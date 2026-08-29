@@ -150,6 +150,9 @@ private:
   // the loop dims a hard-locked LIT panel a bounded time after this, independent of the screen-timeout
   // setting and of held/ghost touches that keep re-revealing it. 0 = not currently lit-locked.
   uint32_t _lock_lit_ms = 0;
+  // True while the always-on lock screen is in its dimmed state (backlight at ~8%, _screen_off=false).
+  // Used to gate message-preview reveals and block the idle screen-timeout from cutting power entirely.
+  bool _lock_ao_dimmed = false;
   NodePrefs* _node_prefs;
   // GPS auto-location: once a fix is seen, keep the node location (node_lat/lon,
   // used by the profile + adverts) synced to GPS and persist it occasionally
@@ -548,8 +551,9 @@ public:
   void lockscreenReveal();
   /** Release a manual lock: hide the lock screen and turn the panel back on. */
   void unlockScreen();
-  /** True while the panel backlight is off (idle-dimmed or manually locked). */
-  bool isScreenOff() const { return _screen_off; }
+  /** True while the panel is dark OR dimmed to always-on level — both mean "not actively in use". */
+  bool isScreenOff() const { return _screen_off || _lock_ao_dimmed; }
+  bool isLockAoDimmed() const { return _lock_ao_dimmed; }
   bool isManualLocked() const { return _manual_lock; }   // hard screen lock engaged
   void toggleScreenLock();                                // Tanmatsu Vol- long-press: lock <-> unlock
   void sleepScreen();                                     // soft screen sleep (backlight off, not locked)

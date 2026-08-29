@@ -122,6 +122,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include <Utils.h>
 #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+#include "PongGame.h"         // Apps → Pong (self-contained game module)
 #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
 
@@ -429,8 +430,8 @@ static void pushDiagLine(const char* message);   // real def near the diag log
 // and one cool slate accent; the warm/saturated colours (the status
 // amber + OD green + alert red) live in the status-color constants
 // below and are used only where state really matters.
-constexpr uint32_t COLOR_BG           = 0x000000;  // pure black, OLED-style
-constexpr uint32_t COLOR_PANEL        = 0x040506;  // essentially black panel
+uint32_t COLOR_BG           = 0x000000;  // pure black, OLED-style
+uint32_t COLOR_PANEL        = 0x040506;  // essentially black panel
 // Earlier accent was 0x4E5C66 — RGB (78,92,102), cool blue-leaning. Even
 // at low opacity that tinted every chip and settings row blue. Switched
 // to a true neutral medium gray (very slight warm) so chip fills read as
@@ -440,6 +441,61 @@ constexpr uint32_t COLOR_PANEL        = 0x040506;  // essentially black panel
 // accent site reads them through lv_color_hex(), so one write re-themes the UI.
 uint32_t COLOR_ACCENT       = 0x15B6A6;  // WADAMESH brand teal (default; the logo dots)
 uint32_t COLOR_ACCENT_PRESS = 0x0D766B;  // darker brand teal (default)
+uint32_t COLOR_TEXT         = 0xE0E3E6;  // clean off-white
+uint32_t COLOR_SUB          = 0x828891;  // medium neutral gray
+// Chat-bubble palette: kept near-monochrome (military comms terminals
+// don't colour-code direction). Slight luminance + hue lean keeps L/R
+// readable but neither side gets a "fun" tint.
+uint32_t COLOR_SENT_BG      = 0x1D2226;  // very subtle steel
+uint32_t COLOR_RECV_BG      = 0x1B1D1F;  // warmer neutral gray
+uint32_t COLOR_MENTION_BG   = 0x16324F;  // blue-tinted bubble for a message that @mentions me
+uint32_t COLOR_BORDER       = 0x18191A;  // card/panel border — thin separator
+uint32_t COLOR_POPUP_BORDER = 0x2A3D52;  // popup/sheet border — slightly lighter
+uint32_t COLOR_SLIDER_BG    = 0x202428;  // slider track background
+
+// ---- Colour themes ----------------------------------------------------------
+// Applied once at boot from the saved pref; a reboot is needed to switch.
+// Each row: { BG, PANEL, TEXT, SUB, SENT_BG, RECV_BG, MENTION_BG, BORDER, POPUP_BORDER, SLIDER_BG, default_ACCENT }
+struct UiThemeRow { uint32_t bg, panel, text, sub, sent, recv, mention_bg, border, popup_border, slider_bg, accent; };
+static const UiThemeRow kUiThemes[] = {
+  // 0: Dark (default — OLED-optimised)
+  { 0x000000, 0x040506, 0xE0E3E6, 0x828891, 0x1D2226, 0x1B1D1F, 0x16324F, 0x18191A, 0x2A3D52, 0x202428, 0x15B6A6 },
+  // 1: Light — white bg, pure black text, high contrast for sunlight
+  { 0xFFFFFF, 0xF0F0F0, 0x000000, 0x444444, 0xD8E8F8, 0xE4E4E4, 0xC8DEFF, 0xCCCCCC, 0xAAAAAA, 0xDDDDDD, 0x0077AA },
+  // 2: Greenish — dark forest
+  { 0x021005, 0x061A08, 0xB8F0C0, 0x5A8A60, 0x0A2210, 0x071A09, 0x0A2A10, 0x0C1A0E, 0x1A3A20, 0x0E1E10, 0x22AA44 },
+  // 3: Pinkish — dark rose
+  { 0x160010, 0x220018, 0xFFD0EA, 0xA06080, 0x2A0820, 0x220616, 0x3A0A2A, 0x2A0A20, 0x44183A, 0x200818, 0xCC3388 },
+  // 4: Reddish — dark ember
+  { 0x150000, 0x200404, 0xFFD0C8, 0xA05050, 0x280808, 0x200404, 0x3A0808, 0x280808, 0x441818, 0x201010, 0xCC2222 },
+  // 5: Light Red — white bg, black text, red-tinted panels/bubbles, high contrast
+  { 0xFFFFFF, 0xFFEEEE, 0x000000, 0x444444, 0xFFD8D8, 0xF5E4E4, 0xFFCCCC, 0xCCAAAB, 0xAA8888, 0xF0DDDD, 0xCC0000 },
+};
+static constexpr int kUiThemeCount = (int)(sizeof(kUiThemes) / sizeof(kUiThemes[0]));
+
+static void applyUiTheme(uint8_t id) {
+  if (id >= kUiThemeCount) id = 0;
+  const UiThemeRow& t = kUiThemes[id];
+  COLOR_BG       = t.bg;
+  COLOR_PANEL    = t.panel;
+  COLOR_TEXT     = t.text;
+  COLOR_SUB      = t.sub;
+  COLOR_SENT_BG    = t.sent;
+  COLOR_RECV_BG    = t.recv;
+  COLOR_MENTION_BG = t.mention_bg;
+  COLOR_BORDER       = t.border;
+  COLOR_POPUP_BORDER = t.popup_border;
+  COLOR_SLIDER_BG    = t.slider_bg;
+  // Only override accent if it hasn't been customised (i.e. still matches the
+  // dark-theme default). This lets a user who picked a custom accent keep it
+  // when they switch themes — ponytail: simple heuristic, good enough.
+  if (COLOR_ACCENT == kUiThemes[0].accent) {
+    COLOR_ACCENT       = t.accent;
+    // darken by 65% — same formula as accentDarken() below
+    { uint32_t a = t.accent;
+      COLOR_ACCENT_PRESS = (((a>>16)&0xFF)*65/100)<<16 | (((a>>8)&0xFF)*65/100)<<8 | ((a&0xFF)*65/100); }
+  }
+}
 
 // Perceived luminance 0..255 (keep the accent dark enough for off-white text).
 static inline uint32_t accentLuma(uint32_t rgb) {
@@ -457,15 +513,7 @@ static inline uint32_t accentClampReadable(uint32_t rgb) {
   if (L > kMaxLuma) return accentDarken(rgb, (int)(kMaxLuma * 100 / L));
   return rgb & 0xFFFFFFu;
 }
-constexpr uint32_t COLOR_TEXT         = 0xE0E3E6;  // clean off-white
-constexpr uint32_t COLOR_SUB          = 0x828891;  // medium neutral gray
-// Chat-bubble palette: kept near-monochrome (military comms terminals
-// don't colour-code direction). Slight luminance + hue lean keeps L/R
-// readable but neither side gets a "fun" tint.
-constexpr uint32_t COLOR_SENT_BG      = 0x1D2226;  // very subtle steel
-constexpr uint32_t COLOR_RECV_BG      = 0x1B1D1F;  // warmer neutral gray
 constexpr uint32_t COLOR_MENTION      = 0x4FA3FF;  // blue — @mentions of me
-constexpr uint32_t COLOR_MENTION_BG   = 0x16324F;  // blue-tinted bubble for a message that @mentions me
 // Functional status colours — use sparingly. These are the ONLY warm/
 // saturated colours in the palette, so when they appear the operator
 // instantly reads them as state, not decoration.
@@ -1126,6 +1174,60 @@ static bool tdeckPlayWavFile(const char* prefpath, int vol) {
   return true;
 }
 
+// ---- Built-in retro melody table (shared across T-Deck, Pager, P4) ----------
+// Each melody: array of {freq_hz, dur_ms} pairs, terminated by {0,0}.
+// Index 0 is reserved (means "use per-slot default chime", not a melody).
+// ponytail: flat array of structs, no heap, no alloc.
+struct MelodyNote { uint16_t freq; uint16_t ms; };
+struct BuiltinMelody { const char* name; const MelodyNote* notes; };
+
+static const MelodyNote kMelNokia[] = {           // Nokia "Grande Valse" fragment
+  {1319,125},{0,62},{988,125},{0,62},{1047,250},{0,62},{1109,250},{0,62},
+  {988,500},{0,62},{1175,500},{0,62},{1319,500},{0,62},
+  {988,125},{0,62},{1047,125},{0,62},{1175,250},{0,62},
+  {988,750},{0,125},
+  {880,125},{0,62},{988,125},{0,62},{1319,250},{0,62},{1175,250},{0,62},
+  {988,500},{0,62},{1047,500},{0,62},{988,1000},
+  {0,0}
+};
+static const MelodyNote kMelEricsson[] = {        // Ericsson "dialing" tri-tone jingle
+  {1174,150},{0,50},{988,150},{0,50},{880,150},{0,50},
+  {988,150},{0,50},{1174,300},{0,100},
+  {1319,150},{0,50},{1174,150},{0,50},{988,300},{0,300},
+  {0,0}
+};
+static const MelodyNote kMelIcq[] = {             // ICQ "Uh-Oh" (two-note descending blip)
+  {1047,120},{0,40},{784,180},{0,60},
+  {1047,120},{0,40},{784,180},
+  {0,0}
+};
+static const MelodyNote kMelMario[] = {           // Super Mario coin / 1-up motif
+  {1319,100},{1568,100},{0,50},{1568,100},{1568,100},{1661,100},{1568,100},{0,50},{1047,100},
+  {0,0}
+};
+static const MelodyNote kMelTetris[] = {          // Tetris Theme A fragment
+  {1319,200},{988,100},{1047,100},{1175,200},{1047,100},{988,100},
+  {880,200},{880,100},{1047,100},{1319,200},{1175,100},{1047,100},
+  {988,300},{1047,100},{1175,200},{1319,200},{1047,200},{880,200},{880,200},
+  {0,0}
+};
+
+static const BuiltinMelody kBuiltinMelodies[] = {
+  { "Nokia",       kMelNokia   },
+  { "Ericsson",    kMelEricsson },
+  { "ICQ Oh-Oh",   kMelIcq     },
+  { "Mario Coin",  kMelMario   },
+  { "Tetris",      kMelTetris  },
+};
+static constexpr int kBuiltinMelodyCount = (int)(sizeof kBuiltinMelodies / sizeof kBuiltinMelodies[0]);
+
+// Parse "builtin:N" path prefix → melody index, or -1 if not a builtin path.
+static int parseBuiltinMelodyIdx(const char* path) {
+  if (!path || strncmp(path, "builtin:", 8) != 0) return -1;
+  int idx = atoi(path + 8);
+  return (idx >= 0 && idx < kBuiltinMelodyCount) ? idx : -1;
+}
+
 // The chime body: install I2S, play the notes, uninstall. ~300 ms of blocking
 // i2s_write + driver setup/teardown — run on its own throwaway task (below).
 static void tdeckNotifyTaskFn(void* arg) {
@@ -1134,9 +1236,15 @@ static void tdeckNotifyTaskFn(void* arg) {
   // Custom WAV for this slot (if set + valid) — installs/uninstalls I2S itself.
   // Path was resolved on the caller thread (s_notify_path) to keep NVS access
   // off this short-lived task.
-  bool played = (s_notify_path[0] && tdeckPlayWavFile(s_notify_path, v));
-  if (!played && tdeckAudioInstall()) {         // built-in chime fallback (distinct per slot)
-    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+  const int melIdx = parseBuiltinMelodyIdx(s_notify_path);
+  bool played = (melIdx < 0 && s_notify_path[0] && tdeckPlayWavFile(s_notify_path, v));
+  if (!played && tdeckAudioInstall()) {
+    if (melIdx >= 0) {                           // retro built-in melody
+      for (const MelodyNote* n = kBuiltinMelodies[melIdx].notes; n->freq || n->ms; ++n) {
+        if (n->freq) tdeckPlayToneRaw(n->freq, n->ms, v);
+        else         vTaskDelay(pdMS_TO_TICKS(n->ms));
+      }
+    } else if (s_notify_slot == TOUCH_SND_MEN) { // @-mention: bright 3-note rising arpeggio
       tdeckPlayToneRaw(1318, 70,  v);            // E6
       tdeckPlayToneRaw(1760, 70,  v);            // A6
       tdeckPlayToneRaw(2349, 130, v);            // D7
@@ -1223,11 +1331,17 @@ static void pagerNotifyTaskFn(void* arg) {
   (void)arg;
   const int volPct = s_notify_vol;
   board.setAmpEnabled(true);
-  bool played = (s_notify_path[0] && pagerPlayWavFile(s_notify_path, volPct));
+  const int melIdx = parseBuiltinMelodyIdx(s_notify_path);
+  bool played = (melIdx < 0 && s_notify_path[0] && pagerPlayWavFile(s_notify_path, volPct));
   if (!played && pagerAudioInstall()) {
     s_pager_codec.setVolumePercent((uint8_t)volPct);
     s_pager_codec.setMute(false);
-    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+    if (melIdx >= 0) {                           // retro built-in melody
+      for (const MelodyNote* n = kBuiltinMelodies[melIdx].notes; n->freq || n->ms; ++n) {
+        if (n->freq) pagerPlayToneRaw(n->freq, n->ms);
+        else         vTaskDelay(pdMS_TO_TICKS(n->ms));
+      }
+    } else if (s_notify_slot == TOUCH_SND_MEN) { // @-mention: bright 3-note rising arpeggio
       pagerPlayToneRaw(1318, 70);                // E6
       pagerPlayToneRaw(1760, 70);                // A6
       pagerPlayToneRaw(2349, 130);               // D7
@@ -1285,9 +1399,16 @@ static void pagerPreviewWavFile(const char* prefpath) {
 static volatile bool s_p4_snd_playing = false;
 static volatile int  s_p4_snd_slot    = TOUCH_SND_MSG;
 static volatile int  s_p4_snd_vol     = 9000;
+static char          s_p4_snd_path[TOUCH_SOUND_PATH_MAXLEN] = {0};
 static void p4NotifyTaskFn(void*) {
   const int v = s_p4_snd_vol;
-  if (s_p4_snd_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+  const int melIdx = parseBuiltinMelodyIdx(s_p4_snd_path);
+  if (melIdx >= 0) {                           // retro built-in melody
+    for (const MelodyNote* n = kBuiltinMelodies[melIdx].notes; n->freq || n->ms; ++n) {
+      if (n->freq) p4AudioTone(n->freq, n->ms, v);
+      else         vTaskDelay(pdMS_TO_TICKS(n->ms));
+    }
+  } else if (s_p4_snd_slot == TOUCH_SND_MEN) { // @-mention: bright 3-note rising arpeggio
     p4AudioTone(1318, 70,  v);                 // E6
     p4AudioTone(1760, 70,  v);                 // A6
     p4AudioTone(2349, 130, v);                 // D7
@@ -1307,6 +1428,7 @@ static void p4PlayNotifySlot(int slot) {
   if (pct <= 0) return;
   s_p4_snd_slot = slot;
   s_p4_snd_vol  = pct * 130;                   // 0..100 -> 0..13000 amplitude
+  touchPrefsGetSoundFile(slot, s_p4_snd_path, sizeof s_p4_snd_path);
   s_p4_snd_playing = true;
   if (xTaskCreate(p4NotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
     s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
@@ -2378,8 +2500,6 @@ struct SettingsModalState {
   lv_obj_t* exp_boost_sw;
   lv_obj_t* exp_dc_sw;
   lv_obj_t* wifi_sw;
-  lv_obj_t* glance_en_sw;
-  lv_obj_t* glance_locked_sw;
   lv_obj_t* wifi_ssid_ta;
   lv_obj_t* wifi_pwd_ta;
   /** Transports modal: live STA line (IP when connected, else Arduino WiFi status). */
@@ -2582,8 +2702,7 @@ static const char* gpsStatusStr(bool compact = false) {
   // point at the actual remedy. The serial boot probe prints the real sky view meanwhile.
   if (!g_lv.task->getGpsFix()) {
     const uint32_t now = millis();
-    if (!s_gps_acq_since) s_gps_acq_since = now;
-    const uint32_t secs = (now - s_gps_acq_since) / 1000u;
+    const uint32_t secs = s_gps_acq_since ? (now - s_gps_acq_since) / 1000u : 0u;
     int n = snprintf(s, sizeof s, TR("GPS: searching"));
     if (n < (int)sizeof s) {
       if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
@@ -2827,19 +2946,19 @@ static inline void noteKbActivity() {}
 
 /** List-style settings launcher (not theme-default `lv_btn` chrome). */
 static void styleSettingsRow(lv_obj_t* row) {
-  // Matches the same low-opacity neutral-slate look as styleButton so the
-  // settings rows don't read as a different visual language than the
-  // chips / sheet buttons elsewhere. Earlier hardcoded blue-slate hexes
-  // (0x141C27 / 0x2A3848) predated the tactical palette overhaul.
+  // On dark themes: transparent rest state so rows read as "etched from the BG".
+  // On light themes: opaque panel fill so rows are visibly distinct from white BG.
+  const uint32_t bg_luma = (299u*((COLOR_BG>>16)&0xFF) + 587u*((COLOR_BG>>8)&0xFF) + 114u*(COLOR_BG&0xFF)) / 1000u;
+  const bool light_bg = bg_luma > 128;
   lv_obj_remove_style_all(row);
-  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(row, LV_OPA_0, LV_PART_MAIN);     // fully transparent at rest
-  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(row, lv_color_hex(light_bg ? COLOR_PANEL : COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(row, light_bg ? LV_OPA_COVER : LV_OPA_0, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(row, LV_OPA_30, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_radius(row, 6, LV_PART_MAIN);     // sharper than 14
+  lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
   lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_opa(row, LV_OPA_30, LV_PART_MAIN);
+  lv_obj_set_style_border_color(row, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_opa(row, light_bg ? LV_OPA_COVER : LV_OPA_30, LV_PART_MAIN);
   lv_obj_set_style_pad_all(row, 0, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(row, 0, LV_PART_MAIN);
   lv_obj_set_style_shadow_ofs_y(row, 0, LV_PART_MAIN);
@@ -2858,7 +2977,7 @@ static void styleSurface(lv_obj_t* obj, uint32_t bg, lv_coord_t radius = 10) {
 static void styleCard(lv_obj_t* obj) {
   styleSurface(obj, COLOR_PANEL, 10);
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(obj, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
 }
 
 // LVGL draws a text area's PLACEHOLDER from LV_PART_TEXTAREA_PLACEHOLDER, and that
@@ -2885,16 +3004,13 @@ static void taSetPlaceholder(lv_obj_t* ta, const char* txt) {
 }
 
 static void styleButton(lv_obj_t* obj) {
-  // Subdued slate chip. Background sits at the panel colour with a low
-  // overall opacity so the pure-black BG bleeds through — chips read as
-  // "etched out of the bezel" rather than glowing. Border is a faint
-  // 1-px line of COLOR_ACCENT at low opacity, text is clean white-ish.
-  // Press state flashes a brighter slate fill so taps still register.
-  // Primary action buttons (Send / Save / Login / Apply / Add) override
-  // the bg to COLOR_STATUS_OK so they remain visually distinct.
-  lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(obj, LV_OPA_10, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
+  // On dark themes: low-opacity accent fill so buttons read as "etched from bezel".
+  // On light themes: opaque panel fill so buttons are visibly distinct from white BG.
+  const uint32_t bg_luma = (299u*((COLOR_BG>>16)&0xFF) + 587u*((COLOR_BG>>8)&0xFF) + 114u*(COLOR_BG&0xFF)) / 1000u;
+  const bool light_bg = bg_luma > 128;
+  lv_obj_set_style_bg_color(obj, lv_color_hex(light_bg ? COLOR_PANEL : COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(obj, light_bg ? LV_OPA_COVER : LV_OPA_10, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(obj, LV_OPA_50, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
@@ -5093,7 +5209,7 @@ struct SettingsCatDef { const char* label; const char* icon; };
 #if CAP_LUA_APPS
 // Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
 enum {
-  APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
+  APPHIDE_SNAKE = 1u << 0,  APPHIDE_PONG = 1u << 13, APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
   APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
   APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
@@ -5804,6 +5920,9 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
     else if (swipe_y != 0) luaAppSteer(0, swipe_y < 0 ? -1 : 1);
     return;
   }
+  if (PongGame::isOpen()) {
+    if (swipe_y != 0) PongGame::nudge(0, swipe_y < 0 ? -1 : 1);
+  }
   if (SnakeGame::isOpen()) {
     if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
     else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
@@ -6155,7 +6274,7 @@ static void kbMirrorEnsureCreated() {
   lv_textarea_set_one_line(s_kb_mirror_ta, true);
   lv_obj_set_style_bg_color(s_kb_mirror_ta, lv_color_hex(0x0A0B0C), LV_PART_MAIN);
   lv_obj_set_style_text_color(s_kb_mirror_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_kb_mirror_ta, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_kb_mirror_ta, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_kb_mirror_ta, 1, LV_PART_MAIN);
   lv_obj_set_style_text_font(s_kb_mirror_ta, &g_font_14, LV_PART_MAIN);
   // Live-sync the mirror's text into the bound real textarea on every
@@ -6489,7 +6608,7 @@ static void accentPopupShow() {
   lv_obj_set_style_bg_color(s_acc_popup, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_acc_popup, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(s_acc_popup, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_acc_popup, lv_color_hex(0x2A3D52), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_acc_popup, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_acc_popup, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_acc_popup, pad, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_acc_popup, gap, LV_PART_MAIN);
@@ -6761,7 +6880,7 @@ static void accentBoxMaybeShow() {
   lv_obj_set_style_bg_color(s_accbox, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_accbox, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(s_accbox, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_accbox, lv_color_hex(0x2A3D52), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_accbox, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_accbox, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_accbox, pad, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_accbox, gap, LV_PART_MAIN);
@@ -7001,7 +7120,7 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
   lv_obj_set_style_bg_color(s_mentionbox, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_mentionbox, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(s_mentionbox, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_mentionbox, lv_color_hex(0x2A3D52), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_mentionbox, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_mentionbox, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_mentionbox, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_row(s_mentionbox, 3, LV_PART_MAIN);
@@ -7533,7 +7652,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);   // header stays fixed; the body below scrolls
@@ -7811,49 +7930,76 @@ static int          s_emoji_cols  = 1;             // grid columns (computed at 
 // (see scripts/build/regen-extras-fonts.sh) — a glyph here that isn't in the
 // font would just render as the font's notdef box, so only ship baked ones.
 static const char* const k_emoji_items[] = {
-  // faces
-  "\xF0\x9F\x98\x80","\xF0\x9F\x98\x83","\xF0\x9F\x98\x84","\xF0\x9F\x98\x81",
-  "\xF0\x9F\x98\x86","\xF0\x9F\x98\x85","\xF0\x9F\x98\x82","\xF0\x9F\x98\x89",
-  "\xF0\x9F\x98\x8A","\xF0\x9F\x98\x8D","\xF0\x9F\x98\x98","\xF0\x9F\x98\x8B",
-  "\xF0\x9F\x98\x9C","\xF0\x9F\x98\x8E","\xF0\x9F\x98\x8F","\xF0\x9F\x98\x92",
-  "\xF0\x9F\x98\x9E","\xF0\x9F\x98\x94","\xF0\x9F\x98\xA2","\xF0\x9F\x98\xAD",
-  "\xF0\x9F\x98\xA1","\xF0\x9F\x98\xA0","\xF0\x9F\x98\xB1","\xF0\x9F\x98\xB4",
-  "\xF0\x9F\x98\xAC","\xF0\x9F\x98\x90",
-  // gestures + people
-  "\xF0\x9F\x91\x8D","\xF0\x9F\x91\x8E","\xF0\x9F\x91\x8C","\xE2\x9C\x8C",
-  "\xF0\x9F\x91\x8A","\xE2\x9C\x8A","\xF0\x9F\x91\x8F","\xF0\x9F\x99\x8C",
-  "\xF0\x9F\x99\x8F","\xF0\x9F\x92\xAA","\xF0\x9F\x91\x8B",
+  // faces smiling
+  "\xF0\x9F\x98\x80","\xF0\x9F\x98\x81","\xF0\x9F\x98\x82","\xF0\x9F\x98\x83","\xF0\x9F\x98\x84","\xF0\x9F\x98\x85","\xF0\x9F\x98\x86","\xF0\x9F\x98\x87",
+  "\xF0\x9F\x98\x88","\xF0\x9F\x98\x89","\xF0\x9F\x98\x8A","\xF0\x9F\x98\x8B","\xF0\x9F\x98\x8C","\xF0\x9F\x98\x8D","\xF0\x9F\x98\x8E","\xF0\x9F\x98\x8F",
+  "\xF0\x9F\x98\x90","\xF0\x9F\x98\x91","\xF0\x9F\x98\x92","\xF0\x9F\x98\x93","\xF0\x9F\x98\x94","\xF0\x9F\x98\x95","\xF0\x9F\x98\x96","\xF0\x9F\x98\x97",
+  "\xF0\x9F\x98\x98","\xF0\x9F\x98\x99","\xF0\x9F\x98\x9A","\xF0\x9F\x98\x9B","\xF0\x9F\x98\x9C","\xF0\x9F\x98\x9D","\xF0\x9F\x98\x9E","\xF0\x9F\x98\x9F",
+  "\xF0\x9F\x98\xA0","\xF0\x9F\x98\xA1","\xF0\x9F\x98\xA2","\xF0\x9F\x98\xA3","\xF0\x9F\x98\xA4","\xF0\x9F\x98\xA5","\xF0\x9F\x98\xA6","\xF0\x9F\x98\xA7",
+  "\xF0\x9F\x98\xA8","\xF0\x9F\x98\xA9","\xF0\x9F\x98\xAA","\xF0\x9F\x98\xAB","\xF0\x9F\x98\xAC","\xF0\x9F\x98\xAD","\xF0\x9F\x98\xAE","\xF0\x9F\x98\xAF",
+  "\xF0\x9F\x98\xB0","\xF0\x9F\x98\xB1","\xF0\x9F\x98\xB2","\xF0\x9F\x98\xB3","\xF0\x9F\x98\xB4","\xF0\x9F\x98\xB5","\xF0\x9F\x98\xB6","\xF0\x9F\x98\xB7",
+  "\xF0\x9F\x99\x81","\xF0\x9F\x99\x82","\xF0\x9F\x99\x83","\xF0\x9F\x99\x84",
+  // monkeys
+  "\xF0\x9F\x99\x88","\xF0\x9F\x99\x89","\xF0\x9F\x99\x8A","\xF0\x9F\x99\x8C","\xF0\x9F\x99\x8F",
+  // faces (new)
+  "\xF0\x9F\xA4\x90","\xF0\x9F\xA4\x91","\xF0\x9F\xA4\x92","\xF0\x9F\xA4\x93","\xF0\x9F\xA4\x94","\xF0\x9F\xA4\x95","\xF0\x9F\xA4\x96","\xF0\x9F\xA4\x97",
+  "\xF0\x9F\xA4\x98","\xF0\x9F\xA4\x99","\xF0\x9F\xA4\x9A","\xF0\x9F\xA4\x9B","\xF0\x9F\xA4\x9C","\xF0\x9F\xA4\x9D","\xF0\x9F\xA4\x9E","\xF0\x9F\xA4\x9F",
+  "\xF0\x9F\xA4\xA0","\xF0\x9F\xA4\xA1","\xF0\x9F\xA4\xA2","\xF0\x9F\xA4\xA3","\xF0\x9F\xA4\xA4","\xF0\x9F\xA4\xA5","\xF0\x9F\xA4\xA7","\xF0\x9F\xA4\xA8",
+  "\xF0\x9F\xA4\xA9","\xF0\x9F\xA4\xAA","\xF0\x9F\xA4\xAB","\xF0\x9F\xA4\xAC","\xF0\x9F\xA4\xAD","\xF0\x9F\xA4\xAE","\xF0\x9F\xA4\xAF","\xF0\x9F\xA4\xB2",
+  "\xF0\x9F\xA5\xB0","\xF0\x9F\xA5\xB1","\xF0\x9F\xA5\xB3","\xF0\x9F\xA5\xB4","\xF0\x9F\xA5\xB5","\xF0\x9F\xA5\xB6","\xF0\x9F\xA5\xBA","\xF0\x9F\xA6\x81",
+  "\xF0\x9F\xA6\x84","\xF0\x9F\xA6\x85","\xF0\x9F\xA6\x86","\xF0\x9F\xA6\x89","\xF0\x9F\xA6\x8B","\xF0\x9F\xA7\x90","\xF0\x9F\xA7\xA1",
+  // gestures + hands
+  "\xE2\x98\x9D","\xE2\x9C\x8A","\xE2\x9C\x8B","\xE2\x9C\x8C","\xF0\x9F\x91\x86","\xF0\x9F\x91\x87","\xF0\x9F\x91\x88","\xF0\x9F\x91\x89",
+  "\xF0\x9F\x91\x8A","\xF0\x9F\x91\x8B","\xF0\x9F\x91\x8C","\xF0\x9F\x91\x8D","\xF0\x9F\x91\x8E","\xF0\x9F\x91\x8F","\xF0\x9F\x91\x90","\xF0\x9F\x92\xAA",
   // hearts
-  "\xE2\x9D\xA4","\xF0\x9F\x92\x94","\xF0\x9F\x92\x95","\xF0\x9F\x92\x99",
-  "\xF0\x9F\x92\x9A","\xF0\x9F\x92\x9B","\xF0\x9F\x92\x9C",
-  // symbols / celebration
-  "\xF0\x9F\x8E\x89","\xF0\x9F\x8E\x8A","\xE2\x9C\xA8","\xF0\x9F\x94\xA5",
-  "\xF0\x9F\x92\xAF","\xE2\x9C\x85","\xE2\x9D\x8C","\xE2\x9D\x97",
-  "\xE2\x9D\x93","\xE2\x9A\xA0","\xF0\x9F\x92\xA9","\xE2\xAD\x90",
-  "\xF0\x9F\x8C\x9F","\xE2\x9A\xA1","\xE2\x98\x80","\xE2\x98\x81",
-  "\xE2\x9D\x84","\xE2\x98\x94","\xE2\x98\x95","\xF0\x9F\x8D\xBA","\xF0\x9F\x8D\xBB",
-  "\xF0\x9F\x8D\x95","\xF0\x9F\x8E\x82","\xF0\x9F\x8E\x81","\xF0\x9F\x92\xAC",
-  "\xF0\x9F\x92\xA4","\xF0\x9F\x92\xA5",
-  // objects
-  "\xF0\x9F\x9A\x80","\xF0\x9F\x93\xB7","\xF0\x9F\x93\xB1","\xF0\x9F\x92\xBB",
-  "\xF0\x9F\x93\x8D","\xF0\x9F\x93\x8C","\xF0\x9F\x93\x85","\xF0\x9F\x94\x8B",
-  "\xF0\x9F\x93\xA1","\xF0\x9F\x94\x91","\xF0\x9F\x94\x92","\xF0\x9F\x93\xA7",
-  "\xF0\x9F\x8F\xA0","\xF0\x9F\x9A\x97","\xE2\x8C\x9A","\xF0\x9F\x92\xA1",
+  "\xE2\x9D\xA4","\xF0\x9F\x92\x90","\xF0\x9F\x92\x93","\xF0\x9F\x92\x94","\xF0\x9F\x92\x95","\xF0\x9F\x92\x96","\xF0\x9F\x92\x97","\xF0\x9F\x92\x98",
+  "\xF0\x9F\x92\x99","\xF0\x9F\x92\x9A","\xF0\x9F\x92\x9B","\xF0\x9F\x92\x9C","\xF0\x9F\x92\x9D","\xF0\x9F\x92\x9E","\xF0\x9F\x92\x9F","\xF0\x9F\x96\xA4",
+  // misc symbols
+  "\xE2\x98\x80","\xE2\x98\x81","\xE2\x98\x94","\xE2\x98\x95","\xE2\x9A\xA0","\xE2\x9A\xA1","\xE2\x9C\x85","\xE2\x9C\x94",
+  "\xE2\x9C\x96","\xE2\x9C\xA8","\xE2\x9D\x84","\xE2\x9D\x8C","\xE2\x9D\x93","\xE2\x9D\x97","\xE2\xAD\x90","\xE2\xAD\x95",
+  // nature + weather
+  "\xF0\x9F\x8C\x88","\xF0\x9F\x8C\x8A","\xF0\x9F\x8C\x90","\xF0\x9F\x8C\x99","\xF0\x9F\x8C\x9B","\xF0\x9F\x8C\x9E","\xF0\x9F\x8C\x9F","\xF0\x9F\x8C\xA0",
+  "\xF0\x9F\x8C\xB1","\xF0\x9F\x8C\xB3","\xF0\x9F\x8C\xB4","\xF0\x9F\x8C\xB7","\xF0\x9F\x8C\xB8","\xF0\x9F\x8C\xB9","\xF0\x9F\x8C\xBA","\xF0\x9F\x8C\xBB",
+  "\xF0\x9F\x8C\xBF","\xF0\x9F\x8D\x80","\xF0\x9F\x8D\x81","\xF0\x9F\x8D\x82","\xF0\x9F\x8D\x95","\xF0\x9F\x8D\xBA","\xF0\x9F\x8D\xBB",
   // animals
-  "\xF0\x9F\x90\xB6","\xF0\x9F\x90\xB1","\xF0\x9F\x90\xB8","\xF0\x9F\x90\xBB",
-  "\xF0\x9F\x90\xA7","\xF0\x9F\x90\x9D",
-  // activity / flags  (soccer, football, moai, transgender flag, Lesotho flag)
-  "\xE2\x9A\xBD","\xF0\x9F\x8F\x88","\xF0\x9F\x97\xBF",
-  "\xF0\x9F\x8F\xB3\xEF\xB8\x8F\xE2\x80\x8D\xE2\x9A\xA7\xEF\xB8\x8F",
-  "\xF0\x9F\x87\xB1\xF0\x9F\x87\xB8",
-  // special characters / punctuation / currency / math
-  "\xE2\x80\x94","\xE2\x80\xA6","\xE2\x80\x9C","\xE2\x80\x9D","\xE2\x80\x98",
-  "\xE2\x80\x99","\xE2\x86\x92","\xE2\x86\x90","\xC2\xB0","\xC2\xB1",
-  "\xC3\x97","\xC3\xB7","\xE2\x82\xAC","\xC2\xA3","\xC2\xA5","\xC2\xA9",
-  "\xC2\xAE","\xE2\x84\xA2","\xE2\x89\xA0","\xE2\x89\xA4","\xE2\x89\xA5",
-  "\xC2\xBD","\xC2\xBC","\xC2\xBE",
+  "\xF0\x9F\x90\x8C","\xF0\x9F\x90\x94","\xF0\x9F\x90\x97","\xF0\x9F\x90\x9D","\xF0\x9F\x90\x9E","\xF0\x9F\x90\xA6","\xF0\x9F\x90\xA7","\xF0\x9F\x90\xA8",
+  "\xF0\x9F\x90\xAD","\xF0\x9F\x90\xAE","\xF0\x9F\x90\xAF","\xF0\x9F\x90\xB0","\xF0\x9F\x90\xB1","\xF0\x9F\x90\xB4","\xF0\x9F\x90\xB5","\xF0\x9F\x90\xB6",
+  "\xF0\x9F\x90\xB7","\xF0\x9F\x90\xB8","\xF0\x9F\x90\xB9","\xF0\x9F\x90\xBA","\xF0\x9F\x90\xBB","\xF0\x9F\x90\xBD",
+  // symbols + celebration
+  "\xF0\x9F\x8E\x81","\xF0\x9F\x8E\x82","\xF0\x9F\x8E\x88","\xF0\x9F\x8E\x89","\xF0\x9F\x8E\x8A","\xF0\x9F\x8E\xAF","\xF0\x9F\x8F\x86","\xF0\x9F\x8F\x88",
+  "\xF0\x9F\x8F\xA0","\xF0\x9F\x8F\xB3","\xF0\x9F\x91\x91","\xF0\x9F\x91\xBB","\xF0\x9F\x91\xBD","\xF0\x9F\x91\xBE","\xF0\x9F\x91\xBF","\xF0\x9F\x92\x80",
+  "\xF0\x9F\x92\xA1","\xF0\x9F\x92\xA2","\xF0\x9F\x92\xA3","\xF0\x9F\x92\xA4","\xF0\x9F\x92\xA5","\xF0\x9F\x92\xA6","\xF0\x9F\x92\xA7","\xF0\x9F\x92\xA8",
+  "\xF0\x9F\x92\xA9","\xF0\x9F\x92\xAB","\xF0\x9F\x92\xAC","\xF0\x9F\x92\xAD","\xF0\x9F\x92\xAF","\xF0\x9F\x92\xBB","\xF0\x9F\x93\x85","\xF0\x9F\x93\x8C",
+  "\xF0\x9F\x93\x8D","\xF0\x9F\x93\xA1","\xF0\x9F\x93\xA7","\xF0\x9F\x93\xB1","\xF0\x9F\x93\xB7",
+  // objects
+  "\xE2\x8C\x9A","\xF0\x9F\x94\x8B","\xF0\x9F\x94\x8C","\xF0\x9F\x94\x91","\xF0\x9F\x94\x92","\xF0\x9F\x94\x93","\xF0\x9F\x94\x94","\xF0\x9F\x94\x95",
+  "\xF0\x9F\x94\x97","\xF0\x9F\x94\x99","\xF0\x9F\x94\x9A","\xF0\x9F\x94\x9C","\xF0\x9F\x94\xA5","\xF0\x9F\x96\x90","\xF0\x9F\x96\x95","\xF0\x9F\x96\x96",
+  "\xF0\x9F\x97\xBF","\xF0\x9F\x9A\x80","\xF0\x9F\x9A\x97","\xF0\x9F\x9A\xAB",
+  // activity + sport
+  "\xE2\x9A\xBD",
+  // other
+  "\xE2\x9D\x94","\xE2\x9D\x95","\xE2\x9D\xA3","\xE2\x9E\x95","\xE2\x9E\x96","\xE2\x9E\x97","\xF0\x9F\x87\xB1","\xF0\x9F\xA4\x8D",
+  "\xF0\x9F\xA4\x8E",
 };
 static constexpr int k_emoji_count = (int)(sizeof(k_emoji_items) / sizeof(k_emoji_items[0]));
+
+// Category tab definitions — label shown on the tab, start index in k_emoji_items[].
+// Indices must stay in sync with the array layout above.
+struct EmojiCat { const char* label; int start; };
+static const EmojiCat k_emoji_cats[] = {
+  { "\xF0\x9F\x98\x80",  0   },   // faces smiling  (U+1F600)
+  { "\xF0\x9F\x99\x88",  60  },   // monkeys        (U+1F648)
+  { "\xF0\x9F\xA4\x90",  65  },   // faces (new)    (U+1F910)
+  { "\xE2\x9C\x8C",      112 },   // gestures+hands (U+270C)
+  { "\xE2\x9D\xA4",      128 },   // hearts         (U+2764)
+  { "\xE2\x98\x80",      144 },   // misc symbols   (U+2600)
+  { "\xF0\x9F\x8C\x88",  160 },   // nature+weather (U+1F308)
+  { "\xF0\x9F\x90\xB6",  183 },   // animals        (U+1F436)
+  { "\xF0\x9F\x8E\x81",  205 },   // celebration    (U+1F381)
+  { "\xE2\x8C\x9A",      242 },   // objects        (U+231A)
+  { "\xE2\x9A\xBD",      262 },   // sport+other    (U+26BD)
+};
+static constexpr int k_emoji_cat_count = (int)(sizeof(k_emoji_cats) / sizeof(k_emoji_cats[0]));
 
 // Special characters / symbols not easy to reach on a compact keyboard — their OWN picker,
 // separate from emoji. All render via the g_font_16 chain (montserrat ASCII base + extras_font
@@ -8021,7 +8167,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_size(card, cardw, cardh);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -8033,19 +8179,65 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_pos(title, 2, 0);
   addCloseXBadge(card, emojiSheetCloseCb);
 
-  // Hint line: how to use the trackball (T-Deck) — finger tap also works.
-  lv_obj_t* hint = lv_label_create(card);
-  lv_label_set_text(hint, TR("Roll to highlight \xE2\x80\xA2 click to insert"));
-  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
+  // Category tab bar — only for the emoji set, not special chars.
+  const bool show_tabs = (s_glyph_items == k_emoji_items);
+  const lv_coord_t tab_h = show_tabs ? 28 : 0;
+  if (show_tabs) {
+    lv_obj_t* tabbar = lv_obj_create(card);
+    lv_obj_remove_style_all(tabbar);
+    lv_obj_set_size(tabbar, cardw - 16, tab_h);
+    lv_obj_set_pos(tabbar, 0, 22);
+    lv_obj_set_flex_flow(tabbar, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(tabbar, 4, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(tabbar, LV_DIR_HOR);
+    lv_obj_set_scrollbar_mode(tabbar, LV_SCROLLBAR_MODE_OFF);
+    for (int ci = 0; ci < k_emoji_cat_count; ++ci) {
+      lv_obj_t* tb = lv_btn_create(tabbar);
+      lv_obj_set_size(tb, LV_SIZE_CONTENT, tab_h - 2);
+      lv_obj_set_style_pad_hor(tb, 6, LV_PART_MAIN);
+      lv_obj_set_style_pad_ver(tb, 0, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(tb, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(tb, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(tb, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
+      lv_obj_set_style_radius(tb, 4, LV_PART_MAIN);
+      lv_obj_set_style_border_width(tb, 0, LV_PART_MAIN);
+      lv_obj_set_style_shadow_width(tb, 0, LV_PART_MAIN);
+      // Scroll the grid to this category's first cell on tap.
+      lv_obj_add_event_cb(tb, [](lv_event_t* ev) {
+        if (lv_event_get_code(ev) != LV_EVENT_CLICKED) return;
+        if (!s_emoji_grid) return;
+        int ci2 = (int)(intptr_t)lv_event_get_user_data(ev);
+        int idx = k_emoji_cats[ci2].start;
+        lv_obj_t* target = lv_obj_get_child(s_emoji_grid, (uint32_t)idx);
+        if (target) lv_obj_scroll_to_view(target, LV_ANIM_ON);
+      }, LV_EVENT_CLICKED, (void*)(intptr_t)ci);
+#if CAP_LARGE_SCREEN && LV_USE_IMGFONT
+      // Show the representative emoji glyph as a small image if available.
+      uint32_t goff = 0;
+      const lv_img_dsc_t* ed = emojiGlyphLookup(_lv_txt_encoded_next(k_emoji_cats[ci].label, &goff));
+      if (ed) {
+        lv_obj_t* im = lv_img_create(tb);
+        lv_img_set_src(im, ed);
+        lv_img_set_antialias(im, true);
+        lv_img_set_zoom(im, 256);   // 1× (16 px native)
+        lv_obj_center(im);
+        continue;
+      }
+#endif
+      lv_obj_t* tl = lv_label_create(tb);
+      lv_label_set_text(tl, k_emoji_cats[ci].label);
+      lv_obj_set_style_text_font(tl, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(tl);
+    }
+  }
 
   // Scrollable grid of glyph buttons.
   const lv_coord_t grid_w = cardw - 16;
   lv_obj_t* grid = lv_obj_create(card);
   lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, grid_w, cardh - 16 - 26);
-  lv_obj_set_pos(grid, 0, 26);
+  lv_obj_set_size(grid, grid_w, cardh - 16 - 26 - tab_h);
+  lv_obj_set_pos(grid, 0, 26 + tab_h);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(grid, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_column(grid, 4, LV_PART_MAIN);
@@ -8242,7 +8434,7 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   // The card is clamped to the visible height above, but its rows are absolutely
@@ -9008,7 +9200,7 @@ static void txtMenuShow(lv_obj_t* ta) {
   lv_obj_set_style_bg_color(s_txtmenu, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_txtmenu, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(s_txtmenu, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_txtmenu, lv_color_hex(0x2A3D52), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_txtmenu, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_txtmenu, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_txtmenu, pad, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_txtmenu, gap, LV_PART_MAIN);
@@ -9176,11 +9368,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
     lv_obj_remove_style_all(card);
     lv_obj_set_width(card, card_w);
     lv_obj_set_height(card, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x121417), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(card, lv_color_hex(0x2A2E34), LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, card_pad, LV_PART_MAIN);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -9226,7 +9418,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
   lv_obj_set_style_border_width(header, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(header, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(header, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
 
   lv_obj_t* lbl = lv_label_create(header);
   lv_label_set_text(lbl, TR(title));
@@ -9932,7 +10124,7 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -10669,7 +10861,7 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(g_set_modal.radio_preset_dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_set_modal.radio_preset_dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     /* Dropdown list (the popup once tapped) */
     lv_obj_t* preset_list = lv_dropdown_get_list(g_set_modal.radio_preset_dd);
     lv_obj_set_style_bg_color(preset_list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -10791,7 +10983,7 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_t* loclist = lv_dropdown_get_list(dd);
     lv_obj_set_style_bg_color(loclist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(loclist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -10834,7 +11026,7 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_t* phlist = lv_dropdown_get_list(dd);
     lv_obj_set_style_bg_color(phlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(phlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -10930,7 +11122,7 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_t* antlist = lv_dropdown_get_list(dd);
     lv_obj_set_style_bg_color(antlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(antlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -11320,7 +11512,7 @@ static void openMemoryDetailCb(lv_event_t* e) {
   lv_obj_set_size(card, sw - 24, (sh - STATUSBAR_H) - 24);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -11920,37 +12112,25 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(unlock_hint, 1600);
 }
 
-// "At a glance" is read straight from NVS at message time (not cached), same as
-// the sound/DND checks right next to its call site in newMsgImpl -- it's not a
-// per-loop hot path, just once per inbound message.
-static void glanceWhenLockedToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-#if defined(ESP32)
-  touchPrefsSetGlanceWhenLocked(on);
-#endif
-  if (g_lv.task) {
-    g_lv.task->showAlert(on ? TR("Glance shows message previews\nwhile the screen is locked")
-                            : TR("Glance only shows when unlocked"), 1600);
-  }
-}
 
-// Master "At a glance" toggle (Options > Display): gates the whole feature.
-// The secondary "while locked" switch's own saved preference is left
-// alone -- only its editability follows the master, so re-enabling always
-// restores its true prior state.
-static void glanceEnabledToggleCb(lv_event_t* e) {
+#if defined(HAS_TDECK_GT911)
+// Lock screen visibility toggle callbacks — one per bool pref, pref ptr passed as user_data.
+// Using a shared template callback avoids 6 nearly-identical functions.
+// ponytail: single cb with pref-setter fn pointer is cleaner than 6 copies
+typedef void (*LockBoolSetter)(bool);
+static void lockVisToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-#if defined(ESP32)
-  touchPrefsSetGlanceEnabled(on);
-#endif
-  if (g_set_modal.glance_locked_sw) {
-    if (on) lv_obj_clear_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
-    else    lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
-  }
-  if (g_lv.task) g_lv.task->showAlert(on ? TR("At a glance enabled") : TR("At a glance disabled"), 1200);
+  auto setter = (LockBoolSetter)lv_event_get_user_data(e);
+  if (setter) setter(on);
 }
+static void lockAlwaysOnToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetLockAlwaysOn(on);
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Lock screen always-on") : TR("Lock screen turns off"), 1200);
+}
+#endif  // HAS_TDECK_GT911 (lock vis toggles)
 
 #if CAP_TRACKBALL
 // Invert the scrollball direction everywhere it drives motion (cursor, map pan,
@@ -12343,7 +12523,7 @@ static void openLocalSensorsPage() {
   lv_obj_set_size(card, sw - 12, H - 44);
   lv_obj_set_pos(card, 6, 36);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -12443,7 +12623,7 @@ static void openExpansionCard() {
   lv_obj_set_size(card, card_w, LV_SIZE_CONTENT);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -12490,21 +12670,9 @@ static void openExpansionCardCb(lv_event_t* e) {
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
-static lv_obj_t* s_lockwall_btn_lbl = nullptr;   // Device-modal button caption (current wallpaper)
-static const uint32_t kLockColors[] = {
-  0xE6F2FF, 0xFFFFFF, 0x5BC0FF, 0x5BE5A0, 0xFFC857, 0xFF6B6B, 0xB39DFF, 0x9AA7B4
-};
-// Human-readable name from a stored pref path ("sd:/lock/x.jpg" -> "SD: x.jpg").
-static void lockwallDisplayName(const char* path, char* out, int cap) {
-  if (!out || cap <= 0) return;
-  if (!path || !path[0]) { snprintf(out, cap, "(default)"); return; }
-  const bool sd = !strncmp(path, "sd:", 3);
-  const char* p = sd ? path + 3 : path;
-  const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
-  snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
-}
-static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
-static void lockColorChosenCb(lv_event_t* e);
+// Lock color swatch callbacks (defined below with the settings section)
+static void lockBgColorChosenCb(lv_event_t* e);
+static void lockTextColorChosenCb(lv_event_t* e);
 #endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // Per-event notification-sound picker (Settings -> Sound). Mirrors the wallpaper picker.
@@ -12652,7 +12820,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_t* gblist = lv_dropdown_get_list(dd);
     lv_obj_set_style_bg_color(gblist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(gblist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -13041,40 +13209,6 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(40, h + 12);
   }
 
-  /* At a glance: master enable for the "at a glance" message-preview overlay
-     (see atGlanceShow()/newMsgImpl()) -- on by default, matching the
-     previously-unconditional behavior. Gates the "while locked" switch below. */
-  bool glance_on = true;
-  {
-    int h = settingsRowLabel(body, y, 6, TR("At a glance"), COLOR_SUB, nullptr, 56);
-    g_set_modal.glance_en_sw = lv_switch_create(body);
-    lv_obj_align(g_set_modal.glance_en_sw, LV_ALIGN_TOP_RIGHT, 0, y);
-#if defined(ESP32)
-    glance_on = touchPrefsGetGlanceEnabled();
-    if (glance_on) lv_obj_add_state(g_set_modal.glance_en_sw, LV_STATE_CHECKED);
-#endif
-    lv_obj_add_event_cb(g_set_modal.glance_en_sw, glanceEnabledToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
-
-#if !defined(HAS_TDISPLAY_P4)
-  /* "At a glance" also fires while manually/idle locked, not just while
-     unlocked+dimmed -- off by default since it's a real trade-off (message
-     text becomes readable off a locked device). Disabled (not cleared) while
-     the master switch above is off. Moved here from Options > Lock screen so
-     it sits with the feature it modifies. */
-  {
-    int h = settingsRowLabel(body, y, 6, TR("At a glance while locked"), COLOR_SUB, nullptr, 56);
-    g_set_modal.glance_locked_sw = lv_switch_create(body);
-    lv_obj_align(g_set_modal.glance_locked_sw, LV_ALIGN_TOP_RIGHT, 0, y);
-#if defined(ESP32)
-    if (touchPrefsGetGlanceWhenLocked()) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_CHECKED);
-    if (!glance_on) lv_obj_add_state(g_set_modal.glance_locked_sw, LV_STATE_DISABLED);
-#endif
-    lv_obj_add_event_cb(g_set_modal.glance_locked_sw, glanceWhenLockedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
-#endif
 
 #if defined(HAS_EXPANSION_KIT)
   /* Show Sensors tab (V4 Expansion Kit): toggles the bottom Sensors tab + the
@@ -13093,6 +13227,24 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("Applies after restart."), COLOR_SUB, &g_font_12, 0) + 6;
   }
 #endif
+
+  /* UI colour theme: full palette swap applied on the next boot. */
+  {
+    y += settingsRowLabel(body, y, 0, TR("Colour theme (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_dropdown_set_options(dd, TR("Dark\nLight\nGreenish\nPinkish\nReddish\nLight Red"));
+    lv_dropdown_set_selected(dd, touchPrefsGetUiTheme());
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_pos(dd, 2, y);
+    lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+      touchPrefsSetUiTheme(sel);
+      if (g_lv.task) g_lv.task->showAlert(TR("Theme saved — restart to apply"), 2000);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(44);
+  }
 
   /* Theme colour (UI accent): opens a colour-wheel + hex picker. The chosen
      colour is clamped dark enough that off-white button text stays readable. */
@@ -13208,7 +13360,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_pos(sl, 2, y + SC(6));
     lv_slider_set_range(sl, 1, 100);   // dark is the mode's job ("Off"); on/auto always visibly lit
     lv_slider_set_value(sl, s_tdeck_kb_bl_pct, LV_ANIM_OFF);
-    lv_obj_set_style_bg_color(sl, lv_color_hex(0x202428), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_SLIDER_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
     lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
@@ -13523,55 +13675,115 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_LOCK) {   // --- Lock screen ---
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  /* Lock screen: pick the wallpaper (internal /lock/ or SD) and the colour of
-     the clock + lock text drawn over it. */
-  {
-    y += settingsRowLabel(body, y, 0, TR("Lock screen wallpaper"), COLOR_SUB, &g_font_12, 0) + 2;
-    lv_obj_t* b_wall = lv_btn_create(body);
-    lv_obj_set_size(b_wall, lv_pct(100), SC(34));
-    lv_obj_set_pos(b_wall, 2, y);
-    styleButton(b_wall);
-    lv_obj_add_event_cb(b_wall, openLockWallPickerCb, LV_EVENT_CLICKED, nullptr);
-    s_lockwall_btn_lbl = lv_label_create(b_wall);
-    useChainedFont(s_lockwall_btn_lbl);
-    {
-      char cur[TOUCH_LOCK_WALLPAPER_MAXLEN], disp[64];
-      touchPrefsGetLockWallpaper(cur, sizeof cur);
-      lockwallDisplayName(cur, disp, sizeof disp);
-      lv_label_set_text(s_lockwall_btn_lbl, disp);
-    }
-    lv_label_set_long_mode(s_lockwall_btn_lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(s_lockwall_btn_lbl, lv_pct(92));
-    lv_obj_set_style_text_align(s_lockwall_btn_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);  // centre text within the fixed-width label
-    lv_obj_center(s_lockwall_btn_lbl);
-    y += SC(40);
+#if defined(HAS_TDECK_GT911)
+  // Per-element visibility toggles
+  struct { const char* label; LockBoolSetter setter; bool cur; } vis[] = {
+    { TR("Show time"),         touchPrefsSetLockShowTime,     touchPrefsGetLockShowTime()     },
+    { TR("Show date"),         touchPrefsSetLockShowDate,     touchPrefsGetLockShowDate()     },
+    { TR("Show weekday"),      touchPrefsSetLockShowWeekday,  touchPrefsGetLockShowWeekday()  },
+    { TR("Show username"),     touchPrefsSetLockShowUsername, touchPrefsGetLockShowUsername()  },
+    { TR("Show unread count"), touchPrefsSetLockShowUnread,   touchPrefsGetLockShowUnread()   },
+    { TR("Show battery %"),    touchPrefsSetLockShowBatt,     touchPrefsGetLockShowBatt()     },
+  };
+  for (auto& v : vis) {
+    int h = settingsRowLabel(body, y, 6, v.label, COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (v.cur) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, lockVisToggleCb, LV_EVENT_VALUE_CHANGED, (void*)v.setter);
+    y += LV_MAX(40, h + 12);
+  }
 
-    y += settingsRowLabel(body, y, 0, TR("Lock text colour"), COLOR_SUB, &g_font_12, 0) + 2;
-    const int ncol = (int)(sizeof(kLockColors) / sizeof(kLockColors[0]));
-    const uint32_t curcol = touchPrefsGetLockTextColor();
+  // Background color swatches
+  {
+    static const uint32_t kLockBgColors[] = {
+      0x000000, 0x0A0A18, 0x0D1117, 0x1A1A2E, 0x101010, 0x1C1C1C, 0x003366, 0x002244
+    };
+    y += settingsRowLabel(body, y, 0, TR("Background colour"), COLOR_SUB, &g_font_12, 0) + 2;
+    const uint32_t curcol = touchPrefsGetLockBgColor();
+    const int ncol = (int)(sizeof(kLockBgColors) / sizeof(kLockBgColors[0]));
     const int swz = 22, gap = 3;
     for (int i = 0; i < ncol; ++i) {
       lv_obj_t* sb = lv_btn_create(body);
       lv_obj_set_size(sb, swz, swz);
       lv_obj_set_pos(sb, 2 + i * (swz + gap), y);
       lv_obj_set_style_radius(sb, 5, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(sb, lv_color_hex(kLockColors[i]), LV_PART_MAIN);
+      lv_obj_set_style_bg_color(sb, lv_color_hex(kLockBgColors[i]), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
-      // Highlight the current colour with a white ring.
-      const bool sel = (kLockColors[i] == curcol);
+      const bool sel = (kLockBgColors[i] == curcol);
       lv_obj_set_style_border_width(sb, sel ? 2 : 1, LV_PART_MAIN);
-      lv_obj_set_style_border_color(sb, lv_color_hex(sel ? 0xFFFFFF : 0x18191A), LV_PART_MAIN);
-      lv_obj_add_event_cb(sb, lockColorChosenCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kLockColors[i]);
+      lv_obj_set_style_border_color(sb, lv_color_hex(sel ? 0xFFFFFF : 0x303030), LV_PART_MAIN);
+      lv_obj_add_event_cb(sb, lockBgColorChosenCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kLockBgColors[i]);
     }
     y += swz + 10;
   }
-#endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
-  // Auto-lock on screen-off: when the idle timeout dims the screen, also hard-lock so the
-  // touchscreen is inert (Tim: pocket-taps while dark). NOT on the P4 — it has no unlock path
-  // (no button/trackball and no touch-unlock overlay yet), so a hard lock there is a power-cycle
-  // trap. The P4 still dims on idle (screen-off wakes on touch); a proper P4 lock is a follow-up.
+  // Text color swatches
+  {
+    static const uint32_t kLockTextColors[] = {
+      0xE6F2FF, 0xFFFFFF, 0xCCCCCC, 0xAAAAAA, 0x88BBFF, 0xFFDD88, 0xFFAA88, 0x88FFB0,
+      0xFF4444, 0x990000, 0xCC3366, 0xFF88BB, 0x1A3A6E,
+    };
+    y += settingsRowLabel(body, y, 0, TR("Text colour"), COLOR_SUB, &g_font_12, 0) + 2;
+    const uint32_t curtcol = touchPrefsGetLockTextColor();
+    const int ncol = (int)(sizeof(kLockTextColors) / sizeof(kLockTextColors[0]));
+    const int swz = 22, gap = 3, per_row = 8;
+    for (int i = 0; i < ncol; ++i) {
+      const int row = i / per_row, col = i % per_row;
+      lv_obj_t* sb = lv_btn_create(body);
+      lv_obj_set_size(sb, swz, swz);
+      lv_obj_set_pos(sb, 2 + col * (swz + gap), y + row * (swz + gap));
+      lv_obj_set_style_radius(sb, 5, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(sb, lv_color_hex(kLockTextColors[i]), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+      const bool sel = (kLockTextColors[i] == curtcol);
+      lv_obj_set_style_border_width(sb, sel ? 2 : 1, LV_PART_MAIN);
+      lv_obj_set_style_border_color(sb, lv_color_hex(sel ? 0x4488FF : 0x303030), LV_PART_MAIN);
+      lv_obj_add_event_cb(sb, lockTextColorChosenCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kLockTextColors[i]);
+    }
+    const int nrows = (ncol + per_row - 1) / per_row;
+    y += nrows * (swz + gap) + 4;
+  }
+
+  // Always-on: dim to low brightness instead of full screen-off when locked
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Always-on lock screen"), COLOR_SUB, nullptr, 56);  // ON by default (v57)
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetLockAlwaysOn()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, lockAlwaysOnToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+  }
+  // Dim brightness slider (1–100%) for the always-on state
+  {
+    y += settingsRowLabel(body, y, 0, TR("Dim brightness"), COLOR_SUB, &g_font_12, 0) + 4;
+    lv_obj_t* sl = lv_slider_create(body);
+    lv_obj_set_size(sl, lv_pct(96), SC(8));
+    lv_obj_set_pos(sl, 2, y + SC(6));
+    lv_slider_set_range(sl, 1, 100);
+    lv_slider_set_value(sl, (int32_t)touchPrefsGetLockDimPct(), LV_ANIM_OFF);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_SLIDER_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(sl, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+    lv_obj_set_style_pad_all(sl, 6, LV_PART_KNOB);
+    lv_obj_add_event_cb(sl, [](lv_event_t* e) {
+      const uint8_t pct = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+      touchPrefsSetLockDimPct(pct);
+      // Live-apply: pref is saved; next dim cycle picks it up via lockAoDuty().
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += SC(26);
+  }
+  // Message preview: show notification card on lock screen when message arrives
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Message preview"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetLockMsgPreview()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, lockVisToggleCb, LV_EVENT_VALUE_CHANGED, (void*)touchPrefsSetLockMsgPreview);
+    y += LV_MAX(40, h + 12);
+  }
+#else
+  // Auto-lock on screen-off (non-T-Deck boards)
 #if !defined(HAS_TDISPLAY_P4)
   {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
@@ -13584,7 +13796,7 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(40, h + 12);
   }
 #endif
-
+#endif  // HAS_TDECK_GT911
 
   }
 
@@ -13771,7 +13983,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* sep = lv_obj_create(body);
     lv_obj_set_size(sep, lv_pct(100),SC(1));
     lv_obj_set_pos(sep, 2, y);
-    lv_obj_set_style_bg_color(sep, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sep, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_border_width(sep, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(sep, 0, LV_PART_MAIN);
     lv_obj_clear_flag(sep, LV_OBJ_FLAG_SCROLLABLE);
@@ -14014,7 +14226,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 12);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
@@ -15561,7 +15773,7 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -16051,7 +16263,7 @@ static void openAdminCmdPicker() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 6, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -16155,7 +16367,7 @@ static void openAdminConsole(const ContactInfo& c) {
   styleSurface(hdr, COLOR_PANEL, 0);
   lv_obj_set_style_border_side(hdr, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
   lv_obj_set_style_border_width(hdr, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(hdr, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(hdr, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_clear_flag(hdr, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t* title = lv_label_create(hdr);
@@ -16187,7 +16399,7 @@ static void openAdminConsole(const ContactInfo& c) {
   lv_obj_set_size(s_admin_log_box, sw - 8, admin_h - 36 - 8 - 44);
   lv_obj_set_pos(s_admin_log_box, 4, 40);
   styleSurface(s_admin_log_box, 0x0A0B0C, 6);
-  lv_obj_set_style_border_color(s_admin_log_box, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_admin_log_box, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_admin_log_box, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_admin_log_box, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(s_admin_log_box, LV_DIR_VER);
@@ -16212,7 +16424,7 @@ static void openAdminConsole(const ContactInfo& c) {
   styleSurface(row, COLOR_PANEL, 0);
   lv_obj_set_style_border_side(row, LV_BORDER_SIDE_TOP, LV_PART_MAIN);
   lv_obj_set_style_border_width(row, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(row, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(row, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
 
   // "?" button on the left opens the command picker. The textarea
@@ -16377,7 +16589,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -17187,7 +17399,7 @@ static void openLosModal(uint32_t mesh_idx) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -17361,7 +17573,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, padding, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);   // title + X stay fixed; the body below scrolls
@@ -18113,7 +18325,7 @@ static void openAddChannelSheet() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -18273,7 +18485,7 @@ static void openShareMyContactPopup() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -18697,7 +18909,7 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_min_height(card, 120, LV_PART_MAIN);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -18767,7 +18979,7 @@ static void openBatteryChartWindow() {
   lv_chart_set_div_line_count(chart, 4, 6);          // helper grid: 4 horizontal, 6 vertical
   lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // faint grid lines
@@ -20001,7 +20213,7 @@ static void openTermCmdPicker() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 6, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -20078,7 +20290,7 @@ static void buildTerminal(lv_obj_t* body) {
   lv_obj_set_size(s_term_log_box, bw - 8, bh - row_h - 4);
   lv_obj_set_pos(s_term_log_box, 4, 2);
   styleSurface(s_term_log_box, 0x0A0B0C, 6);
-  lv_obj_set_style_border_color(s_term_log_box, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_term_log_box, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_term_log_box, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_term_log_box, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(s_term_log_box, LV_DIR_VER);
@@ -21244,10 +21456,6 @@ static void fmShowObj(lv_obj_t* o, bool show) {
 // open image's path / filesystem so the action can persist it. The button is
 // CAP_LOCK_SCREEN-gated: on the one filesystem board WITHOUT a lock screen
 // (V4-R8) nothing ever renders the wallpaper, so offering to set one — with a
-// "Lock wallpaper set" toast — was a dead control.
-#if CAP_LOCK_SCREEN
-static lv_obj_t* s_fm_img_wall = nullptr;
-#endif
 static char      s_fm_img_path[208] = {0};
 static bool      s_fm_img_on_sd     = false;
 
@@ -21266,9 +21474,6 @@ static void fmImageRelayout() {
   fmShowObj(s_fm_img_hdr,   !fs);
   fmShowObj(s_fm_img_close, !fs);
   fmShowObj(s_fm_img_full,  !fs);
-#if CAP_LOCK_SCREEN
-  fmShowObj(s_fm_img_wall,  !fs);
-#endif
   fmShowObj(s_fm_img_hint,   fs);
   // The status bar lives on lv_layer_sys (above this overlay), so hide it
   // outright for a true full-screen image; restore it otherwise.
@@ -21312,25 +21517,6 @@ static void fmImageRootClickCb(lv_event_t* e) {
 }
 
 // Persist the currently-viewed JPEG as the lock-screen wallpaper. By the time the
-// viewer is up the file is a confirmed JPEG (PNG is rejected earlier), so it's a
-// valid wallpaper. SD paths get the "sd:" prefix the decoder expects.
-#if CAP_LOCK_SCREEN
-static void fmSetWallpaperCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_fm_img_path[0]) return;
-  char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
-  if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
-  else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
-  touchPrefsSetLockWallpaper(pref);
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // the set of boards that declare s_lockwall_btn_lbl
-  if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
-    char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
-    lv_label_set_text(s_lockwall_btn_lbl, disp);
-  }
-#endif
-  fmImageClose();
-  if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1300);
-}
-#endif  // CAP_LOCK_SCREEN (fmSetWallpaperCb)
 
 #if CAP_SOUND_FILES
 // ---- .wav -> notification-sound chooser (opened from the File Manager) ------
@@ -21523,21 +21709,6 @@ static void fmOpenImage(const char* name) {
   lv_obj_t* fll = lv_label_create(full); lv_label_set_text(fll, TR("Full"));
   lv_obj_set_style_text_font(fll, &g_font_12, LV_PART_MAIN); lv_obj_center(fll);
 
-#if CAP_LOCK_SCREEN
-  // "Set as lock wallpaper" — bottom-left, windowed chrome only.
-  lv_obj_t* wall = lv_btn_create(s_fm_img_root);
-  lv_obj_set_height(wall, 30);
-  lv_obj_align(wall, LV_ALIGN_BOTTOM_LEFT, 6, -6);
-  styleButton(wall);
-  lv_obj_set_style_bg_color(wall, lv_color_hex(0x35C9C9), LV_PART_MAIN);
-  lv_obj_add_event_cb(wall, fmSetWallpaperCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* wll = lv_label_create(wall);
-  lv_label_set_text(wll, TR(LV_SYMBOL_IMAGE "  Set as wallpaper"));
-  lv_obj_set_style_text_font(wll, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(wll, lv_color_black(), LV_PART_MAIN);
-  lv_obj_center(wll);
-  s_fm_img_wall = wall;
-#endif  // CAP_LOCK_SCREEN (wallpaper button)
 
   // "tap to exit" hint, shown only in full-screen mode.
   lv_obj_t* hint = lv_label_create(s_fm_img_root);
@@ -22137,7 +22308,7 @@ static void openSignalInfoPopup() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -24232,7 +24403,7 @@ static void openSpectrumPage() {
   lv_obj_clear_flag(s_spec_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_bg_color(s_spec_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_spec_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_spec_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_spec_chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_spec_chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(s_spec_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_spec_chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);
@@ -25063,7 +25234,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, padding, LV_PART_MAIN);
   lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);           // safety net: if capped below content (e.g. Huge scale), the lower rows stay reachable
@@ -25452,7 +25623,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_row(card, 6, LV_PART_MAIN);
@@ -29669,7 +29840,7 @@ static void mapOptInfoCb(lv_event_t* e) {
   lv_obj_set_size(card, sw - 24, (sh - STATUSBAR_H) - 24);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -29742,7 +29913,7 @@ static void openMapOptions() {
   lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);  // ...scroll if past the screen
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -29995,7 +30166,7 @@ static void openMapPicker(const int* idxs, int n) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -30266,7 +30437,7 @@ static void openMapContactsList() {
   lv_obj_set_size(card, card_w, card_h);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -30967,7 +31138,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_obj_align(s_map_zoom_slider, LV_ALIGN_BOTTOM_MID, 0, -(TABBAR_H + 8));
   lv_slider_set_range(s_map_zoom_slider, k_map_zoom_min, k_map_zoom_max);
   lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
-  lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(0x202428), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(COLOR_SLIDER_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_map_zoom_slider, LV_OPA_80, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
   lv_obj_set_style_bg_color(s_map_zoom_slider, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
@@ -31579,7 +31750,7 @@ static int append_settings_section(lv_obj_t* tab, int y, const char* title, lv_e
   lv_obj_t* chev = lv_label_create(row);
   lv_label_set_text(chev, LV_SYMBOL_RIGHT);
   lv_obj_set_style_text_font(chev, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(chev, lv_color_hex(0x4A5D70), LV_PART_MAIN);
+  lv_obj_set_style_text_color(chev, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -12, 0);
 
   if (sub_idx >= 0 && sub_idx < SEC_COUNT) g_set_sec_sub[sub_idx] = sub;
@@ -32216,12 +32387,12 @@ static void makeSettings(lv_obj_t* tab) {
     s_settings_cat_card[c] = card;      // remembered so hiding can apply live
     lv_obj_remove_style_all(card);
     lv_obj_set_size(card, card_w, card_h);
-    lv_obj_set_style_bg_color(card, lv_color_hex(0x121417), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(card, lv_color_hex(0x2A2E34), LV_PART_MAIN);
+    lv_obj_set_style_border_color(card, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(card, settingsCatOpenCb, LV_EVENT_CLICKED, (void*)(intptr_t)c);
 
@@ -32432,7 +32603,7 @@ static void openTraceResultPopup(const char* title, const char* body) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -32710,7 +32881,7 @@ static void openMessageActionMenu(int msg_idx) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   if (scroll_menu) {
@@ -32846,7 +33017,7 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -33137,8 +33308,16 @@ static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_col
   uint32_t h = 2166136261u;                        // FNV-1a offset basis
   for (const char* p = name; p && *p; ++p) { h ^= (uint8_t)(*p); h *= 16777619u; }
   const uint16_t hue = (uint16_t)(h % 360u);
-  if (bubble_bg) *bubble_bg = lv_color_hsv_to_rgb(hue, 55, 26);  // dark, off-white text readable
-  if (name_col)  *name_col  = lv_color_hsv_to_rgb(hue, 85, 95);  // vivid sender-name line
+  // On light themes the dark-V=26 bubble would be invisible against a white background.
+  // Use perceived luminance of COLOR_BG to decide: light bg → light pastel bubble + dark name.
+  const uint32_t bg_luma = (299u*((COLOR_BG>>16)&0xFF) + 587u*((COLOR_BG>>8)&0xFF) + 114u*(COLOR_BG&0xFF)) / 1000u;
+  const bool light_bg = bg_luma > 128;
+  if (bubble_bg) *bubble_bg = light_bg
+    ? lv_color_hsv_to_rgb(hue, 30, 90)   // light pastel — readable on white bg
+    : lv_color_hsv_to_rgb(hue, 55, 26);  // dark tint — readable on black bg
+  if (name_col)  *name_col  = light_bg
+    ? lv_color_hsv_to_rgb(hue, 90, 45)   // dark vivid — legible on light bubble
+    : lv_color_hsv_to_rgb(hue, 85, 95);  // bright vivid — legible on dark bubble
 }
 
 static void formatDaySeparator(char* buf, size_t cap, const struct tm* tv) {
@@ -34305,7 +34484,7 @@ static void openUrlQrPopup(const char* url) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -34395,7 +34574,7 @@ static void openUrlMenu(const char* url) {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -36101,7 +36280,7 @@ static void setLogModeButtonStyles() {
   const bool rx_selected = (g_set_modal.log_mode == 0);
   lv_obj_set_style_bg_color(
       g_set_modal.log_rx_btn,
-      lv_color_hex(rx_selected ? COLOR_ACCENT : 0x2A3848),
+      lv_color_hex(rx_selected ? COLOR_ACCENT : COLOR_PANEL),
       LV_PART_MAIN);
   lv_obj_set_style_text_color(
       g_set_modal.log_rx_btn,
@@ -36109,7 +36288,7 @@ static void setLogModeButtonStyles() {
       LV_PART_MAIN);
   lv_obj_set_style_bg_color(
       g_set_modal.log_raw_btn,
-      lv_color_hex(rx_selected ? 0x2A3848 : COLOR_ACCENT),
+      lv_color_hex(rx_selected ? COLOR_PANEL : COLOR_ACCENT),
       LV_PART_MAIN);
   lv_obj_set_style_text_color(
       g_set_modal.log_raw_btn,
@@ -36217,13 +36396,14 @@ static void updateTrackball(unsigned long now) {
 
   // ---- Snake game ----
   // While Snake is open the trackball steers it (no soft cursor on that page).
-  if (SnakeGame::isOpen() || luaAppIsOpen()) {
+  if (SnakeGame::isOpen() || PongGame::isOpen() || luaAppIsOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
     s_tb_click_press = false;
     if (moved && (dx != 0 || dy != 0)) {
-      if (luaAppIsOpen()) luaAppSteer(dx, dy);
-      else                SnakeGame::steer(dx, dy);
+      if (luaAppIsOpen())      luaAppSteer(dx, dy);
+      else if (PongGame::isOpen()) PongGame::nudge(dx, dy);
+      else                     SnakeGame::steer(dx, dy);
       if (g_lv.task) g_lv.task->noteUserInput();
     }
     return;
@@ -36500,7 +36680,7 @@ static void pagerLockingPopupShow() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 12, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -37039,12 +37219,18 @@ static int tabForKey(int key) {
 // unlocking; holding the trackball ~1 s unlocks (see the loop's button block).
 static lv_obj_t*    s_lock_root      = nullptr;
 static lv_obj_t*    s_lock_clock     = nullptr;
-static uint8_t*     s_lock_wall      = nullptr;   // decoded RGB565 (lvglPsramAlloc)
-static lv_img_dsc_t s_lock_wall_dsc;
 static int          s_lock_clock_min = -1;        // last minute drawn (redraw guard)
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
+#if defined(HAS_TDECK_GT911)
+// Info lockscreen extras (T-Deck): date, weekday, username, battery
+static lv_obj_t*    s_lock_date      = nullptr;
+static lv_obj_t*    s_lock_weekday   = nullptr;
+static lv_obj_t*    s_lock_username  = nullptr;
+static lv_obj_t*    s_lock_batt      = nullptr;
+static int          s_lock_batt_pct  = -999;      // last drawn value (redraw guard)
+#endif
 #if defined(TLORA_PAGER)
 static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
 static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
@@ -37057,55 +37243,27 @@ static const unsigned long kLockUnlockHoldMs = 1000;
 static lv_obj_t* s_unlock_popup = nullptr;
 static lv_obj_t* s_unlock_count = nullptr;
 
-// Decode the configured wallpaper (internal SPIFFS path, or an "sd:"-prefixed SD
-// path) into a fresh RGB565 buffer; fall back to the embedded placeholder.
-// Caller owns the buffer (lvglPsramFree). Returns nullptr only if even the
-// placeholder fails to decode.
-static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
-  char path[TOUCH_LOCK_WALLPAPER_MAXLEN];
-  touchPrefsGetLockWallpaper(path, sizeof path);
-  // (The built-in default is handled by lockscreenShow() via the RGB565 embed;
-  // this path only runs for user-selected wallpapers.)
-  fs::FS* fsp = &SPIFFS;
-  const char* fp = path;
-#if CAP_SD || defined(TLORA_PAGER)
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes (T-Deck SD only)
-#endif
-
-  uint8_t* rgb = nullptr;
-  if (fp && fp[0]) {
-    File f = fsp->open(fp, "r");
-    if (f) {
-      size_t sz = f.size();
-      if (sz > 0 && sz <= FM_IMG_MAX) {
-        uint8_t* enc = (uint8_t*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM);
-        if (!enc) enc = (uint8_t*)malloc(sz);
-        if (enc) {
-          size_t rd = f.readBytes((char*)enc, sz);
-          const bool is_png = (rd >= 4 && enc[0] == 0x89 && enc[1] == 'P');
-          if (!is_png) {
-            rgb = decodeJpegToRgb565(enc, rd, out_w, out_h);
-            if (!rgb) rgb = decodeJpegScaledToRgb565(enc, rd, out_w, out_h, 640);  // big wallpaper: downscale (keeps the held buffer small)
-          }
-          free(enc);
-        }
-      }
-      f.close();
-    }
-  }
-  if (!rgb) rgb = decodeJpegToRgb565(lockscreen_placeholder_jpg,
-                                     lockscreen_placeholder_jpg_len, out_w, out_h);
-  return rgb;
-}
-
 static void lockscreenUpdateClock() {
   if (!s_lock_clock) return;
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   uint32_t t = rtc ? rtc->getCurrentTime() : 0;
   int mm = 0;
   char b[12]; snprintf(b, sizeof b, "00:00");
-  if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); fmtClockHM(b, sizeof b, &v); mm = v.tm_min; }
+  struct tm v = {};
+  if (t > 0) { time_t tt = (time_t)t; localtime_r(&tt, &v); fmtClockHM(b, sizeof b, &v); mm = v.tm_min; }
   lv_label_set_text(s_lock_clock, b);
+#if defined(HAS_TDECK_GT911)
+  if (s_lock_date && t > 0) {
+    char db[16];
+    snprintf(db, sizeof db, "%02d.%02d.%04d", v.tm_mday, v.tm_mon + 1, v.tm_year + 1900);
+    lv_label_set_text(s_lock_date, db);
+  }
+  if (s_lock_weekday && t > 0) {
+    char wd[16];
+    strftime(wd, sizeof wd, "%A", &v);
+    lv_label_set_text(s_lock_weekday, TR(wd));
+  }
+#endif
   // Anti-burn-in drift: nudge the clock a few pixels per minute so its outline never
   // parks on the same LCD cells — wyvern.red reported the lock layout retaining into
   // the panel. Deterministic from the minute, so it also moves on every reveal.
@@ -37122,8 +37280,15 @@ static void lockscreenUpdateClock() {
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6 + dx, 30 + dy);
 #else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
+#if defined(HAS_TDECK_GT911)
+  // Date and weekday ride the same drift as the clock so no element parks permanently.
+  if (s_lock_weekday) lv_obj_align(s_lock_weekday, LV_ALIGN_TOP_MID, dx, 65 + dy);
+  if (s_lock_date)    lv_obj_align(s_lock_date,    LV_ALIGN_TOP_MID, dx, 84 + dy);
+#else
   // The unread badge rides along with the same drift so it never parks either.
+  // (T-Deck info lockscreen: unread is fixed bottom-right, not top-mid.)
   if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
+#endif
 #endif
   s_lock_clock_min = mm;
 }
@@ -37132,6 +37297,9 @@ static void lockscreenUpdateClock() {
 // unlocking. Hidden entirely at zero so the lock screen stays calm.
 static void lockscreenUpdateUnread() {
   if (!s_lock_unread || !g_lv.task) return;
+#if defined(HAS_TDECK_GT911)
+  if (!touchPrefsGetLockShowUnread()) { lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN); return; }
+#endif
   const int n = g_lv.task->getUnreadTotal();
   if (n == s_lock_unread_n) return;
   s_lock_unread_n = n;
@@ -37141,6 +37309,33 @@ static void lockscreenUpdateUnread() {
   lv_label_set_text(s_lock_unread, b);
   lv_obj_clear_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
 }
+
+#if defined(HAS_TDECK_GT911)
+// Refresh username + battery on the info lock screen (called ~1 Hz from serviceLockscreen).
+// dx/dy: anti-burn-in offset computed by the caller from the current minute.
+static void lockscreenUpdateFooter(int dx, int dy) {
+  if (!s_lock_root || !g_lv.task) return;
+  if (s_lock_username) {
+    const char* nm = g_lv.task->getNodeNameCstr();
+    lv_label_set_text(s_lock_username, (nm && nm[0]) ? nm : "");
+    lv_obj_align(s_lock_username, LV_ALIGN_BOTTOM_LEFT, 8 + dx, -8 + dy);
+  }
+  if (s_lock_unread && !lv_obj_has_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN))
+    lv_obj_align(s_lock_unread, LV_ALIGN_BOTTOM_RIGHT, -56 + dx, -8 + dy);
+  if (s_lock_batt) {
+    uint16_t mv = g_lv.task->getBattMilliVolts();
+    int pct = mv ? batteryPercentFromMv(mv) : -1;
+    if (pct != s_lock_batt_pct) {
+      s_lock_batt_pct = pct;
+      char b[24];
+      if (pct >= 0) snprintf(b, sizeof b, "%d %%", pct);
+      else          snprintf(b, sizeof b, "--");
+      lv_label_set_text(s_lock_batt, b);
+    }
+    lv_obj_align(s_lock_batt, LV_ALIGN_BOTTOM_RIGHT, -8 + dx, -8 + dy);
+  }
+}
+#endif
 
 static void lockscreenUnlockPopupHide() {
   if (s_unlock_popup) { lv_obj_del(s_unlock_popup); s_unlock_popup = nullptr; s_unlock_count = nullptr; }
@@ -37155,7 +37350,7 @@ static void lockscreenUnlockProgress(unsigned long remaining_ms) {
     lv_obj_set_style_bg_color(s_unlock_popup, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_unlock_popup, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(s_unlock_popup, 12, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_unlock_popup, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_unlock_popup, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_border_width(s_unlock_popup, 1, LV_PART_MAIN);
     lv_obj_clear_flag(s_unlock_popup, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -37218,81 +37413,54 @@ static void lockscreenShow() {
   lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
 #endif
 
-  // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
-  int ww = 0, wh = 0;
-  const uint8_t* wall_data = nullptr;
-  if (s_lock_wall) {
-    // Invalidate LVGL's image cache entry for s_lock_wall_dsc BEFORE freeing the
-    // buffer it points at. s_lock_wall_dsc is a static var (stable address), and
-    // LVGL's img cache is keyed by that src pointer -- without this, the next
-    // lockscreenShow() can hit a stale cache entry pointing at freed PSRAM that
-    // has since been reused elsewhere (e.g. the map's 128 KB tile buffers),
-    // rendering as RGB565 noise on wake. Same bug class already fixed for map
-    // tiles in freeMapTileSlot() -- see the comment there (issue #127).
-    lv_img_cache_invalidate_src(&s_lock_wall_dsc);
-    lvglPsramFree(s_lock_wall);
-    s_lock_wall = nullptr;
-  }
-  char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
-  touchPrefsGetLockWallpaper(wpath, sizeof wpath);
-  if (!strcmp(wpath, "/lock/placeholder.jpg")) {
-    // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
-    // with no JPEG round-trip to re-introduce gradient banding.
+#if defined(HAS_TDECK_GT911)
+  // Solid background color (user-configured; default black).
+  lv_obj_set_style_bg_color(s_lock_root, lv_color_hex(touchPrefsGetLockBgColor()), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
+#else
+  // Non-T-Deck boards keep the wallpaper (pager/etc): load from PSRAM asset.
+  {
+    const uint8_t* wall_data = nullptr; int ww = 0, wh = 0;
 #if defined(TLORA_PAGER)
-    // Native 480x222 crop of the same icon+wordmark, repositioned to the left
-    // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
-    // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
-    // cropped ~70px off top+bottom, shoving it into the fixed-position text
-    // labels below (reported/photographed). Being screen-native, this needs
-    // no crop math at all: the cover-zoom below naturally computes ~1:1.
     wall_data = (const uint8_t*)lockscreen_wallpaper_pager_rgb565;
-    ww = LOCKSCREEN_WALLPAPER_PAGER_W;
-    wh = LOCKSCREEN_WALLPAPER_PAGER_H;
+    ww = LOCKSCREEN_WALLPAPER_PAGER_W; wh = LOCKSCREEN_WALLPAPER_PAGER_H;
 #else
     wall_data = (const uint8_t*)lockscreen_wallpaper_rgb565;
-    ww = LOCKSCREEN_WALLPAPER_W;
-    wh = LOCKSCREEN_WALLPAPER_H;
+    ww = LOCKSCREEN_WALLPAPER_W; wh = LOCKSCREEN_WALLPAPER_H;
 #endif
-  } else {
-    s_lock_wall = lockscreenDecodeWallpaper(&ww, &wh);   // custom wallpaper (JPEG)
-    wall_data = s_lock_wall;
+    static lv_img_dsc_t s_lock_wall_dsc;
+    if (wall_data && ww > 0 && wh > 0) {
+      memset(&s_lock_wall_dsc, 0, sizeof s_lock_wall_dsc);
+      s_lock_wall_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+      s_lock_wall_dsc.header.w  = (uint32_t)ww; s_lock_wall_dsc.header.h = (uint32_t)wh;
+      s_lock_wall_dsc.data      = wall_data;
+      s_lock_wall_dsc.data_size = (uint32_t)ww * (uint32_t)wh * sizeof(lv_color_t);
+      lv_obj_t* img = lv_img_create(s_lock_root);
+      lv_img_set_src(img, &s_lock_wall_dsc);
+      lv_img_set_antialias(img, true);
+      lv_img_set_pivot(img, ww / 2, wh / 2);
+      lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
+      uint32_t zx = (uint32_t)sw * 256u / (uint32_t)ww;
+      uint32_t zy = (uint32_t)sh * 256u / (uint32_t)wh;
+      uint32_t zoom = (zx > zy) ? zx : zy;
+      if (zoom < 1) zoom = 1; if (zoom > 2048) zoom = 2048;
+      lv_img_set_zoom(img, (uint16_t)zoom);
+      lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
+    }
   }
-  if (wall_data && ww > 0 && wh > 0) {
-    memset(&s_lock_wall_dsc, 0, sizeof s_lock_wall_dsc);
-    s_lock_wall_dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
-    s_lock_wall_dsc.header.w  = (uint32_t)ww;
-    s_lock_wall_dsc.header.h  = (uint32_t)wh;
-    s_lock_wall_dsc.data      = wall_data;
-    s_lock_wall_dsc.data_size = (uint32_t)ww * (uint32_t)wh * sizeof(lv_color_t);
-    lv_obj_t* img = lv_img_create(s_lock_root);
-    lv_img_set_src(img, &s_lock_wall_dsc);
-    lv_img_set_antialias(img, true);
-    lv_img_set_pivot(img, ww / 2, wh / 2);
-    lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
-    // Background wallpaper: same cover-fill-and-center treatment on every
-    // board, pager included -- only the text labels below get a pager-
-    // specific layout (they're what was actually unreadable/colliding; the
-    // wallpaper crop itself is unchanged from how it's always looked).
-    uint32_t zx = (uint32_t)sw * 256u / (uint32_t)ww;
-    uint32_t zy = (uint32_t)sh * 256u / (uint32_t)wh;
-    uint32_t zoom = (zx > zy) ? zx : zy;             // cover
-    if (zoom < 1) zoom = 1; if (zoom > 2048) zoom = 2048;
-    lv_img_set_zoom(img, (uint16_t)zoom);
-    lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
-  }
+#endif  // HAS_TDECK_GT911 (background)
 
 #if defined(TLORA_PAGER)
-  // Force a guaranteed-visible white here rather than the shared, user-
-  // customizable touchPrefsGetLockTextColor() -- on this board that pref was
-  // rendering noticeably dim/dark (reported/photographed against this panel's
-  // background) even at the shared soft-white default (0xE6F2FF), so this
-  // board gets pure white instead of chasing a per-device pref/storage
-  // question for a cosmetic lock screen.
   const lv_color_t col = lv_color_hex(0xFFFFFFu);
+#elif defined(HAS_TDECK_GT911)
+  const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
 #else
   const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
 #endif
 
+#if defined(HAS_TDECK_GT911)
+  if (touchPrefsGetLockShowTime()) {
+#endif
   s_lock_clock = lv_label_create(s_lock_root);
   lv_label_set_text(s_lock_clock, "--:--");
   lv_obj_set_style_text_font(s_lock_clock, &lv_font_montserrat_28, LV_PART_MAIN);
@@ -37312,7 +37480,32 @@ static void lockscreenShow() {
 #else
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
 #endif
+#if defined(HAS_TDECK_GT911)
+  }  // lock_show_time
+#endif
   s_lock_clock_min = -1;
+
+#if defined(HAS_TDECK_GT911)
+  if (touchPrefsGetLockShowWeekday()) {
+    // Weekday label below the clock (e.g. "Friday")
+    s_lock_weekday = lv_label_create(s_lock_root);
+    useChainedFont(s_lock_weekday);
+    lv_label_set_text(s_lock_weekday, "");
+    lv_obj_set_style_text_font(s_lock_weekday, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_lock_weekday, col, LV_PART_MAIN);
+    lv_obj_align(s_lock_weekday, LV_ALIGN_TOP_MID, 0, 65);
+  }
+
+  if (touchPrefsGetLockShowDate()) {
+    // Date label below weekday (e.g. "28.08.2026")
+    s_lock_date = lv_label_create(s_lock_root);
+    lv_label_set_text(s_lock_date, "");
+    lv_obj_set_style_text_font(s_lock_date, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_lock_date, col, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_lock_date, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_align(s_lock_date, LV_ALIGN_TOP_MID, 0, 84);
+  }
+#endif
 
   s_lock_unread = lv_label_create(s_lock_root);
   lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
@@ -37320,6 +37513,8 @@ static void lockscreenShow() {
 #if defined(TLORA_PAGER)
   // Positioned once the hint label exists below -- see the bottom-right stack
   // built after `hint` is created.
+#elif defined(HAS_TDECK_GT911)
+  // Positioned bottom-right below battery (see footer labels below)
 #else
   lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
 #endif
@@ -37328,6 +37523,45 @@ static void lockscreenShow() {
   lockscreenUpdateClock();
   lockscreenUpdateUnread();
 
+#if defined(HAS_TDECK_GT911)
+  if (touchPrefsGetLockShowUsername()) {
+    // Username: bottom-left
+    s_lock_username = lv_label_create(s_lock_root);
+    useChainedFont(s_lock_username);
+    lv_label_set_text(s_lock_username, "");
+    lv_obj_set_style_text_font(s_lock_username, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_lock_username, col, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_lock_username, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_align(s_lock_username, LV_ALIGN_BOTTOM_LEFT, 8, -8);
+  }
+
+  if (touchPrefsGetLockShowBatt()) {
+    // Battery %: bottom-right anchor
+    s_lock_batt = lv_label_create(s_lock_root);
+    lv_label_set_text(s_lock_batt, "--");
+    lv_obj_set_style_text_font(s_lock_batt, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_lock_batt, col, LV_PART_MAIN);
+    lv_obj_set_style_text_opa(s_lock_batt, LV_OPA_80, LV_PART_MAIN);
+    lv_obj_align(s_lock_batt, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+    s_lock_batt_pct = -999;
+  }
+
+  // Unread badge: bottom-right, to the left of battery (fixed offset; battery is ~40 px wide)
+  if (touchPrefsGetLockShowUnread())
+    lv_obj_align(s_lock_unread, LV_ALIGN_BOTTOM_RIGHT, -56, -8);
+
+  // Unlock hint: centered below date
+  lv_obj_t* hint = lv_label_create(s_lock_root);
+  useChainedFont(hint);
+  lv_label_set_text(hint, TR("hold the trackball to unlock"));
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
+  lv_obj_set_style_text_opa(hint, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_align(hint, LV_ALIGN_TOP_MID, 0, 103);
+
+  // Pass 0,0 here; serviceLockscreen applies the drift offset within 60 s.
+  lockscreenUpdateFooter(0, 0);
+#else
   lv_obj_t* st = lv_label_create(s_lock_root);
   lv_label_set_text(st, TR("Screen locked"));
   lv_obj_set_style_text_font(st, &g_font_16, LV_PART_MAIN);
@@ -37368,16 +37602,28 @@ static void lockscreenShow() {
 #else
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
 #endif
+#endif  // HAS_TDECK_GT911
 }
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
-  if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr;
+  if (s_lock_root) {
+    lv_obj_del(s_lock_root);
+    s_lock_root   = nullptr;
+    s_lock_clock  = nullptr;
+    s_lock_unread = nullptr;
+#if defined(HAS_TDECK_GT911)
+    s_lock_date     = nullptr;
+    s_lock_weekday  = nullptr;
+    s_lock_username = nullptr;
+    s_lock_batt     = nullptr;
+    s_lock_batt_pct = -999;
+#endif
 #if defined(TLORA_PAGER)
-    s_lock_status = nullptr; s_lock_hint = nullptr;
+    s_lock_status = nullptr;
+    s_lock_hint   = nullptr;
 #endif
   }
-  if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
   s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
@@ -37390,14 +37636,27 @@ static void lockscreenHide() {
 // Refresh the clock when the minute rolls over (called each loop tick), and
 // the unread badge at 1 Hz so a message arriving while locked shows up.
 static void serviceLockscreen() {
-  if (!s_lock_root || !s_lock_clock) return;
+  if (!s_lock_root) return;
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   uint32_t t = rtc ? rtc->getCurrentTime() : 0;
   int mm = 0;
   if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min; }
   if (mm != s_lock_clock_min) lockscreenUpdateClock();
   unsigned long now = millis();
-  if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
+  if (now - s_lock_unread_ms >= 1000) {
+    s_lock_unread_ms = now;
+    lockscreenUpdateUnread();
+  }
+#if defined(HAS_TDECK_GT911)
+  // Battery % changes at most once per minute — no need to sample every second.
+  static unsigned long s_lock_footer_ms = 0;
+  if (now - s_lock_footer_ms >= 60000) {
+    s_lock_footer_ms = now;
+    const int fdx = (mm % 5) * 3 - 6;
+    const int fdy = ((mm / 5) % 3) * 4 - 4;
+    lockscreenUpdateFooter(fdx, fdy);
+  }
+#endif
 }
 #endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
 
@@ -37408,10 +37667,9 @@ static void serviceLockscreen() {
 // "Set as notification sound"), or "Built-in (default)" to reset to the chime.
 static void soundDisplayName(const char* path, char* out, int cap) {
   if (!out || cap <= 0) return;
-  // TR(), not a bare literal: this is the label shown for the default chime, and
-  // it was the one path of two that never went through the translation table, so
-  // the same word appeared translated in the menu and English on the button.
   if (!path || !path[0]) { snprintf(out, cap, "%s", TR("Built-in")); return; }
+  const int melIdx = parseBuiltinMelodyIdx(path);
+  if (melIdx >= 0) { snprintf(out, cap, "%s", kBuiltinMelodies[melIdx].name); return; }
   const bool sd = !strncmp(path, "sd:", 3);
   const char* p = sd ? path + 3 : path;
   const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
@@ -37436,12 +37694,69 @@ static void sndMenuFilesCb(lv_event_t* e) {
   buildFileManager(body);
   if (g_lv.task) g_lv.task->showAlert(TR("Open a .wav, then tap 'Set as notification sound'"), 2800);
 }
+// ---- Ringtone picker (inline list, opens from sound menu) -------------------
+static lv_obj_t* s_snd_ringtone_picker = nullptr;
+static void sndRingtonePickerClose() {
+  if (s_snd_ringtone_picker) { lv_obj_del(s_snd_ringtone_picker); s_snd_ringtone_picker = nullptr; }
+}
+static void sndRingtoneCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  int slot = s_snd_pending_slot; if (slot < 0 || slot > 2) slot = TOUCH_SND_MSG;
+  char pref[24]; snprintf(pref, sizeof pref, "builtin:%d", idx);
+  touchPrefsSetSoundFile(slot, pref);
+  if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
+    lv_label_set_text(s_snd_btn_lbl[slot], kBuiltinMelodies[idx].name);
+  sndRingtonePickerClose();
+  sndMenuClose();
+  uiPlaySlot(slot);   // preview
+}
+static void sndOpenRingtonePicker(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  sndRingtonePickerClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t pw = (sw * 72) / 100;
+  const lv_coord_t row = 42, gap = 4, top = 44;
+  const lv_coord_t ph = top + kBuiltinMelodyCount * (row + gap) + 8;
+  s_snd_ringtone_picker = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_snd_ringtone_picker);
+  lv_obj_set_size(s_snd_ringtone_picker, pw, ph);
+  lv_obj_set_pos(s_snd_ringtone_picker, (sw - pw) / 2, STATUSBAR_H + (sh - STATUSBAR_H - ph) / 2);
+  lv_obj_set_style_bg_color(s_snd_ringtone_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_snd_ringtone_picker, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_snd_ringtone_picker, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_snd_ringtone_picker, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_snd_ringtone_picker, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_clear_flag(s_snd_ringtone_picker, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* title = lv_label_create(s_snd_ringtone_picker);
+  lv_label_set_text(title, TR("Ringtones"));
+  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, 12, 12);
+  lv_obj_t* close2 = lv_btn_create(s_snd_ringtone_picker);
+  lv_obj_set_size(close2, 30, 26); lv_obj_align(close2, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close2);
+  lv_obj_add_event_cb(close2, [](lv_event_t* ev){ if(lv_event_get_code(ev)==LV_EVENT_CLICKED) sndRingtonePickerClose(); }, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* cl2 = lv_label_create(close2); lv_label_set_text(cl2, LV_SYMBOL_CLOSE); tanCloseRed(cl2);
+  lv_obj_set_style_text_font(cl2, &g_font_12, LV_PART_MAIN); lv_obj_center(cl2);
+  for (int i = 0; i < kBuiltinMelodyCount; ++i) {
+    lv_obj_t* b = lv_btn_create(s_snd_ringtone_picker);
+    lv_obj_set_size(b, pw - 24, row);
+    lv_obj_set_pos(b, 12, top + i * (row + gap));
+    styleButton(b);
+    lv_obj_add_event_cb(b, sndRingtoneCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, kBuiltinMelodies[i].name);
+    lv_obj_center(bl);
+  }
+}
+
 static void openSoundMenu(int slot) {
   s_snd_pending_slot = slot;
   sndMenuClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  const lv_coord_t pw = (sw * 82) / 100, ph = 168;
+  const lv_coord_t pw = (sw * 82) / 100, ph = 216;
   s_snd_menu = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_snd_menu);
   lv_obj_set_size(s_snd_menu, pw, ph);
@@ -37459,13 +37774,18 @@ static void openSoundMenu(int slot) {
   lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(title, 12, 12);
+  lv_obj_t* br = lv_btn_create(s_snd_menu);
+  lv_obj_set_size(br, pw - 24, 40); lv_obj_set_pos(br, 12, 44); styleButton(br);
+  lv_obj_add_event_cb(br, sndOpenRingtonePicker, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* lr = lv_label_create(br); lv_label_set_text(lr, TR(LV_SYMBOL_AUDIO "  Ringtones")); lv_obj_center(lr);
+  useChainedFont(lr);
   lv_obj_t* bf = lv_btn_create(s_snd_menu);
-  lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 44); styleButton(bf);
+  lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 92); styleButton(bf);
   lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, TR(LV_SYMBOL_DIRECTORY "  Choose .wav from files")); lv_obj_center(lf);
   useChainedFont(lf);
   lv_obj_t* bb = lv_btn_create(s_snd_menu);
-  lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 92); styleButton(bb);
+  lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 140); styleButton(bb);
   lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lb = lv_label_create(bb); lv_label_set_text(lb, TR("Built-in (default)")); lv_obj_center(lb);
   useChainedFont(lb);
@@ -37489,6 +37809,14 @@ static int  s_lockwall_count = 0;
 
 static void lockwallPickerClose() {
   popupClose(&s_lockwall_picker);
+}
+static void lockwallDisplayName(const char* path, char* out, int cap) {
+  if (!out || cap <= 0) return;
+  if (!path || !path[0]) { snprintf(out, cap, "(default)"); return; }
+  const bool sd = !strncmp(path, "sd:", 3);
+  const char* p = sd ? path + 3 : path;
+  const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
+  snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
 }
 static void lockwallPickerCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) lockwallPickerClose();
@@ -37566,10 +37894,6 @@ static void lockwallChosenCb(lv_event_t* e) {
   const char* path = (const char*)lv_event_get_user_data(e);
   if (!path) return;
   touchPrefsSetLockWallpaper(path);
-  if (s_lockwall_btn_lbl) {
-    char disp[64]; lockwallDisplayName(path, disp, sizeof disp);
-    lv_label_set_text(s_lockwall_btn_lbl, disp);
-  }
   lockwallPickerClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Lock wallpaper set"), 1100);
 }
@@ -37629,23 +37953,19 @@ static void openLockWallPicker() {
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 4, 0);
   }
 }
-static void openLockWallPickerCb(lv_event_t* e) {
+static void lockBgColorChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  // Open the file manager and let the user navigate to their image. Far faster
-  // than scanning the whole card (no recursive walk on the UI thread), and works
-  // at any folder depth. Tapping a JPEG opens the viewer, which now has a
-  // "Set as wallpaper" button.
-  lv_obj_t* body = openFullscreenView("Files");
-  buildFileManager(body);
-  if (g_lv.task) g_lv.task->showAlert(TR("Open a JPEG, then tap 'Set as wallpaper'"), 2600);
+  const uint32_t rgb = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+  touchPrefsSetLockBgColor(rgb);
+  if (g_lv.task) g_lv.task->showAlert(TR("Lock background colour set"), 1000);
 }
-static void lockColorChosenCb(lv_event_t* e) {
+static void lockTextColorChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const uint32_t rgb = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
   touchPrefsSetLockTextColor(rgb);
   if (g_lv.task) g_lv.task->showAlert(TR("Lock text colour set"), 1000);
 }
-#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (wallpaper picker + lock text colour)
+#endif  // HAS_TDECK_GT911 || HAS_THINKNODE_M9 (lock bg colour picker)
 
 // ---- Settings backup: import file picker ------------------------------------
 // Mirrors the lock-wallpaper picker UX: a full-screen list of *.json files on
@@ -38218,7 +38538,7 @@ static void startLockingCountdown() {
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 12, LV_PART_MAIN);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
@@ -39783,7 +40103,7 @@ static void openPowerMenu() {
   lv_obj_set_size(card, card_w, card_h);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 10);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -41626,7 +41946,7 @@ static void luaStoreOpenLanguages() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_PONG, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER, APPACT_STORE,
   APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
 };
@@ -41906,6 +42226,7 @@ static void appTileCb(lv_event_t* e) {
     // here, so the linker drops it).
 #else
     case APPACT_SNAKE:     SnakeGame::launch();  return;
+    case APPACT_PONG:      PongGame::launch();   return;
 #endif
 #if defined(HAS_TOUCH_UI)
     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
@@ -42350,11 +42671,11 @@ static void openAppDrawer() {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
-#if !CAP_LUA_APPS
-    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
-#else
-    { LV_SYMBOL_DOWNLOAD,  "Store",      APPACT_STORE,   0,         0x15B6A6 },      // Lua app store (brand teal); short name = fits every panel
+#if CAP_LUA_APPS
+    { LV_SYMBOL_DOWNLOAD,  "Store",     APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
 #endif
+    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (always present)
+    { nullptr,             "Pong",      APPACT_PONG,     0,         0x4488CC },      // native pong (always present)
     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
   };
   const int n_static = (int)(sizeof(tiles) / sizeof(tiles[0]));
@@ -42364,6 +42685,7 @@ static void openAppDrawer() {
   auto tileHidden = [&](int act) -> bool {
     switch (act) {
       case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
+      case APPACT_PONG:     return hide_mask & APPHIDE_PONG;
       case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
       case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
       case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
@@ -42380,6 +42702,7 @@ static void openAppDrawer() {
   int n = 0;
   for (int i = 0; i < n_static; i++)
     if (!tileHidden(tiles[i].act)) s_draw_order[n++] = i;
+  luaStoreTablesReady();
   luaStoreScanInstalled();
   int dyn0 = n;
   for (int i = 0; i < s_lua_inst_n && n < 40; i++)
@@ -45750,7 +46073,7 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_sens_env_chart, 3, 4);
   lv_obj_set_style_bg_color(s_sens_env_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_sens_env_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_sens_env_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_sens_env_chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_sens_env_chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(s_sens_env_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_sens_env_chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);
@@ -45786,7 +46109,7 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_sens_press_chart, 3, 4);
   lv_obj_set_style_bg_color(s_sens_press_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_sens_press_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_sens_press_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_sens_press_chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_sens_press_chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(s_sens_press_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_sens_press_chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);
@@ -45849,7 +46172,7 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_chart_set_div_line_count(s_sens_batt_chart, 3, 4);
   lv_obj_set_style_bg_color(s_sens_batt_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_sens_batt_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_sens_batt_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_sens_batt_chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(s_sens_batt_chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(s_sens_batt_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_sens_batt_chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);
@@ -45916,9 +46239,9 @@ static void buildUiTree() {
   }
 #endif
 
-  // Load the saved theme accent before any widget is built so the whole tree
-  // adopts it. g_lv.tabview/keyboard are still null here, so applyAccent only
-  // sets the colour globals (no live re-style needed at boot).
+  // Apply the colour theme first (sets BG/TEXT/PANEL/… globals and the
+  // theme-default accent), then load any user-customised accent on top.
+  applyUiTheme(touchPrefsGetUiTheme());
   applyAccent(touchPrefsGetAccentColor());
 
   lv_obj_t* root = lv_scr_act();
@@ -46170,7 +46493,7 @@ static void buildUiTree() {
   // Dark-theme keyboard styling
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(0x1B2B3A),    LV_PART_ITEMS);
-  lv_obj_set_style_border_color(g_lv.keyboard, lv_color_hex(0x18191A), LV_PART_ITEMS);
+  lv_obj_set_style_border_color(g_lv.keyboard, lv_color_hex(COLOR_BORDER), LV_PART_ITEMS);
   lv_obj_set_style_text_color(g_lv.keyboard,  lv_color_hex(COLOR_TEXT), LV_PART_ITEMS);
   // Key labels use the extended font (montserrat + Cyrillic/Greek/Arabic fallback)
   // so the secondary keyboard layouts render real glyphs instead of tofu boxes.
@@ -46198,7 +46521,7 @@ static void buildUiTree() {
     lv_obj_t* b = lv_btn_create(lv_layer_top());
     lv_obj_set_size(b, 32, 26);
     lv_obj_set_style_bg_color(b, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
-    lv_obj_set_style_border_color(b, lv_color_hex(0x2A3D52), LV_PART_MAIN);
+    lv_obj_set_style_border_color(b, lv_color_hex(COLOR_POPUP_BORDER), LV_PART_MAIN);
     lv_obj_set_style_border_width(b, 1, LV_PART_MAIN);
     lv_obj_set_style_radius(b, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
@@ -46685,7 +47008,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   lv_obj_set_size(card, cardw, sh - STATUSBAR_H - 12);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 6);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -46809,7 +47132,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_chart_set_div_line_count(chart, 4, 6);
     lv_obj_set_style_bg_color(chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(chart, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(chart, lv_color_hex(0x18191A), LV_PART_MAIN);
+    lv_obj_set_style_border_color(chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_border_width(chart, 1, LV_PART_MAIN);
     lv_obj_set_style_radius(chart, 6, LV_PART_MAIN);
     lv_obj_set_style_line_color(chart, lv_color_hex(0x1A1D1F), LV_PART_MAIN);
@@ -46930,7 +47253,7 @@ static void openTelemetryConfigWindow() {
   lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 24, LV_PART_MAIN);
   lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 16);
   styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
@@ -51335,6 +51658,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // reliably starts the NMEA reader.
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
+    // Same reason as toggleGPS: without this the acquisition clock would start
+    // whenever the user first opened the GPS page, not at the boot that actually
+    // started the receiver.
+    { const uint32_t t = millis(); s_gps_acq_since = t ? t : 1u; }
   }
   // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
   // that choice on both boards; forcing it off on Pager made a selected SD pack
@@ -52046,11 +52373,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // (Audio: the I2S speaker amp is installed on demand per tone — see
     // tdeckPlayNotify — so nothing to set up at boot.)
 
-    // Load the saved theme accent BEFORE the bar is built: the status bar is the one
-    // widget tree created here in begin() rather than in buildUiTree (which loads the
-    // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
-    // icons — would freeze the compile-time default instead of the user's colour.
+    // Apply colour theme + accent BEFORE the status bar is built.
     // Idempotent: buildUiTree's own call just re-sets the same globals.
+    applyUiTheme(touchPrefsGetUiTheme());
     applyAccent(touchPrefsGetAccentColor());
 
     // Build the always-on top status bar AFTER the display driver is
@@ -52814,6 +53139,15 @@ void UITask::toggleGPS() {
   // still consistent — same behaviour as before.
   (void)hw_ok;
   _node_prefs->gps_enabled = target_on ? 1 : 0;
+  // Start the acquisition clock HERE. It used to be stamped lazily on the first
+  // gpsStatusStr() call, and that function only runs from the GPS settings page
+  // and the Control Center chip — so the "searching Nm" figure measured time
+  // since the user first LOOKED at it, not since the GPS was switched on. A
+  // receiver that had been searching for twenty minutes reported "0m02s" the
+  // moment you opened the page, which reads as "it only starts when I navigate
+  // here". Non-zero sentinel: millis() can legitimately be 0 at boot, and
+  // gpsStatusStr treats 0 as "not started yet".
+  { const uint32_t t = millis(); s_gps_acq_since = target_on ? (t ? t : 1u) : 0u; }
   the_mesh.savePrefs();
 }
 
@@ -53148,6 +53482,13 @@ void UITask::noteUserInput() {
   if (_screen_off) wakeScreen();
 }
 
+// PWM duty for always-on dim level, read from prefs each call so slider changes take effect.
+#if defined(HAS_BACKLIGHT_PWM)
+static inline uint32_t lockAoDuty() {
+  return (uint32_t)touchPrefsGetLockDimPct() * 255u / 100u;
+}
+#endif
+
 void UITask::wakeScreen() {
   if (!_screen_off) return;
   setCpuForScreen(true);     // back to 240 MHz before we render
@@ -53173,15 +53514,31 @@ void UITask::lockScreen() {
   _last_input_ms = millis();
   return;
 #endif
-  touchScreenBacklight(false);
-  setCpuForScreen(false);    // screen dark -> drop to 80 MHz
-  _screen_off  = true;
   _manual_lock = true;
 #if defined(HAS_TDECK_GT911)
-  // T-Deck: build the lock screen overlay now (dark). A key/trackball press
-  // reveals it; holding the trackball unlocks. (V4 keeps the plain off+wake.)
+  // T-Deck: build the lock screen overlay, then either dim (always-on) or go dark.
   lockscreenShow();
   _lock_lit_ms = millis();   // arm the burn-in guard so a lit lock screen always dims (#55)
+#if defined(HAS_BACKLIGHT_PWM)
+  if (touchPrefsGetLockAlwaysOn()) {
+    // Always-on: dim backlight to ~8%, CPU to 80 MHz. Panel stays active (no SLPIN)
+    // so the lock screen image remains visible at low brightness.
+    ledcWrite(kBlPwmChannel, lockAoDuty());
+    setCpuForScreen(false);         // 80 MHz: radio stays at its own floor, UI idle
+    _screen_off     = false;
+    _lock_ao_dimmed = true;
+    _last_input_ms  = millis();
+  } else
+#endif
+  {
+    touchScreenBacklight(false);
+    setCpuForScreen(false);    // screen dark -> drop to 80 MHz
+    _screen_off = true;
+  }
+#else
+  touchScreenBacklight(false);
+  setCpuForScreen(false);    // screen dark -> drop to 80 MHz
+  _screen_off = true;
 #endif
 }
 
@@ -53194,17 +53551,28 @@ void UITask::lockscreenReveal() {
     setCpuForScreen(true); touchScreenBacklight(true); _screen_off = false;
     _lock_lit_ms = millis();
   } else {
-    lockscreenShow();                // already lit: just re-foreground (idempotent, cheap)
+    lockscreenShow();                // already lit (or always-on dimmed): re-foreground
+#if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
+    // Always-on dim: restore full brightness on touch/button.
+    if (_lock_ao_dimmed) {
+      _lock_ao_dimmed = false;
+      setCpuForScreen(true);        // back to 240 MHz before rendering
+      touchScreenBacklight(true);   // wakes panel (touchPanelSleep(false)) + restores configured brightness
+      _lock_lit_ms = millis();      // re-arm the burn-in guard so it dims again after timeout
+    }
+#endif
   }
   _last_input_ms = millis();
 #endif
 }
 
 void UITask::unlockScreen() {
-  _manual_lock = false;
-  _screen_off  = false;
+  _manual_lock    = false;
+  _screen_off     = false;
+  _lock_ao_dimmed = false;
+  _lock_lit_ms    = 0;   // disarm burn-in guard — no longer locked
   setCpuForScreen(true);
-  touchScreenBacklight(true);
+  touchScreenBacklight(true);   // restores s_brightness_pct (full configured brightness)
 #if CAP_LOCK_SCREEN
   lockscreenHide();
 #endif
@@ -53373,40 +53741,25 @@ void consoleHostRebootToUi() {
 
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
-// ---- "At a glance" notification --------------------------------------------
-// New, board-agnostic feature (distinct from the T-Deck's existing opt-in
-// "msgFlash", which fully wakes to the live app + pulses the keyboard
-// backlight): while the device is UNLOCKED but its screen has idle-dimmed to
-// off, an incoming message (DND permitting) briefly lights a plain black
-// overlay showing just the channel/sender name and the message text, then
-// dims back out on its own after a fixed window -- a glance, not a wake.
-// Never opens the chat, so the message stays unread, and whatever tab/chat
-// was open underneath is left exactly as it was. atGlanceShow() below only
-// builds/updates the overlay; UITask::newMsgImpl() decides whether to fire it
-// (and wakes the screen + arms the auto-hide window); UITask::loop() clears it.
+// ---- Lockscreen notification card ------------------------------------------
+// iOS-style rounded card overlaid on the lock screen when a message arrives
+// while always-on dim is active. atGlanceShow() builds/updates the card;
+// newMsgImpl() fires it; loop() auto-hides it after 10 s and re-dims.
 static lv_obj_t* s_glance_root       = nullptr;
-static lv_obj_t* s_glance_title      = nullptr;
+static lv_obj_t* s_glance_card       = nullptr;   // notification card (child of root; animated as a unit)
+static lv_obj_t* s_glance_title      = nullptr;   // channel/context label (accent, small)
+static lv_obj_t* s_glance_sender_lbl = nullptr;   // author name (white, medium)
+static lv_obj_t* s_glance_time_lbl   = nullptr;   // "HH:MM" top-right of card
 static lv_obj_t* s_glance_body       = nullptr;
-static uint32_t  s_glance_lit_ms     = 0;       // millis() when (re)shown, 0 = not showing -- loop() re-dims 5s later
+static uint32_t  s_glance_lit_ms     = 0;       // millis() when (re)shown, 0 = not showing -- loop() re-dims 10s later
 static bool      s_glance_fading_out = false;   // one-shot guard: the 200ms fade-out anim has already been started
 
 static void atGlanceOpaCb(void* var, int32_t v) {
   lv_obj_set_style_opa(static_cast<lv_obj_t*>(var), static_cast<lv_opa_t>(v), LV_PART_MAIN);
 }
 
-// Message-body font, built once: stock Montserrat 28 (ASCII) -> extras_lat_28
-// (accented Latin, em-dash, ellipsis -- now compiled on every board, not just the
-// Tanmatsu; see extras_lat_28.c) -> extras_16 tail (Cyrillic/Greek/Arabic, baked at
-// 16 px so those scripts render a bit small relative to Latin text, but never a
-// missing-glyph box). 28, not 24: only 12/14/16/28 are actually enabled in this
-// project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't). g_font_16 itself
-// is deliberately left alone -- it's the UI-scale-driven font hundreds of OTHER
-// widgets use, not something to repurpose for one feature.
-//
-// T-Deck experiment: 20px instead of 28px (LV_FONT_MONTSERRAT_20 + extras_lat_20
-// widened for this board specifically, see lv_conf.h/extras_lat_20.c) -- trying
-// a smaller glance body on this panel. Revert by dropping this branch + those
-// two gate widenings.
+// Message-body font, built once: Montserrat -> extras_lat -> extras_16 -> emoji imgfont.
+// T-Deck: 20px (LV_FONT_MONTSERRAT_20 + extras_lat_20). Other boards: 28px.
 static lv_font_t s_glance_body_font;
 static bool      s_glance_font_ready = false;
 static void atGlanceEnsureFont() {
@@ -53415,13 +53768,16 @@ static void atGlanceEnsureFont() {
 #if defined(HAS_TDECK_GT911)
   static lv_font_t s_lat20;
   s_lat20 = extras_lat_20;
-  s_lat20.fallback = &extras_16;
+  // Chain emoji imgfont at the tail so emoji codepoints are caught before the box-glyph fallback.
+  s_lat20.fallback = s_emoji_font[0] ? s_emoji_font[0] : &extras_16;
+  if (s_emoji_font[0]) s_emoji_font[0]->fallback = &extras_16;
   s_glance_body_font = lv_font_montserrat_20;
   s_glance_body_font.fallback = &s_lat20;
 #else
   static lv_font_t s_lat28;
   s_lat28 = extras_lat_28;
-  s_lat28.fallback = &extras_16;
+  s_lat28.fallback = s_emoji_font[0] ? s_emoji_font[0] : &extras_16;
+  if (s_emoji_font[0]) s_emoji_font[0]->fallback = &extras_16;
   s_glance_body_font = lv_font_montserrat_28;
   s_glance_body_font.fallback = &s_lat28;
 #endif
@@ -53429,10 +53785,8 @@ static void atGlanceEnsureFont() {
 
 static void atGlanceHide() {
   if (s_glance_root) {
-    // Only the TEXT fades (see atGlanceShow()) -- the root's own opa is never
-    // touched, so nothing to reset on it. Just cancel any in-flight label fades.
-    if (s_glance_title) { lv_anim_del(s_glance_title, atGlanceOpaCb); lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN); }
-    if (s_glance_body)  { lv_anim_del(s_glance_body,  atGlanceOpaCb); lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN); }
+    lv_anim_del(s_glance_card, atGlanceOpaCb);
+    lv_obj_set_style_opa(s_glance_card, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
   }
   s_glance_lit_ms = 0;
@@ -53442,97 +53796,107 @@ static void atGlanceHide() {
 // `fade_in`: true on the first reveal of a burst (screen was off), false when
 // a later message in the same burst just updates the text on an already-lit
 // overlay -- no need to re-fade something already fully visible.
-static void atGlanceShow(const char* title, const char* body, bool fade_in) {
+// `locked`: when true (lock screen showing), uses a notification card style
+//           (iOS-style rounded card over the lock screen) instead of a full
+//           black overlay. Card is the animation target; root is transparent.
+// `sender`: individual author name (may differ from `title` for channel msgs).
+static void atGlanceShow(const char* title, const char* sender, const char* body, const char* time_str, bool fade_in) {
   if (!g_lv.ready) return;
   if (!s_glance_root) {
+    const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+
+    // Root: transparent full-screen container; the lock screen shows through.
     s_glance_root = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_glance_root);
-    lv_obj_set_style_bg_color(s_glance_root, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(s_glance_root, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_glance_root, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_size(s_glance_root, sw, lv_disp_get_ver_res(nullptr));
+    lv_obj_set_pos(s_glance_root, 0, 0);
     lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps -- no UI leak underneath
-    // Never a keyboard/encoder nav target on any board: same reasoning as the
-    // lock screen's NAV_SKIP_FLAG (see lockscreenShow()) -- a CLICKABLE
-    // top-layer overlay with nothing to navigate to would otherwise be
-    // collected as the sole focus target, and navFocusCb's focus-highlight
-    // would invert its text to dark the instant the nav group (re)builds.
+    lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_glance_root, NAV_SKIP_FLAG);
 
-    // Small "eyebrow" label (channel/sender) above the message, in the app's
-    // accent colour -- the message itself is the thing that needs to be
-    // readable from a few feet away (desk-mounted device), so it gets the
-    // dominant size/position below and this stays a secondary context cue.
-    s_glance_title = lv_label_create(s_glance_root);
-    lv_obj_set_style_text_font(s_glance_title, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_width(s_glance_title, lv_pct(85));
-    lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);   // single line, ellipsize -- guaranteed to fit every board's width
-    lv_obj_align(s_glance_title, LV_ALIGN_TOP_LEFT, 14, 30);   // below the ~22 px status bar band (the real status bar renders above this overlay)
-
-    // Message body: 28 px (bumped up from 16 -- 16 wasn't legible from a few
-    // feet away on a desk-mounted device) via atGlanceEnsureFont()'s own
-    // fallback chain, so arbitrary chat text (accents, em-dash, ellipsis)
-    // still never shows a missing-glyph box at this size.
     atGlanceEnsureFont();
-    s_glance_body = lv_label_create(s_glance_root);
-    lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
-    lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
-    lv_obj_set_width(s_glance_body, lv_pct(85));
-    lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST
-    // one on overflow) when the label has a fixed HEIGHT, not just a fixed width --
-    // left at auto/content height (as this was), it sizes to exactly one line, so
-    // every board was effectively single-line regardless of panel size (reported:
-    // text cropped at the end of the first line instead of continuing on a second).
-    // Give it the actual remaining space below this label's own y-offset down to a
-    // small bottom margin, computed from this board's resolution + active body font,
-    // so it uses exactly what's available -- more lines on tall panels, fewer on the
-    // 222 px-tall Pager -- instead of a guessed fixed line count.
+    const lv_coord_t pad = 10;
+    const lv_coord_t title_h  = lv_font_get_line_height(&g_font_16);
+    const lv_coord_t body_line_h = lv_font_get_line_height(&s_glance_body_font);
+    const lv_coord_t card_h = title_h + 4 + title_h + 4 + body_line_h * 2 + pad * 2;
+    const lv_coord_t card_w = sw - pad * 2;
+
     {
-      const lv_coord_t avail_h = lv_disp_get_ver_res(nullptr) - 60 - 10;
-      const lv_coord_t line_h  = lv_font_get_line_height(&s_glance_body_font);
-      lv_obj_set_height(s_glance_body, avail_h > line_h ? avail_h : line_h);
+      // Notification card: rounded rect with semi-transparent dark background,
+      // positioned in the lower third of the screen (below the time/date area).
+      s_glance_card = lv_obj_create(s_glance_root);
+      lv_obj_remove_style_all(s_glance_card);
+      lv_obj_set_style_bg_color(s_glance_card, lv_color_hex(0x1A1A2Eu), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(s_glance_card, LV_OPA_80, LV_PART_MAIN);
+      lv_obj_set_style_radius(s_glance_card, 12, LV_PART_MAIN);
+      lv_obj_set_style_pad_all(s_glance_card, pad, LV_PART_MAIN);
+      lv_obj_set_size(s_glance_card, card_w, card_h);
+      // Place card in the lower portion, above the bottom footer elements.
+      lv_obj_align(s_glance_card, LV_ALIGN_BOTTOM_MID, 0, -36);
+      lv_obj_clear_flag(s_glance_card, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(s_glance_card, NAV_SKIP_FLAG);
+
+      // Row 1 left: channel/DM context ("Messages" or "#ChannelName") in accent color.
+      s_glance_title = lv_label_create(s_glance_card);
+      lv_obj_set_style_text_font(s_glance_title, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_set_width(s_glance_title, card_w - pad * 2 - 50);   // leave room for time
+      lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);
+      lv_obj_align(s_glance_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+      // Row 1 right: receive time ("HH:MM"), muted white.
+      s_glance_time_lbl = lv_label_create(s_glance_card);
+      lv_obj_set_style_text_font(s_glance_time_lbl, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_glance_time_lbl, lv_color_hex(0xBBBBBBu), LV_PART_MAIN);
+      lv_label_set_long_mode(s_glance_time_lbl, LV_LABEL_LONG_CLIP);
+      lv_obj_set_width(s_glance_time_lbl, 48);
+      lv_obj_align(s_glance_time_lbl, LV_ALIGN_TOP_RIGHT, 0, 0);
+
+      // Row 2: author/sender name, white.
+      s_glance_sender_lbl = lv_label_create(s_glance_card);
+      lv_obj_set_style_text_font(s_glance_sender_lbl, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_glance_sender_lbl, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
+      lv_obj_set_width(s_glance_sender_lbl, card_w - pad * 2);
+      lv_label_set_long_mode(s_glance_sender_lbl, LV_LABEL_LONG_DOT);
+      lv_obj_align(s_glance_sender_lbl, LV_ALIGN_TOP_LEFT, 0, title_h + 4);
+
+      // Row 3: message body with emoji support.
+      s_glance_body = lv_label_create(s_glance_card);
+      lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xEEEEEEu), LV_PART_MAIN);
+      lv_obj_set_width(s_glance_body, card_w - pad * 2);
+      lv_obj_set_height(s_glance_body, body_line_h * 2);
+      lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
+      lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 0, title_h + 4 + title_h + 4);
     }
-    lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
-    lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 14, 60);   // a bit more clearance now the title above is 16 px, not 12
   }
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  lv_obj_set_size(s_glance_root, sw, sh);
-  lv_obj_set_pos(s_glance_root, 0, 0);
+
+  // Update text content.
   lv_label_set_text(s_glance_title, title ? title : "");
+  if (s_glance_sender_lbl) lv_label_set_text(s_glance_sender_lbl, sender ? sender : "");
   lv_label_set_text(s_glance_body,  body  ? body  : "");
-  // Cancel any fade-out already begun (by an earlier message in this burst) on
-  // either label.
-  lv_anim_del(s_glance_title, atGlanceOpaCb);
-  lv_anim_del(s_glance_body,  atGlanceOpaCb);
+  if (s_glance_time_lbl) lv_label_set_text(s_glance_time_lbl, time_str ? time_str : "");
+
+  // Cancel any in-flight fade-out.
+  lv_anim_del(s_glance_card, atGlanceOpaCb);
+
   lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(s_glance_root);
+
   if (fade_in) {
-    // Only the TEXT fades in, never the root: the root's bg_opa is COVER (solid
-    // black) from the moment it's created and stays that way, so the very first
-    // frame -- forced-painted BEFORE the backlight comes on (see newMsgImpl()) --
-    // is already a clean black screen, not a transparent one letting the live
-    // app screen show through underneath for a frame (reported: "I see the app
-    // screen then I see the at-glance"). Fading the whole root's opa used to fade
-    // the background along with the text, which is what caused that.
-    lv_obj_set_style_opa(s_glance_title, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_opa(s_glance_body,  LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_t* targets[2] = { s_glance_title, s_glance_body };
-    for (lv_obj_t* t : targets) {
-      lv_anim_t a;
-      lv_anim_init(&a);
-      lv_anim_set_var(&a, t);
-      lv_anim_set_time(&a, 180);
-      lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
-      lv_anim_set_exec_cb(&a, atGlanceOpaCb);
-      lv_anim_start(&a);
-    }
+    // Animate the card from transparent: root bg is transparent, so the lock
+    // screen is fully painted before the card fades in — no stale-frame flash.
+    lv_obj_set_style_opa(s_glance_card, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_glance_card);
+    lv_anim_set_time(&a, 180);
+    lv_anim_set_values(&a, LV_OPA_TRANSP, LV_OPA_COVER);
+    lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+    lv_anim_start(&a);
   } else {
-    // Already visible -- just swap the text, no re-fade.
-    lv_obj_set_style_opa(s_glance_title, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_opa(s_glance_body,  LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_opa(s_glance_card, LV_OPA_COVER, LV_PART_MAIN);
   }
 }
 
@@ -53640,59 +54004,31 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   }
 #endif
 #if defined(HAS_TOUCH_UI)
-  // "At a glance": device unlocked but idle-dimmed to off -- light the plain
-  // black glance overlay instead of the full app (see atGlanceShow() above).
-  // Master-disabled via Options > Display > "At a glance"
-  // (touchPrefsGetGlanceEnabled()) skips this entirely. Skipped if DND is on.
-  // Manually locked is ALSO skipped unless the user opted in via Options >
-  // Display > "At a glance while locked" (touchPrefsGetGlanceWhenLocked())
-  // -- off by default since it's a real trade-off (message text becomes
-  // readable off a locked device). `_screen_off` covers the first message of
-  // a burst (wake + show); `s_glance_lit_ms` (already showing, from an
-  // earlier message in the same window) covers later ones -- update the text
-  // and restart the 5 s window instead of dropping them, since our own wake
-  // already cleared _screen_off by then.
-#if defined(ESP32)
-  const bool glance_enabled_ok = touchPrefsGetGlanceEnabled();
-  const bool glance_locked_ok = !_manual_lock || touchPrefsGetGlanceWhenLocked();
-#else
-  const bool glance_enabled_ok = true;
-  const bool glance_locked_ok = !_manual_lock;
-#endif
-  if (glance_enabled_ok && !dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
-    const bool was_off = _screen_off;
-    atGlanceShow(thread, body, was_off);   // fade in only on the initial reveal of a burst
-    if (was_off) {
-      lv_refr_now(nullptr);   // paint before the backlight comes on -- no stale-frame flash
-      if (_manual_lock) {
-        // Locked: light the panel WITHOUT clearing the lock -- wakeScreen()
-        // unconditionally clears _manual_lock, which would silently unlock the
-        // device (touch/input live again) just to show a glance. Mirrors
-        // lockscreenReveal()'s peek path instead: same fields, lock untouched.
-        // The auto-hide re-dim below (UITask::loop()) is symmetric -- it never
-        // touches _manual_lock either, so the device is exactly as locked after
-        // the glance as before it.
-        setCpuForScreen(true);
-        touchScreenBacklight(true);
-        _screen_off = false;
-        // MUST bump this even though it's not real input: loop()'s generic idle
-        // screen-timeout check fires on !_screen_off && (now - _last_input_ms) >=
-        // _screen_timeout_ms regardless of _manual_lock -- leaving it stale (from
-        // before the lock) made that check true on the very next loop() tick,
-        // instantly flipping the backlight back off before the glance was ever
-        // seen (reported: sound played but nothing showed). wakeScreen() bumps
-        // this for the same reason; omitting it here was the bug.
-        _last_input_ms = millis();
+  const bool ao_dimmed = _lock_ao_dimmed;  // always-on lock screen is dimmed but not off
+  // --- Always-on lockscreen preview (independent of "At a glance" setting) ---
+  // Gated only by Settings > Sperrbildschirm > "Message preview" and DND.
+  // Fires when the device is always-on dimmed, OR in the brief fully-off window
+  // before the first dim cycle completes on a manually-locked always-on screen.
+  const bool ao_preview_ok = touchPrefsGetLockMsgPreview() && !dndActive() &&
+      (ao_dimmed || (_manual_lock && _screen_off && touchPrefsGetLockAlwaysOn()));
+  if (ao_preview_ok) {
+    char glance_time[6] = "";
+    { time_t tt = time(nullptr); struct tm tmv;
+      if (tt > 1700000000 && localtime_r(&tt, &tmv)) strftime(glance_time, sizeof glance_time, "%H:%M", &tmv); }
+    atGlanceShow(thread, sender, body, glance_time, true);
+    setCpuForScreen(true);
+    lv_refr_now(nullptr);
+    touchScreenBacklight(true);
+    _screen_off     = false;
+    _lock_ao_dimmed = false;   // fully lit now; burn-in guard will re-dim after timeout
+    { const uint32_t t = millis(); _last_input_ms = t; s_glance_lit_ms = t;
 #if CAP_LOCK_SCREEN
-        _lock_lit_ms = millis();   // keep the lock screen's own burn-in guard armed too
+      _lock_lit_ms = t;
 #endif
-      } else {
-        wakeScreen();
-      }
     }
-    s_glance_lit_ms = millis();
-    s_glance_fading_out = false;   // a new message cancels any fade-out already begun
+    s_glance_fading_out = false;
   }
+
 #endif
   // Inbound route (repeater hashes) for the Info popup — flood RX only; read
   // synchronously from MyMesh, which stashed it just before this call.
@@ -54322,7 +54658,7 @@ void UITask::loop() {
     // Screen timeout. The graphical path does this far below, so without it a
     // console stayed lit forever: battery drain, and burn-in on the panels that
     // suffer from it. Same pref, same helpers.
-    if (!_screen_off && _screen_timeout_ms > 0 &&
+    if (!_screen_off && !_lock_ao_dimmed && _screen_timeout_ms > 0 &&
         (uint32_t)(now - _last_input_ms) >= _screen_timeout_ms) {
       touchScreenBacklight(false);
       setCpuForScreen(false);       // idle -> 80 MHz, as the UI does
@@ -54617,6 +54953,18 @@ void UITask::loop() {
          * #if), which has no keyboard -- BOOT is its only lock/unlock control
          * and must keep instantly unlocking it. */
         if (!_manual_lock) wakeScreen();
+#elif defined(HAS_TDECK_GT911)
+        /* T-Deck info lockscreen peek: BOOT from idle-dim shows the info
+         * lockscreen (time, date, weekday, unread, battery) without unlocking.
+         * If already hard-locked the trackball block above already handled the
+         * reveal, so this branch only fires for idle-dim (_manual_lock==false). */
+        if (!_manual_lock) {
+          // Lock and immediately reveal (lockScreen dims/offs, lockscreenReveal re-lights).
+          lockScreen();
+          lockscreenReveal();
+        } else {
+          lockscreenReveal();
+        }
 #else
         /* wakeScreen() clears _manual_lock so subsequent touches work. */
         wakeScreen();
@@ -54657,26 +55005,27 @@ void UITask::loop() {
   // be a few ms AFTER `now` (sampled at the top of loop()). An unsigned compare
   // then made (now - _last_input_ms) underflow to ~4.29e9 and fire the timeout on
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
-  if (_screen_timeout_ms > 0 && !_screen_off &&
-      (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
-#if !defined(HAS_TDISPLAY_P4)
-    // The P4 has no unlock path (no button/overlay), so it must NEVER hard-lock, even if an old
-    // pref left the flag set — it always takes the plain screen-off branch below, which wakes on
-    // touch. (Guards the trap; the "Lock when screen off" toggle is also hidden on the P4.)
+  if (_screen_timeout_ms > 0 && !_screen_off && !_lock_ao_dimmed &&
+      (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {  // _lock_ao_dimmed: already dimmed for always-on
+#if defined(HAS_TDECK_GT911)
+    // T-Deck Plus: idle timeout always goes to the lock screen (dimmed if always-on,
+    // fully off otherwise). Plain screen-off without lock is not useful here since
+    // we have a full lock screen with time/date/battery.
+    if (!_manual_lock) lockScreen();
+#elif !defined(HAS_TDISPLAY_P4)
+    // Other boards: "Lock when screen off" pref gates hard-lock. The P4 has no
+    // unlock path so it always takes the plain screen-off branch below.
     if (s_lock_on_screen_off && !_manual_lock) {
-      // "Lock when screen off": idle dim also hard-locks, so the touchscreen is
-      // inert until a deliberate unlock (trackball hold on the T-Deck, BOOT
-      // press on the V4) — Tim's request to stop pocket-taps while dark. The
-      // !_manual_lock guard stops the Tanmatsu's lit lock screen from re-firing
-      // lockScreen() (and re-lighting) on every idle tick.
       lockScreen();
     } else
 #endif
+#if !defined(HAS_TDECK_GT911)
     {
       touchScreenBacklight(false);
       setCpuForScreen(false);   // idle dim (no lock) -> drop to 80 MHz too
       _screen_off = true;
     }
+#endif
   }
 
   // Burn-in guard (#55): a LIT hard-locked panel ALWAYS dims after a bounded window — independent of
@@ -54686,11 +55035,21 @@ void UITask::loop() {
   // Was T-Deck-only; now every board — the Tanmatsu's lit lock screen otherwise never went dark at
   // screen-timeout "never" (wyvern.red burn-in report). No-op where _lock_lit_ms is never armed (V4).
   if (_manual_lock && !_screen_off && _lock_lit_ms) {
-    uint32_t lock_dim = (_screen_timeout_ms > 0 && _screen_timeout_ms < 20000u) ? _screen_timeout_ms : 20000u;
+    uint32_t lock_dim = (_screen_timeout_ms > 0 && _screen_timeout_ms < 5000u) ? _screen_timeout_ms : 5000u;
     if ((int32_t)(now - _lock_lit_ms) >= (int32_t)lock_dim) {
-      touchScreenBacklight(false);
-      setCpuForScreen(false);
-      _screen_off = true;
+#if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
+      if (touchPrefsGetLockAlwaysOn()) {
+        // Always-on: dim to ~8%, CPU to 80 MHz — panel stays active so image remains visible.
+        ledcWrite(kBlPwmChannel, lockAoDuty());
+        setCpuForScreen(false);
+        _lock_ao_dimmed = true;
+      } else
+#endif
+      {
+        touchScreenBacklight(false);
+        setCpuForScreen(false);
+        _screen_off = true;
+      }
     }
   }
 
@@ -54706,43 +55065,42 @@ void UITask::loop() {
     else if (_last_input_ms > s_notify_wake_ms) s_notify_wake_ms = 0; // user took over
     else if ((int32_t)(now - s_notify_wake_ms) >= 10000) {
       s_notify_wake_ms = 0;
-      touchScreenBacklight(false);
-      setCpuForScreen(false);
-      _screen_off = true;
+#if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
+      if (_manual_lock && touchPrefsGetLockAlwaysOn()) {
+        ledcWrite(kBlPwmChannel, lockAoDuty()); setCpuForScreen(false); _lock_ao_dimmed = true;
+      } else
+#endif
+      { touchScreenBacklight(false); setCpuForScreen(false); _screen_off = true; }
     }
   }
 #endif  // HAS_TDECK_KEYBOARD || HAS_M9_KEYBOARD (notify-wake re-dim)
 
-  // "At a glance" auto-hide: same re-dim shape as the msgflash window above,
-  // but this feature's own fixed 5 s window (the last 200 ms of it spent
-  // fading out, not a hard cut) and unconditional on every board (see
-  // atGlanceShow()/newMsgImpl() above). Real input during the window hands
-  // off to the user actually looking at the screen now -- don't snatch it
-  // back off from underneath them; just stop tracking it and let the normal
-  // idle timeout (already bumped by that real input) take over.
+  // Lockscreen card auto-hide: fade out after 10 s, then re-dim (always-on) or go dark.
+  // Real input clears s_glance_lit_ms via atGlanceHide() in the input handlers.
   if (s_glance_lit_ms) {
-    if (_screen_off)                          atGlanceHide();   // already dark again some other way
+    if (_screen_off)                           atGlanceHide();   // already dark some other way
     else if (_last_input_ms > s_glance_lit_ms) atGlanceHide();   // user took over
     else {
       const int32_t elapsed = (int32_t)(now - s_glance_lit_ms);
-      if (!s_glance_fading_out && elapsed >= 4800) {
+      if (!s_glance_fading_out && elapsed >= 9800) {
         s_glance_fading_out = true;
-        lv_obj_t* targets[2] = { s_glance_title, s_glance_body };   // text only -- see atGlanceShow()
-        for (lv_obj_t* t : targets) {
-          lv_anim_t a;
-          lv_anim_init(&a);
-          lv_anim_set_var(&a, t);
-          lv_anim_set_time(&a, 200);
-          lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
-          lv_anim_set_exec_cb(&a, atGlanceOpaCb);
-          lv_anim_start(&a);
-        }
+        lv_anim_t a;
+        lv_anim_init(&a);
+        lv_anim_set_var(&a, s_glance_card);
+        lv_anim_set_time(&a, 200);
+        lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_TRANSP);
+        lv_anim_set_exec_cb(&a, atGlanceOpaCb);
+        lv_anim_start(&a);
       }
-      if (elapsed >= 5000) {
+      if (elapsed >= 10000) {
         atGlanceHide();
-        touchScreenBacklight(false);
-        setCpuForScreen(false);
-        _screen_off = true;
+#if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
+        // Re-dim instead of full screen-off when always-on lock is active.
+        if (_manual_lock && touchPrefsGetLockAlwaysOn()) {
+          ledcWrite(kBlPwmChannel, lockAoDuty()); setCpuForScreen(false); _lock_ao_dimmed = true;
+        } else
+#endif
+        { touchScreenBacklight(false); setCpuForScreen(false); _screen_off = true; }
       }
     }
   }
@@ -55345,7 +55703,7 @@ void UITask::loop() {
     }
     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
     // bottom can't slip through to the app switcher (e.g. into the map).
-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || luaAppIsOpen();
+    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || PongGame::isOpen() || luaAppIsOpen();
     if (want_lock != s_tabbar_locked && g_lv.tabview) {
       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
       if (tab_btns) {
@@ -55413,6 +55771,21 @@ void UITask::loop() {
     lv_obj_invalidate(lv_scr_act());
 #endif
   uiCp("ui:lvgl");
+#if defined(HAS_TDECK_GT911)
+  // AO-dim throttle: when the lock screen is dimmed (always-on) and there is no
+  // animation or pending glance, LVGL has nothing to do. Run it at 1 Hz (the
+  // clock service rate) instead of every loop tick — cuts idle CPU burn on the
+  // main task significantly. s_glance_lit_ms != 0 means a preview card is fading.
+  if (_lock_ao_dimmed && !s_glance_lit_ms) {
+    static uint32_t s_ao_lv_last_ms = 0;
+    if ((int32_t)(millis() - s_ao_lv_last_ms) >= 1000) {
+      s_ao_lv_last_ms = millis();
+      lv_timer_handler();
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(50));   // yield CPU; FreeRTOS idle task halts via WFI
+    }
+  } else
+#endif
   lv_timer_handler();
   uiCp("ui:tail");
 #if (CAP_SD || defined(TLORA_PAGER)) && \

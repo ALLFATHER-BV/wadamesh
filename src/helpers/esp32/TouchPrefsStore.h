@@ -451,10 +451,26 @@ bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scrol
 void    touchPrefsSetEdgeScroll(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
 void    touchPrefsSetLockOnScreenOff(bool on);
-bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
-void    touchPrefsSetGlanceWhenLocked(bool on);
-bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
-void    touchPrefsSetGlanceEnabled(bool on);
+bool    touchPrefsGetLockShowTime();           // show time on lockscreen (default true)
+void    touchPrefsSetLockShowTime(bool on);
+bool    touchPrefsGetLockShowDate();           // show date on lockscreen (default true)
+void    touchPrefsSetLockShowDate(bool on);
+bool    touchPrefsGetLockShowWeekday();        // show weekday on lockscreen (default true)
+void    touchPrefsSetLockShowWeekday(bool on);
+bool    touchPrefsGetLockShowUsername();       // show node name on lockscreen (default true)
+void    touchPrefsSetLockShowUsername(bool on);
+bool    touchPrefsGetLockShowUnread();         // show unread count on lockscreen (default true)
+void    touchPrefsSetLockShowUnread(bool on);
+bool    touchPrefsGetLockShowBatt();           // show battery % on lockscreen (default true)
+void    touchPrefsSetLockShowBatt(bool on);
+uint32_t touchPrefsGetLockBgColor();           // solid lockscreen background color (default 0x000000)
+bool     touchPrefsSetLockBgColor(uint32_t rgb);
+bool    touchPrefsGetLockAlwaysOn();           // dim instead of screen-off when locked (default false)
+void    touchPrefsSetLockAlwaysOn(bool on);
+bool    touchPrefsGetLockMsgPreview();         // show message preview card on lock screen (default true)
+void    touchPrefsSetLockMsgPreview(bool on);
+uint8_t touchPrefsGetLockDimPct();             // always-on dim brightness 1..100% (default 8)
+void    touchPrefsSetLockDimPct(uint8_t pct);
 
 /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
  *  mute @-mentions. Suppresses the notification SOUND for that channel (the
@@ -589,5 +605,10 @@ uint16_t touchPrefsGetSigPollMins();
 /* NB: there is deliberately no touchPrefsGet/SetP4Antenna(). The T-Display P4 antenna choice is
  * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
 bool     touchPrefsSetSigPollMins(uint16_t mins);
+
+/** UI colour theme: 0=Dark (default), 1=Light, 2=Greenish, 3=Pinkish, 4=Reddish.
+ *  Applied at boot; a reboot is required to switch. */
+uint8_t touchPrefsGetUiTheme();
+void    touchPrefsSetUiTheme(uint8_t theme);
 
 #endif

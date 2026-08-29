@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 52;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON)
+static constexpr uint8_t CURRENT_VERSION = 57;   // ...v55: lock_dim_pct; v56: sleep_idle default ON; v57: lock_always_on default ON   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -83,6 +83,17 @@ struct __attribute__((packed)) Config {
   // every field after it, which is what v45 had to undo. Append, never insert.
   uint8_t  console_mode;     // v51: boot into the LVGL-free text console (CONSOLE_MODE.md)
   uint8_t  console_monitor;  // v52: console mode shows incoming messages as they arrive
+  // v53: lock screen display prefs (T-Deck Plus / CAP_LOCK_SCREEN)
+  uint8_t  lock_show_time;      // show time on lockscreen (default 1)
+  uint8_t  lock_show_date;      // show date on lockscreen (default 1)
+  uint8_t  lock_show_weekday;   // show weekday on lockscreen (default 1)
+  uint8_t  lock_show_username;  // show node name bottom-left (default 1)
+  uint8_t  lock_show_unread;    // show unread count bottom-right (default 1)
+  uint8_t  lock_show_batt;      // show battery % bottom-right (default 1)
+  uint32_t lock_bg_color;       // solid background color (default 0x000000 black)
+  uint8_t  lock_always_on;      // always-on: dim instead of screen-off (default 0)
+  uint8_t  lock_msg_preview;    // v54: show message preview card on lock screen (default 1)
+  uint8_t  lock_dim_pct;        // v55: always-on dim brightness 1..100% (default 8)
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -90,8 +101,14 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, console_monitor) + sizeof(Config::console_monitor) == sizeof(Config),
+static_assert(offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct) == sizeof(Config),
               "new preference fields must remain trailing");
+static_assert(offsetof(Config, lock_msg_preview) ==
+                  offsetof(Config, lock_always_on) + sizeof(Config::lock_always_on),
+              "lock_msg_preview must follow lock_always_on");
+static_assert(offsetof(Config, lock_dim_pct) ==
+                  offsetof(Config, lock_msg_preview) + sizeof(Config::lock_msg_preview),
+              "lock_dim_pct must follow lock_msg_preview");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is
 // told at compile time instead of shipping another v44.
@@ -101,6 +118,12 @@ static_assert(offsetof(Config, console_mode) ==
 static_assert(offsetof(Config, console_monitor) ==
                   offsetof(Config, console_mode) + sizeof(Config::console_mode),
               "console_monitor must follow console_mode");
+static_assert(offsetof(Config, lock_show_time) ==
+                  offsetof(Config, console_monitor) + sizeof(Config::console_monitor),
+              "lock_show_time must follow console_monitor");
+static_assert(offsetof(Config, lock_always_on) ==
+                  offsetof(Config, lock_bg_color) + sizeof(Config::lock_bg_color),
+              "lock_always_on must follow lock_bg_color");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with
 // retry_echo inserted before web_mirror, shifting every later value. That blob

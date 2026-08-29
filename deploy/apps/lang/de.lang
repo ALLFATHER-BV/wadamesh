@@ -102,6 +102,7 @@ Blocked list	Blockierliste
 Blocked users	Blockierte Benutzer
 Blocked — their messages are hidden	Blockiert — Nachrichten ausgeblendet
 Blocking unsupported	Blockieren nicht unterstützt
+Background colour	Hintergrundfarbe
 Blue battery  Last 6 min	Blau Akku  Letzte 6 Min
 Blue battery  Orange temp  Cyan humidity	Blau Akku  Orange Temp.  Cyan Feuchte
 Bluetooth	Bluetooth
@@ -435,6 +436,7 @@ Local sensors	Lokale Sensoren
 Lock	Sperren
 Lock screen	Sperrbildschirm
 Lock screen wallpaper	Sperrbildschirm-Hintergrund
+Lock background colour set	Hintergrundfarbe der Sperre gesetzt
 Lock text colour	Sperrtext-Farbe
 Lock text colour set	Sperrtext-Farbe gesetzt
 Lock wallpaper	Sperr-Hintergrund
@@ -842,6 +844,14 @@ Test builds: off	Test-Builds: aus
 Test builds: on	Test-Builds: an
 Theme	Thema
 Theme colour	Themenfarbe
+Theme saved — restart to apply	Thema gespeichert — Neustart zum Anwenden
+Colour theme (restart to apply)	Farbthema (Neustart nötig)
+Dark	Dunkel
+Light	Hell
+Greenish	Grünlich
+Pinkish	Rosalich
+Reddish	Rötlich
+Light Red	Hell-Rot
 Then pick a mode:	Dann einen Modus wählen:
 This contact hasn't shared\na GPS position.	Dieser Kontakt hat keine\nGPS-Position geteilt.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Dieses Gerät kann Wi-Fi und Bluetooth gleichzeitig als eigenständiges Funkgerät und Telefon-Begleiter (MeshCore-App) betreiben.\n\nBeides gleichzeitig braucht mehr RAM, aktiviere also nur, was du brauchst.\n\nJederzeit in den Einstellungen einrichtbar.
@@ -1065,6 +1075,7 @@ Show contacts	Show contacts
 Show coordinates	Show coordinates
 Show tile z/x/y	Show tile z/x/y
 Starting…	Starting…
+Text colour	Textfarbe
 Text console (experimental)	Text console (experimental)
 Tile debug overlay	Tile debug overlay
 chats	chats
@@ -1093,15 +1104,20 @@ Install beta_%d?\nThis downgrades the firmware and reboots.	Install beta_%d?\nTh
 Other (hidden) network…	Other (hidden) network…
 Paused	Paused
 Scan again	Scan again
-At a glance	At a glance
-At a glance disabled	At a glance disabled
-At a glance enabled	At a glance enabled
-At a glance while locked	At a glance while locked
-Glance only shows when unlocked	Glance only shows when unlocked
-Glance shows message previews\nwhile the screen is locked	Glance shows message previews\nwhile the screen is locked
+At a glance	Kurzmitteilung
+At a glance disabled	Kurzmitteilung deaktiviert
+At a glance enabled	Kurzmitteilung aktiviert
+At a glance while locked	Kurzmitteilung bei Sperre
+Glance only shows when unlocked	Kurzmitteilung nur bei entsperrtem Bildschirm
+Glance shows message previews\nwhile the screen is locked	Zeigt Nachrichtenvorschau\nbei gesperrtem Bildschirm
 Snake  —  swipe, roll, or press a direction	Snake  —  swipe, roll, or press a direction
 N/A	N/A
 This board cannot run this app.	This board cannot run this app.
 Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
+Always-on lock screen	Sperrbildschirm immer aktiv
+Lock screen always-on	Sperrbildschirm immer aktiv
+Lock screen turns off	Sperrbildschirm schaltet ab
+Dim brightness	Gedimmte Helligkeit
+Message preview	Nachrichtenvorschau
