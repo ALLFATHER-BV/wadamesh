@@ -51368,6 +51368,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // reliably starts the NMEA reader.
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
+    // Same reason as toggleGPS: without this the acquisition clock would start
+    // whenever the user first opened the GPS page, not at the boot that actually
+    // started the receiver.
+    { const uint32_t t = millis(); s_gps_acq_since = t ? t : 1u; }
   }
   // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
   // that choice on both boards; forcing it off on Pager made a selected SD pack
@@ -52853,6 +52857,15 @@ void UITask::toggleGPS() {
   // still consistent — same behaviour as before.
   (void)hw_ok;
   _node_prefs->gps_enabled = target_on ? 1 : 0;
+  // Start the acquisition clock HERE. It used to be stamped lazily on the first
+  // gpsStatusStr() call, and that function only runs from the GPS settings page
+  // and the Control Center chip — so the "searching Nm" figure measured time
+  // since the user first LOOKED at it, not since the GPS was switched on. A
+  // receiver that had been searching for twenty minutes reported "0m02s" the
+  // moment you opened the page, which reads as "it only starts when I navigate
+  // here". Non-zero sentinel: millis() can legitimately be 0 at boot, and
+  // gpsStatusStr treats 0 as "not started yet".
+  { const uint32_t t = millis(); s_gps_acq_since = target_on ? (t ? t : 1u) : 0u; }
   the_mesh.savePrefs();
 }
 
