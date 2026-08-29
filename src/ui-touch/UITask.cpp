@@ -10021,7 +10021,12 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
       lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
       lv_obj_set_pos(l, 2, y);
-      y += SC(38);
+      // The text names every enabled type TWICE ("Auto-add on for chats,
+      // repeaters, rooms, sensors — new chats, repeaters, rooms, sensors land
+      // in Contacts automatically."), so with several types enabled it wraps
+      // well past the fixed SC(38) and printed over the first discovered card.
+      lv_obj_update_layout(l);
+      y += LV_MAX(SC(38), lv_obj_get_height(l) + SC(6));
     }
   }
 
@@ -10732,7 +10737,11 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_pos(rl, 2, y);
-    y += SC(22);
+    // Width is set, so this label WRAPS. A 4-digit time-on-air (any SF11/SF12
+    // preset) or a longer translation takes it to two lines, and the fixed
+    // SC(22) advance ran the second line through the MESH section divider.
+    lv_obj_update_layout(rl);
+    y += LV_MAX(SC(22), lv_obj_get_height(rl) + SC(4));
   }
 
   mk_section("MESH");
@@ -14269,11 +14278,17 @@ static void buildBluetoothSettings() {
     y += SC(38);
 
     lv_obj_t* hint = lv_label_create(body);
+    // Give it a width so it WRAPS: with none, the label sizes to its text and
+    // simply runs off the right edge. The English string already overflows the
+    // grouped-settings width here, before any longer translation.
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, lv_pct(100));
     lv_label_set_text(hint, TR("Type a new 6-digit code \xC2\xB7 applies after a reboot"));
     lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(hint, 2, y);
-    y += SC(18);
+    lv_obj_update_layout(hint);
+    y += LV_MAX(SC(18), lv_obj_get_height(hint) + SC(4));
   }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -17850,7 +17865,12 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_text_font(s_addct_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addct_error_l, "");
   lv_obj_set_pos(s_addct_error_l, 2, y);
-  y += 24;
+  // This label is EMPTY at build time, so the 24 px below reserved space for
+  // text that did not exist yet. addContactSubmitCb then fills it with a
+  // validation message that wraps to two lines and printed over the submit
+  // button. Pin the height to the reservation so the error wraps INSIDE it.
+  lv_obj_set_height(s_addct_error_l, SC(30));
+  y += SC(34);
 
   lv_obj_t* b = lv_btn_create(body);
   lv_obj_set_size(b, lv_pct(100),36);
@@ -42344,6 +42364,10 @@ static void openAppGridSheet() {
   {
     const int ty = hdr + 2 * (btn_h + gap);
     lv_obj_t* hl = lv_label_create(card);
+    // Keep clear of the right-aligned switch below. With no width the label
+    // sizes to its text, so a longer translation ran straight under the switch.
+    lv_label_set_long_mode(hl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(hl, lv_pct(68));
     lv_label_set_text(hl, TR("App drawer as home"));
     lv_obj_set_style_text_font(hl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -44545,7 +44569,11 @@ static int setupHeader(const char* title, const char* blurb, const char* step_ta
   lv_obj_set_style_text_font(t, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(t, 12, 12);
-  int y = 12 + 24;
+  // The title has LV_LABEL_LONG_WRAP at width sw-84, so it is NOT always one
+  // line — a longer translation wraps and the hardcoded 24 px advance put the
+  // blurb (and every step's content under it) straight through the title.
+  lv_obj_update_layout(t);
+  int y = 12 + LV_MAX(24, lv_obj_get_height(t) + 2);
   if (step_tag && step_tag[0]) {
     lv_obj_t* s = lv_label_create(s_setup_root);
     lv_label_set_text(s, step_tag);
@@ -45454,6 +45482,13 @@ static void openChannelScopeModal(int slot, const char* name) {
   lv_obj_set_pos(nm, SC(8), SC(36));
 
   lv_obj_t* hint = lv_label_create(s_chanscope_modal);
+  // One line, ellipsized. With no width the label sizes to its text and its tail
+  // ran past the modal edge; wrapping is not an option here either, because the
+  // textarea below is pinned at SC(72) and this sits at SC(54) — 18 px of room,
+  // less than a second line. A longer translation loses its tail rather than
+  // printing over the input.
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(hint, sw - SC(16));
   lv_label_set_text(hint, TR("Region scope (#tag), blank = default."));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
