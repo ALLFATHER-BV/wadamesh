@@ -19181,7 +19181,7 @@ static const char* k_term_banner =
   "Config: ver clock status get advert reboot\n"
   "        set <name|freq|bw|sf|cr|tx> <value>\n"
   "MeshCom: wifi status, tcp status, ble status,\n"
-  "         ota status, tcp on/off, ble on/off.\n";
+  "         mqtt status, ota status, tcp/ble on/off.\n";
 
 // Quick-pick catalogue (mirrors the repeater admin picker). Commands here are
 // the ones MyMesh::handleMeshcomodCommand understands natively when run
@@ -19219,6 +19219,7 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "wifi set pwd <v>",               "wifi set pwd " },
   { "wifi apply - connect now",       "wifi apply" },
   { "wifi clear - forget creds",      "wifi clear" },
+  { "mqtt status",                    "mqtt status" },
   { "tcp status",                     "tcp status" },
   { "tcp on",                         "tcp on" },
   { "tcp off",                        "tcp off" },
@@ -19542,7 +19543,7 @@ static void termCmdExit() {
 static bool termIsCliKeyword(const char* word, size_t len) {
   static const char* kw[] = {
     "help", "ver", "version", "clock", "time", "status", "get", "set",
-    "advert", "advert.zerohop", "reboot", "wifi", "tcp", "ble", "ota",
+    "advert", "advert.zerohop", "reboot", "wifi", "mqtt", "tcp", "ble", "ota",
     "ok", "cancel",
   };
   for (const char* k : kw) {

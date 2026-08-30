@@ -366,7 +366,7 @@ which is why the console needed far fewer new commands than the UI has screens.
 | Quick replies | none | gap |
 | Backups | none | gap |
 | Language | none | gap |
-| MQTT bridge | none | gap |
+| MQTT bridge | `mqtt status` | **done** (diagnostics only) |
 | App permissions | none | with Phase 4 |
 | General | `console`/`ui` toggle | partial |
 

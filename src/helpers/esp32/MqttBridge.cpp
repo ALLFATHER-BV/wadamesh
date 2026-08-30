@@ -36,17 +36,52 @@ size_t MqttNbClient::write(const uint8_t* buf, size_t size) {
     return WiFiClient::write(buf, size);
 }
 
+void MqttBridge::getStatus(MqttBridgeStatus& out) const {
+    portENTER_CRITICAL(&_statusMux);
+    out = _status;
+    portEXIT_CRITICAL(&_statusMux);
+}
+
+void MqttBridge::syncStatusConfig(MqttBridgePhase phase) {
+    MqttBridgeStatus next;
+    next.phase = phase;
+    next.available = true;
+    next.requestedEnabled = _requestedEnabled;
+    next.publishDm = _pubDm;
+    next.publishChannel = _pubChannel;
+    next.encrypted = _encOn;
+    strncpy(next.host, _host, sizeof(next.host) - 1);
+    next.port = _port;
+    portENTER_CRITICAL(&_statusMux);
+    _status = next;
+    portEXIT_CRITICAL(&_statusMux);
+}
+
+void MqttBridge::setStatusPhase(MqttBridgePhase phase, int result, uint32_t now,
+                                bool recordResult, uint32_t retryAt) {
+    portENTER_CRITICAL(&_statusMux);
+    _status.phase = phase;
+    _status.retryAtMs = retryAt;
+    if (phase == MqttBridgePhase::Connecting) _status.lastAttemptMs = now;
+    if (phase == MqttBridgePhase::Connected)  _status.lastConnectedMs = now;
+    if (recordResult) {
+        _status.lastResult = (int8_t)result;
+        _status.lastResultMs = now;
+    }
+    portEXIT_CRITICAL(&_statusMux);
+}
+
 // Read every field from the "mqtt" NVS namespace into the members. isKey() guards
 // avoid the [E] NOT_FOUND log spam that getString emits for absent keys on the
 // USB-CDC companion stream (see TouchPrefsStore prefsGetStr note).
 void MqttBridge::loadConfig() {
-    _enabled = false; _pubDm = false; _pubChannel = true;
+    _requestedEnabled = false; _enabled = false; _pubDm = false; _pubChannel = true;
     _host[0] = _user[0] = _pwd[0] = _psk[0] = '\0';
     _port = 1883;
 
     SdNvsPrefs p;
     if (p.begin("mqtt", true)) {
-        _enabled    = p.getBool("en", false);
+        _requestedEnabled = p.getBool("en", false);
         _port       = (uint16_t)p.getUInt("port", 1883);
         _pubDm      = p.getBool("dm", false);
         _pubChannel = p.getBool("ch", true);
@@ -57,7 +92,13 @@ void MqttBridge::loadConfig() {
         p.end();
     }
     deriveKey();
-    if (!_enabled || _host[0] == '\0') _enabled = false;
+    _enabled = _requestedEnabled && _host[0] != '\0';
+    MqttBridgePhase phase = MqttBridgePhase::Disabled;
+    if (_requestedEnabled && _host[0] == '\0') phase = MqttBridgePhase::Misconfigured;
+    else if (_enabled) phase = WiFi.status() == WL_CONNECTED
+                                ? MqttBridgePhase::RetryWait
+                                : MqttBridgePhase::WaitingForWifi;
+    syncStatusConfig(phase);
 }
 
 // Derive the AES key from the passphrase. mbedtls_md() (generic digest) is used
@@ -88,7 +129,12 @@ void MqttBridge::begin(const char* nodeHex) {
 }
 
 bool MqttBridge::reconnect() {
-    if (!_enabled || WiFi.status() != WL_CONNECTED) return false;
+    if (!_enabled) return false;
+    if (WiFi.status() != WL_CONNECTED) {
+        setStatusPhase(MqttBridgePhase::WaitingForWifi, MQTT_DISCONNECTED,
+                       millis(), false);
+        return false;
+    }
 
     char clientId[32], lwtTopic[80];
     snprintf(clientId, sizeof(clientId), "wadamesh-%s", _nodeHex);
@@ -98,11 +144,21 @@ bool MqttBridge::reconnect() {
         ? _mqtt.connect(clientId, _user, _pwd, lwtTopic, 0, true, "offline")
         : _mqtt.connect(clientId, nullptr, nullptr, lwtTopic, 0, true, "offline");
 
+    const uint32_t now = millis();
+    const int result = _mqtt.state();
     if (ok) {
+        setStatusPhase(MqttBridgePhase::Connected, result, now, true);
         _mqtt.publish(lwtTopic, "online", true);
         Serial.printf("[MQTT] connected as %s\n", clientId);
     } else {
-        Serial.printf("[MQTT] connect failed, rc=%d\n", _mqtt.state());
+        MqttBridgeStatus current;
+        getStatus(current);
+        const uint32_t retryAt = current.lastAttemptMs
+                                   ? current.lastAttemptMs + RECONNECT_INTERVAL_MS
+                                   : now + RECONNECT_INTERVAL_MS;
+        setStatusPhase(MqttBridgePhase::RetryWait, result, now, true,
+                       retryAt);
+        Serial.printf("[MQTT] connect failed, rc=%d\n", result);
     }
     return ok;
 }
@@ -119,19 +175,41 @@ void MqttBridge::reconnectTask(void* arg) {
 
 void MqttBridge::loop() {
     if (!_enabled || _connecting) return;
+    uint32_t now = millis();
+    if (WiFi.status() != WL_CONNECTED) {
+        if (_mqtt.connected()) _mqtt.loop();
+        setStatusPhase(MqttBridgePhase::WaitingForWifi, MQTT_DISCONNECTED,
+                       now, false);
+        return;
+    }
     if (!_mqtt.connected()) {
-        uint32_t now = millis();
+        MqttBridgeStatus current;
+        getStatus(current);
+        if (current.phase == MqttBridgePhase::Connected) {
+            setStatusPhase(MqttBridgePhase::RetryWait, _mqtt.state(), now, true,
+                           now);
+        }
         if ((uint32_t)(now - _lastReconnectMs) >= RECONNECT_INTERVAL_MS) {
             _lastReconnectMs = now;
             _connecting = true;
+            setStatusPhase(MqttBridgePhase::Connecting, MQTT_DISCONNECTED,
+                           now, false);
             if (xTaskCreatePinnedToCore(reconnectTask, "mqtt_conn", 6144, this,
                                         1, nullptr, 0) != pdPASS) {
                 _connecting = false;   // task OOM — try again next interval
+                setStatusPhase(MqttBridgePhase::RetryWait, MQTT_DISCONNECTED,
+                               now, false, now + RECONNECT_INTERVAL_MS);
             }
+        } else {
+            setStatusPhase(MqttBridgePhase::RetryWait, MQTT_DISCONNECTED,
+                           now, false, _lastReconnectMs + RECONNECT_INTERVAL_MS);
         }
         return;
     }
-    _mqtt.loop();
+    if (!_mqtt.loop()) {
+        setStatusPhase(MqttBridgePhase::RetryWait, _mqtt.state(), now, true,
+                       now);
+    }
 }
 
 // AES-256-GCM seal: out = base64( nonce[12] || ciphertext || tag[16] ). Single-task

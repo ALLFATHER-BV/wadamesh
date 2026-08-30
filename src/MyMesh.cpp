@@ -280,11 +280,100 @@ static const char* kMeshcomodHelpMsg =
   "set tx <dBm>        set TX power\n"
   "wifi status|on|off|scan\n"
   "wifi use <n> | set ssid <v> | set pwd <v> | apply | clear\n"
+  "mqtt status\n"
   "tcp status|on|off\n"
   "ble status|on|off\n"
   "ota status|start|netdiag | ota url <https://...bin>\n"
   "reboot              restart the device\n"
   "bootloader / dfu    reboot to download mode";
+
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+static const char* mqttResultText(int result) {
+  switch (result) {
+    case -4: return "connection timeout";
+    case -3: return "connection lost";
+    case -2: return "TCP connect failed";
+    case -1: return "disconnected";
+    case  0: return "connected";
+    case  1: return "bad protocol";
+    case  2: return "rejected client ID";
+    case  3: return "broker unavailable";
+    case  4: return "bad credentials";
+    case  5: return "unauthorized";
+    default: return "unknown";
+  }
+}
+
+static void mqttFormatAge(char* out, size_t cap, uint32_t timestamp, uint32_t now) {
+  if (!timestamp) { snprintf(out, cap, "never"); return; }
+  const uint32_t seconds = (uint32_t)(now - timestamp) / 1000u;
+  if (seconds < 60u) snprintf(out, cap, "%lus ago", (unsigned long)seconds);
+  else if (seconds < 3600u) snprintf(out, cap, "%lum %lus ago",
+                                    (unsigned long)(seconds / 60u),
+                                    (unsigned long)(seconds % 60u));
+  else snprintf(out, cap, "%luh %lum ago", (unsigned long)(seconds / 3600u),
+                (unsigned long)((seconds / 60u) % 60u));
+}
+
+static void mqttFormatStatus(char* out, size_t cap) {
+  MqttBridgeStatus status;
+  mqtt_bridge.getStatus(status);
+  if (!status.available) {
+    snprintf(out, cap, "mqtt: unavailable on this build");
+    return;
+  }
+  if (status.phase == MqttBridgePhase::Disabled) {
+    snprintf(out, cap, "mqtt: disabled");
+    return;
+  }
+  if (status.phase == MqttBridgePhase::Misconfigured) {
+    snprintf(out, cap, "mqtt: misconfigured (broker host is empty)");
+    return;
+  }
+
+  const uint32_t now = millis();
+  char state[64];
+  char timing[96] = {};
+  switch (status.phase) {
+    case MqttBridgePhase::WaitingForWifi:
+      snprintf(state, sizeof(state), "mqtt: waiting for Wi-Fi");
+      break;
+    case MqttBridgePhase::Connecting: {
+      char age[32];
+      mqttFormatAge(age, sizeof(age), status.lastAttemptMs, now);
+      snprintf(state, sizeof(state), "mqtt: connecting");
+      snprintf(timing, sizeof(timing), "attempt: %s", age);
+      break;
+    }
+    case MqttBridgePhase::Connected: {
+      char age[32];
+      mqttFormatAge(age, sizeof(age), status.lastConnectedMs, now);
+      snprintf(state, sizeof(state), "mqtt: connected");
+      snprintf(timing, sizeof(timing), "connected: %s", age);
+      break;
+    }
+    case MqttBridgePhase::RetryWait: {
+      const int32_t remaining = (int32_t)(status.retryAtMs - now);
+      const uint32_t seconds = remaining > 0 ? ((uint32_t)remaining + 999u) / 1000u : 0u;
+      snprintf(state, sizeof(state), "mqtt: retrying (%lus)", (unsigned long)seconds);
+      if (status.lastResultMs) {
+        char age[32];
+        mqttFormatAge(age, sizeof(age), status.lastResultMs, now);
+        snprintf(timing, sizeof(timing), "last error: %d (%s), %s",
+                 (int)status.lastResult, mqttResultText(status.lastResult), age);
+      }
+      break;
+    }
+    default:
+      snprintf(state, sizeof(state), "mqtt: unavailable on this build");
+      break;
+  }
+  snprintf(out, cap, "%s\nbroker: %s:%u\npublish: channels=%s dm=%s encrypted=%s%s%s",
+           state, status.host, (unsigned)status.port,
+           status.publishChannel ? "on" : "off", status.publishDm ? "on" : "off",
+           status.encrypted ? "yes" : "no", timing[0] ? "\n" : "", timing);
+}
+#endif
 
 #define MESHCOMOD_CMD_CACHE_SIZE 6
 struct MeshcomodCmdCacheEntry {
@@ -695,6 +784,23 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     char status_basic[180];
     snprintf(status_basic, sizeof(status_basic), "companion status:\nusb: on\nble: %s\ntcp: %s\n%s", ble, tcp, ws_line);
     pushMeshcomodReply(status_basic);
+    return true;
+  }
+
+  if (isCmd(p, "mqtt")) {
+    const char* q = p + 4;
+    while (*q == ' ' || *q == '\t') q++;
+    if (isCmd(q, "status")) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      char reply[320];
+      mqttFormatStatus(reply, sizeof(reply));
+      pushMeshcomodReply(reply);
+#else
+      pushMeshcomodReply("mqtt: unavailable on this build");
+#endif
+      return true;
+    }
+    pushMeshcomodReply("usage:\n- mqtt status");
     return true;
   }
 
@@ -5219,6 +5325,16 @@ void MyMesh::checkCLIRescueCmd() {
       } else {
         Serial.printf("  Error: unknown config: %s\n", config);
       }
+    } else if (strcmp(cli_command, "mqtt.status") == 0 ||
+               strcmp(cli_command, "get mqtt.status") == 0 ||
+               strcmp(cli_command, "mqtt status") == 0) {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+      char reply[320];
+      mqttFormatStatus(reply, sizeof(reply));
+      Serial.printf("  > %s\n", reply);
+#else
+      Serial.println("  > mqtt: unavailable on this build");
+#endif
     } else if (strcmp(cli_command, "get wifi.ssid") == 0) {
 #ifdef ESP32
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
