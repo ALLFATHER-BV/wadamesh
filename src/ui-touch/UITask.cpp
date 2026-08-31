@@ -128,6 +128,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 // The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
 // must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
 // stores fine gets rejected as implausible and the author lands back in the body.
@@ -193,6 +194,11 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     // its include path, so an angle include picks that up and misses accessors we
     // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
     #include "../helpers/esp32/TouchPrefsStore.h"
+    // A block-list slot narrower than a sender name stores a cut name that the full-width
+    // RX check can never match again — the block shows in Settings and silently never
+    // fires. TouchPrefsStore.h stated this invariant in prose; prose is what let it rot.
+    static_assert(TOUCH_IGNORED_NAME_LEN >= UITask::MAX_SENDER_NAME + 1,
+                  "block-list slot must hold a full sender name, or blocking silently stops working");
     #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
@@ -314,6 +320,15 @@ struct __attribute__((packed)) UiHistoryThread {
   char name[UITask::MAX_THREAD_NAME + 1];
 };
 
+// On-disk width of UiHistoryMsg::sender, FROZEN at what v6 blobs were written with.
+// Deliberately NOT tied to UITask::MAX_SENDER_NAME: `sender` sits between `thread` and
+// `text`, so growing it in place shifts `text` for every already-stored record. Nothing
+// detects that — the segment loader validates only magic/version/rec_size, so an old
+// record would prefix-read into the new offsets and every message would silently lose
+// the first bytes of its body. A sender too long for this field spills into
+// UiSegMsg::sender_ext instead (see SenderExtField.h).
+constexpr int k_ui_disk_sender_len = 25;   // == the historical MAX_SENDER_NAME + 1
+
 struct __attribute__((packed)) UiHistoryMsg {
   uint32_t ts;
   uint8_t channel;
@@ -328,7 +343,7 @@ struct __attribute__((packed)) UiHistoryMsg {
   int8_t  snr_q4;
   int8_t  rssi;
   char thread[UITask::MAX_THREAD_NAME + 1];
-  char sender[UITask::MAX_SENDER_NAME + 1];
+  char sender[k_ui_disk_sender_len];
   char text[UITask::MAX_MSG_TEXT + 1];
   // Append any FUTURE fields HERE (after text) and bump k_ui_history_version.
   // The v5+ loader zero-fills appended fields for older blobs, so appending
@@ -392,7 +407,27 @@ struct __attribute__((packed)) UiSegHeader {
 struct __attribute__((packed)) UiSegMsg {
   UiHistoryMsg m;
   uint32_t     seq;
+  // Names run to 31 chars on the wire (MeshCore's ContactInfo::name[32]) but m.sender
+  // freezes at the 24 the v6 record was written with. The tail lives HERE, appended at
+  // the very end — after seq, not inside m — so every pre-existing field keeps its
+  // offset and the min(rec_size) prefix read stays correct in BOTH directions: an old
+  // 233-byte record zero-fills this and yields its original short name, and an older
+  // firmware reading this 240-byte record copies the first 233 bytes and ignores the
+  // tail (the name falls back to 24 chars, nothing else changes). That is why
+  // k_ui_seg_version STAYS 1 — bumping it would make that older firmware reject the
+  // file outright (uiSegOpenValidated rejects version > k_ui_seg_version) and quarantine
+  // a perfectly readable history. Split/rejoin lives in SenderExtField.h.
+  char         sender_ext[UITask::MAX_SENDER_NAME + 1 - k_ui_disk_sender_len];
 };
+
+// Pin what an ALREADY-WRITTEN record's reader depends on. These are offsets, not the total
+// size, precisely because appending further fields at the tail stays safe — what must never
+// move is anything a v6-era record already holds, since nothing on the read path would
+// detect the shift. Growing the record past these offsets is fine; moving them is not.
+static_assert(sizeof(UiHistoryMsg) == 229, "v6 record layout changed — old blobs would mis-read");
+static_assert(offsetof(UiSegMsg, seq) == 229, "seq moved — old segments would mis-read");
+static_assert(offsetof(UiSegMsg, sender_ext) == 233,
+              "the appended tail must start where the old record ended, or old segments mis-read");
 } // namespace
 #endif
 
@@ -45288,7 +45323,7 @@ static void openBlockedUsersModal() {
     for (int j = 0; j < nc; ++j) {
       if (the_mesh.getContactByIdx((uint32_t)j, c) &&
           memcmp(c.id.pub_key, pub6, TOUCH_IGNORE_KEY_BYTES) == 0) {
-        snprintf(nm, sizeof nm, "%.24s", c.name); named = true; break;
+        snprintf(nm, sizeof nm, "%.31s", c.name); named = true; break;   // full name width
       }
     }
     if (!named) snprintf(nm, sizeof nm, "%02X%02X%02X%02X%02X%02X",
@@ -45337,7 +45372,7 @@ static void openBlockedUsersModal() {
 
     lv_obj_t* lbl = lv_label_create(row);
     char shown[40];
-    snprintf(shown, sizeof shown, "%.24s", nm);   // name-only entry
+    snprintf(shown, sizeof shown, "%.31s", nm);   // name-only entry, full name width
     lv_label_set_text(lbl, shown);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, sw - 16 - 96);
@@ -49302,8 +49337,8 @@ bool UITask::loadMsgsFromStorage() {
     d.rssi       = m.rssi;
     strncpy(d.thread, m.thread, MAX_THREAD_NAME);
     d.thread[MAX_THREAD_NAME] = '\0';
-    strncpy(d.sender, m.sender, MAX_SENDER_NAME);
-    d.sender[MAX_SENDER_NAME] = '\0';
+    strncpy(d.sender, m.sender, sizeof(m.sender) - 1);   // source is the frozen disk width
+    d.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(d.text, m.text, MAX_MSG_TEXT);
     d.text[MAX_MSG_TEXT] = '\0';
   }
@@ -49623,8 +49658,8 @@ bool UITask::loadLegacyHistoryFromStorage() {
       _ui_msgs[i].rssi       = m.rssi;
       strncpy(_ui_msgs[i].thread, m.thread, MAX_THREAD_NAME);
       _ui_msgs[i].thread[MAX_THREAD_NAME] = '\0';
-      strncpy(_ui_msgs[i].sender, m.sender, MAX_SENDER_NAME);
-      _ui_msgs[i].sender[MAX_SENDER_NAME] = '\0';
+      strncpy(_ui_msgs[i].sender, m.sender, sizeof(m.sender) - 1);   // frozen disk width
+      _ui_msgs[i].sender[sizeof(m.sender) - 1] = '\0';
       strncpy(_ui_msgs[i].text, m.text, MAX_MSG_TEXT);
       _ui_msgs[i].text[MAX_MSG_TEXT] = '\0';
     } else {
@@ -49842,8 +49877,8 @@ static void uiSegMarshal(const UITask::UIMessage& s, UiSegMsg* d) {
   d->m.rssi       = s.rssi;
   strncpy(d->m.thread, s.thread, sizeof(d->m.thread) - 1);
   d->m.thread[sizeof(d->m.thread) - 1] = '\0';
-  strncpy(d->m.sender, s.sender, sizeof(d->m.sender) - 1);
-  d->m.sender[sizeof(d->m.sender) - 1] = '\0';
+  SenderExtField::store(s.sender, d->m.sender, sizeof(d->m.sender),
+                        d->sender_ext, sizeof(d->sender_ext));
   strncpy(d->m.text, s.text, sizeof(d->m.text) - 1);
   d->m.text[sizeof(d->m.text) - 1] = '\0';
   d->seq = s.seq;
@@ -50041,8 +50076,9 @@ static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint
   out->rssi       = rec.m.rssi;
   strncpy(out->thread, rec.m.thread, UITask::MAX_THREAD_NAME);
   out->thread[UITask::MAX_THREAD_NAME] = '\0';
-  strncpy(out->sender, rec.m.sender, UITask::MAX_SENDER_NAME);
-  out->sender[UITask::MAX_SENDER_NAME] = '\0';
+  SenderExtField::load(rec.m.sender, sizeof(rec.m.sender),
+                       rec.sender_ext, sizeof(rec.sender_ext),
+                       out->sender, sizeof(out->sender));
   strncpy(out->text, rec.m.text, UITask::MAX_MSG_TEXT);
   out->text[UITask::MAX_MSG_TEXT] = '\0';
   out->seq = rec.seq;
