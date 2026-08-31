@@ -32,6 +32,11 @@ About the map	Σχετικά με τον χάρτη
 Accent popups	Αναδυόμενα τόνων
 Accent popups: off	Αναδυόμενα τόνων: όχι
 Accent popups: on	Αναδυόμενα τόνων: ναι
+Accent colour	Χρώμα έμφασης
+Appearance	Εμφάνιση
+Day	Ημέρα
+Night	Νύχτα
+Theme save failed	Αποτυχία αποθήκευσης θέματος
 Ack	Ack
 Active	Ενεργό
 Add	Προσθήκη
@@ -845,7 +850,6 @@ Temperature	Θερμοκρασία
 Test builds: off	Δοκιμαστικά builds: off
 Test builds: on	Δοκιμαστικά builds: on
 Theme	Θέμα
-Theme colour	Χρώμα θέματος
 Then pick a mode:	Μετά επιλέξτε λειτουργία:
 This contact hasn't shared\na GPS position.	Αυτή η επαφή δεν μοιράστηκε\nθέση GPS.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Αυτή η συσκευή μπορεί να χρησιμοποιεί Wi-Fi και Bluetooth ταυτόχρονα, ως αυτόνομος πομποδέκτης και συνοδός τηλεφώνου (εφαρμογή MeshCore).\n\nΚαι τα δύο μαζί χρησιμοποιούν περισσότερη RAM, οπότε ενεργοποιήστε μόνο ό,τι χρειάζεστε.\n\nΡυθμίστε τα οποτεδήποτε στις Ρυθμίσεις.

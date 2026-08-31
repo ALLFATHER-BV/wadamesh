@@ -22,6 +22,7 @@ static Config safeDefaults() {
   c.hist_per_chat = 250;
   c.p4_antenna = 0;
   c.retry_echo = 1;
+  c.theme_mode = 0;
   return c;
 }
 
@@ -29,7 +30,9 @@ int main() {
   constexpr size_t v43_size = offsetof(Config, retry_echo);
   constexpr size_t suffix_offset = offsetof(Config, web_mirror);
   constexpr size_t v43_suffix_size = v43_size - suffix_offset;
-  static_assert(v43_size + 1 == sizeof(Config), "v45 must append exactly one byte");
+  static_assert(offsetof(Config, retry_echo) ==
+                    offsetof(Config, p4_antenna) + sizeof(Config::p4_antenna),
+                "v45 retry field moved");
 
   // A v43 blob has the current layout minus the newly appended retry byte.
   // Every established field must survive byte-for-byte and retry defaults on.
@@ -85,16 +88,37 @@ int main() {
                 reinterpret_cast<const uint8_t*>(&defaults) + suffix_offset,
                 sizeof(Config) - suffix_offset) == 0);  // ambiguous suffix fails safe
 
-  // Once rewritten as v45, the whole structure is authoritative, including an
-  // explicit retry opt-out and a deliberately enabled Remote Mode.
+  // Once rewritten as v45, every field through retry_echo is authoritative;
+  // fields appended by later versions retain their safe defaults.
+  constexpr size_t v45_size = offsetof(Config, app_hide);
   Config v45 = safeDefaults();
+  v45.ver = 45;
   v45.remote_mode = 1;
   v45.remote_landscape = 0;
   v45.retry_echo = 0;
   migrated = safeDefaults();
-  assert(TouchPrefsSchema::overlayStored(migrated, &v45, sizeof(v45), &stored_version));
+  assert(TouchPrefsSchema::overlayStored(migrated, &v45, v45_size, &stored_version));
   assert(stored_version == 45);
-  assert(memcmp(&migrated, &v45, sizeof(v45)) == 0);
+  assert(migrated.remote_mode == 1);
+  assert(migrated.remote_landscape == 0);
+  assert(migrated.retry_echo == 0);
+  assert(migrated.app_hide == safeDefaults().app_hide);
+  assert(migrated.theme_mode == 0);
+
+  // v54 appends only theme_mode. A v53 blob preserves every older field and
+  // leaves the new byte at the caller-provided Night default.
+  constexpr size_t v53_size = offsetof(Config, theme_mode);
+  static_assert(v53_size + sizeof(Config::theme_mode) == sizeof(Config),
+                "v54 theme field must remain last");
+  Config v53 = safeDefaults();
+  v53.ver = 53;
+  v53.kb_force_legacy = 1;
+  v53.theme_mode = 1;   // outside the stored v53 extent
+  migrated = safeDefaults();
+  assert(TouchPrefsSchema::overlayStored(migrated, &v53, v53_size, &stored_version));
+  assert(stored_version == 53);
+  assert(migrated.kb_force_legacy == 1);
+  assert(migrated.theme_mode == 0);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};

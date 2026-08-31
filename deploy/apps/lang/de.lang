@@ -32,6 +32,11 @@ About the map	Über die Karte
 Accent popups	Akzent-Popups
 Accent popups: off	Akzent-Popups: aus
 Accent popups: on	Akzent-Popups: ein
+Accent colour	Akzentfarbe
+Appearance	Erscheinungsbild
+Day	Tag
+Night	Nacht
+Theme save failed	Design konnte nicht gespeichert werden
 Ack	Ack
 Active	Aktiv
 Add	Hinzufügen
@@ -841,7 +846,6 @@ Temperature	Temperatur
 Test builds: off	Test-Builds: aus
 Test builds: on	Test-Builds: an
 Theme	Thema
-Theme colour	Themenfarbe
 Then pick a mode:	Dann einen Modus wählen:
 This contact hasn't shared\na GPS position.	Dieser Kontakt hat keine\nGPS-Position geteilt.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Dieses Gerät kann Wi-Fi und Bluetooth gleichzeitig als eigenständiges Funkgerät und Telefon-Begleiter (MeshCore-App) betreiben.\n\nBeides gleichzeitig braucht mehr RAM, aktiviere also nur, was du brauchst.\n\nJederzeit in den Einstellungen einrichtbar.

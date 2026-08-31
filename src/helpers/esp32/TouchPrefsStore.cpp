@@ -39,6 +39,7 @@ static const char* KEY_CFG = "cfg";
 static const uint16_t TOUCH_CFG_MAGIC = TouchPrefsSchema::MAGIC;
 static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v2 sig_probe/poll; v3 tz_zone; v4 hide_node_name; v5 map_night/map_zoom; v6 map text/marker visibility; v7 app_grid_large; v8 ui_scale; v9 tb_keypad; v10 sleep_idle; v11 nav_keys; v12 map_zoom_buttons; v13 nav_dir_keys; v14 home_is_drawer; v15 kbd_nav default ON (one-time migrate); v16 nav_scroll_keys; v17 notify_new_contact; v18 kbd_nav OFF by default (reverses v15; T-Deck/V4 only, Tanmatsu stays on); v19 show_sensors_tab; v20 map_show_links; v21 map_style (0=OSM default, 1=OpenTopoMap); v22 tb_nav; v23 scope_direct (opt-in: scope direct/login floods to the region); v24 tb_nav default OFF (experimental); v25 fem_lna (Heltec V4.3 high-gain FEM LNA, opt-in); v26 msg_flash (flash keyboard backlight + wake screen on a new message, opt-in); v27 flood_adv_hrs + local_adv_min (periodic self-advert intervals, the standard MeshCore flood/local advert on a timer); v28 beta_updates (opt-in to test/beta firmware on the OTA update check + install); v29 ui_scale default -> Large/150% (Tanmatsu; bumps the old 100% default, leaves an explicit Large/Huge choice); v30 boot_advert (opt-in one-shot flood self-advert ~6s after boot, all boards, #76); v31 compact_chat (opt-in IRC-style dense chat rows instead of bubbles); v32 clock_floor (highest epoch handed out — monotonic send-timestamp floor across reboots, #89); v33 rx_queue (buffered LoRa receive: drain task + packet ring, experimental, default OFF); v34 web_mirror (web control panel: mirror the live UI to a phone browser + inject taps, opt-in, default OFF); v35 remote_mode (render the UI off-screen at a web resolution instead of the panel; boot mode, default OFF); v36 remote_landscape (remote mode orientation: landscape 800x480 vs portrait 480x800); v37 remote_landscape now defaults ON (remote mode = landscape/desktop by default; one-time flip of existing installs, portrait stays a toggle); v38 web_terminal (web mesh CLI terminal served on the device IP; runtime toggle, mutually exclusive with VNC, default OFF); v40 hist_sync_after (chat-history flush: consecutive off-thread write failures before the blocking loop-task fallback, 0 = never); v41 p4_antenna (T-Display P4 antenna select; now RESERVED/unused - the choice is session-only so every boot comes up on the on-board antenna); v42 hist_per_chat (max stored messages PER chat, default 250 - a busy public channel used to be able to fill the whole shared ring and drag the UI down); v43 Pager UI-size presets (reset the previously ignored large-screen default to Small once); v44 broken retry_echo mid-struct insertion; v45 moves retry_echo to the actual tail and resets the ambiguous v44 suffix; v46 app_hide; v47 MQTT hidden by default; v48 lang_file; v49 fem_lna default ON on the V4-R8 (KCT8103L FEM; one-time flip of existing installs, no new field); v50 map_show_tilexyz default OFF (tile z/x/y line hidden; one-time flip, no new field)
 
+// v54 appends theme_mode (Night by default).
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
 static const uint8_t  DEFAULT_BRIGHTNESS       = 100;
@@ -136,6 +137,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
   c.console_monitor   = 1;      // ON: the console shows messages as they arrive
   c.kb_force_legacy   = 0;      // OFF: detect the keyboard protocol automatically
+  c.theme_mode        = 0;      // Night: preserves the existing firmware appearance
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
@@ -834,6 +836,19 @@ bool touchPrefsSetAccentColor(uint32_t rgb) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.accent = rgb & 0xFFFFFFu;
   return cfgFlush();
+}
+
+uint8_t touchPrefsGetThemeMode() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.theme_mode == TOUCH_THEME_DAY ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT;
+}
+bool touchPrefsSetThemeMode(uint8_t mode) {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t old_mode = s_cfg.theme_mode;
+  s_cfg.theme_mode = mode == TOUCH_THEME_DAY ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT;
+  if (cfgFlush()) return true;
+  s_cfg.theme_mode = old_mode;
+  return false;
 }
 
 // Quick-reply macros. Stored as NVS strings keyed "qr0".."qr5".
