@@ -19566,6 +19566,14 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_size(home, 40, 28);
   lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, 4);
   styleButton(home);
+#if !defined(HAS_TANMATSU)
+  if (s_theme_day) {
+    lv_obj_set_style_bg_color(home, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(home, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+  }
+#endif
   lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* hl = lv_label_create(home);
   useChainedFont(hl);
@@ -19574,6 +19582,7 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
 #else
   lv_label_set_text(hl, LV_SYMBOL_HOME);
+  if (s_theme_day) lv_obj_set_style_text_font(hl, &g_font_16, LV_PART_MAIN);
 #endif
   lv_obj_center(hl);
   lv_obj_move_foreground(home);
