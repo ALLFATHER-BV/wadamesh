@@ -267,6 +267,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 57) s_cfg.lock_always_on = 1;   // v57: always-on lock screen ON by default (was OFF)
         if (stored_version < 58) { s_cfg.auto_theme_sun = 0; s_cfg.auto_aod_sun = 0; }  // v58: sun auto-theme/AOD fields added (were off)
         if (stored_version < 59) { s_cfg.auto_theme_sun = 1; s_cfg.auto_aod_sun = 1; }  // v59: flip to ON for existing users
+        if (stored_version < 60) s_cfg.kb_force_legacy = 0;  // v60: kb protocol override, default auto-detect
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
