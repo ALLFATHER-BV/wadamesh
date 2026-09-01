@@ -11,6 +11,11 @@
 // and show only the body underneath.
 namespace ChannelSenderSplit {
 
+// The widest author a channel post can legitimately name. MeshCore keeps every
+// name in a char[32] (ContactInfo::name, ChannelDetails::name,
+// NodePrefs::node_name), so 31 characters is the whole wire width.
+constexpr size_t kMaxWireName = 31;
+
 // Copies the embedded author into `sender_out` (always NUL-terminated, empty when
 // there is nothing to split) and returns the start of the body — `text` itself
 // when the string carries no author prefix.
@@ -19,6 +24,13 @@ namespace ChannelSenderSplit {
 // run to 31 chars while UIMessage::sender holds 24, and refusing the split for
 // the overflowing ones is what put the channel name in the bubble header and left
 // "nick: message" in the body.
+//
+// A prefix wider than kMaxWireName is a different thing entirely and IS rejected:
+// no name can be that long, so the ": " belongs to an unprefixed message ("the
+// repeater at Ouderkerk: it works"). Splitting there would invent an author and
+// hide the start of the body. That plausibility check is what the old
+// `slen <= MAX_SENDER_NAME` test provided; it has to be the WIRE width and not
+// the destination width, or a long real name gets rejected all over again.
 //
 // A truncated name ends in "..." (ASCII, like chatFitLeadingEllipsis — the baked
 // fonts carry no U+2026), so a cut name reads as cut rather than as a different
@@ -31,6 +43,7 @@ inline const char* split(const char* text, char* sender_out, size_t sender_cap) 
 
   const char* colon = strstr(text, ": ");
   if (!colon || colon == text) return text;
+  if (static_cast<size_t>(colon - text) > kMaxWireName) return text;   // not a name — see above
 
   static const char kEllipsis[] = "...";
   const size_t kEllipsisLen = sizeof(kEllipsis) - 1;

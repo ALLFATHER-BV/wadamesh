@@ -128,6 +128,11 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+// The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
+// must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
+// stores fine gets rejected as implausible and the author lands back in the body.
+static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAME,
+              "the split would reject a name UIMessage::sender can hold");
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>

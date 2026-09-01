@@ -49,6 +49,30 @@ int main() {
   assert(strcmp(sender, "123456789012345678901...") == 0);
   assert(strcmp(body, "body") == 0);
 
+  // The widest name the wire can carry (31) still splits — truncated to the
+  // 24-char field with the marker, but the author is out of the body.
+  const char* widest = "1234567890123456789012345678901: body";
+  assert(strlen(widest) == 37);
+  body = ChannelSenderSplit::split(widest, sender, sizeof sender);
+  assert(strcmp(sender, "123456789012345678901...") == 0);
+  assert(strcmp(body, "body") == 0);
+
+  // One char PAST the wire width is not a name at all — no node can be called
+  // this — so the ": " belongs to the message. Leave the text whole rather than
+  // inventing an author and hiding the start of the body.
+  const char* not_a_name = "12345678901234567890123456789012: body";
+  assert(strlen(not_a_name) == 38);
+  body = ChannelSenderSplit::split(not_a_name, sender, sizeof sender);
+  assert(sender[0] == '\0');
+  assert(body == not_a_name);
+
+  // The realistic shape of that: an unprefixed post whose body just happens to
+  // contain ": ". It must survive intact.
+  const char* prose = "the repeater at Ouderkerk is back up: full quieting again";
+  body = ChannelSenderSplit::split(prose, sender, sizeof sender);
+  assert(sender[0] == '\0');
+  assert(body == prose);
+
   // Destination too small to hold a marker: truncate plainly rather than
   // spending the whole label on dots.
   char tiny[5];
