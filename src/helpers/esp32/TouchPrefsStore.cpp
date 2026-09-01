@@ -1750,9 +1750,11 @@ static bool s_ign_names_migrated = false;
 
 static void ignNamesMigrateV1() {
   if (s_ign_names_migrated) return;
-  s_ign_names_migrated = true;
   if (!s_begun) touchPrefsBegin();
-  if (s_prefs.isKey(KEY_IGN_NAMES) || !s_prefs.isKey(KEY_IGN_NAMES_V1)) return;
+  if (s_prefs.isKey(KEY_IGN_NAMES) || !s_prefs.isKey(KEY_IGN_NAMES_V1)) {
+    s_ign_names_migrated = true;   // nothing to fold in, now or on any later call
+    return;
+  }
 
   char old_buf[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGN_NAME_LEN_V1];
   size_t n = s_prefs.getBytes(KEY_IGN_NAMES_V1, old_buf, sizeof(old_buf));
@@ -1767,12 +1769,20 @@ static void ignNamesMigrateV1() {
   }
 
   s_prefs.end();
+  bool ok = false;
   if (s_prefs.begin(TOUCH_NS, false)) {
-    if (count > 0) s_prefs.putBytes(KEY_IGN_NAMES, buf, (size_t)(count * TOUCH_IGNORED_NAME_LEN));
-    s_prefs.remove(KEY_IGN_NAMES_V1);   // drop the old key either way: it can only mis-read now
+    ok = (count == 0) ||
+         s_prefs.putBytes(KEY_IGN_NAMES, buf, (size_t)(count * TOUCH_IGNORED_NAME_LEN)) > 0;
+    if (ok) s_prefs.remove(KEY_IGN_NAMES_V1);   // only once the new key actually holds the list
     s_prefs.end();
   }
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  // Latch on SUCCESS only. Latching a failed fold would leave the list reading empty for
+  // the rest of the boot — every block silently stops firing — and the next Block tap
+  // would then write a fresh ign_nm2 that orphans every old entry for good. Retrying
+  // costs the two key lookups per message the latch exists to avoid, but only while the
+  // store is already refusing writes.
+  s_ign_names_migrated = ok;
 }
 
 static int ignNamesReadAll(char out[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN]) {
