@@ -41,7 +41,7 @@ static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v
 
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
-static const uint8_t  DEFAULT_BRIGHTNESS       = 100;
+static const uint8_t  DEFAULT_BRIGHTNESS       = 70;   // 70%: saves ~15 mA vs 100% on first boot
 static const uint8_t  DEFAULT_KB_BL            = 2;          // auto
 static const uint8_t  DEFAULT_KB_LAYOUT        = 0;          // English
 static const uint8_t  DEFAULT_KB_SECONDARY     = 0;          // None
@@ -176,6 +176,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.lock_always_on    = 1;          // ON: always-on dim lock screen by default (v57)
   c.lock_msg_preview  = 1;          // ON: show message preview card on lock screen
   c.lock_dim_pct      = 8;          // 8% — readable but low power
+  c.auto_theme_sun    = 1;          // v59: sun auto-theme ON by default
+  c.auto_aod_sun      = 1;          // v59: sun auto-AOD brightness ON by default
 }
 
 // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -262,6 +264,8 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 55) s_cfg.lock_dim_pct = 8;      // v55: always-on dim brightness, default 8%
         if (stored_version < 56) s_cfg.sleep_idle = 1;        // v56: idle sleep ON by default (was OFF)
         if (stored_version < 57) s_cfg.lock_always_on = 1;   // v57: always-on lock screen ON by default (was OFF)
+        if (stored_version < 58) { s_cfg.auto_theme_sun = 0; s_cfg.auto_aod_sun = 0; }  // v58: sun auto-theme/AOD fields added (were off)
+        if (stored_version < 59) { s_cfg.auto_theme_sun = 1; s_cfg.auto_aod_sun = 1; }  // v59: flip to ON for existing users
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -609,6 +613,57 @@ bool touchPrefsSetChannelScope(int slot, const char* name) {
   s_prefs.end();
   if (!s_prefs.begin(TOUCH_NS, false)) return false;
   bool ok = s_prefs.putString(k, name ? name : "") > 0;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+static const char* KEY_LOCK_PIN  = "lk_pin";
+
+void touchPrefsGetLockPin(char* out, int out_cap) {
+  if (!out || out_cap <= 0) return;
+  out[0] = '\0';
+  if (!s_begun) touchPrefsBegin();
+  String v = prefsGetStr(KEY_LOCK_PIN, String(""));
+  int n = (int)v.length();
+  if (n > out_cap - 1) n = out_cap - 1;
+  memcpy(out, v.c_str(), (size_t)n);
+  out[n] = '\0';
+}
+
+bool touchPrefsSetLockPin(const char* pin) {
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok = s_prefs.putString(KEY_LOCK_PIN, pin ? pin : "") > 0;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
+static const char* KEY_APPSTORE_URL = "as_url";
+static const char* DEFAULT_APPSTORE_URL = "http://firmware.wadamesh.com/apps";
+
+void touchPrefsGetAppStoreUrl(char* out, int out_cap) {
+  if (!out || out_cap <= 0) return;
+  if (!s_begun) touchPrefsBegin();
+  String v = prefsGetStr(KEY_APPSTORE_URL, String(""));
+  if (v.length() == 0) {
+    strncpy(out, DEFAULT_APPSTORE_URL, out_cap - 1);
+    out[out_cap - 1] = '\0';
+    return;
+  }
+  int n = (int)v.length();
+  if (n > out_cap - 1) n = out_cap - 1;
+  memcpy(out, v.c_str(), n);
+  out[n] = '\0';
+}
+
+bool touchPrefsSetAppStoreUrl(const char* url) {
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok = s_prefs.putString(KEY_APPSTORE_URL, url ? url : "") > 0;
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return ok;
@@ -1893,6 +1948,10 @@ bool    touchPrefsGetLockMsgPreview()  { if (!s_begun) touchPrefsBegin(); return
 void    touchPrefsSetLockMsgPreview(bool on)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_msg_preview  = on?1:0; cfgFlush(); }
 uint8_t touchPrefsGetLockDimPct()     { if (!s_begun) touchPrefsBegin(); uint8_t v = s_cfg.lock_dim_pct; return (v < 1) ? 1 : (v > 100) ? 100 : v; }
 void    touchPrefsSetLockDimPct(uint8_t pct)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_dim_pct = (pct < 1) ? 1 : (pct > 100) ? 100 : pct; cfgFlush(); }
+bool    touchPrefsGetAutoThemeSun()   { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_theme_sun != 0; }
+void    touchPrefsSetAutoThemeSun(bool on) { if (!s_begun) touchPrefsBegin(); s_cfg.auto_theme_sun = on ? 1 : 0; cfgFlush(); }
+bool    touchPrefsGetAutoAodSun()     { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_aod_sun  != 0; }
+void    touchPrefsSetAutoAodSun(bool on)   { if (!s_begun) touchPrefsBegin(); s_cfg.auto_aod_sun  = on ? 1 : 0; cfgFlush(); }
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON

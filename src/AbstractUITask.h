@@ -113,10 +113,11 @@ public:
    *  full); `is_new=false` means the contact is in contacts[] and was just
    *  updated. Used by the touch UI to build a "Discovered" list of pending
    *  contacts when auto-add is off. Default impl is a no-op. */
-  virtual void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
+  virtual void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len, int8_t snr_q4 = -128) {
     (void)contact;
     (void)is_new;
     (void)path_len;
+    (void)snr_q4;
   }
   /** Notify UI of a status response from a repeater that was pinged from the
    *  UI side (e.g. via the Contacts action sheet). `data`/`len` is the raw

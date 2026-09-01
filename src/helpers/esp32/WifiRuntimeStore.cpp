@@ -207,17 +207,12 @@ void wifiScanSetActive(bool active) { s_wifi_scan_active = active; }
 bool wifiScanIsActive() { return s_wifi_scan_active; }
 
 void wifiConfigApply() {
-#if defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
-  // Multi-transport targets serialize apply and worker scans in main.cpp. The
-  // Pager additionally releases/recreates NimBLE around WPA. Calling
-  // disconnect()/begin() directly here bypasses both ownership contracts.
+#if defined(MULTI_TRANSPORT_COMPANION) || defined(HAS_TANMATSU)
+  // Multi-transport and Tanmatsu targets both have a WiFi state machine in their
+  // main loop that owns disconnect()/begin(). Calling those directly here races
+  // with that machine (and on Tanmatsu can crash the esp-hosted C6 link).
   wifiConfigRequestApply();
   return;
-#endif
-#if defined(HAS_TANMATSU)
-  printf("[WIFI] apply radio_en=%d hasRuntime=%d mode=%d status=%d\n",
-         (int)wifiConfigGetRadioEnabled(), (int)wifiConfigHasRuntime(),
-         (int)WiFi.getMode(), (int)WiFi.status());
 #endif
   if (!wifiConfigGetRadioEnabled()) {
     WiFi.disconnect(true);

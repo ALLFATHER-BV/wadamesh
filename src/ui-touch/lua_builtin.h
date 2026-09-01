@@ -1815,6 +1815,30 @@ end
 
 return app
 )WADALUA";
+static const char kLuaSrc_helloworld[] = R"WADALUA(-- Hello World — minimal Lua app to verify the app host is working.
+local ui, sys = wada.ui, wada.sys
+local C = ui.colors
+local app = {}
+
+local lbl, sub
+
+function app.on_open(w, h)
+  lbl = ui.label(0, h / 2 - 20, w, 30)
+  lbl:set("Hello, World!")
+  lbl:color(C.accent)
+  lbl:align("center")
+
+  sub = ui.label(0, h / 2 + 16, w, 20)
+  sub:set("Lua app host is working  \xE2\x80\x94  " .. (sys.board() or ""))
+  sub:color(C.sub)
+  sub:align("center")
+end
+
+function app.on_close()
+end
+
+return app
+)WADALUA";
 
 static const LuaBuiltinApp kLuaBuiltin[] = {
   { "monitor", "RF Monitor", "1.3", kLuaSrc_monitor },
@@ -1824,5 +1848,6 @@ static const LuaBuiltinApp kLuaBuiltin[] = {
   { "2048", "2048", "1.2", kLuaSrc_2048 },
   { "wardrive", "Wardrive", "1.1", kLuaSrc_wardrive },
   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },
+  { "helloworld", "Hello World", "1.0", kLuaSrc_helloworld },
 };
 static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));

@@ -203,9 +203,9 @@ bool    touchPrefsSetBootAdvert(bool on);
 bool    touchPrefsGetCompactChat();
 bool    touchPrefsSetCompactChat(bool on);
 
-/* Buffered LoRa receive (experimental): a high-priority drain task lifts each packet
- * out of the radio within ~1 ms so UI-thread stalls can't overwrite unread packets
- * (the missed-messages class). Opt-in, default off = stock receive path. */
+/* Buffered LoRa receive: a high-priority drain task lifts each packet out of the
+ * radio within ~1 ms so UI-thread stalls can't overwrite unread packets
+ * (the missed-messages class). Default ON. */
 bool    touchPrefsGetRxQueue();
 bool    touchPrefsSetRxQueue(bool on);
 uint32_t touchPrefsGetAppHide();       // v46: app-drawer hide bitmask (Store page toggles)
@@ -471,6 +471,10 @@ bool    touchPrefsGetLockMsgPreview();         // show message preview card on l
 void    touchPrefsSetLockMsgPreview(bool on);
 uint8_t touchPrefsGetLockDimPct();             // always-on dim brightness 1..100% (default 8)
 void    touchPrefsSetLockDimPct(uint8_t pct);
+bool    touchPrefsGetAutoThemeSun();           // v58: auto dark/light theme by sunrise/sunset (applied at boot)
+void    touchPrefsSetAutoThemeSun(bool on);
+bool    touchPrefsGetAutoAodSun();             // v58: auto AOD brightness 6% night / 15% day (live)
+void    touchPrefsSetAutoAodSun(bool on);
 
 /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
  *  mute @-mentions. Suppresses the notification SOUND for that channel (the
@@ -524,6 +528,17 @@ constexpr int TOUCH_REPEATER_PW_KEY_LEN = 6;
 constexpr int TOUCH_REPEATER_PW_LEN     = 16;   // 15 chars + null
 int  touchPrefsGetRepeaterPassword(const uint8_t* pub_key6, char* out, int out_cap);
 bool touchPrefsSetRepeaterPassword(const uint8_t* pub_key6, const char* password);
+
+/** Lock-screen PIN. Empty string = no PIN (default). Max 16 alphanumeric chars (a-z, 0-9). */
+constexpr int TOUCH_LOCK_PIN_MAXLEN = 17;   // 16 chars + null
+void touchPrefsGetLockPin(char* out, int out_cap);
+bool touchPrefsSetLockPin(const char* pin);
+
+/** Custom App Store base URL. Empty = use the built-in default (firmware.wadamesh.com/apps).
+ *  Must NOT have a trailing slash. Max 127 chars. */
+constexpr int TOUCH_APPSTORE_URL_MAXLEN = 128;
+void touchPrefsGetAppStoreUrl(char* out, int out_cap);
+bool touchPrefsSetAppStoreUrl(const char* url);
 
 /** Lock-screen wallpaper. Either an internal SPIFFS path (e.g.
  *  "/lock/placeholder.jpg") or an SD-card path prefixed with "sd:" (e.g.

@@ -160,6 +160,7 @@ private:
   bool _gps_had_fix = false;
   double _gps_saved_lat = 0.0, _gps_saved_lon = 0.0;
   unsigned long _gps_next_persist_ms = 0;
+  bool _gps_paused_for_aod = false;  // true while GPS is temporarily halted for screen-off/AOD power saving
   void updateGpsLocation(unsigned long now);
   char _alert[80];
   unsigned long _alert_expiry;
@@ -593,7 +594,7 @@ public:
   void appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp = 0) override;
   void notify(UIEventType t = UIEventType::none) override;
   void logRxFrame(float snr, float rssi, const uint8_t* raw, int len) override;
-  void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) override;
+  void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len, int8_t snr_q4 = -128) override;
   void onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
   void onTelemetryReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
   void onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) override;

@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 57;   // ...v55: lock_dim_pct; v56: sleep_idle default ON; v57: lock_always_on default ON   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
+static constexpr uint8_t CURRENT_VERSION = 59;   // ...v55: lock_dim_pct; v56: sleep_idle default ON; v57: lock_always_on default ON; v58: auto_theme_sun + auto_aod_sun; v59: auto_theme_sun + auto_aod_sun default ON   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -94,6 +94,9 @@ struct __attribute__((packed)) Config {
   uint8_t  lock_always_on;      // always-on: dim instead of screen-off (default 0)
   uint8_t  lock_msg_preview;    // v54: show message preview card on lock screen (default 1)
   uint8_t  lock_dim_pct;        // v55: always-on dim brightness 1..100% (default 8)
+  // v58: automatic day/night theme + AOD brightness driven by local sunrise/sunset
+  uint8_t  auto_theme_sun;      // 0=off, 1=on: switch theme at sunrise/sunset (applied at boot)
+  uint8_t  auto_aod_sun;        // 0=off, 1=on: AOD dim 6% night / 15% day (live, follows sun)
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -101,8 +104,14 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct) == sizeof(Config),
+static_assert(offsetof(Config, auto_aod_sun) + sizeof(Config::auto_aod_sun) == sizeof(Config),
               "new preference fields must remain trailing");
+static_assert(offsetof(Config, auto_theme_sun) ==
+                  offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct),
+              "auto_theme_sun must follow lock_dim_pct");
+static_assert(offsetof(Config, auto_aod_sun) ==
+                  offsetof(Config, auto_theme_sun) + sizeof(Config::auto_theme_sun),
+              "auto_aod_sun must follow auto_theme_sun");
 static_assert(offsetof(Config, lock_msg_preview) ==
                   offsetof(Config, lock_always_on) + sizeof(Config::lock_always_on),
               "lock_msg_preview must follow lock_always_on");

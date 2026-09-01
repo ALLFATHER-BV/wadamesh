@@ -1,0 +1,27 @@
+# beta_74 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Emoji picker -------------------------------------------------------------------------------
+The emoji picker now has a category tab bar at the top with 11 categories (smileys, people, nature, food, travel, activities, objects, symbols, flags, and more). Tapping a tab scrolls straight to that section. The full set of 272 built-in Noto glyphs is now available.
+
+# --- Pong game ----------------------------------------------------------------------------------
+Pong is now built in alongside Snake. Both games appear in the app drawer on all boards including T-Deck. The AI paddle adapts to the ball speed; you play with gestures, trackball or keys.
+
+# --- Retro ringtones ----------------------------------------------------------------------------
+Five classic ringtones are now built in: Nokia Grande Valse, Ericsson tri-tone, ICQ Oh-Oh, Mario Coin, and Tetris Theme A. Settings → Sound → Ringtones opens a picker where you can select and preview them.
+
+# --- GPS search timer ---------------------------------------------------------------------------
+The GPS page no longer shows "searching 0m 02s" the moment you open it. The search timer now starts when the GPS receiver actually starts searching, not when you first look at the page.
+
+# --- Lock screen improvements ------------------------------------------------------------------
+The lock screen now shows "Enter PIN to unlock" instead of "hold the trackball to unlock" when a PIN is set.
+Pressing any key on a dark lock screen now lights the keyboard immediately and keeps it on for 10 seconds, so you can see the keys at night while entering your PIN. Each additional keypress extends the window.
+If you start typing your PIN and the screen goes dark before you finish, the field is cleared when you wake the screen again so you start fresh rather than seeing leftover dots.
+Swiping up from the bottom of an open chat now returns to the home screen, the same as it does everywhere else.
+
+# --- Automatic day/night theme -----------------------------------------------------------------
+The automatic theme (sun) and automatic always-on brightness (sun) settings now default to on for new installs and for upgrades from older firmware.
+The firmware now detects and corrects a theme mismatch at runtime, not only at boot, so a device that powered on before GPS or clock data was available will switch to the correct theme once the sun position is known and restart automatically.
+
+# --- For testers -------------------------------------------------------------------------------
+Still open and not fixed here: a map that renders nothing after beta_71, a screen that will not stay dark after a manual lock, and a web flasher that hangs at "wrapping up" on the T-Display P4.

@@ -1386,6 +1386,20 @@ void setup() {
 #endif
   sensors.begin();
 
+#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
+  // Cold-boot standby: if GPS is disabled in prefs, the L76K powers up on the
+  // 3.3V rail and searches satellites forever (~15-20 mA) until told otherwise.
+  // Send the software standby command immediately after sensors.begin() opens
+  // the UART so the module drops to ~500 µA — same as the AOD pause path.
+  {
+    auto* np = the_mesh.getNodePrefs();
+    if (np && !np->gps_enabled) {
+      LocationProvider* lp = sensors.getLocationProvider();
+      if (lp) { lp->begin(); lp->stop(); }   // begin opens UART; stop() sends PMTK161,0 then releases
+    }
+  }
+#endif
+
 #ifdef DISPLAY_CLASS
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
   Serial.println("[BOOT] ui ready");
@@ -1430,9 +1444,12 @@ void loop() {
 #endif
   static bool wifi_started = false;
   static uint32_t last_wifi_retry_ms = 0;
-  static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+  static const uint32_t WIFI_RETRY_INTERVAL_INIT_MS = 10000;
+  static const uint32_t WIFI_RETRY_INTERVAL_MAX_MS  = 300000;  // 5 min cap
+  static uint32_t wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
+  static bool wifi_idled_off = false;   // set by idle-off block below; suppresses the state machine while screen is dark
   /* Run the saved Wi-Fi state machine whenever its radio preference is on.
    * Pager setup separately guarantees that Wi-Fi claims its coexistence
    * resources before a cold BLE start. */
@@ -1554,8 +1571,9 @@ void loop() {
     }
     wifi_started = false;
     last_wifi_retry_ms = 0;
+    wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
   }
-  bool wifi_state_machine_active = wifi_radio_en;
+  bool wifi_state_machine_active = wifi_radio_en && !wifi_idled_off;
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
   wifi_state_machine_active = wifi_state_machine_active && !wifiConfigPagerBleFallbackActive();
 #endif
@@ -1625,8 +1643,10 @@ void loop() {
     // abort the in-flight sweep (the scan-while-connected "0 networks" bug).
     if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED && !wifiScanIsActive()) {
       uint32_t now = millis();
-      if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
+      if ((uint32_t)(now - last_wifi_retry_ms) >= wifi_retry_interval_ms) {
         last_wifi_retry_ms = now;
+        // Exponential backoff: double on each retry, cap at 5 min.
+        wifi_retry_interval_ms = min(wifi_retry_interval_ms * 2, WIFI_RETRY_INTERVAL_MAX_MS);
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
         s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
         s_pager_wifi_ble_deadline_ms = 0;
@@ -1668,6 +1688,7 @@ void loop() {
     static bool sntp_pushed = false;
     static uint32_t sntp_kick_ms = 0;
     if (WiFi.status() == WL_CONNECTED) {
+      wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;  // reset backoff on successful connect
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
       s_pager_wifi_ble_deadline_ms = 0;
@@ -1887,5 +1908,46 @@ void loop() {
 #else
   touchSleep::loopEnd(millis());
 #endif
+#endif
+
+#if defined(MULTI_TRANSPORT_COMPANION) && defined(HAS_TOUCH_UI)
+  // WiFi idle-off: when the screen is off/AOD-locked AND no WiFi companion
+  // client is connected, power down WiFi after a 60-second grace period.
+  // BLE stays up so the companion app can still connect via Bluetooth.
+  // WiFi is restored the moment the screen wakes (wakeScreen triggers a
+  // wifiConfigRequestApply which the state machine above picks up next tick).
+  {
+    static uint32_t s_wifi_idle_since_ms = 0;
+    constexpr uint32_t WIFI_IDLE_GRACE_MS = 60000;
+
+    const bool screen_idle = ui_task.isScreenOff();
+    const bool has_wifi_client = serial_interface.hasWifiCompanionClient();
+
+    if (!screen_idle || has_wifi_client) {
+      // Active: cancel any pending shutdown; restore WiFi if we turned it off.
+      s_wifi_idle_since_ms = 0;
+      if (wifi_idled_off && !wifiScanIsActive()) {
+        wifi_idled_off = false;
+        // Re-arm TCP so startTcpServer() in the block above accepts connections again.
+        serial_interface.enableTcp();
+        // Let the existing WiFi state machine (above, now un-gated) handle
+        // mode(STA) + begin() + SNTP on the next tick.
+        last_wifi_retry_ms = 0;
+        wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
+      }
+    } else {
+      // Screen idle, no WiFi client.
+      if (s_wifi_idle_since_ms == 0) s_wifi_idle_since_ms = millis();
+      if (!wifi_idled_off && wifi_started &&
+          (uint32_t)(millis() - s_wifi_idle_since_ms) >= WIFI_IDLE_GRACE_MS) {
+        wifi_idled_off = true;
+        serial_interface.stopTcpServer();   // drops all TCP/WS clients + sets _tcp_enabled=false
+        WiFi.disconnect(true);
+        delay(50);
+        WiFi.mode(WIFI_OFF);
+        wifi_started = false;
+      }
+    }
+  }
 #endif
 }

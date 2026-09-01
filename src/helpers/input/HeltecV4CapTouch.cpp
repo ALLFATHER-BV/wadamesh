@@ -60,6 +60,7 @@ static bool s_tap_pending = false;
 static uint16_t s_tap_x = 0, s_tap_y = 0;
 static bool s_swipe_pending = false;
 static int8_t s_swipe_x = 0, s_swipe_y = 0;
+static uint16_t s_swipe_start_y = 0;   // logical display Y where the vertical swipe began
 static bool s_live = false;
 static uint16_t s_live_x = 0, s_live_y = 0;
 // Set during a gesture once displacement exceeds the swipe threshold AND the
@@ -353,6 +354,7 @@ int heltecV4CapTouchCheck() {
     if (!long_dispatched && ady >= HELTEC_V4_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
       s_swipe_x = 0;
       s_swipe_y = (dy < 0) ? -1 : 1;
+      s_swipe_start_y = sy;   // logical start Y for edge-zone check in applySwipeGesture
       s_swipe_pending = true;
       return BUTTON_EVENT_NONE;
     }
@@ -398,11 +400,12 @@ bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y) {
   return true;
 }
 
-bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir) {
+bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir, uint16_t* start_y_out) {
   if (!s_swipe_pending) return false;
   s_swipe_pending = false;
   if (x_dir) *x_dir = s_swipe_x;
   if (y_dir) *y_dir = s_swipe_y;
+  if (start_y_out) *start_y_out = s_swipe_start_y;
   s_swipe_x = 0;
   s_swipe_y = 0;
   return true;
