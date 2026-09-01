@@ -127,6 +127,12 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
+#include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+// The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
+// must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
+// stores fine gets rejected as implausible and the author lands back in the body.
+static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAME,
+              "the split would reject a name UIMessage::sender can hold");
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -33842,15 +33848,10 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
        (channel_mode &&
         (m.sender[0] == '\0' ||
          (m.sender[0] == 'r' && m.sender[1] == 'x' && m.sender[2] == '\0'))))) {
-    const char* colon = strstr(m.text, ": ");
-    if (colon) {
-      const int slen = static_cast<int>(colon - m.text);
-      if (slen > 0 && slen <= UITask::MAX_SENDER_NAME) {
-        strncpy(d.retro_sender, m.text, slen);
-        d.retro_sender[slen] = '\0';
-        d.show_sender = d.retro_sender;
-        d.show_text   = colon + 2;
-      }
+    const char* body = ChannelSenderSplit::split(m.text, d.retro_sender, sizeof(d.retro_sender));
+    if (d.retro_sender[0]) {
+      d.show_sender = d.retro_sender;
+      d.show_text   = body;
     }
   }
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
@@ -53992,17 +53993,8 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   char parsed_sender[MAX_SENDER_NAME + 1];
   parsed_sender[0] = '\0';
   const char* body = text ? text : "";
-  if (channel && text && !have_sender_override) {
-    const char* colon = strstr(text, ": ");
-    if (colon) {
-      int slen = static_cast<int>(colon - text);
-      if (slen > 0 && slen <= MAX_SENDER_NAME) {
-        strncpy(parsed_sender, text, slen);
-        parsed_sender[slen] = '\0';
-        body = colon + 2;
-      }
-    }
-  }
+  if (channel && text && !have_sender_override)
+    body = ChannelSenderSplit::split(text, parsed_sender, sizeof(parsed_sender));
   const char* sender = have_sender_override
       ? sender_override
       : (channel
