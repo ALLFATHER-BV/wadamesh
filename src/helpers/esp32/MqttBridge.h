@@ -3,6 +3,32 @@
 
 #include <Arduino.h>
 
+enum class MqttBridgePhase : uint8_t {
+    Unavailable,
+    Disabled,
+    Misconfigured,
+    WaitingForWifi,
+    Connecting,
+    Connected,
+    RetryWait,
+};
+
+struct MqttBridgeStatus {
+    MqttBridgePhase phase = MqttBridgePhase::Unavailable;
+    bool available = false;
+    bool requestedEnabled = false;
+    bool publishDm = false;
+    bool publishChannel = false;
+    bool encrypted = false;
+    char host[64] = {};
+    uint16_t port = 1883;
+    int8_t lastResult = -1;
+    uint32_t lastAttemptMs = 0;
+    uint32_t lastConnectedMs = 0;
+    uint32_t lastResultMs = 0;
+    uint32_t retryAtMs = 0;
+};
+
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
 // ---- MQTT DISABLED on the ESP32-P4 boards (Tanmatsu + T-Display P4) ----
 // The P4's Wi-Fi runs through the esp-hosted C6 co-processor; the Arduino WiFiClient / PubSubClient
@@ -16,6 +42,7 @@ public:
     void publishDM(const char*, const uint8_t*, float, uint8_t, uint32_t, const char*) {}
     void publishChannel(int, const char*, float, uint8_t, uint32_t, const char*) {}
     bool enabled() const { return false; }
+    void getStatus(MqttBridgeStatus& out) const { out = MqttBridgeStatus{}; }
     static void saveConfig(const char*, uint16_t, const char*, const char*,
                            bool, bool, const char*, bool) {}
     void reloadConfig() {}
@@ -75,6 +102,7 @@ public:
                         float snr, uint8_t hops, uint32_t ts, const char* text);
 
     bool enabled() const { return _enabled; }
+    void getStatus(MqttBridgeStatus& out) const;
 
     // Persist config (called from Settings UI save).
     static void saveConfig(const char* host, uint16_t port,
@@ -87,6 +115,7 @@ private:
     MqttNbClient _wc;
     PubSubClient _mqtt{_wc};
     char     _nodeHex[13] = {};   // 6-byte key → 12 hex chars + '\0'
+    bool     _requestedEnabled = false;
     bool     _enabled     = false;
     bool     _pubDm       = false; // DMs off by default (private 1:1 traffic)
     bool     _pubChannel  = true;  // channel messages on by default
@@ -101,11 +130,16 @@ private:
     // True while the one-shot connect task owns _mqtt/_wc. The loop thread must
     // not touch either until it clears (PubSubClient is not thread-safe).
     volatile bool _connecting = false;
+    mutable portMUX_TYPE _statusMux = portMUX_INITIALIZER_UNLOCKED;
+    MqttBridgeStatus _status;
 
     static const uint32_t RECONNECT_INTERVAL_MS = 15000;
 
     void loadConfig();             // shared by begin() / reloadConfig()
     void deriveKey();              // _key = SHA-256(_psk); sets _encOn
+    void setStatusPhase(MqttBridgePhase phase, int result, uint32_t now,
+                        bool recordResult, uint32_t retryAt = 0);
+    void syncStatusConfig(MqttBridgePhase phase);
     bool reconnect();
     static void reconnectTask(void* arg);   // one-shot task body wrapping reconnect()
     void pub(const char* subtopic, const char* json);  // seals if _encOn
