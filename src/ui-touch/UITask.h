@@ -36,7 +36,11 @@ public:
   static const int MAX_UI_MESSAGES_SD = 5000;
   static const int MAX_UI_THREADS = 48;
   static const int MAX_THREAD_NAME = 32;
-  static const int MAX_SENDER_NAME = 24;
+  // Full MeshCore name width: ContactInfo::name / ChannelDetails::name / NodePrefs::
+  // node_name are all char[32], so 31 chars + NUL is exactly lossless. Was 24, which
+  // silently dropped every longer name. The PERSISTED width is frozen separately
+  // (k_ui_disk_sender_len in UITask.cpp) — raising this does not move any on-disk field.
+  static const int MAX_SENDER_NAME = 31;
   static const int MAX_MSG_TEXT = 160;   // full LoRa text length (was 96 -> cut long msgs ~3 lines)
   static const int MAX_UI_PATH = 32;  // inbound-route bytes/message for the Info popup (covers deep + multi-byte-hash routes)
 
