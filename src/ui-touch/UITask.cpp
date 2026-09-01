@@ -11923,6 +11923,8 @@ static void sdRestoreRun() {
   }
   meshcomodClearSdMigLatch();           // manual copy succeeded -> re-arm boot auto-adoption (GH #142/#148)
   touchPrefsSetUseSdStorage(true);      // make sure the reboot adopts the card
+  touchPrefsSetClockFloor(rtc_clock.getFloor());
+  touchPrefsFlush();                    // persist storage selection + protocol floor before reset
   delay(400);                           // let the alert render before the restart
   board.reboot();
 }
@@ -38172,6 +38174,8 @@ static void doBackupImportChosen() {
   g_lv.task->showAlert(dmsg, 2600);
   lv_refr_now(nullptr);
   delay(2600);
+  touchPrefsSetClockFloor(rtc_clock.getFloor());
+  touchPrefsFlush();
   ESP.restart();
 }
 static void backupChosenCb(lv_event_t* e) {
@@ -40097,6 +40101,7 @@ static void powerOffCb(lv_event_t* e) {
     discoveredFlushNow();                  // and the Discovered ring
     the_mesh.flushContactsIfDirty();       // and any coalesced contacts refresh
     the_mesh.persistSyncHistoryNow();      // and the app-sync replay ring (RAM is lost in deep sleep)
+    touchPrefsSetClockFloor(rtc_clock.getFloor());   // preserve protocol monotonicity after wake
     touchPrefsFlush();                     // and all queued A/B preference snapshots
     // Name the control this board actually has. "Click trackball" was shown on
     // every board that reached here, trackball or not.
@@ -40174,6 +40179,7 @@ static void powerDownloadCb(lv_event_t* e) {
     g_lv.task->persistHistoryNow();   // flush chat before we go down
     discoveredFlushNow();             // and the Discovered ring
     the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
+    touchPrefsSetClockFloor(rtc_clock.getFloor());   // preserve protocol monotonicity after flashing
     touchPrefsFlush();                 // and all queued A/B preference snapshots
     g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
   }
@@ -53873,6 +53879,7 @@ void UITask::rebootDevice() {
   discoveredFlushNow();   // persist the Discovered ring before we go down
   the_mesh.flushContactsIfDirty();   // and any coalesced contacts refresh (card-less devices)
   the_mesh.persistSyncHistoryNow();  // and the app-sync replay ring
+  touchPrefsSetClockFloor(rtc_clock.getFloor());   // preserve protocol monotonicity across this reboot
   touchPrefsFlush();       // finish queued A/B snapshots before reset
   if (_board) _board->reboot();
 }
@@ -53893,6 +53900,7 @@ void UITask::rebootDevice() {
 void consoleHostRebootToUi() {
   touchPrefsSetConsoleMode(false);
   if (g_lv.task) { g_lv.task->rebootDevice(); return; }
+  touchPrefsSetClockFloor(rtc_clock.getFloor());
   touchPrefsFlush();   // no UITask (should not happen): at least do not lose the pref
   ESP.restart();
 }
