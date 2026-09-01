@@ -5242,6 +5242,10 @@ static void      buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw);   // fw
 #endif
 static lv_obj_t* s_update_badge     = nullptr;   // red "!" over the bottom-bar gear
 static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over the bottom-bar Chats icon
+#if defined(HAS_THINKNODE_M9)
+static lv_obj_t* s_m9_mail_indicator = nullptr;
+static lv_obj_t* s_m9_contact_indicator = nullptr;
+#endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
@@ -8795,7 +8799,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if CAP_KEYBOARD && CAP_KEYPAD_NAV
 // Recursively find the first text field under `obj` (depth-first).
 static lv_obj_t* findFirstTextarea(lv_obj_t* obj) {
   if (!obj) return nullptr;
@@ -8812,14 +8816,20 @@ static lv_obj_t* findFirstTextarea(lv_obj_t* obj) {
 // Deferred via lv_async from createSettingsModal so the modal's fields exist by
 // the time it runs: focus the first text field of a freshly-opened popup modal
 // so the physical keyboard types straight into it. Mirrors settingsFieldFocusCb.
-static void tdeckModalAutoFocusAsync(void* root) {
+static void physicalKeyboardModalAutoFocusAsync(void* root) {
   lv_obj_t* r = static_cast<lv_obj_t*>(root);
   if (!r || !lv_obj_is_valid(r)) return;          // modal already closed in the meantime?
   lv_obj_t* ta = findFirstTextarea(r);
   if (!ta) return;                                 // no text field -> nothing to focus
   s_kb_panel = nullptr;                            // a settings field, not the chat composer
   kbMirrorBind(ta);                                // bind the keyboard to it
-  lv_obj_add_state(ta, LV_STATE_FOCUSED);          // show the cursor
+  s_nav_focus_hint = ta;
+  navMarkDirty();
+  navMaybeRebuild();
+  if (s_nav_group && lv_group_get_focused(s_nav_group) == ta) {
+    s_nav_ta_editing = true;
+    navSyncCursor();
+  }
   noteKbActivity();
 }
 #endif
@@ -9375,11 +9385,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   g_set_modal.root = root;
   g_set_modal.kind = kind;
   s_settings_content_w = (sw - 8) - 12;   // modal body width minus its 6px padding each side
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if CAP_KEYBOARD && CAP_KEYPAD_NAV
   // Physical keyboard: once the caller has finished adding this modal's fields
   // (deferred to the next frame), focus its first text field so the user can
   // type straight away. Popup modals only — the inline-settings path returns above.
-  lv_async_call(tdeckModalAutoFocusAsync, root);
+  lv_async_call(physicalKeyboardModalAutoFocusAsync, root);
 #endif
   return content;
 }
@@ -46447,11 +46457,19 @@ static void buildUiTree() {
 #endif
 #endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
-  // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
-  // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
+  // Tab labels: icons-only on touch targets; the 480px-wide Pager appends each
+  // physical-keyboard mnemonic so the shortcuts are discoverable.
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
 #if defined(TLORA_PAGER)
-  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE " M");
+  const char* const pager_chats_tab_label = LV_SYMBOL_ENVELOPE " M";
+  const char* const pager_settings_tab_label = LV_SYMBOL_SETTINGS " S";
+  auto pagerTabIconBadgeX = [](int tab_index, const char* label, const char* icon) -> lv_coord_t {
+    const lv_coord_t cell_w = lv_disp_get_hor_res(nullptr) / 5;
+    const lv_coord_t label_w = lv_txt_get_width(label, strlen(label), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t icon_w = lv_txt_get_width(icon, strlen(icon), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
+    return cell_w * tab_index + cell_w / 2 - (label_w - icon_w) / 2 - 8;
+  };
+  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, pager_chats_tab_label);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
@@ -46479,7 +46497,7 @@ static void buildUiTree() {
   }
 #endif
 #if defined(TLORA_PAGER)
-  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS " S");
+  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, pager_settings_tab_label);
 #else
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
 #endif
@@ -46512,6 +46530,23 @@ static void buildUiTree() {
   if (tab_sensors) makeSensorsTab(tab_sensors);
 #endif
 
+#if defined(HAS_THINKNODE_M9)
+  const lv_coord_t m9_notice_slot_w = lv_disp_get_hor_res(nullptr) / 5;
+  auto makeM9Notice = [&](const char* glyph, int slot) -> lv_obj_t* {
+    lv_obj_t* icon = lv_label_create(lv_layer_top());
+    lv_label_set_text(icon, glyph);
+    lv_obj_set_size(icon, m9_notice_slot_w, 20);
+    lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(icon, &g_font_16, LV_PART_MAIN);
+    lv_obj_align(icon, LV_ALIGN_BOTTOM_LEFT, slot * m9_notice_slot_w, -5);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN | NAV_SKIP_FLAG);
+    return icon;
+  };
+  s_m9_mail_indicator = makeM9Notice(LV_SYMBOL_ENVELOPE, 0);
+  s_m9_contact_indicator = makeM9Notice(TOUCH_SYM_PERSON, 1);
+#else
   // Red "!" update badge over the Settings gear (rightmost bottom tab). A child
   // of the screen (so it has no layout overriding its alignment) created BEFORE
   // the chat-detail overlays + above the tabview — it floats over the gear on
@@ -46529,8 +46564,9 @@ static void buildUiTree() {
   lv_obj_set_style_text_font(s_update_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_update_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
-#if defined(HAS_THINKNODE_M9)
-  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -4);   // no tab bar on this board
+#if defined(TLORA_PAGER)
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_LEFT,
+               pagerTabIconBadgeX(4, pager_settings_tab_label, LV_SYMBOL_SETTINGS), -(TABBAR_H - 16));
 #else
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
 #endif
@@ -46552,14 +46588,15 @@ static void buildUiTree() {
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
-#if defined(HAS_THINKNODE_M9)
-               8, -4);                                                     // no tab bar on this board — bottom-left corner
+#if defined(TLORA_PAGER)
+               pagerTabIconBadgeX(0, pager_chats_tab_label, LV_SYMBOL_ENVELOPE), -(TABBAR_H - 16));
 #elif defined(HAS_EXPANSION_KIT)
                lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+#endif
 
 #if !defined(HAS_THINKNODE_M9)
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
@@ -55376,6 +55413,31 @@ void UITask::loop() {
   }
   if (now >= _next_refresh) {
     refreshStatusLabels();
+#if defined(HAS_THINKNODE_M9)
+    if (s_m9_mail_indicator && s_m9_contact_indicator) {
+      lv_obj_t* top = lv_layer_top();
+      const bool top_has_content = navTopHasVisibleChild(top);
+      const bool drawer_front = top_has_content && s_appdrawer_root &&
+                                navTopFrontmostChild(top) == s_appdrawer_root;
+      const bool notice_surface = !_screen_off && !_manual_lock && !s_remote_mode &&
+                                  !s_setup_root && !s_settings_sheet &&
+                                  !s_apppage_title && !s_chat_title[0] &&
+                                  (!anyPopupOpen() || drawer_front);
+      const bool mail_pending = notice_surface && getUnreadTotal() > 0;
+      const bool contact_pending = notice_surface && discoveredCount() > 0;
+      const bool blink_on = ((now / 500u) & 1u) == 0;
+      if (mail_pending || contact_pending) {
+        lv_obj_move_foreground(s_m9_mail_indicator);
+        lv_obj_move_foreground(s_m9_contact_indicator);
+      }
+      lv_obj_set_style_text_color(s_m9_mail_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_m9_contact_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      if (mail_pending && blink_on) lv_obj_clear_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
+      else                          lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
+      if (contact_pending && blink_on) lv_obj_clear_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+      else                             lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
     // Unread-count badge over the Chats tab icon (bottom bar).
     if (s_chat_unread_badge) {
       const int u = getUnreadTotal();

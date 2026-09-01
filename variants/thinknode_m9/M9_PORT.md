@@ -363,8 +363,9 @@ ruled out the tile-slot pool, the tab-bar removal, and the key-drain timing:
   touchless board it was uncontrollable dead space. `TABBAR_H` is now 0 for
   M9 and the btnmatrix is hidden; every tab remains reachable via the dedicated
   HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles.
-  Content gains the 30 px row; the update / chat-unread badges anchor to the
-  bottom corners instead of the (gone) bar.
+  Content gains the 30 px row. The M9 draws no notification badges there;
+  unread messages and newly discovered contacts instead blink small accent-colour
+  envelope/person glyphs in the former Chats and Contacts nav slots.
 - **Spectrum sweep crawl fixed (LR1110-specific)**: `LR11x0::getRSSI(false)` is
   not the SX126x's cheap register read — it internally re-arms RX and drops to
   standby around EVERY call, so the 6-read peak-hold per bin paid ~960 extra
