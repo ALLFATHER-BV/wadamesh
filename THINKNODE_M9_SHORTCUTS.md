@@ -20,20 +20,33 @@ this page is the five-minute tour that makes the board feel native.
   the second layer instead. Start typing in a chat and the composer focuses
   itself; any key wakes the screen from idle.
 
-## The one rule: Back closes what you see
+## The one rule: Back closes what you see, then goes back
 
 **Back** always closes the *top* layer, one per press: map pan mode → an open
 dropdown → the power menu → the Control Center → a full-screen app → a dialog
-→ any popup → an open chat → back out of the page. Nothing ever closes
-invisibly beneath something else. The only exception is deliberate: progress
-overlays (SD format, bulk delete) block all keys until the operation finishes.
+→ any popup → an open chat. Nothing ever closes invisibly beneath something
+else.
+
+Once there is nothing left covering the screen, **Back returns you to the
+previous screen** — the tab you came from, however you got there: a function
+key, an app-drawer tile, "Show on map", a contact's Send-msg button. Keep
+pressing and you keep walking back through where you have been. When the trail
+runs out Back lands on Home, and on Home with nothing open it does nothing,
+because that is the root.
+
+**HOME** is the shortcut past all of that: it goes straight to the root and
+clears the trail, so Back from there won't jump you back out again.
+
+The only exception is deliberate: progress overlays (SD format, bulk delete)
+block all keys until the operation finishes — Back will not navigate out from
+under a running operation.
 
 ## Function keys
 
 | Key | Press | Hold |
 |---|---|---|
 | **MSG** | Jump to the Chats tab (closes an open app first) | — |
-| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home | — |
+| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail) | — |
 | **@ (Mentions)** | Open the Mentions screen | — |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
 | **MAP** | Jump to the Map tab — press again *on* the map to toggle pan mode | — |
@@ -77,9 +90,24 @@ app can trap the keys, even while the screen is locked.
 
 If you last used the M9 on an earlier beta, the notable navigation changes:
 
+- **Back now actually goes back** — once everything covering the screen was
+  closed, Back had nothing left to do and the press simply died on any bare
+  tab. It now walks back through the screens you visited, then Home. Jumps that
+  used to strand you ("Show on map" from Discover or Contacts, a route replay
+  from a chat, the Home unread line, the ✉ badge, app-drawer tiles) all return
+  properly. **Back also works in the first-boot wizard** now, stepping back
+  through its screens like the on-screen Back button.
 - **Back restored and made consistent** — it had regressed to doing nothing
   outside text fields, and could close hidden popups beneath the Control
   Center. Both fixed; the close-what-you-see rule above now holds everywhere.
+- **The map opens faster the first time** — the cold open was doing a
+  whole-card zoom scan whose result was thrown away, and (with no GPS fix) was
+  repeating that scan on *every* open. The "Loading map…" hint now appears
+  immediately instead of after the scan, so the board no longer looks frozen on
+  the previous screen while the first tiles decode.
+- **The d-pad no longer goes dead for a second** when a message arrives, and
+  the Spectrum page no longer steers an invisible cursor around the app drawer
+  underneath it.
 - **Apps can't strand you** — opening Advert/Mentions over a running app used
   to orphan it with no key path back; app permission dialogs are now
   answerable with the d-pad.

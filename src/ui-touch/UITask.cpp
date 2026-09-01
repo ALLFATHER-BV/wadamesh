@@ -3576,11 +3576,54 @@ static void navSwitchTab(int dir) {
 }
 
 // Jump straight to a main tab (the coloured F-keys). Close any open modal/sheet first so the jump
-// lands on the bare page.
-static void navGoToMainTab(int tab) {
-  for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();
+// lands on the bare page. Returns false when a popup REFUSED to close: the registry's key-blocker
+// rows (SD-format progress, bulk-delete progress) have a null closer by design, and the old
+// unconditional loop spun eight times closing nothing and then switched tabs out from under the
+// running operation anyway. Callers that ignore the result still compile unchanged.
+static bool navGoToMainTab(int tab) {
+  for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+  if (anyPopupOpen()) return false;
   goToTab(tab);
+  return true;
 }
+
+#if defined(HAS_M9_KEYBOARD)
+// ---- M9 navigation history ---------------------------------------------------
+// The Back ladder (m9HandleNavKey, M9_KEY_HW_BACK) peels modals, app pages, chats
+// and modes innermost-first, and it does that part correctly. What it never had is
+// "the screen I was on BEFORE this one": every tab jump was one-way, so once the
+// layers were peeled Back fell through to navPushTap(LV_KEY_ESC) — and nothing in
+// this build consumes LV_KEY_ESC (the sole consumer is lv_dropdown, already peeled
+// a rung earlier, and navMaybeRebuild deliberately keeps the tab bar out of the
+// focus group). The press was consumed and nothing happened, on every bare tab.
+//
+// This records ONLY that missing piece: which main tab you came from. It
+// deliberately does NOT shadow the layers the ladder already peels — duplicating
+// them here would double-close. In particular the app drawer is NOT pushed: it is
+// a popup-registry row that rung 6 already closes, and its mode survives a tab
+// switch, so returning to Home restores it on its own.
+//
+// NEVER store an lv_obj_t* here. Settings sheets, app pages and the drawer are
+// destroyed (often via del_async), so a stored pointer would dangle. Store the tab
+// index only, and treat an entry that no longer applies as a skip rather than
+// letting it cost the user a dead press.
+static constexpr int kM9NavMax = 12;            // 12 * 2 B = 24 B of .bss
+static int16_t s_m9_nav[kM9NavMax];
+static int     s_m9_nav_n = 0;
+static bool    s_m9_nav_replaying = false;      // a pop's own goToTab must not re-push
+
+static void m9NavPush(int tab) {
+  if (s_m9_nav_replaying) return;
+  if (s_m9_nav_n > 0 && s_m9_nav[s_m9_nav_n - 1] == (int16_t)tab) return;   // collapse repeats
+  if (s_m9_nav_n == kM9NavMax) {                                            // full: drop the OLDEST
+    memmove(&s_m9_nav[0], &s_m9_nav[1], sizeof(s_m9_nav[0]) * (kM9NavMax - 1));
+    s_m9_nav_n--;
+  }
+  s_m9_nav[s_m9_nav_n++] = (int16_t)tab;
+}
+static void m9NavClear() { s_m9_nav_n = 0; }
+static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside them
+#endif
 
 // Visible focus ring (the LVGL default theme's focus outline is invisible on this dark UI). Driven
 // by the group's focus-changed callback. Reverse-video ("negative") highlight: the
@@ -5394,6 +5437,7 @@ static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region p
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
+static void setupShowStep(int step);      // fwd: the M9 Back key steps the wizard, same as its on-screen Back
 static void setupRerunCb(lv_event_t* e);  // fwd: "Run setup again" button callback
 
 // Our release number (the N in "beta_N"); -1 if this isn't a tagged build.
@@ -8333,6 +8377,8 @@ static void openQuickReplyPicker(LvChatPanel* p) {
 static void openAppDrawer();    // fwd — app-drawer overlay (defined below openControlCenter)
 static void closeAppDrawer();
 static void setHomeDrawer(bool show);
+static void ctExitSelectMode();  // fwd — leave Contacts multi-select if it is on (defined with the Contacts tab).
+                                 // Must sit OUTSIDE any CAP_KEYPAD_NAV guard: tabChangedCb below calls it on every board.
 static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
 static void openMentionsScreen();            // fwd — same
 static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
@@ -8415,6 +8461,7 @@ static void tabChangedCb(lv_event_t* e) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
   }
   if (new_t == CONTACTS_TAB_INDEX) refreshContactsList();
+  else if (prev_t == CONTACTS_TAB_INDEX) ctExitSelectMode();   // a mode must not outlive the tab it belongs to
 #if defined(HAS_EXPANSION_KIT)
   if (new_t == SENSORS_TAB_INDEX) refreshSensorsTab();
 #endif
@@ -15557,6 +15604,15 @@ static void openLogModalCb(lv_event_t* e) {
 // goToTab defined after all callbacks that need it
 static void goToTab(int idx) {
   if (!g_lv.tabview) return;
+#if defined(HAS_M9_KEYBOARD)
+  // The single choke point for main-tab navigation, and the only place that
+  // fires LV_EVENT_VALUE_CHANGED explicitly — so recording the outgoing tab
+  // here covers every jump that goes through it (function keys, home tiles,
+  // app-drawer tiles, "Show on map", route replay). The raw
+  // lv_tabview_set_act() call sites bypass it by construction; the one that
+  // matters on this board (openMeshContactDm) is routed through the same push.
+  { const int cur = getActiveTab(); if (cur != idx) m9NavPush(cur); }
+#endif
   // Clear any keyboard-nav focus highlight BEFORE the tab switches. Activating a
   // clickable element with Enter (e.g. the Home "Unread" line) fires its CLICKED
   // handler WITHOUT moving group focus, so navFocusCb never runs to un-highlight it
@@ -25358,6 +25414,31 @@ static void ctSetSelectMode(bool on){
   ctUpdateDelLabel();
   s_ct_list_force = true;
   refreshContactsList();
+}
+
+// Select mode is a MODE, not a popup: its registry row carries flags=0, so
+// anyPopupOpen() never reports it, and nothing cleared it when the user left the
+// Contacts tab. Left set, it made Back close it INVISIBLY from another tab — the
+// registry walks in table order and its row sits above the app drawer's — costing
+// a press with nothing on screen changing, exactly what the M9's "nothing ever
+// closes invisibly beneath something else" rule forbids. The board already applies
+// this discipline to map pan mode; this gives select mode the same.
+static void ctExitSelectMode() {
+  if (!s_ct_select_mode) return;
+  // Deliberately NOT ctSetSelectMode(false). That one ends in
+  // s_ct_list_force + refreshContactsList(), i.e. a full teardown and rebuild
+  // of the contacts list — measured at ~1.3 s with a large list (#82). We are
+  // called from tabChangedCb as the user LEAVES Contacts, inside the tabview's
+  // VALUE_CHANGED chain, so paying it here would freeze the tab they are
+  // moving TO. Drop the mode and restore the toolbars now, and just ARM
+  // s_ct_list_force: tabChangedCb already calls refreshContactsList() on the
+  // way back into Contacts, so the clean rebuild happens where it is visible.
+  s_ct_select_mode = false;
+  s_ct_sel_n = 0;
+  if (s_ct_normal_bar) lv_obj_clear_flag(s_ct_normal_bar, LV_OBJ_FLAG_HIDDEN);
+  if (s_ct_select_bar) lv_obj_add_flag(s_ct_select_bar, LV_OBJ_FLAG_HIDDEN);
+  ctUpdateDelLabel();
+  s_ct_list_force = true;
 }
 
 // Select EVERY contact passing the current filter + search (favorites skipped).
@@ -38486,6 +38567,26 @@ static void serviceLockingCountdown(unsigned long now) {
 // (s_m9_map_pan — the Map-key pan-mode flag — is declared with the map state,
 // next to s_map_follow: mapAutoFollowTick pauses while it's set.)
 
+// Return to the previously recorded main tab (see the M9 nav history block up by
+// navGoToMainTab). Defined here rather than with the push because it needs
+// s_m9_map_pan, which lives with the map state further down. Entries that no
+// longer apply — the tab was removed, or we are already on it — are SKIPPED, not
+// reported as a successful back: a stale entry must never cost the user a press.
+// Returns false when the history is exhausted, which is the caller's cue to fall
+// through to the next rung.
+static bool m9NavPop() {
+  while (s_m9_nav_n > 0) {
+    const int tab = (int)s_m9_nav[--s_m9_nav_n];
+    if (!g_lv.tabview || tab < 0 || tab > TAB_LAST || tab == getActiveTab()) continue;
+    s_m9_nav_replaying = true;   // suppress the re-push from our own goToTab
+    s_m9_map_pan = false;        // a pan flag must never outlive its tab (mirrors M9_KEY_HOME)
+    goToTab(tab);
+    s_m9_nav_replaying = false;
+    return true;
+  }
+  return false;
+}
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -38509,7 +38610,18 @@ static bool m9HandleNavKey(int key) {
       // registry, or Back would close the enclosing modal instead of the list.
       // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
       // open"), so anyPopupOpen() alone would never let Back leave it.
-      if (s_setup_root) return true;   // wizard: nothing to back out of
+      // Wizard: step BACK through it, exactly what its own on-screen Back
+      // button does (setupBackCb). The old "nothing to back out of" comment was
+      // wrong — the wizard is a four-step stack (welcome/name/region/Wi-Fi) and
+      // steps 1-3 each draw a working Back. This function exists precisely
+      // because the d-pad is the M9's only input INCLUDING first-boot setup, so
+      // it was the one place that premise had been abandoned. Returning false
+      // would not help either: the T-Deck swallow just below eats the key next.
+      if (s_setup_root) {
+        if (s_setup_step > 0) setupShowStep(s_setup_step - 1);
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+        return true;
+      }
       // Pan is only the innermost "thing open" while the bare map is frontmost.
       // A popup stacked over it (CTRL) or a tab jump that missed a clear makes
       // the flag stale — drop it silently so THIS press acts on what the user
@@ -38540,6 +38652,29 @@ static bool m9HandleNavKey(int key) {
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
       else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      // Every layer that was covering the screen is peeled — NOW go back a
+      // screen. This rung is what the ladder was missing: without it Back fell
+      // straight through to LV_KEY_ESC, which nothing in this build consumes
+      // (the sole consumer, lv_dropdown, is peeled several rungs above, and the
+      // tab bar is deliberately not a focus stop), so the press was swallowed
+      // and NOTHING happened on any bare tab. Sitting below the peel rungs is
+      // what keeps modals closing innermost-first — and a blocker popup still
+      // stops Back at the registry rung above, so a running SD format or bulk
+      // delete is never navigated out from under.
+      else if (m9NavPop())                           { /* returned to the previous screen */ }
+      // History exhausted (cold boot onto a restored tab, or already fully
+      // unwound): fall back to Home — the rung pagerNavGoBack has always had
+      // and this ladder did not. On Home with an empty history ESC stays a
+      // genuine no-op, which is correct: Home is the root of the tree.
+      else if (getActiveTab() != HOME_TAB_INDEX)     {
+        s_m9_map_pan = false;
+        // Unwinding, NOT new navigation: without suppressing the push, this
+        // jump would record the tab we are leaving, and the very next Back
+        // would pop straight back to it — Back ping-ponging Home/tab forever.
+        s_m9_nav_replaying = true;
+        navGoToMainTab(HOME_TAB_INDEX);
+        s_m9_nav_replaying = false;
+      }
       else                                           navPushTap(LV_KEY_ESC);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_GPS_LONG:
@@ -38580,16 +38715,34 @@ static bool m9HandleNavKey(int key) {
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
-        for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
+        // Stop on a key-blocker row (SD format / bulk delete progress) instead of
+        // spinning eight times closing nothing and then toggling the drawer out
+        // from under a running operation.
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+        if (anyPopupOpen()) { s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true; }
         setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
       } else {
         s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
-        navGoToMainTab(HOME_TAB_INDEX);
+        if (!navGoToMainTab(HOME_TAB_INDEX)) {   // a blocker popup refused: nothing moved, so keep the trail
+          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+        }
       }
+      // HOME means "go to the root", so the trail behind it is spent: without
+      // this, Back from Home would jump back out to wherever you were before,
+      // which reads as a bug and makes the Home-tab ESC no-op unreachable.
+      // MSG / MAP are lateral jumps and deliberately keep pushing.
+      m9NavClear();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
       if (s_setup_root) return true;
       s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
+      // Blocker check BEFORE the app page is destroyed — same order as
+      // SUB_MESSAGE / SUB_MAP below. navGoToMainTab now refuses to switch while
+      // a null-close progress row (SD format, bulk delete) owns the screen, so
+      // closing the page first would leave the user with neither the page nor
+      // the jump.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
@@ -38616,6 +38769,9 @@ static bool m9HandleNavKey(int key) {
                                                          : TR("Map pan off"), 1200);
       } else {
         s_m9_map_pan = false;   // fresh entry always starts in nav mode
+        // Blocker check before destroying the page — see M9_KEY_LEFT_MESSAGE.
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+        if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
         if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
         navGoToMainTab(MAP_TAB_INDEX);
       }
@@ -44710,6 +44866,9 @@ static int setupHeader(const char* title, const char* blurb, const char* step_ta
 // No reboot — used for Skip and (implicitly) anything that doesn't change the
 // radio/Wi-Fi. The status bar (hidden while the wizard owns the screen) returns.
 static void setupWizardClose() {
+#if defined(HAS_M9_KEYBOARD)
+  m9NavClear();   // the wizard owned the whole screen; start the history fresh behind it
+#endif
   g_set_modal.wifi_ssid_ta = nullptr;       // we borrowed these for the scan popup
   g_set_modal.wifi_pwd_ta  = nullptr;
   hideKb();
@@ -44936,6 +45095,9 @@ static void setupShowStep(int step) {
 
 static void setupWizardOpen() {
   if (s_setup_root) return;
+#if defined(HAS_M9_KEYBOARD)
+  m9NavClear();   // no popping back to a pre-wizard tab from inside first-boot setup
+#endif
   if (g_statusbar.root) lv_obj_add_flag(g_statusbar.root, LV_OBJ_FLAG_HIDDEN);  // own the whole screen
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -52780,6 +52942,26 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   }
   hideKb();
   closeSettingsModal();
+  // Switch to the Chats tab HERE, and fire the event the way goToTab does.
+  // This used to sit at the END of this function as a bare lv_tabview_set_act()
+  // with no LV_EVENT_VALUE_CHANGED, so tabChangedCb never ran for it: it left
+  // s_lv_tab_prev stale, which made the NEXT real tab change compute
+  // leaving_inbox as false and skip the only code that hides this DM overlay —
+  // the chat then stayed painted over whatever tab the user moved to. Running it
+  // BEFORE the overlay is un-hidden and before showKb() also means
+  // tabChangedCb's own hideKb() + overlay cleanup can't undo the setup below,
+  // which is what keeping it at the end was really working around.
+  if (g_lv.tabview && getActiveTab() != CHAT_INBOX_TAB_INDEX) {
+#if defined(HAS_M9_KEYBOARD)
+    m9NavPush(getActiveTab());   // so Back leaves the chat and returns to where it was opened from
+#endif
+    // Keep LV_ANIM_OFF: the chat detail overlay covers the tabview so the 150 ms
+    // slide is invisible anyway, and it was stealing refresh ticks from the first
+    // composer tap + keyboard show — a ~300-500 ms perceived lag on the
+    // map → marker → Send msg path.
+    lv_tabview_set_act(g_lv.tabview, CHAT_INBOX_TAB_INDEX, LV_ANIM_OFF);
+    lv_event_send(g_lv.tabview, LV_EVENT_VALUE_CHANGED, nullptr);
+  }
   if (g_lv.ch.detail_open && g_lv.ch.overlay) {
     lv_obj_add_flag(g_lv.ch.overlay, LV_OBJ_FLAG_HIDDEN);
     g_lv.ch.detail_open = false;
@@ -52799,14 +52981,7 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   // Physical keyboard: focus the composer on open so typing goes straight in.
   showKb(&g_lv.dm);
 #endif
-  // Skip the LV_ANIM_ON tab transition (150 ms slide) — the chat detail
-  // overlay covers the tabview so the slide is invisible anyway, and the
-  // animation was stealing refresh ticks from the first composer tap +
-  // keyboard show, causing a ~300-500 ms perceived lag on the map →
-  // marker → Send msg path.
-  if (g_lv.tabview) {
-    lv_tabview_set_act(g_lv.tabview, CHAT_INBOX_TAB_INDEX, LV_ANIM_OFF);
-  }
+  // (The tab switch moved ABOVE, before the overlay setup — see the note there.)
   g_lv.dirty_threads = true;
 #endif
 }
