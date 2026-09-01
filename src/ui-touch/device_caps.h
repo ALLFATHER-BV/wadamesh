@@ -384,13 +384,11 @@
 #endif
 
 // Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
-// out/firmware/apps/) so a board that cannot reach the Lua Store still has
-// them in the drawer. A downloaded <data>/apps/<id>.lua always wins, because
-// luaAppLaunchFile() is file-first. Costs ~10 KB of FLASH, no RAM.
+// deploy/apps/) so apps are available in the drawer out of the box, without
+// requiring a Store download or SD card. A downloaded <data>/apps/<id>.lua
+// always wins (luaAppLaunchFile is file-first), so the seeded copy is just a
+// default. Costs ~50 KB of flash for the full catalog. All CAP_LUA_APPS boards
+// get this so the app drawer is never empty on first boot.
 #ifndef CAP_BUILTIN_LUA_APPS
-  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
-    #define CAP_BUILTIN_LUA_APPS 1
-  #else
-    #define CAP_BUILTIN_LUA_APPS 0
-  #endif
+  #define CAP_BUILTIN_LUA_APPS CAP_LUA_APPS
 #endif

@@ -67,6 +67,7 @@ static uint16_t s_tap_x = 0, s_tap_y = 0;
 static bool     s_swiping_now = false;
 static bool     s_swipe_pending = false;
 static int8_t   s_swipe_x = 0, s_swipe_y = 0;
+static uint16_t s_swipe_start_y = 0;
 
 static uint8_t  s_ui_rotation = 0;
 static uint8_t  s_point_rotation = 0;
@@ -262,6 +263,7 @@ int heltecV4CapTouchCheck() {
     if (ady >= RAK_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
       s_swipe_x = 0;
       s_swipe_y = ((int)s_last_y - (int)s_start_y) < 0 ? -1 : 1;
+      s_swipe_start_y = s_start_y;
       s_swipe_pending = true;
       return BUTTON_EVENT_NONE;
     }
@@ -294,11 +296,12 @@ bool heltecV4CapTouchPopTap(uint16_t* x, uint16_t* y) {
   if (y) *y = s_tap_y;
   return true;
 }
-bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd) {
+bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd, uint16_t* start_y_out) {
   if (!s_swipe_pending) return false;
   s_swipe_pending = false;
   if (xd) *xd = s_swipe_x;
   if (yd) *yd = s_swipe_y;
+  if (start_y_out) *start_y_out = s_swipe_start_y;
   return true;
 }
 

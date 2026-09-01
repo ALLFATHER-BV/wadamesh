@@ -1,5 +1,11 @@
 #include "MyMesh.h"
+#include "helpers/ClockFloorRTC.h"   // for rtc_clock.getCurrentTimeUnique() — non-virtual override (#374)
 #include <esp_heap_caps.h>
+
+// Direct access to the concrete clock so our getCurrentTimeUnique() override
+// (which resets the monotonic counter on backward corrections) is called
+// instead of the private RTCClock::last_unique path.
+extern ClockFloorRTC rtc_clock;
 
 #include <Arduino.h> // needed for PlatformIO
 #include <Mesh.h>
@@ -573,7 +579,7 @@ void MyMesh::pushMeshcomodReply(const char* text, bool immediate_current) {
     j += 6;
     out_frame[j++] = 0xFF;
     out_frame[j++] = TXT_TYPE_PLAIN;
-    uint32_t ts = getRTCClock()->getCurrentTimeUnique();
+    uint32_t ts = rtc_clock.getCurrentTimeUnique();
     // Some clients coalesce messages by sender+timestamp; enforce strictly monotonic ts.
     if (ts <= s_meshcomod_last_reply_ts) ts = s_meshcomod_last_reply_ts + 1;
     s_meshcomod_last_reply_ts = ts;
@@ -2768,6 +2774,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     p->recv_seq = advert_recv_seq;
     p->type = contact.type;
     p->used = true;
+    p->snr_q4 = _ui_sig_snr_q4;   // SNR of this advert packet for yield-quality gating
     p->path_len = path_len;
     if (path_len) memcpy(p->path, path, path_len);
 #if defined(ESP32)
@@ -2786,7 +2793,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
   // adverts and manually add nodes to contacts[] (used when auto-add is off
   // or contacts[] is full). `is_new=true` here means the contact is NOT yet
   // in contacts[]; `is_new=false` means it's a refresh of an existing one.
-  if (_ui) _ui->discoveredContact(contact, is_new, path_len);
+  if (_ui) _ui->discoveredContact(contact, is_new, path_len, _ui_sig_snr_q4);
 #endif
 
   if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
@@ -3052,7 +3059,61 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
 }
 
 bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
-  return _prefs.client_repeat != 0;
+  if (!_prefs.client_repeat) return false;
+
+  // Best signal: packet already carries repeater hops in its path hash — a real
+  // repeater is actively forwarding THIS packet right now. Yield immediately.
+  if (packet && packet->getPathHashCount() > 0) return false;
+
+  // Fallback: no repeater hops in packet yet (direct from originator).
+  // Scan advert_paths (fixed 16-entry table, O(16)) instead of the full contact
+  // list (O(N)) — recv_timestamp is actual last-heard-over-air, not lastmod which
+  // is only updated on advert receipt and drifts with companion sync.
+  // SNR gate: only yield to a repeater we're hearing well (> -10 dB). A barely-
+  // decodable repeater (-20 dB) is probably not serving the network better than us.
+  static constexpr uint32_t REPEATER_ACTIVE_SECS = 5 * 60;
+  static constexpr int8_t   REPEATER_MIN_SNR_Q4  = -10 * 4;  // -10 dB × 4
+  const uint32_t now = (uint32_t)getRTCClock()->getCurrentTime();
+  bool yield = false;
+#if defined(ESP32)
+  portENTER_CRITICAL(&advert_paths_mux);
+#endif
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+    const AdvertPath& p = advert_paths[i];
+    if (p.used && p.type == ADV_TYPE_REPEATER &&
+        p.recv_timestamp > 0 && now >= p.recv_timestamp &&
+        (now - p.recv_timestamp) < REPEATER_ACTIVE_SECS &&
+        p.snr_q4 >= REPEATER_MIN_SNR_Q4) {
+      yield = true;
+      break;
+    }
+  }
+#if defined(ESP32)
+  portEXIT_CRITICAL(&advert_paths_mux);
+#endif
+  return !yield;
+}
+
+bool MyMesh::hasActiveRepeater() const {
+  static constexpr uint32_t REP_ACTIVE_SECS = 5 * 60;
+  static constexpr int8_t   REP_MIN_SNR_Q4  = -10 * 4;
+  const uint32_t now = getRTCClock() ? (uint32_t)getRTCClock()->getCurrentTime() : 0;
+  bool found = false;
+#if defined(ESP32)
+  portENTER_CRITICAL(&const_cast<MyMesh*>(this)->advert_paths_mux);
+#endif
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE && !found; i++) {
+    const AdvertPath& p = advert_paths[i];
+    if (p.used && p.type == ADV_TYPE_REPEATER &&
+        p.recv_timestamp > 0 && now >= p.recv_timestamp &&
+        (now - p.recv_timestamp) < REP_ACTIVE_SECS &&
+        p.snr_q4 >= REP_MIN_SNR_Q4)
+      found = true;
+  }
+#if defined(ESP32)
+  portEXIT_CRITICAL(&const_cast<MyMesh*>(this)->advert_paths_mux);
+#endif
+  return found;
 }
 
 // Fingerprint + track an originated flood, but only for chat messages — DM text
@@ -3693,6 +3754,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.tx_power_dbm = LORA_TX_POWER;
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
+  _prefs.multi_acks  = 1;       // extra ACK retransmit ON by default: improves delivery in busy meshes at low airtime cost
+  _prefs.client_repeat = 1;    // smart relay ON by default: yields to active repeaters, steps in when none around
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
 #if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121)
 #ifdef SX126X_RX_BOOSTED_GAIN
@@ -4027,7 +4090,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (isMeshcomodRecipient(pub_key_prefix)) {
       char *text = (char *)&cmd_frame[i];
       int tlen = len - i;
-      uint32_t expected_ack = msg_timestamp ? msg_timestamp : getRTCClock()->getCurrentTimeUnique();
+      uint32_t expected_ack = msg_timestamp ? msg_timestamp : rtc_clock.getCurrentTimeUnique();
       uint32_t est_timeout = 1;
       out_frame[0] = RESP_CODE_SENT;
       out_frame[1] = 0; // local handling, not flood
@@ -4082,7 +4145,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         }
       }
       if (txt_type == TXT_TYPE_CLI_DATA) {
-        msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
+        msg_timestamp = rtc_clock.getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
         TxtTxDebugInfo dbg{};
         result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout, nullptr, &dbg);
         expected_ack = 0; // no Ack expected
@@ -4101,7 +4164,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         // Force node-side unique timestamp for plain sends as well.
         // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
         // and replay-like suppression on receivers.
-        msg_timestamp = getRTCClock()->getCurrentTimeUnique();
+        msg_timestamp = rtc_clock.getCurrentTimeUnique();
         uint32_t tx_hash4 = 0;
         TxtTxDebugInfo dbg{};
         result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);

@@ -72,6 +72,8 @@ public:
   uint16_t getWsPort() const override { return _ws_port; }
 #endif
   int getWsConnectedCount() const override { return _ws.connectedCount(); }
+  /** True if any TCP or WebSocket companion client is currently connected (BLE not counted). */
+  bool hasWifiCompanionClient() const { return _tcp.connectedCount() + _ws.connectedCount() > 0; }
   /** Accept WebSocket clients / handshakes; call from main loop. */
   void tickWebSocketHandshake() override;
 

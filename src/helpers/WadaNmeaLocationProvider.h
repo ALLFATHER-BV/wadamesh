@@ -79,6 +79,10 @@ public:
   }
 
   void stop() override {
+    // Put the L76K into low-power standby (~500 µA) before releasing the
+    // UART. Works on boards with no hardware GPS_EN pin (T-Deck Plus) where
+    // the module is always powered from the 3.3V rail. Any UART byte wakes it.
+    nmea.sendSentence(*_gps_serial, "PMTK161,0");
     if (_pin_en != -1) digitalWrite(_pin_en, !GPS_EN_ACTIVE);
     if (_pin_reset != -1) digitalWrite(_pin_reset, GPS_RESET_ACTIVE);
     release();

@@ -1,0 +1,3782 @@
+diff --git a/deploy/apps/apps.json b/deploy/apps/apps.json
+index 9e6b97d..302fd7c 100644
+--- a/deploy/apps/apps.json
++++ b/deploy/apps/apps.json
+@@ -50,6 +50,12 @@
+       "ver": "1.0",
+       "desc": "Compass rose: magnetometer or GPS course, live fix, bearing to contacts",
+       "seed": false
++    },
++    {
++      "id": "helloworld",
++      "name": "Hello World",
++      "ver": "1.0",
++      "desc": "Minimal test app — verifies the Lua app host is working on this board."
+     }
+   ]
+ }
+diff --git a/deploy/apps/gpscompass/1.0/gpscompass.lua b/deploy/apps/gpscompass/1.0/gpscompass.lua
+index 24c933d..3d4c400 100644
+--- a/deploy/apps/gpscompass/1.0/gpscompass.lua
++++ b/deploy/apps/gpscompass/1.0/gpscompass.lua
+@@ -742,6 +742,15 @@ local function draw_dial(tgt_bearing)
+   else
+     cv:text(CX - math.floor(text_w("--", TH16, 16) / 2), CY - math.floor(TH16 / 2), "--", C.sub, 16)
+   end
++
++  -- crosshair: current-position marker at the dial centre, high-contrast black
++  local XH = 7   -- half-length of each arm
++  local XG = 3   -- gap radius around the centre point
++  cv:line(CX - XH, CY, CX - XG, CY, 0x000000, 2)
++  cv:line(CX + XG, CY, CX + XH, CY, 0x000000, 2)
++  cv:line(CX, CY - XH, CX, CY - XG, 0x000000, 2)
++  cv:line(CX, CY + XG, CX, CY + XH, 0x000000, 2)
++  cv:circle(CX, CY, XG - 1, 0x000000, false, 1)
+ end
+ 
+ -- satellite meter: ten cells, filled in the status colour up to the count
+diff --git a/deploy/apps/lang/de.lang b/deploy/apps/lang/de.lang
+index de8c41d..0202f29 100644
+--- a/deploy/apps/lang/de.lang
++++ b/deploy/apps/lang/de.lang
+@@ -434,8 +434,8 @@ Loading...	Lädt...
+ Local every	Lokal alle
+ Local sensors	Lokale Sensoren
+ Lock	Sperren
+-Lock screen	Sperrbildschirm
+-Lock screen wallpaper	Sperrbildschirm-Hintergrund
++Lock screen	Lockscreen
++Lock screen wallpaper	Lockscreen-Hintergrund
+ Lock background colour set	Hintergrundfarbe der Sperre gesetzt
+ Lock text colour	Sperrtext-Farbe
+ Lock text colour set	Sperrtext-Farbe gesetzt
+diff --git a/platformio.ini b/platformio.ini
+index 0c51f74..7b8b715 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -183,7 +183,7 @@ lib_deps =
+   ; MeshCore core = the meshcomod monorepo built as a lib, pinned by tag.
+   ; Touch-app files (TouchPrefsStore, WifiRuntimeStore, transports, ...) are
+   ; vendored in this app's src/ and dropped from the lib via -DMC_VENDORED_TOUCH_APP.
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -472,7 +472,7 @@ build_src_filter =
+   +<../variants/attaky_mesh_series/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -656,7 +656,7 @@ build_src_filter =
+   +<../variants/lilygo_tdeck/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -882,7 +882,7 @@ build_src_filter =
+   +<../variants/lilygo_tlora_pager/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -1110,7 +1110,7 @@ build_src_filter =
+   +<../variants/lilygo_tlora_pager/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -1370,7 +1370,7 @@ build_src_filter =
+   +<../variants/thinknode_m9/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+@@ -1564,7 +1564,7 @@ build_src_filter =
+   +<../variants/rak_tap_v2/*.cpp>
+ 
+ lib_deps =
+-  https://github.com/ALLFATHER-BV/meshcomod.git#core-v1.17.4
++  https://github.com/ALLFATHER-BV/meshcomod.git#e62be9b
+   SPI
+   Wire
+   jgromes/RadioLib @ ^7.6.0
+diff --git a/src/AbstractUITask.h b/src/AbstractUITask.h
+index 55eab99..8cd67e8 100644
+--- a/src/AbstractUITask.h
++++ b/src/AbstractUITask.h
+@@ -113,10 +113,11 @@ public:
+    *  full); `is_new=false` means the contact is in contacts[] and was just
+    *  updated. Used by the touch UI to build a "Discovered" list of pending
+    *  contacts when auto-add is off. Default impl is a no-op. */
+-  virtual void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
++  virtual void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len, int8_t snr_q4 = -128) {
+     (void)contact;
+     (void)is_new;
+     (void)path_len;
++    (void)snr_q4;
+   }
+   /** Notify UI of a status response from a repeater that was pinged from the
+    *  UI side (e.g. via the Contacts action sheet). `data`/`len` is the raw
+diff --git a/src/MyMesh.cpp b/src/MyMesh.cpp
+index b769e62..784c067 100644
+--- a/src/MyMesh.cpp
++++ b/src/MyMesh.cpp
+@@ -1,6 +1,12 @@
+ #include "MyMesh.h"
++#include "helpers/ClockFloorRTC.h"   // for rtc_clock.getCurrentTimeUnique() — non-virtual override (#374)
+ #include <esp_heap_caps.h>
+ 
++// Direct access to the concrete clock so our getCurrentTimeUnique() override
++// (which resets the monotonic counter on backward corrections) is called
++// instead of the private RTCClock::last_unique path.
++extern ClockFloorRTC rtc_clock;
++
+ #include <Arduino.h> // needed for PlatformIO
+ #include <Mesh.h>
+ #include <ArduinoJson.h>   // settings backup import (uiImportBackup)
+@@ -484,7 +490,7 @@ void MyMesh::pushMeshcomodReply(const char* text, bool immediate_current) {
+     j += 6;
+     out_frame[j++] = 0xFF;
+     out_frame[j++] = TXT_TYPE_PLAIN;
+-    uint32_t ts = getRTCClock()->getCurrentTimeUnique();
++    uint32_t ts = rtc_clock.getCurrentTimeUnique();
+     // Some clients coalesce messages by sender+timestamp; enforce strictly monotonic ts.
+     if (ts <= s_meshcomod_last_reply_ts) ts = s_meshcomod_last_reply_ts + 1;
+     s_meshcomod_last_reply_ts = ts;
+@@ -2662,6 +2668,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
+     p->recv_seq = advert_recv_seq;
+     p->type = contact.type;
+     p->used = true;
++    p->snr_q4 = _ui_sig_snr_q4;   // SNR of this advert packet for yield-quality gating
+     p->path_len = path_len;
+     if (path_len) memcpy(p->path, path, path_len);
+ #if defined(ESP32)
+@@ -2680,7 +2687,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
+   // adverts and manually add nodes to contacts[] (used when auto-add is off
+   // or contacts[] is full). `is_new=true` here means the contact is NOT yet
+   // in contacts[]; `is_new=false` means it's a refresh of an existing one.
+-  if (_ui) _ui->discoveredContact(contact, is_new, path_len);
++  if (_ui) _ui->discoveredContact(contact, is_new, path_len, _ui_sig_snr_q4);
+ #endif
+ 
+   if (!is_new) dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY); // only schedule lazy write for contacts that are in contacts[]
+@@ -2946,7 +2953,61 @@ bool MyMesh::filterRecvFloodPacket(mesh::Packet* packet) {
+ }
+ 
+ bool MyMesh::allowPacketForward(const mesh::Packet* packet) {
+-  return _prefs.client_repeat != 0;
++  if (!_prefs.client_repeat) return false;
++
++  // Best signal: packet already carries repeater hops in its path hash — a real
++  // repeater is actively forwarding THIS packet right now. Yield immediately.
++  if (packet && packet->getPathHashCount() > 0) return false;
++
++  // Fallback: no repeater hops in packet yet (direct from originator).
++  // Scan advert_paths (fixed 16-entry table, O(16)) instead of the full contact
++  // list (O(N)) — recv_timestamp is actual last-heard-over-air, not lastmod which
++  // is only updated on advert receipt and drifts with companion sync.
++  // SNR gate: only yield to a repeater we're hearing well (> -10 dB). A barely-
++  // decodable repeater (-20 dB) is probably not serving the network better than us.
++  static constexpr uint32_t REPEATER_ACTIVE_SECS = 5 * 60;
++  static constexpr int8_t   REPEATER_MIN_SNR_Q4  = -10 * 4;  // -10 dB × 4
++  const uint32_t now = (uint32_t)getRTCClock()->getCurrentTime();
++  bool yield = false;
++#if defined(ESP32)
++  portENTER_CRITICAL(&advert_paths_mux);
++#endif
++  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
++    const AdvertPath& p = advert_paths[i];
++    if (p.used && p.type == ADV_TYPE_REPEATER &&
++        p.recv_timestamp > 0 && now >= p.recv_timestamp &&
++        (now - p.recv_timestamp) < REPEATER_ACTIVE_SECS &&
++        p.snr_q4 >= REPEATER_MIN_SNR_Q4) {
++      yield = true;
++      break;
++    }
++  }
++#if defined(ESP32)
++  portEXIT_CRITICAL(&advert_paths_mux);
++#endif
++  return !yield;
++}
++
++bool MyMesh::hasActiveRepeater() const {
++  static constexpr uint32_t REP_ACTIVE_SECS = 5 * 60;
++  static constexpr int8_t   REP_MIN_SNR_Q4  = -10 * 4;
++  const uint32_t now = getRTCClock() ? (uint32_t)getRTCClock()->getCurrentTime() : 0;
++  bool found = false;
++#if defined(ESP32)
++  portENTER_CRITICAL(&const_cast<MyMesh*>(this)->advert_paths_mux);
++#endif
++  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE && !found; i++) {
++    const AdvertPath& p = advert_paths[i];
++    if (p.used && p.type == ADV_TYPE_REPEATER &&
++        p.recv_timestamp > 0 && now >= p.recv_timestamp &&
++        (now - p.recv_timestamp) < REP_ACTIVE_SECS &&
++        p.snr_q4 >= REP_MIN_SNR_Q4)
++      found = true;
++  }
++#if defined(ESP32)
++  portEXIT_CRITICAL(&const_cast<MyMesh*>(this)->advert_paths_mux);
++#endif
++  return found;
+ }
+ 
+ // Fingerprint + track an originated flood, but only for chat messages — DM text
+@@ -3587,6 +3648,8 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
+   _prefs.tx_power_dbm = LORA_TX_POWER;
+   _prefs.gps_enabled = 0;       // GPS disabled by default
+   _prefs.gps_interval = 0;      // No automatic GPS updates by default
++  _prefs.multi_acks  = 1;       // extra ACK retransmit ON by default: improves delivery in busy meshes at low airtime cost
++  _prefs.client_repeat = 1;    // smart relay ON by default: yields to active repeaters, steps in when none around
+   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
+ #if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121)
+ #ifdef SX126X_RX_BOOSTED_GAIN
+@@ -3921,7 +3984,7 @@ void MyMesh::handleCmdFrame(size_t len) {
+     if (isMeshcomodRecipient(pub_key_prefix)) {
+       char *text = (char *)&cmd_frame[i];
+       int tlen = len - i;
+-      uint32_t expected_ack = msg_timestamp ? msg_timestamp : getRTCClock()->getCurrentTimeUnique();
++      uint32_t expected_ack = msg_timestamp ? msg_timestamp : rtc_clock.getCurrentTimeUnique();
+       uint32_t est_timeout = 1;
+       out_frame[0] = RESP_CODE_SENT;
+       out_frame[1] = 0; // local handling, not flood
+@@ -3976,7 +4039,7 @@ void MyMesh::handleCmdFrame(size_t len) {
+         }
+       }
+       if (txt_type == TXT_TYPE_CLI_DATA) {
+-        msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
++        msg_timestamp = rtc_clock.getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
+         TxtTxDebugInfo dbg{};
+         result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout, nullptr, &dbg);
+         expected_ack = 0; // no Ack expected
+@@ -3995,7 +4058,7 @@ void MyMesh::handleCmdFrame(size_t len) {
+         // Force node-side unique timestamp for plain sends as well.
+         // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
+         // and replay-like suppression on receivers.
+-        msg_timestamp = getRTCClock()->getCurrentTimeUnique();
++        msg_timestamp = rtc_clock.getCurrentTimeUnique();
+         uint32_t tx_hash4 = 0;
+         TxtTxDebugInfo dbg{};
+         result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);
+diff --git a/src/MyMesh.h b/src/MyMesh.h
+index 5a3aedb..e79cfb5 100644
+--- a/src/MyMesh.h
++++ b/src/MyMesh.h
+@@ -124,6 +124,7 @@ struct AdvertPath {
+   uint32_t recv_seq;
+   uint8_t type;
+   bool used;
++  int8_t  snr_q4;   // RX SNR×4 of the advert packet (-128 = unknown)
+   uint8_t path[MAX_PATH_SIZE];
+ };
+ 
+@@ -348,6 +349,9 @@ protected:
+   }
+ 
+ public:
++  /** True if a repeater with SNR > -10 dB was heard within the last 5 min.
++   *  Used by the status bar to colour the client-repeat icon. */
++  bool hasActiveRepeater() const;
+   /** Which kind of touch-UI request is currently in flight, so the response
+    *  matcher in onContactResponse routes to the right callback. */
+   enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2 };
+diff --git a/src/helpers/ClockFloorRTC.h b/src/helpers/ClockFloorRTC.h
+index 934e985..7cc41f0 100644
+--- a/src/helpers/ClockFloorRTC.h
++++ b/src/helpers/ClockFloorRTC.h
+@@ -29,7 +29,9 @@
+ //     worse than the one-time server re-lock it avoids (which the login skew
+ //     warning surfaces to the user anyway).
+ class ClockFloorRTC : public AutoDiscoverRTCClock {
+-  uint32_t _floor = 0;
++  uint32_t _floor      = 0;
++  uint32_t _last_uniq  = 0;   // our own monotonic counter; mirrors RTCClock::last_unique
++                               // but is RESET when setCurrentTime() pulls the floor back
+ public:
+   ClockFloorRTC(mesh::RTCClock& fallback) : AutoDiscoverRTCClock(fallback) {}
+ 
+@@ -62,7 +64,20 @@ public:
+     if (time < MIN_VALID_EPOCH || time > MAX_PLAUSIBLE_EPOCH) return;   // garbage set — ignore, whatever the source
+     AutoDiscoverRTCClock::setCurrentTime(time);
+     pushSystemClock(time);
+-    if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
++    if (_floor > time + TRUSTED_BACK_CAP) {
++      _floor = time;
++      _last_uniq = 0;   // reset monotonic stamp: old future value is now invalid (#374)
++    }
++  }
++
++  // Shadow RTCClock::getCurrentTimeUnique() using our own counter so a reset of
++  // _last_uniq (above) actually takes effect. RTCClock::last_unique is private and
++  // can't be touched from here — but since getCurrentTimeUnique() is non-virtual the
++  // base counter just quietly diverges after a floor reset; this one is what we call.
++  uint32_t getCurrentTimeUnique() {
++    uint32_t t = getCurrentTime();   // goes through our floor ratchet
++    if (t <= _last_uniq) return ++_last_uniq;
++    return _last_uniq = t;
+   }
+ 
+   // The UI reads the ESP32 *system* clock for every displayed time (status bar, chat
+diff --git a/src/helpers/WadaNmeaLocationProvider.h b/src/helpers/WadaNmeaLocationProvider.h
+index 5b2b339..7405e53 100644
+--- a/src/helpers/WadaNmeaLocationProvider.h
++++ b/src/helpers/WadaNmeaLocationProvider.h
+@@ -79,6 +79,10 @@ public:
+   }
+ 
+   void stop() override {
++    // Put the L76K into low-power standby (~500 µA) before releasing the
++    // UART. Works on boards with no hardware GPS_EN pin (T-Deck Plus) where
++    // the module is always powered from the 3.3V rail. Any UART byte wakes it.
++    nmea.sendSentence(*_gps_serial, "PMTK161,0");
+     if (_pin_en != -1) digitalWrite(_pin_en, !GPS_EN_ACTIVE);
+     if (_pin_reset != -1) digitalWrite(_pin_reset, GPS_RESET_ACTIVE);
+     release();
+diff --git a/src/helpers/esp32/MultiTransportCompanionInterface.h b/src/helpers/esp32/MultiTransportCompanionInterface.h
+index 9294db3..221b83f 100644
+--- a/src/helpers/esp32/MultiTransportCompanionInterface.h
++++ b/src/helpers/esp32/MultiTransportCompanionInterface.h
+@@ -72,6 +72,8 @@ public:
+   uint16_t getWsPort() const override { return _ws_port; }
+ #endif
+   int getWsConnectedCount() const override { return _ws.connectedCount(); }
++  /** True if any TCP or WebSocket companion client is currently connected (BLE not counted). */
++  bool hasWifiCompanionClient() const { return _tcp.connectedCount() + _ws.connectedCount() > 0; }
+   /** Accept WebSocket clients / handshakes; call from main loop. */
+   void tickWebSocketHandshake() override;
+ 
+diff --git a/src/helpers/esp32/TouchPrefsSchema.h b/src/helpers/esp32/TouchPrefsSchema.h
+index 1ce6a53..1c5e83d 100644
+--- a/src/helpers/esp32/TouchPrefsSchema.h
++++ b/src/helpers/esp32/TouchPrefsSchema.h
+@@ -9,7 +9,7 @@
+ namespace TouchPrefsSchema {
+ 
+ static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
+-static constexpr uint8_t CURRENT_VERSION = 57;   // ...v55: lock_dim_pct; v56: sleep_idle default ON; v57: lock_always_on default ON   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
++static constexpr uint8_t CURRENT_VERSION = 59;   // ...v55: lock_dim_pct; v56: sleep_idle default ON; v57: lock_always_on default ON; v58: auto_theme_sun + auto_aod_sun; v59: auto_theme_sun + auto_aod_sun default ON   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
+ static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
+ 
+ // Persisted byte layout. New fields must be appended at the end: older blobs
+@@ -94,6 +94,9 @@ struct __attribute__((packed)) Config {
+   uint8_t  lock_always_on;      // always-on: dim instead of screen-off (default 0)
+   uint8_t  lock_msg_preview;    // v54: show message preview card on lock screen (default 1)
+   uint8_t  lock_dim_pct;        // v55: always-on dim brightness 1..100% (default 8)
++  // v58: automatic day/night theme + AOD brightness driven by local sunrise/sunset
++  uint8_t  auto_theme_sun;      // 0=off, 1=on: switch theme at sunrise/sunset (applied at boot)
++  uint8_t  auto_aod_sun;        // 0=off, 1=on: AOD dim 6% night / 15% day (live, follows sun)
+ };
+ 
+ static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
+@@ -101,8 +104,14 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
+ 
+ static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
+               "the pre-v44 suffix moved");
+-static_assert(offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct) == sizeof(Config),
++static_assert(offsetof(Config, auto_aod_sun) + sizeof(Config::auto_aod_sun) == sizeof(Config),
+               "new preference fields must remain trailing");
++static_assert(offsetof(Config, auto_theme_sun) ==
++                  offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct),
++              "auto_theme_sun must follow lock_dim_pct");
++static_assert(offsetof(Config, auto_aod_sun) ==
++                  offsetof(Config, auto_theme_sun) + sizeof(Config::auto_theme_sun),
++              "auto_aod_sun must follow auto_theme_sun");
+ static_assert(offsetof(Config, lock_msg_preview) ==
+                   offsetof(Config, lock_always_on) + sizeof(Config::lock_always_on),
+               "lock_msg_preview must follow lock_always_on");
+diff --git a/src/helpers/esp32/TouchPrefsStore.cpp b/src/helpers/esp32/TouchPrefsStore.cpp
+index 9ecbc0c..539329c 100644
+--- a/src/helpers/esp32/TouchPrefsStore.cpp
++++ b/src/helpers/esp32/TouchPrefsStore.cpp
+@@ -41,7 +41,7 @@ static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v
+ 
+ // Defaults (kept identical to the historical per-key defaults).
+ static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
+-static const uint8_t  DEFAULT_BRIGHTNESS       = 100;
++static const uint8_t  DEFAULT_BRIGHTNESS       = 70;   // 70%: saves ~15 mA vs 100% on first boot
+ static const uint8_t  DEFAULT_KB_BL            = 2;          // auto
+ static const uint8_t  DEFAULT_KB_LAYOUT        = 0;          // English
+ static const uint8_t  DEFAULT_KB_SECONDARY     = 0;          // None
+@@ -176,6 +176,8 @@ static void cfgSetDefaults(TouchCfg& c) {
+   c.lock_always_on    = 1;          // ON: always-on dim lock screen by default (v57)
+   c.lock_msg_preview  = 1;          // ON: show message preview card on lock screen
+   c.lock_dim_pct      = 8;          // 8% — readable but low power
++  c.auto_theme_sun    = 1;          // v59: sun auto-theme ON by default
++  c.auto_aod_sun      = 1;          // v59: sun auto-AOD brightness ON by default
+ }
+ 
+ // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
+@@ -262,6 +264,8 @@ static void cfgLoadOrMigrate() {
+         if (stored_version < 55) s_cfg.lock_dim_pct = 8;      // v55: always-on dim brightness, default 8%
+         if (stored_version < 56) s_cfg.sleep_idle = 1;        // v56: idle sleep ON by default (was OFF)
+         if (stored_version < 57) s_cfg.lock_always_on = 1;   // v57: always-on lock screen ON by default (was OFF)
++        if (stored_version < 58) { s_cfg.auto_theme_sun = 0; s_cfg.auto_aod_sun = 0; }  // v58: sun auto-theme/AOD fields added (were off)
++        if (stored_version < 59) { s_cfg.auto_theme_sun = 1; s_cfg.auto_aod_sun = 1; }  // v59: flip to ON for existing users
+         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
+         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
+         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
+@@ -614,6 +618,57 @@ bool touchPrefsSetChannelScope(int slot, const char* name) {
+   return ok;
+ }
+ 
++static const char* KEY_LOCK_PIN  = "lk_pin";
++
++void touchPrefsGetLockPin(char* out, int out_cap) {
++  if (!out || out_cap <= 0) return;
++  out[0] = '\0';
++  if (!s_begun) touchPrefsBegin();
++  String v = prefsGetStr(KEY_LOCK_PIN, String(""));
++  int n = (int)v.length();
++  if (n > out_cap - 1) n = out_cap - 1;
++  memcpy(out, v.c_str(), (size_t)n);
++  out[n] = '\0';
++}
++
++bool touchPrefsSetLockPin(const char* pin) {
++  if (!s_begun) touchPrefsBegin();
++  s_prefs.end();
++  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
++  bool ok = s_prefs.putString(KEY_LOCK_PIN, pin ? pin : "") > 0;
++  s_prefs.end();
++  s_begun = s_prefs.begin(TOUCH_NS, true);
++  return ok;
++}
++
++static const char* KEY_APPSTORE_URL = "as_url";
++static const char* DEFAULT_APPSTORE_URL = "http://firmware.wadamesh.com/apps";
++
++void touchPrefsGetAppStoreUrl(char* out, int out_cap) {
++  if (!out || out_cap <= 0) return;
++  if (!s_begun) touchPrefsBegin();
++  String v = prefsGetStr(KEY_APPSTORE_URL, String(""));
++  if (v.length() == 0) {
++    strncpy(out, DEFAULT_APPSTORE_URL, out_cap - 1);
++    out[out_cap - 1] = '\0';
++    return;
++  }
++  int n = (int)v.length();
++  if (n > out_cap - 1) n = out_cap - 1;
++  memcpy(out, v.c_str(), n);
++  out[n] = '\0';
++}
++
++bool touchPrefsSetAppStoreUrl(const char* url) {
++  if (!s_begun) touchPrefsBegin();
++  s_prefs.end();
++  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
++  bool ok = s_prefs.putString(KEY_APPSTORE_URL, url ? url : "") > 0;
++  s_prefs.end();
++  s_begun = s_prefs.begin(TOUCH_NS, true);
++  return ok;
++}
++
+ static const char* KEY_LOCK_WALL = "lk_wall";
+ static const char* DEFAULT_LOCK_WALL = "/lock/placeholder.jpg";
+ 
+@@ -1893,6 +1948,10 @@ bool    touchPrefsGetLockMsgPreview()  { if (!s_begun) touchPrefsBegin(); return
+ void    touchPrefsSetLockMsgPreview(bool on)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_msg_preview  = on?1:0; cfgFlush(); }
+ uint8_t touchPrefsGetLockDimPct()     { if (!s_begun) touchPrefsBegin(); uint8_t v = s_cfg.lock_dim_pct; return (v < 1) ? 1 : (v > 100) ? 100 : v; }
+ void    touchPrefsSetLockDimPct(uint8_t pct)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_dim_pct = (pct < 1) ? 1 : (pct > 100) ? 100 : pct; cfgFlush(); }
++bool    touchPrefsGetAutoThemeSun()   { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_theme_sun != 0; }
++void    touchPrefsSetAutoThemeSun(bool on) { if (!s_begun) touchPrefsBegin(); s_cfg.auto_theme_sun = on ? 1 : 0; cfgFlush(); }
++bool    touchPrefsGetAutoAodSun()     { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_aod_sun  != 0; }
++void    touchPrefsSetAutoAodSun(bool on)   { if (!s_begun) touchPrefsBegin(); s_cfg.auto_aod_sun  = on ? 1 : 0; cfgFlush(); }
+ 
+ #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
+ bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
+diff --git a/src/helpers/esp32/TouchPrefsStore.h b/src/helpers/esp32/TouchPrefsStore.h
+index 8c7a8c2..46f654d 100644
+--- a/src/helpers/esp32/TouchPrefsStore.h
++++ b/src/helpers/esp32/TouchPrefsStore.h
+@@ -203,9 +203,9 @@ bool    touchPrefsSetBootAdvert(bool on);
+ bool    touchPrefsGetCompactChat();
+ bool    touchPrefsSetCompactChat(bool on);
+ 
+-/* Buffered LoRa receive (experimental): a high-priority drain task lifts each packet
+- * out of the radio within ~1 ms so UI-thread stalls can't overwrite unread packets
+- * (the missed-messages class). Opt-in, default off = stock receive path. */
++/* Buffered LoRa receive: a high-priority drain task lifts each packet out of the
++ * radio within ~1 ms so UI-thread stalls can't overwrite unread packets
++ * (the missed-messages class). Default ON. */
+ bool    touchPrefsGetRxQueue();
+ bool    touchPrefsSetRxQueue(bool on);
+ uint32_t touchPrefsGetAppHide();       // v46: app-drawer hide bitmask (Store page toggles)
+@@ -471,6 +471,10 @@ bool    touchPrefsGetLockMsgPreview();         // show message preview card on l
+ void    touchPrefsSetLockMsgPreview(bool on);
+ uint8_t touchPrefsGetLockDimPct();             // always-on dim brightness 1..100% (default 8)
+ void    touchPrefsSetLockDimPct(uint8_t pct);
++bool    touchPrefsGetAutoThemeSun();           // v58: auto dark/light theme by sunrise/sunset (applied at boot)
++void    touchPrefsSetAutoThemeSun(bool on);
++bool    touchPrefsGetAutoAodSun();             // v58: auto AOD brightness 6% night / 15% day (live)
++void    touchPrefsSetAutoAodSun(bool on);
+ 
+ /** Per-channel mute, keyed by channel name. Bit 0 = mute messages, bit 1 =
+  *  mute @-mentions. Suppresses the notification SOUND for that channel (the
+@@ -525,6 +529,17 @@ constexpr int TOUCH_REPEATER_PW_LEN     = 16;   // 15 chars + null
+ int  touchPrefsGetRepeaterPassword(const uint8_t* pub_key6, char* out, int out_cap);
+ bool touchPrefsSetRepeaterPassword(const uint8_t* pub_key6, const char* password);
+ 
++/** Lock-screen PIN. Empty string = no PIN (default). Max 16 alphanumeric chars (a-z, 0-9). */
++constexpr int TOUCH_LOCK_PIN_MAXLEN = 17;   // 16 chars + null
++void touchPrefsGetLockPin(char* out, int out_cap);
++bool touchPrefsSetLockPin(const char* pin);
++
++/** Custom App Store base URL. Empty = use the built-in default (firmware.wadamesh.com/apps).
++ *  Must NOT have a trailing slash. Max 127 chars. */
++constexpr int TOUCH_APPSTORE_URL_MAXLEN = 128;
++void touchPrefsGetAppStoreUrl(char* out, int out_cap);
++bool touchPrefsSetAppStoreUrl(const char* url);
++
+ /** Lock-screen wallpaper. Either an internal SPIFFS path (e.g.
+  *  "/lock/placeholder.jpg") or an SD-card path prefixed with "sd:" (e.g.
+  *  "sd:/walls/x.jpg"). The lockscreen falls back to the embedded placeholder
+diff --git a/src/helpers/esp32/WifiRuntimeStore.cpp b/src/helpers/esp32/WifiRuntimeStore.cpp
+index 67180d4..205f4da 100644
+--- a/src/helpers/esp32/WifiRuntimeStore.cpp
++++ b/src/helpers/esp32/WifiRuntimeStore.cpp
+@@ -207,17 +207,12 @@ void wifiScanSetActive(bool active) { s_wifi_scan_active = active; }
+ bool wifiScanIsActive() { return s_wifi_scan_active; }
+ 
+ void wifiConfigApply() {
+-#if defined(MULTI_TRANSPORT_COMPANION) && !defined(HAS_TANMATSU)
+-  // Multi-transport targets serialize apply and worker scans in main.cpp. The
+-  // Pager additionally releases/recreates NimBLE around WPA. Calling
+-  // disconnect()/begin() directly here bypasses both ownership contracts.
++#if defined(MULTI_TRANSPORT_COMPANION) || defined(HAS_TANMATSU)
++  // Multi-transport and Tanmatsu targets both have a WiFi state machine in their
++  // main loop that owns disconnect()/begin(). Calling those directly here races
++  // with that machine (and on Tanmatsu can crash the esp-hosted C6 link).
+   wifiConfigRequestApply();
+   return;
+-#endif
+-#if defined(HAS_TANMATSU)
+-  printf("[WIFI] apply radio_en=%d hasRuntime=%d mode=%d status=%d\n",
+-         (int)wifiConfigGetRadioEnabled(), (int)wifiConfigHasRuntime(),
+-         (int)WiFi.getMode(), (int)WiFi.status());
+ #endif
+   if (!wifiConfigGetRadioEnabled()) {
+     WiFi.disconnect(true);
+diff --git a/src/helpers/input/HeltecV4CapTouch.cpp b/src/helpers/input/HeltecV4CapTouch.cpp
+index 4e0fb49..df808b9 100644
+--- a/src/helpers/input/HeltecV4CapTouch.cpp
++++ b/src/helpers/input/HeltecV4CapTouch.cpp
+@@ -60,6 +60,7 @@ static bool s_tap_pending = false;
+ static uint16_t s_tap_x = 0, s_tap_y = 0;
+ static bool s_swipe_pending = false;
+ static int8_t s_swipe_x = 0, s_swipe_y = 0;
++static uint16_t s_swipe_start_y = 0;   // logical display Y where the vertical swipe began
+ static bool s_live = false;
+ static uint16_t s_live_x = 0, s_live_y = 0;
+ // Set during a gesture once displacement exceeds the swipe threshold AND the
+@@ -353,6 +354,7 @@ int heltecV4CapTouchCheck() {
+     if (!long_dispatched && ady >= HELTEC_V4_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
+       s_swipe_x = 0;
+       s_swipe_y = (dy < 0) ? -1 : 1;
++      s_swipe_start_y = sy;   // logical start Y for edge-zone check in applySwipeGesture
+       s_swipe_pending = true;
+       return BUTTON_EVENT_NONE;
+     }
+@@ -398,11 +400,12 @@ bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y) {
+   return true;
+ }
+ 
+-bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir) {
++bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir, uint16_t* start_y_out) {
+   if (!s_swipe_pending) return false;
+   s_swipe_pending = false;
+   if (x_dir) *x_dir = s_swipe_x;
+   if (y_dir) *y_dir = s_swipe_y;
++  if (start_y_out) *start_y_out = s_swipe_start_y;
+   s_swipe_x = 0;
+   s_swipe_y = 0;
+   return true;
+diff --git a/src/helpers/input/HeltecV4CapTouch.h b/src/helpers/input/HeltecV4CapTouch.h
+index e6743e8..63de087 100644
+--- a/src/helpers/input/HeltecV4CapTouch.h
++++ b/src/helpers/input/HeltecV4CapTouch.h
+@@ -19,7 +19,7 @@ bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y);
+  * x_dir: -1 left, +1 right, 0 none
+  * y_dir: -1 up, +1 down, 0 none
+  */
+-bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir);
++bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir, uint16_t* start_y_out = nullptr);
+ 
+ /**
+  * Spawn a pinned FreeRTOS task that owns the touch I2C bus and polls
+diff --git a/src/helpers/input/RakTapV2Touch.cpp b/src/helpers/input/RakTapV2Touch.cpp
+index 8666922..9a65580 100644
+--- a/src/helpers/input/RakTapV2Touch.cpp
++++ b/src/helpers/input/RakTapV2Touch.cpp
+@@ -67,6 +67,7 @@ static uint16_t s_tap_x = 0, s_tap_y = 0;
+ static bool     s_swiping_now = false;
+ static bool     s_swipe_pending = false;
+ static int8_t   s_swipe_x = 0, s_swipe_y = 0;
++static uint16_t s_swipe_start_y = 0;
+ 
+ static uint8_t  s_ui_rotation = 0;
+ static uint8_t  s_point_rotation = 0;
+@@ -262,6 +263,7 @@ int heltecV4CapTouchCheck() {
+     if (ady >= RAK_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
+       s_swipe_x = 0;
+       s_swipe_y = ((int)s_last_y - (int)s_start_y) < 0 ? -1 : 1;
++      s_swipe_start_y = s_start_y;
+       s_swipe_pending = true;
+       return BUTTON_EVENT_NONE;
+     }
+@@ -294,11 +296,12 @@ bool heltecV4CapTouchPopTap(uint16_t* x, uint16_t* y) {
+   if (y) *y = s_tap_y;
+   return true;
+ }
+-bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd) {
++bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd, uint16_t* start_y_out) {
+   if (!s_swipe_pending) return false;
+   s_swipe_pending = false;
+   if (xd) *xd = s_swipe_x;
+   if (yd) *yd = s_swipe_y;
++  if (start_y_out) *start_y_out = s_swipe_start_y;
+   return true;
+ }
+ 
+diff --git a/src/helpers/input/TDeckTouch.cpp b/src/helpers/input/TDeckTouch.cpp
+index d233422..0f9c17e 100644
+--- a/src/helpers/input/TDeckTouch.cpp
++++ b/src/helpers/input/TDeckTouch.cpp
+@@ -65,6 +65,7 @@ static uint16_t s_tap_x = 0, s_tap_y = 0;
+ static bool     s_swiping_now = false;
+ static bool     s_swipe_pending = false;
+ static int8_t   s_swipe_x = 0, s_swipe_y = 0;
++static uint16_t s_swipe_start_y = 0;
+ 
+ static uint8_t  s_ui_rotation = 0;     // stored; the T-Deck is fixed landscape
+ static uint8_t  s_point_rotation = 0;  // so these are informational only
+@@ -366,6 +367,7 @@ int heltecV4CapTouchCheck() {
+     if (ady >= TDECK_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
+       s_swipe_x = 0;
+       s_swipe_y = (dy < 0) ? -1 : 1;
++      s_swipe_start_y = s_start_y;
+       s_swipe_pending = true;
+       return BUTTON_EVENT_NONE;
+     }
+@@ -397,11 +399,12 @@ bool heltecV4CapTouchPopTap(uint16_t* x, uint16_t* y) {
+   return true;
+ }
+ 
+-bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd) {
++bool heltecV4CapTouchPopSwipe(int8_t* xd, int8_t* yd, uint16_t* start_y_out) {
+   if (!s_swipe_pending) return false;
+   s_swipe_pending = false;
+   if (xd) *xd = s_swipe_x;
+   if (yd) *yd = s_swipe_y;
++  if (start_y_out) *start_y_out = s_swipe_start_y;
+   return true;
+ }
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index e57bec9..6a32080 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -1386,6 +1386,20 @@ void setup() {
+ #endif
+   sensors.begin();
+ 
++#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
++  // Cold-boot standby: if GPS is disabled in prefs, the L76K powers up on the
++  // 3.3V rail and searches satellites forever (~15-20 mA) until told otherwise.
++  // Send the software standby command immediately after sensors.begin() opens
++  // the UART so the module drops to ~500 µA — same as the AOD pause path.
++  {
++    auto* np = the_mesh.getNodePrefs();
++    if (np && !np->gps_enabled) {
++      LocationProvider* lp = sensors.getLocationProvider();
++      if (lp) { lp->begin(); lp->stop(); }   // begin opens UART; stop() sends PMTK161,0 then releases
++    }
++  }
++#endif
++
+ #ifdef DISPLAY_CLASS
+   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());  // still want to pass this in as dependency, as prefs might be moved
+   Serial.println("[BOOT] ui ready");
+@@ -1430,9 +1444,12 @@ void loop() {
+ #endif
+   static bool wifi_started = false;
+   static uint32_t last_wifi_retry_ms = 0;
+-  static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
++  static const uint32_t WIFI_RETRY_INTERVAL_INIT_MS = 10000;
++  static const uint32_t WIFI_RETRY_INTERVAL_MAX_MS  = 300000;  // 5 min cap
++  static uint32_t wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
+   static bool wifi_radio_prev = true;
+   static bool wifi_radio_inited = false;
++  static bool wifi_idled_off = false;   // set by idle-off block below; suppresses the state machine while screen is dark
+   /* Run the saved Wi-Fi state machine whenever its radio preference is on.
+    * Pager setup separately guarantees that Wi-Fi claims its coexistence
+    * resources before a cold BLE start. */
+@@ -1554,8 +1571,9 @@ void loop() {
+     }
+     wifi_started = false;
+     last_wifi_retry_ms = 0;
++    wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
+   }
+-  bool wifi_state_machine_active = wifi_radio_en;
++  bool wifi_state_machine_active = wifi_radio_en && !wifi_idled_off;
+ #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+   wifi_state_machine_active = wifi_state_machine_active && !wifiConfigPagerBleFallbackActive();
+ #endif
+@@ -1625,8 +1643,10 @@ void loop() {
+     // abort the in-flight sweep (the scan-while-connected "0 networks" bug).
+     if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED && !wifiScanIsActive()) {
+       uint32_t now = millis();
+-      if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
++      if ((uint32_t)(now - last_wifi_retry_ms) >= wifi_retry_interval_ms) {
+         last_wifi_retry_ms = now;
++        // Exponential backoff: double on each retry, cap at 5 min.
++        wifi_retry_interval_ms = min(wifi_retry_interval_ms * 2, WIFI_RETRY_INTERVAL_MAX_MS);
+ #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+         s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
+         s_pager_wifi_ble_deadline_ms = 0;
+@@ -1668,6 +1688,7 @@ void loop() {
+     static bool sntp_pushed = false;
+     static uint32_t sntp_kick_ms = 0;
+     if (WiFi.status() == WL_CONNECTED) {
++      wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;  // reset backoff on successful connect
+ #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
+       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
+       s_pager_wifi_ble_deadline_ms = 0;
+@@ -1888,4 +1909,45 @@ void loop() {
+   touchSleep::loopEnd(millis());
+ #endif
+ #endif
++
++#if defined(MULTI_TRANSPORT_COMPANION) && defined(HAS_TOUCH_UI)
++  // WiFi idle-off: when the screen is off/AOD-locked AND no WiFi companion
++  // client is connected, power down WiFi after a 60-second grace period.
++  // BLE stays up so the companion app can still connect via Bluetooth.
++  // WiFi is restored the moment the screen wakes (wakeScreen triggers a
++  // wifiConfigRequestApply which the state machine above picks up next tick).
++  {
++    static uint32_t s_wifi_idle_since_ms = 0;
++    constexpr uint32_t WIFI_IDLE_GRACE_MS = 60000;
++
++    const bool screen_idle = ui_task.isScreenOff();
++    const bool has_wifi_client = serial_interface.hasWifiCompanionClient();
++
++    if (!screen_idle || has_wifi_client) {
++      // Active: cancel any pending shutdown; restore WiFi if we turned it off.
++      s_wifi_idle_since_ms = 0;
++      if (wifi_idled_off && !wifiScanIsActive()) {
++        wifi_idled_off = false;
++        // Re-arm TCP so startTcpServer() in the block above accepts connections again.
++        serial_interface.enableTcp();
++        // Let the existing WiFi state machine (above, now un-gated) handle
++        // mode(STA) + begin() + SNTP on the next tick.
++        last_wifi_retry_ms = 0;
++        wifi_retry_interval_ms = WIFI_RETRY_INTERVAL_INIT_MS;
++      }
++    } else {
++      // Screen idle, no WiFi client.
++      if (s_wifi_idle_since_ms == 0) s_wifi_idle_since_ms = millis();
++      if (!wifi_idled_off && wifi_started &&
++          (uint32_t)(millis() - s_wifi_idle_since_ms) >= WIFI_IDLE_GRACE_MS) {
++        wifi_idled_off = true;
++        serial_interface.stopTcpServer();   // drops all TCP/WS clients + sets _tcp_enabled=false
++        WiFi.disconnect(true);
++        delay(50);
++        WiFi.mode(WIFI_OFF);
++        wifi_started = false;
++      }
++    }
++  }
++#endif
+ }
+diff --git a/src/ui-touch/PongGame.cpp b/src/ui-touch/PongGame.cpp
+deleted file mode 100644
+index 181b172..0000000
+--- a/src/ui-touch/PongGame.cpp
++++ /dev/null
+@@ -1,292 +0,0 @@
+-// SPDX-License-Identifier: GPL-3.0-or-later
+-#include "PongGame.h"
+-#include "AppPage.h"
+-#include "i18n.h"
+-
+-#include <Arduino.h>
+-#include <math.h>
+-#include <stdio.h>
+-#include <LvglPsramAlloc.h>
+-
+-static constexpr uint32_t kTickMs   = 30;     // ~33 fps
+-static constexpr uint32_t kColBg    = 0x0A0C0E;
+-static constexpr uint32_t kColAi    = 0x828891;   // AI paddle (grey)
+-static constexpr uint32_t kColPlayer= 0x15B6A6;   // player paddle (brand teal)
+-static constexpr uint32_t kColBall  = 0xE6EAEE;
+-static constexpr uint32_t kColText  = 0xE6EAEE;
+-static constexpr uint32_t kColNet   = 0x1E2428;   // centre-line colour
+-
+-PongGame* PongGame::s_active = nullptr;
+-
+-bool PongGame::isOpen() { return s_active && s_active->root_; }
+-
+-void PongGame::nudge(int dx, int dy) {
+-  if (!s_active || s_active->over_) return;
+-  if (!s_active->started_) s_active->started_ = true;
+-  // dominant axis → vertical paddle movement only
+-  const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+-  const int move = (ady >= adx) ? dy : 0;
+-  if (move == 0) return;
+-  const float step = 14.0f;
+-  const float half = s_active->kPadH / 2.0f;
+-  s_active->py_ += move * step;
+-  if (s_active->py_ < half) s_active->py_ = half;
+-  if (s_active->py_ > s_active->H_ - half) s_active->py_ = (float)(s_active->H_) - half;
+-}
+-
+-void PongGame::launch() {
+-  if (s_active) return;
+-  PongGame* g = new PongGame();
+-  s_active = g;
+-  if (!g->open()) { s_active = nullptr; delete g; }
+-}
+-
+-void PongGame::destroyAsync(void* p) { delete static_cast<PongGame*>(p); }
+-
+-void PongGame::dismiss() {
+-  if (!s_active) return;
+-  PongGame* g = s_active;
+-  s_active = nullptr;
+-  g->close();
+-  lv_async_call(destroyAsync, g);
+-}
+-
+-PongGame::~PongGame() {
+-  if (buf_) { lvglPsramFree(buf_); buf_ = nullptr; }
+-}
+-
+-// ── helpers ───────────────────────────────────────────────────────────────────
+-
+-static inline float clampf(float v, float lo, float hi) {
+-  return v < lo ? lo : v > hi ? hi : v;
+-}
+-
+-void PongGame::resetBall(int dir) {
+-  bx_ = W_ / 2.0f;
+-  by_ = H_ / 2.0f;
+-  // random vertical angle ±25°
+-  const float angle = ((float)(random(-25, 26))) * 3.14159f / 180.0f;
+-  const float spd = 3.8f;
+-  bvx_ =  dir * spd * cosf(angle);
+-  bvy_ =        spd * sinf(angle);
+-}
+-
+-void PongGame::reset() {
+-  py_  = H_ / 2.0f;
+-  ay_  = H_ / 2.0f;
+-  ps_  = 0;
+-  as_  = 0;
+-  over_ = false;
+-  resetBall(1);
+-}
+-
+-// ── render ────────────────────────────────────────────────────────────────────
+-
+-void PongGame::render() {
+-  if (!canvas_) return;
+-
+-  lv_canvas_fill_bg(canvas_, lv_color_hex(kColBg), LV_OPA_COVER);
+-
+-  lv_draw_rect_dsc_t rd;
+-  lv_draw_rect_dsc_init(&rd);
+-  rd.radius = 0;
+-
+-  // centre net (dashes)
+-  rd.bg_color = lv_color_hex(kColNet);
+-  rd.bg_opa   = LV_OPA_COVER;
+-  const int cx = W_ / 2;
+-  for (int y = 0; y < H_; y += 12)
+-    lv_canvas_draw_rect(canvas_, cx - 1, y, 2, 8, &rd);
+-
+-  // AI paddle (left)
+-  rd.bg_color = lv_color_hex(kColAi);
+-  rd.radius   = 3;
+-  lv_canvas_draw_rect(canvas_, 6,
+-                      (int)(ay_ - kPadH / 2), kPadW, kPadH, &rd);
+-
+-  // player paddle (right)
+-  rd.bg_color = lv_color_hex(kColPlayer);
+-  lv_canvas_draw_rect(canvas_, W_ - 6 - kPadW,
+-                      (int)(py_ - kPadH / 2), kPadW, kPadH, &rd);
+-
+-  // ball
+-  rd.bg_color = lv_color_hex(kColBall);
+-  rd.radius   = 2;
+-  lv_canvas_draw_rect(canvas_, (int)(bx_ - kBallR), (int)(by_ - kBallR),
+-                      kBallR * 2, kBallR * 2, &rd);
+-}
+-
+-// ── physics ───────────────────────────────────────────────────────────────────
+-
+-void PongGame::step() {
+-  if (!started_ || over_) return;
+-
+-  bx_ += bvx_;
+-  by_ += bvy_;
+-
+-  // top/bottom wall
+-  if (by_ - kBallR < 0)   { by_ = kBallR;        bvy_ = -bvy_; }
+-  if (by_ + kBallR > H_)  { by_ = H_ - kBallR;   bvy_ = -bvy_; }
+-
+-  // AI tracking
+-  const float ai_diff = by_ - ay_;
+-  const float ai_move = clampf(ai_diff, -kAiSpd, kAiSpd);
+-  ay_ = clampf(ay_ + ai_move, kPadH / 2.0f, H_ - kPadH / 2.0f);
+-
+-  // AI paddle hit (left)
+-  const float ai_right = 6.0f + kPadW;
+-  if (bvx_ < 0 && bx_ - kBallR < ai_right && bx_ - kBallR > ai_right - 10) {
+-    if (by_ >= ay_ - kPadH / 2 && by_ <= ay_ + kPadH / 2) {
+-      bx_  = ai_right + kBallR;
+-      bvx_ = -bvx_ * 1.05f;
+-      bvy_ = ((by_ - ay_) / (kPadH / 2.0f)) * fabsf(bvx_) * 0.8f;
+-    }
+-  }
+-
+-  // player paddle hit (right)
+-  const float pl_left = (float)(W_ - 6 - kPadW);
+-  if (bvx_ > 0 && bx_ + kBallR > pl_left && bx_ + kBallR < pl_left + 10) {
+-    if (by_ >= py_ - kPadH / 2 && by_ <= py_ + kPadH / 2) {
+-      bx_  = pl_left - kBallR;
+-      bvx_ = -bvx_ * 1.05f;
+-      bvy_ = ((by_ - py_) / (kPadH / 2.0f)) * fabsf(bvx_) * 0.8f;
+-    }
+-  }
+-
+-  // speed cap
+-  const float spd = sqrtf(bvx_ * bvx_ + bvy_ * bvy_);
+-  if (spd > 12.0f) { bvx_ = bvx_ / spd * 12.0f; bvy_ = bvy_ / spd * 12.0f; }
+-
+-  // scoring
+-  if (bx_ + kBallR < 0) {
+-    ps_++;
+-    if (ps_ >= kWin) { over_ = true; } else { resetBall(1); }
+-    updateScoreLabel();
+-  } else if (bx_ - kBallR > W_) {
+-    as_++;
+-    if (as_ >= kWin) { over_ = true; } else { resetBall(-1); }
+-    updateScoreLabel();
+-  }
+-
+-  render();
+-}
+-
+-void PongGame::updateScoreLabel() {
+-  if (!score_) return;
+-  if (over_) {
+-    const bool win = ps_ >= kWin;
+-    lv_label_set_text_fmt(score_,
+-      TR(win ? "You win!  \xe2\x80\x94  %d : %d  (tap to restart)"
+-             : "AI wins  \xe2\x80\x94  %d : %d  (tap to restart)"),
+-      ps_, as_);
+-  } else if (started_) {
+-    lv_label_set_text_fmt(score_, TR("You %d  \xe2\x80\x94  AI %d"), ps_, as_);
+-  } else {
+-    lv_label_set_text(score_, TR("Pong  \xe2\x80\x94  swipe up/down or use arrow keys"));
+-  }
+-}
+-
+-// ── open / close ──────────────────────────────────────────────────────────────
+-
+-bool PongGame::open() {
+-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+-
+-  root_ = appPageCreateRoot(kColBg);
+-  lv_obj_add_event_cb(root_, gestureCb, LV_EVENT_GESTURE, this);
+-  lv_obj_add_event_cb(root_, tapCb,     LV_EVENT_CLICKED, this);
+-
+-  static char s_bar_title[16];
+-  snprintf(s_bar_title, sizeof s_bar_title, "%s", TR("Pong"));
+-  appPageBegin(s_bar_title, &PongGame::dismiss);
+-
+-  // canvas below a 24 px score row
+-  W_ = (int)sw;
+-  H_ = (int)appPageContentH() - 24;
+-  buf_ = (lv_color_t*)lvglPsramAlloc((size_t)W_ * H_ * sizeof(lv_color_t));
+-  if (!buf_) return false;
+-
+-  canvas_ = lv_canvas_create(root_);
+-  lv_canvas_set_buffer(canvas_, buf_, W_, H_, LV_IMG_CF_TRUE_COLOR);
+-  lv_obj_align(canvas_, LV_ALIGN_BOTTOM_MID, 0, 0);
+-
+-  score_ = lv_label_create(root_);
+-  lv_obj_set_style_text_color(score_, lv_color_hex(kColText), LV_PART_MAIN);
+-  lv_obj_align(score_, LV_ALIGN_TOP_LEFT, 6, 4);
+-
+-  reset();
+-  updateScoreLabel();
+-  render();
+-
+-  start_btn_ = lv_btn_create(root_);
+-  lv_obj_set_size(start_btn_, 150, 44);
+-  lv_obj_align(start_btn_, LV_ALIGN_CENTER, 0, 0);
+-  lv_obj_add_event_cb(start_btn_, startCb, LV_EVENT_CLICKED, this);
+-  lv_obj_t* sl = lv_label_create(start_btn_);
+-  lv_label_set_text(sl, TR(LV_SYMBOL_PLAY "  New game"));
+-  lv_obj_center(sl);
+-
+-  return true;
+-}
+-
+-void PongGame::close() {
+-  if (timer_) { lv_timer_del(timer_); timer_ = nullptr; }
+-  appPageEnd(&PongGame::dismiss);
+-  appPageDeleteRootAsync(root_);
+-  root_ = nullptr; canvas_ = nullptr; score_ = nullptr; start_btn_ = nullptr;
+-}
+-
+-// ── LVGL callbacks ────────────────────────────────────────────────────────────
+-
+-void PongGame::timerCb(lv_timer_t* t) {
+-  auto* self = static_cast<PongGame*>(t->user_data);
+-  if (self) self->step();
+-}
+-
+-void PongGame::gestureCb(lv_event_t* e) {
+-  auto* self = static_cast<PongGame*>(lv_event_get_user_data(e));
+-  if (!self) return;
+-  if (!self->started_) {
+-    self->started_ = true;
+-    if (self->start_btn_) { lv_obj_del(self->start_btn_); self->start_btn_ = nullptr; }
+-    if (!self->timer_) self->timer_ = lv_timer_create(timerCb, kTickMs, self);
+-    self->updateScoreLabel();
+-  }
+-  const float half = self->kPadH / 2.0f;
+-  switch (lv_indev_get_gesture_dir(lv_indev_get_act())) {
+-    case LV_DIR_TOP:
+-      self->py_ = clampf(self->py_ - 30, half, self->H_ - half); break;
+-    case LV_DIR_BOTTOM:
+-      self->py_ = clampf(self->py_ + 30, half, self->H_ - half); break;
+-    default: break;
+-  }
+-}
+-
+-void PongGame::tapCb(lv_event_t* e) {
+-  auto* self = static_cast<PongGame*>(lv_event_get_user_data(e));
+-  if (!self) return;
+-  if (self->over_) {
+-    self->reset();
+-    self->started_ = false;
+-    self->updateScoreLabel();
+-    self->render();
+-    // re-show start button
+-    self->start_btn_ = lv_btn_create(self->root_);
+-    lv_obj_set_size(self->start_btn_, 150, 44);
+-    lv_obj_align(self->start_btn_, LV_ALIGN_CENTER, 0, 0);
+-    lv_obj_add_event_cb(self->start_btn_, startCb, LV_EVENT_CLICKED, self);
+-    lv_obj_t* sl = lv_label_create(self->start_btn_);
+-    lv_label_set_text(sl, TR(LV_SYMBOL_PLAY "  New game"));
+-    lv_obj_center(sl);
+-    if (self->timer_) { lv_timer_del(self->timer_); self->timer_ = nullptr; }
+-  }
+-}
+-
+-void PongGame::startCb(lv_event_t* e) {
+-  auto* self = static_cast<PongGame*>(lv_event_get_user_data(e));
+-  if (!self || self->started_) return;
+-  self->started_ = true;
+-  if (self->start_btn_) { lv_obj_del(self->start_btn_); self->start_btn_ = nullptr; }
+-  if (!self->timer_) self->timer_ = lv_timer_create(timerCb, kTickMs, self);
+-  self->updateScoreLabel();
+-}
+diff --git a/src/ui-touch/PongGame.h b/src/ui-touch/PongGame.h
+deleted file mode 100644
+index 51660fe..0000000
+--- a/src/ui-touch/PongGame.h
++++ /dev/null
+@@ -1,67 +0,0 @@
+-// SPDX-License-Identifier: GPL-3.0-or-later
+-#pragma once
+-
+-#include <lvgl.h>
+-
+-// Self-contained Pong mini-game launched from the Apps drawer.
+-//
+-// Single-player vs a simple AI. Canvas fills the screen below a score line.
+-// Player paddle (right) controlled by swipe/gesture, trackball, or hardware
+-// direction keys (UITask routes input here via isOpen()/nudge()).
+-// Tap "New game" to start; tap anywhere to restart after game over.
+-// One instance at a time — same lifecycle as SnakeGame.
+-class PongGame {
+-public:
+-  static void launch();                 // open (no-op if already open)
+-  static bool isOpen();
+-  static void nudge(int dx, int dy);    // UITask: trackball/key -> paddle move
+-  static void dismiss();               // THE single close path (also AppPage back hook)
+-
+-private:
+-  ~PongGame();
+-
+-  // Canvas dimensions are set at open() from the live screen size.
+-  lv_obj_t*   root_      = nullptr;
+-  lv_obj_t*   canvas_    = nullptr;
+-  lv_color_t* buf_       = nullptr;    // PSRAM canvas buffer
+-  lv_obj_t*   score_     = nullptr;
+-  lv_obj_t*   start_btn_ = nullptr;
+-  lv_timer_t* timer_     = nullptr;
+-
+-  int  W_ = 0, H_ = 0;                // canvas size (px)
+-  bool started_ = false;
+-  bool over_    = false;
+-
+-  // ball
+-  float bx_ = 0, by_ = 0;
+-  float bvx_ = 0, bvy_ = 0;
+-
+-  // paddles (centre Y)
+-  float py_ = 0;    // player (right)
+-  float ay_ = 0;    // AI    (left)
+-
+-  // scores
+-  int ps_ = 0, as_ = 0;
+-  static constexpr int kWin = 7;
+-
+-  // geometry
+-  static constexpr int kPadW  = 8;
+-  static constexpr int kPadH  = 40;
+-  static constexpr int kBallR = 5;
+-  static constexpr float kAiSpd = 3.2f;
+-
+-  void resetBall(int dir);   // dir: +1 toward player, -1 toward AI
+-  void reset();
+-  void render();
+-  void step();
+-  void updateScoreLabel();
+-  bool open();
+-  void close();
+-
+-  static PongGame* s_active;
+-  static void timerCb(lv_timer_t* t);
+-  static void gestureCb(lv_event_t* e);
+-  static void tapCb(lv_event_t* e);
+-  static void startCb(lv_event_t* e);
+-  static void destroyAsync(void* p);
+-};
+diff --git a/src/ui-touch/SnakeGame.cpp b/src/ui-touch/SnakeGame.cpp
+deleted file mode 100644
+index 4ba731b..0000000
+--- a/src/ui-touch/SnakeGame.cpp
++++ /dev/null
+@@ -1,253 +0,0 @@
+-// SPDX-License-Identifier: GPL-3.0-or-later
+-#include "SnakeGame.h"
+-#include "AppPage.h"   // shared app-page chrome: root, tall "< Snake" bar, async teardown
+-#include "i18n.h"
+-
+-#include <Arduino.h>          // random()
+-#include <string.h>           // memmove
+-#include <stdio.h>            // snprintf (bar title)
+-#include <LvglPsramAlloc.h>   // PSRAM-preferred buffer for the canvas
+-
+-// Page geometry + the tall "< Snake" bar come from AppPage (shared with Spectrum and the
+-// other tool pages). This used to mirror the bar height with a local `kTopBar = 22`, which
+-// is wrong wherever STATUSBAR_H isn't 22 (the P4's two-row bar, any UI scale above 100%)
+-// and buried the game's own X under the real bar with no reachable exit.
+-static constexpr uint32_t   kStepMs = 300;   // tick period (a touch slower than before)
+-
+-// Palette (hex literals so the module is self-contained).
+-static constexpr uint32_t kColBg   = 0x0A0B0C;   // playfield background
+-static constexpr uint32_t kColFood = 0xE0584C;   // food
+-static constexpr uint32_t kColBody = 0x15B6A6;   // snake body (brand teal)
+-static constexpr uint32_t kColText = 0xE6EAEE;
+-
+-SnakeGame* SnakeGame::s_active = nullptr;
+-
+-bool SnakeGame::isOpen() { return s_active != nullptr && s_active->root_ != nullptr; }
+-
+-void SnakeGame::steer(int dx, int dy) {
+-  if (!s_active || s_active->over_) return;
+-  // Trackball deltas -> one cardinal direction (dominant axis).
+-  if (dx == 0 && dy == 0) return;
+-  // Keyboard-only boards (M9) have no touch "New game" tap target; first
+-  // directional input should start immediately.
+-  if (!s_active->started_) s_active->startGame();
+-  const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+-  if (adx >= ady) s_active->setDir(dx > 0 ? 1 : -1, 0);
+-  else            s_active->setDir(0, dy > 0 ? 1 : -1);
+-}
+-
+-void SnakeGame::launch() {
+-  if (s_active) return;
+-  SnakeGame* g = new SnakeGame();
+-  s_active = g;
+-  if (!g->open()) { s_active = nullptr; delete g; }
+-}
+-
+-void SnakeGame::destroyAsync(void* p) { delete static_cast<SnakeGame*>(p); }
+-
+-void SnakeGame::dismiss() {
+-  // THE single close path — the tall bar's back hook (installed via appPageBegin) and any
+-  // other caller land here, so teardown happens once, in one order.
+-  //
+-  // Both halves are deferred deliberately. close() queues the root with lv_obj_del_async and
+-  // the instance is freed from an lv_async_call: this can run from inside an LVGL event
+-  // callback, and the old code deleted the root AND `this` synchronously from a child
+-  // button's own handler — freeing what LVGL was still dispatching to. Async calls run FIFO,
+-  // so the root (and with it the canvas) dies before ~SnakeGame() frees the canvas buffer.
+-  if (!s_active) return;
+-  SnakeGame* g = s_active;
+-  s_active = nullptr;
+-  g->close();
+-  lv_async_call(destroyAsync, g);
+-}
+-
+-// The canvas pixel buffer must outlive the canvas object. close() only QUEUES the root for
+-// deletion, so freeing buf_ there would leave a live canvas pointing at freed PSRAM for one
+-// more frame. It is freed here instead: the destructor runs from the lv_async_call queued
+-// after lv_obj_del_async, by which point the canvas is really gone.
+-SnakeGame::~SnakeGame() {
+-  if (buf_) { lvglPsramFree(buf_); buf_ = nullptr; }
+-}
+-
+-void SnakeGame::placeFood() {
+-  const int cells = cols_ * rows_;
+-  for (int tries = 0; tries < 4 * cells + 16; ++tries) {
+-    const uint8_t fx = (uint8_t)random(cols_);
+-    const uint8_t fy = (uint8_t)random(rows_);
+-    bool on = false;
+-    for (int i = 0; i < len_; ++i) if (bx_[i] == fx && by_[i] == fy) { on = true; break; }
+-    if (!on) { fx_ = fx; fy_ = fy; return; }
+-  }
+-}
+-
+-void SnakeGame::reset() {
+-  len_ = 3;
+-  const uint8_t cx = (uint8_t)(cols_ / 2), cy = (uint8_t)(rows_ / 2);
+-  for (int i = 0; i < len_; ++i) { bx_[i] = (uint8_t)(cx - i); by_[i] = cy; }
+-  dx_ = 1; dy_ = 0; ndx_ = 1; ndy_ = 0;
+-  over_ = false; score_val_ = 0;
+-  placeFood();
+-}
+-
+-void SnakeGame::render() {
+-  if (!canvas_) return;
+-  const int c = kCellPx;
+-  lv_canvas_fill_bg(canvas_, lv_color_hex(kColBg), LV_OPA_COVER);
+-  lv_draw_rect_dsc_t d; lv_draw_rect_dsc_init(&d); d.radius = 2;
+-  d.bg_color = lv_color_hex(kColFood);
+-  lv_canvas_draw_rect(canvas_, fx_ * c + 1, fy_ * c + 1, c - 2, c - 2, &d);
+-  for (int i = 0; i < len_; ++i) {
+-    d.bg_color = lv_color_hex(kColBody);
+-    d.bg_opa   = (i == 0) ? LV_OPA_COVER : LV_OPA_80;   // head reads brighter
+-    lv_canvas_draw_rect(canvas_, bx_[i] * c + 1, by_[i] * c + 1, c - 2, c - 2, &d);
+-  }
+-}
+-
+-void SnakeGame::updateScoreLabel() {
+-  if (!score_) return;
+-  if (over_)         lv_label_set_text_fmt(score_, TR("Game over  \xe2\x80\x94  score %d   (tap to restart)"), score_val_);
+-  else if (paused_)  lv_label_set_text_fmt(score_, TR("Paused  \xe2\x80\x94  score %d"), score_val_);
+-  else if (started_) lv_label_set_text_fmt(score_, TR("score %d"), score_val_);
+-  else               lv_label_set_text(score_, TR("Snake  \xe2\x80\x94  swipe, roll, or press a direction"));
+-}
+-
+-void SnakeGame::step() {
+-  if (over_ || !started_ || paused_) return;
+-  if (!(ndx_ == -dx_ && ndy_ == -dy_)) { dx_ = ndx_; dy_ = ndy_; }
+-  const int nx = bx_[0] + dx_, ny = by_[0] + dy_;
+-  const bool eat = (nx == fx_ && ny == fy_);
+-  bool over = (nx < 0 || ny < 0 || nx >= cols_ || ny >= rows_);
+-  const int clen = eat ? len_ : len_ - 1;   // the tail vacates unless we grow
+-  for (int i = 0; i < clen && !over; ++i) if (bx_[i] == nx && by_[i] == ny) over = true;
+-  if (over) { over_ = true; updateScoreLabel(); return; }
+-
+-  int newlen = len_ + (eat ? 1 : 0);
+-  if (newlen > cols_ * rows_) newlen = cols_ * rows_;
+-  memmove(&bx_[1], &bx_[0], (size_t)(newlen - 1));
+-  memmove(&by_[1], &by_[0], (size_t)(newlen - 1));
+-  bx_[0] = (uint8_t)nx; by_[0] = (uint8_t)ny;
+-  len_ = newlen;
+-  if (eat) { score_val_++; placeFood(); updateScoreLabel(); }
+-  render();
+-}
+-
+-void SnakeGame::setDir(int dx, int dy) { ndx_ = dx; ndy_ = dy; }
+-
+-void SnakeGame::startGame() {
+-  if (started_) return;
+-  started_ = true;
+-  paused_  = false;
+-  if (start_btn_) { lv_obj_del(start_btn_); start_btn_ = nullptr; }
+-  if (pause_btn_) {                              // reveal the pause toggle now that we're playing
+-    lv_obj_clear_flag(pause_btn_, LV_OBJ_FLAG_HIDDEN);
+-    if (pause_lbl_) lv_label_set_text(pause_lbl_, LV_SYMBOL_PAUSE);
+-  }
+-  reset();
+-  updateScoreLabel();
+-  render();
+-  if (!timer_) timer_ = lv_timer_create(timerCb, kStepMs, this);
+-}
+-
+-void SnakeGame::togglePause() {
+-  if (!started_ || over_) return;
+-  paused_ = !paused_;
+-  if (pause_lbl_) lv_label_set_text(pause_lbl_, paused_ ? LV_SYMBOL_PLAY : LV_SYMBOL_PAUSE);
+-  updateScoreLabel();
+-}
+-
+-bool SnakeGame::open() {
+-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+-  // Page root + chrome, identical to the Spectrum page: opaque and CLICKABLE so nothing
+-  // underneath can be touched, geometry from the LIVE status-bar height, and the global bar
+-  // carries "< Snake" as the way back. NOTE: no backdrop-tap-to-close here (unlike Airtime)
+-  // — a tap on the playfield restarts after a game over, so the bar is the only exit.
+-  root_ = appPageCreateRoot(0x0E1216);
+-  lv_obj_add_event_cb(root_, gestureCb, LV_EVENT_GESTURE, this);
+-  lv_obj_add_event_cb(root_, tapCb,     LV_EVENT_CLICKED, this);
+-// The bar title is stored by POINTER for as long as the page is up, so it must own its
+-// storage. TR() hands back the table cell for a plain key (static, fine) but a recycled
+-// 4-slot ring for an icon-prefixed one — copy it out so adding a glyph to this string
+-// later can't turn the status-bar title into a dangling read.
+-  static char s_bar_title[24];
+-  snprintf(s_bar_title, sizeof s_bar_title, "%s", TR("Snake"));
+-  appPageBegin(s_bar_title, &SnakeGame::dismiss);
+-
+-  // Fill the unoccupied screen below a 24-px score row. Whole cells only.
+-  const int avail_w = (int)sw;
+-  const int avail_h = (int)appPageContentH() - 24;
+-  cols_ = avail_w / kCellPx; if (cols_ > kMaxCols) cols_ = kMaxCols; if (cols_ < 6) cols_ = 6;
+-  rows_ = avail_h / kCellPx; if (rows_ > kMaxRows) rows_ = kMaxRows; if (rows_ < 6) rows_ = 6;
+-  const int pw = cols_ * kCellPx, ph = rows_ * kCellPx;
+-  buf_ = (lv_color_t*)lvglPsramAlloc((size_t)pw * ph * sizeof(lv_color_t));
+-  if (!buf_) return false;
+-  canvas_ = lv_canvas_create(root_);
+-  lv_canvas_set_buffer(canvas_, buf_, pw, ph, LV_IMG_CF_TRUE_COLOR);
+-  lv_obj_align(canvas_, LV_ALIGN_BOTTOM_MID, 0, 0);   // playfield fills the lower area
+-
+-  score_ = lv_label_create(root_);
+-  lv_obj_set_style_text_color(score_, lv_color_hex(kColText), LV_PART_MAIN);
+-  lv_obj_align(score_, LV_ALIGN_TOP_LEFT, 6, 4);
+-
+-  // No in-page X any more — the tall bar's "<" is the exit. That button was the bug: laid
+-  // out against a 22 px bar assumption, it vanished under the real one on the P4.
+-  // Pause/resume toggle, top-right. Hidden until the game starts.
+-  pause_btn_ = lv_btn_create(root_);
+-  lv_obj_set_size(pause_btn_, 30, 24);
+-  lv_obj_align(pause_btn_, LV_ALIGN_TOP_RIGHT, -4, 0);
+-  lv_obj_add_event_cb(pause_btn_, pauseCb, LV_EVENT_CLICKED, this);
+-  pause_lbl_ = lv_label_create(pause_btn_); lv_label_set_text(pause_lbl_, LV_SYMBOL_PAUSE); lv_obj_center(pause_lbl_);
+-  lv_obj_add_flag(pause_btn_, LV_OBJ_FLAG_HIDDEN);
+-
+-  // Paused: draw the initial snake, then wait on a centred "New game" button.
+-  reset();
+-  updateScoreLabel();
+-  render();
+-  start_btn_ = lv_btn_create(root_);
+-  lv_obj_set_size(start_btn_, 150, 44);
+-  lv_obj_align(start_btn_, LV_ALIGN_CENTER, 0, 0);
+-  lv_obj_add_event_cb(start_btn_, startCb, LV_EVENT_CLICKED, this);
+-  lv_obj_t* sl = lv_label_create(start_btn_);
+-  lv_label_set_text(sl, TR(LV_SYMBOL_PLAY "  New game"));
+-  lv_obj_center(sl);
+-  return true;
+-}
+-
+-void SnakeGame::close() {
+-  if (timer_) { lv_timer_del(timer_); timer_ = nullptr; }   // stop stepping before the UI goes
+-  appPageEnd(&SnakeGame::dismiss);                          // hand the status bar back
+-  appPageDeleteRootAsync(root_);                            // never a sync del from a callback
+-  root_ = nullptr;
+-  canvas_ = nullptr; score_ = nullptr; start_btn_ = nullptr;
+-  pause_btn_ = nullptr; pause_lbl_ = nullptr;
+-  // buf_ is freed in ~SnakeGame(), after the queued root delete has taken the canvas with it.
+-}
+-
+-// ---- LVGL C-callback trampolines (user_data = the instance) ----
+-void SnakeGame::timerCb(lv_timer_t* t) {
+-  auto* self = static_cast<SnakeGame*>(t->user_data);
+-  if (self) self->step();
+-}
+-void SnakeGame::gestureCb(lv_event_t* e) {
+-  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+-  if (!self || !self->started_) return;
+-  switch (lv_indev_get_gesture_dir(lv_indev_get_act())) {
+-    case LV_DIR_TOP:    self->setDir(0, -1); break;
+-    case LV_DIR_BOTTOM: self->setDir(0, 1);  break;
+-    case LV_DIR_LEFT:   self->setDir(-1, 0); break;
+-    case LV_DIR_RIGHT:  self->setDir(1, 0);  break;
+-    default: break;
+-  }
+-}
+-void SnakeGame::tapCb(lv_event_t* e) {
+-  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+-  if (self && self->started_ && self->over_) { self->reset(); self->updateScoreLabel(); self->render(); }
+-}
+-void SnakeGame::startCb(lv_event_t* e) {
+-  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+-  if (self) self->startGame();
+-}
+-void SnakeGame::pauseCb(lv_event_t* e) {
+-  auto* self = static_cast<SnakeGame*>(lv_event_get_user_data(e));
+-  if (self) self->togglePause();
+-}
+diff --git a/src/ui-touch/SnakeGame.h b/src/ui-touch/SnakeGame.h
+deleted file mode 100644
+index 7bc63ed..0000000
+--- a/src/ui-touch/SnakeGame.h
++++ /dev/null
+@@ -1,74 +0,0 @@
+-// SPDX-License-Identifier: GPL-3.0-or-later
+-#pragma once
+-
+-#include <lvgl.h>
+-
+-// Self-contained Snake mini-game launched from the Apps drawer.
+-//
+-// Owns a full-screen overlay on lv_layer_top: a canvas playfield filling the
+-// unoccupied screen, a score line, and a close button. The game can start from
+-// the "New game" button OR from the first directional steer input. Steer by
+-// swipe/gesture, trackball, or hardware directional keys (UITask routes board
+-// input here via isOpen()/steer());
+-// tap to restart after a game over; the X closes it. One instance at a time.
+-//
+-// Decoupled from UITask internals — depends only on LVGL and lvglPsramAlloc.
+-class SnakeGame {
+-public:
+-  static void launch();                 // open (no-op if already open)
+-  static bool isOpen();                 // UITask: gate the trackball + tab bar
+-  static void steer(int dx, int dy);    // UITask: trackball motion -> direction
+-  // THE close path. Installed as the AppPage back hook (see appPageBegin), so the tall
+-  // "< Snake" bar closes the game. Plain void() on purpose — that is what appPageBegin
+-  // takes. Safe from an event callback: root and instance are torn down asynchronously.
+-  static void dismiss();
+-
+-private:
+-  ~SnakeGame();   // frees the canvas buffer, after the queued root delete released the canvas
+-
+-  // The playfield grid is sized to the screen at open() (cols_ x rows_), capped
+-  // by these maxima so the body arrays are fixed-size.
+-  static constexpr int kCellPx   = 14;  // px per cell
+-  static constexpr int kMaxCols  = 40;
+-  static constexpr int kMaxRows  = 30;
+-  static constexpr int kMaxCells = kMaxCols * kMaxRows;
+-
+-  lv_obj_t*   root_      = nullptr;     // full-screen overlay (owns everything below)
+-  lv_obj_t*   canvas_    = nullptr;
+-  lv_color_t* buf_       = nullptr;     // canvas pixel buffer (PSRAM)
+-  lv_obj_t*   score_     = nullptr;
+-  lv_obj_t*   start_btn_ = nullptr;     // "New game" gate (deleted once tapped)
+-  lv_obj_t*   pause_btn_ = nullptr;     // pause/resume toggle (shown once playing)
+-  lv_obj_t*   pause_lbl_ = nullptr;     // its glyph (play <-> pause)
+-  lv_timer_t* timer_     = nullptr;
+-
+-  int     cols_ = 14, rows_ = 14;       // grid dimensions (set at open)
+-  bool    started_ = false;             // false until "New game" is tapped
+-  bool    paused_  = false;             // pause toggle (timer keeps ticking; step() no-ops)
+-  uint8_t bx_[kMaxCells], by_[kMaxCells];   // snake body, [0] = head
+-  int     len_ = 0;
+-  int     dx_ = 1, dy_ = 0;             // active direction
+-  int     ndx_ = 1, ndy_ = 0;          // queued direction (applied next step)
+-  uint8_t fx_ = 0, fy_ = 0;            // food cell
+-  bool    over_ = false;
+-  int     score_val_ = 0;
+-
+-  bool open();                          // build UI (paused); false on alloc failure
+-  void startGame();                     // begin the tick (from the New-game button)
+-  void togglePause();                   // pause/resume the running game
+-  void close();
+-  void reset();
+-  void placeFood();
+-  void render();
+-  void step();
+-  void setDir(int dx, int dy);
+-  void updateScoreLabel();
+-
+-  static SnakeGame* s_active;           // the one live game (or nullptr)
+-  static void timerCb(lv_timer_t* t);
+-  static void gestureCb(lv_event_t* e);
+-  static void tapCb(lv_event_t* e);
+-  static void startCb(lv_event_t* e);
+-  static void pauseCb(lv_event_t* e);
+-  static void destroyAsync(void* p);    // lv_async_call target: delete the instance
+-};
+diff --git a/src/ui-touch/UITask.cpp b/src/ui-touch/UITask.cpp
+index b3549e7..2fc401e 100644
+--- a/src/ui-touch/UITask.cpp
++++ b/src/ui-touch/UITask.cpp
+@@ -1,5 +1,6 @@
+ #include "UITask.h"
+ #include "TouchSleep.h"
++#include "SunCalc.h"
+ 
+ #include "../MyMesh.h"
+ 
+@@ -121,8 +122,6 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
+ #endif
+ #include <Utils.h>
+ #include <LvglPsramAlloc.h>   // PSRAM-preferred alloc helpers for the map tile cache
+-#include "SnakeGame.h"        // Apps → Snake (self-contained game module)
+-#include "PongGame.h"         // Apps → Pong (self-contained game module)
+ #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
+ #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
+ 
+@@ -131,7 +130,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
+ 
+ #if defined(HAS_TOUCH_UI)
+   #include <lvgl.h>
+-  #include <helpers/input/HeltecV4CapTouch.h>
++  #include "../helpers/input/HeltecV4CapTouch.h"
+   #if CAP_TRACKBALL
+     #include <helpers/input/TDeckTrackball.h>
+   #endif
+@@ -497,10 +496,55 @@ static void applyUiTheme(uint8_t id) {
+   }
+ }
+ 
++// ---- Sun state (day/night) --------------------------------------------------
++// Evaluated at boot and every SUN_EVAL_INTERVAL_MS while awake.
++// s_sun_is_night drives auto-AOD brightness live; auto-theme is boot-only.
++static constexpr uint32_t SUN_EVAL_INTERVAL_MS = 10UL * 60UL * 1000UL;  // 10 min
++static constexpr int      SUN_HYSTERESIS_MIN    = 10;                     // ±10 min
++static bool     s_sun_is_night     = false;   // current day/night state
++static bool     s_sun_valid        = false;   // false = no location/time → feature disabled
++static uint32_t s_sun_last_eval_ms = 0;
++
++// Evaluate sunrise/sunset for the current moment.
++// lat/lon in degrees; tz_offset_hours from existing time-offset pref.
++static void sunEvaluate(double lat, double lon, float tz_h) {
++  if (lat == 0.0 && lon == 0.0) { s_sun_valid = false; return; }
++  const time_t now_utc = time(nullptr);
++  if (now_utc < 1700000000L) { s_sun_valid = false; return; }  // clock not synced
++
++  int rise_min = 0, set_min = 0;
++  bool polar_day = false;
++  const bool ok = SunCalc::compute(lat, lon, now_utc, tz_h, rise_min, set_min, &polar_day);
++  s_sun_valid = true;
++  if (!ok) {
++    s_sun_is_night = !polar_day;  // polar day = day; polar night = night
++    return;
++  }
++
++  const int now_min = SunCalc::localMinutesNow(now_utc, tz_h);
++  // Apply hysteresis: only flip state when we are past the band edge.
++  if (s_sun_is_night) {
++    // currently night → switch to day when past (sunrise + hysteresis)
++    if (now_min > rise_min + SUN_HYSTERESIS_MIN && now_min < set_min - SUN_HYSTERESIS_MIN)
++      s_sun_is_night = false;
++  } else {
++    // currently day → switch to night when past (sunset + hysteresis)
++    if (now_min > set_min + SUN_HYSTERESIS_MIN || now_min < rise_min - SUN_HYSTERESIS_MIN)
++      s_sun_is_night = true;
++  }
++}
++
+ // Perceived luminance 0..255 (keep the accent dark enough for off-white text).
+ static inline uint32_t accentLuma(uint32_t rgb) {
+   return (299u*((rgb>>16)&0xFF) + 587u*((rgb>>8)&0xFF) + 114u*(rgb&0xFF)) / 1000u;
+ }
++// True when the current theme has a light background (luma > 128).
++static inline bool isLightTheme() { return accentLuma(COLOR_BG) > 128; }
++// On light themes a "dark pressed" colour must be a mid-tone, not near-black.
++// Returns a colour suitable for list-button pressed/border states.
++static inline uint32_t listPressedColor() { return isLightTheme() ? 0xCCCCCC : 0x141516; }
++static inline uint32_t listBorderColor()  { return isLightTheme() ? COLOR_BORDER : 0x141516; }
++
+ // Scale brightness to `pct` percent, preserving hue.
+ static inline uint32_t accentDarken(uint32_t rgb, int pct) {
+   uint32_t r=((rgb>>16)&0xFF)*pct/100, g=((rgb>>8)&0xFF)*pct/100, b=(rgb&0xFF)*pct/100;
+@@ -878,6 +922,12 @@ static void initTouchFontFallbacks() {
+   s_person_font14 = person_font14;
+   s_person_font14.fallback = g_font_14.fallback;
+   g_font_14.fallback = &s_person_font14;
++  // Status bar uses g_font_12; U+F519 (tower-broadcast / repeat icon) lives only
++  // in person_font14. Splice it into g_font_12 so the antenna glyph renders there.
++  static lv_font_t s_person_font12;
++  s_person_font12 = person_font14;   // reuse the 14px bitmap — slight oversizing is fine at status bar scale
++  s_person_font12.fallback = g_font_12.fallback;
++  g_font_12.fallback = &s_person_font12;
+ }
+ 
+ #if defined(MULTI_TRANSPORT_COMPANION)
+@@ -1181,13 +1231,16 @@ static bool tdeckPlayWavFile(const char* prefpath, int vol) {
+ struct MelodyNote { uint16_t freq; uint16_t ms; };
+ struct BuiltinMelody { const char* name; const MelodyNote* notes; };
+ 
+-static const MelodyNote kMelNokia[] = {           // Nokia "Grande Valse" fragment
+-  {1319,125},{0,62},{988,125},{0,62},{1047,250},{0,62},{1109,250},{0,62},
+-  {988,500},{0,62},{1175,500},{0,62},{1319,500},{0,62},
+-  {988,125},{0,62},{1047,125},{0,62},{1175,250},{0,62},
+-  {988,750},{0,125},
+-  {880,125},{0,62},{988,125},{0,62},{1319,250},{0,62},{1175,250},{0,62},
+-  {988,500},{0,62},{1047,500},{0,62},{988,1000},
++static const MelodyNote kMelNokia[] = {
++  // Nokia Ringtone — robsoncouto/arduino-songs, tempo 180
++  // E5,8  D5,8  FS4,4  GS4,4
++  {659,150},{0,17},{587,150},{0,17},{370,300},{0,33},{415,300},{0,33},
++  // CS5,8  B4,8  D4,4  E4,4
++  {554,150},{0,17},{494,150},{0,17},{294,300},{0,33},{330,300},{0,33},
++  // B4,8  A4,8  CS4,4  E4,4
++  {494,150},{0,17},{440,150},{0,17},{277,300},{0,33},{330,300},{0,33},
++  // A4,2
++  {440,600},{0,67},
+   {0,0}
+ };
+ static const MelodyNote kMelEricsson[] = {        // Ericsson "dialing" tri-tone jingle
+@@ -1196,28 +1249,143 @@ static const MelodyNote kMelEricsson[] = {        // Ericsson "dialing" tri-tone
+   {1319,150},{0,50},{1174,150},{0,50},{988,300},{0,300},
+   {0,0}
+ };
+-static const MelodyNote kMelIcq[] = {             // ICQ "Uh-Oh" (two-note descending blip)
+-  {1047,120},{0,40},{784,180},{0,60},
+-  {1047,120},{0,40},{784,180},
++static const MelodyNote kMelIcq[] = {             // ICQ "Uh-Oh" — pitch-analysed from original MP3
++  {727,80},{0,50},{571,280},                       // "Uh" 727Hz 80ms → "Oh" 571Hz 280ms
+   {0,0}
+ };
+-static const MelodyNote kMelMario[] = {           // Super Mario coin / 1-up motif
+-  {1319,100},{1568,100},{0,50},{1568,100},{1568,100},{1661,100},{1568,100},{0,50},{1047,100},
++static const MelodyNote kMelMario[] = {           // Super Mario Bros — robsoncouto, tempo 200
++  {659,135},{0,15},{659,135},{0,15},{0,150},{659,135},
++  {0,15},{0,150},{523,135},{0,15},{659,135},{0,15},
++  {784,270},{0,30},{0,300},{392,135},{0,15},{0,300},
+   {0,0}
+ };
+-static const MelodyNote kMelTetris[] = {          // Tetris Theme A fragment
+-  {1319,200},{988,100},{1047,100},{1175,200},{1047,100},{988,100},
+-  {880,200},{880,100},{1047,100},{1319,200},{1175,100},{1047,100},
+-  {988,300},{1047,100},{1175,200},{1319,200},{1047,200},{880,200},{880,200},
++static const MelodyNote kMelTetris[] = {          // Tetris Theme A — robsoncouto, tempo 144
++  {659,374},{0,42},{494,187},{0,21},{523,187},{0,21},
++  {587,374},{0,42},{523,187},{0,21},{494,187},{0,21},
++  {440,374},{0,42},{440,187},{0,21},{523,187},{0,21},
++  {659,374},{0,42},{587,187},{0,21},{523,187},{0,21},
++  {494,561},{0,63},{523,187},{0,21},{587,374},{0,42},
++  {659,374},{0,42},{523,374},{0,42},{440,374},{0,42},
++  {440,374},{0,42},{0,416},
++  {0,0}
++};
++static const MelodyNote kMelPacman[] = {          // Pac-Man — robsoncouto, tempo 105
++  {494,127},{0,15},{988,127},{0,15},{740,127},{0,15},
++  {622,127},{0,15},{988,63},{0,8},{740,191},{0,22},
++  {622,256},{0,29},{523,127},{0,15},{1047,127},{0,15},
++  {1568,127},{0,15},{1319,127},{0,15},{1047,63},{0,8},
++  {1568,191},{0,22},{1319,256},{0,29},{494,127},{0,15},
++  {988,127},{0,15},{740,127},{0,15},{622,127},{0,15},
++  {988,63},{0,8},{740,191},{0,22},{622,256},{0,29},
++  {622,63},{0,8},{659,63},{0,8},{698,63},{0,8},
++  {698,63},{0,8},{740,63},{0,8},{784,63},{0,8},
++  {784,63},{0,8},{831,63},{0,8},{880,127},{0,15},
++  {988,256},{0,29},
++  {0,0}
++};
++static const MelodyNote kMelImperial[] = {        // Imperial March — robsoncouto, tempo 120
++  {440,675},{0,75},{440,675},{0,75},{440,112},{0,13},
++  {440,112},{0,13},{440,112},{0,13},{440,112},{0,13},
++  {349,225},{0,25},{0,250},{440,675},{0,75},{440,675},
++  {0,75},{440,112},{0,13},{440,112},{0,13},{440,112},
++  {0,13},{440,112},{0,13},{349,225},{0,25},{0,250},
++  {440,450},{0,50},{440,450},{0,50},{440,450},{0,50},
++  {349,337},{0,38},{523,112},{0,13},{440,450},{0,50},
++  {349,337},{0,38},{523,112},{0,13},{440,900},{0,100},
++  {0,0}
++};
++static const MelodyNote kMelThrones[] = {         // Game of Thrones — robsoncouto, tempo 85
++  {392,316},{0,36},{262,316},{0,36},{311,158},{0,18},
++  {349,158},{0,18},{392,316},{0,36},{262,316},{0,36},
++  {311,158},{0,18},{349,158},{0,18},{392,316},{0,36},
++  {262,316},{0,36},{330,158},{0,18},{349,158},{0,18},
++  {392,316},{0,36},{262,316},{0,36},{330,158},{0,18},
++  {349,158},{0,18},{392,951},{0,106},{262,951},{0,106},
++  {0,0}
++};
++
++static const MelodyNote kMelPassacaglia[] = {  // Handel Passacaglia — hibit-dev, 1000/div timing
++  {110,125},{0,37},{220,125},{0,37},{330,125},{0,37},
++  {262,125},{0,37},{440,125},{0,37},{262,125},{0,37},
++  {330,125},{0,37},{262,125},{0,37},{110,125},{0,37},
++  {220,125},{0,37},{330,125},{0,37},{262,125},{0,37},
++  {440,125},{0,37},{262,125},{0,37},{330,125},{0,37},
++  {262,125},{0,37},{523,125},{0,37},{1047,125},{0,37},
++  {988,125},{0,37},{1047,125},{0,37},{880,125},{0,37},
++  {1047,125},{0,37},{784,125},{0,37},{1047,125},{0,37},
++  {698,125},{0,37},{1047,125},{0,37},{659,125},{0,37},
++  {1047,125},{0,37},{587,125},{0,37},{1047,125},{0,37},
++  {523,125},{0,37},{1047,125},{0,37},{494,125},{0,37},
++  {988,125},{0,37},{880,125},{0,37},{988,125},{0,37},
++  {784,125},{0,37},{988,125},{0,37},{698,125},{0,37},
++  {988,125},{0,37},{659,125},{0,37},{988,125},{0,37},
++  {587,125},{0,37},{988,125},{0,37},{523,125},{0,37},
++  {988,125},{0,37},{494,125},{0,37},{988,125},{0,37},
++  {440,125},{0,37},{880,125},{0,37},{784,125},{0,37},
++  {880,125},{0,37},{698,125},{0,37},{880,125},{0,37},
++  {659,125},{0,37},{880,125},{0,37},{587,125},{0,37},
++  {880,125},{0,37},{523,125},{0,37},{880,125},{0,37},
++  {494,125},{0,37},{880,125},{0,37},{440,125},{0,37},
++  {880,125},{0,37},{880,250},{0,75},{831,125},{0,37},
++  {740,125},{0,37},{831,333},{0,99},{880,125},{0,37},
++  {880,500},{0,150},
++  {0,0}
++};
++
++static const MelodyNote kMelToreador[] = {  // Bizet Toreador Song — hibit-dev, 1000/div timing
++  {523,500},{0,150},{587,333},{0,99},{523,125},{0,37},
++  {440,500},{0,150},{440,500},{0,150},{440,333},{0,99},
++  {392,125},{0,37},{440,333},{0,99},{466,125},{0,37},
++  {440,1000},{0,300},{466,500},{0,150},{392,333},{0,99},
++  {523,125},{0,37},{440,1000},{0,300},{349,500},{0,150},
++  {294,333},{0,99},{392,125},{0,37},{262,1000},{0,300},
++  {392,1000},{0,300},{392,250},{0,75},{587,250},{0,75},
++  {523,250},{0,75},{466,250},{0,75},{440,250},{0,75},
++  {392,250},{0,75},{440,250},{0,75},{466,250},{0,75},
++  {440,1000},{0,300},{330,500},{0,150},{440,500},{0,150},
++  {440,500},{0,150},{415,333},{0,99},{494,125},{0,37},
++  {659,1000},{0,300},{0,1300},
++  {0,0}
++};
++
++static const MelodyNote kMelDespacito[] = {  // Despacito — akshaymulik/8bit-music
++  {494,400},{0,50},{494,300},{554,300},{587,300},{554,300},
++  {494,300},{440,300},{392,300},{587,400},{0,100},{587,600},
++  {0,100},{587,300},{440,300},{587,300},{440,300},{587,300},
++  {440,300},{587,300},{659,300},{554,600},{0,100},{494,500},
++  {0,50},{494,300},{554,300},{587,150},{554,150},{587,150},
++  {554,150},{587,300},{554,300},{494,400},{0,200},
++  {0,0}
++};
++static const MelodyNote kMelCoin[] = {        // Mario Coin — bboyho/SparkFun
++  {988,100},{1319,850},
++  {0,0}
++};
++static const MelodyNote kMelOneUp[] = {       // Mario 1-Up — bboyho/SparkFun
++  {1319,125},{0,5},{1568,125},{0,5},{2637,125},{0,5},
++  {2093,125},{0,5},{2349,125},{0,5},{3136,125},
++  {0,0}
++};
++static const MelodyNote kMelFireball[] = {    // Mario Fireball — bboyho/SparkFun
++  {392,35},{784,35},{1568,35},
+   {0,0}
+ };
+ 
+ static const BuiltinMelody kBuiltinMelodies[] = {
+-  { "Nokia",       kMelNokia   },
+-  { "Ericsson",    kMelEricsson },
+-  { "ICQ Oh-Oh",   kMelIcq     },
+-  { "Mario Coin",  kMelMario   },
+-  { "Tetris",      kMelTetris  },
++  { "Nokia",          kMelNokia       },
++  { "Ericsson",       kMelEricsson    },
++  { "ICQ Oh-Oh",      kMelIcq         },
++  { "Super Mario",    kMelMario       },
++  { "Tetris",         kMelTetris      },
++  { "Pac-Man",        kMelPacman      },
++  { "Imperial March", kMelImperial    },
++  { "Game of Thrones",kMelThrones     },
++  { "Passacaglia",    kMelPassacaglia },
++  { "Toreador",       kMelToreador    },
++  { "Despacito",      kMelDespacito   },
++  { "Mario Coin",     kMelCoin        },
++  { "Mario 1-Up",     kMelOneUp       },
++  { "Mario Fireball", kMelFireball    },
+ };
+ static constexpr int kBuiltinMelodyCount = (int)(sizeof kBuiltinMelodies / sizeof kBuiltinMelodies[0]);
+ 
+@@ -1563,8 +1731,9 @@ struct GlobalStatusBar {
+   lv_obj_t* left_label;
+   lv_obj_t* conn_icon;       // Wi-Fi glyph
+   lv_obj_t* ble_icon;        // Bluetooth glyph (separate from Wi-Fi)
+-  lv_obj_t* sleep_icon;      // idle light-sleep readiness indicator (T-Deck only)
+   lv_obj_t* dnd_icon;        // Do Not Disturb active glyph (moon, all boards)
++  lv_obj_t* repeat_icon;     // "R" shown while client repeat is enabled
++  lv_obj_t* gps_icon;        // GPS active glyph (shown while GPS is enabled)
+   lv_obj_t* sd_icon;         // microSD read/write activity LED (left of Wi-Fi)
+   lv_obj_t* async_icon;      // async mesh-request spinner glyph (centre, transient)
+   lv_obj_t* clock;
+@@ -1619,7 +1788,7 @@ void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats
+ 
+ // ---- AppPage: the shared full-screen app-page chrome (see AppPage.h) --------------
+ // Thin wrappers over the machinery just above, exported so the self-contained app
+-// modules (SnakeGame) build the same page as the in-file tool
++// modules build the same page as the in-file tool
+ // pages instead of hand-rolling it against a hardcoded bar height.
+ lv_coord_t appPageContentTop() { return STATUSBAR_H; }
+ lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+@@ -1666,8 +1835,6 @@ void appPageEnd(void (*close_fn)()) {
+ void appPageDeleteRootAsync(lv_obj_t* root) {
+   if (root) lv_obj_del_async(root);
+ }
+-static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
+-static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
+ static void batteryTapCb(lv_event_t* e);   // fwd decl (defined near the battery chart) — Settings "Battery" button reuses it
+ 
+ // microSD read/write activity. markSdIo() stamps the time of the last SD access
+@@ -2148,6 +2315,7 @@ struct LvDiscoveredEntry {
+   bool used;
+   bool in_contacts;
+   uint8_t path_len;
++  int8_t snr_q4;   // advert RX SNR×4; -128 = unknown (RAM-only, not persisted)
+   uint32_t last_advert_ts;
+   uint32_t recv_ms;
+   ContactInfo ci;
+@@ -2249,6 +2417,7 @@ static void saveDiscovered() {
+ static void loadDiscovered() {
+   if (!s_discovered || !discBlob()) return;
+   memset(s_discovered, 0, sizeof(LvDiscoveredEntry) * DISCOVERED_MAX);
++  for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].snr_q4 = -128;  // 0 != unknown
+   SdNvsPrefs prefs;
+   const bool prefs_open = prefs.begin(DISC_NS, true);
+   const bool have_new = prefs_open && prefs.isKey(DISC_MARKER);
+@@ -2938,6 +3107,7 @@ static void refreshSensorsHistoryCharts();
+ static uint8_t       s_kb_bl_mode    = 2;
+ static unsigned long s_kb_last_key_ms = 0;
+ constexpr unsigned long kKbBacklightIdleMs = 3000;   // auto: off 3 s after last key
++static unsigned long s_lock_pin_kb_until_ms = 0;    // PIN-entry night backlight: active until this timestamp
+ // Register input activity (keypress / field focus / tap) for the auto backlight.
+ static inline void noteKbActivity() { s_kb_last_key_ms = millis(); }
+ #else
+@@ -3598,6 +3768,8 @@ static bool hwKeyDismissTopPopup();            // (defined far below) close the
+ static bool anyPopupOpen();                    // (defined below) is any modal/sheet currently up
+ static void closeChatPanel(LvChatPanel* p);    // (defined far below) close an open chat/channel detail
+ static void toggleControlCenter();             // (defined far below) the top-bar "control center" dropdown
++static void setHomeDrawer(bool show);          // (defined far below) open/close the app drawer
++static bool s_home_drawer_mode = false;        // true = Home tab shows app drawer
+ static void homeKeyActivate();                 // (defined far below) green ○ tap: Home, or toggle drawer if already Home
+ static uint32_t s_f4_down_ms = 0;              // green ○ press time — tap = Home, hold = control center
+ static uint32_t s_f1_down_ms = 0;              // red ✕ press time — tap = close, hold = power menu
+@@ -5209,7 +5381,7 @@ struct SettingsCatDef { const char* label; const char* icon; };
+ #if CAP_LUA_APPS
+ // Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
+ enum {
+-  APPHIDE_SNAKE = 1u << 0,  APPHIDE_PONG = 1u << 13, APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
++  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
+   APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+   APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
+   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
+@@ -5271,10 +5443,6 @@ static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub
+ static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
+ static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info LIVE tier (uptime/heap, 1 Hz on the About tab)
+ static lv_obj_t* s_sysinfo_rest_lbl = nullptr;   // System-info slow tier (re-set only when its text changes)
+-#if defined(HAS_TDECK_GT911)
+-static lv_obj_t* s_sleep_diag_lbl  = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 1)
+-static lv_obj_t* s_sleep_diag_lbl2 = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 2)
+-#endif
+ static bool      s_update_available = false;
+ static bool      s_verchk_ran       = false;     // a check has completed (ok or failed)
+ static volatile bool s_verchk_request  = false;  // UI -> core-0 worker: please check
+@@ -5906,7 +6074,7 @@ static void betaUpdatesToggleCb(lv_event_t* e) {
+   if (g_lv.task) g_lv.task->showAlert(on ? TR("Test builds: on") : TR("Test builds: off"), 2000);
+ }
+ #endif
+-static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
++static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y, uint16_t swipe_start_y = 0) {
+   // The Snake game owns the whole screen while it's open: steer with the swipe
+   // and return, so it can never reach the tab switcher / map pan / control
+   // centre behind the overlay. This reuses the per-board hardware swipe detector
+@@ -5920,14 +6088,6 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
+     else if (swipe_y != 0) luaAppSteer(0, swipe_y < 0 ? -1 : 1);
+     return;
+   }
+-  if (PongGame::isOpen()) {
+-    if (swipe_y != 0) PongGame::nudge(0, swipe_y < 0 ? -1 : 1);
+-  }
+-  if (SnakeGame::isOpen()) {
+-    if (swipe_x != 0)      SnakeGame::steer(swipe_x < 0 ? -1 : 1, 0);
+-    else if (swipe_y != 0) SnakeGame::steer(0, swipe_y < 0 ? -1 : 1);
+-    return;
+-  }
+   // Every OTHER full-screen app page (Airtime, Spectrum, RF Monitor, Discover, VNC, Remote,
+   // Reader) also owns the screen, so swallow the swipe instead of letting it reach the tab
+   // switcher behind the page. Making the page root opaque + CLICKABLE only stops CLICKS:
+@@ -5942,11 +6102,22 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
+   // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
+   if (s_slider_touch_ms && (millis() - s_slider_touch_ms) < 500) return;
+   // An open chat/channel: a left→right (rightward) swipe closes it (iOS-style
+-  // back). Any other swipe is swallowed so the conversation keeps the screen.
++  // back). Swipe-up from the bottom edge opens the app drawer (no tab bar in
++  // chat so this is the only exit gesture). Any other swipe is swallowed.
+   if (hasChatDetailOpen()) {
+     if (swipe_x > 0) {
+       if (g_lv.dm.detail_open)      closeChatPanel(&g_lv.dm);
+       else if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
++      return;
++    }
++    if (swipe_y < 0 && !anyPopupOpen()) {
++      const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
++      const uint16_t edge_bot = (uint16_t)(sh / 4);
++      if (swipe_start_y >= (uint16_t)(sh - edge_bot)) {
++        s_home_drawer_mode = true;
++        goToTab(HOME_TAB_INDEX);
++        return;
++      }
+     }
+     return;
+   }
+@@ -5985,12 +6156,33 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
+     if (next != idx) goToTab(next);
+     return;
+   }
+-  // Vertical swipes intentionally fall through: LVGL's native drag-scroll on
+-  // the underlying list (chats / contacts / settings tab) handles them
+-  // continuously during the gesture, which feels naturally finger-locked.
+-  // The old fixed-step jump on release was the source of "jittery / jumpy"
+-  // vertical scroll feel.
+-  (void)swipe_y;
++  // Swipe UP (swipe_y < 0) from anywhere on the main screen → open the app
++  // drawer (same action as tabBarGestureCb, but via the reliable hardware
++  // swipe path — LVGL's LV_EVENT_GESTURE is unreliable on GT911 cap-touch).
++  // Swipe UP from bottom edge → app drawer.
++  // Swipe DOWN from top edge → control center.
++  // Edge zone = bottom/top 25% of screen height so mid-screen vertical drags
++  // (scrolling lists) don't accidentally trigger these.
++  {
++    const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
++    const uint16_t edge_top = (uint16_t)(sh / 5);       // top 20% → control center
++    const uint16_t edge_bot = (uint16_t)(sh / 4);       // bottom 25% → app drawer
++    if (swipe_y < 0 && !anyPopupOpen() && swipe_start_y >= (uint16_t)(sh - edge_bot)) {
++      // Started in bottom 25% → open app drawer
++      if (getActiveTab() == HOME_TAB_INDEX) {
++        setHomeDrawer(true);
++      } else {
++        s_home_drawer_mode = true;
++        goToTab(HOME_TAB_INDEX);
++      }
++      return;
++    }
++    if (swipe_y > 0 && !anyPopupOpen() && swipe_start_y <= edge_top) {
++      // Started in top 20% (status bar zone) → open/close control center
++      if (s_cc_root) closeControlCenter(); else openControlCenter();
++      return;
++    }
++  }
+ }
+ 
+ static lv_obj_t* s_chat_msgs_scroll_obj = nullptr;  // active virt chat scroll container
+@@ -6577,7 +6769,7 @@ static void accentPopupHighlight() {
+   for (int i = 0; i < s_acc_n; ++i) {
+     if (!s_acc_cells[i]) continue;
+     const bool sel = (i == s_acc_idx);
+-    lv_obj_set_style_bg_color(s_acc_cells[i], lv_color_hex(sel ? COLOR_ACCENT : 0x10202E), LV_PART_MAIN);
++    lv_obj_set_style_bg_color(s_acc_cells[i], lv_color_hex(sel ? COLOR_ACCENT : COLOR_PANEL), LV_PART_MAIN);
+     lv_obj_set_style_bg_opa(s_acc_cells[i], LV_OPA_COVER, LV_PART_MAIN);
+   }
+ }
+@@ -8532,7 +8724,6 @@ static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
+ // The Home tab shows the command centre OR the app drawer; remember which so
+ // leaving Home and coming back restores the same view. Toggled by the Home tab
+ // button (tabBtnsCb); tabChangedCb shows/hides the overlay to match on enter/leave.
+-static bool s_home_drawer_mode = false;
+ static bool s_home_is_drawer   = false;   // persistent pref: Home tab defaults to the app drawer (loaded at boot)
+ static bool s_tab_changed = false;   // a real tab switch happened this tap; the Home-button toggle reads it
+ // Slide the thin accent indicator bar under the active tab. Hidden on the
+@@ -9657,11 +9848,6 @@ static void saveExperimentalCb(lv_event_t* e) {
+   refreshStatusLabels();   // applies instantly on toggle (no Save button)
+ }
+ 
+-static void syncClockCb(lv_event_t* e) {
+-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+-  const bool ok = g_lv.task->setDeviceTimeFromSystemClock();
+-  g_lv.task->showAlert(ok ? TR("Clock synced") : TR("No system time yet"), 900);
+-}
+ 
+ // Chat-save fallback dropdown (Settings -> General): selection index -> number
+ // of consecutive failed background history writes before the flush retries
+@@ -10346,11 +10532,24 @@ static void openDiscoveredModalCb(lv_event_t* e) {
+     char keyhex[18];
+     mesh::Utils::toHex(keyhex, e_disc.ci.id.pub_key, 4);
+     keyhex[8] = '\0';
+-    char meta_buf[64];
+-    snprintf(meta_buf, sizeof(meta_buf), "%s · %u hop · %s…",
+-             type_label, (unsigned)e_disc.path_len, keyhex);
++    char meta_buf[72];
++    if (e_disc.snr_q4 != -128) {
++      snprintf(meta_buf, sizeof(meta_buf), "%s · %u hop · SNR %+.1f dB · %s…",
++               type_label, (unsigned)e_disc.path_len,
++               (double)e_disc.snr_q4 / 4.0, keyhex);
++    } else {
++      snprintf(meta_buf, sizeof(meta_buf), "%s · %u hop · %s…",
++               type_label, (unsigned)e_disc.path_len, keyhex);
++    }
+     lv_label_set_text(meta, meta_buf);
+-    lv_obj_set_style_text_color(meta, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
++    // Color-code SNR: green ≥ -5 dB, yellow -5→-15, red < -15
++    uint32_t meta_color = COLOR_SUB;
++    if (e_disc.snr_q4 != -128) {
++      if      (e_disc.snr_q4 >= -5 * 4)  meta_color = 0x55AA55;  // green
++      else if (e_disc.snr_q4 >= -15 * 4) meta_color = 0xCCAA22;  // yellow
++      else                                meta_color = 0xCC5555;  // red
++    }
++    lv_obj_set_style_text_color(meta, lv_color_hex(meta_color), LV_PART_MAIN);
+     lv_obj_set_style_text_font(meta, &g_font_12, LV_PART_MAIN);
+     lv_label_set_long_mode(meta, LV_LABEL_LONG_DOT);
+     lv_obj_set_width(meta, text_w);
+@@ -10742,7 +10941,7 @@ static void radioFemLnaToggleCb(lv_event_t* e) {
+   board.setFemLnaEnable(on);
+ }
+ #endif
+-// Buffered LoRa receive (experimental): a drain task lifts each packet out of the
++// Buffered LoRa receive: a drain task lifts each packet out of the
+ // radio within ~1 ms so a busy UI thread can't overwrite unread packets (the
+ // missed-messages class). Persists + applies live.
+ static void radioRxQueueToggleCb(lv_event_t* e) {
+@@ -11155,9 +11354,9 @@ static void buildRadioSettings() {
+   }
+ #endif
+ 
+-  // Buffered receive (experimental): decouple packet pickup from the UI loop.
++  // Buffered receive: decouple packet pickup from the UI loop.
+   {
+-    int rh = settingsRowLabel(body, y, 4, TR("Buffered receive (experimental)"), COLOR_TEXT, &g_font_12, 56);
++    int rh = settingsRowLabel(body, y, 4, TR("Buffered receive"), COLOR_TEXT, &g_font_12, 56);
+     lv_obj_t* sw = lv_switch_create(body);
+     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+     if (touchPrefsGetRxQueue()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+@@ -11315,8 +11514,8 @@ static void buildExperimentalSettings() {
+     y += LV_MAX(34, h + 12);
+   };
+ 
+-  mk_switch(TR("Multi ACKs"), &g_set_modal.exp_multi_sw);
+-  mk_switch(TR("Client repeat"), &g_set_modal.exp_repeat_sw);
++  mk_switch(TR("Multi ACKs  (default on)"), &g_set_modal.exp_multi_sw);
++  mk_switch(TR("Client repeat  (smart: yields to active repeaters)"), &g_set_modal.exp_repeat_sw);
+   mk_switch(TR("RX boosted gain"), &g_set_modal.exp_boost_sw);
+   mk_switch(TR("Duty meter"), &g_set_modal.exp_dc_sw);
+ 
+@@ -11792,36 +11991,6 @@ static void refreshSysInfo(unsigned long now) {
+   }
+ }
+ 
+-#if defined(HAS_TDECK_GT911)
+-// Re-render the idle-sleep instrumentation labels ~1 Hz while the Lock settings
+-// panel is open. Mirrors the refreshSysInfo() guard: skip if the right sheet is
+-// not visible, or while the user is mid-scroll (avoids layout churn).
+-static void refreshSleepDiag(unsigned long now) {
+-  static unsigned long next = 0;
+-  if ((long)(now - next) < 0) return;
+-  if (!s_sleep_diag_lbl || !s_sleep_diag_lbl2 ||
+-      getActiveTab() != SETTINGS_TAB_INDEX || s_settings_open_cat != CAT_LOCK) {
+-    next = now + 1000;
+-    return;
+-  }
+-  for (lv_indev_t* in = lv_indev_get_next(nullptr); in; in = lv_indev_get_next(in)) {
+-    if (lv_indev_get_scroll_dir(in) != LV_DIR_NONE) { next = now + 120; return; }
+-  }
+-  next = now + 1000;
+-
+-  char buf[64];
+-  snprintf(buf, sizeof buf, "%s · cycles %lu · asleep %u%%",
+-           touchSleep::isSleeping() ? "sleeping" : "awake",
+-           (unsigned long)touchSleep::wakeCount(),
+-           (unsigned)touchSleep::pctAsleep());
+-  lv_label_set_text(s_sleep_diag_lbl, buf);
+-
+-  char buf2[48];
+-  snprintf(buf2, sizeof buf2, "%s%s",
+-           TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+-  lv_label_set_text(s_sleep_diag_lbl2, buf2);
+-}
+-#endif  // HAS_TDECK_GT911
+ 
+ static void buildSystemInfoSettings() {
+   lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
+@@ -12074,20 +12243,6 @@ static void uiScaleSelectCb(lv_event_t* e) {
+ #endif
+ 
+ // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
+-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+-// Toggle idle light-sleep via the Settings row. Updates NVS, the live
+-// touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
+-static void sleepIdleToggleCb(lv_event_t* e) {
+-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+-#if defined(ESP32)
+-  touchPrefsSetSleepIdle(on);
+-#endif
+-  touchSleep::setEnabled(on);
+-  updateGlobalStatusBar();
+-  if (g_lv.task) g_lv.task->showAlert(on ? TR("Idle sleep enabled") : TR("Idle sleep disabled"), 1200);
+-}
+-#endif
+ 
+ // inert until a deliberate unlock. Cached in s_lock_on_screen_off so the loop's
+ // idle check never hits NVS.
+@@ -13020,18 +13175,6 @@ static void buildDeviceSettings(int sec) {
+ 
+   }
+ 
+-  if (sec == DSEC_CLOCK) {   // --- Sync clock ---
+-  lv_obj_t* b_time = lv_btn_create(body);
+-  lv_obj_set_size(b_time, lv_pct(100),SC(34));
+-  lv_obj_set_pos(b_time, 2, y);
+-  styleButton(b_time);
+-  lv_obj_add_event_cb(b_time, syncClockCb, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_t* l_time = lv_label_create(b_time);
+-  useChainedFont(l_time);
+-  lv_label_set_text(l_time, TR("Sync clock from system"));
+-  lv_obj_center(l_time);
+-  y += SC(40);
+-  }
+ 
+   if (sec == DSEC_GENERAL) {   // --- Send advert (device action) ---
+   lv_obj_t* b_adv = lv_btn_create(body);
+@@ -13240,11 +13383,28 @@ static void buildDeviceSettings(int sec) {
+       if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+       uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
+       touchPrefsSetUiTheme(sel);
++      // Manual selection disables auto-theme (user takes explicit control).
++      if (touchPrefsGetAutoThemeSun()) touchPrefsSetAutoThemeSun(false);
+       if (g_lv.task) g_lv.task->showAlert(TR("Theme saved — restart to apply"), 2000);
+     }, LV_EVENT_VALUE_CHANGED, nullptr);
+     lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+     y += SC(44);
+   }
++  // Auto theme by sun: Dark at night, Light during the day. Applied at next boot.
++  {
++    int h = settingsRowLabel(body, y, 6, TR("Auto theme by sun (restart)"), COLOR_SUB, nullptr, 56);
++    lv_obj_t* sw = lv_switch_create(body);
++    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
++    if (touchPrefsGetAutoThemeSun()) lv_obj_add_state(sw, LV_STATE_CHECKED);
++    lv_obj_add_event_cb(sw, [](lv_event_t* e) {
++      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
++      bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
++      touchPrefsSetAutoThemeSun(on);
++      if (g_lv.task) g_lv.task->showAlert(on ? TR("Auto theme on — restart to apply")
++                                              : TR("Auto theme off — restart to apply"), 2000);
++    }, LV_EVENT_VALUE_CHANGED, nullptr);
++    y += LV_MAX(40, h + 12);
++  }
+ 
+   /* Theme colour (UI accent): opens a colour-wheel + hex picker. The chosen
+      colour is clamped dark enough that off-white button text stays readable. */
+@@ -13782,6 +13942,20 @@ static void buildDeviceSettings(int sec) {
+     lv_obj_add_event_cb(sw, lockVisToggleCb, LV_EVENT_VALUE_CHANGED, (void*)touchPrefsSetLockMsgPreview);
+     y += LV_MAX(40, h + 12);
+   }
++  // Auto AOD brightness by sun: 6% at night, 15% during the day.
++  {
++    y += settingsRowLabel(body, y, 0, TR("Auto brightness by sun"), COLOR_SUB, &g_font_12, 0) + 2;
++    int h = settingsRowLabel(body, y, 6, TR("Night 6% / Day 15%"), COLOR_SUB, nullptr, 56);
++    lv_obj_t* sw = lv_switch_create(body);
++    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
++    if (touchPrefsGetAutoAodSun()) lv_obj_add_state(sw, LV_STATE_CHECKED);
++    lv_obj_add_event_cb(sw, [](lv_event_t* e) {
++      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
++      bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
++      touchPrefsSetAutoAodSun(on);
++    }, LV_EVENT_VALUE_CHANGED, nullptr);
++    y += LV_MAX(40, h + 12);
++  }
+ #else
+   // Auto-lock on screen-off (non-T-Deck boards)
+ #if !defined(HAS_TDISPLAY_P4)
+@@ -13798,6 +13972,49 @@ static void buildDeviceSettings(int sec) {
+ #endif
+ #endif  // HAS_TDECK_GT911
+ 
++  // PIN lock — shown on all boards
++  {
++    y += settingsRowLabel(body, y, 0, TR("PIN lock"), COLOR_SUB, &g_font_12, 0) + 2;
++
++    // Current PIN textarea (shows "set" or placeholder)
++    char cur_pin[TOUCH_LOCK_PIN_MAXLEN] = {};
++    touchPrefsGetLockPin(cur_pin, sizeof cur_pin);
++
++    lv_obj_t* pin_ta = lv_textarea_create(body);
++    lv_obj_set_size(pin_ta, lv_pct(100), SC(36));
++    lv_obj_set_pos(pin_ta, 0, y);
++    lv_textarea_set_max_length(pin_ta, 16);
++    lv_textarea_set_one_line(pin_ta, true);
++    lv_textarea_set_password_mode(pin_ta, true);
++    lv_textarea_set_placeholder_text(pin_ta, TR("Enter PIN (blank = disabled)"));
++    lv_textarea_set_text(pin_ta, cur_pin);
++    lv_obj_set_style_text_color(pin_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
++    lv_obj_set_style_border_color(pin_ta, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUSED);
++    lv_obj_add_event_cb(pin_ta, [](lv_event_t* e) {
++      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
++      lv_obj_t* ta = lv_event_get_target(e);
++      const char* txt = lv_textarea_get_text(ta);
++      // sanitise: only a-z A-Z 0-9
++      char clean[TOUCH_LOCK_PIN_MAXLEN] = {};
++      int j = 0;
++      for (int i = 0; txt[i] && j < 16; i++) {
++        char c = txt[i];
++        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
++          clean[j++] = c;
++      }
++      touchPrefsSetLockPin(clean);
++    }, LV_EVENT_VALUE_CHANGED, nullptr);
++    attachSettingsTaEvents(pin_ta);   // keyboard bind + nav group membership
++    y += SC(44);
++
++    lv_obj_t* hint = lv_label_create(body);
++    lv_label_set_text(hint, TR("a-z, A-Z, 0-9 only. Blank disables PIN."));
++    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
++    lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
++    lv_obj_set_pos(hint, 2, y);
++    y += 20;
++  }
++
+   }
+ 
+   if (sec == DSEC_CLOCK) {   // --- Time zone + UTC offset ---
+@@ -13933,27 +14150,6 @@ static void buildDeviceSettings(int sec) {
+     lv_obj_center(l_bat);
+     y += SC(42);
+   }
+-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+-  // Experimental battery saver (idle power-save) — throttles the CPU when the
+-  // device is parked (screen off, on battery, standalone). Moved here from
+-  // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
+-  // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
+-  // can't block it there, and the other gates are user state).
+-  {
+-    int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
+-    lv_obj_t* sw = lv_switch_create(body);
+-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+-#if defined(ESP32)
+-    if (touchPrefsGetSleepIdle()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+-#endif
+-    lv_obj_add_event_cb(sw, sleepIdleToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+-    y += LV_MAX(SC(34), h + 12);
+-    const char* reason = tsBlockReason();
+-    y += settingsRowLabel(body, y, 0,
+-        reason ? reason : TR("Throttles the CPU when idle to save power"),
+-        COLOR_SUB, &g_font_12, 0) + 6;
+-  }
+-#endif
+ 
+   // Calibrate battery: capture the current voltage as 100% (for custom packs /
+   // builds whose full voltage isn't 4.2 V). Tap = set 100%; long-press = reset.
+@@ -16311,9 +16507,9 @@ static void openAdminCmdPicker() {
+     // lv_list_add_btn uses a light theme bg by default — flip to the
+     // panel-dark palette so the text is actually legible.
+     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
++    lv_obj_set_style_bg_color(btn, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
+     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
++    lv_obj_set_style_border_color(btn, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+     lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+     lv_obj_set_style_min_height(btn, 30, LV_PART_MAIN);
+@@ -19089,37 +19285,6 @@ static void openBatteryChartWindow() {
+   lv_obj_set_style_text_color(cpul, lv_color_hex(s_batt_show_cpu ? 0xFFFFFF : COLOR_SUB), LV_PART_MAIN);
+   lv_obj_center(cpul);
+ 
+-  // ---- Idle power-save stats (snapshot mirror of the Lock-settings diag; the
+-  // chart itself is a snapshot too, so this refreshes each time the window opens).
+-  // Same two lines as refreshSleepDiag(): state / wakes / % asleep, then last-wake. ----
+-  by += 8;
+-  lv_obj_t* slph = lv_label_create(card);
+-  lv_label_set_text(slph, TR("Idle power-save"));
+-  lv_obj_set_style_text_font(slph, &g_font_12, LV_PART_MAIN);
+-  lv_obj_set_style_text_color(slph, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+-  lv_obj_set_pos(slph, 0, by);
+-  by += 18;
+-
+-  char slp1[64];
+-  snprintf(slp1, sizeof slp1, "%s \xc2\xb7 cycles %lu \xc2\xb7 asleep %u%%",
+-           touchSleep::isSleeping() ? "sleeping" : "awake",
+-           (unsigned long)touchSleep::wakeCount(),
+-           (unsigned)touchSleep::pctAsleep());
+-  lv_obj_t* slp1l = lv_label_create(card);
+-  lv_label_set_text(slp1l, slp1);
+-  lv_obj_set_style_text_font(slp1l, &g_font_12, LV_PART_MAIN);
+-  lv_obj_set_style_text_color(slp1l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+-  lv_obj_set_width(slp1l, cardw - 20);
+-  lv_label_set_long_mode(slp1l, LV_LABEL_LONG_WRAP);
+-  lv_obj_set_pos(slp1l, 0, by);
+-  by += 18;
+-
+-  lv_obj_t* slp2l = lv_label_create(card);
+-  lv_label_set_text_fmt(slp2l, "%s%s", TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+-  lv_obj_set_style_text_font(slp2l, &g_font_12, LV_PART_MAIN);
+-  lv_obj_set_style_text_color(slp2l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+-  lv_obj_set_pos(slp2l, 0, by);
+-  by += 18;
+ }
+ 
+ static void batteryTapCb(lv_event_t* e) {
+@@ -20253,9 +20418,9 @@ static void openTermCmdPicker() {
+     lv_obj_set_style_text_font(btn, &g_font_12, LV_PART_MAIN);
+     lv_obj_set_style_text_color(btn, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
++    lv_obj_set_style_bg_color(btn, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
+     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
++    lv_obj_set_style_border_color(btn, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+     lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+     lv_obj_set_style_min_height(btn, 30, LV_PART_MAIN);
+@@ -20379,9 +20544,9 @@ static void fmStyleRow(lv_obj_t* btn, uint32_t text_color) {
+   lv_obj_set_style_text_font(btn, &g_font_14, LV_PART_MAIN);
+   lv_obj_set_style_text_color(btn, lv_color_hex(text_color), LV_PART_MAIN);
+   lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+-  lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
++  lv_obj_set_style_bg_color(btn, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
+   lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+-  lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
++  lv_obj_set_style_border_color(btn, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+   lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+   lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+   lv_obj_set_style_min_height(btn, 34, LV_PART_MAIN);
+@@ -26719,13 +26884,24 @@ int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf,
+                          url, buf, cap, (const uint8_t*)body, body_len, ctype);
+ }
+ 
++// Returns the configured app-store base URL (no trailing slash).
++// Called from the worker thread — reads a stack buffer, safe.
++static void luaStoreBaseUrl(char* out, size_t cap) {
++  touchPrefsGetAppStoreUrl(out, (int)cap);
++  // strip any trailing slash the user may have typed
++  size_t n = strlen(out);
++  while (n > 0 && out[n - 1] == '/') out[--n] = '\0';
++}
++
+ static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
+   if (!s_luacat_buf)
+     s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+   if (!s_luacat_buf) { return; }
+   s_luacat_buf[0] = 0;
+-  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/apps.json",
+-                  s_luacat_buf, kLuaCatBufMax);
++  char base[TOUCH_APPSTORE_URL_MAXLEN]; luaStoreBaseUrl(base, sizeof base);
++  char url[TOUCH_APPSTORE_URL_MAXLEN + 16];
++  snprintf(url, sizeof url, "%s/apps.json", base);
++  luaStoreHttpGet(client, http, url, s_luacat_buf, kLuaCatBufMax);
+ }
+ 
+ // Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
+@@ -26742,7 +26918,8 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
+     char* buf = (char*)heap_caps_malloc(kCap[e], MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+     if (!buf) return false;
+     char url[128];
+-    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/%s/%s/%s.%s", id, ver, id, kExt[e]);
++    char base[TOUCH_APPSTORE_URL_MAXLEN]; luaStoreBaseUrl(base, sizeof base);
++    snprintf(url, sizeof url, "%s/%s/%s/%s.%s", base, id, ver, id, kExt[e]);
+     int n = luaStoreHttpGet(client, http, url, buf, kCap[e]);
+     if (n <= 0) { heap_caps_free(buf); return false; }
+     char rel[40], path[64];
+@@ -26789,8 +26966,10 @@ static void luaStoreFetchLangCatalogWorker(WiFiClient& client, HTTPClient& http)
+     s_langcat_buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+   if (!s_langcat_buf) return;
+   s_langcat_buf[0] = 0;
+-  luaStoreHttpGet(client, http, "http://firmware.wadamesh.com/apps/langs.json",
+-                  s_langcat_buf, kCap);
++  char base[TOUCH_APPSTORE_URL_MAXLEN]; luaStoreBaseUrl(base, sizeof base);
++  char url[TOUCH_APPSTORE_URL_MAXLEN + 16];
++  snprintf(url, sizeof url, "%s/langs.json", base);
++  luaStoreHttpGet(client, http, url, s_langcat_buf, kCap);
+ }
+ 
+ // Chunked writer through an internal bounce buffer, tolerant of transient
+@@ -26850,11 +27029,12 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
+   if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+   if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_8BIT); }
+   if (!buf) { s_langdl_err = "Not enough memory"; return false; }
+-  char url[112];
++  char base[TOUCH_APPSTORE_URL_MAXLEN]; luaStoreBaseUrl(base, sizeof base);
++  char url[TOUCH_APPSTORE_URL_MAXLEN + 48];
+   if (ver && ver[0])
+-    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s/%s.lang", ver, code);
++    snprintf(url, sizeof url, "%s/lang/%s/%s.lang", base, ver, code);
+   else
+-    snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
++    snprintf(url, sizeof url, "%s/lang/%s.lang", base, code);
+   int n = luaStoreHttpGet(client, http, url, buf, kCap);
+   bool ok = false;
+   bool opened = false;
+@@ -30954,9 +31134,8 @@ static void applyMapChrome(bool on) {
+     const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_ACCENT);
+     if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_radio, LV_PART_MAIN);
+     if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_radio, LV_PART_MAIN);
+-#if defined(HAS_TDECK_GT911)
+-    if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
+-#endif
++    if (g_statusbar.gps_icon)    lv_obj_set_style_text_color(g_statusbar.gps_icon,   fg_radio, LV_PART_MAIN);
++    // repeat_icon color is managed by the status-bar tick (active vs yield); skip here
+   }
+   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
+   if (g_lv.tabview) {
+@@ -32217,11 +32396,6 @@ static void closeSettingsCategory() {
+     s_ota_prev_btn = nullptr;
+     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
+   }
+-#if defined(HAS_TDECK_GT911)
+-  if (s_settings_open_cat == CAT_LOCK) {   // null the sleep-diag live-label ptrs
+-    s_sleep_diag_lbl = nullptr; s_sleep_diag_lbl2 = nullptr;
+-  }
+-#endif
+   s_settings_inline_parent = nullptr;
+   // del_async, NOT del: the sheet holds the scrollable page, and this close can
+   // fire mid-gesture (swipe-back / tab change while a settings page has scroll
+@@ -35389,9 +35563,9 @@ static void refreshChatList(LvChatPanel& p) {
+     // 1 px bottom hairline, square corners, 16 px type icon + 14 px name.
+     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
++    lv_obj_set_style_bg_color(btn, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
+     lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+-    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
++    lv_obj_set_style_border_color(btn, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+     lv_obj_set_style_text_color(btn,
+@@ -35495,9 +35669,9 @@ static void refreshChatList(LvChatPanel& p) {
+     btn = lv_list_add_btn(p.list_cont, nullptr, nullptr);
+     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(btn, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
++    lv_obj_set_style_bg_color(btn, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
+     lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+-    lv_obj_set_style_border_color(btn, lv_color_hex(0x141516), LV_PART_MAIN);
++    lv_obj_set_style_border_color(btn, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+     lv_obj_set_style_border_side(btn, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+     lv_obj_set_style_radius(btn, 0, LV_PART_MAIN);
+     lv_obj_set_style_pad_all(btn, 0, LV_PART_MAIN);
+@@ -36092,8 +36266,8 @@ static void refreshContactsList() {
+     lv_obj_set_size(rb, row_w, ROW_H);
+     lv_obj_set_style_bg_color(rb, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+     lv_obj_set_style_bg_opa(rb, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_bg_color(rb, lv_color_hex(0x141516), LV_PART_MAIN | LV_STATE_PRESSED);
+-    lv_obj_set_style_border_color(rb, lv_color_hex(0x141516), LV_PART_MAIN);
++    lv_obj_set_style_bg_color(rb, lv_color_hex(listPressedColor()), LV_PART_MAIN | LV_STATE_PRESSED);
++    lv_obj_set_style_border_color(rb, lv_color_hex(listBorderColor()), LV_PART_MAIN);
+     lv_obj_set_style_border_width(rb, 1, LV_PART_MAIN);
+     lv_obj_set_style_border_side(rb, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+     lv_obj_set_style_radius(rb, 0, LV_PART_MAIN);
+@@ -36394,16 +36568,12 @@ static void updateTrackball(unsigned long now) {
+   const bool moved = tdeckTrackballReadMotion(&dx, &dy);
+   if (s_tb_reverse) { dx = -dx; dy = -dy; }   // user opted to invert scrollball direction
+ 
+-  // ---- Snake game ----
+-  // While Snake is open the trackball steers it (no soft cursor on that page).
+-  if (SnakeGame::isOpen() || PongGame::isOpen() || luaAppIsOpen()) {
++  if (luaAppIsOpen()) {
+     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
+       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+     s_tb_click_press = false;
+     if (moved && (dx != 0 || dy != 0)) {
+-      if (luaAppIsOpen())      luaAppSteer(dx, dy);
+-      else if (PongGame::isOpen()) PongGame::nudge(dx, dy);
+-      else                     SnakeGame::steer(dx, dy);
++      luaAppSteer(dx, dy);
+       if (g_lv.task) g_lv.task->noteUserInput();
+     }
+     return;
+@@ -37243,6 +37413,11 @@ static const unsigned long kLockUnlockHoldMs = 1000;
+ static lv_obj_t* s_unlock_popup = nullptr;
+ static lv_obj_t* s_unlock_count = nullptr;
+ 
++// PIN entry overlay (shown on first keypress while locked, if PIN is set)
++static lv_obj_t* s_lock_pin_box   = nullptr;   // container card
++static lv_obj_t* s_lock_pin_ta    = nullptr;   // textarea (password mode)
++static lv_obj_t* s_lock_pin_err   = nullptr;   // "Incorrect PIN" label
++
+ static void lockscreenUpdateClock() {
+   if (!s_lock_clock) return;
+   mesh::RTCClock* rtc = the_mesh.getRTCClock();
+@@ -37337,6 +37512,97 @@ static void lockscreenUpdateFooter(int dx, int dy) {
+ }
+ #endif
+ 
++// Show the PIN entry card on the lock screen. Idempotent.
++static void lockscreenPinShow() {
++  if (!s_lock_root) return;
++  if (s_lock_pin_box) { lv_obj_move_foreground(s_lock_pin_box); lv_obj_scroll_to_view(s_lock_pin_ta, LV_ANIM_OFF); return; }
++
++  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
++  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
++  const lv_coord_t bw = LV_MIN(sw - 20, 260);
++  const lv_coord_t bh = 120;
++
++  s_lock_pin_box = lv_obj_create(lv_layer_top());
++  lv_obj_remove_style_all(s_lock_pin_box);
++  lv_obj_set_size(s_lock_pin_box, bw, bh);
++  lv_obj_set_pos(s_lock_pin_box, (sw - bw) / 2, (sh - bh) / 2);
++  lv_obj_set_style_bg_color(s_lock_pin_box, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
++  lv_obj_set_style_bg_opa(s_lock_pin_box, LV_OPA_COVER, LV_PART_MAIN);
++  lv_obj_set_style_radius(s_lock_pin_box, 12, LV_PART_MAIN);
++  lv_obj_set_style_border_color(s_lock_pin_box, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
++  lv_obj_set_style_border_width(s_lock_pin_box, 1, LV_PART_MAIN);
++  lv_obj_clear_flag(s_lock_pin_box, LV_OBJ_FLAG_SCROLLABLE);
++
++  lv_obj_t* title = lv_label_create(s_lock_pin_box);
++  lv_label_set_text(title, TR("Enter PIN"));
++  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
++  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
++  lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 8);
++
++  s_lock_pin_ta = lv_textarea_create(s_lock_pin_box);
++  lv_obj_set_size(s_lock_pin_ta, bw - 16, SC(36));
++  lv_obj_align(s_lock_pin_ta, LV_ALIGN_TOP_MID, 0, 32);
++  lv_textarea_set_max_length(s_lock_pin_ta, 16);
++  lv_textarea_set_one_line(s_lock_pin_ta, true);
++  lv_textarea_set_password_mode(s_lock_pin_ta, true);
++  lv_textarea_set_placeholder_text(s_lock_pin_ta, "PIN");
++  lv_textarea_set_text(s_lock_pin_ta, "");
++  lv_obj_set_style_text_color(s_lock_pin_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
++  lv_obj_set_style_border_color(s_lock_pin_ta, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUSED);
++  lv_obj_add_flag(s_lock_pin_ta, NAV_SKIP_FLAG);   // keyboard-nav skips this (touch/hardware key feeds it directly)
++
++  s_lock_pin_err = lv_label_create(s_lock_pin_box);
++  lv_label_set_text(s_lock_pin_err, "");
++  lv_obj_set_style_text_color(s_lock_pin_err, lv_color_hex(0xD7574E), LV_PART_MAIN);
++  lv_obj_set_style_text_font(s_lock_pin_err, &g_font_12, LV_PART_MAIN);
++  lv_obj_align(s_lock_pin_err, LV_ALIGN_BOTTOM_MID, 0, -6);
++}
++
++static void lockscreenPinHide() {
++  if (s_lock_pin_box) { lv_obj_del(s_lock_pin_box); s_lock_pin_box = nullptr; s_lock_pin_ta = nullptr; s_lock_pin_err = nullptr; }
++}
++// Clear the PIN field + error label (e.g. after screen went dark mid-entry).
++static void lockscreenPinClear() {
++  if (s_lock_pin_ta)  lv_textarea_set_text(s_lock_pin_ta, "");
++  if (s_lock_pin_err) lv_label_set_text(s_lock_pin_err, "");
++}
++
++// Feed a character into the PIN textarea (called from key handler while locked).
++static void lockscreenPinFeedChar(char c) {
++  lockscreenPinShow();
++  if (!s_lock_pin_ta) return;
++  if (c == '\b' || c == 127) {
++    lv_textarea_del_char(s_lock_pin_ta);
++  } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
++    char buf[2] = {c, 0};
++    lv_textarea_add_text(s_lock_pin_ta, buf);
++  }
++  if (s_lock_pin_err) lv_label_set_text(s_lock_pin_err, "");  // clear error on any input
++  // At night, each PIN keypress keeps the keyboard backlight on for 10 s.
++#if defined(HAS_TDECK_KEYBOARD)
++  if (s_sun_is_night && s_kb_bl_mode != 0)
++    s_lock_pin_kb_until_ms = millis() + 10000UL;
++#endif
++}
++
++// Validate the entered PIN. Returns true and calls unlockScreen() on match.
++// Returns false and shows error if wrong.
++static bool lockscreenPinSubmit() {
++  if (!s_lock_pin_ta || !g_lv.task) return false;
++  char stored[TOUCH_LOCK_PIN_MAXLEN] = {};
++  touchPrefsGetLockPin(stored, sizeof stored);
++  const char* entered = lv_textarea_get_text(s_lock_pin_ta);
++  if (strcmp(entered, stored) == 0) {
++    lockscreenPinHide();
++    g_lv.task->unlockScreen();
++    return true;
++  }
++  // Wrong PIN
++  lv_textarea_set_text(s_lock_pin_ta, "");
++  if (s_lock_pin_err) lv_label_set_text(s_lock_pin_err, TR("Incorrect PIN"));
++  return false;
++}
++
+ static void lockscreenUnlockPopupHide() {
+   if (s_unlock_popup) { lv_obj_del(s_unlock_popup); s_unlock_popup = nullptr; s_unlock_count = nullptr; }
+ }
+@@ -37550,10 +37816,14 @@ static void lockscreenShow() {
+   if (touchPrefsGetLockShowUnread())
+     lv_obj_align(s_lock_unread, LV_ALIGN_BOTTOM_RIGHT, -56, -8);
+ 
+-  // Unlock hint: centered below date
++  // Unlock hint: centered below date. If a PIN is set, prompt for it instead.
+   lv_obj_t* hint = lv_label_create(s_lock_root);
+   useChainedFont(hint);
+-  lv_label_set_text(hint, TR("hold the trackball to unlock"));
++  {
++    char _pin_chk[TOUCH_LOCK_PIN_MAXLEN] = {};
++    touchPrefsGetLockPin(_pin_chk, sizeof _pin_chk);
++    lv_label_set_text(hint, _pin_chk[0] ? TR("Enter PIN to unlock") : TR("hold the trackball to unlock"));
++  }
+   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
+   lv_obj_set_style_text_opa(hint, LV_OPA_50, LV_PART_MAIN);
+@@ -37574,19 +37844,27 @@ static void lockscreenShow() {
+ 
+   lv_obj_t* hint = lv_label_create(s_lock_root);
+   useChainedFont(hint);
++  {
++    char _pin_chk[TOUCH_LOCK_PIN_MAXLEN] = {};
++    touchPrefsGetLockPin(_pin_chk, sizeof _pin_chk);
++    if (_pin_chk[0]) {
++      lv_label_set_text(hint, TR("Enter PIN to unlock"));
++    } else {
+ #if defined(HAS_TANMATSU)
+-  lv_label_set_text(hint, TR("press Volume Down to unlock"));
++      lv_label_set_text(hint, TR("press Volume Down to unlock"));
+ #elif defined(HAS_PAGER_KEYBOARD)
+-  // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
+-  // Backspace tap, or the new-message notify flash while locked) is gated on
+-  // CAP_LOCK_SCREEN, which is 1 for the pager, not HAS_TDECK_GT911. (An
+-  // earlier version of this comment claimed otherwise; it was wrong.)
+-  lv_label_set_text(hint, TR("hold Backspace to unlock"));
++      // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
++      // Backspace tap, or the new-message notify flash while locked) is gated on
++      // CAP_LOCK_SCREEN, which is 1 for the pager, not HAS_TDECK_GT911. (An
++      // earlier version of this comment claimed otherwise; it was wrong.)
++      lv_label_set_text(hint, TR("hold Backspace to unlock"));
+ #elif defined(HAS_THINKNODE_M9)
+-  lv_label_set_text(hint, TR("hold the d-pad to unlock"));
++      lv_label_set_text(hint, TR("hold the d-pad to unlock"));
+ #else
+-  lv_label_set_text(hint, TR("hold the trackball to unlock"));
++      lv_label_set_text(hint, TR("hold the trackball to unlock"));
+ #endif
++    }
++  }
+   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
+   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
+@@ -37606,6 +37884,7 @@ static void lockscreenShow() {
+ }
+ 
+ static void lockscreenHide() {
++  lockscreenPinHide();
+   lockscreenUnlockPopupHide();
+   if (s_lock_root) {
+     lv_obj_del(s_lock_root);
+@@ -37694,11 +37973,6 @@ static void sndMenuFilesCb(lv_event_t* e) {
+   buildFileManager(body);
+   if (g_lv.task) g_lv.task->showAlert(TR("Open a .wav, then tap 'Set as notification sound'"), 2800);
+ }
+-// ---- Ringtone picker (inline list, opens from sound menu) -------------------
+-static lv_obj_t* s_snd_ringtone_picker = nullptr;
+-static void sndRingtonePickerClose() {
+-  if (s_snd_ringtone_picker) { lv_obj_del(s_snd_ringtone_picker); s_snd_ringtone_picker = nullptr; }
+-}
+ static void sndRingtoneCb(lv_event_t* e) {
+   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+   int idx = (int)(intptr_t)lv_event_get_user_data(e);
+@@ -37707,66 +37981,28 @@ static void sndRingtoneCb(lv_event_t* e) {
+   touchPrefsSetSoundFile(slot, pref);
+   if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
+     lv_label_set_text(s_snd_btn_lbl[slot], kBuiltinMelodies[idx].name);
+-  sndRingtonePickerClose();
+   sndMenuClose();
+   uiPlaySlot(slot);   // preview
+ }
+-static void sndOpenRingtonePicker(lv_event_t* e) {
+-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+-  sndRingtonePickerClose();
+-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+-  const lv_coord_t pw = (sw * 72) / 100;
+-  const lv_coord_t row = 42, gap = 4, top = 44;
+-  const lv_coord_t ph = top + kBuiltinMelodyCount * (row + gap) + 8;
+-  s_snd_ringtone_picker = lv_obj_create(lv_layer_top());
+-  lv_obj_remove_style_all(s_snd_ringtone_picker);
+-  lv_obj_set_size(s_snd_ringtone_picker, pw, ph);
+-  lv_obj_set_pos(s_snd_ringtone_picker, (sw - pw) / 2, STATUSBAR_H + (sh - STATUSBAR_H - ph) / 2);
+-  lv_obj_set_style_bg_color(s_snd_ringtone_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+-  lv_obj_set_style_bg_opa(s_snd_ringtone_picker, LV_OPA_COVER, LV_PART_MAIN);
+-  lv_obj_set_style_radius(s_snd_ringtone_picker, 8, LV_PART_MAIN);
+-  lv_obj_set_style_border_width(s_snd_ringtone_picker, 1, LV_PART_MAIN);
+-  lv_obj_set_style_border_color(s_snd_ringtone_picker, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+-  lv_obj_clear_flag(s_snd_ringtone_picker, LV_OBJ_FLAG_SCROLLABLE);
+-  lv_obj_t* title = lv_label_create(s_snd_ringtone_picker);
+-  lv_label_set_text(title, TR("Ringtones"));
+-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+-  lv_obj_set_pos(title, 12, 12);
+-  lv_obj_t* close2 = lv_btn_create(s_snd_ringtone_picker);
+-  lv_obj_set_size(close2, 30, 26); lv_obj_align(close2, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close2);
+-  lv_obj_add_event_cb(close2, [](lv_event_t* ev){ if(lv_event_get_code(ev)==LV_EVENT_CLICKED) sndRingtonePickerClose(); }, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_t* cl2 = lv_label_create(close2); lv_label_set_text(cl2, LV_SYMBOL_CLOSE); tanCloseRed(cl2);
+-  lv_obj_set_style_text_font(cl2, &g_font_12, LV_PART_MAIN); lv_obj_center(cl2);
+-  for (int i = 0; i < kBuiltinMelodyCount; ++i) {
+-    lv_obj_t* b = lv_btn_create(s_snd_ringtone_picker);
+-    lv_obj_set_size(b, pw - 24, row);
+-    lv_obj_set_pos(b, 12, top + i * (row + gap));
+-    styleButton(b);
+-    lv_obj_add_event_cb(b, sndRingtoneCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+-    lv_obj_t* bl = lv_label_create(b);
+-    lv_label_set_text(bl, kBuiltinMelodies[i].name);
+-    lv_obj_center(bl);
+-  }
+-}
+ 
+ static void openSoundMenu(int slot) {
+   s_snd_pending_slot = slot;
+   sndMenuClose();
+-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+-  const lv_coord_t pw = (sw * 82) / 100, ph = 216;
++  const lv_coord_t sw  = lv_disp_get_hor_res(nullptr);
++  const lv_coord_t sh  = lv_disp_get_ver_res(nullptr);
++  // Fullscreen below the status bar.
++  const lv_coord_t pw  = sw;
++  const lv_coord_t ph  = sh - STATUSBAR_H;
++  const lv_coord_t row = 40, gap = 4, top = 44;
++
+   s_snd_menu = lv_obj_create(lv_layer_top());
+   lv_obj_remove_style_all(s_snd_menu);
+   lv_obj_set_size(s_snd_menu, pw, ph);
+-  lv_obj_set_pos(s_snd_menu, (sw - pw) / 2, STATUSBAR_H + (sh - STATUSBAR_H - ph) / 2);
++  lv_obj_set_pos(s_snd_menu, 0, STATUSBAR_H);
+   lv_obj_set_style_bg_color(s_snd_menu, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+   lv_obj_set_style_bg_opa(s_snd_menu, LV_OPA_COVER, LV_PART_MAIN);
+-  lv_obj_set_style_radius(s_snd_menu, 8, LV_PART_MAIN);
+-  lv_obj_set_style_border_width(s_snd_menu, 1, LV_PART_MAIN);
+-  lv_obj_set_style_border_color(s_snd_menu, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+   lv_obj_clear_flag(s_snd_menu, LV_OBJ_FLAG_SCROLLABLE);
++
+   static const char* const kSlot[3] = { "Message", "Direct (DM)", "@ mention" };
+   lv_obj_t* title = lv_label_create(s_snd_menu);
+   char tt[40]; snprintf(tt, sizeof tt, "%s sound", kSlot[(slot >= 0 && slot < 3) ? slot : 0]);
+@@ -37774,26 +38010,59 @@ static void openSoundMenu(int slot) {
+   lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
+   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+   lv_obj_set_pos(title, 12, 12);
+-  lv_obj_t* br = lv_btn_create(s_snd_menu);
+-  lv_obj_set_size(br, pw - 24, 40); lv_obj_set_pos(br, 12, 44); styleButton(br);
+-  lv_obj_add_event_cb(br, sndOpenRingtonePicker, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_t* lr = lv_label_create(br); lv_label_set_text(lr, TR(LV_SYMBOL_AUDIO "  Ringtones")); lv_obj_center(lr);
+-  useChainedFont(lr);
+-  lv_obj_t* bf = lv_btn_create(s_snd_menu);
+-  lv_obj_set_size(bf, pw - 24, 40); lv_obj_set_pos(bf, 12, 92); styleButton(bf);
+-  lv_obj_add_event_cb(bf, sndMenuFilesCb, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_t* lf = lv_label_create(bf); lv_label_set_text(lf, TR(LV_SYMBOL_DIRECTORY "  Choose .wav from files")); lv_obj_center(lf);
+-  useChainedFont(lf);
+-  lv_obj_t* bb = lv_btn_create(s_snd_menu);
+-  lv_obj_set_size(bb, pw - 24, 40); lv_obj_set_pos(bb, 12, 140); styleButton(bb);
+-  lv_obj_add_event_cb(bb, sndMenuBuiltinCb, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_t* lb = lv_label_create(bb); lv_label_set_text(lb, TR("Built-in (default)")); lv_obj_center(lb);
+-  useChainedFont(lb);
++
+   lv_obj_t* close = lv_btn_create(s_snd_menu);
+   lv_obj_set_size(close, 30, 26); lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 6); styleButton(close);
+   lv_obj_add_event_cb(close, sndMenuCloseCb, LV_EVENT_CLICKED, nullptr);
+   lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
+   lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
++
++  // Scrollable list fills the remaining height.
++  lv_obj_t* list = lv_obj_create(s_snd_menu);
++  lv_obj_remove_style_all(list);
++  lv_obj_set_size(list, pw, ph - top);
++  lv_obj_set_pos(list, 0, top);
++  lv_obj_set_style_bg_opa(list, LV_OPA_TRANSP, LV_PART_MAIN);
++  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
++  lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
++  lv_obj_set_style_pad_row(list, gap, LV_PART_MAIN);
++  lv_obj_set_style_pad_left(list, 12, LV_PART_MAIN);
++  lv_obj_set_style_pad_right(list, 12, LV_PART_MAIN);
++  lv_obj_set_style_pad_top(list, 4, LV_PART_MAIN);
++  lv_obj_set_style_pad_bottom(list, 8, LV_PART_MAIN);
++  lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
++  lv_obj_set_scroll_dir(list, LV_DIR_VER);
++  lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
++
++  auto addRow = [&](const char* text, lv_event_cb_t cb, void* ud, bool chained = false) {
++    lv_obj_t* b = lv_btn_create(list);
++    lv_obj_set_size(b, pw - 24, row);
++    styleButton(b);
++    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
++    lv_obj_t* l = lv_label_create(b); lv_label_set_text(l, TR(text));
++    if (chained) useChainedFont(l);
++    lv_obj_center(l);
++  };
++
++  addRow("Built-in (default)", sndMenuBuiltinCb, nullptr, true);
++#if CAP_SOUND_FILES
++  addRow(LV_SYMBOL_DIRECTORY "  Choose .wav from files", sndMenuFilesCb, nullptr, true);
++#endif
++
++  lv_obj_t* sec = lv_label_create(list);
++  lv_label_set_text(sec, TR("Ringtones"));
++  lv_obj_set_style_text_color(sec, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
++  lv_obj_set_style_text_font(sec, &g_font_12, LV_PART_MAIN);
++
++  for (int i = 0; i < kBuiltinMelodyCount; ++i) {
++    lv_obj_t* b = lv_btn_create(list);
++    lv_obj_set_size(b, pw - 24, row);
++    styleButton(b);
++    lv_obj_add_event_cb(b, sndRingtoneCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
++    lv_obj_t* bl = lv_label_create(b);
++    lv_label_set_text(bl, kBuiltinMelodies[i].name);
++    lv_obj_center(bl);
++  }
+ }
+ static void openSoundPickerCb(lv_event_t* e) {
+   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+@@ -38890,14 +39159,43 @@ static void handleHwKey(int key) {
+   }
+ if (g_lv.task && g_lv.task->isManualLock()) {
+ #if defined(HAS_M9_KEYBOARD)
+-    // M9 has no trackball to hold — the keyboard controller's own long-press
+-    // detection (M9_KEY_ENTER_LONG, a distinct byte from a normal Enter tap)
+-    // stands in for "hold to unlock." No progressive countdown UI is possible
+-    // this way (we only get a single discrete "that was a long press" event,
+-    // not continuous press-state to poll), but it's a working equivalent.
+-    if (key == M9_KEY_ENTER_LONG) { g_lv.task->unlockScreen(); return; }
++    if (key == M9_KEY_ENTER_LONG) {
++      char pin[TOUCH_LOCK_PIN_MAXLEN] = {};
++      touchPrefsGetLockPin(pin, sizeof pin);
++      if (pin[0]) { lockscreenPinShow(); }
++      else         { g_lv.task->unlockScreen(); }
++      return;
++    }
+ #endif
++    // was_off: fully dark (not just AOD-dimmed). AOD-dimmed screen is already
++    // visible, so a keypress there should immediately feed the PIN box.
++    const bool was_off = g_lv.task->isScreenOff() && !g_lv.task->isLockAoDimmed();
+     g_lv.task->lockscreenReveal();
++    if (was_off) {
++#if defined(HAS_TDECK_KEYBOARD)
++      // Light the keyboard immediately for the wake keypress so the user can
++      // see the keys; stamp 10 s forward so the backlight stays on.
++      {
++        char _pin_wake[TOUCH_LOCK_PIN_MAXLEN] = {};
++        touchPrefsGetLockPin(_pin_wake, sizeof _pin_wake);
++        if (_pin_wake[0] && s_sun_is_night && s_kb_bl_mode != 0)
++          s_lock_pin_kb_until_ms = millis() + 10000UL;
++      }
++#endif
++      return;   // first key just woke the screen — don't also type it into the PIN field
++    }
++    // If PIN is set: any printable key / backspace opens & feeds the PIN box
++    {
++      char pin[TOUCH_LOCK_PIN_MAXLEN] = {};
++      touchPrefsGetLockPin(pin, sizeof pin);
++      if (pin[0]) {
++        if (key == '\r' || key == '\n' || key == LV_KEY_ENTER) {
++          lockscreenPinSubmit();
++        } else {
++          lockscreenPinFeedChar((char)key);
++        }
++      }
++    }
+     return;
+   }
+ #if defined(HAS_M9_KEYBOARD)
+@@ -41613,6 +41911,36 @@ static void luaStoreRebuildList() {
+   }
+ 
+   // ==== tab: Apps (the catalog) ====
++  // URL field — shows current base URL, editable, persisted on blur
++  {
++    char cur_url[TOUCH_APPSTORE_URL_MAXLEN];
++    touchPrefsGetAppStoreUrl(cur_url, sizeof cur_url);
++    lv_obj_t* url_ta = lv_textarea_create(s_luastore_list);
++    lv_obj_set_size(url_ta, W - 8, SC(32));
++    lv_textarea_set_one_line(url_ta, true);
++    lv_textarea_set_max_length(url_ta, TOUCH_APPSTORE_URL_MAXLEN - 1);
++    lv_textarea_set_placeholder_text(url_ta, "http://firmware.wadamesh.com/apps");
++    lv_textarea_set_text(url_ta, cur_url);
++    lv_obj_set_style_text_font(url_ta, &g_font_12, LV_PART_MAIN);
++    lv_obj_set_style_text_color(url_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
++    lv_obj_set_style_border_color(url_ta, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUSED);
++    lv_obj_add_event_cb(url_ta, [](lv_event_t* e) {
++      if (blurFromDelete(e)) return;
++      if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED) return;
++      const char* txt = lv_textarea_get_text(lv_event_get_target(e));
++      // strip trailing slash before saving
++      char clean[TOUCH_APPSTORE_URL_MAXLEN];
++      strncpy(clean, txt ? txt : "", sizeof clean - 1);
++      clean[sizeof clean - 1] = '\0';
++      size_t n = strlen(clean);
++      while (n > 0 && clean[n - 1] == '/') clean[--n] = '\0';
++      touchPrefsSetAppStoreUrl(clean);
++      // invalidate catalog so next open re-fetches from new URL
++      s_lua_cat_n = 0; s_luacat_done = false;
++    }, LV_EVENT_DEFOCUSED, nullptr);
++    attachSettingsTaEvents(url_ta);
++  }
++
+   if (s_lua_cat_n <= 0) {
+     lv_obj_t* card = lv_obj_create(s_luastore_list);
+     lv_obj_remove_style_all(card);
+@@ -41839,13 +42167,7 @@ static void openLuaStorePage() {
+     lv_obj_set_pos(bar, 6, 4);
+     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+     static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
+-#if CAP_BUILTIN_LUA_APPS
+-    // This board ships its apps and languages inside the image, so there is
+-    // nothing to browse or install — the page is a picker, not a shop.
+-    const int t_first = 1, t_count = 2;
+-#else
+-    const int t_first = 0, t_count = 3;
+-#endif
++    const int t_first = 0, t_count = 3;   // all tabs always: built-ins seed the drawer but downloads are still welcome
+     // Cells sized to their text, NOT even thirds. The P4 is 284 px logical and its
+     // fonts are scaled up, so an even third is ~90 px — "Languages" cannot fit that
+     // at the board's smallest font (uiFitLabelWidth bottoms out at g_font_12, which
+@@ -41896,9 +42218,6 @@ static void openLuaStorePage() {
+   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
+   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
+ 
+-#if CAP_BUILTIN_LUA_APPS
+-  if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
+-#endif
+   appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
+ 
+   // Open instantly from the cached install list; the card re-listing (sideload
+@@ -41946,7 +42265,7 @@ static void luaStoreOpenLanguages() {
+ enum AppDrawerAction {
+   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
+   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
+-  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_PONG, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
++  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+   APPACT_DISCOVER, APPACT_STORE,
+   APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
+ };
+@@ -42225,8 +42544,6 @@ static void appTileCb(lv_event_t* e) {
+     // appears as a regular installed tile (the native module goes unreferenced
+     // here, so the linker drops it).
+ #else
+-    case APPACT_SNAKE:     SnakeGame::launch();  return;
+-    case APPACT_PONG:      PongGame::launch();   return;
+ #endif
+ #if defined(HAS_TOUCH_UI)
+     case APPACT_TERMINAL:  homeTerminalCb(e);    return;
+@@ -42350,38 +42667,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
+   lv_obj_set_style_border_width(chip_o, 1, LV_PART_MAIN);
+   lv_obj_set_style_border_opa(chip_o, LV_OPA_50, LV_PART_MAIN);
+ 
+-  if (act == APPACT_SNAKE) {
+-    // The 🐍 emoji (U+1F40D) isn't in the baked colour-emoji set, so a plain
+-    // label renders it as a tofu box. Draw the game's blocky snake from a few
+-    // rounded cells instead — self-contained, on-theme, and scales with the chip.
+-    lv_obj_t* box = lv_obj_create(chip_o);
+-    lv_obj_remove_style_all(box);
+-    lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+-    lv_obj_set_size(box, 18, 12);
+-    lv_obj_center(box);
+-    // Tail bottom-left -> right -> up -> head top-right (cells share edges, so the
+-    // body reads as one continuous snake).
+-    static const struct { int8_t x, y; } seg[4] = { {0,6}, {6,6}, {6,0}, {12,0} };
+-    for (int s = 0; s < 4; s++) {
+-      lv_obj_t* cell = lv_obj_create(box);
+-      lv_obj_remove_style_all(cell);
+-      lv_obj_clear_flag(cell, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+-      lv_obj_set_size(cell, 6, 6);
+-      lv_obj_set_pos(cell, seg[s].x, seg[s].y);
+-      lv_obj_set_style_bg_color(cell, lv_color_hex(icon_col), LV_PART_MAIN);
+-      lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, LV_PART_MAIN);
+-      lv_obj_set_style_radius(cell, 2, LV_PART_MAIN);
+-    }
+-    // Dark pupil on the head cell (the last segment, facing right).
+-    lv_obj_t* eye = lv_obj_create(box);
+-    lv_obj_remove_style_all(eye);
+-    lv_obj_clear_flag(eye, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+-    lv_obj_set_size(eye, 2, 2);
+-    lv_obj_set_pos(eye, 14, 1);
+-    lv_obj_set_style_bg_color(eye, lv_color_hex(0x0E1216), LV_PART_MAIN);
+-    lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, LV_PART_MAIN);
+-    lv_obj_set_style_radius(eye, 1, LV_PART_MAIN);
+-  } else if (act == APPACT_READER) {
++  if (act == APPACT_READER) {
+     // 🌐 globe: the ONLY colour-emoji tile, so it drops to a tofu box on the 2 MB V4
+     // (the imgfont fallback can't decode it under PSRAM pressure). Draw it from a
+     // circle + meridian/parallel lines instead — renders identically on every board,
+@@ -42674,8 +42960,6 @@ static void openAppDrawer() {
+ #if CAP_LUA_APPS
+     { LV_SYMBOL_DOWNLOAD,  "Store",     APPACT_STORE,    0,         0x15B6A6 },      // Lua app store (brand teal)
+ #endif
+-    { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (always present)
+-    { nullptr,             "Pong",      APPACT_PONG,     0,         0x4488CC },      // native pong (always present)
+     { LV_SYMBOL_POWER,     "Power",     APPACT_POWER,    0,         0xE05544 },      // power red
+   };
+   const int n_static = (int)(sizeof(tiles) / sizeof(tiles[0]));
+@@ -42684,8 +42968,6 @@ static void openAppDrawer() {
+   const uint32_t hide_mask = touchPrefsGetAppHide();
+   auto tileHidden = [&](int act) -> bool {
+     switch (act) {
+-      case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
+-      case APPACT_PONG:     return hide_mask & APPHIDE_PONG;
+       case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
+       case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
+       case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
+@@ -43055,34 +43337,6 @@ static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
+ }
+ static uint32_t tsEpochNow() { return (uint32_t)time(nullptr); }
+ 
+-// tsBlockReason: returns nullptr when the gate would pass once the screen dims
+-// (i.e. the device is ready to idle-sleep); else returns the highest-priority
+-// blocking condition as a human-readable string for the status-bar toast.
+-// "feature disabled" is NOT a blocking reason — the caller hides the icon instead.
+-static const char* tsBlockReason() {
+-  if (!touchSleep::enabled())  return nullptr;          // hidden, not blocked
+-  if (!tsOnBattery())          return TR("USB powered");
+-  if (!tsWifiOff())            return TR("Wi-Fi on");
+-  if (!tsBleOff())             return TR("BLE on");
+-  if (!tsNoClient())           return TR("client connected");
+-  if (!tsMeshIdle())           return TR("mesh busy");
+-  return nullptr;   // ready — only screen-off remains for the gate to pass
+-}
+-
+-// tsWakeReasonStr: human-readable label for each WakeReason enum value, shown in
+-// the idle-sleep diag panel so the user can see *why* the device last woke.
+-// "-" is the sentinel for WakeReason::None (no wake yet since boot).
+-static const char* tsWakeReasonStr(touchSleep::WakeReason r) {
+-  using WR = touchSleep::WakeReason;
+-  switch (r) {
+-    case WR::Timer:  return "timer";
+-    case WR::Packet: return "packet";
+-    case WR::Touch:  return "touch";
+-    case WR::Button: return "button";
+-    case WR::Other:  return "other";
+-    default:         return "-";
+-  }
+-}
+ 
+ static void uiInstallTouchSleepHooks() {
+   touchSleep::Hooks h{};
+@@ -43094,16 +43348,6 @@ static void uiInstallTouchSleepHooks() {
+   touchSleep::begin(h);
+ }
+ 
+-#if defined(HAS_TDECK_GT911)
+-// Tap on the sleep readiness icon: toast the current blocking reason so the
+-// user knows WHY the device won't idle-sleep yet (mirrors batteryTapCb shape).
+-static void sleepIconTapCb(lv_event_t* e) {
+-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+-  if (!g_lv.task) return;
+-  const char* reason = tsBlockReason();
+-  g_lv.task->showAlert(reason ? reason : TR("Sleep ready"), 1600);
+-}
+-#endif
+ 
+ // Build the always-on status bar. Called once from UITask::begin after lv_init.
+ // Lives on lv_layer_top (above all tab/chat content on lv_scr_act). It is the
+@@ -43368,58 +43612,52 @@ static void buildGlobalStatusBar() {
+ #if defined(TLORA_PAGER)
+                -104,
+ #else
+-               -SC(73),
++               -SC(73),   // slot 1: WiFi
+ #endif
+                0);
+ 
+-  // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
++  // Bluetooth glyph — slot 3, 19px left of BLE slot.
+   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
+   lv_label_set_text(g_statusbar.ble_icon, "");
+   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
+-  // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
+-  // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
+   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
+ #if defined(TLORA_PAGER)
+-               -142,
++               -140,      // slot 3: BLE (+18 from repeat at -122)
+ #else
+-               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
++               -SC(110),  // slot 3: BLE (+19 from repeat at -91)
+ #endif
+                0);
+ 
+-#if defined(HAS_TDECK_GT911)
+-  // Idle power-save readiness indicator — moon glyph, left of the SD LED. T-Deck only,
+-  // visible only when the feature is enabled; accent colour = ready, grey = blocked.
+-  g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
+-  lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
+-  lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+-  lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
+-  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+-  lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
+-  lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
+-  lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
+-  lv_obj_add_event_cb(g_statusbar.sleep_icon, sleepIconTapCb, LV_EVENT_CLICKED, nullptr);
+-  lv_obj_add_flag(g_statusbar.sleep_icon, NAV_SKIP_FLAG);   // status glyph, not a focus-nav target
+-#endif
+-
+-  // Do Not Disturb glyph — same moon, same slot as the T-Deck sleep_icon above
+-  // (sleep_icon is permanently force-hidden every tick, see updateGlobalStatusBar,
+-  // since the idle-sleep indicator moved to tinting the battery glyph amber — so
+-  // there's no visual collision there; on every other board this is simply a
+-  // fresh, all-board indicator in a previously T-Deck-only slot).
++  // Do Not Disturb glyph — slot 4, shares with GPS icon.
+   g_statusbar.dnd_icon = lv_label_create(g_statusbar.root);
+   lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
+   lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+   lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
+   lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID,
+ #if defined(TLORA_PAGER)
+-               -164,
++               -158,      // slot 4: DND/GPS (+18 from BLE at -140)
+ #else
+-               -SC(144),
++               -SC(127),  // slot 4: DND/GPS (+17 from BLE at -110)
+ #endif
+                0);
+-  lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
+-  lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);        // passive status glyph, not a focus-nav target
++  lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);
++  lv_obj_add_flag(g_statusbar.dnd_icon, NAV_SKIP_FLAG);
++
++  // Client-repeat indicator — slot 2, transient, shares area with SD dot.
++  g_statusbar.repeat_icon = lv_label_create(g_statusbar.root);
++  lv_label_set_text(g_statusbar.repeat_icon, TOUCH_SYM_ANTENNA);
++  lv_obj_set_style_text_color(g_statusbar.repeat_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
++  lv_obj_set_style_text_font(g_statusbar.repeat_icon, &g_font_12, LV_PART_MAIN);
++  lv_obj_align(g_statusbar.repeat_icon, LV_ALIGN_RIGHT_MID,
++#if defined(TLORA_PAGER)
++               -122,      // slot 2: repeat/SD (+18 from WiFi at -104)
++#else
++               -SC(91),   // slot 2: repeat/SD (+18 from WiFi at -73)
++#endif
++               0);
++  lv_obj_add_flag(g_statusbar.repeat_icon, LV_OBJ_FLAG_HIDDEN);
++  lv_obj_add_flag(g_statusbar.repeat_icon, NAV_SKIP_FLAG);
+ 
+   // microSD read/write activity LED — a small amber dot in the gap just left of
+   // the Wi-Fi glyph. Hidden when idle; UITask::loop lights it for ~180 ms after
+@@ -43441,6 +43679,23 @@ static void buildGlobalStatusBar() {
+                0);
+   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
+ 
++#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
++  // GPS active glyph — slot 4, shares with DND icon; GPS takes priority.
++  g_statusbar.gps_icon = lv_label_create(g_statusbar.root);
++  lv_label_set_text(g_statusbar.gps_icon, LV_SYMBOL_GPS);
++  lv_obj_set_style_text_color(g_statusbar.gps_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
++  lv_obj_set_style_text_font(g_statusbar.gps_icon, &g_font_12, LV_PART_MAIN);
++  lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID,
++#if defined(TLORA_PAGER)
++               -158,      // slot 4: GPS/DND (+18 from BLE at -140)
++#else
++               -SC(127),  // slot 4: GPS/DND (+17 from BLE at -110)
++#endif
++               0);
++  lv_obj_add_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN);
++  lv_obj_add_flag(g_statusbar.gps_icon, NAV_SKIP_FLAG);
++#endif
++
+   // Async mesh-request spinner — a refresh glyph centred in the bar, blinking
+   // while a request is in flight (UITask::loop drives it). Centre keeps it clear
+   // of both the left-zone title and the right-side icon cluster.
+@@ -43476,7 +43731,7 @@ static void buildGlobalStatusBar() {
+       lv_obj_set_pos(b, i * (bw + gap), 12 - hh[i]);   // bottom-aligned
+       lv_obj_set_style_radius(b, 1, LV_PART_MAIN);
+       lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+-      lv_obj_set_style_bg_color(b, lv_color_hex(0x33363B), LV_PART_MAIN);
++      lv_obj_set_style_bg_color(b, lv_color_mix(lv_color_hex(COLOR_SUB), lv_color_hex(COLOR_BG), 64), LV_PART_MAIN);
+       g_statusbar.sig_bars[i] = b;
+     }
+   }
+@@ -43926,15 +44181,37 @@ static void updateGlobalStatusBar() {
+   }
+ #endif
+ 
+-#if defined(HAS_TDECK_GT911)
+-  // ---- Idle power-save icon ---- (T-Deck only; predicates live in the same
+-  // HAS_TDECK_GT911 build environment as the actual light-sleep execution)
+-  // Idle power-save state is now shown by tinting the status-bar battery glyph amber
+-  // (iPhone-style, see applyBattColor), so the separate moon icon stays hidden. Kept in
+-  // the tree (hidden) to preserve the bar layout and its tap handler.
+-  if (g_statusbar.sleep_icon) lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);
++#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
++  // ---- GPS active icon (shares DND slot; GPS takes priority) ----
++  if (g_statusbar.gps_icon) {
++    const NodePrefs* gp = the_mesh.getNodePrefs();
++    const bool gps_on = gp && gp->gps_enabled;
++    if (gps_on) {
++      lv_obj_clear_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN);
++      if (g_statusbar.dnd_icon) lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);
++    } else {
++      lv_obj_add_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN);
++    }
++  }
+ #endif
+ 
++  // ---- Client-repeat icon ----
++  // Shown (accent = actively repeating) when client_repeat is on AND no good
++  // repeater is nearby (same logic as allowPacketForward). Dimmed (COLOR_SUB)
++  // when enabled but yielding to an active repeater with SNR > -10 dB.
++  if (g_statusbar.repeat_icon) {
++    const NodePrefs* rp = the_mesh.getNodePrefs();
++    if (rp && rp->client_repeat) {
++      lv_obj_clear_flag(g_statusbar.repeat_icon, LV_OBJ_FLAG_HIDDEN);
++      // Active (no repeater covering) = accent teal; yielding to repeater = dim
++      const uint32_t icon_color = the_mesh.hasActiveRepeater() ? COLOR_SUB : COLOR_ACCENT;
++      lv_obj_set_style_text_color(g_statusbar.repeat_icon, lv_color_hex(icon_color), LV_PART_MAIN);
++    } else {
++      lv_obj_add_flag(g_statusbar.repeat_icon, LV_OBJ_FLAG_HIDDEN);
++    }
++  }
++
++
+   // ---- Do Not Disturb icon ---- (shown only while the configured silence
+   // window is active — see dndActive()). On cramped bars (T-Display P4's
+   // round-corner two-row layout, or Heltec V4 rotated to portrait, <300px wide)
+@@ -43999,12 +44276,15 @@ static void updateGlobalStatusBar() {
+       else                 level = 1;   // heard something, just weak -> 1 bar
+     }
+     static int s_sig_level = -1;
+-    if (level != s_sig_level) {
+-      s_sig_level = level;
++    static uint32_t s_sig_bg = 0xFFFFFFFF;   // invalidated on theme change
++    if (level != s_sig_level || COLOR_BG != s_sig_bg) {
++      s_sig_level = level; s_sig_bg = COLOR_BG;
+       for (int i = 0; i < 4; i++)
+         if (g_statusbar.sig_bars[i])
+           lv_obj_set_style_bg_color(g_statusbar.sig_bars[i],
+-              lv_color_hex(i < level ? COLOR_ACCENT : 0x33363B), LV_PART_MAIN);
++              i < level ? lv_color_hex(COLOR_ACCENT)
++                        : lv_color_mix(lv_color_hex(COLOR_SUB), lv_color_hex(COLOR_BG), 64),
++              LV_PART_MAIN);
+     }
+   }
+ 
+@@ -44032,9 +44312,11 @@ static void updateGlobalStatusBar() {
+       const int d = charging ? 45 : 0;
+       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
+       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
+-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
+-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -142 + d, 0);
+-      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -164 + d, 0);
++      if (g_statusbar.repeat_icon)  lv_obj_align(g_statusbar.repeat_icon,  LV_ALIGN_RIGHT_MID, -122 + d, 0);
++      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -122 + d, 0);
++      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -140 + d, 0);
++      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -158 + d, 0);
++      if (g_statusbar.gps_icon)     lv_obj_align(g_statusbar.gps_icon,     LV_ALIGN_RIGHT_MID, -158 + d, 0);
+       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -232 + d, 0);
+ #elif CAP_LARGE_SCREEN
+       // Tanmatsu: the cluster is built with SC() UI-scaling, so this slide MUST scale too — the raw
+@@ -44045,9 +44327,11 @@ static void updateGlobalStatusBar() {
+       const int d = charging ? SC(32) : 0;
+       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -SC(54)  + d, 0);
+       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -SC(73)  + d, 0);
++      if (g_statusbar.repeat_icon)  lv_obj_align(g_statusbar.repeat_icon,  LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
+       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
+-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
+-      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(144) + d, 0);
++      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -SC(110) + d, 0);
++      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
++      if (g_statusbar.gps_icon)     lv_obj_align(g_statusbar.gps_icon,     LV_ALIGN_RIGHT_MID, -SC(127) + d, 0);
+       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -SC(182) + d, 0);
+ #else
+       const int d = charging ? 32 : 0;
+@@ -44056,14 +44340,13 @@ static void updateGlobalStatusBar() {
+       // the cluster too so it stays between Wi-Fi and Bluetooth while charging.
+       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
+       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
++      if (g_statusbar.repeat_icon)  lv_obj_align(g_statusbar.repeat_icon,  LV_ALIGN_RIGHT_MID, -91  + d, 0);
+       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
+-      // Narrow bar (V4 portrait) has no DND slot next to BLE (DND borrows the signal slot),
+-      // and its clock sits at -126 — so keep BLE at its pre-DND -111 there; -127 lands on the clock.
+-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300 ? -111 : -127) + d, 0);
++      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, -110 + d, 0);
++      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -127 + d, 0);
++      if (g_statusbar.gps_icon)     lv_obj_align(g_statusbar.gps_icon,     LV_ALIGN_RIGHT_MID, -127 + d, 0);
+       if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -160 + d, 0);
+       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
+-      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -144 + d, 0);
+-      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -144 + d, 0);
+ #endif
+     }
+     s_last_pct = pct;
+@@ -44075,14 +44358,6 @@ static void updateGlobalStatusBar() {
+     lv_label_set_text(g_statusbar.batt_icon, g);
+     s_last_glyph = g;
+   }
+-#if defined(HAS_TDECK_GT911)
+-  // Re-tint the battery amber/normal when idle power-save toggles (the toggle cb routes through
+-  // here via updateGlobalStatusBar). Only on change, so no per-tick style churn.
+-  { static int s_last_pwr = -1;
+-    const int pwr = touchSleep::enabled() ? 1 : 0;
+-    if (pwr != s_last_pwr) { s_last_pwr = pwr; applyBattColor(); }
+-  }
+-#endif
+ 
+   // ---- Clock ----
+ #if defined(ESP32)
+@@ -46239,6 +46514,20 @@ static void buildUiTree() {
+   }
+ #endif
+ 
++  // Sun-driven auto theme: evaluate once at boot so the chosen theme is known
++  // before the widget tree is built. Theme change requires a restart anyway,
++  // so boot-time evaluation is both correct and sufficient.
++  // Theme 0 = Dark (night), Theme 1 = Light (day).
++  if ((touchPrefsGetAutoThemeSun() || touchPrefsGetAutoAodSun()) && g_lv.task) {
++    float tz_h = (float)touchPrefsGetTimeOffsetHours();   // hours, user's UTC offset
++    sunEvaluate(g_lv.task->getNodeLat(), g_lv.task->getNodeLon(), tz_h);
++    s_sun_last_eval_ms = millis();
++    if (s_sun_valid && touchPrefsGetAutoThemeSun()) {
++      const uint8_t sun_theme = s_sun_is_night ? 0 : 1;   // 0=Dark, 1=Light
++      if (touchPrefsGetUiTheme() != sun_theme) touchPrefsSetUiTheme(sun_theme);
++    }
++  }
++
+   // Apply the colour theme first (sets BG/TEXT/PANEL/… globals and the
+   // theme-default accent), then load any user-customised accent on top.
+   applyUiTheme(touchPrefsGetUiTheme());
+@@ -46307,6 +46596,7 @@ static void buildUiTree() {
+   lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS);
+   lv_obj_set_style_border_width(tab_btns, 0, LV_PART_ITEMS | LV_STATE_CHECKED);
+   lv_obj_set_style_bg_opa(tab_btns, LV_OPA_TRANSP, LV_PART_ITEMS | LV_STATE_CHECKED);
++  lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_SUB), LV_PART_MAIN);   // override theme default (may be black on dark bg)
+   lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_SUB), LV_PART_ITEMS);
+   lv_obj_set_style_text_color(tab_btns, lv_color_hex(COLOR_ACCENT),
+                                LV_PART_ITEMS | LV_STATE_CHECKED);
+@@ -46645,7 +46935,7 @@ void UITask::stepComposerChar(int delta)   { _composer_char_idx  += delta; }
+ void UITask::stepComposerAction(int delta) { _composer_action_idx += delta; }
+ void UITask::userLedHandler() {}
+ 
+-void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) {
++void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len, int8_t snr_q4) {
+ #if !defined(HAS_TANMATSU)
+   s_web_rx_nudge = true;
+ #endif
+@@ -46714,6 +47004,7 @@ void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t
+   s_discovered[slot].used = true;
+   s_discovered[slot].in_contacts = false;
+   s_discovered[slot].path_len = path_len;
++  s_discovered[slot].snr_q4 = snr_q4;
+   s_discovered[slot].last_advert_ts = contact.last_advert_timestamp;
+   s_discovered[slot].recv_ms = (uint32_t)millis();
+   s_discovered[slot].ci = contact;
+@@ -52496,7 +52787,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
+     xl9535.setAntennaMode(Xl9535::ANT_INTERNAL);
+ #endif
+ 
+-    // Buffered LoRa receive (experimental, default OFF): apply the saved opt-in.
++    // Buffered LoRa receive: apply the saved preference (default ON).
+     if (touchPrefsGetRxQueue()) radio_driver.rxQueueEnable(true);
+ 
+     buildUiTree();
+@@ -53485,6 +53776,9 @@ void UITask::noteUserInput() {
+ // PWM duty for always-on dim level, read from prefs each call so slider changes take effect.
+ #if defined(HAS_BACKLIGHT_PWM)
+ static inline uint32_t lockAoDuty() {
++  // Auto AOD brightness by sun: 6% night, 15% day — overrides manual dim pct.
++  if (touchPrefsGetAutoAodSun() && s_sun_valid)
++    return s_sun_is_night ? (6u * 255u / 100u) : (15u * 255u / 100u);
+   return (uint32_t)touchPrefsGetLockDimPct() * 255u / 100u;
+ }
+ #endif
+@@ -53496,6 +53790,18 @@ void UITask::wakeScreen() {
+   _screen_off    = false;
+   _manual_lock   = false;
+   _last_input_ms = millis();
++#if CAP_GPS
++  // Resume GPS NMEA polling if we paused it on screen-off. Uses the LocationProvider
++  // directly — never touches setSettingValue/prefs so user's GPS-on/off setting is
++  // unaffected. Only restores if gps_enabled is still true.
++  if (_gps_paused_for_aod) {
++    _gps_paused_for_aod = false;
++    if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
++      LocationProvider* lp = _sensors->getLocationProvider();
++      if (lp) { lp->begin(); lp->reset(); }
++    }
++  }
++#endif
+ }
+ 
+ void UITask::lockScreen() {
+@@ -53512,6 +53818,12 @@ void UITask::lockScreen() {
+   lockscreenShow();
+   _lock_lit_ms   = millis();   // arm the burn-in guard — a lit lock screen always dims, even at timeout "never"
+   _last_input_ms = millis();
++#if CAP_GPS
++  if (!_gps_paused_for_aod && _sensors && _node_prefs && _node_prefs->gps_enabled) {
++    LocationProvider* lp = _sensors->getLocationProvider();
++    if (lp) { lp->stop(); _gps_paused_for_aod = true; }
++  }
++#endif
+   return;
+ #endif
+   _manual_lock = true;
+@@ -53540,12 +53852,23 @@ void UITask::lockScreen() {
+   setCpuForScreen(false);    // screen dark -> drop to 80 MHz
+   _screen_off = true;
+ #endif
++#if CAP_GPS
++  // Pause GPS NMEA polling while locked/AOD to save power. Uses LocationProvider directly —
++  // never touches setSettingValue/prefs so the user's GPS on/off setting is unchanged.
++  // Cached node_lat/node_lon keeps LoRa beacons working while screen is off.
++  // Restored in wakeScreen().
++  if (!_gps_paused_for_aod && _sensors && _node_prefs && _node_prefs->gps_enabled) {
++    LocationProvider* lp = _sensors->getLocationProvider();
++    if (lp) { lp->stop(); _gps_paused_for_aod = true; }
++  }
++#endif
+ }
+ 
+ void UITask::lockscreenReveal() {
+ #if CAP_LOCK_SCREEN
+   if (!_manual_lock) return;
+   if (_screen_off) {
++    lockscreenPinClear();           // wipe stale PIN dots from the previous (interrupted) attempt
+     lockscreenShow();               // build + foreground FIRST
+     lv_refr_now(nullptr);           // force it to actually paint before the backlight comes on
+     setCpuForScreen(true); touchScreenBacklight(true); _screen_off = false;
+@@ -53555,8 +53878,11 @@ void UITask::lockscreenReveal() {
+ #if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
+     // Always-on dim: restore full brightness on touch/button.
+     if (_lock_ao_dimmed) {
++      lockscreenPinClear();         // wipe stale PIN dots from the previous (interrupted) attempt
+       _lock_ao_dimmed = false;
+       setCpuForScreen(true);        // back to 240 MHz before rendering
++      refreshStatusLabels();        // force status bar (WiFi icon etc.) current before flush
++      lv_refr_now(nullptr);         // flush current LVGL state before backlight brightens
+       touchScreenBacklight(true);   // wakes panel (touchPanelSleep(false)) + restores configured brightness
+       _lock_lit_ms = millis();      // re-arm the burn-in guard so it dims again after timeout
+     }
+@@ -53572,6 +53898,19 @@ void UITask::unlockScreen() {
+   _lock_ao_dimmed = false;
+   _lock_lit_ms    = 0;   // disarm burn-in guard — no longer locked
+   setCpuForScreen(true);
++#if CAP_GPS
++  // Resume GPS if paused for AOD — wakeScreen() skips this when _screen_off is
++  // already false (AOD path), so unlockScreen() must cover it.
++  if (_gps_paused_for_aod) {
++    _gps_paused_for_aod = false;
++    if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
++      LocationProvider* lp = _sensors->getLocationProvider();
++      if (lp) { lp->begin(); lp->reset(); }
++    }
++  }
++#endif
++  refreshStatusLabels();        // force status bar (WiFi icon etc.) current before flush
++  lv_refr_now(nullptr);         // flush current LVGL state before backlight brightens
+   touchScreenBacklight(true);   // restores s_brightness_pct (full configured brightness)
+ #if CAP_LOCK_SCREEN
+   lockscreenHide();
+@@ -54881,7 +55220,14 @@ void UITask::loop() {
+       if (tb_pressed && s_tb_hold_start && !_screen_off) {
+         const unsigned long held = now - s_tb_hold_start;
+         if (held >= kLockUnlockHoldMs) {
+-          unlockScreen();            // hides the "Unlocking…" popup too
++          char pin[TOUCH_LOCK_PIN_MAXLEN] = {};
++          touchPrefsGetLockPin(pin, sizeof pin);
++          if (pin[0]) {
++            lockscreenUnlockPopupHide();
++            lockscreenPinShow();     // PIN set: show entry box instead of unlocking
++          } else {
++            unlockScreen();          // no PIN: unlock directly
++          }
+           s_tb_hold_start = 0;
+           s_tb_wake_consume = true;  // swallow the release so it isn't a UI tap
+         } else if (held >= 200) {    // ignore a quick wake-tap; show on a real hold
+@@ -55108,6 +55454,27 @@ void UITask::loop() {
+ #if defined(HAS_TOUCH_UI)
+   if (!g_lv.ready) return;
+ 
++  // Periodic sun re-evaluation for live AOD brightness (auto_aod_sun) and
++  // theme correction. Theme change needs a restart; if the running theme doesn't
++  // match what the sun says it should be, save the correct theme and reboot.
++  if ((touchPrefsGetAutoThemeSun() || touchPrefsGetAutoAodSun()) && _sensors) {
++    if ((uint32_t)(now - s_sun_last_eval_ms) >= SUN_EVAL_INTERVAL_MS) {
++      sunEvaluate(_sensors->node_lat, _sensors->node_lon,
++                  (float)touchPrefsGetTimeOffsetHours());
++      s_sun_last_eval_ms = now;
++      if (s_sun_valid && touchPrefsGetAutoThemeSun()) {
++        const uint8_t sun_theme = s_sun_is_night ? 0 : 1;  // 0=Dark, 1=Light
++        if (touchPrefsGetUiTheme() != sun_theme) {
++          touchPrefsSetUiTheme(sun_theme);
++          showAlert(TR("Theme changed — restarting…"), 2000);
++          lv_refr_now(nullptr);
++          delay(2000);
++          ESP.restart();
++        }
++      }
++    }
++  }
++
+ #if CAP_TOUCH
+   // The Tanmatsu has NO CHSC6x cap-touch — input comes from the bsp keypad (LVGL KEYPAD indev).
+   // heltecV4CapTouchBegin() probes CHSC6x I2C addresses on arduino Wire (port 0), which badge-bsp
+@@ -55144,8 +55511,9 @@ void UITask::loop() {
+ 
+   // Swipe → tab change (blocked while a chat detail overlay is open)
+   int8_t swipe_x = 0, swipe_y = 0;
+-  if (heltecV4CapTouchPopSwipe(&swipe_x, &swipe_y)) {
+-    applySwipeGesture(swipe_x, swipe_y);
++  uint16_t swipe_start_y = 0;
++  if (heltecV4CapTouchPopSwipe(&swipe_x, &swipe_y, &swipe_start_y)) {
++    applySwipeGesture(swipe_x, swipe_y, swipe_start_y);
+   }
+ 
+   // Advance LVGL tick using micros so timers still run when millis() does not advance.
+@@ -55314,7 +55682,16 @@ void UITask::loop() {
+   uint8_t kb_bl = 0;
+   if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
+   else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+-  if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
++  if (_screen_off || _manual_lock) {
++    // Exception: PIN entry at night — keep keyboard lit for 10 s after each keypress.
++#if defined(HAS_TDECK_KEYBOARD)
++    if (_manual_lock && s_sun_is_night && s_kb_bl_mode != 0 &&
++        s_lock_pin_kb_until_ms && (int32_t)(now - s_lock_pin_kb_until_ms) < 0) {
++      kb_bl = tdeckKbBlLevel();   // within the 10 s PIN-entry window: light the keys
++    } else
++#endif
++    kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
++  }
+   // New-message notify flash: light the screen so the user sees a message arrived. When the
+   // screen is hard-locked, REVEAL the lock screen (lights the wallpaper, keeps the lock) rather
+   // than wakeScreen() — wakeScreen() clears _manual_lock, which would leave the lock overlay up
+@@ -55684,9 +56061,6 @@ void UITask::loop() {
+   versionCheckService(now);   // firmware update check (gear badge + About line)
+   uiCp("ui:sbar");
+   refreshSysInfo(now);        // live uptime / heap on the About sub-tab
+-#if defined(HAS_TDECK_GT911)
+-  refreshSleepDiag(now);     // live sleep counters on the Lock settings panel
+-#endif
+   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
+   ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
+ 
+@@ -55703,7 +56077,7 @@ void UITask::loop() {
+     }
+     // Also hard-lock the tab bar while Snake is open so a swipe/tap near the
+     // bottom can't slip through to the app switcher (e.g. into the map).
+-    const bool want_lock = (now < s_tabbar_lock_until) || SnakeGame::isOpen() || PongGame::isOpen() || luaAppIsOpen();
++    const bool want_lock = (now < s_tabbar_lock_until) || luaAppIsOpen();
+     if (want_lock != s_tabbar_locked && g_lv.tabview) {
+       lv_obj_t* tab_btns = lv_tabview_get_tab_btns(g_lv.tabview);
+       if (tab_btns) {
+diff --git a/src/ui-touch/UITask.h b/src/ui-touch/UITask.h
+index 02b09af..3a36a28 100644
+--- a/src/ui-touch/UITask.h
++++ b/src/ui-touch/UITask.h
+@@ -160,6 +160,7 @@ private:
+   bool _gps_had_fix = false;
+   double _gps_saved_lat = 0.0, _gps_saved_lon = 0.0;
+   unsigned long _gps_next_persist_ms = 0;
++  bool _gps_paused_for_aod = false;  // true while GPS is temporarily halted for screen-off/AOD power saving
+   void updateGpsLocation(unsigned long now);
+   char _alert[80];
+   unsigned long _alert_expiry;
+@@ -593,7 +594,7 @@ public:
+   void appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp = 0) override;
+   void notify(UIEventType t = UIEventType::none) override;
+   void logRxFrame(float snr, float rssi, const uint8_t* raw, int len) override;
+-  void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len) override;
++  void discoveredContact(const ContactInfo& contact, bool is_new, uint8_t path_len, int8_t snr_q4 = -128) override;
+   void onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
+   void onTelemetryReply(const ContactInfo& contact, const uint8_t* data, size_t len) override;
+   void onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) override;
+diff --git a/src/ui-touch/assets/lua_apps/snake_lua.h b/src/ui-touch/assets/lua_apps/snake_lua.h
+deleted file mode 100644
+index b1d72a1..0000000
+--- a/src/ui-touch/assets/lua_apps/snake_lua.h
++++ /dev/null
+@@ -1,129 +0,0 @@
+-// SPDX-License-Identifier: GPL-3.0-or-later
+-// Snake, in Lua — the wada.* reference app (LUA_APPS.md). Embedded so the game
+-// works with no storage; seeded to /apps/snake.lua so users can open and edit
+-// it (the host prefers the file copy — instant moddability).
+-#pragma once
+-
+-static const char kSnakeLua[] = R"luaapp(
+--- Snake — wada.* reference app. Swipe (or trackball) to steer; eat the red
+--- food, don't bite yourself. Tap after a game over to play again.
+-local ui, sys, store, timer = wada.ui, wada.sys, wada.store, wada.timer
+-local C = ui.colors
+-
+-local CELL = 14
+-local app = {}
+-local cv, score_lbl
+-local cols, rows, px_w, px_h
+-local body, len, dx, dy, ndx, ndy, fx, fy
+-local score, hiscore, running, over
+-
+-local function place_food()
+-  repeat
+-    fx, fy = sys.random(0, cols - 1), sys.random(0, rows - 1)
+-    local clash = false
+-    for i = 1, len do
+-      if body[i].x == fx and body[i].y == fy then clash = true break end
+-    end
+-  until not clash
+-end
+-
+-local function reset()
+-  len, score, over, running = 3, 0, false, false
+-  dx, dy, ndx, ndy = 1, 0, 1, 0
+-  body = {}
+-  local cx, cy = math.floor(cols / 2), math.floor(rows / 2)
+-  for i = 1, len do body[i] = { x = cx - i + 1, y = cy } end
+-  place_food()
+-end
+-
+-local function scoreline()
+-  score_lbl:set(string.format("Score %d   Best %d%s", score, hiscore,
+-                              running and "" or (over and "   -  tap to retry" or "   -  swipe to start")))
+-end
+-
+-local function draw()
+-  cv:fill(0x101418)
+-  cv:rect(fx * CELL + 2, fy * CELL + 2, CELL - 4, CELL - 4, C.bad, true, 4)
+-  for i = len, 1, -1 do
+-    cv:rect(body[i].x * CELL + 1, body[i].y * CELL + 1, CELL - 2, CELL - 2,
+-            i == 1 and C.accent or C.good, true, 3)
+-  end
+-  if over then
+-    cv:text(math.floor(px_w / 2) - 40, math.floor(px_h / 2) - 10, "GAME OVER", C.text, 16)
+-  end
+-end
+-
+-local function step()
+-  dx, dy = ndx, ndy
+-  local head = body[1]
+-  local nx, ny = head.x + dx, head.y + dy
+-  if nx < 0 or ny < 0 or nx >= cols or ny >= rows then over = true end
+-  if not over then
+-    for i = 1, len - 1 do
+-      if body[i].x == nx and body[i].y == ny then over = true break end
+-    end
+-  end
+-  if over then
+-    running = false
+-    if score > hiscore then
+-      hiscore = score
+-      store.set("hiscore", hiscore)
+-      sys.toast("New high score: " .. hiscore, 1600)
+-    end
+-    scoreline()
+-    draw()
+-    return
+-  end
+-  table.insert(body, 1, { x = nx, y = ny })
+-  if nx == fx and ny == fy then
+-    len = len + 1
+-    score = score + 10
+-    place_food()
+-    scoreline()
+-  else
+-    body[#body] = nil
+-  end
+-  draw()
+-end
+-
+-function app.on_open(w, h)
+-  hiscore = store.get("hiscore", 0)
+-  cols = math.floor(w / CELL)
+-  rows = math.floor((h - 26) / CELL)
+-  px_w, px_h = cols * CELL, rows * CELL
+-  score_lbl = ui.label("", 4, 4, 14, C.text)
+-  cv = ui.canvas(px_w, px_h)
+-  cv:pos(math.floor((w - px_w) / 2), 26)
+-  reset()
+-  scoreline()
+-  draw()
+-  timer.every(120)
+-end
+-
+-function app.on_input(ev)
+-  if ev.type == "swipe" then
+-    local d = ev.dir
+-    if     d == "up"    and dy ~= 1  then ndx, ndy = 0, -1
+-    elseif d == "down"  and dy ~= -1 then ndx, ndy = 0, 1
+-    elseif d == "left"  and dx ~= 1  then ndx, ndy = -1, 0
+-    elseif d == "right" and dx ~= -1 then ndx, ndy = 1, 0
+-    end
+-    if not running and not over then running = true; scoreline() end
+-  elseif ev.type == "down" and over then
+-    reset()
+-    scoreline()
+-    draw()
+-  end
+-end
+-
+-function app.on_tick(dt)
+-  if running and not over then step() end
+-end
+-
+-function app.on_close()
+-  -- high score is already persisted on set; nothing to tear down (the host
+-  -- frees every widget and the canvas with the app)
+-end
+-
+-return app
+-)luaapp";
+diff --git a/src/ui-touch/device_caps.h b/src/ui-touch/device_caps.h
+index 64ac3b9..3dc615c 100644
+--- a/src/ui-touch/device_caps.h
++++ b/src/ui-touch/device_caps.h
+@@ -384,13 +384,11 @@
+ #endif
+ 
+ // Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
+-// out/firmware/apps/) so a board that cannot reach the Lua Store still has
+-// them in the drawer. A downloaded <data>/apps/<id>.lua always wins, because
+-// luaAppLaunchFile() is file-first. Costs ~10 KB of FLASH, no RAM.
++// deploy/apps/) so apps are available in the drawer out of the box, without
++// requiring a Store download or SD card. A downloaded <data>/apps/<id>.lua
++// always wins (luaAppLaunchFile is file-first), so the seeded copy is just a
++// default. Costs ~50 KB of flash for the full catalog. All CAP_LUA_APPS boards
++// get this so the app drawer is never empty on first boot.
+ #ifndef CAP_BUILTIN_LUA_APPS
+-  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+-    #define CAP_BUILTIN_LUA_APPS 1
+-  #else
+-    #define CAP_BUILTIN_LUA_APPS 0
+-  #endif
++  #define CAP_BUILTIN_LUA_APPS CAP_LUA_APPS
+ #endif
+diff --git a/src/ui-touch/i18n_builtin.h b/src/ui-touch/i18n_builtin.h
+index e6fa2b3..2c603e7 100644
+--- a/src/ui-touch/i18n_builtin.h
++++ b/src/ui-touch/i18n_builtin.h
+@@ -2381,10 +2381,10 @@ static const I18nPair kBuiltin_de[] = {
+   { "Local sensors", "Lokale Sensoren" },
+   { "Lock", "Sperren" },
+   { "Lock background colour set", "Hintergrundfarbe der Sperre gesetzt" },
+-  { "Lock screen", "Sperrbildschirm" },
++  { "Lock screen", "Lockscreen" },
+   { "Lock screen always-on", "Sperrbildschirm immer aktiv" },
+   { "Lock screen turns off", "Sperrbildschirm schaltet ab" },
+-  { "Lock screen wallpaper", "Sperrbildschirm-Hintergrund" },
++  { "Lock screen wallpaper", "Lockscreen-Hintergrund" },
+   { "Lock text colour", "Sperrtext-Farbe" },
+   { "Lock text colour set", "Sperrtext-Farbe gesetzt" },
+   { "Lock wallpaper", "Sperr-Hintergrund" },
+diff --git a/src/ui-touch/lua_builtin.h b/src/ui-touch/lua_builtin.h
+index e653820..199ddbe 100644
+--- a/src/ui-touch/lua_builtin.h
++++ b/src/ui-touch/lua_builtin.h
+@@ -1813,6 +1813,30 @@ function app.on_close()
+   if map then map:close() end
+ end
+ 
++return app
++)WADALUA";
++static const char kLuaSrc_helloworld[] = R"WADALUA(-- Hello World — minimal Lua app to verify the app host is working.
++local ui, sys = wada.ui, wada.sys
++local C = ui.colors
++local app = {}
++
++local lbl, sub
++
++function app.on_open(w, h)
++  lbl = ui.label(0, h / 2 - 20, w, 30)
++  lbl:set("Hello, World!")
++  lbl:color(C.accent)
++  lbl:align("center")
++
++  sub = ui.label(0, h / 2 + 16, w, 20)
++  sub:set("Lua app host is working  \xE2\x80\x94  " .. (sys.board() or ""))
++  sub:color(C.sub)
++  sub:align("center")
++end
++
++function app.on_close()
++end
++
+ return app
+ )WADALUA";
+ 
+@@ -1824,5 +1848,6 @@ static const LuaBuiltinApp kLuaBuiltin[] = {
+   { "2048", "2048", "1.2", kLuaSrc_2048 },
+   { "wardrive", "Wardrive", "1.1", kLuaSrc_wardrive },
+   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },
++  { "helloworld", "Hello World", "1.0", kLuaSrc_helloworld },
+ };
+ static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));

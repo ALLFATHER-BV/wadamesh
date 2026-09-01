@@ -742,6 +742,15 @@ local function draw_dial(tgt_bearing)
   else
     cv:text(CX - math.floor(text_w("--", TH16, 16) / 2), CY - math.floor(TH16 / 2), "--", C.sub, 16)
   end
+
+  -- crosshair: current-position marker at the dial centre, high-contrast black
+  local XH = 7   -- half-length of each arm
+  local XG = 3   -- gap radius around the centre point
+  cv:line(CX - XH, CY, CX - XG, CY, 0x000000, 2)
+  cv:line(CX + XG, CY, CX + XH, CY, 0x000000, 2)
+  cv:line(CX, CY - XH, CX, CY - XG, 0x000000, 2)
+  cv:line(CX, CY + XG, CX, CY + XH, 0x000000, 2)
+  cv:circle(CX, CY, XG - 1, 0x000000, false, 1)
 end
 
 -- satellite meter: ten cells, filled in the status colour up to the count

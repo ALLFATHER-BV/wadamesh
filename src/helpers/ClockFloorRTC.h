@@ -29,7 +29,9 @@
 //     worse than the one-time server re-lock it avoids (which the login skew
 //     warning surfaces to the user anyway).
 class ClockFloorRTC : public AutoDiscoverRTCClock {
-  uint32_t _floor = 0;
+  uint32_t _floor      = 0;
+  uint32_t _last_uniq  = 0;   // our own monotonic counter; mirrors RTCClock::last_unique
+                               // but is RESET when setCurrentTime() pulls the floor back
 public:
   ClockFloorRTC(mesh::RTCClock& fallback) : AutoDiscoverRTCClock(fallback) {}
 
@@ -62,7 +64,20 @@ public:
     if (time < MIN_VALID_EPOCH || time > MAX_PLAUSIBLE_EPOCH) return;   // garbage set — ignore, whatever the source
     AutoDiscoverRTCClock::setCurrentTime(time);
     pushSystemClock(time);
-    if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
+    if (_floor > time + TRUSTED_BACK_CAP) {
+      _floor = time;
+      _last_uniq = 0;   // reset monotonic stamp: old future value is now invalid (#374)
+    }
+  }
+
+  // Shadow RTCClock::getCurrentTimeUnique() using our own counter so a reset of
+  // _last_uniq (above) actually takes effect. RTCClock::last_unique is private and
+  // can't be touched from here — but since getCurrentTimeUnique() is non-virtual the
+  // base counter just quietly diverges after a floor reset; this one is what we call.
+  uint32_t getCurrentTimeUnique() {
+    uint32_t t = getCurrentTime();   // goes through our floor ratchet
+    if (t <= _last_uniq) return ++_last_uniq;
+    return _last_uniq = t;
   }
 
   // The UI reads the ESP32 *system* clock for every displayed time (status bar, chat

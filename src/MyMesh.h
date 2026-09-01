@@ -124,6 +124,7 @@ struct AdvertPath {
   uint32_t recv_seq;
   uint8_t type;
   bool used;
+  int8_t  snr_q4;   // RX SNR×4 of the advert packet (-128 = unknown)
   uint8_t path[MAX_PATH_SIZE];
 };
 
@@ -348,6 +349,9 @@ protected:
   }
 
 public:
+  /** True if a repeater with SNR > -10 dB was heard within the last 5 min.
+   *  Used by the status bar to colour the client-repeat icon. */
+  bool hasActiveRepeater() const;
   /** Which kind of touch-UI request is currently in flight, so the response
    *  matcher in onContactResponse routes to the right callback. */
   enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2 };

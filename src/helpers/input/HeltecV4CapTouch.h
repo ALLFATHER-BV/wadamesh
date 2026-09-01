@@ -19,7 +19,7 @@ bool heltecV4CapTouchGetLive(uint16_t* x, uint16_t* y);
  * x_dir: -1 left, +1 right, 0 none
  * y_dir: -1 up, +1 down, 0 none
  */
-bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir);
+bool heltecV4CapTouchPopSwipe(int8_t* x_dir, int8_t* y_dir, uint16_t* start_y_out = nullptr);
 
 /**
  * Spawn a pinned FreeRTOS task that owns the touch I2C bus and polls
