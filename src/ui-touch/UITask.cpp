@@ -417,6 +417,14 @@ struct __attribute__((packed)) UiSegMsg {
   // k_ui_seg_version STAYS 1 — bumping it would make that older firmware reject the
   // file outright (uiSegOpenValidated rejects version > k_ui_seg_version) and quarantine
   // a perfectly readable history. Split/rejoin lives in SenderExtField.h.
+  //
+  // Rollback caveat, since two widths now exist in the wild: an older firmware READS
+  // this record correctly, but if it then APPENDS to the same segment it writes 233-byte
+  // records into a file whose header says 240, and everything after them reads at the
+  // wrong stride. Nothing on this side can prevent that (the write is the old build's),
+  // and a version bump would not help either — it would only make the old build reject
+  // the file instead. Our own direction of the same hazard IS handled: see the width
+  // check in loadMsgsFromSegments, which refuses to append across widths.
   char         sender_ext[UITask::MAX_SENDER_NAME + 1 - k_ui_disk_sender_len];
 };
 
@@ -49417,6 +49425,17 @@ bool UITask::loadMsgsFromSegments() {
     info.disk_recs = nrec;
     info.live_recs = nrec;
     info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    // A segment written at a DIFFERENT record width can be READ fine (the header is
+    // self-describing, and readHistoryRec prefix-reads or skips the surplus), but it
+    // must never be APPENDED to: the append writes sizeof(UiSegMsg) while the header
+    // still says rec_sz, so every record after the appended one is read at the wrong
+    // stride — silent garbage bubbles, a poisoned seq (which then drops every later
+    // segment), and the next compaction makes it permanent. Only a NON-FULL segment
+    // can ever receive an append, so flag just those for a full rewrite; step 0 of
+    // segBuildJob runs that before any append, and the rewrite lays down a fresh
+    // header at the current width. A full old-width segment is left alone — it is
+    // read correctly by its own header and costs nothing.
+    if ((size_t)rec_sz != sizeof(UiSegMsg) && nrec < k_ui_seg_records) info.rewrite_open = 1;
     // The file holds records the table doesn't account for — rewrite it so disk
     // and table agree again (also drops the dead weight for good).
     if (skipped) info.rewrite_open = 1;
