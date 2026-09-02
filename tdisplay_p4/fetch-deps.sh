@@ -15,7 +15,14 @@ mkdir -p components
 #     Run tanmatsu/fetch-deps.sh first (or let it be run by this one) to materialize it.
 [ -d ../tanmatsu/components/meshcore/core/src ] || ../tanmatsu/fetch-deps.sh
 mkdir -p components/meshcore
-[ -e components/meshcore/core ] || ln -s ../../../tanmatsu/components/meshcore/core components/meshcore/core
+CORE_LINK="components/meshcore/core"
+CORE_TARGET="../../../tanmatsu/components/meshcore/core"
+if [ ! -L "$CORE_LINK" ] || [ "$(readlink "$CORE_LINK")" != "$CORE_TARGET" ]; then
+  rm -rf "$CORE_LINK"
+  ln -s "$CORE_TARGET" "$CORE_LINK"
+fi
+python3 ../scripts/build/patch_meshcore_txt_timestamp.py \
+  --patch-file "$CORE_LINK/src/helpers/BaseChatMesh.cpp"
 echo "linked: meshcore core -> tanmatsu's vendored copy"
 
 # --- LVGL 8.4 (own component; big; uses the repo's include/lv_conf.h) ---
