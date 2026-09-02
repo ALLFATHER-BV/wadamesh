@@ -56565,7 +56565,11 @@ void UITask::loop() {
         // Cap at 5 min regardless — must stay within REP_ACTIVE_SECS (300 s)
         // so hasActiveRepeater() never expires between probes.
         constexpr uint32_t kRepActiveSecs = 5 * 60 * 1000UL;   // 300 000 ms
+#if defined(HAS_EXPANSION_KIT)
         const bool moving = (s_gps_speed_kmh > 2.0f);
+#else
+        const bool moving = false;
+#endif
         if (moving || poll_ms > kRepActiveSecs) poll_ms = kRepActiveSecs;
         s_sig_probe_at = now + poll_ms;
         const uint32_t sms = the_mesh.uiSignalMs();
