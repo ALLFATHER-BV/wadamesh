@@ -873,6 +873,106 @@ Still open on the map, in win/risk order: a priority lane for visible tiles
 29-tile background prefetch pyramid on every pan), a retry pump so a dropped
 fetch heals without a manual pan, and the SD clock below.
 
+## Battery pass (2026-09-02) — saver unreachable, GPS-off base current
+
+Battery-focused sweep of the board code plus every shared power path the M9
+compiles. Verified sound and left alone: `getBattMilliVolts()`'s ADC2
+per-sample filter + 2:1 math; backlight-off (`ledcWrite(ch, 255)` is
+special-cased by the framework to duty 256 = constant HIGH — checked in
+`esp32-hal-ledc.c`, so "off" is truly off, no 1/256 PWM sliver); compass/IMU
+suspend-on-idle actually ticked from the UI loop; the 15 ms keyboard poll; the
+20 s default screen timeout with the 240→80 MHz drop; buzzer noTone + high-Z;
+the (latent) deep-sleep hold sequence; battery-log flash wear (~century-scale
+on SPIFFS at the 5-min cadence). Three findings, two fixed now:
+
+1. **Battery saver was unreachable — FIXED.** The touchSleep idle throttle was
+   fully wired on the M9 (hooks installed + pref restored under
+   `HAS_TOUCH_UI`, every gate predicate functional) but the only enable UI —
+   the Settings→Battery switch — was compiled for T-Deck + V4-R8 only, and the
+   pref defaults OFF with no console path either. So an idle, screen-off,
+   standalone M9 free-spun its loop forever; the whole subsystem was dead
+   code. Both `#if`s (settings row + `sleepIdleToggleCb`) now include
+   `HAS_THINKNODE_M9`. The M9 is arguably the *safest* board for it: the
+   throttle is a plain vTaskDelay in the loop task, wake is the keyboard poll
+   which runs through it (≤50 ms latency on a dark screen), and the M9 sits
+   in `batteryIsCharging()`'s `#else` branch (compile-time false), so the
+   "USB powered" gate can never block — even stronger than the R8, whose
+   runtime voltage heuristic still can (the R8's widening rationale was that
+   its heuristic doesn't block in practice, not compile-time falsity).
+   Matching the R8 precedent, no status-bar indicator (the amber battery
+   tint stays T-Deck-only); the settings row shows the live block reason.
+   VERIFY on hardware — and note the obvious probe is a decoy: the Battery
+   chart's CPU-MHz series sits at 80 on ANY screen-off M9 (that drop belongs
+   to the pre-existing screen timeout, not the throttle), and keypress wake
+   also works saver-off. The discriminating readout is the Battery chart
+   window's "Idle power-save" stats card (wakeCount / % asleep — unguarded,
+   present on the M9). The FULL gate must pass or the counters sit at 0 and
+   the feature looks broken: saver on, screen off, no companion client, AND
+   the BLE + Wi-Fi radios actually off (BLE is on by default in this
+   companion build — "standalone" is not enough; the settings row's block
+   reason names the offender), on battery, mesh idle. Under that regime the
+   counters must MOVE (on a boot where the saver was never engaged they
+   never leave 0). Then confirm a keypress still wakes the dark screen
+   (≤50 ms extra latency is expected).
+
+2. **GPS-off burned Q16 base current — FIXED, magnitude needs the bench.**
+   `WadaNmeaLocationProvider`'s constructor and `stop()` followed the core's
+   convention of parking GPS_RESET *asserted*. Zero-cost on a direct-wired
+   active-LOW reset — but the M9's reset is inverted (GPS_RST1 → R46 → NPN
+   Q16, GPIO HIGH = asserted), so "asserted" held GPIO5 HIGH sourcing
+   (3.3 V − Vbe)/R46 continuously whenever the GPS was OFF (its default
+   state; `initBasicGPS()` stops it at every boot) — for a module whose rail
+   EN had already cut. Both sites now park the line LOW, the zero-current level
+   for *both* circuits (LOW = asserted on direct-wired boards, so nothing
+   changes there; the provider is M9-only today anyway). The clean-reset
+   guarantee is intact: every start path calls `begin()` then `reset()`,
+   which pulses the line explicitly. VERIFY on hardware: R46's value (read
+   it off the board or the schematic) decides whether this saved ~0.3 mA
+   (10k) or ~2.7 mA (1k); and confirm GPS still acquires after an
+   off→on→off→on toggle cycle.
+
+3. **Screen-off leaves the ST7789 panel driving — still open (already on the
+   deferred list).** The M9 branch of `touchScreenBacklight()` kills only the
+   backlight; SLPIN/DISPOFF panel sleep remains "designed, not coded blind"
+   (shared-SPI variant of the T-Deck path). The battery angle strengthens
+   the case: SLPIN stops the oscillator/booster/LC drive (~1–2 mA class) for
+   every screen-off hour, on top of the anti-burn-in argument.
+
+4. **Saver × GPS: mid-session enable ran NMEA into the stock 256 B ring —
+   FIXED (found by this pass's adversarial review of finding 1).** The 4 KB
+   Serial1 RX ring from the TTFF fix is installed at boot ONLY when
+   gps_enabled was already persisted, and `setRxBufferSize` is a no-op on a
+   running UART — so the session where GPS is first enabled ran on 256 B
+   (~22 ms of slack at the M9's 115200 baud, the only saver board at that
+   rate BY DEFAULT — the baud is NVS-overridable on every touch board, so a
+   T-Deck/R8 dialed up to 115200 hits the same wall; at their defaults,
+   38400 / 9600 can't overflow in one park). With the saver newly reachable,
+   every 50 ms park spans ~576 line-rate bytes: a 1 Hz NMEA burst landing
+   inside a park lost its tail. The damage is host-side — MicroNMEA discards
+   checksum-failed sentences, so the host's parsed fix goes stale (worst
+   case, with every burst clipped, it never sees an intact sentence until
+   reboot); the receiver itself keeps its own acquisition regardless. Root
+   cause fixed rather than gating the saver (a screen-off standalone tracker
+   is exactly the saver's target regime): `gpsEnsureBigRxRing()` in main.cpp
+   cycles the UART (end → 4 KB ring → begin at the initBasicGPS pins/baud)
+   and is called from BOTH mid-session "gps on" funnels —
+   `UITask::toggleGPS()` (keyboard GPS_LONG chord, CC chip, settings switch)
+   and the companion `CMD_SET_CUSTOM_VAR("gps")` handler in MyMesh.cpp —
+   right AFTER a successful start (so a refused enable on a GPS-less V4/R8
+   never spends the 4 KB; the just-started cycle is benign — everything
+   Serial1 runs on loopTask, worst case one torn checksum-rejected
+   sentence on the EN-less boards whose modules stream even while
+   "stopped"). Boot-persisted GPS-on takes the unchanged boot path; GPS-off
+   boots still pay 0 extra DRAM until GPS actually starts. VERIFY on
+   hardware: enable GPS mid-session (no reboot) with the saver on, screen
+   off → a fix should still arrive and hold.
+
+Also corrected: BOTH copies of the "keyboard S2 sits on the switched
+peripheral rail" claim — `M9Keyboard.cpp` begin() and the keyboard-backlight
+cache comment in `UITask.cpp`'s M9 branch — now match the schematic-verified
+note in platformio.ini (always-on 3V3 via R3). It matters: a deep-sleeping
+M9 still feeds the S2; only the slider cuts it.
+
 ## Deferred — hardware-verify list
 
 These are left intentionally unset/unwired rather than guessed:

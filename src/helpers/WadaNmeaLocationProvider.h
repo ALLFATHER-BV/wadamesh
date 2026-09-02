@@ -16,7 +16,9 @@
 // wada.sys.gps() binding then reports speed_kmh/course on that board.
 //
 // Kept in lock-step with the core header it mirrors (meshcomod core-v1.17.4);
-// if the core provider gains behaviour, port it here too.
+// if the core provider gains behaviour, port it here too. ONE deliberate
+// deviation (2026-09-02 battery pass): the reset line is parked LOW — not
+// asserted — while the GPS is stopped; see the comment in the constructor.
 
 #include <helpers/sensors/MicroNMEALocationProvider.h>   // GPS_EN/GPS_RESET macros, LocationProvider
 #include <MicroNMEA.h>
@@ -45,7 +47,18 @@ public:
         _peripher_power(peripher_power), _pin_reset(pin_reset), _pin_en(pin_en) {
     if (_pin_reset != -1) {
       pinMode(_pin_reset, OUTPUT);
-      digitalWrite(_pin_reset, GPS_RESET_ACTIVE);
+      // Park the reset line LOW while the GPS is off — NOT "asserted" (the
+      // core's convention). On a direct-wired active-LOW reset LOW *is*
+      // asserted, so this changes nothing there. On the M9 the polarity is
+      // inverted by a transistor (GPS_RST1 -> R46 -> NPN Q16: GPIO HIGH =
+      // reset asserted), so the core convention holds the GPIO HIGH and
+      // sources (3.3 V - Vbe)/R46 of Q16 base current the entire time the
+      // GPS is OFF — its default state — for a module that is unpowered
+      // anyway (EN inactive cuts its rail; the reset level is moot). LOW is
+      // the zero-current level for both circuits. A clean reset at power-on
+      // is still guaranteed: every start path (initBasicGPS / start_gps)
+      // calls begin() then reset(), and reset() pulses the line explicitly.
+      digitalWrite(_pin_reset, LOW);
     }
     if (_pin_en != -1) {
       pinMode(_pin_en, OUTPUT);
@@ -80,7 +93,10 @@ public:
 
   void stop() override {
     if (_pin_en != -1) digitalWrite(_pin_en, !GPS_EN_ACTIVE);
-    if (_pin_reset != -1) digitalWrite(_pin_reset, GPS_RESET_ACTIVE);
+    // LOW, not GPS_RESET_ACTIVE — the zero-current park level for both reset
+    // circuits (see the constructor comment; on the M9 "asserted" = GPIO HIGH
+    // through R46 into Q16's base = a constant drain while the GPS is off).
+    if (_pin_reset != -1) digitalWrite(_pin_reset, LOW);
     release();
   }
 

@@ -12026,7 +12026,7 @@ static void uiScaleSelectCb(lv_event_t* e) {
 #endif
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -13912,12 +13912,19 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
   // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
   // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
-  // can't block it there, and the other gates are user state).
+  // can't block it there, and the other gates are user state) + M9 (2026-09-02
+  // battery pass: the hooks were already installed and every gate works there —
+  // the throttle is a plain vTaskDelay in the loop task, wake is the keyboard
+  // poll that runs through it, and the M9 is in batteryIsCharging's #else
+  // branch (compile-time false), so the "USB powered" gate can never block —
+  // even stronger than the R8, whose runtime voltage heuristic can — but no
+  // M9 build ever compiled this switch, so on the M9 the pref was permanently
+  // OFF).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -53382,6 +53389,23 @@ void UITask::toggleGPS() {
   const char* value = target_on ? "1" : "0";
   bool hw_ok = false;
   if (_sensors) hw_ok = _sensors->setSettingValue("gps", value);
+#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
+  // GPS just turned ON mid-session: give Serial1 the 4 KB RX ring. The
+  // boot-time gate in main.cpp installs it only when gps_enabled was already
+  // persisted, and setRxBufferSize is a no-op on a running UART — so without
+  // this the session that first enables GPS runs NMEA into the stock 256 B
+  // ring until reboot (~22 ms of slack at the M9's 115200 baud; a long LVGL
+  // frame or one 50 ms battery-saver park clips the burst). Gated on hw_ok so
+  // a refused enable (V4/R8 detect path, no module found) doesn't spend the
+  // 4 KB of internal DRAM; cycling just after a successful start is benign —
+  // same loopTask as every Serial1 reader, module barely powered (EN-pin
+  // boards) or at worst one torn, checksum-rejected sentence (EN-less boards,
+  // whose always-powered modules stream even while "stopped").
+  if (target_on && hw_ok) {
+    extern void gpsEnsureBigRxRing();
+    gpsEnsureBigRxRing();
+  }
+#endif
   // If the sensor manager doesn't recognise the setting (built without
   // ENV_INCLUDE_GPS), fall back to just flipping the pref so the UI is
   // still consistent — same behaviour as before.
@@ -55724,8 +55748,10 @@ void UITask::loop() {
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
     // Cache the last duty the controller ACTUALLY took, not the last one
-    // computed: the write is dropped while the controller (its own MCU on the
-    // switched rail) is still booting, or on a NACK — latching a dropped
+    // computed: the write is dropped while the controller (its own MCU, on
+    // always-on 3V3 via R3 per the schematic-verified note in platformio.ini
+    // — NOT the switched rail an earlier revision here claimed) is still
+    // booting, or on a NACK — latching a dropped
     // write would leave the controller on its power-on default until the
     // next mode/lock change. And 255 is a normal FIRST value (mode "On"
     // restored from prefs; auto during the first idle window), so a 0xFF

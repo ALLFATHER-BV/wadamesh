@@ -55,8 +55,12 @@ static void kbTryFindBus() {
 
 void m9KeyboardBegin() {
   Wire1.begin(PIN_KB_SDA, PIN_KB_SCL);
-  // The controller is its own MCU on the switched peripheral rail and may
-  // still be booting here — poll re-probes once a second until it answers.
+  // The controller is its own MCU (ESP32-S2) on the ALWAYS-ON 3V3 rail via R3
+  // (schematic-verified, see the keyboard-bus note in platformio.ini — an
+  // earlier revision of this comment said "switched peripheral rail", which
+  // matters for the deep-sleep drain budget: the S2 keeps drawing through a
+  // deep sleep, and only the power slider actually cuts it). It may still be
+  // booting here — poll re-probes once a second until it answers.
   kbTryFindBus();
   if (!s_bus) Serial.println("M9 keyboard: no controller yet (will keep probing)");
   s_inited = true;
