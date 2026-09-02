@@ -1990,7 +1990,10 @@ void loop() {
     } else {
       // Screen idle, no WiFi client.
       if (s_wifi_idle_since_ms == 0) s_wifi_idle_since_ms = millis();
-      if (!wifi_idled_off && wifi_started &&
+      // Skip WiFi shutdown when BLE is active: WiFi.mode(WIFI_OFF) deinits the
+      // coexistence controller on ESP32-S3, silently killing BLE advertising too.
+      const bool ble_active = serial_interface.isBleEnabled();
+      if (!wifi_idled_off && wifi_started && !ble_active &&
           (uint32_t)(millis() - s_wifi_idle_since_ms) >= WIFI_IDLE_GRACE_MS) {
         wifi_idled_off = true;
         serial_interface.stopTcpServer();   // drops all TCP/WS clients + sets _tcp_enabled=false

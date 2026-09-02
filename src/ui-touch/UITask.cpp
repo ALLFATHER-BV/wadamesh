@@ -211,6 +211,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
       #endif
       #include "../helpers/esp32/WifiRuntimeStore.h"   // QUOTED: this tree's copy (wifiScan*Active), not the lib's stale one
       #include "helpers/esp32/MqttBridge.h"
+      #ifdef BLE_PIN_CODE
+        #include "../helpers/esp32/MultiTransportCompanionInterface.h"
+      #endif
       #if defined(HAS_TDISPLAY_P4)
         // T-Display P4: the C6 runs ESP-AT, so Arduino's real WiFi object must NEVER be driven (its
         // mode()/begin() re-init esp_hosted and panic). These facades rebind every WiFi.* below to the
@@ -14821,6 +14824,39 @@ static void buildBluetoothSettings() {
   lv_obj_add_event_cb(g_set_modal.wifi_sw, bleEnableSwitchCb, LV_EVENT_VALUE_CHANGED, nullptr);  // instant toggle (BLE is live)
   y += SC(38);
   // No Save button — the enable switch toggles BLE live, and the pairing code auto-saves on blur.
+
+  // "Clear pairing" — wipes the NimBLE bond store so a phone that shows "Invalid Pairing"
+  // can re-pair from scratch (the phone must also Forget the device in iOS Bluetooth settings).
+  {
+    lv_obj_t* clr_lbl = lv_label_create(body);
+    lv_label_set_text(clr_lbl, TR("Clear pairing"));
+    lv_obj_set_style_text_color(clr_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(clr_lbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(clr_lbl, 2, y + 7);
+
+    lv_obj_t* clr_btn = lv_btn_create(body);
+    lv_obj_set_size(clr_btn, SC(70), SC(28));
+    lv_obj_align(clr_btn, LV_ALIGN_TOP_RIGHT, 0, y);
+    lv_obj_t* clr_btn_lbl = lv_label_create(clr_btn);
+    lv_label_set_text(clr_btn_lbl, TR("Clear"));
+    lv_obj_center(clr_btn_lbl);
+    lv_obj_add_event_cb(clr_btn, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+      g_lv.task->clearBleBonds();
+      g_lv.task->showAlert(TR("Pairing cleared \xE2\x80\x94 forget device on phone too"), 2600);
+    }, LV_EVENT_CLICKED, nullptr);
+    y += SC(38);
+
+    lv_obj_t* clr_hint = lv_label_create(body);
+    lv_label_set_long_mode(clr_hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(clr_hint, lv_pct(100));
+    lv_label_set_text(clr_hint, TR("Use if phone shows \xE2\x80\x9CInvalid Pairing\xE2\x80\x9D"));
+    lv_obj_set_style_text_color(clr_hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(clr_hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_pos(clr_hint, 2, y);
+    lv_obj_update_layout(clr_hint);
+    y += LV_MAX(SC(18), lv_obj_get_height(clr_hint) + SC(4));
+  }
 #else
   (void)y;
 #endif
@@ -54559,6 +54595,13 @@ bool UITask::enableBle() {
   rebootDevice();
 #endif
   return false;
+}
+
+void UITask::clearBleBonds() {
+#if defined(MULTI_TRANSPORT_COMPANION) && defined(BLE_PIN_CODE)
+  if (auto* mt = static_cast<MultiTransportCompanionInterface*>(_serial))
+    mt->clearBleBonds();
+#endif
 }
 
 void UITask::persistHistoryNow() {

@@ -538,6 +538,7 @@ public:
   // Returns false when a required cold start cannot be made safely.
   bool enableBle();
   void disableBle() { if (_serial) _serial->disableBle(); }
+  void clearBleBonds();   // wipe NimBLE bond store; implemented in UITask.cpp
   int getWsConnectedCount() const { return _serial ? _serial->getWsConnectedCount() : 0; }
   /** Push the ESP32 system clock into the mesh RTC. false = never synced, mesh clock untouched. */
   bool setDeviceTimeFromSystemClock();

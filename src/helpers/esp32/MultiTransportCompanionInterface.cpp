@@ -292,6 +292,10 @@ void MultiTransportCompanionInterface::disableBle() {
 #endif
 }
 
+void MultiTransportCompanionInterface::clearBleBonds() {
+  if (_ble_begun) NimBLEDevice::deleteAllBonds();
+}
+
 #if defined(TLORA_PAGER)
 bool MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
   // Preserve both the user's BLE preference and NimBLE's live bond/GATT state.

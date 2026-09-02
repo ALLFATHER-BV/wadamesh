@@ -45,6 +45,7 @@ public:
   // state. Wi-Fi can then re-associate before enableBle() resumes advertising.
   bool suspendBleForWifiReconnect();
 #endif
+  void clearBleBonds();   // wipe NimBLE bond store; call when phone shows "Invalid Pairing"
   bool isBleEnabled() const override { return _ble_enabled; }
   bool isBleStackBegun() const { return _ble_begun; }
 #if defined(HAS_TDISPLAY_P4)
