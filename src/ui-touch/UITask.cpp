@@ -55683,7 +55683,7 @@ void UITask::loop() {
   { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
-  uiCp("ui:gps");
+  uiCp("ui:disc-flush");       // discoveredFlushIfDue owns this slot (was mislabelled ui:gps)
   updateGpsLocation(now);
   uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
