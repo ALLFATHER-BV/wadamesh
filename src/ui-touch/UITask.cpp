@@ -2080,6 +2080,7 @@ struct LvChatPanel {
   lv_obj_t* jump_oldest_btn; // floating "jump to oldest" button
   lv_obj_t* composer_row;  // container: input + send button
   lv_obj_t* composer_ta;   // textarea: user types here
+  lv_obj_t* char_count_lbl; // remaining-chars hint above Send (nullptr on Pager)
   LvThreadButtonCtx ctx_store[UITask::MAX_UI_THREADS];
   bool channel_mode;
   /** When true, `list_cont` shows channels + DMs with history (Chats tab only). */
@@ -6771,6 +6772,19 @@ static void showKb(LvChatPanel* p) {
 // post-send clear, emoji/quick-reply inserts). Past the cap it scrolls vertically.
 static void chatComposerAutoGrow(LvChatPanel* p) {
   if (!p || !p->composer_ta || !p->composer_row || !p->msgs) return;
+  if (p->char_count_lbl) {
+    const char* txt = lv_textarea_get_text(p->composer_ta);
+    int used = txt ? (int)strlen(txt) : 0;
+    if (used == 0) {
+      lv_label_set_text(p->char_count_lbl, "");
+    } else {
+      int rem = UITask::MAX_MSG_TEXT - used;
+      char buf[8]; snprintf(buf, sizeof(buf), "%d", rem);
+      lv_label_set_text(p->char_count_lbl, buf);
+      lv_obj_set_style_text_color(p->char_count_lbl,
+        lv_color_hex(rem <= 20 ? 0xE05050u : COLOR_SUB), LV_PART_MAIN);
+    }
+  }
   const lv_coord_t lh = lv_font_get_line_height(&g_font_14);
   if (lh <= 0) return;
   const char* txt = lv_textarea_get_text(p->composer_ta);
@@ -15557,7 +15571,6 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
   s_wifi_sheet_pwd_ta = lv_textarea_create(body);
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
-  lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, true);
   taSetPlaceholder(s_wifi_sheet_pwd_ta, "PSK");
   lv_textarea_set_max_length(s_wifi_sheet_pwd_ta, WIFI_CONFIG_PWD_MAX - 1);
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
@@ -32414,6 +32427,17 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_label_set_text(sl, LV_SYMBOL_RIGHT);
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
   lv_obj_center(sl);
+
+#if !defined(TLORA_PAGER)
+  // Character-remaining count: floats above the Send button, hidden at 160 (max), red at ≤20.
+  p.char_count_lbl = lv_label_create(p.composer_row);
+  lv_label_set_text(p.char_count_lbl, "");
+  lv_obj_set_style_text_font(p.char_count_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(p.char_count_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_align(p.char_count_lbl, LV_ALIGN_TOP_RIGHT, 0, 0);
+#else
+  p.char_count_lbl = nullptr;
+#endif
 
   // No floating HOME button — exit is the Back chevron in the (double-height) status
   // bar: tapping the bar closes the chat (statusBarTapCb), with a "‹" affordance + the
