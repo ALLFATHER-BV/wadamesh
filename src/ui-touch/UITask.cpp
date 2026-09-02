@@ -29694,13 +29694,42 @@ static void renderMapMarkers() {
       self_sy >= -10 && self_sy < k_map_canvas_h + 10) {
     MapMarker& m = s_map_markers[0];
     m.mesh_idx = -1;
-    m.obj = lv_label_create(parent);
-    lv_label_set_text(m.obj, LV_SYMBOL_GPS);
-    lv_obj_set_style_text_font(m.obj, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(m.obj, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
-    // The glyph's optical center isn't at its bbox center — fudge the
-    // align slightly so the crosshair lines up with the tile pixel.
-    lv_obj_set_pos(m.obj, self_sx - 8, self_sy - 11);
+    // Self marker: black crosshair (high contrast on any tile background).
+    // A transparent container holds two 1-px black bars (H + V) that cross
+    // at the centre, plus a small filled circle at the intersection.
+    const int XH = 8;   // half-arm length
+    const int XG = 3;   // gap radius around centre dot
+    const int SZ = XH * 2 + 1;
+    m.obj = lv_obj_create(parent);
+    lv_obj_remove_style_all(m.obj);
+    lv_obj_set_size(m.obj, SZ, SZ);
+    lv_obj_set_pos(m.obj, self_sx - XH, self_sy - XH);
+    lv_obj_clear_flag(m.obj, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    // Horizontal bar
+    lv_obj_t* hbar = lv_obj_create(m.obj);
+    lv_obj_remove_style_all(hbar);
+    lv_obj_set_size(hbar, SZ, 2);
+    lv_obj_set_pos(hbar, 0, XH - 1);
+    lv_obj_set_style_bg_color(hbar, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(hbar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(hbar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    // Vertical bar
+    lv_obj_t* vbar = lv_obj_create(m.obj);
+    lv_obj_remove_style_all(vbar);
+    lv_obj_set_size(vbar, 2, SZ);
+    lv_obj_set_pos(vbar, XH - 1, 0);
+    lv_obj_set_style_bg_color(vbar, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(vbar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(vbar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    // Centre dot
+    lv_obj_t* dot = lv_obj_create(m.obj);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, XG * 2, XG * 2);
+    lv_obj_set_pos(dot, XH - XG, XH - XG);
+    lv_obj_set_style_bg_color(dot, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(dot, XG, LV_PART_MAIN);
+    lv_obj_clear_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   }
 
   // ---- Contact markers — colored circles sized for taps (14×14 with a
@@ -55886,7 +55915,7 @@ void UITask::loop() {
   // Was T-Deck-only; now every board — the Tanmatsu's lit lock screen otherwise never went dark at
   // screen-timeout "never" (wyvern.red burn-in report). No-op where _lock_lit_ms is never armed (V4).
   if (_manual_lock && !_screen_off && _lock_lit_ms) {
-    uint32_t lock_dim = (_screen_timeout_ms > 0 && _screen_timeout_ms < 5000u) ? _screen_timeout_ms : 5000u;
+    uint32_t lock_dim = (_screen_timeout_ms > 0 && _screen_timeout_ms < 10000u) ? _screen_timeout_ms : 10000u;
     if ((int32_t)(now - _lock_lit_ms) >= (int32_t)lock_dim) {
 #if defined(HAS_TDECK_GT911) && defined(HAS_BACKLIGHT_PWM)
       if (touchPrefsGetLockAlwaysOn()) {
@@ -56530,7 +56559,14 @@ void UITask::loop() {
     (void)0;  // placeholder — variable declared at file scope above
     if ((long)(now - s_sig_probe_at) >= 0) {
       if (touchPrefsGetSigProbeEnabled()) {
-        const uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
+        uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
+        // GPS-adaptive interval: tighten to 5 min while moving (> 2 km/h) so
+        // the repeater table stays fresh as the RF environment changes.
+        // Cap at 5 min regardless — must stay within REP_ACTIVE_SECS (300 s)
+        // so hasActiveRepeater() never expires between probes.
+        constexpr uint32_t kRepActiveSecs = 5 * 60 * 1000UL;   // 300 000 ms
+        const bool moving = (s_gps_speed_kmh > 2.0f);
+        if (moving || poll_ms > kRepActiveSecs) poll_ms = kRepActiveSecs;
         s_sig_probe_at = now + poll_ms;
         const uint32_t sms = the_mesh.uiSignalMs();
         // Skip the announce when a direct neighbour was heard within the poll window.
