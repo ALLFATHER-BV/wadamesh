@@ -14396,9 +14396,8 @@ static void buildDeviceSettings(int sec) {
 #endif
     lv_obj_add_event_cb(sw, sleepIdleToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(SC(34), h + 12);
-    const char* reason = tsBlockReason();
     y += settingsRowLabel(body, y, 0,
-        reason ? reason : TR("Throttles the CPU when idle to save power"),
+        TR("Throttles the CPU when idle to save power"),
         COLOR_SUB, &g_font_12, 0) + 6;
   }
 #endif
