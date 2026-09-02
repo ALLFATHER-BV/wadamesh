@@ -644,6 +644,41 @@ void meshcomodClearSdMigLatch() {
 }
 #endif
 
+#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
+// Whether Serial1 got the 4 KB RX ring (the boot-time gate in setup() below
+// only installs it when gps_enabled was already persisted).
+static bool s_gps_big_rx_ring = false;
+// Called by the "gps on" paths (UITask::toggleGPS, the companion
+// CMD_SET_CUSTOM_VAR("gps") handler) right after a SUCCESSFUL mid-session
+// start. Such an enable used to run the whole session on the stock 256 B
+// ring — setRxBufferSize is a no-op on a running UART, and initBasicGPS()
+// opened Serial1 at boot — with only ~22 ms of slack at the M9's 115200
+// baud, so any loop stall past that (a long LVGL frame; every 50 ms
+// battery-saver park) clipped NMEA bursts until the next reboot. Cycle it:
+// end -> resize -> begin, with the same pins/baud initBasicGPS() uses. Safe
+// even though the line may already carry NMEA (boards without a GPS EN pin —
+// T-Deck, pagers, RAK TAP — have always-powered modules that stream even
+// while "stopped"): every Serial1 reader runs on this same loopTask, so the
+// worst case is one torn, checksum-rejected sentence plus dropping the stale
+// 256 B backlog.
+void gpsEnsureBigRxRing() {
+  if (s_gps_big_rx_ring) return;
+  Serial1.end();
+  Serial1.setRxBufferSize(4096);
+  Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX);  // same (module-perspective) order as initBasicGPS
+#ifdef GPS_BAUD_RATE
+  const uint32_t k_gps_baud_default = GPS_BAUD_RATE;
+#else
+  const uint32_t k_gps_baud_default = 9600;
+#endif
+#if defined(HAS_TOUCH_UI) && defined(ESP32)
+  Serial1.begin(touchPrefsGetGpsBaud(k_gps_baud_default));
+#else
+  Serial1.begin(k_gps_baud_default);
+#endif
+  s_gps_big_rx_ring = true;
+}
+#endif
 
 void setup() {
   Serial.begin(115200);
@@ -1424,15 +1459,17 @@ void setup() {
   // unconditional 4 KB ring permanently costs ~3.8 KB of scarce internal DRAM for nothing
   // on the GPS-off majority (the "RAM is higher now" reports). GPS-on users (who actually
   // hit the overflow) still get the big ring; default GPS-off keeps the stock 256 B. A user
-  // who enables GPS mid-session picks it up on the next reboot (gps_enabled is persisted).
+  // who enables GPS mid-session gets it immediately via gpsEnsureBigRxRing() above (it
+  // used to wait for the next reboot).
   {
 #if defined(ATTAKY_MESH_SERIES)
     // This fixed stack always carries the GPS, so take the larger RX ring
     // unconditionally; the default 256 B ring gives the slowest first fix.
     Serial1.setRxBufferSize(4096);
+    s_gps_big_rx_ring = true;
 #else
     auto* np = the_mesh.getNodePrefs();
-    if (np && np->gps_enabled) Serial1.setRxBufferSize(4096);
+    if (np && np->gps_enabled) { Serial1.setRxBufferSize(4096); s_gps_big_rx_ring = true; }
 #endif
   }
 #endif
