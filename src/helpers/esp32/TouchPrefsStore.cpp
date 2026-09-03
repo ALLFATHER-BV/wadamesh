@@ -138,6 +138,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.kb_force_legacy   = 0;      // OFF: detect the keyboard protocol automatically
   c.boot_wifi_time    = 0;      // OFF: no cold-boot Wi-Fi time sync (#383) — opt-in
   c.boot_wifi_open    = 0;      // OFF: and never a saved OPEN network even then
+  c.loud_alerts       = 0;      // OFF: the standard chime pitch unless asked for
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
@@ -250,6 +251,7 @@ static void cfgLoadOrMigrate() {
         // force both OFF rather than inherit whatever byte happened to be there:
         // a garbage 1 would spend boot time on a Wi-Fi session nobody asked for.
         if (stored_version < 54) { s_cfg.boot_wifi_time = 0; s_cfg.boot_wifi_open = 0; }
+        if (stored_version < 55) { s_cfg.loud_alerts = 0; }
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -1149,6 +1151,16 @@ bool touchPrefsGetBootWifiTimeOpen() {
 bool touchPrefsSetBootWifiTimeOpen(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.boot_wifi_open = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetLoudAlerts() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.loud_alerts != 0;
+}
+bool touchPrefsSetLoudAlerts(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.loud_alerts = on ? 1 : 0;
   return cfgFlush();
 }
 

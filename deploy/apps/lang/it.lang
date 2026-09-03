@@ -1116,3 +1116,7 @@ Formatted OK - card did not remount, reinsert it	Formatted OK - card did not rem
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
 Accent colour	Accent colour
+Loud alerts	Loud alerts
+Loud alerts: off	Loud alerts: off
+Loud alerts: on	Loud alerts: on
+higher-pitched chime; louder on most buzzers	higher-pitched chime; louder on most buzzers

@@ -1520,14 +1520,25 @@ static volatile bool s_v4_beep_playing = false;
 static volatile bool s_v4_mention = false;
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
+  // "Loud alerts" shifts the same chime into the piezo's resonant band. A bare
+  // piezo on a GPIO has no volume control -- tone() is a fixed-duty square wave,
+  // so amplitude is whatever the part does at that pitch -- but output near
+  // mechanical resonance (around 4 kHz on typical parts) is far higher than at
+  // the 1-2.6 kHz used here. Same three-note shape, so it still reads as the
+  // same chime rather than a different alert (#388).
+#if defined(ESP32)
+  const bool loud = touchPrefsGetLoudAlerts();
+#else
+  const bool loud = false;
+#endif
   if (s_v4_mention) {
-    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(UI_BUZZER_PIN, 2600);  vTaskDelay(pdMS_TO_TICKS(170));
+    tone(UI_BUZZER_PIN, loud ? 3400 : 1500);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, loud ? 3900 : 2000);  vTaskDelay(pdMS_TO_TICKS(110));
+    tone(UI_BUZZER_PIN, loud ? 4200 : 2600);  vTaskDelay(pdMS_TO_TICKS(170));
   } else {
-    tone(UI_BUZZER_PIN, 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(UI_BUZZER_PIN, 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(UI_BUZZER_PIN, 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+    tone(UI_BUZZER_PIN, loud ? 3200 : 1000);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, loud ? 3700 : 1500);  vTaskDelay(pdMS_TO_TICKS(160));
+    tone(UI_BUZZER_PIN, loud ? 4100 : 2000);  vTaskDelay(pdMS_TO_TICKS(200));
   }
   noTone(UI_BUZZER_PIN);
   pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
@@ -8916,6 +8927,21 @@ static inline void uiSoundPreview() {
 #endif
 }
 // Message-sound switch (under the master Sound switch). VALUE_CHANGED; previews.
+// "Loud alerts": the piezo has no volume control, so this raises the chime's
+// pitch into its resonant band instead, where the same drive is much louder.
+// Buzzer boards only -- the Tanmatsu drives a codec and has real volume (#388).
+#if defined(HAS_UI_SOUND)
+static void toggleLoudAlertsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  touchPrefsSetLoudAlerts(on);
+#endif
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Loud alerts: on") : TR("Loud alerts: off"), 1100);
+  uiPlayNotify();   // play it, so the difference is audible while the switch is under your finger
+}
+#endif
+
 static void toggleMessageSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -13103,6 +13129,21 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, toggleBuzzerCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(34, rh + 12);
   }
+#if defined(HAS_UI_SOUND)
+  // Loudness, for the boards whose "speaker" is a bare piezo on a GPIO.
+  {
+    int rh = settingsRowLabel(body, y, 6, TR("Loud alerts"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetLoudAlerts()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, toggleLoudAlertsCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+    y += settingsRowLabel(body, y, 0, TR("higher-pitched chime; louder on most buzzers"),
+                          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
   // Per-event on/off switches: Message, DM, @-mention (under the master Sound).
   {
     int rh = settingsRowLabel(body, y, 6, TR("Message sound"), COLOR_SUB, nullptr, 56);
