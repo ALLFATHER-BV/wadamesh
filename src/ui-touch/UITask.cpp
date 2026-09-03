@@ -49914,6 +49914,7 @@ bool UITask::loadMsgsFromSegments() {
 // would otherwise shadow it in the loader's precedence order).
 bool UITask::migrateRingToSegments() {
 #if defined(ESP32)
+  Serial.println("[chatstore] migration: starting");
   uiDataEnsureDirs();
   // The marker goes away FIRST: from here until the verified end of this
   // migration the on-disk segment set is provisional, and a boot that finds it
@@ -49927,7 +49928,14 @@ bool UITask::migrateRingToSegments() {
   s_seg_count = 0;
   s_seg_total_bytes = 0;
   UITask::UIMessage* buf = segEnsureBuf(&s_segsync_buf);
-  if (!buf) return false;
+  if (!buf) {
+    // Silent until now, and it is the first thing that can fail. A Tanmatsu
+    // stuck on "migration pending" with Last save FAIL produced a boot capture
+    // with NO migration lines at all, which is only possible if we bail before
+    // any of them (#372). Say which step gave up.
+    Serial.println("[chatstore] migration: no scratch buffer (allocation failed)");
+    return false;
+  }
 
   // Walk the ring CHRONOLOGICALLY and skip tombstones. Both matter: this runs
   // not only at boot (ring linear) but also as a retry after a failed boot
@@ -49985,6 +49993,8 @@ bool UITask::migrateRingToSegments() {
       ok = (s_seg[i].first_seq > s_seg[i - 1].last_seq);
   }
   if (!ok) {
+    Serial.printf("[chatstore] migration: read-back verify FAILED across %d segment(s); "
+                  "old file kept, will retry\n", s_seg_count);
     for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
     s_seg_count = 0;
     s_seg_total_bytes = 0;
@@ -49994,6 +50004,7 @@ bool UITask::migrateRingToSegments() {
   {
     File okf = uiDataOpen(k_ui_seg_ok, "w");
     if (!okf) {   // can't commit -> leave the old file authoritative and retry later
+      Serial.println("[chatstore] migration: cannot create the commit marker; old file kept");
       for (int i = 0; i < s_seg_count; ++i) uiSegRemoveFile(s_seg[i].first_seq);
       s_seg_count = 0;
       s_seg_total_bytes = 0;
@@ -50012,6 +50023,8 @@ bool UITask::migrateRingToSegments() {
   s_seg_resync      = false;   // a full write IS the resync
   s_seg_stale_purge = false;
   s_seg_store_ready = true;
+  Serial.printf("[chatstore] migration: OK, %d segment(s), %u bytes\n",
+                s_seg_count, (unsigned)s_seg_total_bytes);
   return true;
 #else
   return false;
