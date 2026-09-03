@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 53;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON)
+static constexpr uint8_t CURRENT_VERSION = 54;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -89,6 +89,14 @@ struct __attribute__((packed)) Config {
   // a setting to fix it. This is reachable by touch, so it is a way out that
   // does not need the keyboard that is broken (#341, #351).
   uint8_t  kb_force_legacy;
+  // v54 (#383): cold-boot time acquisition over SAVED Wi-Fi, for boards that
+  // cannot keep wall time through a power cut. Two independent opt-ins, both
+  // default OFF so boot time and radio behaviour are unchanged for everyone who
+  // does not ask for this. See helpers/esp32/BootTimeSync.h for why the second
+  // one is separate: joining an OPEN access point is a materially different
+  // trust decision from reconnecting to a saved secured one.
+  uint8_t  boot_wifi_time;   // sync the clock from a saved Wi-Fi network after a cold boot
+  uint8_t  boot_wifi_open;   // ...and allow saved OPEN networks to be used for it
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -96,7 +104,7 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy) == sizeof(Config),
+static_assert(offsetof(Config, boot_wifi_open) + sizeof(Config::boot_wifi_open) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is
@@ -107,6 +115,12 @@ static_assert(offsetof(Config, console_mode) ==
 static_assert(offsetof(Config, console_monitor) ==
                   offsetof(Config, console_mode) + sizeof(Config::console_mode),
               "console_monitor must follow console_mode");
+static_assert(offsetof(Config, boot_wifi_time) ==
+                  offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy),
+              "boot_wifi_time must follow kb_force_legacy");
+static_assert(offsetof(Config, boot_wifi_open) ==
+                  offsetof(Config, boot_wifi_time) + sizeof(Config::boot_wifi_time),
+              "boot_wifi_open must follow boot_wifi_time");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with
 // retry_echo inserted before web_mirror, shifting every later value. That blob

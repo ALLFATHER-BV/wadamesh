@@ -5324,13 +5324,38 @@ static void chatSaveFailText(char* out, size_t cap) {
   snprintf(out, cap, "%s failed: %s (e%d)", stage, why, e);
 }
 static void fmtClockHM(char* buf, size_t cap, const struct tm* t);   // fwd: 12/24h-aware HH:MM
+
+static bool wallClockIsCurrent() {
+#if defined(ESP32)
+  return rtc_clock.timeIsCurrent();
+#else
+  return true;
+#endif
+}
+
+// Compact replacement for live wall-clock labels while all we have is the
+// persisted replay floor. The "UP" prefix and warning tint at call sites make
+// it deliberately unlike a real time-of-day display (#383).
+static void formatUptimeShort(char* out, size_t cap) {
+  const uint32_t total_min = millis() / 60000u;
+  if (total_min < 60u) {
+    snprintf(out, cap, "UP %lum", (unsigned long)total_min);
+  } else if (total_min < 1440u) {
+    snprintf(out, cap, "UP %luh%02lum", (unsigned long)(total_min / 60u),
+             (unsigned long)(total_min % 60u));
+  } else {
+    snprintf(out, cap, "UP %lud%02luh", (unsigned long)(total_min / 1440u),
+             (unsigned long)((total_min / 60u) % 24u));
+  }
+}
+
 // "When did the chat store last save" as a CLOCK TIME rather than an age:
 // HH:MM (honouring the 12/24h pref), with a "-<N>D" suffix once it is a day or
 // more old, so a stale save is obvious at a glance instead of having to read a
 // growing seconds counter. "--:--" when the event never happened, or happened
 // before the system clock was set (no meaningful timestamp exists).
 static void chatSaveStamp(char* out, size_t cap, uint32_t epoch) {
-  if (!epoch) { snprintf(out, cap, "--:--"); return; }
+  if (!wallClockIsCurrent() || !epoch) { snprintf(out, cap, "--:--"); return; }
   const time_t t = (time_t)epoch;
   struct tm tmv;
   if (!localtime_r(&t, &tmv)) { snprintf(out, cap, "--:--"); return; }
@@ -8644,6 +8669,7 @@ static void toggleGpsCb(lv_event_t* e) {   // GPS on/off switch (VALUE_CHANGED)
 // it on every board. Silently inactive if the RTC hasn't been set yet.
 static bool dndActive() {
   if (!touchPrefsGetDndEnabled()) return false;
+  if (!wallClockIsCurrent()) return false;
   time_t now_t = time(nullptr);
   if (now_t <= 1700000000) return false;   // RTC not set yet -- clock is meaningless
   struct tm tm_loc; localtime_r(&now_t, &tm_loc);
@@ -11566,6 +11592,16 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                 (chip.features & CHIP_FEATURE_WIFI_BGN) ? " WiFi" : "",
                 (chip.features & CHIP_FEATURE_BT)       ? " BT"   : "");
 
+  p += snprintf(buf + p, cap - p, "Clock\n  source: %s (%s)\n",
+                rtc_clock.sourceName(), rtc_clock.timeIsCurrent() ? "current" : "degraded");
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  p += snprintf(buf + p, cap - p, "  %s: %s%s\n\n", hw_rtc.chipName(),
+                HardwareRtcClock::statusName(hw_rtc.status()),
+                hw_rtc.writeConfirmed() ? " (write verified)" : "");
+#else
+  p += snprintf(buf + p, cap - p, "\n");
+#endif
+
   const uint32_t flash_chip_size = ESP.getFlashChipSize();
 #if defined(HAS_TANMATSU)
   // ESP.getSketchSize()/getFreeSketchSpace() abort() on the P4: this is an AppFS app (runs from the
@@ -11703,7 +11739,7 @@ static void refreshSysInfo(unsigned long now) {
     if (lv_indev_get_scroll_dir(in) != LV_DIR_NONE) { next = now + 120; return; }
   }
   next = now + 1000;
-  char buf[704];
+  char buf[832];
   sysInfoTextLive(buf, sizeof buf);
   lv_label_set_text(s_sysinfo_lbl, buf);
   // Slow tier: pushing identical text would still invalidate + repaint the whole
@@ -11748,7 +11784,7 @@ static void refreshSleepDiag(unsigned long now) {
 
 static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
-  char buf[704];
+  char buf[832];
 
   // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
   // Both labels below are re-texted AFTER build with text whose LINE COUNT
@@ -12016,6 +12052,25 @@ static void clock12hToggleCb(lv_event_t* e) {
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Clock: 12-hour") : TR("Clock: 24-hour"), 900);
 }
+
+#if CAP_BOOT_TIME_SYNC
+static void bootWifiTimeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetBootWifiTime(on);
+  lv_obj_t* open_sw = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+  if (open_sw && lv_obj_is_valid(open_sw)) {
+    if (on) lv_obj_clear_state(open_sw, LV_STATE_DISABLED);
+    else    lv_obj_add_state(open_sw, LV_STATE_DISABLED);
+  }
+}
+
+static void bootWifiOpenToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetBootWifiTimeOpen(
+      lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 
 #if CAP_UI_SIZE
 // UI-size selector — saves the board-specific preset. Fonts and any matching
@@ -13037,6 +13092,30 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_time, TR("Sync clock from system"));
   lv_obj_center(l_time);
   y += SC(40);
+
+#if CAP_BOOT_TIME_SYNC
+  lv_obj_t* boot_sync_sw = lv_switch_create(body);
+  lv_obj_t* open_sync_sw = lv_switch_create(body);
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Sync time from saved Wi-Fi after cold boot"),
+                             COLOR_SUB, nullptr, 56);
+    lv_obj_align(boot_sync_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetBootWifiTime()) lv_obj_add_state(boot_sync_sw, LV_STATE_CHECKED);
+    y += LV_MAX(SC(34), h + 12);
+  }
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Allow saved open networks for time sync"),
+                             COLOR_SUB, nullptr, 56);
+    lv_obj_align(open_sync_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetBootWifiTimeOpen()) lv_obj_add_state(open_sync_sw, LV_STATE_CHECKED);
+    if (!touchPrefsGetBootWifiTime()) lv_obj_add_state(open_sync_sw, LV_STATE_DISABLED);
+    y += LV_MAX(SC(34), h + 12);
+  }
+  lv_obj_add_event_cb(boot_sync_sw, bootWifiTimeToggleCb,
+                      LV_EVENT_VALUE_CHANGED, open_sync_sw);
+  lv_obj_add_event_cb(open_sync_sw, bootWifiOpenToggleCb,
+                      LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
   }
 
   if (sec == DSEC_GENERAL) {   // --- Send advert (device action) ---
@@ -14059,7 +14138,7 @@ static void buildDeviceSettings(int sec) {
     {
       mesh::RTCClock* rtc = the_mesh.getRTCClock();
       uint32_t now = rtc ? rtc->getCurrentTime() : 0;
-      if (now > 0) {
+      if (wallClockIsCurrent() && now > ClockFloorRTC::MIN_VALID_EPOCH) {
         time_t t = (time_t)now;
         struct tm tmv;
         /* RTC stores UTC; show user-local time using TZ set via configTzTime
@@ -14072,7 +14151,10 @@ static void buildDeviceSettings(int sec) {
                  tmv.tm_isdst > 0 ? "CEST" : "CET");
         mk_info(TR("Device time:"), ts);
       } else {
-        mk_info(TR("Device time:"), "not set");
+        char up[16]; formatUptimeShort(up, sizeof up);
+        char fallback[48];
+        snprintf(fallback, sizeof fallback, "%s · build %s", up, FIRMWARE_BUILD_DATE);
+        mk_info(TR("Device time:"), fallback);
       }
     }
   }
@@ -16165,10 +16247,12 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
   }
   // Show what the DEVICE thinks the time is — a wrong clock here is the tell
   // for the replay-guard case (the other causes read the first two hints).
-  char when[24] = "?";
-  time_t tt = (time_t)the_mesh.getRTCClock()->getCurrentTime();
-  struct tm tmv;
-  if (localtime_r(&tt, &tmv)) strftime(when, sizeof when, "%H:%M %d %b", &tmv);
+  char when[24] = "clock degraded";
+  if (wallClockIsCurrent()) {
+    time_t tt = (time_t)the_mesh.getRTCClock()->getCurrentTime();
+    struct tm tmv;
+    if (localtime_r(&tt, &tmv)) strftime(when, sizeof when, "%H:%M %d %b", &tmv);
+  }
   char msg[160];
   // Multi-byte path hashing is the one setting that makes a login fail EXACTLY like
   // this: a repeater that predates it, or does not implement it, silently drops 2- and
@@ -19230,15 +19314,21 @@ static void refreshHomeBattery() {
     static char s_last_clock[12] = {0};
 #if defined(ESP32)
     time_t now_t = time(nullptr);
-    if (now_t > 1700000000) {  // ~ "RTC has been bootstrapped" sentinel
+    char buf[12];
+    const bool current = wallClockIsCurrent() &&
+                         now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH;
+    if (current) {
       struct tm tm_loc;
       localtime_r(&now_t, &tm_loc);
-      char buf[12];
       fmtClockHM(buf, sizeof(buf), &tm_loc);
-      if (strcmp(buf, s_last_clock) != 0) {
-        lv_label_set_text(s_home_clock, buf);
-        strncpy(s_last_clock, buf, sizeof(s_last_clock) - 1);
-      }
+    } else {
+      formatUptimeShort(buf, sizeof buf);
+    }
+    if (strcmp(buf, s_last_clock) != 0) {
+      lv_label_set_text(s_home_clock, buf);
+      lv_obj_set_style_text_color(s_home_clock,
+          lv_color_hex(current ? COLOR_TEXT : COLOR_STATUS_WARN), LV_PART_MAIN);
+      strncpy(s_last_clock, buf, sizeof(s_last_clock) - 1);
     }
 #endif
   }
@@ -20051,7 +20141,9 @@ static void webPushStatus() {
   uint16_t mv  = batteryMvSmoothed();
   int      pct = batteryPercentFromMv(mv);
   bool     wc  = (WiFi.status() == WL_CONNECTED);
-  uint32_t clk = 0; auto* rtc = the_mesh.getRTCClock(); if (rtc) clk = rtc->getCurrentTime();
+  uint32_t clk = 0;
+  auto* rtc = the_mesh.getRTCClock();
+  if (wallClockIsCurrent() && rtc) clk = rtc->getCurrentTime();
   int snr = -128;   // "no signal"; else last-heard SNR (dB), stale after 60 s
   if (the_mesh.uiSignalMs() != 0 && (millis() - the_mesh.uiSignalMs()) < 60000) snr = the_mesh.uiSignalSnrQ4() / 4;
   char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
@@ -37460,6 +37552,7 @@ static lv_obj_t*    s_lock_clock     = nullptr;
 static uint8_t*     s_lock_wall      = nullptr;   // decoded RGB565 (lvglPsramAlloc)
 static lv_img_dsc_t s_lock_wall_dsc;
 static int          s_lock_clock_min = -1;        // last minute drawn (redraw guard)
+static int8_t       s_lock_clock_current = -1;    // refresh immediately when clock quality changes
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
@@ -37522,8 +37615,23 @@ static void lockscreenUpdateClock() {
   uint32_t t = rtc ? rtc->getCurrentTime() : 0;
   int mm = 0;
   char b[12]; snprintf(b, sizeof b, "00:00");
-  if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); fmtClockHM(b, sizeof b, &v); mm = v.tm_min; }
+  const bool current = wallClockIsCurrent() && t > ClockFloorRTC::MIN_VALID_EPOCH;
+  if (current) {
+    time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v);
+    fmtClockHM(b, sizeof b, &v); mm = v.tm_min;
+  } else {
+    formatUptimeShort(b, sizeof b);
+    mm = (int)((millis() / 60000u) % 60u);
+  }
   lv_label_set_text(s_lock_clock, b);
+#if defined(TLORA_PAGER)
+  const lv_color_t normal_color = lv_color_hex(0xFFFFFFu);
+#else
+  const lv_color_t normal_color = lv_color_hex(touchPrefsGetLockTextColor());
+#endif
+  lv_obj_set_style_text_color(s_lock_clock,
+      current ? normal_color : lv_color_hex(COLOR_STATUS_WARN), LV_PART_MAIN);
+  s_lock_clock_current = current ? 1 : 0;
   // Anti-burn-in drift: nudge the clock a few pixels per minute so its outline never
   // parks on the same LCD cells — wyvern.red reported the lock layout retaining into
   // the panel. Deterministic from the minute, so it also moves on every reveal.
@@ -37731,6 +37839,7 @@ static void lockscreenShow() {
   lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
 #endif
   s_lock_clock_min = -1;
+  s_lock_clock_current = -1;
 
   s_lock_unread = lv_label_create(s_lock_root);
   lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
@@ -37797,6 +37906,7 @@ static void lockscreenHide() {
   }
   if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
+  s_lock_clock_current = -1;
   s_lock_unread_n  = -1;
   // Restore the status bar's normal opaque background + accent border.
   if (g_statusbar.root) {
@@ -37812,8 +37922,14 @@ static void serviceLockscreen() {
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   uint32_t t = rtc ? rtc->getCurrentTime() : 0;
   int mm = 0;
-  if (t > 0) { time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min; }
-  if (mm != s_lock_clock_min) lockscreenUpdateClock();
+  const bool current = wallClockIsCurrent() && t > ClockFloorRTC::MIN_VALID_EPOCH;
+  if (current) {
+    time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v); mm = v.tm_min;
+  } else {
+    mm = (int)((millis() / 60000u) % 60u);
+  }
+  if (mm != s_lock_clock_min || (current ? 1 : 0) != s_lock_clock_current)
+    lockscreenUpdateClock();
   unsigned long now = millis();
   if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
 }
@@ -38323,7 +38439,7 @@ static void backupsRebuildAsyncCb(void* /*p*/) {
 static void backupMakeFilename(char* out, size_t cap) {
   uint32_t t = 0;
   if (mesh::RTCClock* rtc = the_mesh.getRTCClock()) t = rtc->getCurrentTime();
-  if (t > 1700000000UL) {
+  if (wallClockIsCurrent() && t > ClockFloorRTC::MIN_VALID_EPOCH) {
     time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v);
     snprintf(out, cap, "meshcore-%04d%02d%02d-%02d%02d%02d.json",
              v.tm_year + 1900, v.tm_mon + 1, v.tm_mday, v.tm_hour, v.tm_min, v.tm_sec);
@@ -40679,23 +40795,31 @@ static void openControlCenter() {
 
   // ---- Clock + date (left) ----
   char clock_s[12] = "--:--", date_s[28] = "RTC unset";
+  bool clock_current = false;
 #if defined(ESP32)
   time_t now_t = time(nullptr);
-  if (now_t > 1700000000) {
+  clock_current = wallClockIsCurrent() &&
+                  now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH;
+  if (clock_current) {
     struct tm tm_loc; localtime_r(&now_t, &tm_loc);
     fmtClockHM(clock_s, sizeof clock_s, &tm_loc);
     strftime(date_s, sizeof date_s, "%a %d %b %Y", &tm_loc);
+  } else {
+    formatUptimeShort(clock_s, sizeof clock_s);
+    snprintf(date_s, sizeof date_s, "Build %s", FIRMWARE_BUILD_DATE);
   }
 #endif
   lv_obj_t* clk = lv_label_create(card);
   lv_label_set_text(clk, clock_s);
   lv_obj_set_style_text_font(clk, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(clk, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_color(clk,
+      lv_color_hex(clock_current ? COLOR_TEXT : COLOR_STATUS_WARN), LV_PART_MAIN);
   lv_obj_align(clk, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_t* dt = lv_label_create(card);
   lv_label_set_text(dt, date_s);
   lv_obj_set_style_text_font(dt, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(dt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(dt,
+      lv_color_hex(clock_current ? COLOR_SUB : COLOR_STATUS_WARN), LV_PART_MAIN);
   lv_obj_align(dt, LV_ALIGN_TOP_LEFT, 0, 21);
 
   // ---- Battery + Wi-Fi info (right) ----
@@ -43071,7 +43195,7 @@ static void takeScreenshotToSd() {
   SD.mkdir("/screenshots");
   char path[48];
   const time_t now = time(nullptr);
-  if (now > 1700000000) {
+  if (wallClockIsCurrent() && now > (time_t)ClockFloorRTC::MIN_VALID_EPOCH) {
     struct tm tmv; localtime_r(&now, &tmv);
     strftime(path, sizeof path, "/screenshots/%Y%m%d_%H%M%S.bmp", &tmv);
   } else {
@@ -44271,16 +44395,26 @@ static void updateGlobalStatusBar() {
   // ---- Clock ----
 #if defined(ESP32)
   static char s_last_clock[12] = {0};
+  static int8_t s_last_clock_current = -1;
   time_t now_t = time(nullptr);
-  if (now_t > 1700000000) {
+  char buf[12];
+  const bool current = wallClockIsCurrent() &&
+                       now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH;
+  if (current) {
     struct tm tm_loc;
     localtime_r(&now_t, &tm_loc);
-    char buf[12];
     fmtClockHM(buf, sizeof(buf), &tm_loc);   // honor the 12/24-hour pref; dedup on the string so a toggle re-renders
-    if (strcmp(buf, s_last_clock) != 0) {
-      lv_label_set_text(g_statusbar.clock, buf);
-      strncpy(s_last_clock, buf, sizeof(s_last_clock) - 1);
-    }
+  } else {
+    formatUptimeShort(buf, sizeof buf);
+  }
+  if (strcmp(buf, s_last_clock) != 0) {
+    lv_label_set_text(g_statusbar.clock, buf);
+    strncpy(s_last_clock, buf, sizeof(s_last_clock) - 1);
+  }
+  if ((current ? 1 : 0) != s_last_clock_current) {
+    s_last_clock_current = current ? 1 : 0;
+    lv_obj_set_style_text_color(g_statusbar.clock,
+        lv_color_hex(current ? COLOR_SUB : COLOR_STATUS_WARN), LV_PART_MAIN);
   }
 #endif
 
@@ -46228,8 +46362,13 @@ static void refreshSensorsTab() {
     mesh::RTCClock* rtc = the_mesh.getRTCClock();
     time_t t = (time_t)(rtc ? rtc->getCurrentTime() : 0);
     struct tm tmv;
-    if (t > 0 && localtime_r(&t, &tmv)) strftime(ts, sizeof ts, "Updated %H:%M:%S", &tmv);
-    else                                snprintf(ts, sizeof ts, "Updated --:--:--");
+    if (wallClockIsCurrent() && t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH &&
+        localtime_r(&t, &tmv)) {
+      strftime(ts, sizeof ts, "Updated %H:%M:%S", &tmv);
+    } else {
+      char up[12]; formatUptimeShort(up, sizeof up);
+      snprintf(ts, sizeof ts, "Updated %s", up);
+    }
     setLabelIfChanged(s_sens_time_lbl, ts);
   }
 
@@ -47315,7 +47454,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   static const int k_max = 300;
   static uint16_t mvs[k_max]; static int16_t t10s[k_max]; static int16_t hums[k_max];
   int n = 0;
-  const uint32_t now = (uint32_t)time(nullptr);
+  const uint32_t now = wallClockIsCurrent() ? (uint32_t)time(nullptr) : 0;
   const uint32_t age_lo = (uint32_t)s_telem_win_now_h  * 3600u;
   const uint32_t age_hi = (uint32_t)s_telem_win_past_h * 3600u;
   if (SD.cardType() != CARD_NONE) {
@@ -50316,7 +50455,9 @@ bool UITask::saveThreadsToStorage() {
 static bool uiMsgsWriteResult(bool ok) {
   const uint32_t m = (uint32_t)millis();
   const time_t   now_t = time(nullptr);
-  const uint32_t ep = (now_t > 1700000000) ? (uint32_t)now_t : 0;   // 0 when the clock is unset
+  const uint32_t ep = (wallClockIsCurrent() &&
+                       now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH)
+                          ? (uint32_t)now_t : 0;
   if (ok) {
     s_msgs_write_ok_ms = m ? m : 1;
     s_msgs_write_ok_epoch = ep;
@@ -51886,20 +52027,6 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 
   // #207 auto-retry: apply the persisted Radio & Mesh toggle (default ON).
   the_mesh.setCompanionRetryEnabled(touchPrefsGetRetryEcho());
-
-#if defined(ESP32)
-  // Clock floor (#89): restore the highest epoch this device ever handed out so
-  // a power cycle without a time source cannot step protocol timestamps
-  // backwards (server replay guards silently drop those). Seed before the UI
-  // generates traffic; written back rate-capped in loop() + on shutdown().
-  rtc_clock.seedFloor(touchPrefsGetClockFloor());
-  // ...then push the resulting time into the ESP32 system clock, which is what every
-  // displayed timestamp reads. On a board with a battery-backed RTC chip (P4) the chip
-  // knows the time but the system clock is still on its power-on seed, so the UI would
-  // otherwise show 15 May 2024 until a network/GPS sync landed. Order matters: after
-  // seedFloor(), so a dead chip still yields the persisted floor instead of the seed.
-  rtc_clock.seedSystemClock();
-#endif
 
   // GPS resume: initBasicGPS() always leaves the module stopped at boot, so a
   // saved "GPS on" pref never actually starts the hardware until the user

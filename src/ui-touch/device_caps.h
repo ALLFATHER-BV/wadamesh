@@ -178,6 +178,33 @@
   #define CAP_KEYPAD_NAV 0
 #endif
 
+// Battery-backed clock that keeps wall time through a TRUE power-off (issue #383).
+// This is a DECLARED hardware fact, never "the generic 0x51 probe found something":
+// address-only auto-detection is what read the Pager's PCF85063A as a PCF8563, and
+// what let a chipless T-Deck look RTC-backed. A board earns a 1 here only when its
+// target.cpp drives a documented chip (HardwareRtcClock) or calls the core probe
+// against a chip the schematic confirms.
+//
+// 1 does NOT mean "the time is right": the chip's own integrity bit can say its
+// contents are untrustworthy after a power cut (the ThinkNode M9 report on #383),
+// and a dead backup cell reads the same way. That is a RUNTIME question — ask
+// rtc_clock.timeIsCurrent() / .source(), not this flag. Use this one for what is
+// physically fitted: diagnostics wording, and whether to probe at all.
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDISPLAY_P4)
+  #define CAP_HARDWARE_RTC 1
+#else
+  #define CAP_HARDWARE_RTC 0
+#endif
+
+// A true power cut can leave these boards without trustworthy wall time. The
+// T-Deck has no RTC; the M9's PCF8563 can report lost integrity after shutdown.
+// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383.
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+  #define CAP_BOOT_TIME_SYNC 1
+#else
+  #define CAP_BOOT_TIME_SYNC 0
+#endif
+
 // Round-cornered, tall/narrow phone-class panel (LilyGo T-Display P4, 568x1232). The
 // AMOLED corners are arcs, so content is inset from all four corners, and the very tall
 // aspect lets the status bar wrap to TWO rows (row 1 = name + clock, row 2 = the wifi/

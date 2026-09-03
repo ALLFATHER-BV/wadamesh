@@ -15,6 +15,7 @@
 #include "TLoraPagerBoard.h"
 #include <helpers/AutoDiscoverRTCClock.h>
 #include "../../src/helpers/ClockFloorRTC.h"   // monotonic send-timestamp floor (issue #89)
+#include "../../src/helpers/HardwareRtcClock.h"  // PCF85063A retention across power-off (issue #383)
 #include <helpers/SensorManager.h>
 #ifdef DISPLAY_CLASS
   #include <helpers/ui/ST7796LCDDisplay.h>
@@ -26,6 +27,7 @@
 extern TLoraPagerBoard board;
 extern WRAPPER_CLASS radio_driver;
 extern RADIO_CLASS radio;
+extern HardwareRtcClock hw_rtc;   // the board's PCF85063A; ClockFloorRTC's fallback
 extern ClockFloorRTC rtc_clock;
 extern EnvironmentSensorManager sensors;
 

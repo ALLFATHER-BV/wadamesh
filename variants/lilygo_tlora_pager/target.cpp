@@ -27,7 +27,12 @@ SPIClass* tloraPagerSharedSPI() {
 }
 
 ESP32RTCClock fallback_clock;
-ClockFloorRTC        rtc_clock(fallback_clock);
+// The Pager's PCF85063A sits between the software clock and the floor: reads
+// still come from the ESP32 clock, but the chip seeds it at boot and is written
+// through on every accepted sync, which is what survives a true power-off
+// (issue #383). ClockFloorRTC's monotonic/replay behaviour is unchanged.
+HardwareRtcClock     hw_rtc(fallback_clock);
+ClockFloorRTC        rtc_clock(hw_rtc);
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
@@ -39,18 +44,18 @@ EnvironmentSensorManager sensors(gps);
 bool radio_init() {
   fallback_clock.begin();
 
-  // rtc_clock.begin(Wire) is intentionally NOT called. This board has a real
-  // PCF85063A at I2C addr 0x51, but AutoDiscoverRTCClock (helpers/AutoDiscoverRTCClock.cpp)
-  // only knows the register-incompatible PCF8563 at that same address — its
-  // probe is just an I2C ACK check, so it would "detect" the PCF85063A as a
-  // PCF8563 and read its registers with the wrong layout, silently returning
-  // garbage timestamps instead of falling back cleanly. Skipping this just
-  // means we fall back to the ESP32 software clock, same as T-Deck/Heltec V4
-  // today. Proper PCF85063A support (SensorLib's SensorPCF85063) is a
-  // follow-up — see TLORA_PAGER_PORT.md.
+  // rtc_clock.begin(Wire) — the core's AutoDiscoverRTCClock probe — is still
+  // intentionally NOT called. Its probe is a bare I2C ACK at 0x51, so it would
+  // "detect" this board's PCF85063A as a register-incompatible PCF8563 and read
+  // garbage. hw_rtc drives the real chip instead, with the register map it
+  // actually has, and refuses any read that fails its integrity/BCD/plausibility
+  // checks (issue #383; the PORT.md follow-up is now done).
   //
   // I2C itself is already up: TLoraPagerBoard::begin() calls Wire.begin(SDA, SCL)
   // and runs before radio_init() in main.cpp's setup(), so no Wire.begin() here.
+  hw_rtc.begin(Wire, HardwareRtcClock::Chip::PCF85063A);
+  rtc_clock.noteHardwareClock(hw_rtc.present());
+  if (hw_rtc.adopted()) rtc_clock.noteHardwareTime();
 
   // No spi.begin() here: the shared SPIClass (see the `radio` global above)
   // was already attached to SCLK/MISO/MOSI by display.begin(), which runs

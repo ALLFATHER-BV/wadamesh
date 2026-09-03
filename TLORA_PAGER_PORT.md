@@ -791,10 +791,16 @@ MQTT, OTA) is resolution-agnostic or already keyed off caps.
    different register layout (RTClib's `RTC_PCF8563` driver would misread its
    registers), so calling `rtc_clock.begin(Wire)` would silently produce
    garbage timestamps instead of a clean fallback. `target.cpp`'s `radio_init()`
-   deliberately skips that call — same time behavior as T-Deck/Heltec V4 (ESP32
-   software clock) rather than a false "RTC found" that's actually wrong. Real
-   PCF85063A support (SensorLib's `SensorPCF85063`) is unscheduled follow-up
-   work, not part of any milestone ①–⑩ yet.
+   still deliberately skips that call.
+   **RESOLVED (issue #383).** The board now drives the real PCF85063A through
+   `src/helpers/HardwareRtcClock.*`, a board-declared adapter (no address-only
+   auto-detection) that proves the chip's identity with the same RAM-register
+   test SensorLib uses, honours its OS integrity bit, validates every BCD nibble
+   and calendar field, checks the epoch against `ClockFloorRTC`'s bounds, and
+   reads back every write. It seeds the ESP32 system clock once at boot and is
+   never touched on the hot path, so the shared I²C bus carries no extra traffic
+   per message or UI tick. That is what gives the Pager the powered-off retention
+   Ripple always had.
 1e. **`-D CGRAM_OFFSET=1` must land in Milestone ④'s pager env flags.**
    This panel's 222px glass is narrower than the ST7796 controller's 320px
    GRAM; TFT_eSPI's `ST7796_Rotation.h` only applies the required 49px

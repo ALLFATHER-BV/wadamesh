@@ -23,6 +23,10 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 - **T-Deck**: the everything device: touch, physical keyboard, trackball cursor
   or d-pad navigation, microSD (deep 5000-message chat history, map tile packs,
   data storage), GPS on the Plus, notification sounds through the I2S speaker.
+  Because the board has no battery-backed clock, Clock settings can optionally
+  use a saved Wi-Fi network once after a true cold boot to obtain the time, then
+  return Wi-Fi to off. This is off by default; saved open networks require a
+  second explicit opt-in and unknown networks are never joined.
   Tap Sym or Alt for one symbol, or double-tap either to lock the symbol layer;
   this needs [LilyGO keyboard-controller firmware with raw matrix mode](https://github.com/Xinyuan-LilyGO/T-Deck/tree/master/examples/Keyboard_ESP32C3)
   (June 2025 or newer). Older controller firmware keeps normal typing and
@@ -42,12 +46,16 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   GPS, microSD, keyboard backlight, lock screen and notification sound through
   the onboard codec and amp all work. Two builds, one per radio: LR1121 and
   SX1262 — flashing the wrong one leaves you with no radio, so check the label
-  on your unit. A card the Pager detects but cannot read shows up in File
+  on your unit. The onboard PCF85063A keeps time through a full power-off and is
+  synchronized automatically whenever the firmware accepts time from NTP, GPS,
+  a companion, CLI, or mesh bootstrap. A card the Pager detects but cannot read shows up in File
   Manager greyed, and tapping it retries the mount; formatting is deliberately
   left to a computer (FAT32) rather than done on-device.
 - **ThinkNode M9**: keyboard plus d-pad navigation (no touch), same feature set
   as the other boards where the hardware allows. Every key and mode is covered
-  in the [keyboard & d-pad guide](THINKNODE_M9_SHORTCUTS.md). New in beta_38;
+  in the [keyboard & d-pad guide](THINKNODE_M9_SHORTCUTS.md). Its PCF8563 is
+  validated at boot; if it reports lost integrity, the same optional saved-Wi-Fi
+  cold-boot sync offered on T-Deck is available in Clock settings. New in beta_38;
   report anything that feels off.
 - **RAK WisMesh Tap V2**: newest port, touch-driven. The browser-flash path is
   fresh; if the flasher cannot open the serial port, put the board in download

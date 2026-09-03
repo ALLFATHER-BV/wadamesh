@@ -32,8 +32,14 @@ EnvironmentSensorManager sensors(gps);
 
 bool radio_init() {
   fallback_clock.begin();
-  rtc_clock.begin(Wire);
   Wire.begin(18, 8);
+  // NO rtc_clock.begin(Wire) here (issue #383). This board has no declared
+  // battery-backed clock, and the call was doubly wrong: it ran BEFORE the bus
+  // was even begun, so "the probe found nothing" was never evidence of anything.
+  // A board either drives a documented chip through HardwareRtcClock (see the
+  // Pager and the M9) or has none — "the generic probe happened to be quiet" is
+  // not a capability test. CAP_HARDWARE_RTC is 0 here, which is what makes the
+  // opt-in cold-boot network time sync worth offering on this board.
 
 #if defined(P_LORA_SCLK)
   return radio.std_init(&spi);

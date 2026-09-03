@@ -2,6 +2,7 @@
 
 #define RADIOLIB_STATIC_ONLY 1
 #include "../../src/helpers/ClockFloorRTC.h" // monotonic send-timestamp floor (issue #89)
+#include "../../src/helpers/HardwareRtcClock.h" // PCF8563 retention across power-off (issue #383)
 #include "M9Board.h"
 #include <RadioLib.h>
 #include <helpers/AutoDiscoverRTCClock.h>
@@ -27,6 +28,7 @@
 extern ThinkNodeM9Board board;
 extern WRAPPER_CLASS radio_driver;
 extern RADIO_CLASS radio;
+extern HardwareRtcClock hw_rtc;   // the board's PCF8563; ClockFloorRTC's fallback
 extern ClockFloorRTC rtc_clock;
 extern EnvironmentSensorManager sensors;
 

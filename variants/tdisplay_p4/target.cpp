@@ -101,6 +101,17 @@ uint16_t TDisplayP4Board::getBattMilliVolts() {
 bool radio_init() {
   fallback_clock.begin();
   rtc_clock.begin(Wire);            // PCF8563 RTC is on I2C_1 (shared Wire, SDA=7/SCL=8)
+  // This board's chip IS documented, so declare it rather than leaving the
+  // clock-source diagnostics to guess (#383). Unlike the Pager and the M9 this
+  // one still goes through the core's probe, so a read that loses the chip's VL
+  // bit is still only caught by ClockFloorRTC's plausibility bounds — which is
+  // what already catches this board's known "came back asserting 2043".
+  rtc_clock.noteHardwareClock(true);
+  const uint32_t retained = rtc_clock.getCurrentTime();
+  if (retained > ClockFloorRTC::MIN_VALID_EPOCH &&
+      retained <= ClockFloorRTC::MAX_PLAUSIBLE_EPOCH) {
+    rtc_clock.noteHardwareTime();
+  }
 
   // SX1262 RESET is on the XL9535 — pulse it before RadioLib init.
   xl9535.sx1262Reset();
