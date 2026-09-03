@@ -198,8 +198,6 @@ bool    touchPrefsSetConsoleMode(bool on);
 // keyboard typing nonsense (#341, #351).
 bool    touchPrefsGetKbForceLegacy();
 bool    touchPrefsSetKbForceLegacy(bool on);
-bool    touchPrefsGetKbForceLegacy();
-bool    touchPrefsSetKbForceLegacy(bool on);
 bool    touchPrefsGetConsoleMonitor();      // console: show incoming messages live
 bool    touchPrefsSetConsoleMonitor(bool on);
 

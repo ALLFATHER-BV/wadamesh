@@ -10490,8 +10490,16 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     mesh::Utils::toHex(keyhex, e_disc.ci.id.pub_key, 4);
     keyhex[8] = '\0';
     char meta_buf[64];
-    snprintf(meta_buf, sizeof(meta_buf), "%s · %u hop · %s…",
-             type_label, (unsigned)e_disc.path_len, keyhex);
+    // 0xFF is OUT_PATH_UNKNOWN, not a hop count: an advert that arrived by flood
+    // has no known path, and printing it raw showed "255 hop", which reads as a
+    // hop count far beyond any real one (#394). Direct is worth saying plainly,
+    // and a count needs its plural or every multi-hop row reads as broken.
+    char hop_buf[16];
+    if (e_disc.path_len == OUT_PATH_UNKNOWN) snprintf(hop_buf, sizeof(hop_buf), "%s", TR("path unknown"));
+    else if (e_disc.path_len == 0)           snprintf(hop_buf, sizeof(hop_buf), "%s", TR("direct"));
+    else snprintf(hop_buf, sizeof(hop_buf), "%u %s", (unsigned)e_disc.path_len,
+                  e_disc.path_len == 1 ? TR("hop") : TR("hops"));
+    snprintf(meta_buf, sizeof(meta_buf), "%s · %s · %s…", type_label, hop_buf, keyhex);
     lv_label_set_text(meta, meta_buf);
     lv_obj_set_style_text_color(meta, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(meta, &g_font_12, LV_PART_MAIN);
@@ -13665,7 +13673,11 @@ static void buildDeviceSettings(int sec) {
      apply within ~8 ms, the NVS save is debounced. "Off" sets the backlight MODE
      off (the same axis the control-center chip cycles), so the chip and this page
      never disagree; the slider (1-100) only sets how bright on/auto glow. */
-  {
+  // Hidden on the older keyboards, which have no controllable backlight: these
+  // controls did nothing there but still looked like settings (#382). "Older
+  // keyboard protocol" already declares which keyboard is fitted, so it gates
+  // this too rather than asking the user the same question twice.
+  if (!touchPrefsGetKbForceLegacy()) {
     y += settingsRowLabel(body, y, 0, TR("Keyboard backlight"), COLOR_SUB, &g_font_12, 0) + 4;
     lv_obj_t* sl = lv_slider_create(body);
     g_set_modal.kbbl_slider = sl;
@@ -54228,7 +54240,7 @@ static void touchPanelSleep(bool slp) {
   s_asleep = slp;
   display.panelSleep(slp);
 }
-#elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_TFT)
+#elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_TFT) || defined(HAS_THINKNODE_M9)
 // ---- ST7789 panel sleep (anti burn-in) -------------------------------------
 // Backlight-off alone is NOT screen-off: the ST7789 keeps refreshing the same
 // static image behind the dark backlight, continuously biasing the liquid
@@ -54241,18 +54253,29 @@ static void touchPanelSleep(bool slp) {
 // redraw. Safe alongside LVGL: flushes run on this same task (no concurrent
 // bus use), and the datasheet allows memory writes while asleep.
 static void touchPanelCmd(uint8_t cmd) {
+#if defined(HAS_THINKNODE_M9)
+  // The M9 takes ST7789LCDDisplay's default constructor branch: the GLOBAL SPI
+  // instance, shared with the LoRa radio, and it deliberately does not define
+  // PIN_TFT_SCL/SDA. So use that same bus object rather than standing up a
+  // second one on pins this board never declares. The display driver already
+  // writes every frame over it, so a two-byte command inside a transaction is
+  // nothing new for the bus; the transaction is what keeps it off the radio's toes.
+  SPIClass* const bus = &SPI;
+#else
   static SPIClass* s_cmd_spi = nullptr;
   if (!s_cmd_spi) {
     s_cmd_spi = new SPIClass(HSPI);                       // same port as the driver's displaySPI
     s_cmd_spi->begin(PIN_TFT_SCL, -1, PIN_TFT_SDA, -1);   // same pins; re-init is idempotent
   }
-  s_cmd_spi->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
+  SPIClass* const bus = s_cmd_spi;
+#endif
+  bus->beginTransaction(SPISettings(8000000, MSBFIRST, SPI_MODE0));
   digitalWrite(PIN_TFT_DC, LOW);    // command
   digitalWrite(PIN_TFT_CS, LOW);
-  s_cmd_spi->transfer(cmd);
+  bus->transfer(cmd);
   digitalWrite(PIN_TFT_CS, HIGH);
   digitalWrite(PIN_TFT_DC, HIGH);   // back to data (the driver's idle default)
-  s_cmd_spi->endTransaction();
+  bus->endTransaction();
 }
 static void touchPanelSleep(bool slp) {
   static bool s_asleep = false;
@@ -54322,8 +54345,18 @@ static inline void touchScreenBacklight(bool on) {
   // M9: BL_EN (GPIO17) drives a PNP transistor gate — LEDC PWM works (confirmed on hardware,
   // Specter bring-up), but duty is INVERTED vs. a normal N-channel/NPN setup: lower duty on
   // the base = MORE conduction = brighter. applyBrightness() below already accounts for this.
-  if (on) applyBrightness(s_brightness_pct);
-  else    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
+  // Backlight off alone is not screen off: the ST7789 keeps refreshing the same
+  // static image behind a dark backlight, which is what actually retains it into
+  // the glass -- visible as a ghost of the lock screen in bright light (#390).
+  // Same order as the PWM boards: wake the panel before lighting it, and stop it
+  // driving the crystals after darkening it.
+  if (on) {
+    touchPanelSleep(false);
+    applyBrightness(s_brightness_pct);
+  } else {
+    ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
+    touchPanelSleep(true);
+  }
 #elif defined(HAS_TDISPLAY_P4)
   // T-Display P4: the RM69A10 AMOLED has no backlight pin — "brightness" is the panel's own DCS
   // 0x51 register. Off = 0 (blanks the AMOLED), on = restore the saved brightness. Without this
