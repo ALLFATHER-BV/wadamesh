@@ -4000,6 +4000,34 @@ static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Sel
 // direction (not just next/prev in the linear list). Scores candidates in that
 // half-plane by primary-axis distance + a cross-axis penalty (prefers aligned + close).
 enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
+// Can `o` take focus from `cur` on a `dir` press at all? (Valid, visible, and not a
+// horizontal-only secondary target — chat-row gears are reachable by LEFT/RIGHT only, so
+// UP/DOWN walk the primary rows instead of hopping onto a gear.)
+static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
+  if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
+  if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
+  return true;
+}
+// Geometry of candidate `b` relative to the focused rect `a`: true when it lies in `dir`,
+// with the gaps navMoveDir ranks by. Direction uses the CENTRE delta (which side the
+// candidate is on); the gaps are rect-to-rect, not centre-to-centre — `primary` is the gap
+// along the pressed axis (how far past the current edge it sits) so the element IMMEDIATELY
+// in that direction wins, and `cross` is the off-axis gap, 0 whenever the rects line up on
+// that axis (a full-width row below a right-aligned switch still counts as "straight down").
+static bool navDirMetrics(const lv_area_t& a, const lv_area_t& b, int dir, long* primary, long* cross) {
+  const int dx = (b.x1 + b.x2) / 2 - (a.x1 + a.x2) / 2;
+  const int dy = (b.y1 + b.y2) / 2 - (a.y1 + a.y2) / 2;
+  long hgap = b.x1 - a.x2; if (a.x1 - b.x2 > hgap) hgap = a.x1 - b.x2; if (hgap < 0) hgap = 0;
+  long vgap = b.y1 - a.y2; if (a.y1 - b.y2 > vgap) vgap = a.y1 - b.y2; if (vgap < 0) vgap = 0;
+  bool ok;
+  switch (dir) {
+    case NAV_UP:    ok = dy < 0; *primary = vgap; *cross = hgap; break;
+    case NAV_DOWN:  ok = dy > 0; *primary = vgap; *cross = hgap; break;
+    case NAV_LEFT:  ok = dx < 0; *primary = hgap; *cross = vgap; break;
+    default:        ok = dx > 0; *primary = hgap; *cross = vgap; break;  // NAV_RIGHT
+  }
+  return ok;
+}
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -4032,35 +4060,49 @@ static void navMoveDir(int dir) {
     return;
   }
   lv_area_t a; lv_obj_get_coords(cur, &a);
-  const int cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+  // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
+  // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
+  // never jump over an intervening focusable: on Send advert, DOWN from the Flood button
+  // used to land on the "Flood every" dropdown two rows down (wide, so perfectly aligned)
+  // instead of the "On boot" switch right below it (narrow + right-aligned, so its cross
+  // penalty out-weighed a whole extra row of distance).
+  long bandLo = 0, bandHi = 0;
+  bool haveBand = false;
+  long nearPrimary = 0x7FFFFFFFL, nearCross = 0x7FFFFFFFL;
+  for (int i = 0; i < n; i++) {
+    lv_obj_t* o = s_nav_objs[i];
+    if (!navDirCandidate(o, cur, dir)) continue;
+    lv_area_t b; lv_obj_get_coords(o, &b);
+    long primary, cross;
+    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
+    if (primary > nearPrimary || (primary == nearPrimary && cross >= nearCross)) continue;
+    nearPrimary = primary; nearCross = cross;
+    const bool vert = (dir == NAV_UP || dir == NAV_DOWN);
+    bandLo = vert ? b.y1 : b.x1;
+    bandHi = vert ? b.y2 : b.x2;
+    haveBand = true;
+  }
   lv_obj_t* best = nullptr;
   long bestScore = 0x7FFFFFFFL;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
-    if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
-    // Horizontal-only secondary targets (chat-row gears) are reachable by LEFT/RIGHT only, so
-    // UP/DOWN walk the primary rows instead of hopping onto a gear.
-    if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) continue;
+    if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
-    const int dx = (b.x1 + b.x2) / 2 - cx, dy = (b.y1 + b.y2) / 2 - cy;
-    // Cross-axis distance is the GAP between the rects (0 when they overlap on that
-    // axis) — so a full-width row below a right-aligned switch still counts as
-    // "straight down" and isn't skipped for a far but column-aligned element.
-    long hgap = b.x1 - a.x2; if (a.x1 - b.x2 > hgap) hgap = a.x1 - b.x2; if (hgap < 0) hgap = 0;
-    long vgap = b.y1 - a.y2; if (a.y1 - b.y2 > vgap) vgap = a.y1 - b.y2; if (vgap < 0) vgap = 0;
-    // Direction test uses the CENTRE delta (which side is the candidate on). Ranking uses
-    // GAPS, not centre distance: `primary` = the gap along the pressed axis (how far past the
-    // current edge the candidate sits) so the element IMMEDIATELY in that direction wins — a
-    // tall, far button is no longer out-scored by a sideways box whose centre happens to be
-    // vertically close. `cross` = the off-axis gap (0 when the rects line up on that axis).
-    bool ok; long primary, cross;
-    switch (dir) {
-      case NAV_UP:    ok = dy < 0; primary = vgap; cross = hgap; break;
-      case NAV_DOWN:  ok = dy > 0; primary = vgap; cross = hgap; break;
-      case NAV_LEFT:  ok = dx < 0; primary = hgap; cross = vgap; break;
-      default:        ok = dx > 0; primary = hgap; cross = vgap; break;  // NAV_RIGHT
+    long primary, cross;
+    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
+    // Out of band = entirely past the nearest candidate in the pressed direction, i.e. a
+    // further row/column. Candidates that merely overlap the band (a taller neighbour, a
+    // switch beside a button) stay in the running and are ranked by the score below.
+    if (haveBand) {
+      bool past;
+      switch (dir) {
+        case NAV_UP:    past = b.y2 <  bandLo; break;
+        case NAV_DOWN:  past = b.y1 >  bandHi; break;
+        case NAV_LEFT:  past = b.x2 <  bandLo; break;
+        default:        past = b.x1 >  bandHi; break;  // NAV_RIGHT
+      }
+      if (past) continue;
     }
-    if (!ok) continue;
     // Column/row alignment dominates: a candidate directly in line (cross == 0) beats a
     // nearer-but-sideways one, so DOWN from a right-column button lands on the button below
     // it, not a box off to the left. Among in-line candidates the closest (smallest gap) wins.
@@ -9898,6 +9940,7 @@ static bool touchHasOtaUpdateSlot() {
 // ---- Advert modal: pick flood (multi-hop) or zero-hop ----
 static lv_obj_t* s_advert_root = nullptr;   // Send-advert app page (tall topbar, like RF Monitor / Spectrum)
 static void closeAdvertPage();
+static void styleDropdown(lv_obj_t* dd);    // fwd: defined beside clampDropdownListCb below
 static void advertFloodCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   bool ok = g_lv.task->sendAdvertFlood();
@@ -10059,6 +10102,7 @@ static void openAdvertPage() {
   lv_dropdown_set_options_static(fdd, TR("Off\n1 day\n2 days\n3 days\n7 days"));
   lv_obj_set_width(fdd, SC(120));
   lv_obj_align(fdd, LV_ALIGN_TOP_RIGHT, -4, y);
+  styleDropdown(fdd);
   lv_dropdown_set_selected(fdd, advertDdIdx(kAutoFloodHrs, (int)(sizeof(kAutoFloodHrs)/sizeof(kAutoFloodHrs[0])), touchPrefsGetFloodAdvHrs()));
   lv_obj_add_event_cb(fdd, advertAutoFloodCb, LV_EVENT_VALUE_CHANGED, nullptr);
   y += SC(44);
@@ -10072,6 +10116,7 @@ static void openAdvertPage() {
   lv_dropdown_set_options_static(ldd, TR("Off\n60 min\n90 min\n2 hours\n3 hours\n4 hours"));
   lv_obj_set_width(ldd, SC(120));
   lv_obj_align(ldd, LV_ALIGN_TOP_RIGHT, -4, y);
+  styleDropdown(ldd);
   lv_dropdown_set_selected(ldd, advertDdIdx(kAutoLocalMin, 6, touchPrefsGetLocalAdvMin()));
   lv_obj_add_event_cb(ldd, advertAutoLocalCb, LV_EVENT_VALUE_CHANGED, nullptr);
   y += SC(46);
@@ -10815,6 +10860,31 @@ static void clampDropdownListCb(lv_event_t* e) {
   const lv_coord_t y1 = lv_obj_get_y(list);
   if (y1 < bar)            lv_obj_set_y(list, bar);                 // opened up into the status bar
   else if (y1 + h > ver)   lv_obj_set_y(list, ver - h);            // hangs off the bottom edge
+}
+
+// The standard dropdown look + behaviour, in one call (the settings pages spell the same
+// thing out inline). Worth having as a helper because an UNSTYLED dropdown is subtly broken
+// on a keyboard board: LVGL's stock theme is the LIGHT one, so the closed button and its open
+// list render as near-white cards — and navFocusCb's focus highlight reverse-videos to
+// COLOR_TEXT, i.e. paints white on white, so the cursor simply vanishes on that widget.
+// Panel colours fix that; the accent-filled selected row does the same job INSIDE an open
+// list (the stock theme highlights it with its own blue primary, not the UI accent); and the
+// clamp keeps a list that opens upward from sliding under the tall app-page title bar.
+static void styleDropdown(lv_obj_t* dd) {
+  lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  if (lv_obj_t* list = lv_dropdown_get_list(dd)) {   // created by the constructor, so it exists already
+    lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_text_color(list, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(list, &g_font_12, LV_PART_MAIN);
+    // The highlighted option (LVGL draws it in LV_PART_SELECTED with the CHECKED state).
+    lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(list, lv_color_hex(COLOR_ON_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
+  }
+  lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
 }
 
 // Signal-probe controls also live in the home-graph "Signal & traffic" popup;
@@ -40832,14 +40902,14 @@ static void ccLongNavCb(lv_event_t* e) {
   s_settings_from_cc = true;   // Back from here reopens the dropdown, not Home
 }
 // Do Not Disturb quick-toggle (control center). Flips the scheduled-silence master switch
-// (the time window lives in Settings > Sound, added with the DND feature); the chip's bell
-// gains a slash while DND is on. All boards — DND itself isn't board-gated.
+// (the time window lives in Settings > Sound, added with the DND feature); the chip's moon
+// fills with the accent while DND is on. All boards — DND itself isn't board-gated.
 static void ccDndCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const bool now_on = !touchPrefsGetDndEnabled();
   touchPrefsSetDndEnabled(now_on);
   if (g_lv.task) g_lv.task->showAlert(now_on ? TR("Do Not Disturb on") : TR("Do Not Disturb off"), 800);
-  refreshStatusLabels();   // update the status-bar DND bell right away
+  refreshStatusLabels();   // update the status-bar DND moon right away
   openControlCenter();     // rebuild so the chip's icon + highlight flip
 }
 
@@ -41504,11 +41574,14 @@ static void openControlCenter() {
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
   ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th, CAT_SOUND);
 #endif
-  // Do Not Disturb (the scheduled-silence feature) — dynamic bell: a plain bell when DND is off,
-  // a bell-with-a-slash when it's on. All boards; the time window lives in Settings > Sound.
+  // Do Not Disturb (the scheduled-silence feature) — the crescent moon everyone knows as DND,
+  // matching the status-bar glyph that appears while the window is live. The chip's own fill
+  // (solid accent on / faint off) carries the state, so the icon stays the same both ways —
+  // a bell/bell-slash pair read as "notification sound", which is the separate Sound chip.
+  // All boards; the time window lives in Settings > Sound.
   {
     const bool dnd_on = touchPrefsGetDndEnabled();
-    ccToggle(row, dnd_on ? TOUCH_SYM_BELL_SLASH : TOUCH_SYM_BELL, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
+    ccToggle(row, TOUCH_SYM_MOON, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
   }
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
   ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
