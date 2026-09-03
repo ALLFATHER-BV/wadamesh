@@ -1113,3 +1113,5 @@ Older keyboard protocol	Older keyboard protocol
 Using the older keyboard protocol	Using the older keyboard protocol
 turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
+Allow saved open networks for time sync	Allow saved open networks for time sync
+Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot

@@ -54125,6 +54125,20 @@ void consoleHostRebootToUi() {
 }
 #endif
 
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU)
+// gpsEnsureBigRxRing() is defined in src/main.cpp, which the two ESP32-P4
+// targets never compile, while the calls to it live in UITask.cpp and
+// MyMesh.cpp which every target does. That left both P4 builds with an
+// undefined reference (#385).
+//
+// A no-op is the correct body rather than a stub that pretends: neither P4
+// board drives its GPS through Arduino's Serial1, so there is no stock 256 byte
+// ring to enlarge. Defined here because this file is compiled everywhere;
+// see the standing rule that a symbol shared between the UI and the Arduino
+// main belongs in UITask.cpp, and src/main.cpp may only extern it.
+void gpsEnsureBigRxRing() {}
+#endif
+
 void UITask::msgRead(int msgcount) { _msgcount = msgcount; }
 
 // ---- "At a glance" notification --------------------------------------------
