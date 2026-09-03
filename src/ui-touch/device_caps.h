@@ -25,17 +25,7 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(HAS_SQUARE)                  // ===== square (ESP32-S3) =====
-  #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0
-  #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
-  #define CAP_SD           0   // SD_MMC, not Arduino SD
-  #define CAP_FILESYSTEM   1
-  #define CAP_GPS          1
-  #define CAP_OTA          1
-  #define CAP_LOCK_SCREEN  1
-
-#elif defined(HAS_TDECK_GT911)          // ===== LilyGo T-Deck (ESP32-S3) =====
+#if defined(HAS_TDECK_GT911)            // ===== LilyGo T-Deck (ESP32-S3) =====
   #define CAP_TOUCH        1   // capacitive touchscreen (pointer input)
   #define CAP_ROTATABLE    0   // panel is fixed landscape
   #define CAP_LARGE_SCREEN 0   // 320x240
@@ -186,6 +176,33 @@
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
+#endif
+
+// Battery-backed clock that keeps wall time through a TRUE power-off (issue #383).
+// This is a DECLARED hardware fact, never "the generic 0x51 probe found something":
+// address-only auto-detection is what read the Pager's PCF85063A as a PCF8563, and
+// what let a chipless T-Deck look RTC-backed. A board earns a 1 here only when its
+// target.cpp drives a documented chip (HardwareRtcClock) or calls the core probe
+// against a chip the schematic confirms.
+//
+// 1 does NOT mean "the time is right": the chip's own integrity bit can say its
+// contents are untrustworthy after a power cut (the ThinkNode M9 report on #383),
+// and a dead backup cell reads the same way. That is a RUNTIME question — ask
+// rtc_clock.timeIsCurrent() / .source(), not this flag. Use this one for what is
+// physically fitted: diagnostics wording, and whether to probe at all.
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDISPLAY_P4)
+  #define CAP_HARDWARE_RTC 1
+#else
+  #define CAP_HARDWARE_RTC 0
+#endif
+
+// A true power cut can leave these boards without trustworthy wall time. The
+// T-Deck has no RTC; the M9's PCF8563 can report lost integrity after shutdown.
+// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383.
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+  #define CAP_BOOT_TIME_SYNC 1
+#else
+  #define CAP_BOOT_TIME_SYNC 0
 #endif
 
 // Round-cornered, tall/narrow phone-class panel (LilyGo T-Display P4, 568x1232). The
