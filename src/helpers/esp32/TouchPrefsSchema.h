@@ -104,6 +104,14 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
+// The whole struct is persisted as ONE blob (cfgFlush -> SdNvsPrefs::putBytes).
+// On the file-backed path that store rejects any value over 2048 bytes, and the
+// rejection is silent: cfgFlush just returns false and every preference stops
+// persisting, with nothing in the log to say why. The struct grows most releases,
+// so guard the ceiling here rather than discover it as "settings do not save" on
+// whichever board is using the file backend. About 500 bytes today.
+static_assert(sizeof(Config) <= 2048,
+              "Config exceeds the SdNvsPrefs value cap; prefs would silently stop saving");
 static_assert(offsetof(Config, boot_wifi_open) + sizeof(Config::boot_wifi_open) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays

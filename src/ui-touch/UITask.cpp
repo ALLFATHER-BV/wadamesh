@@ -6951,14 +6951,14 @@ static void accentAltCb(lv_event_t* e) {
 // keystroke / a pick / hiding the keyboard.
 static lv_obj_t* s_accbox    = nullptr;
 static lv_obj_t* s_accbox_ta = nullptr;   // the field the box edits
-#if defined(TLORA_PAGER)
-// No touch on this board, and the cells below are NAV_SKIP_FLAG (excluded from
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
+// No touch on these boards, and the cells below are NAV_SKIP_FLAG (excluded from
 // the normal keyboard/encoder focus group by design, since touch boards pick
 // them by tap) -- without this, the box is completely unreachable here. Fn
 // (Alt)+Space jumps in (handleHwKey()); the rotary encoder then walks
 // s_accbox_cells (updatePagerEncoder()); Enter (the encoder's own click)
 // confirms via accentNavConfirm(); Backspace cancels.
-static constexpr int kAccentNavMax = 8;   // covers kAccentSets' largest set (8, 'a'/'A')
+static constexpr int kAccentNavMax = 9;   // covers kAccentSets' largest set ('a'/'A': 9, incl. æ)
 static lv_obj_t* s_accbox_cells[kAccentNavMax];
 static uint8_t   s_accbox_cell_n    = 0;
 static bool      s_accentnav_active = false;
@@ -6971,12 +6971,12 @@ static const AccentSet* accentSetFor(char c) {
 static void accentBoxHide() {
   if (s_accbox) { lv_obj_del(s_accbox); s_accbox = nullptr; }
   s_accbox_ta = nullptr;
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
   s_accentnav_active = false;
   s_accbox_cell_n = 0;
 #endif
 }
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
 static void accentNavRestyle() {
   for (uint8_t i = 0; i < s_accbox_cell_n; ++i) {
     if (!s_accbox_cells[i]) continue;
@@ -7008,15 +7008,6 @@ static void accentBoxCellCb(lv_event_t* e) {
 }
 static void accentBoxMaybeShow() {
   accentBoxHide();                          // each new keystroke clears the last box
-#if defined(HAS_M9_KEYBOARD)
-  // Never on the M9: the box is tap-to-pick (its cells are NAV_SKIP_FLAG by
-  // design) and the key-selection machinery is pager-only (encoder walk +
-  // Enter) — with no touch and no nav path here it would float over the
-  // composer as dead chrome nothing can select. Deliberately suppressed
-  // until an M9 d-pad selection path is built; the Accent-popups settings
-  // row is hidden there for the same reason.
-  return;
-#endif
   if (!s_accent_popups) return;             // user turned accent popups off in settings
   if (!g_lv.keyboard) return;
   lv_obj_t* ta = lv_keyboard_get_textarea(g_lv.keyboard);
@@ -7026,7 +7017,7 @@ static void accentBoxMaybeShow() {
   const AccentSet* set = accentSetFor(last[0]);
   if (!set) return;
   s_accbox_ta = ta;
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
   s_accentnav_active = false;   // fresh box -> Fn+Space (re-)arms nav mode
   s_accentnav_idx = 0;
   s_accbox_cell_n = set->n < kAccentNavMax ? set->n : (uint8_t)kAccentNavMax;
@@ -7053,7 +7044,7 @@ static void accentBoxMaybeShow() {
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(c, accentBoxCellCb, LV_EVENT_CLICKED, (void*)set->v[i]);
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (i < kAccentNavMax) s_accbox_cells[i] = c;
 #endif
     lv_obj_t* l = lv_label_create(c);
@@ -12472,7 +12463,6 @@ static void showSensorsTabToggleCb(lv_event_t* e) {
 // the tap-to-pick accent box stops appearing as you type. Default ON.
 // (Not compiled on the M9 — the pickers are suppressed there and its settings
 // row is hidden, see accentBoxMaybeShow.)
-#if !defined(HAS_M9_KEYBOARD)
 static void accentPopupsToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -12483,7 +12473,6 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (!on) accentBoxHide();   // dismiss any box already on screen
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
-#endif
 
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
@@ -13719,11 +13708,10 @@ static void buildDeviceSettings(int sec) {
     }
   }
 
-#if !defined(HAS_M9_KEYBOARD)
   /* Accent popups. Typing a Latin letter that has accented variants pops up a
-     tap-to-pick box; turn this off for plain typing. Default on. Not on the
-     M9: the pickers are suppressed there (no touch and no key-selection path
-     — see accentBoxMaybeShow), so the switch would control nothing. */
+     pick box; turn this off for plain typing. Default on. Now shown on the M9
+     too: it has a d-pad selection path as of #387, so the switch controls
+     something there. */
   {
     int h = settingsRowLabel(body, y, 4, TR("Accent popups"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -13739,7 +13727,6 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
-#endif
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
@@ -25024,6 +25011,9 @@ static void statusBarUnreadCb(lv_event_t* e) {
 // lives below openControlCenter (it links to the tool openers defined there);
 // the home's Apps button and the back-key handler reach it through these.
 static lv_obj_t* s_appdrawer_root = nullptr;
+// Badge counts baked into the drawer grid when it was last built, so the
+// refresh tick can tell whether they still match reality (see #393).
+static uint32_t  s_appdrawer_badge_sig = 0;
 static void openAppDrawer();
 static void closeAppDrawer();
 static void homeAppsBtnCb(lv_event_t* e) {   // "Apps" launcher on the command centre -> open the drawer
@@ -39786,6 +39776,29 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // Printable input falls through to the textarea and re-filters the list.
   }
 #endif
+#if defined(HAS_M9_KEYBOARD)
+  // The M9 has no touch, so the accent box is driven by the d-pad, the same way
+  // the mention box already is on this board. There is no arming step: the box
+  // only exists for the moment after typing a base letter, so LEFT/RIGHT belong
+  // to it while it is up and go back to the caret as soon as it closes. Enter
+  // takes the highlighted variant, Back and Backspace dismiss (#387).
+  if (s_accbox && s_accbox_cell_n) {
+    if (key == M9_KEY_LEFT || key == M9_KEY_RIGHT) {
+      if (!s_accentnav_active) { s_accentnav_active = true; s_accentnav_idx = 0; }
+      else s_accentnav_idx = (key == M9_KEY_RIGHT)
+             ? (s_accentnav_idx + 1) % (int)s_accbox_cell_n
+             : (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
+      accentNavRestyle();
+      return;
+    }
+    if (s_accentnav_active) {
+      if (key == 0x0D)                            { accentNavConfirm(); return; }
+      if (key == 0x08 || key == 0x7F ||
+          key == M9_KEY_HW_BACK)                  { accentBoxHide(); return; }
+      return;   // swallow the rest while picking
+    }
+  }
+#endif
 #if defined(TLORA_PAGER)
   if (s_accentnav_active) {
     if (key == 0x08 || key == 0x7F) { accentBoxHide(); return; }
@@ -43293,6 +43306,7 @@ static void openAppDrawer() {
   // First tile is "Command" (back to the command centre); the rest are the apps.
   const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
   const int mentions = g_lv.task ? g_lv.task->getUnreadMentionCount() : 0;
+  s_appdrawer_badge_sig = ((uint32_t)(unread & 0xFFFF) << 16) | (uint32_t)(mentions & 0xFFFF);
   // Per-tile icon colour. Command (house) + Signal follow the theme accent; the
   // rest get a dedicated, meaningful hue so the grid isn't a wall of one colour.
   struct { const char* icon; const char* label; int act; int badge; uint32_t color; } tiles[] = {
@@ -44197,6 +44211,16 @@ static void statusBarLayoutTwoRow(int slide) {
 #endif
 
 static void updateGlobalStatusBar() {
+  // The drawer's badges are a snapshot taken when the grid was built, so a
+  // message arriving while it is open -- including while the screen was locked
+  // over it -- left the count stale until you navigated away and back (#393).
+  // Rebuild on an actual change of the counts, not every tick, using the same
+  // close/open idiom the tile-changing settings already use.
+  if (s_appdrawer_root && g_lv.task) {
+    const uint32_t sig = ((uint32_t)(g_lv.task->getUnreadTotal() & 0xFFFF) << 16)
+                       | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0xFFFF);
+    if (sig != s_appdrawer_badge_sig) { closeAppDrawer(); openAppDrawer(); }
+  }
   if (!g_statusbar.root || !g_lv.task) return;
 
   // ---- Layer order (edge-triggered) ----
