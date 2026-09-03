@@ -6,7 +6,7 @@
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_SQUARE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 #include <SD_MMC.h>
 #endif
 
@@ -1139,9 +1139,9 @@ bool DataStore::useSdStorage() {
 }
 #endif
 
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_SQUARE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 // Full-store adoption on an SD_MMC slot. P4 callers migrate internal files
-// first; square mounts and adopts the card directly at boot.
+// first; the Wio Tracker L2 mounts and adopts the card directly at boot.
 bool DataStore::useSdMmcStorage() {
   if (!SD_MMC.exists("/meshcomod"))          SD_MMC.mkdir("/meshcomod");
   if (!SD_MMC.exists("/meshcomod/bl"))       SD_MMC.mkdir("/meshcomod/bl");

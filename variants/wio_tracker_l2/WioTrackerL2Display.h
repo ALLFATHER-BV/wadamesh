@@ -7,7 +7,7 @@
 #include <LovyanGFX.hpp>
 #include <lgfx/v1/panel/Panel_NV3031B.hpp>
 
-class SquareLight : public lgfx::v1::ILight {
+class WioTrackerL2Light : public lgfx::v1::ILight {
 public:
   bool init(uint8_t brightness) override;
   void setBrightness(uint8_t brightness) override;
@@ -18,9 +18,9 @@ private:
   uint8_t _brightness = 160;
 };
 
-class SquareDisplay : public DisplayDriver {
+class WioTrackerL2Display : public DisplayDriver {
 public:
-  SquareDisplay();
+  WioTrackerL2Display();
   bool begin();
 
   bool isOn() override { return _isOn; }
@@ -46,7 +46,7 @@ public:
 private:
   lgfx::Panel_NV3031B _panel;
   lgfx::Bus_SPI _bus;
-  SquareLight _light;
+  WioTrackerL2Light _light;
   lgfx::Touch_GT911 _touch;
   lgfx::LGFX_Device _lcd;
   bool _isOn = false;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#if defined(HAS_SQUARE) && defined(ESP32)
+#if defined(HAS_WIO_TRACKER_L2) && defined(ESP32)
 
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>
@@ -7,9 +7,9 @@
 #include <helpers/input/HeltecV4CapTouch.h>
 #include <helpers/ui/MomentaryButton.h>
 
-#include "SquareDisplay.h"
+#include "WioTrackerL2Display.h"
 
-extern SquareDisplay display;
+extern WioTrackerL2Display display;
 
 namespace {
 bool s_ready = false;
@@ -72,7 +72,7 @@ bool heltecV4CapTouchPopSwipe(int8_t* x, int8_t* y) {
 bool heltecV4CapTouchStartBackgroundPoll(uint32_t periodMs) {
   if (s_async || !s_ready) return false;
   s_periodMs = periodMs < 4 ? 4 : (periodMs > 100 ? 100 : periodMs);
-  if (xTaskCreatePinnedToCore(pollTask, "square_touch", 3072, nullptr, 2, &s_task, 0) != pdPASS) return false;
+  if (xTaskCreatePinnedToCore(pollTask, "wio_l2_touch", 3072, nullptr, 2, &s_task, 0) != pdPASS) return false;
   s_async = true; return true;
 }
 bool heltecV4CapTouchIsAsyncPolling() { return s_async; }
@@ -80,7 +80,7 @@ bool heltecV4CapTouchIsSwiping() { return s_swiping; }
 void heltecV4CapTouchSetRotation(uint8_t) {}
 void heltecV4CapTouchSetPointRotation(uint8_t) {}
 void heltecV4CapTouchSetSlowPoll(bool slow) { s_periodMs = slow ? 50 : 8; }
-const char* heltecV4CapTouchDebug() { return "square GT911"; }
+const char* heltecV4CapTouchDebug() { return "Wio Tracker L2 GT911"; }
 void heltecV4CapTouchGetRaw(uint16_t* x, uint16_t* y) { if (x) *x = s_x; if (y) *y = s_y; }
 
 #endif

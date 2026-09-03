@@ -43,9 +43,9 @@ public:
   // if the dir can't be created. No-op on non-ESP32.
   bool useSdStorage();
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_SQUARE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   // Full-store adoption of an SD_MMC card. P4 callers migrate internal files
-  // first; square adopts the card directly at boot.
+  // first; the Wio Tracker L2 adopts the card directly at boot.
   bool useSdMmcStorage();
 #endif
   FILESYSTEM* getPrimaryFS() const { return _fs; }

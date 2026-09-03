@@ -3,7 +3,7 @@
 
 #include "target.h"
 
-SquareBoard board;
+WioTrackerL2Board board;
 
 static SPIClass radioSpi(FSPI);
 RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, radioSpi);
@@ -19,7 +19,7 @@ EnvironmentSensorManager sensors(gps);
 EnvironmentSensorManager sensors;
 #endif
 
-SquareDisplay display;
+WioTrackerL2Display display;
 MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
 
 bool radio_init() {

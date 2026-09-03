@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "SquareIo.h"
+#include "WioTrackerL2Io.h"
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -87,7 +87,7 @@ bool readInputBit(uint8_t bit, bool& high) {
 
 }  // namespace
 
-namespace SquareIo {
+namespace WioTrackerL2Io {
 
 bool begin() {
   s_ready = false;
@@ -97,7 +97,7 @@ bool begin() {
 
   if (!readRegisters(kRegOutput0, s_output, sizeof(s_output)) ||
       !readRegisters(kRegConfig0, s_config, sizeof(s_config))) {
-    Serial.println("[square] expander probe failed");
+    Serial.println("[wio-l2] expander probe failed");
     return false;
   }
 
@@ -137,7 +137,7 @@ bool begin() {
   delay(60);
 
   s_ready = true;
-  Serial.printf("[square] expander ready out=%02X/%02X cfg=%02X/%02X\n",
+  Serial.printf("[wio-l2] expander ready out=%02X/%02X cfg=%02X/%02X\n",
                 s_output[0], s_output[1], s_config[0], s_config[1]);
   return true;
 }
@@ -167,4 +167,4 @@ bool setSdPower(bool enabled) { return setOutput(kSdPower, enabled); }
 bool setBatterySense(bool enabled) { return setOutput(kBatterySense, enabled); }
 bool setAudioPaPower(bool enabled) { return setOutput(kAudioPa, enabled); }
 
-}  // namespace SquareIo
+}  // namespace WioTrackerL2Io

@@ -49,9 +49,9 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
-  #if defined(HAS_SQUARE)
+  #if defined(HAS_WIO_TRACKER_L2)
     #include <SD_MMC.h>
-    #include <SquareIo.h>
+    #include <WioTrackerL2Io.h>
   #endif
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
@@ -649,25 +649,25 @@ void meshcomodClearSdMigLatch() {
 #endif
 
 
-#if defined(HAS_SQUARE) && defined(SQUARE_GPS_PROBE)
+#if defined(HAS_WIO_TRACKER_L2) && defined(WIO_TRACKER_L2_GPS_PROBE)
 // ============================================================================
-// TEMP DIAGNOSTIC — remove this block and the -D SQUARE_GPS_PROBE=1 line in
-// platformio.ini once the square's GPS wiring is confirmed.
+// TEMP DIAGNOSTIC — remove this block and the -D WIO_TRACKER_L2_GPS_PROBE=1 line in
+// platformio.ini once the Wio Tracker L2's GPS wiring is confirmed.
 //
-// square's PIN_GPS_RX=18 / PIN_GPS_TX=17 were added wholesale in the bring-up
+// the L2's PIN_GPS_RX=18 / PIN_GPS_TX=17 were added wholesale in the bring-up
 // commit and are byte-identical to the Attaky env, so neither the pin pair nor
 // GPS_BAUD_RATE=9600 has ever been checked against this board. ENV_SKIP_GPS_DETECT
 // hard-codes gps_detected = true, so the UI reports a module present whether or
 // not a byte ever arrives — this probe is the missing evidence.
 //
-// Runs after board.begin() (SquareIo::begin has already powered the GNSS and
+// Runs after board.begin() (WioTrackerL2Io::begin has already powered the GNSS and
 // released its reset) and before sensors.begin() (which is what normally opens
 // Serial1), then leaves the UART closed for initBasicGPS() to reopen.
 //
 // RX only: txPin is -1 so the probe never drives a pin whose real function on
 // this board is unconfirmed. Costs ~6 s of boot time while it runs.
 // ============================================================================
-static void squareGpsProbe() {
+static void wioTrackerL2GpsProbe() {
   static const int8_t   kPins[]  = {17, 18};              // 17 = today's ESP RX, 18 = the swap
   static const uint32_t kBauds[] = {9600, 38400, 115200};
 
@@ -725,12 +725,12 @@ static void squareGpsProbe() {
     // EnvironmentSensorManager calls Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX) and
     // Arduino's setPins() takes (rxPin, txPin) -- so the pin we RECEIVE on is
     // PIN_GPS_TX, and PIN_GPS_RX is the pin we transmit on.
-    Serial.printf("[GPSPROBE] -> platformio.ini square env should read: PIN_GPS_TX=%d, PIN_GPS_RX=%d, GPS_BAUD_RATE=%lu\n",
+    Serial.printf("[GPSPROBE] -> platformio.ini wio_tracker_l2 env should read: PIN_GPS_TX=%d, PIN_GPS_RX=%d, GPS_BAUD_RATE=%lu\n",
                   (int)best_pin, (int)(best_pin == 17 ? 18 : 17), (unsigned long)best_baud);
   }
   Serial.println(F("[GPSPROBE] ---- end ----"));
 }
-#endif  // HAS_SQUARE && SQUARE_GPS_PROBE
+#endif  // HAS_WIO_TRACKER_L2 && WIO_TRACKER_L2_GPS_PROBE
 
 
 void setup() {
@@ -980,7 +980,7 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
-#if defined(HAS_SQUARE)
+#if defined(HAS_WIO_TRACKER_L2)
   // This target uses a dedicated one-bit SD_MMC bus rather than the LoRa SPI
   // bus. Power the card first, set the non-default pins, and adopt it as the
   // complete store when available; SPIFFS remains the graceful fallback.
@@ -991,19 +991,19 @@ void setup() {
   // edge shows up as a mid-session "sdmmc_host_wait_for_event returned 0x107"
   // (ESP_ERR_TIMEOUT) that takes prefs, contacts and chat history down with it. The
   // T-Display P4 hot-insert path already drops to this rate for the same reason.
-  bool square_sd_begun = false;
-  if (SquareIo::ready() && SquareIo::setSdPower(true) &&
+  bool wio_l2_sd_begun = false;
+  if (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
       SD_MMC.setPins(2, 3, 1) &&
-      (square_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) &&
+      (wio_l2_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) &&
       SD_MMC.cardType() != CARD_NONE) {
     sd_storage = store.useSdMmcStorage();
     g_contacts_on_sd = sd_storage;
     g_full_data_on_sd = sd_storage;
-    Serial.printf("[BOOT] square SD_MMC: %s\n", sd_storage ? "adopted" : "mount only");
+    Serial.printf("[BOOT] wio-l2 SD_MMC: %s\n", sd_storage ? "adopted" : "mount only");
   } else {
-    if (square_sd_begun) SD_MMC.end();
-    (void)SquareIo::setSdPower(false);
-    Serial.println("[BOOT] square SD_MMC unavailable; using SPIFFS");
+    if (wio_l2_sd_begun) SD_MMC.end();
+    (void)WioTrackerL2Io::setSdPower(false);
+    Serial.println("[BOOT] wio-l2 SD_MMC unavailable; using SPIFFS");
   }
 #endif
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
@@ -1296,7 +1296,7 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_SQUARE)
+  #if defined(HAS_WIO_TRACKER_L2)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD_MMC : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
@@ -1553,8 +1553,8 @@ void setup() {
 #endif
   }
 #endif
-#if defined(HAS_SQUARE) && defined(SQUARE_GPS_PROBE)
-  squareGpsProbe();   // TEMP DIAGNOSTIC — must precede sensors.begin()'s Serial1.begin()
+#if defined(HAS_WIO_TRACKER_L2) && defined(WIO_TRACKER_L2_GPS_PROBE)
+  wioTrackerL2GpsProbe();   // TEMP DIAGNOSTIC — must precede sensors.begin()'s Serial1.begin()
 #endif
   sensors.begin();
 

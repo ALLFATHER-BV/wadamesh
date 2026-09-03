@@ -28,7 +28,7 @@
     "openocd_target": "esp32s3.cfg"
   },
   "frameworks": ["arduino", "espidf"],
-  "name": "square (16 MB FLASH, 8 MB PSRAM)",
+  "name": "Seeed Wio Tracker L2 (16 MB FLASH, 8 MB PSRAM)",
   "upload": {
     "flash_size": "16MB",
     "maximum_ram_size": 8388608,
@@ -39,5 +39,5 @@
     "speed": 921600
   },
   "url": "",
-  "vendor": ""
+  "vendor": "Seeed Studio"
 }

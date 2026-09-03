@@ -4,7 +4,7 @@
 Import("env")
 import os
 
-MARKER = "wadamesh-square-dmadesc-oom-patch"
+MARKER = "wadamesh-wio-tracker-l2-dmadesc-oom-patch"
 
 OLD_ALLOC = """  void Bus_SPI::_alloc_dmadesc(size_t len)
   {
@@ -15,7 +15,7 @@ OLD_ALLOC = """  void Bus_SPI::_alloc_dmadesc(size_t len)
 
 NEW_ALLOC = """  void Bus_SPI::_alloc_dmadesc(size_t len)
   {
-    // wadamesh-square-dmadesc-oom-patch: retain the working descriptor array
+    // wadamesh-wio-tracker-l2-dmadesc-oom-patch: retain the working descriptor array
     // when a replacement cannot be allocated.
     auto next = (lldesc_t*)heap_caps_malloc(sizeof(lldesc_t) * len, MALLOC_CAP_DMA);
     if (next == nullptr) { return; }
@@ -34,7 +34,7 @@ NEW_SETUP = """    if (_dmadesc_size * SPI_MAX_DMA_LEN < len)
     {
       _alloc_dmadesc(len / SPI_MAX_DMA_LEN + 1);
     }
-    // wadamesh-square-dmadesc-oom-patch: skip a frame rather than walking a
+    // wadamesh-wio-tracker-l2-dmadesc-oom-patch: skip a frame rather than walking a
     // null or undersized descriptor array after allocation failure.
     if (_dmadesc == nullptr || _dmadesc_size * SPI_MAX_DMA_LEN < len) { return; }
     lldesc_t *dmadesc = _dmadesc;"""
@@ -59,7 +59,7 @@ else:
         source = source.replace(OLD_ALLOC, NEW_ALLOC, 1).replace(OLD_SETUP, NEW_SETUP, 1)
         with open(path, "w", encoding="utf-8") as source_file:
             source_file.write(source)
-        print("[patch_lgfx_dmadesc] patched square LovyanGFX DMA allocation")
+        print("[patch_lgfx_dmadesc] patched Wio Tracker L2 LovyanGFX DMA allocation")
 
 
     def verify_patched(target, source, env):

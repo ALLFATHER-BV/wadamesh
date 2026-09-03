@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-namespace SquareIo {
+namespace WioTrackerL2Io {
 
 bool begin();
 bool ready();
@@ -19,4 +19,4 @@ bool setSdPower(bool enabled);
 bool setBatterySense(bool enabled);
 bool setAudioPaPower(bool enabled);
 
-}  // namespace SquareIo
+}  // namespace WioTrackerL2Io

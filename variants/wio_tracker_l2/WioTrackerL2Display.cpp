@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-#include "SquareDisplay.h"
+#include "WioTrackerL2Display.h"
 
 #include <Arduino.h>
 #include <Wire.h>
@@ -10,14 +10,14 @@ constexpr uint8_t kLightUpdate = 0x0F;
 constexpr uint8_t kLightPwm0 = 0x18;
 }
 
-bool SquareLight::writeRegister(uint8_t reg, uint8_t value) {
+bool WioTrackerL2Light::writeRegister(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(kLightAddress);
   Wire.write(reg);
   Wire.write(value);
   return Wire.endTransmission() == 0;
 }
 
-bool SquareLight::init(uint8_t brightness) {
+bool WioTrackerL2Light::init(uint8_t brightness) {
   bool ok = true;
   ok = writeRegister(0x00, 0x01) && ok;
   ok = writeRegister(0x01, 0x01) && ok;
@@ -30,13 +30,13 @@ bool SquareLight::init(uint8_t brightness) {
   return ok;
 }
 
-void SquareLight::setBrightness(uint8_t brightness) {
+void WioTrackerL2Light::setBrightness(uint8_t brightness) {
   for (uint8_t channel = 0; channel < 4; ++channel) (void)writeRegister(kLightPwm0 + channel, brightness);
   (void)writeRegister(kLightUpdate, 0x55);
   _brightness = brightness;
 }
 
-SquareDisplay::SquareDisplay() : DisplayDriver(320, 240) {
+WioTrackerL2Display::WioTrackerL2Display() : DisplayDriver(320, 240) {
   {
     auto cfg = _bus.config();
     cfg.spi_host = SPI3_HOST;
@@ -95,7 +95,7 @@ SquareDisplay::SquareDisplay() : DisplayDriver(320, 240) {
   _lcd.setPanel(&_panel);
 }
 
-bool SquareDisplay::begin() {
+bool WioTrackerL2Display::begin() {
   if (_isOn) return true;
   (void)_light.init(160);
   _lcd.init();
@@ -107,25 +107,25 @@ bool SquareDisplay::begin() {
   _lcd.fillScreen(0);
   setLogicalSize(_lcd.width(), _lcd.height());
   _isOn = true;
-  Serial.printf("[square] display %dx%d\n", width(), height());
+  Serial.printf("[wio-l2] display %dx%d\n", width(), height());
   return true;
 }
 
-void SquareDisplay::turnOn() { if (!_isOn) { _lcd.setBrightness(160); _isOn = true; } }
-void SquareDisplay::turnOff() { if (_isOn) { _lcd.setBrightness(0); _isOn = false; } }
-void SquareDisplay::clear() { _lcd.fillScreen(0); }
-void SquareDisplay::startFrame(ColorVal bkg) { _lcd.fillScreen(bkg); }
-void SquareDisplay::setTextSize(int sz) { _lcd.setTextSize(sz); }
-void SquareDisplay::setColor(ColorVal c) { _color = c; _lcd.setTextColor(c); }
-void SquareDisplay::setCursor(int x, int y) { _lcd.setCursor(x, y); }
-void SquareDisplay::print(const char* str) { _lcd.print(str); }
-void SquareDisplay::fillRect(int x, int y, int w, int h) { _lcd.fillRect(x, y, w, h, _color); }
-void SquareDisplay::drawRect(int x, int y, int w, int h) { _lcd.drawRect(x, y, w, h, _color); }
-void SquareDisplay::drawXbm(int x, int y, const uint8_t* bits, int w, int h) { _lcd.drawXBitmap(x, y, bits, w, h, _color); }
-uint16_t SquareDisplay::getTextWidth(const char* str) { return _lcd.textWidth(str); }
-void SquareDisplay::endFrame() {}
+void WioTrackerL2Display::turnOn() { if (!_isOn) { _lcd.setBrightness(160); _isOn = true; } }
+void WioTrackerL2Display::turnOff() { if (_isOn) { _lcd.setBrightness(0); _isOn = false; } }
+void WioTrackerL2Display::clear() { _lcd.fillScreen(0); }
+void WioTrackerL2Display::startFrame(ColorVal bkg) { _lcd.fillScreen(bkg); }
+void WioTrackerL2Display::setTextSize(int sz) { _lcd.setTextSize(sz); }
+void WioTrackerL2Display::setColor(ColorVal c) { _color = c; _lcd.setTextColor(c); }
+void WioTrackerL2Display::setCursor(int x, int y) { _lcd.setCursor(x, y); }
+void WioTrackerL2Display::print(const char* str) { _lcd.print(str); }
+void WioTrackerL2Display::fillRect(int x, int y, int w, int h) { _lcd.fillRect(x, y, w, h, _color); }
+void WioTrackerL2Display::drawRect(int x, int y, int w, int h) { _lcd.drawRect(x, y, w, h, _color); }
+void WioTrackerL2Display::drawXbm(int x, int y, const uint8_t* bits, int w, int h) { _lcd.drawXBitmap(x, y, bits, w, h, _color); }
+uint16_t WioTrackerL2Display::getTextWidth(const char* str) { return _lcd.textWidth(str); }
+void WioTrackerL2Display::endFrame() {}
 
-void SquareDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
+void WioTrackerL2Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_isOn || !pixels || w <= 0 || h <= 0) return;
   _lcd.startWrite();
   _lcd.setAddrWindow(x, y, w, h);
@@ -133,16 +133,16 @@ void SquareDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t
   _lcd.endWrite();
 }
 
-void SquareDisplay::setDisplayRotation(uint8_t) {
+void WioTrackerL2Display::setDisplayRotation(uint8_t) {
   _lcd.setRotation(0);
   setLogicalSize(_lcd.width(), _lcd.height());
 }
 
-void SquareDisplay::setBrightness(uint8_t brightness) {
+void WioTrackerL2Display::setBrightness(uint8_t brightness) {
   _lcd.setBrightness(brightness);
 }
 
-bool SquareDisplay::getTouchPoint(uint16_t& x, uint16_t& y) {
+bool WioTrackerL2Display::getTouchPoint(uint16_t& x, uint16_t& y) {
   int32_t tx = 0, ty = 0;
   if (!_lcd.getTouch(&tx, &ty)) return false;
   x = (uint16_t)tx;

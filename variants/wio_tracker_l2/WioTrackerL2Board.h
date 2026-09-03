@@ -4,12 +4,12 @@
 #include <Adafruit_ADS1X15.h>
 #include <helpers/ESP32Board.h>
 
-class SquareBoard : public ESP32Board {
+class WioTrackerL2Board : public ESP32Board {
 public:
   void begin();
   void powerOff() override;
   uint16_t getBattMilliVolts() override;
-  const char* getManufacturerName() const override { return "square"; }
+  const char* getManufacturerName() const override { return "Seeed Wio Tracker L2"; }
   bool sdCardPresent();
 
 private:

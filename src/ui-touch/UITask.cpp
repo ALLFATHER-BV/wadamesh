@@ -114,7 +114,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
   #include "Es8311Codec.h"    // PIN_I2S_MCLK/BCK/WS/DOUT/SDIN come from platformio.ini build flags
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   #include <FFat.h>            // internal FAT partition (Tanmatsu 'locfd' / P4 'storage')
   #include <SD_MMC.h>          // microSD on the P4-class boards' SDMMC slot 0; slot 1 = C6 radio
   extern bool g_fs_ok;         // set in main.cpp once the internal FAT is mounted
@@ -172,6 +172,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
   #elif defined(TLORA_PAGER)
     #include <helpers/ui/ST7796LCDDisplay.h>
+  #elif defined(HAS_WIO_TRACKER_L2)
+    #include <WioTrackerL2Display.h>
+    #include <WioTrackerL2Io.h>
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
@@ -229,6 +232,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern TanmatsuDisplay display;
   #elif defined(TLORA_PAGER)
     extern ST7796LCDDisplay display;
+  #elif defined(HAS_WIO_TRACKER_L2)
+    extern WioTrackerL2Display display;
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
@@ -607,9 +612,13 @@ static uint32_t COLOR_SECONDARY_ACTION = kNightPalette.secondary_action;
 static uint32_t COLOR_TRACK            = kNightPalette.track;
 static uint32_t COLOR_CHART_BG         = kNightPalette.chart_bg;
 
-static void applyThemeMode(uint8_t mode) {
-  s_theme_day = mode == TOUCH_THEME_DAY;
-  const TouchPalette& p = s_theme_day ? kDayPalette : kNightPalette;
+// Day/Night belongs to the 296-day-night-theme branch, whose TouchPrefsStore
+// half (the TOUCH_THEME_* modes and their accessors) is not on this branch. The
+// UI is pinned to the night palette until that branch lands: s_theme_day stays
+// false, so every `s_theme_day ? day : night` site below resolves to night.
+static void applyThemeMode() {
+  s_theme_day = false;
+  const TouchPalette& p = kNightPalette;
   COLOR_BG = p.bg;
   COLOR_PANEL = p.panel;
   COLOR_TEXT = p.text;
@@ -6347,6 +6356,13 @@ static void kbShowRotateArrows(bool show) {
   }
 }
 
+// The Wio Tracker L2 panel is fixed 320x240 LANDSCAPE (CAP_ROTATABLE 0), so
+// "rotate for landscape typing" has nothing to offer there — it would turn a
+// landscape keyboard into a portrait one. The arrows are not created on that
+// board and these, their only callers, go with them. Every other reference to
+// the two pointers is null-guarded, so leaving them null is enough to remove
+// the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
+#if !defined(HAS_WIO_TRACKER_L2)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -6361,6 +6377,7 @@ static void kbRotRightCb(lv_event_t* e) {
   kbApplyRotation(s_kb_rotation);
   kbSaveRotationPref();
 }
+#endif
 
 static void kbMirrorEnsureCreated() {
   if (s_kb_mirror_root) return;
@@ -11708,16 +11725,6 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                 (chip.features & CHIP_FEATURE_WIFI_BGN) ? " WiFi" : "",
                 (chip.features & CHIP_FEATURE_BT)       ? " BT"   : "");
 
-  p += snprintf(buf + p, cap - p, "Clock\n  source: %s (%s)\n",
-                rtc_clock.sourceName(), rtc_clock.timeIsCurrent() ? "current" : "degraded");
-#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
-  p += snprintf(buf + p, cap - p, "  %s: %s%s\n\n", hw_rtc.chipName(),
-                HardwareRtcClock::statusName(hw_rtc.status()),
-                hw_rtc.writeConfirmed() ? " (write verified)" : "");
-#else
-  p += snprintf(buf + p, cap - p, "\n");
-#endif
-
   const uint32_t flash_chip_size = ESP.getFlashChipSize();
 #if defined(HAS_TANMATSU)
   // ESP.getSketchSize()/getFreeSketchSpace() abort() on the P4: this is an AppFS app (runs from the
@@ -12166,25 +12173,6 @@ static void clock12hToggleCb(lv_event_t* e) {
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Clock: 12-hour") : TR("Clock: 24-hour"), 900);
 }
-
-#if CAP_BOOT_TIME_SYNC
-static void bootWifiTimeToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  touchPrefsSetBootWifiTime(on);
-  lv_obj_t* open_sw = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
-  if (open_sw && lv_obj_is_valid(open_sw)) {
-    if (on) lv_obj_clear_state(open_sw, LV_STATE_DISABLED);
-    else    lv_obj_add_state(open_sw, LV_STATE_DISABLED);
-  }
-}
-
-static void bootWifiOpenToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  touchPrefsSetBootWifiTimeOpen(
-      lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
-}
-#endif
 
 #if CAP_UI_SIZE
 // UI-size selector — saves the board-specific preset. Fonts and any matching
@@ -12910,22 +12898,6 @@ static void pagerKbBlCycleCb(lv_event_t* e) {
 }
 #endif
 
-static void themeModeRestart(uint8_t mode) {
-#if defined(ESP32)
-  if (touchPrefsGetThemeMode() == mode) return;
-  if (!touchPrefsSetThemeMode(mode)) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Theme save failed"), 1600);
-    return;
-  }
-#endif
-  if (g_lv.task) g_lv.task->rebootDevice();
-}
-
-static void themeModeSelectCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
-}
-
 static void buildDeviceSettings(int sec) {
   // One detail page per section: each block below is gated to its DSEC_* section
   // (skipped blocks don't advance y, so every page lays out from the top).
@@ -13224,30 +13196,6 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_time, TR("Sync clock from system"));
   lv_obj_center(l_time);
   y += SC(40);
-
-#if CAP_BOOT_TIME_SYNC
-  lv_obj_t* boot_sync_sw = lv_switch_create(body);
-  lv_obj_t* open_sync_sw = lv_switch_create(body);
-  {
-    int h = settingsRowLabel(body, y, 6, TR("Sync time from saved Wi-Fi after cold boot"),
-                             COLOR_SUB, nullptr, 56);
-    lv_obj_align(boot_sync_sw, LV_ALIGN_TOP_RIGHT, 0, y);
-    if (touchPrefsGetBootWifiTime()) lv_obj_add_state(boot_sync_sw, LV_STATE_CHECKED);
-    y += LV_MAX(SC(34), h + 12);
-  }
-  {
-    int h = settingsRowLabel(body, y, 6, TR("Allow saved open networks for time sync"),
-                             COLOR_SUB, nullptr, 56);
-    lv_obj_align(open_sync_sw, LV_ALIGN_TOP_RIGHT, 0, y);
-    if (touchPrefsGetBootWifiTimeOpen()) lv_obj_add_state(open_sync_sw, LV_STATE_CHECKED);
-    if (!touchPrefsGetBootWifiTime()) lv_obj_add_state(open_sync_sw, LV_STATE_DISABLED);
-    y += LV_MAX(SC(34), h + 12);
-  }
-  lv_obj_add_event_cb(boot_sync_sw, bootWifiTimeToggleCb,
-                      LV_EVENT_VALUE_CHANGED, open_sync_sw);
-  lv_obj_add_event_cb(open_sync_sw, bootWifiOpenToggleCb,
-                      LV_EVENT_VALUE_CHANGED, nullptr);
-#endif
   }
 
   if (sec == DSEC_GENERAL) {   // --- Send advert (device action) ---
@@ -13478,37 +13426,6 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("Applies after restart."), COLOR_SUB, &g_font_12, 0) + 6;
   }
 #endif
-
-  /* Firmware appearance: selecting a different palette saves and restarts so
-     every LVGL object is rebuilt with one coherent set of colours. */
-  {
-    y += settingsRowLabel(body, y, 0, TR("Appearance"), COLOR_SUB, &g_font_12, 0) + 4;
-    const uint8_t current = touchPrefsGetThemeMode();
-    const lv_coord_t gap = 4;
-    const lv_coord_t row_w = s_settings_content_w - 2;
-    const lv_coord_t button_w = (row_w - gap) / 2;
-    const char* labels[2] = { TR("Night"), TR("Day") };
-    for (uint8_t mode = TOUCH_THEME_NIGHT; mode <= TOUCH_THEME_DAY; ++mode) {
-      lv_obj_t* button = lv_btn_create(body);
-      lv_obj_set_size(button, button_w, SC(34));
-      lv_obj_set_pos(button, 2 + mode * (button_w + gap), y);
-      styleButton(button);
-      if (mode == current) {
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(button, LV_OPA_COVER, LV_PART_MAIN);
-      }
-      lv_obj_set_style_text_color(button,
-          lv_color_hex(mode == current ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_add_event_cb(button, themeModeSelectCb, LV_EVENT_CLICKED,
-                          (void*)(uintptr_t)mode);
-      lv_obj_t* label = lv_label_create(button);
-      char text[32];
-      snprintf(text, sizeof(text), "%s%s", mode == current ? LV_SYMBOL_OK "  " : "", labels[mode]);
-      lv_label_set_text(label, text);
-      lv_obj_center(label);
-    }
-    y += SC(42);
-  }
 
   /* Accent colour: opens a colour-wheel + hex picker. */
   {
@@ -19563,7 +19480,7 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // fmRefresh, so they blip the LED too.
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/pager/M9 LoRa bus, V4-R8 TFT bus)
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
 static inline bool fmIsSd(fs::FS*) { return false; }       // Heltec: no Arduino SD global in this FM path
@@ -22249,7 +22166,7 @@ static void fmRefresh() {
 }
 
 // Roots screen: list the available storages.
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 // ---- Tanmatsu / T-Display P4 microSD (SDMMC slot 0) ----------------------------------------------
 // The card sits on the P4's SDMMC *slot 0* (IOMUX pins CLK43/CMD44/D0-3 39-42, selected by the
 // BOARD_SDMMC_SLOT=0 build define); slot 1 is the C6 radio (esp-hosted / ESP-AT SDIO), which we never
@@ -22265,7 +22182,15 @@ static bool tanSdTryMount() {
   if (luaAudioStorageBusy()) return false;
 #endif
   if (millis() < s_tan_sd_retry_after) return false;
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_WIO_TRACKER_L2)
+  // 20 MHz to match main.cpp's boot mount — re-begin()ning at Arduino's 40 MHz
+  // default would quietly re-clock a card the boot already brought up at 20.
+  if (SD_MMC.cardType() != CARD_NONE ||
+      (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
+       SD_MMC.setPins(2, 3, 1) &&
+       SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT) &&
+       SD_MMC.cardType() != CARD_NONE)) {
+#elif defined(HAS_TDISPLAY_P4)
   // Hot-insert path (no-op when main.cpp already mounted at boot): 20 MHz like the boot ladder,
   // not Arduino's 40 MHz HIGHSPEED default.
   if (SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT) && SD_MMC.cardType() != CARD_NONE) {
@@ -22276,7 +22201,22 @@ static bool tanSdTryMount() {
     s_tan_sd_size = SD_MMC.cardSize();
     return true;
   }
+#if defined(HAS_WIO_TRACKER_L2)
+  // On the L2 the card is not just a browse target: when boot adopted it,
+  // identity, prefs, contacts and chat history all live on it. end() + cutting
+  // the power rail here would turn one transient read error into total storage
+  // loss for the rest of the boot, with every later write failing silently.
+  // Leave the mount alone and just back off — the browse attempt is what fails,
+  // not the store. Only a card the store never adopted may be powered down.
+  // (The file-scope extern above is inside a T-Deck/Pager/M9 #if, so redeclare here.)
+  extern bool g_full_data_on_sd;   // main.cpp: boot adopted the SD_MMC profile
+  if (!g_full_data_on_sd) {
+    SD_MMC.end();
+    (void)WioTrackerL2Io::setSdPower(false);
+  }
+#else
   SD_MMC.end();
+#endif
   s_tan_sd_retry_after = millis() + 8000;   // don't grind a missing card on every roots render
   return false;
 }
@@ -22348,7 +22288,7 @@ static void fmShowRoots() {
     lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   // microSD (SDMMC slot 0). Probe outside the mount-backoff window so an absent card doesn't grind
   // the bus on every render; tapping the row forces a fresh mount attempt (tanSdClickCb clears it).
   if ((s_tan_sd_mounted || millis() >= s_tan_sd_retry_after) && tanSdTryMount()) {
@@ -40262,13 +40202,6 @@ static void ccGpsNoneCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("No onboard GPS"), 1200);
 }
 #endif
-// Day/Night chip: persist the opposite palette and rebuild the complete UI on restart.
-static void ccThemeCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  closeControlCenter();
-  themeModeRestart(s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
-}
-
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
 static uint8_t s_cc_screenshot_delay_s = 3;
 static lv_timer_t* s_cc_screenshot_timer = nullptr;
@@ -40787,6 +40720,15 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
+#elif defined(HAS_WIO_TRACKER_L2)
+#define HAS_CC_BRIGHTNESS 1
+static uint8_t s_brightness_pct = 63;
+static void applyBrightness(uint8_t pct) {
+  if (pct < 5) pct = 5;
+  if (pct > 100) pct = 100;
+  s_brightness_pct = pct;
+  display.setBrightness((uint8_t)((uint32_t)pct * 255u / 100u));
+}
 #elif defined(HAS_THINKNODE_M9)
 // M9: BL_EN (GPIO17) is a PNP transistor gate. LEDC PWM confirmed working on hardware
 // (Specter bring-up), but the duty is INVERTED — lower duty on the base = MORE conduction
@@ -41222,8 +41164,6 @@ static void openControlCenter() {
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
   ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
-  ccToggle(row, s_theme_day ? TOUCH_SYM_SUN : TOUCH_SYM_MOON, TR("Theme"), s_theme_day,
-           ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
@@ -43300,9 +43240,15 @@ static void statusBarReaderBackCb(lv_event_t* e) {
 // compression) is the quickest viewable format to emit — rows are a direct copy
 // of the RGB565 framebuffer (LV_COLOR_16_SWAP is 0). Saved to /screenshots.
 static void takeScreenshotToSd() {
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SD || defined(TLORA_PAGER) || defined(HAS_WIO_TRACKER_L2)
   auto toast = [&](const char* m){ if (g_lv.task) g_lv.task->showAlert(m, 1800); };
+#if defined(HAS_WIO_TRACKER_L2)
+  fs::FS& screenshotFs = SD_MMC;
+  if (SD_MMC.cardType() == CARD_NONE) { toast(TR("Screenshot: no SD card")); return; }
+#else
+  fs::FS& screenshotFs = SD;
   if (SD.cardType() == CARD_NONE) { toast(TR("Screenshot: no SD card")); return; }
+#endif
   const int W = lv_disp_get_hor_res(nullptr);
   const int H = lv_disp_get_ver_res(nullptr);
   lv_color_t* buf = (lv_color_t*)heap_caps_malloc((size_t)W * H * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
@@ -43318,7 +43264,7 @@ static void takeScreenshotToSd() {
   g_shot_buf = nullptr;
 
   markSdIo();
-  SD.mkdir("/screenshots");
+  screenshotFs.mkdir("/screenshots");
   char path[48];
   const time_t now = time(nullptr);
   if (now > 1700000000) {
@@ -43327,7 +43273,7 @@ static void takeScreenshotToSd() {
   } else {
     snprintf(path, sizeof path, "/screenshots/up_%lu.bmp", (unsigned long)millis());
   }
-  File f = SD.open(path, FILE_WRITE);
+  File f = screenshotFs.open(path, FILE_WRITE);
   if (!f) { free(buf); toast(TR("Screenshot: write failed")); return; }
 
   const uint32_t row_bytes = (uint32_t)(((W * 16 + 31) / 32) * 4);   // 4-byte aligned
@@ -46723,7 +46669,7 @@ static void buildUiTree() {
   // Load the saved theme accent before any widget is built so the whole tree
   // adopts it. g_lv.tabview/keyboard are still null here, so applyAccent only
   // sets the colour globals (no live re-style needed at boot).
-  applyThemeMode(touchPrefsGetThemeMode());
+  applyThemeMode();
   applyAccent(touchPrefsGetAccentColor());
 
   lv_obj_t* root = lv_scr_act();
@@ -47045,8 +46991,10 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
+#if !defined(HAS_WIO_TRACKER_L2)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
+#endif
   // On-screen language-cycle key (boards without a physical keyboard). Its label
   // is the active layout's 2-letter code; kbShowRotateArrows reveals it only when
   // a secondary layout is enabled.
@@ -48324,6 +48272,9 @@ void UITask::flushHistoryIfDue(unsigned long now) {
 // the chat to the SD card.
 static fs::FS* s_ui_data_fs       = nullptr;
 static char    s_ui_data_root[16] = "";
+#if defined(HAS_WIO_TRACKER_L2)
+extern bool g_full_data_on_sd;   // boot adopted the SD_MMC profile
+#endif
 #if defined(TLORA_PAGER)
 static bool    s_ui_data_boot_finalized = false;
 #endif
@@ -48355,7 +48306,17 @@ static bool uiDataFsReady() {
     return false;
   }
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_WIO_TRACKER_L2)
+  // Follow the boot-time DataStore decision. Never attach a card later in the
+  // same boot, because the in-memory ring was not loaded from that profile.
+  if (g_full_data_on_sd && SD_MMC.cardType() != CARD_NONE) {
+    SD_MMC.mkdir("/meshcomod");
+    s_ui_data_fs = &SD_MMC;
+    strncpy(s_ui_data_root, "/meshcomod", sizeof s_ui_data_root - 1);
+    return true;
+  }
+  if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   // Tanmatsu + T-Display P4: use each board's mounted internal data partition
   // (Tanmatsu FFat 'locfd', P4 LittleFS 'storage'), with SD_MMC as fallback.
   // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
@@ -49937,7 +49898,7 @@ void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const 
 // message ring (MAX_UI_MESSAGES_SD) since the card has room for the bigger file.
 static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   return s_ui_data_fs == &SD_MMC;
 #elif defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   return s_ui_data_fs == &SD;
@@ -52372,7 +52333,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     }
   }
 #endif
-#if !defined(HAS_TDISPLAY_P4)
+#if defined(HAS_WIO_TRACKER_L2)
+  else if (SD_MMC.cardType() != CARD_NONE) {
+    s_tile_fs = &SD_MMC;
+    s_tile_root[0] = '\0';
+    s_tiles_fs_ready = true;
+    WIRE_DBG("[TILE] wio-l2: caching Wi-Fi tiles on SD_MMC /tiles\n");
+  }
+#endif
+#if !defined(HAS_TDISPLAY_P4) && !defined(HAS_WIO_TRACKER_L2)
   else {
     s_tile_fs = nullptr;   // no cache backend at all -> map shows the storage notice
   }
@@ -52628,7 +52597,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-#if defined(HAS_RAK_TAP_V2)
+#if defined(HAS_RAK_TAP_V2) || defined(HAS_WIO_TRACKER_L2)
       const int draw_band_w = 320;
 #else
       const int draw_band_w = 240;
@@ -52729,6 +52698,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+  #if defined(HAS_WIO_TRACKER_L2)
+    // The panel driver exposes its fixed 320x240 landscape surface directly.
+    s_ui_rotation = LV_DISP_ROT_NONE;
+  #endif
 #if defined(ATTAKY_MESH_SERIES)
     // Display and touch share this landscape transform.
     s_ui_rotation = LV_DISP_ROT_90;
@@ -52826,6 +52799,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // display for the browser without changing the physical placeholder panel.
     g_lv.disp_drv.hor_res  = (s_remote_mode && !s_remote_landscape) ? 222 : 480;
     g_lv.disp_drv.ver_res  = (s_remote_mode && !s_remote_landscape) ? 480 : 222;
+#elif defined(HAS_WIO_TRACKER_L2)
+  g_lv.disp_drv.hor_res  = 320;
+  g_lv.disp_drv.ver_res  = 240;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -52907,7 +52883,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
     // icons — would freeze the compile-time default instead of the user's colour.
     // Idempotent: buildUiTree's own call just re-sets the same globals.
-    applyThemeMode(touchPrefsGetThemeMode());
+    applyThemeMode();
     applyAccent(touchPrefsGetAccentColor());
 
     // Build the always-on top status bar AFTER the display driver is
@@ -55388,11 +55364,23 @@ void UITask::loop() {
   {
     static bool s_user_btn_inited = false;
     static uint8_t s_user_btn_prev = HIGH;
+    auto readUserButton = []() {
+      uint8_t state = digitalRead(PIN_USER_BTN);
+#if defined(HAS_WIO_TRACKER_L2)
+      static bool expanderDown = false;
+      if (digitalRead(45) == LOW || expanderDown) {
+        bool pressed = false;
+        if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
+      }
+      if (expanderDown) state = LOW;
+#endif
+      return state;
+    };
     if (!s_user_btn_inited) {
-      s_user_btn_prev = digitalRead(PIN_USER_BTN);
+      s_user_btn_prev = readUserButton();
       s_user_btn_inited = true;
     }
-    uint8_t v = digitalRead(PIN_USER_BTN);
+    uint8_t v = readUserButton();
 #if CAP_TRACKBALL
     /* On the T-Deck, PIN_USER_BTN (GPIO0) is the trackball centre click — make
      * it act as a touch at the cursor: a held click = a held press (so taps,
@@ -55448,6 +55436,23 @@ void UITask::loop() {
       if (!tb_pressed) s_tb_wake_consume = false;   // released after unlock -> clicks re-armed
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
+    }
+#elif defined(HAS_WIO_TRACKER_L2)
+    // Either physical button wakes immediately. While awake, a two-second hold
+    // turns the display off without hard-locking touch input.
+    static uint32_t s_l2_btn_down_ms = 0;
+    static bool s_l2_hold_fired = false;
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      if (_screen_off) wakeScreen();
+      s_l2_btn_down_ms = now;
+      s_l2_hold_fired = false;
+    } else if (v == LOW && s_user_btn_prev == LOW && !_screen_off &&
+               !s_l2_hold_fired && now - s_l2_btn_down_ms >= 2000) {
+      s_l2_hold_fired = true;
+      touchScreenBacklight(false);
+      setCpuForScreen(false);
+      _screen_off = true;
+      _manual_lock = false;
     }
 #elif defined(HAS_RAK_TAP_V2)
     // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.
