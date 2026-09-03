@@ -2410,7 +2410,8 @@ static const char*   DISC_NS = "discovered";
 static const char*   DISC_MARKER = "ver";
 static bool          s_disc_dirty   = false;
 static unsigned long s_disc_save_at = 0;
-static volatile bool s_disc_flush_req = false;   // signal background task to call saveDiscovered()
+static volatile bool s_disc_flush_req  = false;   // signal background task to call saveDiscovered()
+static volatile bool s_prefs_save_req  = false;   // signal background task to call the_mesh.savePrefs()
 // Compact on-disk record (84 B/entry). SdNvsPrefs caps one value at 2048 B, so
 // we cap each stored blob at DISC_PER_CHUNK records
 // (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
@@ -2531,6 +2532,10 @@ static void discFlushTaskFn(void*) {
     if (s_disc_flush_req) {
       s_disc_flush_req = false;
       saveDiscovered();
+    }
+    if (s_prefs_save_req) {
+      s_prefs_save_req = false;
+      the_mesh.savePrefs();
     }
     vTaskDelay(pdMS_TO_TICKS(200));
   }
@@ -6192,6 +6197,15 @@ static void betaUpdatesToggleCb(lv_event_t* e) {
 }
 #endif
 static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y, uint16_t swipe_start_y = 0) {
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  // Swipe-up is valid from the top 16% (status-bar pull) OR the bottom tab-bar
+  // zone (≥ SCR_H - TABBAR_H). TABBAR_H = 30 on T-Deck → bottom edge is y≥210.
+  // The old code only checked top-edge (y≤38), so every swipe-up from the tab
+  // bar was silently dropped.
+  const uint16_t SWIPE_UP_ZONE     = (uint16_t)(sh * 16 / 100);   // top 16%
+  const uint16_t SWIPE_UP_BOT_EDGE = (uint16_t)(sh - TABBAR_H);   // bottom tab bar
+  const bool swipe_up_valid = swipe_start_y <= SWIPE_UP_ZONE ||
+                              swipe_start_y >= SWIPE_UP_BOT_EDGE;
   // The Snake game owns the whole screen while it's open: steer with the swipe
   // and return, so it can never reach the tab switcher / map pan / control
   // centre behind the overlay. This reuses the per-board hardware swipe detector
@@ -6228,9 +6242,7 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y, uint16_t swipe_sta
       return;
     }
     if (swipe_y < 0 && !anyPopupOpen()) {
-      const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-      const uint16_t edge_bot = (uint16_t)(sh / 4);
-      if (swipe_start_y >= (uint16_t)(sh - edge_bot)) {
+      if (swipe_up_valid) {
         s_home_drawer_mode = true;
         goToTab(HOME_TAB_INDEX);
         return;
@@ -6273,19 +6285,11 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y, uint16_t swipe_sta
     if (next != idx) goToTab(next);
     return;
   }
-  // Swipe UP (swipe_y < 0) from anywhere on the main screen → open the app
-  // drawer (same action as tabBarGestureCb, but via the reliable hardware
-  // swipe path — LVGL's LV_EVENT_GESTURE is unreliable on GT911 cap-touch).
-  // Swipe UP from bottom edge → app drawer.
-  // Swipe DOWN from top edge → control center.
-  // Edge zone = bottom/top 25% of screen height so mid-screen vertical drags
-  // (scrolling lists) don't accidentally trigger these.
+  // Swipe UP from top 16% or bottom tab-bar zone → app drawer.
+  // Swipe DOWN from top 20% (status bar) → control center.
   {
-    const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
     const uint16_t edge_top = (uint16_t)(sh / 5);       // top 20% → control center
-    const uint16_t edge_bot = (uint16_t)(sh / 4);       // bottom 25% → app drawer
-    if (swipe_y < 0 && !anyPopupOpen() && swipe_start_y >= (uint16_t)(sh - edge_bot)) {
-      // Started in bottom 25% → open app drawer
+    if (swipe_y < 0 && !anyPopupOpen() && swipe_up_valid) {
       if (getActiveTab() == HOME_TAB_INDEX) {
         setHomeDrawer(true);
       } else {
@@ -54393,7 +54397,7 @@ void UITask::updateGpsLocation(unsigned long now) {
     _gps_saved_lat = la;
     _gps_saved_lon = lo;
     _gps_next_persist_ms = now + 120000;
-    the_mesh.savePrefs();
+    s_prefs_save_req = true;   // off-thread: savePrefs() blocks ~600ms on flash
   }
 }
 

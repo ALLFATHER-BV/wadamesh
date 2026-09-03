@@ -80,6 +80,17 @@ static uint8_t  s_point_rotation = 0;  // so these are informational only
   #define TDECK_TOUCH_LONG_MS 1000
 #endif
 
+// Gesture debug: -DGESTURE_DEBUG=1 to print gesture events to Serial.
+// Off by default — Serial is a binary companion stream during sessions (GH #25).
+#ifndef GESTURE_DEBUG
+  #define GESTURE_DEBUG 0
+#endif
+#if GESTURE_DEBUG
+  #define GEST_LOG(...) Serial.printf("[GEST] " __VA_ARGS__)
+#else
+  #define GEST_LOG(...) do {} while(0)
+#endif
+
 static bool gt911ReadReg(uint16_t reg, uint8_t* buf, uint8_t len) {
   Wire.beginTransmission(s_addr);
   Wire.write((uint8_t)(reg >> 8));
@@ -332,17 +343,32 @@ int heltecV4CapTouchCheck() {
       s_start_x = s_cur_x;
       s_start_y = s_cur_y;
       s_swiping_now = false;
+      // tab bar zone: SCR_H=240, TABBAR_H=30 -> edge_zone when start_y >= 210
+      GEST_LOG("DOWN x=%d y=%d (scr %dx%d, top_edge<=%d bot_edge>=%d)\n",
+               s_start_x, s_start_y, SCR_W, SCR_H,
+               SCR_H * 16 / 100, SCR_H - 30);
     }
     s_last_x = s_cur_x;
     s_last_y = s_cur_y;
-    // Horizontal-swipe-in-progress flag (so LVGL can abort a click that turns
-    // into a side-swipe). Vertical drags stay scroll.
+    // Abort LVGL press for: horizontal swipes (any zone), and vertical swipes
+    // that start in the top 16% (swipe-up trigger) or bottom tab-bar area
+    // (30 px) — so a swipe from the tab bar doesn't also fire a tab-switch click.
+    // Mid-screen vertical drags are left alone so list scrolling still works.
     if (!s_swiping_now) {
       int dx = (int)s_last_x - (int)s_start_x;
       int dy = (int)s_last_y - (int)s_start_y;
       int adx = dx < 0 ? -dx : dx;
       int ady = dy < 0 ? -dy : dy;
-      if (adx >= TDECK_TOUCH_SWIPE_MIN && adx > ady) s_swiping_now = true;
+      const bool edge_zone = s_start_y <= (SCR_H * 16 / 100) ||
+                             s_start_y >= (SCR_H - 30);
+      const bool h_swipe = adx >= TDECK_TOUCH_SWIPE_MIN && adx > ady;
+      const bool v_swipe = ady >= TDECK_TOUCH_SWIPE_MIN && ady > adx && edge_zone;
+      if (h_swipe || v_swipe) {
+        s_swiping_now = true;
+        GEST_LOG("SWIPE_DETECT %s dx=%d dy=%d adx=%d ady=%d start=(%d,%d) edge=%d\n",
+                 h_swipe ? "HORIZ" : "VERT",
+                 dx, dy, adx, ady, s_start_x, s_start_y, (int)edge_zone);
+      }
     }
     return BUTTON_EVENT_NONE;
   }
@@ -357,11 +383,14 @@ int heltecV4CapTouchCheck() {
     int dy = (int)s_last_y - (int)s_start_y;
     int adx = dx < 0 ? -dx : dx;
     int ady = dy < 0 ? -dy : dy;
+    GEST_LOG("UP   start=(%d,%d) end=(%d,%d) dx=%d dy=%d adx=%d ady=%d dur=%lums\n",
+             s_start_x, s_start_y, s_last_x, s_last_y, dx, dy, adx, ady, dur);
     if (adx >= TDECK_TOUCH_SWIPE_MIN && adx > (ady + 8)) {
       bool left = dx < 0;
       s_swipe_x = left ? -1 : 1;
       s_swipe_y = 0;
       s_swipe_pending = true;
+      GEST_LOG("EMIT swipe_%s\n", left ? "left" : "right");
       return left ? BUTTON_EVENT_DOUBLE_CLICK : BUTTON_EVENT_TRIPLE_CLICK;
     }
     if (ady >= TDECK_TOUCH_SWIPE_MIN && ady > (adx + 8)) {
@@ -369,6 +398,7 @@ int heltecV4CapTouchCheck() {
       s_swipe_y = (dy < 0) ? -1 : 1;
       s_swipe_start_y = s_start_y;
       s_swipe_pending = true;
+      GEST_LOG("EMIT swipe_%s start_y=%d\n", dy < 0 ? "up" : "down", s_start_y);
       return BUTTON_EVENT_NONE;
     }
     if (dur >= 12 && dur < (unsigned long)TDECK_TOUCH_LONG_MS &&
@@ -376,8 +406,10 @@ int heltecV4CapTouchCheck() {
       s_tap_x = s_last_x;
       s_tap_y = s_last_y;
       s_tap_pending = true;
+      GEST_LOG("EMIT tap (%d,%d) dur=%lums\n", s_tap_x, s_tap_y, dur);
       return BUTTON_EVENT_CLICK;
     }
+    GEST_LOG("EMIT none (no gesture matched)\n");
   } else {
     s_live = false;
   }
