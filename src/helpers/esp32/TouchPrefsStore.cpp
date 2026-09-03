@@ -179,6 +179,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.lock_dim_pct      = 8;          // 8% — readable but low power
   c.auto_theme_sun    = 1;          // v59: sun auto-theme ON by default
   c.auto_aod_sun      = 1;          // v59: sun auto-AOD brightness ON by default
+  c.night_theme       = 0;          // v61: Dark at night (default)
+  c.day_theme         = 1;          // v61: Light during day (default)
 }
 
 // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
@@ -268,6 +270,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 58) { s_cfg.auto_theme_sun = 0; s_cfg.auto_aod_sun = 0; }  // v58: sun auto-theme/AOD fields added (were off)
         if (stored_version < 59) { s_cfg.auto_theme_sun = 1; s_cfg.auto_aod_sun = 1; }  // v59: flip to ON for existing users
         if (stored_version < 60) s_cfg.kb_force_legacy = 0;  // v60: kb protocol override, default auto-detect
+        if (stored_version < 61) { s_cfg.night_theme = 0; s_cfg.day_theme = 1; }  // v61: per-theme auto day/night
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -2015,6 +2018,10 @@ uint8_t touchPrefsGetLockDimPct()     { if (!s_begun) touchPrefsBegin(); uint8_t
 void    touchPrefsSetLockDimPct(uint8_t pct)  { if (!s_begun) touchPrefsBegin(); s_cfg.lock_dim_pct = (pct < 1) ? 1 : (pct > 100) ? 100 : pct; cfgFlush(); }
 bool    touchPrefsGetAutoThemeSun()   { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_theme_sun != 0; }
 void    touchPrefsSetAutoThemeSun(bool on) { if (!s_begun) touchPrefsBegin(); s_cfg.auto_theme_sun = on ? 1 : 0; cfgFlush(); }
+uint8_t touchPrefsGetNightTheme()     { if (!s_begun) touchPrefsBegin(); return s_cfg.night_theme; }
+void    touchPrefsSetNightTheme(uint8_t t) { if (!s_begun) touchPrefsBegin(); s_cfg.night_theme = t; cfgFlush(); }
+uint8_t touchPrefsGetDayTheme()       { if (!s_begun) touchPrefsBegin(); return s_cfg.day_theme; }
+void    touchPrefsSetDayTheme(uint8_t t)   { if (!s_begun) touchPrefsBegin(); s_cfg.day_theme = t; cfgFlush(); }
 bool    touchPrefsGetAutoAodSun()     { if (!s_begun) touchPrefsBegin(); return s_cfg.auto_aod_sun  != 0; }
 void    touchPrefsSetAutoAodSun(bool on)   { if (!s_begun) touchPrefsBegin(); s_cfg.auto_aod_sun  = on ? 1 : 0; cfgFlush(); }
 

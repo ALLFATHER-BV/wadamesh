@@ -407,6 +407,13 @@ public:
   }
   /** Message-ring capacity this boot (500, or 5000 with SD-backed history). */
   int  msgCap() const { return _ui_msg_cap; }
+  // Thin accessors used by ctPruneOldContacts (UITask.cpp) to walk the thread
+  // table without exposing _ui_threads outside the translation unit.
+  bool getThreadUsed(int idx) const { return idx >= 0 && idx < MAX_UI_THREADS && _ui_threads[idx].used; }
+  bool getThreadIsChannel(int idx) const { return idx >= 0 && idx < MAX_UI_THREADS && _ui_threads[idx].channel; }
+  const uint8_t* getThreadKey6(int idx) const {
+    return (idx >= 0 && idx < MAX_UI_THREADS && _ui_threads[idx].used) ? _ui_threads[idx].mesh_contact_key6 : nullptr;
+  }
   /** DM thread's full contact pubkey (32 B) — for the chat sheet's "Reset path".
    *  False for channels, unused slots, or a thread with no pubkey mapping yet. */
   bool getThreadContactPub(int idx, uint8_t out[32]) const {

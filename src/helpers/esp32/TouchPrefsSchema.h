@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 60;   // ...v58: auto_theme_sun + auto_aod_sun; v59: auto_theme_sun + auto_aod_sun default ON; v60: kb_force_legacy (older keyboard protocol, default OFF)   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
+static constexpr uint8_t CURRENT_VERSION = 61;   // ...v58: auto_theme_sun + auto_aod_sun; v59: auto_theme_sun + auto_aod_sun default ON; v60: kb_force_legacy (older keyboard protocol, default OFF); v61: night_theme + day_theme (per-theme auto day/night switch)   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v53: lock screen prefs (show_time/date/weekday/username/unread/batt, bg_color, always_on); v54: lock_msg_preview (show message preview card on lock screen, default 1)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -102,6 +102,9 @@ struct __attribute__((packed)) Config {
   // wrong the keyboard types nonsense — reachable by touch so it's a way out
   // that doesn't need the broken keyboard (#341, #351).
   uint8_t  kb_force_legacy;     // 0=auto-detect (default), 1=always use older protocol
+  // v61: per-theme selection for auto day/night switch
+  uint8_t  night_theme;         // theme index used at night (default 0=Dark)
+  uint8_t  day_theme;           // theme index used during day (default 1=Light)
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -109,8 +112,14 @@ static constexpr size_t STABLE_V44_PREFIX_SIZE = offsetof(Config, web_mirror);
 
 static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeof(Config::rx_queue),
               "the pre-v44 suffix moved");
-static_assert(offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy) == sizeof(Config),
+static_assert(offsetof(Config, day_theme) + sizeof(Config::day_theme) == sizeof(Config),
               "new preference fields must remain trailing");
+static_assert(offsetof(Config, night_theme) ==
+                  offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy),
+              "night_theme must follow kb_force_legacy");
+static_assert(offsetof(Config, day_theme) ==
+                  offsetof(Config, night_theme) + sizeof(Config::night_theme),
+              "day_theme must follow night_theme");
 static_assert(offsetof(Config, auto_theme_sun) ==
                   offsetof(Config, lock_dim_pct) + sizeof(Config::lock_dim_pct),
               "auto_theme_sun must follow lock_dim_pct");

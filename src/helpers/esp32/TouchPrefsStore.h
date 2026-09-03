@@ -486,6 +486,10 @@ uint8_t touchPrefsGetLockDimPct();             // always-on dim brightness 1..10
 void    touchPrefsSetLockDimPct(uint8_t pct);
 bool    touchPrefsGetAutoThemeSun();           // v58: auto dark/light theme by sunrise/sunset (applied at boot)
 void    touchPrefsSetAutoThemeSun(bool on);
+uint8_t touchPrefsGetNightTheme();             // v61: theme index used at night (default 0=Dark)
+void    touchPrefsSetNightTheme(uint8_t t);
+uint8_t touchPrefsGetDayTheme();               // v61: theme index used during day (default 1=Light)
+void    touchPrefsSetDayTheme(uint8_t t);
 bool    touchPrefsGetAutoAodSun();             // v58: auto AOD brightness 6% night / 15% day (live)
 void    touchPrefsSetAutoAodSun(bool on);
 

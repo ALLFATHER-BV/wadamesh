@@ -2410,6 +2410,7 @@ static const char*   DISC_NS = "discovered";
 static const char*   DISC_MARKER = "ver";
 static bool          s_disc_dirty   = false;
 static unsigned long s_disc_save_at = 0;
+static volatile bool s_disc_flush_req = false;   // signal background task to call saveDiscovered()
 // Compact on-disk record (84 B/entry). SdNvsPrefs caps one value at 2048 B, so
 // we cap each stored blob at DISC_PER_CHUNK records
 // (2 + 24*84 = 2018 B) and split the ring across as many chunk keys ("disc",
@@ -2519,11 +2520,26 @@ static void loadDiscovered() {
 // Coalesce a burst of adverts into one write ~20 s later (flash-churn guard).
 static void markDiscoveredDirty() { s_disc_dirty = true; s_disc_save_at = millis() + 20000; }
 static void discoveredFlushIfDue(unsigned long now) {
-  if (s_disc_dirty && (long)(now - s_disc_save_at) >= 0) saveDiscovered();
+  if (s_disc_dirty && (long)(now - s_disc_save_at) >= 0) s_disc_flush_req = true;  // off-thread (NVS blocks 2-3s)
 }
 // Synchronous flush for the deliberate reboot / power-off / download-mode paths
 // (mirrors the chat-history flush) so a manual reboot never drops recent finds.
 static void discoveredFlushNow() { if (s_disc_dirty) saveDiscovered(); }
+// Background task: drain s_disc_flush_req so saveDiscovered() never blocks the UI loop.
+static void discFlushTaskFn(void*) {
+  for (;;) {
+    if (s_disc_flush_req) {
+      s_disc_flush_req = false;
+      saveDiscovered();
+    }
+    vTaskDelay(pdMS_TO_TICKS(200));
+  }
+}
+static void ensureDiscFlushTask() {
+  static bool started = false;
+  if (started) return;
+  started = (xTaskCreate(discFlushTaskFn, "disc_flush", 4096, nullptr, 1, nullptr) == pdPASS);
+}
 // Remove discovered entries heard via more hops than the configured limit (the
 // "auto-delete above N hops" setting; 0 = off). Returns true if anything went.
 static bool discoveredSweepHops() {
@@ -8166,10 +8182,7 @@ static void threadSelectCb(lv_event_t* e) {
   // which collapses the content so the open-scroll lands at the top. Visible first = correct
   // heights = the open-scroll reaches the newest message.
   refreshChatDetailAsync(p);
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
-  // Physical keyboard: focus the composer on open so typing goes straight in.
-  showKb(&p);
-#endif
+  showKb(&p);   // focus composer on open so typing goes straight in (physical + touch)
 }
 
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
@@ -12330,17 +12343,6 @@ static void sdRestoreFromInternalCb(lv_event_t* e) {
 #endif
 #endif
 
-static void useMilesToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool miles = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-#if defined(ESP32)
-  touchPrefsSetUseMiles(miles);
-#endif
-  if (g_lv.task) g_lv.task->showAlert(miles ? TR("Distance: miles") : TR("Distance: km"), 900);
-  // The contacts cache now keys on the units flag, so this rebuilds the
-  // badges on the next refresh (and immediately if the list is visible).
-  refreshContactsList();
-}
 
 // Enter key sends the chat message (default) vs. inserts a newline so you send
 // only via the on-screen button — Tim kept firing messages on the public
@@ -13490,16 +13492,25 @@ static void buildDeviceSettings(int sec) {
 #endif
 #endif
 
-  /* Distance units: OFF = km (default), ON = miles. Applies immediately. */
+  /* Distance units: Metric (km, default) or Imperial (miles). Applies immediately. */
   {
-    int h = settingsRowLabel(body, y, 6, TR("Distance in miles"), COLOR_SUB, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);   // flush to the card's right edge
+    y += settingsRowLabel(body, y, 0, TR("Distance units"), COLOR_SUB, &g_font_12, 0) + 2;
+    lv_obj_t* dd = lv_dropdown_create(body);
+    lv_dropdown_set_options(dd, TR("Metric (km)\nImperial (mi)"));
 #if defined(ESP32)
-    if (touchPrefsGetUseMiles()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_dropdown_set_selected(dd, touchPrefsGetUseMiles() ? 1 : 0);
 #endif
-    lv_obj_add_event_cb(sw, useMilesToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
+    lv_obj_set_width(dd, lv_pct(100));
+    lv_obj_set_pos(dd, 2, y);
+    lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      const bool miles = lv_dropdown_get_selected(lv_event_get_target(e)) == 1;
+      touchPrefsSetUseMiles(miles);
+      refreshContactsList();
+      if (g_lv.task) g_lv.task->showAlert(miles ? TR("Distance: miles") : TR("Distance: km"), 900);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    y += SC(44);
   }
 
   }
@@ -13576,39 +13587,91 @@ static void buildDeviceSettings(int sec) {
   }
 #endif
 
-  /* UI colour theme: full palette swap applied on the next boot. */
+  /* UI colour theme: full palette swap applied on the next boot.
+     Auto day/night switch: shows separate night + day dropdowns.
+     Manual (switch off): single theme dropdown. */
   {
-    y += settingsRowLabel(body, y, 0, TR("Colour theme (restart to apply)"), COLOR_SUB, &g_font_12, 0) + 2;
-    lv_obj_t* dd = lv_dropdown_create(body);
-    lv_dropdown_set_options(dd, TR("Dark\nLight\nGreenish\nPinkish\nReddish\nLight Red"));
-    lv_dropdown_set_selected(dd, touchPrefsGetUiTheme());
-    lv_obj_set_width(dd, lv_pct(100));
-    lv_obj_set_pos(dd, 2, y);
-    lv_obj_add_event_cb(dd, [](lv_event_t* e) {
+    // Auto day/night switch toggle (first, so it controls what dropdowns appear below)
+    int h = settingsRowLabel(body, y, 6, TR("Auto day/night theme (restart)"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw_auto = lv_switch_create(body);
+    lv_obj_align(sw_auto, LV_ALIGN_TOP_RIGHT, 0, y);
+    const bool auto_on = touchPrefsGetAutoThemeSun();
+    if (auto_on) lv_obj_add_state(sw_auto, LV_STATE_CHECKED);
+    y += LV_MAX(40, h + 12);
+
+    static const char* THEME_OPTS = "Dark\nLight\nGreenish\nPinkish\nReddish\nLight Red";
+
+    // Night theme dropdown (only when auto is on)
+    lv_obj_t* row_night = lv_obj_create(body);
+    lv_obj_remove_style_all(row_night);
+    lv_obj_set_size(row_night, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_pos(row_night, 0, y);
+    if (!auto_on) lv_obj_add_flag(row_night, LV_OBJ_FLAG_HIDDEN);
+    settingsRowLabel(row_night, 0, 0, TR("Night theme"), COLOR_SUB, &g_font_12, 0);
+    lv_obj_t* dd_night = lv_dropdown_create(row_night);
+    lv_dropdown_set_options(dd_night, TR(THEME_OPTS));
+    lv_dropdown_set_selected(dd_night, touchPrefsGetNightTheme());
+    lv_obj_set_width(dd_night, lv_pct(100));
+    lv_obj_set_pos(dd_night, 2, SC(18));
+    lv_obj_add_event_cb(dd_night, [](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-      uint8_t sel = (uint8_t)lv_dropdown_get_selected(lv_event_get_target(e));
-      touchPrefsSetUiTheme(sel);
-      // Manual selection disables auto-theme (user takes explicit control).
-      if (touchPrefsGetAutoThemeSun()) touchPrefsSetAutoThemeSun(false);
+      touchPrefsSetNightTheme((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
+      if (g_lv.task) g_lv.task->showAlert(TR("Night theme saved — restart to apply"), 2000);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd_night, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_set_height(row_night, SC(18) + SC(44));
+    const int night_row_h = SC(18) + SC(44) + 4;
+
+    // Day theme dropdown (only when auto is on)
+    lv_obj_t* row_day = lv_obj_create(body);
+    lv_obj_remove_style_all(row_day);
+    lv_obj_set_size(row_day, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_pos(row_day, 0, y + night_row_h);
+    if (!auto_on) lv_obj_add_flag(row_day, LV_OBJ_FLAG_HIDDEN);
+    settingsRowLabel(row_day, 0, 0, TR("Day theme"), COLOR_SUB, &g_font_12, 0);
+    lv_obj_t* dd_day = lv_dropdown_create(row_day);
+    lv_dropdown_set_options(dd_day, TR(THEME_OPTS));
+    lv_dropdown_set_selected(dd_day, touchPrefsGetDayTheme());
+    lv_obj_set_width(dd_day, lv_pct(100));
+    lv_obj_set_pos(dd_day, 2, SC(18));
+    lv_obj_add_event_cb(dd_day, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      touchPrefsSetDayTheme((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
+      if (g_lv.task) g_lv.task->showAlert(TR("Day theme saved — restart to apply"), 2000);
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(dd_day, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_set_height(row_day, SC(18) + SC(44));
+    const int day_row_h = SC(18) + SC(44) + 4;
+
+    // Single theme dropdown (only when auto is off)
+    lv_obj_t* row_manual = lv_obj_create(body);
+    lv_obj_remove_style_all(row_manual);
+    lv_obj_set_size(row_manual, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_pos(row_manual, 0, y);
+    if (auto_on) lv_obj_add_flag(row_manual, LV_OBJ_FLAG_HIDDEN);
+    settingsRowLabel(row_manual, 0, 0, TR("Colour theme (restart to apply)"), COLOR_SUB, &g_font_12, 0);
+    lv_obj_t* dd_manual = lv_dropdown_create(row_manual);
+    lv_dropdown_set_options(dd_manual, TR(THEME_OPTS));
+    lv_dropdown_set_selected(dd_manual, touchPrefsGetUiTheme());
+    lv_obj_set_width(dd_manual, lv_pct(100));
+    lv_obj_set_pos(dd_manual, 2, SC(18));
+    lv_obj_add_event_cb(dd_manual, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      touchPrefsSetUiTheme((uint8_t)lv_dropdown_get_selected(lv_event_get_target(e)));
       if (g_lv.task) g_lv.task->showAlert(TR("Theme saved — restart to apply"), 2000);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
-    y += SC(44);
-  }
-  // Auto theme by sun: Dark at night, Light during the day. Applied at next boot.
-  {
-    int h = settingsRowLabel(body, y, 6, TR("Auto theme by sun (restart)"), COLOR_SUB, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
-    if (touchPrefsGetAutoThemeSun()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(sw, [](lv_event_t* e) {
+    lv_obj_add_event_cb(dd_manual, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_set_height(row_manual, SC(18) + SC(44));
+    const int manual_row_h = SC(18) + SC(44) + 4;
+
+    // Toggle saves the pref; settings page rebuilds on next open showing the right rows.
+    lv_obj_add_event_cb(sw_auto, [](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-      bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-      touchPrefsSetAutoThemeSun(on);
-      if (g_lv.task) g_lv.task->showAlert(on ? TR("Auto theme on — restart to apply")
-                                              : TR("Auto theme off — restart to apply"), 2000);
+      touchPrefsSetAutoThemeSun(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+      if (g_lv.task) g_lv.task->showAlert(TR("Restart to apply"), 2000);
     }, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
+
+    y += auto_on ? (night_row_h + day_row_h) : manual_row_h;
   }
 
   /* Theme colour (UI accent): opens a colour-wheel + hex picker. The chosen
@@ -25723,6 +25786,63 @@ static void contactsSegmentCb(lv_event_t* e) {
 }
 
 // ---- Overflow ("⋯") sheet: Search / Found / + ----
+// Bulk-delete state (also used by auto-prune below)
+static bool         s_ctd_active  = false;
+static int          s_ctd_total   = 0, s_ctd_done = 0;
+static ContactInfo* s_ctd_list    = nullptr;   // psAlloc'd snapshot of what to delete
+static lv_obj_t*    s_ctd_overlay = nullptr;   // progress modal
+static lv_obj_t*    s_ctd_bar     = nullptr;
+static lv_obj_t*    s_ctd_lbl     = nullptr;
+static void ctDeleteProgressOpen();   // fwd: defined below with the select-mode toolbar
+// Auto-prune: remove contacts not heard in 7 days that are neither starred nor
+// have any DM history. Safe to call at boot (now > 12 s) and from the UI.
+// Uses the existing chunked-delete engine (ctDeleteServiceTick) so the UI stays
+// responsive and the progress bar shows during a large prune.
+static void ctPruneOldContacts(bool silent = false) {
+  if (!g_lv.task) return;
+  if (s_ctd_active) return;   // another bulk-delete in progress
+  constexpr uint32_t PRUNE_AGE_SECS = 1u * 24u * 3600u;   // 1 day
+  const uint32_t now_epoch = the_mesh.getRTCClock() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  if (now_epoch < PRUNE_AGE_SECS) return;   // RTC not set or freshly booted — skip
+  const uint32_t cutoff = now_epoch - PRUNE_AGE_SECS;
+#if defined(ESP32)
+  uint8_t fav_buf[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];
+  const int fav_count = touchPrefsCopyFavorites(fav_buf);
+#else
+  const int fav_count = 0; uint8_t* const fav_buf = nullptr;
+#endif
+  if (!s_ctd_list) s_ctd_list = (ContactInfo*)psAlloc(sizeof(ContactInfo) * 128);
+  if (!s_ctd_list) return;
+  int n = 0;
+  const int cnt = the_mesh.getNumContacts();
+  for (int i = 0; i < cnt && n < 128; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !c.name[0]) continue;
+    // Keep favorites
+#if defined(ESP32)
+    if (touchPrefsFavoritesSnapshotContains(fav_buf, fav_count, c.id.pub_key)) continue;
+#endif
+    if (c.flags & 0x01) continue;   // favorite flag in the mesh store
+    // Keep contacts active within 1 day
+    if (c.lastmod >= cutoff) continue;
+    // Keep contacts with DM history (scan thread table by key6)
+    bool has_dm = false;
+    for (int t = 0; t < UITask::MAX_UI_THREADS && !has_dm; ++t) {
+      if (!g_lv.task->getThreadUsed(t) || g_lv.task->getThreadIsChannel(t)) continue;
+      const uint8_t* k6 = g_lv.task->getThreadKey6(t);
+      if (k6 && memcmp(k6, c.id.pub_key, 6) == 0) has_dm = g_lv.task->threadHasMessageHistory(t);
+    }
+    if (has_dm) continue;
+    s_ctd_list[n++] = c;
+  }
+  if (n == 0) {
+    if (!silent && g_lv.task) g_lv.task->showAlert(TR("Nothing to prune"), 1200);
+    return;
+  }
+  s_ctd_total = n; s_ctd_done = 0; s_ctd_active = true;
+  if (!silent) ctDeleteProgressOpen();   // boot-time prune: no modal, just background chunked delete
+}
+
 static void closeContactsOverflowSheet() {
   if (s_contacts_overflow_root) {
     popupClose(&s_contacts_overflow_root);
@@ -25753,6 +25873,11 @@ static void contactsOverflowAutoAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeContactsOverflowSheet();
   openSettingsCategory(CAT_AUTOADD);   // jump straight to the dedicated Auto-add page
+}
+static void contactsOverflowPruneCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeContactsOverflowSheet();
+  ctPruneOldContacts(false);
 }
 static void contactsOverflowBlockedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -25786,7 +25911,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   const int card_w = PCW(200);
 #endif
   const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
-  const int rows = 5;
+  const int rows = 6;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
   lv_obj_t* card = lv_obj_create(s_contacts_overflow_root);
@@ -25844,6 +25969,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   mk(TR(LV_SYMBOL_PLUS     "  Add contact"), contactsOverflowAddCb, 0);
   mk(TR(LV_SYMBOL_DOWNLOAD "  Auto-add settings"), contactsOverflowAutoAddCb, 0);
   mk(TR(LV_SYMBOL_CLOSE    "  Blocked list"), contactsOverflowBlockedCb, 0);
+  mk(TR(LV_SYMBOL_TRASH    "  Prune old contacts"), contactsOverflowPruneCb, 0x3D2020);
 }
 
 // ============================================================
@@ -25869,14 +25995,7 @@ static const char* contactsFilterShortLabel() {
     default: return "All";
   }
 }
-// Bulk-delete runs chunked across loop ticks (each uiRemoveContact rewrites the
-// contacts file to flash; doing 100+ synchronously froze the UI / tripped the WDT).
-static bool         s_ctd_active  = false;
-static int          s_ctd_total   = 0, s_ctd_done = 0;
-static ContactInfo* s_ctd_list    = nullptr;   // psAlloc'd snapshot of what to delete
-static lv_obj_t*    s_ctd_overlay = nullptr;   // progress modal
-static lv_obj_t*    s_ctd_bar     = nullptr;
-static lv_obj_t*    s_ctd_lbl     = nullptr;
+// Bulk-delete state moved up (before ctPruneOldContacts which references it).
 
 static bool ctSelHas(const uint8_t* k){ for(int i=0;i<s_ct_sel_n;++i) if(!memcmp(s_ct_sel[i],k,6)) return true; return false; }
 static void ctSelAdd(const uint8_t* k){ if(s_ct_sel_n<128 && !ctSelHas(k)) memcpy(s_ct_sel[s_ct_sel_n++],k,6); }
@@ -33407,6 +33526,24 @@ static void msgMenuBlockCb(lv_event_t* e) {
   g_lv.task->showAlert(ok ? TR("Sender blocked") : TR("Block list full"), 1500);
 }
 
+static void msgMenuDmCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a) lv_indev_wait_release(a);
+  closeMsgActionMenu();
+  // Find the mesh contact matching the snapshotted sender name.
+  const uint32_t nc = the_mesh.getNumContacts();
+  for (uint32_t i = 0; i < nc; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c)) continue;
+    if (strcmp(c.name, s_msg_menu_sender) == 0) {
+      g_lv.task->openMeshContactDm(i);
+      return;
+    }
+  }
+  g_lv.task->showAlert(TR("Contact not found"), 1400);
+}
+
 // "Resend" (outgoing messages only): transmit the same text again to the open
 // thread — for when a DM never got its ✓✓ ack, or a channel post may not have
 // propagated. Sends the snapshotted body (s_msg_menu_text) via the normal composer
@@ -33545,6 +33682,7 @@ static void openMessageActionMenu(int msg_idx) {
   const bool can_mention = m.channel && !m.outgoing && m.sender[0];
   const bool can_block   = !m.outgoing;   // block the sender — never for our own messages
   const bool can_resend  = m.outgoing && m.text[0];   // re-send one of OUR messages (DM or channel)
+  const bool can_dm      = m.channel && !m.outgoing && m.sender[0];   // open DM to channel msg sender
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -33584,7 +33722,7 @@ static void openMessageActionMenu(int msg_idx) {
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0) + (can_dm ? 1 : 0);
   const int nrows  = (nbtn + 1) / 2;
   int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
@@ -33644,6 +33782,7 @@ static void openMessageActionMenu(int msg_idx) {
   mk_btn(TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
   if (can_block)  mk_btn(TR(LV_SYMBOL_CLOSE   "  Block"), msgMenuBlockCb);
   if (can_resend) mk_btn(TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
+  if (can_dm)     mk_btn(TR(LV_SYMBOL_ENVELOPE "  DM"), msgMenuDmCb);
   mk_btn(TR(LV_SYMBOL_TRASH "  Delete"), msgMenuDeleteCb);
 }
 
@@ -40151,6 +40290,22 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     }
     accentBoxHide();
   } else if (key == ' ') {
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+    // If the composer contains only spaces (or is empty), treat Space as a
+    // lock trigger: clear the field and start the locking countdown.
+    // This lets the user "hold" Space by repeatedly pressing it until the
+    // field is all-spaces, then one more press → lock. Actual text is safe.
+    if (s_kb_panel && (ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta)) {
+      const char* txt = lv_textarea_get_text(ta);
+      bool only_spaces = true;
+      for (const char* p = txt; *p; ++p) { if (*p != ' ') { only_spaces = false; break; } }
+      if (only_spaces) {
+        lv_textarea_set_text(ta, "");   // clear any accumulated spaces
+        startLockingCountdown();
+        return;
+      }
+    }
+#endif
     // Double-tap SPACE within 250 ms toggles between English and the
     // configured secondary keyboard. If no secondary is set, it behaves
     // as a normal space.
@@ -47170,7 +47325,7 @@ static void buildUiTree() {
     sunEvaluate(g_lv.task->getNodeLat(), g_lv.task->getNodeLon(), tz_h);
     s_sun_last_eval_ms = millis();
     if (s_sun_valid && touchPrefsGetAutoThemeSun()) {
-      const uint8_t sun_theme = s_sun_is_night ? 0 : 1;   // 0=Dark, 1=Light
+      const uint8_t sun_theme = s_sun_is_night ? touchPrefsGetNightTheme() : touchPrefsGetDayTheme();
       if (touchPrefsGetUiTheme() != sun_theme) touchPrefsSetUiTheme(sun_theme);
     }
   }
@@ -55764,6 +55919,15 @@ void UITask::loop() {
       if (changed) Serial.println("[UI] favorite flags synced into contact table (#178)");
     }
   }
+  // Boot-time auto-prune: silently remove contacts not heard in 7 days that
+  // have no star and no DM history. Runs once after the RTC / fav-sync settle.
+  {
+    static bool s_pruned = false;
+    if (!s_pruned && now > 12000) {
+      s_pruned = true;
+      ctPruneOldContacts(false);   // DEBUG: show alert so we can see if prune fires and what it finds
+    }
+  }
 #endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
@@ -55868,7 +56032,7 @@ void UITask::loop() {
 #if defined(HAS_TANMATSU)
   if (s_msgled_flash_until) msgLedRefresh(getUnreadTotal() > 0);   // end the one-shot envelope-LED flash on time
 #endif
-  { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
+  { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); ensureDiscFlushTask(); } }
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:disc-flush");       // discoveredFlushIfDue owns this slot (was mislabelled ui:gps)
@@ -56185,7 +56349,7 @@ void UITask::loop() {
                   (float)touchPrefsGetTimeOffsetHours());
       s_sun_last_eval_ms = now;
       if (s_sun_valid && touchPrefsGetAutoThemeSun()) {
-        const uint8_t sun_theme = s_sun_is_night ? 0 : 1;  // 0=Dark, 1=Light
+        const uint8_t sun_theme = s_sun_is_night ? touchPrefsGetNightTheme() : touchPrefsGetDayTheme();
         if (touchPrefsGetUiTheme() != sun_theme) {
           touchPrefsSetUiTheme(sun_theme);
           showAlert(TR("Theme changed — restarting…"), 2000);
