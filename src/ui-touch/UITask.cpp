@@ -127,6 +127,13 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
+#include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
+// The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
+// must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
+// stores fine gets rejected as implausible and the author lands back in the body.
+static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAME,
+              "the split would reject a name UIMessage::sender can hold");
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
@@ -190,6 +197,11 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
     // its include path, so an angle include picks that up and misses accessors we
     // add here (e.g. the signal-probe prefs). Quotes force the local src/ copy.
     #include "../helpers/esp32/TouchPrefsStore.h"
+    // A block-list slot narrower than a sender name stores a cut name that the full-width
+    // RX check can never match again — the block shows in Settings and silently never
+    // fires. TouchPrefsStore.h stated this invariant in prose; prose is what let it rot.
+    static_assert(TOUCH_IGNORED_NAME_LEN >= UITask::MAX_SENDER_NAME + 1,
+                  "block-list slot must hold a full sender name, or blocking silently stops working");
     #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
@@ -313,6 +325,15 @@ struct __attribute__((packed)) UiHistoryThread {
   char name[UITask::MAX_THREAD_NAME + 1];
 };
 
+// On-disk width of UiHistoryMsg::sender, FROZEN at what v6 blobs were written with.
+// Deliberately NOT tied to UITask::MAX_SENDER_NAME: `sender` sits between `thread` and
+// `text`, so growing it in place shifts `text` for every already-stored record. Nothing
+// detects that — the segment loader validates only magic/version/rec_size, so an old
+// record would prefix-read into the new offsets and every message would silently lose
+// the first bytes of its body. A sender too long for this field spills into
+// UiSegMsg::sender_ext instead (see SenderExtField.h).
+constexpr int k_ui_disk_sender_len = 25;   // == the historical MAX_SENDER_NAME + 1
+
 struct __attribute__((packed)) UiHistoryMsg {
   uint32_t ts;
   uint8_t channel;
@@ -327,7 +348,7 @@ struct __attribute__((packed)) UiHistoryMsg {
   int8_t  snr_q4;
   int8_t  rssi;
   char thread[UITask::MAX_THREAD_NAME + 1];
-  char sender[UITask::MAX_SENDER_NAME + 1];
+  char sender[k_ui_disk_sender_len];
   char text[UITask::MAX_MSG_TEXT + 1];
   // Append any FUTURE fields HERE (after text) and bump k_ui_history_version.
   // The v5+ loader zero-fills appended fields for older blobs, so appending
@@ -391,7 +412,35 @@ struct __attribute__((packed)) UiSegHeader {
 struct __attribute__((packed)) UiSegMsg {
   UiHistoryMsg m;
   uint32_t     seq;
+  // Names run to 31 chars on the wire (MeshCore's ContactInfo::name[32]) but m.sender
+  // freezes at the 24 the v6 record was written with. The tail lives HERE, appended at
+  // the very end — after seq, not inside m — so every pre-existing field keeps its
+  // offset and the min(rec_size) prefix read stays correct in BOTH directions: an old
+  // 233-byte record zero-fills this and yields its original short name, and an older
+  // firmware reading this 240-byte record copies the first 233 bytes and ignores the
+  // tail (the name falls back to 24 chars, nothing else changes). That is why
+  // k_ui_seg_version STAYS 1 — bumping it would make that older firmware reject the
+  // file outright (uiSegOpenValidated rejects version > k_ui_seg_version) and quarantine
+  // a perfectly readable history. Split/rejoin lives in SenderExtField.h.
+  //
+  // Rollback caveat, since two widths now exist in the wild: an older firmware READS
+  // this record correctly, but if it then APPENDS to the same segment it writes 233-byte
+  // records into a file whose header says 240, and everything after them reads at the
+  // wrong stride. Nothing on this side can prevent that (the write is the old build's),
+  // and a version bump would not help either — it would only make the old build reject
+  // the file instead. Our own direction of the same hazard IS handled: see the width
+  // check in loadMsgsFromSegments, which refuses to append across widths.
+  char         sender_ext[UITask::MAX_SENDER_NAME + 1 - k_ui_disk_sender_len];
 };
+
+// Pin what an ALREADY-WRITTEN record's reader depends on. These are offsets, not the total
+// size, precisely because appending further fields at the tail stays safe — what must never
+// move is anything a v6-era record already holds, since nothing on the read path would
+// detect the shift. Growing the record past these offsets is fine; moving them is not.
+static_assert(sizeof(UiHistoryMsg) == 229, "v6 record layout changed — old blobs would mis-read");
+static_assert(offsetof(UiSegMsg, seq) == 229, "seq moved — old segments would mis-read");
+static_assert(offsetof(UiSegMsg, sender_ext) == 233,
+              "the appended tail must start where the old record ended, or old segments mis-read");
 } // namespace
 #endif
 
@@ -3581,11 +3630,54 @@ static void navSwitchTab(int dir) {
 }
 
 // Jump straight to a main tab (the coloured F-keys). Close any open modal/sheet first so the jump
-// lands on the bare page.
-static void navGoToMainTab(int tab) {
-  for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();
+// lands on the bare page. Returns false when a popup REFUSED to close: the registry's key-blocker
+// rows (SD-format progress, bulk-delete progress) have a null closer by design, and the old
+// unconditional loop spun eight times closing nothing and then switched tabs out from under the
+// running operation anyway. Callers that ignore the result still compile unchanged.
+static bool navGoToMainTab(int tab) {
+  for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+  if (anyPopupOpen()) return false;
   goToTab(tab);
+  return true;
 }
+
+#if defined(HAS_M9_KEYBOARD)
+// ---- M9 navigation history ---------------------------------------------------
+// The Back ladder (m9HandleNavKey, M9_KEY_HW_BACK) peels modals, app pages, chats
+// and modes innermost-first, and it does that part correctly. What it never had is
+// "the screen I was on BEFORE this one": every tab jump was one-way, so once the
+// layers were peeled Back fell through to navPushTap(LV_KEY_ESC) — and nothing in
+// this build consumes LV_KEY_ESC (the sole consumer is lv_dropdown, already peeled
+// a rung earlier, and navMaybeRebuild deliberately keeps the tab bar out of the
+// focus group). The press was consumed and nothing happened, on every bare tab.
+//
+// This records ONLY that missing piece: which main tab you came from. It
+// deliberately does NOT shadow the layers the ladder already peels — duplicating
+// them here would double-close. In particular the app drawer is NOT pushed: it is
+// a popup-registry row that rung 6 already closes, and its mode survives a tab
+// switch, so returning to Home restores it on its own.
+//
+// NEVER store an lv_obj_t* here. Settings sheets, app pages and the drawer are
+// destroyed (often via del_async), so a stored pointer would dangle. Store the tab
+// index only, and treat an entry that no longer applies as a skip rather than
+// letting it cost the user a dead press.
+static constexpr int kM9NavMax = 12;            // 12 * 2 B = 24 B of .bss
+static int16_t s_m9_nav[kM9NavMax];
+static int     s_m9_nav_n = 0;
+static bool    s_m9_nav_replaying = false;      // a pop's own goToTab must not re-push
+
+static void m9NavPush(int tab) {
+  if (s_m9_nav_replaying) return;
+  if (s_m9_nav_n > 0 && s_m9_nav[s_m9_nav_n - 1] == (int16_t)tab) return;   // collapse repeats
+  if (s_m9_nav_n == kM9NavMax) {                                            // full: drop the OLDEST
+    memmove(&s_m9_nav[0], &s_m9_nav[1], sizeof(s_m9_nav[0]) * (kM9NavMax - 1));
+    s_m9_nav_n--;
+  }
+  s_m9_nav[s_m9_nav_n++] = (int16_t)tab;
+}
+static void m9NavClear() { s_m9_nav_n = 0; }
+static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside them
+#endif
 
 // Visible focus ring (the LVGL default theme's focus outline is invisible on this dark UI). Driven
 // by the group's focus-changed callback. Reverse-video ("negative") highlight: the
@@ -5155,6 +5247,10 @@ static void      buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw);   // fw
 #endif
 static lv_obj_t* s_update_badge     = nullptr;   // red "!" over the bottom-bar gear
 static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over the bottom-bar Chats icon
+#if defined(HAS_THINKNODE_M9)
+static lv_obj_t* s_m9_mail_indicator = nullptr;
+static lv_obj_t* s_m9_contact_indicator = nullptr;
+#endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
@@ -5399,6 +5495,7 @@ static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region p
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
+static void setupShowStep(int step);      // fwd: the M9 Back key steps the wizard, same as its on-screen Back
 static void setupRerunCb(lv_event_t* e);  // fwd: "Run setup again" button callback
 
 // Our release number (the N in "beta_N"); -1 if this isn't a tagged build.
@@ -8346,6 +8443,8 @@ static void openQuickReplyPicker(LvChatPanel* p) {
 static void openAppDrawer();    // fwd — app-drawer overlay (defined below openControlCenter)
 static void closeAppDrawer();
 static void setHomeDrawer(bool show);
+static void ctExitSelectMode();  // fwd — leave Contacts multi-select if it is on (defined with the Contacts tab).
+                                 // Must sit OUTSIDE any CAP_KEYPAD_NAV guard: tabChangedCb below calls it on every board.
 static void closeMentionsScreen();           // fwd — @-mentions screen (defined with the drawer)
 static void openMentionsScreen();            // fwd — same
 static void closeAppDrawerSync();            // fwd — synchronous drawer close (safe outside the drawer's own event)
@@ -8428,6 +8527,7 @@ static void tabChangedCb(lv_event_t* e) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
   }
   if (new_t == CONTACTS_TAB_INDEX) refreshContactsList();
+  else if (prev_t == CONTACTS_TAB_INDEX) ctExitSelectMode();   // a mode must not outlive the tab it belongs to
 #if defined(HAS_EXPANSION_KIT)
   if (new_t == SENSORS_TAB_INDEX) refreshSensorsTab();
 #endif
@@ -8712,7 +8812,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if CAP_KEYBOARD && CAP_KEYPAD_NAV
 // Recursively find the first text field under `obj` (depth-first).
 static lv_obj_t* findFirstTextarea(lv_obj_t* obj) {
   if (!obj) return nullptr;
@@ -8729,14 +8829,20 @@ static lv_obj_t* findFirstTextarea(lv_obj_t* obj) {
 // Deferred via lv_async from createSettingsModal so the modal's fields exist by
 // the time it runs: focus the first text field of a freshly-opened popup modal
 // so the physical keyboard types straight into it. Mirrors settingsFieldFocusCb.
-static void tdeckModalAutoFocusAsync(void* root) {
+static void physicalKeyboardModalAutoFocusAsync(void* root) {
   lv_obj_t* r = static_cast<lv_obj_t*>(root);
   if (!r || !lv_obj_is_valid(r)) return;          // modal already closed in the meantime?
   lv_obj_t* ta = findFirstTextarea(r);
   if (!ta) return;                                 // no text field -> nothing to focus
   s_kb_panel = nullptr;                            // a settings field, not the chat composer
   kbMirrorBind(ta);                                // bind the keyboard to it
-  lv_obj_add_state(ta, LV_STATE_FOCUSED);          // show the cursor
+  s_nav_focus_hint = ta;
+  navMarkDirty();
+  navMaybeRebuild();
+  if (s_nav_group && lv_group_get_focused(s_nav_group) == ta) {
+    s_nav_ta_editing = true;
+    navSyncCursor();
+  }
   noteKbActivity();
 }
 #endif
@@ -9292,11 +9398,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   g_set_modal.root = root;
   g_set_modal.kind = kind;
   s_settings_content_w = (sw - 8) - 12;   // modal body width minus its 6px padding each side
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if CAP_KEYBOARD && CAP_KEYPAD_NAV
   // Physical keyboard: once the caller has finished adding this modal's fields
   // (deferred to the next frame), focus its first text field so the user can
   // type straight away. Popup modals only — the inline-settings path returns above.
-  lv_async_call(tdeckModalAutoFocusAsync, root);
+  lv_async_call(physicalKeyboardModalAutoFocusAsync, root);
 #endif
   return content;
 }
@@ -10034,7 +10140,12 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
       lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
       lv_obj_set_pos(l, 2, y);
-      y += SC(38);
+      // The text names every enabled type TWICE ("Auto-add on for chats,
+      // repeaters, rooms, sensors — new chats, repeaters, rooms, sensors land
+      // in Contacts automatically."), so with several types enabled it wraps
+      // well past the fixed SC(38) and printed over the first discovered card.
+      lv_obj_update_layout(l);
+      y += LV_MAX(SC(38), lv_obj_get_height(l) + SC(6));
     }
   }
 
@@ -10745,7 +10856,11 @@ static void buildRadioSettings() {
     lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_pos(rl, 2, y);
-    y += SC(22);
+    // Width is set, so this label WRAPS. A 4-digit time-on-air (any SF11/SF12
+    // preset) or a longer translation takes it to two lines, and the fixed
+    // SC(22) advance ran the second line through the MESH section divider.
+    lv_obj_update_layout(rl);
+    y += LV_MAX(SC(22), lv_obj_get_height(rl) + SC(4));
   }
 
   mk_section("MESH");
@@ -11648,34 +11763,49 @@ static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
   char buf[704];
 
-  // Live tier (uptime + heap): a small constant-height label refreshed at 1 Hz.
+  // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
+  // Both labels below are re-texted AFTER build with text whose LINE COUNT
+  // genuinely varies:
+  //   • the live tier gains a hard '\n' the moment a chat-store write fails
+  //     (sysInfoTextLive's "last save: FAIL ...\n  append failed: ..." branch),
+  //     and it is refreshed at 1 Hz while this page is open;
+  //   • the slow tier grows as the off-thread microSD scan publishes its
+  //     size/free lines, and as the loop-stall ring fills from "none recorded"
+  //     to six "-Ns <tag> Nms" rows — on a page that is itself a documented
+  //     stall source.
+  // The old code pinned each child to the MEASURED height of the one above it,
+  // so any of that growth printed straight over the next widget: the live tier
+  // over the "Chip / ESP32-S3" heading, the slow tier over the Memory detail
+  // button. Reserving a worst case is not viable here — neither the stall ring
+  // nor the SD strings have a fixed upper bound — so let the container reflow
+  // instead. Children are created in visual order, which is what flex needs.
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(body, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(body, 2, LV_PART_MAIN);
+
+  // Live tier (uptime + heap), refreshed at 1 Hz.
   lv_obj_t* lbl = lv_label_create(body);
   s_sysinfo_lbl = lbl;
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(lbl, lv_pct(100));
-  lv_obj_set_pos(lbl, 2, 0);
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   sysInfoTextLive(buf, sizeof buf);
   lv_label_set_text(lbl, buf);
 
   // Slow tier below it: chip/flash/SD/NVS/stalls/build — re-set only on change.
-  lv_obj_update_layout(lbl);
   lv_obj_t* rest = lv_label_create(body);
   s_sysinfo_rest_lbl = rest;
   lv_label_set_long_mode(rest, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(rest, lv_pct(100));
-  lv_obj_set_pos(rest, 2, lv_obj_get_y(lbl) + lv_obj_get_height(lbl) + 2);
   lv_obj_set_style_text_font(rest, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(rest, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   sysInfoTextRest(buf, sizeof buf);
   lv_label_set_text(rest, buf);
 
   // "Memory detail" button below the info text (per-region heap breakdown).
-  lv_obj_update_layout(rest);
   lv_obj_t* membtn = lv_btn_create(body);
   lv_obj_set_size(membtn, lv_pct(96), SC(34));
-  lv_obj_set_pos(membtn, 2, lv_obj_get_y(rest) + lv_obj_get_height(rest) + 8);
   styleButton(membtn);
   lv_obj_add_event_cb(membtn, openMemoryDetailCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* mbl = lv_label_create(membtn);
@@ -12656,9 +12786,37 @@ static void buildDeviceSettings(int sec) {
   lv_obj_set_style_text_color(g_set_modal.gps_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(g_set_modal.gps_status, 4, y);
-  lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
-  lv_obj_update_layout(g_set_modal.gps_status);
-  y += LV_MAX(SC(22), lv_obj_get_height(g_set_modal.gps_status) + SC(6));   // status is 2 lines now
+  // RESERVE THE WORST-CASE HEIGHT, don't measure the current text. This label is
+  // re-texted every tick while the page is open (updateSettingsLiveFields), and
+  // every row below it is positioned ABSOLUTELY from this build-time `y` — so a
+  // status that grows after the page was built lands on top of them. Concretely:
+  // open the page with GPS off and the text is a one-line "GPS: off", so `y`
+  // advanced ~22 px; toggle GPS on — the obvious thing to do on this page — and
+  // the text becomes "GPS: searching Nm" plus the ~100-character cold-start
+  // sentence, which wraps to several lines on a 240 px panel and printed over
+  // the "GPS serial baud" label and its dropdown.
+  // Measure the tallest string this label can ever hold, with the real font and
+  // width, and PIN the height to it. A later refresh then cannot reflow anything.
+  // Both long variants are probed because which one is tallest depends on the
+  // active translation, not just on English.
+  {
+    char probe[200];
+    snprintf(probe, sizeof probe, "%s 00m00s\n%s", TR("GPS: searching"),
+             TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+    lv_label_set_text(g_set_modal.gps_status, probe);
+    lv_obj_update_layout(g_set_modal.gps_status);
+    lv_coord_t worst_h = lv_obj_get_height(g_set_modal.gps_status);
+
+    snprintf(probe, sizeof probe, "%s \xc2\xb7 00 sats \xc2\xb7 0000 m\n00.00000, 000.00000", TR("GPS: fix"));
+    lv_label_set_text(g_set_modal.gps_status, probe);
+    lv_obj_update_layout(g_set_modal.gps_status);
+    if (lv_obj_get_height(g_set_modal.gps_status) > worst_h)
+      worst_h = lv_obj_get_height(g_set_modal.gps_status);
+
+    lv_obj_set_height(g_set_modal.gps_status, worst_h);
+    lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
+    y += LV_MAX(SC(22), worst_h + SC(6));
+  }
 
   // (Expansion Kit moved to the Sensors page — see the DSEC_SENSORS block below.)
 
@@ -14239,11 +14397,17 @@ static void buildBluetoothSettings() {
     y += SC(38);
 
     lv_obj_t* hint = lv_label_create(body);
+    // Give it a width so it WRAPS: with none, the label sizes to its text and
+    // simply runs off the right edge. The English string already overflows the
+    // grouped-settings width here, before any longer translation.
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, lv_pct(100));
     lv_label_set_text(hint, TR("Type a new 6-digit code \xC2\xB7 applies after a reboot"));
     lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(hint, 2, y);
-    y += SC(18);
+    lv_obj_update_layout(hint);
+    y += LV_MAX(SC(18), lv_obj_get_height(hint) + SC(4));
   }
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -15413,6 +15577,15 @@ static void buildWifiSettings() {
   lv_obj_set_width(g_set_modal.wifi_sta_status_l, cw - SC(54));   // clear of the switch
   lv_obj_set_style_text_color(g_set_modal.wifi_sta_status_l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_set_modal.wifi_sta_status_l, &g_font_12, LV_PART_MAIN);
+  // Pin it to ONE line, as the header comment above promises. LV_LABEL_LONG_DOT
+  // only ellipsizes against the object's HEIGHT — with the label's default
+  // LV_SIZE_CONTENT height there is nothing to ellipsize against, so a long
+  // status just wrapped and grew instead. That matters here because this label
+  // is re-texted live (wifiRefreshStatus) with SSIDs and IP addresses, and the
+  // header only reserves SC(30) below it: at the M9's narrow content width a
+  // two-line status ran from y+SC(7) straight into s_wifi_list_cont, which is
+  // pinned at SC(30) and painted after it. A fixed height makes the dots work.
+  lv_obj_set_height(g_set_modal.wifi_sta_status_l, SC(16));
   lv_obj_set_pos(g_set_modal.wifi_sta_status_l, 2, y + SC(7));
   lv_label_set_text(g_set_modal.wifi_sta_status_l, TR("Loading..."));
   y += SC(30);
@@ -15503,6 +15676,15 @@ static void openLogModalCb(lv_event_t* e) {
 // goToTab defined after all callbacks that need it
 static void goToTab(int idx) {
   if (!g_lv.tabview) return;
+#if defined(HAS_M9_KEYBOARD)
+  // The single choke point for main-tab navigation, and the only place that
+  // fires LV_EVENT_VALUE_CHANGED explicitly — so recording the outgoing tab
+  // here covers every jump that goes through it (function keys, home tiles,
+  // app-drawer tiles, "Show on map", route replay). The raw
+  // lv_tabview_set_act() call sites bypass it by construction; the one that
+  // matters on this board (openMeshContactDm) is routed through the same push.
+  { const int cur = getActiveTab(); if (cur != idx) m9NavPush(cur); }
+#endif
   // Clear any keyboard-nav focus highlight BEFORE the tab switches. Activating a
   // clickable element with Enter (e.g. the Home "Unread" line) fires its CLICKED
   // handler WITHOUT moving group focus, so navFocusCb never runs to un-highlight it
@@ -15513,7 +15695,15 @@ static void goToTab(int idx) {
 #if CAP_KEYPAD_NAV
   if (s_nav_styled) { navUnstyle(s_nav_styled); s_nav_styled = nullptr; }
 #endif
-  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx), LV_ANIM_ON);
+  // The map's first paint blocks this thread for ~2.5 s inside the tab-change
+  // handler. With the 200-400 ms slide still running, the lv_refr_now that
+  // pushes the "Loading map…" hint can land while the map page is still
+  // off-screen — the hint never reaches the panel and the board reads as
+  // frozen on the previous tab. Skip the slide for the map only; every other
+  // tab keeps it. (Swipe-driven switches call lv_tabview_set_act inside LVGL
+  // and are unaffected.)
+  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx),
+                     idx == MAP_TAB_INDEX ? LV_ANIM_OFF : LV_ANIM_ON);
   // lv_tabview_set_act() does NOT emit LV_EVENT_VALUE_CHANGED, so the full
   // tab-change handler (tabChangedCb → onMapTabActivated, status bar, chat
   // overlay cleanup, onLvTabChanged, heavy refresh) was skipped for swipe-driven
@@ -17811,7 +18001,12 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_set_style_text_font(s_addct_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addct_error_l, "");
   lv_obj_set_pos(s_addct_error_l, 2, y);
-  y += 24;
+  // This label is EMPTY at build time, so the 24 px below reserved space for
+  // text that did not exist yet. addContactSubmitCb then fills it with a
+  // validation message that wraps to two lines and printed over the submit
+  // button. Pin the height to the reservation so the error wraps INSIDE it.
+  lv_obj_set_height(s_addct_error_l, SC(30));
+  y += SC(34);
 
   lv_obj_t* b = lv_btn_create(body);
   lv_obj_set_size(b, lv_pct(100),36);
@@ -19194,7 +19389,7 @@ static const char* k_term_banner =
   "Config: ver clock status get advert reboot\n"
   "        set <name|freq|bw|sf|cr|tx> <value>\n"
   "MeshCom: wifi status, tcp status, ble status,\n"
-  "         ota status, tcp on/off, ble on/off.\n";
+  "         mqtt status, ota status, tcp/ble on/off.\n";
 
 // Quick-pick catalogue (mirrors the repeater admin picker). Commands here are
 // the ones MyMesh::handleMeshcomodCommand understands natively when run
@@ -19232,6 +19427,7 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "wifi set pwd <v>",               "wifi set pwd " },
   { "wifi apply - connect now",       "wifi apply" },
   { "wifi clear - forget creds",      "wifi clear" },
+  { "mqtt status",                    "mqtt status" },
   { "tcp status",                     "tcp status" },
   { "tcp on",                         "tcp on" },
   { "tcp off",                        "tcp off" },
@@ -19555,7 +19751,7 @@ static void termCmdExit() {
 static bool termIsCliKeyword(const char* word, size_t len) {
   static const char* kw[] = {
     "help", "ver", "version", "clock", "time", "status", "get", "set",
-    "advert", "advert.zerohop", "reboot", "wifi", "tcp", "ble", "ota",
+    "advert", "advert.zerohop", "reboot", "wifi", "mqtt", "tcp", "ble", "ota",
     "ok", "cancel",
   };
   for (const char* k : kw) {
@@ -22095,6 +22291,14 @@ static void buildFileManager(lv_obj_t* body) {
   lv_label_set_long_mode(s_fm_path_lbl, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(s_fm_path_lbl, loc_x, 6);
   lv_obj_set_width(s_fm_path_lbl, loc_w);
+  // One line, fixed. LV_LABEL_LONG_DOT ellipsizes against the object's HEIGHT,
+  // and a label defaults to LV_SIZE_CONTENT — so with no height set, a path too
+  // long for loc_w wrapped and grew downward instead of getting its dots. This
+  // text changes every time the user walks into a directory, the field sits at
+  // y=6 inside a header only HDR_H (34) tall, and s_fm_list is pinned at HDR_H
+  // and painted after it, so the overflow disappeared under the list. Height =
+  // one line of g_font_12 plus the 3 px pad_ver either side.
+  lv_obj_set_height(s_fm_path_lbl, SC(21));
   lv_obj_set_style_text_font(s_fm_path_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_path_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_fm_path_lbl, lv_color_hex(0x101418), LV_PART_MAIN);
@@ -24258,10 +24462,17 @@ static void openSpectrumPage() {
   lv_obj_add_event_cb(s_spec_root, spectrumDismissCb, LV_EVENT_CLICKED, nullptr);
   // Keyboard/d-pad nav (M9, T-Deck, Tanmatsu): nothing on this page is actionable — the
   // chart and the waterfall's scale box are plain containers, so the nav collector was
-  // highlighting them for no reason. Skip the whole subtree (same as the lock screen):
-  // the focus group stays empty and the only way out is Back (hardware key / bar chevron /
-  // Esc — all routed through the page ladder, none of which needs focus).
-  lv_obj_add_flag(s_spec_root, NAV_SKIP_FLAG);
+  // highlighting them for no reason. The focus group should stay empty and the only way
+  // out be Back (hardware key / bar chevron / Esc — all routed through the page ladder,
+  // none of which needs focus).
+  // PASSTHRU, not SKIP: NAV_SKIP_FLAG hides this root from navTopHasVisibleChild and
+  // navTopFrontmostChild too, so the collector decided the top layer showed nothing and
+  // re-rooted the group onto the ACTIVE SCREEN — i.e. the app drawer still open beneath
+  // this full-screen page (tool tiles deliberately leave it up). The d-pad then moved an
+  // unseen focus ring across hidden drawer tiles and OK launched them. PASSTHRU keeps the
+  // page as the focus container while excluding the container itself as a target, which
+  // is what the paragraph above actually describes.
+  lv_obj_add_flag(s_spec_root, NAV_PASSTHRU_FLAG);
 
   // Settings-subpage chrome: the GLOBAL status bar goes tall and shows "‹ Spectrum"
   // (tap the bar = Back). Content insets below the bar's lower row — no second header.
@@ -24299,6 +24510,12 @@ static void openSpectrumPage() {
   lv_obj_set_size(s_spec_chart, chart_w, chart_h);
   lv_obj_set_pos(s_spec_chart, chart_x, chart_y);
   lv_obj_clear_flag(s_spec_chart, LV_OBJ_FLAG_SCROLLABLE);
+  // The trace is a read-out, never a control. lv_chart does NOT clear
+  // LV_OBJ_FLAG_CLICKABLE the way lv_label / lv_img do (LVGL 8.4 lv_obj.c sets
+  // it in the base constructor), so without this the nav collector takes the
+  // chart as the page's FIRST focus stop and navFocusCb paints it reverse-video
+  // — a solid fill straight over the live trace. Reported on the M9.
+  lv_obj_add_flag(s_spec_chart, NAV_SKIP_FLAG);
   lv_obj_set_style_bg_color(s_spec_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_spec_chart, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_border_color(s_spec_chart, lv_color_hex(0x18191A), LV_PART_MAIN);
@@ -24358,6 +24575,7 @@ static void openSpectrumPage() {
       lv_obj_set_style_bg_color(sw_box, lv_color_hex(kRampStops[s]), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(sw_box, LV_OPA_COVER, LV_PART_MAIN);
       lv_obj_clear_flag(sw_box, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(sw_box, NAV_SKIP_FLAG);   // inert colour key — same reason as the chart above
     }
     s_spec_scale_hi_lbl = lv_label_create(s_spec_root);   // ceiling dBm (top, strong)
     lv_label_set_text(s_spec_scale_hi_lbl, "--");
@@ -25296,6 +25514,31 @@ static void ctSetSelectMode(bool on){
   refreshContactsList();
 }
 
+// Select mode is a MODE, not a popup: its registry row carries flags=0, so
+// anyPopupOpen() never reports it, and nothing cleared it when the user left the
+// Contacts tab. Left set, it made Back close it INVISIBLY from another tab — the
+// registry walks in table order and its row sits above the app drawer's — costing
+// a press with nothing on screen changing, exactly what the M9's "nothing ever
+// closes invisibly beneath something else" rule forbids. The board already applies
+// this discipline to map pan mode; this gives select mode the same.
+static void ctExitSelectMode() {
+  if (!s_ct_select_mode) return;
+  // Deliberately NOT ctSetSelectMode(false). That one ends in
+  // s_ct_list_force + refreshContactsList(), i.e. a full teardown and rebuild
+  // of the contacts list — measured at ~1.3 s with a large list (#82). We are
+  // called from tabChangedCb as the user LEAVES Contacts, inside the tabview's
+  // VALUE_CHANGED chain, so paying it here would freeze the tab they are
+  // moving TO. Drop the mode and restore the toolbars now, and just ARM
+  // s_ct_list_force: tabChangedCb already calls refreshContactsList() on the
+  // way back into Contacts, so the clean rebuild happens where it is visible.
+  s_ct_select_mode = false;
+  s_ct_sel_n = 0;
+  if (s_ct_normal_bar) lv_obj_clear_flag(s_ct_normal_bar, LV_OBJ_FLAG_HIDDEN);
+  if (s_ct_select_bar) lv_obj_add_flag(s_ct_select_bar, LV_OBJ_FLAG_HIDDEN);
+  ctUpdateDelLabel();
+  s_ct_list_force = true;
+}
+
 // Select EVERY contact passing the current filter + search (favorites skipped).
 static void ctSelectAllFiltered(){
   if(!g_lv.task) return;
@@ -26048,6 +26291,7 @@ static volatile int16_t  s_tile_fetch_last_code = 0;
 //   'w' wrote ok   'O' open("w") failed (dir missing / SD write-protect / bus)
 //   'P' short/failed disk write (card full or SD error mid-write)
 //   'Z' bad/oversized content-length   'e' HTTP != 200
+//   'J' body was not a JPEG (proxy error page / blank body)
 //   'S' cache low-space gate   'H' internal-heap gate   'W' Wi-Fi down
 static volatile char     s_tile_fetch_last_wr   = '-';
 static volatile uint16_t s_tile_fetch_open_fail = 0;   // tileCacheOpen("w") returned an invalid File
@@ -26121,6 +26365,11 @@ static int        k_map_canvas_h      = 226;
 constexpr uint8_t k_map_zoom_min      = 3;
 constexpr uint8_t k_map_zoom_max      = 19;
 constexpr uint8_t k_map_zoom_default  = 14;
+// Minimum gap between the progressive per-tile repaints in renderMapTiles. Each
+// repaint is a full-screen composite plus the two transparent chrome bars (~115 ms
+// on the M9), so painting after every tile dominated the cold open. 350 ms still
+// gives ~3 visible fill-in steps across a ~1 s read+decode pass.
+constexpr uint32_t k_map_progressive_ms = 350;
 // 3×3 grid covers a 768×768-px slab — ~130 px of pan buffer on each side
 // of the 240×226 viewport. We tried 5×5 (25 tiles, 3.2 MB PSRAM) for the
 // bigger buffer but it pushed PSRAM usage to the edge on the S3 boards —
@@ -27423,7 +27672,16 @@ static void tileFetchTaskFn(void* arg) {
         tileCacheRemove(path_jpg);   // present but unreadable/short/bad -> fall through and re-download
       }
     }
-    tileCacheRemove(path_png);   // drop any stale .png from an older build — remove is a no-op if absent (don't gate on the broken exists())
+    // Drop any stale .png from an older build — but ONLY on the firmware's own
+    // LittleFS cache partition, which is what this cleanup was written for.
+    // s_tile_fs is re-pointed at the SD ROOT on boards that cache tiles to the
+    // card (M9 always; see UITask::begin), and s_tile_root is "" there — so
+    // unguarded this resolved to SD.remove("/tiles/<z>/<x>/<y>.png"), deleting
+    // the user's own offline map pack. The skip-check above only ever tests the
+    // .jpg, so every queued tile whose .jpg was absent erased the co-located
+    // .png. Same discriminator tileCacheMarkSdIo/tilesFsLowSpace already use.
+    if (s_tile_fs == &s_tiles_fs)
+      tileCacheRemove(path_png);   // no-op if absent (don't gate on the broken exists())
 
     // Heap-safety gate: opening a TCP socket costs ~6 KB of internal DMA
     // RAM, and the Wi-Fi driver needs more on top for RX. If internal
@@ -27508,6 +27766,25 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'r';
       int content_len = http.getSize();
       // Sanity cap — refuse anything > 100 KB. Tiles are typically 10-30 KB.
+      // NOTE (2026-08-28): a "stream it anyway when Content-Length is absent"
+      // variant was tried here for upstream #339 and REVERTED. Two reasons, both
+      // worth knowing before anyone tries it again:
+      //   1. It was aimed at the wrong target. The `wrZ` in that report is STALE
+      //      telemetry (the same screenshot shows Wi-Fi off), and the maintainer's
+      //      own curl against the proxy returns a valid Content-Length, so
+      //      getSize() == -1 does not apply. The live symptom there is `d0/9` —
+      //      the SD READ path finding nothing — not this write path.
+      //   2. It would not have worked. On arduino-esp32 2.0.17 http.getStreamPtr()
+      //      hands back the RAW client; chunk de-framing lives only inside
+      //      writeToStream(). Reading the raw stream on a genuinely chunked reply
+      //      writes the hex chunk headers into the cache file, so the SOI check
+      //      below rejects it anyway — 'Z' simply becomes 'J'. It also spun
+      //      readBytes() for the full 2 s socket timeout at the end of every body
+      //      (Stream::readBytes is an unyielded byte-at-a-time loop), on the
+      //      core-0 task whose IDLE feeds the watchdog.
+      // If chunked support is ever genuinely needed, use http.writeToStream(&f)
+      // (fs::File is a Stream) and validate the file afterwards, rather than
+      // hand-rolling the framing here.
       if (content_len > 0 && content_len <= 100 * 1024) {
         File f = tileCacheOpen(path_jpg, "w");
         if (f) {
@@ -27588,7 +27865,14 @@ static void tileFetchTaskFn(void* arg) {
       s_tile_fetch_step = 'w';
       s_tile_fetch_last_wr = 'w';
       ++s_tile_fetch_ok;
-      s_tile_fetch_dirty = true;        // render thread picks this up
+      // Visible zoom ONLY — same rule as the already-cached path above. A
+      // settled centre also enqueues a 29-tile background pyramid (z7/z8/z9 +
+      // two singles), and flagging dirty for those drove a full grid re-render
+      // AND marker rebuild on the LVGL thread up to 2.5x/s for the whole
+      // download window, for tiles that are not on screen at any point. Those
+      // passes also chew the internal DMA heap this very worker gates on, so
+      // they slowed the downloads they were waiting for.
+      if (req.z == s_map_zoom) s_tile_fetch_dirty = true;   // render thread picks this up
     } else {
       WIRE_DBG("[TILE]  -> FAILED %s\n", path_jpg);
       ++s_tile_fetch_failed;
@@ -28140,8 +28424,14 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
   // which would make the zoom guard think whole levels are un-cached. A successful open == it's there.
   snprintf(p, sizeof p, "%s/%u/%ld/%ld.jpg", mapTileRoot(), (unsigned)z, x, y);
   { File f = tileCacheOpen(p, "r"); if (f) { f.close(); return true; } }
-  snprintf(p, sizeof p, "%s/%u/%ld/%ld.png", mapTileRoot(), (unsigned)z, x, y);
-  { File f = tileCacheOpen(p, "r"); if (f) { f.close(); return true; } }
+  // .jpg ONLY — deliberately no .png leg here. This branch must mirror the
+  // generic loader, and that builds exactly one path ("%s/%u/%ld/%ld.jpg", see
+  // loadTileJpeg) with no .png fallback: the LittleFS cache is JPEG-only by
+  // design. Probing .png made the zoom guard advertise — and the auto-snap
+  // select — levels the loader then could not draw, i.e. a silently blank map
+  // instead of an honest "Max zoom for this pack". Dropping it also halves the
+  // cost of every probe, which matters because bestAvailableZoom and
+  // mapZoomStep walk many levels per call.
   return false;
 }
 #endif  // ESP32
@@ -28302,6 +28592,9 @@ static void renderMapTiles() {
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
   bool any_loaded = false;
   int  n_missing  = 0;   // visible tiles we couldn't load from disk
+  // Progressive-paint throttle — see the lv_refr_now() call inside the loop.
+  uint32_t prog_last_ms = 0;
+  int      prog_painted = 0;
   for (int i = 0; i < n_wanted; ++i) {
     if (wanted[i].placed) { any_loaded = true; continue; }
     // Pick an empty slot, PREFERRING one that already owns a reusable 128 KB
@@ -28414,7 +28707,23 @@ static void renderMapTiles() {
     // screen, which is heavy on internal DMA RAM — doing that per-tile WHILE the
     // Wi-Fi worker holds a socket pushed the heap into an OOM reboot. When tiles
     // are arriving from the network, let LVGL batch one redraw at the end.
-    if (tileFetchPendingLoad() == 0) lv_refr_now(NULL);
+    // THROTTLED. Each of these composites the whole 240x320 screen AND alpha-
+    // blends the transparent status + tab bars over it — measured on the M9 at
+    // ~115 ms a call: measured 1042 ms of compositing across a 9-tile cold open, against
+    // read=497ms and decode=539ms. The per-tile paint was therefore costing MORE
+    // than the SD reads and the JPEG decodes COMBINED, to draw intermediate
+    // frames that flick past too fast to read individually. Paint the first tile
+    // straight away (so the map starts filling immediately), then at most every
+    // k_map_progressive_ms. Still visibly progressive, roughly a third of the
+    // cost. The final frame is painted by the normal LVGL tick once this returns.
+    if (tileFetchPendingLoad() == 0) {
+      const uint32_t now_ms = millis();
+      if (prog_painted == 0 || (uint32_t)(now_ms - prog_last_ms) >= k_map_progressive_ms) {
+        lv_refr_now(NULL);
+        prog_last_ms = millis();   // AFTER the paint: throttle the gap between paints, not their starts
+        ++prog_painted;
+      }
+    }
     // Yield to the IDLE task after each tile's read + decode + paint. This loop
     // runs on loopTask, which is what the task watchdog watches via IDLE1; a full
     // 9-tile load (or a few slow SD reads) can otherwise pin the core long enough
@@ -30770,6 +31079,18 @@ static void onMapTabActivated() {
   memset(s_tile_fetch_dedup, 0, sizeof(s_tile_fetch_dedup));
   s_tile_fetch_dedup_head = 0;
 #endif
+  // Nine tile reads + JPEG decodes block this callback for ~2.5 s on the first
+  // open after boot (measured: [STALL] ui:lvgl 2597ms, M9_PORT.md). Show the
+  // hint and flush a frame FIRST — ahead of the recenter/zoom-probe block
+  // below, not just ahead of renderMapTiles. Sitting after that block, the hint
+  // could not paint until the probe had already finished, so the whole scan
+  // happened with the OUTGOING tab still frozen on the panel and the device
+  // looking wedged. Nothing here depends on the centre or zoom.
+  if (s_map_status_lbl) {
+    lv_label_set_text(s_map_status_lbl, TR("Loading map\xe2\x80\xa6"));
+    lv_obj_clear_flag(s_map_status_lbl, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_refr_now(NULL);   // drain one frame so the label reaches the panel before we block
   // The entire UI is now clocked at 160 MHz from UITask::begin, so there's
   // no per-tab boost dance here anymore. (Tried 240 MHz briefly — the
   // PSRAM bus tightens enough at that clock for the SJPG decoder to
@@ -30795,18 +31116,23 @@ static void onMapTabActivated() {
 #if defined(ESP32)
     have_saved_zoom = (touchPrefsGetMapZoom() != 0);
 #endif
-    const uint8_t best = bestAvailableZoom(s_map_center_lat, s_map_center_lon);
+    // Only probe when the answer can actually be USED. Two ways it could not:
+    //   • a persisted zoom wins outright, so the result is discarded one line
+    //     down — but the walk was paid anyway, on every boot's first map open;
+    //   • a still-zero centre has no tile to find at ANY level, so the walk ran
+    //     all 17 zoom levels against the card and returned 0. That case is not
+    //     first-open-only: s_map_view_inited below only latches once a centre
+    //     exists, so without a fix (or a Profile location) the guard above never
+    //     closes and this repeated on EVERY map open, forever.
+    // bestAvailableZoom has no other caller, so this is pure dead-work removal.
+    const bool centred = !(s_map_center_lat == 0.0 && s_map_center_lon == 0.0);
+    const uint8_t best = (have_saved_zoom || !centred)
+                       ? 0 : bestAvailableZoom(s_map_center_lat, s_map_center_lon);
     if (best != 0 && !have_saved_zoom) s_map_zoom = best;
-    if (!(s_map_center_lat == 0.0 && s_map_center_lon == 0.0)) s_map_view_inited = true;
+    if (centred) s_map_view_inited = true;
   }
-  // 9 SPIFFS reads + JPEG decodes take ~1-3 seconds on first paint. Show a
-  // visible "loading" hint and force an LVGL render pass BEFORE we block on
-  // the actual tile reads, so the user doesn't think the device froze.
-  if (s_map_status_lbl) {
-    lv_label_set_text(s_map_status_lbl, TR("Loading map\xe2\x80\xa6"));
-    lv_obj_clear_flag(s_map_status_lbl, LV_OBJ_FLAG_HIDDEN);
-  }
-  lv_refr_now(NULL);   // drain one frame so the label paints before we block
+  // (The "Loading map…" hint + frame flush moved to the top of this function —
+  // it has to precede the zoom probe above, not just the tile reads below.)
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
@@ -33630,15 +33956,10 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
        (channel_mode &&
         (m.sender[0] == '\0' ||
          (m.sender[0] == 'r' && m.sender[1] == 'x' && m.sender[2] == '\0'))))) {
-    const char* colon = strstr(m.text, ": ");
-    if (colon) {
-      const int slen = static_cast<int>(colon - m.text);
-      if (slen > 0 && slen <= UITask::MAX_SENDER_NAME) {
-        strncpy(d.retro_sender, m.text, slen);
-        d.retro_sender[slen] = '\0';
-        d.show_sender = d.retro_sender;
-        d.show_text   = colon + 2;
-      }
+    const char* body = ChannelSenderSplit::split(m.text, d.retro_sender, sizeof(d.retro_sender));
+    if (d.retro_sender[0]) {
+      d.show_sender = d.retro_sender;
+      d.show_text   = body;
     }
   }
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
@@ -38355,6 +38676,26 @@ static void serviceLockingCountdown(unsigned long now) {
 // (s_m9_map_pan — the Map-key pan-mode flag — is declared with the map state,
 // next to s_map_follow: mapAutoFollowTick pauses while it's set.)
 
+// Return to the previously recorded main tab (see the M9 nav history block up by
+// navGoToMainTab). Defined here rather than with the push because it needs
+// s_m9_map_pan, which lives with the map state further down. Entries that no
+// longer apply — the tab was removed, or we are already on it — are SKIPPED, not
+// reported as a successful back: a stale entry must never cost the user a press.
+// Returns false when the history is exhausted, which is the caller's cue to fall
+// through to the next rung.
+static bool m9NavPop() {
+  while (s_m9_nav_n > 0) {
+    const int tab = (int)s_m9_nav[--s_m9_nav_n];
+    if (!g_lv.tabview || tab < 0 || tab > TAB_LAST || tab == getActiveTab()) continue;
+    s_m9_nav_replaying = true;   // suppress the re-push from our own goToTab
+    s_m9_map_pan = false;        // a pan flag must never outlive its tab (mirrors M9_KEY_HOME)
+    goToTab(tab);
+    s_m9_nav_replaying = false;
+    return true;
+  }
+  return false;
+}
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -38378,7 +38719,18 @@ static bool m9HandleNavKey(int key) {
       // registry, or Back would close the enclosing modal instead of the list.
       // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
       // open"), so anyPopupOpen() alone would never let Back leave it.
-      if (s_setup_root) return true;   // wizard: nothing to back out of
+      // Wizard: step BACK through it, exactly what its own on-screen Back
+      // button does (setupBackCb). The old "nothing to back out of" comment was
+      // wrong — the wizard is a four-step stack (welcome/name/region/Wi-Fi) and
+      // steps 1-3 each draw a working Back. This function exists precisely
+      // because the d-pad is the M9's only input INCLUDING first-boot setup, so
+      // it was the one place that premise had been abandoned. Returning false
+      // would not help either: the T-Deck swallow just below eats the key next.
+      if (s_setup_root) {
+        if (s_setup_step > 0) setupShowStep(s_setup_step - 1);
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+        return true;
+      }
       // Pan is only the innermost "thing open" while the bare map is frontmost.
       // A popup stacked over it (CTRL) or a tab jump that missed a clear makes
       // the flag stale — drop it silently so THIS press acts on what the user
@@ -38409,6 +38761,29 @@ static bool m9HandleNavKey(int key) {
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
       else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      // Every layer that was covering the screen is peeled — NOW go back a
+      // screen. This rung is what the ladder was missing: without it Back fell
+      // straight through to LV_KEY_ESC, which nothing in this build consumes
+      // (the sole consumer, lv_dropdown, is peeled several rungs above, and the
+      // tab bar is deliberately not a focus stop), so the press was swallowed
+      // and NOTHING happened on any bare tab. Sitting below the peel rungs is
+      // what keeps modals closing innermost-first — and a blocker popup still
+      // stops Back at the registry rung above, so a running SD format or bulk
+      // delete is never navigated out from under.
+      else if (m9NavPop())                           { /* returned to the previous screen */ }
+      // History exhausted (cold boot onto a restored tab, or already fully
+      // unwound): fall back to Home — the rung pagerNavGoBack has always had
+      // and this ladder did not. On Home with an empty history ESC stays a
+      // genuine no-op, which is correct: Home is the root of the tree.
+      else if (getActiveTab() != HOME_TAB_INDEX)     {
+        s_m9_map_pan = false;
+        // Unwinding, NOT new navigation: without suppressing the push, this
+        // jump would record the tab we are leaving, and the very next Back
+        // would pop straight back to it — Back ping-ponging Home/tab forever.
+        s_m9_nav_replaying = true;
+        navGoToMainTab(HOME_TAB_INDEX);
+        s_m9_nav_replaying = false;
+      }
       else                                           navPushTap(LV_KEY_ESC);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_GPS_LONG:
@@ -38449,16 +38824,34 @@ static bool m9HandleNavKey(int key) {
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
-        for (int i = 0; i < 8 && anyPopupOpen(); i++) hwKeyDismissTopPopup();   // still closes anything else on top (registry untouched, Back/etc. keep working)
+        // Stop on a key-blocker row (SD format / bulk delete progress) instead of
+        // spinning eight times closing nothing and then toggling the drawer out
+        // from under a running operation.
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+        if (anyPopupOpen()) { s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true; }
         setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
       } else {
         s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
-        navGoToMainTab(HOME_TAB_INDEX);
+        if (!navGoToMainTab(HOME_TAB_INDEX)) {   // a blocker popup refused: nothing moved, so keep the trail
+          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+        }
       }
+      // HOME means "go to the root", so the trail behind it is spent: without
+      // this, Back from Home would jump back out to wherever you were before,
+      // which reads as a bug and makes the Home-tab ESC no-op unreachable.
+      // MSG / MAP are lateral jumps and deliberately keep pushing.
+      m9NavClear();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_LEFT_MESSAGE:
       if (s_setup_root) return true;
       s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
+      // Blocker check BEFORE the app page is destroyed — same order as
+      // SUB_MESSAGE / SUB_MAP below. navGoToMainTab now refuses to switch while
+      // a null-close progress row (SD format, bulk delete) owns the screen, so
+      // closing the page first would leave the user with neither the page nor
+      // the jump.
+      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
@@ -38485,6 +38878,9 @@ static bool m9HandleNavKey(int key) {
                                                          : TR("Map pan off"), 1200);
       } else {
         s_m9_map_pan = false;   // fresh entry always starts in nav mode
+        // Blocker check before destroying the page — see M9_KEY_LEFT_MESSAGE.
+        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+        if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
         if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
         navGoToMainTab(MAP_TAB_INDEX);
       }
@@ -39319,6 +39715,12 @@ static void showSubtleNotifyLvgl(const char* text, uint32_t duration_ms) {
     lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clear_flag(s_notify_chip, LV_OBJ_FLAG_CLICKABLE);   // taps pass through
     lv_obj_add_flag(s_notify_chip, LV_OBJ_FLAG_FLOATING);
+    // …and pass through keyboard nav too. Without this the chip counts as a
+    // visible lv_layer_top child, so navCollect re-roots the focus group onto it
+    // — and finds nothing focusable inside, because it is not CLICKABLE. The
+    // group came up EMPTY for the chip's ~1.1 s life: d-pad and OK inert, and
+    // the status-bar actions skipped, on every incoming message.
+    lv_obj_add_flag(s_notify_chip, NAV_SKIP_FLAG);
 
     lv_obj_t* l = lv_label_create(s_notify_chip);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -42347,6 +42749,10 @@ static void openAppGridSheet() {
   {
     const int ty = hdr + 2 * (btn_h + gap);
     lv_obj_t* hl = lv_label_create(card);
+    // Keep clear of the right-aligned switch below. With no width the label
+    // sizes to its text, so a longer translation ran straight under the switch.
+    lv_label_set_long_mode(hl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(hl, lv_pct(68));
     lv_label_set_text(hl, TR("App drawer as home"));
     lv_obj_set_style_text_font(hl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(hl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -44554,7 +44960,11 @@ static int setupHeader(const char* title, const char* blurb, const char* step_ta
   lv_obj_set_style_text_font(t, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_pos(t, 12, 12);
-  int y = 12 + 24;
+  // The title has LV_LABEL_LONG_WRAP at width sw-84, so it is NOT always one
+  // line — a longer translation wraps and the hardcoded 24 px advance put the
+  // blurb (and every step's content under it) straight through the title.
+  lv_obj_update_layout(t);
+  int y = 12 + LV_MAX(24, lv_obj_get_height(t) + 2);
   if (step_tag && step_tag[0]) {
     lv_obj_t* s = lv_label_create(s_setup_root);
     lv_label_set_text(s, step_tag);
@@ -44580,6 +44990,9 @@ static int setupHeader(const char* title, const char* blurb, const char* step_ta
 // No reboot — used for Skip and (implicitly) anything that doesn't change the
 // radio/Wi-Fi. The status bar (hidden while the wizard owns the screen) returns.
 static void setupWizardClose() {
+#if defined(HAS_M9_KEYBOARD)
+  m9NavClear();   // the wizard owned the whole screen; start the history fresh behind it
+#endif
   g_set_modal.wifi_ssid_ta = nullptr;       // we borrowed these for the scan popup
   g_set_modal.wifi_pwd_ta  = nullptr;
   hideKb();
@@ -44806,6 +45219,9 @@ static void setupShowStep(int step) {
 
 static void setupWizardOpen() {
   if (s_setup_root) return;
+#if defined(HAS_M9_KEYBOARD)
+  m9NavClear();   // no popping back to a pre-wizard tab from inside first-boot setup
+#endif
   if (g_statusbar.root) lv_obj_add_flag(g_statusbar.root, LV_OBJ_FLAG_HIDDEN);  // own the whole screen
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -45356,7 +45772,7 @@ static void openBlockedUsersModal() {
     for (int j = 0; j < nc; ++j) {
       if (the_mesh.getContactByIdx((uint32_t)j, c) &&
           memcmp(c.id.pub_key, pub6, TOUCH_IGNORE_KEY_BYTES) == 0) {
-        snprintf(nm, sizeof nm, "%.24s", c.name); named = true; break;
+        snprintf(nm, sizeof nm, "%.31s", c.name); named = true; break;   // full name width
       }
     }
     if (!named) snprintf(nm, sizeof nm, "%02X%02X%02X%02X%02X%02X",
@@ -45405,7 +45821,7 @@ static void openBlockedUsersModal() {
 
     lv_obj_t* lbl = lv_label_create(row);
     char shown[40];
-    snprintf(shown, sizeof shown, "%.24s", nm);   // name-only entry
+    snprintf(shown, sizeof shown, "%.31s", nm);   // name-only entry, full name width
     lv_label_set_text(lbl, shown);
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(lbl, sw - 16 - 96);
@@ -45463,6 +45879,13 @@ static void openChannelScopeModal(int slot, const char* name) {
   lv_obj_set_pos(nm, SC(8), SC(36));
 
   lv_obj_t* hint = lv_label_create(s_chanscope_modal);
+  // One line, ellipsized. With no width the label sizes to its text and its tail
+  // ran past the modal edge; wrapping is not an option here either, because the
+  // textarea below is pinned at SC(72) and this sits at SC(54) — 18 px of room,
+  // less than a second line. A longer translation loses its tail rather than
+  // printing over the input.
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(hint, sw - SC(16));
   lv_label_set_text(hint, TR("Region scope (#tag), blank = default."));
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
@@ -46104,11 +46527,19 @@ static void buildUiTree() {
 #endif
 #endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
-  // Tab labels: icons-only on touch targets; the 480px-wide Pager prefixes each
-  // icon with its physical-keyboard mnemonic so the shortcuts are discoverable.
+  // Tab labels: icons-only on touch targets; the 480px-wide Pager appends each
+  // physical-keyboard mnemonic so the shortcuts are discoverable.
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
 #if defined(TLORA_PAGER)
-  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE " M");
+  const char* const pager_chats_tab_label = LV_SYMBOL_ENVELOPE " M";
+  const char* const pager_settings_tab_label = LV_SYMBOL_SETTINGS " S";
+  auto pagerTabIconBadgeX = [](int tab_index, const char* label, const char* icon) -> lv_coord_t {
+    const lv_coord_t cell_w = lv_disp_get_hor_res(nullptr) / 5;
+    const lv_coord_t label_w = lv_txt_get_width(label, strlen(label), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t icon_w = lv_txt_get_width(icon, strlen(icon), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
+    return cell_w * tab_index + cell_w / 2 - (label_w - icon_w) / 2 - 8;
+  };
+  lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, pager_chats_tab_label);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
   lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
   lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
@@ -46136,7 +46567,7 @@ static void buildUiTree() {
   }
 #endif
 #if defined(TLORA_PAGER)
-  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS " S");
+  lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, pager_settings_tab_label);
 #else
   lv_obj_t* tab_settings = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_SETTINGS);
 #endif
@@ -46169,6 +46600,23 @@ static void buildUiTree() {
   if (tab_sensors) makeSensorsTab(tab_sensors);
 #endif
 
+#if defined(HAS_THINKNODE_M9)
+  const lv_coord_t m9_notice_slot_w = lv_disp_get_hor_res(nullptr) / 5;
+  auto makeM9Notice = [&](const char* glyph, int slot) -> lv_obj_t* {
+    lv_obj_t* icon = lv_label_create(lv_layer_top());
+    lv_label_set_text(icon, glyph);
+    lv_obj_set_size(icon, m9_notice_slot_w, 20);
+    lv_obj_set_style_text_align(icon, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(icon, &g_font_16, LV_PART_MAIN);
+    lv_obj_align(icon, LV_ALIGN_BOTTOM_LEFT, slot * m9_notice_slot_w, -5);
+    lv_obj_clear_flag(icon, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN | NAV_SKIP_FLAG);
+    return icon;
+  };
+  s_m9_mail_indicator = makeM9Notice(LV_SYMBOL_ENVELOPE, 0);
+  s_m9_contact_indicator = makeM9Notice(TOUCH_SYM_PERSON, 1);
+#else
   // Red "!" update badge over the Settings gear (rightmost bottom tab). A child
   // of the screen (so it has no layout overriding its alignment) created BEFORE
   // the chat-detail overlays + above the tabview — it floats over the gear on
@@ -46186,8 +46634,9 @@ static void buildUiTree() {
   lv_obj_set_style_text_font(s_update_badge, &lv_font_montserrat_12, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_update_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(s_update_badge, 0, LV_PART_MAIN);
-#if defined(HAS_THINKNODE_M9)
-  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -4);   // no tab bar on this board
+#if defined(TLORA_PAGER)
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_LEFT,
+               pagerTabIconBadgeX(4, pager_settings_tab_label, LV_SYMBOL_SETTINGS), -(TABBAR_H - 16));
 #else
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
 #endif
@@ -46209,14 +46658,15 @@ static void buildUiTree() {
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(s_chat_unread_badge, 0, LV_PART_MAIN);
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
-#if defined(HAS_THINKNODE_M9)
-               8, -4);                                                     // no tab bar on this board — bottom-left corner
+#if defined(TLORA_PAGER)
+               pagerTabIconBadgeX(0, pager_chats_tab_label, LV_SYMBOL_ENVELOPE), -(TABBAR_H - 16));
 #elif defined(HAS_EXPANSION_KIT)
                lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+#endif
 
 #if !defined(HAS_THINKNODE_M9)
   // Thin rounded accent "glow" bar that marks the active tab. A child of the
@@ -49385,8 +49835,8 @@ bool UITask::loadMsgsFromStorage() {
     d.rssi       = m.rssi;
     strncpy(d.thread, m.thread, MAX_THREAD_NAME);
     d.thread[MAX_THREAD_NAME] = '\0';
-    strncpy(d.sender, m.sender, MAX_SENDER_NAME);
-    d.sender[MAX_SENDER_NAME] = '\0';
+    strncpy(d.sender, m.sender, sizeof(m.sender) - 1);   // source is the frozen disk width
+    d.sender[sizeof(m.sender) - 1] = '\0';
     strncpy(d.text, m.text, MAX_MSG_TEXT);
     d.text[MAX_MSG_TEXT] = '\0';
   }
@@ -49465,6 +49915,17 @@ bool UITask::loadMsgsFromSegments() {
     info.disk_recs = nrec;
     info.live_recs = nrec;
     info.bytes     = (uint32_t)sizeof(UiSegHeader) + (uint32_t)nrec * (uint32_t)rec_sz;
+    // A segment written at a DIFFERENT record width can be READ fine (the header is
+    // self-describing, and readHistoryRec prefix-reads or skips the surplus), but it
+    // must never be APPENDED to: the append writes sizeof(UiSegMsg) while the header
+    // still says rec_sz, so every record after the appended one is read at the wrong
+    // stride — silent garbage bubbles, a poisoned seq (which then drops every later
+    // segment), and the next compaction makes it permanent. Only a NON-FULL segment
+    // can ever receive an append, so flag just those for a full rewrite; step 0 of
+    // segBuildJob runs that before any append, and the rewrite lays down a fresh
+    // header at the current width. A full old-width segment is left alone — it is
+    // read correctly by its own header and costs nothing.
+    if ((size_t)rec_sz != sizeof(UiSegMsg) && nrec < k_ui_seg_records) info.rewrite_open = 1;
     // The file holds records the table doesn't account for — rewrite it so disk
     // and table agree again (also drops the dead weight for good).
     if (skipped) info.rewrite_open = 1;
@@ -49706,8 +50167,8 @@ bool UITask::loadLegacyHistoryFromStorage() {
       _ui_msgs[i].rssi       = m.rssi;
       strncpy(_ui_msgs[i].thread, m.thread, MAX_THREAD_NAME);
       _ui_msgs[i].thread[MAX_THREAD_NAME] = '\0';
-      strncpy(_ui_msgs[i].sender, m.sender, MAX_SENDER_NAME);
-      _ui_msgs[i].sender[MAX_SENDER_NAME] = '\0';
+      strncpy(_ui_msgs[i].sender, m.sender, sizeof(m.sender) - 1);   // frozen disk width
+      _ui_msgs[i].sender[sizeof(m.sender) - 1] = '\0';
       strncpy(_ui_msgs[i].text, m.text, MAX_MSG_TEXT);
       _ui_msgs[i].text[MAX_MSG_TEXT] = '\0';
     } else {
@@ -49925,8 +50386,8 @@ static void uiSegMarshal(const UITask::UIMessage& s, UiSegMsg* d) {
   d->m.rssi       = s.rssi;
   strncpy(d->m.thread, s.thread, sizeof(d->m.thread) - 1);
   d->m.thread[sizeof(d->m.thread) - 1] = '\0';
-  strncpy(d->m.sender, s.sender, sizeof(d->m.sender) - 1);
-  d->m.sender[sizeof(d->m.sender) - 1] = '\0';
+  SenderExtField::store(s.sender, d->m.sender, sizeof(d->m.sender),
+                        d->sender_ext, sizeof(d->sender_ext));
   strncpy(d->m.text, s.text, sizeof(d->m.text) - 1);
   d->m.text[sizeof(d->m.text) - 1] = '\0';
   d->seq = s.seq;
@@ -50124,8 +50585,9 @@ static bool uiSegReadRec(File& f, uint16_t disk_sz, UITask::UIMessage* out, uint
   out->rssi       = rec.m.rssi;
   strncpy(out->thread, rec.m.thread, UITask::MAX_THREAD_NAME);
   out->thread[UITask::MAX_THREAD_NAME] = '\0';
-  strncpy(out->sender, rec.m.sender, UITask::MAX_SENDER_NAME);
-  out->sender[UITask::MAX_SENDER_NAME] = '\0';
+  SenderExtField::load(rec.m.sender, sizeof(rec.m.sender),
+                       rec.sender_ext, sizeof(rec.sender_ext),
+                       out->sender, sizeof(out->sender));
   strncpy(out->text, rec.m.text, UITask::MAX_MSG_TEXT);
   out->text[UITask::MAX_MSG_TEXT] = '\0';
   out->seq = rec.seq;
@@ -51452,6 +51914,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // reliably starts the NMEA reader.
   if (_sensors && _node_prefs && _node_prefs->gps_enabled) {
     _sensors->setSettingValue("gps", "1");
+    // Same reason as toggleGPS: without this the acquisition clock would start
+    // whenever the user first opened the GPS page, not at the boot that actually
+    // started the receiver.
+    { const uint32_t t = millis(); s_gps_acq_since = t ? t : 1u; }
   }
   // Map options exposes the same source toggle on T-Deck and T-Pager. Restore
   // that choice on both boards; forcing it off on Pager made a selected SD pack
@@ -52669,6 +53135,26 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   }
   hideKb();
   closeSettingsModal();
+  // Switch to the Chats tab HERE, and fire the event the way goToTab does.
+  // This used to sit at the END of this function as a bare lv_tabview_set_act()
+  // with no LV_EVENT_VALUE_CHANGED, so tabChangedCb never ran for it: it left
+  // s_lv_tab_prev stale, which made the NEXT real tab change compute
+  // leaving_inbox as false and skip the only code that hides this DM overlay —
+  // the chat then stayed painted over whatever tab the user moved to. Running it
+  // BEFORE the overlay is un-hidden and before showKb() also means
+  // tabChangedCb's own hideKb() + overlay cleanup can't undo the setup below,
+  // which is what keeping it at the end was really working around.
+  if (g_lv.tabview && getActiveTab() != CHAT_INBOX_TAB_INDEX) {
+#if defined(HAS_M9_KEYBOARD)
+    m9NavPush(getActiveTab());   // so Back leaves the chat and returns to where it was opened from
+#endif
+    // Keep LV_ANIM_OFF: the chat detail overlay covers the tabview so the 150 ms
+    // slide is invisible anyway, and it was stealing refresh ticks from the first
+    // composer tap + keyboard show — a ~300-500 ms perceived lag on the
+    // map → marker → Send msg path.
+    lv_tabview_set_act(g_lv.tabview, CHAT_INBOX_TAB_INDEX, LV_ANIM_OFF);
+    lv_event_send(g_lv.tabview, LV_EVENT_VALUE_CHANGED, nullptr);
+  }
   if (g_lv.ch.detail_open && g_lv.ch.overlay) {
     lv_obj_add_flag(g_lv.ch.overlay, LV_OBJ_FLAG_HIDDEN);
     g_lv.ch.detail_open = false;
@@ -52688,14 +53174,7 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   // Physical keyboard: focus the composer on open so typing goes straight in.
   showKb(&g_lv.dm);
 #endif
-  // Skip the LV_ANIM_ON tab transition (150 ms slide) — the chat detail
-  // overlay covers the tabview so the slide is invisible anyway, and the
-  // animation was stealing refresh ticks from the first composer tap +
-  // keyboard show, causing a ~300-500 ms perceived lag on the map →
-  // marker → Send msg path.
-  if (g_lv.tabview) {
-    lv_tabview_set_act(g_lv.tabview, CHAT_INBOX_TAB_INDEX, LV_ANIM_OFF);
-  }
+  // (The tab switch moved ABOVE, before the overlay setup — see the note there.)
   g_lv.dirty_threads = true;
 #endif
 }
@@ -52952,6 +53431,15 @@ void UITask::toggleGPS() {
   // still consistent — same behaviour as before.
   (void)hw_ok;
   _node_prefs->gps_enabled = target_on ? 1 : 0;
+  // Start the acquisition clock HERE. It used to be stamped lazily on the first
+  // gpsStatusStr() call, and that function only runs from the GPS settings page
+  // and the Control Center chip — so the "searching Nm" figure measured time
+  // since the user first LOOKED at it, not since the GPS was switched on. A
+  // receiver that had been searching for twenty minutes reported "0m02s" the
+  // moment you opened the page, which reads as "it only starts when I navigate
+  // here". Non-zero sentinel: millis() can legitimately be 0 at boot, and
+  // gpsStatusStr treats 0 as "not started yet".
+  { const uint32_t t = millis(); s_gps_acq_since = target_on ? (t ? t : 1u) : 0u; }
   the_mesh.savePrefs();
 }
 
@@ -53697,17 +54185,8 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   char parsed_sender[MAX_SENDER_NAME + 1];
   parsed_sender[0] = '\0';
   const char* body = text ? text : "";
-  if (channel && text && !have_sender_override) {
-    const char* colon = strstr(text, ": ");
-    if (colon) {
-      int slen = static_cast<int>(colon - text);
-      if (slen > 0 && slen <= MAX_SENDER_NAME) {
-        strncpy(parsed_sender, text, slen);
-        parsed_sender[slen] = '\0';
-        body = colon + 2;
-      }
-    }
-  }
+  if (channel && text && !have_sender_override)
+    body = ChannelSenderSplit::split(text, parsed_sender, sizeof(parsed_sender));
   const char* sender = have_sender_override
       ? sender_override
       : (channel
@@ -55076,6 +55555,31 @@ void UITask::loop() {
   uiCp("ui:status");
   if (now >= _next_refresh) {
     refreshStatusLabels();
+#if defined(HAS_THINKNODE_M9)
+    if (s_m9_mail_indicator && s_m9_contact_indicator) {
+      lv_obj_t* top = lv_layer_top();
+      const bool top_has_content = navTopHasVisibleChild(top);
+      const bool drawer_front = top_has_content && s_appdrawer_root &&
+                                navTopFrontmostChild(top) == s_appdrawer_root;
+      const bool notice_surface = !_screen_off && !_manual_lock && !s_remote_mode &&
+                                  !s_setup_root && !s_settings_sheet &&
+                                  !s_apppage_title && !s_chat_title[0] &&
+                                  (!anyPopupOpen() || drawer_front);
+      const bool mail_pending = notice_surface && getUnreadTotal() > 0;
+      const bool contact_pending = notice_surface && discoveredCount() > 0;
+      const bool blink_on = ((now / 500u) & 1u) == 0;
+      if (mail_pending || contact_pending) {
+        lv_obj_move_foreground(s_m9_mail_indicator);
+        lv_obj_move_foreground(s_m9_contact_indicator);
+      }
+      lv_obj_set_style_text_color(s_m9_mail_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_m9_contact_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+      if (mail_pending && blink_on) lv_obj_clear_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
+      else                          lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
+      if (contact_pending && blink_on) lv_obj_clear_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+      else                             lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+    }
+#endif
     // Unread-count badge over the Chats tab icon (bottom bar).
     if (s_chat_unread_badge) {
       const int u = getUnreadTotal();
@@ -55241,6 +55745,15 @@ void UITask::loop() {
     serviceLockscreen();
   }
 #elif defined(HAS_M9_KEYBOARD)
+  // Own the stall buckets for everything a keypress triggers. The "ui:input"
+  // checkpoint further up is inside #if CAP_TRACKBALL, which is 0 on this board
+  // (device_caps.h) — so with no checkpoint here, every keypress-driven action
+  // on the M9 (a map open, a tab jump, a Back press: the d-pad is the ONLY
+  // input this board has) was billed to whichever bucket happened to be open,
+  // which is "ui:threads". That made the stall ring actively misleading on the
+  // one board where it matters most: a 2.5 s cold map open was reported as a
+  // slow chat-threads refresh. The three checkpoints below tag it honestly AND
+  // split it — see the note at ui:navreb.
   // M9's keyboard controller is on its OWN bus (Wire1) — no touch task shares
   // it, so polling happens right here on the UI thread rather than from a
   // separate core-0 task (the poll itself rate-limits to ~15 ms inside
@@ -55252,7 +55765,20 @@ void UITask::loop() {
   // s_nav_objs still mirroring the screen behind the modal — the intermittent
   // "modal navigation breaks out to the screen behind" bug. Sync the group to
   // the current tree before draining (cheap: sig-compare early-out).
+  //
+  // The three checkpoints below split what used to be one "ui:input" bucket. It
+  // spanned the focus-group rebuild, the I2C keyboard/sensor polls AND every
+  // action handleHwKey dispatches, so a ~1.2 s stall reported as "ui:input" said
+  // almost nothing about where the time went. Measure the split before
+  // optimising: on the map, the obvious suspect (JPEG decode) turned out to cost
+  // less than the compositing nobody had counted. uiCp() is two loads and a
+  // compare, so these checkpoints are free.
+  //   ui:navreb — nav focus-group rebuild (walks the widget tree)
+  //   ui:kbpoll — I2C keyboard drain + compass/IMU idle ticks
+  //   ui:keys   — handleHwKey: the actual action (page builds, list rebuilds, …)
+  uiCp("ui:navreb");
   if (s_kbd_nav || s_tb_nav) navMaybeRebuild();
+  uiCp("ui:kbpoll");
   m9KeyboardPoll();
 #if defined(HAS_M9_COMPASS)
   m9CompassIdleTick();   // park the magnetometer when no app is reading it
@@ -55260,6 +55786,7 @@ void UITask::loop() {
 #if defined(HAS_M9_IMU)
   m9ImuIdleTick();       // and the accelerometer
 #endif
+  uiCp("ui:keys");
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = m9KeyboardReadKey();
     if (key <= 0) break;
@@ -55648,6 +56175,7 @@ void UITask::loop() {
   if (s_sd_format_pending && --s_sd_format_pending == 0) {
     s_sd_format_wait_until = 0;
     bool ok = false;
+    bool mkfs_ok = false;   // the format ITSELF succeeded, independent of the remount below
     {
       LoopWdtGuard loop_wdt_guard;
       SPIClass* spi = sdSharedSPI();   // this board's SD bus (T-Deck: LoRa SPI; R8: TFT FSPI; M9: shared SPI)
@@ -55665,13 +56193,28 @@ void UITask::loop() {
           if (work) {
             if (f_mkfs(drv, MC_FM_FAT32, 0, work, 4096) == 0 /*FR_OK*/) {
               sdWriteFatLabel(pdrv, "MESHCOMOD");
+              mkfs_ok = true;
               ok = true;
             }
             free(work);
           }
           sdcard_uninit(pdrv);
         }
-        if (ok) ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
+        // Remount through the FULL mount ladder, not a bare single-shot begin.
+        // sdcard_uninit() above issues GO_IDLE_STATE, so the card is back in SPI
+        // idle and has to re-run its whole power-up handshake — exactly the case
+        // fmSdTryMount's ladder exists for (7 rungs, 4 MHz down to 400 kHz with
+        // 40-900 ms settles, and an upward renegotiation after a slow success).
+        // A single 4 MHz SD.begin with no settle made a card that HAD just been
+        // formatted fall into the failure branch and report itself as ABSENT —
+        // upstream #343, "SD card reported missing when formatting". That
+        // ladder's own comment flags it as unverified on M9 timing, which is
+        // precisely why the format path must not hand-roll a weaker version of
+        // it. Clear the backoff first: this is an explicit user action, and the
+        // preceding SD.end()/uninit may have stamped one.
+        // (fmSdTryMount takes its own LoopWdtGuard; nesting is a no-op because
+        // the inner guard sees the WDT already unsubscribed.)
+        if (ok) { s_sd_retry_after_ms = 0; ok = fmSdTryMount(); }
       }
     }
     fmHideFormatOverlay();
@@ -55695,7 +56238,19 @@ void UITask::loop() {
       // The backend handshake waits for any current File and preserves queued
       // requests, then drops the failed SD backend without leaving a pause set.
       mapNoteStorageChanged();
-      showAlert(TR("Format failed (no card / SD error)"), 3500);
+      // Do NOT say "no card" when the card was in fact formatted successfully
+      // and only the remount missed — that reads as "the device cannot see my
+      // card" and sends people hunting a hardware fault that isn't there
+      // (upstream #343). Separate the two outcomes: f_mkfs failing is a real
+      // format failure; mkfs_ok with a failed remount is a card that is fine and
+      // freshly FAT32, just not answering yet.
+      // A failed remount stamped a 10 s backoff inside fmSdTryMount. Clear it:
+      // fmShowRoots() runs immediately below and gates the SD row on that same
+      // backoff, so leaving it set hides the card for 10 s while the user is
+      // reading a toast telling them to reinsert it.
+      s_sd_retry_after_ms = 0;
+      showAlert(mkfs_ok ? TR("Formatted OK - card did not remount, reinsert it")
+                        : TR("Format failed (no card / SD error)"), 3500);
     }
     if (s_fm_list) fmShowRoots();
   }

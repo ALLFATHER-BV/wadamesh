@@ -392,7 +392,13 @@ int  touchPrefsCopyIgnored(uint8_t* out_buf);
  *  • touchPrefsCopyIgnoredNames: copy every stored name into `out_buf`
  *    (>= TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN bytes); returns count. */
 constexpr int TOUCH_IGNORED_NAMES_MAX = 16;
-constexpr int TOUCH_IGNORED_NAME_LEN  = 28;   // fixed NUL-padded slot (>= MAX_SENDER_NAME+1)
+// Fixed NUL-padded slot, and it MUST stay >= UITask::MAX_SENDER_NAME + 1 — a slot narrower
+// than a sender stores a cut name that the full-width RX check can never match again, so
+// the block shows in the list and silently never fires. That invariant was prose only; it
+// is now a static_assert in UITask.cpp. Widened 28 -> 32 with MAX_SENDER_NAME 24 -> 31; the
+// slot width is baked into the stored blob (the entry count is its length / this), so the
+// key was renamed in the same change to migrate rather than mis-slot the old one.
+constexpr int TOUCH_IGNORED_NAME_LEN  = 32;
 bool touchPrefsIsNameIgnored(const char* name);
 bool touchPrefsSetNameIgnored(const char* name, bool ignored);
 int  touchPrefsCopyIgnoredNames(char* out_buf);

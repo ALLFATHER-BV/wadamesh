@@ -1238,6 +1238,58 @@ void setup() {
     }
   }
 #endif
+  // Repair an unusable SPIFFS whether or not the profile lives on SD.
+  //
+  // This used to be `if (!sd_storage && !spiffs_ok)`, which is a catch-22: an
+  // invalid SPIFFS forces want_full_sd above ("Move the WHOLE store to SD when
+  // the device has no usable SPIFFS"), and being on SD then skipped the repair —
+  // so the partition stayed unformatted forever. Every boot logged
+  // `E SPIFFS: mount failed, -10025` and internal storage read as 0 bytes.
+  //
+  // The consequence is not cosmetic. The migration path documents that it
+  // "never deletes its SPIFFS sources, so a device that already adopted the card
+  // still has a byte-identical copy here" — i.e. the design assumes internal
+  // flash holds a second copy of the identity. A device that went SD-native
+  // because SPIFFS was broken never had that copy, so /meshcomod/identity/_main.id
+  // on the card is the ONLY thing making it its node. On the ThinkNode M9 the
+  // card is soldered, so it cannot even be moved to another device to recover.
+  //
+  // Formatting here is safe for the profile: sd_storage was already decided
+  // above and is not revisited, so this only makes the internal filesystem
+  // usable again — it does not move anyone's data. A brand-new device is
+  // unaffected (a virgin partition is formatted on the same call it always was).
+  // KNOWN BUG, deliberately NOT fixed here yet — read before touching this.
+  //
+  // The condition is a catch-22. An invalid SPIFFS forces want_full_sd above
+  // ("Move the WHOLE store to SD when the device has no usable SPIFFS"), and
+  // being on SD then SKIPS this repair — so the partition stays unformatted
+  // forever. Every boot logs `E SPIFFS: mount failed, -10025` and internal
+  // storage reads 0 bytes. It is not cosmetic: the migration path documents that
+  // it "never deletes its SPIFFS sources, so a device that already adopted the
+  // card still has a byte-identical copy here", i.e. the design assumes internal
+  // flash holds a SECOND copy of the identity. A device that went SD-native
+  // *because* SPIFFS was broken never had that copy, so
+  // /meshcomod/identity/_main.id on the card is the only thing making it its
+  // node — and on the ThinkNode M9 that card is soldered.
+  //
+  // Reproduced on M9 hardware 2026-08-28. Changing this to
+  // `if (!spiffs_ok) spiffs_ok = SPIFFS.begin(true);` DOES repair the partition
+  // (the boot then reports the internal fs as ok, and the profile correctly
+  // stays on SD), but that boot then panicked and looped:
+  //   Guru Meditation Error: Core 1 panic'ed (InstrFetchProhibited)
+  //   Backtrace: WiFiEventCbList::WiFiEventCbList(const&)
+  //              -> WiFiGenericClass::_eventCallback -> _arduino_event_task
+  // The follow-up matters: once the partition was formatted, the SAME build with
+  // this line back as-is — SPIFFS now mounting AND the profile on SD, i.e. the
+  // exact state that crashed — boots cleanly and repeatedly. So the fault is not
+  // "SPIFFS is mounted"; it is almost certainly the 3.375 MB format ITSELF
+  // running at this point in setup(), blocking long enough to race the Arduino
+  // Wi-Fi event task that is starting up alongside it.
+  //
+  // So the fix is not this one-liner: it is to repair the partition somewhere
+  // that can afford a multi-second blocking format (before the Wi-Fi/event tasks
+  // exist, or deferred to a UI-driven action with a progress notice), and to
+  // confirm on hardware that a cold first-format boot survives.
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
   Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)

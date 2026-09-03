@@ -548,11 +548,12 @@ void submit() {
     consoleWriteLine("mesh     contacts, chans, unread");
     consoleWriteLine("         chat <name>    show a thread");
     consoleWriteLine("         discover / discovered");
-    consoleWriteLine("radio    stat, batt, wifi");
     consoleWriteLine("         read <name>    clear that thread's unread");
     consoleWriteLine("         monitor on|off show arriving messages");
     consoleWriteLine("         to <name>   pick a contact or channel");
     consoleWriteLine("         msg <text>  send to it");
+    consoleWriteLine("network  mqtt status, tcp status, ble status");
+    consoleWriteLine("radio    stat, batt, wifi");
     consoleWriteLine("node     anything the CLI answers:");
     consoleWriteLine("         advert, get name, set name <x>, time, ver");
     return;

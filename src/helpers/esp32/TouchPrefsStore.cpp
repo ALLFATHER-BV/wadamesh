@@ -1728,13 +1728,66 @@ bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored) {
 }
 
 // Ignored / blocked sender NAMES (channel/room senders that aren't contacts) ---
-// One NVS blob "ign_nm" of up to TOUCH_IGNORED_NAMES_MAX fixed-width,
+// One NVS blob "ign_nm2" of up to TOUCH_IGNORED_NAMES_MAX fixed-width,
 // NUL-padded TOUCH_IGNORED_NAME_LEN slots. Same read/replace/write scheme as
 // the 6-byte prefix list above.
-static const char* KEY_IGN_NAMES = "ign_nm";
+// The blob carries no header — the entry count is derived by dividing its length by the
+// slot width — so widening the slot re-slots every stored entry: slot 1 would start inside
+// the old name 0, every row after the first would render as a mangled suffix and would stop
+// matching, and the first write back would make that permanent. A new key sidesteps it: the
+// old blob is read once with the OLD stride, re-slotted, written here, and removed. A key
+// rename is unambiguous by construction, unlike sniffing the blob length (28 and 32 share
+// multiples at 224 and 448 bytes, both inside the 16-entry cap).
+static const char* KEY_IGN_NAMES     = "ign_nm2";
+static const char* KEY_IGN_NAMES_V1  = "ign_nm";
+constexpr int      TOUCH_IGN_NAME_LEN_V1 = 28;
+
+// One-shot: fold a pre-widening "ign_nm" blob into the current key. No-op once migrated
+// (and on a fresh device, where neither key exists). Latched for the boot because the
+// caller runs on the RX path for EVERY incoming message — two NVS key lookups per message
+// is not a price worth paying for a check that can only change once.
+static bool s_ign_names_migrated = false;
+
+static void ignNamesMigrateV1() {
+  if (s_ign_names_migrated) return;
+  if (!s_begun) touchPrefsBegin();
+  if (s_prefs.isKey(KEY_IGN_NAMES) || !s_prefs.isKey(KEY_IGN_NAMES_V1)) {
+    s_ign_names_migrated = true;   // nothing to fold in, now or on any later call
+    return;
+  }
+
+  char old_buf[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGN_NAME_LEN_V1];
+  size_t n = s_prefs.getBytes(KEY_IGN_NAMES_V1, old_buf, sizeof(old_buf));
+  const int count = (n == 0 || n > sizeof(old_buf)) ? 0 : (int)(n / TOUCH_IGN_NAME_LEN_V1);
+
+  char buf[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN];
+  memset(buf, 0, sizeof(buf));
+  for (int i = 0; i < count; ++i) {
+    // Old slots hold at most 27 chars, so they always fit the wider one.
+    strncpy(&buf[i * TOUCH_IGNORED_NAME_LEN], &old_buf[i * TOUCH_IGN_NAME_LEN_V1],
+            TOUCH_IGN_NAME_LEN_V1 - 1);
+  }
+
+  s_prefs.end();
+  bool ok = false;
+  if (s_prefs.begin(TOUCH_NS, false)) {
+    ok = (count == 0) ||
+         s_prefs.putBytes(KEY_IGN_NAMES, buf, (size_t)(count * TOUCH_IGNORED_NAME_LEN)) > 0;
+    if (ok) s_prefs.remove(KEY_IGN_NAMES_V1);   // only once the new key actually holds the list
+    s_prefs.end();
+  }
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  // Latch on SUCCESS only. Latching a failed fold would leave the list reading empty for
+  // the rest of the boot — every block silently stops firing — and the next Block tap
+  // would then write a fresh ign_nm2 that orphans every old entry for good. Retrying
+  // costs the two key lookups per message the latch exists to avoid, but only while the
+  // store is already refusing writes.
+  s_ign_names_migrated = ok;
+}
 
 static int ignNamesReadAll(char out[TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN]) {
   if (!s_begun) touchPrefsBegin();
+  ignNamesMigrateV1();
   if (!s_prefs.isKey(KEY_IGN_NAMES)) return 0;   // absent on a fresh device — skip [E] NOT_FOUND
   size_t n = s_prefs.getBytes(KEY_IGN_NAMES, out, TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN);
   if (n == 0 || n > (size_t)(TOUCH_IGNORED_NAMES_MAX * TOUCH_IGNORED_NAME_LEN)) return 0;

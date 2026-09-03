@@ -1,0 +1,26 @@
+# beta_75 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Your offline map pack was being deleted -----------------------------------------------
+If you keep map tiles on an SD card, the firmware was permanently deleting files from your own map pack. Every tile it wanted but could not find as a .jpg erased the .png sitting next to it, and that deletion is not recoverable.
+The cleanup responsible was written for the firmware's own small tile cache, but on every board that keeps tiles on the card it was pointed at the card instead. It is now limited to the cache it was meant for. Found and fixed by Christopher Van Hoose, confirmed on a ThinkNode M9.
+
+# --- Names -----------------------------------------------------------------------------------
+Long sender names are stored in full. Names can be 31 characters and only the first 24 were kept, so anything longer was cut permanently on arrival. Nothing is lost now, and existing chat history is untouched.
+A long name no longer pushes the message text out of shape, and a colon inside an ordinary message is no longer mistaken for an author name.
+Both by Ruben Laban, a first contribution.
+
+# --- ThinkNode M9 ----------------------------------------------------------------------------
+The map opens in about 1.5 seconds instead of 2.6.
+Back returns to the previous screen rather than jumping out of where you were.
+The SD card is remounted properly after formatting it on the device.
+Labels that update while you watch no longer overlap the rows beneath them, and controls that are hidden or inactive are skipped when moving with the d-pad instead of trapping the cursor.
+GPS acquisition time is measured from when the search started rather than from when you happened to open the page.
+All from Christopher Van Hoose.
+
+# --- Also ------------------------------------------------------------------------------------
+Notification indicators and modal focus behave correctly, and there is a command to check MQTT connection status. Both by Michael A. Cojocari.
+
+# --- For testers -------------------------------------------------------------------------------
+If you keep an offline map pack on SD, this release stops the damage but cannot undo it. Check whether tiles are missing and re-copy that area if so.
+Still open and not fixed here: chat history resetting to an older point on reboot, a Tanmatsu whose chat store will not finish migrating, a map that renders nothing since beta_71, a screen that will not stay dark after a manual lock, and the web flasher hanging at "wrapping up" on the T-Display P4. Several of those are waiting on information from the people who reported them.
