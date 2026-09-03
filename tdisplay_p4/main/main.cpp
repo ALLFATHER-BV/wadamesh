@@ -459,8 +459,22 @@ extern "C" void app_main(void) {
     // WiFi.* here is the C6WifiShim facade (AT-over-SDIO), so this state machine drives REAL joins:
     // start once the c6_at worker has the AT link up + the user wants Wi-Fi. The 10 s retry branch
     // doubles as auto-reconnect. (TDP4_C6_READY still gates the unused esp-hosted path elsewhere.)
-    bool wifi_radio_en = c6at_is_up() && wifiConfigWantsWifi();
-    if (!wifi_radio_inited) { wifi_radio_inited = true; wifi_radio_prev = wifi_radio_en; }
+    const bool c6_up = c6at_is_up();
+    bool wifi_radio_en = c6_up && wifiConfigWantsWifi();
+    // The C6 runs its own AT firmware with auto-connect enabled, so after a power
+    // cycle it rejoins the last AP by itself, before this loop ever asks it to.
+    // So latch only once the AT link is actually up, and APPLY the user's choice
+    // at that moment rather than merely recording it: with the radio pref off
+    // there is no on->off transition for the branch below to catch, the join the
+    // C6 made on its own is never torn down, and the device comes up connected
+    // while every switch in the UI reads off (#373).
+    if (!wifi_radio_inited) {
+      if (c6_up) {
+        wifi_radio_inited = true;
+        wifi_radio_prev   = wifi_radio_en;
+        if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
+      }
+    }
     else if (wifi_radio_en != wifi_radio_prev) {
       wifi_radio_prev = wifi_radio_en;
       if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }

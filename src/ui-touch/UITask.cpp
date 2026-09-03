@@ -1932,6 +1932,7 @@ struct LvChatPanel {
   lv_obj_t* jump_oldest_btn; // floating "jump to oldest" button
   lv_obj_t* composer_row;  // container: input + send button
   lv_obj_t* composer_ta;   // textarea: user types here
+  lv_obj_t* composer_cnt;  // "148/160" counter, shown only near the limit
   LvThreadButtonCtx ctx_store[UITask::MAX_UI_THREADS];
   bool channel_mode;
   /** When true, `list_cont` shows channels + DMs with history (Chats tab only). */
@@ -7369,6 +7370,27 @@ static void keyboardCb(lv_event_t* e) {
     accentHandleValueChanged();
     if (!s_mentionbox) accentBoxMaybeShow();
   }
+}
+
+// Show "n/160" once the message is close enough to the cap to matter, and mark
+// it when the cap is actually reached so a keyboard that has gone quiet is
+// visibly the limit rather than a fault. Counted in codepoints to match how
+// LVGL enforces max_length: by bytes an emoji would read as four characters.
+static void composerCountCb(lv_event_t* e) {
+  LvChatPanel* p = (LvChatPanel*)lv_event_get_user_data(e);
+  if (!p || !p->composer_cnt || !lv_obj_is_valid(p->composer_cnt)) return;
+  const char* txt = lv_textarea_get_text(p->composer_ta);
+  const uint32_t used = txt ? _lv_txt_get_encoded_length(txt) : 0;
+  const uint32_t cap  = (uint32_t)UITask::MAX_MSG_TEXT;
+  // Quiet until the last quarter; a short message should not carry a readout.
+  if (used * 4 < cap * 3) { lv_obj_add_flag(p->composer_cnt, LV_OBJ_FLAG_HIDDEN); return; }
+  lv_label_set_text_fmt(p->composer_cnt, "%u/%u", (unsigned)used, (unsigned)cap);
+  lv_obj_set_style_text_color(p->composer_cnt,
+                              lv_color_hex(used >= cap ? COLOR_STATUS_WARN : COLOR_SUB),
+                              LV_PART_MAIN);
+  lv_obj_clear_flag(p->composer_cnt, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(p->composer_cnt, LV_ALIGN_TOP_RIGHT, -SC(4), -SC(2));
+  lv_obj_move_foreground(p->composer_cnt);
 }
 
 static void composerFocusCb(lv_event_t* e) {
@@ -15287,6 +15309,20 @@ static void wifiJoinConfirmCb(lv_event_t* e) {
   wifiDoJoin(ssid, pwd, true);
 }
 
+// Reveal/hide the passphrase while typing it. Entering a PSK blind on a device
+// keyboard is a real failure mode -- a tester needed ten attempts to join their
+// own network (#381) -- and the keyboard mirror has to be switched too or the
+// characters stay masked in the one field the user is actually looking at.
+static void wifiPwdRevealCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_wifi_sheet_pwd_ta) return;
+  const bool hidden = lv_textarea_get_password_mode(s_wifi_sheet_pwd_ta);
+  lv_textarea_set_password_mode(s_wifi_sheet_pwd_ta, !hidden);
+  if (s_kb_mirror_ta) lv_textarea_set_password_mode(s_kb_mirror_ta, !hidden);
+  lv_obj_t* glyph = (lv_obj_t*)lv_event_get_user_data(e);
+  if (glyph) lv_label_set_text(glyph, hidden ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN);
+}
+
 // Join / hidden-network sheet, full-screen (see wifiSheetOpenFullscreen).
 // manual=true adds an editable SSID field (hidden network); else the ssid is
 // fixed and shown in the title bar.
@@ -15316,7 +15352,22 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
 
   lv_obj_t* pl = lv_label_create(body); lv_label_set_text(pl, TR("Password (empty = open)"));
   lv_obj_set_style_text_font(pl, &g_font_12, LV_PART_MAIN); lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(pl, 0, yy); yy += SC(16);
+  lv_obj_set_pos(pl, 0, yy);
+  {
+    lv_obj_t* eye = lv_btn_create(body);
+    lv_obj_set_size(eye, SC(34), SC(22));
+    lv_obj_set_pos(eye, iw - SC(34), yy - SC(4));
+    lv_obj_set_style_bg_opa(eye, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(eye, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(eye, 0, LV_PART_MAIN);
+    lv_obj_t* glyph = lv_label_create(eye);
+    lv_label_set_text(glyph, LV_SYMBOL_EYE_OPEN);
+    lv_obj_set_style_text_font(glyph, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(glyph, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_center(glyph);
+    lv_obj_add_event_cb(eye, wifiPwdRevealCb, LV_EVENT_CLICKED, glyph);
+  }
+  yy += SC(16);
   s_wifi_sheet_pwd_ta = lv_textarea_create(body);
   lv_obj_set_size(s_wifi_sheet_pwd_ta, iw, SC(32)); lv_obj_set_pos(s_wifi_sheet_pwd_ta, 0, yy);
   lv_textarea_set_one_line(s_wifi_sheet_pwd_ta, true);
@@ -29724,9 +29775,21 @@ static void renderMapMarkers() {
     lv_label_set_text(m.obj, LV_SYMBOL_GPS);
     lv_obj_set_style_text_font(m.obj, &g_font_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(m.obj, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    // A bare white glyph disappears on light tiles (#366). The contact markers
+    // below already carry a dark border for exactly this reason; the self
+    // marker never got one. Same treatment: a dark chip behind the glyph, so it
+    // reads on any basemap without needing a colour that means something else.
+    lv_obj_set_style_bg_color(m.obj, lv_color_hex(0x101418), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(m.obj, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_set_style_radius(m.obj, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(m.obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(m.obj, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_border_width(m.obj, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(m.obj, LV_OPA_60, LV_PART_MAIN);
     // The glyph's optical center isn't at its bbox center — fudge the
-    // align slightly so the crosshair lines up with the tile pixel.
-    lv_obj_set_pos(m.obj, self_sx - 8, self_sy - 11);
+    // align slightly so the crosshair lines up with the tile pixel. The 3 px
+    // of chip (2 pad + 1 border) shifts it again, so take that off too.
+    lv_obj_set_pos(m.obj, self_sx - 8 - 3, self_sy - 11 - 3);
   }
 
   // ---- Contact markers — colored circles sized for taps (14×14 with a
@@ -32246,6 +32309,23 @@ static void makeChatDetail(LvChatPanel& p) {
     // its slack, so no exact-fit scroll jitter, and the auto-grow centres every line count.
     lv_obj_set_style_pad_top(comp_lbl, 4, LV_PART_MAIN);
   }
+  // Character counter. A message is capped at MAX_MSG_TEXT and the cap is silent:
+  // typing simply stops, which reads as a broken keyboard (#350). Rather than
+  // spend a row on a counter that is noise for a normal short message, it is
+  // overlaid on the composer and only appears once the limit is close enough to
+  // matter. LVGL counts the cap in codepoints, so count in codepoints too or the
+  // readout disagrees with the cap the moment someone types an emoji or an accent.
+  p.composer_cnt = lv_label_create(p.composer_row);
+  lv_label_set_text(p.composer_cnt, "");
+  lv_obj_set_style_text_font(p.composer_cnt, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(p.composer_cnt, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_add_flag(p.composer_cnt, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_clear_flag(p.composer_cnt, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(p.composer_cnt, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_align(p.composer_cnt, LV_ALIGN_TOP_RIGHT, -SC(4), -SC(2));
+  lv_obj_move_foreground(p.composer_cnt);
+  lv_obj_add_event_cb(p.composer_ta, composerCountCb, LV_EVENT_VALUE_CHANGED, &p);
+
   // Tap on composer → show keyboard
   lv_obj_add_event_cb(p.composer_ta, composerFocusCb, LV_EVENT_FOCUSED, &p);
 #if CAP_TOUCH && !CAP_KEYBOARD

@@ -475,7 +475,14 @@ extern "C" void app_main(void) {
     ui_task.loop();      // UI first (splash/flush)
 
     bool wifi_radio_en = wifiConfigWantsWifi();
-    if (!wifi_radio_inited) { wifi_radio_inited = true; wifi_radio_prev = wifi_radio_en; }
+    // Apply the radio pref on the first pass instead of only recording it: with
+    // Wi-Fi off there is never an on->off transition for the branch below to
+    // catch, so anything the coprocessor joined on its own survives boot (#373).
+    if (!wifi_radio_inited) {
+      wifi_radio_inited = true;
+      wifi_radio_prev   = wifi_radio_en;
+      if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
+    }
     else if (wifi_radio_en != wifi_radio_prev) {
       wifi_radio_prev = wifi_radio_en;
       if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
