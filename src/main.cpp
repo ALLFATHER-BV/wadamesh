@@ -51,6 +51,10 @@ static uint32_t _atoi(const char* sp) {
   DataStore store(LittleFS, rtc_clock);
 #elif defined(ESP32)
   #include <SPIFFS.h>
+  #if defined(HAS_WIO_TRACKER_L2)
+    #include <SD_MMC.h>
+    #include <WioTrackerL2Io.h>
+  #endif
   #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
     #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
@@ -682,6 +686,90 @@ void gpsEnsureBigRxRing() {
 }
 #endif
 
+#if defined(HAS_WIO_TRACKER_L2) && defined(WIO_TRACKER_L2_GPS_PROBE)
+// ============================================================================
+// TEMP DIAGNOSTIC — remove this block and the -D WIO_TRACKER_L2_GPS_PROBE=1 line in
+// platformio.ini once the Wio Tracker L2's GPS wiring is confirmed.
+//
+// the L2's PIN_GPS_RX=18 / PIN_GPS_TX=17 were added wholesale in the bring-up
+// commit and are byte-identical to the Attaky env, so neither the pin pair nor
+// GPS_BAUD_RATE=9600 has ever been checked against this board. ENV_SKIP_GPS_DETECT
+// hard-codes gps_detected = true, so the UI reports a module present whether or
+// not a byte ever arrives — this probe is the missing evidence.
+//
+// Runs after board.begin() (WioTrackerL2Io::begin has already powered the GNSS and
+// released its reset) and before sensors.begin() (which is what normally opens
+// Serial1), then leaves the UART closed for initBasicGPS() to reopen.
+//
+// RX only: txPin is -1 so the probe never drives a pin whose real function on
+// this board is unconfirmed. Costs ~6 s of boot time while it runs.
+// ============================================================================
+static void wioTrackerL2GpsProbe() {
+  static const int8_t   kPins[]  = {17, 18};              // 17 = today's ESP RX, 18 = the swap
+  static const uint32_t kBauds[] = {9600, 38400, 115200};
+
+  Serial.println(F("[GPSPROBE] ---- start: 2 pins x 3 bauds, 1s each ----"));
+  Serial1.setRxBufferSize(1024);   // must precede the first begin() to take effect
+
+  int8_t   best_pin  = -1;
+  uint32_t best_baud = 0;
+  uint32_t best_score = 0;
+
+  for (size_t pi = 0; pi < sizeof(kPins) / sizeof(kPins[0]); ++pi) {
+    for (size_t bi = 0; bi < sizeof(kBauds) / sizeof(kBauds[0]); ++bi) {
+      const int8_t   pin  = kPins[pi];
+      const uint32_t baud = kBauds[bi];
+      Serial1.begin(baud, SERIAL_8N1, pin, -1 /*no TX*/);
+
+      uint32_t total = 0, printable = 0, dollars = 0;
+      char     head[40];
+      uint8_t  head_n = 0;
+      const uint32_t deadline = millis() + 1000;
+      while ((int32_t)(millis() - deadline) < 0) {
+        while (Serial1.available() > 0) {
+          const int c = Serial1.read();
+          if (c < 0) break;
+          ++total;
+          if (c == '$') ++dollars;
+          if (c >= 0x20 && c < 0x7F) ++printable;
+          if (head_n < sizeof(head) - 1)
+            head[head_n++] = (c >= 0x20 && c < 0x7F) ? (char)c : '.';
+        }
+        delay(1);   // yield to IDLE so the task watchdog stays fed
+      }
+      Serial1.end();
+      head[head_n] = '\0';
+
+      // NMEA is all-printable and sentence-framed. Garbage at the wrong baud
+      // still yields bytes, so require both a high printable ratio AND '$'.
+      const bool looks_nmea = (total > 20) && (dollars > 0) && (printable * 10 >= total * 9);
+      Serial.printf("[GPSPROBE] rx=%-2d baud=%-6lu bytes=%-5lu printable=%-5lu '$'=%-3lu %s%s%s\n",
+                    (int)pin, (unsigned long)baud, (unsigned long)total,
+                    (unsigned long)printable, (unsigned long)dollars,
+                    looks_nmea ? "<== NMEA  " : "", head_n ? "head=" : "", head);
+      if (looks_nmea && total > best_score) { best_score = total; best_pin = pin; best_baud = baud; }
+    }
+  }
+
+  if (best_pin < 0) {
+    Serial.println(F("[GPSPROBE] no NMEA on 17 or 18 at any baud."));
+    Serial.println(F("[GPSPROBE] -> module is on another pin, unpowered, or silent. Next: confirm"));
+    Serial.println(F("[GPSPROBE]    the schematic, or scope the module's TX for activity."));
+  } else {
+    Serial.printf("[GPSPROBE] NMEA found: ESP RX=%d at %lu baud.\n",
+                  (int)best_pin, (unsigned long)best_baud);
+    // NAMING TRAP (see the comments at platformio.ini:273/935/1182):
+    // EnvironmentSensorManager calls Serial1.setPins(PIN_GPS_TX, PIN_GPS_RX) and
+    // Arduino's setPins() takes (rxPin, txPin) -- so the pin we RECEIVE on is
+    // PIN_GPS_TX, and PIN_GPS_RX is the pin we transmit on.
+    Serial.printf("[GPSPROBE] -> platformio.ini wio_tracker_l2 env should read: PIN_GPS_TX=%d, PIN_GPS_RX=%d, GPS_BAUD_RATE=%lu\n",
+                  (int)best_pin, (int)(best_pin == 17 ? 18 : 17), (unsigned long)best_baud);
+  }
+  Serial.println(F("[GPSPROBE] ---- end ----"));
+}
+#endif  // HAS_WIO_TRACKER_L2 && WIO_TRACKER_L2_GPS_PROBE
+
+
 void setup() {
   Serial.begin(115200);
 #if defined(HAS_RAK_TAP_V2)
@@ -929,6 +1017,32 @@ void setup() {
   // failure falls back to SPIFFS so the device always boots.
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
   bool sd_storage = false;
+#if defined(HAS_WIO_TRACKER_L2)
+  // This target uses a dedicated one-bit SD_MMC bus rather than the LoRa SPI
+  // bus. Power the card first, set the non-default pins, and adopt it as the
+  // complete store when available; SPIFFS remains the graceful fallback.
+  //
+  // 20 MHz (SDMMC_FREQ_DEFAULT), not Arduino's 40 MHz HIGHSPEED default: CLK/CMD/D0
+  // are ordinary GPIOs (2/3/1) routed through the GPIO matrix, not an IOMUX SD pad
+  // group, and this is the card the *whole* data store lives on. At 40 MHz a marginal
+  // edge shows up as a mid-session "sdmmc_host_wait_for_event returned 0x107"
+  // (ESP_ERR_TIMEOUT) that takes prefs, contacts and chat history down with it. The
+  // T-Display P4 hot-insert path already drops to this rate for the same reason.
+  bool wio_l2_sd_begun = false;
+  if (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
+      SD_MMC.setPins(2, 3, 1) &&
+      (wio_l2_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) &&
+      SD_MMC.cardType() != CARD_NONE) {
+    sd_storage = store.useSdMmcStorage();
+    g_contacts_on_sd = sd_storage;
+    g_full_data_on_sd = sd_storage;
+    Serial.printf("[BOOT] wio-l2 SD_MMC: %s\n", sd_storage ? "adopted" : "mount only");
+  } else {
+    if (wio_l2_sd_begun) SD_MMC.end();
+    (void)WioTrackerL2Io::setSdPower(false);
+    Serial.println("[BOOT] wio-l2 SD_MMC unavailable; using SPIFFS");
+  }
+#endif
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
    #if defined(TLORA_PAGER)
@@ -1219,7 +1333,10 @@ void setup() {
   // Route touch settings + Wi-Fi creds to the active filesystem (SD when that's
   // the data store, else SPIFFS) instead of NVS. Old NVS values still load and
   // migrate on their next save, so this is a transparent in-place upgrade.
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #if defined(HAS_WIO_TRACKER_L2)
+    SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD_MMC : (fs::FS*)&SPIFFS,
+                        sd_storage ? "/meshcomod" : "/prefs");
+  #elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else
@@ -1507,6 +1624,9 @@ void setup() {
     if (np && np->gps_enabled) { Serial1.setRxBufferSize(4096); s_gps_big_rx_ring = true; }
 #endif
   }
+#endif
+#if defined(HAS_WIO_TRACKER_L2) && defined(WIO_TRACKER_L2_GPS_PROBE)
+  wioTrackerL2GpsProbe();   // TEMP DIAGNOSTIC — must precede sensors.begin()'s Serial1.begin()
 #endif
   sensors.begin();
 

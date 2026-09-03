@@ -6,7 +6,7 @@
 #include <SD.h>
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 #include <SD_MMC.h>
 #endif
 
@@ -1139,15 +1139,9 @@ bool DataStore::useSdStorage() {
 }
 #endif
 
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-// P4 boards: same full-store adoption as useSdStorage(), but on the SD_MMC slot.
-// The internal FFat 'locfd' has a broken FAT metadata layer (f_stat/exists lie —
-// see the tile-cache notes), and the exists()-gated identity + prefs loads that
-// "worked" at -Og read different garbage at -Os and came up empty: fresh node
-// identity, default name, profile changes gone every reboot. The card's FAT
-// metadata is truthful, so identity/prefs move there with everything else.
-// The caller migrates any FFat-resident files first (open()-probed, never
-// exists() on FFat).
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+// Full-store adoption on an SD_MMC slot. P4 callers migrate internal files
+// first; the Wio Tracker L2 mounts and adopts the card directly at boot.
 bool DataStore::useSdMmcStorage() {
   if (!SD_MMC.exists("/meshcomod"))          SD_MMC.mkdir("/meshcomod");
   if (!SD_MMC.exists("/meshcomod/bl"))       SD_MMC.mkdir("/meshcomod/bl");

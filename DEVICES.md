@@ -60,6 +60,9 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 - **RAK WisMesh Tap V2**: newest port, touch-driven. The browser-flash path is
   fresh; if the flasher cannot open the serial port, put the board in download
   mode manually and retry, and please report it.
+- **Seeed Wio Tracker L2**: pre-release touch target under active bring-up. Builds are for
+  development and hardware validation only; no public release artifact is
+  promised until the port is verified.
 
 ## Requested boards
 

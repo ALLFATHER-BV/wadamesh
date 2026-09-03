@@ -32,6 +32,8 @@ public:
   static void tick(uint32_t now_ms = 0);              // schedule due snapshots; never blocks on I/O
   static bool flush(uint32_t timeout_ms = 12000);     // force all queued snapshots before reset/sleep
   static bool busy();                                  // a worker currently owns a filesystem handle
+  static bool slowIoOverlap(uint32_t start_ms, uint32_t end_ms,
+                            const char*& phase, uint32_t& elapsed_ms);
 
   // Early boot needs `use_sd` before the regular backend is selected. These
   // helpers use the same A/B format on an explicitly supplied filesystem.
