@@ -7145,7 +7145,7 @@ static void accentNavRestyle() {
   for (uint8_t i = 0; i < s_accbox_cell_n; ++i) {
     if (!s_accbox_cells[i]) continue;
     lv_obj_set_style_bg_color(s_accbox_cells[i],
-      lv_color_hex((int)i == s_accentnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
+      lv_color_hex((int)i == s_accentnav_idx ? COLOR_ACCENT : COLOR_BORDER), LV_PART_MAIN);
   }
 }
 // Encoder's short-click while picking: fire the highlighted cell's own CLICKED
@@ -7214,7 +7214,7 @@ static void accentBoxMaybeShow() {
     lv_obj_add_flag(c, NAV_SKIP_FLAG);   // tappable, but never a keyboard-nav focus stop
     lv_obj_set_size(c, cw, ch);
     lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(c, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(c, accentBoxCellCb, LV_EVENT_CLICKED, (void*)set->v[i]);
 #if defined(TLORA_PAGER)
@@ -7280,7 +7280,7 @@ static void mentionNavRestyle() {
   for (uint8_t i = 0; i < s_mentionbox_cell_n; ++i) {
     if (!s_mentionbox_cells[i]) continue;
     lv_obj_set_style_bg_color(s_mentionbox_cells[i],
-      lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : 0x1B2B3A), LV_PART_MAIN);
+      lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : COLOR_BORDER), LV_PART_MAIN);
   }
 }
 static void mentionNavMove(int delta) {
@@ -7454,7 +7454,7 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
     lv_obj_add_flag(b, NAV_SKIP_FLAG);
     lv_obj_set_size(b, boxw, rowh);
     lv_obj_set_style_radius(b, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(b, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(b, mentionBoxCellCb, LV_EVENT_CLICKED, (void*)s_mention_names[i]);
   #if CAP_KEYPAD_NAV
@@ -9538,7 +9538,7 @@ static void txtMenuShow(lv_obj_t* ta) {
     lv_obj_t* c = lv_btn_create(s_txtmenu);
     lv_obj_set_size(c, cw, ch);
     lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(c, lv_color_hex(0x1B2B3A), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_add_event_cb(c, txtMenuCellCb, LV_EVENT_CLICKED, reinterpret_cast<void*>((intptr_t)i));
     lv_obj_t* l = lv_label_create(c);
