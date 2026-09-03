@@ -659,11 +659,32 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     return true;
   }
   if (isCmd(p, "clock") || isCmd(p, "time")) {
-    time_t tt = (time_t)getRTCClock()->getCurrentTime();
-    struct tm tmv; gmtime_r(&tt, &tmv);
-    char r[64];
-    snprintf(r, sizeof r, "clock: %04d-%02d-%02d %02d:%02d:%02d UTC",
-             tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday, tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    char r[192];
+    int n = 0;
+#if defined(ESP32)
+    if (!rtc_clock.timeIsCurrent()) {
+      n = snprintf(r, sizeof r, "clock: unavailable\nuptime: %lus\nbuild: %s",
+                   (unsigned long)(millis() / 1000u), FIRMWARE_BUILD_DATE);
+    } else
+#endif
+    {
+      time_t tt = (time_t)getRTCClock()->getCurrentTime();
+      struct tm tmv; gmtime_r(&tt, &tmv);
+      n = snprintf(r, sizeof r, "clock: %04d-%02d-%02d %02d:%02d:%02d UTC",
+                   tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                   tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    }
+#if defined(ESP32)
+    // Where that value came from, and whether the board's RTC chip vouches for
+    // itself (#383). A frozen clock and a live one print the same digits, so the
+    // digits alone were never a diagnosis.
+    n += snprintf(r + n, sizeof r - n, "\nsource: %s", rtc_clock.sourceName());
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+    snprintf(r + n, sizeof r - n, "\nrtc: %s %s%s", hw_rtc.chipName(),
+             HardwareRtcClock::statusName(hw_rtc.status()),
+             hw_rtc.writeConfirmed() ? " (write verified)" : "");
+#endif
+#endif
     pushMeshcomodReply(r);
     return true;
   }

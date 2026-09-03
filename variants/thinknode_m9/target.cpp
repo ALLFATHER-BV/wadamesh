@@ -24,8 +24,16 @@ RADIO_CLASS radio =
 WRAPPER_CLASS radio_driver(radio, board);
 
 ESP32RTCClock fallback_clock;
+// The M9's PCF8563 goes through the board adapter rather than the core's
+// address-only probe (issue #383). The core path read the chip's calendar
+// registers WITHOUT consulting its VL bit, so after a hard shutdown the stale
+// register contents came back as real wall time and the clock appeared frozen
+// at the moment the slider was pulled — the reported M9 symptom. The adapter
+// refuses an integrity-lost read, clears a latched STOP bit, and reads back
+// every write.
+HardwareRtcClock hw_rtc(fallback_clock);
 ClockFloorRTC rtc_clock(
-    fallback_clock); // wraps AutoDiscover: monotonic send-timestamp floor (#89)
+    hw_rtc); // wraps AutoDiscover: monotonic send-timestamp floor (#89)
 // Wadamesh's own provider rather than the core's MicroNMEALocationProvider:
 // identical behaviour, plus the RMC speed/course the core keeps private (see
 // src/helpers/WadaNmeaLocationProvider.h for why it is a copy, not a subclass).
@@ -50,7 +58,11 @@ DISPLAY_CLASS display(&board.periph_power);
 
 bool radio_init() {
   fallback_clock.begin();
-  rtc_clock.begin(Wire); // peripheral I2C bus (7/6) — RTC PCF8563 @ 0x51
+  // peripheral I2C bus (7/6) — RTC PCF8563 @ 0x51, brought up by
+  // ESP32Board::begin() (PIN_BOARD_SDA/SCL) well before this runs.
+  hw_rtc.begin(Wire, HardwareRtcClock::Chip::PCF8563);
+  rtc_clock.noteHardwareClock(hw_rtc.present());
+  if (hw_rtc.adopted()) rtc_clock.noteHardwareTime();
 
 #if defined(HAS_M9_KEYBOARD)
   m9KeyboardBegin(); // own bus, Wire1 (20/21) — no contention with Wire

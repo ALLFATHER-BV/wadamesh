@@ -4,6 +4,7 @@
 #if defined(ESP32_PLATFORM)
   #include <new>               // placement-new for the PSRAM-resident the_mesh
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
+  #include <esp_sntp.h>        // completion status for normal + cold-boot time sync
 #endif
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
 #include <Preferences.h>
@@ -15,6 +16,7 @@
 #include "helpers/esp32/TouchPrefsStore.h"   // QUOTED: get wadamesh's copy (touchPrefsReload), not the lib's stale one
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
+#include "helpers/esp32/BootTimeSync.h"      // opt-in cold-boot clock sync over saved Wi-Fi (#383)
 #include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
@@ -1193,6 +1195,11 @@ void setup() {
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+  // Restore replay protection before mesh startup or optional cold-boot NTP.
+  // A trusted correction can then pull a poisoned future floor back through
+  // ClockFloorRTC's guarded set path without a later restore undoing it.
+  rtc_clock.seedFloor(touchPrefsGetClockFloor());
+  rtc_clock.seedSystemClock();
 #if defined(HAS_RAK_TAP_V2)
   Serial.println("[BOOT] prefs_backend ok"); Serial.flush();
   Serial.println("[BOOT] touchPrefsReload ok"); Serial.flush();
@@ -1226,6 +1233,34 @@ void setup() {
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
   wifiConfigBegin();
   Serial.println("[BOOT] wifiConfig ok");
+
+#if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  /* Cold-boot clock acquisition over SAVED Wi-Fi (#383, BootTimeSync.h).
+   *
+   * HERE, and nowhere later, on purpose: after wifiConfigBegin() (so the saved
+   * credentials are readable) but BEFORE serial_interface.begin(), the TCP/WS
+   * listeners and any cold BLE allocation. Running before the transports exist
+   * means the temporary session has nothing live to suspend and rebuild — the
+   * normal boot path a few lines down reads the persisted Wi-Fi/BLE intent
+   * flags, which this never touches, and proceeds exactly as it always did.
+   *
+   * Opt-in, power-on-reset only, and bounded (~12 s worst case); it returns
+   * Skipped without spending anything when the board already knows the time,
+   * which is every boot on a T-Pager or an M9 whose RTC is healthy. */
+  {
+    uint32_t synced_epoch = 0;
+    const BootTimeSyncResult r = bootTimeSyncRun(rtc_clock.timeIsCurrent(), synced_epoch);
+    if (r == BootTimeSyncResult::Ok) {
+      // Through the normal guarded path, so the clock floor, the system clock
+      // and the board's RTC chip are all updated the same way an NTP or GPS
+      // sync would update them.
+      rtc_clock.setCurrentTime(synced_epoch);
+      Serial.printf("[BOOT] cold-boot time sync ok: %lu\n", (unsigned long)synced_epoch);
+    } else if (r != BootTimeSyncResult::Skipped) {
+      Serial.printf("[BOOT] cold-boot time sync: %s\n", bootTimeSyncResultName(r));
+    }
+  }
+#endif
 #endif
 
 #ifdef MULTI_TRANSPORT_COMPANION
@@ -1718,7 +1753,6 @@ void loop() {
      * into the mesh RTC so timestamps on messages are accurate. */
     static bool sntp_kicked = false;
     static bool sntp_pushed = false;
-    static uint32_t sntp_kick_ms = 0;
     if (WiFi.status() == WL_CONNECTED) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
@@ -1776,12 +1810,14 @@ void loop() {
         strncpy(_tz, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof _tz);
         _tz[sizeof _tz - 1] = '\0';
 #endif
+  esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
         configTzTime(_tz, "pool.ntp.org", "time.google.com");
         sntp_kicked = true;
-        sntp_kick_ms = millis();
-      } else if (!sntp_pushed && (uint32_t)(millis() - sntp_kick_ms) >= 1500) {
+      } else if (!sntp_pushed &&
+     esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
         time_t t = time(nullptr);
-        if (t > 1700000000) {
+        if (t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH &&
+            t <= (time_t)ClockFloorRTC::MAX_PLAUSIBLE_EPOCH) {
           /* Mesh RTC stores UTC seconds (protocol-facing); display layer
            * converts to local via localtime_r() using the TZ from configTzTime. */
           rtc_clock.setCurrentTime((uint32_t)t);
