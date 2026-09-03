@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "target.h"
+#include <helpers/HardwareRtcClock.h>
 
 TDeckBoard board;
 
@@ -21,7 +22,12 @@ SPIClass* tdeckSharedSPI() {
 }
 
 ESP32RTCClock fallback_clock;
-ClockFloorRTC        rtc_clock(fallback_clock);
+// The T-Deck ships with no battery-backed clock, but a DS3231 module on the I2C
+// bus is a common self-fit (#378). The adapter is transparent when nothing is
+// there: reads come from the software clock and writes stop at it, so a board
+// without the module behaves exactly as before.
+HardwareRtcClock     hw_rtc(fallback_clock);
+ClockFloorRTC        rtc_clock(hw_rtc);
 MicroNMEALocationProvider gps(Serial1, &rtc_clock);
 EnvironmentSensorManager sensors(gps);
 
@@ -33,7 +39,16 @@ EnvironmentSensorManager sensors(gps);
 bool radio_init() {
   fallback_clock.begin();
   Wire.begin(18, 8);
-  // NO rtc_clock.begin(Wire) here (issue #383). This board has no declared
+  // A DS3231 fitted to this bus, if there is one. This is NOT the generic
+  // address probe the comment below warns about: it is a declared chip type at
+  // its own address with a positive identity proof, and a bus with nothing at
+  // 0x68 simply logs and carries on. CAP_HARDWARE_RTC stays 0 for the board,
+  // since the module is an aftermarket addition rather than something a T-Deck
+  // has, which keeps the cold-boot network time sync on offer for everyone else.
+  hw_rtc.begin(Wire, HardwareRtcClock::Chip::DS3231);
+  rtc_clock.noteHardwareClock(hw_rtc.present());
+  if (hw_rtc.adopted()) rtc_clock.noteHardwareTime();
+  // NO generic rtc_clock.begin(Wire) here (issue #383). This board has no declared
   // battery-backed clock, and the call was doubly wrong: it ran BEFORE the bus
   // was even begun, so "the probe found nothing" was never evidence of anything.
   // A board either drives a documented chip through HardwareRtcClock (see the

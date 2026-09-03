@@ -61,7 +61,11 @@
 
 class HardwareRtcClock : public mesh::RTCClock {
 public:
-  enum class Chip : uint8_t { None, PCF8563, PCF85063A };
+  // DS3231 is an aftermarket module people fit themselves (#378, T-Deck). It
+  // lives at a different I2C address from the two soldered parts, so it can
+  // never be confused with them; everything else about it differs too, see the
+  // normalisation in the .cpp.
+  enum class Chip : uint8_t { None, PCF8563, PCF85063A, DS3231 };
 
   // Why a boot-time read was refused. Surfaced by the `clock` CLI and the About
   // page so "the clock is wrong" is diagnosable without a serial console.
@@ -99,10 +103,12 @@ public:
 
 private:
   bool     writeHardware(uint32_t epoch);
-  uint8_t  timeBase() const;   // first time register: 0x02 (8563) / 0x04 (85063)
+  uint8_t  timeBase() const;   // first time register: 0x02 (8563) / 0x04 (85063) / 0x00 (DS3231)
+  uint8_t  i2cAddr()  const;   // 0x51 for both PCF parts, 0x68 for the DS3231
   bool     readRegs(uint8_t reg, uint8_t* buf, uint8_t len);
   bool     writeRegs(uint8_t reg, const uint8_t* buf, uint8_t len);
   bool     identify();
+  bool     ds3231Normalise(uint8_t r[7]);
   bool     clearStopBit(bool& was_stopped);
 
   mesh::RTCClock& _sw;
