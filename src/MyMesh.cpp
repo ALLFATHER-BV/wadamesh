@@ -22,6 +22,9 @@
 #include <helpers/HttpOtaDisplayState.h>
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WiFiConfig.h"
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+#include "helpers/esp32/TouchPrefsStore.h"
+#endif
 #ifdef ESP32
 #if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
 #include <WiFi.h>
@@ -38,6 +41,15 @@
 /** While `ota url` runs, pin WS/TCP reply target so OTA progress survives yield() and checkRecvFrame. */
 static int s_companion_ota_pinned_reply_target = -1;
 #endif
+
+static void persistProtocolClockBeforeReset(mesh::RTCClock* clock) {
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+  if (clock) touchPrefsSetClockFloor(clock->getCurrentTime());
+  touchPrefsFlush();
+#else
+  (void)clock;
+#endif
+}
 
 #define CMD_APP_START                 1
 #define CMD_SEND_TXT_MSG              2
@@ -678,6 +690,7 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
   if (isCmd(p, "reboot")) {
     pushMeshcomodReply("rebooting...");
     delay(150);
+    persistProtocolClockBeforeReset(getRTCClock());
     board.reboot();
     return true;   // not reached
   }
@@ -702,6 +715,7 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     uint32_t opt1 = REG_READ(RTC_CNTL_OPTION1_REG);
     REG_WRITE(RTC_CNTL_OPTION1_REG, opt1 | RTC_CNTL_FORCE_DOWNLOAD_BOOT);
 #endif
+    persistProtocolClockBeforeReset(getRTCClock());
     board.reboot();   // Tanmatsu/P4: plain reboot (the launcher manages flashing)
 #else
     pushMeshcomodReply("bootloader: ESP32-only");
@@ -4596,6 +4610,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     // was the "read and unread messages deleted after a manual reboot" report.
     if (_ui) _ui->persistHistoryNow();
     persistSyncHistoryNow();   // and the app-sync replay ring
+    persistProtocolClockBeforeReset(getRTCClock());
     board.reboot();
   } else if (cmd_frame[0] == CMD_GET_BATT_AND_STORAGE) {
     uint8_t reply[11];
@@ -5569,6 +5584,7 @@ void MyMesh::checkCLIRescueCmd() {
       cliPutEnd();
 #endif
     } else if (strcmp(cli_command, "reboot") == 0) {
+      persistProtocolClockBeforeReset(getRTCClock());
       board.reboot();  // doesn't return
     } else {
       Serial.println("  Error: unknown command");

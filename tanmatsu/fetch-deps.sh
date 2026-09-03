@@ -19,6 +19,8 @@ cp -R "$LIBDEPS/MeshCore/src"      components/meshcore/core/src
 cp -R "$LIBDEPS/MeshCore/variants" components/meshcore/core/variants 2>/dev/null || true
 mkdir -p components/meshcore/core/lib
 cp -R "$LIBDEPS/MeshCore/lib/ed25519" components/meshcore/core/lib/ed25519   # bundled C ed25519 (Identity.cpp)
+python3 ../scripts/build/patch_meshcore_txt_timestamp.py \
+  --patch-file components/meshcore/core/src/helpers/BaseChatMesh.cpp
 echo "vendored: meshcore core ($(find components/meshcore/core/src -name '*.cpp' | wc -l | tr -d ' ') cpp)"
 
 # --- LVGL 8.4 (own component; big; uses the repo's include/lv_conf.h) ---

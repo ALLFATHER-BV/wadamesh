@@ -8,7 +8,31 @@
 # Everything else mirrors the Tanmatsu selection (see its CMakeLists): drop nRF52/TBeam boards,
 # the S3 panel drivers, sensors, other-platform helpers, ESP-NOW, and the MC_VENDORED_TOUCH_APP
 # files our own src/ ships.
+set(CORE_LINK "${CMAKE_CURRENT_LIST_DIR}/core")
+if(NOT IS_SYMLINK "${CORE_LINK}")
+  message(FATAL_ERROR "T-Display P4 MeshCore is not the shared Tanmatsu symlink; run tdisplay_p4/fetch-deps.sh")
+endif()
+get_filename_component(CORE_REAL "${CORE_LINK}" REALPATH)
+get_filename_component(CORE_EXPECTED_REAL "${CMAKE_CURRENT_LIST_DIR}/../../../tanmatsu/components/meshcore/core" REALPATH)
+if(NOT "${CORE_REAL}" STREQUAL "${CORE_EXPECTED_REAL}")
+  message(FATAL_ERROR "T-Display P4 MeshCore points to the wrong source; run tdisplay_p4/fetch-deps.sh")
+endif()
+
 set(CORE "core/src")
+set(TXT_TIMESTAMP_SOURCE "${CMAKE_CURRENT_LIST_DIR}/${CORE}/helpers/BaseChatMesh.cpp")
+if(NOT EXISTS "${TXT_TIMESTAMP_SOURCE}")
+  message(FATAL_ERROR "MeshCore sources are missing; run tdisplay_p4/fetch-deps.sh")
+endif()
+execute_process(
+  COMMAND python3 "${CMAKE_CURRENT_LIST_DIR}/../../../scripts/build/patch_meshcore_txt_timestamp.py"
+          --verify-file "${TXT_TIMESTAMP_SOURCE}"
+  RESULT_VARIABLE TXT_TIMESTAMP_VERIFY_RESULT
+  OUTPUT_VARIABLE TXT_TIMESTAMP_VERIFY_OUT
+  ERROR_VARIABLE TXT_TIMESTAMP_VERIFY_ERR
+)
+if(NOT TXT_TIMESTAMP_VERIFY_RESULT EQUAL 0)
+  message(FATAL_ERROR "Vendored MeshCore failed issue #374 verification; run tdisplay_p4/fetch-deps.sh\n${TXT_TIMESTAMP_VERIFY_OUT}${TXT_TIMESTAMP_VERIFY_ERR}")
+endif()
 file(GLOB_RECURSE CORE_SRCS "${CMAKE_CURRENT_LIST_DIR}/${CORE}/*.cpp")
 # NOTE: helpers/radiolib/ is NOT excluded here (unlike the Tanmatsu) — the P4 needs it.
 # helpers/sensors/ is NOT fully excluded either: the P4 has a real GPS (L76K), so it compiles
