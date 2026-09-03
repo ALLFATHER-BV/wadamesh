@@ -12028,7 +12028,7 @@ static void uiScaleSelectCb(lv_event_t* e) {
 #endif
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -13914,12 +13914,19 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
   // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
   // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
-  // can't block it there, and the other gates are user state).
+  // can't block it there, and the other gates are user state) + M9 (2026-09-02
+  // battery pass: the hooks were already installed and every gate works there —
+  // the throttle is a plain vTaskDelay in the loop task, wake is the keyboard
+  // poll that runs through it, and the M9 is in batteryIsCharging's #else
+  // branch (compile-time false), so the "USB powered" gate can never block —
+  // even stronger than the R8, whose runtime voltage heuristic can — but no
+  // M9 build ever compiled this switch, so on the M9 the pref was permanently
+  // OFF).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -23542,7 +23549,28 @@ static void openDiscoverPage() {
 // the radio while we own it.
 static const int   SPEC_BINS      = 160;     // frequency bins across the span
 static const int   SPEC_WF_ROWS   = 48;      // waterfall height (rows of history; zoomed to fit width)
-static const int   SPEC_CHUNK     = 8;       // bins swept per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+static const int   SPEC_CHUNK     = 8;       // MAX bins per timer tick (~5.5 ms/bin -> ~44 ms UI block)
+// The ~5.5 ms/bin figure above is CORRECT — verified on M9 hardware 2026-08-28,
+// which is the "re-verify with a micros() log on hardware" the standby(0x01)
+// comment further down asks for. Measured: 5181-5904 us/bin, so 8 bins really is
+// the ~44 ms tick the constant promises. Recorded here so nobody re-derives it.
+//
+// It was measured while chasing repeated ~1.7 s "ui:lvgl" stalls that appear
+// ONLY while this page is open, on the theory that the sweep was overrunning.
+// It is not: the sweep is on budget. The time is in the REDRAW path
+// (spectrumPushWaterfall / spectrumDrawTrace) — instrumenting the flush
+// callback showed ~1.8 s of LVGL compute against only ~190 ms of actual panel
+// flush, i.e. the cost is LVGL rendering, not SPI bandwidth.
+// Do not "fix" the sweep; look at the waterfall canvas and the 160-point chart.
+//
+// The wall-clock bound below therefore is NOT that fix. It is a cheap guard so a
+// slower radio or a busier bus can never turn this tick into a multi-second UI
+// block, plus the permanent per-bin measurement. It is clamped so it can only
+// ever REDUCE bins per tick, never raise them above SPEC_CHUNK — on hardware it
+// simply settles at 7-8, i.e. today's behaviour, on every board.
+static const uint32_t SPEC_TICK_BUDGET_US = 45000;   // the ~44 ms UI block this was designed around
+static int         s_spec_chunk   = SPEC_CHUNK;      // adaptive bins/tick, retuned each sweep chunk
+static uint32_t    s_spec_bin_us  = 0;               // last measured per-bin sweep cost
 // Honest-coverage note: 24 MHz / 160 bins = 150 kHz of bin pitch, but each bin
 // listens through a 62.5 kHz channel filter — only ~42% of the span is inside a
 // filter on any sweep, so a narrowband carrier sitting between bin centers is
@@ -23643,7 +23671,9 @@ static void spectrumUpdateFloor() {
 // snapshot almost always missed. (The mesh is paused — spectrumOwnsRadio() — so nothing
 // else touches the modem while we hop it across the band.)
 static bool spectrumSweepChunk() {
-  int end = s_spec_pos + SPEC_CHUNK;
+  const int      start_pos = s_spec_pos;
+  const uint32_t t_chunk0  = micros();
+  int end = s_spec_pos + s_spec_chunk;
   if (end > SPEC_BINS) end = SPEC_BINS;
 #if defined(RADIO_CLASS)
   for (int i = s_spec_pos; i < end; i++) {
@@ -23723,6 +23753,38 @@ static bool spectrumSweepChunk() {
   }
 #endif
   s_spec_pos = end;
+
+  // Size the NEXT tick from what these bins actually cost. micros() subtraction
+  // is unsigned, so the ~71 min wrap is handled. Always advance at least one bin
+  // (forward progress beats a perfectly smooth UI that never finishes a sweep),
+  // and never exceed SPEC_CHUNK so a radio that already met the 5.5 ms/bin
+  // assumption is bit-for-bit unchanged. The log fires only when the value moves,
+  // so it stays quiet in use — and it is the "micros() log on hardware" the
+  // standby(0x01) comment above asks for, now permanent instead of a one-off.
+  const int swept = end - start_pos;
+  if (swept > 0) {
+    const uint32_t tick_us = (uint32_t)(micros() - t_chunk0);
+    s_spec_bin_us = tick_us / (uint32_t)swept;
+    // HYSTERESIS, not a control loop that chases the jitter. Shrink as soon as a
+    // tick actually overruns the budget; grow only when the tick is comfortably
+    // (2x) inside it. Without this the chunk flapped 7<->8 forever, because
+    // 8 bins x ~5.5 ms sits within jitter of the 45 ms budget.
+    int want = s_spec_chunk;
+    if (tick_us > SPEC_TICK_BUDGET_US && s_spec_bin_us) {
+      want = (int)(SPEC_TICK_BUDGET_US / s_spec_bin_us);
+    } else if (tick_us * 2u < SPEC_TICK_BUDGET_US && s_spec_chunk < SPEC_CHUNK) {
+      want = s_spec_chunk + 1;
+    }
+    if (want < 1)          want = 1;    // always make progress
+    if (want > SPEC_CHUNK) want = SPEC_CHUNK;
+    if (want != s_spec_chunk) {
+      Serial.printf("[SPEC] %lu us/bin, tick %lu us -> %d bins/tick (was %d, budget %lu us)\n",
+                    (unsigned long)s_spec_bin_us, (unsigned long)tick_us, want, s_spec_chunk,
+                    (unsigned long)SPEC_TICK_BUDGET_US);
+      s_spec_chunk = want;
+    }
+  }
+
   if (s_spec_pos >= SPEC_BINS) { s_spec_pos = 0; spectrumUpdateFloor(); return true; }
   return false;
 }
@@ -53346,6 +53408,23 @@ void UITask::toggleGPS() {
   const char* value = target_on ? "1" : "0";
   bool hw_ok = false;
   if (_sensors) hw_ok = _sensors->setSettingValue("gps", value);
+#if defined(ENV_INCLUDE_GPS) && (ENV_INCLUDE_GPS == 1)
+  // GPS just turned ON mid-session: give Serial1 the 4 KB RX ring. The
+  // boot-time gate in main.cpp installs it only when gps_enabled was already
+  // persisted, and setRxBufferSize is a no-op on a running UART — so without
+  // this the session that first enables GPS runs NMEA into the stock 256 B
+  // ring until reboot (~22 ms of slack at the M9's 115200 baud; a long LVGL
+  // frame or one 50 ms battery-saver park clips the burst). Gated on hw_ok so
+  // a refused enable (V4/R8 detect path, no module found) doesn't spend the
+  // 4 KB of internal DRAM; cycling just after a successful start is benign —
+  // same loopTask as every Serial1 reader, module barely powered (EN-pin
+  // boards) or at worst one torn, checksum-rejected sentence (EN-less boards,
+  // whose always-powered modules stream even while "stopped").
+  if (target_on && hw_ok) {
+    extern void gpsEnsureBigRxRing();
+    gpsEnsureBigRxRing();
+  }
+#endif
   // If the sensor manager doesn't recognise the setting (built without
   // ENV_INCLUDE_GPS), fall back to just flipping the pref so the UI is
   // still consistent — same behaviour as before.
@@ -55690,8 +55769,10 @@ void UITask::loop() {
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
     // Cache the last duty the controller ACTUALLY took, not the last one
-    // computed: the write is dropped while the controller (its own MCU on the
-    // switched rail) is still booting, or on a NACK — latching a dropped
+    // computed: the write is dropped while the controller (its own MCU, on
+    // always-on 3V3 via R3 per the schematic-verified note in platformio.ini
+    // — NOT the switched rail an earlier revision here claimed) is still
+    // booting, or on a NACK — latching a dropped
     // write would leave the controller on its power-on default until the
     // next mode/lock change. And 255 is a normal FIRST value (mode "On"
     // restored from prefs; auto during the first idle window), so a 0xFF

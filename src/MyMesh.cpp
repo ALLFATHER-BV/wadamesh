@@ -5018,6 +5018,21 @@ void MyMesh::handleCmdFrame(size_t len) {
         #if ENV_INCLUDE_GPS == 1
         // Update node preferences for GPS settings
         if (strcmp(sp, "gps") == 0) {
+          // Companion-app "gps on" mid-session: same 4 KB RX-ring upgrade the
+          // touch UI's toggleGPS does — the boot-time gate in main.cpp only
+          // installs it when gps_enabled was already persisted, and
+          // setRxBufferSize is a no-op on the running UART. Matches
+          // setSettingValue's own enable test (anything but "0" starts the
+          // GPS — not just "1"), and runs only on SUCCESS so a refused enable
+          // (no GPS detected on the V4/R8 detect path) doesn't pay the 4 KB.
+          // Cycling just after start is benign: everything here runs on
+          // loopTask, and the module has barely powered up (EN-pin boards) or
+          // at worst loses one torn, checksum-rejected sentence (EN-less
+          // boards, whose modules stream even while "stopped").
+          if (strcmp(np, "0") != 0) {
+            extern void gpsEnsureBigRxRing();
+            gpsEnsureBigRxRing();
+          }
           _prefs.gps_enabled = (np[0] == '1') ? 1 : 0;
           savePrefs();
         } else if (strcmp(sp, "gps_interval") == 0) {
