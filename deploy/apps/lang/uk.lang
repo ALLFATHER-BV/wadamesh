@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Блокується при в
 Locks when screen off\n(hold the trackball to unlock)	Блокується при вимк. екрані\n(утримуйте трекбол для розблокування)
 Locks when screen off\n(press Volume Down to unlock)	Блокується при вимк. екрані\n(натисніть Гучність вниз для розблокування)
 Locks when screen off\n(press the button to unlock)	Блокується при вимк. екрані\n(натисніть кнопку для розблокування)
+Locks when screen off\n(hold the wake button to unlock)	Блокується при вимк. екрані\n(утримуйте кнопку пробудження для розблокування)
 Log in again	Увійти знову
 Logging in again...	Повторний вхід...
 Logging in…	Вхід…
@@ -955,6 +956,7 @@ h  to	год  до
 hold Backspace to unlock	утримуйте Backspace для розблокування
 hold the d-pad to unlock	утримуйте d-pad для розблокування
 hold the trackball to unlock	утримуйте трекбол для розблокування
+hold the wake button to unlock	утримуйте кнопку пробудження для розблокування
 kHz	kHz
 keep holding	утримуйте
 last wake:	

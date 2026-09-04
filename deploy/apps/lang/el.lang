@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Κλειδώνει με κλε
 Locks when screen off\n(hold the trackball to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το trackball για ξεκλείδωμα)
 Locks when screen off\n(press Volume Down to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε Μείωση έντασης για ξεκλείδωμα)
 Locks when screen off\n(press the button to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε το κουμπί για ξεκλείδωμα)
+Locks when screen off\n(hold the wake button to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το κουμπί αφύπνισης για ξεκλείδωμα)
 Log in again	Σύνδεση ξανά
 Logging in again...	Επανασύνδεση...
 Logging in…	Σύνδεση…
@@ -955,6 +956,7 @@ h  to	ώ  έως
 hold Backspace to unlock	κρατήστε Backspace για ξεκλείδωμα
 hold the d-pad to unlock	κρατήστε το d-pad για ξεκλείδωμα
 hold the trackball to unlock	κρατήστε το trackball για ξεκλείδωμα
+hold the wake button to unlock	κρατήστε το κουμπί αφύπνισης για ξεκλείδωμα
 kHz	kHz
 keep holding	κρατήστε πατημένο
 last wake:	

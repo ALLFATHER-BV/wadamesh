@@ -12387,6 +12387,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the trackball to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_THINKNODE_M9)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the d-pad to unlock)") : TR("Screen-off just dims");
+#elif defined(HAS_WIO_TRACKER_L2)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the wake button to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #elif defined(TLORA_PAGER)
@@ -25411,7 +25413,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(ATTAKY_MESH_SERIES)
   // Landscape boards keep the chart clear of the right-hand button strip.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
@@ -27225,6 +27227,15 @@ static lv_obj_t*  s_map_btn_zoomout    = nullptr;   // "-" (buttons mode)
 static lv_obj_t*  s_map_btn_recenter   = nullptr;   // GPS recenter (shifts down in buttons mode)
 static lv_obj_t*  s_map_btn_contacts   = nullptr;   // contacts list (shifts down in buttons mode)
 static bool     s_map_has_pack   = false;   // toggles placeholder visibility
+static void mapSetHasPack(bool has_pack) {
+  if (s_map_has_pack == has_pack) return;
+  s_map_has_pack = has_pack;
+#if defined(HAS_WIO_TRACKER_L2)
+  // L2's empty canvas is dark, while loaded day tiles are light. Refresh the
+  // transparent map chrome when that background changes under the controls.
+  if (getActiveTab() == MAP_TAB_INDEX) applyMapChrome(true);
+#endif
+}
 
 // lat/lon → world pixel at given zoom (Web Mercator).
 static void latLonToWorldPx(double lat, double lon, uint8_t zoom,
@@ -29046,7 +29057,7 @@ static void renderMapTiles() {
   // Fall back to placeholder when no usable GPS center.
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {
     freeMapTiles();
-    s_map_has_pack = false;
+    mapSetHasPack(false);
     if (s_map_status_lbl) {
       lv_label_set_text(s_map_status_lbl,
           TR("Map — set your location\nin Settings \xe2\x86\x92 Profile to\nshow the map here."));
@@ -29327,7 +29338,7 @@ static void renderMapTiles() {
   //     Missing edge tiles just fill in as they download.
   //   • nothing rendered (panned into an un-tiled area) → show a clear,
   //     human message that depends on whether we can actually fetch.
-  s_map_has_pack = any_loaded;
+  mapSetHasPack(any_loaded);
   // Remember the gap count so the bottom info bar can show a compact
   // "downloading" / "Wi-Fi off" hint even when the map is partially loaded
   // (any_loaded true) — that's the common "panned toward the edge of my
@@ -31739,6 +31750,13 @@ static void applyBattColor() {
 // Because OSM tiles are LIGHT, the status-bar text/icons are switched to BLACK
 // for legibility, and reverted to the normal off-white when leaving the tab.
 static void applyMapChrome(bool on) {
+#if defined(HAS_WIO_TRACKER_L2)
+  // With no visible tiles the L2 shows COLOR_FIELD, a dark placeholder. Treat
+  // that like an inverted/night map so transparent navigation stays readable.
+  const bool light_map_chrome = on && (s_map_night || !s_map_has_pack);
+#else
+  const bool light_map_chrome = on && s_map_night;
+#endif
   // ---- Background tile canvas: show it + make the tabview see-through so it
   //      shows behind the (transparent) chrome. Hidden + opaque off-map. ----
   if (s_map_canvas) {
@@ -31760,9 +31778,8 @@ static void applyMapChrome(bool on) {
     lv_obj_set_style_border_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_30, LV_PART_MAIN);
     // Night mode inverts the tiles to DARK, so the on-map chrome flips from black
     // (legible over light tiles) to off-white (legible over the dark inverted tiles).
-    const bool night = on && s_map_night;
-    const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (night ? 0xF0F0F0 : 0x000000));
-    const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (night ? 0xC8CCD0 : 0x000000));
+    const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (light_map_chrome ? 0xF0F0F0 : 0x000000));
+    const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (light_map_chrome ? 0xC8CCD0 : 0x000000));
     if (g_statusbar.left_label) lv_obj_set_style_text_color(g_statusbar.left_label, fg, LV_PART_MAIN);
     s_batt_base = fg;            // theme/map-driven battery colour...
     applyBattColor();            // ...with the power-save amber overlaid if enabled
@@ -31785,12 +31802,11 @@ static void applyMapChrome(bool on) {
       // map tiles, no grey bar behind them.
       lv_obj_set_style_bg_opa(btns, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
       // Day map: black icons over light tiles. Night map: off-white over dark tiles.
-      const bool night_tabs = on && s_map_night;
-      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : (night_tabs ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : (light_map_chrome ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
       // Off-map: active icon back to the ACCENT colour (not white). On-map: high-
       // contrast icon for the tile brightness. (The accent indicator bar is hidden
       // on the map separately by updateTabIndicator().)
-      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_ACCENT : (night_tabs ? 0xFFFFFF : 0x000000)),
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_ACCENT : (light_map_chrome ? 0xFFFFFF : 0x000000)),
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
     }
   }
@@ -38415,6 +38431,8 @@ static void lockscreenShow() {
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("hold the d-pad to unlock"));
+#elif defined(HAS_WIO_TRACKER_L2)
+  lv_label_set_text(hint, TR("hold the wake button to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
@@ -40827,12 +40845,14 @@ static void powerRebootCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("Rebooting\xE2\x80\xA6"), 600);
   g_lv.task->rebootDevice();   // flushes chat history, then reboots
 }
-// Gated on PIN_USER_BTN, which is exactly what arms the deep-sleep wake below.
+// Gated on a directly wakeable PIN_USER_BTN, which is exactly what arms the
+// deep-sleep wake below. The L2's user-facing wake button is behind an I2C
+// expander, so its GPIO0 definition does not make software power-off reversible.
 // A power-off nobody can undo is not a power-off, it is a brick until the user
 // finds the hardware switch — and that is what the T-Display P4 did: no wake
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
-#if defined(PIN_USER_BTN)
+#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
@@ -40893,7 +40913,7 @@ static void powerOffCb(lv_event_t* e) {
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
 #endif
 }
-#endif  // PIN_USER_BTN (powerOffCb)
+#endif  // directly wakeable PIN_USER_BTN (powerOffCb)
 
 #if defined(ESP32)
 #if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
@@ -40954,7 +40974,7 @@ static void openPowerMenu() {
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
-#elif defined(HAS_THINKNODE_M9)
+#elif defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2)
   // Power-off row hidden (see below) — 3 rows: Reboot / Download / Cancel.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
@@ -40998,12 +41018,13 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if !defined(PIN_USER_BTN)
+#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2)
   // No "Power off" here: nothing on this board can wake it from deep sleep.
-  // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the
-  // T-Display P4 and Tanmatsu have no user button either. On those the physical
-  // switch IS the power-off, and offering a software one that cannot be undone
-  // reads as a freeze (#310). Remaining rows shift up one slot.
+  // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the L2's
+  // wake button is behind an I2C expander, which cannot wake the ESP32-S3; the
+  // T-Display P4 and Tanmatsu have no user button either. Offering a software
+  // power-off that cannot be undone reads as a freeze (#310, #406). Remaining
+  // rows shift up one slot.
   const int p_y = p_y0;
 #else
   mk(TR(LV_SYMBOL_POWER "  Power off"),        powerOffCb,      0xC44B55, p_y0);
@@ -54572,6 +54593,11 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
+#elif defined(HAS_WIO_TRACKER_L2)
+  // L2: brightness is controlled by the display's I2C light controller, not a
+  // direct TFT_BL GPIO. Restore the saved level on wake and write zero on sleep.
+  if (on) applyBrightness(s_brightness_pct);
+  else    display.setBrightness(0);
 #elif defined(HAS_TDISPLAY_P4)
   // T-Display P4: the RM69A10 AMOLED has no backlight pin — "brightness" is the panel's own DCS
   // 0x51 register. Off = 0 (blanks the AMOLED), on = restore the saved brightness. Without this
@@ -56002,10 +56028,10 @@ void UITask::loop() {
       uint8_t state = digitalRead(PIN_USER_BTN);
 #if defined(HAS_WIO_TRACKER_L2)
       static bool expanderDown = false;
-      if (digitalRead(45) == LOW || expanderDown) {
-        bool pressed = false;
-        if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
-      }
+      bool pressed = false;
+      // Reading any TCA9535 input register clears its shared INT line. Poll the
+      // wake bit every pass so an SD/touch read cannot consume the edge first.
+      if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
       if (expanderDown) state = LOW;
 #endif
       return state;
@@ -56072,21 +56098,32 @@ void UITask::loop() {
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
     }
 #elif defined(HAS_WIO_TRACKER_L2)
-    // Either physical button wakes immediately. While awake, a two-second hold
-    // turns the display off without hard-locking touch input.
+    // Either physical button wakes/reveals immediately. Continuing to hold for
+    // two seconds toggles the hard lock; releasing early cancels the transition.
+    static constexpr uint32_t kL2WakeHoldMs = 2000;
     static uint32_t s_l2_btn_down_ms = 0;
+    static bool s_l2_press_active = false;
     static bool s_l2_hold_fired = false;
     if (v == LOW && s_user_btn_prev == HIGH) {
-      if (_screen_off) wakeScreen();
+      s_l2_press_active = true;
       s_l2_btn_down_ms = now;
       s_l2_hold_fired = false;
-    } else if (v == LOW && s_user_btn_prev == LOW && !_screen_off &&
-               !s_l2_hold_fired && now - s_l2_btn_down_ms >= 2000) {
-      s_l2_hold_fired = true;
-      touchScreenBacklight(false);
-      setCpuForScreen(false);
-      _screen_off = true;
-      _manual_lock = false;
+      if (_manual_lock) lockscreenReveal();
+      else              noteUserInput();
+    } else if (v == LOW && s_l2_press_active && !s_l2_hold_fired) {
+      const uint32_t held = now - s_l2_btn_down_ms;
+      if (held >= kL2WakeHoldMs) {
+        s_l2_hold_fired = true;
+        lockscreenUnlockPopupHide();
+        if (_manual_lock) unlockScreen();
+        else              lockScreen();
+      } else if (_manual_lock && held >= 200) {
+        lockscreenUnlockProgress(kL2WakeHoldMs - held);
+      }
+    } else if (v == HIGH && s_user_btn_prev == LOW) {
+      s_l2_press_active = false;
+      s_l2_btn_down_ms = 0;
+      lockscreenUnlockPopupHide();
     }
 #elif defined(HAS_RAK_TAP_V2)
     // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.

@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Sperrt bei Bildschirm aus\n(D-
 Locks when screen off\n(hold the trackball to unlock)	Sperrt bei Bildschirm aus\n(Trackball halten zum Entsperren)
 Locks when screen off\n(press Volume Down to unlock)	Sperrt bei Bildschirm aus\n(Lautstärke leiser drücken zum Entsperren)
 Locks when screen off\n(press the button to unlock)	Sperrt bei Bildschirm aus\n(Taste drücken zum Entsperren)
+Locks when screen off\n(hold the wake button to unlock)	Sperrt bei Bildschirm aus\n(Wake-Taste zum Entsperren halten)
 Log in again	Erneut anmelden
 Logging in again...	Erneute Anmeldung...
 Logging in…	Anmeldung…
@@ -951,6 +952,7 @@ h  to	h  bis
 hold Backspace to unlock	Backspace halten zum Entsperren
 hold the d-pad to unlock	D-Pad halten zum Entsperren
 hold the trackball to unlock	Trackball halten zum Entsperren
+hold the wake button to unlock	Wake-Taste zum Entsperren halten
 kHz	kHz
 keep holding	weiter halten
 last wake:	Letztes Aufwachen:
