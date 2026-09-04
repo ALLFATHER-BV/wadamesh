@@ -447,7 +447,7 @@ Lock wallpaper set	Papel de parede definido
 Lock when screen off	Bloquear com tela desligada
 Locking…	Bloqueando…
 Locks when screen off\n(hold Backspace to unlock)	Bloqueia com a tela desligada\n(segure Backspace para desbloquear)
-Locks when screen off\n(hold the d-pad to unlock)	Bloqueia com tela desligada\n(segure o d-pad para desbloquear)
+Locks when screen off\n(double-press d-pad center to unlock)	Bloqueia com tela desligada\n(pressione duas vezes o centro do direcional para desbloquear)
 Locks when screen off\n(hold the trackball to unlock)	Bloqueia com tela desligada\n(segure o trackball para desbloquear)
 Locks when screen off\n(press Volume Down to unlock)	Bloqueia com tela desligada\n(pressione Volume para baixo para desbloquear)
 Locks when screen off\n(press the button to unlock)	Bloqueia com tela desligada\n(pressione o botão para desbloquear)
@@ -952,7 +952,7 @@ e.g. mesh	ex. mesh
 from	de
 h  to	h  até
 hold Backspace to unlock	segure Backspace para desbloquear
-hold the d-pad to unlock	segure o d-pad para desbloquear
+double-press d-pad center to unlock	pressione duas vezes o centro do direcional para desbloquear
 hold the trackball to unlock	segure o trackball para desbloquear
 kHz	kHz
 keep holding	continue segurando

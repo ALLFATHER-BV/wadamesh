@@ -4311,11 +4311,11 @@ static lv_obj_t* navOpenDropdown() {
   return nullptr;
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
 // Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
 // long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
 // container, so identify one by its parent. Returns true if it handled the Enter. Shared by
-// Tanmatsu's navPump() (below) and the pager's handleHwKey() Enter branch — board-agnostic,
+// Tanmatsu's navPump() (below) and the pager/M9 handleHwKey() Enter branches — board-agnostic,
 // only touches s_nav_group/navOpenChatPanel/plain lv_obj calls.
 static bool navEnterBubble() {
   lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
@@ -12386,7 +12386,7 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
 #if defined(HAS_TDECK_GT911)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the trackball to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_THINKNODE_M9)
-  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the d-pad to unlock)") : TR("Screen-off just dims");
+  const char* unlock_hint = on ? TR("Locks when screen off\n(double-press d-pad center to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #elif defined(TLORA_PAGER)
@@ -38414,7 +38414,7 @@ static void lockscreenShow() {
   // earlier version of this comment claimed otherwise; it was wrong.)
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
-  lv_label_set_text(hint, TR("hold the d-pad to unlock"));
+  lv_label_set_text(hint, TR("double-press d-pad center to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
@@ -39371,7 +39371,7 @@ static bool m9HandleNavKey(int key) {
     case M9_KEY_ENTER:
       if (navOnTabBar()) {
         navSwitchTab(+1);
-      } else {
+      } else if (!navEnterBubble()) {
         navMarkEntered(lv_group_get_focused(s_nav_group));
         navPushTap(LV_KEY_ENTER);
       }
@@ -39722,11 +39722,25 @@ static void handleHwKey(int key) {
   }
 if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_M9_KEYBOARD)
-    // M9 has no trackball to hold — the keyboard controller's own long-press
-    // detection (M9_KEY_ENTER_LONG, a distinct byte from a normal Enter tap)
-    // stands in for "hold to unlock." No progressive countdown UI is possible
-    // this way (we only get a single discrete "that was a long press" event,
-    // not continuous press-state to poll), but it's a working equivalent.
+    // The d-pad centre and keyboard Enter share M9_KEY_ENTER. Two presses in a
+    // short window unlock; any other key cancels the sequence, so arrow behavior
+    // remains unchanged. Keep ENTER_LONG as a compatibility fallback.
+    static uint32_t s_m9_unlock_tap_ms = 0;
+    static bool s_m9_unlock_tap_armed = false;
+    if (key == M9_KEY_ENTER) {
+      const uint32_t tap_ms = millis();
+      const uint32_t elapsed = tap_ms - s_m9_unlock_tap_ms;
+      if (s_m9_unlock_tap_armed && elapsed >= 80 && elapsed <= 700) {
+        s_m9_unlock_tap_armed = false;
+        g_lv.task->unlockScreen();
+        return;
+      }
+      s_m9_unlock_tap_ms = tap_ms;
+      s_m9_unlock_tap_armed = true;
+      g_lv.task->lockscreenReveal();
+      return;
+    }
+    s_m9_unlock_tap_armed = false;
     if (key == M9_KEY_ENTER_LONG) { g_lv.task->unlockScreen(); return; }
 #endif
     g_lv.task->lockscreenReveal();

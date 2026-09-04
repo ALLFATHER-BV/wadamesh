@@ -447,7 +447,7 @@ Lock wallpaper set	Fundal blocare setat
 Lock when screen off	Blochează când ecranul e stins
 Locking…	Se blochează…
 Locks when screen off\n(hold Backspace to unlock)	Se blochează cu ecranul stins\n(ţine Backspace pentru deblocare)
-Locks when screen off\n(hold the d-pad to unlock)	Se blochează când ecranul e stins\n(ţine d-pad pentru deblocare)
+Locks when screen off\n(double-press d-pad center to unlock)	Se blochează când ecranul e stins\n(apăsați de două ori centrul d-pad-ului pentru deblocare)
 Locks when screen off\n(hold the trackball to unlock)	Se blochează când ecranul e stins\n(ţine trackball-ul pentru deblocare)
 Locks when screen off\n(press Volume Down to unlock)	Se blochează când ecranul e stins\n(apasă Volum jos pentru deblocare)
 Locks when screen off\n(press the button to unlock)	Se blochează când ecranul e stins\n(apasă butonul pentru deblocare)
@@ -953,7 +953,7 @@ e.g. mesh	ex. mesh
 from	de la
 h  to	h  la
 hold Backspace to unlock	ţine Backspace pentru deblocare
-hold the d-pad to unlock	ţine d-pad pentru deblocare
+double-press d-pad center to unlock	apăsați de două ori centrul d-pad-ului pentru deblocare
 hold the trackball to unlock	ţine trackball-ul apăsat pentru deblocare
 kHz	kHz
 keep holding	ţine apăsat
