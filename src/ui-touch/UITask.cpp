@@ -37222,7 +37222,21 @@ static void updateTrackball(unsigned long now) {
   if (SnakeGame::isOpen() || luaAppIsOpen()) {
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    // The centre button was simply dropped here, so a Lua app could be steered
+    // by the trackball but never clicked with it -- pressing in on a selection
+    // did nothing. Deliver it as the same synthetic centre tap the touchless
+    // boards' select key already sends, so an app that listens for type=="down"
+    // works with the trackball too. On the PRESS EDGE only: the flag is a
+    // per-frame "held" level, so forwarding it raw would fire a tap every frame
+    // the button stayed down.
+    static bool s_tb_click_prev_app = false;
+    const bool click_now = s_tb_click_press;
     s_tb_click_press = false;
+    if (luaAppIsOpen() && click_now && !s_tb_click_prev_app) {
+      luaAppPress();
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
+    s_tb_click_prev_app = click_now;
     if (moved && (dx != 0 || dy != 0)) {
       if (luaAppIsOpen()) luaAppSteer(dx, dy);
       else                SnakeGame::steer(dx, dy);
@@ -37968,6 +37982,29 @@ static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
 // Keys that act as "close the popup" when no text field is focused.
+// Which keys a running Lua app must NOT be given. The rule is "an app may never
+// swallow its own exit", so it only bites where a reserved key IS the only exit.
+//
+// T-Deck: it is not. An app page is closed by tapping the back bar, and this
+// board has a touchscreen, so the letters isDismissKey() claims here close
+// nothing while an app is open -- the app host is not in the popup registry, so
+// the dismiss path below never fires for it. Withholding them only made A, P, Q,
+// Enter and Backspace dead inside every Lua app, which is exactly the "missing
+// keys in the SDK" the app authors hit, on this board and no other.
+// M9: it genuinely is the only exit. Its reserved keys are sentinel bytes the
+// keyboard controller emits for Back and Home, never typed text, and there is no
+// touch to tap out with, so they stay reserved.
+// Pager: reserves nothing already; its exit is the encoder long-press.
+static bool isDismissKey(int key);
+static inline bool keyReservedFromLuaApps(int key) {
+#if defined(HAS_M9_KEYBOARD)
+  return isDismissKey(key);
+#else
+  (void)key;
+  return false;
+#endif
+}
+
 static bool isDismissKey(int key) {
 #if defined(HAS_TDECK_KEYBOARD)
   // The user picked the easy-to-find corner keys; there's no dedicated Esc on
@@ -39636,7 +39673,7 @@ static void handleHwKey(int key) {
   //
   // The dismiss key is deliberately NOT forwarded: an app must never be able to
   // trap the user by swallowing its own exit, whether by bug or by design.
-  if (luaAppIsOpen() && !isDismissKey(key)
+  if (luaAppIsOpen() && !keyReservedFromLuaApps(key)
 #if defined(HAS_M9_KEYBOARD)
       // Locked or dark: the lock/wake handlers below must see the key — else
       // ENTER_LONG (this board's only unlock) is eaten by the app and the
@@ -50050,6 +50087,14 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
   }
   return false;   // no such channel on this device
 }
+// Repeat tracking for a message an app sent. The firmware already counts how
+// many repeaters were heard rebroadcasting an outgoing flood -- it is the
+// refresh glyph on a sent bubble -- keyed on a fingerprint taken at transmit
+// time. These two expose that to the SDK: the send returns the fingerprint, and
+// the app reads the count back whenever it likes. A DM has no meaningful count,
+// since it is not flooded.
+uint32_t luaHostLastSentFp() { return the_mesh.uiLastSentFp(); }
+uint8_t  luaHostRepeatsForFp(uint32_t fp) { return fp ? the_mesh.uiRepeatsForFp(fp) : 0; }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
 #if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too

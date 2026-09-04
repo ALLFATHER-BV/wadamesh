@@ -92,6 +92,8 @@ extern int  luaHostSendPerm(const char* app_id);                              //
 extern bool luaHostReadPerm(const char* app_id);                             // may be shown incoming messages
 extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); // raises the consent prompt
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
+extern uint32_t luaHostLastSentFp();
+extern uint8_t  luaHostRepeatsForFp(uint32_t fp);
 extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
 extern int  luaHostMeshChannelNames(char out[][32], int max_n);
 extern int  luaHostDmSendPerm(const char* app_id);
@@ -1248,6 +1250,23 @@ int meshSend(lua_State* L) {
   if (ok) s_h->mesh_last_send_ms = now;   // only a real transmission starts the clock
   lua_pushboolean(L, ok);
   if (!ok) { lua_pushstring(L, "no such channel"); return 2; }
+  // Second return: the fingerprint of what just went out, for wada.mesh.repeats().
+  // Additive -- an app that only reads the first value is unaffected.
+  lua_pushinteger(L, (lua_Integer)luaHostLastSentFp());
+  return 2;
+}
+
+// wada.mesh.repeats(fp) -> n
+//
+// How many repeaters have been heard rebroadcasting the flood identified by `fp`,
+// the second value wada.mesh.send() returns. This is the same count the sent
+// bubble shows next to the refresh glyph, and it grows for a while after the
+// send as repeats arrive, so an app polls it rather than reading it once. Only
+// meaningful for a channel send: a direct message is not flooded, so it has no
+// repeats to hear, and 0 is returned for an unknown or expired fingerprint.
+int meshRepeats(lua_State* L) {
+  const lua_Integer fp = luaL_checkinteger(L, 1);
+  lua_pushinteger(L, (lua_Integer)luaHostRepeatsForFp((uint32_t)fp));
   return 1;
 }
 
@@ -2418,6 +2437,7 @@ void openWada(lua_State* L) {
   lua_pushinteger(L, 4); lua_setfield(L, -2, "NODE_SENSOR");
 #if CAP_LUA_SDK_EXT
   lua_pushcfunction(L, meshSend);     lua_setfield(L, -2, "send");      // consent-gated (channels)
+  lua_pushcfunction(L, meshRepeats);  lua_setfield(L, -2, "repeats");   // repeaters heard rebroadcasting a send
   lua_pushcfunction(L, meshSendDm);   lua_setfield(L, -2, "send_dm");   // consent-gated (DMs + rooms)
   lua_pushcfunction(L, meshChannels); lua_setfield(L, -2, "channels");  // names only, no secrets
   lua_pushcfunction(L, meshDiscover); lua_setfield(L, -2, "discover");  // consent-gated (transmits)
