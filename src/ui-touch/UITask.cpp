@@ -3662,6 +3662,8 @@ static const int kNavMax = 160;   // spatial-nav mirror capacity — MUST exceed
                                   // navMoveDir() never reaches them (the 122-cell emoji picker — GH #141).
 static lv_obj_t* s_nav_objs[kNavMax] = { nullptr };
 static lv_obj_t* s_nav_tabbar   = nullptr;     // the bottom tab bar (btnmatrix), added last to the group
+static lv_obj_t* s_nav_drawer_corner = nullptr;
+static lv_obj_t* s_nav_drawer_gear   = nullptr;
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
 static lv_obj_t* s_nav_styled   = nullptr;     // obj currently wearing the focus highlight
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
@@ -4001,6 +4003,7 @@ enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
 // UP/DOWN walk the primary rows instead of hopping onto a gear.)
 static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
+  if (o == s_nav_drawer_gear) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
   return true;
 }
@@ -4036,6 +4039,15 @@ static void navMoveDir(int dir) {
     // freed memory inside lv_group_focus_obj.
     s_nav_show = true;
     if (s_nav_objs[0] && lv_obj_is_valid(s_nav_objs[0])) lv_group_focus_obj(s_nav_objs[0]);
+    return;
+  }
+  // The app-drawer gear is a deliberate edge target, not a generic object above/right
+  // of the grid. Only the top-right tile may enter it; spatial nav otherwise ignores it.
+  if ((dir == NAV_UP || dir == NAV_RIGHT) && cur == s_nav_drawer_corner &&
+      s_nav_drawer_gear && lv_obj_is_valid(s_nav_drawer_gear)) {
+    s_nav_show = true;
+    lv_group_focus_obj(s_nav_drawer_gear);
+    if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
   // A focused slider captures LEFT/RIGHT to adjust its VALUE instead of moving focus —
@@ -42870,6 +42882,8 @@ enum AppDrawerAction {
 };
 
 static void closeAppDrawer() {
+  s_nav_drawer_corner = nullptr;
+  s_nav_drawer_gear = nullptr;
   popupClose(&s_appdrawer_root);   // del_async + wait_release: the drawer grid scrolls, so guard the throw UAF
 }
 
@@ -42878,6 +42892,8 @@ static void closeAppDrawer() {
 // bottom-bar tap). Leaving Home this way means the map's slow first tile render
 // can't paint under a still-present, del_async'd drawer.
 static void closeAppDrawerSync() {
+  s_nav_drawer_corner = nullptr;
+  s_nav_drawer_gear = nullptr;
   if (s_appdrawer_root) { popupClose(&s_appdrawer_root); }
 }
 
@@ -43672,6 +43688,7 @@ static void openAppDrawer() {
                tiles[i].act, tiles[i].badge, tiles[i].color, big_grid);
 #endif
   }
+  s_nav_drawer_corner = lv_obj_get_child(s_appdrawer_root, (uint32_t)(cols - 1));
 
   // Keep the scrollbar permanently visible only when the grid actually overflows
   // the drawer area (so it's discoverable); when it all fits, hide it so there's
@@ -43684,6 +43701,7 @@ static void openAppDrawer() {
   // App-drawer settings cog — top-right, floats above the scrolling grid (does not
   // move with it). Opens the icon-size chooser (Compact / Large).
   lv_obj_t* cog = lv_btn_create(s_appdrawer_root);
+  s_nav_drawer_gear = cog;
   lv_obj_remove_style_all(cog);
   lv_obj_set_size(cog, 30, 30);
   lv_obj_add_flag(cog, LV_OBJ_FLAG_FLOATING);
@@ -56415,7 +56433,7 @@ void UITask::loop() {
                                   !s_setup_root && !s_settings_sheet &&
                                   !s_apppage_title && !s_chat_title[0] &&
                                   (!anyPopupOpen() || drawer_front);
-      const bool mail_pending = notice_surface && getUnreadTotal() > 0;
+      const bool mail_pending = notice_surface && !drawer_front && getUnreadTotal() > 0;
       const bool contact_pending = notice_surface && discoveredCount() > 0;
       const bool blink_on = ((now / 500u) & 1u) == 0;
       if (mail_pending || contact_pending) {
