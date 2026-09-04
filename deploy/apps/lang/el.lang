@@ -447,7 +447,7 @@ Lock wallpaper set	Ορίστηκε ταπετσαρία κλειδώματος
 Lock when screen off	Κλείδωμα με κλειστή οθόνη
 Locking…	Κλείδωμα…
 Locks when screen off\n(hold Backspace to unlock)	Κλειδώνει με σβηστή οθόνη\n(κρατήστε Backspace για ξεκλείδωμα)
-Locks when screen off\n(hold the d-pad to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το d-pad για ξεκλείδωμα)
+Locks when screen off\n(double-press d-pad center to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε δύο φορές το κέντρο του d-pad για ξεκλείδωμα)
 Locks when screen off\n(hold the trackball to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το trackball για ξεκλείδωμα)
 Locks when screen off\n(press Volume Down to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε Μείωση έντασης για ξεκλείδωμα)
 Locks when screen off\n(press the button to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε το κουμπί για ξεκλείδωμα)
@@ -953,7 +953,7 @@ e.g. mesh	π.χ. mesh
 from	από
 h  to	ώ  έως
 hold Backspace to unlock	κρατήστε Backspace για ξεκλείδωμα
-hold the d-pad to unlock	κρατήστε το d-pad για ξεκλείδωμα
+double-press d-pad center to unlock	πατήστε δύο φορές το κέντρο του d-pad για ξεκλείδωμα
 hold the trackball to unlock	κρατήστε το trackball για ξεκλείδωμα
 kHz	kHz
 keep holding	κρατήστε πατημένο

@@ -447,7 +447,7 @@ Lock wallpaper set	Fondo de bloqueo establecido
 Lock when screen off	Bloquear con pantalla apagada
 Locking…	Bloqueando…
 Locks when screen off\n(hold Backspace to unlock)	Se bloquea con la pantalla apagada\n(mantén Retroceso para desbloquear)
-Locks when screen off\n(hold the d-pad to unlock)	Se bloquea con pantalla apagada\n(mantén el d-pad para desbloquear)
+Locks when screen off\n(double-press d-pad center to unlock)	Se bloquea con pantalla apagada\n(pulsa dos veces el centro del d-pad para desbloquear)
 Locks when screen off\n(hold the trackball to unlock)	Se bloquea con pantalla apagada\n(mantén el trackball para desbloquear)
 Locks when screen off\n(press Volume Down to unlock)	Se bloquea con pantalla apagada\n(pulsa Bajar volumen para desbloquear)
 Locks when screen off\n(press the button to unlock)	Se bloquea con pantalla apagada\n(pulsa el botón para desbloquear)
@@ -953,7 +953,7 @@ e.g. mesh	p. ej. mesh
 from	de
 h  to	h  a
 hold Backspace to unlock	mantén Retroceso para desbloquear
-hold the d-pad to unlock	mantén el d-pad para desbloquear
+double-press d-pad center to unlock	pulsa dos veces el centro del d-pad para desbloquear
 hold the trackball to unlock	mantén el trackball para desbloquear
 kHz	kHz
 keep holding	mantén pulsado
