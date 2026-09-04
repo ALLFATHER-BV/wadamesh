@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Блокируется при 
 Locks when screen off\n(hold the trackball to unlock)	Блокируется при выкл. экране\n(удерживайте трекбол для разблокировки)
 Locks when screen off\n(press Volume Down to unlock)	Блокируется при выкл. экране\n(нажмите Громкость вниз для разблокировки)
 Locks when screen off\n(press the button to unlock)	Блокируется при выкл. экране\n(нажмите кнопку для разблокировки)
+Locks when screen off\n(hold the wake button to unlock)	Блокируется при выкл. экране\n(удерживайте кнопку пробуждения для разблокировки)
 Log in again	Войти заново
 Logging in again...	Повторный вход...
 Logging in…	Вход…
@@ -955,6 +956,7 @@ h  to	ч  до
 hold Backspace to unlock	удерживайте Backspace для разблокировки
 hold the d-pad to unlock	удерживайте d-pad для разблокировки
 hold the trackball to unlock	удерживайте трекбол для разблокировки
+hold the wake button to unlock	удерживайте кнопку пробуждения для разблокировки
 kHz	kHz
 keep holding	удерживайте
 last wake:	

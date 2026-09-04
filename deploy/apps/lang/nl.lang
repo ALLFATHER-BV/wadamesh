@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Vergrendelt bij scherm uit\n(h
 Locks when screen off\n(hold the trackball to unlock)	Vergrendelt bij scherm uit\n(houd de trackball vast om te ontgrendelen)
 Locks when screen off\n(press Volume Down to unlock)	Vergrendelt bij scherm uit\n(druk op Volume Omlaag om te ontgrendelen)
 Locks when screen off\n(press the button to unlock)	Vergrendelt bij scherm uit\n(druk op de knop om te ontgrendelen)
+Locks when screen off\n(hold the wake button to unlock)	Vergrendelt bij scherm uit\n(houd de wekknop vast om te ontgrendelen)
 Log in again	Opnieuw inloggen
 Logging in again...	Opnieuw inloggen...
 Logging in…	Inloggen…
@@ -952,6 +953,7 @@ h  to	u  tot
 hold Backspace to unlock	houd Backspace vast om te ontgrendelen
 hold the d-pad to unlock	houd de d-pad vast om te ontgrendelen
 hold the trackball to unlock	houd de trackball vast om te ontgrendelen
+hold the wake button to unlock	houd de wekknop vast om te ontgrendelen
 kHz	kHz
 keep holding	blijf vasthouden
 last wake:	laatste ontwaken:

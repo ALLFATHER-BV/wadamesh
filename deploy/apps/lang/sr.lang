@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Закључава се кад
 Locks when screen off\n(hold the trackball to unlock)	Закључава се кад је екран искључен\n(држите трекбол да откључате)
 Locks when screen off\n(press Volume Down to unlock)	Закључава се кад је екран искључен\n(притисните Јачина доле да откључате)
 Locks when screen off\n(press the button to unlock)	Закључава се кад је екран искључен\n(притисните дугме да откључате)
+Locks when screen off\n(hold the wake button to unlock)	Закључава се кад је екран искључен\n(држите дугме за буђење да откључате)
 Log in again	Пријави се поново
 Logging in again...	Поновно пријављивање...
 Logging in…	Пријава…
@@ -955,6 +956,7 @@ h  to	ч  до
 hold Backspace to unlock	држи Backspace за откључавање
 hold the d-pad to unlock	држи d-pad за откључавање
 hold the trackball to unlock	држите куглицу да откључате
+hold the wake button to unlock	држите дугме за буђење да откључате
 kHz	kHz
 keep holding	држите
 last wake:	

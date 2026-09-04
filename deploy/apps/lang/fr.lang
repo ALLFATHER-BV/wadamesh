@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Verrouille écran éteint\n(ma
 Locks when screen off\n(hold the trackball to unlock)	Verrouille écran éteint\n(maintenez le trackball pour déverrouiller)
 Locks when screen off\n(press Volume Down to unlock)	Verrouille écran éteint\n(appuyez sur Volume Bas pour déverrouiller)
 Locks when screen off\n(press the button to unlock)	Verrouille écran éteint\n(appuyez sur le bouton pour déverrouiller)
+Locks when screen off\n(hold the wake button to unlock)	Verrouille écran éteint\n(maintenez le bouton de réveil pour déverrouiller)
 Log in again	Se reconnecter
 Logging in again...	Reconnexion...
 Logging in…	Connexion…
@@ -954,6 +955,7 @@ h  to	h  à
 hold Backspace to unlock	maintenez Retour pour déverrouiller
 hold the d-pad to unlock	maintenez le d-pad pour déverrouiller
 hold the trackball to unlock	maintenez la boule pour déverrouiller
+hold the wake button to unlock	maintenez le bouton de réveil pour déverrouiller
 kHz	kHz
 keep holding	maintenez
 last wake:	

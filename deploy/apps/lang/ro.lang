@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Se blochează când ecranul e 
 Locks when screen off\n(hold the trackball to unlock)	Se blochează când ecranul e stins\n(ţine trackball-ul pentru deblocare)
 Locks when screen off\n(press Volume Down to unlock)	Se blochează când ecranul e stins\n(apasă Volum jos pentru deblocare)
 Locks when screen off\n(press the button to unlock)	Se blochează când ecranul e stins\n(apasă butonul pentru deblocare)
+Locks when screen off\n(hold the wake button to unlock)	Se blochează când ecranul e stins\n(ține apăsat butonul de activare pentru deblocare)
 Log in again	Autentificare din nou
 Logging in again...	Se autentifică din nou...
 Logging in…	Se autentifică…
@@ -955,6 +956,7 @@ h  to	h  la
 hold Backspace to unlock	ţine Backspace pentru deblocare
 hold the d-pad to unlock	ţine d-pad pentru deblocare
 hold the trackball to unlock	ţine trackball-ul apăsat pentru deblocare
+hold the wake button to unlock	ține apăsat butonul de activare pentru deblocare
 kHz	kHz
 keep holding	ţine apăsat
 last wake:	

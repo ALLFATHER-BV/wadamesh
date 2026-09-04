@@ -451,6 +451,7 @@ Locks when screen off\n(hold the d-pad to unlock)	Bloqueia com tela desligada\n(
 Locks when screen off\n(hold the trackball to unlock)	Bloqueia com tela desligada\n(segure o trackball para desbloquear)
 Locks when screen off\n(press Volume Down to unlock)	Bloqueia com tela desligada\n(pressione Volume para baixo para desbloquear)
 Locks when screen off\n(press the button to unlock)	Bloqueia com tela desligada\n(pressione o botão para desbloquear)
+Locks when screen off\n(hold the wake button to unlock)	Bloqueia com tela desligada\n(segure o botão de ativação para desbloquear)
 Log in again	Entrar novamente
 Logging in again...	Entrando novamente...
 Logging in…	Entrando…
@@ -954,6 +955,7 @@ h  to	h  até
 hold Backspace to unlock	segure Backspace para desbloquear
 hold the d-pad to unlock	segure o d-pad para desbloquear
 hold the trackball to unlock	segure o trackball para desbloquear
+hold the wake button to unlock	segure o botão de ativação para desbloquear
 kHz	kHz
 keep holding	continue segurando
 last wake:	
