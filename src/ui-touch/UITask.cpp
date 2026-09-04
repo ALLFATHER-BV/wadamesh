@@ -3581,6 +3581,14 @@ static bool      s_settings_from_cc  = false;    // settings sheet opened via a 
 // (with its ta/sw siblings) far below; only the container pointer is needed up here.
 static lv_obj_t* s_wifi_sheet        = nullptr;  // join / details / hidden overlay (one at a time)
 
+// Store navigation bridges. The Store builds on touch-only targets too, so the
+// pointers live outside CAP_KEYPAD_NAV; only the keypad navigation code uses them.
+static lv_obj_t* s_nav_store_list       = nullptr;
+static lv_obj_t* s_nav_store_tabs[3]    = { nullptr, nullptr, nullptr };
+static lv_obj_t* s_nav_store_active_tab = nullptr;
+static lv_obj_t* s_nav_store_first      = nullptr;
+static lv_obj_t* s_nav_store_top_row    = nullptr;
+
 #if CAP_KEYPAD_NAV
 // ===========================================================================
 // Keypad / D-pad focus navigation
@@ -3666,6 +3674,8 @@ static lv_obj_t* s_nav_drawer_corner = nullptr;
 static lv_obj_t* s_nav_drawer_gear   = nullptr;
 static bool      s_nav_want_tabbar = false;    // after switching tabs from the bar, refocus the bar
 static lv_obj_t* s_nav_styled   = nullptr;     // obj currently wearing the focus highlight
+static bool      navIsStoreTab(lv_obj_t* o);
+static lv_obj_t* navStoreRowFor(lv_obj_t* o);
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER)
 static bool      s_nav_show     = true;        // keyboard-only device: focus highlight is always visible
 #else
@@ -3967,7 +3977,10 @@ static void navFocusCb(lv_group_t* g) {
     uint32_t nc = lv_obj_get_child_cnt(f);
     for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
   }
-  if (!s_nav_suppress_scroll) lv_obj_scroll_to_view_recursive(f, LV_ANIM_OFF);
+  if (!s_nav_suppress_scroll) {
+    lv_obj_t* scroll_target = navStoreRowFor(f);
+    lv_obj_scroll_to_view_recursive(scroll_target ? scroll_target : f, LV_ANIM_OFF);
+  }
 }
 
 #if CAP_KEYPAD_NAV
@@ -3998,12 +4011,26 @@ static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Sel
 // direction (not just next/prev in the linear list). Scores candidates in that
 // half-plane by primary-axis distance + a cross-axis penalty (prefers aligned + close).
 enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
+static bool navIsStoreTab(lv_obj_t* o) {
+  for (lv_obj_t* tab : s_nav_store_tabs) if (o && o == tab) return true;
+  return false;
+}
+static lv_obj_t* navStoreRowFor(lv_obj_t* o) {
+  if (!o || !s_nav_store_list || !lv_obj_is_valid(s_nav_store_list)) return nullptr;
+  while (o && lv_obj_get_parent(o) != s_nav_store_list) o = lv_obj_get_parent(o);
+  return o && lv_obj_get_parent(o) == s_nav_store_list ? o : nullptr;
+}
 // Can `o` take focus from `cur` on a `dir` press at all? (Valid, visible, and not a
 // horizontal-only secondary target — chat-row gears are reachable by LEFT/RIGHT only, so
 // UP/DOWN walk the primary rows instead of hopping onto a gear.)
 static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
   if (o == s_nav_drawer_gear) return false;
+  // Store tabs are a fixed header above an independently scrolling list. Keep
+  // generic spatial search within whichever region currently owns focus; the
+  // explicit edge transitions in navMoveDir bridge the two at the true top.
+  if (navIsStoreTab(o) && !navIsStoreTab(cur)) return false;
+  if (navIsStoreTab(cur) && !navIsStoreTab(o)) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
   return true;
 }
@@ -4047,6 +4074,29 @@ static void navMoveDir(int dir) {
       s_nav_drawer_gear && lv_obj_is_valid(s_nav_drawer_gear)) {
     s_nav_show = true;
     lv_group_focus_obj(s_nav_drawer_gear);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (navIsStoreTab(cur)) {
+    if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
+      if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list))
+        lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+      s_nav_show = true;
+      lv_group_focus_obj(s_nav_store_first);
+      if (g_lv.task) g_lv.task->noteUserInput();
+    }
+    if (dir == NAV_UP || dir == NAV_DOWN) return;
+  } else if (dir == NAV_UP && s_nav_store_top_row &&
+             navStoreRowFor(cur) == s_nav_store_top_row) {
+    if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list) &&
+        lv_obj_get_scroll_y(s_nav_store_list) > 0) {
+      // The first card may still be clipped after free-scrolling. Reveal its
+      // whole box/name before allowing the next Up press into the fixed tabs.
+      lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+    } else if (s_nav_store_active_tab && lv_obj_is_valid(s_nav_store_active_tab)) {
+      s_nav_show = true;
+      lv_group_focus_obj(s_nav_store_active_tab);
+    }
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
@@ -4779,6 +4829,7 @@ static bool navDetachBeforeTreeMutation() {
   }
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr;
+  s_nav_store_first = s_nav_store_top_row = nullptr;
   s_nav_count = 0;
   for (int i = 0; i < kNavMax; ++i) s_nav_objs[i] = nullptr;
   navMarkDirty();
@@ -4939,7 +4990,19 @@ static void navMaybeRebuild() {
   s_nav_suppress_scroll = true;   // don't let the transient first-object focus during recollect scroll the page/chat
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr; s_nav_count = 0;
+  s_nav_store_first = s_nav_store_top_row = nullptr;
   if (root) navCollect(root);                              // content items (focus starts here)
+  if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list)) {
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; ++i) {
+      lv_obj_t* o = s_nav_objs[i];
+      lv_obj_t* row = (o && lv_obj_is_valid(o)) ? navStoreRowFor(o) : nullptr;
+      if (!row) continue;
+      s_nav_store_first = o;
+      s_nav_store_top_row = row;
+      break;
+    }
+  }
   // Only expose the top-bar action buttons when NOT inside a modal/popup (useTop). A modal on the top
   // layer must trap keyboard nav to its own controls — otherwise up/down/right would jump out to the
   // status bar (+ ✓ QR / gear) sitting "under" the popup. Pages + chat keep their top-bar actions.
@@ -41975,6 +42038,9 @@ static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
   s_luastore_list = nullptr;
   s_luastore_tabbtn[0] = s_luastore_tabbtn[1] = s_luastore_tabbtn[2] = nullptr;
+  s_nav_store_list = s_nav_store_active_tab = nullptr;
+  s_nav_store_first = s_nav_store_top_row = nullptr;
+  for (lv_obj_t*& tab : s_nav_store_tabs) tab = nullptr;
   appPageEnd(&closeLuaStorePage);
   popupClose(&s_luastore_root);
   // The drawer underneath was built BEFORE any install/remove done in here —
@@ -42263,10 +42329,12 @@ static void luaStoreLangRemoveCb(lv_event_t* e) {
 }
 
 static void luaStoreStyleTabs() {
+  s_nav_store_active_tab = nullptr;
   for (int t = 0; t < 3; t++) {
     lv_obj_t* b = s_luastore_tabbtn[t];
     if (!b || !lv_obj_is_valid(b)) continue;
     const bool on = (t == s_luastore_tab);
+    if (on) s_nav_store_active_tab = b;
     lv_obj_set_style_bg_color(b, lv_color_hex(on ? COLOR_ACCENT : COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_t* l = lv_obj_get_child(b, 0);
@@ -42302,6 +42370,14 @@ static void luaStoreRebuildList() {
   // button at all). Restored after the rows exist, so the value is clamped
   // against the NEW content height rather than the old one.
   const lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+#if CAP_KEYPAD_NAV
+  lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (focused && lv_obj_is_valid(focused) &&
+      (navIsStoreTab(focused) || navStoreRowFor(focused))) {
+    navMarkEntered(focused);   // reselect the recreated control at the same screen position
+  }
+  navDetachBeforeTreeMutation();
+#endif
   lv_obj_clean(s_luastore_list);
   const uint32_t hide = touchPrefsGetAppHide();
   const lv_coord_t W = s_luastore_w;
@@ -42799,6 +42875,7 @@ static void openLuaStorePage() {
                                      : (lv_coord_t)(((int32_t)total * need[t]) / need_sum);
       lv_obj_t* b = lv_btn_create(bar);
       s_luastore_tabbtn[t] = b;
+      s_nav_store_tabs[t] = b;
       lv_obj_remove_style_all(b);
       lv_obj_set_size(b, cw - 4, bar_h - 4);
       lv_obj_set_pos(b, x + 2, 0);
@@ -42818,6 +42895,7 @@ static void openLuaStorePage() {
   }
 
   s_luastore_list = lv_obj_create(s_luastore_root);
+  s_nav_store_list = s_luastore_list;
   lv_obj_remove_style_all(s_luastore_list);
   s_luastore_w = sw - 12;
   lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - bar_h - 14);
