@@ -14052,6 +14052,23 @@ static void buildDeviceSettings(int sec) {
       lv_obj_set_style_radius(sb, 5, LV_PART_MAIN);
       lv_obj_set_style_bg_color(sb, lv_color_hex(kLockColors[i]), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+      // A swatch IS its colour, so it has to keep it in every state. Setting the
+      // colour only for the default state left the theme free to repaint the
+      // focused and pressed ones, and on a d-pad board the swatch you are
+      // standing on is always focused: it went white, so you could not see what
+      // you were about to pick (#389). Pin the colour across those states and
+      // show focus as a ring outside the swatch instead of a fill over it.
+      for (lv_style_selector_t st : { (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED),
+                                      (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                      (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_PRESSED),
+                                      (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_CHECKED) }) {
+        lv_obj_set_style_bg_color(sb, lv_color_hex(kLockColors[i]), st);
+        lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, st);
+      }
+      lv_obj_set_style_outline_color(sb, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_width(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_opa(sb, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_pad(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
       // Highlight the current colour with a white ring.
       const bool sel = (kLockColors[i] == curcol);
       lv_obj_set_style_border_width(sb, sel ? 2 : 1, LV_PART_MAIN);
