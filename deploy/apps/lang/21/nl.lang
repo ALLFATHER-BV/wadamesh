@@ -32,6 +32,11 @@ About the map	Over de kaart
 Accent popups	Accent-popups
 Accent popups: off	Accent-popups: uit
 Accent popups: on	Accent-popups: aan
+Accent colour	Accentkleur
+Appearance	Weergave
+Day	Dag
+Night	Nacht
+Theme save failed	Thema opslaan mislukt
 Ack	Ack
 Active	Actief
 Add	Toevoegen
@@ -842,7 +847,6 @@ Temperature	Temperatuur
 Test builds: off	Testbuilds: uit
 Test builds: on	Testbuilds: aan
 Theme	Thema
-Theme colour	Themakleur
 Then pick a mode:	Kies daarna een modus:
 This contact hasn't shared\na GPS position.	Dit contact heeft geen\nGPS-positie gedeeld.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Dit apparaat kan Wi-Fi en Bluetooth tegelijk draaien, als zelfstandige radio én telefoon-companion (MeshCore-app) samen.\n\nBeide tegelijk gebruikt meer RAM, dus zet alleen aan wat je nodig hebt.\n\nStel ze altijd in via Instellingen.

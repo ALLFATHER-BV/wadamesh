@@ -164,11 +164,28 @@ uint8_t ringGetSpl2(int i) {
 // and the greens were unreadable. Owning both ends removes the dependency on
 // which definition happens to win at link time.
 #define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
-constexpr uint16_t kBg = RGB565(0x0E, 0x12, 0x16);   // the firmware's near-black
+bool s_day_theme = false;
+uint16_t consoleBg() {
+  return s_day_theme ? RGB565(0xF1, 0xF4, 0xF6) : RGB565(0x0E, 0x12, 0x16);
+}
 
 uint16_t colourFor(uint8_t c) {
   // e-ink has one ink colour; anything else is invisible or dithered.
   if (s_disp && s_disp->isEink()) return UIColor::primary_txt;
+  if (s_day_theme) {
+    switch (c) {
+      case CC_DIM:    return RGB565(0x56, 0x60, 0x6C);
+      case CC_ECHO:
+      case CC_OK:     return RGB565(0x27, 0x67, 0x38);
+      case CC_WARN:   return RGB565(0x80, 0x60, 0x00);
+      case CC_ERR:    return RGB565(0xA5, 0x2B, 0x26);
+      case CC_CHAN:   return RGB565(0x1F, 0x5F, 0x9E);
+      case CC_SENDER: return RGB565(0x8A, 0x5A, 0x00);
+      case CC_DM:     return RGB565(0x68, 0x42, 0xA0);
+      case CC_HEAD:   return RGB565(0x08, 0x77, 0x6D);
+      default:        return RGB565(0x17, 0x20, 0x26);
+    }
+  }
   switch (c) {
     case CC_DIM:    return RGB565(0x7A, 0x7F, 0x87);   // grey, the theme's "sub"
     case CC_ECHO:   return RGB565(0x53, 0xC0, 0x6B);   // green, the shell-echo convention
@@ -321,7 +338,7 @@ void measure() {
 // ---- render -----------------------------------------------------------------
 void render() {
   if (!s_disp || !s_active) return;
-  s_disp->startFrame(kBg);
+  s_disp->startFrame(consoleBg());
   s_disp->setTextSize(1);
 
   // Oldest-first from the scroll position, newest at the bottom.
@@ -410,7 +427,7 @@ void drawInputLine(bool cursor_on) {
   const int iy = s_disp->height() - s_line_h;
 #endif
   // Clear only this row. fillScreen would take the scrollback and keypad with it.
-  s_disp->setColor(kBg);
+  s_disp->setColor(consoleBg());
   s_disp->fillRect(0, iy, s_disp->width(), s_line_h);
 
   s_disp->setTextSize(1);
@@ -452,7 +469,7 @@ void drawInputLine(bool cursor_on) {
 // Toggle just the cursor cell. Two fillRects, no text, no clear.
 void drawCursorOnly(bool on) {
   if (!s_disp) return;
-  s_disp->setColor(on ? colourFor(CC_TEXT) : kBg);
+  s_disp->setColor(on ? colourFor(CC_TEXT) : consoleBg());
   s_disp->fillRect(s_cur_x, s_cur_y, s_char_w, s_line_h);
 }
 
@@ -705,6 +722,9 @@ void submit() {
 void consoleBegin(DisplayDriver* d) {
   s_disp = d;
   if (!s_disp) return;
+#if defined(ESP32)
+  s_day_theme = touchPrefsGetThemeMode() == TOUCH_THEME_DAY;
+#endif
   if (!s_ring) {
     const size_t bytes = (size_t)kMaxLines * (kLineCap + 1);
 #if defined(ESP32)

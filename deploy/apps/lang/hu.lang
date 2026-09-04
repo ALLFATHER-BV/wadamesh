@@ -32,6 +32,11 @@ About the map	A térképről
 Accent popups	Ékezetes felugró ablakok
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
+Accent colour	Kiemelőszín
+Appearance	Megjelenés
+Day	Nappali
+Night	Éjszakai
+Theme save failed	Téma mentése sikertelen
 Ack	Ack
 Active	Aktív
 Add	Hozzáad
@@ -861,7 +866,6 @@ Temperature	Hőmérséklet
 Test builds: off	Tesztverziók: kikapcsolva
 Test builds: on	Tesztverziók: bekapcsolva
 Theme	Téma
-Theme colour	Téma szine
 Then pick a mode:	Majd válassz módot:
 This contact hasn't shared\na GPS position.	Ez a kapcsolat nem osztotta meg GPS-pozícióját.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Ez az eszköz egyszerre képes Wi-Fi-t és Bluetooth-t futtatni, önálló rádióként és telefonkiegészítőként (MeshCore alkalmazás) is.\n\nA kettő egyidejű futtatása több RAM-ot fogyaszt, ezért csak azt kapcsold be, amire szükséged van.\n\nBármikor beállíthatod őket a Beállításokban.

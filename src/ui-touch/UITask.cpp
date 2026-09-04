@@ -612,13 +612,9 @@ static uint32_t COLOR_SECONDARY_ACTION = kNightPalette.secondary_action;
 static uint32_t COLOR_TRACK            = kNightPalette.track;
 static uint32_t COLOR_CHART_BG         = kNightPalette.chart_bg;
 
-// Day/Night belongs to the 296-day-night-theme branch, whose TouchPrefsStore
-// half (the TOUCH_THEME_* modes and their accessors) is not on this branch. The
-// UI is pinned to the night palette until that branch lands: s_theme_day stays
-// false, so every `s_theme_day ? day : night` site below resolves to night.
-static void applyThemeMode() {
-  s_theme_day = false;
-  const TouchPalette& p = kNightPalette;
+static void applyThemeMode(uint8_t mode) {
+  s_theme_day = mode == TOUCH_THEME_DAY;
+  const TouchPalette& p = s_theme_day ? kDayPalette : kNightPalette;
   COLOR_BG = p.bg;
   COLOR_PANEL = p.panel;
   COLOR_TEXT = p.text;
@@ -13070,6 +13066,22 @@ static void pagerKbBlCycleCb(lv_event_t* e) {
 }
 #endif
 
+static void themeModeRestart(uint8_t mode) {
+#if defined(ESP32)
+  if (touchPrefsGetThemeMode() == mode) return;
+  if (!touchPrefsSetThemeMode(mode)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Theme save failed"), 1600);
+    return;
+  }
+#endif
+  if (g_lv.task) g_lv.task->rebootDevice();
+}
+
+static void themeModeSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
 static void buildDeviceSettings(int sec) {
   // One detail page per section: each block below is gated to its DSEC_* section
   // (skipped blocks don't advance y, so every page lays out from the top).
@@ -13637,6 +13649,37 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("Applies after restart."), COLOR_SUB, &g_font_12, 0) + 6;
   }
 #endif
+
+  /* Firmware appearance: selecting a different palette saves and restarts so
+     every LVGL object is rebuilt with one coherent set of colours. */
+  {
+    y += settingsRowLabel(body, y, 0, TR("Appearance"), COLOR_SUB, &g_font_12, 0) + 4;
+    const uint8_t current = touchPrefsGetThemeMode();
+    const lv_coord_t gap = 4;
+    const lv_coord_t row_w = s_settings_content_w - 2;
+    const lv_coord_t button_w = (row_w - gap) / 2;
+    const char* labels[2] = { TR("Night"), TR("Day") };
+    for (uint8_t mode = TOUCH_THEME_NIGHT; mode <= TOUCH_THEME_DAY; ++mode) {
+      lv_obj_t* button = lv_btn_create(body);
+      lv_obj_set_size(button, button_w, SC(34));
+      lv_obj_set_pos(button, 2 + mode * (button_w + gap), y);
+      styleButton(button);
+      if (mode == current) {
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(button, LV_OPA_COVER, LV_PART_MAIN);
+      }
+      lv_obj_set_style_text_color(button,
+          lv_color_hex(mode == current ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_add_event_cb(button, themeModeSelectCb, LV_EVENT_CLICKED,
+                          (void*)(uintptr_t)mode);
+      lv_obj_t* label = lv_label_create(button);
+      char text[32];
+      snprintf(text, sizeof(text), "%s%s", mode == current ? LV_SYMBOL_OK "  " : "", labels[mode]);
+      lv_label_set_text(label, text);
+      lv_obj_center(label);
+    }
+    y += SC(42);
+  }
 
   /* Accent colour: opens a colour-wheel + hex picker. */
   {
@@ -20009,6 +20052,14 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_size(home, 40, 28);
   lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, 4);
   styleButton(home);
+#if !defined(HAS_TANMATSU)
+  if (s_theme_day) {
+    lv_obj_set_style_bg_color(home, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(home, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+  }
+#endif
   lv_obj_add_event_cb(home, fullscreenHomeCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* hl = lv_label_create(home);
   useChainedFont(hl);
@@ -20017,6 +20068,7 @@ static lv_obj_t* openFullscreenView(const char* title) {
   lv_obj_set_style_text_color(hl, lv_color_hex(0xE05544), LV_PART_MAIN);
 #else
   lv_label_set_text(hl, LV_SYMBOL_HOME);
+  if (s_theme_day) lv_obj_set_style_text_font(hl, &g_font_16, LV_PART_MAIN);
 #endif
   lv_obj_center(hl);
   lv_obj_move_foreground(home);
@@ -40617,6 +40669,13 @@ static void ccGpsNoneCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("No onboard GPS"), 1200);
 }
 #endif
+// Day/Night chip: persist the opposite palette and rebuild the complete UI on restart.
+static void ccThemeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeControlCenter();
+  themeModeRestart(s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
+}
+
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
 static uint8_t s_cc_screenshot_delay_s = 3;
 static lv_timer_t* s_cc_screenshot_timer = nullptr;
@@ -41589,6 +41648,8 @@ static void openControlCenter() {
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
   ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
+  ccToggle(row, s_theme_day ? TOUCH_SYM_SUN : TOUCH_SYM_MOON, TR("Theme"), s_theme_day,
+           ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
@@ -47123,7 +47184,7 @@ static void buildUiTree() {
   // Load the saved theme accent before any widget is built so the whole tree
   // adopts it. g_lv.tabview/keyboard are still null here, so applyAccent only
   // sets the colour globals (no live re-style needed at boot).
-  applyThemeMode();
+  applyThemeMode(touchPrefsGetThemeMode());
   applyAccent(touchPrefsGetAccentColor());
 
   lv_obj_t* root = lv_scr_act();
@@ -53338,7 +53399,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
     // icons — would freeze the compile-time default instead of the user's colour.
     // Idempotent: buildUiTree's own call just re-sets the same globals.
-    applyThemeMode();
+    applyThemeMode(touchPrefsGetThemeMode());
     applyAccent(touchPrefsGetAccentColor());
 
     // Build the always-on top status bar AFTER the display driver is

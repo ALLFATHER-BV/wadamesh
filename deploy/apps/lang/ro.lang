@@ -32,6 +32,11 @@ About the map	Despre hartă
 Accent popups	Popupuri cu accente
 Accent popups: off	Popupuri accente: oprite
 Accent popups: on	Popupuri accente: pornite
+Accent colour	Culoare de accent
+Appearance	Aspect
+Day	Zi
+Night	Noapte
+Theme save failed	Salvarea temei a eșuat
 Ack	Ack
 Active	Activ
 Add	Adaugă
@@ -845,7 +850,6 @@ Temperature	Temperatură
 Test builds: off	Versiuni de test: oprite
 Test builds: on	Versiuni de test: pornite
 Theme	Temă
-Theme colour	Culoare temă
 Then pick a mode:	Apoi alege un mod:
 This contact hasn't shared\na GPS position.	Acest contact nu a partajat\no poziţie GPS.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Acest dispozitiv poate rula Wi-Fi şi Bluetooth simultan, ca radio de sine stătător şi companion de telefon (aplicaţia MeshCore) în acelaşi timp.\n\nRularea ambelor foloseşte mai multă memorie RAM, deci porneşte doar ce îţi trebuie.\n\nLe poţi configura oricând în Setări.

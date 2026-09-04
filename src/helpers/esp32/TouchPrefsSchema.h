@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 55;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF)
+static constexpr uint8_t CURRENT_VERSION = 56;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Day/Night firmware theme, #296; default Night)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -102,6 +102,7 @@ struct __attribute__((packed)) Config {
   // louder near its mechanical resonance, typically around 4 kHz, than at the
   // 1-2.6 kHz the chime uses. This shifts the same chime up into that band (#388).
   uint8_t  loud_alerts;      // play the notification chime at the piezo's resonant pitch
+  uint8_t  theme_mode;       // v56: 0 Night, 1 Day
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -114,10 +115,10 @@ static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeo
 // rejection is silent: cfgFlush just returns false and every preference stops
 // persisting, with nothing in the log to say why. The struct grows most releases,
 // so guard the ceiling here rather than discover it as "settings do not save" on
-// whichever board is using the file backend. About 500 bytes today.
+// whichever board is using the file backend. 114 bytes today.
 static_assert(sizeof(Config) <= 2048,
               "Config exceeds the SdNvsPrefs value cap; prefs would silently stop saving");
-static_assert(offsetof(Config, loud_alerts) + sizeof(Config::loud_alerts) == sizeof(Config),
+static_assert(offsetof(Config, theme_mode) + sizeof(Config::theme_mode) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is
@@ -128,12 +129,18 @@ static_assert(offsetof(Config, console_mode) ==
 static_assert(offsetof(Config, console_monitor) ==
                   offsetof(Config, console_mode) + sizeof(Config::console_mode),
               "console_monitor must follow console_mode");
+static_assert(offsetof(Config, kb_force_legacy) ==
+                  offsetof(Config, console_monitor) + sizeof(Config::console_monitor),
+              "kb_force_legacy must follow console_monitor");
 static_assert(offsetof(Config, boot_wifi_time) ==
                   offsetof(Config, kb_force_legacy) + sizeof(Config::kb_force_legacy),
               "boot_wifi_time must follow kb_force_legacy");
 static_assert(offsetof(Config, boot_wifi_open) ==
                   offsetof(Config, boot_wifi_time) + sizeof(Config::boot_wifi_time),
               "boot_wifi_open must follow boot_wifi_time");
+static_assert(offsetof(Config, theme_mode) ==
+                  offsetof(Config, loud_alerts) + sizeof(Config::loud_alerts),
+              "theme_mode must follow loud_alerts");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with
 // retry_echo inserted before web_mirror, shifting every later value. That blob

@@ -32,6 +32,11 @@ About the map	Относно картата
 Accent popups	Изскачащи акценти
 Accent popups: off	Изскачащи акценти: изкл
 Accent popups: on	Изскачащи акценти: вкл
+Accent colour	Акцентен цвят
+Appearance	Изглед
+Day	Ден
+Night	Нощ
+Theme save failed	Неуспешно запазване на темата
 Ack	Ack
 Active	Активно
 Add	Добави
@@ -845,7 +850,6 @@ Temperature	Температура
 Test builds: off	Тестови компилации: изкл
 Test builds: on	Тестови компилации: вкл
 Theme	Тема
-Theme colour	Цвят на темата
 Then pick a mode:	После избери режим:
 This contact hasn't shared\na GPS position.	Този контакт не е споделил\nGPS позиция.
 This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a phone companion (MeshCore app) together.\n\nRunning both at the same time uses more RAM, so turn on only what you need.\n\nSet them up anytime in Settings.	Това устройство може да ползва Wi-Fi и Bluetooth едновременно — като самостоятелно радио и телефонен компаньон (приложение MeshCore).\n\nДвете заедно ползват повече RAM, затова включвай само нужното.\n\nНастрой ги по всяко време в Настройки.

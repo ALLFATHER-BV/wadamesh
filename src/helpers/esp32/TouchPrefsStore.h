@@ -9,6 +9,9 @@
 #include <stdint.h>
 #include <stddef.h>   // size_t (blob helpers below)
 
+static constexpr uint8_t TOUCH_THEME_NIGHT = 0;
+static constexpr uint8_t TOUCH_THEME_DAY   = 1;
+
 void touchPrefsBegin();
 // Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
 // boot: an earlier pref read may have cached the blob from the legacy backend.
@@ -26,6 +29,10 @@ bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);
 /** Display backlight brightness, 5–100 %. Default 100. */
 uint8_t touchPrefsGetBrightness();
 bool    touchPrefsSetBrightness(uint8_t pct);
+
+/** Firmware palette: 0 = Night (default), 1 = Day. Applied after restart. */
+uint8_t touchPrefsGetThemeMode();
+bool    touchPrefsSetThemeMode(uint8_t mode);
 
 /** Keyboard backlight mode: 0 = off, 1 = on, 2 = auto (on while typing). Default auto. */
 uint8_t touchPrefsGetKbBacklight();
