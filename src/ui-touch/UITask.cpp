@@ -3679,6 +3679,7 @@ static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
 static void mapNudge(int dir);                 // (defined far below) map pan — 0=up 1=down 2=left 3=right
+static void rebootWithNotice(const char* msg);  // (defined far below) reboot, with the reason on screen first
 static bool hwKeyDismissTopPopup();            // (defined far below) close the topmost modal/sheet
 static bool anyPopupOpen();                    // (defined below) is any modal/sheet currently up
 static void closeChatPanel(LvChatPanel* p);    // (defined far below) close an open chat/channel detail
@@ -12627,10 +12628,9 @@ static void rotateScreenCycleCb(lv_event_t* e) {
                                                  : (uint8_t)LV_DISP_ROT_NONE;
   touchPrefsSetUiRotation(next);
 #endif
-  if (g_lv.task) {
-    g_lv.task->showAlert(TR("Rotating\xe2\x80\xa6 rebooting"), 600);
-    g_lv.task->rebootDevice();
-  }
+  // Same as the theme and language switches: reboot on a timer so the notice is
+  // actually painted first, rather than going dark under the user's finger.
+  rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
 }
 
 // ---- Manual clock offset (Device modal): nudge local time +/- whole hours ----
@@ -13074,7 +13074,13 @@ static void themeModeRestart(uint8_t mode) {
     return;
   }
 #endif
-  if (g_lv.task) g_lv.task->rebootDevice();
+  // Changing the theme reboots, so every LVGL object is rebuilt from one palette
+  // rather than half-repainted. Announce it the way the language switch does:
+  // rebooting straight from this callback paints no notice at all, so the device
+  // appears to restart by itself, which reads as a crash rather than as the
+  // setting working.
+  rebootWithNotice(mode == TOUCH_THEME_DAY ? TR("Day theme - restarting to apply it\xE2\x80\xA6")
+                                           : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
 }
 
 static void themeModeSelectCb(lv_event_t* e) {
@@ -24648,11 +24654,11 @@ static void closeRemotePage() {
 static void remoteToggleCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetRemoteMode(on);
-  if (g_lv.task) {
-    g_lv.task->showAlert(on ? TR("Entering remote mode - rebooting...")
-                            : TR("Leaving remote mode - rebooting..."), 1600);
-    g_lv.task->rebootDevice();   // saves chat history, then reboots into the new mode
-  }
+  // Rebooted straight from the callback, the notice never painted; schedule it
+  // so the user sees which way it is going. rebootDevice() still saves chat
+  // history first, it just happens 1.8 s later.
+  rebootWithNotice(on ? TR("Entering remote mode - restarting\xE2\x80\xA6")
+                      : TR("Leaving remote mode - restarting\xE2\x80\xA6"));
 }
 
 #if CAP_CONSOLE
@@ -42156,12 +42162,22 @@ static void langRebootTimerCb(lv_timer_t* t) {
   if (g_lv.task) g_lv.task->rebootDevice();
 }
 
-static void langRebootWithNotice(const char* msg) {
-  s_luastore_busy = true;                   // swallow further taps on the way out
+// Reboot, but let the user read WHY first. showAlert() only creates the notice;
+// it is painted by the next LVGL frame, and rebootDevice() never returns to one,
+// so announcing a reboot and then calling it immediately shows nothing at all.
+// Scheduling the reboot on a one-shot timer hands control back to LVGL, the
+// notice paints, and the device goes down 1.8 s later with the reason on screen.
+// Any setting that reboots should go through here.
+static void rebootWithNotice(const char* msg) {
   if (g_lv.task) g_lv.task->showAlert(msg, 2400);
   lv_timer_t* t = lv_timer_create(langRebootTimerCb, 1800, nullptr);
   if (t) lv_timer_set_repeat_count(t, 1);
   else if (g_lv.task) g_lv.task->rebootDevice();   // no timer slot: don't strand the user
+}
+
+static void langRebootWithNotice(const char* msg) {
+  s_luastore_busy = true;                   // swallow further taps on the way out
+  rebootWithNotice(msg);
 }
 // Switching language reboots (same as the Settings picker) so the whole UI —
 // fonts, keyboard layout, every built label — re-renders consistently.
