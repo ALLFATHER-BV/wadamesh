@@ -1,0 +1,46 @@
+# beta_76 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Day and Night themes -----------------------------------------------------------------
+The firmware has a light theme. Settings, Display, Appearance switches between Night and Day, and the Theme chip in the control centre toggles it directly. Night is still the default and looks exactly as it did.
+Day is a full palette rather than an inverted one: text, panels, fields, borders, controls, focus rings, charts, status colours and chat bubbles each got their own light values. Changing it restarts the device so every part of the interface is rebuilt from one set of colours instead of half-repainted.
+By Michael A. Cojocari.
+
+# --- A new board ----------------------------------------------------------------------------
+The Seeed Wio Tracker L2 is supported. Display, touch, GPS, microSD, battery and buttons were brought up on real hardware by the contributor, and the board goes on sale next week.
+Added and maintained by Michael A. Cojocari, who has the hardware. Treat it as new: if something is wrong on an L2, say so on GitHub.
+
+# --- Your screen was still on when you thought it was off ---------------------------------
+On the ThinkNode M9, turning the screen off only turned the backlight off. The panel kept refreshing the same image behind it, which is what actually burns an image into the glass, and you could see the lock screen faintly in bright light. It now stops driving the panel properly. Reported by Buko84, who spotted it and photographed it.
+On the T-Display P4, Wi-Fi came back on by itself after a power cycle while every switch in the interface said it was off. The radio really was on. The co-processor rejoins your last network on its own at power-on, and the firmware only ever acted when the setting changed, so an already-connected radio was never told to stop. Reported by wb6zsu.
+
+# --- Settings that restart now tell you first ------------------------------------------------
+Changing the theme, rotating the screen or switching remote mode restarts the device, and none of them said so: the message was created but the restart happened before the screen could draw it. All three now show the reason and restart a moment later.
+
+# --- Typing ------------------------------------------------------------------------------------
+Accented and Nordic letters can be typed on the M9. The letters were always there, but the picker that reaches them needed a touchscreen. Type a letter, then use left and right to walk the variants and Enter to take one. Requested by leon699.
+That also fixed a smaller thing on the T-Lora Pager, where the last variant in a set could not be reached at all, which happened to be the one Nordic users want.
+Wi-Fi passwords can be shown while you type them. Entering a long passphrase blind on a device keyboard is its own failure mode. Requested by jesshampshire.
+The message box shows a character count as you approach the 160 character limit, and marks it when you reach it. The limit used to be silent, so typing simply stopped. Requested by jrote1.
+
+# --- Fixed -------------------------------------------------------------------------------------
+The Discovered list showed impossible hop counts like "255 hop". That value means the path is unknown, which is what an advert that reached you by flood carries; it now says so, says "direct" for zero hops, and counts hops in plural. Reported by jesshampshire.
+Your own position marker on the map is readable on light maps. It was a white glyph with nothing behind it. Reported by 100monkeys.
+The message count on the app drawer no longer stays stale after unlocking. The badges were drawn once and never refreshed. Reported by Buko84.
+Moving with the d-pad through the colour swatches no longer turns the swatch you are on white, which hid the colour you were choosing. Reported by Buko84.
+Keypad navigation could skip a whole row on the Send advert screen, two dropdowns had an invisible focus highlight, and an open dropdown list was clipped by the title bar. The Do Not Disturb chip now uses the crescent moon rather than a bell, which is the Sound chip's job. By Michael A. Cojocari.
+Keyboard backlight controls are hidden on the older T-Decks, which have no controllable backlight, so they no longer look like settings that do nothing. Requested by jesshampshire.
+
+# --- For people writing Lua apps -------------------------------------------------------------
+On the T-Deck an app never received A, P, Q, Enter or Backspace. Those keys are held back so an app cannot swallow its own exit, which matters on a board where a key is the only way out; on the T-Deck you leave by tapping the back bar, so they were simply dead. They now reach the app.
+The T-Deck trackball button reaches apps too. Movement was passed on and the click was thrown away, so you could steer but never select.
+wada.mesh.send() returns a fingerprint for what it sent, and wada.mesh.repeats(fp) tells you how many repeaters were heard rebroadcasting it. That is the same count the sent message shows next to its refresh icon.
+All three reported by Jade, who is building against the SDK.
+
+# --- Also --------------------------------------------------------------------------------------
+A louder notification chime, in Settings, Sound. The buzzer on these boards has no volume control, so this raises the pitch into the range a piezo is loudest at instead. Off by default. Requested by Buko84.
+Support for a DS3231 clock module fitted to a T-Deck, so the time survives a full power-off without GPS or Wi-Fi. Requested and being built by jrote1.
+
+# --- For testers -------------------------------------------------------------------------------
+Two things in this release are NOT verified on hardware, both off by default. The DS3231 support is written from the datasheet and nobody has had one wired up yet. The louder chime raises the pitch to where a piezo is typically loudest, but that has not been measured on an M9. If you try either, please say what happened.
+Still open and not fixed here: a map that renders nothing since beta_71, a screen that will not stay dark after a manual lock, and the web flasher hanging at "wrapping up" on the T-Display P4.
