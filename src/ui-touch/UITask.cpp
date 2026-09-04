@@ -3679,7 +3679,6 @@ static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
 static void mapNudge(int dir);                 // (defined far below) map pan — 0=up 1=down 2=left 3=right
-static void rebootWithNotice(const char* msg);  // (defined far below) reboot, with the reason on screen first
 static bool hwKeyDismissTopPopup();            // (defined far below) close the topmost modal/sheet
 static bool anyPopupOpen();                    // (defined below) is any modal/sheet currently up
 static void closeChatPanel(LvChatPanel* p);    // (defined far below) close an open chat/channel detail
@@ -10585,6 +10584,10 @@ public:
 // Import settings opens a full-screen .json picker (internal flash + SD), the
 // same UX as the lock-wallpaper picker. Defined later in this file (where the
 // SD mount state is in scope); forward-declared here for the button below.
+// Declared here, NOT among the keypad-nav forward declarations: that block is
+// inside #if CAP_KEYPAD_NAV, so the declaration disappeared on every board
+// without keypad navigation while the calls below stayed.
+static void rebootWithNotice(const char* msg);   // (defined far below) reboot, reason on screen first
 static void openBackupPicker();
 static void buildBackupsSettings();   // Settings -> Backups detail page (list/delete + factory reset)
 static void doExportBackupFile(const char* fname);   // write a backup (SD if a card is present, else internal)
