@@ -2,6 +2,10 @@
 #include <helpers/RepeaterTcpOtaEmit.h>
 #include "WifiRuntimeStore.h"   // persist BLE on/off (ble_en) across reboots
 #include "WebMirror.h"          // web UI mirror bridge (served over the WS server)
+#include "WebFileTransferConfig.h"
+#if WADA_WEB_FILE_TRANSFER
+#include "WebFileTransfer.h"
+#endif
 #include <esp_heap_caps.h>
 #include <string.h>
 
@@ -118,7 +122,12 @@ static void wsMirrorStreamTask(void* arg) {
   WebSocketCompanionServer* ws = static_cast<WebSocketCompanionServer*>(arg);
   for (;;) {
     ws->serviceMirror(g_web_mirror);
-    vTaskDelay(pdMS_TO_TICKS(g_web_mirror.clients() > 0 ? 2 : 25));  // fast when a browser is watching, idle otherwise
+#if WADA_WEB_FILE_TRANSFER
+    const bool browser_active = g_web_mirror.clients() > 0 || g_web_file_transfer.clients() > 0;
+#else
+    const bool browser_active = g_web_mirror.clients() > 0;
+#endif
+    vTaskDelay(pdMS_TO_TICKS(browser_active ? 2 : 25));  // fast when a browser is active, idle otherwise
   }
 }
 
