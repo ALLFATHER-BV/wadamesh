@@ -41694,7 +41694,7 @@ static void openControlCenter() {
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
   ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
 #endif
-  ccToggle(row, s_theme_day ? TOUCH_SYM_SUN : TOUCH_SYM_MOON, TR("Theme"), s_theme_day,
+  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_day,
            ccThemeCb, tw, th, CAT_DISPLAY);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
