@@ -2990,6 +2990,14 @@ static void buildExpansionInfoText(char* out, size_t cap) {
 // (which is defined above the control-center code) can update the live GPS line.
 static lv_obj_t* s_cc_root      = nullptr;
 static lv_obj_t* s_cc_gps_label = nullptr;
+enum CcNavSlot : uint8_t {
+  CC_NAV_WIFI, CC_NAV_BT, CC_NAV_GPS, CC_NAV_THEME, CC_NAV_KEYBOARD,
+  CC_NAV_SOUND, CC_NAV_DND, CC_NAV_TIMER, CC_NAV_SCREENSHOT, CC_NAV_COUNT
+};
+#if defined(HAS_THINKNODE_M9)
+static lv_obj_t* s_m9_cc_nav[CC_NAV_COUNT] = { nullptr };
+static uint8_t s_m9_cc_screenshot_up = CC_NAV_THEME;
+#endif
 #if defined(HAS_EXPANSION_KIT)
 static lv_obj_t* s_cc_env_label = nullptr;   // Expansion-Kit local-env line in the control center
 #endif
@@ -4024,6 +4032,49 @@ static bool navDirMetrics(const lv_area_t& a, const lv_area_t& b, int dir, long*
   }
   return ok;
 }
+#if defined(HAS_THINKNODE_M9)
+static bool m9ControlCenterMove(lv_obj_t* current, int dir) {
+  if (!s_cc_root || !current) return false;
+  int slot = -1;
+  for (int i = 0; i < CC_NAV_COUNT; ++i) {
+    if (s_m9_cc_nav[i] == current) { slot = i; break; }
+  }
+  if (slot < 0) return false;
+
+  int target = -1;
+  switch (dir) {
+    case NAV_LEFT:
+      if ((slot > CC_NAV_WIFI && slot <= CC_NAV_KEYBOARD) ||
+          (slot > CC_NAV_SOUND && slot <= CC_NAV_SCREENSHOT)) target = slot - 1;
+      break;
+    case NAV_RIGHT:
+      if ((slot >= CC_NAV_WIFI && slot < CC_NAV_KEYBOARD) ||
+          (slot >= CC_NAV_SOUND && slot < CC_NAV_SCREENSHOT)) target = slot + 1;
+      break;
+    case NAV_UP:
+      if (slot >= CC_NAV_SOUND && slot <= CC_NAV_TIMER) target = slot - CC_NAV_SOUND;
+      else if (slot == CC_NAV_SCREENSHOT) target = s_m9_cc_screenshot_up;
+      else return false;   // top row may still move to brightness/power by geometry
+      break;
+    case NAV_DOWN:
+      if (slot >= CC_NAV_WIFI && slot <= CC_NAV_GPS) target = slot + CC_NAV_SOUND;
+      else if (slot == CC_NAV_THEME || slot == CC_NAV_KEYBOARD) {
+        s_m9_cc_screenshot_up = (uint8_t)slot;
+        target = CC_NAV_SCREENSHOT;
+      } else {
+        return false;      // bottom row keeps the existing edge behaviour
+      }
+      break;
+  }
+  if (target >= 0 && target < CC_NAV_COUNT && s_m9_cc_nav[target] &&
+      lv_obj_is_valid(s_m9_cc_nav[target])) {
+    s_nav_show = true;
+    lv_group_focus_obj(s_m9_cc_nav[target]);
+    if (g_lv.task) g_lv.task->noteUserInput();
+  }
+  return true;             // consume left/right at a row edge instead of jumping rows
+}
+#endif
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -4055,6 +4106,9 @@ static void navMoveDir(int dir) {
     if (g_lv.task) g_lv.task->noteUserInput();
     return;
   }
+#if defined(HAS_THINKNODE_M9)
+  if (m9ControlCenterMove(cur, dir)) return;
+#endif
   lv_area_t a; lv_obj_get_coords(cur, &a);
   // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
   // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
@@ -40634,6 +40688,10 @@ static void refreshSettingsSectionSubtitles() {
 
 static void closeControlCenter() {
   if (s_cc_root) { popupClose(&s_cc_root); }
+#if defined(HAS_THINKNODE_M9)
+  memset(s_m9_cc_nav, 0, sizeof s_m9_cc_nav);
+  s_m9_cc_screenshot_up = CC_NAV_THEME;
+#endif
   s_cc_gps_label = nullptr;
 #if defined(HAS_EXPANSION_KIT)
   s_cc_env_label = nullptr;
@@ -41049,7 +41107,8 @@ static void ccDndCb(lv_event_t* e) {
 
 static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
                      bool active, lv_event_cb_t cb, int width = 66, int height = 54,
-                     int long_cat = -1, const char* sub_text = nullptr) {
+                     int long_cat = -1, const char* sub_text = nullptr,
+                     int m9_nav_slot = -1) {
   (void)label;   // icon-only round chips now — the standalone caption under each icon was dropped by request
   // A true circle needs a SQUARE footprint (LV_RADIUS_CIRCLE on a non-square gives a stadium/pill),
   // so the visible button is d x d. But a bare d-wide circle is much narrower than its intended
@@ -41065,6 +41124,11 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
   lv_obj_t* b = lv_btn_create(cell);
   lv_obj_set_size(b, d, d);
   lv_obj_center(b);
+#if defined(HAS_THINKNODE_M9)
+  if (m9_nav_slot >= 0 && m9_nav_slot < CC_NAV_COUNT) s_m9_cc_nav[m9_nav_slot] = b;
+#else
+  (void)m9_nav_slot;
+#endif
   styleButton(b);
   lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
   lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
@@ -41684,23 +41748,28 @@ static void openControlCenter() {
 #endif
   // Each chip: tap = toggle, long-press = jump to that feature's settings page
   // (GPS -> Radio & Mesh, where the location-sharing settings live).
-  ccToggle(row, LV_SYMBOL_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th, CAT_WIFI);
+  ccToggle(row, LV_SYMBOL_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th,
+           CAT_WIFI, nullptr, CC_NAV_WIFI);
   if (!g_lv.task || g_lv.task->hasBleCapability())
-    ccToggle(row, LV_SYMBOL_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th, CAT_BLUETOOTH);
+    ccToggle(row, LV_SYMBOL_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th,
+             CAT_BLUETOOTH, nullptr, CC_NAV_BT);
 #if !CAP_GPS
-  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), false, ccGpsNoneCb, tw, th, -1);   // no onboard GPS — info-only, untoggable
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), false, ccGpsNoneCb, tw, th,
+           -1, nullptr, CC_NAV_GPS);   // no onboard GPS — info-only, untoggable
 #else
   // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
-  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th, CAT_GPS);
+  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th,
+           CAT_GPS, nullptr, CC_NAV_GPS);
 #endif
   ccToggle(row, s_theme_day ? TOUCH_SYM_SUN : TOUCH_SYM_MOON, TR("Theme"), s_theme_day,
-           ccThemeCb, tw, th, CAT_DISPLAY);
+           ccThemeCb, tw, th, CAT_DISPLAY, nullptr, CC_NAV_THEME);
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
   const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
-  ccToggle(row, LV_SYMBOL_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0, ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode);
+  ccToggle(row, LV_SYMBOL_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0,
+           ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode, CC_NAV_KEYBOARD);
 #endif
 #if defined(HAS_TDECK_GT911)
   ccToggle(row, TOUCH_SYM_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
@@ -41708,7 +41777,8 @@ static void openControlCenter() {
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Sound on/off — the notification-tone mute (T-Deck I2S speaker / Heltec V4 piezo / Tanmatsu ES8156).
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
-  ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th, CAT_SOUND);
+  ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th,
+           CAT_SOUND, nullptr, CC_NAV_SOUND);
 #endif
   // Do Not Disturb (the scheduled-silence feature) — the crescent moon everyone knows as DND,
   // matching the status-bar glyph that appears while the window is live. The chip's own fill
@@ -41717,12 +41787,14 @@ static void openControlCenter() {
   // All boards; the time window lives in Settings > Sound.
   {
     const bool dnd_on = touchPrefsGetDndEnabled();
-    ccToggle(row, TOUCH_SYM_MOON, TR("DND"), dnd_on, ccDndCb, tw, th, CAT_SOUND);
+    ccToggle(row, TOUCH_SYM_MOON, TR("DND"), dnd_on, ccDndCb, tw, th,
+             CAT_SOUND, nullptr, CC_NAV_DND);
   }
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
   ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
-           ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText());
-  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th);
+           ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText(), CC_NAV_TIMER);
+  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
+           -1, nullptr, CC_NAV_SCREENSHOT);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
 }
