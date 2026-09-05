@@ -203,6 +203,11 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     static_assert(TOUCH_IGNORED_NAME_LEN >= UITask::MAX_SENDER_NAME + 1,
                   "block-list slot must hold a full sender name, or blocking silently stops working");
     #include "../helpers/esp32/WebMirror.h"   // web UI mirror (framebuffer + pointer bridge)
+    #include "../helpers/esp32/WebFileTransferConfig.h"
+    #if WADA_WEB_FILE_TRANSFER
+      #include "../helpers/esp32/WebFileTransfer.h"
+      #include "../helpers/esp32/WebFileTransferProtocol.h"
+    #endif
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
     #if defined(MULTI_TRANSPORT_COMPANION)
@@ -5384,6 +5389,7 @@ enum {
   APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
   APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
+  APPHIDE_FILE_TRANSFER = 1u << 13,
 };
 #endif
 
@@ -24489,6 +24495,604 @@ static void spectrumDismissCb(lv_event_t* e) {
   closeSpectrumPage();
 }
 
+#if WADA_WEB_FILE_TRANSFER
+// ============================================================================
+// File Transfer app: authenticated browser access to removable SD storage.
+// Network code only queues complete frames; this UI-loop owner performs every
+// filesystem operation so the core-0 WebSocket task never calls into FAT/SD.
+// ============================================================================
+static lv_obj_t* s_file_transfer_root = nullptr;
+static lv_obj_t* s_file_transfer_status = nullptr;
+static lv_timer_t* s_file_transfer_timer = nullptr;
+static bool s_file_transfer_started_tcp = false;
+static File s_file_transfer_file;
+static File s_file_transfer_read_file;
+static File s_file_transfer_list_dir;
+static bool s_file_transfer_uploading = false;
+static bool s_file_transfer_downloading = false;
+static bool s_file_transfer_listing = false;
+static uint8_t s_file_transfer_list_phase = 0;
+static uint32_t s_file_transfer_expected = 0;
+static uint32_t s_file_transfer_received = 0;
+static uint32_t s_file_transfer_crc = 0xFFFFFFFFu;
+static uint32_t s_file_transfer_download_size = 0;
+static uint32_t s_file_transfer_download_offset = 0;
+static char s_file_transfer_name[65] = {0};
+static char s_file_transfer_final[96] = {0};
+static char s_file_transfer_result[112] = {0};
+static constexpr const char* kFileTransferTemp = "/transfer/.upload.part";
+static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
+static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
+static constexpr uint32_t kFileTransferChunkTimeoutMs = 30000u;
+static void closeFileTransferPage();
+
+static fs::FS& fileTransferStorage() {
+#if WADA_WEB_FILE_TRANSFER_SDMMC
+  return SD_MMC;
+#else
+  return SD;
+#endif
+}
+
+static bool fileTransferStorageMounted() {
+#if WADA_WEB_FILE_TRANSFER_SDMMC
+  return SD_MMC.cardType() != CARD_NONE;
+#else
+  return s_sd_mounted && SD.cardType() != CARD_NONE;
+#endif
+}
+
+static bool fileTransferStorageReady() {
+#if WADA_WEB_FILE_TRANSFER_SDMMC
+  return tanSdTryMount() && SD_MMC.cardType() != CARD_NONE;
+#else
+  return fmSdTryMount() && s_sd_mounted && SD.cardType() != CARD_NONE;
+#endif
+}
+
+static void fileTransferStorageIoFailed() {
+#if WADA_WEB_FILE_TRANSFER_SPI_SD
+  sdNoteIoFailure();
+#else
+  s_tan_sd_mounted = false;
+  s_tan_sd_retry_after = millis() + 8000;
+#endif
+}
+
+static void fileTransferResetUpload(bool remove_temp) {
+  fs::FS& storage = fileTransferStorage();
+  if (s_file_transfer_file) {
+    s_file_transfer_file.close();
+    markSdIo();
+  }
+  if (remove_temp && fileTransferStorageMounted() && storage.exists(kFileTransferTemp)) {
+    if (!storage.remove(kFileTransferTemp)) fileTransferStorageIoFailed();
+    markSdIo();
+  }
+  s_file_transfer_uploading = false;
+  s_file_transfer_expected = 0;
+  s_file_transfer_received = 0;
+  s_file_transfer_crc = 0xFFFFFFFFu;
+  s_file_transfer_name[0] = '\0';
+  s_file_transfer_final[0] = '\0';
+}
+
+static void fileTransferResetRead(bool clear_queued_data = true) {
+  if (s_file_transfer_read_file) {
+    s_file_transfer_read_file.close();
+    markSdIo();
+  }
+  if (s_file_transfer_list_dir) s_file_transfer_list_dir.close();
+  s_file_transfer_downloading = false;
+  s_file_transfer_listing = false;
+  s_file_transfer_list_phase = 0;
+  s_file_transfer_download_size = 0;
+  s_file_transfer_download_offset = 0;
+  if (clear_queued_data) g_web_file_transfer.clearData();
+}
+
+static void fileTransferReply(const char* text) {
+  if (text) g_web_file_transfer.pushReply(text);
+}
+
+static void fileTransferFail(const char* text) {
+  fileTransferResetRead();
+  fileTransferResetUpload(true);
+  snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", text ? text : "Upload failed");
+  char reply[WebFileTransfer::MAX_REPLY_BYTES];
+  snprintf(reply, sizeof reply, "ERR %s", s_file_transfer_result);
+  fileTransferReply(reply);
+}
+
+static void fileTransferBegin(const char* command) {
+  unsigned long declared = 0;
+  char name[65] = {0};
+  char extra = 0;
+  if (!command || sscanf(command, "BEGIN %lu %64s %c", &declared, name, &extra) != 2 ||
+      declared == 0 || declared > kFileTransferMaxBytes ||
+      !WebFileTransferProtocol::fileNameValid(name)) {
+    fileTransferFail("invalid file name or size");
+    return;
+  }
+  if (!fileTransferStorageReady()) {
+    fileTransferFail("SD card unavailable");
+    return;
+  }
+
+  fs::FS& storage = fileTransferStorage();
+  fileTransferResetRead();
+  fileTransferResetUpload(true);
+  if (storage.exists(kFileTransferTemp)) {
+    fileTransferFail("cannot clear temporary file");
+    return;
+  }
+  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+    fileTransferStorageIoFailed();
+    fileTransferFail("cannot create transfer directory");
+    return;
+  }
+  snprintf(s_file_transfer_final, sizeof s_file_transfer_final, "/transfer/%s", name);
+  if (storage.exists(s_file_transfer_final)) {
+    fileTransferFail("file already exists");
+    return;
+  }
+  s_file_transfer_file = storage.open(kFileTransferTemp, FILE_WRITE);
+  markSdIo();
+  if (!s_file_transfer_file) {
+    fileTransferStorageIoFailed();
+    fileTransferFail("cannot create temporary file");
+    return;
+  }
+  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", name);
+  s_file_transfer_expected = static_cast<uint32_t>(declared);
+  s_file_transfer_received = 0;
+  s_file_transfer_crc = 0xFFFFFFFFu;
+  s_file_transfer_result[0] = '\0';
+  s_file_transfer_uploading = true;
+  fileTransferReply("READY");
+}
+
+static void fileTransferChunk(const uint8_t* frame, size_t len) {
+  if (!s_file_transfer_uploading || !s_file_transfer_file) {
+    fileTransferFail("no upload in progress");
+    return;
+  }
+  if (!frame || len <= 4 || len > WebFileTransfer::MAX_INBOUND_BYTES) {
+    fileTransferFail("invalid chunk");
+    return;
+  }
+  const uint32_t offset = WebFileTransferProtocol::readLe32(frame);
+  const size_t payload_len = len - 4;
+  if (offset != s_file_transfer_received ||
+      static_cast<uint64_t>(s_file_transfer_received) + payload_len > s_file_transfer_expected) {
+    fileTransferFail("unexpected chunk offset");
+    return;
+  }
+  if (s_file_transfer_file.write(frame + 4, payload_len) != payload_len) {
+    fileTransferStorageIoFailed();
+    fileTransferFail("write failed (card full?)");
+    return;
+  }
+  markSdIo();
+  s_file_transfer_crc = WebFileTransferProtocol::crc32Update(
+      s_file_transfer_crc, frame + 4, payload_len);
+  s_file_transfer_received += static_cast<uint32_t>(payload_len);
+  char reply[32];
+  snprintf(reply, sizeof reply, "ACK %lu", static_cast<unsigned long>(s_file_transfer_received));
+  fileTransferReply(reply);
+}
+
+static void fileTransferEnd(const char* command) {
+  uint32_t browser_crc = 0;
+  if (!s_file_transfer_uploading || !s_file_transfer_file || !command ||
+      strncmp(command, "END ", 4) != 0 ||
+      !WebFileTransferProtocol::parseHex32(command + 4, &browser_crc)) {
+    fileTransferFail("invalid upload completion");
+    return;
+  }
+  const uint32_t actual_crc = s_file_transfer_crc ^ 0xFFFFFFFFu;
+  if (s_file_transfer_received != s_file_transfer_expected || actual_crc != browser_crc) {
+    fileTransferFail("size or checksum mismatch");
+    return;
+  }
+
+  s_file_transfer_file.flush();
+  s_file_transfer_file.close();
+  markSdIo();
+  fs::FS& storage = fileTransferStorage();
+  if (!storage.rename(kFileTransferTemp, s_file_transfer_final)) {
+    fileTransferStorageIoFailed();
+    if (!storage.remove(kFileTransferTemp)) fileTransferStorageIoFailed();
+    fileTransferResetUpload(false);
+    snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Could not commit upload");
+    fileTransferReply("ERR could not commit upload");
+    return;
+  }
+  markSdIo();
+  const uint32_t completed = s_file_transfer_received;
+  char completed_name[sizeof s_file_transfer_name];
+  snprintf(completed_name, sizeof completed_name, "%s", s_file_transfer_name);
+  fileTransferResetUpload(false);
+  snprintf(s_file_transfer_result, sizeof s_file_transfer_result,
+           "Saved %s (%lu bytes)", completed_name, static_cast<unsigned long>(completed));
+  char reply[48];
+  snprintf(reply, sizeof reply, "DONE %lu", static_cast<unsigned long>(completed));
+  fileTransferReply(reply);
+}
+
+static void fileTransferListNext() {
+  fs::FS& storage = fileTransferStorage();
+  while (s_file_transfer_listing) {
+    if (!s_file_transfer_list_dir) {
+      const char* dir_path = s_file_transfer_list_phase == 0 ? "/screenshots" : "/transfer";
+      s_file_transfer_list_dir = storage.open(dir_path, FILE_READ);
+      markSdIo();
+      if (!s_file_transfer_list_dir || !s_file_transfer_list_dir.isDirectory()) {
+        if (s_file_transfer_list_dir) s_file_transfer_list_dir.close();
+        if (s_file_transfer_list_phase == 1) {
+          fileTransferStorageIoFailed();
+          s_file_transfer_listing = false;
+          fileTransferReply("ERR SD read failed");
+          return;
+        }
+        s_file_transfer_list_phase++;
+        if (s_file_transfer_list_phase >= 2) {
+          s_file_transfer_listing = false;
+          fileTransferReply("LIST DONE");
+        }
+        continue;
+      }
+    }
+
+    File entry = s_file_transfer_list_dir.openNextFile();
+    if (!entry) {
+      s_file_transfer_list_dir.close();
+      s_file_transfer_list_phase++;
+      if (s_file_transfer_list_phase >= 2) {
+        s_file_transfer_listing = false;
+        fileTransferReply("LIST DONE");
+      }
+      continue;
+    }
+    const bool directory = entry.isDirectory();
+    const uint32_t size = static_cast<uint32_t>(entry.size());
+    const char* raw_name = entry.name();
+    const char* leaf = raw_name ? strrchr(raw_name, '/') : nullptr;
+    leaf = leaf ? leaf + 1 : raw_name;
+    char safe_leaf[65] = {0};
+    const bool name_fits = leaf && strlen(leaf) < sizeof safe_leaf;
+    if (name_fits) snprintf(safe_leaf, sizeof safe_leaf, "%s", leaf);
+    entry.close();
+    if (directory || !name_fits || !WebFileTransferProtocol::fileNameValid(safe_leaf)) continue;
+
+    const char* prefix = s_file_transfer_list_phase == 0 ? "/screenshots/" : "/transfer/";
+    char reply[WebFileTransfer::MAX_REPLY_BYTES];
+    snprintf(reply, sizeof reply, "ENTRY %lu %s%s", static_cast<unsigned long>(size),
+             prefix, safe_leaf);
+    fileTransferReply(reply);
+    return;
+  }
+}
+
+static void fileTransferListBegin() {
+  if (s_file_transfer_uploading) {
+    fileTransferReply("ERR upload in progress");
+    return;
+  }
+  if (!fileTransferStorageReady()) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR SD card unavailable");
+    return;
+  }
+  fileTransferResetRead();
+  s_file_transfer_result[0] = '\0';
+  s_file_transfer_listing = true;
+  fileTransferListNext();
+}
+
+static void fileTransferDownloadBegin(const char* path) {
+  if (s_file_transfer_uploading) {
+    fileTransferReply("ERR upload in progress");
+    return;
+  }
+  if (!WebFileTransferProtocol::readablePath(path)) {
+    fileTransferReply("ERR invalid download path");
+    return;
+  }
+  if (!fileTransferStorageReady()) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR SD card unavailable");
+    return;
+  }
+  fileTransferResetRead();
+  s_file_transfer_read_file = fileTransferStorage().open(path, FILE_READ);
+  markSdIo();
+  if (!s_file_transfer_read_file || s_file_transfer_read_file.isDirectory()) {
+    fileTransferStorageIoFailed();
+    fileTransferResetRead();
+    fileTransferReply("ERR file unavailable");
+    return;
+  }
+  const uint64_t size = s_file_transfer_read_file.size();
+  if (size == 0 || size > kFileTransferMaxBytes) {
+    fileTransferResetRead();
+    fileTransferReply("ERR file size unsupported");
+    return;
+  }
+  s_file_transfer_downloading = true;
+  s_file_transfer_download_size = static_cast<uint32_t>(size);
+  s_file_transfer_download_offset = 0;
+  s_file_transfer_result[0] = '\0';
+  const char* leaf = strrchr(path, '/');
+  leaf = leaf ? leaf + 1 : path;
+  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", leaf);
+  char reply[WebFileTransfer::MAX_REPLY_BYTES];
+  snprintf(reply, sizeof reply, "FILE %lu %s", static_cast<unsigned long>(size), leaf);
+  fileTransferReply(reply);
+}
+
+static void fileTransferDownloadRead(const char* command) {
+  unsigned long requested = 0;
+  char extra = 0;
+  if (!s_file_transfer_downloading || !s_file_transfer_read_file || !command ||
+      sscanf(command, "READ %lu %c", &requested, &extra) != 1 ||
+      requested != s_file_transfer_download_offset) {
+    fileTransferResetRead();
+    fileTransferReply("ERR invalid download offset");
+    return;
+  }
+  static uint8_t outbound[WebFileTransfer::MAX_OUTBOUND_BYTES];
+  const size_t remaining = s_file_transfer_download_size - s_file_transfer_download_offset;
+  const size_t wanted = remaining > 2048 ? 2048 : remaining;
+  const size_t got = s_file_transfer_read_file.read(outbound + 5, wanted);
+  markSdIo();
+  if (got != wanted) {
+    fileTransferStorageIoFailed();
+    fileTransferResetRead();
+    fileTransferReply("ERR download read failed");
+    return;
+  }
+  outbound[0] = 0x01;
+  const uint32_t offset = s_file_transfer_download_offset;
+  outbound[1] = static_cast<uint8_t>(offset);
+  outbound[2] = static_cast<uint8_t>(offset >> 8);
+  outbound[3] = static_cast<uint8_t>(offset >> 16);
+  outbound[4] = static_cast<uint8_t>(offset >> 24);
+  if (!g_web_file_transfer.pushData(outbound, got + 5)) {
+    if (!s_file_transfer_read_file.seek(offset)) fileTransferStorageIoFailed();
+    fileTransferReply("ERR device busy");
+    return;
+  }
+  s_file_transfer_download_offset += static_cast<uint32_t>(got);
+  if (s_file_transfer_download_offset >= s_file_transfer_download_size) {
+    const uint32_t completed = s_file_transfer_download_size;
+    char completed_name[sizeof s_file_transfer_name];
+    snprintf(completed_name, sizeof completed_name, "%s", s_file_transfer_name);
+    fileTransferResetRead(false);   // final chunk is queued for the network task
+    snprintf(s_file_transfer_result, sizeof s_file_transfer_result,
+             "Sent %s (%lu bytes)", completed_name, static_cast<unsigned long>(completed));
+  }
+}
+
+static bool webFileTransferStorageBusy() {
+  return s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing ||
+         static_cast<bool>(s_file_transfer_file) ||
+         static_cast<bool>(s_file_transfer_read_file) ||
+         static_cast<bool>(s_file_transfer_list_dir);
+}
+
+static void webFileTransferTick() {
+  if (!g_web_file_transfer.enabled()) return;
+  if (WiFi.status() != WL_CONNECTED || static_cast<uint32_t>(WiFi.localIP()) == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("File Transfer stopped: Wi-Fi disconnected"), 2000);
+    closeFileTransferPage();
+    return;
+  }
+  if (g_web_file_transfer.clients() == 0) {
+    if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
+      fileTransferResetUpload(true);
+      fileTransferResetRead();
+      snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s",
+               "Transfer cancelled: browser disconnected");
+    }
+    g_web_file_transfer.discardTraffic();
+    if (millis() - g_web_file_transfer.lastActivityMs() > kFileTransferIdleMs) {
+      if (g_lv.task) g_lv.task->showAlert(TR("File Transfer session expired"), 1800);
+      closeFileTransferPage();
+    }
+    return;
+  }
+  static uint8_t frame[WebFileTransfer::MAX_INBOUND_BYTES];
+  uint8_t opcode = 0;
+  int budget = 3;
+  while (budget-- > 0) {
+    const size_t len = g_web_file_transfer.popInbound(&opcode, frame, sizeof frame);
+    if (len == 0) break;
+    if (opcode == 0x02) {
+      fileTransferChunk(frame, len);
+      continue;
+    }
+    if (len >= sizeof frame) {
+      fileTransferFail("command too long");
+      continue;
+    }
+    frame[len] = 0;
+    const char* command = reinterpret_cast<const char*>(frame);
+    if (strncmp(command, "BEGIN ", 6) == 0) fileTransferBegin(command);
+    else if (strncmp(command, "END ", 4) == 0) fileTransferEnd(command);
+    else if (strcmp(command, "LIST") == 0) fileTransferListBegin();
+    else if (strcmp(command, "LIST NEXT") == 0) fileTransferListNext();
+    else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
+    else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
+    else if (strcmp(command, "CANCEL") == 0) {
+      fileTransferResetUpload(true);
+      fileTransferResetRead();
+      snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Upload cancelled");
+      fileTransferReply("CANCELLED");
+    } else {
+      fileTransferFail("unknown command");
+    }
+  }
+
+  const uint32_t inactive_ms = millis() - g_web_file_transfer.lastActivityMs();
+  if ((s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) &&
+      inactive_ms > kFileTransferChunkTimeoutMs) {
+    fileTransferResetUpload(true);
+    fileTransferResetRead();
+    snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Transfer timed out");
+    fileTransferReply("ERR transfer timed out");
+  }
+  if (!s_file_transfer_uploading && !s_file_transfer_downloading && !s_file_transfer_listing &&
+      inactive_ms > kFileTransferIdleMs) {
+    if (g_lv.task) g_lv.task->showAlert(TR("File Transfer session expired"), 1800);
+    closeFileTransferPage();
+  }
+}
+
+static void fileTransferRefresh() {
+  if (!s_file_transfer_status) return;
+  if (s_file_transfer_uploading) {
+    lv_label_set_text_fmt(s_file_transfer_status, "Receiving %s\n%lu / %lu bytes",
+                          s_file_transfer_name,
+                          static_cast<unsigned long>(s_file_transfer_received),
+                          static_cast<unsigned long>(s_file_transfer_expected));
+  } else if (s_file_transfer_downloading) {
+    lv_label_set_text_fmt(s_file_transfer_status, "Sending %s\n%lu / %lu bytes",
+                          s_file_transfer_name,
+                          static_cast<unsigned long>(s_file_transfer_download_offset),
+                          static_cast<unsigned long>(s_file_transfer_download_size));
+  } else if (s_file_transfer_listing) {
+    lv_label_set_text(s_file_transfer_status, TR("Reading file list"));
+  } else if (s_file_transfer_result[0]) {
+    lv_label_set_text(s_file_transfer_status, s_file_transfer_result);
+  } else if (g_web_file_transfer.clients() > 0) {
+    lv_label_set_text(s_file_transfer_status, TR("Browser connected"));
+  } else {
+    lv_label_set_text(s_file_transfer_status, TR("Waiting for browser"));
+  }
+}
+
+static void closeFileTransferPage() {
+  if (s_file_transfer_timer) { lv_timer_del(s_file_transfer_timer); s_file_transfer_timer = nullptr; }
+  g_web_file_transfer.setEnabled(false);
+  fileTransferResetUpload(true);
+  fileTransferResetRead();
+  if (s_file_transfer_started_tcp && g_lv.task) g_lv.task->disableTcp();
+  s_file_transfer_started_tcp = false;
+  if (s_file_transfer_root) { popupClose(&s_file_transfer_root); }
+  s_file_transfer_status = nullptr;
+  appPageEnd(&closeFileTransferPage);
+}
+
+static void fileTransferStopCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeFileTransferPage();
+}
+
+static void fileTransferTimerCb(lv_timer_t*) {
+  fileTransferRefresh();
+}
+
+static void openFileTransferPage() {
+  closeFileTransferPage();
+  if (WiFi.status() != WL_CONNECTED || static_cast<uint32_t>(WiFi.localIP()) == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Connect to Wi-Fi first"), 1800);
+    return;
+  }
+  if (!fileTransferStorageReady()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("File Transfer needs the SD card"), 2000);
+    return;
+  }
+  fs::FS& storage = fileTransferStorage();
+  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+    fileTransferStorageIoFailed();
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not create transfer folder"), 2000);
+    return;
+  }
+  if (storage.exists(kFileTransferTemp) && !storage.remove(kFileTransferTemp)) {
+    fileTransferStorageIoFailed();
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not clear previous upload"), 2000);
+    return;
+  }
+  markSdIo();
+  if (g_lv.task && !g_lv.task->isTcpEnabled()) {
+    g_lv.task->enableTcp();
+    s_file_transfer_started_tcp = true;
+  }
+  const uint32_t code = 100000u + esp_random() % 900000u;
+  s_file_transfer_result[0] = '\0';
+  if (!g_web_file_transfer.setEnabled(true, code)) {
+    if (s_file_transfer_started_tcp && g_lv.task) g_lv.task->disableTcp();
+    s_file_transfer_started_tcp = false;
+    if (g_lv.task) g_lv.task->showAlert(TR("File Transfer: low memory"), 1800);
+    return;
+  }
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  s_file_transfer_root = appPageCreateRoot(COLOR_BG);
+  lv_obj_set_style_pad_top(s_file_transfer_root, STATUSBAR_H + 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(s_file_transfer_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_file_transfer_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_file_transfer_root, 14, LV_PART_MAIN);
+  lv_obj_add_flag(s_file_transfer_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(s_file_transfer_root, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_file_transfer_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_file_transfer_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_file_transfer_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_file_transfer_root, 5, LV_PART_SCROLLBAR);
+  lv_obj_set_flex_flow(s_file_transfer_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_file_transfer_root, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_file_transfer_root, 10, LV_PART_MAIN);
+  appPageBegin("File Transfer", &closeFileTransferPage);
+
+  const lv_coord_t width = sw - 28;
+  lv_obj_t* intro = lv_label_create(s_file_transfer_root);
+  lv_label_set_text(intro, TR("Upload files or download screenshots from a browser on the same Wi-Fi."));
+  lv_obj_set_style_text_font(intro, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(intro, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(intro, width);
+
+  lv_obj_t* url = lv_label_create(s_file_transfer_root);
+  char url_text[72];
+  snprintf(url_text, sizeof url_text, "http://%s:" WEB_UI_PORT_STR "/files",
+           WiFi.localIP().toString().c_str());
+  lv_label_set_text(url, url_text);
+  lv_obj_set_style_text_font(url, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(url, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_label_set_long_mode(url, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(url, width);
+
+  lv_obj_t* code_caption = lv_label_create(s_file_transfer_root);
+  lv_label_set_text(code_caption, TR("Session code"));
+  lv_obj_set_style_text_font(code_caption, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(code_caption, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+
+  lv_obj_t* code_label = lv_label_create(s_file_transfer_root);
+  lv_label_set_text_fmt(code_label, "%06lu", static_cast<unsigned long>(code));
+  lv_obj_set_style_text_font(code_label, &lv_font_montserrat_28, LV_PART_MAIN);
+  lv_obj_set_style_text_color(code_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+
+  s_file_transfer_status = lv_label_create(s_file_transfer_root);
+  lv_obj_set_style_text_font(s_file_transfer_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_file_transfer_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(s_file_transfer_status, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(s_file_transfer_status, width);
+
+  lv_obj_t* stop = lv_btn_create(s_file_transfer_root);
+  lv_obj_set_size(stop, width, SC(40));
+  styleButton(stop);
+  lv_obj_add_event_cb(stop, fileTransferStopCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* stop_label = lv_label_create(stop);
+  lv_label_set_text(stop_label, TR("Stop File Transfer"));
+  lv_obj_set_style_text_font(stop_label, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(stop_label);
+
+  fileTransferRefresh();
+  s_file_transfer_timer = lv_timer_create(fileTransferTimerCb, 500, nullptr);
+}
+#endif
+
 #if !defined(HAS_TANMATSU)
 // ============================================================================
 // VNC app  (app-drawer tile -> APPACT_VNC): serve the live UI to a phone browser
@@ -42348,6 +42952,9 @@ static void luaStoreRebuildList() {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
       { "Files", APPHIDE_FILES },
 #endif
+#if WADA_WEB_FILE_TRANSFER
+  { "Transfer", APPHIDE_FILE_TRANSFER },
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
 #endif
@@ -42864,7 +43471,7 @@ static void luaStoreOpenLanguages() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
-  APPACT_TERMINAL, APPACT_FILES, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
+  APPACT_TERMINAL, APPACT_FILES, APPACT_FILE_TRANSFER, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER, APPACT_STORE,
   APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
 };
@@ -43151,6 +43758,9 @@ static void appTileCb(lv_event_t* e) {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     case APPACT_FILES:     homeFilesCb(e);       return;
 #endif
+#if WADA_WEB_FILE_TRANSFER
+    case APPACT_FILE_TRANSFER: openFileTransferPage(); return;
+#endif
     default: break;
   }
   // Navigation tiles: leave the drawer for the chosen tab.
@@ -43195,6 +43805,7 @@ static uint32_t appHideBitFor(int act) {
     case APPACT_READER:   return APPHIDE_READER;
     case APPACT_TERMINAL: return APPHIDE_TERMINAL;
     case APPACT_FILES:    return APPHIDE_FILES;
+    case APPACT_FILE_TRANSFER: return APPHIDE_FILE_TRANSFER;
     case APPACT_SIGNAL:   return APPHIDE_SIGNAL;
     case APPACT_MENTIONS: return APPHIDE_MENTIONS;
     default:              return 0;   // core tiles (Chats/Map/Settings/...) stay put
@@ -43593,6 +44204,9 @@ static void openAppDrawer() {
 #if CAP_FILESYSTEM || defined(TLORA_PAGER)
     { LV_SYMBOL_DIRECTORY, "Files",     APPACT_FILES,    0,         0xE6BE4A },      // folder gold
 #endif
+#if WADA_WEB_FILE_TRANSFER
+    { LV_SYMBOL_UPLOAD,    "Transfer",  APPACT_FILE_TRANSFER, 0,    0x2FB8A6 },      // authenticated browser upload
+#endif
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
@@ -43614,6 +44228,7 @@ static void openAppDrawer() {
       case APPACT_READER:   return hide_mask & APPHIDE_READER;
       case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
       case APPACT_FILES:    return hide_mask & APPHIDE_FILES;
+      case APPACT_FILE_TRANSFER: return hide_mask & APPHIDE_FILE_TRANSFER;
       case APPACT_SIGNAL:   return hide_mask & APPHIDE_SIGNAL;
       case APPACT_MENTIONS: return hide_mask & APPHIDE_MENTIONS;
       default:              return false;
@@ -55450,6 +56065,9 @@ static bool sdRuntimeLifecycleBusy() {
   bool busy = s_hist_flush_busy || s_hist_flush_req || s_sdinfo_request ||
               s_sdinfo_busy ||
               touchPrefsIoBusy();
+#if WADA_WEB_FILE_TRANSFER_SPI_SD
+  busy = busy || webFileTransferStorageBusy();
+#endif
 #if defined(MULTI_TRANSPORT_COMPANION)
   // The web reader and the Lua audio player are independent SD consumers, so
   // both gate the mount lifecycle. The reader excludes ITSELF: it calls this
@@ -55847,6 +56465,9 @@ void UITask::loop() {
       if (changed) Serial.println("[UI] favorite flags synced into contact table (#178)");
     }
   }
+#endif
+#if WADA_WEB_FILE_TRANSFER
+  webFileTransferTick();
 #endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
@@ -57198,6 +57819,9 @@ static const PopupEnt k_popup_registry[] = {
 #if !defined(HAS_TANMATSU)
   { P_OPEN(s_vnc_root),              []{ closeVncPage(); },               PF_COUNT },
   { P_OPEN(s_remote_root),           []{ closeRemotePage(); },            PF_COUNT },
+#endif
+#if WADA_WEB_FILE_TRANSFER
+  { P_OPEN(s_file_transfer_root),     []{ closeFileTransferPage(); },       PF_COUNT },
 #endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   { P_OPEN(s_wifi_sheet),            []{ wifiSheetClose(); },             PF_COUNT },   // was in no registry at all
