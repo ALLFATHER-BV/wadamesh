@@ -41850,10 +41850,15 @@ static void powerDownloadCb(lv_event_t* e) {
     the_mesh.persistSyncHistoryNow(); // and the app-sync replay ring
     touchPrefsSetClockFloor(rtc_clock.getFloor());   // preserve protocol monotonicity after flashing
     touchPrefsFlush();                 // and all queued A/B preference snapshots
-    g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB"), 1500);
+    // Say how to LEAVE, not just what is happening. This screen is the last
+    // thing shown before the device stops its own UI and waits to be flashed,
+    // and a blank screen with no way back reads as a hang: it was reported as
+    // "device frozen" (#104) by someone who simply had no way to know that
+    // reset returns them to normal.
+    g_lv.task->showAlert(TR("Download mode\xE2\x80\xA6 reflash over USB,\nor press RESET to cancel"), 2600);
   }
   lv_refr_now(NULL);
-  delay(900);
+  delay(1800);   // long enough to read the way out before the UI stops
   rebootToDownloadMode();   // never returns
 #endif
 }
@@ -41938,7 +41943,7 @@ static void openPowerMenu() {
 #endif
   mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
 #if !defined(HAS_RAK_TAP_V2)
-  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode"), powerDownloadCb, 0,        p_y + p_step);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode (wait for USB flash)"), powerDownloadCb, 0,        p_y + p_step);
   mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
 #else
   mk(TR("Cancel"), powerCancelCb, 0, p_y + p_step);
