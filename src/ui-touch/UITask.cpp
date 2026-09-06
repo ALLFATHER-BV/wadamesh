@@ -6610,7 +6610,7 @@ static void kbMirrorEnsureCreated() {
   lv_obj_align(hint, LV_ALIGN_TOP_LEFT, 0, 0);
 
   s_kb_mirror_ta = lv_textarea_create(s_kb_mirror_root);
-  lv_obj_set_size(s_kb_mirror_ta, 224, 30);
+  lv_obj_set_size(s_kb_mirror_ta, SC(224), SC(30));
   lv_obj_align(s_kb_mirror_ta, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   lv_textarea_set_one_line(s_kb_mirror_ta, true);
   lv_obj_set_style_bg_color(s_kb_mirror_ta, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
@@ -38417,7 +38417,7 @@ static void pagerLockingPopupShow() {
 
   lv_obj_t* card = lv_obj_create(s_pager_locking_popup);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, 180, 74);
+  lv_obj_set_size(card, SC(180), SC(74));
   lv_obj_center(card);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -38433,7 +38433,7 @@ static void pagerLockingPopupShow() {
   lv_obj_align(t, LV_ALIGN_TOP_MID, 0, 8);
 
   s_pager_locking_bar = lv_bar_create(card);
-  lv_obj_set_size(s_pager_locking_bar, 140, 8);
+  lv_obj_set_size(s_pager_locking_bar, SC(140), SC(8));
   lv_obj_align(s_pager_locking_bar, LV_ALIGN_BOTTOM_MID, 0, -14);
   lv_obj_set_style_bg_color(s_pager_locking_bar, lv_color_hex(themeRole(0x2A2D31, COLOR_TRACK)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_pager_locking_bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -39111,7 +39111,7 @@ static void lockscreenUnlockProgress(unsigned long remaining_ms) {
   if (!s_unlock_popup) {
     s_unlock_popup = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_unlock_popup);
-    lv_obj_set_size(s_unlock_popup, 180, 104);
+    lv_obj_set_size(s_unlock_popup, SC(180), SC(104));
     lv_obj_center(s_unlock_popup);
     lv_obj_set_style_bg_color(s_unlock_popup, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_unlock_popup, LV_OPA_COVER, LV_PART_MAIN);
@@ -40189,7 +40189,7 @@ static void startLockingCountdown() {
 
   lv_obj_t* card = lv_obj_create(s_locking_popup);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, 180, 104);
+  lv_obj_set_size(card, SC(180), SC(104));
   lv_obj_center(card);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -47213,7 +47213,7 @@ static void openAccentPicker() {
 
   lv_obj_t* hexrow = lv_obj_create(s_accent_picker);
   lv_obj_remove_style_all(hexrow);
-  lv_obj_set_size(hexrow, 150, 30);
+  lv_obj_set_size(hexrow, SC(150), SC(30));
   lv_obj_t* hash = lv_label_create(hexrow);
   useChainedFont(hash);
   lv_label_set_text(hash, "#");
@@ -47223,14 +47223,14 @@ static void openAccentPicker() {
   lv_textarea_set_one_line(s_accent_hex_ta, true);
   lv_textarea_set_max_length(s_accent_hex_ta, 6);
   lv_textarea_set_accepted_chars(s_accent_hex_ta, "0123456789abcdefABCDEF");
-  lv_obj_set_size(s_accent_hex_ta, 120, 28);
+  lv_obj_set_size(s_accent_hex_ta, SC(120), SC(28));
   lv_obj_align(s_accent_hex_ta, LV_ALIGN_LEFT_MID, 16, 0);
   lv_obj_add_event_cb(s_accent_hex_ta, accentHexCb, LV_EVENT_VALUE_CHANGED, nullptr);
   attachSettingsTaEvents(s_accent_hex_ta);
 
   s_accent_preview = lv_obj_create(s_accent_picker);
   lv_obj_remove_style_all(s_accent_preview);
-  lv_obj_set_size(s_accent_preview, 150, 28);
+  lv_obj_set_size(s_accent_preview, SC(150), SC(28));
   lv_obj_set_style_radius(s_accent_preview, 6, LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_accent_preview, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_t* pv = lv_label_create(s_accent_preview);
