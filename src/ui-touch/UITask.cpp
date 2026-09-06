@@ -56672,6 +56672,20 @@ static void sdHealthTick() {
       sdNoteIoFailure();
     }
   }
+  // Holding the backend pause across a busy tick is deliberate, so queued tile
+  // requests cannot keep winning the boundary while recovery waits. It becomes a
+  // deadlock for exactly one busy reason: a pending About-page SD-usage rescan.
+  // The tile worker services that request near the TOP of its loop but takes the
+  // backend lease LATER in the same pass, so a request armed in between can only
+  // ever be cleared by the task the pause has just parked, while the flag keeps
+  // sdRuntimeLifecycleBusy() true and this tick returning. Nothing else can break
+  // it and the card stays locked out until reboot (#364, traced by @cvhviz).
+  //
+  // So release the pause for that one case and let the worker drain. Recovery is
+  // not abandoned, it retries on the next tick; it just stops holding the door
+  // shut on the only task that can open it. Same reasoning as the reader
+  // excluding itself from this predicate a few lines up.
+  if (s_sdinfo_request && tileBackendSwapRequested()) tileBackendSwapFinish();
   if (s_pager_sd_removal_pending) {
     if (sdRuntimeLifecycleBusy()) return;
     fmSdUnmount();
