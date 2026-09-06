@@ -71,6 +71,18 @@ field, so you're never stuck. Enter sends (toggleable under Settings), Back
 leaves the field. In the Terminal, Enter runs the command; in the text editor
 it inserts a newline.
 
+Channels, direct messages, and room conversations place **#** and emoji to the
+right of the message input. Press Right to move from the input to **#**, and
+Right again to move to emoji. Press **OK** on either button to open its picker.
+
+In the symbol grid, use all four arrows to move the highlight and **OK** to
+insert the selected character.
+
+The Create/Join channel forms use the same **#** action beside every text
+field. Right moves from the field to **#**; Left returns to editing the field.
+Password fields use the same control, including Wi-Fi, MQTT, and repeater login.
+After inserting a symbol, focus returns to the originating text field.
+
 ## Lock screen
 
 **Hold OK** to unlock — the keyboard's hardware long-press stands in for the
