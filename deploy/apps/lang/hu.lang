@@ -1158,3 +1158,8 @@ Rotating… restarting to apply it	Rotating… restarting to apply it
 Within %u km	Within %u km
 Within %u m	Within %u m
 shifts the position others see; your own map keeps the real fix	shifts the position others see; your own map keeps the real fix
+Clock set	Clock set
+Set clock	Set clock
+Set the clock by hand (local time)	Set the clock by hand (local time)
+That is not a valid date and time	That is not a valid date and time
+Use YYYY-MM-DD HH:MM	Use YYYY-MM-DD HH:MM

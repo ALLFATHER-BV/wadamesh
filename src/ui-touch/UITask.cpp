@@ -13086,6 +13086,45 @@ static void themeModeRestart(uint8_t mode) {
                                            : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
 }
 
+static lv_obj_t* s_clockset_ta = nullptr;   // manual clock entry (#105)
+
+// Set the clock by hand. Until now the only ways to get the time were GPS, a
+// companion app, or a network, so a device used purely offline had no way at all
+// to hold a correct clock, and message timestamps are built from it (#105).
+// Entry is local time in "YYYY-MM-DD HH:MM": mktime() reads it through the
+// configured zone, which is the same zone the clock is displayed in, so what you
+// type is what you see rather than something you have to convert to UTC first.
+static void clockSetManualCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!s_clockset_ta || !lv_obj_is_valid(s_clockset_ta)) return;
+  const char* txt = lv_textarea_get_text(s_clockset_ta);
+  int Y = 0, Mo = 0, D = 0, h = 0, mi = 0;
+  if (!txt || sscanf(txt, "%d-%d-%d %d:%d", &Y, &Mo, &D, &h, &mi) != 5) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Use YYYY-MM-DD HH:MM"), 1800);
+    return;
+  }
+  if (Y < 2000 || Y > 2099 || Mo < 1 || Mo > 12 || D < 1 || D > 31 ||
+      h < 0 || h > 23 || mi < 0 || mi > 59) {
+    if (g_lv.task) g_lv.task->showAlert(TR("That is not a valid date and time"), 1800);
+    return;
+  }
+  struct tm v = {};
+  v.tm_year = Y - 1900; v.tm_mon = Mo - 1; v.tm_mday = D;
+  v.tm_hour = h; v.tm_min = mi; v.tm_sec = 0;
+  v.tm_isdst = -1;                       // let the zone decide, so summer time is not off by an hour
+  const time_t t = mktime(&v);
+#if defined(ESP32)
+  if (t <= 0 || (uint32_t)t <= ClockFloorRTC::MIN_VALID_EPOCH) {
+    // The same floor every other clock source is held to: a value this low is
+    // refused rather than allowed to walk the send-timestamp ratchet backwards.
+    if (g_lv.task) g_lv.task->showAlert(TR("That is not a valid date and time"), 1800);
+    return;
+  }
+#endif
+  the_mesh.getRTCClock()->setCurrentTime((uint32_t)t);
+  if (g_lv.task) g_lv.task->showAlert(TR("Clock set"), 1400);
+}
+
 static void buildDeviceSettings(int sec);   // fwd: the cycle button redraws its own page
 
 // Advertised-position displacement (#399). Cycles off / 100 m / 250 m / 1 km,
@@ -13447,6 +13486,43 @@ static void buildDeviceSettings(int sec) {
   lv_label_set_text(l_time, TR("Sync clock from system"));
   lv_obj_center(l_time);
   y += SC(40);
+
+  // Manual entry, for a device that has no GPS fix, no network and no phone (#105).
+  {
+    y += settingsRowLabel(body, y, 0, TR("Set the clock by hand (local time)"),
+                          COLOR_SUB, &g_font_12, 0) + 4;
+    s_clockset_ta = lv_textarea_create(body);
+    lv_obj_set_size(s_clockset_ta, lv_pct(100), SC(32));
+    lv_obj_set_pos(s_clockset_ta, 2, y);
+    lv_textarea_set_one_line(s_clockset_ta, true);
+    lv_textarea_set_max_length(s_clockset_ta, 16);
+    taSetPlaceholder(s_clockset_ta, "YYYY-MM-DD HH:MM");
+    // Prefill with the clock's current reading, so a correction is an edit of a
+    // digit or two rather than typing the whole stamp on a device keyboard.
+    {
+      const time_t now = (time_t)the_mesh.getRTCClock()->getCurrentTime();
+      struct tm lv_now;
+      localtime_r(&now, &lv_now);
+      char pre[20];
+      snprintf(pre, sizeof pre, "%04d-%02d-%02d %02d:%02d",
+               lv_now.tm_year + 1900, lv_now.tm_mon + 1, lv_now.tm_mday,
+               lv_now.tm_hour, lv_now.tm_min);
+      lv_textarea_set_text(s_clockset_ta, pre);
+    }
+    attachSettingsTaEvents(s_clockset_ta);
+    y += SC(38);
+
+    lv_obj_t* b_set = lv_btn_create(body);
+    lv_obj_set_size(b_set, lv_pct(100), SC(34));
+    lv_obj_set_pos(b_set, 2, y);
+    styleButton(b_set);
+    lv_obj_add_event_cb(b_set, clockSetManualCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l_set = lv_label_create(b_set);
+    useChainedFont(l_set);
+    lv_label_set_text(l_set, TR("Set clock"));
+    lv_obj_center(l_set);
+    y += SC(40);
+  }
 
 #if CAP_BOOT_TIME_SYNC
   lv_obj_t* boot_sync_sw = lv_switch_create(body);
