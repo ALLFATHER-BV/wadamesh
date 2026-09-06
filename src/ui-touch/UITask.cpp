@@ -43226,8 +43226,13 @@ enum AppDrawerAction {
 };
 
 static void closeAppDrawer() {
+#if CAP_KEYPAD_NAV
+  // Declared inside the keypad-nav block, so clearing them has to be too: on a
+  // board without keypad navigation these do not exist and the file stopped
+  // compiling (the Heltec V4 TFT and the Wio Tracker L2).
   s_nav_drawer_corner = nullptr;
   s_nav_drawer_gear = nullptr;
+#endif
   popupClose(&s_appdrawer_root);   // del_async + wait_release: the drawer grid scrolls, so guard the throw UAF
 }
 
@@ -43236,8 +43241,10 @@ static void closeAppDrawer() {
 // bottom-bar tap). Leaving Home this way means the map's slow first tile render
 // can't paint under a still-present, del_async'd drawer.
 static void closeAppDrawerSync() {
+#if CAP_KEYPAD_NAV
   s_nav_drawer_corner = nullptr;
   s_nav_drawer_gear = nullptr;
+#endif
   if (s_appdrawer_root) { popupClose(&s_appdrawer_root); }
 }
 
@@ -44032,7 +44039,10 @@ static void openAppDrawer() {
                tiles[i].act, tiles[i].badge, tiles[i].color, big_grid);
 #endif
   }
+#if CAP_KEYPAD_NAV
+  // Keypad-nav only: the top-right tile is where UP and RIGHT wrap to the gear.
   s_nav_drawer_corner = lv_obj_get_child(s_appdrawer_root, (uint32_t)(cols - 1));
+#endif
 
   // Keep the scrollbar permanently visible only when the grid actually overflows
   // the drawer area (so it's discoverable); when it all fits, hide it so there's
@@ -44045,7 +44055,9 @@ static void openAppDrawer() {
   // App-drawer settings cog — top-right, floats above the scrolling grid (does not
   // move with it). Opens the icon-size chooser (Compact / Large).
   lv_obj_t* cog = lv_btn_create(s_appdrawer_root);
+#if CAP_KEYPAD_NAV
   s_nav_drawer_gear = cog;
+#endif
   lv_obj_remove_style_all(cog);
   lv_obj_set_size(cog, 30, 30);
   lv_obj_add_flag(cog, LV_OBJ_FLAG_FLOATING);
