@@ -452,7 +452,7 @@ Lock wallpaper set	Zárolt háttérkép beállítása
 Lock when screen off	Zárolás kikapcsolt képernyő esetén
 Locking…	Zárva…
 Locks when screen off\n(hold Backspace to unlock)	Zárol képernyőkikapcsoláskor\n(feloldás: Backspace nyomva tartása)
-Locks when screen off\n(hold the d-pad to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz tartsa lenyomva a d-padot)
+Locks when screen off\n(double-press d-pad center to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz nyomja meg kétszer a d-pad közepét)
 Locks when screen off\n(hold the trackball to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz tartsa lenyomva a görgetőgolyót)
 Locks when screen off\n(press Volume Down to unlock)	Kikapcsolt képernyő esetén zárol\n(a feloldáshoz nyomja meg a Hangerő csökkentése gombot)
 Locks when screen off\n(press the button to unlock)	Lezár, ha a képernyő ki van kapcsolva\n(a feloldáshoz nyomja meg a gombot)
@@ -972,7 +972,7 @@ e.g. mesh	pl. mesh
 from	from
 h  to	ó  →
 hold Backspace to unlock	feloldás: tartsd nyomva a Backspace-t
-hold the d-pad to unlock	tartsa lenyomva a d-padot a feloldáshoz
+double-press d-pad center to unlock	a feloldáshoz nyomja meg kétszer a d-pad közepét
 hold the trackball to unlock	tartsa lenyomva a trackballt a feloldáshoz
 kHz	kHz
 keep holding	tartsd ki

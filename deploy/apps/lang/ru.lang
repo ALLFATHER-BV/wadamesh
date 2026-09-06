@@ -447,7 +447,7 @@ Lock wallpaper set	Обои блокировки заданы
 Lock when screen off	Блокировать при выкл. экране
 Locking…	Блокировка…
 Locks when screen off\n(hold Backspace to unlock)	Блокируется при выключении экрана\n(удерживайте Backspace для разблокировки)
-Locks when screen off\n(hold the d-pad to unlock)	Блокируется при выкл. экране\n(удерживайте d-pad для разблокировки)
+Locks when screen off\n(double-press d-pad center to unlock)	Блокируется при выкл. экране\n(дважды нажмите центр d-pad для разблокировки)
 Locks when screen off\n(hold the trackball to unlock)	Блокируется при выкл. экране\n(удерживайте трекбол для разблокировки)
 Locks when screen off\n(press Volume Down to unlock)	Блокируется при выкл. экране\n(нажмите Громкость вниз для разблокировки)
 Locks when screen off\n(press the button to unlock)	Блокируется при выкл. экране\n(нажмите кнопку для разблокировки)
@@ -953,7 +953,7 @@ e.g. mesh	напр. mesh
 from	от
 h  to	ч  до
 hold Backspace to unlock	удерживайте Backspace для разблокировки
-hold the d-pad to unlock	удерживайте d-pad для разблокировки
+double-press d-pad center to unlock	дважды нажмите центр d-pad для разблокировки
 hold the trackball to unlock	удерживайте трекбол для разблокировки
 kHz	kHz
 keep holding	удерживайте

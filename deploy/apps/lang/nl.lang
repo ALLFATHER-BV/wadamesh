@@ -447,7 +447,7 @@ Lock wallpaper set	Vergrendelachtergrond ingesteld
 Lock when screen off	Vergrendelen bij scherm uit
 Locking…	Vergrendelen…
 Locks when screen off\n(hold Backspace to unlock)	Vergrendelt bij scherm uit\n(houd Backspace vast om te ontgrendelen)
-Locks when screen off\n(hold the d-pad to unlock)	Vergrendelt bij scherm uit\n(houd de d-pad vast om te ontgrendelen)
+Locks when screen off\n(double-press d-pad center to unlock)	Vergrendelt bij scherm uit\n(druk tweemaal op het midden van de d-pad om te ontgrendelen)
 Locks when screen off\n(hold the trackball to unlock)	Vergrendelt bij scherm uit\n(houd de trackball vast om te ontgrendelen)
 Locks when screen off\n(press Volume Down to unlock)	Vergrendelt bij scherm uit\n(druk op Volume Omlaag om te ontgrendelen)
 Locks when screen off\n(press the button to unlock)	Vergrendelt bij scherm uit\n(druk op de knop om te ontgrendelen)
@@ -950,7 +950,7 @@ e.g. mesh	bijv. mesh
 from	van
 h  to	u  tot
 hold Backspace to unlock	houd Backspace vast om te ontgrendelen
-hold the d-pad to unlock	houd de d-pad vast om te ontgrendelen
+double-press d-pad center to unlock	druk tweemaal op het midden van de d-pad om te ontgrendelen
 hold the trackball to unlock	houd de trackball vast om te ontgrendelen
 kHz	kHz
 keep holding	blijf vasthouden

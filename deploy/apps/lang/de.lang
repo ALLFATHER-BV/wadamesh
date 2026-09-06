@@ -447,7 +447,7 @@ Lock wallpaper set	Sperr-Hintergrund gesetzt
 Lock when screen off	Sperren bei Bildschirm aus
 Locking…	Sperren…
 Locks when screen off\n(hold Backspace to unlock)	Sperrt bei Bildschirm aus\n(Backspace halten zum Entsperren)
-Locks when screen off\n(hold the d-pad to unlock)	Sperrt bei Bildschirm aus\n(D-Pad halten zum Entsperren)
+Locks when screen off\n(double-press d-pad center to unlock)	Sperrt bei Bildschirm aus\n(D-Pad-Mitte zweimal drücken zum Entsperren)
 Locks when screen off\n(hold the trackball to unlock)	Sperrt bei Bildschirm aus\n(Trackball halten zum Entsperren)
 Locks when screen off\n(press Volume Down to unlock)	Sperrt bei Bildschirm aus\n(Lautstärke leiser drücken zum Entsperren)
 Locks when screen off\n(press the button to unlock)	Sperrt bei Bildschirm aus\n(Taste drücken zum Entsperren)
@@ -949,7 +949,7 @@ e.g. mesh	z. B. mesh
 from	von
 h  to	h  bis
 hold Backspace to unlock	Backspace halten zum Entsperren
-hold the d-pad to unlock	D-Pad halten zum Entsperren
+double-press d-pad center to unlock	D-Pad-Mitte zweimal drücken zum Entsperren
 hold the trackball to unlock	Trackball halten zum Entsperren
 kHz	kHz
 keep holding	weiter halten

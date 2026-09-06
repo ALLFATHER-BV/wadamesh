@@ -447,7 +447,7 @@ Lock wallpaper set	Шпалери блокування встановлено
 Lock when screen off	Блокувати при вимк. екрані
 Locking…	Блокування…
 Locks when screen off\n(hold Backspace to unlock)	Блокується при вимкненні екрана\n(утримуйте Backspace для розблокування)
-Locks when screen off\n(hold the d-pad to unlock)	Блокується при вимк. екрані\n(утримуйте d-pad для розблокування)
+Locks when screen off\n(double-press d-pad center to unlock)	Блокується при вимк. екрані\n(двічі натисніть центр d-pad для розблокування)
 Locks when screen off\n(hold the trackball to unlock)	Блокується при вимк. екрані\n(утримуйте трекбол для розблокування)
 Locks when screen off\n(press Volume Down to unlock)	Блокується при вимк. екрані\n(натисніть Гучність вниз для розблокування)
 Locks when screen off\n(press the button to unlock)	Блокується при вимк. екрані\n(натисніть кнопку для розблокування)
@@ -953,7 +953,7 @@ e.g. mesh	напр. mesh
 from	від
 h  to	год  до
 hold Backspace to unlock	утримуйте Backspace для розблокування
-hold the d-pad to unlock	утримуйте d-pad для розблокування
+double-press d-pad center to unlock	двічі натисніть центр d-pad для розблокування
 hold the trackball to unlock	утримуйте трекбол для розблокування
 kHz	kHz
 keep holding	утримуйте

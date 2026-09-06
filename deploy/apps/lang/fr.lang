@@ -447,7 +447,7 @@ Lock wallpaper set	Fond de verrouillage défini
 Lock when screen off	Verrouiller écran éteint
 Locking…	Verrouillage…
 Locks when screen off\n(hold Backspace to unlock)	Se verrouille écran éteint\n(maintenez Retour pour déverrouiller)
-Locks when screen off\n(hold the d-pad to unlock)	Verrouille écran éteint\n(maintenez la croix pour déverrouiller)
+Locks when screen off\n(double-press d-pad center to unlock)	Verrouille écran éteint\n(appuyez deux fois au centre du pavé pour déverrouiller)
 Locks when screen off\n(hold the trackball to unlock)	Verrouille écran éteint\n(maintenez le trackball pour déverrouiller)
 Locks when screen off\n(press Volume Down to unlock)	Verrouille écran éteint\n(appuyez sur Volume Bas pour déverrouiller)
 Locks when screen off\n(press the button to unlock)	Verrouille écran éteint\n(appuyez sur le bouton pour déverrouiller)
@@ -952,7 +952,7 @@ e.g. mesh	ex. mesh
 from	de
 h  to	h  à
 hold Backspace to unlock	maintenez Retour pour déverrouiller
-hold the d-pad to unlock	maintenez le d-pad pour déverrouiller
+double-press d-pad center to unlock	appuyez deux fois au centre du pavé pour déverrouiller
 hold the trackball to unlock	maintenez la boule pour déverrouiller
 kHz	kHz
 keep holding	maintenez

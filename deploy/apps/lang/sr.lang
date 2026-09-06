@@ -447,7 +447,7 @@ Lock wallpaper set	Позадина закључавања постављена
 Lock when screen off	Закључај кад је екран искључен
 Locking…	Закључавање…
 Locks when screen off\n(hold Backspace to unlock)	Закључава се кад се екран угаси\n(држи Backspace за откључавање)
-Locks when screen off\n(hold the d-pad to unlock)	Закључава се кад је екран искључен\n(држите d-pad да откључате)
+Locks when screen off\n(double-press d-pad center to unlock)	Закључава се кад је екран искључен\n(притисните средину d-pad-а два пута за откључавање)
 Locks when screen off\n(hold the trackball to unlock)	Закључава се кад је екран искључен\n(држите трекбол да откључате)
 Locks when screen off\n(press Volume Down to unlock)	Закључава се кад је екран искључен\n(притисните Јачина доле да откључате)
 Locks when screen off\n(press the button to unlock)	Закључава се кад је екран искључен\n(притисните дугме да откључате)
@@ -953,7 +953,7 @@ e.g. mesh	нпр. mesh
 from	од
 h  to	ч  до
 hold Backspace to unlock	држи Backspace за откључавање
-hold the d-pad to unlock	држи d-pad за откључавање
+double-press d-pad center to unlock	притисните средину d-pad-а два пута за откључавање
 hold the trackball to unlock	држите куглицу да откључате
 kHz	kHz
 keep holding	држите
