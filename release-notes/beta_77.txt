@@ -30,6 +30,9 @@ On the T-Display P4, the first line of a Lua app is no longer cut in half by the
 Several other panels that hold text were on fixed sizes too: the lock and unlock progress cards, the on screen keyboard's text line, and the accent colour entry row. All now scale with the text they contain, so a longer translation has room.
 The theme button in the control centre keeps one icon in both states, matching how Do Not Disturb already behaves: the button's own fill shows whether it is on.
 
+# --- Small things --------------------------------------------------------------------------------
+Download mode says what it is for and how to leave it. It waits for a USB flash with the interface stopped, which looked like the device had frozen; the entry now says "wait for USB flash" and the message says RESET cancels. Reported as a freeze by dreirund, who was right that a state you cannot leave without already knowing the way out is a bug even when the code is correct.
+
 # --- For testers ---------------------------------------------------------------------------------
 If you were on beta_76 with a Lua app open, the drawer problem is the one to confirm gone.
 Still not verified on hardware, both off by default and unchanged since beta_76: the DS3231 clock module support, written from the datasheet with nobody having wired one up yet, and the louder chime, whose pitch has not been measured on an M9.
