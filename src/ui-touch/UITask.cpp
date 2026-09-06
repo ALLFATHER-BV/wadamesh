@@ -44420,16 +44420,26 @@ static void openAppGridSheet() {
   lv_obj_clear_flag(s_appgrid_sheet, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_appgrid_sheet, appGridBackdropCb, LV_EVENT_CLICKED, nullptr);
 
+  // Scaled, not raw pixels. The text inside these buttons grows with the UI
+  // scale while the card did not, so on a board running Large or Huge the
+  // contents outgrew the box they sit in (#238). SC() is identity at 100%, so
+  // this changes nothing on a board that was already right.
 #if CAP_LARGE_SCREEN
-  const int card_w = 380, btn_h = 62, pad = 18, hdr = 38, gap = 12;   // bigger on the 800×480 panel
-  const int home_row = 46;
+  const int card_w = SC(380), btn_h = SC(62), pad = SC(18), hdr = SC(38), gap = SC(12);
+  const int home_row = SC(46);
 #else
-  const int card_w = 210, btn_h = 46, pad = 12, hdr = 28, gap = 8;
-  const int home_row = 36;   // the "app drawer as home" toggle row below the size buttons
+  const int card_w = SC(210), btn_h = SC(46), pad = SC(12), hdr = SC(28), gap = SC(8);
+  const int home_row = SC(36);   // the "app drawer as home" toggle row below the size buttons
 #endif
+  // Never taller than the sheet it floats in, however large the scale goes.
+  const int card_h_max = (int)(sh - STATUSBAR_H) - SC(16);
   lv_obj_t* card = lv_obj_create(s_appgrid_sheet);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, card_w, hdr + 2 * btn_h + gap + home_row + gap + 2 * pad);
+  {
+    int card_h = hdr + 2 * btn_h + gap + home_row + gap + 2 * pad;
+    if (card_h > card_h_max) card_h = card_h_max;
+    lv_obj_set_size(card, card_w, card_h);
+  }
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
@@ -51116,6 +51126,14 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
 // time. These two expose that to the SDK: the send returns the fingerprint, and
 // the app reads the count back whenever it likes. A DM has no meaningful count,
 // since it is not flooded.
+// The height an AppPage's title bar ACTUALLY occupies. The Lua host had this as
+// a hardcoded 44, which is right only where STATUSBAR_H is its 22 default: it is
+// SB_TOP_PAD + SB_ROW*2 on the round-corner phone panel, and SC(22) everywhere
+// else, so it grows with the UI scale. Wherever it was taller than 44 the app's
+// first line was drawn under the bar (#236 on the T-Display P4, and the same on
+// any board at Large or Huge scale, which the Tanmatsu uses by default).
+lv_coord_t luaHostAppBarH() { return statusBarCurH(); }
+
 uint32_t luaHostLastSentFp() { return the_mesh.uiLastSentFp(); }
 uint8_t  luaHostRepeatsForFp(uint32_t fp) { return fp ? the_mesh.uiRepeatsForFp(fp) : 0; }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE

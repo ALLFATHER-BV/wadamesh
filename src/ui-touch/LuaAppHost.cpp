@@ -29,6 +29,7 @@ extern "C" {
 
 // UITask-owned services the host borrows (all pre-existing, fwd-declared here
 // to keep this TU decoupled from the 47k-line UITask.cpp).
+extern lv_coord_t       luaHostAppBarH();                         // real AppPage bar height
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern bool             luaHostBeep();
@@ -2750,7 +2751,9 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 
   h->body = lv_obj_create(h->root);
   lv_obj_remove_style_all(h->body);
-  const int bar_h = 44;   // matches the AppPage tall bar band
+  // Ask for the bar's real height rather than assuming the 44 it happens to be
+  // at the default status-bar size and 100% UI scale (#236).
+  const int bar_h = (int)luaHostAppBarH();
   h->body_w = lv_disp_get_hor_res(nullptr);
   h->body_h = lv_disp_get_ver_res(nullptr) - bar_h;
   lv_obj_set_pos(h->body, 0, bar_h);
