@@ -32611,7 +32611,7 @@ static void onMapTabActivated() {
   refreshMapInfoLabel();
 }
 
-// Idle power-save indicator (iPhone Low-Power-Mode style, T-Deck only): instead of a separate moon
+// Idle power-save indicator (iPhone Low-Power-Mode style, T-Deck and M9): instead of a separate moon
 // glyph, the status-bar battery turns amber while idle power-save is enabled. s_batt_base holds the
 // colour the theme/map chrome wants (off-white off-map, black/white over light tiles); applyBattColor
 // overlays the amber when power-save is on, so the map-chrome setter and the per-tick refresh share
@@ -32620,7 +32620,7 @@ static lv_color_t s_batt_base = lv_color_hex(COLOR_TEXT);
 static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (touchSleep::enabled()) c = lv_color_hex(0xFFD60A);   // iOS systemYellow ≈ Low Power Mode
 #endif
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
@@ -46031,7 +46031,7 @@ static void updateGlobalStatusBar() {
     lv_label_set_text(g_statusbar.batt_icon, g);
     s_last_glyph = g;
   }
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Re-tint the battery amber/normal when idle power-save toggles (the toggle cb routes through
   // here via updateGlobalStatusBar). Only on change, so no per-tick style churn.
   { static int s_last_pwr = -1;
