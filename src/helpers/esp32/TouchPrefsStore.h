@@ -214,6 +214,8 @@ bool    touchPrefsSetConsoleMonitor(bool on);
  *  decision and is never implied by the first. */
 bool    touchPrefsGetBootWifiTime();
 bool    touchPrefsSetBootWifiTime(bool on);
+uint16_t touchPrefsGetGpsFuzzM();
+bool     touchPrefsSetGpsFuzzM(uint16_t m);
 bool    touchPrefsGetLoudAlerts();
 bool    touchPrefsSetLoudAlerts(bool on);
 bool    touchPrefsGetBootWifiTimeOpen();

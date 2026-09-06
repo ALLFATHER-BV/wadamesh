@@ -13086,6 +13086,25 @@ static void themeModeRestart(uint8_t mode) {
                                            : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
 }
 
+static void buildDeviceSettings(int sec);   // fwd: the cycle button redraws its own page
+
+// Advertised-position displacement (#399). Cycles off / 100 m / 250 m / 1 km,
+// because a free-text metre box on a device keyboard is a worse experience than
+// three sensible choices, and the exact number is not what matters here.
+static void gpsFuzzCycleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+#if defined(ESP32)
+  const uint16_t cur = touchPrefsGetGpsFuzzM();
+  const uint16_t next = cur == 0 ? 100 : cur == 100 ? 250 : cur == 250 ? 1000 : 0;
+  touchPrefsSetGpsFuzzM(next);
+  if (g_lv.task) {
+    if (next == 0) g_lv.task->showAlert(TR("Advertising your exact position"), 1400);
+    else           g_lv.task->showAlert(TR("Advertised position displaced"), 1400);
+  }
+  buildDeviceSettings(DSEC_GPS);   // redraw so the button shows the new value
+#endif
+}
+
 static void themeModeSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
@@ -13211,6 +13230,30 @@ static void buildDeviceSettings(int sec) {
     lv_label_set_text(le, TR("Expansion Kit"));
     lv_obj_center(le);
     y += SC(38);
+#endif
+#if defined(ESP32)
+  // Privacy: advertise a position near you without advertising your address.
+  {
+    y += settingsRowLabel(body, y, 0, TR("Position in adverts"), COLOR_SUB, &g_font_12, 0) + 4;
+    lv_obj_t* b_fz = lv_btn_create(body);
+    lv_obj_set_size(b_fz, lv_pct(100), SC(34));
+    lv_obj_set_pos(b_fz, 2, y);
+    styleButton(b_fz);
+    lv_obj_add_event_cb(b_fz, gpsFuzzCycleCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* lf = lv_label_create(b_fz);
+    useChainedFont(lf);
+    const uint16_t fz = touchPrefsGetGpsFuzzM();
+    char fb[48];
+    if (fz == 0)          snprintf(fb, sizeof fb, "%s", TR("Exact"));
+    else if (fz < 1000)   snprintf(fb, sizeof fb, TR("Within %u m"), (unsigned)fz);
+    else                  snprintf(fb, sizeof fb, TR("Within %u km"), (unsigned)(fz / 1000));
+    lv_label_set_text(lf, fb);
+    lv_obj_center(lf);
+    y += SC(38);
+    y += settingsRowLabel(body, y, 0,
+          TR("shifts the position others see; your own map keeps the real fix"),
+          COLOR_SUB, &g_font_12, 0) + 2;
+  }
 #endif
     // The "Show Sensors tab" toggle is appended here too (moved from Display).
   }
@@ -25215,6 +25258,32 @@ static lv_obj_t* s_appdrawer_root = nullptr;
 // Badge counts baked into the drawer grid when it was last built, so the
 // refresh tick can tell whether they still match reality (see #393).
 static uint32_t  s_appdrawer_badge_sig = 0;
+
+// Is anything drawn in front of the app drawer? Tools and Lua apps are children
+// of the same layer and open over it without closing it, so "the drawer exists"
+// does not mean "the drawer is what the user is looking at". Tested by sibling
+// order rather than by listing the tools, so a tool added later is covered
+// automatically. The global status bar is excluded: it legitimately floats above
+// the drawer at all times, and treating it as covering would mean the badges
+// never refreshed at all.
+static bool appDrawerCovered() {
+  lv_obj_t* layer = s_appdrawer_root ? lv_obj_get_parent(s_appdrawer_root) : nullptr;
+  if (!layer) return false;
+  const uint32_t n = lv_obj_get_child_cnt(layer);
+  uint32_t idx = 0;
+  bool found = false;
+  for (uint32_t i = 0; i < n; ++i) {
+    if (lv_obj_get_child(layer, (int32_t)i) == s_appdrawer_root) { idx = i; found = true; break; }
+  }
+  if (!found) return false;
+  for (uint32_t i = idx + 1; i < n; ++i) {
+    lv_obj_t* c = lv_obj_get_child(layer, (int32_t)i);
+    if (!c || c == g_statusbar.root) continue;
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    return true;
+  }
+  return false;
+}
 static void openAppDrawer();
 static void closeAppDrawer();
 static void homeAppsBtnCb(lv_event_t* e) {   // "Apps" launcher on the command centre -> open the drawer
@@ -39365,6 +39434,29 @@ static bool m9NavPop() {
   return false;
 }
 
+// The M9 has no touch, so the accent box is driven by the d-pad, the same way
+// the mention box already is on this board. There is no arming step: the box
+// only exists for the moment after typing a base letter, so LEFT/RIGHT belong
+// to it while it is up and go back to the caret as soon as it closes. Enter
+// takes the highlighted variant, Back and Backspace dismiss (#387).
+// Returns true when the key was consumed. MUST be called before
+// m9HandleArrowKey(), which would otherwise take the arrows for the caret (#410).
+static bool m9AccentBoxHandleKey(int key) {
+  if (!s_accbox || !s_accbox_cell_n) return false;
+  if (key == M9_KEY_LEFT || key == M9_KEY_RIGHT) {
+    if (!s_accentnav_active) { s_accentnav_active = true; s_accentnav_idx = 0; }
+    else s_accentnav_idx = (key == M9_KEY_RIGHT)
+           ? (s_accentnav_idx + 1) % (int)s_accbox_cell_n
+           : (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
+    accentNavRestyle();
+    return true;
+  }
+  if (!s_accentnav_active) return false;
+  if (key == 0x0D)                                    { accentNavConfirm(); return true; }
+  if (key == 0x08 || key == 0x7F || key == M9_KEY_HW_BACK) { accentBoxHide(); return true; }
+  return true;   // swallow the rest while picking
+}
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -39808,6 +39900,13 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // it before the textarea split so edit mode cannot swallow it as an unknown
   // non-printable byte.
   if (key == M9_KEY_HOME && m9HandleNavKey(key)) return;
+  // The accent box owns the arrows WHILE IT IS UP, so this has to come before
+  // m9HandleArrowKey, which consumes LEFT/RIGHT to move the caret and returns.
+  // Below it, the variants appeared and could never be selected (#410): the box
+  // was drawn, the arrows went to the caret, and nothing reached the picker.
+  // The box only exists for the moment after typing a base letter, so the
+  // arrows go back to the caret the instant it closes.
+  if (m9AccentBoxHandleKey(key)) return;
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
@@ -40012,29 +40111,6 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     if (key == 0x08 || key == 0x7F) { mentionBoxHide(); return; }
     if (key == 0x0D)                { mentionNavConfirm(); return; }
     // Printable input falls through to the textarea and re-filters the list.
-  }
-#endif
-#if defined(HAS_M9_KEYBOARD)
-  // The M9 has no touch, so the accent box is driven by the d-pad, the same way
-  // the mention box already is on this board. There is no arming step: the box
-  // only exists for the moment after typing a base letter, so LEFT/RIGHT belong
-  // to it while it is up and go back to the caret as soon as it closes. Enter
-  // takes the highlighted variant, Back and Backspace dismiss (#387).
-  if (s_accbox && s_accbox_cell_n) {
-    if (key == M9_KEY_LEFT || key == M9_KEY_RIGHT) {
-      if (!s_accentnav_active) { s_accentnav_active = true; s_accentnav_idx = 0; }
-      else s_accentnav_idx = (key == M9_KEY_RIGHT)
-             ? (s_accentnav_idx + 1) % (int)s_accbox_cell_n
-             : (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
-      accentNavRestyle();
-      return;
-    }
-    if (s_accentnav_active) {
-      if (key == 0x0D)                            { accentNavConfirm(); return; }
-      if (key == 0x08 || key == 0x7F ||
-          key == M9_KEY_HW_BACK)                  { accentBoxHide(); return; }
-      return;   // swallow the rest while picking
-    }
   }
 #endif
 #if defined(TLORA_PAGER)
@@ -44479,7 +44555,22 @@ static void updateGlobalStatusBar() {
   if (s_appdrawer_root && g_lv.task) {
     const uint32_t sig = ((uint32_t)(g_lv.task->getUnreadTotal() & 0xFFFF) << 16)
                        | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0xFFFF);
-    if (sig != s_appdrawer_badge_sig) { closeAppDrawer(); openAppDrawer(); }
+    if (sig != s_appdrawer_badge_sig && !appDrawerCovered()) {
+      // Only when nothing is in front of it. Lua apps and the other tools open
+      // OVER the drawer without closing it, deliberately (see appTileCb), and
+      // openAppDrawer() ends with lv_obj_move_foreground() -- so rebuilding
+      // while one was up threw the drawer on top of the running app (#415).
+      // Leaving the signature stale is what makes this self-healing: the check
+      // runs again every tick, so the badge is right by the time the drawer is
+      // back in front, without having to hook every tool's close path.
+      const lv_coord_t sx = lv_obj_get_scroll_x(s_appdrawer_root);
+      const lv_coord_t sy = lv_obj_get_scroll_y(s_appdrawer_root);
+      closeAppDrawer();
+      openAppDrawer();
+      // Rebuilding resets the scroll, so a message arriving while you were
+      // reading the second row used to jump you back to the first.
+      if (s_appdrawer_root && (sx || sy)) lv_obj_scroll_to(s_appdrawer_root, sx, sy, LV_ANIM_OFF);
+    }
   }
   if (!g_statusbar.root || !g_lv.task) return;
 

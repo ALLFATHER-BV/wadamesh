@@ -26,6 +26,7 @@ static Config safeDefaults() {
   c.boot_wifi_time = 0;
   c.boot_wifi_open = 0;
   c.theme_mode = 0;
+  c.gps_fuzz_m = 0;
   return c;
 }
 
@@ -83,6 +84,7 @@ int main() {
   assert(migrated.boot_wifi_open == 0);
   assert(migrated.loud_alerts == 0);
   assert(migrated.theme_mode == 0);
+  assert(migrated.gps_fuzz_m == 0);
 
   // Reproduce beta 57 exactly: retry was inserted before the old suffix, then
   // the v43 bytes were copied and the full shifted v44 structure was written.
@@ -113,7 +115,8 @@ int main() {
   // session the user never asked for.
   constexpr size_t v53_size = offsetof(Config, boot_wifi_time);
   static_assert(v53_size + sizeof(Config::boot_wifi_time) + sizeof(Config::boot_wifi_open)
-                    + sizeof(Config::loud_alerts) + sizeof(Config::theme_mode) == sizeof(Config),
+                    + sizeof(Config::loud_alerts) + sizeof(Config::theme_mode)
+                    + sizeof(Config::gps_fuzz_m) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -151,6 +154,7 @@ int main() {
   current.boot_wifi_open = 1;
   current.loud_alerts = 1;
   current.theme_mode = 1;
+  current.gps_fuzz_m = 150;
   migrated = safeDefaults();
   assert(TouchPrefsSchema::overlayStored(migrated, &current, sizeof(current), &stored_version));
   assert(stored_version == TouchPrefsSchema::CURRENT_VERSION);
@@ -178,8 +182,10 @@ int main() {
   // merged, so the field sits behind those and the blob one version short of
   // current is the one that must leave it at the Night default.
   constexpr size_t v55_size = offsetof(Config, theme_mode);
-  static_assert(v55_size + sizeof(Config::theme_mode) == sizeof(Config),
-                "theme field must remain last");
+  static_assert(offsetof(Config, gps_fuzz_m) + sizeof(Config::gps_fuzz_m) == sizeof(Config),
+                "gps_fuzz_m must remain last");
+  static_assert(v55_size + sizeof(Config::theme_mode) + sizeof(Config::gps_fuzz_m) == sizeof(Config),
+                "v55 is the current layout minus theme_mode and gps_fuzz_m");
   Config v55 = safeDefaults();
   v55.ver = 55;
   v55.kb_force_legacy = 1;
@@ -191,6 +197,7 @@ int main() {
   assert(migrated.kb_force_legacy == 1);
   assert(migrated.loud_alerts == 1);
   assert(migrated.theme_mode == 0);
+  assert(migrated.gps_fuzz_m == 0);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};

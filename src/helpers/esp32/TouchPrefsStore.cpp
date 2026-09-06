@@ -143,6 +143,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.boot_wifi_open    = 0;      // OFF: and never a saved OPEN network even then
   c.loud_alerts       = 0;      // OFF: the standard chime pitch unless asked for
   c.theme_mode        = 0;      // Night: preserves the existing firmware appearance
+  c.gps_fuzz_m        = 0;      // OFF: advertise the real position unless asked otherwise
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
@@ -257,6 +258,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 54) { s_cfg.boot_wifi_time = 0; s_cfg.boot_wifi_open = 0; }
         if (stored_version < 55) { s_cfg.loud_alerts = 0; }
         if (stored_version < 56) { s_cfg.theme_mode = 0; }   // Night: unchanged appearance
+        if (stored_version < 57) { s_cfg.gps_fuzz_m = 0; }   // OFF: real position
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -1169,6 +1171,16 @@ bool touchPrefsGetBootWifiTimeOpen() {
 bool touchPrefsSetBootWifiTimeOpen(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.boot_wifi_open = on ? 1 : 0;
+  return cfgFlush();
+}
+
+uint16_t touchPrefsGetGpsFuzzM() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.gps_fuzz_m;
+}
+bool touchPrefsSetGpsFuzzM(uint16_t m) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.gps_fuzz_m = m;
   return cfgFlush();
 }
 

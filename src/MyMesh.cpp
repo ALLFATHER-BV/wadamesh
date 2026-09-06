@@ -2482,6 +2482,37 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   }
 }
 
+// ---- Advertised-position displacement (#399) --------------------------------
+// Broadcast a position that is near where you are without being where you live.
+// Applied ONLY to our own adverts: the map, the GPS page and anything local keep
+// the true fix, because the point is to tell other people less, not to lie to
+// yourself.
+//
+// The displacement is DERIVED FROM THE NODE IDENTITY, so it is the same offset
+// every time rather than a fresh random one per advert. That distinction is the
+// whole feature: re-rolling per advert would scatter points around the true
+// position, and anyone averaging a night of them would recover the centre
+// exactly. A fixed displacement instead looks like a node that simply sits
+// somewhere else, which is what a manually-set location already looks like.
+void MyMesh::advertPosition(double& lat, double& lon) const {
+#if defined(ESP32)
+  const uint16_t r = touchPrefsGetGpsFuzzM();
+  if (r == 0 || (lat == 0 && lon == 0)) return;
+  // Two bytes of our own public key give a stable bearing and distance.
+  const uint8_t* id = self_id.pub_key;
+  const double bearing = ((double)id[0] / 256.0) * 2.0 * 3.14159265358979;
+  const double dist    = ((double)id[1] / 255.0) * (double)r;   // 0..r metres
+  const double dlat    = (dist * cos(bearing)) / 111320.0;
+  double coslat = cos(lat * 3.14159265358979 / 180.0);
+  if (coslat < 0.01) coslat = 0.01;                             // near the poles
+  const double dlon    = (dist * sin(bearing)) / (111320.0 * coslat);
+  lat += dlat;
+  lon += dlon;
+#else
+  (void)lat; (void)lon;
+#endif
+}
+
 void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   static const char* HX = "0123456789abcdef";
   auto hex = [&](const uint8_t* d, int n) {
@@ -4326,7 +4357,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
       pkt = createSelfAdvert(_prefs.node_name);
     } else {
-      pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+      { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
     }
     if (pkt) {
       if (len >= 2 && cmd_frame[1] == 1) { // optional param (1 = flood, 0 = zero hop)
@@ -4419,7 +4452,9 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
         pkt = createSelfAdvert(_prefs.node_name);
       } else {
-        pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+        { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
       }
       if (pkt) {
         pkt->header |= ROUTE_TYPE_FLOOD; // would normally be sent in this mode
@@ -5948,7 +5983,9 @@ bool MyMesh::sendAdvert(bool flood) {
   if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
     pkt = createSelfAdvert(_prefs.node_name);
   } else {
-    pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+    { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
   }
   if (!pkt) return false;
   if (flood) {
