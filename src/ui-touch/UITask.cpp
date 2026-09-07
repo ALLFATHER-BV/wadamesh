@@ -13267,20 +13267,19 @@ static void clockSetManualCb(lv_event_t* e) {
 
 static void buildDeviceSettings(int sec);   // fwd: the cycle button redraws its own page
 
-// Advertised-position displacement (#399). Cycles off / 100 m / 250 m / 1 km,
-// because a free-text metre box on a device keyboard is a worse experience than
-// three sensible choices, and the exact number is not what matters here.
-static void gpsFuzzCycleCb(lv_event_t* e) {
+// Advertised-position displacement (#399). The button carries the metre value,
+// so selecting is one tap on the value you want rather than cycling to it.
+static void gpsFuzzSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
-  const uint16_t cur = touchPrefsGetGpsFuzzM();
-  const uint16_t next = cur == 0 ? 100 : cur == 100 ? 250 : cur == 250 ? 1000 : 0;
-  touchPrefsSetGpsFuzzM(next);
+  const uint16_t m = (uint16_t)(uintptr_t)lv_event_get_user_data(e);
+  if (m == touchPrefsGetGpsFuzzM()) return;         // already selected
+  touchPrefsSetGpsFuzzM(m);
   if (g_lv.task) {
-    if (next == 0) g_lv.task->showAlert(TR("Advertising your exact position"), 1400);
-    else           g_lv.task->showAlert(TR("Advertised position displaced"), 1400);
+    g_lv.task->showAlert(m == 0 ? TR("Advertising your exact position")
+                                : TR("Advertised position displaced"), 1400);
   }
-  buildDeviceSettings(DSEC_GPS);   // redraw so the button shows the new value
+  buildDeviceSettings(DSEC_GPS);   // redraw so the selected button updates
 #endif
 }
 
@@ -13395,6 +13394,54 @@ static void buildDeviceSettings(int sec) {
   }
 #endif  // !HAS_TANMATSU (GPS toggle/baud)
 
+#if defined(ESP32)
+  // Privacy: advertise a position near you without advertising your address.
+  {
+    // Named for what people look for, not for the mechanism. The first version
+    // of this row was called "Position in adverts", which nobody found: somebody
+    // who has read about reducing location accuracy scans for privacy, location
+    // or accuracy, and does not match on "adverts".
+    y += settingsRowLabel(body, y, 0, TR("Location privacy"), COLOR_SUB, &g_font_12, 0) + 4;
+    // Four buttons rather than one that cycles, or a dropdown. The whole trouble
+    // with this setting has been that nobody could find it, and a row of choices
+    // shows every option and the current one without being touched at all. A
+    // cycling button hides three of four values, and a dropdown hides all of
+    // them until it is opened. Same shape as the Night/Day selector.
+    static const struct { uint16_t m; const char* label; } k_fuzz[] = {
+      { 0,    "Exact"  },
+      { 100,  "100 m"  },
+      { 250,  "250 m"  },
+      { 1000, "1 km"   },
+    };
+    const int n_fuzz  = (int)(sizeof(k_fuzz) / sizeof(k_fuzz[0]));
+    const uint16_t cur_fz = touchPrefsGetGpsFuzzM();
+    const lv_coord_t gap  = SC(4);
+    const lv_coord_t roww = s_settings_content_w - 2;
+    const lv_coord_t bw   = (roww - gap * (n_fuzz - 1)) / n_fuzz;
+    for (int i = 0; i < n_fuzz; ++i) {
+      lv_obj_t* b = lv_btn_create(body);
+      lv_obj_set_size(b, bw, SC(34));
+      lv_obj_set_pos(b, 2 + i * (bw + gap), y);
+      styleButton(b);
+      const bool on = (k_fuzz[i].m == cur_fz);
+      if (on) {
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+      }
+      lv_obj_set_style_text_color(b, lv_color_hex(on ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_add_event_cb(b, gpsFuzzSelectCb, LV_EVENT_CLICKED,
+                          (void*)(uintptr_t)k_fuzz[i].m);
+      lv_obj_t* l = lv_label_create(b);
+      useChainedFont(l);
+      lv_label_set_text(l, TR(k_fuzz[i].label));
+      lv_obj_center(l);
+    }
+    y += SC(38);
+    y += settingsRowLabel(body, y, 0,
+          TR("position others see is shifted; your own map keeps the real fix"),
+          COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
   }
 
   if (sec == DSEC_SENSORS) {   // --- Sensors / expansion (V4-with-kit only) ---
@@ -13409,30 +13456,6 @@ static void buildDeviceSettings(int sec) {
     lv_label_set_text(le, TR("Expansion Kit"));
     lv_obj_center(le);
     y += SC(38);
-#endif
-#if defined(ESP32)
-  // Privacy: advertise a position near you without advertising your address.
-  {
-    y += settingsRowLabel(body, y, 0, TR("Position in adverts"), COLOR_SUB, &g_font_12, 0) + 4;
-    lv_obj_t* b_fz = lv_btn_create(body);
-    lv_obj_set_size(b_fz, lv_pct(100), SC(34));
-    lv_obj_set_pos(b_fz, 2, y);
-    styleButton(b_fz);
-    lv_obj_add_event_cb(b_fz, gpsFuzzCycleCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* lf = lv_label_create(b_fz);
-    useChainedFont(lf);
-    const uint16_t fz = touchPrefsGetGpsFuzzM();
-    char fb[48];
-    if (fz == 0)          snprintf(fb, sizeof fb, "%s", TR("Exact"));
-    else if (fz < 1000)   snprintf(fb, sizeof fb, TR("Within %u m"), (unsigned)fz);
-    else                  snprintf(fb, sizeof fb, TR("Within %u km"), (unsigned)(fz / 1000));
-    lv_label_set_text(lf, fb);
-    lv_obj_center(lf);
-    y += SC(38);
-    y += settingsRowLabel(body, y, 0,
-          TR("shifts the position others see; your own map keeps the real fix"),
-          COLOR_SUB, &g_font_12, 0) + 2;
-  }
 #endif
     // The "Show Sensors tab" toggle is appended here too (moved from Display).
   }
