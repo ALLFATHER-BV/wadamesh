@@ -726,7 +726,7 @@ extern "C" const lv_font_t extras_lat_28;
 // extras_lat_20 was HAS_TANMATSU-only too (Large/Huge UI-scale fallback); the
 // T-Deck now also builds it, for its 20px at-glance body experiment (see
 // atGlanceEnsureFont()) -- extras_lat_20.c's own gate was widened to match.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
 extern "C" const lv_font_t extras_lat_20;
 #endif
 #if defined(TLORA_PAGER)
@@ -56436,7 +56436,11 @@ static bool      s_glance_font_ready = false;
 static void atGlanceEnsureFont() {
   if (s_glance_font_ready) return;
   s_glance_font_ready = true;
-#if defined(HAS_TDECK_GT911)
+// 20 px on the small screens. 28 px was chosen to be legible across a room, and
+// it is, but on a 240x320 panel it fills the glance and crowds out the message
+// (#446). The T-Deck already dropped to 20; the M9 has the same size panel and
+// wanted the same treatment.
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   static lv_font_t s_lat20;
   s_lat20 = extras_lat_20;
   s_lat20.fallback = &extras_16;

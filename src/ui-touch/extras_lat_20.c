@@ -3,7 +3,7 @@
 // now also builds this for the "at a glance" notification's 20 px message body
 // (see atGlanceEnsureFont() in UITask.cpp) -- an experiment to see whether a
 // smaller-than-28px glance body is still legible on that panel.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911)
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
 
 /*******************************************************************************
  * Size: 20 px
