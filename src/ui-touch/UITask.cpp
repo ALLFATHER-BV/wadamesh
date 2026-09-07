@@ -1905,9 +1905,20 @@ static inline lv_coord_t chatComposerSendSz() {
   return 34;
 #endif
 }
-static inline lv_coord_t chatComposerTaW() {
+static inline bool chatHasSymbolChip(bool channel_mode) {
+#if defined(HAS_M9_KEYBOARD)
+  (void)channel_mode;
+  return true;
+#else
+  (void)channel_mode;
+  return false;
+#endif
+}
+static inline lv_coord_t chatComposerTaW(bool channel_mode) {
   const lv_coord_t chip = chatComposerChipSz();
-  return chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14;
+  lv_coord_t width = chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14;
+  if (chatHasSymbolChip(channel_mode)) width -= chip + 6;
+  return width;
 }
 // Most boards use a DOUBLE-height status bar in a chat (thread name on the lower
 // row + a centred cog). The round panel already has two physical rows, while the
@@ -1945,6 +1956,8 @@ struct LvChatPanel {
   lv_obj_t* composer_row;  // container: input + send button
   lv_obj_t* composer_ta;   // textarea: user types here
   lv_obj_t* composer_cnt;  // "148/160" counter, shown only near the limit
+  lv_obj_t* symbol_btn;    // M9 conversation special-character picker
+  lv_obj_t* emoji_btn;     // composer emoji picker; stored for M9 focus routing
   LvThreadButtonCtx ctx_store[UITask::MAX_UI_THREADS];
   bool channel_mode;
   /** When true, `list_cont` shows channels + DMs with history (Chats tab only). */
@@ -3701,6 +3714,9 @@ static bool      s_nav_show     = false;       // T-Deck: focus-visible — pain
 // scroll-into-view during a rebuild; direct arrow-nav (focus set OUTSIDE a rebuild) still scrolls.
 static bool      s_nav_suppress_scroll = false;
 static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on the next rebuild (#45)
+#if defined(HAS_M9_KEYBOARD)
+static lv_obj_t* s_m9_focus_pending = nullptr;  // retained until the requested target owns nav
+#endif
 static void goToTab(int idx);                  // (defined far below) tab switch + refresh
 static int  getActiveTab();                    // (defined below) current tabview index
 static void mapNudge(int dir);                 // (defined far below) map pan — 0=up 1=down 2=left 3=right
@@ -5077,7 +5093,24 @@ static void navMaybeRebuild() {
   // When a chat just opened, drop focus on its composer so typing goes straight in (issue: textfield
   // not auto-selected). Only on the open transition, so new messages don't steal focus mid-typing.
   bool focus_set = false;   // true once we deliberately focus a COLLECTED obj (else LVGL defaults to the first item)
-  if (s_nav_focus_hint && lv_obj_is_valid(s_nav_focus_hint)) {
+#if defined(HAS_M9_KEYBOARD)
+  if (s_m9_focus_pending && !lv_obj_is_valid(s_m9_focus_pending))
+    s_m9_focus_pending = nullptr;
+  if (s_m9_focus_pending) {
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; ++i) {
+      if (s_nav_objs[i] != s_m9_focus_pending) continue;
+      const bool editing = lv_obj_check_type(s_m9_focus_pending, &lv_textarea_class);
+      if (!editing) s_nav_show = true;
+      lv_group_focus_obj(s_m9_focus_pending);
+      s_nav_ta_editing = editing;
+      s_m9_focus_pending = nullptr;
+      focus_set = true;
+      break;
+    }
+  }
+#endif
+  if (!focus_set && s_nav_focus_hint && lv_obj_is_valid(s_nav_focus_hint)) {
     // One-shot explicit focus hint — e.g. turning keyboard-nav ON keeps the highlight on the switch you
     // just toggled instead of snapping the settings list to the top (issue #45).
     const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -6409,7 +6442,7 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
       lv_obj_set_y(s_kb_panel->composer_row, chatCompYKb());
     }
     if (s_kb_panel->composer_ta)
-      lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW());
+      lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW(s_kb_panel->channel_mode));
   }
   // Rotation arrows. Default: just above the keyboard's top edge. In the
   // chat panel that area is occupied by the composer row (QR + textarea +
@@ -6809,6 +6842,21 @@ static void showKb(LvChatPanel* p) {
   lv_obj_set_y(p->composer_row,      chatCompYKb());
   kbApplyRotation(effectiveKbRotation());
   kbShowRotateArrows(true);
+#endif
+}
+
+static void focusChatComposerOnOpen(LvChatPanel* p) {
+  if (p && p->composer_ta && lv_obj_is_valid(p->composer_ta)) {
+    taClearSelection(p->composer_ta);
+    lv_textarea_set_cursor_pos(p->composer_ta, LV_TEXTAREA_CURSOR_LAST);
+  }
+  showKb(p);
+#if defined(HAS_M9_KEYBOARD)
+  if (!p || !p->composer_ta || !lv_obj_is_valid(p->composer_ta)) return;
+  s_m9_focus_pending = p->composer_ta;
+  s_nav_ta_editing = true;
+  navMarkDirty();
+  navMaybeRebuild();
 #endif
 }
 
@@ -7592,6 +7640,11 @@ static int      s_chat_jump_msg_idx = -1;  // ring-slot index to scroll to on op
 // the floating HOME button (backBtnCb) and the left→right swipe-back gesture.
 static void closeChatPanel(LvChatPanel* p) {
   if (!p || !p->detail_open) return;  // already closed (e.g. a repeat fire)
+#if defined(HAS_M9_KEYBOARD)
+  if (s_m9_focus_pending == p->composer_ta ||
+      s_m9_focus_pending == p->symbol_btn ||
+      s_m9_focus_pending == p->emoji_btn) s_m9_focus_pending = nullptr;
+#endif
   hideKb();
   if (p->overlay) lv_obj_add_flag(p->overlay, LV_OBJ_FLAG_HIDDEN);
   p->detail_open = false;
@@ -8220,7 +8273,7 @@ static void threadSelectCb(lv_event_t* e) {
   refreshChatDetailAsync(p);
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
-  showKb(&p);
+  focusChatComposerOnOpen(&p);
 #endif
 }
 
@@ -8281,7 +8334,7 @@ static LvChatPanel* s_qr_panel  = nullptr;
 static lv_obj_t*    s_emoji_sheet = nullptr;
 static lv_obj_t*    s_emoji_target_ta = nullptr;   // textarea to insert into
 static lv_obj_t*    s_emoji_grid  = nullptr;       // the scrollable button grid
-static int          s_emoji_sel   = -1;            // trackball-highlighted index (-1 = none)
+static int          s_emoji_sel   = -1;            // hardware-highlighted index (-1 = none)
 static int          s_emoji_cols  = 1;             // grid columns (computed at open)
 
 // Curated insert set, grouped. Kept in sync with what the extras fonts bake
@@ -8362,11 +8415,22 @@ static int                 s_glyph_count = k_emoji_count;
 static void (*s_emoji_pick_cb)(const char* utf8) = nullptr;
 
 static void closeEmojiSheet() {
+#if defined(HAS_M9_KEYBOARD)
+  lv_obj_t* return_ta = s_emoji_target_ta;
+#endif
   popupClose(&s_emoji_sheet);
   s_emoji_target_ta = nullptr;
   s_emoji_grid = nullptr;
   s_emoji_sel = -1;
   s_emoji_pick_cb = nullptr;
+#if defined(HAS_M9_KEYBOARD)
+  if (return_ta && lv_obj_is_valid(return_ta)) {
+    s_m9_focus_pending = return_ta;
+    s_nav_ta_editing = true;
+    navMarkDirty();
+    navMaybeRebuild();
+  }
+#endif
 }
 static void emojiSheetCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -8409,8 +8473,8 @@ static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title)
   s_emoji_pick_cb = cb;                                            // arm AFTER the open (the closer clears it)
 }
 
-// Paint the trackball-selected cell highlighted and the rest normal, and keep
-// the selection scrolled into view. No-op when nothing is selected (finger-only).
+// Paint the hardware-selected cell highlighted and the rest normal, and keep
+// the selection scrolled into view. No-op when nothing is selected (touch-only).
 static void emojiPaintSelection() {
   if (!s_emoji_grid) return;
   const uint32_t n = lv_obj_get_child_cnt(s_emoji_grid);
@@ -8484,6 +8548,11 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_emoji_sheet = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_emoji_sheet);
+#if defined(HAS_M9_KEYBOARD)
+  // M9 drives this modal through the same private selector as the T-Deck
+  // trackball; keep the generic focus collector on the composer underneath.
+  lv_obj_add_flag(s_emoji_sheet, NAV_SKIP_FLAG);
+#endif
   lv_obj_set_size(s_emoji_sheet, sw, sh - STATUSBAR_H);
   lv_obj_set_pos(s_emoji_sheet, 0, STATUSBAR_H);
   lv_obj_set_style_bg_color(s_emoji_sheet, lv_color_hex(0x000000), LV_PART_MAIN);
@@ -8510,9 +8579,13 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_pos(title, 2, 0);
   addCloseXBadge(card, emojiSheetCloseCb);
 
-  // Hint line: how to use the trackball (T-Deck) — finger tap also works.
+  // Hint line: how to use the board's primary picker controls.
   lv_obj_t* hint = lv_label_create(card);
+#if defined(HAS_M9_KEYBOARD)
+  lv_label_set_text(hint, TR("Arrows \xE2\x80\xA2 OK"));
+#else
   lv_label_set_text(hint, TR("Roll to highlight \xE2\x80\xA2 click to insert"));
+#endif
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
@@ -8575,6 +8648,12 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
   }
+#if defined(HAS_M9_KEYBOARD)
+  if (s_glyph_count > 0) {
+    s_emoji_sel = 0;
+    emojiPaintSelection();
+  }
+#endif
 }
 
 // Special-character picker: the same sheet/grid as the emoji picker, but the dedicated
@@ -8583,11 +8662,103 @@ static void openSpecialPicker(lv_obj_t* ta) {
   openEmojiPicker(ta, k_special_items, k_special_count, "Special characters");
 }
 
+#if defined(HAS_M9_KEYBOARD)
+struct M9SymbolFieldLink {
+  lv_obj_t* field;
+  lv_obj_t* button;
+};
+static M9SymbolFieldLink s_m9_symbol_fields[12] = {};
+
+static void m9SymbolFieldDeletedCb(lv_event_t* e) {
+  auto* link = static_cast<M9SymbolFieldLink*>(lv_event_get_user_data(e));
+  if (!link) return;
+  link->field = nullptr;
+  link->button = nullptr;
+}
+
+static lv_obj_t* m9SymbolButtonForField(lv_obj_t* field) {
+  if (!field) return nullptr;
+  for (auto& link : s_m9_symbol_fields) {
+    if (link.field == field && link.button && lv_obj_is_valid(link.button)) return link.button;
+  }
+  return nullptr;
+}
+
+static lv_obj_t* m9SymbolFieldForButton(lv_obj_t* button) {
+  if (!button) return nullptr;
+  for (auto& link : s_m9_symbol_fields) {
+    if (link.button == button && link.field && lv_obj_is_valid(link.field)) return link.field;
+  }
+  return nullptr;
+}
+
+static void m9SymbolFieldClickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  auto* link = static_cast<M9SymbolFieldLink*>(lv_event_get_user_data(e));
+  if (link && link->field && lv_obj_is_valid(link->field)) openSpecialPicker(link->field);
+}
+
+static lv_obj_t* m9AttachSymbolButton(lv_obj_t* field) {
+  if (!field || !lv_obj_is_valid(field)) return nullptr;
+  if (lv_obj_t* existing = m9SymbolButtonForField(field)) return existing;
+
+  M9SymbolFieldLink* link = nullptr;
+  for (auto& candidate : s_m9_symbol_fields) {
+    if (!candidate.field && !candidate.button) { link = &candidate; break; }
+  }
+  if (!link) return nullptr;
+
+  lv_obj_t* parent = lv_obj_get_parent(field);
+  if (!parent) return nullptr;
+  lv_obj_update_layout(field);
+  constexpr lv_coord_t button_width = 30;
+  constexpr lv_coord_t gap = 4;
+  const lv_coord_t original_width = lv_obj_get_width(field);
+  const lv_coord_t field_height = lv_obj_get_height(field);
+  if (original_width <= button_width + gap + 32) return nullptr;
+  const lv_coord_t field_x = lv_obj_get_x(field);
+  const lv_coord_t field_y = lv_obj_get_y(field);
+  const lv_coord_t reduced_width = original_width - button_width - gap;
+  lv_obj_set_width(field, reduced_width);
+
+  lv_obj_t* button = lv_btn_create(parent);
+  lv_obj_set_size(button, button_width, field_height);
+  lv_obj_set_pos(button, field_x + reduced_width + gap, field_y);
+  styleButton(button);
+  lv_obj_set_style_radius(button, field_height / 2, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(button, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(button, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_add_flag(button, NAV_HMOVE_FLAG);
+
+  link->field = field;
+  link->button = button;
+  lv_obj_add_event_cb(field, m9SymbolFieldDeletedCb, LV_EVENT_DELETE, link);
+  lv_obj_add_event_cb(button, m9SymbolFieldDeletedCb, LV_EVENT_DELETE, link);
+  lv_obj_add_event_cb(button, m9SymbolFieldClickCb, LV_EVENT_CLICKED, link);
+
+  lv_obj_t* label = lv_label_create(button);
+  lv_label_set_text(label, "#");
+  lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(label);
+  navMarkDirty();
+  return button;
+}
+#else
+static inline lv_obj_t* m9AttachSymbolButton(lv_obj_t*) { return nullptr; }
+#endif
+
 static void openEmojiPickerCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
   if (!p || !p->composer_ta) return;
   openEmojiPicker(p->composer_ta);
+}
+
+static void openSpecialPickerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
+  if (!p || !p->composer_ta) return;
+  openSpecialPicker(p->composer_ta);
 }
 #if defined(HAS_TANMATSU)
 // Thin wrapper so navPump's yellow F3 key can open the emoji picker for a composer without
@@ -15836,6 +16007,7 @@ static void openWifiJoinSheet(const char* ssid, bool manual) {
   taSetPlaceholder(s_wifi_sheet_pwd_ta, "PSK");
   lv_textarea_set_max_length(s_wifi_sheet_pwd_ta, WIFI_CONFIG_PWD_MAX - 1);
   attachSettingsTaEvents(s_wifi_sheet_pwd_ta);
+  m9AttachSymbolButton(s_wifi_sheet_pwd_ta);
   // Prefill the saved passphrase if we already know this network.
   if (ssid && ssid[0]) { int e = touchPrefsFindWifiNet(ssid); if (e >= 0) { TouchWifiNet n; if (touchPrefsGetWifiNet(e, n)) lv_textarea_set_text(s_wifi_sheet_pwd_ta, n.pwd); } }
   yy += SC(44);
@@ -16227,6 +16399,7 @@ static void buildMqttSettings() {
   taSetPlaceholder(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
   lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
   attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
+  m9AttachSymbolButton(g_set_modal.mqtt_pwd_ta);
   y += SC(36);
 
   // ---- Publish toggles: channel on by default, DMs opt-in ----
@@ -16263,6 +16436,7 @@ static void buildMqttSettings() {
   taSetPlaceholder(g_set_modal.mqtt_psk_ta, TR("Empty = plaintext to a private broker"));
   lv_textarea_set_max_length(g_set_modal.mqtt_psk_ta, 32);
   attachSettingsTaEvents(g_set_modal.mqtt_psk_ta);
+  m9AttachSymbolButton(g_set_modal.mqtt_psk_ta);
   y += SC(36);
 
   // ---- Load current config ----
@@ -17427,6 +17601,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
+  m9AttachSymbolButton(s_admin_pw_ta);
 
   // Prefill from NVS if we've remembered a password for this repeater.
   // The state of the Remember checkbox follows: if a saved password
@@ -18783,13 +18958,37 @@ static void openAddContactModalCb(lv_event_t* e) {
   lv_obj_center(bl);
 }
 
+static lv_coord_t channelFormControlWidth() {
+#if defined(HAS_M9_KEYBOARD)
+  return s_settings_content_w - 4;  // x=2 with a matching 2px right inset
+#else
+  return lv_pct(100);
+#endif
+}
+
+static void channelFormSetFullWidth(lv_obj_t* obj, lv_coord_t y, lv_coord_t height) {
+  lv_obj_set_size(obj, channelFormControlWidth(), height);
+  lv_obj_set_pos(obj, 2, y);
+}
+
+static void channelFormLayoutTextarea(lv_obj_t* body, lv_obj_t* ta, lv_coord_t y) {
+#if defined(HAS_M9_KEYBOARD)
+  lv_obj_set_size(ta, channelFormControlWidth(), 30);
+  lv_obj_set_pos(ta, 2, y);
+  m9AttachSymbolButton(ta);
+#else
+  (void)body;
+  channelFormSetFullWidth(ta, y, 30);
+#endif
+}
+
 static void openCreatePrivateChannelModal() {
   lv_obj_t* body = createSettingsModal(TR("Create private channel"), SettingsModalKind::ChCreatePrv);
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
   lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(hint, lv_pct(100));
+  lv_obj_set_width(hint, channelFormControlWidth());
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(hint, TR("Share the 32-char secret so others can join. Leave the secret empty to generate a random one."));
@@ -18803,8 +19002,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_pos(name_l, 2, y);
   y += 16;
   s_addch_name_ta = lv_textarea_create(body);
-  lv_obj_set_size(s_addch_name_ta, lv_pct(100),30);
-  lv_obj_set_pos(s_addch_name_ta, 2, y);
+  channelFormLayoutTextarea(body, s_addch_name_ta, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
   taSetPlaceholder(s_addch_name_ta, TR("e.g. Family"));
   lv_textarea_set_max_length(s_addch_name_ta, 31);
@@ -18818,8 +19016,7 @@ static void openCreatePrivateChannelModal() {
   lv_obj_set_pos(sec_l, 2, y);
   y += 16;
   s_addch_secret_ta = lv_textarea_create(body);
-  lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
-  lv_obj_set_pos(s_addch_secret_ta, 2, y);
+  channelFormLayoutTextarea(body, s_addch_secret_ta, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
   taSetPlaceholder(s_addch_secret_ta, TR("leave empty to generate"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
@@ -18828,7 +19025,7 @@ static void openCreatePrivateChannelModal() {
 
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_addch_error_l, lv_pct(100));
+  lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
@@ -18836,8 +19033,7 @@ static void openCreatePrivateChannelModal() {
   y += 24;
 
   lv_obj_t* b = lv_btn_create(body);
-  lv_obj_set_size(b, lv_pct(100),36);
-  lv_obj_set_pos(b, 2, y);
+  channelFormSetFullWidth(b, y, 36);
   styleButton(b);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -18893,7 +19089,7 @@ static void openJoinPrivateChannelModal() {
 
   lv_obj_t* hint = lv_label_create(body);
   lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(hint, lv_pct(100));
+  lv_obj_set_width(hint, channelFormControlWidth());
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(hint, TR("Enter the 32-hex secret shared by the channel creator."));
@@ -18907,8 +19103,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_pos(name_l, 2, y);
   y += 16;
   s_addch_name_ta = lv_textarea_create(body);
-  lv_obj_set_size(s_addch_name_ta, lv_pct(100), 30);
-  lv_obj_set_pos(s_addch_name_ta, 2, y);
+  channelFormLayoutTextarea(body, s_addch_name_ta, y);
   lv_textarea_set_one_line(s_addch_name_ta, true);
   taSetPlaceholder(s_addch_name_ta, TR("Channel name"));
   lv_textarea_set_max_length(s_addch_name_ta, 30);
@@ -18922,8 +19117,7 @@ static void openJoinPrivateChannelModal() {
   lv_obj_set_pos(sec_l, 2, y);
   y += 16;
   s_addch_secret_ta = lv_textarea_create(body);
-  lv_obj_set_size(s_addch_secret_ta, lv_pct(100),30);
-  lv_obj_set_pos(s_addch_secret_ta, 2, y);
+  channelFormLayoutTextarea(body, s_addch_secret_ta, y);
   lv_textarea_set_one_line(s_addch_secret_ta, true);
   taSetPlaceholder(s_addch_secret_ta, TR("32 hex characters"));
   lv_textarea_set_max_length(s_addch_secret_ta, 32);
@@ -18932,7 +19126,7 @@ static void openJoinPrivateChannelModal() {
 
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_addch_error_l, lv_pct(100));
+  lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
@@ -18940,8 +19134,7 @@ static void openJoinPrivateChannelModal() {
   y += 24;
 
   lv_obj_t* b = lv_btn_create(body);
-  lv_obj_set_size(b, lv_pct(100),36);
-  lv_obj_set_pos(b, 2, y);
+  channelFormSetFullWidth(b, y, 36);
   styleButton(b);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -19000,7 +19193,7 @@ static void openJoinHashtagChannelModal() {
 
   lv_obj_t* hint = lv_label_create(body);
   lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(hint, lv_pct(100));
+  lv_obj_set_width(hint, channelFormControlWidth());
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(hint, TR("Anyone can join. Key is derived from the hashtag (lowercase)."));
@@ -19014,8 +19207,7 @@ static void openJoinHashtagChannelModal() {
   lv_obj_set_pos(name_l, 2, y);
   y += 16;
   s_addch_hashtag_ta = lv_textarea_create(body);
-  lv_obj_set_size(s_addch_hashtag_ta, lv_pct(100),30);
-  lv_obj_set_pos(s_addch_hashtag_ta, 2, y);
+  channelFormLayoutTextarea(body, s_addch_hashtag_ta, y);
   lv_textarea_set_one_line(s_addch_hashtag_ta, true);
   taSetPlaceholder(s_addch_hashtag_ta, TR("e.g. mesh"));
   lv_textarea_set_text(s_addch_hashtag_ta, "#");
@@ -19025,7 +19217,7 @@ static void openJoinHashtagChannelModal() {
 
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_addch_error_l, lv_pct(100));
+  lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
   lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
@@ -19033,8 +19225,7 @@ static void openJoinHashtagChannelModal() {
   y += 24;
 
   lv_obj_t* b = lv_btn_create(body);
-  lv_obj_set_size(b, lv_pct(100),36);
-  lv_obj_set_pos(b, 2, y);
+  channelFormSetFullWidth(b, y, 36);
   styleButton(b);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -26682,6 +26873,8 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   p.jump_oldest_btn  = nullptr;
   p.composer_row     = nullptr;
   p.composer_ta      = nullptr;
+  p.symbol_btn       = nullptr;
+  p.emoji_btn        = nullptr;
 
   // Disable tab-level scrolling; the list handles its own scroll.
   lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
@@ -33308,6 +33501,18 @@ static void makeChatDetail(LvChatPanel& p) {
   // CAP_LARGE_SCREEN) has room; 30 px elsewhere keeps the small boards unchanged.
   const lv_coord_t chip_sz = chatComposerChipSz();
   const lv_coord_t chip_gap = 6;
+  const bool has_symbol_chip = chatHasSymbolChip(p.channel_mode);
+  const lv_coord_t send_sz = chatComposerSendSz();
+  const lv_coord_t comp_ta_w = chatComposerTaW(p.channel_mode);
+  const lv_coord_t comp_ta_x = has_symbol_chip
+      ? chip_sz + chip_gap
+      : 2 * chip_sz + 2 * chip_gap;
+  const lv_coord_t symbol_x = has_symbol_chip
+      ? comp_ta_x + comp_ta_w + chip_gap
+      : 0;
+  const lv_coord_t emoji_x = has_symbol_chip
+      ? symbol_x + chip_sz + chip_gap
+      : chip_sz + chip_gap;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
   // defined quick-reply presets. Saves typing for stock phrases ("ok",
@@ -33338,32 +33543,32 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
 
   // Emoji / special-character picker button (smiley). Opens the insert grid.
-  lv_obj_t* emoji_btn = lv_btn_create(p.composer_row);
-  lv_obj_set_size(emoji_btn, chip_sz, chip_sz);
-  lv_obj_align(emoji_btn, LV_ALIGN_BOTTOM_LEFT, chip_sz + chip_gap, 0);   // past the QR chip + gap
-  styleButton(emoji_btn);
-  lv_obj_set_style_radius(emoji_btn, chip_sz / 2, LV_PART_MAIN);
+  p.emoji_btn = lv_btn_create(p.composer_row);
+  lv_obj_set_size(p.emoji_btn, chip_sz, chip_sz);
+  lv_obj_align(p.emoji_btn, LV_ALIGN_BOTTOM_LEFT, emoji_x, 0);
+  styleButton(p.emoji_btn);
+  lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
   // Glass chip: dark + translucent so the chat bubbles show through faintly.
-  lv_obj_set_style_bg_color(emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(emoji_btn, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_add_event_cb(emoji_btn, openEmojiPickerCb, LV_EVENT_CLICKED, &p);
-  lv_obj_t* el = lv_label_create(emoji_btn);
+  lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_add_event_cb(p.emoji_btn, openEmojiPickerCb, LV_EVENT_CLICKED, &p);
+  lv_obj_t* el = lv_label_create(p.emoji_btn);
   lv_label_set_text(el, TR("\xF0\x9F\x98\x8A"));   // 😊
   lv_obj_set_style_text_font(el, &g_font_16, LV_PART_MAIN);
   lv_obj_center(el);
 #if defined(HAS_TANMATSU)
-  styleChipAsFkey(emoji_btn, el, 1, 0xFFD400, chip_sz, false); // yellow □ — emoji picker (F3); keep the colour glyph
+  styleChipAsFkey(p.emoji_btn, el, 1, 0xFFD400, chip_sz, false); // yellow □ — emoji picker (F3); keep the colour glyph
   // styleChipAsFkey clears the bg to draw the shape — restore the glass backing behind it.
-  lv_obj_set_style_bg_color(emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(emoji_btn, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_set_style_radius(emoji_btn, chip_sz / 2, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
 #if LV_USE_IMGFONT
   // The colour emoji is a fixed ~16-px baked image (it doesn't scale with the font), so it
   // looks tiny in the big □. Hide the label glyph and draw the same emoji as a 2x-zoomed
   // image so it fills the shape.
   if (const lv_img_dsc_t* sm = emojiGlyphLookup(0x1F60A)) {   // 😊
     lv_obj_add_flag(el, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_t* eimg = lv_img_create(emoji_btn);
+    lv_obj_t* eimg = lv_img_create(p.emoji_btn);
     lv_img_set_src(eimg, sm);
     lv_img_set_antialias(eimg, true);
     lv_img_set_zoom(eimg, 512);   // 256 = 1x -> 512 = 2x
@@ -33372,19 +33577,29 @@ static void makeChatDetail(LvChatPanel& p) {
   }
 #endif
 #endif
-  // Channel settings lives on the TOP status-bar gear (styled as the green ○ key), not a
-  // composer chip — so the left chip row stays QR + emoji and the textarea geometry is fixed.
-  const lv_coord_t comp_ta_x = 2 * chip_sz + 2 * chip_gap;       // start past both left chips + gaps
-  const lv_coord_t send_sz = chatComposerSendSz();
-  const lv_coord_t comp_ta_w = chatComposerTaW();
+
+#if defined(HAS_M9_KEYBOARD)
+  if (has_symbol_chip) {
+    p.symbol_btn = lv_btn_create(p.composer_row);
+    lv_obj_set_size(p.symbol_btn, chip_sz, chip_sz);
+    lv_obj_align(p.symbol_btn, LV_ALIGN_BOTTOM_LEFT, symbol_x, 0);
+    styleButton(p.symbol_btn);
+    lv_obj_set_style_radius(p.symbol_btn, chip_sz / 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(p.symbol_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(p.symbol_btn, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_add_event_cb(p.symbol_btn, openSpecialPickerCb, LV_EVENT_CLICKED, &p);
+    lv_obj_t* symbol_label = lv_label_create(p.symbol_btn);
+    lv_label_set_text(symbol_label, "#");
+    lv_obj_set_style_text_font(symbol_label, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(symbol_label);
+  }
+#endif
 
   p.composer_ta = lv_textarea_create(p.composer_row);
-  // Fill the row between the two left chips and Send (right): content width is
-  // screen - 8 (pad), minus QR(30)+gap(6)+Emoji(30)+gap(6) on the left and
-  // gap(6)+Send(34) on the right => screen - 120. Widens with the screen.
+  // M9 conversations: QR | message input | # | emoji | Send. Other boards
+  // retain QR | emoji | message input | Send.
   lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4);
-  // 30 (QR) + 6 + 30 (Emoji) + 6 = 72 offset from content-left. Bottom-aligned so
-  // the box grows UPWARD as the message wraps to more lines (chatComposerAutoGrow).
+  // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
   styleCard(p.composer_ta);
   lv_obj_set_style_radius(p.composer_ta, 15, LV_PART_MAIN);   // pill shape
@@ -40589,6 +40804,17 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       return true;
     }
     case M9_KEY_LEFT:
+      if (s_nav_group) {
+        lv_obj_t* focused = lv_group_get_focused(s_nav_group);
+        lv_obj_t* field = m9SymbolFieldForButton(focused);
+        if (field && lv_obj_is_valid(field) && lv_obj_get_group(field) == s_nav_group) {
+          s_nav_show = false;
+          lv_group_focus_obj(field);
+          s_nav_ta_editing = true;
+          if (g_lv.task) g_lv.task->noteUserInput();
+          return true;
+        }
+      }
       if (ta) {
         // Caret already at the start: fall through to focus-move so arrows
         // always eventually LEAVE the field (a silent boundary no-op read as
@@ -40602,15 +40828,58 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
       return true;
     case M9_KEY_RIGHT:
-      if (ta) {
-        const uint32_t p = lv_textarea_get_cursor_pos(ta);
-        lv_textarea_cursor_right(ta);
-        if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_RIGHT);   // caret at end — same as LEFT
+      {
+        lv_obj_t* source_ta = navFocusedTextarea();
+        lv_obj_t* button = m9SymbolButtonForField(source_ta);
+        if (!button && ta) button = m9SymbolButtonForField(ta);
+        if (button) {
+          s_nav_ta_editing = false;
+          if (lv_obj_get_group(button) == s_nav_group) {
+            s_m9_focus_pending = nullptr;
+            s_nav_show = true;
+            lv_group_focus_obj(button);
+          } else {
+            s_m9_focus_pending = button;
+            navMarkDirty();
+            navMaybeRebuild();
+          }
+        } else if (LvChatPanel* chat = navOpenChatPanel();
+                   chat && chat->symbol_btn && lv_obj_is_valid(chat->symbol_btn) &&
+                   (ta == chat->composer_ta || navFocusedTextarea() == chat->composer_ta)) {
+          s_nav_ta_editing = false;
+          if (lv_obj_get_group(chat->symbol_btn) == s_nav_group) {
+            s_m9_focus_pending = nullptr;
+            s_nav_show = true;
+            lv_group_focus_obj(chat->symbol_btn);
+          } else {
+            s_m9_focus_pending = chat->symbol_btn;
+            navMarkDirty();
+            navMaybeRebuild();
+          }
+        } else if (LvChatPanel* chat = navOpenChatPanel();
+                   chat && chat->symbol_btn && chat->emoji_btn &&
+                   lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn) &&
+                   ((s_nav_group && lv_group_get_focused(s_nav_group) == chat->symbol_btn) ||
+                    s_m9_focus_pending == chat->symbol_btn)) {
+          if (lv_obj_get_group(chat->emoji_btn) == s_nav_group) {
+            s_m9_focus_pending = nullptr;
+            s_nav_show = true;
+            lv_group_focus_obj(chat->emoji_btn);
+          } else {
+            s_m9_focus_pending = chat->emoji_btn;
+            navMarkDirty();
+            navMaybeRebuild();
+          }
+        } else if (ta) {
+          const uint32_t p = lv_textarea_get_cursor_pos(ta);
+          lv_textarea_cursor_right(ta);
+          if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_RIGHT);   // caret at end — same as LEFT
+        }
+        else if (navOnTabBar()) navSwitchTab(+1);
+        else                    navMoveDir(NAV_RIGHT);
+        s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+        return true;
       }
-      else if (navOnTabBar()) navSwitchTab(+1);
-      else                    navMoveDir(NAV_RIGHT);
-      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
-      return true;
     default: return false;
   }
 }
@@ -40713,6 +40982,24 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   noteKbActivity();   // any key counts as activity for the keyboard-backlight auto mode too
 #endif
 #endif  // HAS_M9_KEYBOARD (wake-from-idle if/else)
+#if defined(HAS_M9_KEYBOARD)
+  // The glyph grid has a private selection model (shared with the T-Deck
+  // trackball). Drive it directly so arrows cannot escape the modal and OK
+  // always activates the highlighted symbol.
+  if (s_emoji_sheet) {
+    switch (key) {
+      case M9_KEY_LEFT:    emojiSelectorMove(-kEmojiSelStep, 0); break;
+      case M9_KEY_RIGHT:   emojiSelectorMove( kEmojiSelStep, 0); break;
+      case M9_KEY_UP:      emojiSelectorMove(0, -kEmojiSelStep); break;
+      case M9_KEY_DOWN:    emojiSelectorMove(0,  kEmojiSelStep); break;
+      case M9_KEY_ENTER:   emojiSelectorClick(); break;
+      case M9_KEY_HW_BACK: closeEmojiSheet(); break;
+      default: break;
+    }
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+#endif
 #if defined(HAS_TDECK_KEYBOARD) && defined(TDECK_KEYCODE_PROBE)
   // TEMP bring-up probe: toast the raw byte of every key so we can see what the
   // physical alt / mic / sym keys emit. Remove once the alt-accent key is wired.
@@ -43962,7 +44249,7 @@ static void openThreadDetailByIdx(int idx, bool channel) {
   if (p.overlay) { lv_obj_clear_flag(p.overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(p.overlay); }
   refreshChatDetailAsync(p);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
-  showKb(&p);          // physical keyboard: auto-focus the composer so typing goes straight in
+  focusChatComposerOnOpen(&p);  // physical keyboard: auto-focus the composer so typing goes straight in
 #elif defined(HAS_TANMATSU)
   navMarkDirty();      // keypad nav: rebuild the focus group onto the chat overlay + focus the composer
 #endif
@@ -55031,7 +55318,7 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   refreshChatDetailAsync(g_lv.dm);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
-  showKb(&g_lv.dm);
+  focusChatComposerOnOpen(&g_lv.dm);
 #endif
   // (The tab switch moved ABOVE, before the overlay setup — see the note there.)
   g_lv.dirty_threads = true;
