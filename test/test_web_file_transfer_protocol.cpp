@@ -50,9 +50,18 @@ int main() {
 
   assert(readablePath("/screenshots/capture.png"));
   assert(readablePath("/transfer/archive.bin"));
+  assert(readablePath("/wadamesh-crash.elf"));
+  assert(readablePath("/wadamesh-crash.elf.txt"));
+  assert(readablePath("/meshcore-backup.json"));
+  assert(readablePath("/meshcore-20260907-120000.json"));
+  assert(readablePath("/meshcore-backup-123.json"));
   assert(!readablePath("/transfer/.upload.part"));
   assert(!readablePath("/transfer/../secret.txt"));
   assert(!readablePath("/transfer/nested/file.txt"));
+  assert(!readablePath("/contacts3"));
+  assert(!readablePath("/other.json"));
+  assert(!readablePath("/meshcore-.json"));
+  assert(!readablePath("/meshcore-backup.json/extra"));
   assert(!readablePath("/other/archive.bin"));
   return 0;
 }
