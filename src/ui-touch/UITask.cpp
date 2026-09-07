@@ -2025,6 +2025,7 @@ struct LvUiState {
   bool touch_inited;
   bool dirty_threads;
   bool dirty_timeline;
+  bool dirty_contacts;
   bool defer_heavy_refresh;
   unsigned long heavy_refresh_at_ms;
   uint32_t lvgl_tick_prev_us;
@@ -9083,7 +9084,9 @@ static void tabChangedCb(lv_event_t* e) {
   } else if (new_t != HOME_TAB_INDEX && prev_t == HOME_TAB_INDEX) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
   }
-  if (new_t == CONTACTS_TAB_INDEX) refreshContactsList();
+  // The list is prebuilt at boot. Let the 150 ms tab slide paint those cached rows
+  // before running a potentially 1.3 s freshness rebuild (#433).
+  if (new_t == CONTACTS_TAB_INDEX) g_lv.dirty_contacts = true;
   else if (prev_t == CONTACTS_TAB_INDEX) ctExitSelectMode();   // a mode must not outlive the tab it belongs to
 #if defined(HAS_EXPANSION_KIT)
   if (new_t == SENSORS_TAB_INDEX) refreshSensorsTab();
@@ -55116,6 +55119,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
   g_lv.dirty_threads      = true;
   g_lv.dirty_timeline     = true;
+  g_lv.dirty_contacts     = false;
   g_lv.defer_heavy_refresh = false;
   g_lv.heavy_refresh_at_ms = 0;
   // Wire the idle light-sleep predicate hooks once the UI is fully initialised.
@@ -57462,7 +57466,8 @@ void UITask::loop() {
     if ((now - s_ct_dirty_refresh_ms) > 2500) {
       s_ct_contacts_dirty   = false;
       s_ct_dirty_refresh_ms = now;
-      contactsListForceRefresh();   // bypass the count-cache — a name-fill / re-advert doesn't change the count
+      s_ct_list_force = true;       // bypass the count-cache — a name-fill / re-advert doesn't change the count
+      g_lv.dirty_contacts = true;
     }
   }
   // Safety net (#73): some contact mutations never set the dirty flag above — messaging a not-yet-
@@ -57473,7 +57478,7 @@ void UITask::loop() {
     static int s_ct_seen_count = -1;
     if (getActiveTab() == CONTACTS_TAB_INDEX) {
       const int nct = the_mesh.getNumContacts();
-      if (nct != s_ct_seen_count) { s_ct_seen_count = nct; refreshContactsList(); }
+      if (nct != s_ct_seen_count) { s_ct_seen_count = nct; g_lv.dirty_contacts = true; }
     }
   }
 #if defined(HAS_TANMATSU)
@@ -57870,6 +57875,10 @@ void UITask::loop() {
   bool heavy_ok = !g_lv.defer_heavy_refresh || now >= g_lv.heavy_refresh_at_ms;
   if (g_lv.defer_heavy_refresh && heavy_ok) g_lv.defer_heavy_refresh = false;
 
+  if (g_lv.dirty_contacts && getActiveTab() == CONTACTS_TAB_INDEX && heavy_ok && !s_ctd_active) {
+    g_lv.dirty_contacts = false;
+    refreshContactsList();
+  }
   if (g_lv.dirty_threads && heavy_ok) {
     refreshThreadLists();
     g_lv.dirty_threads = false;
