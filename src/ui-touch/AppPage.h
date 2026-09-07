@@ -50,6 +50,9 @@ void appPageBegin(const char* title, void (*close_fn)());
  *  own chrome (e.g. the Lua Store's tab bar) starts right at the top. */
 void appPageBeginSlim(const char* title, void (*close_fn)());
 
+/** Hide the current page title while retaining its slim Back bar and close hook. */
+void appPageCollapseTitle(void (*close_fn)());
+
 /**
  * Hand the status bar back — but only if `close_fn` is still the installed hook, so a
  * page closing after another one already opened cannot steal the new page's chrome.
