@@ -47692,10 +47692,27 @@ static void openAccentPicker() {
   lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
   for (int i = 0; i < (int)(sizeof(kThemeColors)/sizeof(kThemeColors[0])); ++i) {
     lv_obj_t* sb = lv_btn_create(grid);
-    lv_obj_set_size(sb, 28, 28);
+    lv_obj_set_size(sb, SC(28), SC(28));
     lv_obj_set_style_radius(sb, 7, LV_PART_MAIN);
     lv_obj_set_style_bg_color(sb, lv_color_hex(kThemeColors[i]), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+    // A swatch IS its colour, so it keeps it in every state. Setting the colour
+    // for the default state alone let the theme repaint the focused one, and on
+    // a d-pad board the swatch you are standing on is always focused: it went
+    // white and hid the colour you were choosing (#431). Identical to the
+    // lock-screen picker fix; this one was simply missed at the time.
+    for (lv_style_selector_t st : { (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED),
+                                    (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                    (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_PRESSED),
+                                    (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_CHECKED) }) {
+      lv_obj_set_style_bg_color(sb, lv_color_hex(kThemeColors[i]), st);
+      lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, st);
+    }
+    // Focus reads as a ring OUTSIDE the swatch, so it never covers the colour.
+    lv_obj_set_style_outline_color(sb, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_outline_width(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_outline_opa(sb, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_outline_pad(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
     lv_obj_set_style_border_width(sb, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(sb, lv_color_hex(0x202224), LV_PART_MAIN);
     lv_obj_add_event_cb(sb, accentSwatchCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kThemeColors[i]);
