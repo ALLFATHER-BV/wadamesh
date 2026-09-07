@@ -56683,9 +56683,42 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   const bool glance_enabled_ok = true;
   const bool glance_locked_ok = !_manual_lock;
 #endif
-  if (glance_enabled_ok && !dndActive() && glance_locked_ok && (_screen_off || s_glance_lit_ms)) {
+  // A muted channel stays quiet on the lock screen too. Muting is a statement
+  // about a conversation, not about the speaker: silencing the chime while the
+  // text still lights the screen and prints itself in large type is the louder
+  // half of the notification, not the quieter one. Mentions honour their own
+  // mute bit, so a channel muted for chatter can still surface an @-mention.
+#if defined(ESP32)
+  const uint8_t glance_cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
+  const bool glance_muted = channel &&
+      (textMentionsMe(text) ? (glance_cmute & TOUCH_CHMUTE_MEN) != 0
+                            : (glance_cmute & TOUCH_CHMUTE_MSG) != 0);
+#else
+  const bool glance_muted = false;
+#endif
+  if (glance_enabled_ok && !dndActive() && glance_locked_ok && !glance_muted &&
+      (_screen_off || s_glance_lit_ms)) {
     const bool was_off = _screen_off;
-    atGlanceShow(thread, body, was_off);   // fade in only on the initial reveal of a burst
+    // Title carries WHO and HOW FAR, not just where. Reading "3 unread" off a
+    // dark screen tells you nothing you can act on; knowing it is a direct
+    // message from a named contact one hop away, versus channel chatter from
+    // five hops out, is the whole reason to look at the screen at all.
+    // path_len 0xFF is OUT_PATH_UNKNOWN (arrived by flood), not a hop count.
+    char glance_title[96];
+    {
+      char hops[24] = "";
+      if (path_len == 0)                       snprintf(hops, sizeof hops, " \xC2\xB7 %s", TR("direct"));
+      else if (path_len != OUT_PATH_UNKNOWN)   snprintf(hops, sizeof hops, " \xC2\xB7 %u %s",
+                                                        (unsigned)path_len,
+                                                        path_len == 1 ? TR("hop") : TR("hops"));
+      // A channel post names the speaker as well as the room; a direct message
+      // is already titled with the sender, so naming them twice adds nothing.
+      if (channel && sender && sender[0])
+        snprintf(glance_title, sizeof glance_title, "%s \xE2\x80\xA2 %s%s", thread, sender, hops);
+      else
+        snprintf(glance_title, sizeof glance_title, "%s%s", thread, hops);
+    }
+    atGlanceShow(glance_title, body, was_off);   // fade in only on the initial reveal of a burst
     if (was_off) {
       lv_refr_now(nullptr);   // paint before the backlight comes on -- no stale-frame flash
       if (_manual_lock) {
