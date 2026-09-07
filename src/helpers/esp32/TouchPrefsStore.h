@@ -196,6 +196,14 @@ bool    touchPrefsSetFemLna(bool on);
 bool    touchPrefsGetMsgFlash();
 bool    touchPrefsSetMsgFlash(bool on);
 
+static constexpr uint8_t TOUCH_ATTAKY_NOTIFY_COLOR_COUNT = 7;
+bool    touchPrefsGetAttakyNotifyEnabled();
+bool    touchPrefsSetAttakyNotifyEnabled(bool on);
+uint8_t touchPrefsGetAttakyNotifyRoomColor();
+bool    touchPrefsSetAttakyNotifyRoomColor(uint8_t color);
+uint8_t touchPrefsGetAttakyNotifyDmColor();
+bool    touchPrefsSetAttakyNotifyDmColor(uint8_t color);
+
 /* Advertise on boot (#76): fire one flood self-advert ~6s after boot so peers with auto-add on
  * refresh our pubkey (useful after a reflash wiped storage). Opt-in, default off. All boards. */
 bool    touchPrefsGetConsoleMode();   // boot into the LVGL-free console (CONSOLE_MODE.md)

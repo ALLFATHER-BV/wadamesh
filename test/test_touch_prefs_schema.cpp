@@ -27,6 +27,9 @@ static Config safeDefaults() {
   c.boot_wifi_open = 0;
   c.theme_mode = 0;
   c.gps_fuzz_m = 0;
+  c.attaky_notify_enabled = 0;
+  c.attaky_notify_room_color = 0;
+  c.attaky_notify_dm_color = 1;
   return c;
 }
 
@@ -85,6 +88,9 @@ int main() {
   assert(migrated.loud_alerts == 0);
   assert(migrated.theme_mode == 0);
   assert(migrated.gps_fuzz_m == 0);
+  assert(migrated.attaky_notify_enabled == 0);
+  assert(migrated.attaky_notify_room_color == 0);
+  assert(migrated.attaky_notify_dm_color == 1);
 
   // Reproduce beta 57 exactly: retry was inserted before the old suffix, then
   // the v43 bytes were copied and the full shifted v44 structure was written.
@@ -116,7 +122,9 @@ int main() {
   constexpr size_t v53_size = offsetof(Config, boot_wifi_time);
   static_assert(v53_size + sizeof(Config::boot_wifi_time) + sizeof(Config::boot_wifi_open)
                     + sizeof(Config::loud_alerts) + sizeof(Config::theme_mode)
-                    + sizeof(Config::gps_fuzz_m) == sizeof(Config),
+            + sizeof(Config::gps_fuzz_m) + sizeof(Config::attaky_notify_enabled)
+            + sizeof(Config::attaky_notify_room_color)
+            + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -155,6 +163,9 @@ int main() {
   current.loud_alerts = 1;
   current.theme_mode = 1;
   current.gps_fuzz_m = 150;
+  current.attaky_notify_enabled = 1;
+  current.attaky_notify_room_color = 6;
+  current.attaky_notify_dm_color = 4;
   migrated = safeDefaults();
   assert(TouchPrefsSchema::overlayStored(migrated, &current, sizeof(current), &stored_version));
   assert(stored_version == TouchPrefsSchema::CURRENT_VERSION);
@@ -177,15 +188,16 @@ int main() {
   assert(migrated.app_hide == safeDefaults().app_hide);
   assert(migrated.theme_mode == 0);
 
-  // v56 appends only theme_mode. It was written as v54 on the contributing
+  // v56 appended only theme_mode. It was written as v54 on the contributing
   // branch, but v54 and v55 were taken by boot_wifi_* and loud_alerts before it
-  // merged, so the field sits behind those and the blob one version short of
-  // current is the one that must leave it at the Night default.
+  // merged, so the field sits behind those and a historical v55 blob must leave
+  // it at the Night default.
   constexpr size_t v55_size = offsetof(Config, theme_mode);
-  static_assert(offsetof(Config, gps_fuzz_m) + sizeof(Config::gps_fuzz_m) == sizeof(Config),
-                "gps_fuzz_m must remain last");
-  static_assert(v55_size + sizeof(Config::theme_mode) + sizeof(Config::gps_fuzz_m) == sizeof(Config),
-                "v55 is the current layout minus theme_mode and gps_fuzz_m");
+  static_assert(v55_size + sizeof(Config::theme_mode) + sizeof(Config::gps_fuzz_m)
+                    + sizeof(Config::attaky_notify_enabled)
+                    + sizeof(Config::attaky_notify_room_color)
+                    + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
+                "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
   v55.kb_force_legacy = 1;
@@ -198,6 +210,28 @@ int main() {
   assert(migrated.loud_alerts == 1);
   assert(migrated.theme_mode == 0);
   assert(migrated.gps_fuzz_m == 0);
+  assert(migrated.attaky_notify_enabled == 0);
+  assert(migrated.attaky_notify_room_color == 0);
+  assert(migrated.attaky_notify_dm_color == 1);
+
+  constexpr size_t v57_size = offsetof(Config, attaky_notify_enabled);
+  static_assert(v57_size + sizeof(Config::attaky_notify_enabled)
+                    + sizeof(Config::attaky_notify_room_color)
+                    + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
+                "v57 is the current layout minus the Attaky notification fields");
+  Config v57 = safeDefaults();
+  v57.ver = 57;
+  v57.gps_fuzz_m = 250;
+  v57.attaky_notify_enabled = 1;    // outside the stored v57 extent
+  v57.attaky_notify_room_color = 6;
+  v57.attaky_notify_dm_color = 5;
+  migrated = safeDefaults();
+  assert(TouchPrefsSchema::overlayStored(migrated, &v57, v57_size, &stored_version));
+  assert(stored_version == 57);
+  assert(migrated.gps_fuzz_m == 250);
+  assert(migrated.attaky_notify_enabled == 0);
+  assert(migrated.attaky_notify_room_color == 0);
+  assert(migrated.attaky_notify_dm_color == 1);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};

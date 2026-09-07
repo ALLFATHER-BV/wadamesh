@@ -5531,7 +5531,7 @@ enum {
   CAT_SENSORS,       // expansion kit + Show-Sensors-tab toggle (V4-with-kit)
   CAT_DISPLAY,       // screen timeout, UI size, bubbles, theme, orientation
   CAT_KEYBOARD,      // secondary layouts + accent popups
-  CAT_SOUND,         // notification sound
+  CAT_SOUND,         // notification sound, or Attaky keyboard-indicator blink
   CAT_QUICKREPLIES,  // quick-reply macros
   CAT_LOCK,          // lock-screen wallpaper + text colour (T-Deck only)
   CAT_GENERAL,       // reboot, run setup, storage/SD, misc device prefs (was "System")
@@ -5567,7 +5567,11 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Sensors",       LV_SYMBOL_EYE_OPEN },
   { "Display",       LV_SYMBOL_IMAGE },
   { "Keyboard",      LV_SYMBOL_KEYBOARD },
+#if defined(ATTAKY_MESH_SERIES)
+  { "Notifications", LV_SYMBOL_AUDIO },
+#else
   { "Sound",         LV_SYMBOL_AUDIO },
+#endif
   { "Quick replies", LV_SYMBOL_ENVELOPE },
   { "Lock screen",   LV_SYMBOL_EYE_CLOSE },
   { "General",       LV_SYMBOL_SETTINGS },
@@ -9333,6 +9337,96 @@ static void volumeStepCb(lv_event_t* e) {
 #endif
 #endif
 
+#if defined(ATTAKY_MESH_SERIES)
+struct AttakyNotifyColor {
+  uint32_t swatch_rgb;
+  uint8_t output_mask;
+};
+static const AttakyNotifyColor kAttakyNotifyColors[] = {
+  { 0xFF0000, ATTAKY_NOTIFY_RED },
+  { 0x00FF00, ATTAKY_NOTIFY_GREEN },
+  { 0x0000FF, ATTAKY_NOTIFY_BLUE },
+  { 0xFFFF00, ATTAKY_NOTIFY_RED | ATTAKY_NOTIFY_GREEN },
+  { 0x00FFFF, ATTAKY_NOTIFY_GREEN | ATTAKY_NOTIFY_BLUE },
+  { 0xFF00FF, ATTAKY_NOTIFY_RED | ATTAKY_NOTIFY_BLUE },
+  { 0xFFFFFF, ATTAKY_NOTIFY_RED | ATTAKY_NOTIFY_GREEN | ATTAKY_NOTIFY_BLUE },
+};
+static_assert(sizeof(kAttakyNotifyColors) / sizeof(kAttakyNotifyColors[0]) ==
+                  TOUCH_ATTAKY_NOTIFY_COLOR_COUNT,
+              "Attaky notification palette and persisted indexes must match");
+
+static lv_obj_t* s_attaky_notify_swatches[2][TOUCH_ATTAKY_NOTIFY_COLOR_COUNT] = {};
+static uint8_t s_attaky_notify_mask = ATTAKY_NOTIFY_OFF;
+static uint8_t s_attaky_notify_transitions = 0;
+static bool s_attaky_notify_lit = false;
+static uint32_t s_attaky_notify_next_ms = 0;
+
+static void attakyNotificationStop() {
+  s_attaky_notify_mask = ATTAKY_NOTIFY_OFF;
+  s_attaky_notify_transitions = 0;
+  s_attaky_notify_lit = false;
+  s_attaky_notify_next_ms = 0;
+  if (!attakyKeyboardSetNotificationColor(ATTAKY_NOTIFY_OFF)) {
+    s_attaky_notify_transitions = 1;
+    s_attaky_notify_lit = true;
+    s_attaky_notify_next_ms = millis() + 50;
+  }
+}
+
+static void attakyNotificationStart(uint8_t color_index) {
+  if (!touchPrefsGetAttakyNotifyEnabled()) return;
+  if (color_index >= TOUCH_ATTAKY_NOTIFY_COLOR_COUNT) color_index = 0;
+  s_attaky_notify_mask = kAttakyNotifyColors[color_index].output_mask;
+  s_attaky_notify_transitions = 6;
+  s_attaky_notify_lit = false;
+  s_attaky_notify_next_ms = millis();
+}
+
+static void attakyNotificationTick(uint32_t now) {
+  if (s_attaky_notify_transitions == 0 ||
+      (int32_t)(now - s_attaky_notify_next_ms) < 0) return;
+  const bool next_lit = !s_attaky_notify_lit;
+  const uint8_t output = next_lit ? s_attaky_notify_mask : ATTAKY_NOTIFY_OFF;
+  if (!attakyKeyboardSetNotificationColor(output)) {
+    s_attaky_notify_next_ms = now + 50;
+    return;
+  }
+  s_attaky_notify_lit = next_lit;
+  --s_attaky_notify_transitions;
+  s_attaky_notify_next_ms = s_attaky_notify_transitions ? now + 220 : 0;
+}
+
+static void attakyNotifySwatchesRefresh(int row) {
+  const uint8_t selected = row == 0
+      ? touchPrefsGetAttakyNotifyRoomColor()
+      : touchPrefsGetAttakyNotifyDmColor();
+  for (uint8_t i = 0; i < TOUCH_ATTAKY_NOTIFY_COLOR_COUNT; ++i) {
+    lv_obj_t* swatch = s_attaky_notify_swatches[row][i];
+    if (!swatch || !lv_obj_is_valid(swatch)) continue;
+    lv_obj_set_style_border_width(swatch, i == selected ? 2 : 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(swatch,
+        lv_color_hex(i == selected ? 0xFFFFFF : COLOR_BORDER), LV_PART_MAIN);
+  }
+}
+
+static void toggleAttakyNotificationsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetAttakyNotifyEnabled(on);
+  if (!on) attakyNotificationStop();
+}
+
+static void attakyNotifyColorChosenCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uintptr_t choice = (uintptr_t)lv_event_get_user_data(e);
+  const int row = (choice & 0x100u) ? 1 : 0;
+  const uint8_t color = (uint8_t)(choice & 0xFFu);
+  if (row == 0) touchPrefsSetAttakyNotifyRoomColor(color);
+  else          touchPrefsSetAttakyNotifyDmColor(color);
+  attakyNotifySwatchesRefresh(row);
+}
+#endif
+
 static void settingsFieldFocusCb(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   // Drop LV_EVENT_PRESSED: it fires on touch-down before LVGL can tell
@@ -9945,13 +10039,14 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   lv_obj_set_height(content, LV_SIZE_CONTENT);
   lv_obj_set_pos(content, 0, 0);
   lv_obj_set_style_pad_all(content, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(content, 6, LV_PART_MAIN);
   lv_obj_set_style_border_width(content, 0, LV_PART_MAIN);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
 
   resetSettingsModalState();
   g_set_modal.root = root;
   g_set_modal.kind = kind;
-  s_settings_content_w = (sw - 8) - 12;   // modal body width minus its 6px padding each side
+  s_settings_content_w = (sw - 8) - 12 - 6;   // body content width minus the right control gutter
 #if CAP_KEYBOARD && CAP_KEYPAD_NAV
   // Physical keyboard: once the caller has finished adding this modal's fields
   // (deferred to the next frame), focus its first text field so the user can
@@ -13631,7 +13726,49 @@ static void buildDeviceSettings(int sec) {
     // The "Show Sensors tab" toggle is appended here too (moved from Display).
   }
 
-  if (sec == DSEC_SOUND) {   // --- Sound ---
+  if (sec == DSEC_SOUND) {   // --- Sound / Attaky notifications ---
+#if defined(ATTAKY_MESH_SERIES)
+  {
+    int rh = settingsRowLabel(body, y, 6, TR("Incoming message blink"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetAttakyNotifyEnabled()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, toggleAttakyNotificationsCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, rh + 12);
+  }
+  auto addNotifyColorRow = [&](const char* label, int row) {
+    y += settingsRowLabel(body, y, 0, TR(label), COLOR_SUB, &g_font_12, 0) + 4;
+    const lv_coord_t gap = 3;
+    const lv_coord_t row_w = s_settings_content_w - 2;
+    const lv_coord_t swatch_w = (row_w - gap * (TOUCH_ATTAKY_NOTIFY_COLOR_COUNT - 1)) /
+                                TOUCH_ATTAKY_NOTIFY_COLOR_COUNT;
+    const lv_coord_t swatch_h = SC(26);
+    for (uint8_t i = 0; i < TOUCH_ATTAKY_NOTIFY_COLOR_COUNT; ++i) {
+      lv_obj_t* swatch = lv_btn_create(body);
+      s_attaky_notify_swatches[row][i] = swatch;
+      lv_obj_set_size(swatch, swatch_w, swatch_h);
+      lv_obj_set_pos(swatch, 2 + i * (swatch_w + gap), y);
+      lv_obj_set_style_radius(swatch, 4, LV_PART_MAIN);
+      for (lv_style_selector_t state : { (lv_style_selector_t)LV_PART_MAIN,
+                                        (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED),
+                                        (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                        (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_PRESSED) }) {
+        lv_obj_set_style_bg_color(swatch, lv_color_hex(kAttakyNotifyColors[i].swatch_rgb), state);
+        lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, state);
+      }
+      lv_obj_set_style_outline_color(swatch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_width(swatch, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_opa(swatch, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      lv_obj_set_style_outline_pad(swatch, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+      const uintptr_t choice = (row ? 0x100u : 0u) | i;
+      lv_obj_add_event_cb(swatch, attakyNotifyColorChosenCb, LV_EVENT_CLICKED, (void*)choice);
+    }
+    attakyNotifySwatchesRefresh(row);
+    y += swatch_h + 10;
+  };
+  addNotifyColorRow("Room / channel color", 0);
+  addNotifyColorRow("Direct message color", 1);
+#endif
   // Sound toggle — T-Deck I2S speaker, Heltec V4 expansion-kit piezo buzzer, or
   // the Tanmatsu's ES8156 codec / speaker amp.
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
@@ -56433,6 +56570,15 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   }
 #endif
 
+#if defined(ATTAKY_MESH_SERIES)
+  if (g_last_event == UIEventType::contactMessage) {
+    attakyNotificationStart(touchPrefsGetAttakyNotifyDmColor());
+  } else if (g_last_event == UIEventType::channelMessage ||
+             g_last_event == UIEventType::roomMessage) {
+    attakyNotificationStart(touchPrefsGetAttakyNotifyRoomColor());
+  }
+#endif
+
 #if CAP_LUA_SDK_EXT
   // Hand a running Lua app the incoming message (app.on_message), AFTER the block
   // and spam filters so an app sees exactly the messages the user does. Permission
@@ -58081,6 +58227,7 @@ void UITask::loop() {
   }
 #endif
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  attakyNotificationTick(now);
   {
     lv_obj_t* akb_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
     attakyKeyboardPoll(akb_ta != nullptr);
@@ -58099,6 +58246,10 @@ void UITask::loop() {
           break;   // keyboard rebound above; akb_ta is stale from here
         }
         else if (s_kb_panel) lv_textarea_add_char(akb_ta, '\n');   // enter-sends off: compose multi-line
+        else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
+          terminalSubmit();   // terminal: submit once, clear, and keep the field ready
+          break;
+        }
         else                 lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);  // settings field: confirm
       }
       else if (key == 0x08 || key == 0x7F) lv_textarea_del_char(akb_ta);
