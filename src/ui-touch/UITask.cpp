@@ -16888,9 +16888,13 @@ static void openContactsSearchSheetCb(lv_event_t* e) {
   // the chat textarea) only shows the keyboard while a chat panel detail
   // is open, so it silently no-op'd here.
   attachSettingsTaEvents(s_contacts_search_ta);
+#if CAP_KEYBOARD && CAP_KEYPAD_NAV
+  lv_async_call(physicalKeyboardModalAutoFocusAsync, s_contacts_search_sheet);
+#else
   // Eager bind so the keyboard appears the instant the overlay opens —
   // matches the behaviour of the other modals that pop up textareas.
   if (g_lv.keyboard) kbMirrorBind(s_contacts_search_ta);
+#endif
 
   lv_obj_t* clear_btn = lv_btn_create(card);
   lv_obj_set_size(clear_btn, PSC(88), PSC(34));
@@ -27785,6 +27789,7 @@ static void makeContactsTab(lv_obj_t* tab) {
     // confused by a short list.
     g_lv.contacts_search_indicator = lv_obj_create(b);
     lv_obj_remove_style_all(g_lv.contacts_search_indicator);
+    lv_obj_clear_flag(g_lv.contacts_search_indicator, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_size(g_lv.contacts_search_indicator, 18, 3);
     lv_obj_align(g_lv.contacts_search_indicator, LV_ALIGN_BOTTOM_MID, 0, -2);
     lv_obj_set_style_bg_color(g_lv.contacts_search_indicator, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
