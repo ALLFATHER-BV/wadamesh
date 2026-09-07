@@ -7,8 +7,8 @@
 // takes the whole subtree out of nav. Needed by the Lua app host: its body is
 // clickable so touch boards get press events, and on keypad-nav boards (M9,
 // Pager, Tanmatsu, T-Deck trackball) navCollect otherwise harvests that body as
-// a leaf target and navFocusCb's reverse-video fill paints the whole app white
-// under the app's own widgets. Lives here because AppPage.h is the header both
+// a leaf target and draws a cursor around the whole app instead of its controls.
+// Lives here because AppPage.h is the header both
 // UITask.cpp and LuaAppHost.cpp already share.
 #define NAV_PASSTHRU_FLAG LV_OBJ_FLAG_USER_4
 

@@ -33,6 +33,7 @@ extern lv_coord_t       luaHostAppBarH();                         // real AppPag
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern bool             luaHostBeep();
+extern void             luaHostSetSelectionGlow(lv_obj_t* obj, bool selected);
 extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
@@ -617,8 +618,9 @@ lv_obj_t* listRowAt(ListUd* u, int i) {          // i is 1-based, as everywhere 
   return lv_obj_get_child(u->obj, i - 1);
 }
 void listPaintRow(lv_obj_t* row, bool selected) {
-  lv_obj_set_style_bg_color(row, lv_color_hex(selected ? 0x15B6A6 : 0x1A1F25), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x1A1F25), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  luaHostSetSelectionGlow(row, selected);
 }
 
 // wada.ui.text_w(text [, size]) -> rendered width in pixels.
@@ -2743,9 +2745,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
   // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the
   // overlay that keeps touches off the screen underneath) — but it must not be
-  // a keyboard-nav focus target either, or the focus highlight paints it
-  // solid: with only the body excluded, navCollect simply promoted the root to
-  // the leaf target and the app went white all the same (seen on the M9).
+  // a keyboard-nav focus target either: with only the body excluded, navCollect
+  // simply promoted the root and drew a cursor around the whole app (seen on the M9).
   lv_obj_add_flag(h->root, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->root, luaAppRootDeletedCb, LV_EVENT_DELETE, nullptr);
 
@@ -2761,9 +2762,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_clear_flag(h->body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(h->body, LV_OBJ_FLAG_CLICKABLE);
   // Clickable for touch, but never a keyboard-nav focus target: on the M9 the
-  // nav collector harvested this body as a leaf and the focus highlight's
-  // reverse-video fill painted the whole app white under its widgets. The
-  // flag leaves the app's own buttons reachable (see AppPage.h).
+  // nav collector harvested this body as a leaf and outlined the whole app.
+  // The flag leaves the app's own buttons reachable (see AppPage.h).
   lv_obj_add_flag(h->body, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->body, gestureCb, LV_EVENT_GESTURE, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_PRESSED, nullptr);

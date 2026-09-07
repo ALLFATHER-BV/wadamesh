@@ -1814,7 +1814,7 @@ constexpr int TAB_LAST               = 4;
 
 // Objects flagged thus are clickable but must NOT be a keyboard-nav focus target —
 // navCollect skips them. Used for the full-area map touch/pan catcher, which would
-// otherwise get focused and painted solid by the focus highlight (white over the map).
+// otherwise get an irrelevant focus glow around the whole map.
 #define NAV_SKIP_FLAG LV_OBJ_FLAG_USER_1
 
 // A "horizontal-only" secondary keyboard-nav target (e.g. the per-row settings gear in the chat
@@ -1824,16 +1824,31 @@ constexpr int TAB_LAST               = 4;
 // row, leaving the row un-focusable so keyboard users could only open thread-settings, never the chat.
 #define NAV_HMOVE_FLAG LV_OBJ_FLAG_USER_2
 
-// An object whose keyboard-nav focus highlight should be an ACCENT-coloured
-// tint (matching its own touch-press feedback) instead of navFocusCb's
-// default white reverse-video fill. Used by app-drawer tiles (addAppTile):
-// a solid white block over a small rounded icon chip reads as a glitch, not
-// a highlight — while on the pager (no touch, so this IS the only feedback
-// a user ever sees on these tiles) it needs to look intentional. Reuses the
-// exact same COLOR_ACCENT tint the tile's own LV_STATE_PRESSED style already
-// defines, so a keyboard/encoder-focused tile matches what a touch/trackball
-// press already looks like on every board.
-#define NAV_ACCENTFOCUS_FLAG LV_OBJ_FLAG_USER_3
+static lv_style_t s_selection_glow_style;
+static bool s_selection_glow_style_ready = false;
+static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t selector) {
+  if (!obj) return;
+  if (!s_selection_glow_style_ready) {
+    lv_style_init(&s_selection_glow_style);
+    lv_style_set_outline_width(&s_selection_glow_style, 3);
+    lv_style_set_outline_pad(&s_selection_glow_style, 2);
+    lv_style_set_outline_opa(&s_selection_glow_style, LV_OPA_COVER);
+    lv_style_set_shadow_width(&s_selection_glow_style, 12);
+    lv_style_set_shadow_spread(&s_selection_glow_style, 1);
+    lv_style_set_shadow_opa(&s_selection_glow_style, LV_OPA_70);
+    lv_style_set_outline_color(&s_selection_glow_style, lv_color_hex(COLOR_ACCENT));
+    lv_style_set_shadow_color(&s_selection_glow_style, lv_color_hex(COLOR_ACCENT));
+    s_selection_glow_style_ready = true;
+  }
+  lv_obj_remove_style(obj, &s_selection_glow_style, selector);
+  if (selected) lv_obj_add_style(obj, &s_selection_glow_style, selector);
+}
+
+#if CAP_LUA_APPS
+void luaHostSetSelectionGlow(lv_obj_t* obj, bool selected) {
+  setSelectionGlow(obj, selected, LV_PART_MAIN);
+}
+#endif
 
 // ---- Chat overlay layout ----
 constexpr int CHAT_HDR_H       = 0;    // in-chat header bar removed; thread name shows in the status bar
@@ -3175,8 +3190,8 @@ static lv_obj_t* addCloseXBadge(lv_obj_t* card, lv_event_cb_t cb, void* user_dat
   lv_obj_add_flag(x, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(x, LV_OBJ_FLAG_FLOATING);
   lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  // Keep the normal reverse-video navigation focus: a bright 24-px disk with
-  // the child X inverted to black. The larger 32-px hit target stays invisible.
+  // The shared navigation cursor adds its accent glow outside this 24-px target;
+  // the larger 32-px touch target stays invisible.
   lv_obj_clear_flag(x, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(x);
   lv_obj_add_event_cb(x, cb, LV_EVENT_CLICKED, user_data);
@@ -3616,6 +3631,18 @@ static lv_obj_t* s_nav_store_active_tab = nullptr;
 static lv_obj_t* s_nav_store_first      = nullptr;
 static lv_obj_t* s_nav_store_top_row    = nullptr;
 
+enum HomeNavSlot : uint8_t {
+  HOME_NAV_ADVERT,
+  HOME_NAV_TERMINAL,
+  HOME_NAV_FILES,
+  HOME_NAV_APPS,
+  HOME_NAV_CONTROL,
+  HOME_NAV_COUNT,
+};
+static lv_obj_t* s_home_nav_root = nullptr;
+static lv_obj_t* s_home_nav_right[HOME_NAV_COUNT] = { nullptr };
+static bool s_home_nav_split = false;
+
 #if CAP_KEYPAD_NAV
 // ===========================================================================
 // Keypad / D-pad focus navigation
@@ -3868,59 +3895,9 @@ static void m9NavClear() { s_m9_nav_n = 0; }
 static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside them
 #endif
 
-// Visible focus ring (the LVGL default theme's focus outline is invisible on this dark UI). Driven
-// by the group's focus-changed callback. Reverse-video ("negative") highlight: the
-// focused element is FILLED with the text colour and its text flipped to the
-// background colour — like a text selection — instead of a coloured ring. Applied as
-// LOCAL styles so it overrides each element's own styling, and restored exactly via
-// local-style introspection so app styling survives the unfocus. The bottom tab bar
-// (a btnmatrix) is the exception: a full fill there reads as a messy bar, so it keeps
-// a bright outline.
-static struct { bool bg_c, bg_o, txt; lv_style_value_t v_bg_c, v_bg_o, v_txt; } s_nav_sv;
-
-// Descendant labels that carry their OWN (local) text colour don't inherit the
-// container's flipped colour, so they'd stay light on the light fill -> unreadable.
-// Track + flip them to dark on focus, restore exactly on unfocus.
-static struct { lv_obj_t* o; lv_style_value_t v; } s_nav_txt[32];
-static int s_nav_txt_n = 0;
-static void navInvertText(lv_obj_t* o) {
-  lv_style_value_t v;
-  if (lv_obj_get_local_style_prop(o, LV_STYLE_TEXT_COLOR, &v, LV_PART_MAIN) == LV_STYLE_RES_FOUND &&
-      s_nav_txt_n < (int)(sizeof(s_nav_txt) / sizeof(s_nav_txt[0]))) {
-    s_nav_txt[s_nav_txt_n].o = o;
-    s_nav_txt[s_nav_txt_n].v = v;
-    s_nav_txt_n++;
-    lv_obj_set_style_text_color(o, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  }
-  uint32_t n = lv_obj_get_child_cnt(o);
-  for (uint32_t i = 0; i < n; i++) navInvertText(lv_obj_get_child(o, i));
-}
-static void navRestoreText() {
-  for (int i = 0; i < s_nav_txt_n; i++)
-    if (s_nav_txt[i].o && lv_obj_is_valid(s_nav_txt[i].o))
-      lv_obj_set_local_style_prop(s_nav_txt[i].o, LV_STYLE_TEXT_COLOR, s_nav_txt[i].v, LV_PART_MAIN);
-  s_nav_txt_n = 0;
-}
-
 static void navUnstyle(lv_obj_t* o) {
-  navRestoreText();                       // un-flip descendant text first (each is_valid-guarded)
   if (!o || !lv_obj_is_valid(o)) return;
-  if (o == s_nav_tabbar) {                // tab bar: clear the inverted active-tab cell
-    lv_obj_remove_local_style_prop(o, LV_STYLE_BG_COLOR,   LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_remove_local_style_prop(o, LV_STYLE_BG_OPA,     LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_remove_local_style_prop(o, LV_STYLE_TEXT_COLOR, LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_invalidate(o);
-    return;
-  }
-  lv_obj_set_style_outline_width(o, 0, LV_PART_MAIN);
-  lv_obj_set_style_shadow_width(o, 0, LV_PART_MAIN);   // drop the switch/slider focus glow (navFocusCb adds it)
-  if (s_nav_sv.bg_c) lv_obj_set_local_style_prop(o, LV_STYLE_BG_COLOR,   s_nav_sv.v_bg_c, LV_PART_MAIN);
-  else               lv_obj_remove_local_style_prop(o, LV_STYLE_BG_COLOR,   LV_PART_MAIN);
-  if (s_nav_sv.bg_o) lv_obj_set_local_style_prop(o, LV_STYLE_BG_OPA,     s_nav_sv.v_bg_o, LV_PART_MAIN);
-  else               lv_obj_remove_local_style_prop(o, LV_STYLE_BG_OPA,     LV_PART_MAIN);
-  if (s_nav_sv.txt)  lv_obj_set_local_style_prop(o, LV_STYLE_TEXT_COLOR,  s_nav_sv.v_txt,  LV_PART_MAIN);
-  else               lv_obj_remove_local_style_prop(o, LV_STYLE_TEXT_COLOR,  LV_PART_MAIN);
-  lv_obj_invalidate(o);
+  setSelectionGlow(o, false, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 }
 
 // Keyboard-nav edit mode for text fields: when focus lands on a field it is NOT editable
@@ -3958,55 +3935,9 @@ static void navFocusCb(lv_group_t* g) {
   if (s_nav_styled && s_nav_styled != f) navUnstyle(s_nav_styled);
   s_nav_styled = nullptr;                  // old highlight (if any) is now restored; nothing styled yet
   if (!f || !s_nav_show) return;          // focus-visible: paint only while actively keyboard-navigating
-  s_nav_styled = f;                        // we ARE styling f now — only now does it own s_nav_sv / s_nav_txt
-  if (f == nav_was_styled) return;         // re-focused the SAME already-styled obj: leave its saved style intact.
-                                           // Re-applying would capture the reverse-video AS the "original" so a later
-                                           // navUnstyle restores the highlight → the obj stays stuck highlighted.
-  if (f == s_nav_tabbar) {
-    // Tab bar is a btnmatrix — invert just the active (checked) tab cell, which tracks
-    // the selection as you press left/right, instead of boxing the whole bar.
-    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_ITEMS | LV_STATE_CHECKED);
-  } else if (lv_obj_check_type(f, &lv_switch_class) || lv_obj_check_type(f, &lv_slider_class) 
-            || lv_obj_check_type(f, &lv_textarea_class)) {
-    // A switch/slider's look is its knob/indicator, not the MAIN bg, so a reverse-video
-    // fill doesn't read as focused — give it a bright outline PLUS an accent glow instead.
-    s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore but the outline/shadow
-    // Bright white ring tight to the widget…
-    lv_obj_set_style_outline_color(f, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_outline_width(f, 3, LV_PART_MAIN);
-    lv_obj_set_style_outline_pad(f, 3, LV_PART_MAIN);
-    lv_obj_set_style_outline_opa(f, LV_OPA_COVER, LV_PART_MAIN);
-    // …backed by a big soft ACCENT glow so a focused switch/slider really pops out
-    // from its neighbours (cleared in navUnstyle alongside the outline).
-    lv_obj_set_style_shadow_color(f, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(f, 16, LV_PART_MAIN);
-    lv_obj_set_style_shadow_spread(f, 2, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(f, LV_OPA_COVER, LV_PART_MAIN);
-  } else if (lv_obj_has_flag(f, NAV_ACCENTFOCUS_FLAG)) {
-    // App-drawer tile: a solid white reverse-fill over a small rounded icon
-    // chip reads as a glitch, not a highlight — use the SAME accent tint the
-    // tile's own LV_STATE_PRESSED style already applies on a touch/trackball
-    // press, so keyboard/encoder focus looks identical on every board instead
-    // of white-on-pager vs. accent-on-touch.
-    s_nav_sv.bg_c = s_nav_sv.bg_o = s_nav_sv.txt = false;   // nothing to restore; navUnstyle just clears these
-    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(f, LV_OPA_20, LV_PART_MAIN);
-  } else {
-    // Save the element's current local props, then apply the negative fill.
-    s_nav_sv.bg_c = lv_obj_get_local_style_prop(f, LV_STYLE_BG_COLOR,   &s_nav_sv.v_bg_c, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
-    s_nav_sv.bg_o = lv_obj_get_local_style_prop(f, LV_STYLE_BG_OPA,     &s_nav_sv.v_bg_o, LV_PART_MAIN) == LV_STYLE_RES_FOUND;
-    s_nav_sv.txt  = lv_obj_get_local_style_prop(f, LV_STYLE_TEXT_COLOR, &s_nav_sv.v_txt,  LV_PART_MAIN) == LV_STYLE_RES_FOUND;
-    lv_obj_set_style_bg_color(f, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(f, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_text_color(f, lv_color_hex(COLOR_BG), LV_PART_MAIN);   // dark text on the light fill (inheritors)
-    lv_obj_set_style_outline_width(f, 0, LV_PART_MAIN);                       // no amber ring
-    lv_obj_set_style_outline_width(f, 0, LV_PART_MAIN | LV_STATE_FOCUS_KEY);  // no stock-theme blue ring
-    // …and flip any descendant labels that carry their own colour, so all text stays readable.
-    uint32_t nc = lv_obj_get_child_cnt(f);
-    for (uint32_t i = 0; i < nc; i++) navInvertText(lv_obj_get_child(f, i));
-  }
+  s_nav_styled = f;
+  if (f == nav_was_styled) return;
+  setSelectionGlow(f, true, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
   if (!s_nav_suppress_scroll) {
     lv_obj_t* scroll_target = navStoreRowFor(f);
     lv_obj_scroll_to_view_recursive(scroll_target ? scroll_target : f, LV_ANIM_OFF);
@@ -4127,6 +4058,55 @@ static bool m9ControlCenterMove(lv_obj_t* current, int dir) {
   return true;             // consume left/right at a row edge instead of jumping rows
 }
 #endif
+static int navHomeRightIndex(lv_obj_t* obj) {
+  for (int i = 0; i < HOME_NAV_COUNT; ++i)
+    if (s_home_nav_right[i] == obj) return i;
+  return -1;
+}
+
+static bool navHomeContains(lv_obj_t* obj) {
+  if (!s_home_nav_split || !s_home_nav_root || !lv_obj_is_valid(s_home_nav_root) ||
+      getActiveTab() != HOME_TAB_INDEX) return false;
+  while (obj) {
+    if (obj == s_home_nav_root) return true;
+    obj = lv_obj_get_parent(obj);
+  }
+  return false;
+}
+
+static void navHomeFocus(lv_obj_t* target) {
+  if (!target || !lv_obj_is_valid(target) || lv_obj_has_flag(target, LV_OBJ_FLAG_HIDDEN)) return;
+  s_nav_show = true;
+  lv_group_focus_obj(target);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+
+static bool navHomeMove(lv_obj_t* current, int dir) {
+  if (!navHomeContains(current)) return false;
+  const int slot = navHomeRightIndex(current);
+  if (dir == NAV_LEFT) {
+    navHomeFocus(g_lv.home_unread);
+    return true;
+  }
+  if (slot >= 0) {
+    if (dir == NAV_UP || dir == NAV_DOWN) {
+      const int step = dir == NAV_DOWN ? 1 : -1;
+      for (int next = slot + step; next >= 0 && next < HOME_NAV_COUNT; next += step) {
+        lv_obj_t* target = s_home_nav_right[next];
+        if (!target || !lv_obj_is_valid(target) || lv_obj_has_flag(target, LV_OBJ_FLAG_HIDDEN)) continue;
+        navHomeFocus(target);
+        break;
+      }
+    }
+    return true;
+  }
+  if (dir == NAV_RIGHT) {
+    navHomeFocus(s_home_nav_right[HOME_NAV_ADVERT]);
+    return true;
+  }
+  return false;
+}
+
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -4193,6 +4173,9 @@ static void navMoveDir(int dir) {
 #if defined(HAS_THINKNODE_M9)
   if (m9ControlCenterMove(cur, dir)) return;
 #endif
+  if (navHomeMove(cur, dir)) return;
+  const bool home_left_vertical = navHomeContains(cur) && navHomeRightIndex(cur) < 0 &&
+                                  (dir == NAV_UP || dir == NAV_DOWN);
   lv_area_t a; lv_obj_get_coords(cur, &a);
   // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
   // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
@@ -4205,6 +4188,7 @@ static void navMoveDir(int dir) {
   long nearPrimary = 0x7FFFFFFFL, nearCross = 0x7FFFFFFFL;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
+    if (home_left_vertical && (!navHomeContains(o) || navHomeRightIndex(o) >= 0)) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
     long primary, cross;
@@ -4220,6 +4204,7 @@ static void navMoveDir(int dir) {
   long bestScore = 0x7FFFFFFFL;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
+    if (home_left_vertical && (!navHomeContains(o) || navHomeRightIndex(o) >= 0)) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
     long primary, cross;
@@ -4889,8 +4874,8 @@ static uint32_t  s_nav_prev_sig = 0xFFFFFFFFu;
 static void navMarkDirty() { s_nav_dirty = true; }
 
 // A virtualized chat rebuild destroys the currently-materialized row objects.
-// Detach the navigation group while every object (and every descendant label
-// remembered by navInvertText) is still alive. Letting lv_obj_del() remove the
+// Detach the navigation group while the focused object is still alive. Letting
+// lv_obj_del() remove the
 // focused row itself is unsafe: LVGL has already torn down that row's styles and
 // animations when lv_group_remove_obj() auto-focuses a survivor and calls
 // navFocusCb(), which then tries to restore styles on the half-destructed row.
@@ -4900,8 +4885,6 @@ static bool navDetachBeforeTreeMutation() {
   if (s_nav_styled) {
     navUnstyle(s_nav_styled);
     s_nav_styled = nullptr;
-  } else {
-    navRestoreText();
   }
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr;
@@ -5437,7 +5420,8 @@ static double contactDistanceKm(double lat1, double lon1, double lat2, double lo
 static void openLogModalCb(lv_event_t* e);
 static void logModeRxCb(lv_event_t* e);
 static void logModeRawCb(lv_event_t* e);
-static void showConfirm(const char* msg, const char* ok_label, void (*on_confirm)());
+static void showConfirm(const char* msg, const char* ok_label, void (*on_confirm)(),
+                        bool actions_only_nav = false);
 static void clipboardSet(const char* text, const char* tag);
 static void copyLabelLongPressCb(lv_event_t* e);
 static void taClearSelection(lv_obj_t* ta);   // clear composer text-selection before an insert
@@ -5631,8 +5615,8 @@ static lv_obj_t* s_m9_contact_indicator = nullptr;
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
-static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info LIVE tier (uptime/heap, 1 Hz on the About tab)
-static lv_obj_t* s_sysinfo_rest_lbl = nullptr;   // System-info slow tier (re-set only when its text changes)
+static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info popup LIVE tier (uptime/heap, 1 Hz while open)
+static lv_obj_t* s_sysinfo_rest_lbl = nullptr;   // System-info popup slow tier (re-set only when its text changes)
 #if defined(HAS_TDECK_GT911)
 static lv_obj_t* s_sleep_diag_lbl  = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 1)
 static lv_obj_t* s_sleep_diag_lbl2 = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 2)
@@ -7232,8 +7216,8 @@ static void accentBoxHide() {
 static void accentNavRestyle() {
   for (uint8_t i = 0; i < s_accbox_cell_n; ++i) {
     if (!s_accbox_cells[i]) continue;
-    lv_obj_set_style_bg_color(s_accbox_cells[i],
-      lv_color_hex((int)i == s_accentnav_idx ? COLOR_ACCENT : COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_accbox_cells[i], lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    setSelectionGlow(s_accbox_cells[i], (int)i == s_accentnav_idx, LV_PART_MAIN);
   }
 }
 // Encoder's short-click while picking: fire the highlighted cell's own CLICKED
@@ -7358,8 +7342,8 @@ static void mentionBoxHide() {
 static void mentionNavRestyle() {
   for (uint8_t i = 0; i < s_mentionbox_cell_n; ++i) {
     if (!s_mentionbox_cells[i]) continue;
-    lv_obj_set_style_bg_color(s_mentionbox_cells[i],
-      lv_color_hex((int)i == s_mentionnav_idx ? COLOR_ACCENT : COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_mentionbox_cells[i], lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    setSelectionGlow(s_mentionbox_cells[i], (int)i == s_mentionnav_idx, LV_PART_MAIN);
   }
 }
 static void mentionNavMove(int delta) {
@@ -8502,9 +8486,9 @@ static void emojiPaintSelection() {
     lv_obj_t* b = lv_obj_get_child(s_emoji_grid, i);
     if (!b) continue;
     const bool sel = ((int)i == s_emoji_sel);
-    lv_obj_set_style_bg_color(b, lv_color_hex(sel ? COLOR_MENTION : COLOR_CONTROL), LV_PART_MAIN);
-    lv_obj_set_style_border_width(b, sel ? 2 : 0, LV_PART_MAIN);
-    lv_obj_set_style_border_color(b, lv_color_hex(0xCFE6FF), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
+    lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
+    setSelectionGlow(b, sel, LV_PART_MAIN);
   }
   if (s_emoji_sel >= 0 && s_emoji_sel < (int)n) {
     lv_obj_t* b = lv_obj_get_child(s_emoji_grid, (uint32_t)s_emoji_sel);
@@ -8913,6 +8897,11 @@ static void openQuickReplyPicker(LvChatPanel* p) {
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
+#if defined(HAS_M9_KEYBOARD)
+  // The focus glow extends 8 px beyond the row. Keep it inside the clipped
+  // scroll viewport when LVGL aligns the first reply to the top padding.
+  lv_obj_set_style_pad_top(card, pad + 2, LV_PART_MAIN);
+#endif
   // The card is clamped to the visible height above, but its rows are absolutely
   // positioned and can extend past that clamp (small screens + Large/Huge UI scale) —
   // enable vertical scrolling so the lower quick-replies + hint stay reachable (GH #151).
@@ -9892,6 +9881,10 @@ static void closeSettingsModal() {
   // has no !CAP_KEYPAD_NAV fallback, hence the gate; navMarkDirty below does).
   navDetachBeforeTreeMutation();
 #endif
+  if (g_set_modal.kind == SettingsModalKind::SystemInfo) {
+    s_sysinfo_lbl = nullptr;
+    s_sysinfo_rest_lbl = nullptr;
+  }
   if (g_set_modal.root) {
     lv_obj_del(g_set_modal.root);
   }
@@ -11292,8 +11285,7 @@ static void clampDropdownListCb(lv_event_t* e) {
 // The standard dropdown look + behaviour, in one call (the settings pages spell the same
 // thing out inline). Worth having as a helper because an UNSTYLED dropdown is subtly broken
 // on a keyboard board: LVGL's stock theme is the LIGHT one, so the closed button and its open
-// list render as near-white cards — and navFocusCb's focus highlight reverse-videos to
-// COLOR_TEXT, i.e. paints white on white, so the cursor simply vanishes on that widget.
+// list render as near-white cards, where the accent focus glow has too little contrast.
 // Panel colours fix that; the accent-filled selected row does the same job INSIDE an open
 // list (the stock theme highlights it with its own blue primary, not the UI accent); and the
 // clamp keeps a list that opens upward from sliding under the tall app-page title bar.
@@ -12180,8 +12172,8 @@ static void openMemoryDetailCb(lv_event_t* e) {
 }
 
 // Render the System-info text into buf. Re-callable so live values (uptime,
-// free heap) update; the inline About page calls it once at build then
-// refreshSysInfo() re-runs it ~1 Hz while that tab is visible.
+// free heap) update; the popup calls it once at build then refreshSysInfo()
+// re-runs it ~1 Hz while the popup is visible.
 // beta_31 field-freeze tracer record (ring + logger defined with UITask::loop below).
 struct StallRec { uint32_t at_s; uint16_t dur_ms; const char* tag; };
 extern StallRec g_stall_ring[16];
@@ -12190,7 +12182,7 @@ extern uint8_t  g_stall_cnt, g_stall_w;
 // Live tier of the About text: the two blocks that genuinely change every second
 // (uptime + heap). Kept in their own small label so the 1 Hz refresh only re-lays
 // ~7 lines — re-setting the full ~40-line text made LVGL spend ~340 ms per second
-// rendering while About was open (the "ui:lvgl" stall-ring entries).
+// rendering while System Information was open (the "ui:lvgl" stall-ring entries).
 static void sysInfoTextLive(char* buf, size_t cap) {
   int p = 0;
 #if defined(ESP32)
@@ -12418,12 +12410,13 @@ static void sysInfoTextRest(char* buf, size_t cap) {
   (void)p;
 }
 
-// Re-render the System-info text in place while the About sub-tab is visible.
+// Re-render the System-info text in place while its popup is visible.
 static void refreshSysInfo(unsigned long now) {
   static unsigned long next = 0;
   if ((long)(now - next) < 0) return;
-  if (!s_sysinfo_lbl || getActiveTab() != SETTINGS_TAB_INDEX || s_settings_open_cat != CAT_ABOUT) {
-    next = now + 1000;   // not on the About sheet — just rate-limit
+  if (!s_sysinfo_lbl || !g_set_modal.root ||
+      g_set_modal.kind != SettingsModalKind::SystemInfo) {
+    next = now + 1000;   // popup closed — just rate-limit
     return;
   }
   // Re-setting a label re-wraps + repaints it; doing that every second WHILE the
@@ -12478,7 +12471,7 @@ static void refreshSleepDiag(unsigned long now) {
 #endif  // HAS_TDECK_GT911
 
 static void buildSystemInfoSettings() {
-  lv_obj_t* body = createSettingsModal(TR("System info"), SettingsModalKind::SystemInfo);
+  lv_obj_t* body = createSettingsModal(TR("System Information"), SettingsModalKind::SystemInfo);
   char buf[832];
 
   // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
@@ -12492,11 +12485,9 @@ static void buildSystemInfoSettings() {
   //     to six "-Ns <tag> Nms" rows — on a page that is itself a documented
   //     stall source.
   // The old code pinned each child to the MEASURED height of the one above it,
-  // so any of that growth printed straight over the next widget: the live tier
-  // over the "Chip / ESP32-S3" heading, the slow tier over the Memory detail
-  // button. Reserving a worst case is not viable here — neither the stall ring
-  // nor the SD strings have a fixed upper bound — so let the container reflow
-  // instead. Children are created in visual order, which is what flex needs.
+  // so any of that growth printed straight over the next widget. Reserving a
+  // worst case is not viable here — neither the stall ring nor the SD strings
+  // have a fixed upper bound — so let the container reflow instead.
   lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(body, 6, LV_PART_MAIN);
   lv_obj_set_style_pad_left(body, 2, LV_PART_MAIN);
@@ -12520,16 +12511,22 @@ static void buildSystemInfoSettings() {
   lv_obj_set_style_text_color(rest, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   sysInfoTextRest(buf, sizeof buf);
   lv_label_set_text(rest, buf);
+}
 
-  // "Memory detail" button below the info text (per-region heap breakdown).
-  lv_obj_t* membtn = lv_btn_create(body);
-  lv_obj_set_size(membtn, lv_pct(96), SC(34));
-  styleButton(membtn);
-  lv_obj_add_event_cb(membtn, openMemoryDetailCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* mbl = lv_label_create(membtn);
-  lv_label_set_text(mbl, TR("Memory detail"));
-  lv_obj_set_style_text_font(mbl, &g_font_14, LV_PART_MAIN);
-  lv_obj_center(mbl);
+static void openSystemInfoCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) buildSystemInfoSettings();
+}
+
+static void addAboutPopupButton(lv_obj_t* parent, lv_coord_t width, const char* label,
+                                lv_event_cb_t callback) {
+  lv_obj_t* button = lv_btn_create(parent);
+  lv_obj_set_size(button, width, 38);
+  styleButton(button);
+  lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* button_label = lv_label_create(button);
+  lv_label_set_text(button_label, label);
+  lv_obj_set_style_text_font(button_label, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(button_label);
 }
 
 // Map tile source: false = tile server + on-device cache, true = read tiles off the microSD.
@@ -13774,10 +13771,6 @@ static void buildDeviceSettings(int sec) {
         lv_obj_set_style_bg_color(swatch, lv_color_hex(kAttakyNotifyColors[i].swatch_rgb), state);
         lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, state);
       }
-      lv_obj_set_style_outline_color(swatch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_width(swatch, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_opa(swatch, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_pad(swatch, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
       const uintptr_t choice = (row ? 0x100u : 0u) | i;
       lv_obj_add_event_cb(swatch, attakyNotifyColorChosenCb, LV_EVENT_CLICKED, (void*)choice);
     }
@@ -14795,10 +14788,6 @@ static void buildDeviceSettings(int sec) {
         lv_obj_set_style_bg_color(sb, lv_color_hex(kLockColors[i]), st);
         lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, st);
       }
-      lv_obj_set_style_outline_color(sb, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_width(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_opa(sb, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-      lv_obj_set_style_outline_pad(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
       // Highlight the current colour with a white ring.
       const bool sel = (kLockColors[i] == curcol);
       lv_obj_set_style_border_width(sb, sel ? 2 : 1, LV_PART_MAIN);
@@ -15219,7 +15208,8 @@ void confirmOkEvt(lv_event_t* e) {
 }
 }  // namespace
 
-static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confirm) {
+static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confirm,
+                        bool actions_only_nav) {
   confirmDismiss();
   s_confirm_cb = on_confirm;
 
@@ -15268,13 +15258,15 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
+  lv_obj_t* close_x = addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
+  if (actions_only_nav) lv_obj_add_flag(close_x, NAV_SKIP_FLAG);
 
   // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
   // physically cannot reach them; scrolls vertically when the card hit the screen cap.
   // Width is still shortened (cf_lblw) so the first line doesn't slide under the X badge.
   lv_obj_t* msg_box = lv_obj_create(card);
   lv_obj_remove_style_all(msg_box);
+  if (actions_only_nav) lv_obj_add_flag(msg_box, NAV_SKIP_FLAG);
   lv_obj_set_size(msg_box, cf_lblw, cf_msgh);
   lv_obj_align(msg_box, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_set_scroll_dir(msg_box, LV_DIR_VER);
@@ -15310,6 +15302,12 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_label_set_text(lo, ok_label ? TR(ok_label) : "OK");
   uiFitLabelWidth(lo, SC(100) - 8);
   lv_obj_center(lo);
+#if CAP_KEYPAD_NAV
+  if (actions_only_nav) {
+    s_nav_focus_hint = b_cancel;
+    navMarkDirty();
+  }
+#endif
 }
 
 // ----- Bluetooth settings page -----
@@ -16771,7 +16769,7 @@ static void goToTab(int idx) {
   // clickable element with Enter (e.g. the Home "Unread" line) fires its CLICKED
   // handler WITHOUT moving group focus, so navFocusCb never runs to un-highlight it
   // — and the element lives on the now-hidden outgoing tab. Without this, its
-  // reverse-video highlight stayed painted (the "home unread line stays highlighted"
+  // focus glow stayed painted (the "home unread line stays highlighted"
   // bug). The destination tab's rebuild re-styles whatever it focuses next.
   // (Keyboard-nav only exists on the Tanmatsu + T-Deck-trackball builds.)
 #if CAP_KEYPAD_NAV
@@ -26313,8 +26311,8 @@ static void openSpectrumPage() {
   // The trace is a read-out, never a control. lv_chart does NOT clear
   // LV_OBJ_FLAG_CLICKABLE the way lv_label / lv_img do (LVGL 8.4 lv_obj.c sets
   // it in the base constructor), so without this the nav collector takes the
-  // chart as the page's FIRST focus stop and navFocusCb paints it reverse-video
-  // — a solid fill straight over the live trace. Reported on the M9.
+  // chart as the page's FIRST focus stop and paints a cursor around a read-only
+  // element instead of the page controls. Reported on the M9.
   lv_obj_add_flag(s_spec_chart, NAV_SKIP_FLAG);
   lv_obj_set_style_bg_color(s_spec_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_spec_chart, LV_OPA_COVER, LV_PART_MAIN);
@@ -26493,6 +26491,9 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_pad_all(tab, 10, LV_PART_MAIN);
 
   const bool home_land = chatLandscape();
+  s_home_nav_root = tab;
+  s_home_nav_split = home_land;
+  for (int i = 0; i < HOME_NAV_COUNT; ++i) s_home_nav_right[i] = nullptr;
   if (home_land) {
     lv_obj_set_scroll_dir(tab, LV_DIR_NONE);
     lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
@@ -26871,6 +26872,7 @@ static void makeHome(lv_obj_t* tab) {
   (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
 #endif
   lv_obj_t* adv = lv_btn_create(tab);
+  s_home_nav_right[HOME_NAV_ADVERT] = adv;
 #if defined(HAS_EXPANSION_KIT)
   s_home_adv_btn = adv;
 #endif
@@ -26969,8 +26971,8 @@ static void makeHome(lv_obj_t* tab) {
 
 #if defined(HAS_TOUCH_UI)
   // Terminal / Files / Apps / Control-panel launchers, stacked under Advert in the
-  // right column and spread to fill the full content height. Files is SD-backed so it
-  // stays T-Deck-only; Terminal + Apps + Control panel are on every touch board.
+  // right column and spread to fill the full content height. Files appears where the
+  // board exposes the file manager; the other launchers fill the remaining slots.
   if (home_land) {
     auto make_launcher = [&](const char* label, int ly, lv_event_cb_t cb, uint32_t bg, int bh) -> lv_obj_t* {
       lv_obj_t* b = lv_btn_create(tab);
@@ -26993,27 +26995,31 @@ static void makeHome(lv_obj_t* tab) {
                     ? COLOR_ACCENT_SURFACE
                     : 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
 #if CAP_LARGE_SCREEN
-    make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
+    s_home_nav_right[HOME_NAV_TERMINAL] = make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
 #if defined(HAS_TDECK_GT911)
-    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tanBtnY(2), homeFilesCb, 0, tan_btn_h);
+    s_home_nav_right[HOME_NAV_FILES] = make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tanBtnY(2), homeFilesCb, 0, tan_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
     g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(3), homeAppsBtnCb, inv_accent, tan_btn_h);
+    s_home_nav_right[HOME_NAV_APPS] = g_lv.home_apps;
 #else
     // Real Tanmatsu (no GT911 / no Files): Apps in slot 2, Control panel fills slot 3.
     g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tanBtnY(2), homeAppsBtnCb, inv_accent, tan_btn_h);
-    make_launcher(TR(LV_SYMBOL_BARS "  Control"), tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
+    s_home_nav_right[HOME_NAV_APPS] = g_lv.home_apps;
+    s_home_nav_right[HOME_NAV_CONTROL] = make_launcher(TR(LV_SYMBOL_BARS "  Control"), tanBtnY(3), homeControlPanelCb, 0, tan_btn_h);   // ☰ (mirrors the CC sliders), not the settings gear
 #endif
 #else
     // T-Deck (and any other non-Tanmatsu landscape board): evenly-spread slots.
-    make_launcher(TR(">_  Terminal"), tdBtnY(1), homeTerminalCb, 0, td_btn_h);
+    s_home_nav_right[HOME_NAV_TERMINAL] = make_launcher(TR(">_  Terminal"), tdBtnY(1), homeTerminalCb, 0, td_btn_h);
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-    make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tdBtnY(2), homeFilesCb, 0, td_btn_h);
+    s_home_nav_right[HOME_NAV_FILES] = make_launcher(TR(LV_SYMBOL_DIRECTORY "  Files"), tdBtnY(2), homeFilesCb, 0, td_btn_h);
     // "Apps" (opens the app drawer) pops with the negative / inverse of the theme accent.
     g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(3), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
+    s_home_nav_right[HOME_NAV_APPS] = g_lv.home_apps;
+    s_home_nav_right[HOME_NAV_CONTROL] = make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(4), homeControlPanelCb, 0, td_btn_h);
 #else
     g_lv.home_apps = make_launcher(TR(LV_SYMBOL_LIST "  Apps"), tdBtnY(2), homeAppsBtnCb, inv_accent, td_btn_h);
-    make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
+    s_home_nav_right[HOME_NAV_APPS] = g_lv.home_apps;
+    s_home_nav_right[HOME_NAV_CONTROL] = make_launcher(TR(LV_SYMBOL_SETTINGS "  Control"), tdBtnY(3), homeControlPanelCb, 0, td_btn_h);
 #endif
 #endif
   }
@@ -27496,7 +27502,7 @@ static void ctDeleteSelCb(lv_event_t* e){
   if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
   if(s_ct_sel_n==0){ if(g_lv.task) g_lv.task->showAlert(TR("Nothing selected"), 1100); return; }
   char m[40]; snprintf(m,sizeof m, TR("Delete %d contact(s)?"), s_ct_sel_n);
-  showConfirm(m, TR("Delete"), ctDoDelete);
+  showConfirm(m, TR("Delete"), ctDoDelete, !CAP_TOUCH);
 }
 
 static void ctSortSheetClose(){ if(s_ct_sort_sheet){ popupClose(&s_ct_sort_sheet); } }
@@ -33180,7 +33186,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_obj_set_style_bg_opa(s_map_touch, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_clear_flag(s_map_touch, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_map_touch, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(s_map_touch, NAV_SKIP_FLAG);   // pan/drag catcher — never a keyboard-nav focus target (else the focus highlight paints it white)
+  lv_obj_add_flag(s_map_touch, NAV_SKIP_FLAG);   // pan/drag catcher — never a keyboard-nav focus target
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_PRESSED,    nullptr);
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_PRESSING,   nullptr);
   lv_obj_add_event_cb(s_map_touch, mapCanvasEventCb, LV_EVENT_RELEASED,   nullptr);
@@ -34310,8 +34316,8 @@ static void settingsCatBuild(int cat) {
         lv_obj_center(cbl);
       }
 #endif
-      s_settings_inline_parent = page;  buildSystemInfoSettings();
-      s_settings_inline_parent = nullptr;
+      addAboutPopupButton(page, lblw, TR("System Information"), openSystemInfoCb);
+      addAboutPopupButton(page, lblw, TR("Memory detail"), openMemoryDetailCb);
       g_lv.settings_status = lv_label_create(page);
       lv_label_set_long_mode(g_lv.settings_status, LV_LABEL_LONG_WRAP);
       lv_obj_set_width(g_lv.settings_status, lblw);
@@ -34343,7 +34349,7 @@ static void closeSettingsCategory() {
   if (!s_settings_sheet && s_settings_open_cat < 0) return;
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
-    s_sysinfo_lbl = nullptr; s_sysinfo_rest_lbl = nullptr; s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
+    s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
 #endif
@@ -39583,12 +39589,9 @@ static void lockscreenShow() {
   // is CLICKABLE (to absorb taps) and it lives on lv_layer_top, so on this
   // no-touch board navMaybeRebuild() would otherwise collect it as the only
   // focusable element in the overlay and focus it -- at which point navFocusCb's
-  // keyboard-focus highlight reverse-videos it: light bg (hidden behind the
-  // wallpaper) + navInvertText() flipping every child label's text to COLOR_BG
-  // (dark). That's the reported "lock text renders white then flips to black a
-  // split second after every reveal, wallpaper stays fine" bug -- the focus
-  // lands a tick after the reveal paint. NAV_SKIP_FLAG makes navCollect/
-  // navTreeSig skip the whole subtree, so it's never focused and never inverted.
+  // shared cursor would otherwise glow around the full-screen overlay instead
+  // of a real control. NAV_SKIP_FLAG keeps the passive lock view out of the
+  // navigation tree entirely.
   lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
 #endif
 
@@ -42480,6 +42483,7 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
   lv_obj_remove_style_all(cell);
   lv_obj_set_size(cell, width, height);
   lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(cell, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   lv_obj_t* b = lv_btn_create(cell);
   lv_obj_set_size(b, d, d);
   lv_obj_center(b);
@@ -42794,6 +42798,7 @@ static void openControlCenter() {
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
   // ---- Clock + date (left) ----
   char clock_s[12] = "--:--", date_s[28] = "RTC unset";
@@ -43058,6 +43063,7 @@ static void openControlCenter() {
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 #endif
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   const bool gps_on = g_lv.task && g_lv.task->getGPSState();
   // T-Deck: chips in a 2-row grid. V4/pager: chips sized to fit the card width
   // with even gaps, divisor derived from the actual chip count below.
@@ -44703,7 +44709,6 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
   lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_add_flag(t, NAV_ACCENTFOCUS_FLAG);   // keyboard/encoder focus = same accent tint as a touch press
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 #if CAP_LUA_APPS
   if (act >= APPACT_LUA_BASE || appHideBitFor(act))
@@ -47708,11 +47713,6 @@ static void openAccentPicker() {
       lv_obj_set_style_bg_color(sb, lv_color_hex(kThemeColors[i]), st);
       lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, st);
     }
-    // Focus reads as a ring OUTSIDE the swatch, so it never covers the colour.
-    lv_obj_set_style_outline_color(sb, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_outline_width(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_outline_opa(sb, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_outline_pad(sb, 2, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
     lv_obj_set_style_border_width(sb, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(sb, lv_color_hex(0x202224), LV_PART_MAIN);
     lv_obj_add_event_cb(sb, accentSwatchCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kThemeColors[i]);
@@ -56482,8 +56482,7 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
     // Never a keyboard/encoder nav target on any board: same reasoning as the
     // lock screen's NAV_SKIP_FLAG (see lockscreenShow()) -- a CLICKABLE
     // top-layer overlay with nothing to navigate to would otherwise be
-    // collected as the sole focus target, and navFocusCb's focus-highlight
-    // would invert its text to dark the instant the nav group (re)builds.
+    // collected as the sole focus target and outlined as though it were actionable.
     lv_obj_add_flag(s_glance_root, NAV_SKIP_FLAG);
 
     // Small "eyebrow" label (channel/sender) above the message, in the app's
