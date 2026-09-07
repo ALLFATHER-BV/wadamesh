@@ -5110,14 +5110,29 @@ static void navMaybeRebuild() {
     }
   }
 #endif
-  if (!focus_set && s_nav_focus_hint && lv_obj_is_valid(s_nav_focus_hint)) {
+  // A still-valid hint can belong to the page behind a newly opened overlay. Only a hint
+  // collected into this rebuild may suppress the new-chat composer fallback (#436).
+  lv_obj_t* collected_focus_hint = nullptr;
+  if (s_nav_focus_hint && lv_obj_is_valid(s_nav_focus_hint)) {
     // One-shot explicit focus hint — e.g. turning keyboard-nav ON keeps the highlight on the switch you
     // just toggled instead of snapping the settings list to the top (issue #45).
     const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
-    for (int i = 0; i < n; i++) if (s_nav_objs[i] == s_nav_focus_hint) { lv_group_focus_obj(s_nav_focus_hint); focus_set = true; break; }
-    s_nav_focus_hint = nullptr;   // consume regardless (one-shot)
+    for (int i = 0; i < n; i++) {
+      if (s_nav_objs[i] == s_nav_focus_hint) { collected_focus_hint = s_nav_focus_hint; break; }
+    }
+  }
+  s_nav_focus_hint = nullptr;   // consume regardless (one-shot)
+  if (focus_set) {
+    // The M9 pending-focus block above already placed focus deliberately. Without
+    // this arm the chain would fall through to the just-opened-chat branch and
+    // move it, which is the whole thing that block exists to prevent.
+  } else if (collected_focus_hint) {
+    lv_group_focus_obj(collected_focus_hint);
+    focus_set = true;
   } else if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
     lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
+    s_nav_ta_editing = true;
+    navSyncCursor();                         // hardware input is ready immediately
     focus_set = true;
   } else if (on_page && !s_nav_prev_on_page && s_nav_page_focus && lv_obj_is_valid(s_nav_page_focus)) {
     // #45: just returned to the page from an overlay/chat — restore the item we left from so the
