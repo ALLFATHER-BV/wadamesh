@@ -17,9 +17,9 @@ on both.
   (press the knob) to select. It's your only pointing device, so almost
   every screen is navigable with turn + click alone.
 
-Everything below only fires while you're **not** actively typing into a text
-field — if a field is focused and you're typing into it, letters type
-normally and these combos step out of the way.
+Unless a row explicitly says it applies to a text field, the shortcuts below
+only fire while you're **not** actively typing. Letters continue to type
+normally while a field is active.
 
 ## Bottom menu shortcuts
 
@@ -45,6 +45,7 @@ while editing a text field, where the keys type normally.
 | Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first) | **Backspace held ~1 s** |
 | **Fn (Alt) + turn**, on a main tab | Move between the 5 main tabs (Mail / Contacts / Home / Map / Settings) | **M / C / H / A / S** jumps directly |
 | **Fn (Alt) + turn**, inside a settings page or chat | Scroll the page up/down | none — encoder only |
+| **Fn (Alt) + short click**, with a text field focused | Open the special-character picker | none — encoder only |
 | Turn, with a dropdown open | Scroll through the dropdown's options | none — encoder only |
 | Turn, with the accent picker open | Cycle through the accent variants (see below) | none — encoder only (Fn+Space to enter is shared) |
 | Turn, with the @-mention list open | Cycle through matching contacts (see below) | none — encoder only |
@@ -128,6 +129,15 @@ return to letters.
    _  $  ;  ?  !  ,  .
 [Space]
 ```
+
+### Symbols not on the keyboard
+
+While any text field is focused, including a Wi-Fi or repeater password:
+
+1. Hold **Fn (Alt)** and short-click the encoder to open **Special characters**.
+2. Turn the encoder to highlight a symbol such as `%`, `<`, `>`, or `€`.
+3. Short-click the encoder or press **Enter** to insert it.
+4. Hold the encoder for about one second to close the picker without inserting.
 
 ### Shift and Caps Lock
 
@@ -247,6 +257,7 @@ that changes keyboard language.
 | Hold encoder ~1s (or hold Backspace ~1s) | Back |
 | Fn + turn (main tab) | Switch tabs |
 | Fn + turn (page/chat) | Scroll |
+| Fn + encoder click (text field focused) | Open special-character picker |
 | Fn tap alone | Use the symbol layer for the next key |
 | Fn double-tap | Lock the symbol layer; tap Fn again to unlock |
 | Hold Shift + letter | Momentary uppercase |

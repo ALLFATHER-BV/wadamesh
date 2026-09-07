@@ -39233,14 +39233,28 @@ static void updatePagerEncoder(unsigned long now) {
   static bool     s_was_held    = false;
   static uint32_t s_press_start = 0;
   static bool     s_long_fired  = false;
+  static bool     s_press_consumed = false;
 
   if (held && !s_was_held) {
     s_press_start = now;
     s_long_fired  = false;
-  } else if (held && !s_long_fired && (now - s_press_start) >= kLongPressMs) {
+    s_press_consumed = false;
+    // The keyboard layer lacks %, <, >, and several non-ASCII symbols. Holding
+    // Fn before pressing the knob opens the shared picker for the active field.
+    if (pagerKeyboardAltHeld() && !s_emoji_sheet && !s_mentionnav_active &&
+        !s_accentnav_active && !navOpenDropdown()) {
+      lv_obj_t* ta = navFocusedTextarea();
+      if (ta && lv_obj_is_valid(ta)) {
+        pagerKeyboardMarkAltUsed();
+        openSpecialPicker(ta);
+        s_press_consumed = true;
+      }
+    }
+  } else if (held && !s_press_consumed && !s_long_fired &&
+             (now - s_press_start) >= kLongPressMs) {
     pagerNavGoBack();   // see pagerNavGoBack() above for the ladder + rationale
     s_long_fired = true;
-  } else if (!held && s_was_held && !s_long_fired) {
+  } else if (!held && s_was_held && !s_press_consumed && !s_long_fired) {
     // Released before the long-press threshold -> short click, same as a
     // keyboard Enter: on a focused chat bubble that means the per-message
     // action menu (navEnterBubble), not a plain ENTER keypress -- mirrors
@@ -39249,6 +39263,7 @@ static void updatePagerEncoder(unsigned long now) {
     else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
+  if (!held && s_was_held) s_press_consumed = false;
   s_was_held = held;
 }
 #endif
