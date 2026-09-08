@@ -1972,6 +1972,7 @@ struct LvContactButtonCtx {
   bool     is_fav;       // favorites can't be multi-select-deleted (unfavorite first)
   uint8_t  key6[6];      // stable identity for the multi-select set (pub_key prefix)
   lv_obj_t* age_lbl;     // the row's Heard label — updated in place on the 60s age tick (#82)
+  lv_obj_t* name_lbl;    // the row's Name label — updated in place on an advert name-fill (#463)
 };
 
 static void* psAlloc(size_t n);   // defined below — PSRAM-first, zero-init
@@ -37967,12 +37968,18 @@ static double   s_ct_sort_self_lat = 0.0, s_ct_sort_self_lon = 0.0;
 // stored label is stale (list mutated outside a build) so the caller falls back
 // to the full rebuild — never a wrong display, worst case the old cost.
 static int s_contacts_rows_built = 0;   // rows rendered by the last full build
-static bool ctRefreshAgeLabelsInPlace() {
+// Name-column geometry from the last full build, so the in-place name refresh can
+// re-pick LONG_DOT vs LONG_SCROLL_CIRCULAR exactly like the builder does.
+static int  s_ct_name_w    = 0;
+static bool s_ct_name_mid  = false;
+static bool ctRefreshRowsInPlace() {
   if (!g_lv.contacts_list) return false;
   const uint32_t now_secs = the_mesh.getRTCClock()->getCurrentTime();
   for (int k = 0; k < s_contacts_rows_built; ++k) {
     lv_obj_t* lbl = s_contacts_ctx[k].age_lbl;
     if (!lbl || !lv_obj_is_valid(lbl)) return false;
+    lv_obj_t* nm  = s_contacts_ctx[k].name_lbl;
+    if (nm && !lv_obj_is_valid(nm)) return false;
     ContactInfo* c = the_mesh.lookupContactByPubKey(s_contacts_ctx[k].key6, 6);
     if (!c) continue;   // deleted mid-window — the count change triggers a full rebuild right after
     char age_buf[12]; uint32_t age_secs = 0;
@@ -37980,6 +37987,23 @@ static bool ctRefreshAgeLabelsInPlace() {
       age_secs = now_secs - c->last_advert_timestamp;
     formatAgeBadge(age_buf, sizeof age_buf, age_secs);
     lv_label_set_text(lbl, age_buf);
+    // An advert can fill in a previously-blank name on an existing contact — the
+    // whole reason the advert path used to force a full teardown+rebuild (#73).
+    // Doing it here keeps that guarantee for a fraction of the cost (#463).
+    if (nm) {
+      char san[40];
+      copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof(san), c->name);
+      if (strcmp(lv_label_get_text(nm), san) != 0) {
+        if (!s_ct_name_mid && s_ct_name_w > 0) {
+          lv_point_t nsz;
+          lv_txt_get_size(&nsz, san, &g_font_14, 0, 0, s_ct_name_w, LV_TEXT_FLAG_NONE);
+          const int name_line_h = lv_font_get_line_height(&g_font_14);
+          lv_label_set_long_mode(nm, (nsz.y > 2 * name_line_h) ? LV_LABEL_LONG_SCROLL_CIRCULAR
+                                                               : LV_LABEL_LONG_DOT);
+        }
+        lv_label_set_text(nm, san);
+      }
+    }
   }
   return true;
 }
@@ -38016,7 +38040,7 @@ static void refreshContactsList() {
     // Only the age labels are stale — update them in place instead of the ~1.3s
     // full teardown+rebuild (#82). Falls through to the rebuild if a row pointer
     // went stale.
-    if (ctRefreshAgeLabelsInPlace()) { s_last_age_refresh_ms = now_ms; return; }
+    if (ctRefreshRowsInPlace()) { s_last_age_refresh_ms = now_ms; return; }
   }
   s_ct_list_force = false;
   s_last_count  = curr_count;
@@ -38312,6 +38336,9 @@ static void refreshContactsList() {
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     if (mid_cols) lv_obj_align(nm, LV_ALIGN_TOP_LEFT, name_x, 5);
     else          lv_obj_align(nm, LV_ALIGN_LEFT_MID, name_x, 0);
+    s_contacts_ctx[k].name_lbl = nm;       // in-place advert name-fill (#463)
+    s_ct_name_w   = name_w;
+    s_ct_name_mid = mid_cols;
 
     // Heard column (12 px — smaller than the 14 px name — and pushed right).
     // Explicit column width so a longer age never bleeds into the Location
@@ -57549,16 +57576,33 @@ void UITask::loop() {
   // "only shows when I sort by messages received" report). Keep the flag set until we're actually on
   // the Contacts tab so an advert heard on another tab isn't dropped, and coalesce an advert flood to
   // at most one rebuild per ~350 ms.
-  if (s_ct_contacts_dirty && getActiveTab() == CONTACTS_TAB_INDEX) {
+  if (s_ct_contacts_dirty && getActiveTab() == CONTACTS_TAB_INDEX && !s_ctd_active) {
     static unsigned long s_ct_dirty_refresh_ms = 0;
+    static unsigned long s_ct_dirty_rebuild_ms = 0;
     // 2.5 s coalescing (was 350 ms): a full rebuild costs ~1.3 s at ~570 contacts
     // (#82), so an advert flood must not be able to queue them back to back. The
     // flag stays set, so the last advert in a burst still lands within 2.5 s.
     if ((now - s_ct_dirty_refresh_ms) > 2500) {
       s_ct_contacts_dirty   = false;
       s_ct_dirty_refresh_ms = now;
-      s_ct_list_force = true;       // bypass the count-cache — a name-fill / re-advert doesn't change the count
-      g_lv.dirty_contacts = true;
+      // #463: forcing the full teardown here meant that on a mesh with adverts
+      // flowing, every 2.5 s on the Contacts tab cost a ~1.3 s rebuild — the UI
+      // froze "in the middle" of the tab transition, and only when something was
+      // being discovered (with no adverts the flag never sets and the count-cache
+      // no-ops). Everything an advert actually changes on an EXISTING row (the
+      // name-fill of #73 and the Heard age) is now written in place. A brand-new
+      // or deleted contact changes getNumContacts(), which the count safety net
+      // just below catches independently, so the guarantee still holds.
+      const bool in_place_ok = ctRefreshRowsInPlace();
+      // Ordering / filter eligibility still need a real rebuild (an advert can
+      // change the last-heard sort position, or give a contact the GPS fix the
+      // "has location" filter wants). Converge on the same 60 s cadence the age
+      // tick already uses instead of every 2.5 s.
+      if (!in_place_ok || (now - s_ct_dirty_rebuild_ms) > 60000UL) {
+        s_ct_dirty_rebuild_ms = now;
+        s_ct_list_force = true;     // bypass the count-cache — a re-advert doesn't change the count
+        g_lv.dirty_contacts = true;
+      }
     }
   }
   // Safety net (#73): some contact mutations never set the dirty flag above — messaging a not-yet-
