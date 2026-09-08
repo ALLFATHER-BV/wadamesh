@@ -40850,14 +40850,14 @@ static bool m9HandleNavKey(int key) {
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_CTRL:
       // The controller latches ONE key and resolves layers itself, so CTRL can
-      // never chord — bind the standalone press to the Control Center, a
-      // one-press quick-settings key matching its label.
+      // never chord — bind the standalone press to toggle the Control Center,
+      // a one-press quick-settings key matching its label.
       if (s_setup_root) return true;
       // The CC must never stack OVER the power menu: Back's ladder peels
       // power first and would close it invisibly beneath the CC (the reverse
       // stacking is fine — openPowerMenu() closes the CC itself).
       if (s_power_menu) closePowerMenu();
-      openControlCenter();
+      toggleControlCenter();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_HOME:
       if (s_setup_root) return true;
