@@ -10960,7 +10960,12 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     const int        pad    = 4, add_w = 56, gap = 8;
     const lv_coord_t card_h = 52;
     const lv_coord_t name_h = lv_font_get_line_height(&g_font_14);
-    const lv_coord_t text_w = cw - 2 * pad - add_w - gap;   // room for name/meta beside Add
+    // Leading type icon, matching the Contacts rows (#459) — the Discover pane was
+    // the only list without one, so a repeater and a peer looked identical until you
+    // read the meta line. Same glyph set and the same 22 px column.
+    const int        icon_w = 22;
+    const int        text_x = 2 + icon_w;
+    const lv_coord_t text_w = cw - 2 * pad - add_w - gap - icon_w;   // room for name/meta beside Add
 
     lv_obj_t* card = lv_obj_create(body);
     lv_obj_remove_style_all(card);
@@ -10972,6 +10977,19 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Type icon (person = peer, antenna = repeater, loop = room). FontAwesome PUA
+    // glyphs resolve through g_font_16's fallback chain, so the label must render in
+    // g_font_16 — same rule as the Contacts rows.
+    {
+      const bool is_rep = (e_disc.ci.type == ADV_TYPE_REPEATER);
+      lv_obj_t* ic = lv_label_create(card);
+      lv_label_set_text(ic, is_rep ? TOUCH_SYM_ANTENNA
+                          : (e_disc.ci.type == ADV_TYPE_ROOM ? LV_SYMBOL_LOOP : TOUCH_SYM_PERSON));
+      lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(ic, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_align(ic, LV_ALIGN_LEFT_MID, 2, 0);
+    }
+
     // Name label — clamped to ONE line (height = line height) so a long name
     // ellipsises instead of wrapping down onto the meta row below it.
     lv_obj_t* nm = lv_label_create(card);
@@ -10982,7 +11000,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
     lv_obj_set_size(nm, text_w, name_h);
-    lv_obj_set_pos(nm, 2, 3);
+    lv_obj_set_pos(nm, text_x, 3);
 
     // Type + hops + key prefix (single line, ellipsised, below the name)
     lv_obj_t* meta = lv_label_create(card);
@@ -11015,7 +11033,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_set_style_text_font(meta, &g_font_12, LV_PART_MAIN);
     lv_label_set_long_mode(meta, LV_LABEL_LONG_DOT);
     lv_obj_set_width(meta, text_w);
-    lv_obj_set_pos(meta, 2, 3 + name_h + 2);
+    lv_obj_set_pos(meta, text_x, 3 + name_h + 2);
 
     // "Add" button on the right, vertically centred
     lv_obj_t* add_btn = lv_btn_create(card);
