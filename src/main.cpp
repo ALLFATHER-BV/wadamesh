@@ -1435,6 +1435,36 @@ void setup() {
    * contiguous DMA block, so let it claim memory before BLE. (Association
    * happens later in loop(); this just inits the stack.) */
   if (want_wifi) {
+    // Register every Wi-Fi event handler BEFORE the stack is started, never
+    // after. WiFi.onEvent() push_backs into a std::vector that the Arduino core
+    // iterates from its own event task, with no lock on either side: a
+    // registration that reallocates the vector while an event is being
+    // dispatched frees the buffer the event task is walking, and it then calls
+    // through a dangling function pointer. That is a real crash we have a dump
+    // of, on a Heltec V4-R8 on beta_77: the event task was inside
+    // _eventCallback copying a WiFiEventCbList entry while setup() was inside
+    // _M_realloc_insert growing that same vector, and it jumped to a garbage PC.
+    //
+    // The bug is in the Arduino core rather than here, and we cannot lock its
+    // vector, but we can make the race impossible: with nothing registered
+    // after the stack can emit events, the vector is never mutated while it is
+    // being read. Both handlers used to be added afterwards, one of them after
+    // WiFi.begin(), which is where the window came from.
+    //
+    // Records WHY every STA disconnect happened, surfaced by the UI's Wi-Fi
+    // status string as "auth failed (rNN)", so failures are diagnosable on a
+    // device with no serial console.
+    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
+        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
+      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+    // Without the WIFI_DEBUG_PRINTLN tracing the old copy had: that macro comes
+    // from SerialWifiInterface.h, which is not in scope this early in setup().
+    // The prints were debug-only and compile to nothing in a release build; the
+    // flag is the handler's actual job and is unchanged.
+    WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t){
+        if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)   wifi_needs_reconnect = true;
+        else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP)    wifi_needs_reconnect = false;
+    });
     const bool wifi_mode_ready = WiFi.mode(WIFI_STA);
 #if defined(TLORA_PAGER)
     if (!wifi_mode_ready) {
@@ -1448,12 +1478,6 @@ void setup() {
                                    // exists so a later WPA re-auth cannot bypass Wi-Fi-first ordering
 #endif
     WiFi.persistent(false);
-    // Record WHY every STA disconnect happened — surfaced by the UI's Wi-Fi
-    // status string as "auth failed (rNN)" so failures are diagnosable on a
-    // device with no serial console. Additive: multiple onEvent handlers coexist.
-    WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info){
-        g_wifi_last_disc_reason = info.wifi_sta_disconnected.reason;
-      }, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
     // NOTE: do NOT enable modem-sleep here. On a fresh, *unassociated* STA (the
     // setup wizard, no creds yet) DTIM modem-sleep naps the radio through the
     // scan dwell, so WiFi.scanNetworks() comes back empty ("no networks found").
@@ -1561,16 +1585,6 @@ void setup() {
 #elif defined(WIFI_SSID)
   board.setInhibitSleep(true);   // prevent sleep when WiFi is active
   WiFi.setAutoReconnect(true);
-
-  WiFi.onEvent([](WiFiEvent_t event, WiFiEventInfo_t info){
-      if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-          WIFI_DEBUG_PRINTLN("WiFi disconnected. Flagging for reconnect...");
-          wifi_needs_reconnect = true;
-      } else if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-          WIFI_DEBUG_PRINTLN("WiFi connected successfully!");
-          wifi_needs_reconnect = false;
-      }
-  });
 
   if (wifiConfigHasRuntime()) {
     char ssid[WIFI_CONFIG_SSID_MAX];
@@ -1782,11 +1796,18 @@ void loop() {
     // Bluetooth request can never cold-start NimBLE over a hidden retry.
     if (wifi_radio_en) WiFi.setAutoReconnect(false);
 #endif
-    /* Only touch WiFi state if it was actually started this session. When
-     * BLE is the active transport (no creds saved), WiFi was never inited
-     * and calling WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init
-     * under low heap → crash. Setting wifi_started=false here is harmless. */
-    if (wifi_started) {
+    /* Only touch WiFi state if the driver is actually up. When BLE is the active
+     * transport (no creds saved), WiFi was never inited and calling
+     * WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init under low
+     * heap → crash. Setting wifi_started=false here is harmless.
+     *
+     * wifi_started alone under-approximates that: a scan or the version check can
+     * bring STA up without going through this state machine, and then disabling
+     * Wi-Fi skipped the power-down entirely and left the modem running (#450 — the
+     * idle power-saver then blocks on "Wi-Fi on" forever). getMode() != WIFI_OFF
+     * PROVES the driver is inited, which is precisely what the guard wants to know,
+     * so it is safe to add and it closes that leak. */
+    if (wifi_started || WiFi.getMode() != WIFI_OFF) {
       if (!wifi_radio_en) {
         WiFi.disconnect(true);
         delay(50);

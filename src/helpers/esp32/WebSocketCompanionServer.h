@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "WebFileTransferConfig.h"
 
 #if defined(HAS_TDISPLAY_P4)
   // Same type rebind as TCPCompanionServer.h (every TU must see one consistent class layout).
@@ -19,7 +20,11 @@
 class WebMirror;   // web-UI mirror bridge (WebMirror.h); included in the .cpp
 
 #ifndef WS_COMPANION_MAX_CLIENTS
-#define WS_COMPANION_MAX_CLIENTS  2
+  #if WADA_WEB_FILE_TRANSFER
+    #define WS_COMPANION_MAX_CLIENTS  3
+  #else
+    #define WS_COMPANION_MAX_CLIENTS  2
+  #endif
 #endif
 
 #ifndef WS_HANDSHAKE_MAX_LEN
@@ -54,7 +59,17 @@ struct WSClientState {
 
   bool is_mirror;      // this client is a web-UI mirror (GET /mirror), not a companion peer
   bool is_term;        // this client is a web mesh terminal (GET /term)
+  bool is_files;       // authenticated browser file transfer (GET /files)
   bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
+#if WADA_WEB_FILE_TRANSFER
+  bool files_authed;
+  bool files_close_after_tx;
+  bool files_request_pending;
+  uint32_t files_frame_started_ms;
+  uint8_t files_auth_failures;
+  uint8_t* files_rx_buf;
+  uint16_t files_rx_len;
+#endif
 
   // Mirror TX buffer: one WS frame (header + payload) queued for this client, drained
   // NON-BLOCKING across loop iterations. The loop never spins on a socket write and a
@@ -117,6 +132,11 @@ private:
   void drainClientTx(int idx);        // push a mirror client's pending tx_buf bytes, non-blocking
   void serviceTerminalClients(WebMirror& m);   // web mesh terminal: reply text out + command text in
   void drainTermInput(int idx, WebMirror& m);  // parse a term client's WS frames -> m.pushTermCmd
+#if WADA_WEB_FILE_TRANSFER
+  void serviceFileClients();
+  void drainFileInput(int idx);
+  bool sendFileReply(int idx, const char* text);
+#endif
 
   // The _clients array is now touched by TWO cores: the main loop (accept/handshake +
   // companion RX/TX, core 1) and the dedicated mirror stream task (serviceMirror, core 0).

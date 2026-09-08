@@ -1087,23 +1087,21 @@ These are left intentionally unset/unwired rather than guessed:
       Map key re-press is discoverable and was a no-op before.)
 
     **Resolved this pass:**
-    - Lock-screen unlock: fixed via `M9_KEY_ENTER_LONG` (the keyboard
-      controller's own hardware-level long-press detection, a distinct byte
-      from a normal Enter tap) standing in for "hold the trackball to
-      unlock." No progressive countdown UI is possible this way (only a
-      single discrete long-press event, not continuous press-state to poll),
-      but it's a confirmed-working equivalent. Also fixed: the lock screen
+    - Lock-screen unlock: double-pressing the d-pad center within 700 ms now
+      unlocks; the first press reveals the lock screen and any other key
+      cancels the sequence, so directional navigation is unchanged. The
+      controller's `M9_KEY_ENTER_LONG` remains a compatibility fallback.
+      Also fixed: the lock screen
       briefly showing the *previous* app screen before painting over it on
       wake (`lockscreenReveal()` was turning the backlight on before the
       lock overlay had actually been built/flushed — reordered + added
       `lv_refr_now()`), and `lockscreenReveal()` itself being a complete
       no-op for M9 (`#if defined(HAS_TDECK_GT911)` wrapped the whole
       function body — widened to `#if CAP_LOCK_SCREEN`).
-    - Chat-message long-press context menu and the SD row's "hold: format":
-      both fixed by the same generic mechanism — `M9_KEY_ENTER_LONG` fires
-      `LV_EVENT_LONG_PRESSED` on whatever's currently group-focused, covering
-      any widget with a long-press handler anywhere in the app, not just
-      these two specific cases.
+    - Chat-message context menu opens with a normal Enter press on the focused
+      message. Other long-press controls, including the SD row's "hold:
+      format", still use the generic `M9_KEY_ENTER_LONG` mechanism, which
+      fires `LV_EVENT_LONG_PRESSED` on the focused widget.
     - Home-button self-conflict: `M9_KEY_HOME`'s "close everything on top"
       dismiss loop was closing the app drawer itself (once registered as a
       popup), then immediately reading the now-mutated `s_home_drawer_mode`

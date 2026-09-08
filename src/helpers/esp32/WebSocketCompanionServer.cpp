@@ -5,6 +5,10 @@
 #include <lwip/sockets.h>
 #include <esp_heap_caps.h>
 #include "WebMirror.h"
+#if WADA_WEB_FILE_TRANSFER
+#include "WebFileTransfer.h"
+#include "WebFileTransferPage.h"
+#endif
 
 #ifndef WS_FRAME_DEBUG
 #define WS_FRAME_DEBUG 0
@@ -520,7 +524,17 @@ WebSocketCompanionServer::WebSocketCompanionServer()
     _clients[i].stall_ms = 0;
     _clients[i].is_mirror = false;
     _clients[i].is_term = false;
+    _clients[i].is_files = false;
     _clients[i].meta_sent = false;
+  #if WADA_WEB_FILE_TRANSFER
+    _clients[i].files_authed = false;
+    _clients[i].files_close_after_tx = false;
+    _clients[i].files_request_pending = false;
+    _clients[i].files_frame_started_ms = 0;
+    _clients[i].files_auth_failures = 0;
+    _clients[i].files_rx_buf = nullptr;
+    _clients[i].files_rx_len = 0;
+  #endif
     _clients[i].tx_buf = nullptr;
     _clients[i].tx_len = 0;
     _clients[i].tx_sent = 0;
@@ -575,6 +589,13 @@ void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
   // reports true). Without this, every new connect is accept()ed then
   // immediately stop()ed, producing SYN/SYN+ACK/ACK/FIN-ACK with zero data.
   if (slot < 0) {
+#if WADA_WEB_FILE_TRANSFER
+    // The third slot is reserved capacity for the runtime file-transfer client.
+    // Never let a new browser connection evict a live companion/VNC/terminal
+    // client before its HTTP path is known; a full server simply refuses it.
+    incoming.stop();
+    return;
+#else
     uint32_t now = millis();
     uint32_t oldest_age = 0;
     for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
@@ -586,6 +607,7 @@ void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
     }
     _clients[slot].client.stop();
     _clients[slot].in_use = false;
+  #endif
   }
   _clients[slot].client = incoming;
   _clients[slot].in_use = true;
@@ -597,7 +619,16 @@ void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
   _clients[slot].stall_ms = 0;
   _clients[slot].is_mirror = false;
   _clients[slot].is_term = false;
+  _clients[slot].is_files = false;
   _clients[slot].meta_sent = false;
+#if WADA_WEB_FILE_TRANSFER
+  _clients[slot].files_authed = false;
+  _clients[slot].files_close_after_tx = false;
+  _clients[slot].files_request_pending = false;
+  _clients[slot].files_frame_started_ms = 0;
+  _clients[slot].files_auth_failures = 0;
+  _clients[slot].files_rx_len = 0;
+#endif
   _clients[slot].tx_len = 0;      // drop any stale pending frame from the previous occupant (tx_buf is reused)
   _clients[slot].tx_sent = 0;
 }
@@ -647,6 +678,28 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
           size_t key_len = key_end - key_start;
           if (key_len == 0 || key_len > 128) break;
 
+          // Route browser endpoints before accepting the upgrade so an unavailable
+          // file-transfer session never observes a successful WebSocket handshake.
+          c->is_mirror = (strncmp(c->handshake_buf, "GET /mirror ", 12) == 0);
+          c->is_term   = (strncmp(c->handshake_buf, "GET /term ", 10) == 0);
+#if WADA_WEB_FILE_TRANSFER
+          c->is_files  = (strncmp(c->handshake_buf, "GET /files ", 11) == 0);
+          bool another_files = false;
+          if (c->is_files) {
+            for (int j = 0; j < WS_COMPANION_MAX_CLIENTS; ++j)
+              if (j != idx && _clients[j].in_use && _clients[j].is_files) another_files = true;
+          }
+          if (c->is_files && (!g_web_file_transfer.enabled() || another_files)) {
+            const char* unavailable = "HTTP/1.1 503 Service Unavailable\r\n"
+                                      "Content-Length: 0\r\nConnection: close\r\n\r\n";
+            writeAllBytes(*cl, reinterpret_cast<const uint8_t*>(unavailable),
+                          strlen(unavailable), TCP_WRITE_TIMEOUT_MS);
+            c->client.stop();
+            c->in_use = false;
+            return false;
+          }
+#endif
+
           char concat[128 + sizeof(WS_MAGIC)];
           memcpy(concat, key_start, key_len);
           memcpy(concat + key_len, WS_MAGIC, sizeof(WS_MAGIC) - 1);
@@ -668,12 +721,7 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
           if (!writeAllBytes(*cl, (const uint8_t*)"\r\n\r\n", 4, TCP_WRITE_TIMEOUT_MS))
             return false;
 
-          // Route GET /mirror to the web-UI mirror channel (display out + pointer
-          // in); every other WS upgrade (the companion app connects to "/") stays
-          // a companion peer on the shared protocol.
-          c->is_mirror = (strncmp(c->handshake_buf, "GET /mirror", 11) == 0);
-          c->is_term   = (strncmp(c->handshake_buf, "GET /term", 9) == 0);   // web mesh terminal socket
-          if (c->is_mirror || c->is_term) c->client.setNoDelay(true);   // low latency: small frames, no Nagle coalescing
+          if (c->is_mirror || c->is_term || c->is_files) c->client.setNoDelay(true);   // low latency: small frames, no Nagle coalescing
           c->meta_sent = false;
           c->handshake_done = true;
           c->ws_state = WS_STATE_HEADER_0;
@@ -681,8 +729,15 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
           return true;
         }
       }
-      // Plain HTTP GET (no WS upgrade): serve the terminal page in terminal mode, else the mirror page.
-      const char* page = g_web_mirror.terminalOn() ? WS_HTML_TERMINAL_PAGE : WS_HTTP_INFO_PAGE;
+      // Plain HTTP GET (no WS upgrade): /files is a runtime-gated transfer page;
+      // the root keeps serving terminal or mirror according to its existing mode.
+      const char* page;
+    #if WADA_WEB_FILE_TRANSFER
+      if (strncmp(c->handshake_buf, "GET /files ", 11) == 0)
+        page = g_web_file_transfer.enabled() ? WS_HTTP_FILES_PAGE : WS_HTTP_FILES_DISABLED;
+      else
+    #endif
+        page = g_web_mirror.terminalOn() ? WS_HTML_TERMINAL_PAGE : WS_HTTP_INFO_PAGE;
       (void)writeAllBytes(*cl, (const uint8_t*)page, strlen(page), TCP_WRITE_TIMEOUT_MS);
       c->client.stop();
       c->in_use = false;
@@ -722,7 +777,7 @@ size_t WebSocketCompanionServer::pollRecvFrame(uint8_t dest[], int* client_index
     }
     // Mirror clients carry framebuffer/pointer traffic, not companion frames —
     // serviceMirror() owns their socket. Never feed their bytes to the parser.
-    if (c->is_mirror || c->is_term) continue;
+    if (c->is_mirror || c->is_term || c->is_files) continue;
 
     WiFiClient* cl = &c->client;
     while (cl->available()) {
@@ -860,7 +915,7 @@ size_t WebSocketCompanionServer::writeToAllClients(const uint8_t src[], size_t l
   int connected = 0;
   int sent = 0;
   for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
-    bool ok = _clients[i].in_use && _clients[i].client.connected() && _clients[i].handshake_done && !_clients[i].is_mirror && !_clients[i].is_term;
+    bool ok = _clients[i].in_use && _clients[i].client.connected() && _clients[i].handshake_done && !_clients[i].is_mirror && !_clients[i].is_term && !_clients[i].is_files;
     if (ok) {
       connected++;
       if (writeToClient(i, src, len) == len) sent++;
@@ -873,14 +928,14 @@ bool WebSocketCompanionServer::isClientConnected(int client_index) const {
   WsClientsLock _lk(_client_mtx);
   if (client_index < 0 || client_index >= WS_COMPANION_MAX_CLIENTS) return false;
   const WSClientState* c = &_clients[client_index];
-  return c->in_use && c->client.connected() && c->handshake_done && !c->is_mirror && !c->is_term;
+  return c->in_use && c->client.connected() && c->handshake_done && !c->is_mirror && !c->is_term && !c->is_files;
 }
 
 int WebSocketCompanionServer::connectedCount() const {
   WsClientsLock _lk(_client_mtx);
   int n = 0;
   for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
-    if (_clients[i].in_use && _clients[i].client.connected() && _clients[i].handshake_done && !_clients[i].is_mirror && !_clients[i].is_term)
+    if (_clients[i].in_use && _clients[i].client.connected() && _clients[i].handshake_done && !_clients[i].is_mirror && !_clients[i].is_term && !_clients[i].is_files)
       n++;
   }
   return n;
@@ -1094,6 +1149,206 @@ void WebSocketCompanionServer::drainTermInput(int idx, WebMirror& m) {
   }
 }
 
+#if WADA_WEB_FILE_TRANSFER
+bool WebSocketCompanionServer::sendFileReply(int idx, const char* text) {
+  if (!text || !text[0]) return false;
+  const size_t len = strlen(text);
+  return writeBinaryFrame(idx, reinterpret_cast<const uint8_t*>(text), len) == len;
+}
+
+// Parse one file-transfer socket. Browser frames are intentionally stop-and-wait:
+// BEGIN -> READY, each binary chunk -> ACK, END -> DONE. That makes the bounded
+// bridge backpressure explicit and prevents the network task from outrunning SD.
+void WebSocketCompanionServer::drainFileInput(int idx) {
+  static constexpr uint32_t kFrameTimeoutMs = 5000;
+  WSClientState* c = &_clients[idx];
+  WiFiClient* cl = &c->client;
+  if (c->ws_state != WS_STATE_HEADER_0 &&
+      millis() - c->files_frame_started_ms > kFrameTimeoutMs) {
+    disconnectClient(idx);
+    return;
+  }
+  if (!c->files_rx_buf) {
+    c->files_rx_buf = static_cast<uint8_t*>(heap_caps_malloc(
+        WebFileTransfer::MAX_INBOUND_BYTES, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!c->files_rx_buf)
+      c->files_rx_buf = static_cast<uint8_t*>(malloc(WebFileTransfer::MAX_INBOUND_BYTES));
+    if (!c->files_rx_buf) {
+      c->client.stop();
+      c->in_use = false;
+      return;
+    }
+  }
+
+  int guard = 0;
+  while (cl->available() && guard++ < 4096) {
+    switch (c->ws_state) {
+      case WS_STATE_HEADER_0: {
+        const uint8_t b = static_cast<uint8_t>(cl->read());
+        c->files_frame_started_ms = millis();
+        const bool final_frame = (b & 0x80) != 0;
+        const bool reserved_bits = (b & 0x70) != 0;
+        c->ws_opcode = b & 0x0F;
+        if (!final_frame || reserved_bits ||
+            (c->ws_opcode != 0x01 && c->ws_opcode != 0x02 && c->ws_opcode != 0x08)) {
+          disconnectClient(idx);
+          return;
+        }
+        c->ws_state = WS_STATE_HEADER_1;
+        break;
+      }
+      case WS_STATE_HEADER_1: {
+        const uint8_t b = static_cast<uint8_t>(cl->read());
+        if ((b & 0x80) == 0) {   // RFC 6455: every client-to-server frame is masked
+          disconnectClient(idx);
+          return;
+        }
+        const uint8_t len7 = b & 0x7F;
+        if (c->ws_opcode == 0x08 && len7 >= 126) {
+          disconnectClient(idx);
+          return;
+        }
+        c->ws_payload_read = 0;
+        c->files_rx_len = 0;
+        if (len7 == 127) {
+          disconnectClient(idx);
+          return;
+        }
+        if (len7 == 126) {
+          c->ws_payload_len = len7;
+          c->ws_state = WS_STATE_LEN_EXT;
+        } else {
+          c->ws_payload_len = len7;
+          c->ws_state = WS_STATE_MASK;
+        }
+        break;
+      }
+      case WS_STATE_LEN_EXT: {
+        if (c->ws_payload_len == 126) {
+          if (cl->available() < 2) return;
+          const uint8_t hi = static_cast<uint8_t>(cl->read());
+          const uint8_t lo = static_cast<uint8_t>(cl->read());
+          c->ws_payload_len = (static_cast<uint16_t>(hi) << 8) | lo;
+        }
+        if (c->ws_payload_len < 126 ||
+            c->ws_payload_len > WebFileTransfer::MAX_INBOUND_BYTES) {
+          disconnectClient(idx);
+          return;
+        }
+        c->ws_state = WS_STATE_MASK;
+        break;
+      }
+      case WS_STATE_MASK: {
+        if (cl->available() < 4) return;
+        for (int i = 0; i < 4; ++i) c->ws_mask[i] = static_cast<uint8_t>(cl->read());
+        if (c->ws_payload_len == 0) {
+          c->files_frame_started_ms = 0;
+          if (c->ws_opcode == 0x08) {
+            disconnectClient(idx);
+            return;
+          }
+          c->ws_state = WS_STATE_HEADER_0;
+        } else {
+          c->ws_state = WS_STATE_PAYLOAD;
+        }
+        break;
+      }
+      default: {
+        const uint8_t value = static_cast<uint8_t>(cl->read()) ^
+                              c->ws_mask[c->ws_payload_read % 4];
+        if (c->files_rx_len < WebFileTransfer::MAX_INBOUND_BYTES)
+          c->files_rx_buf[c->files_rx_len++] = value;
+        c->ws_payload_read++;
+        if (c->ws_payload_read < c->ws_payload_len) break;
+
+        if (c->ws_opcode == 0x08) {
+          disconnectClient(idx);
+          return;
+        }
+        if (c->ws_payload_len > WebFileTransfer::MAX_INBOUND_BYTES) {
+          if (c->tx_len == 0) sendFileReply(idx, "ERR frame too large");
+        } else if (!c->files_authed) {
+          const bool allowed = g_web_file_transfer.authAllowed();
+          const bool auth = allowed && c->ws_opcode == 0x01 && c->files_rx_len == 11 &&
+                            memcmp(c->files_rx_buf, "AUTH ", 5) == 0 &&
+                            g_web_file_transfer.matchesCode(c->files_rx_buf + 5, 6);
+          if (auth) {
+            c->files_authed = true;
+            c->files_auth_failures = 0;
+            g_web_file_transfer.noteAuthSuccess();
+            if (c->tx_len == 0) sendFileReply(idx, "AUTH OK");
+          } else {
+            c->files_auth_failures++;
+            if (allowed) g_web_file_transfer.noteAuthFailure();
+            if (c->tx_len == 0)
+              sendFileReply(idx, allowed ? "ERR invalid code" : "ERR try again in 30 seconds");
+            if (c->files_auth_failures >= 3) c->files_close_after_tx = true;
+          }
+        } else if ((c->ws_opcode == 0x01 || c->ws_opcode == 0x02) &&
+                   c->files_rx_len > 0) {
+          if (g_web_file_transfer.pushInbound(c->ws_opcode, c->files_rx_buf,
+                                               c->files_rx_len)) {
+            c->files_request_pending = true;
+          } else if (c->tx_len == 0) {
+            sendFileReply(idx, "ERR device busy");
+          }
+        }
+        c->ws_state = WS_STATE_HEADER_0;
+        c->files_frame_started_ms = 0;
+        return;   // one complete application frame per service pass
+      }
+    }
+  }
+}
+
+void WebSocketCompanionServer::serviceFileClients() {
+  int clients = 0;
+  int active = -1;
+  for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; ++i) {
+    WSClientState* c = &_clients[i];
+    if (!c->in_use || !c->client.connected() || !c->handshake_done || !c->is_files) continue;
+    clients++;
+    active = i;
+    drainClientTx(i);
+    if (!c->in_use) continue;
+    if (!g_web_file_transfer.enabled()) {
+      if (c->tx_len == 0) sendFileReply(i, "ERR session ended");
+      c->files_close_after_tx = true;
+    } else if (!c->files_request_pending && c->tx_len == 0) {
+      drainFileInput(i);
+    }
+    if (c->in_use && c->files_close_after_tx && c->tx_len == 0) disconnectClient(i);
+  }
+  g_web_file_transfer.noteClients(clients);
+
+  if (active < 0 || !_clients[active].in_use || !_clients[active].files_authed ||
+      _clients[active].tx_len != 0) return;
+  uint8_t reply[WebFileTransfer::MAX_REPLY_BYTES];
+  const size_t len = g_web_file_transfer.popReply(reply, sizeof reply);
+  if (len > 0) {
+    if (writeBinaryFrame(active, reply, len) == len) {
+      _clients[active].files_request_pending = false;
+    } else {
+      char retry[WebFileTransfer::MAX_REPLY_BYTES];
+      memcpy(retry, reply, len);
+      retry[len] = '\0';
+      g_web_file_transfer.pushReply(retry);
+    }
+    return;
+  }
+  if (!_mirror_txbuf) return;
+  const size_t data_len = g_web_file_transfer.popData(
+      _mirror_txbuf, WebFileTransfer::MAX_OUTBOUND_BYTES);
+  if (data_len > 0) {
+    if (writeBinaryFrame(active, _mirror_txbuf, data_len) == data_len) {
+      _clients[active].files_request_pending = false;
+    } else {
+      g_web_file_transfer.pushData(_mirror_txbuf, data_len);
+    }
+  }
+}
+#endif
+
 // Web mesh terminal: shuttle text both ways for /term clients (independent of the
 // framebuffer mirror; a client is never both). Called from serviceMirror on the stream
 // task with _client_mtx already held. writeBinaryFrame's per-client tx_buf keeps it
@@ -1135,6 +1390,9 @@ void WebSocketCompanionServer::serviceMirror(WebMirror& m) {
     _mirror_txbuf = (uint8_t*)heap_caps_malloc(WS_MIRROR_TXBUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!_mirror_txbuf) _mirror_txbuf = (uint8_t*)malloc(WS_MIRROR_TXBUF);
   }
+#if WADA_WEB_FILE_TRANSFER
+  serviceFileClients();                    // authenticated browser upload channel
+#endif
   serviceTerminalClients(m);               // web mesh terminal + Contacts/Chats data (independent of the framebuffer)
   const int mc = mirrorClientCount();
   m.noteClients(mc);

@@ -276,6 +276,14 @@
 .rescard p{color:var(--mut); font-size:.88rem; line-height:1.55; margin:0}
 .rescard .go{margin-top:auto; padding-top:6px; color:var(--teal); font-weight:650; font-size:.88rem}
 .rescard:hover .go{text-decoration:underline}
+  /* "What's new" is collapsed by default: a big release fills the page otherwise. */
+  .wn > summary{font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:2px 0}
+  .wn > summary::-webkit-details-marker{display:none}      /* Safari/Chrome default triangle */
+  .wn > summary::marker{content:""}                        /* Firefox */
+  .wn > summary:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:6px}
+  .wn .wn-caret{display:inline-block;color:var(--teal);transition:transform .15s ease;flex:0 0 auto}
+  .wn[open] .wn-caret{transform:rotate(90deg)}
+  .wn .wn-count{color:var(--mut);font-weight:400}
 </style>
 </head>
 <body>
@@ -400,10 +408,10 @@
       </div>
       <p style="margin:12px auto 0;max-width:600px;text-align:left;font-size:.88rem;line-height:1.6"><b>Stable</b> is the tested default. Pick it unless you want to help test. <b>Beta &middot; testing</b> gets new features and fixes earlier, before they are proven, so it can be rough. It is for trying things early and reporting bugs.<br>Already running WADAMESH? You do not have to reflash to switch channels: turn on <b>Settings &rarr; About &rarr; "Get test builds (beta)"</b> on the device and it updates to test builds over Wi-Fi. Switch it off to go back to stable.</p>
       <p data-wm-betahint hidden style="margin:8px auto 0;font-size:.84rem;color:#b4631a;max-width:560px">Beta builds are newer and less tested — for trying things early and reporting bugs. On a T-Deck under Launcher you download the .bin and side-load it.</p>
-      <div data-whatsnew hidden style="margin:18px auto 0;max-width:560px;background:rgba(21,182,166,.07);border:1px solid rgba(21,182,166,.28);border-radius:12px;padding:13px 16px;text-align:left">
-        <div style="font-weight:600">What's new in <span data-wn-tag style="color:var(--teal)">the latest build</span></div>
-        <ul data-wn-notes style="margin:7px 0 0;padding-left:18px;font-size:.9rem;color:var(--mut);line-height:1.55"></ul>
-      </div>
+      <details class="wn" data-whatsnew hidden style="margin:18px auto 0;max-width:560px;background:rgba(21,182,166,.07);border:1px solid rgba(21,182,166,.28);border-radius:12px;padding:13px 16px;text-align:left">
+        <summary><span class="wn-caret" aria-hidden="true">&#9656;</span><span>See what&rsquo;s new in <span data-wn-tag style="color:var(--teal)">the latest build</span><span data-wn-count class="wn-count"></span></span></summary>
+        <ul data-wn-notes style="margin:9px 0 0;padding-left:18px;font-size:.9rem;color:var(--mut);line-height:1.55"></ul>
+      </details>
       <div class="steps" style="margin-top:22px">
         <div class="step"><div class="num">1</div><div><h4>Connect over USB</h4><p>Plug your T-Deck or Heltec V4 into your computer with a data cable.</p></div></div>
         <div class="step"><div class="num">2</div><div><h4>Pick your board &amp; install</h4><p>Hit <b>Install</b> below, choose the serial port, and let it flash. It does a clean full install.</p></div></div>
@@ -739,7 +747,10 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
           ul.innerHTML = '';
           notes.forEach(n => { const li = document.createElement('li'); li.textContent = n; ul.appendChild(li); });
         });
-        wn.forEach(b => b.hidden = !notes.length);
+        document.querySelectorAll('[data-wn-count]').forEach(e => {
+          e.textContent = notes.length ? ('  \u00b7 ' + notes.length + ' change' + (notes.length === 1 ? '' : 's')) : '';
+        });
+        wn.forEach(b => { b.hidden = !notes.length; b.open = false; });   // always start collapsed
       }).catch(() => { wn.forEach(b => b.hidden = true); });
   }
   window.wmSetChannel = function(ch){

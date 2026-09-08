@@ -2482,6 +2482,54 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   }
 }
 
+// ---- Advertised-position displacement (#399) --------------------------------
+// Broadcast a position that is near where you are without being where you live.
+// Applied ONLY to our own adverts: the map, the GPS page and anything local keep
+// the true fix, because the point is to tell other people less, not to lie to
+// yourself.
+//
+// The displacement is DERIVED FROM THE NODE IDENTITY, so it is the same offset
+// every time rather than a fresh random one per advert. That distinction is the
+// whole feature: re-rolling per advert would scatter points around the true
+// position, and anyone averaging a night of them would recover the centre
+// exactly. A fixed displacement instead looks like a node that simply sits
+// somewhere else, which is what a manually-set location already looks like.
+void MyMesh::advertPosition(double& lat, double& lon) const {
+#if defined(ESP32)
+  const uint16_t r = touchPrefsGetGpsFuzzM();
+  if (r == 0 || (lat == 0 && lon == 0)) return;
+  // Bearing and distance are derived from the public key AND the chosen radius,
+  // so each setting gets its own unrelated direction.
+  //
+  // Keying on the identity alone was a real weakness, spotted by jesshampshire
+  // on #399: the bearing was then the same at every radius, so switching from
+  // 100 m to 1 km moved the reported point further along the SAME ray from the
+  // true position. Anyone who saw both could intersect them and recover the
+  // exact location, which is precisely what this setting exists to prevent.
+  // Folding the radius in means changing it lands somewhere unrelated instead.
+  //
+  // Still deterministic rather than random per advert, which is the other half
+  // of the design: a fresh offset each time would scatter points around the true
+  // position and averaging a night of them would recover the centre.
+  uint32_t h = 2166136261u;                       // FNV-1a over the key + radius
+  for (int i = 0; i < PUB_KEY_SIZE; ++i) { h ^= self_id.pub_key[i]; h *= 16777619u; }
+  h ^= (uint32_t)r;         h *= 16777619u;
+  h ^= (uint32_t)(r >> 8);  h *= 16777619u;
+  const double bearing = ((double)(h & 0xFFFFu) / 65536.0) * 2.0 * 3.14159265358979;
+  // Distance kept in the upper half of the radius: an offset that can land near
+  // zero would sometimes publish a position barely displaced at all.
+  const double dist    = (0.5 + ((double)((h >> 16) & 0xFFFFu) / 131072.0)) * (double)r;
+  const double dlat    = (dist * cos(bearing)) / 111320.0;
+  double coslat = cos(lat * 3.14159265358979 / 180.0);
+  if (coslat < 0.01) coslat = 0.01;                             // near the poles
+  const double dlon    = (dist * sin(bearing)) / (111320.0 * coslat);
+  lat += dlat;
+  lon += dlon;
+#else
+  (void)lat; (void)lon;
+#endif
+}
+
 void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   static const char* HX = "0123456789abcdef";
   auto hex = [&](const uint8_t* d, int n) {
@@ -3308,8 +3356,21 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
     if (permissions & TELEM_PERM_BASE) { // only respond if base permission bit is set
       telemetry.reset();
       telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
-      // query other sensors -- target specific
+      // query other sensors -- target specific.
+      //
+      // Telemetry answers with a position too, and it has to honour the same
+      // displacement as adverts or the privacy setting is a hole rather than a
+      // feature: someone who turns it on would reasonably believe their exact
+      // position is not going out, while a telemetry request returned it
+      // (spotted by honza_87628). querySensors() reads these members directly,
+      // so displace them across the call and put the true values back straight
+      // after, which keeps the local map and GPS page accurate.
+      const double telem_true_lat = sensors.node_lat;
+      const double telem_true_lon = sensors.node_lon;
+      advertPosition(sensors.node_lat, sensors.node_lon);
       sensors.querySensors(permissions, telemetry);
+      sensors.node_lat = telem_true_lat;
+      sensors.node_lon = telem_true_lon;
 
       memcpy(reply, &sender_timestamp,
              4); // reflect sender_timestamp back in response packet (kind of like a 'tag')
@@ -4326,7 +4387,9 @@ void MyMesh::handleCmdFrame(size_t len) {
     if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
       pkt = createSelfAdvert(_prefs.node_name);
     } else {
-      pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+      { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
     }
     if (pkt) {
       if (len >= 2 && cmd_frame[1] == 1) { // optional param (1 = flood, 0 = zero hop)
@@ -4419,7 +4482,9 @@ void MyMesh::handleCmdFrame(size_t len) {
       if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
         pkt = createSelfAdvert(_prefs.node_name);
       } else {
-        pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+        { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
       }
       if (pkt) {
         pkt->header |= ROUTE_TYPE_FLOOD; // would normally be sent in this mode
@@ -5948,7 +6013,9 @@ bool MyMesh::sendAdvert(bool flood) {
   if (_prefs.advert_loc_policy == ADVERT_LOC_NONE) {
     pkt = createSelfAdvert(_prefs.node_name);
   } else {
-    pkt = createSelfAdvert(_prefs.node_name, sensors.node_lat, sensors.node_lon);
+    { double alat = sensors.node_lat, alon = sensors.node_lon;
+        advertPosition(alat, alon);
+        pkt = createSelfAdvert(_prefs.node_name, alat, alon); }
   }
   if (!pkt) return false;
   if (flood) {

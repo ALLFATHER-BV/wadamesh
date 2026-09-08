@@ -1,0 +1,39 @@
+# beta_77 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Two things beta_76 broke ---------------------------------------------------------------
+A Lua app is no longer covered by the app drawer when a message arrives. The app kept running underneath, but most of its screen disappeared. Apps opened from the drawer deliberately leave it open behind them, and the badge refresh added in beta_76 rebuilt it on every change of the unread count, which put it back in front of whatever was running. Reported by Jade and confirmed by another tester on a second T-Deck.
+Related to the same change: a message arriving while you were looking at the second row of the drawer no longer jumps you back to the first.
+On the ThinkNode M9, accented letters can now actually be selected. beta_76 made the picker appear on this board for the first time, but the arrow keys were being taken by the text cursor before they reached it, so the letters were visible and unreachable. Reported by DenRalle.
+
+# --- Send a position without sending your address --------------------------------------------
+Settings, GPS now has a "Position in adverts" option: exact, or displaced by up to 100 m, 250 m or 1 km. Only what you broadcast is moved; your own map and GPS page still show your real position.
+The displacement is the same every time rather than random per advert. That is deliberate and it is what makes it work: a fresh random offset each time would scatter points around where you really are, and anyone collecting a night of them could average out your true location. A fixed shift instead looks like a node that simply sits somewhere else. Requested by Danie10.
+
+# --- Set the clock without GPS, Wi-Fi or a phone ---------------------------------------------
+Settings, Clock takes the time by hand now, as local time. With no GPS fix, no network and no companion app there was previously no way to set it at all, and message timestamps are built from it. The field starts filled with the current reading, so correcting a drifting clock is editing a digit rather than typing the whole thing. Requested by dreirund.
+
+# --- Files on and off the device ----------------------------------------------------------------
+Copy files between a browser and the device's card, protected by a six digit code shown on screen. Uploads are verified with a checksum and committed atomically, so an interrupted transfer cannot leave a half written file in place, and three wrong codes lock attempts out for thirty seconds.
+Available on the boards with a removable card: Heltec V4-R8, T-Deck, both T-Lora Pagers, ThinkNode M9, Wio Tracker L2, Tanmatsu and T-Display P4. By Michael A. Cojocari.
+
+# --- ThinkNode M9 -------------------------------------------------------------------------------
+Control centre navigation, message actions and the unlock gesture are all improved. Replying to a message no longer needs a five second hold: pressing Enter on a selected message does the same thing, and unlocking is now a double press of the d-pad centre rather than a long hold. Requested by Buko84, written by Michael A. Cojocari.
+The app drawer no longer jumps to the settings gear when you are moving up through the list from the middle. Reported by Buko84.
+The card could stop responding entirely until a reboot. Opening Settings, About at the wrong moment could park the tile worker and the recovery path against each other, and once that happened nothing could break it. Traced from the code by Christopher Van Hoose, who filed it without being able to reproduce it, which was the right call because no user could have reported this usefully.
+
+# --- Seeed Wio Tracker L2 -------------------------------------------------------------------------
+Wake and screen controls fixed on the new board. By Michael A. Cojocari.
+
+# --- Fixed elsewhere ------------------------------------------------------------------------------
+On the T-Display P4, the first line of a Lua app is no longer cut in half by the status bar, and the app drawer's options fit the screen. Both were fixed sizes in an interface whose text scales, so both also affected any board running at Large or Huge text size, not just the P4. Reported by D-Melhede.
+Several other panels that hold text were on fixed sizes too: the lock and unlock progress cards, the on screen keyboard's text line, and the accent colour entry row. All now scale with the text they contain, so a longer translation has room.
+The theme button in the control centre keeps one icon in both states, matching how Do Not Disturb already behaves: the button's own fill shows whether it is on.
+
+# --- Small things --------------------------------------------------------------------------------
+Download mode says what it is for and how to leave it. It waits for a USB flash with the interface stopped, which looked like the device had frozen; the entry now says "wait for USB flash" and the message says RESET cancels. Reported as a freeze by dreirund, who was right that a state you cannot leave without already knowing the way out is a bug even when the code is correct.
+
+# --- For testers ---------------------------------------------------------------------------------
+If you were on beta_76 with a Lua app open, the drawer problem is the one to confirm gone.
+Still not verified on hardware, both off by default and unchanged since beta_76: the DS3231 clock module support, written from the datasheet with nobody having wired one up yet, and the louder chime, whose pitch has not been measured on an M9.
+Still open and not fixed here: a map that renders nothing since beta_71, a screen that will not stay dark after a manual lock, and the web flasher hanging at "wrapping up" on the T-Display P4.

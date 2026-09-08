@@ -46,6 +46,7 @@ static const uint8_t SHIFT_HALF = 0, SHIFT_ROW = 3, SHIFT_COL = 0;
 
 static bool     s_inited      = false;
 static bool     s_present[2]  = { false, false };
+static uint8_t  s_notify_color = ATTAKY_NOTIFY_OFF;
 static uint8_t  s_prev[2][5]  = { { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF },
                                   { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } };
 
@@ -72,6 +73,11 @@ static uint8_t awRead(uint8_t addr, uint8_t reg) {
   return (uint8_t)Wire.read();
 }
 
+static uint8_t p1Value(uint8_t row_bits) {
+  const uint8_t led_bits = (uint8_t)((~s_notify_color & 0x07u) << 5);
+  return (uint8_t)((row_bits & 0x1Fu) | led_bits);
+}
+
 static bool initHalf(uint8_t addr) {
   bool ok = true;
   ok &= awWrite(addr, AW_REG_SWRST,   0x00);
@@ -81,7 +87,7 @@ static bool initHalf(uint8_t addr) {
   ok &= awWrite(addr, AW_REG_CFG_P0,  0xFF);
   ok &= awWrite(addr, AW_REG_CFG_P1,  0x00);
   ok &= awWrite(addr, AW_REG_OUT_P0,  0x00);
-  ok &= awWrite(addr, AW_REG_OUT_P1,  P1_IDLE);
+  ok &= awWrite(addr, AW_REG_OUT_P1,  p1Value(P1_IDLE));
   return ok;
 }
 
@@ -97,11 +103,11 @@ static void ensureInit() {
 
 static void scanHalf(uint8_t addr, uint8_t cols[5]) {
   for (uint8_t row = 0; row < 5; row++) {
-    awWrite(addr, AW_REG_OUT_P1, (uint8_t)(ROW_DRIVE[row] | 0xE0));
+    awWrite(addr, AW_REG_OUT_P1, p1Value(ROW_DRIVE[row]));
     delayMicroseconds(50);
     cols[row] = (uint8_t)(awRead(addr, AW_REG_IN_P0) & 0x1F);
   }
-  awWrite(addr, AW_REG_OUT_P1, P1_IDLE);
+  awWrite(addr, AW_REG_OUT_P1, p1Value(P1_IDLE));
 }
 
 void attakyKeyboardPoll(bool active) {
@@ -154,5 +160,21 @@ int attakyKeyboardReadKey() {
 }
 
 bool attakyKeyboardPresent() { return s_present[0] || s_present[1]; }
+
+bool attakyKeyboardSetNotificationColor(uint8_t color_mask) {
+  s_notify_color = color_mask & 0x07u;
+  ensureInit();
+  if (!attakyI2cLock(20)) return false;
+
+  bool wrote = false;
+  bool ok = true;
+  for (int h = 0; h < 2; ++h) {
+    if (!s_present[h]) continue;
+    wrote = true;
+    if (!awWrite(KB_ADDR[h], AW_REG_OUT_P1, p1Value(P1_IDLE))) ok = false;
+  }
+  attakyI2cUnlock();
+  return wrote && ok;
+}
 
 #endif

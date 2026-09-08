@@ -7,8 +7,8 @@
 // takes the whole subtree out of nav. Needed by the Lua app host: its body is
 // clickable so touch boards get press events, and on keypad-nav boards (M9,
 // Pager, Tanmatsu, T-Deck trackball) navCollect otherwise harvests that body as
-// a leaf target and navFocusCb's reverse-video fill paints the whole app white
-// under the app's own widgets. Lives here because AppPage.h is the header both
+// a leaf target and draws a cursor around the whole app instead of its controls.
+// Lives here because AppPage.h is the header both
 // UITask.cpp and LuaAppHost.cpp already share.
 #define NAV_PASSTHRU_FLAG LV_OBJ_FLAG_USER_4
 
@@ -49,6 +49,9 @@ void appPageBegin(const char* title, void (*close_fn)());
 /** Same contract, but the bar stays ONE line (no tall glass row) — for pages whose
  *  own chrome (e.g. the Lua Store's tab bar) starts right at the top. */
 void appPageBeginSlim(const char* title, void (*close_fn)());
+
+/** Hide the current page title while retaining its slim Back bar and close hook. */
+void appPageCollapseTitle(void (*close_fn)());
 
 /**
  * Hand the status bar back — but only if `close_fn` is still the installed hook, so a

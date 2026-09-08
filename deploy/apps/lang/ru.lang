@@ -447,10 +447,11 @@ Lock wallpaper set	Обои блокировки заданы
 Lock when screen off	Блокировать при выкл. экране
 Locking…	Блокировка…
 Locks when screen off\n(hold Backspace to unlock)	Блокируется при выключении экрана\n(удерживайте Backspace для разблокировки)
-Locks when screen off\n(hold the d-pad to unlock)	Блокируется при выкл. экране\n(удерживайте d-pad для разблокировки)
+Locks when screen off\n(double-press d-pad center to unlock)	Блокируется при выкл. экране\n(дважды нажмите центр d-pad для разблокировки)
 Locks when screen off\n(hold the trackball to unlock)	Блокируется при выкл. экране\n(удерживайте трекбол для разблокировки)
 Locks when screen off\n(press Volume Down to unlock)	Блокируется при выкл. экране\n(нажмите Громкость вниз для разблокировки)
 Locks when screen off\n(press the button to unlock)	Блокируется при выкл. экране\n(нажмите кнопку для разблокировки)
+Locks when screen off\n(hold the wake button to unlock)	Блокируется при выкл. экране\n(удерживайте кнопку пробуждения для разблокировки)
 Log in again	Войти заново
 Logging in again...	Повторный вход...
 Logging in…	Вход…
@@ -953,9 +954,10 @@ e.g. mesh	напр. mesh
 from	от
 h  to	ч  до
 hold Backspace to unlock	удерживайте Backspace для разблокировки
-hold the d-pad to unlock	удерживайте d-pad для разблокировки
+double-press d-pad center to unlock	дважды нажмите центр d-pad для разблокировки
 hold the trackball to unlock	удерживайте трекбол для разблокировки
 press the button to unlock	нажмите кнопку для разблокировки
+hold the wake button to unlock	удерживайте кнопку пробуждения для разблокировки
 kHz	kHz
 keep holding	удерживайте
 last wake:	
@@ -1130,3 +1132,44 @@ path unknown	path unknown
 direct	direct
 hop	hop
 hops	hops
+Advertised position displaced	Advertised position displaced
+Advertising your exact position	Advertising your exact position
+Day theme - restarting to apply it…	Day theme - restarting to apply it…
+Entering remote mode - restarting…	Entering remote mode - restarting…
+Exact	Exact
+Leaving remote mode - restarting…	Leaving remote mode - restarting…
+Night theme - restarting to apply it…	Night theme - restarting to apply it…
+Position in adverts	Position in adverts
+Rotating… restarting to apply it	Rotating… restarting to apply it
+Within %u km	Within %u km
+Within %u m	Within %u m
+shifts the position others see; your own map keeps the real fix	shifts the position others see; your own map keeps the real fix
+Clock set	Clock set
+Set clock	Set clock
+Set the clock by hand (local time)	Set the clock by hand (local time)
+That is not a valid date and time	That is not a valid date and time
+Use YYYY-MM-DD HH:MM	Use YYYY-MM-DD HH:MM
+Browser connected	Browser connected
+Could not clear previous upload	Could not clear previous upload
+Could not create transfer folder	Could not create transfer folder
+File Transfer needs the SD card	File Transfer needs the SD card
+File Transfer session expired	File Transfer session expired
+File Transfer stopped: Wi-Fi disconnected	File Transfer stopped: Wi-Fi disconnected
+File Transfer: low memory	File Transfer: low memory
+Reading file list	Reading file list
+Session code	Session code
+Stop File Transfer	Stop File Transfer
+Upload files or download screenshots from a browser on the same Wi-Fi.	Upload files or download screenshots from a browser on the same Wi-Fi.
+Waiting for browser	Waiting for browser
+Download mode (wait for USB flash)	Download mode (wait for USB flash)
+Download mode… reflash over USB,\nor press RESET to cancel	Download mode… reflash over USB,\nor press RESET to cancel
+1 km	1 km
+100 m	100 m
+250 m	250 m
+Location privacy	Location privacy
+position others see is shifted; your own map keeps the real fix	position others see is shifted; your own map keeps the real fix
+Arrows • OK	Arrows • OK
+Direct message color	Direct message color
+Incoming message blink	Incoming message blink
+Notifications	Notifications
+Room / channel color	Room / channel color

@@ -672,6 +672,8 @@ public:
 
   /** Echoes (repeater re-broadcasts) heard of the flood TXT with this payload
    *  fingerprint. 0 if unknown / evicted from the ring. */
+  // Displace the position we ADVERTISE (#399); local readings keep the true fix.
+  void advertPosition(double& lat, double& lon) const;
   uint8_t uiRepeatsForFp(uint32_t fp) const {
     if (fp == 0) return 0;
     for (int i = 0; i < UI_ECHO_SLOTS; i++) if (_echo_fp[i] == fp) return _echo_rep[i];

@@ -447,10 +447,11 @@ Lock wallpaper set	Sperr-Hintergrund gesetzt
 Lock when screen off	Sperren bei Bildschirm aus
 Locking…	Sperren…
 Locks when screen off\n(hold Backspace to unlock)	Sperrt bei Bildschirm aus\n(Backspace halten zum Entsperren)
-Locks when screen off\n(hold the d-pad to unlock)	Sperrt bei Bildschirm aus\n(D-Pad halten zum Entsperren)
+Locks when screen off\n(double-press d-pad center to unlock)	Sperrt bei Bildschirm aus\n(D-Pad-Mitte zweimal drücken zum Entsperren)
 Locks when screen off\n(hold the trackball to unlock)	Sperrt bei Bildschirm aus\n(Trackball halten zum Entsperren)
 Locks when screen off\n(press Volume Down to unlock)	Sperrt bei Bildschirm aus\n(Lautstärke leiser drücken zum Entsperren)
 Locks when screen off\n(press the button to unlock)	Sperrt bei Bildschirm aus\n(Taste drücken zum Entsperren)
+Locks when screen off\n(hold the wake button to unlock)	Sperrt bei Bildschirm aus\n(Wake-Taste zum Entsperren halten)
 Log in again	Erneut anmelden
 Logging in again...	Erneute Anmeldung...
 Logging in…	Anmeldung…
@@ -949,9 +950,10 @@ e.g. mesh	z. B. mesh
 from	von
 h  to	h  bis
 hold Backspace to unlock	Backspace halten zum Entsperren
-hold the d-pad to unlock	D-Pad halten zum Entsperren
+double-press d-pad center to unlock	D-Pad-Mitte zweimal drücken zum Entsperren
 hold the trackball to unlock	Trackball halten zum Entsperren
 press the button to unlock	Taste drücken zum Entsperren
+hold the wake button to unlock	Wake-Taste zum Entsperren halten
 kHz	kHz
 keep holding	weiter halten
 last wake:	Letztes Aufwachen:
@@ -1126,3 +1128,44 @@ path unknown	path unknown
 direct	direct
 hop	hop
 hops	hops
+Advertised position displaced	Advertised position displaced
+Advertising your exact position	Advertising your exact position
+Day theme - restarting to apply it…	Day theme - restarting to apply it…
+Entering remote mode - restarting…	Entering remote mode - restarting…
+Exact	Exact
+Leaving remote mode - restarting…	Leaving remote mode - restarting…
+Night theme - restarting to apply it…	Night theme - restarting to apply it…
+Position in adverts	Position in adverts
+Rotating… restarting to apply it	Rotating… restarting to apply it
+Within %u km	Within %u km
+Within %u m	Within %u m
+shifts the position others see; your own map keeps the real fix	shifts the position others see; your own map keeps the real fix
+Clock set	Clock set
+Set clock	Set clock
+Set the clock by hand (local time)	Set the clock by hand (local time)
+That is not a valid date and time	That is not a valid date and time
+Use YYYY-MM-DD HH:MM	Use YYYY-MM-DD HH:MM
+Browser connected	Browser connected
+Could not clear previous upload	Could not clear previous upload
+Could not create transfer folder	Could not create transfer folder
+File Transfer needs the SD card	File Transfer needs the SD card
+File Transfer session expired	File Transfer session expired
+File Transfer stopped: Wi-Fi disconnected	File Transfer stopped: Wi-Fi disconnected
+File Transfer: low memory	File Transfer: low memory
+Reading file list	Reading file list
+Session code	Session code
+Stop File Transfer	Stop File Transfer
+Upload files or download screenshots from a browser on the same Wi-Fi.	Upload files or download screenshots from a browser on the same Wi-Fi.
+Waiting for browser	Waiting for browser
+Download mode (wait for USB flash)	Download mode (wait for USB flash)
+Download mode… reflash over USB,\nor press RESET to cancel	Download mode… reflash over USB,\nor press RESET to cancel
+1 km	1 km
+100 m	100 m
+250 m	250 m
+Location privacy	Location privacy
+position others see is shifted; your own map keeps the real fix	position others see is shifted; your own map keeps the real fix
+Arrows • OK	Arrows • OK
+Direct message color	Direct message color
+Incoming message blink	Incoming message blink
+Notifications	Notifications
+Room / channel color	Room / channel color

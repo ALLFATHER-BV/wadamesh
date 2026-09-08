@@ -29,9 +29,11 @@ extern "C" {
 
 // UITask-owned services the host borrows (all pre-existing, fwd-declared here
 // to keep this TU decoupled from the 47k-line UITask.cpp).
+extern lv_coord_t       luaHostAppBarH();                         // real AppPage bar height
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern bool             luaHostBeep();
+extern void             luaHostSetSelectionGlow(lv_obj_t* obj, bool selected);
 extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
@@ -180,6 +182,7 @@ constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
 constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
+constexpr uint32_t kAppTitleMs = 3000;         // identify the app briefly, then reclaim its top row
 
 // Bumped by wada.ui.clear(). Every widget handle records the generation it was
 // created in; a handle from an older one has already been destroyed, so the
@@ -195,8 +198,9 @@ struct Host {
   lua_State*  L = nullptr;
   LuaHeap     heap;
   lv_obj_t*   root = nullptr;        // full-screen overlay on lv_layer_top
-  lv_obj_t*   body = nullptr;        // app content area (below the tall bar)
+  lv_obj_t*   body = nullptr;        // app content area below the slim Back bar
   lv_timer_t* timer = nullptr;
+  lv_timer_t* title_timer = nullptr;
   int         body_w = 0, body_h = 0;   // set at creation — lv_obj_get_width() reads 0 pre-layout
   uint32_t    last_tick = 0;
   int         ref_app   = LUA_NOREF; // the table the chunk returned
@@ -222,6 +226,12 @@ Host* s_h = nullptr;
 uint32_t s_host_generation = 0;
 
 char s_bar_title[40];   // appPageBegin keeps the pointer — must outlive the page
+
+void titleTimerCb(lv_timer_t* timer) {
+  if (!s_h || s_h->title_timer != timer) return;
+  s_h->title_timer = nullptr;
+  appPageCollapseTitle(&luaAppDismiss);
+}
 
 // ---------------------------------------------------------------------------
 // guarded callback invocation
@@ -616,8 +626,9 @@ lv_obj_t* listRowAt(ListUd* u, int i) {          // i is 1-based, as everywhere 
   return lv_obj_get_child(u->obj, i - 1);
 }
 void listPaintRow(lv_obj_t* row, bool selected) {
-  lv_obj_set_style_bg_color(row, lv_color_hex(selected ? 0x15B6A6 : 0x1A1F25), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(row, lv_color_hex(0x1A1F25), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
+  luaHostSetSelectionGlow(row, selected);
 }
 
 // wada.ui.text_w(text [, size]) -> rendered width in pixels.
@@ -2673,6 +2684,7 @@ void hostTeardown() {
   }
   luaHostKeepAwake(false);          // an app cannot hold the screen after it closes
   if (h->timer) { lv_timer_del(h->timer); h->timer = nullptr; }
+  if (h->title_timer) { lv_timer_del(h->title_timer); h->title_timer = nullptr; }
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }
   s_net_cb = LUA_NOREF;              // a worker fetch may still land; netDeliver sees no app and drops it
@@ -2729,8 +2741,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   openSandbox(h->L);
   openWada(h->L);
 
-  // UI scaffold: full-screen overlay + tall "< title" bar via AppPage, exactly
-  // like SnakeGame. Body = the content area apps build into.
+  // UI scaffold: full-screen overlay + a slim "< title" bar. The title identifies
+  // the app briefly, then collapses to Back-only so it cannot cover app content.
   h->root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(h->root);
   lv_obj_set_size(h->root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
@@ -2742,15 +2754,23 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
   // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the
   // overlay that keeps touches off the screen underneath) — but it must not be
-  // a keyboard-nav focus target either, or the focus highlight paints it
-  // solid: with only the body excluded, navCollect simply promoted the root to
-  // the leaf target and the app went white all the same (seen on the M9).
+  // a keyboard-nav focus target either: with only the body excluded, navCollect
+  // simply promoted the root and drew a cursor around the whole app (seen on the M9).
   lv_obj_add_flag(h->root, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->root, luaAppRootDeletedCb, LV_EVENT_DELETE, nullptr);
 
   h->body = lv_obj_create(h->root);
   lv_obj_remove_style_all(h->body);
-  const int bar_h = 44;   // matches the AppPage tall bar band
+  // Install the page chrome BEFORE measuring it. appPageBeginSlim is what puts
+  // the bar into its slim state, so reading the height first measured the
+  // OUTGOING page's bar: launching an app from a tall-bar page sized the body
+  // for a tall bar and left a dead strip under the slim one (and the reverse
+  // overlapped). Same #236 reasoning, one step earlier.
+  snprintf(s_bar_title, sizeof s_bar_title, "%s", h->title);
+  appPageBeginSlim(s_bar_title, &luaAppDismiss);
+  // Ask for the bar's real height rather than assuming the 44 it happens to be
+  // at the default status-bar size and 100% UI scale (#236).
+  const int bar_h = (int)luaHostAppBarH();
   h->body_w = lv_disp_get_hor_res(nullptr);
   h->body_h = lv_disp_get_ver_res(nullptr) - bar_h;
   lv_obj_set_pos(h->body, 0, bar_h);
@@ -2758,18 +2778,16 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_clear_flag(h->body, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(h->body, LV_OBJ_FLAG_CLICKABLE);
   // Clickable for touch, but never a keyboard-nav focus target: on the M9 the
-  // nav collector harvested this body as a leaf and the focus highlight's
-  // reverse-video fill painted the whole app white under its widgets. The
-  // flag leaves the app's own buttons reachable (see AppPage.h).
+  // nav collector harvested this body as a leaf and outlined the whole app.
+  // The flag leaves the app's own buttons reachable (see AppPage.h).
   lv_obj_add_flag(h->body, NAV_PASSTHRU_FLAG);
   lv_obj_add_event_cb(h->body, gestureCb, LV_EVENT_GESTURE, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_PRESSED, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_RELEASED, nullptr);
 
-  snprintf(s_bar_title, sizeof s_bar_title, "%s", h->title);
-  appPageBegin(s_bar_title, &luaAppDismiss);
-
   s_h = h;
+  h->title_timer = lv_timer_create(titleTimerCb, kAppTitleMs, nullptr);
+  if (h->title_timer) lv_timer_set_repeat_count(h->title_timer, 1);
   storeLoad();
 
   // button-callback table

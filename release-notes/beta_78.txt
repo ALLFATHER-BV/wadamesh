@@ -1,0 +1,27 @@
+# beta_78 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- A crash at startup ---------------------------------------------------------------------
+A device could crash while starting up, before it finished booting, and on an unlucky unit that means it never comes up at all. Found by decoding a crash dump from a Heltec V4-R8.
+The cause was a race inside the Wi-Fi stack: the firmware was adding its Wi-Fi event handlers after the radio had already started, and a disconnect arriving in that moment could be handled while the list of handlers was being rebuilt underneath. The handlers are now all registered before the radio starts, which closes the window rather than narrowing it. A failed first connection is ordinary, which is why this could happen at all.
+
+# --- The location privacy setting was on the wrong page --------------------------------------
+beta_77 added an option to advertise a position near you rather than your exact one, and put it on a settings page most devices do not show. Two people went looking for it and correctly concluded it was not there. It is now in Settings, GPS, at the bottom.
+It is also easier to recognise: it is called "Location privacy" rather than "Position in adverts", and it shows four buttons, Exact, 100 m, 250 m and 1 km, so every choice and the current one are visible without tapping anything.
+
+# --- Lock screen notifications ----------------------------------------------------------------
+A message arriving on the lock screen now says who sent it and how far away they are, not just which conversation it was in. A channel post shows the channel, the sender and the hop count; a direct message shows the contact and "direct" when they are one hop away.
+Messages in a muted channel no longer light the screen. Muting silenced the sound but still woke the display and printed the message in large type, which was the louder half of the notification rather than the quieter one. Mentions are separate, so a channel muted for chatter still shows an @-mention.
+
+# --- ThinkNode M9 -------------------------------------------------------------------------------
+Special characters can be selected. Contact search navigation, the contacts menu delay, and the composer being focused when a chat opens are all fixed, and the battery saver now shows in the status icons. All by Michael A. Cojocari, from reports by Buko84.
+The colour picker in Display settings no longer turns the swatch you are on white, which hid the colour you were choosing. Reported by Buko84.
+The notification text on a dark screen is smaller, so the message has room. It was sized to be readable from across a room, which crowded a 240x320 panel. Requested by Buko84.
+
+# --- Also ----------------------------------------------------------------------------------------
+The T-Lora Pager has a shortcut to the special-character picker, and several Attaky usability problems are fixed. Both by Michael A. Cojocari.
+
+# --- For testers ---------------------------------------------------------------------------------
+If you use the lock screen notification, the two things worth confirming are that a muted channel stays dark and that an @-mention in that same channel still comes through.
+Still not verified on hardware, both off by default and unchanged: the DS3231 clock module support, written from the datasheet with nobody having wired one up, and the louder chime, whose pitch has not been measured on an M9.
+Still open and not fixed here: a reboot when pressing down past the bottom of a chat on the M9, which needs a crash dump to place; a screen that will not stay dark after a manual lock; and the web flasher hanging at "wrapping up" on the T-Display P4.

@@ -143,6 +143,10 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.boot_wifi_open    = 0;      // OFF: and never a saved OPEN network even then
   c.loud_alerts       = 0;      // OFF: the standard chime pitch unless asked for
   c.theme_mode        = 0;      // Night: preserves the existing firmware appearance
+  c.gps_fuzz_m        = 0;      // OFF: advertise the real position unless asked otherwise
+  c.attaky_notify_enabled    = 0;  // OFF: incoming messages do not blink the keyboard indicators
+  c.attaky_notify_room_color = 0;  // red
+  c.attaky_notify_dm_color   = 1;  // green
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
@@ -257,6 +261,12 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 54) { s_cfg.boot_wifi_time = 0; s_cfg.boot_wifi_open = 0; }
         if (stored_version < 55) { s_cfg.loud_alerts = 0; }
         if (stored_version < 56) { s_cfg.theme_mode = 0; }   // Night: unchanged appearance
+        if (stored_version < 57) { s_cfg.gps_fuzz_m = 0; }   // OFF: real position
+        if (stored_version < 58) {
+          s_cfg.attaky_notify_enabled = 0;
+          s_cfg.attaky_notify_room_color = 0;
+          s_cfg.attaky_notify_dm_color = 1;
+        }
         if (stored_version < 31) s_cfg.compact_chat = 0;  // new trailing field: compact chat rows off by default
         if (stored_version < 32) s_cfg.clock_floor = 0;   // new trailing field: no send-timestamp floor persisted yet (#89)
         if (stored_version < 33) s_cfg.rx_queue = 1;      // buffered LoRa receive ON for the test channel (opt-out toggle in Radio & Mesh)
@@ -1128,6 +1138,38 @@ bool touchPrefsSetMsgFlash(bool on) {
   return cfgFlush();
 }
 
+bool touchPrefsGetAttakyNotifyEnabled() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.attaky_notify_enabled != 0;
+}
+bool touchPrefsSetAttakyNotifyEnabled(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.attaky_notify_enabled = on ? 1 : 0;
+  return cfgFlush();
+}
+uint8_t touchPrefsGetAttakyNotifyRoomColor() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.attaky_notify_room_color < TOUCH_ATTAKY_NOTIFY_COLOR_COUNT
+      ? s_cfg.attaky_notify_room_color : 0;
+}
+bool touchPrefsSetAttakyNotifyRoomColor(uint8_t color) {
+  if (color >= TOUCH_ATTAKY_NOTIFY_COLOR_COUNT) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.attaky_notify_room_color = color;
+  return cfgFlush();
+}
+uint8_t touchPrefsGetAttakyNotifyDmColor() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.attaky_notify_dm_color < TOUCH_ATTAKY_NOTIFY_COLOR_COUNT
+      ? s_cfg.attaky_notify_dm_color : 1;
+}
+bool touchPrefsSetAttakyNotifyDmColor(uint8_t color) {
+  if (color >= TOUCH_ATTAKY_NOTIFY_COLOR_COUNT) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.attaky_notify_dm_color = color;
+  return cfgFlush();
+}
+
 // Console mode is a BOOT mode, so this is read before the UI is built. It fails
 // safe by construction: the only value that means console is exactly 1, so a
 // corrupt or unreadable pref boots the graphical UI, which is the mode everyone
@@ -1169,6 +1211,16 @@ bool touchPrefsGetBootWifiTimeOpen() {
 bool touchPrefsSetBootWifiTimeOpen(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.boot_wifi_open = on ? 1 : 0;
+  return cfgFlush();
+}
+
+uint16_t touchPrefsGetGpsFuzzM() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.gps_fuzz_m;
+}
+bool touchPrefsSetGpsFuzzM(uint16_t m) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.gps_fuzz_m = m;
   return cfgFlush();
 }
 

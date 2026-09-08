@@ -447,10 +447,11 @@ Lock wallpaper set	Ορίστηκε ταπετσαρία κλειδώματος
 Lock when screen off	Κλείδωμα με κλειστή οθόνη
 Locking…	Κλείδωμα…
 Locks when screen off\n(hold Backspace to unlock)	Κλειδώνει με σβηστή οθόνη\n(κρατήστε Backspace για ξεκλείδωμα)
-Locks when screen off\n(hold the d-pad to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το d-pad για ξεκλείδωμα)
+Locks when screen off\n(double-press d-pad center to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε δύο φορές το κέντρο του d-pad για ξεκλείδωμα)
 Locks when screen off\n(hold the trackball to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το trackball για ξεκλείδωμα)
 Locks when screen off\n(press Volume Down to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε Μείωση έντασης για ξεκλείδωμα)
 Locks when screen off\n(press the button to unlock)	Κλειδώνει με κλειστή οθόνη\n(πατήστε το κουμπί για ξεκλείδωμα)
+Locks when screen off\n(hold the wake button to unlock)	Κλειδώνει με κλειστή οθόνη\n(κρατήστε το κουμπί αφύπνισης για ξεκλείδωμα)
 Log in again	Σύνδεση ξανά
 Logging in again...	Επανασύνδεση...
 Logging in…	Σύνδεση…
@@ -953,9 +954,10 @@ e.g. mesh	π.χ. mesh
 from	από
 h  to	ώ  έως
 hold Backspace to unlock	κρατήστε Backspace για ξεκλείδωμα
-hold the d-pad to unlock	κρατήστε το d-pad για ξεκλείδωμα
+double-press d-pad center to unlock	πατήστε δύο φορές το κέντρο του d-pad για ξεκλείδωμα
 hold the trackball to unlock	κρατήστε το trackball για ξεκλείδωμα
 press the button to unlock	πατήστε το κουμπί για ξεκλείδωμα
+hold the wake button to unlock	κρατήστε το κουμπί αφύπνισης για ξεκλείδωμα
 kHz	kHz
 keep holding	κρατήστε πατημένο
 last wake:	
@@ -1130,3 +1132,44 @@ path unknown	path unknown
 direct	direct
 hop	hop
 hops	hops
+Advertised position displaced	Advertised position displaced
+Advertising your exact position	Advertising your exact position
+Day theme - restarting to apply it…	Day theme - restarting to apply it…
+Entering remote mode - restarting…	Entering remote mode - restarting…
+Exact	Exact
+Leaving remote mode - restarting…	Leaving remote mode - restarting…
+Night theme - restarting to apply it…	Night theme - restarting to apply it…
+Position in adverts	Position in adverts
+Rotating… restarting to apply it	Rotating… restarting to apply it
+Within %u km	Within %u km
+Within %u m	Within %u m
+shifts the position others see; your own map keeps the real fix	shifts the position others see; your own map keeps the real fix
+Clock set	Clock set
+Set clock	Set clock
+Set the clock by hand (local time)	Set the clock by hand (local time)
+That is not a valid date and time	That is not a valid date and time
+Use YYYY-MM-DD HH:MM	Use YYYY-MM-DD HH:MM
+Browser connected	Browser connected
+Could not clear previous upload	Could not clear previous upload
+Could not create transfer folder	Could not create transfer folder
+File Transfer needs the SD card	File Transfer needs the SD card
+File Transfer session expired	File Transfer session expired
+File Transfer stopped: Wi-Fi disconnected	File Transfer stopped: Wi-Fi disconnected
+File Transfer: low memory	File Transfer: low memory
+Reading file list	Reading file list
+Session code	Session code
+Stop File Transfer	Stop File Transfer
+Upload files or download screenshots from a browser on the same Wi-Fi.	Upload files or download screenshots from a browser on the same Wi-Fi.
+Waiting for browser	Waiting for browser
+Download mode (wait for USB flash)	Download mode (wait for USB flash)
+Download mode… reflash over USB,\nor press RESET to cancel	Download mode… reflash over USB,\nor press RESET to cancel
+1 km	1 km
+100 m	100 m
+250 m	250 m
+Location privacy	Location privacy
+position others see is shifted; your own map keeps the real fix	position others see is shifted; your own map keeps the real fix
+Arrows • OK	Arrows • OK
+Direct message color	Direct message color
+Incoming message blink	Incoming message blink
+Notifications	Notifications
+Room / channel color	Room / channel color
