@@ -7026,6 +7026,11 @@ static void focusChatComposerOnOpen(LvChatPanel* p) {
   s_nav_ta_editing = true;
   navMarkDirty();
   navMaybeRebuild();
+#elif defined(HAS_TDECK_PRO)
+  if (!p || !p->composer_ta || !lv_obj_is_valid(p->composer_ta)) return;
+  s_nav_ta_editing = true;
+  navMarkDirty();
+  navMaybeRebuild();
 #endif
 }
 
@@ -8440,7 +8445,7 @@ static void threadSelectCb(lv_event_t* e) {
   // which collapses the content so the open-scroll lands at the top. Visible first = correct
   // heights = the open-scroll reaches the newest message.
   refreshChatDetailAsync(p);
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
   focusChatComposerOnOpen(&p);
 #endif
@@ -25317,7 +25322,12 @@ static void spectrumDrawTrace() {
   // live legend: peak dBm @ its frequency, and the colour-ramp's current dBm endpoints
   if (s_spec_peak_lbl) {
     char pb[40];
+#if defined(HAS_TDECK_PRO)
+    snprintf(pb, sizeof pb, "Peak %d dBm @ %.1f MHz", pk,
+             (double)(s_spec_start + (float)pki * s_spec_step));
+#else
     snprintf(pb, sizeof pb, "peak %d @ %.1f", pk, (double)(s_spec_start + (float)pki * s_spec_step));
+#endif
     lv_label_set_text(s_spec_peak_lbl, pb);
   }
   if (s_spec_scale_hi_lbl) { char sb[12]; snprintf(sb, sizeof sb, "%d", s_spec_floor + SPEC_WF_HEADROOM); lv_label_set_text(s_spec_scale_hi_lbl, sb); }
@@ -25327,11 +25337,16 @@ static void spectrumDrawTrace() {
 static void spectrumTimerCb(lv_timer_t* t) {
   (void)t;
   if (!s_spec_root) return;
+#if !defined(HAS_TDECK_PRO)
   static int s_spec_last_row_pos = 0;   // sweep cursor at the last waterfall row push
+#endif
   if (spectrumSweepChunk()) {     // a full sweep just finished
+#if !defined(HAS_TDECK_PRO)
     s_spec_last_row_pos = 0;
     spectrumPushWaterfall();
+#endif
     spectrumDrawTrace();          // full: floor rescale + legend + trace
+#if !defined(HAS_TDECK_PRO)
   } else if (s_spec_pos - s_spec_last_row_pos >= SPEC_BINS / 4) {
     // Quarter-sweep rolling update: one new waterfall row + a live trace advance
     // every ~250 ms — matches the Monitor app's felt refresh instead of waiting
@@ -25340,6 +25355,7 @@ static void spectrumTimerCb(lv_timer_t* t) {
     s_spec_last_row_pos = s_spec_pos;
     spectrumPushWaterfall();
     spectrumDrawTraceLive();
+#endif
   }
 }
 
@@ -26608,30 +26624,60 @@ static void openSpectrumPage() {
   updateGlobalStatusBar();
   const int top = STATUSBAR_H + 8;
 
-  // ---- readout line: RBW / span (left)  +  live peak (right). The centre frequency
-  //      lives on the frequency axis below, so it's dropped here to clear the peak. ----
+  // ---- readout line: RBW / span. The centre frequency lives on the axis below. ----
   s_spec_info_lbl = lv_label_create(s_spec_root);
   char info[96];
+#if defined(HAS_TDECK_PRO)
+  snprintf(info, sizeof info, "RBW %.1f kHz  |  span %.1f MHz",
+           (double)SPEC_RBW_KHZ, (double)(stop - start));
+#else
   snprintf(info, sizeof info, "RBW %.0fk     span %.0fM", (double)SPEC_RBW_KHZ, (double)(stop - start));
+#endif
   lv_label_set_text(s_spec_info_lbl, info);
   lv_obj_set_style_text_font(s_spec_info_lbl, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(s_spec_info_lbl, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_width(s_spec_info_lbl, sw - 20);
+  lv_label_set_long_mode(s_spec_info_lbl, LV_LABEL_LONG_DOT);
+  lv_obj_set_height(s_spec_info_lbl, lv_font_get_line_height(&g_font_12));
+#else
   lv_obj_set_style_text_color(s_spec_info_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#endif
   lv_obj_set_pos(s_spec_info_lbl, 10, top + 3);
 
-  // live peak readout (right-aligned on the same row; updated each sweep)
+  // Live peak readout: a dedicated line on Pro, right-aligned on the info row elsewhere.
   s_spec_peak_lbl = lv_label_create(s_spec_root);
+#if defined(HAS_TDECK_PRO)
+  lv_label_set_text(s_spec_peak_lbl, "Peak -- dBm");
+#else
   lv_label_set_text(s_spec_peak_lbl, TR("peak --"));
+#endif
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_font(s_spec_peak_lbl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_spec_peak_lbl, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_width(s_spec_peak_lbl, sw - 20);
+  lv_obj_set_style_text_align(s_spec_peak_lbl, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+  lv_obj_set_pos(s_spec_peak_lbl, 10, top + 22);
+#else
   lv_obj_set_style_text_font(s_spec_peak_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_spec_peak_lbl, lv_color_hex(0xF0D020), LV_PART_MAIN);
   lv_obj_set_width(s_spec_peak_lbl, 150);
   lv_obj_set_style_text_align(s_spec_peak_lbl, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
   lv_obj_set_pos(s_spec_peak_lbl, sw - 8 - 150, top + 3);
+#endif
 
   // ---- live power-vs-frequency trace (lv_chart, LINE), like the Monitor ----
+#if defined(HAS_TDECK_PRO)
+  const int chart_x = 40;
+  const int chart_y = top + 44;
+  const int chart_w = sw - chart_x - 8;
+  const int chart_h = H - chart_y - 42;
+#else
   const int chart_x = 40;
   const int chart_y = top + 21;
   const int chart_w = sw - chart_x - 10;
   const int chart_h = H * 22 / 100;                 // sized so the waterfall + axis clear the screen
+#endif
   s_spec_chart = lv_chart_create(s_spec_root);
   lv_obj_set_size(s_spec_chart, chart_w, chart_h);
   lv_obj_set_pos(s_spec_chart, chart_x, chart_y);
@@ -26642,14 +26688,38 @@ static void openSpectrumPage() {
   // chart as the page's FIRST focus stop and paints a cursor around a read-only
   // element instead of the page controls. Reported on the M9.
   lv_obj_add_flag(s_spec_chart, NAV_SKIP_FLAG);
-  lv_obj_set_style_bg_color(s_spec_chart, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                            lv_color_white(),
+#else
+                            lv_color_hex(COLOR_PANEL),
+#endif
+                            LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_spec_chart, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(s_spec_chart, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                                lv_color_black(),
+#else
+                                lv_color_hex(COLOR_BORDER),
+#endif
+                                LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_border_width(s_spec_chart, 2, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_spec_chart, 0, LV_PART_MAIN);
+  lv_obj_set_style_line_color(s_spec_chart, lv_color_black(), LV_PART_MAIN);
+#else
   lv_obj_set_style_border_width(s_spec_chart, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(s_spec_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_line_color(s_spec_chart, lv_color_hex(COLOR_CHART_GRID), LV_PART_MAIN);
+#endif
   lv_obj_set_style_size(s_spec_chart, 0, LV_PART_INDICATOR);     // hide point dots
-  lv_obj_set_style_line_width(s_spec_chart, 1, LV_PART_ITEMS);   // thin: 160 points
+  lv_obj_set_style_line_width(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                              2,
+#else
+                              1,
+#endif
+                              LV_PART_ITEMS);
   lv_chart_set_type(s_spec_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_spec_chart, SPEC_BINS);
   lv_chart_set_update_mode(s_spec_chart, LV_CHART_UPDATE_MODE_CIRCULAR);
@@ -26659,12 +26729,31 @@ static void openSpectrumPage() {
   lv_obj_set_style_pad_bottom(s_spec_chart, 6, LV_PART_MAIN);
   lv_obj_set_style_pad_left(s_spec_chart, 4, LV_PART_TICKS);
   lv_obj_set_style_text_font(s_spec_chart, &g_font_12, LV_PART_TICKS);
-  lv_obj_set_style_text_color(s_spec_chart, lv_color_hex(COLOR_SUB), LV_PART_TICKS);
-  lv_obj_set_style_line_color(s_spec_chart, lv_color_hex(COLOR_CHART_TICK), LV_PART_TICKS);
+  lv_obj_set_style_text_color(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                              lv_color_black(),
+#else
+                              lv_color_hex(COLOR_SUB),
+#endif
+                              LV_PART_TICKS);
+  lv_obj_set_style_line_color(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                              lv_color_black(),
+#else
+                              lv_color_hex(COLOR_CHART_TICK),
+#endif
+                              LV_PART_TICKS);
   lv_chart_set_axis_tick(s_spec_chart, LV_CHART_AXIS_PRIMARY_Y, 4, 0, 3, 1, true, 40);
-  s_spec_ser = lv_chart_add_series(s_spec_chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_PRIMARY_Y);
+  s_spec_ser = lv_chart_add_series(s_spec_chart,
+#if defined(HAS_TDECK_PRO)
+                                   lv_color_black(),
+#else
+                                   lv_color_hex(0x35C9C9),
+#endif
+                                   LV_CHART_AXIS_PRIMARY_Y);
   lv_chart_set_all_value(s_spec_chart, s_spec_ser, SPEC_DBM_MIN);
 
+#if !defined(HAS_TDECK_PRO)
   // ---- waterfall canvas (RGB565, PSRAM-backed), stretched to the chart width ----
   const int wf_y = chart_y + chart_h + 6;
   const int wf_w = chart_w;
@@ -26714,26 +26803,44 @@ static void openSpectrumPage() {
     lv_obj_set_style_text_color(s_spec_scale_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(s_spec_scale_lbl, lg_x - 1, wf_y + wf_disp_h - 8);
   }
+#endif
 
-  // ---- frequency axis labels: start / center / end (just under the waterfall) ----
+  // ---- frequency axis labels: start / center / end below the visualization ----
   s_spec_axis_lbl = lv_label_create(s_spec_root);
   lv_label_set_recolor(s_spec_axis_lbl, true);
   char ax[96];
+#if defined(HAS_TDECK_PRO)
+  snprintf(ax, sizeof ax, "%.1f  |  %.1f  |  %.1f MHz",
+           (double)start, (double)center, (double)stop);
+#else
   snprintf(ax, sizeof ax, "%.1f          %.1f MHz          %.1f",
            (double)start, (double)center, (double)stop);
+#endif
   lv_label_set_text(s_spec_axis_lbl, ax);
   lv_obj_set_width(s_spec_axis_lbl, chart_w);
   lv_obj_set_style_text_align(s_spec_axis_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_text_font(s_spec_axis_lbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_spec_axis_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_spec_axis_lbl,
+#if defined(HAS_TDECK_PRO)
+                              lv_color_black(),
+#else
+                              lv_color_hex(COLOR_SUB),
+#endif
+                              LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_label_set_long_mode(s_spec_axis_lbl, LV_LABEL_LONG_DOT);
+  lv_obj_set_height(s_spec_axis_lbl, lv_font_get_line_height(&g_font_12));
+  lv_obj_set_pos(s_spec_axis_lbl, chart_x, chart_y + chart_h + 6);
+#else
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, wf_y + wf_disp_h + 3);
+#endif
 
   // Each bin costs ~5.5 ms (1.5 ms settle + ~2.4 ms of peak-hold reads + retune/RX
   // command overhead), so SPEC_CHUNK=8 blocks the UI ~44 ms per tick; the 8 ms timer
   // makes the ticks run essentially back-to-back, so a full 160-bin sweep is 20
   // ticks ≈ ~1 s and the quarter-sweep waterfall rows land ~every 250 ms. (Numbers
   // assume the between-bin XOSC standby holds the TCXO up — re-time on hardware.)
-  s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);    // ticks back-to-back with the sweep chunks; waterfall + trace repaint every quarter sweep (~250 ms)
+  s_spec_timer = lv_timer_create(spectrumTimerCb, 8, nullptr);
   lv_obj_move_foreground(s_spec_root);
   lv_obj_move_foreground(g_statusbar.root);   // keep the tall title bar above this page
 }
@@ -28064,6 +28171,9 @@ static void makeContactsTab(lv_obj_t* tab) {
     // FIXED-width label, and the content-sized label ran under the badge on narrow chips
     // ("Disc[48]er" — the pill painted mid-word on the 284-px P4).
     lv_obj_set_width(l, lv_pct(76));
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_height(l, lv_font_get_line_height(&g_font_12));
+#endif
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 0, 0);
     s_ct_disc_badge = lv_label_create(b);   // red count pill, right side (updated by the loop)
     lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 16);
@@ -30852,6 +30962,9 @@ static void renderMapTiles() {
       const int cnt = dw * dh;
       for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
     }
+#if defined(HAS_TDECK_PRO)
+    TDeckProDisplay::prepareMapTileRGB565((uint16_t*)rgb, dw, dh);
+#endif
     dst->z = s_map_zoom; dst->x = wanted[i].tx; dst->y = wanted[i].ty;
     dst->rgb565 = rgb;   // == the slot's persistent buffer (decoded in place)
     dst->w = dw; dst->h = dh;
@@ -31317,6 +31430,9 @@ void luaHostMapRender(void* vp) {
       const int cnt = dw * dh;
       for (int p = 0; p < cnt; ++p) px[p] = (uint16_t)~px[p];
     }
+#if defined(HAS_TDECK_PRO)
+    TDeckProDisplay::prepareMapTileRGB565((uint16_t*)rgb, dw, dh);
+#endif
     dst->z = v->zoom; dst->x = wanted[k].tx; dst->y = wanted[k].ty;
     dst->w = dw; dst->h = dh;
     memset(&dst->dsc, 0, sizeof(dst->dsc));
@@ -41947,7 +42063,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
     } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
@@ -44871,7 +44987,7 @@ static void openThreadDetailByIdx(int idx, bool channel) {
   hideKb();
   if (p.overlay) { lv_obj_clear_flag(p.overlay, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(p.overlay); }
   refreshChatDetailAsync(p);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
   focusChatComposerOnOpen(&p);  // physical keyboard: auto-focus the composer so typing goes straight in
 #elif defined(HAS_TANMATSU)
   navMarkDirty();      // keypad nav: rebuild the focus group onto the chat overlay + focus the composer
@@ -56043,7 +56159,7 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
     lv_obj_move_foreground(g_lv.dm.overlay);
   }
   refreshChatDetailAsync(g_lv.dm);   // AFTER un-hiding so bubbles measure correctly and the open-scroll reaches the newest message
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
   // Physical keyboard: focus the composer on open so typing goes straight in.
   focusChatComposerOnOpen(&g_lv.dm);
 #endif

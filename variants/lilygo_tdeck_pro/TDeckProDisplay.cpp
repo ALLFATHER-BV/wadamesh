@@ -108,6 +108,57 @@ bool TDeckProDisplay::isDark(uint16_t color) {
   return ((red * 54u + green * 183u + blue * 19u) >> 8) < 144u;
 }
 
+void TDeckProDisplay::prepareMapTileRGB565(uint16_t* pixels, int width, int height) {
+  if (!pixels || width <= 0 || height <= 0) return;
+
+  // A fixed Bayer screen preserves mid-tone map regions without carrying
+  // diffusion error across independently decoded tiles. Map tiles are 256 px,
+  // a multiple of eight, so the pattern also remains continuous at tile edges.
+  static constexpr uint8_t bayer[8][8] = {
+    { 0, 48, 12, 60,  3, 51, 15, 63 },
+    {32, 16, 44, 28, 35, 19, 47, 31 },
+    { 8, 56,  4, 52, 11, 59,  7, 55 },
+    {40, 24, 36, 20, 43, 27, 39, 23 },
+    { 2, 50, 14, 62,  1, 49, 13, 61 },
+    {34, 18, 46, 30, 33, 17, 45, 29 },
+    {10, 58,  6, 54,  9, 57,  5, 53 },
+    {42, 26, 38, 22, 41, 25, 37, 21 },
+  };
+  constexpr int black_point = 72;
+  constexpr int white_point = 246;
+
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      const uint16_t color = pixels[(size_t)y * width + x];
+      const int red = (int)(((color >> 11) & 0x1F) * 255u / 31u);
+      const int green = (int)(((color >> 5) & 0x3F) * 255u / 63u);
+      const int blue = (int)((color & 0x1F) * 255u / 31u);
+      int maximum = red > green ? red : green;
+      if (blue > maximum) maximum = blue;
+      int minimum = red < green ? red : green;
+      if (blue < minimum) minimum = blue;
+
+      // Hue differences carry map meaning even when their luminance is close.
+      // Darkening saturated fills slightly keeps water, parks, and major roads
+      // distinguishable from neutral land after conversion to one bit.
+      int tone = ((red * 54 + green * 183 + blue * 19) >> 8) -
+                 (maximum - minimum) / 5;
+      bool black;
+      if (tone <= black_point) {
+        black = true;
+      } else if (tone >= white_point) {
+        black = false;
+      } else {
+        const int white_level =
+            ((tone - black_point) * 64 + (white_point - black_point) / 2) /
+            (white_point - black_point);
+        black = bayer[y & 7][x & 7] >= white_level;
+      }
+      pixels[(size_t)y * width + x] = black ? 0x0000u : 0xFFFFu;
+    }
+  }
+}
+
 void TDeckProDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_mono || !pixels || w <= 0 || h <= 0) return;
   if (x >= 0 && y >= 0 && x + w <= WIDTH && y + h <= HEIGHT)

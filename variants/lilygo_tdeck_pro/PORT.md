@@ -38,6 +38,15 @@ band into a full 1-bit shadow, then coalesces the completed LVGL frame into an
 e-paper update. Every tenth update is full; the intervening updates use the
 panel's partial-refresh mode. The UI is fixed to the light palette.
 
+Map tiles receive a map-specific monochrome pass before LVGL displays them. It
+uses chroma-aware luminance and an 8x8 ordered dither so roads, water, terrain,
+and labels survive the 1-bit conversion without seams between adjacent tiles.
+
+The Spectrum app uses an e-paper snapshot layout: a large two-pixel black trace
+on white with monochrome labels and sparse grid lines. It omits the LCD color
+waterfall and only invalidates the display after a complete radio sweep, while
+the radio sampling itself continues in short responsive chunks.
+
 The panel can remain BUSY for roughly 0.7-1.1 seconds. Its BUSY callback pumps
 the TCA8418 driver into a 64-byte software queue so fast typing does not overflow
 the controller's ten-event FIFO. The Pro matrix order is covered by

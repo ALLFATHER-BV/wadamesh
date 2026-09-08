@@ -34,6 +34,7 @@ public:
   void endFrame() override;
 
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels);
+  static void prepareMapTileRGB565(uint16_t* pixels, int width, int height);
   void setDisplayRotation(uint8_t rotation);
   void setBrightness(uint8_t brightness);
   bool getTouchPoint(uint16_t& x, uint16_t& y);
