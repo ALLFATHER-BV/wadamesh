@@ -2192,6 +2192,7 @@ static lv_obj_t* s_kb_mirror_root = nullptr;
 static lv_obj_t* s_kb_mirror_ta = nullptr;
 /** Real textarea whose text is synced with `s_kb_mirror_ta` while the keyboard is open. */
 static lv_obj_t* s_kb_bind_ta = nullptr;
+static bool terminalHandleVirtualKeyboardReady();
 // The T-Deck has a physical keyboard and never shows the on-screen keyboard or
 // the (hidden) mirror strip, so its keys bind STRAIGHT to the visible field —
 // the mirror indirection only exists for boards with an on-screen keyboard.
@@ -2590,6 +2591,7 @@ enum class SettingsModalKind : uint8_t {
   ChJoinPrv,    // Chats "+": join a private channel by secret
   ChJoinTag,    // Chats "+": join a hashtag channel by name
   SystemInfo,   // Read-only system / firmware diagnostic page
+  MemoryInfo,   // Read-only detailed heap diagnostic page
   AddContact,   // Manual add-contact (pubkey + name) modal
   QuickReply,   // Edit the 6 quick-reply preset macros
   Mqtt,         // MQTT bridge config
@@ -6672,6 +6674,10 @@ static void kbMirrorEnsureCreated() {
     (void)e;
     kbMirrorSyncToReal();
   }, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(s_kb_mirror_ta, [](lv_event_t* e) {
+    (void)e;
+    terminalHandleVirtualKeyboardReady();
+  }, LV_EVENT_READY, nullptr);
 }
 
 static void kbMirrorSyncToReal() {
@@ -7310,7 +7316,7 @@ static void accentBoxMaybeShow() {
   // field's live coords lag — so clamp the box's bottom above the keyboard top
   // (computed from the current rotation) and above the composer too in a chat.
   if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) {
-    lv_coord_t limit = lv_disp_get_ver_res(nullptr) - chatKbH() - 2;
+    lv_coord_t limit = lv_disp_get_ver_res(nullptr) - chatKbH() - 6;
     if (s_kb_panel) limit -= s_comp_h;   // chat: also clear the composer above the keys
     if (by + bh > limit) by = limit - bh;
     if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
@@ -7579,6 +7585,7 @@ static void composerSuggestChangedCb(lv_event_t* e) {
 
 static void keyboardCb(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_READY && terminalHandleVirtualKeyboardReady()) return;
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
     accentExit(); accentBoxHide();
@@ -12101,22 +12108,12 @@ static const char* resetReasonString(esp_reset_reason_t r) {
 }
 #endif
 
-// "Memory detail" popup — heap usage by region (the ESP32 shares one heap
+// "Memory detail" page — heap usage by region (the ESP32 shares one heap
 // across all tasks, so there's no per-process split like a PC task manager;
 // this shows internal DRAM vs PSRAM used/free + largest free block, which is
 // what actually tells you where RAM is going and how fragmented it is).
-static lv_obj_t* s_meminfo_root = nullptr;
-static void closeMemInfo() {
-  if (s_meminfo_root) { popupClose(&s_meminfo_root); }
-}
-static void memInfoCloseCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
-  closeMemInfo();
-}
 static void openMemoryDetailCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  closeMemInfo();
 #if defined(ESP32)
   auto kb = [](size_t v) -> unsigned { return (unsigned)((v + 512) / 1024); };
   const size_t i_tot  = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -12141,39 +12138,14 @@ static void openMemoryDetailCb(lv_event_t* e) {
   q += snprintf(b + q, sizeof(b) - q,
     "Note: the ESP32 shares one heap\nacross all tasks - no per-task\nsplit like a PC. 'largest free'\nvs 'free' shows fragmentation.");
 
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_meminfo_root = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_meminfo_root);
-  lv_obj_set_size(s_meminfo_root, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_meminfo_root, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_meminfo_root, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_meminfo_root, LV_OPA_70, LV_PART_MAIN);
-  lv_obj_clear_flag(s_meminfo_root, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_meminfo_root, memInfoCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* body = createSettingsModal(TR("Memory detail"), SettingsModalKind::MemoryInfo);
+  lv_obj_set_flex_flow(body, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(body, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(body, 2, LV_PART_MAIN);
 
-  lv_obj_t* card = lv_obj_create(s_meminfo_root);
-  lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, sw - 24, (sh - STATUSBAR_H) - 24);
-  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
-  styleSurface(card, COLOR_PANEL, 8);
-  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(card, 10, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(card, LV_DIR_VER);
-  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
-  addCloseXBadge(card, memInfoCloseCb);
-
-  lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, TR("Memory detail"));
-  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 0, 2);
-
-  lv_obj_t* lbl = lv_label_create(card);
+  lv_obj_t* lbl = lv_label_create(body);
   lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(lbl, sw - 24 - 20);
-  lv_obj_set_pos(lbl, 0, 28);
+  lv_obj_set_width(lbl, lv_pct(100));
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_text(lbl, b);
@@ -20984,6 +20956,16 @@ static void terminalSubmit() {
   lv_textarea_set_text(s_term_input_ta, "");
   // Re-bind so the cleared mirror tracks the field and the next Enter submits.
   if (g_lv.keyboard) kbMirrorBind(s_term_input_ta);
+}
+
+static bool terminalHandleVirtualKeyboardReady() {
+  if (!s_term_input_ta || s_kb_bind_ta != s_term_input_ta) return false;
+  accentExit();
+  accentBoxHide();
+  mentionBoxHide();
+  terminalSubmit();
+  hideKb();
+  return true;
 }
 
 // ============================================================================
@@ -57725,10 +57707,16 @@ void UITask::loop() {
       uint8_t state = digitalRead(PIN_USER_BTN);
 #if defined(HAS_WIO_TRACKER_L2)
       static bool expanderDown = false;
+  static uint32_t nextExpanderPollMs = 0;
       bool pressed = false;
-      // Reading any TCA9535 input register clears its shared INT line. Poll the
-      // wake bit every pass so an SD/touch read cannot consume the edge first.
-      if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
+  // The UI loop is free-running; an I2C read every pass can saturate the
+  // shared 100 kHz bus. A 20 ms sample interval is still well below the
+  // button debounce/hold thresholds and preserves both edges.
+  const uint32_t pollNow = millis();
+  if ((int32_t)(pollNow - nextExpanderPollMs) >= 0) {
+    nextExpanderPollMs = pollNow + 20;
+    if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
+  }
       if (expanderDown) state = LOW;
 #endif
       return state;
@@ -58010,6 +57998,12 @@ void UITask::loop() {
     }
     if (g_lv.touch_inited) {
       pushDiagLine("touch init ok");
+    #if defined(HAS_WIO_TRACKER_L2)
+      // GT911 (LovyanGFX) and the TCA9535/ADS1115 (Wire) share I2C0 on
+      // GPIO47/48 but use different driver locks. Keep every transaction on
+      // loopTask so the touch poll cannot interrupt an expander/ADC transfer.
+      pushDiagLine("touch inline (shared I2C)");
+    #else
       // Once hardware is up, hand the chsc6x poll off to a pinned task on
       // core 0 so it runs at a fixed ~125 Hz independent of LVGL render and
       // the_mesh.loop() — that's the only way touch stays snappy when the
@@ -58020,6 +58014,7 @@ void UITask::loop() {
       } else {
         pushDiagLine("touch async start failed");
       }
+#endif
     } else if (!g_cap_touch_hw_started) {
       g_cap_touch_hw_started = true;
       pushDiagLine("touch init retrying");
@@ -58901,7 +58896,6 @@ static constexpr uint8_t PF_SWIPE = 2;
 static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
-  { P_OPEN(s_meminfo_root),          []{ closeMemInfo(); },               PF_COUNT },
   { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
   { P_OPEN(s_advert_root),           []{ closeAdvertPage(); },            PF_COUNT },   // was dismissable but never counted
