@@ -51,11 +51,22 @@ inline bool fileNameValid(const char* name) {
   return true;
 }
 
+inline bool firmwareExportName(const char* name) {
+  if (!fileNameValid(name)) return false;
+  if (strcmp(name, "wadamesh-crash.elf") == 0 ||
+      strcmp(name, "wadamesh-crash.elf.txt") == 0) return true;
+  const size_t len = strlen(name);
+  return len > 14 && strncmp(name, "meshcore-", 9) == 0 &&
+         strcmp(name + len - 5, ".json") == 0;
+}
+
 inline bool readablePath(const char* path) {
   if (!path) return false;
   const char* leaf = nullptr;
   if (strncmp(path, "/screenshots/", 13) == 0) leaf = path + 13;
   else if (strncmp(path, "/transfer/", 10) == 0) leaf = path + 10;
+  else if (path[0] == '/' && strchr(path + 1, '/') == nullptr &&
+           firmwareExportName(path + 1)) leaf = path + 1;
   else return false;
   return fileNameValid(leaf) && strchr(leaf, '/') == nullptr;
 }

@@ -25373,19 +25373,20 @@ static void fileTransferListNext() {
   fs::FS& storage = fileTransferStorage();
   while (s_file_transfer_listing) {
     if (!s_file_transfer_list_dir) {
-      const char* dir_path = s_file_transfer_list_phase == 0 ? "/screenshots" : "/transfer";
+      const char* dir_path = s_file_transfer_list_phase == 0 ? "/screenshots" :
+                             s_file_transfer_list_phase == 1 ? "/transfer" : "/";
       s_file_transfer_list_dir = storage.open(dir_path, FILE_READ);
       markSdIo();
       if (!s_file_transfer_list_dir || !s_file_transfer_list_dir.isDirectory()) {
         if (s_file_transfer_list_dir) s_file_transfer_list_dir.close();
-        if (s_file_transfer_list_phase == 1) {
+        if (s_file_transfer_list_phase == 2) {
           fileTransferStorageIoFailed();
           s_file_transfer_listing = false;
           fileTransferReply("ERR SD read failed");
           return;
         }
         s_file_transfer_list_phase++;
-        if (s_file_transfer_list_phase >= 2) {
+        if (s_file_transfer_list_phase >= 3) {
           s_file_transfer_listing = false;
           fileTransferReply("LIST DONE");
         }
@@ -25397,7 +25398,7 @@ static void fileTransferListNext() {
     if (!entry) {
       s_file_transfer_list_dir.close();
       s_file_transfer_list_phase++;
-      if (s_file_transfer_list_phase >= 2) {
+      if (s_file_transfer_list_phase >= 3) {
         s_file_transfer_listing = false;
         fileTransferReply("LIST DONE");
       }
@@ -25413,8 +25414,11 @@ static void fileTransferListNext() {
     if (name_fits) snprintf(safe_leaf, sizeof safe_leaf, "%s", leaf);
     entry.close();
     if (directory || !name_fits || !WebFileTransferProtocol::fileNameValid(safe_leaf)) continue;
+    if (s_file_transfer_list_phase == 2 &&
+      !WebFileTransferProtocol::firmwareExportName(safe_leaf)) continue;
 
-    const char* prefix = s_file_transfer_list_phase == 0 ? "/screenshots/" : "/transfer/";
+    const char* prefix = s_file_transfer_list_phase == 0 ? "/screenshots/" :
+               s_file_transfer_list_phase == 1 ? "/transfer/" : "/";
     char reply[WebFileTransfer::MAX_REPLY_BYTES];
     snprintf(reply, sizeof reply, "ENTRY %lu %s%s", static_cast<unsigned long>(size),
              prefix, safe_leaf);
@@ -25478,6 +25482,44 @@ static void fileTransferDownloadBegin(const char* path) {
   char reply[WebFileTransfer::MAX_REPLY_BYTES];
   snprintf(reply, sizeof reply, "FILE %lu %s", static_cast<unsigned long>(size), leaf);
   fileTransferReply(reply);
+}
+
+static void fileTransferDelete(const char* path) {
+  if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
+    fileTransferReply("ERR transfer in progress");
+    return;
+  }
+  if (!WebFileTransferProtocol::readablePath(path)) {
+    fileTransferReply("ERR invalid delete path");
+    return;
+  }
+  if (!fileTransferStorageReady()) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR SD card unavailable");
+    return;
+  }
+
+  fs::FS& storage = fileTransferStorage();
+  File target = storage.open(path, FILE_READ);
+  markSdIo();
+  if (!target || target.isDirectory()) {
+    if (target) target.close();
+    fileTransferReply("ERR file unavailable");
+    return;
+  }
+  target.close();
+  if (!storage.remove(path)) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR delete failed");
+    return;
+  }
+  markSdIo();
+  const char* leaf = strrchr(path, '/');
+  leaf = leaf ? leaf + 1 : path;
+  snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "Deleted %s", leaf);
+  fileTransferResetRead();
+  s_file_transfer_listing = true;
+  fileTransferListNext();
 }
 
 static void fileTransferDownloadRead(const char* command) {
@@ -25572,6 +25614,7 @@ static void webFileTransferTick() {
     else if (strcmp(command, "LIST") == 0) fileTransferListBegin();
     else if (strcmp(command, "LIST NEXT") == 0) fileTransferListNext();
     else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
+    else if (strncmp(command, "DELETE ", 7) == 0) fileTransferDelete(command + 7);
     else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
     else if (strcmp(command, "CANCEL") == 0) {
       fileTransferResetUpload(true);
@@ -25696,7 +25739,7 @@ static void openFileTransferPage() {
 
   const lv_coord_t width = sw - 28;
   lv_obj_t* intro = lv_label_create(s_file_transfer_root);
-  lv_label_set_text(intro, TR("Upload files or download screenshots from a browser on the same Wi-Fi."));
+  lv_label_set_text(intro, TR("Upload, download, or delete files from a browser on the same Wi-Fi."));
   lv_obj_set_style_text_font(intro, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(intro, LV_LABEL_LONG_WRAP);
