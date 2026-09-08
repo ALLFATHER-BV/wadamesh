@@ -45541,11 +45541,16 @@ static void docCaptureTour() {
 // Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
 static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
-// tsWifiOff: true only when the WiFi radio is actually powered off — the pref
-// wifiConfigGetRadioEnabled() is the source of truth (wifiConfigApply() drives
-// WiFi.mode(WIFI_OFF) when it is false).  WiFi.status() != WL_CONNECTED was
-// the previous check but returns true even while the modem is powered and scanning.
-static bool tsWifiOff()    { return !wifiConfigGetRadioEnabled() && WiFi.getMode() == WIFI_OFF; }
+// tsWifiOff: true only when the WiFi radio is actually powered off. The question
+// the gate is asking is "is the modem drawing power", and WiFi.getMode() answers
+// exactly that — WIFI_OFF means esp_wifi is stopped. (WiFi.status() != WL_CONNECTED,
+// the original check, returns true even while the modem is powered and scanning.)
+// This used to AND in the wifiConfigGetRadioEnabled() pref as well, which wedged the
+// gate permanently in both directions (#450): the pref DEFAULTS TO ENABLED when its
+// NVS key was never written, so a user who never toggled Wi-Fi in this firmware read
+// as "Wi-Fi on" forever; and conversely a modem left powered by an out-of-band scan
+// was still reported off. The mode alone is both necessary and sufficient.
+static bool tsWifiOff()    { return WiFi.getMode() == WIFI_OFF; }
 // tsBleOff: true when no BLE capability is enabled (mirrors the ble_up flag in
 // updateGlobalStatusBar — hasBleCapability() && isBleEnabled()).
 static bool tsBleOff()     {
@@ -58932,6 +58937,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_tz_picker),             []{ tzPickerClose(); },              PF_COUNT },
   { P_OPEN(s_chanscope_modal),       []{ chanScopeClose(); },             PF_COUNT | PF_SWIPE },
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
+  { P_OPEN(s_regions_modal),         []{ regionsModalClose(); },          PF_COUNT },   // was in no registry at all (#449)
   { P_OPEN(s_wifi_scan_popup),       []{ wifiScanPopupClose(); },         PF_COUNT },
 #if !defined(HAS_TANMATSU)
   { P_OPEN(s_vnc_root),              []{ closeVncPage(); },               PF_COUNT },

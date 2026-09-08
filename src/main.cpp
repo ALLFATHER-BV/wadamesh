@@ -1796,11 +1796,18 @@ void loop() {
     // Bluetooth request can never cold-start NimBLE over a hidden retry.
     if (wifi_radio_en) WiFi.setAutoReconnect(false);
 #endif
-    /* Only touch WiFi state if it was actually started this session. When
-     * BLE is the active transport (no creds saved), WiFi was never inited
-     * and calling WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init
-     * under low heap → crash. Setting wifi_started=false here is harmless. */
-    if (wifi_started) {
+    /* Only touch WiFi state if the driver is actually up. When BLE is the active
+     * transport (no creds saved), WiFi was never inited and calling
+     * WiFi.disconnect()/mode(WIFI_OFF) would trigger esp_wifi_init under low
+     * heap → crash. Setting wifi_started=false here is harmless.
+     *
+     * wifi_started alone under-approximates that: a scan or the version check can
+     * bring STA up without going through this state machine, and then disabling
+     * Wi-Fi skipped the power-down entirely and left the modem running (#450 — the
+     * idle power-saver then blocks on "Wi-Fi on" forever). getMode() != WIFI_OFF
+     * PROVES the driver is inited, which is precisely what the guard wants to know,
+     * so it is safe to add and it closes that leak. */
+    if (wifi_started || WiFi.getMode() != WIFI_OFF) {
       if (!wifi_radio_en) {
         WiFi.disconnect(true);
         delay(50);

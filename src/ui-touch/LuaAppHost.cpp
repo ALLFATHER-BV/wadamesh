@@ -2761,6 +2761,13 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 
   h->body = lv_obj_create(h->root);
   lv_obj_remove_style_all(h->body);
+  // Install the page chrome BEFORE measuring it. appPageBeginSlim is what puts
+  // the bar into its slim state, so reading the height first measured the
+  // OUTGOING page's bar: launching an app from a tall-bar page sized the body
+  // for a tall bar and left a dead strip under the slim one (and the reverse
+  // overlapped). Same #236 reasoning, one step earlier.
+  snprintf(s_bar_title, sizeof s_bar_title, "%s", h->title);
+  appPageBeginSlim(s_bar_title, &luaAppDismiss);
   // Ask for the bar's real height rather than assuming the 44 it happens to be
   // at the default status-bar size and 100% UI scale (#236).
   const int bar_h = (int)luaHostAppBarH();
@@ -2777,9 +2784,6 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_add_event_cb(h->body, gestureCb, LV_EVENT_GESTURE, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_PRESSED, nullptr);
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_RELEASED, nullptr);
-
-  snprintf(s_bar_title, sizeof s_bar_title, "%s", h->title);
-  appPageBeginSlim(s_bar_title, &luaAppDismiss);
 
   s_h = h;
   h->title_timer = lv_timer_create(titleTimerCb, kAppTitleMs, nullptr);
