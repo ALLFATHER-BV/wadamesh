@@ -1833,6 +1833,11 @@ constexpr int TAB_LAST               = 4;
 // row, leaving the row un-focusable so keyboard users could only open thread-settings, never the chat.
 #define NAV_HMOVE_FLAG LV_OBJ_FLAG_USER_2
 
+// Thread rows are rebuilt whenever unread state or recent-message ordering changes.
+// Tag them so focus restoration can follow the thread identity instead of a stale
+// object address or a list position that may now belong to another channel.
+#define NAV_THREAD_ROW_FLAG LV_OBJ_FLAG_USER_3
+
 static lv_style_t s_selection_glow_style;
 static bool s_selection_glow_style_ready = false;
 static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t selector) {
@@ -5017,6 +5022,7 @@ static void navMaybeRebuild() {
   // (#467), so remember the slot it occupied and how big the collection was too.
   static int  s_nav_page_focus_idx = -1;
   static int  s_nav_page_focus_n   = 0;
+  static int  s_nav_page_thread_idx = -1;
   static bool s_nav_prev_on_page = true;
   static bool s_nav_prev_useTop  = false;   // track the container kind so reselect only fires on a same-screen rebuild
   lv_obj_t* scr = lv_scr_act();
@@ -5064,9 +5070,14 @@ static void navMaybeRebuild() {
   if (!on_page && s_nav_prev_on_page) {   // #45: leaving the page → remember where we were
     s_nav_page_focus = keep;
     s_nav_page_focus_idx = -1;
+    s_nav_page_thread_idx = -1;
     s_nav_page_focus_n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
     for (int i = 0; i < s_nav_page_focus_n; i++)
       if (s_nav_objs[i] == keep) { s_nav_page_focus_idx = i; break; }
+    if (keep && lv_obj_is_valid(keep) && lv_obj_has_flag(keep, NAV_THREAD_ROW_FLAG)) {
+      const intptr_t encoded = reinterpret_cast<intptr_t>(lv_obj_get_user_data(keep));
+      if (encoded > 0) s_nav_page_thread_idx = static_cast<int>(encoded - 1);
+    }
   }
   s_nav_suppress_scroll = true;   // don't let the transient first-object focus during recollect scroll the page/chat
   lv_group_remove_all_objs(s_nav_group);
@@ -5141,19 +5152,29 @@ static void navMaybeRebuild() {
     navSyncCursor();                         // hardware input is ready immediately
     focus_set = true;
   } else if (on_page && !s_nav_prev_on_page &&
-             (s_nav_page_focus || s_nav_page_focus_idx >= 0)) {
+             (s_nav_page_focus || s_nav_page_focus_idx >= 0 || s_nav_page_thread_idx >= 0)) {
     // #45: just returned to the page from an overlay/chat — restore the item we left from so the
     // list stays put instead of snapping to the top.
     //
     // #467: the page can be REBUILT while we are away — reading a channel's unread messages
     // clears its badge, which recreates every thread row. The saved pointer is then either dead
-    // or, worse, recycled by the allocator onto a DIFFERENT row, which lands the cursor on an
-    // unrelated channel. So when the page came back with the same number of targets, the SLOT
-    // we left from is the reliable identity (a rebuilt-in-place list keeps its order); the raw
-    // pointer is only consulted when the count changed and the slot cannot be trusted.
+    // or, worse, recycled by the allocator onto a DIFFERENT row. The list is sorted by recent
+    // activity too, so even the same slot can belong to another channel after incoming traffic.
+    // Prefer the stable internal thread id; retain slot/pointer restoration for non-thread pages.
     const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
     lv_obj_t* restored = nullptr;
-    if (s_nav_page_focus_idx >= 0 && s_nav_page_focus_idx < n && n == s_nav_page_focus_n) {
+    if (s_nav_page_thread_idx >= 0) {
+      for (int i = 0; i < n; ++i) {
+        lv_obj_t* o = s_nav_objs[i];
+        if (!o || !lv_obj_is_valid(o) || !lv_obj_has_flag(o, NAV_THREAD_ROW_FLAG)) continue;
+        const intptr_t encoded = reinterpret_cast<intptr_t>(lv_obj_get_user_data(o));
+        if (encoded > 0 && static_cast<int>(encoded - 1) == s_nav_page_thread_idx) {
+          restored = o;
+          break;
+        }
+      }
+    }
+    if (!restored && s_nav_page_focus_idx >= 0 && s_nav_page_focus_idx < n && n == s_nav_page_focus_n) {
       lv_obj_t* o = s_nav_objs[s_nav_page_focus_idx];
       if (o && lv_obj_is_valid(o)) restored = o;
     }
@@ -33739,15 +33760,15 @@ static void makeChatDetail(LvChatPanel& p) {
   // transparent button keeps a usable touch target (plus ext_click_area) while
   // only the glyph is visible; UITask::loop dims them to 50% one second after
   // the last scroll (jumpBtnsSetDim above).
-  // Both floating jump arrows are touch-only affordances with no purpose on
-  // the T-LoRa Pager (no touchscreen), so skip creating them on that board
+  // These are pointer affordances on touch boards and hardware F-key affordances
+  // on Tanmatsu. They have no purpose on the T-LoRa Pager or ThinkNode M9, so skip creating them
   // and leave the pointers null like every consumer already handles safely
   // (chatUpdateJumpButtons, jumpBtnsSetDim, the LvChatPanel reset — all
   // null-guarded). The pager's own Backspace-tap "jump to latest" shortcut
   // below no longer depends on jump_btn's existence; it checks
   // chatVirtAwayFromBottom() directly and calls chatVirtJumpToLatest(), the
   // same virtualization-aware jump this button's own click handler uses.
-#if !defined(TLORA_PAGER)
+#if !defined(TLORA_PAGER) && !defined(HAS_THINKNODE_M9)
   p.jump_oldest_btn = lv_btn_create(p.overlay);
   lv_obj_set_size(p.jump_oldest_btn, 28, 36);
   lv_obj_set_style_bg_opa(p.jump_oldest_btn, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -33772,9 +33793,9 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_add_event_cb(p.jump_oldest_btn, jumpToOldestCb, LV_EVENT_CLICKED, &p);
   lv_obj_add_flag(p.jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
-#endif  // !TLORA_PAGER (jump_oldest_btn)
+#endif  // Pager/M9 omit jump_oldest_btn
 
-#if !defined(TLORA_PAGER)
+#if !defined(TLORA_PAGER) && !defined(HAS_THINKNODE_M9)
   p.jump_btn = lv_btn_create(p.overlay);
   lv_obj_set_size(p.jump_btn, 28, 36);
   lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -33800,7 +33821,7 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_add_event_cb(p.jump_btn, jumpToLatestCb, LV_EVENT_CLICKED, &p);
   lv_obj_add_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
-#endif  // !TLORA_PAGER (jump_btn)
+#endif  // Pager/M9 omit jump_btn
 
   // ---- Composer row ----
   const lv_coord_t composer_h = chatComposerBaseH();
@@ -35950,12 +35971,22 @@ static void chatVirtFreeOffsets() {
 static int      s_pager_chat_focus_i  = -1;
 static uint32_t s_pager_chat_focus_ms = 0;
 #endif
+#if defined(HAS_M9_KEYBOARD)
+// M9 Up/Down follows chronological message indices instead of 2D bubble
+// geometry. Keep the requested index across a virtual-window rebuild so an
+// adjacent message just outside the materialized rows receives focus too.
+static int      s_m9_chat_focus_i  = -1;
+static uint32_t s_m9_chat_focus_ms = 0;
+#endif
 
 static void chatVirtReset(LvChatPanel* p) {
   chatVirtCancelRenderTimer();
   (void)p;
 #if defined(TLORA_PAGER)
   s_pager_chat_focus_i = -1;
+#endif
+#if defined(HAS_M9_KEYBOARD)
+  s_m9_chat_focus_i = -1;
 #endif
   // Null the divider pointer WITHOUT queueing a delete. It is always a child of
   // p->msgs, and every path that follows a reset (lv_obj_clean in the empty-thread
@@ -37195,6 +37226,8 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
 #if defined(TLORA_PAGER)
   // An explicit pending target from the Pager encoder edge clamp wins.
   refocus_i = s_pager_chat_focus_i;
+#elif defined(HAS_M9_KEYBOARD)
+  refocus_i = s_m9_chat_focus_i;
 #endif
   lv_obj_t* stable_focus = nullptr;
   if (s_nav_group) {
@@ -37239,8 +37272,8 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
 
 #if CAP_KEYPAD_NAV
   // Re-aim focus at the recreated row for the captured logical index. A fast
-  // Pager encoder target can briefly run past the materialized window, so clamp
-  // it to the nearest fresh row and let the next reflow continue from there.
+  // Pager encoder or M9 d-pad target can briefly run past the materialized
+  // window, so clamp it to the nearest fresh row and continue from there.
   if (refocus_i >= 0) {
     if (refocus_i < i0) refocus_i = i0;
     if (refocus_i > i1) refocus_i = i1;
@@ -37255,6 +37288,8 @@ static void chatVirtRenderWindow(LvChatPanel* p, lv_coord_t scroll_y, lv_coord_t
     }
 #if defined(TLORA_PAGER)
     s_pager_chat_focus_i = -1;   // consumed (whether or not the row was found)
+#elif defined(HAS_M9_KEYBOARD)
+    s_m9_chat_focus_i = -1;
 #endif
   } else if (stable_focus && lv_obj_is_valid(stable_focus)) {
     s_nav_focus_hint = stable_focus;
@@ -37987,6 +38022,8 @@ static void refreshChatList(LvChatPanel& p) {
 
     p.ctx_store[i].idx     = idxs[i];
     p.ctx_store[i].channel = ch;
+    lv_obj_add_flag(btn, NAV_THREAD_ROW_FLAG);
+    lv_obj_set_user_data(btn, reinterpret_cast<void*>(static_cast<intptr_t>(idxs[i] + 1)));
     lv_obj_add_event_cb(btn, threadSelectCb,    LV_EVENT_CLICKED,      &p.ctx_store[i]);
     lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_LONG_PRESSED, &p.ctx_store[i]);
   }
@@ -41095,6 +41132,59 @@ static bool m9HandleNavKey(int key) {
 #endif
 
 #if defined(HAS_M9_KEYBOARD)
+static bool m9ChatMoveMessage(bool down) {
+  LvChatPanel* cp = navOpenChatPanel();
+  if (!cp || !cp->msgs || s_chat_virt.panel != cp || s_chat_virt.n <= 0) return false;
+
+  const int step = down ? 1 : -1;
+  int target_i = -1;
+  if (s_m9_chat_focus_i >= 0 && millis() - s_m9_chat_focus_ms <= 600) {
+    target_i = s_m9_chat_focus_i + step;
+  } else {
+    s_m9_chat_focus_i = -1;
+    lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+    if (!focused || lv_obj_get_parent(focused) != cp->msgs) return false;
+    const intptr_t logical_i = reinterpret_cast<intptr_t>(lv_obj_get_user_data(focused));
+    if (logical_i < 0 || logical_i >= s_chat_virt.n) return false;
+    target_i = static_cast<int>(logical_i) + step;
+  }
+  if (target_i < 0 || target_i >= s_chat_virt.n) {
+    s_m9_chat_focus_i = -1;
+    return false;
+  }
+
+  const uint32_t child_count = lv_obj_get_child_cnt(cp->msgs);
+  for (uint32_t i = 0; i < child_count; ++i) {
+    lv_obj_t* row = lv_obj_get_child(cp->msgs, i);
+    if (!row || !lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE) ||
+        lv_obj_has_flag(row, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) != target_i) continue;
+    s_m9_chat_focus_i = -1;
+    s_nav_show = true;
+    lv_group_focus_obj(row);
+    return true;
+  }
+
+  // The adjacent message is outside the materialized window. Centre its
+  // virtual extent in the viewport, then let chatVirtRenderWindow recreate and
+  // focus that exact logical row through the pending-index hook above.
+  if (!s_chat_virt.offsets) return false;
+  const int32_t target_mid =
+      (s_chat_virt.offsets[target_i] + chatVirtMsgVirtBottom(target_i)) / 2;
+  int32_t target_top = target_mid - chatVirtMsgsViewH(cp) / 2;
+  const int32_t max_top = chatVirtMaxVirtTop(cp);
+  if (target_top < 0) target_top = 0;
+  else if (target_top > max_top) target_top = max_top;
+  s_m9_chat_focus_i = target_i;
+  s_m9_chat_focus_ms = millis();
+  s_nav_show = true;
+  chatVirtCancelRenderTimer();
+  s_chat_virt.last_i0 = -1;
+  s_chat_virt.last_i1 = -1;
+  chatVirtQueueScroll(cp, chatVirtVirtToLv(target_top));
+  return true;
+}
+
 static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   if (!s_kbd_nav) return false;
   // An open dropdown LIST owns the arrows (mirrors Tanmatsu's navPump capture):
@@ -41140,6 +41230,11 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       if (g_lv.task) g_lv.task->noteUserInput();
       return true;
     }
+  }
+  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
+      m9ChatMoveMessage(key == M9_KEY_DOWN)) {
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return true;
   }
   switch (key) {
     case M9_KEY_UP: {
