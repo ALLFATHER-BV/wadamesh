@@ -13,6 +13,13 @@ namespace touchSleep {
 
 enum class WakeReason : uint8_t { None, Timer, Packet, Touch, Button, Other };
 
+// Which gate condition is holding the device awake, in the order gatePasses() tests
+// them — the FIRST failing one is what gets charged the elapsed time. Reported so a
+// user can see WHY the saver is barely engaging instead of only that it isn't.
+enum class Blocker : uint8_t {
+  Disabled, ScreenOn, ClientConnected, WifiOn, BleOn, UsbPower, MeshBusy, Count
+};
+
 struct Hooks {
   bool     (*screenOff)();      // display is off
   bool     (*noClient)();       // no companion client on any transport
@@ -42,5 +49,9 @@ bool       isSleeping();          // currently in the asleep regime
 uint32_t   wakeCount();           // cumulative meaningful wakes
 WakeReason lastWakeReason();
 uint8_t    pctAsleep();           // % wall-time asleep since boot (0..100)
+// Share (0..100) of measured wall time each condition has held the gate shut, and
+// whichever has held it shut longest (Blocker::Count when nothing ever has).
+uint8_t    blockedPct(Blocker b);
+Blocker    topBlocker();
 
 } // namespace touchSleep

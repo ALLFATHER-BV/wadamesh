@@ -1466,7 +1466,8 @@ static void pagerPreviewWavFile(const char* prefpath) {
 
 // ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9
 //      piezo / T-Display P4 ES8311 codec) ----
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER) || defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4)
+// One source of truth: device_caps.h computes the same board list as CAP_SOUND.
+#if CAP_SOUND
   #define HAS_UI_SOUND 1
 #endif
 
@@ -5012,6 +5013,10 @@ static void navMaybeRebuild() {
   // lived inside it and is now gone, so focus would fall to the first list item and the underlying
   // list would snap to the top. Stash the page focus on the way out, restore it on the way back.
   static lv_obj_t* s_nav_page_focus = nullptr;
+  // Pointer identity alone does not survive the page being REBUILT while we are away
+  // (#467), so remember the slot it occupied and how big the collection was too.
+  static int  s_nav_page_focus_idx = -1;
+  static int  s_nav_page_focus_n   = 0;
   static bool s_nav_prev_on_page = true;
   static bool s_nav_prev_useTop  = false;   // track the container kind so reselect only fires on a same-screen rebuild
   lv_obj_t* scr = lv_scr_act();
@@ -5056,7 +5061,13 @@ static void navMaybeRebuild() {
   if (!s_nav_dirty && scr == s_nav_prev_scr && sig == s_nav_prev_sig) return;
   s_nav_dirty = false; s_nav_prev_scr = scr; s_nav_prev_sig = sig;
   lv_obj_t* keep = lv_group_get_focused(s_nav_group);     // preserve focus across a same-page rebuild (toggle/click)
-  if (!on_page && s_nav_prev_on_page) s_nav_page_focus = keep;   // #45: leaving the page → remember where we were
+  if (!on_page && s_nav_prev_on_page) {   // #45: leaving the page → remember where we were
+    s_nav_page_focus = keep;
+    s_nav_page_focus_idx = -1;
+    s_nav_page_focus_n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < s_nav_page_focus_n; i++)
+      if (s_nav_objs[i] == keep) { s_nav_page_focus_idx = i; break; }
+  }
   s_nav_suppress_scroll = true;   // don't let the transient first-object focus during recollect scroll the page/chat
   lv_group_remove_all_objs(s_nav_group);
   s_nav_first = s_nav_last = nullptr; s_nav_count = 0;
@@ -5129,11 +5140,41 @@ static void navMaybeRebuild() {
     s_nav_ta_editing = true;
     navSyncCursor();                         // hardware input is ready immediately
     focus_set = true;
-  } else if (on_page && !s_nav_prev_on_page && s_nav_page_focus && lv_obj_is_valid(s_nav_page_focus)) {
+  } else if (on_page && !s_nav_prev_on_page &&
+             (s_nav_page_focus || s_nav_page_focus_idx >= 0)) {
     // #45: just returned to the page from an overlay/chat — restore the item we left from so the
     // list stays put instead of snapping to the top.
+    //
+    // #467: the page can be REBUILT while we are away — reading a channel's unread messages
+    // clears its badge, which recreates every thread row. The saved pointer is then either dead
+    // or, worse, recycled by the allocator onto a DIFFERENT row, which lands the cursor on an
+    // unrelated channel. So when the page came back with the same number of targets, the SLOT
+    // we left from is the reliable identity (a rebuilt-in-place list keeps its order); the raw
+    // pointer is only consulted when the count changed and the slot cannot be trusted.
     const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
-    for (int i = 0; i < n; i++) if (s_nav_objs[i] == s_nav_page_focus) { lv_group_focus_obj(s_nav_page_focus); focus_set = true; break; }
+    lv_obj_t* restored = nullptr;
+    if (s_nav_page_focus_idx >= 0 && s_nav_page_focus_idx < n && n == s_nav_page_focus_n) {
+      lv_obj_t* o = s_nav_objs[s_nav_page_focus_idx];
+      if (o && lv_obj_is_valid(o)) restored = o;
+    }
+    if (!restored && s_nav_page_focus && lv_obj_is_valid(s_nav_page_focus)) {
+      for (int i = 0; i < n; i++)
+        if (s_nav_objs[i] == s_nav_page_focus) { restored = s_nav_page_focus; break; }
+    }
+    if (!restored && s_nav_page_focus_idx >= 0 && n > 0) {
+      lv_obj_t* o = s_nav_objs[s_nav_page_focus_idx < n ? s_nav_page_focus_idx : n - 1];
+      if (o && lv_obj_is_valid(o)) restored = o;
+    }
+    if (restored) {
+      lv_group_focus_obj(restored);
+      focus_set = true;
+      // Scroll it back into view. The rest of this rebuild runs with focus-scroll
+      // suppressed, which is right for the transient focus during recollect but left
+      // the restored cursor off-screen whenever the rebuild also reset the list's
+      // scroll position — the "cursor ends up somewhere else entirely" half of #467.
+      lv_obj_t* scroll_target = navStoreRowFor(restored);
+      lv_obj_scroll_to_view_recursive(scroll_target ? scroll_target : restored, LV_ANIM_OFF);
+    }
   } else if (keep && lv_obj_is_valid(keep)) {
     // A toggle/click triggers a rebuild; if the previously-focused element survived,
     // keep focus on it instead of jumping back to the top of the page.
@@ -12420,6 +12461,32 @@ static void refreshSysInfo(unsigned long now) {
   }
 }
 
+// Human-readable name for a gate condition, reusing the exact strings tsBlockReason()
+// already toasts so the live reason and the historical breakdown read identically.
+static const char* tsBlockerLabel(touchSleep::Blocker b) {
+  using B = touchSleep::Blocker;
+  switch (b) {
+    case B::Disabled:        return TR("off");
+    case B::ScreenOn:        return TR("screen on");
+    case B::ClientConnected: return TR("client connected");
+    case B::WifiOn:          return TR("Wi-Fi on");
+    case B::BleOn:           return TR("BLE on");
+    case B::UsbPower:        return TR("USB powered");
+    case B::MeshBusy:        return TR("mesh busy");
+    default:                 return "-";
+  }
+}
+// "held by <condition> <n>%" — what kept the gate shut the longest since boot. Empty
+// when nothing has, so the caller can just concatenate it (#465).
+static void tsTopBlockerText(char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  out[0] = '\0';
+  const touchSleep::Blocker top = touchSleep::topBlocker();
+  if (top == touchSleep::Blocker::Count) return;
+  snprintf(out, cap, "%s%s %u%%", TR("held by "), tsBlockerLabel(top),
+           (unsigned)touchSleep::blockedPct(top));
+}
+
 #if defined(HAS_TDECK_GT911)
 // Re-render the idle-sleep instrumentation labels ~1 Hz while the Lock settings
 // panel is open. Mirrors the refreshSysInfo() guard: skip if the right sheet is
@@ -12444,9 +12511,11 @@ static void refreshSleepDiag(unsigned long now) {
            (unsigned)touchSleep::pctAsleep());
   lv_label_set_text(s_sleep_diag_lbl, buf);
 
-  char buf2[48];
-  snprintf(buf2, sizeof buf2, "%s%s",
-           TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()));
+  char held[64]; tsTopBlockerText(held, sizeof held);
+  char buf2[128];
+  snprintf(buf2, sizeof buf2, "%s%s%s%s",
+           TR("last wake: "), tsWakeReasonStr(touchSleep::lastWakeReason()),
+           held[0] ? " \xc2\xb7 " : "", held);
   lv_label_set_text(s_sleep_diag_lbl2, buf2);
 }
 #endif  // HAS_TDECK_GT911
@@ -20269,6 +20338,22 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_text_color(slp2l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(slp2l, 0, by);
   by += 18;
+
+  // A low "asleep %" on its own does not say whether the parks are too short or the
+  // device was simply never eligible, which is the only thing worth knowing when
+  // someone reports the saver doing nothing (#465). Name the condition that has held
+  // the gate shut longest, and for how much of the time.
+  char held[64]; tsTopBlockerText(held, sizeof held);
+  if (held[0]) {
+    lv_obj_t* slp3l = lv_label_create(card);
+    lv_label_set_text(slp3l, held);
+    lv_obj_set_style_text_font(slp3l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(slp3l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(slp3l, cardw - 20);
+    lv_label_set_long_mode(slp3l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(slp3l, 0, by);
+    by += 18;
+  }
 }
 
 static void batteryTapCb(lv_event_t* e) {
