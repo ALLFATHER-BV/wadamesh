@@ -1737,6 +1737,14 @@ void appPageBeginSlim(const char* title, void (*close_fn)()) {
   updateGlobalStatusBar();
 }
 
+void appPageCollapseTitle(void (*close_fn)()) {
+  if (s_apppage_close != close_fn) return;
+  s_apppage_title = "";
+  s_apppage_slim = true;
+  statusBarSetTall(false);
+  updateGlobalStatusBar();
+}
+
 void appPageEnd(void (*close_fn)()) {
   if (s_apppage_close != close_fn) return;   // a different page owns the bar now — leave it
   s_apppage_title = nullptr;

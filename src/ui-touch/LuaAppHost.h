@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 // Lua app host (LUA_APPS.md Phase 1). Runs ONE sandboxed Lua app at a time as a
-// full-screen AppPage overlay, exactly like SnakeGame: tall "< title"
-// bar, status-bar-tap dismiss, async teardown. Apps are event-driven (the script
+// full-screen AppPage overlay with a slim "< title" bar that becomes Back-only
+// after launch, status-bar-tap dismiss, and async teardown. Apps are event-driven (the script
 // returns {on_open,on_tick,on_input,on_close}) and every callback runs under an
 // instruction budget + pcall — an app error or runaway loop becomes a toast and
 // a clean close, never a watchdog reset. All app memory lives in PSRAM.

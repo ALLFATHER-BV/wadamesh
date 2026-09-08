@@ -182,6 +182,7 @@ constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
 constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
+constexpr uint32_t kAppTitleMs = 3000;         // identify the app briefly, then reclaim its top row
 
 // Bumped by wada.ui.clear(). Every widget handle records the generation it was
 // created in; a handle from an older one has already been destroyed, so the
@@ -197,8 +198,9 @@ struct Host {
   lua_State*  L = nullptr;
   LuaHeap     heap;
   lv_obj_t*   root = nullptr;        // full-screen overlay on lv_layer_top
-  lv_obj_t*   body = nullptr;        // app content area (below the tall bar)
+  lv_obj_t*   body = nullptr;        // app content area below the slim Back bar
   lv_timer_t* timer = nullptr;
+  lv_timer_t* title_timer = nullptr;
   int         body_w = 0, body_h = 0;   // set at creation — lv_obj_get_width() reads 0 pre-layout
   uint32_t    last_tick = 0;
   int         ref_app   = LUA_NOREF; // the table the chunk returned
@@ -224,6 +226,12 @@ Host* s_h = nullptr;
 uint32_t s_host_generation = 0;
 
 char s_bar_title[40];   // appPageBegin keeps the pointer — must outlive the page
+
+void titleTimerCb(lv_timer_t* timer) {
+  if (!s_h || s_h->title_timer != timer) return;
+  s_h->title_timer = nullptr;
+  appPageCollapseTitle(&luaAppDismiss);
+}
 
 // ---------------------------------------------------------------------------
 // guarded callback invocation
@@ -2676,6 +2684,7 @@ void hostTeardown() {
   }
   luaHostKeepAwake(false);          // an app cannot hold the screen after it closes
   if (h->timer) { lv_timer_del(h->timer); h->timer = nullptr; }
+  if (h->title_timer) { lv_timer_del(h->title_timer); h->title_timer = nullptr; }
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (h->L && s_net_cb != LUA_NOREF) { luaL_unref(h->L, LUA_REGISTRYINDEX, s_net_cb); }
   s_net_cb = LUA_NOREF;              // a worker fetch may still land; netDeliver sees no app and drops it
@@ -2732,8 +2741,8 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   openSandbox(h->L);
   openWada(h->L);
 
-  // UI scaffold: full-screen overlay + tall "< title" bar via AppPage, exactly
-  // like SnakeGame. Body = the content area apps build into.
+  // UI scaffold: full-screen overlay + a slim "< title" bar. The title identifies
+  // the app briefly, then collapses to Back-only so it cannot cover app content.
   h->root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(h->root);
   lv_obj_set_size(h->root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
@@ -2770,9 +2779,11 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   lv_obj_add_event_cb(h->body, pressCb, LV_EVENT_RELEASED, nullptr);
 
   snprintf(s_bar_title, sizeof s_bar_title, "%s", h->title);
-  appPageBegin(s_bar_title, &luaAppDismiss);
+  appPageBeginSlim(s_bar_title, &luaAppDismiss);
 
   s_h = h;
+  h->title_timer = lv_timer_create(titleTimerCb, kAppTitleMs, nullptr);
+  if (h->title_timer) lv_timer_set_repeat_count(h->title_timer, 1);
   storeLoad();
 
   // button-callback table
