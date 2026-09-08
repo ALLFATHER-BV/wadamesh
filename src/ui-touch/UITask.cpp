@@ -13549,21 +13549,38 @@ static void clockSetManualCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(TR("Clock set"), 1400);
 }
 
-static void buildDeviceSettings(int sec);   // fwd: the cycle button redraws its own page
+// The four buttons, kept so the selection can be repainted in place.
+static lv_obj_t* s_gps_fuzz_btn[4] = { nullptr, nullptr, nullptr, nullptr };
+static uint16_t  s_gps_fuzz_val[4] = { 0, 0, 0, 0 };
+static int       s_gps_fuzz_n      = 0;
 
 // Advertised-position displacement (#399). The button carries the metre value,
 // so selecting is one tap on the value you want rather than cycling to it.
+//
+// Repaints the buttons rather than rebuilding the page. buildDeviceSettings() is
+// the entry point for OPENING a settings category, so calling it from inside a
+// button callback stacked a second page over the live one: the back button went
+// stale, Close did nothing, and the change looked reverted until you navigated
+// away and came back, because you were looking at the page underneath. Reported
+// by honza_87628 and confirmed by Buko84 on an M9.
 static void gpsFuzzSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
   const uint16_t m = (uint16_t)(uintptr_t)lv_event_get_user_data(e);
   if (m == touchPrefsGetGpsFuzzM()) return;         // already selected
   touchPrefsSetGpsFuzzM(m);
+  for (int i = 0; i < s_gps_fuzz_n; ++i) {
+    lv_obj_t* b = s_gps_fuzz_btn[i];
+    if (!b || !lv_obj_is_valid(b)) continue;        // page closed under us
+    const bool on = (s_gps_fuzz_val[i] == m);
+    lv_obj_set_style_bg_opa(b, on ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(b, on ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_text_color(b, lv_color_hex(on ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+  }
   if (g_lv.task) {
     g_lv.task->showAlert(m == 0 ? TR("Advertising your exact position")
                                 : TR("Advertised position displaced"), 1400);
   }
-  buildDeviceSettings(DSEC_GPS);   // redraw so the selected button updates
 #endif
 }
 
@@ -13708,11 +13725,16 @@ static void buildDeviceSettings(int sec) {
       lv_obj_set_pos(b, 2 + i * (bw + gap), y);
       styleButton(b);
       const bool on = (k_fuzz[i].m == cur_fz);
-      if (on) {
-        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(b, LV_OPA_COVER, LV_PART_MAIN);
-      }
+      // Both states set explicitly, so repainting a selection later is symmetric
+      // rather than depending on whatever styleButton left behind.
+      lv_obj_set_style_bg_opa(b, on ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+      lv_obj_set_style_border_opa(b, on ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
       lv_obj_set_style_text_color(b, lv_color_hex(on ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+      if (i < (int)(sizeof(s_gps_fuzz_btn) / sizeof(s_gps_fuzz_btn[0]))) {
+        s_gps_fuzz_btn[i] = b;
+        s_gps_fuzz_val[i] = k_fuzz[i].m;
+        s_gps_fuzz_n = i + 1;
+      }
       lv_obj_add_event_cb(b, gpsFuzzSelectCb, LV_EVENT_CLICKED,
                           (void*)(uintptr_t)k_fuzz[i].m);
       lv_obj_t* l = lv_label_create(b);

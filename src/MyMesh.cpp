@@ -2498,10 +2498,27 @@ void MyMesh::advertPosition(double& lat, double& lon) const {
 #if defined(ESP32)
   const uint16_t r = touchPrefsGetGpsFuzzM();
   if (r == 0 || (lat == 0 && lon == 0)) return;
-  // Two bytes of our own public key give a stable bearing and distance.
-  const uint8_t* id = self_id.pub_key;
-  const double bearing = ((double)id[0] / 256.0) * 2.0 * 3.14159265358979;
-  const double dist    = ((double)id[1] / 255.0) * (double)r;   // 0..r metres
+  // Bearing and distance are derived from the public key AND the chosen radius,
+  // so each setting gets its own unrelated direction.
+  //
+  // Keying on the identity alone was a real weakness, spotted by jesshampshire
+  // on #399: the bearing was then the same at every radius, so switching from
+  // 100 m to 1 km moved the reported point further along the SAME ray from the
+  // true position. Anyone who saw both could intersect them and recover the
+  // exact location, which is precisely what this setting exists to prevent.
+  // Folding the radius in means changing it lands somewhere unrelated instead.
+  //
+  // Still deterministic rather than random per advert, which is the other half
+  // of the design: a fresh offset each time would scatter points around the true
+  // position and averaging a night of them would recover the centre.
+  uint32_t h = 2166136261u;                       // FNV-1a over the key + radius
+  for (int i = 0; i < PUB_KEY_SIZE; ++i) { h ^= self_id.pub_key[i]; h *= 16777619u; }
+  h ^= (uint32_t)r;         h *= 16777619u;
+  h ^= (uint32_t)(r >> 8);  h *= 16777619u;
+  const double bearing = ((double)(h & 0xFFFFu) / 65536.0) * 2.0 * 3.14159265358979;
+  // Distance kept in the upper half of the radius: an offset that can land near
+  // zero would sometimes publish a position barely displaced at all.
+  const double dist    = (0.5 + ((double)((h >> 16) & 0xFFFFu) / 131072.0)) * (double)r;
   const double dlat    = (dist * cos(bearing)) / 111320.0;
   double coslat = cos(lat * 3.14159265358979 / 180.0);
   if (coslat < 0.01) coslat = 0.01;                             // near the poles
@@ -3339,8 +3356,21 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
     if (permissions & TELEM_PERM_BASE) { // only respond if base permission bit is set
       telemetry.reset();
       telemetry.addVoltage(TELEM_CHANNEL_SELF, (float)board.getBattMilliVolts() / 1000.0f);
-      // query other sensors -- target specific
+      // query other sensors -- target specific.
+      //
+      // Telemetry answers with a position too, and it has to honour the same
+      // displacement as adverts or the privacy setting is a hole rather than a
+      // feature: someone who turns it on would reasonably believe their exact
+      // position is not going out, while a telemetry request returned it
+      // (spotted by honza_87628). querySensors() reads these members directly,
+      // so displace them across the call and put the true values back straight
+      // after, which keeps the local map and GPS page accurate.
+      const double telem_true_lat = sensors.node_lat;
+      const double telem_true_lon = sensors.node_lon;
+      advertPosition(sensors.node_lat, sensors.node_lon);
       sensors.querySensors(permissions, telemetry);
+      sensors.node_lat = telem_true_lat;
+      sensors.node_lon = telem_true_lon;
 
       memcpy(reply, &sender_timestamp,
              4); // reflect sender_timestamp back in response packet (kind of like a 'tag')
