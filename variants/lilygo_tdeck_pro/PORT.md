@@ -61,10 +61,11 @@ events are drained but do not wake the display; GPIO0 is the wake control.
 - PlatformIO configuration resolves and all declared dependencies install.
 - Pro and Pager keyboard-state host tests pass.
 - Static diagnostics and `git diff --check` pass.
-- The first firmware compile reached the shared UI and exposed Pro-specific
-	declaration/config guards; those are fixed, but a clean compile rerun and
-	on-device validation are still pending.
+- The firmware has been exercised on LilyGo T-Deck Pro hardware. This is initial
+  validation only, not comprehensive release qualification.
 
-On-device bring-up should verify, in order: boot image/full refresh, partial
-refresh cadence, keyboard during BUSY, both touch-controller revisions, radio
-TX/RX, SD mount, GPS input, battery voltage, frontlight, and GPIO0 sleep/wake.
+Substantial additional testing is required before release, including repeated
+boot/full-refresh cycles, partial-refresh cadence and ghosting, keyboard input
+during BUSY, both touch-controller revisions, radio TX/RX, SD mount and I/O, GPS,
+battery reporting, frontlight behavior, GPIO0 sleep/wake, OTA, companion
+transports, and broad regression testing across the shared touch UI.
