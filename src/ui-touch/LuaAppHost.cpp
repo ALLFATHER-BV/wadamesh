@@ -242,10 +242,42 @@ int tracebackMsgh(lua_State* L) {
   return 1;
 }
 
+// Last-resort handler for an error that reached Lua with NO protected frame.
+// Lua's default panic function calls abort(), which resets the device: a T-Deck
+// crash dump from a Lua app decoded to luaG_callerror -> abort() straight through
+// here. The host's contract is that an app fault is a toast and a clean close, so
+// at minimum record what happened. Lua aborts anyway once this returns (that is
+// documented behaviour and there is no safe frame to unwind to), but the error
+// text now reaches the serial log and the diag ring instead of being lost, which
+// is the difference between a reproducible report and a mystery reset.
+int luaPanicCb(lua_State* L) {
+  const char* err = lua_tostring(L, -1);
+  Serial.printf("[LUAAPP] PANIC (unprotected error): %s\n", err ? err : "?");
+  char msg[96];
+  snprintf(msg, sizeof msg, "Lua panic: %.70s", err ? err : "unknown");
+  luaHostToast(msg, 3000);
+  if (s_h) s_h->want_close = true;
+  return 0;
+}
+
 // Push app.<name>; returns false if the app has no such callback.
+//
+// RAW on purpose. This runs BEFORE guardedCall arms its pcall, so anything it
+// executes is unprotected: lua_getfield honours __index, and an app table with a
+// metatable whose __index is not callable raises "attempt to call a ... value"
+// with no frame to catch it, which panics and resets the device. Callbacks are
+// plain fields on the table the chunk returned, so a raw lookup is also the
+// correct semantics -- no shipped app uses setmetatable. lua_checkstack cannot
+// raise (it returns false), unlike the pushes it protects.
 bool pushCallback(Host* h, const char* name) {
+  // 8 slots: the callback, its argument table, and a key/value pair at a time
+  // while the caller fills it. Those pushes happen before the pcall too, so the
+  // room has to be reserved here where failure can be returned instead of raised.
+  if (!lua_checkstack(h->L, 8)) return false;
   lua_rawgeti(h->L, LUA_REGISTRYINDEX, h->ref_app);
-  lua_getfield(h->L, -1, name);
+  if (!lua_istable(h->L, -1)) { lua_pop(h->L, 1); return false; }
+  lua_pushstring(h->L, name);
+  lua_rawget(h->L, -2);
   lua_remove(h->L, -2);
   if (!lua_isfunction(h->L, -1)) { lua_pop(h->L, 1); return false; }
   return true;
@@ -2738,6 +2770,7 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 
   h->L = lua_newstate(psAllocCb, &h->heap);
   if (!h->L) { delete h; luaHostToast("App: out of memory", 1800); return false; }
+  lua_atpanic(h->L, luaPanicCb);   // never let an escaped error abort() silently
   openSandbox(h->L);
   openWada(h->L);
 
