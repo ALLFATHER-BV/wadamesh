@@ -516,7 +516,11 @@ int chAxis(lua_State* L) {
   int major = (int)luaL_optinteger(L, 2, 4);
   int gutter = (int)luaL_optinteger(L, 3, 40);
   lv_obj_set_style_text_font(c->obj, luaHostFontForSize(12), LV_PART_TICKS);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(c->obj, lv_color_white(), LV_PART_TICKS);
+#else
   lv_obj_set_style_text_color(c->obj, lv_color_hex(0x7A7F87), LV_PART_TICKS);
+#endif
   lv_obj_set_style_pad_left(c->obj, 4, LV_PART_TICKS);
   lv_chart_set_axis_tick(c->obj, LV_CHART_AXIS_PRIMARY_Y, 4, 0, major, 1, true, gutter);
   return 0;

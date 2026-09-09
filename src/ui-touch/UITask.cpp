@@ -1960,7 +1960,13 @@ static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
-static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - STATUSBAR_H; }
+#if defined(HAS_TDECK_PRO)
+// E-paper cannot render the glass title row cleanly, so chat content starts below it.
+static inline lv_coord_t chatContentTop(){ return chatBarH(); }
+#else
+static inline lv_coord_t chatContentTop(){ return STATUSBAR_H; }
+#endif
+static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - chatContentTop(); }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
 // (or the keyboard top) — the composer FLOATS over its lower edge with a transparent
@@ -3130,6 +3136,37 @@ static void styleCard(lv_obj_t* obj) {
   styleSurface(obj, COLOR_PANEL, 10);
   lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
   lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+}
+
+static inline uint32_t lightSurfaceTextRgb(uint32_t color) {
+#if defined(HAS_TDECK_PRO)
+  (void)color;
+  return 0x000000;
+#else
+  return color;
+#endif
+}
+
+static inline lv_color_t lightSurfaceTextColor(uint32_t color) {
+  return lv_color_hex(lightSurfaceTextRgb(color));
+}
+
+static void normalizeLightSurfaceRecolor(char* text) {
+#if defined(HAS_TDECK_PRO)
+  if (!text) return;
+  for (char* p = text; *p; ++p) {
+    if (*p != '#') continue;
+    bool is_color = true;
+    for (int i = 1; is_color && i <= 6; ++i) {
+      const char c = p[i];
+      is_color = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                 (c >= 'A' && c <= 'F');
+    }
+    if (is_color && p[7] == ' ') memset(p + 1, '0', 6);
+  }
+#else
+  (void)text;
+#endif
 }
 
 #if defined(HAS_TDECK_PRO)
@@ -6124,10 +6161,10 @@ static void versionCheckUpdateUi() {
   } else if (s_update_available && s_verchk_latest_n >= 0) {
     snprintf(b, sizeof b, LV_SYMBOL_DOWNLOAD "  Update available: beta_%d\nYou have beta_%d — update manually at flasher.wadamesh.com",
              s_verchk_latest_n, my_n);
-    lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_update_about_lbl, lightSurfaceTextColor(0xE2A23A), LV_PART_MAIN);
   } else if (s_verchk_latest_n >= 0) {
     snprintf(b, sizeof b, LV_SYMBOL_OK "  Up to date (beta_%d)", my_n);
-    lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(0x6FCF6F), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_update_about_lbl, lightSurfaceTextColor(0x6FCF6F), LV_PART_MAIN);
   } else if (s_verchk_ran) {
     snprintf(b, sizeof b, TR("Firmware beta_%d\nCouldn't reach the update server"), my_n);
     lv_obj_set_style_text_color(s_update_about_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -6302,7 +6339,7 @@ static void otaStartInstall(int target_n) {
   if (WiFi.status() != WL_CONNECTED) {
     if (s_ota_status_lbl) {
       lv_label_set_text(s_ota_status_lbl, TR("Connect to Wi-Fi first, then try again."));
-      lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+      lv_obj_set_style_text_color(s_ota_status_lbl, lightSurfaceTextColor(0xE2A23A), LV_PART_MAIN);
     }
     if (g_lv.task) g_lv.task->showAlert(TR("Wi-Fi not connected"), 2000);
     return;
@@ -6315,7 +6352,7 @@ static void otaStartInstall(int target_n) {
     char sb[48];
     snprintf(sb, sizeof sb, "Installing beta_%d...\nDo not power off.", target_n);
     lv_label_set_text(s_ota_status_lbl, sb);
-    lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ota_status_lbl, lightSurfaceTextColor(0xE2A23A), LV_PART_MAIN);
   }
   if (!s_ota_poll_timer) s_ota_poll_timer = lv_timer_create(otaPollTimerCb, 400, nullptr);
 }
@@ -6426,7 +6463,7 @@ static void otaInstallLatestCb(lv_event_t* e) {
   // Launcher / Tanmatsu: no spare OTA slot to write into — update out-of-band.
   if (s_ota_status_lbl) {
     lv_label_set_text(s_ota_status_lbl, TR("Update via the Launcher / flasher.wadamesh.com."));
-    lv_obj_set_style_text_color(s_ota_status_lbl, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_ota_status_lbl, lightSurfaceTextColor(0xE2A23A), LV_PART_MAIN);
   }
   if (g_lv.task) g_lv.task->showAlert(TR("Update via the Launcher"), 3000);
 #endif
@@ -11717,7 +11754,7 @@ static void buildRadioSettings() {
     lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_t* sl = lv_label_create(body);
     lv_label_set_text(sl, TR(title));
-    lv_obj_set_style_text_color(sl, lv_color_hex(0x8A929B), LV_PART_MAIN);
+    lv_obj_set_style_text_color(sl, lightSurfaceTextColor(0x8A929B), LV_PART_MAIN);
     lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(sl, 2, y + SC(7));
     y += SC(28);
@@ -14622,16 +14659,16 @@ static void buildDeviceSettings(int sec) {
       lv_label_set_text(st, want_sd
           ? TR("SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.")
           : TR("SD data is unavailable - contacts and channels cannot be saved until the card is reinserted."));
-      lv_obj_set_style_text_color(st, lv_color_hex(0xE34B4B), LV_PART_MAIN);
+      lv_obj_set_style_text_color(st, lightSurfaceTextColor(0xE34B4B), LV_PART_MAIN);
     } else if (want_sd && g_sd_migration_blocked) {
       lv_label_set_text(st, TR("SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry."));
-      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);
+      lv_obj_set_style_text_color(st, lightSurfaceTextColor(0xE3A127), LV_PART_MAIN);
     } else if (g_contacts_on_sd) {
       lv_label_set_text(st, TR("Contacts are saved to the SD card."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_STATUS_OK_TEXT), LV_PART_MAIN);
     } else if (want_sd) {
       lv_label_set_text(st, TR("Contacts are on internal flash - the SD card did not mount at boot. Re-seat the card and reboot."));
-      lv_obj_set_style_text_color(st, lv_color_hex(0xE3A127), LV_PART_MAIN);  // amber warning
+      lv_obj_set_style_text_color(st, lightSurfaceTextColor(0xE3A127), LV_PART_MAIN);  // amber warning
     } else {
       lv_label_set_text(st, TR("Contacts are on internal flash."));
       lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -16733,7 +16770,7 @@ static void buildMqttSettings() {
   lv_label_set_text(warn, TR("Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker."));
   lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(warn, cw);
-  lv_obj_set_style_text_color(warn, lv_color_hex(0xCC6A00), LV_PART_MAIN);
+  lv_obj_set_style_text_color(warn, lightSurfaceTextColor(0xCC6A00), LV_PART_MAIN);
   lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(warn, 2, y);
   lv_obj_update_layout(warn);
@@ -18626,6 +18663,7 @@ static void losDrawPlot() {
         "#%06x %s#\n#5b6168 you %dm \xc2\xb7 peer %dm \xc2\xb7 %.0f MHz#",
         (unsigned)vcol, vstr,
         (int)s_los_ant_self, (int)s_los_ant_peer, freq_mhz);
+    normalizeLightSurfaceRecolor(body);
     lv_label_set_text(s_los_verdict, body);
   }
 }
@@ -19367,7 +19405,7 @@ static void openAddContactModalCb(lv_event_t* e) {
   s_addct_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addct_error_l, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_addct_error_l, lv_pct(100));
-  lv_obj_set_style_text_color(s_addct_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_addct_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addct_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addct_error_l, "");
   lv_obj_set_pos(s_addct_error_l, 2, y);
@@ -19460,7 +19498,7 @@ static void openCreatePrivateChannelModal() {
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
-  lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_addch_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 0, y);
@@ -19561,7 +19599,7 @@ static void openJoinPrivateChannelModal() {
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
-  lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_addch_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 0, y);
@@ -19652,7 +19690,7 @@ static void openJoinHashtagChannelModal() {
   s_addch_error_l = lv_label_create(body);
   lv_label_set_long_mode(s_addch_error_l, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_addch_error_l, channelFormControlWidth());
-  lv_obj_set_style_text_color(s_addch_error_l, lv_color_hex(0xE08080), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_addch_error_l, lightSurfaceTextColor(0xE08080), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_addch_error_l, &g_font_12, LV_PART_MAIN);
   lv_label_set_text(s_addch_error_l, "");
   lv_obj_set_pos(s_addch_error_l, 0, y);
@@ -24005,6 +24043,7 @@ static void openSignalInfoPopup() {
   char graph_legend_text[40];
   snprintf(graph_legend_text, sizeof graph_legend_text, "#%06X TX#   #4F94CD RX#",
            (unsigned)COLOR_STATUS_OK_TEXT);
+  normalizeLightSurfaceRecolor(graph_legend_text);
   lv_label_set_recolor(graph_legend, true);
   lv_label_set_text(graph_legend, graph_legend_text);
   lv_obj_set_style_text_font(graph_legend, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -24518,7 +24557,7 @@ static void readerRenderBody() {
     lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(l, cw);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(l, lv_color_hex(link ? 0x6FB7FF : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lightSurfaceTextColor(link ? 0x6FB7FF : COLOR_TEXT), LV_PART_MAIN);
     if (link) {
       lv_obj_set_style_text_decor(l, LV_TEXT_DECOR_UNDERLINE, LV_PART_MAIN);
       lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
@@ -24801,8 +24840,11 @@ static void discoverWardriveTick() {
     }
   }
   if (s_disc_footer) {
-    if (!fix) lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#"));
-    else lv_label_set_text_fmt(s_disc_footer, TR("#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#"), s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n, (unsigned long)s_disc_log_count);
+    char footer[192];
+    if (!fix) snprintf(footer, sizeof footer, "%s", TR("#7A7F87 Wardrive: waiting for GPS fix\xE2\x80\xA6#"));
+    else snprintf(footer, sizeof footer, TR("#7A7F87 Wardrive: %d coverage pts \xC2\xB7 %lu logged to SD#"), s_disc_track_n > k_disc_track_max ? k_disc_track_max : s_disc_track_n, (unsigned long)s_disc_log_count);
+    normalizeLightSurfaceRecolor(footer);
+    lv_label_set_text(s_disc_footer, footer);
   }
 }
 
@@ -24892,6 +24934,7 @@ static void discoverBuildFeed() {
   }
   if (q == 0) snprintf(buf, sizeof buf, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
+  normalizeLightSurfaceRecolor(buf);
   lv_label_set_text(s_discover_feed, buf);
   if (s_discover_status)
     lv_label_set_text_fmt(s_discover_status, TR("%s \xC2\xB7 %d nearby (%d rpt, %d comp)"), s_discover_scanning ? TR("Scanning\xE2\x80\xA6") : TR("Paused"), (int)m, rpt, comp);
@@ -25047,7 +25090,7 @@ static void openDiscoverPage() {
   lv_label_set_long_mode(s_discover_feed, LV_LABEL_LONG_CLIP);         // one line per row -> tap-to-add maps Y->row
   lv_obj_set_style_text_line_space(s_discover_feed, 3, LV_PART_MAIN);  // fixed row pitch (font line-height + 3)
   lv_obj_set_style_text_font(s_discover_feed, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_discover_feed, lv_color_hex(0xC8CDD2), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_discover_feed, lightSurfaceTextColor(0xC8CDD2), LV_PART_MAIN);
   lv_obj_add_flag(s_discover_feed, LV_OBJ_FLAG_CLICKABLE);             // tap a node row -> add to contacts
   lv_obj_add_event_cb(s_discover_feed, discoverFeedTapCb, LV_EVENT_CLICKED, nullptr);
   lv_label_set_text(s_discover_feed, "");
@@ -25057,7 +25100,10 @@ static void openDiscoverPage() {
   lv_label_set_recolor(s_disc_footer, true);
   lv_obj_set_style_text_font(s_disc_footer, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(s_disc_footer, 10, STATUSBAR_H + H - 18);
-  lv_label_set_text(s_disc_footer, TR("#7A7F87 Wardrive: \xE2\x80\xA6#"));
+  char footer[96];
+  snprintf(footer, sizeof footer, "%s", TR("#7A7F87 Wardrive: \xE2\x80\xA6#"));
+  normalizeLightSurfaceRecolor(footer);
+  lv_label_set_text(s_disc_footer, footer);
 
   the_mesh.discoverClear();
   s_discover_scanning = true;
@@ -26268,6 +26314,12 @@ static void openVncPage() {
   lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_t* sw2 = lv_switch_create(row);
   lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_update_layout(row);
+  const lv_coord_t label_w = lv_obj_get_content_width(row) - lv_obj_get_width(sw2) - 12;
+  lv_obj_set_size(rl, label_w, lv_font_get_line_height(&g_font_14));
+  lv_label_set_long_mode(rl, LV_LABEL_LONG_DOT);
+#endif
   if (touchPrefsGetWebMirror()) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, vncToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
@@ -26285,7 +26337,7 @@ static void openVncPage() {
   lv_obj_t* warn = lv_label_create(s_vnc_root);
   lv_label_set_text(warn, TR("While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only)."));
   lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(warn, lv_color_hex(0x8A8F98), LV_PART_MAIN);
+  lv_obj_set_style_text_color(warn, lightSurfaceTextColor(0x8A8F98), LV_PART_MAIN);
   lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(warn, cw);
 
@@ -32600,7 +32652,7 @@ static void openMapOptions() {
     lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_t* sl = lv_label_create(card);
     lv_label_set_text(sl, TR("Show on map"));
-    lv_obj_set_style_text_color(sl, lv_color_hex(0x8A929B), LV_PART_MAIN);
+    lv_obj_set_style_text_color(sl, lightSurfaceTextColor(0x8A929B), LV_PART_MAIN);
     lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_pos(sl, 2, y + 10);
     y += 34;
@@ -34046,9 +34098,9 @@ static void styleChipAsFkey(lv_obj_t* btn, lv_obj_t* icon, int shape, uint32_t r
 static void makeChatDetail(LvChatPanel& p) {
   p.overlay = lv_obj_create(lv_scr_act());
   lv_obj_set_size(p.overlay, chatScreenW(), chatScreenH());
-  // Overlay starts under the SOLID top row of the status bar; the bar's translucent
-  // glass lower row floats over the top of the message list (which insets for it).
-  lv_obj_set_pos(p.overlay, 0, STATUSBAR_H);
+  // Most boards start below the solid row and let the glass title row overlap the
+  // list. T-Deck Pro starts below both rows because e-paper needs opaque separation.
+  lv_obj_set_pos(p.overlay, 0, chatContentTop());
   styleSurface(p.overlay, COLOR_BG, 0);
   lv_obj_set_style_pad_all(p.overlay, 0, LV_PART_MAIN);   // prevent child-position offset
   lv_obj_clear_flag(p.overlay, LV_OBJ_FLAG_SCROLLABLE);
@@ -34080,7 +34132,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // The status bar's glass lower row floats over the TOP of the list on boards
   // with a two-row chat header. Pager keeps the chat header in one regular row,
   // so retaining that old row-sized inset only wastes message space.
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
@@ -34125,7 +34177,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_border_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_ext_click_area(p.jump_oldest_btn, 6);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + 2);
+#else
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + STATUSBAR_H + 2);
+#endif
   lv_obj_t* jolbl = lv_label_create(p.jump_oldest_btn);
   lv_label_set_text(jolbl, LV_SYMBOL_UP);
   lv_obj_set_style_text_font(jolbl, &g_font_16, LV_PART_MAIN);
@@ -34416,7 +34472,7 @@ static int append_settings_section(lv_obj_t* tab, int y, const char* title, lv_e
   lv_obj_t* chev = lv_label_create(row);
   lv_label_set_text(chev, LV_SYMBOL_RIGHT);
   lv_obj_set_style_text_font(chev, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(chev, lv_color_hex(0x4A5D70), LV_PART_MAIN);
+  lv_obj_set_style_text_color(chev, lightSurfaceTextColor(0x4A5D70), LV_PART_MAIN);
   lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -12, 0);
 
   if (sub_idx >= 0 && sub_idx < SEC_COUNT) g_set_sec_sub[sub_idx] = sub;
@@ -34856,7 +34912,7 @@ static void settingsCatBuild(int cat) {
       g_lv.diag_id_label = lv_label_create(page);
       lv_label_set_long_mode(g_lv.diag_id_label, LV_LABEL_LONG_WRAP);
       lv_obj_set_width(g_lv.diag_id_label, lblw);
-      lv_obj_set_style_text_color(g_lv.diag_id_label, lv_color_hex(0xA8C8FF), LV_PART_MAIN);
+      lv_obj_set_style_text_color(g_lv.diag_id_label, lightSurfaceTextColor(0xA8C8FF), LV_PART_MAIN);
       lv_obj_set_style_text_font(g_lv.diag_id_label, &g_font_12, LV_PART_MAIN);
       lv_label_set_text(g_lv.diag_id_label, s_diag_id_pinned[0] ? s_diag_id_pinned : "ID …");
       g_lv.diag_label = lv_label_create(page);
@@ -37038,7 +37094,7 @@ static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
   lv_obj_t* dlbl = lv_label_create(div);
   lv_label_set_text(dlbl, TR("New"));
   lv_obj_set_style_text_font(dlbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(dlbl, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_text_color(dlbl, lightSurfaceTextColor(0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_color(dlbl, lv_color_hex(COLOR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(dlbl, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(dlbl, 4, LV_PART_MAIN);
@@ -37248,7 +37304,7 @@ static void openUrlMenu(const char* url) {
   lv_obj_set_width(u, card_w - 2 * pad);
   lv_label_set_text(u, url);
   lv_obj_set_style_text_font(u, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(u, lv_color_hex(0x6FB7FF), LV_PART_MAIN);
+  lv_obj_set_style_text_color(u, lightSurfaceTextColor(0x6FB7FF), LV_PART_MAIN);
   lv_obj_set_pos(u, 0, 0);
   int by = url_h + gap;
   auto mk = [&](const char* txt, lv_event_cb_t cb) {
@@ -38871,7 +38927,11 @@ static void refreshContactsList() {
       lv_obj_t* chk = lv_label_create(box);
       lv_label_set_text(chk, LV_SYMBOL_OK);
       lv_obj_set_style_text_font(chk, &g_font_12, LV_PART_MAIN);
+    #if defined(HAS_TDECK_PRO)
+      lv_obj_set_style_text_color(chk, lv_color_white(), LV_PART_MAIN);
+    #else
       lv_obj_set_style_text_color(chk, lv_color_hex(0x062019), LV_PART_MAIN);
+    #endif
       lv_obj_center(chk);
       if (!ctSelHas(e.key6)) lv_obj_add_flag(chk, LV_OBJ_FLAG_HIDDEN);
     }
@@ -38885,7 +38945,7 @@ static void refreshContactsList() {
                         : (is_rep ? TOUCH_SYM_ANTENNA
                         : (e.type == ADV_TYPE_ROOM ? LV_SYMBOL_LOOP : TOUCH_SYM_PERSON)));   // rooms discernible at a glance (#106)
     lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(ic, lv_color_hex(e.is_blocked ? 0xD7574E : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_color(ic, lightSurfaceTextColor(e.is_blocked ? 0xD7574E : COLOR_SUB), LV_PART_MAIN);
     lv_obj_align(ic, LV_ALIGN_LEFT_MID, icon_x, 0);
 
     // Name: wrap up to 2 lines; if the name would need a 3rd line (which
@@ -38938,7 +38998,7 @@ static void refreshContactsList() {
     lv_obj_t* ll = lv_label_create(rb);
     lv_label_set_text(ll, loc_buf);
     lv_obj_set_style_text_font(ll, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(ll, lv_color_hex(e.has_gps ? COLOR_SUB : 0x4A4E54), LV_PART_MAIN);
+    lv_obj_set_style_text_color(ll, lightSurfaceTextColor(e.has_gps ? COLOR_SUB : 0x4A4E54), LV_PART_MAIN);
     lv_obj_set_width(ll, loc_w);
     lv_label_set_long_mode(ll, LV_LABEL_LONG_CLIP);
     if (mid_cols) lv_obj_align(ll, LV_ALIGN_TOP_LEFT, name_x + hrd_w + col_gap, row2_y);
@@ -38949,7 +39009,7 @@ static void refreshContactsList() {
       lv_obj_t* star = lv_label_create(rb);
       lv_label_set_text(star, TOUCH_SYM_STAR_BIG);
       lv_obj_set_style_text_font(star, &star_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(star, lv_color_hex(0xC9A24A), LV_PART_MAIN);
+      lv_obj_set_style_text_color(star, lightSurfaceTextColor(0xC9A24A), LV_PART_MAIN);
       lv_obj_align(star, LV_ALIGN_LEFT_MID, star_x, 0);
     }
   }
@@ -44615,7 +44675,7 @@ static void luaStoreRebuildList() {
           ? TR("Language catalog unavailable - check Wi-Fi, then reopen this tab.")
           : TR("Loading the language catalog\xE2\x80\xA6"));
       lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(h, lv_color_hex(s_langcat_n < 0 ? 0xE08080 : COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_style_text_color(h, lightSurfaceTextColor(s_langcat_n < 0 ? 0xE08080 : COLOR_SUB), LV_PART_MAIN);
       lv_obj_set_width(h, W - 12);
       lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
     }
@@ -44637,7 +44697,7 @@ static void luaStoreRebuildList() {
     lv_obj_t* t = lv_label_create(card);
     lv_label_set_text(t, s_lua_cat_n < 0 ? TR("Catalog unavailable") : TR("Loading catalog\xE2\x80\xA6"));
     lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(t, lv_color_hex(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lightSurfaceTextColor(s_lua_cat_n < 0 ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_pos(t, 0, 0);
     lv_obj_t* h = lv_label_create(card);
     useChainedFont(h);
@@ -44750,7 +44810,7 @@ static void luaStoreRebuildList() {
       // a pointless download.
       lv_obj_set_style_bg_color(b, lv_color_hex(themeRole(0x39404C, COLOR_SECONDARY_ACTION)), LV_PART_MAIN);
       lv_obj_clear_flag(b, LV_OBJ_FLAG_CLICKABLE);
-      lv_obj_set_style_text_color(ds, lv_color_hex(0xD7574E), LV_PART_MAIN);
+      lv_obj_set_style_text_color(ds, lightSurfaceTextColor(0xD7574E), LV_PART_MAIN);
       lv_label_set_text(ds, TR("This board cannot run this app."));
     } else if (inst && cur) {
       // Remove needs the INSTALLED index
@@ -46722,16 +46782,20 @@ static void updateGlobalStatusBar() {
     const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || inbox_overview || chat_open;
 #endif
     if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
-    // Glass lower row on EVERY double-height bar (settings detail, inbox/chat overview,
+    // Glass lower row on double-height bars (settings detail, inbox/chat overview,
     // open chat) so the tall bar looks consistent everywhere it appears. Switch the
     // root's own fill transparent so only the fade backdrop paints the bar, then show
     // it; otherwise the root paints solid and the backdrop hides. Edge-triggered (the
     // built state — opaque root + hidden fade — already matches the inactive case).
     // EXCEPT while the channel-settings / blocked-users sheets are open: those are a new
     // page over the chat, so the bar goes SOLID (no glass revealing the chat behind it).
-    // The round panel keeps a SOLID two-row bar (no glass fade — there's no doubled lower
-    // row to reveal content through), so fade never activates there.
+    // The round panel keeps a solid two-row bar because there is no doubled lower row;
+    // T-Deck Pro also stays solid because its monochrome e-paper cannot render glass.
+  #if defined(HAS_TDECK_PRO)
+    const bool fade_active = false;
+  #else
     const bool fade_active = want_tall && !chanScopeIsOpen() && !blockedModalIsOpen() && !s_reader_page_open && !CAP_ROUND_CORNERS;
+  #endif
     static bool s_fade_active = false;
     if (fade_active != s_fade_active) {
       s_fade_active = fade_active;
@@ -47773,7 +47837,10 @@ static void buildBootSplash() {
   // keeps the pixel/mono feel as a continuation of the early boot screen.
   lv_obj_t* wm = lv_label_create(s_splash_root);
   lv_label_set_recolor(wm, true);
-  lv_label_set_text(wm, TR("WADA#15B6A6 MESH#"));
+  char wordmark[48];
+  snprintf(wordmark, sizeof wordmark, "%s", TR("WADA#15B6A6 MESH#"));
+  normalizeLightSurfaceRecolor(wordmark);
+  lv_label_set_text(wm, wordmark);
   lv_obj_set_style_text_font(wm, &lv_font_unscii_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(wm,
       lv_color_hex(themeRole(0xFFFFFF, COLOR_TEXT)), LV_PART_MAIN);
@@ -49847,7 +49914,7 @@ static void buildUiTree() {
   // underneath it.
   lv_obj_align(s_live_diag_label, LV_ALIGN_TOP_LEFT, 2, STATUSBAR_H + 2);
   lv_obj_set_style_text_font(s_live_diag_label, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_live_diag_label, lv_color_hex(0xC7D2DE), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_live_diag_label, lightSurfaceTextColor(0xC7D2DE), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_live_diag_label, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(s_live_diag_label, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
   lv_obj_set_style_pad_hor(s_live_diag_label, 4, LV_PART_MAIN);
@@ -50329,7 +50396,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
                    : (state == TELEM_FAILED)      ? "  \xe2\x80\x94 last request failed" : "";
   lv_label_set_text_fmt(title, "%s%s", name && name[0] ? name : "node", stxt);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(state == TELEM_FAILED ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lightSurfaceTextColor(state == TELEM_FAILED ? 0xE08080 : COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_width(title, cardw - 20 - 98);   // clear the request, gear and X badges
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_pos(title, 0, 0);
@@ -50424,6 +50491,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     if (s_telem_show_temp) strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0""C   ");
     if (s_telem_show_hum)  strcat(leg, "#35C9C9 \xe2\x97\x8f# %RH");
     if (!leg[0]) strcpy(leg, "#808080 (nothing shown \xe2\x80\x94 enable a series in settings)#");
+    normalizeLightSurfaceRecolor(leg);
     lv_obj_t* lg = lv_label_create(card);
     lv_label_set_recolor(lg, true);
     lv_label_set_text(lg, leg);
