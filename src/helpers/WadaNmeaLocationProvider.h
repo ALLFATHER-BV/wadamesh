@@ -11,9 +11,10 @@
 // is exactly the build-fragile dependency patch this repo avoids. So the
 // provider is re-owned here: same behaviour line for line (claim/release, the
 // time-sync rules from #89's follow-up, GPS_EN/GPS_RESET polarity macros from
-// the core header), plus motion(). Boards opt in by constructing this class in
-// their target.cpp instead of the core one and defining HAS_GPS_MOTION; the
-// wada.sys.gps() binding then reports speed_kmh/course on that board.
+// the core header), plus motion() and optional checksum-driven UART baud
+// recovery. Boards opt in by constructing this class in their target.cpp
+// instead of the core one. HAS_GPS_MOTION exposes speed/course to Lua; passing
+// the UART probe arguments enables baud recovery independently.
 //
 // Kept in lock-step with the core header it mirrors (meshcomod core-v1.17.4);
 // if the core provider gains behaviour, port it here too. ONE deliberate
@@ -24,6 +25,7 @@
 #include <MicroNMEA.h>
 #include <RTClib.h>
 #include <helpers/RefCountedDigitalPin.h>
+#include "esp32/TouchPrefsStore.h"
 #include <limits.h>
 
 class WadaNmeaLocationProvider : public LocationProvider {
@@ -38,7 +40,54 @@ class WadaNmeaLocationProvider : public LocationProvider {
   unsigned long next_check = 0;
   long time_valid = 0;
   unsigned long _last_time_sync = 0;
+  HardwareSerial* _probe_serial = nullptr;
+  int8_t _probe_rx = -1;
+  int8_t _probe_tx = -1;
+  uint8_t _probe_cursor = 0;
+  uint32_t _probe_default_baud = 0;
+  uint32_t _active_baud = 0;
+  uint32_t _probe_deadline_ms = 0;
+  bool _stream_locked = false;
   static const unsigned long TIME_SYNC_INTERVAL = 1800000;  // re-sync every 30 minutes
+  static const unsigned long BAUD_PROBE_START_MS = 9000;
+  static const unsigned long BAUD_PROBE_INTERVAL_MS = 5000;
+
+  void nudgeReceiver() {
+    if (!_probe_serial) return;
+    _probe_serial->write((uint8_t)'\r');
+    _probe_serial->write((uint8_t)'\n');
+    _probe_serial->flush();
+  }
+
+  void probeNextBaud() {
+    if (!_probe_serial || _probe_rx < 0) return;
+    const uint32_t candidates[] = {
+      _probe_default_baud, 9600u, 19200u, 38400u, 57600u, 115200u
+    };
+    for (size_t attempt = 0; attempt < sizeof(candidates) / sizeof(candidates[0]); ++attempt) {
+      const uint32_t candidate = candidates[_probe_cursor];
+      _probe_cursor = (uint8_t)((_probe_cursor + 1) %
+                                (sizeof(candidates) / sizeof(candidates[0])));
+      if (candidate == 0 || candidate == _active_baud) continue;
+      _probe_serial->end();
+      _probe_serial->setPins(_probe_rx, _probe_tx);
+      _probe_serial->begin(candidate);
+      nmea.clear();
+      time_valid = 0;
+      _active_baud = candidate;
+      _probe_deadline_ms = millis() + BAUD_PROBE_INTERVAL_MS;
+      nudgeReceiver();
+      return;
+    }
+  }
+
+  void noteValidSentence() {
+    if (!_probe_serial || _stream_locked) return;
+    _stream_locked = true;
+    _probe_deadline_ms = 0;
+    if (touchPrefsGetGpsBaud(_probe_default_baud) != _active_baud)
+      (void)touchPrefsSetGpsBaud(_active_baud);
+  }
 
 public:
   WadaNmeaLocationProvider(Stream& ser, mesh::RTCClock* clock = NULL, int pin_reset = GPS_RESET,
@@ -66,6 +115,16 @@ public:
     }
   }
 
+  WadaNmeaLocationProvider(HardwareSerial& ser, mesh::RTCClock* clock,
+                           int pin_reset, int pin_en, int serial_rx, int serial_tx,
+                           uint32_t default_baud)
+      : WadaNmeaLocationProvider(static_cast<Stream&>(ser), clock, pin_reset, pin_en) {
+    _probe_serial = &ser;
+    _probe_rx = (int8_t)serial_rx;
+    _probe_tx = (int8_t)serial_tx;
+    _probe_default_baud = default_baud;
+  }
+
   void claim() {
     _claims++;
     if (_peripher_power) _peripher_power->claim();
@@ -81,6 +140,13 @@ public:
     claim();
     if (_pin_en != -1) digitalWrite(_pin_en, GPS_EN_ACTIVE);
     if (_pin_reset != -1) digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
+    if (_probe_serial) {
+      _active_baud = touchPrefsGetGpsBaud(_probe_default_baud);
+      _probe_cursor = 0;
+      _stream_locked = false;
+      _probe_deadline_ms = millis() + BAUD_PROBE_START_MS;
+      nudgeReceiver();
+    }
   }
 
   void reset() override {
@@ -97,6 +163,8 @@ public:
     // circuits (see the constructor comment; on the M9 "asserted" = GPIO HIGH
     // through R46 into Q16's base = a constant drain while the GPS is off).
     if (_pin_reset != -1) digitalWrite(_pin_reset, LOW);
+    _probe_deadline_ms = 0;
+    _stream_locked = false;
     release();
   }
 
@@ -153,8 +221,18 @@ public:
 #ifdef GPS_NMEA_DEBUG
       Serial.print(c);
 #endif
+      const bool sentence_end = c == '\r' || c == '\n';
       nmea.process(c);
+      if (sentence_end) {
+        const char* sentence = nmea.getSentence();
+        if (sentence && sentence[0] == '$' && MicroNMEA::testChecksum(sentence))
+          noteValidSentence();
+      }
     }
+
+    if (_probe_serial && !_stream_locked && _probe_deadline_ms &&
+        (int32_t)(millis() - _probe_deadline_ms) >= 0)
+      probeNextBaud();
 
     if (!isValid()) time_valid = 0;
 

@@ -47,7 +47,13 @@ static PagerKeyboardState s_state;
 // the UI task, but the short critical section preserves the header's contract
 // if a future board moves I2C polling to another core.
 static portMUX_TYPE s_ring_mux = portMUX_INITIALIZER_UNLOCKED;
-static uint8_t s_ring[16];
+#if defined(HAS_TDECK_PRO)
+static constexpr uint8_t kRingSize = 64;
+#else
+static constexpr uint8_t kRingSize = 16;
+#endif
+static_assert((kRingSize & (kRingSize - 1)) == 0, "keyboard ring must be a power of two");
+static uint8_t s_ring[kRingSize];
 static uint8_t s_head = 0;
 static uint8_t s_tail = 0;
 
@@ -57,11 +63,15 @@ static bool s_bl_ready = false;
 // esp32-hal-ledc.h, not the newer pin-based ledcAttach()). Channel 0: nothing
 // else on this board claims an LEDC channel (the AW9364 display backlight is
 // pulse-driven, not PWM).
+#if defined(HAS_TDECK_PRO)
+static constexpr uint8_t kKbBacklightPwmChannel = 1;   // channel 0 drives the e-paper frontlight
+#else
 static constexpr uint8_t kKbBacklightPwmChannel = 0;
+#endif
 
 static void ringPush(uint8_t c) {
   portENTER_CRITICAL(&s_ring_mux);
-  const uint8_t nh = (uint8_t)((s_head + 1) & 15);
+  const uint8_t nh = (uint8_t)((s_head + 1) & (kRingSize - 1));
   if (nh != s_tail) {   // drop if the ring is full
     s_ring[s_head] = c;
     s_head = nh;
@@ -102,7 +112,7 @@ int pagerKeyboardReadKey() {
     return 0;
   }
   const uint8_t c = s_ring[s_tail];
-  s_tail = (uint8_t)((s_tail + 1) & 15);
+  s_tail = (uint8_t)((s_tail + 1) & (kRingSize - 1));
   portEXIT_CRITICAL(&s_ring_mux);
   return c;
 }
