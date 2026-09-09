@@ -34931,6 +34931,7 @@ static bool textMentionsMe(const char* text) {
 
 static lv_obj_t* s_msg_menu_root = nullptr;
 static lv_obj_t* s_msg_info_root = nullptr;
+static lv_obj_t* s_msg_info_body = nullptr;
 static int       s_msg_menu_idx  = -1;   // absolute index into _ui_msgs
 static char      s_msg_menu_sender[UITask::MAX_SENDER_NAME + 1] = {0};
 // Buffer the body text so the Copy button doesn't reach back into the ring
@@ -34948,6 +34949,7 @@ static void closeMsgActionMenu() {
   }
 }
 static void closeMsgInfoPopup() {
+  s_msg_info_body = nullptr;
   if (s_msg_info_root) {
     // Hide this frame so it vanishes instantly (e.g. when tapping "Replay route"
     // the popup shouldn't linger over the map transition); the async del frees it
@@ -35636,6 +35638,7 @@ static void openMessageInfoPopup(int msg_idx) {
   // Scrollable body below the action row. recolor is on so each repeater's
   // identifier is tinted with its chat-bubble colour (markers built into `body`).
   lv_obj_t* bodywrap = lv_obj_create(card);
+  s_msg_info_body = bodywrap;
   lv_obj_remove_style_all(bodywrap);
   lv_obj_set_size(bodywrap, card_w - 20, content_h - body_top);
   lv_obj_set_pos(bodywrap, 0, body_top);
@@ -41305,6 +41308,26 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
 #endif
       if (g_lv.task) g_lv.task->noteUserInput();
       return true;
+    }
+  }
+  // Message info has a tall, independently scrolling metadata label beneath
+  // its pinned Replay/Trace row. Let that body consume vertical presses while
+  // it has room; otherwise Up finds the pinned button as a spatial candidate
+  // before the normal "focus did not move" scroll fallback can run.
+  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
+      s_msg_info_body && lv_obj_is_valid(s_msg_info_body)) {
+    lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+    for (lv_obj_t* o = focused; o; o = lv_obj_get_parent(o)) {
+      if (o != s_msg_info_body) continue;
+      const bool up = key == M9_KEY_UP;
+      const lv_coord_t room = up ? lv_obj_get_scroll_top(s_msg_info_body)
+                                 : lv_obj_get_scroll_bottom(s_msg_info_body);
+      if (room > 0) {
+        navScrollBy(s_msg_info_body, up);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return true;
+      }
+      break;
     }
   }
   if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
