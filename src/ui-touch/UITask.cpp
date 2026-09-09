@@ -3998,6 +3998,11 @@ static lv_obj_t* navStoreRowFor(lv_obj_t* o) {
   while (o && lv_obj_get_parent(o) != s_nav_store_list) o = lv_obj_get_parent(o);
   return o && lv_obj_get_parent(o) == s_nav_store_list ? o : nullptr;
 }
+static lv_obj_t* navSettingsModalRegionFor(lv_obj_t* o) {
+  if (!o || !g_set_modal.root || !lv_obj_is_valid(g_set_modal.root)) return nullptr;
+  while (o && lv_obj_get_parent(o) != g_set_modal.root) o = lv_obj_get_parent(o);
+  return o && lv_obj_get_parent(o) == g_set_modal.root ? o : nullptr;
+}
 // Can `o` take focus from `cur` on a `dir` press at all? (Valid, visible, and not a
 // horizontal-only secondary target — chat-row gears are reachable by LEFT/RIGHT only, so
 // UP/DOWN walk the primary rows instead of hopping onto a gear.)
@@ -4194,6 +4199,27 @@ static void navMoveDir(int dir) {
   const bool home_left_vertical = navHomeContains(cur) && navHomeRightIndex(cur) < 0 &&
                                   (dir == NAV_UP || dir == NAV_DOWN);
   lv_area_t a; lv_obj_get_coords(cur, &a);
+  // The Discovered header is fixed immediately above its scrolling list. When a
+  // row sits at the viewport top, Close can be physically nearer than the prior
+  // offscreen Add button, causing repeated Up presses to bounce between them.
+  // Prefer the list region while it still has a target in the requested direction;
+  // at the true edge the normal search can still enter the header controls.
+  lv_obj_t* preferred_region = nullptr;
+  if ((dir == NAV_UP || dir == NAV_DOWN) &&
+      g_set_modal.kind == SettingsModalKind::Discovered &&
+      g_set_modal.root && lv_obj_is_valid(g_set_modal.root) &&
+      lv_obj_get_child_cnt(g_set_modal.root) > 1) {
+    lv_obj_t* body_region = lv_obj_get_child(g_set_modal.root, 1);
+    if (navSettingsModalRegionFor(cur) == body_region) {
+      for (int i = 0; i < n; ++i) {
+        lv_obj_t* o = s_nav_objs[i];
+        if (navSettingsModalRegionFor(o) != body_region || !navDirCandidate(o, cur, dir)) continue;
+        lv_area_t b; lv_obj_get_coords(o, &b);
+        long primary, cross;
+        if (navDirMetrics(a, b, dir, &primary, &cross)) { preferred_region = body_region; break; }
+      }
+    }
+  }
   // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
   // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
   // never jump over an intervening focusable: on Send advert, DOWN from the Flood button
@@ -4205,6 +4231,7 @@ static void navMoveDir(int dir) {
   long nearPrimary = 0x7FFFFFFFL, nearCross = 0x7FFFFFFFL;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
+    if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
     if (home_left_vertical && (!navHomeContains(o) || navHomeRightIndex(o) >= 0)) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
@@ -4221,6 +4248,7 @@ static void navMoveDir(int dir) {
   long bestScore = 0x7FFFFFFFL;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
+    if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
     if (home_left_vertical && (!navHomeContains(o) || navHomeRightIndex(o) >= 0)) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
@@ -4245,7 +4273,19 @@ static void navMoveDir(int dir) {
     const long score = primary + 8 * cross;
     if (score < bestScore) { bestScore = score; best = o; }
   }
-  if (best) { s_nav_show = true; lv_group_focus_obj(best); if (g_lv.task) g_lv.task->noteUserInput(); }
+  if (best) {
+    if (dir == NAV_UP && g_set_modal.kind == SettingsModalKind::Discovered &&
+        g_set_modal.root && lv_obj_is_valid(g_set_modal.root) &&
+        lv_obj_get_child_cnt(g_set_modal.root) > 1) {
+      lv_obj_t* body_region = lv_obj_get_child(g_set_modal.root, 1);
+      if (navSettingsModalRegionFor(cur) == body_region &&
+          navSettingsModalRegionFor(best) != body_region)
+        lv_obj_scroll_to_y(body_region, 0, LV_ANIM_OFF);
+    }
+    s_nav_show = true;
+    lv_group_focus_obj(best);
+    if (g_lv.task) g_lv.task->noteUserInput();
+  }
 }
 
 static inline int  navKeyLower(int k)   { return (k >= 'A' && k <= 'Z') ? k - 'A' + 'a' : k; }
