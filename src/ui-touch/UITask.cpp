@@ -15123,11 +15123,13 @@ static void buildDeviceSettings(int sec) {
   // can't block it there, and the other gates are user state) + M9 (2026-09-02
   // battery pass: the hooks were already installed and every gate works there —
   // the throttle is a plain vTaskDelay in the loop task, wake is the keyboard
-  // poll that runs through it, and the M9 is in batteryIsCharging's #else
-  // branch (compile-time false), so the "USB powered" gate can never block —
-  // even stronger than the R8, whose runtime voltage heuristic can — but no
-  // M9 build ever compiled this switch, so on the M9 the pref was permanently
-  // OFF).
+  // poll that runs through it — but no M9 build ever compiled this switch, so
+  // on the M9 the pref was permanently OFF).
+  //
+  // That reasoning used to add "and the M9 is in batteryIsCharging's #else
+  // branch (compile-time false), so the USB-powered gate can never block".
+  // That is no longer true: charge detection is shared by every board now, so
+  // the M9 blocks on USB power like the rest, which is what the gate is for.
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -19918,8 +19920,6 @@ static uint16_t batteryFullMv() {
 // (R8: the divider is permanently connected — PIN_ADC_CTRL=-1 — so the same
 // EMA + above-full voltage heuristic applies; threshold accuracy vs the
 // uncalibrated ADC_MULTIPLIER=5.07 conversion needs on-device confirmation.)
-static constexpr uint16_t kBattChargingMv = 4250;
-
 // Per-board battery sampler: EMA over the noisy ADC so the value doesn't jitter
 // ±1 every tick. Wrapped by batteryMvSmoothed() (below), which only publishes a
 // fresh value every 20 s. Returns 0 if unsupported.
@@ -19940,12 +19940,35 @@ static uint16_t batteryMvSampled() {
   }
   return (uint16_t)(s_ema + 0.5f);
 }
-static bool batteryIsCharging(uint16_t mv) { return mv >= (uint16_t)(batteryFullMv() + 50); }
 #else
-// V4 (and any non-T-Deck touch board): direct read, no charge-from-voltage.
+// V4 (and any non-T-Deck touch board): direct read, no EMA.
 static uint16_t batteryMvSampled() { return g_lv.task ? g_lv.task->getBattMilliVolts() : 0; }
-static bool batteryIsCharging(uint16_t) { return false; }
 #endif
+
+// Charge detection is SHARED by every board: a rail sitting above a full pack
+// means something external is holding it there.
+//
+// This used to live inside the branch above and the #else returned a flat false,
+// so only the T-Deck and V4-R8 ever showed a charging icon. That split was a
+// deliberate call about the V4's noisy ADC dragging the EMA down (see the note
+// above the #if) -- but it decided the question for every OTHER board too,
+// purely by falling through, and nobody had looked at those. The M9 in
+// particular could never report charging no matter what the hardware did
+// (reported by museifu696; V4-R8 charge behaviour separately reported by
+// thesupergeek). The EMA stays gated as before; only the verdict is shared, so
+// battery PERCENTAGE on the direct-read boards is untouched.
+//
+// Deliberately pure: batteryMvSmoothed()'s charge_flip calls this twice with
+// different arguments to compare the old and new verdicts, so a latching
+// Schmitt trigger here would corrupt itself. Flap is bounded instead by the 20 s
+// publish hold and by the 50 mV margin above full.
+//
+// The threshold against an uncalibrated ADC still wants on-device confirmation,
+// exactly as the V4-R8 note above already says.
+static bool batteryIsCharging(uint16_t mv) {
+  const uint16_t full = batteryFullMv();
+  return mv != 0 && mv >= (uint16_t)(full + 50);
+}
 
 // Hold the battery reading steady: publish a fresh value only every 20 s so the
 // %, icon and voltage stop twitching tick-to-tick. The per-board sampler above
