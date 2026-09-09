@@ -1839,23 +1839,45 @@ constexpr int TAB_LAST               = 4;
 #define NAV_THREAD_ROW_FLAG LV_OBJ_FLAG_USER_3
 
 static lv_style_t s_selection_glow_style;
+static lv_style_t s_selection_glow_contrast_style;
 static bool s_selection_glow_style_ready = false;
+static void initSelectionGlowStyle(lv_style_t* style, uint32_t color) {
+  lv_style_init(style);
+  lv_style_set_outline_width(style, 3);
+  // Keep the full cursor inside the widget; outward outlines and shadows are
+  // clipped unevenly when a control sits against a scroll-container edge.
+  lv_style_set_outline_pad(style, -2);
+  lv_style_set_outline_opa(style, LV_OPA_COVER);
+  lv_style_set_outline_color(style, lv_color_hex(color));
+}
 static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t selector) {
   if (!obj) return;
   if (!s_selection_glow_style_ready) {
-    lv_style_init(&s_selection_glow_style);
-    lv_style_set_outline_width(&s_selection_glow_style, 3);
-    lv_style_set_outline_pad(&s_selection_glow_style, 2);
-    lv_style_set_outline_opa(&s_selection_glow_style, LV_OPA_COVER);
-    lv_style_set_shadow_width(&s_selection_glow_style, 12);
-    lv_style_set_shadow_spread(&s_selection_glow_style, 1);
-    lv_style_set_shadow_opa(&s_selection_glow_style, LV_OPA_70);
-    lv_style_set_outline_color(&s_selection_glow_style, lv_color_hex(COLOR_ACCENT));
-    lv_style_set_shadow_color(&s_selection_glow_style, lv_color_hex(COLOR_ACCENT));
+    initSelectionGlowStyle(&s_selection_glow_style, COLOR_ACCENT);
+    initSelectionGlowStyle(&s_selection_glow_contrast_style,
+                           s_theme_day ? 0x000000 : 0xFFFFFF);
     s_selection_glow_style_ready = true;
   }
-  lv_obj_remove_style(obj, &s_selection_glow_style, selector);
-  if (selected) lv_obj_add_style(obj, &s_selection_glow_style, selector);
+  const bool knob_cursor = lv_obj_check_type(obj, &lv_switch_class) ||
+                           lv_obj_check_type(obj, &lv_slider_class);
+  const lv_style_selector_t cursor_selector = knob_cursor
+      ? (lv_style_selector_t)(LV_PART_KNOB | (selector & LV_STATE_ANY))
+      : selector;
+  const uint32_t cursor_part = knob_cursor ? LV_PART_KNOB : LV_PART_MAIN;
+  lv_obj_remove_style(obj, &s_selection_glow_style, cursor_selector);
+  lv_obj_remove_style(obj, &s_selection_glow_contrast_style, cursor_selector);
+  if (selected) {
+    const bool on_accent = lv_obj_get_style_bg_opa(obj, cursor_part) == LV_OPA_COVER &&
+        lv_color_to32(lv_obj_get_style_bg_color(obj, cursor_part)) ==
+        lv_color_to32(lv_color_hex(COLOR_ACCENT));
+    lv_obj_add_style(obj, on_accent ? &s_selection_glow_contrast_style
+                                    : &s_selection_glow_style, cursor_selector);
+  }
+}
+
+static void setNavSelectionGlow(lv_obj_t* obj, bool selected) {
+  setSelectionGlow(obj, selected, LV_PART_MAIN | LV_STATE_FOCUSED);
+  setSelectionGlow(obj, selected, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 }
 
 #if CAP_LUA_APPS
@@ -3759,6 +3781,7 @@ static bool      s_nav_show     = false;       // T-Deck: focus-visible — pain
 // scroll-into-view during a rebuild; direct arrow-nav (focus set OUTSIDE a rebuild) still scrolls.
 static bool      s_nav_suppress_scroll = false;
 static lv_obj_t* s_nav_focus_hint = nullptr;   // one-shot: focus this object on the next rebuild (#45)
+static bool      s_nav_focus_first_thread = false; // one-shot: entering Chats starts at the top row
 #if defined(HAS_M9_KEYBOARD)
 static lv_obj_t* s_m9_focus_pending = nullptr;  // retained until the requested target owns nav
 #endif
@@ -3914,7 +3937,7 @@ static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside t
 
 static void navUnstyle(lv_obj_t* o) {
   if (!o || !lv_obj_is_valid(o)) return;
-  setSelectionGlow(o, false, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+  setNavSelectionGlow(o, false);
 }
 
 // Keyboard-nav edit mode for text fields: when focus lands on a field it is NOT editable
@@ -3954,7 +3977,7 @@ static void navFocusCb(lv_group_t* g) {
   if (!f || !s_nav_show) return;          // focus-visible: paint only while actively keyboard-navigating
   s_nav_styled = f;
   if (f == nav_was_styled) return;
-  setSelectionGlow(f, true, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+  setNavSelectionGlow(f, true);
   if (!s_nav_suppress_scroll) {
     lv_obj_t* scroll_target = navStoreRowFor(f);
     lv_obj_scroll_to_view_recursive(scroll_target ? scroll_target : f, LV_ANIM_OFF);
@@ -5143,6 +5166,18 @@ static void navMaybeRebuild() {
     // The M9 pending-focus block above already placed focus deliberately. Without
     // this arm the chain would fall through to the just-opened-chat branch and
     // move it, which is the whole thing that block exists to prevent.
+  } else if (s_nav_focus_first_thread && on_page &&
+             getActiveTab() == CHAT_INBOX_TAB_INDEX) {
+    s_nav_focus_first_thread = false;
+    const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+    for (int i = 0; i < n; ++i) {
+      lv_obj_t* row = s_nav_objs[i];
+      if (!row || !lv_obj_is_valid(row) || !lv_obj_has_flag(row, NAV_THREAD_ROW_FLAG)) continue;
+      lv_group_focus_obj(row);
+      lv_obj_scroll_to_view_recursive(row, LV_ANIM_OFF);
+      focus_set = true;
+      break;
+    }
   } else if (collected_focus_hint) {
     lv_group_focus_obj(collected_focus_hint);
     focus_set = true;
@@ -9110,6 +9145,12 @@ static void tabChangedCb(lv_event_t* e) {
 
   const int new_t         = getActiveTab();
   updateTabIndicator();   // slide the accent glow bar under the newly-active tab
+#if CAP_KEYPAD_NAV
+  if (new_t == CHAT_INBOX_TAB_INDEX && s_lv_tab_prev != CHAT_INBOX_TAB_INDEX) {
+    s_nav_focus_first_thread = true;
+    navMarkDirty();
+  }
+#endif
   const bool leaving_inbox =
       (s_lv_tab_prev == CHAT_INBOX_TAB_INDEX && new_t != CHAT_INBOX_TAB_INDEX);
   if (leaving_inbox) {
@@ -11577,6 +11618,7 @@ static void buildRadioSettings() {
     y += SC(6);
     lv_obj_t* sep = lv_obj_create(body);
     lv_obj_remove_style_all(sep);
+    lv_obj_clear_flag(sep, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(sep, s_settings_content_w, 1);
     lv_obj_set_pos(sep, 0, y);
     lv_obj_set_style_bg_color(sep, lv_color_hex(themeRole(0x303438, COLOR_BORDER)), LV_PART_MAIN);
@@ -38095,6 +38137,16 @@ static void refreshChatList(LvChatPanel& p) {
     }
     }
     if (!btn) continue;
+
+    // lv_list_btn's default theme paints a solid primary fill for FOCUS_KEY.
+    // Chat navigation uses the shared cursor ring instead, so preserve the
+    // row's normal panel fill while moving through conversations.
+    lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_PANEL),
+                  LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER,
+                LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_transform_width(btn, 0,
+                     LV_PART_MAIN | LV_STATE_FOCUS_KEY);
 
     p.ctx_store[i].idx     = idxs[i];
     p.ctx_store[i].channel = ch;
