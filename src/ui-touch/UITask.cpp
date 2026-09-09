@@ -10743,7 +10743,7 @@ static void discoveredPurgeApply() {
 }
 static void discoveredPurgeCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Purge all discovered nodes?"), TR("Purge"), discoveredPurgeApply);
+  showConfirm(TR("Purge all discovered nodes?"), TR("Purge"), discoveredPurgeApply, true);
 }
 
 // ---- Discovered settings (cogwheel): a small sheet floated over the modal ----
