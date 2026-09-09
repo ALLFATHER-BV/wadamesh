@@ -1,0 +1,43 @@
+# beta_79 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Community ------------------------------------------------------------------------------------
+Six of this drop's changes are Michael A. Cojocari's, across the M9, the Wio Tracker L2, the app store and the browser file transfer, each one tested on his own hardware. The M9 in particular is close to the point where its keyboard navigation stops being something you work around.
+
+# --- A Lua app could reset the device --------------------------------------------------------
+Running a Lua app could reboot the device outright. Decoding a crash dump from a T-Deck put it inside Lua's own panic path: the firmware never told Lua what to do when an error escapes, so Lua fell back to its default, which is to abort the whole program. On a phone that is a closed app; here it is a reset.
+An app's own faults were already caught and turned into a message plus a clean close. The gap was everything that runs just before that safety net is in place, including looking up the app's callback, which an app can make run its own code. That lookup no longer can, there is room reserved in advance for the values that get passed in, and if anything still escapes, the error text is now printed instead of being lost with the reset.
+
+# --- Contacts on the M9 -----------------------------------------------------------------------
+Opening Contacts no longer stalls partway through. While adverts were arriving, the whole list was being torn down and rebuilt once every two and a half seconds, which takes over a second on a large list. Now only the parts an advert actually changes, a name filling in and the "heard" age, are updated in place. Reported by Buko84, whose observation that it was smooth until something was discovered is what found it.
+Leaving a channel puts the cursor back on the channel you were in. Reading unread messages rebuilds the list, and the cursor was being remembered by an address that no longer pointed at the same row, so it landed somewhere unrelated. Reported by Buko84. Michael A. Cojocari extended the fix so the D-pad also walks messages in order inside a conversation, and removed the two floating jump arrows, which were only ever useful with a touchscreen.
+Quick Reply, the About page and the contacts list share a new selection cursor: an accent outline rather than the old block of reverse video, which used to hide whatever it landed on. All keyboard-driven boards get it, so the Pager, Tanmatsu and T-Deck trackball look the same as the M9 now. By Michael A. Cojocari, from reports by Buko84.
+The Ctrl key closes the Control Center as well as opening it. By Michael A. Cojocari, reported by Buko84.
+
+# --- Sound ------------------------------------------------------------------------------------------
+Notification sounds behave the way the settings page claims. The sample chime, the volume buttons and each switch all played regardless of the master Sound switch and of Do Not Disturb, while an arriving message respected both. So with sound switched off the page still chimed at you while you set it up, and nothing ever arrived audibly. A preview is now silent exactly when a real notification would be, and says which of the two silenced it. Reported by PD0RCM on a T-Deck Plus.
+The charging icon appears on the ThinkNode M9 and on every other board that was missing it. Charge detection was only ever compiled for two boards, and every other one answered "not charging" no matter what the hardware was doing. Reported by museifu696 and thesupergeek.
+
+# --- Battery -----------------------------------------------------------------------------------------
+The idle power saver works again. It refused to arm because it consulted a saved Wi-Fi setting that reads as "on" when it has never been written, so anyone who had not explicitly switched Wi-Fi off inside this firmware was blocked forever. It now looks at whether the radio is actually powered, and the radio is properly powered down when you turn Wi-Fi off, which a network scan could previously leave running. Reported by jrote1.
+The Battery page says what is keeping the device awake, for example "held by mesh busy 62%". A low "asleep" figure could mean the device parks badly or simply that it was rarely allowed to park, and there was no way to tell which. Requested by jrote1.
+
+# --- Location privacy ----------------------------------------------------------------------------
+The displacement now changes with the distance you pick. It was the same direction every time, so someone watching you switch between 100 m and 1 km could draw two lines and cross them at your real position. Found by jesshampshire.
+You can choose to answer a position request from your chosen contacts with your real position. The displacement applies to those replies too, which is right by default, but a reply goes encrypted to one contact who already has your permission and who asked for it, so treating it like a broadcast was too blunt. Off unless you turn it on, and what you advertise stays displaced either way. Raised by honza_87628.
+
+# --- Files, apps and pages ------------------------------------------------------------------
+The browser file transfer lists crash reports, settings backups and transferred files as well as screenshots, filters them by type, and can delete them. By Michael A. Cojocari, requested by DenRalle. A settings backup contains your private key, so the page now says so before you download one.
+An app opened from the store no longer keeps its title bar over the app. The title identifies it for a moment and then gets out of the way. By Michael A. Cojocari, reported by Buko84.
+The Discover list shows the same icons as Contacts, so a repeater and an ordinary node are no longer identical until you read the line underneath. Requested by jesshampshire.
+Known regions can be left again on the Tanmatsu. The page was missing from the list the Back key walks, so it stayed on screen and everything opened behind it. Reported by DenRalle.
+On the T-Display P4, the GPS screen can be left after changing the displacement. Choosing a distance opened a second copy of the page over the live one, so Close did nothing. Reported by Leon P.
+The T-Display P4 no longer offers a lock screen. It had no way in, no way out and an empty settings page, so it was a promise the board could not keep. Reported by Piguyraspberry.
+
+# --- Wio Tracker L2 ---------------------------------------------------------------------------
+Enter on the on-screen keyboard runs the terminal command, the wake button is more responsive, and the Memory detail page matches the other full-screen pages. By Michael A. Cojocari.
+
+# --- For testers -----------------------------------------------------------------------------------
+The selection cursor changed on every keyboard-driven board, so if something looks wrong to navigate to, that is the thing to report. On a long list, check whether the cursor stays visible on the last entry.
+Your saved settings carry a new entry this build. Nothing needs doing, but if a setting looks wrong after updating, say so rather than working around it.
+Still open and not fixed here: side-loading Lua apps from the SD card on the T-Display P4, where the app list only reads internal storage; the "your own apps" page in the store closing on its own; and no UI size option on the T-Deck.
