@@ -463,12 +463,19 @@ public:
    *  pending_login so onContactResponse's existing login branch can route
    *  the response. The same branch now also fires
    *  AbstractUITask::onAdminLoginResult so the UI can flip from "logging
-   *  in…" to "logged in" (or "failed"). */
+   *  in…" to "logged in" (or "failed"). Interactive login floods always
+   *  use the legacy-compatible one-byte path hash: older room/repeater
+   *  firmware silently drops packets using the optional wider hashes. */
+  static constexpr uint8_t UI_LOGIN_FLOOD_HASH_SIZE = 1;
   int uiSendAdminLogin(ContactInfo& recipient, const char* password) {
     uiResetPathForLogin(recipient);
     uint32_t est = 0;
+    const uint8_t previous_hash_override = _flood_path_hash_size_override;
+    _flood_path_hash_size_override = UI_LOGIN_FLOOD_HASH_SIZE;
     int r = sendLogin(recipient, password ? password : "", est);
+    _flood_path_hash_size_override = previous_hash_override;
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+      // BaseChatMesh::sendLogin() only transmits; MyMesh owns this response matcher.
       memcpy(&pending_login, recipient.id.pub_key, 4);
     }
     // Diagnostic (room-server login trace): which contact/type we sent the login
@@ -1199,6 +1206,12 @@ public:
 
 private:
   bool _companion_retry_enabled = false;  // opt-in; UITask::begin() applies the persisted toggle
+  uint8_t _flood_path_hash_size_override = 0;  // nonzero only during a synchronous compatibility send
+  uint8_t floodPathHashSize() const {
+    return _flood_path_hash_size_override
+        ? _flood_path_hash_size_override
+        : (uint8_t)(_prefs.path_hash_mode + 1);
+  }
   static const uint8_t COMPANION_TEXT_QUEUE_CAPACITY = 16;
   uint8_t companionDetachQueuedText(mesh::Packet* packets[], uint8_t priorities[],
                                     uint32_t scheduled_for[]);
