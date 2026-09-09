@@ -41363,6 +41363,15 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       return true;
     case M9_KEY_RIGHT:
       {
+        // Reaching the final caret position must not also leave edit mode.
+        if (ta) {
+          const uint32_t p = lv_textarea_get_cursor_pos(ta);
+          lv_textarea_cursor_right(ta);
+          if (lv_textarea_get_cursor_pos(ta) != p) {
+            s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+            return true;
+          }
+        }
         lv_obj_t* source_ta = navFocusedTextarea();
         lv_obj_t* button = m9SymbolButtonForField(source_ta);
         if (!button && ta) button = m9SymbolButtonForField(ta);
@@ -41405,9 +41414,7 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
             navMaybeRebuild();
           }
         } else if (ta) {
-          const uint32_t p = lv_textarea_get_cursor_pos(ta);
-          lv_textarea_cursor_right(ta);
-          if (lv_textarea_get_cursor_pos(ta) == p) navMoveDir(NAV_RIGHT);   // caret at end — same as LEFT
+          navMoveDir(NAV_RIGHT);   // caret was already at end — same as LEFT
         }
         else if (navOnTabBar()) navSwitchTab(+1);
         else                    navMoveDir(NAV_RIGHT);
