@@ -3365,12 +3365,23 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
       // (spotted by honza_87628). querySensors() reads these members directly,
       // so displace them across the call and put the true values back straight
       // after, which keeps the local map and GPS page accurate.
+      //
+      // v59: an answer is not a broadcast, so the operator can choose to give the
+      // contacts they already picked the true fix (honza_87628). Off by default,
+      // and the advert stays displaced either way.
       const double telem_true_lat = sensors.node_lat;
       const double telem_true_lon = sensors.node_lon;
-      advertPosition(sensors.node_lat, sensors.node_lon);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+      const bool telem_exact = touchPrefsGetTelemLocExact();
+#else
+      const bool telem_exact = false;   // no touch prefs here: keep the displacement
+#endif
+      if (!telem_exact) advertPosition(sensors.node_lat, sensors.node_lon);
       sensors.querySensors(permissions, telemetry);
-      sensors.node_lat = telem_true_lat;
-      sensors.node_lon = telem_true_lon;
+      if (!telem_exact) {
+        sensors.node_lat = telem_true_lat;
+        sensors.node_lon = telem_true_lon;
+      }
 
       memcpy(reply, &sender_timestamp,
              4); // reflect sender_timestamp back in response packet (kind of like a 'tag')

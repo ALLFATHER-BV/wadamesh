@@ -224,6 +224,12 @@ bool    touchPrefsGetBootWifiTime();
 bool    touchPrefsSetBootWifiTime(bool on);
 uint16_t touchPrefsGetGpsFuzzM();
 bool     touchPrefsSetGpsFuzzM(uint16_t m);
+/** Answer a telemetry position REQUEST with the true fix instead of the advert
+ *  displacement. Off by default. The advert is a broadcast and stays displaced
+ *  either way; this only widens what a contact you already granted the location
+ *  permission to receives, in an encrypted reply they asked for. */
+bool     touchPrefsGetTelemLocExact();
+bool     touchPrefsSetTelemLocExact(bool on);
 bool    touchPrefsGetLoudAlerts();
 bool    touchPrefsSetLoudAlerts(bool on);
 bool    touchPrefsGetBootWifiTimeOpen();

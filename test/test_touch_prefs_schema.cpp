@@ -124,7 +124,8 @@ int main() {
                     + sizeof(Config::loud_alerts) + sizeof(Config::theme_mode)
             + sizeof(Config::gps_fuzz_m) + sizeof(Config::attaky_notify_enabled)
             + sizeof(Config::attaky_notify_room_color)
-            + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
+            + sizeof(Config::attaky_notify_dm_color)
+                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -196,7 +197,8 @@ int main() {
   static_assert(v55_size + sizeof(Config::theme_mode) + sizeof(Config::gps_fuzz_m)
                     + sizeof(Config::attaky_notify_enabled)
                     + sizeof(Config::attaky_notify_room_color)
-                    + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
+                    + sizeof(Config::attaky_notify_dm_color)
+                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -217,7 +219,8 @@ int main() {
   constexpr size_t v57_size = offsetof(Config, attaky_notify_enabled);
   static_assert(v57_size + sizeof(Config::attaky_notify_enabled)
                     + sizeof(Config::attaky_notify_room_color)
-                    + sizeof(Config::attaky_notify_dm_color) == sizeof(Config),
+                    + sizeof(Config::attaky_notify_dm_color)
+                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;

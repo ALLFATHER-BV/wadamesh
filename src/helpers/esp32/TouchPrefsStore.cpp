@@ -144,6 +144,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.loud_alerts       = 0;      // OFF: the standard chime pitch unless asked for
   c.theme_mode        = 0;      // Night: preserves the existing firmware appearance
   c.gps_fuzz_m        = 0;      // OFF: advertise the real position unless asked otherwise
+  c.telem_loc_exact   = 0;      // OFF: a position ANSWER carries the same displacement as the advert
   c.attaky_notify_enabled    = 0;  // OFF: incoming messages do not blink the keyboard indicators
   c.attaky_notify_room_color = 0;  // red
   c.attaky_notify_dm_color   = 1;  // green
@@ -262,6 +263,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 55) { s_cfg.loud_alerts = 0; }
         if (stored_version < 56) { s_cfg.theme_mode = 0; }   // Night: unchanged appearance
         if (stored_version < 57) { s_cfg.gps_fuzz_m = 0; }   // OFF: real position
+        if (stored_version < 59) { s_cfg.telem_loc_exact = 0; }   // OFF: answers stay displaced
         if (stored_version < 58) {
           s_cfg.attaky_notify_enabled = 0;
           s_cfg.attaky_notify_room_color = 0;
@@ -1223,6 +1225,19 @@ bool touchPrefsSetGpsFuzzM(uint16_t m) {
   s_cfg.gps_fuzz_m = m;
   return cfgFlush();
 }
+// v59: whether a telemetry position ANSWER carries the true fix. The advert is a
+// broadcast and stays displaced regardless; this only affects the encrypted reply
+// sent to a contact you already granted the permission to.
+bool touchPrefsGetTelemLocExact() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.telem_loc_exact != 0;
+}
+bool touchPrefsSetTelemLocExact(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.telem_loc_exact = on ? 1 : 0;
+  return cfgFlush();
+}
+
 
 bool touchPrefsGetLoudAlerts() {
   if (!s_begun) touchPrefsBegin();

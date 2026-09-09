@@ -9337,6 +9337,26 @@ static void dndStartPlusCb(lv_event_t* e)  { if (lv_event_get_code(e) == LV_EVEN
 static void dndEndMinusCb(lv_event_t* e)   { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndEndStep(-1); }
 static void dndEndPlusCb(lv_event_t* e)    { if (lv_event_get_code(e) == LV_EVENT_CLICKED) dndEndStep(+1); }
 
+// A settings preview must be silent exactly when a real notification would be.
+// Playing them unconditionally made the Sound page lie: every toggle and every
+// volume step chimed even with the master Sound switch off or Do Not Disturb
+// active, while arrivals stayed silent. So "I can hear the sample sound, but not
+// incoming messages" looked like a broken notification path when the master was
+// simply off, which is what #464 turned out to be on a T-Deck Plus. Reports the
+// reason rather than just going quiet, so the page explains itself.
+static bool soundPreviewAllowed(bool announce = true) {
+  if (!g_lv.task) return false;
+  if (g_lv.task->isBuzzerQuiet()) {
+    if (announce) g_lv.task->showAlert(TR("Sound is off"), 1400);
+    return false;
+  }
+  if (dndActive()) {
+    if (announce) g_lv.task->showAlert(TR("Do Not Disturb is on"), 1400);
+    return false;
+  }
+  return true;
+}
+
 static void toggleBuzzerCb(lv_event_t* e) {   // message-sound switch (VALUE_CHANGED)
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
   g_lv.task->toggleBuzzer();
@@ -9371,7 +9391,8 @@ static void toggleLoudAlertsCb(lv_event_t* e) {
   touchPrefsSetLoudAlerts(on);
 #endif
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Loud alerts: on") : TR("Loud alerts: off"), 1100);
-  uiPlayNotify();   // play it, so the difference is audible while the switch is under your finger
+  // announce=false: the toast above already owns this tap's feedback.
+  if (soundPreviewAllowed(false)) uiPlayNotify();   // audible difference under your finger
 }
 #endif
 
@@ -9379,25 +9400,27 @@ static void toggleMessageSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetSoundMessages(on);
-  if (on) uiSoundPreview();
+  if (on && soundPreviewAllowed()) uiSoundPreview();
 }
 // Direct/DM-sound switch (own on/off + own slot sound).
 static void toggleDirectSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetSoundDirect(on);
-  if (on) uiPlaySlot(TOUCH_SND_DM);
+  if (on && soundPreviewAllowed()) uiPlaySlot(TOUCH_SND_DM);
 }
 // @-mention-sound switch (distinct chime; lets you keep mentions on with messages off).
 static void toggleMentionSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetSoundMentions(on);
+  if (on && soundPreviewAllowed()) {
 #if defined(HAS_TANMATSU)
-  if (on) tanBeep();          // the Tanmatsu has no distinct mention chime — same tick
+    tanBeep();          // the Tanmatsu has no distinct mention chime — same tick
 #else
-  if (on) uiPlayMention();
+    uiPlayMention();
 #endif
+  }
 }
 #if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
@@ -9409,14 +9432,17 @@ static void volumeStepCb(lv_event_t* e) {
   if (v < 0) v = 0; if (v > 100) v = 100;
   touchPrefsSetSoundVolume((uint8_t)v);
   if (s_vol_val_lbl) lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", v);
+  // Volume steps stay silent under the master switch / DND too, but without a
+  // toast per press: the readout above already changed, so the tap is not lost.
+  const bool preview_ok = soundPreviewAllowed(false);
 #if defined(HAS_TANMATSU)
   applyVolume((uint8_t)v);    // push the new level to the codec live, then preview it
-  tanBeep();
+  if (preview_ok) tanBeep();
 #elif defined(HAS_TDISPLAY_P4)
   applyVolume((uint8_t)v);    // keep the CC slider position in sync, then preview
-  uiPlayNotify();
+  if (preview_ok) uiPlayNotify();
 #else
-  uiPlayNotify();   // preview at the new volume
+  if (preview_ok) uiPlayNotify();   // preview at the new volume
 #endif
 }
 #endif
@@ -11743,6 +11769,33 @@ static void buildRadioSettings() {
     lv_obj_update_layout(note);
     y += lv_obj_get_height(note) + SC(10);
   }
+#if defined(ESP32)
+  // The advert displacement (#399) also applies to a position ANSWER, because a
+  // privacy setting that a telemetry request walks straight around is a hole
+  // rather than a feature. But an answer is not a broadcast: it is encrypted to
+  // one contact you already granted the permission to, and it only goes out
+  // because they asked. Letting those contacts have the true fix is a reasonable
+  // thing to want (honza_87628), so make it a deliberate choice instead of an
+  // assumption. Off by default, so the private behaviour is what you get unless
+  // you say otherwise, and the broadcast advert stays displaced either way.
+  {
+    const int rh = settingsRowLabel(body, y, 6, TR("Exact position to those contacts"),
+                                    COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    y += LV_MAX(34, rh + 12);
+    if (touchPrefsGetTelemLocExact()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, +[](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      touchPrefsSetTelemLocExact(on);
+      if (g_lv.task) {
+        g_lv.task->showAlert(on ? TR("Answering with your exact position")
+                                : TR("Answering with your displaced position"), 1600);
+      }
+    }, LV_EVENT_VALUE_CHANGED, nullptr);
+  }
+#endif
 
   // Multi-byte routing: how many bytes of each repeater's hash this node stamps
   // into the path when it adverts / sends. 1 byte (legacy) collides in large
@@ -40036,7 +40089,7 @@ static void sndMenuBuiltinCb(lv_event_t* e) {
   if (s_snd_btn_lbl[slot] && lv_obj_is_valid(s_snd_btn_lbl[slot]))
     lv_label_set_text(s_snd_btn_lbl[slot], TR("Built-in"));
   sndMenuClose();
-  uiPlaySlot(slot);     // preview the built-in chime
+  if (soundPreviewAllowed()) uiPlaySlot(slot);     // preview the built-in chime
 }
 static void sndMenuFilesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
