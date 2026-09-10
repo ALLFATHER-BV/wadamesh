@@ -6600,7 +6600,7 @@ static void kbSetRotateArrowsOpa(lv_opa_t opa) {
 // a little key showing the active layout's 2-letter code; tapping it cycles
 // English -> each enabled secondary layout -> back, like the T-Deck's SPACE.
 static const char* kbLayoutCode(KeyboardLayoutId id) {
-  static const char* k_codes[] = { "EN", "BG", "RU", "UK", "SR", "EL", "AR", "FR", "NL", "DE", "ES", "IT" };
+  static const char* k_codes[] = { "EN", "BG", "RU", "UK", "SR", "EL", "AR", "FR", "NL", "DE", "ES", "IT", "RO", "LV" };
   const uint8_t i = static_cast<uint8_t>(id);
   return (i < (sizeof k_codes / sizeof k_codes[0])) ? k_codes[i] : "EN";
 }
@@ -14631,11 +14631,11 @@ static void buildDeviceSettings(int sec) {
     uint16_t en_mask = 0;
 #endif
     /* One row per non-English layout; index id-1 into the display names.
-       Keep in KeyboardLayoutId order (BG=1 .. IT=11). MUST have one entry per
+       Keep in KeyboardLayoutId order (BG=1 .. LV=13). MUST have one entry per
        non-EN layout or the loop below reads past the end. */
     static const char* k_kb_disp[] = {
       "Bulgarian", "Russian", "Ukrainian", "Serbian", "Greek", "Arabic (experimental)",
-      "French", "Dutch", "German", "Spanish", "Italian", "Romanian"
+      "French", "Dutch", "German", "Spanish", "Italian", "Romanian", "Latvian"
     };
     for (int id = 1; id < KEYBOARD_LAYOUT_COUNT; ++id) {
       int h = settingsRowLabel(body, y, 4, k_kb_disp[id - 1], COLOR_TEXT, &g_font_12, 56);
