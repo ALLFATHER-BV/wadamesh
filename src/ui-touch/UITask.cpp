@@ -23228,7 +23228,15 @@ static void fmRender() {
         localtime_r(&t, &tmv);
         strftime(ts, sizeof ts, "  %d %b %H:%M", &tmv);
       }
+#if defined(HAS_THINKNODE_M9)
+      // The M9's 320 px row cannot show a crash-report filename, size and date
+      // at once. Keep the filename on line one and make metadata immediately
+      // visible below it instead of hiding the timestamp in the marquee tail.
+      if (ts[0]) snprintf(label, sizeof label, "%s\n%s%s", en.name, sz, ts);
+      else       snprintf(label, sizeof label, "%s   %s", en.name, sz);
+#else
       snprintf(label, sizeof label, "%s   %s%s", en.name, sz, ts);
+#endif
     }
     lv_obj_t* row = lv_list_add_btn(s_fm_list, en.isdir ? LV_SYMBOL_DIRECTORY : LV_SYMBOL_FILE, label);
     fmStyleRow(row, COLOR_TEXT);
