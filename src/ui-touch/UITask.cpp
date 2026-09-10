@@ -39604,6 +39604,26 @@ static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 #endif  // CAP_KEYBOARD || CAP_KEYPAD_NAV (hwKeyDismissTopPopup)
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+// Dedicated M9 destination/action shortcuts stay global once the screen is
+// awake. Back, arrows and Enter are deliberately excluded because they retain
+// contextual editing, picker and game behavior.
+#if defined(HAS_M9_KEYBOARD)
+static bool m9IsGlobalShortcutKey(int key) {
+  switch (key) {
+    case M9_KEY_LEFT_MESSAGE:
+    case M9_KEY_HOME:
+    case M9_KEY_SUB_MESSAGE:
+    case M9_KEY_SUB_MAP:
+    case M9_KEY_MAP:
+    case M9_KEY_CTRL:
+    case M9_KEY_GPS_LONG:
+      return true;
+    default:
+      return false;
+  }
+}
+#endif
+
 // Keys that act as "close the popup" when no text field is focused.
 // Which keys a running Lua app must NOT be given. The rule is "an app may never
 // swallow its own exit", so it only bites where a reserved key IS the only exit.
@@ -39614,14 +39634,14 @@ static bool hwKeyDismissTopPopup() { return popupRegistryDismissTop(); }
 // the dismiss path below never fires for it. Withholding them only made A, P, Q,
 // Enter and Backspace dead inside every Lua app, which is exactly the "missing
 // keys in the SDK" the app authors hit, on this board and no other.
-// M9: it genuinely is the only exit. Its reserved keys are sentinel bytes the
-// keyboard controller emits for Back and Home, never typed text, and there is no
-// touch to tap out with, so they stay reserved.
+// M9: dedicated navigation keys are firmware-owned sentinel bytes, never typed
+// text. Back/Home provide the only guaranteed exits, and destination shortcuts
+// must remain usable without a touchscreen even while an app owns normal input.
 // Pager: reserves nothing already; its exit is the encoder long-press.
 static bool isDismissKey(int key);
 static inline bool keyReservedFromLuaApps(int key) {
 #if defined(HAS_M9_KEYBOARD)
-  return isDismissKey(key);
+  return isDismissKey(key) || m9IsGlobalShortcutKey(key);
 #else
   (void)key;
   return false;
@@ -41158,7 +41178,8 @@ static bool m9HandleNavKey(int key) {
       for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
       if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
-      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else                                      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
@@ -41517,6 +41538,11 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #endif
 #endif  // HAS_M9_KEYBOARD (wake-from-idle if/else)
 #if defined(HAS_M9_KEYBOARD)
+  // Function-row navigation is firmware-owned from every unlocked screen,
+  // including Lua apps, pickers and active text fields. Dispatch it before any
+  // of those contexts can interpret or swallow the sentinel byte.
+  if (m9IsGlobalShortcutKey(key) && m9HandleNavKey(key)) return;
+
   // The glyph grid has a private selection model (shared with the T-Deck
   // trackball). Drive it directly so arrows cannot escape the modal and OK
   // always activates the highlighted symbol.
@@ -41584,10 +41610,6 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   lv_obj_t* ta = ta_focused;
 #endif
 #if defined(HAS_M9_KEYBOARD)
-  // Unlike directional keys and Back, the dedicated Home key is global. Route
-  // it before the textarea split so edit mode cannot swallow it as an unknown
-  // non-printable byte.
-  if (key == M9_KEY_HOME && m9HandleNavKey(key)) return;
   // The accent box owns the arrows WHILE IT IS UP, so this has to come before
   // m9HandleArrowKey, which consumes LEFT/RIGHT to move the caret and returns.
   // Below it, the variants appeared and could never be selected (#410): the box
