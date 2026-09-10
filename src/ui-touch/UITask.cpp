@@ -5684,6 +5684,12 @@ static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over 
 #if defined(HAS_THINKNODE_M9)
 static lv_obj_t* s_m9_mail_indicator = nullptr;
 static lv_obj_t* s_m9_contact_indicator = nullptr;
+static void hideM9NoticeIndicators() {
+  if (s_m9_mail_indicator && lv_obj_is_valid(s_m9_mail_indicator))
+    lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
+  if (s_m9_contact_indicator && lv_obj_is_valid(s_m9_contact_indicator))
+    lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+}
 #endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
@@ -6927,6 +6933,9 @@ static void showKb(LvChatPanel* p) {
 }
 
 static void focusChatComposerOnOpen(LvChatPanel* p) {
+#if defined(HAS_THINKNODE_M9)
+  hideM9NoticeIndicators();
+#endif
   if (p && p->composer_ta && lv_obj_is_valid(p->composer_ta)) {
     taClearSelection(p->composer_ta);
     lv_textarea_set_cursor_pos(p->composer_ta, LV_TEXTAREA_CURSOR_LAST);
@@ -7725,7 +7734,8 @@ static void closeChatPanel(LvChatPanel* p) {
 #if defined(HAS_M9_KEYBOARD)
   if (s_m9_focus_pending == p->composer_ta ||
       s_m9_focus_pending == p->symbol_btn ||
-      s_m9_focus_pending == p->emoji_btn) s_m9_focus_pending = nullptr;
+      s_m9_focus_pending == p->emoji_btn ||
+      s_m9_focus_pending == p->jump_btn) s_m9_focus_pending = nullptr;
 #endif
   hideKb();
   if (p->overlay) lv_obj_add_flag(p->overlay, LV_OBJ_FLAG_HIDDEN);
@@ -9109,6 +9119,9 @@ static void tabChangedCb(lv_event_t* e) {
   closeMentionsScreen();     // transient overlay — switching tabs leaves it
 
   const int new_t         = getActiveTab();
+#if defined(HAS_THINKNODE_M9)
+  if (new_t == CHAT_INBOX_TAB_INDEX) hideM9NoticeIndicators();
+#endif
   updateTabIndicator();   // slide the accent glow bar under the newly-active tab
   const bool leaving_inbox =
       (s_lv_tab_prev == CHAT_INBOX_TAB_INDEX && new_t != CHAT_INBOX_TAB_INDEX);
@@ -33837,8 +33850,9 @@ static void makeChatDetail(LvChatPanel& p) {
   // only the glyph is visible; UITask::loop dims them to 50% one second after
   // the last scroll (jumpBtnsSetDim above).
   // These are pointer affordances on touch boards and hardware F-key affordances
-  // on Tanmatsu. They have no purpose on the T-LoRa Pager or ThinkNode M9, so skip creating them
-  // and leave the pointers null like every consumer already handles safely
+  // on Tanmatsu. M9 also uses the latest-message arrow as a d-pad focus target;
+  // the T-LoRa Pager keeps its Backspace shortcut instead. Leave omitted pointers
+  // null like every consumer already handles safely
   // (chatUpdateJumpButtons, jumpBtnsSetDim, the LvChatPanel reset — all
   // null-guarded). The pager's own Backspace-tap "jump to latest" shortcut
   // below no longer depends on jump_btn's existence; it checks
@@ -33871,7 +33885,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_flag(p.jump_oldest_btn, LV_OBJ_FLAG_HIDDEN);
 #endif  // Pager/M9 omit jump_oldest_btn
 
-#if !defined(TLORA_PAGER) && !defined(HAS_THINKNODE_M9)
+#if !defined(TLORA_PAGER)
   p.jump_btn = lv_btn_create(p.overlay);
   lv_obj_set_size(p.jump_btn, 28, 36);
   lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_TRANSP, LV_PART_MAIN);
@@ -33897,7 +33911,7 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_add_event_cb(p.jump_btn, jumpToLatestCb, LV_EVENT_CLICKED, &p);
   lv_obj_add_flag(p.jump_btn, LV_OBJ_FLAG_HIDDEN);
-#endif  // Pager/M9 omit jump_btn
+#endif  // Pager omits jump_btn
 
   // ---- Composer row ----
   const lv_coord_t composer_h = chatComposerBaseH();
@@ -41363,6 +41377,23 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       return true;
     case M9_KEY_RIGHT:
       {
+        if (LvChatPanel* chat = navOpenChatPanel();
+            chat && chat->msgs && chat->jump_btn && lv_obj_is_valid(chat->jump_btn) &&
+            !lv_obj_has_flag(chat->jump_btn, LV_OBJ_FLAG_HIDDEN)) {
+          lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+          if (focused && lv_obj_get_parent(focused) == chat->msgs) {
+            if (lv_obj_get_group(chat->jump_btn) == s_nav_group) {
+              s_nav_show = true;
+              lv_group_focus_obj(chat->jump_btn);
+            } else {
+              s_m9_focus_pending = chat->jump_btn;
+              navMarkDirty();
+              navMaybeRebuild();
+            }
+            if (g_lv.task) g_lv.task->noteUserInput();
+            return true;
+          }
+        }
         lv_obj_t* source_ta = navFocusedTextarea();
         lv_obj_t* button = m9SymbolButtonForField(source_ta);
         if (!button && ta) button = m9SymbolButtonForField(ta);
@@ -58420,7 +58451,8 @@ void UITask::loop() {
                                 navTopFrontmostChild(top) == s_appdrawer_root;
       const bool notice_surface = !_screen_off && !_manual_lock && !s_remote_mode &&
                                   !s_setup_root && !s_settings_sheet &&
-                                  !s_apppage_title && !s_chat_title[0] &&
+                                  !s_apppage_title && !hasChatDetailOpen() &&
+                                  getActiveTab() != CHAT_INBOX_TAB_INDEX &&
                                   (!anyPopupOpen() || drawer_front);
       const bool mail_pending = notice_surface && !drawer_front && getUnreadTotal() > 0;
       const bool contact_pending = notice_surface && discoveredCount() > 0;
