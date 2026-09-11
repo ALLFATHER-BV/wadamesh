@@ -89,11 +89,11 @@ bool    touchPrefsSetLangFile(const char* code);
 
 /** User-configurable quick-reply macros: up to 6 short strings the user can
  *  drop into the composer with a single tap (e.g. "ok", "on the way",
- *  "stuck — wait"). idx is 0..5; max length 31 chars + null. Returns the
+ *  "stuck — wait"). idx is 0..5; max length 100 chars + null. Returns the
  *  text length actually written into `out` (0 if the slot is empty or idx
  *  is out of range). `out` is always null-terminated when out_cap > 0. */
 constexpr int TOUCH_QUICK_REPLY_COUNT  = 6;
-constexpr int TOUCH_QUICK_REPLY_MAXLEN = 32;
+constexpr int TOUCH_QUICK_REPLY_MAXLEN = 101;
 int  touchPrefsGetQuickReply(int idx, char* out, int out_cap);
 bool touchPrefsSetQuickReply(int idx, const char* text);
 
