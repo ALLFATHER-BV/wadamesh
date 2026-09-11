@@ -289,6 +289,11 @@ bool    touchPrefsSetNavDirKey(int idx, uint8_t ch);
 bool    touchPrefsGetHomeIsDrawer();
 bool    touchPrefsSetHomeIsDrawer(bool on);
 
+/* M9 Home-key behavior: when true and the app drawer is configured as Home,
+ * pressing Home stays in or returns to the drawer instead of toggling Commander. */
+bool    touchPrefsGetHomeKeyKeepsDrawer();
+bool    touchPrefsSetHomeKeyKeepsDrawer(bool on);
+
 /** Hide the device/profile name in the status bar and move the clock to the
  *  left where the name used to be. Default false (name shown). */
 bool touchPrefsGetHideNodeName();
