@@ -40391,6 +40391,15 @@ static fs::FS* backupInternalFs() {
   return &SPIFFS;
 #endif
 }
+static fs::FS* backupSdFs() {
+#if CAP_SD || defined(TLORA_PAGER)
+  return fmSdTryMount() ? &SD : nullptr;
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+  return tanSdTryMount() ? &SD_MMC : nullptr;
+#else
+  return nullptr;
+#endif
+}
 static void backupScan() {
   s_backup_count = 0;
   // Internal flash is flat — list any *.json at the root (SPIFFS on T-Deck/V4, FFat on Tanmatsu).
@@ -40410,17 +40419,15 @@ static void backupScan() {
     }
     root.close();
   }
-#if CAP_SD || defined(TLORA_PAGER)
   // SD card: scan the root AND the /meshcomod data folder. SD-storage builds keep
   // their data under /meshcomod, so users naturally drop a backup next to it —
-  // previously only the root was scanned, so a json in /meshcomod never showed up
-  // ("only gets recognized from the root folder"). Actively (re)mount here: the SD
-  // is otherwise only probed while the file manager is open. fmSdTryMount() no-ops
-  // if already mounted, else walks the mount ladder.
-  if (fmSdTryMount()) {
+  // previously only the root was scanned, so a json in /meshcomod never showed up.
+  // backupSdFs() adopts or mounts either the board's SPI SD or SD_MMC card.
+  fs::FS* sd_fs = backupSdFs();
+  if (sd_fs) {
     static const char* kSdDirs[] = { "/", "/meshcomod" };
     for (const char* dir : kSdDirs) {
-      File d = SD.open(dir);
+      File d = sd_fs->open(dir);
       if (d && d.isDirectory()) {
         File e = d.openNextFile();
         while (e) {
@@ -40446,7 +40453,6 @@ static void backupScan() {
       if (d) d.close();
     }
   }
-#endif
 }
 static void backupPickerClose() {
   popupClose(&s_backup_picker);
@@ -40460,9 +40466,7 @@ static void doBackupImportChosen() {
   fs::FS* fsp = nullptr;
   const char* path = s_backup_chosen;
   if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
-#if CAP_SD || defined(TLORA_PAGER)
-  else if (!strncmp(path, "sd:", 3)) { fsp = &SD; path += 3; }
-#endif
+  else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
   if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
   // "Importing…" overlay, painted before the blocking parse + apply.
   lv_obj_t* ov = lv_obj_create(lv_layer_top());
@@ -40620,11 +40624,12 @@ static void doExportBackupFile(const char* fname) {
 
   char path[96]; snprintf(path, sizeof path, "/%s", fname);
   File f; const char* where = "internal";
-#if CAP_SD || defined(TLORA_PAGER)
-  // Actually mount the card (SD.cardType alone reads CARD_NONE until something
-  // mounts it) so a backup truly lands on — and lists from — the SD card.
-  if (fmSdTryMount()) { f = SD.open(path, FILE_WRITE); if (f) where = "SD"; }
-#endif
+  // Actually mount or adopt the card so a backup truly lands on — and lists
+  // from — removable storage, including boards whose card uses SD_MMC.
+  if (fs::FS* sd_fs = backupSdFs()) {
+    f = sd_fs->open(path, FILE_WRITE);
+    if (f) where = "SD";
+  }
   if (!f) { f = backupInternalFs()->open(path, FILE_WRITE); }
   if (!f) { lv_obj_del(ov); g_lv.task->showAlert(TR("Export failed (can't open file)"), 1800); return; }
   { WdtHeavyGuard _wg;   // a 60 KB backup write to internal flash can trigger a SPIFFS GC
@@ -40642,9 +40647,9 @@ static void doDeleteBackup() {
   const char* path = s_backup_del_path;
   bool ok = false;
   if (!strncmp(path, "int:", 4)) { ok = backupInternalFs()->remove(path + 4); }   // FFat on Tanmatsu/P4, SPIFFS elsewhere
-#if CAP_SD || defined(TLORA_PAGER)
-  else if (!strncmp(path, "sd:", 3)) { if (fmSdTryMount()) ok = SD.remove(path + 3); }
-#endif
+  else if (!strncmp(path, "sd:", 3)) {
+    if (fs::FS* sd_fs = backupSdFs()) ok = sd_fs->remove(path + 3);
+  }
   s_backup_del_path[0] = '\0';
   if (g_lv.task && !ok) g_lv.task->showAlert(TR("Delete failed"), 1500);
   if (s_settings_open_cat == CAT_BACKUPS) lv_async_call(backupsRebuildAsyncCb, nullptr);   // deferred rebuild
