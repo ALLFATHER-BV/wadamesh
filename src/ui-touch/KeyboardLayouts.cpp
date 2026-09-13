@@ -403,6 +403,43 @@ static const lv_btnmatrix_ctrl_t kb_ro_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
+/* Latvian keeps the exact QWERTY deck (same alpha positions as English — no
+ * letters removed, so loanwords/names still type normally) and promotes the
+ * three extra letters with the most everyday use straight onto the deck:
+ * š on the home row (like Spanish's ñ / Romanian's ă) and č / ž on the bottom
+ * row (like Romanian's ş / ţ). The other eight — ā ē ģ ī ķ ļ ņ ū — stay
+ * reachable through the accent popups on their base letter (a/e/g/i/k/l/n/u)
+ * and, on physical hardware, the number row (see hw_lv_digits below). All 22
+ * upper/lower Latvian glyphs sit in Latin Extended-A (U+0100-017F), fully
+ * covered by the bundled extras_* fallback fonts. */
+static const char* const kb_lv_lower[] = {
+    "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "š", LV_SYMBOL_NEW_LINE, "\n",
+    "č", "ž", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_lv_lower_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
+static const char* const kb_lv_upper[] = {
+    "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Š", LV_SYMBOL_NEW_LINE, "\n",
+    "Č", "Ž", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+};
+
+static const lv_btnmatrix_ctrl_t kb_lv_upper_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
 struct OsKeyboardLayout {
     KeyboardLayoutId id;
     const char*      name;
@@ -452,6 +489,9 @@ static const OsKeyboardLayout k_os_layouts[] = {
     { KeyboardLayoutId::RO, "RO",
       kb_ro_lower, kb_ro_lower_ctrl,
       kb_ro_upper, kb_ro_upper_ctrl },
+    { KeyboardLayoutId::LV, "LV",
+      kb_lv_lower, kb_lv_lower_ctrl,
+      kb_lv_upper, kb_lv_upper_ctrl },
 };
 
 /* ================================================================
@@ -477,6 +517,7 @@ static const HwKeyboardLayout k_hw_layouts[] = {
     { KeyboardLayoutId::ES, "ES" },
     { KeyboardLayoutId::IT, "IT" },
     { KeyboardLayoutId::RO, "RO" },
+    { KeyboardLayoutId::LV, "LV" },
 };
 
 /* Bulgarian phonetic mapping for T-Deck.
@@ -723,6 +764,23 @@ static const char* hw_ro_upper[26] = {
 static const char* hw_ro_digits[10]       = { nullptr, "ă", "â", "î", "ş", "ţ", nullptr, nullptr, nullptr, nullptr };
 static const char* hw_ro_digits_shift[10] = { nullptr, "Ă", "Â", "Î", "Ş", "Ţ", nullptr, nullptr, nullptr, nullptr };
 
+/* Latvian keeps the standard a..z alpha matrix (identical to English, matching
+ * the on-screen deck above); the number row surfaces the eight macron/cedilla
+ * letters that aren't already promoted onto the deck (č š ž), in alphabetical
+ * order of their base letter — same trick as Romanian's digit row. */
+static const char* hw_lv_lower[26] = {
+    "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
+    "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
+    "u", "v", "w", "x", "y", "z"
+};
+static const char* hw_lv_upper[26] = {
+    "A", "B", "C", "D", "E", "F", "G", "H", "I", "J",
+    "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
+    "U", "V", "W", "X", "Y", "Z"
+};
+static const char* hw_lv_digits[10]       = { nullptr, "ā", "ē", "ģ", "ī", "ķ", "ļ", "ņ", "ū", nullptr };
+static const char* hw_lv_digits_shift[10] = { nullptr, "Ā", "Ē", "Ģ", "Ī", "Ķ", "Ļ", "Ņ", "Ū", nullptr };
+
 /* ================================================================
  * Runtime state
  * ================================================================ */
@@ -808,6 +866,7 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* ES */ { hw_es_lower,  hw_es_upper,  hw_es_digits,   hw_es_digits_shift },
     /* IT */ { hw_it_lower,  hw_it_upper,  hw_it_digits,   hw_it_digits_shift },
     /* RO */ { hw_ro_lower,  hw_ro_upper,  hw_ro_digits,   hw_ro_digits_shift },
+    /* LV */ { hw_lv_lower,  hw_lv_upper,  hw_lv_digits,   hw_lv_digits_shift },
 };
 
 const char* keyboardLayoutMapHwKey(KeyboardLayoutId id, int key, bool shifted) {
