@@ -171,6 +171,15 @@
   #define CAP_LOCK_SCREEN  0
 #endif
 
+// Physical removable microSD slot, independent of the filesystem API used to
+// drive it. CAP_SD specifically means Arduino SD over SPI; these three boards
+// use SD_MMC instead but still need the same user-facing card diagnostics.
+#if CAP_SD || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  #define CAP_MICROSD 1
+#else
+  #define CAP_MICROSD 0
+#endif
+
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
 // expose it; the Pager adds font-only presets because its 480x222 viewport is
 // wide enough for larger type but too short for global geometry scaling.
