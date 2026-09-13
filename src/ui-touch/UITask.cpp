@@ -19099,6 +19099,11 @@ static void setAddChannelError(const char* msg) {
   if (s_addch_error_l) lv_label_set_text(s_addch_error_l, msg ? TR(msg) : "");
 }
 
+#if defined(HAS_M9_KEYBOARD)
+static int findChannelThreadByName(const char* name);
+static void openThreadDetailByIdx(int idx, bool channel);
+#endif
+
 // ---- Create-private channel ----
 static void createPrivateChannelSubmitCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -19140,11 +19145,23 @@ static void createPrivateChannelSubmitCb(lv_event_t* e) {
   // Don't wait for the loop's deferred refresh — pull the channel into the
   // thread list right now so the chats list shows the new entry the instant
   // the modal closes.
+#if defined(HAS_M9_KEYBOARD)
+  int thread_idx = -1;
+#endif
   if (g_lv.task) {
     g_lv.task->refreshThreadsFromMesh();
     g_lv.dirty_threads = true;
+#if defined(HAS_M9_KEYBOARD)
+    thread_idx = findChannelThreadByName(name);
+#endif
   }
   closeSettingsModal();
+#if defined(HAS_M9_KEYBOARD)
+  if (thread_idx >= 0) {
+    goToTab(CHAT_INBOX_TAB_INDEX);
+    openThreadDetailByIdx(thread_idx, true);
+  }
+#endif
   if (g_lv.task) g_lv.task->showAlert(TR("Channel created"), 1200);
 }
 
@@ -37562,6 +37579,11 @@ static void refreshChatDetail(LvChatPanel& p) {
 #endif
   if (n <= 0) {
     chatVirtResetToPlaceholder(p, "No messages yet.\nSay hello!");
+#if defined(HAS_M9_KEYBOARD)
+    if (opening) focusChatComposerOnOpen(&p);
+#endif
+    s_chat_just_opened  = false;
+    s_chat_jump_msg_idx = -1;
     return;
   }
 
