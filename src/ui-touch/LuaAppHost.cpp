@@ -194,6 +194,16 @@ constexpr uint32_t kAppTitleMs = 3000;         // identify the app briefly, then
 // screen would sail past the null check straight into freed memory.
 static uint32_t s_ui_gen = 1;
 
+#if CAP_LUA_SDK_EXT
+static void* s_map_view = nullptr;
+
+static void destroyLiveMapView() {
+  void* view = s_map_view;
+  s_map_view = nullptr;
+  if (view) luaHostMapDestroy(view);
+}
+#endif
+
 struct Host {
   lua_State*  L = nullptr;
   LuaHeap     heap;
@@ -719,6 +729,9 @@ int uiTextLines(lua_State* L) {
 static int uiClear(lua_State* L) {
   (void)L;
   if (!s_h || !s_h->body) return 0;
+#if CAP_LUA_SDK_EXT
+  destroyLiveMapView();
+#endif
   lv_obj_clean(s_h->body);   // deletes the children, keeps the page itself
   ++s_ui_gen;
   return 0;
@@ -1393,14 +1406,17 @@ int meshDiscover(lua_State* L) {
 // which is 512 KB of PSRAM; letting an app open them in a loop would be a
 // straightforward way to exhaust the board. :close() disposes of one early
 // rather than waiting for the collector.
-struct MapUd { void* v; };
-int s_map_views = 0;
+struct MapUd { void* v; uint32_t gen; };
 
-MapUd* checkMap(lua_State* L) { return (MapUd*)luaL_checkudata(L, 1, "wada.map"); }
+MapUd* checkMap(lua_State* L) {
+  MapUd* u = (MapUd*)luaL_checkudata(L, 1, "wada.map");
+  if (u->gen != s_ui_gen || u->v != s_map_view) u->v = nullptr;
+  return u;
+}
 
 int mapView(lua_State* L) {
   if (!s_h) return luaL_error(L, "no app");
-  if (s_map_views > 0) return luaL_error(L, "only one map view at a time (call :close() first)");
+  if (s_map_view) return luaL_error(L, "only one map view at a time (call :close() first)");
   const int x = (int)luaL_checkinteger(L, 1), y = (int)luaL_checkinteger(L, 2);
   const int w = (int)luaL_checkinteger(L, 3), h = (int)luaL_checkinteger(L, 4);
   luaL_argcheck(L, w > 0 && w <= 800, 3, "width 1..800");
@@ -1409,7 +1425,8 @@ int mapView(lua_State* L) {
   if (!v) return luaL_error(L, "map view alloc failed");
   MapUd* ud = (MapUd*)lua_newuserdatauv(L, sizeof(MapUd), 0);
   ud->v = v;
-  s_map_views++;
+  ud->gen = s_ui_gen;
+  s_map_view = v;
   luaL_setmetatable(L, "wada.map");
   return 1;
 }
@@ -1480,7 +1497,7 @@ int mpToLatLon(lua_State* L) {
 }
 int mpClose(lua_State* L) {
   MapUd* u = checkMap(L);
-  if (u->v) { luaHostMapDestroy(u->v); u->v = nullptr; if (s_map_views > 0) s_map_views--; }
+  if (u->v) { u->v = nullptr; destroyLiveMapView(); }
   return 0;
 }
 int mpGc(lua_State* L) { return mpClose(L); }
@@ -2704,12 +2721,6 @@ void hostTeardown() {
   if (h->L && h->prompt_cb != LUA_NOREF) luaL_unref(h->L, LUA_REGISTRYINDEX, h->prompt_cb);
   h->prompt_cb = LUA_NOREF;
   if (s_pkt_poll) { lv_timer_del(s_pkt_poll); s_pkt_poll = nullptr; }
-#if CAP_LUA_SDK_EXT
-  // A map view is torn down with the app body below, so its userdata __gc must
-  // not free it a second time. Zeroing the count here also lets the next app
-  // open a view even if the previous one never called :close().
-  s_map_views = 0;
-#endif
   // Named timers hold both an lv_timer and a registry ref; both go now, while
   // the state is still alive to unref against.
   for (int i = 0; i < Host::kMaxTimers; i++) {
@@ -2745,6 +2756,9 @@ void hostTeardown() {
     s_h = h;               // storeFlush needs the id + dirty flag
     storeFlush();
     s_h = nullptr;
+#if CAP_LUA_SDK_EXT
+    destroyLiveMapView();  // leaves map userdata inert when lua_close runs __gc
+#endif
     lua_close(L);          // runs canvas __gc -> frees pixel buffers
     Serial.printf("[LUAAPP] %s closed, leaked=%u peak=%u psram_free=%u\n", h->id,
                   (unsigned)h->heap.used, (unsigned)h->heap.peak,
