@@ -1,0 +1,1 @@
+{"id":"wardrive","name":"Wardrive","ver":"1.2","desc":"LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions to a CSV. Review a run on the device: the route on the map, coloured by which direction of the link you ask about. Reference app for wada.mesh.discover.","icon":"map"}
