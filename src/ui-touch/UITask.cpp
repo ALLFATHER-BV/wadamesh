@@ -2627,6 +2627,7 @@ enum class SettingsModalKind : uint8_t {
 
 struct SettingsModalState {
   lv_obj_t* root;
+  lv_obj_t* body;
   SettingsModalKind kind;
   lv_obj_t* name_ta;
   lv_obj_t* lat_ta;
@@ -4380,6 +4381,18 @@ static lv_obj_t* navScrollFocused(bool up) {
     if (room <= 0) continue;   // nothing to scroll that way here — try the next ancestor
     navScrollBy(p, up);
     return p;
+  }
+  // A read-only settings modal can legitimately leave focus on its fixed
+  // header Close button, which is a sibling of the scroll body. Prefer that
+  // visible modal body and never scroll the covered page behind it.
+  if (g_set_modal.root && g_set_modal.body && lv_obj_is_valid(g_set_modal.body)) {
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(g_set_modal.body)
+                               : lv_obj_get_scroll_bottom(g_set_modal.body);
+    if (room > 0) {
+      navScrollBy(g_set_modal.body, up);
+      return g_set_modal.body;
+    }
+    return nullptr;
   }
   lv_obj_t* best = nullptr; long bestArea = 0;   // fallback: scroll the page regardless of focus
   navFindScrollableRec(lv_scr_act(), up, &best, &bestArea);
@@ -10336,6 +10349,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   styleSurface(body, COLOR_BG, 0);
   lv_obj_set_style_pad_all(body, 6, LV_PART_MAIN);
   lv_obj_set_style_border_width(body, 0, LV_PART_MAIN);
+  lv_obj_add_flag(body, NAV_PASSTHRU_FLAG);
   lv_obj_set_scroll_dir(body, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(body, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_add_event_cb(body, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
@@ -10355,9 +10369,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   lv_obj_set_style_pad_right(content, 6, LV_PART_MAIN);
   lv_obj_set_style_border_width(content, 0, LV_PART_MAIN);
   lv_obj_clear_flag(content, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(content, NAV_PASSTHRU_FLAG);
 
   resetSettingsModalState();
   g_set_modal.root = root;
+  g_set_modal.body = body;
   g_set_modal.kind = kind;
   s_settings_content_w = (sw - 8) - 12 - 6;   // body content width minus the right control gutter
 #if CAP_KEYBOARD && CAP_KEYPAD_NAV
@@ -35029,6 +35045,10 @@ static void settingsCatBuild(int cat) {
 // call when nothing is open (tab change / key dismiss call it unconditionally).
 static void closeSettingsCategory() {
   if (!s_settings_sheet && s_settings_open_cat < 0) return;
+  // A popup settings modal sits above this category. Tear it down through its
+  // canonical closer before resetting g_set_modal, otherwise the root survives
+  // on lv_layer_top with no pointer left for Back or Close to dismiss it.
+  if (settingsModalIsOpen()) closeSettingsModal();
   hideKb();
   if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
     s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
@@ -41773,6 +41793,19 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       default: return false;
     }
     s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
+    return true;
+  }
+  // System Information and Memory detail are read-only, so their only real
+  // focus target is Close. Up/Down must operate the sibling scroll body
+  // directly; generic spatial navigation would otherwise bounce between the
+  // passive content wrapper and Close instead of scrolling back through text.
+  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
+      g_set_modal.root && g_set_modal.body &&
+      (g_set_modal.kind == SettingsModalKind::SystemInfo ||
+       g_set_modal.kind == SettingsModalKind::MemoryInfo)) {
+    navScrollBy(g_set_modal.body, key == M9_KEY_UP);
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
     return true;
   }
   // Map pan mode (toggled by the Map key on the Map tab): arrows pan the map
@@ -59910,8 +59943,8 @@ static const PopupEnt k_popup_registry[] = {
   // so those still close first.
   { P_OPEN(s_luastore_root),         []{ closeLuaStorePage(); },          PF_COUNT },
 #endif
-  { P_OPEN(s_settings_sheet),        []{ closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
   { []{ return settingsModalIsOpen(); }, []{ closeSettingsModal(); },     PF_COUNT },
+  { P_OPEN(s_settings_sheet),        []{ closeSettingsCategory(); },      PF_COUNT | PF_SWIPE },
   { P_OPEN(s_power_menu),            []{ closePowerMenu(); },             PF_COUNT },
   { P_OPEN(s_cc_root),               []{ closeControlCenter(); },         PF_COUNT },
   { P_OPEN(s_ct_sort_sheet),         []{ ctSortSheetClose(); },           PF_COUNT },
