@@ -57871,10 +57871,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     char glance_title[96];
     {
       char hops[24] = "";
-      if (path_len == 0)                       snprintf(hops, sizeof hops, " \xC2\xB7 %s", TR("direct"));
-      else if (path_len != OUT_PATH_UNKNOWN)   snprintf(hops, sizeof hops, " \xC2\xB7 %u %s",
-                                                        (unsigned)path_len,
-                                                        path_len == 1 ? TR("hop") : TR("hops"));
+      if (path_len != OUT_PATH_UNKNOWN) {
+        const uint8_t hop_count = (uint8_t)(path_len & 0x3F);
+        if (hop_count == 0) snprintf(hops, sizeof hops, " \xC2\xB7 %s", TR("direct"));
+        else snprintf(hops, sizeof hops, " \xC2\xB7 %u %s", (unsigned)hop_count,
+                      hop_count == 1 ? TR("hop") : TR("hops"));
+      }
       // A channel post names the speaker as well as the room; a direct message
       // is already titled with the sender, so naming them twice adds nothing.
       if (channel && sender && sender[0])
