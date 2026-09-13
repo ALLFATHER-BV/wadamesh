@@ -20542,9 +20542,16 @@ static void battChartTickCb(lv_event_t* e) {
 static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
                                 int full_mv, char* out, size_t cap) {
   int start = 0;
-  for (int i = 1; i < n; ++i) {
+  for (int i = 0; i < n; ++i) {
+    // The chart is intentionally drawn in file order, but the regression uses
+    // elapsed epoch seconds. A reboot before wall-clock recovery, or a later
+    // clock correction, can append zero/backward timestamps; unsigned
+    // subtraction then turns a real discharge into a near-zero positive slope.
+    // Fit only the newest valid, strictly increasing timeline segment.
+    if (eps[i] < 1700000000UL) { start = i + 1; continue; }
+    if (i > 0 && (eps[i - 1] < 1700000000UL || eps[i] <= eps[i - 1])) start = i;
     if ((int)mvs[i] > full_mv)                   start = i + 1;   // charging spike -> resume after
-    else if ((int)mvs[i] - (int)mvs[i - 1] >= 25) start = i;      // a >=25 mV rise = charge event
+    else if (i > 0 && (int)mvs[i] - (int)mvs[i - 1] >= 25) start = i; // a >=25 mV rise = charge event
   }
   double sx = 0, sy = 0, sxx = 0, sxy = 0; int m = 0;
   uint32_t t0 = 0, last_t = 0; int last_v = 0;
