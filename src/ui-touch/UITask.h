@@ -27,6 +27,10 @@ struct ContactInfo;
 /** Maps bottom tabs (Home, Chats, Contacts, Set — no separate Net tab). */
 enum class TouchUiScreen : uint8_t { Home = 0, ChatInbox = 1, Contacts = 2, Settings = 3 };
 
+void sdMountDiagBegin();
+void sdMountDiagAttempt(uint32_t hz, bool begin_ok, bool card_ready);
+void sdMountDiagSetMounted(bool mounted, uint32_t hz);
+
 class UITask : public AbstractUITask {
 public:
   static const int MAX_UI_MESSAGES = 500;

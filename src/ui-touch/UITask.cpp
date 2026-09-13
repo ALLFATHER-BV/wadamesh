@@ -2484,6 +2484,49 @@ static lv_color_t* g_draw_buffer = nullptr;
 // every mount/remount site (main.cpp boot adoption + the two UITask mounts) because SD.begin's
 // clock is the session clock; Settings -> About reports it on the R8 (no serial console there).
 uint32_t g_sd_operating_hz = 0;
+// Most supported boards expose no card-detect GPIO, so a completed filesystem
+// mount is the only positive proof that a card is connected. Preserve existing
+// mount attempts for the on-device diagnostic instead of issuing extra probes.
+struct SdMountDiagState {
+  bool checked = false;
+  bool mounted = false;
+  bool last_begin_ok = false;
+  uint8_t attempts = 0;
+  uint32_t last_attempt_hz = 0;
+  uint32_t mounted_hz = 0;
+};
+static volatile SdMountDiagState s_sd_diag;
+
+void sdMountDiagBegin() {
+  s_sd_diag.checked = true;
+  s_sd_diag.mounted = false;
+  s_sd_diag.last_begin_ok = false;
+  s_sd_diag.attempts = 0;
+  s_sd_diag.last_attempt_hz = 0;
+  s_sd_diag.mounted_hz = 0;
+}
+
+void sdMountDiagAttempt(uint32_t hz, bool begin_ok, bool card_ready) {
+  s_sd_diag.checked = true;
+  if (s_sd_diag.attempts < 0xFF) ++s_sd_diag.attempts;
+  s_sd_diag.last_attempt_hz = hz;
+  s_sd_diag.last_begin_ok = begin_ok;
+  s_sd_diag.mounted = card_ready;
+  if (card_ready) s_sd_diag.mounted_hz = hz;
+}
+
+void sdMountDiagSetMounted(bool mounted, uint32_t hz) {
+  s_sd_diag.checked = true;
+  s_sd_diag.mounted = mounted;
+  if (!mounted) s_sd_diag.mounted_hz = 0;
+  else if (hz)  s_sd_diag.mounted_hz = hz;
+}
+
+static void sdDiagClockText(uint32_t hz, char* out, size_t cap) {
+  if (hz >= 1000000) snprintf(out, cap, "%lu MHz", (unsigned long)(hz / 1000000));
+  else if (hz > 0)   snprintf(out, cap, "%lu kHz", (unsigned long)(hz / 1000));
+  else               snprintf(out, cap, "unknown");
+}
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
 // UI resolution scaling (Tanmatsu, no touchscreen). LVGL renders at s_lv_pw x s_lv_ph (PHYSICAL
@@ -12431,11 +12474,11 @@ static void sysInfoTextRest(char* buf, size_t cap) {
                 (unsigned)(sketch_size / 1024u),
                 (unsigned)(sketch_free / 1024u));
 
-#if CAP_SD || defined(TLORA_PAGER)
-  // microSD size + free. The FAT scan (usedBytes()) is done by the core-0 worker — never
-  // on this UI thread — so the About sheet can't freeze on it. We just read the worker's
-  // cached result here and request a (re)scan at most every 30 s.
+#if CAP_MICROSD
   {
+#if CAP_SD
+    // SPI-SD size + free. This existing FAT scan stays on the core-0 worker so
+    // opening About cannot freeze the UI; SD_MMC builds remain fully passive.
     static uint32_t sd_req_ms = 0;
     const uint32_t nowm = millis();
     // Once armed, only the worker may clear this request (after publishing
@@ -12446,16 +12489,56 @@ static void sysInfoTextRest(char* buf, size_t cap) {
       if (ensureTileFetchTaskRunning())
         s_sdinfo_request = true;   // worker rescans off-thread
     }
-    if (!s_sdinfo_done)
-      p += snprintf(buf + p, cap - p, "microSD\n  \xE2\x80\xA6\n\n");          // … (computing)
-    else if (s_sdinfo_ok)
+#endif
+    char sd_clock[16];
+    sdDiagClockText(s_sd_diag.mounted ? s_sd_diag.mounted_hz
+                                     : s_sd_diag.last_attempt_hz,
+                    sd_clock, sizeof sd_clock);
+    if (!s_sd_diag.checked) {
+      p += snprintf(buf + p, cap - p, "microSD\n  status: not checked\n\n");
+    } else if (!s_sd_diag.mounted && s_sd_diag.attempts == 0) {
       p += snprintf(buf + p, cap - p,
-                    "microSD\n  size: %llu MB\n  free: %llu MB\n\n",
+                    "microSD\n  status: not mounted\n  mount was not attempted\n\n");
+    } else if (!s_sd_diag.mounted) {
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  status: not mounted (missing or unreadable)\n"
+                    "  last mount: %u attempt%s, %s\n  last init: %s\n\n",
+                    (unsigned)s_sd_diag.attempts,
+                    s_sd_diag.attempts == 1 ? "" : "s",
+                    sd_clock, s_sd_diag.last_begin_ok ? "ok" : "failed");
+#if CAP_SD
+    } else if (!s_sdinfo_done) {
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  status: connected / mounted\n"
+                    "  mount: %u attempt%s @ %s\n  size: checking...\n\n",
+                    (unsigned)s_sd_diag.attempts,
+                    s_sd_diag.attempts == 1 ? "" : "s", sd_clock);
+    } else if (s_sdinfo_ok) {
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  status: connected / mounted\n"
+                    "  mount: %u attempt%s @ %s\n  size: %llu MB\n  free: %llu MB\n\n",
+                    (unsigned)s_sd_diag.attempts,
+                    s_sd_diag.attempts == 1 ? "" : "s", sd_clock,
                     (unsigned long long)(s_sdinfo_tot  / (1024ull * 1024ull)),
                     (unsigned long long)(s_sdinfo_free / (1024ull * 1024ull)));
-    else
-      p += snprintf(buf + p, cap - p, "microSD\n  not mounted\n\n");
+    } else {
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  status: mounted, capacity read failed\n"
+                    "  mount: %u attempt%s @ %s\n\n",
+                    (unsigned)s_sd_diag.attempts,
+                    s_sd_diag.attempts == 1 ? "" : "s", sd_clock);
+#else
+    } else {
+      p += snprintf(buf + p, cap - p,
+                    "microSD\n  status: connected / mounted\n"
+                    "  mount: %u attempt%s @ %s\n\n",
+                    (unsigned)s_sd_diag.attempts,
+                    s_sd_diag.attempts == 1 ? "" : "s", sd_clock);
+#endif
+    }
   }
+#else
+  p += snprintf(buf + p, cap - p, "microSD\n  not available on this hardware\n\n");
 #endif
 
   // NVS usage across the whole 'nvs' partition (shared by Wi-Fi creds, the
@@ -12541,7 +12624,7 @@ static void refreshSysInfo(unsigned long now) {
     if (lv_indev_get_scroll_dir(in) != LV_DIR_NONE) { next = now + 120; return; }
   }
   next = now + 1000;
-  char buf[832];
+  char buf[1024];
   sysInfoTextLive(buf, sizeof buf);
   lv_label_set_text(s_sysinfo_lbl, buf);
   // Slow tier: pushing identical text would still invalidate + repaint the whole
@@ -12614,7 +12697,7 @@ static void refreshSleepDiag(unsigned long now) {
 
 static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal(TR("System Information"), SettingsModalKind::SystemInfo);
-  char buf[832];
+  char buf[1024];
 
   // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
   // Both labels below are re-texted AFTER build with text whose LINE COUNT
@@ -21868,7 +21951,15 @@ static bool sdAdoptLiveMount() {
   s_sd_mounted = true;
   s_sd_size = SD.cardSize();
   s_sd_retry_after_ms = 0;
+  sdMountDiagSetMounted(true, g_sd_operating_hz);
   return true;
+}
+static bool sdBeginTracked(SPIClass* spi, uint32_t hz, bool* begin_ok_out = nullptr) {
+  const bool begin_ok = spi && SD.begin(PIN_SD_CS, *spi, hz, "/sd", 6);
+  const bool card_ready = begin_ok && SD.cardType() != CARD_NONE;
+  if (begin_ok_out) *begin_ok_out = begin_ok;
+  sdMountDiagAttempt(hz, begin_ok, card_ready);
+  return card_ready;
 }
 static bool sdRuntimeLifecycleBusy();
 static bool fmSdTryMount() {
@@ -21902,12 +21993,13 @@ static bool fmSdTryMount() {
 #endif
   SPIClass* spi = sdSharedSPI();
   if (!spi) return false;
+  sdMountDiagBegin();
 #if defined(TLORA_PAGER)
   // Vendor-compatible Pager sequence: the shared display/radio bus is already
   // running, all other CS lines are parked HIGH, and the card gets one 4 MHz
   // mount attempt. Never tear down that live shared bus or add a retry ladder.
-  const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
-  const bool mounted = begin_ok && SD.cardType() != CARD_NONE;
+  bool begin_ok = false;
+  const bool mounted = sdBeginTracked(spi, 4000000, &begin_ok);
 #else
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
@@ -21950,7 +22042,7 @@ static bool fmSdTryMount() {
     for (int attempt = 0; attempt < kAttempts; ++attempt) {
       SD.end();
       delay(kMountLadder[attempt].settle_ms);
-      if (SD.begin(PIN_SD_CS, *spi, kMountLadder[attempt].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
+      if (sdBeginTracked(spi, kMountLadder[attempt].hz)) {
         mounted = true;
         mounted_hz = kMountLadder[attempt].hz;
         break;
@@ -21963,10 +22055,10 @@ static bool fmSdTryMount() {
     if (mounted && mounted_hz < 4000000) {
       SD.end();
       delay(60);
-      if (!(SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE)) {
+      if (!sdBeginTracked(spi, 4000000)) {
         SD.end();
         delay(120);
-        mounted = SD.begin(PIN_SD_CS, *spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+        mounted = sdBeginTracked(spi, mounted_hz);
       } else {
         mounted_hz = 4000000;
       }
@@ -21986,6 +22078,7 @@ static bool fmSdTryMount() {
     // later mount only restores the independently SD-backed data consumers.
     s_sd_data_warn_next_ms = 0;
 #endif
+  sdMountDiagSetMounted(true, mounted_hz);
     return true;
   }
 #if defined(TLORA_PAGER)
@@ -21998,6 +22091,7 @@ static bool fmSdTryMount() {
 #else
   SD.end();                                     // clean up on failure
 #endif
+  sdMountDiagSetMounted(false, 0);
   s_sd_retry_after_ms = millis() + 10000;       // back off so we don't hammer the card
   return false;
 }
@@ -22009,6 +22103,7 @@ static void fmSdUnmount() {
 #endif
     s_sd_mounted = false;
     s_sd_size = 0;
+    sdMountDiagSetMounted(false, 0);
   }
   s_sd_retry_after_ms = 0;   // a reinsert should be able to mount right away
 }
@@ -23365,23 +23460,39 @@ static bool tanSdTryMount() {
   if (luaAudioStorageBusy()) return false;
 #endif
   if (millis() < s_tan_sd_retry_after) return false;
+  const uint32_t mount_hz = (uint32_t)SDMMC_FREQ_DEFAULT * 1000u;
+  if (SD_MMC.cardType() != CARD_NONE) {
+    s_tan_sd_mounted = true;
+    s_tan_sd_size = SD_MMC.cardSize();
+    sdMountDiagSetMounted(true, 0);   // preserve the boot-recorded clock when adopting its mount
+    return true;
+  }
+  sdMountDiagBegin();
+  bool attempted = false;
+  bool begin_ok = false;
 #if defined(HAS_WIO_TRACKER_L2)
   // 20 MHz to match main.cpp's boot mount — re-begin()ning at Arduino's 40 MHz
   // default would quietly re-clock a card the boot already brought up at 20.
-  if (SD_MMC.cardType() != CARD_NONE ||
-      (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
-       SD_MMC.setPins(2, 3, 1) &&
-       SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT) &&
-       SD_MMC.cardType() != CARD_NONE)) {
+  if (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
+      SD_MMC.setPins(2, 3, 1)) {
+    attempted = true;
+    begin_ok = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT);
+  }
 #elif defined(HAS_TDISPLAY_P4)
   // Hot-insert path (no-op when main.cpp already mounted at boot): 20 MHz like the boot ladder,
   // not Arduino's 40 MHz HIGHSPEED default.
-  if (SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT) && SD_MMC.cardType() != CARD_NONE) {
+  attempted = true;
+  begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT);
 #else
-  if (SD_MMC.begin("/sdcard", false /*4-bit*/) && SD_MMC.cardType() != CARD_NONE) {
+  attempted = true;
+  begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/);
 #endif
+  const bool card_ready = begin_ok && SD_MMC.cardType() != CARD_NONE;
+  if (attempted) sdMountDiagAttempt(mount_hz, begin_ok, card_ready);
+  if (card_ready) {
     s_tan_sd_mounted = true;
     s_tan_sd_size = SD_MMC.cardSize();
+    sdMountDiagSetMounted(true, mount_hz);
     return true;
   }
 #if defined(HAS_WIO_TRACKER_L2)
@@ -23400,6 +23511,7 @@ static bool tanSdTryMount() {
 #else
   SD_MMC.end();
 #endif
+  sdMountDiagSetMounted(false, 0);
   s_tan_sd_retry_after = millis() + 8000;   // don't grind a missing card on every roots render
   return false;
 }
@@ -25393,6 +25505,7 @@ static void fileTransferStorageIoFailed() {
 #else
   s_tan_sd_mounted = false;
   s_tan_sd_retry_after = millis() + 8000;
+  sdMountDiagSetMounted(false, 0);
 #endif
 }
 
@@ -29638,7 +29751,7 @@ static void tileFetchTaskFn(void* arg) {
       if (luaNetWorkerPending()) { luaNetWorkerService(&client, &http); continue; }
     }
 #endif
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_SD
     // microSD usage for the About page — the FAT scan runs here, off the UI thread.
     if (s_sdinfo_request) {
       // Publish busy before clearing request so the loop task never observes a
@@ -57492,21 +57605,22 @@ static void sdHealthTick() {
 #endif
     SPIClass* spi = sdSharedSPI();
     if (!spi) return;
+    sdMountDiagBegin();
 #if defined(TLORA_PAGER)
     // The Pager shares this SPIClass with display + radio: one 4 MHz attempt,
     // with every other CS parked HIGH and no SD.end() of a potentially live bus.
-    const bool begin_ok = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6);
-    const bool remounted = begin_ok && SD.cardType() != CARD_NONE;
+    bool begin_ok = false;
+    const bool remounted = sdBeginTracked(spi, 4000000, &begin_ok);
 #else
     SD.end();
-    bool remounted = SD.begin(PIN_SD_CS, *spi, 4000000, "/sd", 6) &&
-                     SD.cardType() != CARD_NONE;
+    bool remounted = sdBeginTracked(spi, 4000000);
     if (remounted) {
       const uint32_t hz = sdTryFastClock(PIN_SD_CS, *spi, 4000000, "SD");   // no-op unless SD_SPI_FAST_HZ
       remounted = hz != 0;
       if (remounted) g_sd_operating_hz = hz;
     }
 #endif
+      sdMountDiagSetMounted(remounted, remounted ? g_sd_operating_hz : 0);
     if (remounted) {
       s_sd_mounted        = true;
       s_sd_size           = SD.cardSize();
