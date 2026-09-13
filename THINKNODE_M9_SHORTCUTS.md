@@ -36,6 +36,9 @@ because that is the root.
 
 **HOME** is the shortcut past all of that: it goes straight to the root and
 clears the trail, so Back from there won't jump you back out again.
+When **App drawer as home** is enabled, the drawer cog's **Lock home to drawer**
+option makes HOME stay in or return to the drawer. The **Cmdr** tile still
+opens the Commander screen when you need it.
 
 The only exception is deliberate: progress overlays (SD format, bulk delete)
 block all keys until the operation finishes — Back will not navigate out from

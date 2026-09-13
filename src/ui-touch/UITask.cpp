@@ -41797,12 +41797,15 @@ static bool m9HandleNavKey(int key) {
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
-        // Stop on a key-blocker row (SD format / bulk delete progress) instead of
-        // spinning eight times closing nothing and then toggling the drawer out
-        // from under a running operation.
-        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-        if (anyPopupOpen()) { s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true; }
-        setHomeDrawer(!was_open);                            // decide from the snapshot, not the now-mutated flag
+        const bool keep_drawer = s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer();
+        if (!(keep_drawer && was_open && s_appdrawer_root && !appDrawerCovered())) {
+          // Stop on a key-blocker row (SD format / bulk delete progress) instead of
+          // spinning eight times closing nothing and then toggling the drawer out
+          // from under a running operation.
+          for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+          if (anyPopupOpen()) { s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+          setHomeDrawer(keep_drawer ? true : !was_open);     // optional sticky drawer; otherwise preserve toggle
+        }
       } else {
         s_m9_map_pan = false;   // leaving the Map: pan must not outlive the tab (a stale flag ate the next Back press)
         if (!navGoToMainTab(HOME_TAB_INDEX)) {   // a blocker popup refused: nothing moved, so keep the trail
@@ -46026,7 +46029,21 @@ static void appHomeIsDrawerCb(lv_event_t* e) {
 #endif
   s_home_is_drawer = on;
   if (on) s_home_drawer_mode = true;   // make the drawer the live Home view too (persists on return + reboot)
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_t* dependent_row = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+  if (dependent_row && lv_obj_is_valid(dependent_row)) {
+    if (on) lv_obj_clear_flag(dependent_row, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(dependent_row, LV_OBJ_FLAG_HIDDEN);
+  }
+#endif
 }
+#if defined(HAS_THINKNODE_M9)
+static void appHomeKeyKeepsDrawerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetHomeKeyKeepsDrawer(
+      lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 static void openAppGridSheet() {
   closeAppGridSheet();
   lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
@@ -46056,6 +46073,9 @@ static void openAppGridSheet() {
   lv_obj_remove_style_all(card);
   {
     int card_h = hdr + 2 * btn_h + gap + home_row + gap + 2 * pad;
+#if defined(HAS_THINKNODE_M9)
+    card_h += home_row + gap;
+#endif
     if (card_h > card_h_max) card_h = card_h_max;
     lv_obj_set_size(card, card_w, card_h);
   }
@@ -46064,7 +46084,13 @@ static void openAppGridSheet() {
   lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_add_event_cb(card, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
+#else
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+#endif
 
   lv_obj_t* ttl = lv_label_create(card);
   lv_label_set_text(ttl, TR("App icon size"));
@@ -46109,7 +46135,29 @@ static void openAppGridSheet() {
 #if defined(ESP32)
     if (touchPrefsGetHomeIsDrawer()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
+#if defined(HAS_THINKNODE_M9)
+    const int ky = ty + home_row + gap;
+    lv_obj_t* key_row = lv_obj_create(card);
+    lv_obj_remove_style_all(key_row);
+    lv_obj_set_size(key_row, card_w - 2 * pad, home_row);
+    lv_obj_set_pos(key_row, 0, ky);
+    lv_obj_clear_flag(key_row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* kl = lv_label_create(key_row);
+    lv_label_set_long_mode(kl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(kl, lv_pct(68));
+    lv_label_set_text(kl, TR("Lock home to drawer"));
+    lv_obj_set_style_text_font(kl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(kl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(kl, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* key_sw = lv_switch_create(key_row);
+    lv_obj_align(key_sw, LV_ALIGN_RIGHT_MID, 0, 0);
+    if (touchPrefsGetHomeKeyKeepsDrawer()) lv_obj_add_state(key_sw, LV_STATE_CHECKED);
+    if (!touchPrefsGetHomeIsDrawer()) lv_obj_add_flag(key_row, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(key_sw, appHomeKeyKeepsDrawerCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(sw, appHomeIsDrawerCb, LV_EVENT_VALUE_CHANGED, key_row);
+#else
     lv_obj_add_event_cb(sw, appHomeIsDrawerCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
   }
 }
 static void appDrawerSettingsCb(lv_event_t* e) {

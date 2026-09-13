@@ -149,6 +149,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.attaky_notify_room_color = 0;  // red
   c.attaky_notify_dm_color   = 1;  // green
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
+  c.home_key_keeps_drawer = 0;  // OFF: preserve Home-key Commander/drawer toggle
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
   c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
@@ -264,6 +265,7 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 56) { s_cfg.theme_mode = 0; }   // Night: unchanged appearance
         if (stored_version < 57) { s_cfg.gps_fuzz_m = 0; }   // OFF: real position
         if (stored_version < 59) { s_cfg.telem_loc_exact = 0; }   // OFF: answers stay displaced
+        if (stored_version < 60) { s_cfg.home_key_keeps_drawer = 0; } // preserve Home-key toggle
         if (stored_version < 58) {
           s_cfg.attaky_notify_enabled = 0;
           s_cfg.attaky_notify_room_color = 0;
@@ -1395,6 +1397,16 @@ bool touchPrefsGetHomeIsDrawer() {
 bool touchPrefsSetHomeIsDrawer(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.home_is_drawer = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetHomeKeyKeepsDrawer() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.home_key_keeps_drawer != 0;
+}
+bool touchPrefsSetHomeKeyKeepsDrawer(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.home_key_keeps_drawer = on ? 1 : 0;
   return cfgFlush();
 }
 
