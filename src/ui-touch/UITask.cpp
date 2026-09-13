@@ -42001,6 +42001,23 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
       break;
     }
   }
+  // The admin console log is an independently scrolling pane between a fixed
+  // Close header and command row. Give it the vertical key while it has room;
+  // otherwise spatial navigation jumps out before the fallback can scroll it.
+  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
+      s_admin_log_box && lv_obj_is_valid(s_admin_log_box)) {
+    lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+    if (focused == s_admin_log_box) {
+      const bool up = key == M9_KEY_UP;
+      const lv_coord_t room = up ? lv_obj_get_scroll_top(s_admin_log_box)
+                                 : lv_obj_get_scroll_bottom(s_admin_log_box);
+      if (room > 0) {
+        navScrollBy(s_admin_log_box, up);
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return true;
+      }
+    }
+  }
   if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
       m9ChatMoveMessage(key == M9_KEY_DOWN)) {
     if (g_lv.task) g_lv.task->noteUserInput();
