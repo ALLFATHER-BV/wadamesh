@@ -2242,6 +2242,7 @@ static lv_obj_t* s_kb_mirror_root = nullptr;
 static lv_obj_t* s_kb_mirror_ta = nullptr;
 /** Real textarea whose text is synced with `s_kb_mirror_ta` while the keyboard is open. */
 static lv_obj_t* s_kb_bind_ta = nullptr;
+static bool s_kb_dismiss_pending = false;
 static bool terminalHandleVirtualKeyboardReady();
 // The T-Deck has a physical keyboard and never shows the on-screen keyboard or
 // the (hidden) mirror strip, so its keys bind STRAIGHT to the visible field —
@@ -6979,7 +6980,11 @@ static void kbMirrorEnsureCreated() {
   }, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(s_kb_mirror_ta, [](lv_event_t* e) {
     (void)e;
-    terminalHandleVirtualKeyboardReady();
+    if (terminalHandleVirtualKeyboardReady()) return;
+    lv_obj_t* ready_ta = s_kb_bind_ta;
+    if (!ready_ta || !lv_obj_is_valid(ready_ta)) return;
+    kbMirrorSyncToReal();
+    lv_event_send(ready_ta, LV_EVENT_READY, nullptr);
   }, LV_EVENT_READY, nullptr);
 }
 
@@ -7894,6 +7899,15 @@ static void composerSuggestChangedCb(lv_event_t* e) {
 static void keyboardCb(lv_event_t* e) {
   lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_READY && terminalHandleVirtualKeyboardReady()) return;
+  if (code == LV_EVENT_READY && s_kb_bind_ta && lv_obj_is_valid(s_kb_bind_ta)) {
+    // LVGL sends READY to the keyboard first and only then to keyboard->ta.
+    // hideKb() below clears keyboard->ta during that first event, so the second
+    // dispatch never happens. Forward it to the real field while the mirror is
+    // still bound; one-line submit fields (notably room Join) receive Enter.
+    lv_obj_t* ready_ta = s_kb_bind_ta;
+    kbMirrorSyncToReal();
+    lv_event_send(ready_ta, LV_EVENT_READY, nullptr);
+  }
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
     accentExit(); accentBoxHide();
@@ -9799,6 +9813,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   // release IF the press qualified as a click (movement under the scroll
   // threshold), so it's the right hook for "open keyboard on real tap".
   if (code != LV_EVENT_FOCUSED && code != LV_EVENT_CLICKED) return;
+  if (s_kb_dismiss_pending) return;
   if (!g_lv.keyboard) return;
   // Belt-and-suspenders: even CLICKED can fire at the tail end of a flick
   // if the touch happened to lift while still on the textarea. Same guard
@@ -17709,21 +17724,7 @@ static void loginWaitTimeoutCb(lv_timer_t* t) {
     if (localtime_r(&tt, &tmv)) strftime(when, sizeof when, "%H:%M %d %b", &tmv);
   }
   char msg[160];
-  // Multi-byte path hashing is the one setting that makes a login fail EXACTLY like
-  // this: a repeater that predates it, or does not implement it, silently drops 2- and
-  // 3-byte-hash packets, so the request never arrives and no error is ever generated
-  // anywhere. It is opt-in and defaults to 1 byte, but someone who turned it on has no
-  // way to connect that choice to "remote management stopped working" — reported twice
-  // (#278, #280), once explicitly while running 3-byte hashes. Name it here, where the
-  // operator is already looking, rather than leaving them to find it in Settings.
-  const uint8_t phm = the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->path_hash_mode : 0;
-  if (phm > 0) {
-    snprintf(msg, sizeof msg,
-             TR("No reply. Path hash is %u bytes;\nolder repeaters drop those.\nTry 1 byte (Settings > Radio & Mesh)"),
-             (unsigned)(phm + 1));
-  } else {
-    snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
-  }
+  snprintf(msg, sizeof msg, TR("No reply. Check password, server,\nor device clock (device: %s)"), when);
   g_lv.task->showAlert(msg, 5000);
 }
 static void loginWaitArm(LoginWaitKind kind) {
@@ -18061,10 +18062,23 @@ static void openAdminConsole(const ContactInfo& c) {
 static char  s_admin_pw_attempt[TOUCH_REPEATER_PW_LEN] = {0};
 static bool  s_admin_pw_remember_flag = false;
 
+static void adminPwDismissKeyboardAsync(void*) {
+  hideKb();
+  s_kb_dismiss_pending = false;
+}
+
 static void adminPwSubmitCb(lv_event_t* e) {
   const lv_event_code_t code = lv_event_get_code(e);
   if (code != LV_EVENT_CLICKED && code != LV_EVENT_READY) return;
+  if (s_kb_dismiss_pending) return;
   kbMirrorSyncToReal();
+  s_kb_dismiss_pending = true;
+  lv_indev_t* active_indev = lv_indev_get_act();
+  if (active_indev) lv_indev_wait_release(active_indev);
+  if (lv_async_call(adminPwDismissKeyboardAsync, nullptr) != LV_RES_OK) {
+    hideKb();
+    s_kb_dismiss_pending = false;
+  }
   if (!s_admin_pw_ta) return;
   const char* pw = lv_textarea_get_text(s_admin_pw_ta);
   ContactInfo* c = the_mesh.lookupContactByPubKey(s_admin_pub32, PUB_KEY_SIZE);
