@@ -71,6 +71,10 @@ field, so you're never stuck. Enter sends (toggleable under Settings), Back
 leaves the field. In the Terminal, Enter runs the command; in the text editor
 it inserts a newline.
 
+While a chat message is focused and newer messages are below it, a down arrow
+appears at the right edge. Press **Right** to select it, then **OK** to jump to
+the newest message.
+
 Channels, direct messages, and room conversations place **#** and emoji to the
 right of the message input. Press Right to move from the input to **#**, and
 Right again to move to emoji. Press **OK** on either button to open its picker.
