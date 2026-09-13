@@ -9,12 +9,35 @@ class PagerKeyboardState {
  public:
   static constexpr uint8_t ROWS = 4;
   static constexpr uint8_t COLS = 10;
+#if defined(HAS_TDECK_PRO)
+  static constexpr uint8_t ALT_POS = 2 * COLS + 9;
+  static constexpr uint8_t SYMBOL_POS = 3 * COLS + 1;
+  static constexpr uint8_t SHIFT_POS = 3 * COLS;
+  static constexpr uint8_t SHIFT_POS_2 = 3 * COLS + 4;
+  static constexpr uint8_t BACKSPACE_POS = 1 * COLS;
+  static constexpr uint8_t SPACE_POS = 3 * COLS + 2;
+#else
   static constexpr uint8_t ALT_POS = 2 * COLS;
   static constexpr uint8_t SHIFT_POS = 2 * COLS + 8;
   static constexpr uint8_t BACKSPACE_POS = 2 * COLS + 9;
   static constexpr uint8_t SPACE_POS = 3 * COLS;
+#endif
 
   uint8_t event(uint8_t code, bool pressed, uint32_t now_ms) {
+#if defined(HAS_TDECK_PRO)
+    static const char base[ROWS][COLS] = {
+      {'p', 'o', 'i', 'u', 'y', 't', 'r', 'e', 'w', 'q'},
+      {'\0', 'l', 'k', 'j', 'h', 'g', 'f', 'd', 's', 'a'},
+      {'\r', '$', 'm', 'n', 'b', 'v', 'c', 'x', 'z', '\0'},
+      {'\0', '\0', ' ', '\0', '\0', '\0', '\0', '\0', '\0', '\0'},
+    };
+    static const char symbols[ROWS][COLS] = {
+      {'@', '+', '-', '_', ')', '(', '3', '2', '1', '#'},
+      {'\0', '"', '\'', ';', ':', '/', '6', '5', '4', '*'},
+      {'\r', '$', '.', ',', '!', '?', '9', '8', '7', '\0'},
+      {'\0', '\0', ' ', '0', '\0', '\0', '\0', '\0', '\0', '\0'},
+    };
+#else
     static const char base[ROWS][COLS] = {
       {'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'},
       {'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', '\r'},
@@ -27,13 +50,22 @@ class PagerKeyboardState {
       {'\0', '_', '$', ';', '?', '!', ',', '.', '\0', '\0'},
       {' ',  '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0', '\0'},
     };
+#endif
 
-    if (code == ALT_POS) {
+    if (code == ALT_POS
+#if defined(HAS_TDECK_PRO)
+        || code == SYMBOL_POS
+#endif
+       ) {
       if (pressed) alt_.press();
       else         alt_.release(now_ms);
       return 0;
     }
-    if (code == SHIFT_POS) {
+    if (code == SHIFT_POS
+#if defined(HAS_TDECK_PRO)
+        || code == SHIFT_POS_2
+#endif
+       ) {
       if (pressed) {
         if (alt_.held()) {
           alt_.markHeldUsed();

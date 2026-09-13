@@ -35,6 +35,16 @@
   #define CAP_OTA          1
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HAS_TDECK_PRO)             // ===== LilyGo T-Deck Pro (ESP32-S3) =====
+  #define CAP_TOUCH        1   // CST328 or CST3530 over I2C
+  #define CAP_ROTATABLE    0   // fixed portrait 240x320 e-paper panel
+  #define CAP_LARGE_SCREEN 0
+  #define CAP_SD           1   // microSD on the shared display/radio SPI bus
+  #define CAP_FILESYSTEM   1
+  #define CAP_GPS          1   // u-blox MIA-M10Q
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  1
+
 #elif defined(HAS_TDECK_GT911)          // ===== LilyGo T-Deck (ESP32-S3) =====
   #define CAP_TOUCH        1   // capacitive touchscreen (pointer input)
   #define CAP_ROTATABLE    0   // panel is fixed landscape
@@ -191,7 +201,7 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
@@ -218,7 +228,7 @@
 // A true power cut can leave these boards without trustworthy wall time. The
 // T-Deck has no RTC; the M9's PCF8563 can report lost integrity after shutdown.
 // Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383.
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
   #define CAP_BOOT_TIME_SYNC 1
 #else
   #define CAP_BOOT_TIME_SYNC 0

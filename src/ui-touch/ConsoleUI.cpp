@@ -166,6 +166,7 @@ uint8_t ringGetSpl2(int i) {
 #define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 bool s_day_theme = false;
 uint16_t consoleBg() {
+  if (s_disp && s_disp->isEink()) return UIColor::window_bkg;
   return s_day_theme ? RGB565(0xF1, 0xF4, 0xF6) : RGB565(0x0E, 0x12, 0x16);
 }
 
@@ -722,7 +723,9 @@ void submit() {
 void consoleBegin(DisplayDriver* d) {
   s_disp = d;
   if (!s_disp) return;
-#if defined(ESP32)
+#if defined(HAS_TDECK_PRO)
+  s_day_theme = true;
+#elif defined(ESP32)
   s_day_theme = touchPrefsGetThemeMode() == TOUCH_THEME_DAY;
 #endif
   if (!s_ring) {

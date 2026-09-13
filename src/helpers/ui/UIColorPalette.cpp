@@ -10,7 +10,18 @@
 // references them).
 #include <helpers/ui/DisplayDriver.h>
 
-ColorVal UIColor::window_bkg    = 0x0000;   // black (our UIs are dark)
+#if defined(HAS_TDECK_PRO)
+ColorVal UIColor::window_bkg    = 0xFFFF;   // white paper
+ColorVal UIColor::title_bkg     = 0xFFFF;
+ColorVal UIColor::title_txt     = 0x0000;
+ColorVal UIColor::primary_txt   = 0x0000;   // black ink
+ColorVal UIColor::secondary_txt = 0x0000;
+ColorVal UIColor::warning_txt   = 0x0000;
+ColorVal UIColor::popup_bkg     = 0xFFFF;
+ColorVal UIColor::popup_txt     = 0x0000;
+ColorVal UIColor::corp_blue     = 0x0000;
+#else
+ColorVal UIColor::window_bkg    = 0x0000;   // black (our TFT UIs are dark)
 ColorVal UIColor::title_bkg     = 0x0000;
 ColorVal UIColor::title_txt     = 0xFFFF;
 ColorVal UIColor::primary_txt   = 0xFFFF;   // white -- old LIGHT
@@ -19,3 +30,4 @@ ColorVal UIColor::warning_txt   = 0xF800;   // red -- old RED
 ColorVal UIColor::popup_bkg     = 0x0000;
 ColorVal UIColor::popup_txt     = 0xFFFF;
 ColorVal UIColor::corp_blue     = 0x0339;
+#endif
