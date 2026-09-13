@@ -12493,8 +12493,8 @@ static void buildQuickReplySettings() {
   int y = 0;
   // Compact form: one row per slot, with the slot index as a tiny prefix
   // label so the user knows which macro they're editing. Single-line
-  // textareas to keep the modal short; macro text caps at 31 chars on the
-  // store side anyway, which fits one line.
+  // textareas keep the six-slot modal compact; longer replies scroll
+  // horizontally while editing.
 #if defined(ESP32)
   for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) {
     char buf[TOUCH_QUICK_REPLY_MAXLEN];
