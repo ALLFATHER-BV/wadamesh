@@ -50746,12 +50746,16 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 static lv_obj_t* s_telemetry_root    = nullptr;
 static lv_obj_t* s_telem_config_root = nullptr;   // settings panel spawned on top
 static lv_obj_t* s_telem_poll_ta     = nullptr;   // auto-poll interval input (config panel)
+static lv_obj_t* s_telem_requests_ta = nullptr;   // finite request budget (config panel)
 static bool      s_telem_show_batt   = true;      // chart series visibility (session-scoped)
 static bool      s_telem_show_temp   = true;
 static bool      s_telem_show_hum    = true;
 static void openTelemetryConfigWindow();          // fwd
 static void telemetryConfigClose() {
-  if (s_telem_config_root) { popupClose(&s_telem_config_root); s_telem_poll_ta = nullptr; }
+  if (s_telem_config_root) {
+    popupClose(&s_telem_config_root);
+    s_telem_poll_ta = s_telem_requests_ta = nullptr;
+  }
 }
 static void telemetryClose() {
   telemetryConfigClose();
@@ -50763,10 +50767,17 @@ static void telemetryWindowDismissCb(lv_event_t* e) {
 }
 static void telemetryCloseCb(lv_event_t* e) { (void)e; telemetryClose(); }   // the X badge
 // ---------- Telemetry auto-poll (per node; persisted /meshcomod/telemetry/poll.cfg) ----------
-struct TelemPoll { uint8_t key[6]; uint16_t interval_min; uint32_t next_ms; bool used; };
+struct TelemPoll { uint8_t key[6]; uint16_t interval_min; uint16_t requests_left; uint32_t next_ms; bool used; };
 static const int      k_telem_poll_max = 8;
+static const uint16_t k_telem_poll_default_requests = 10;
+static const uint16_t k_telem_poll_max_requests = 9999;
+static const uint32_t k_telem_poll_send_gap_ms = 30000;
 static TelemPoll      s_telem_poll[k_telem_poll_max];
 static bool           s_telem_poll_loaded = false;
+static uint32_t       s_telem_poll_next_send_ms = 0;
+static uint8_t        s_telem_poll_cursor = 0;
+
+static void telemetryPollSave();
 
 static bool telemetryFindContact(const uint8_t* key6, ContactInfo* out) {
   const uint32_t n = the_mesh.getNumContacts();
@@ -50784,19 +50795,28 @@ static void telemetryPollLoad() {
   File f = SD.open("/meshcomod/telemetry/poll.cfg", FILE_READ);
   if (!f) return;
   int idx = 0;
+  bool migrated = false;
   while (f.available() && idx < k_telem_poll_max) {
     String ln = f.readStringUntil('\n'); ln.trim();
     if (ln.length() < 14) continue;                       // 12 hex + space + >=1 digit
     TelemPoll& e = s_telem_poll[idx];
     for (int b = 0; b < 6; ++b)
       e.key[b] = (uint8_t)strtoul(ln.substring(b * 2, b * 2 + 2).c_str(), nullptr, 16);
-    const int mn = ln.substring(13).toInt();
-    if (mn <= 0) continue;
+    const int requests_sep = ln.indexOf(' ', 13);
+    int mn = (requests_sep < 0 ? ln.substring(13) : ln.substring(13, requests_sep)).toInt();
+    int requests = requests_sep < 0 ? k_telem_poll_default_requests
+                                     : ln.substring(requests_sep + 1).toInt();
+    if (mn <= 0 || requests <= 0) continue;
+    if (mn > 1440) { mn = 1440; migrated = true; }
+    if (requests > k_telem_poll_max_requests) { requests = k_telem_poll_max_requests; migrated = true; }
+    if (requests_sep < 0) migrated = true;                 // legacy key + interval record
     e.interval_min = (uint16_t)mn;
+    e.requests_left = (uint16_t)requests;
     e.next_ms = millis() + 5000;                          // first poll shortly after load
     e.used = true; ++idx;
   }
   f.close();
+  if (migrated) telemetryPollSave();
 }
 static void telemetryPollSave() {
   if (SD.cardType() == CARD_NONE) return;
@@ -50806,9 +50826,9 @@ static void telemetryPollSave() {
   File f = SD.open("/meshcomod/telemetry/poll.cfg", FILE_WRITE);
   if (!f) return;
   for (auto& e : s_telem_poll)
-    if (e.used) f.printf("%02X%02X%02X%02X%02X%02X %u\n",
+    if (e.used) f.printf("%02X%02X%02X%02X%02X%02X %u %u\n",
                          e.key[0], e.key[1], e.key[2], e.key[3], e.key[4], e.key[5],
-                         (unsigned)e.interval_min);
+                         (unsigned)e.interval_min, (unsigned)e.requests_left);
   f.close();
 }
 static int telemetryPollGet(const uint8_t* key6) {
@@ -50816,12 +50836,18 @@ static int telemetryPollGet(const uint8_t* key6) {
   for (auto& e : s_telem_poll) if (e.used && memcmp(e.key, key6, 6) == 0) return e.interval_min;
   return 0;
 }
-static void telemetryPollSet(const uint8_t* key6, int interval_min) {
+static int telemetryPollRequestsLeft(const uint8_t* key6) {
+  telemetryPollLoad();
+  for (auto& e : s_telem_poll) if (e.used && memcmp(e.key, key6, 6) == 0) return e.requests_left;
+  return k_telem_poll_default_requests;
+}
+static void telemetryPollSet(const uint8_t* key6, int interval_min, int requests) {
   telemetryPollLoad();
   for (auto& e : s_telem_poll) if (e.used && memcmp(e.key, key6, 6) == 0) e.used = false;  // drop old
   if (interval_min > 0)
     for (auto& e : s_telem_poll) if (!e.used) {
       memcpy(e.key, key6, 6); e.interval_min = (uint16_t)interval_min;
+      e.requests_left = (uint16_t)requests;
       e.next_ms = millis() + 3000; e.used = true; break;
     }
   telemetryPollSave();
@@ -50832,8 +50858,13 @@ static void telemetryPollTick(uint32_t now_ms) {
   // REQ would overwrite the manual request's pending tag and orphan its reply.
   // It'll poll on the next interval (the manual pending window is short).
   if (s_telem_manual_pending) return;
+  if (s_telem_poll_next_send_ms != 0 &&
+      (int32_t)(now_ms - s_telem_poll_next_send_ms) < 0) return;
+  if (the_mesh.getRemainingTxBudget() < 300) return;
   telemetryPollLoad();
-  for (auto& e : s_telem_poll) {
+  for (int step = 0; step < k_telem_poll_max; ++step) {
+    const int idx = (s_telem_poll_cursor + step) % k_telem_poll_max;
+    TelemPoll& e = s_telem_poll[idx];
     if (!e.used || (int32_t)(now_ms - e.next_ms) < 0) continue;
     e.next_ms = now_ms + (uint32_t)e.interval_min * 60000u;
     ContactInfo c;
@@ -50841,6 +50872,14 @@ static void telemetryPollTick(uint32_t now_ms) {
       const int r = the_mesh.sendTelemetryRequestWithGuestLoginForUI(c);   // logged on reply; no window
       if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) markMeshRequest();
     }
+    // Consume every due slot, including missing contacts or failed sends, so a
+    // stale entry can never remain an unbounded recurring job.
+    if (e.requests_left > 0) --e.requests_left;
+    if (e.requests_left == 0) e.used = false;
+    telemetryPollSave();
+    s_telem_poll_next_send_ms = now_ms + k_telem_poll_send_gap_ms;
+    s_telem_poll_cursor = (uint8_t)((idx + 1) % k_telem_poll_max);
+    break;                                                   // one auto-poll dispatch per gap
   }
 }
 
@@ -50914,9 +50953,13 @@ static void telemShowToggleCb(lv_event_t* e) {
 static void telemPollApplyCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   int mins = s_telem_poll_ta ? atoi(lv_textarea_get_text(s_telem_poll_ta)) : 0;
+  int requests = s_telem_requests_ta ? atoi(lv_textarea_get_text(s_telem_requests_ta))
+                                     : k_telem_poll_default_requests;
   if (mins < 0)    mins = 0;
   if (mins > 1440) mins = 1440;
-  telemetryPollSet(s_telem_node, mins);   // 0 disables auto-poll for this node
+  if (requests < 1) requests = k_telem_poll_default_requests;
+  if (requests > k_telem_poll_max_requests) requests = k_telem_poll_max_requests;
+  telemetryPollSet(s_telem_node, mins, requests);   // 0 minutes disables auto-poll for this node
 }
 static void telemClearConfirmed() {
   char path[40]; telemetryNodePath(s_telem_node, path, sizeof path);
@@ -51175,11 +51218,14 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   }
 }
 
-// Settings panel for the telemetry window: which series to chart, the auto-poll
-// interval (manual minutes; 0 = off), and a clear-history button. Spawned on top
-// of the telemetry window; toggling a checkbox redraws the chart underneath live.
+// Settings panel for the telemetry window: which series to chart, the finite
+// auto-poll interval and request budget, and a clear-history button. Spawned on
+// top of the telemetry window; toggling a checkbox redraws the chart underneath live.
 static void openTelemetryConfigWindow() {
-  if (s_telem_config_root) { popupClose(&s_telem_config_root); s_telem_poll_ta = nullptr; }
+  if (s_telem_config_root) {
+    popupClose(&s_telem_config_root);
+    s_telem_poll_ta = s_telem_requests_ta = nullptr;
+  }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_telem_config_root = lv_obj_create(lv_layer_top());
@@ -51258,6 +51304,26 @@ static void openTelemetryConfigWindow() {
   lv_obj_set_style_text_font(mlab, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(mlab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_pos(mlab, 182, y + 8);
+
+  y += 40;
+  lv_obj_t* rlabel = lv_label_create(card);
+  lv_label_set_text(rlabel, TR("Requests left"));
+  lv_obj_set_style_text_font(rlabel, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rlabel, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(rlabel, 0, y + 8);
+  s_telem_requests_ta = lv_textarea_create(card);
+  lv_textarea_set_one_line(s_telem_requests_ta, true);
+  lv_textarea_set_accepted_chars(s_telem_requests_ta, "0123456789");
+  lv_textarea_set_max_length(s_telem_requests_ta, 4);
+  lv_obj_set_width(s_telem_requests_ta, 56); lv_obj_set_pos(s_telem_requests_ta, 120, y);
+  attachSettingsTaEvents(s_telem_requests_ta);
+  { char rb[8]; snprintf(rb, sizeof rb, "%d", telemetryPollRequestsLeft(s_telem_node)); lv_textarea_set_text(s_telem_requests_ta, rb); }
+  lv_obj_t* stoplab = lv_label_create(card);
+  lv_label_set_text(stoplab, TR("then stop"));
+  lv_obj_set_style_text_font(stoplab, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(stoplab, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(stoplab, 182, y + 8);
+
   lv_obj_t* ap = lv_btn_create(card);
   lv_obj_set_size(ap, cardw - 24, 32); lv_obj_set_pos(ap, 0, y + 42);
   styleButton(ap);
