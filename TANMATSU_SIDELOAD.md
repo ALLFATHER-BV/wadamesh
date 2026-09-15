@@ -57,21 +57,13 @@ apps you actually have.
 cd tanmatsu && ./build.sh build
 ```
 
-Use `build.sh`, not `idf.py` directly: it applies two build-time patches to
-`managed_components` (esp-hosted Wi-Fi-init tolerance, and an Arduino BLE stub)
-that the build needs.
+Use `build.sh`, not `idf.py` directly: it configures and applies the required
+`managed_components` compatibility patches before compiling.
 
-**The build ends with an error and that is expected:**
-
-```
-Generated .../application.bin
-Error: All app partitions are too small
-```
-
-The ~2.9 MB app is being size-checked against the 2 MB `ota_0` slot, but it does
-not live there: it lives in the 8 MB `appfs` partition. Judge success by
-`Generated ... application.bin` appearing with no `error:` or `undefined
-reference` above it.
+The wrapper builds the `gen_project_binary` target because this app lives in the
+8 MB `appfs` partition, not either 2 MB OTA slot in the device partition table.
+That runs the full compile and link while skipping IDF's irrelevant OTA size
+check, so a zero exit status means `build/tanmatsu/application.bin` is ready.
 
 ## Install
 

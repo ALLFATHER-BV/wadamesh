@@ -14,8 +14,44 @@ set -e
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
+# VS Code may launch this wrapper from PlatformIO's virtualenv. Pin the
+# project-local IDF environment before export.sh inspects that unrelated Python.
+if [ -z "${IDF_PYTHON_ENV_PATH:-}" ]; then
+  for idf_py_env in "$IDF_TOOLS_PATH"/python_env/idf5.5_py*_env; do
+    if [ -x "$idf_py_env/bin/python" ]; then
+      export IDF_PYTHON_ENV_PATH="$idf_py_env"
+      break
+    fi
+  done
+fi
+unset VIRTUAL_ENV CONDA_PREFIX
 # shellcheck disable=SC1091
 source esp-idf/export.sh >/dev/null 2>&1
+
+WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
+WADA_FW_DATE="$(date '+%-d %b %Y')"
+IDF_ARGS=(-B build/tdisplay_p4 \
+  -DDEVICE=tdisplay_p4 \
+  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/wadamesh;sdkconfigs/tdisplay_p4" \
+  -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
+  -DIDF_TARGET=esp32p4)
+
+# A fresh clone has no managed_components yet. Configure once to download them,
+# then apply the compatibility patches below before the first compilation.
+if [ ! -f managed_components/espressif__libsodium/CMakeLists.txt ]; then
+  idf.py "${IDF_ARGS[@]}" reconfigure
+fi
+
+# --- Build-time patch: libsodium forced includes in paths with spaces -----------------------------
+# The managed component emits `SHELL:-include <absolute path>`. CMake leaves that
+# path unquoted in Ninja, so a checkout such as "T7 Shield" reaches GCC as two
+# input files. GCC accepts the joined -include<path> form, which cannot split.
+SODIUM_CMAKE="managed_components/espressif__libsodium/CMakeLists.txt"
+if [ -f "$SODIUM_CMAKE" ] && grep -q 'SHELL:-include' "$SODIUM_CMAKE"; then
+  sed -i '' -e 's|SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}|-include${CMAKE_CURRENT_SOURCE_DIR}|g' \
+             -e 's|SHELL:-include${CMAKE_CURRENT_SOURCE_DIR}|-include${CMAKE_CURRENT_SOURCE_DIR}|g' "$SODIUM_CMAKE"
+  echo "[build.sh] patched libsodium forced includes (space-safe paths)"
+fi
 
 # --- Build-time patch: SD_MMC internal pull-ups (T-Display P4) ------------------------------------
 # The board has no external pull-ups on the SD data lines; the IDF sdmmc host explicitly FLOATS the
@@ -71,11 +107,4 @@ for HDIR in espressif__esp_hosted nicolaielectronics__esp-hosted-tanmatsu; do
   fi
 done
 
-WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
-WADA_FW_DATE="$(date '+%-d %b %Y')"
-
-exec idf.py -B build/tdisplay_p4 \
-  -DDEVICE=tdisplay_p4 \
-  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/wadamesh;sdkconfigs/tdisplay_p4" \
-  -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
-  -DIDF_TARGET=esp32p4 "$@"
+exec idf.py "${IDF_ARGS[@]}" "$@"

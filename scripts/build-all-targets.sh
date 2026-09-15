@@ -110,7 +110,8 @@ summary() {
   printf 'total %dm%02ds\n' $((total/60)) $((total%60))
   if [ "$DO_IDF" = 1 ] && ! idf_available; then
     printf '\nnote: the ESP-IDF boards were skipped - install the project-local IDF with\n'
-    printf '      tanmatsu/fetch-deps.sh (needs an S3 pio build first), then re-run.\n'
+    printf '      make -C tanmatsu sdk, then run tanmatsu/fetch-deps.sh and\n'
+    printf '      tdisplay_p4/fetch-deps.sh (needs an S3 pio build first).\n'
   fi
 }
 
@@ -127,7 +128,7 @@ if [ "$DO_IDF" = 1 ]; then
     if idf_available; then
       run_target "$d (esp-idf)" "$LOGDIR/$d.log" "$ROOT/$d/build.sh" build
     else
-      skip_target "$d (esp-idf)" "no tanmatsu/esp-idf - see tanmatsu/fetch-deps.sh"
+      skip_target "$d (esp-idf)" "no tanmatsu/esp-idf - run: make -C tanmatsu sdk"
     fi
   done
 fi

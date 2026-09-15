@@ -60,10 +60,11 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   [[ "$ARG" =~ ^beta_([0-9]+)$ ]] && export WADA_FW_TAG="$ARG"
   echo "==> building Tanmatsu app (./build.sh build)..."
   LOG="$(mktemp)"
-  ( cd "$WADAMESH/tanmatsu" && ./build.sh build ) >"$LOG" 2>&1 || true   # app_check_size exit!=0 is EXPECTED
-  # real compile/link errors abort; the cosmetic 'app partitions too small' does not
-  if grep -E "error:|undefined reference|was not declared" "$LOG" | grep -vE "app_check_size|too small|partitions are too small"; then
-    echo "!! real build error above — aborting"; rm -f "$LOG"; exit 1
+  if ! ( cd "$WADAMESH/tanmatsu" && ./build.sh build ) >"$LOG" 2>&1; then
+    cat "$LOG"
+    echo "!! Tanmatsu build failed — aborting"
+    rm -f "$LOG"
+    exit 1
   fi
   rm -f "$LOG"
 fi

@@ -22446,6 +22446,7 @@ static bool fmSdTryMount() {
   // mount attempt. Never tear down that live shared bus or add a retry ladder.
   bool begin_ok = false;
   const bool mounted = sdBeginTracked(spi, 4000000, &begin_ok);
+  const uint32_t mounted_hz = 4000000;
 #else
   // Cold microSD cards — especially the first mount after boot — often fail
   // the initial SD.begin and historically only recovered after a physical
