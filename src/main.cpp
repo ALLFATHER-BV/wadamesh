@@ -1102,11 +1102,11 @@ void setup() {
       Serial.println("[BOOT] SD: no card detected");
     } else {
       // Match LilyGo's pager bring-up: the card shares the already-running
-      // display/radio SPIClass and gets one conservative 4 MHz mount attempt.
-      // Do not tear down that live shared bus or hide arbitration bugs behind
-      // delays/retry ladders.
+      // display/radio SPIClass and mounts at a conservative 4 MHz. A failure
+      // gets one dedicated SD-rail reset and retry; the shared bus itself is
+      // never torn down or hidden behind a broad retry ladder.
       Serial.println("[BOOT] SD: card detected; mounting at 4 MHz");
-      const bool sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
+      bool sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
       sd_mounted = sd_begin_ok && SD.cardType() != CARD_NONE;
       sdMountDiagAttempt(4000000, sd_begin_ok, sd_mounted);
       if (!sd_mounted) {
@@ -1117,6 +1117,20 @@ void setup() {
         }
         // Keep the board bring-up invariant explicit even if the SD library
         // changed this pin while unwinding a failed mount.
+        pinMode(PIN_SD_CS, OUTPUT);
+        digitalWrite(PIN_SD_CS, HIGH);
+        // SD_EN survives software power-off because the XL9555 remains powered
+        // during deep sleep. Give a host-used/reinserted card a real controller
+        // reset, then retry once without disturbing the shared SPIClass.
+        if (board.resetSdCardPower()) {
+          Serial.println("[BOOT] SD: retrying after rail power cycle");
+          sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
+          sd_mounted = sd_begin_ok && SD.cardType() != CARD_NONE;
+          sdMountDiagAttempt(4000000, sd_begin_ok, sd_mounted);
+        }
+      }
+      if (!sd_mounted) {
+        if (sd_begin_ok) SD.end();
         pinMode(PIN_SD_CS, OUTPUT);
         digitalWrite(PIN_SD_CS, HIGH);
       }

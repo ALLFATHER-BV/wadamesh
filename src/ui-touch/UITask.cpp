@@ -22407,6 +22407,21 @@ static bool sdBeginTracked(SPIClass* spi, uint32_t hz, bool* begin_ok_out = null
   sdMountDiagAttempt(hz, begin_ok, card_ready);
   return card_ready;
 }
+#if defined(TLORA_PAGER)
+static bool sdPagerBeginWithPowerRecovery(SPIClass* spi, bool* begin_ok_out) {
+  bool begin_ok = false;
+  bool mounted = sdBeginTracked(spi, 4000000, &begin_ok);
+  if (!mounted) {
+    if (begin_ok) SD.end();
+    sdPagerParkCs();
+    begin_ok = false;
+    if (board.resetSdCardPower())
+      mounted = sdBeginTracked(spi, 4000000, &begin_ok);
+  }
+  if (begin_ok_out) *begin_ok_out = begin_ok;
+  return mounted;
+}
+#endif
 static bool sdRuntimeLifecycleBusy();
 static bool fmSdTryMount() {
   // main.cpp may already have mounted this global SD object for DataStore.
@@ -22442,10 +22457,10 @@ static bool fmSdTryMount() {
   sdMountDiagBegin();
 #if defined(TLORA_PAGER)
   // Vendor-compatible Pager sequence: the shared display/radio bus is already
-  // running, all other CS lines are parked HIGH, and the card gets one 4 MHz
-  // mount attempt. Never tear down that live shared bus or add a retry ladder.
+  // running and all other CS lines are parked HIGH. Try 4 MHz once, then reset
+  // only the SD rail and retry once without tearing down the live shared bus.
   bool begin_ok = false;
-  const bool mounted = sdBeginTracked(spi, 4000000, &begin_ok);
+  const bool mounted = sdPagerBeginWithPowerRecovery(spi, &begin_ok);
   const uint32_t mounted_hz = 4000000;
 #else
   // Cold microSD cards — especially the first mount after boot — often fail
@@ -22643,7 +22658,8 @@ static void fmHideFormatOverlay() {
 //  1. f_mkfs needs SD.end() + sdcard_init/uninit around it. That is a card and
 //     diskio lifecycle teardown on a bus the display AND the radio are actively
 //     driving, and this board's mount path is explicitly documented (fmSdTryMount
-//     above) to make ONE 4 MHz attempt and never tear the live shared bus down.
+//     above) to use a bounded 4 MHz attempt, dedicated SD-rail reset, and retry
+//     without ever tearing the live shared bus down.
 //     The Arduino SD library never touches the SPI peripheral itself, so this is
 //     very likely fine — but "very likely" is not a basis for a one-way, whole-card
 //     erase, and it has never been run on Pager hardware.
@@ -43551,6 +43567,24 @@ static void powerOffCb(lv_event_t* e) {
   display.serviceRefresh(true);   // this path never returns to the deferred e-paper service tick
 #endif
   delay(900);
+#if defined(TLORA_PAGER)
+  // "Power off" is deep sleep on the Pager, so its XL9555 (and SD_EN) remain
+  // alive. Pause new tile work, let any in-flight SD owner finish, unmount FAT,
+  // then remove card power so removal/reinsertion while asleep is truly cold.
+  tileBackendSwapTryBegin();
+  const uint32_t sd_stop_deadline = millis() + 3000;
+  while (sdRuntimeLifecycleBusy() && (int32_t)(millis() - sd_stop_deadline) < 0)
+    delay(10);
+  if (!sdRuntimeLifecycleBusy()) {
+    sdAdoptLiveMount();
+    fmSdUnmount();
+    if (!board.setSdCardPower(false))
+      Serial.println("[POWER] SD rail off failed");
+  } else {
+    tileBackendSwapFinish();
+    Serial.println("[POWER] SD stayed busy; rail left powered");
+  }
+#endif
 #if defined(HELTEC_LORA_V4_R8)
   // Park everything before sleeping — without this the SX1262 stayed in RX
   // with the FEM enabled (pure drain, no wake purpose: all wake sources are
@@ -58663,9 +58697,10 @@ static void sdHealthTick() {
     sdMountDiagBegin();
 #if defined(TLORA_PAGER)
     // The Pager shares this SPIClass with display + radio: one 4 MHz attempt,
-    // with every other CS parked HIGH and no SD.end() of a potentially live bus.
+    // with every other CS parked HIGH. A failed attempt gets one dedicated
+    // SD-rail power cycle before retrying; the display/radio bus stays live.
     bool begin_ok = false;
-    const bool remounted = sdBeginTracked(spi, 4000000, &begin_ok);
+    const bool remounted = sdPagerBeginWithPowerRecovery(spi, &begin_ok);
 #else
     SD.end();
     bool remounted = sdBeginTracked(spi, 4000000);

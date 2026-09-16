@@ -61,6 +61,8 @@ public:
   void begin();
   SdCardState sdCardState();
   bool sdCardPresent();
+  bool setSdCardPower(bool on);
+  bool resetSdCardPower();
 
   void enterDeepSleep(uint32_t secs, int pin_wake_btn) {
     esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);
