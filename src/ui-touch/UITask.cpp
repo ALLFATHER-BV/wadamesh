@@ -36664,6 +36664,18 @@ static void chatVirtRemap1To1Scroll(LvChatPanel* p) {
   const int32_t max_top = chatVirtMaxVirtTop(p);
   if (s_chat_virt.scroll_virt_top < 0) s_chat_virt.scroll_virt_top = 0;
   else if (s_chat_virt.scroll_virt_top > max_top) s_chat_virt.scroll_virt_top = max_top;
+  // An animated scroll (the keypad page scroll in navScrollBy) delivers this
+  // event from inside LVGL's animation step, and lv_obj_scroll_to_y() deletes
+  // that running animation. LVGL 8.4 keeps using it after we return: when the
+  // step was also its last, it frees the animation a second time, releasing
+  // whatever reused the memory in between. That is the #428/#475 panic (a jump
+  // to 0x00020000 out of anim_timer). The rows are floating and follow virt_top,
+  // so just track the animation; chatVirtOnScrollEnd re-anchors once LVGL has
+  // unlinked it. The early snap also stopped every such scroll after one frame.
+  if (lv_anim_get(p->msgs, nullptr)) {
+    s_chat_virt.scroll_lv_anchor = lv_y;
+    return;
+  }
   const lv_coord_t corrected = chatVirtVirtToLv(s_chat_virt.scroll_virt_top);
   s_chat_virt.scroll_lv_anchor = corrected;
   if (corrected != lv_y) lv_obj_scroll_to_y(p->msgs, corrected, LV_ANIM_OFF);
@@ -36721,10 +36733,10 @@ static bool chatVirtNeedReflow(int new_i0, int new_i1) {
 static void chatVirtCancelRenderTimer() {
   s_chat_virt_render_panel = nullptr;
   // Keep one timer allocation for the lifetime of the UI.  This path is hit
-  // repeatedly while a fast scroll crosses virtual-window boundaries. Two
-  // matching dumps reached lv_timer_exec through an invalid callback (#251), so
-  // do not churn this timer's list node in the reproducing path. Pausing keeps
-  // its callback allocation stable while still cancelling the pending work.
+  // repeatedly while a fast scroll crosses virtual-window boundaries, and
+  // pausing cancels the pending work without churning the timer list. (The
+  // #251 dumps that prompted this looked like a bad timer callback; the same
+  // signature in #428 was a freed animation, see chatVirtRemap1To1Scroll.)
   if (s_chat_virt_render_timer) lv_timer_pause(s_chat_virt_render_timer);
 }
 

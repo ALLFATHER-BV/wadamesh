@@ -29,6 +29,8 @@ echo "linked: meshcore core -> tanmatsu's vendored copy"
 rm -rf components/lvgl/upstream
 mkdir -p components/lvgl
 cp -R "$LIBDEPS/lvgl" components/lvgl/upstream
+python3 ../scripts/build/patch_lvgl_anim_uaf.py \
+  --patch-file components/lvgl/upstream/src/misc/lv_anim.c
 echo "vendored: lvgl ($(find components/lvgl/upstream/src -name '*.c' | wc -l | tr -d ' ') c)"
 
 # --- RadioLib: the P4 drives a RAW SX1262 through the core's RadioLib path (unlike the

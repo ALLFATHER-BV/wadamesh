@@ -10,6 +10,10 @@ set -e
 # Same for the seeded Lua apps. The PlatformIO envs get this from a pre: hook;
 # the IDF builds need it here or the P4 boards ship stale copies.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
+# LVGL is vendored (gitignored) by fetch-deps.sh, so a copy vendored before the
+# anim_timer use-after-free fix (#428) still needs it. Idempotent; fails on drift.
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_anim_uaf.py" \
+  --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_anim.c"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # VS Code may launch this wrapper from PlatformIO's virtualenv. Pin the
