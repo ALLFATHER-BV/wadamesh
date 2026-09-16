@@ -57947,9 +57947,8 @@ static void atGlanceOpaCb(void* var, int32_t v) {
 
 // Message-body font, built once: stock Montserrat 28 (ASCII) -> extras_lat_28
 // (accented Latin, em-dash, ellipsis -- now compiled on every board, not just the
-// Tanmatsu; see extras_lat_28.c) -> extras_16 tail (Cyrillic/Greek/Arabic, baked at
-// 16 px so those scripts render a bit small relative to Latin text, but never a
-// missing-glyph box). 28, not 24: only 12/14/16/28 are actually enabled in this
+// Tanmatsu; see extras_lat_28.c) -> the shared 16 px emoji image font -> the
+// general-script tail. 28, not 24: only 12/14/16/28 are actually enabled in this
 // project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't). g_font_16 itself
 // is deliberately left alone -- it's the UI-scale-driven font hundreds of OTHER
 // widgets use, not something to repurpose for one feature.
@@ -57963,6 +57962,12 @@ static bool      s_glance_font_ready = false;
 static void atGlanceEnsureFont() {
   if (s_glance_font_ready) return;
   s_glance_font_ready = true;
+  const lv_font_t* glance_tail = &extras_16;
+#if LV_USE_IMGFONT
+  // initTouchFontFallbacks() creates this before any glance can be shown. Reuse
+  // it so glance messages resolve the same baked emoji set as normal chat.
+  if (s_emoji_font[2]) glance_tail = s_emoji_font[2];
+#endif
 // 20 px on the small screens. 28 px was chosen to be legible across a room, and
 // it is, but on a 240x320 panel it fills the glance and crowds out the message
 // (#446). The T-Deck already dropped to 20; the M9 has the same size panel and
@@ -57970,13 +57975,13 @@ static void atGlanceEnsureFont() {
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   static lv_font_t s_lat20;
   s_lat20 = extras_lat_20;
-  s_lat20.fallback = &extras_16;
+  s_lat20.fallback = glance_tail;
   s_glance_body_font = lv_font_montserrat_20;
   s_glance_body_font.fallback = &s_lat20;
 #else
   static lv_font_t s_lat28;
   s_lat28 = extras_lat_28;
-  s_lat28.fallback = &extras_16;
+  s_lat28.fallback = glance_tail;
   s_glance_body_font = lv_font_montserrat_28;
   s_glance_body_font.fallback = &s_lat28;
 #endif
