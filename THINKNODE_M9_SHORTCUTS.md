@@ -36,6 +36,9 @@ because that is the root.
 
 **HOME** is the shortcut past all of that: it goes straight to the root and
 clears the trail, so Back from there won't jump you back out again.
+When **App drawer as home** is enabled, the drawer cog's **Lock home to drawer**
+option makes HOME stay in or return to the drawer. The **Cmdr** tile still
+opens the Commander screen when you need it.
 
 The only exception is deliberate: progress overlays (SD format, bulk delete)
 block all keys until the operation finishes — Back will not navigate out from
@@ -45,7 +48,7 @@ under a running operation.
 
 | Key | Press | Hold |
 |---|---|---|
-| **MSG** | Jump to the Chats tab (closes an open app first) | — |
+| **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first) | — |
 | **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail) | — |
 | **@ (Mentions)** | Open the Mentions screen | — |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
@@ -54,6 +57,10 @@ under a running operation.
 | **CTRL** | Open the Control Center (quick toggles, incl. the keyboard light: off / on / auto) | — |
 | **MIC** | Nothing yet — deliberately reserved | — |
 | **OK / Enter** | Activate the focused item; send a message; run a terminal command; newline in the editor | **Long-press the focused item / unlock the lock screen** |
+
+The **MSG**, **HOME**, **@**, **ADV**, **MAP**, and **CTRL** shortcuts remain
+active while typing or using a picker. Back, the d-pad, and OK remain contextual
+so they can leave edit mode, move the caret or selection, and activate controls.
 
 ## Map pan mode
 
@@ -70,6 +77,10 @@ is already at the edge of the text, the same press steps focus *out* of the
 field, so you're never stuck. Enter sends (toggleable under Settings), Back
 leaves the field. In the Terminal, Enter runs the command; in the text editor
 it inserts a newline.
+
+While a chat message is focused and newer messages are below it, a down arrow
+appears at the right edge. Press **Right** to select it, then **OK** to jump to
+the newest message.
 
 Channels, direct messages, and room conversations place **#** and emoji to the
 right of the message input. Press Right to move from the input to **#**, and

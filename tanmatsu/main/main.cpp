@@ -379,7 +379,11 @@ static void wadameshSetup() {
   // the build (-Og "worked by luck"; -Os made the exists()-gated identity + prefs loads come up
   // empty: fresh node identity, default name, profile changes lost every reboot). The card's FAT
   // metadata is truthful, so the WHOLE store lives there now; FFat remains only the no-card fallback.
-  g_sd_ok = SD_MMC.begin("/sdcard", false /*1-bit*/) && SD_MMC.cardType() != CARD_NONE;
+  sdMountDiagBegin();
+  const bool sd_begin_ok = SD_MMC.begin("/sdcard", false /*1-bit*/);
+  g_sd_ok = sd_begin_ok && SD_MMC.cardType() != CARD_NONE;
+  sdMountDiagAttempt((uint32_t)SDMMC_FREQ_DEFAULT * 1000u, sd_begin_ok, g_sd_ok);
+  sdMountDiagSetMounted(g_sd_ok, g_sd_ok ? (uint32_t)SDMMC_FREQ_DEFAULT * 1000u : 0);
   printf("[storage] SD_MMC.begin = %s\n", g_sd_ok ? "OK" : "no card");
   if (g_sd_ok) {
     SD_MMC.mkdir("/meshcomod");

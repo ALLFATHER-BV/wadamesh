@@ -9,6 +9,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | Device | MCU / radio | Display and input | Install | Channel | Status |
 |---|---|---|---|---|---|
 | LilyGo T-Deck / T-Deck Plus | ESP32-S3, SX1262 | 2.8" 320x240 touch, QWERTY, trackball | Web flasher (standalone) or Launcher app image | Stable | Fully supported, reference device |
+| LilyGo T-Deck Pro | ESP32-S3, SX1262 | 3.1" 240x320 e-paper touch, TCA8418 QWERTY | Development build only | Experimental | Initial target; display, touch, keyboard, radio, GPS and microSD validation pending (#62) |
 | Heltec V4 + TFT | ESP32-S3, SX1262 | 2.4" 240x320 touch (CHSC6x) | Web flasher | Stable | Fully supported; Expansion Kit sensors, V4.3 high-gain RX toggle |
 | Tanmatsu | ESP32-P4 + ESP32-C6, SX1262 | 4" 800x480, 69-key keyboard (no touch) | Tanmatsu app store on the device (runs under the badge.team launcher, not web-flashable) | Store tracks the test channel | Fully supported; LoRa + Wi-Fi + Bluetooth simultaneously, standalone and companion in one |
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
@@ -31,6 +32,12 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   this needs [LilyGO keyboard-controller firmware with raw matrix mode](https://github.com/Xinyuan-LilyGO/T-Deck/tree/master/examples/Keyboard_ESP32C3)
   (June 2025 or newer). Older controller firmware keeps normal typing and
   reports the unavailable latch mode on Serial.
+- **T-Deck Pro**: dedicated `LilyGo_TDeck_Pro_companion_radio_touch` development
+  target for the GDEQ031T10 e-paper model. It uses a monochrome shadow buffer,
+  coalesced partial refreshes, CST328/CST3530 touch detection and the Pro-specific
+  TCA8418 matrix. Keyboard events are drained during the panel BUSY interval so
+  a refresh cannot overflow the controller FIFO. Hardware validation is pending;
+  see [variants/lilygo_tdeck_pro/PORT.md](variants/lilygo_tdeck_pro/PORT.md).
 - **Heltec V4 + TFT**: touch UI with the on-screen keyboard; the optional
   Expansion Kit adds environment sensors (home-screen chart) and a piezo
   buzzer. V4.3 boards get the switchable high-gain receive LNA toggle.
@@ -70,7 +77,7 @@ Open hardware requests, roughly in demand order. Ports are welcome, see
 [CONTRIBUTING.md](CONTRIBUTING.md); the M9 and Tap V2 both started as community
 PRs.
 
-- LilyGo T-Deck Pro Max: [#62](https://github.com/ALLFATHER-BV/wadamesh/issues/62)
+- LilyGo T-Deck Pro hardware validation / T-Deck Max variants: [#62](https://github.com/ALLFATHER-BV/wadamesh/issues/62)
 - SenseCAP Indicator D1L: [#14](https://github.com/ALLFATHER-BV/wadamesh/issues/14)
 
 ## Channels

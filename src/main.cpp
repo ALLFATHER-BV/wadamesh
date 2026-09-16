@@ -55,7 +55,7 @@ static uint32_t _atoi(const char* sp) {
     #include <SD_MMC.h>
     #include <WioTrackerL2Io.h>
   #endif
-  #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     #include <SD.h>
     #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
     #include <Preferences.h>
@@ -269,7 +269,7 @@ extern volatile uint8_t g_wifi_last_disc_reason;
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -1028,11 +1028,19 @@ void setup() {
   // edge shows up as a mid-session "sdmmc_host_wait_for_event returned 0x107"
   // (ESP_ERR_TIMEOUT) that takes prefs, contacts and chat history down with it. The
   // T-Display P4 hot-insert path already drops to this rate for the same reason.
+  sdMountDiagBegin();
   bool wio_l2_sd_begun = false;
-  if (WioTrackerL2Io::ready() && WioTrackerL2Io::setSdPower(true) &&
-      SD_MMC.setPins(2, 3, 1) &&
-      (wio_l2_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT)) &&
-      SD_MMC.cardType() != CARD_NONE) {
+  const bool wio_l2_sd_bus_ready = WioTrackerL2Io::ready() &&
+                                   WioTrackerL2Io::setSdPower(true) &&
+                                   SD_MMC.setPins(2, 3, 1);
+  if (wio_l2_sd_bus_ready)
+    wio_l2_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT);
+  const bool wio_l2_sd_ready = wio_l2_sd_begun && SD_MMC.cardType() != CARD_NONE;
+  if (wio_l2_sd_bus_ready)
+    sdMountDiagAttempt((uint32_t)SDMMC_FREQ_DEFAULT * 1000u, wio_l2_sd_begun, wio_l2_sd_ready);
+  sdMountDiagSetMounted(wio_l2_sd_ready,
+                        wio_l2_sd_ready ? (uint32_t)SDMMC_FREQ_DEFAULT * 1000u : 0);
+  if (wio_l2_sd_ready) {
     sd_storage = store.useSdMmcStorage();
     g_contacts_on_sd = sd_storage;
     g_full_data_on_sd = sd_storage;
@@ -1043,7 +1051,7 @@ void setup() {
     Serial.println("[BOOT] wio-l2 SD_MMC unavailable; using SPIFFS");
   }
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   {
    #if defined(TLORA_PAGER)
     extern SPIClass* tloraPagerSharedSPI();    // display/radio/SD shared bus
@@ -1087,6 +1095,7 @@ void setup() {
    #endif
     bool sd_mounted = false;
 #if defined(TLORA_PAGER)
+    sdMountDiagBegin();
     if (!_spi) {
       Serial.println("[BOOT] SD: shared SPI unavailable");
     } else if (!board.sdCardPresent()) {
@@ -1099,6 +1108,7 @@ void setup() {
       Serial.println("[BOOT] SD: card detected; mounting at 4 MHz");
       const bool sd_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
       sd_mounted = sd_begin_ok && SD.cardType() != CARD_NONE;
+      sdMountDiagAttempt(4000000, sd_begin_ok, sd_mounted);
       if (!sd_mounted) {
         if (sd_begin_ok) {
           // Release only the unusable mount created above. SD.end() unregisters
@@ -1112,7 +1122,10 @@ void setup() {
       }
       Serial.printf("[BOOT] SD mount: %s\n", sd_mounted ? "ok" : "failed");
     }
+    sdMountDiagSetMounted(sd_mounted, sd_mounted ? 4000000 : 0);
 #else
+    sdMountDiagBegin();
+    uint32_t mounted_hz = 0;
     if (_spi) {
       // Try to mount the card on EVERY boot: even a device that keeps identity on SPIFFS
       // wants its churn-heavy contacts/channels on the card.
@@ -1131,11 +1144,13 @@ void setup() {
         { 300, 1000000 }, { 450, 1000000 }, { 650,  400000 }, { 900, 400000 },
       };
       int tries = want_full_sd ? 7 : 3;
-      uint32_t mounted_hz = 0;
       for (int a = 0; a < tries && !sd_mounted; ++a) {
         SD.end();
         delay(kBootMount[a].settle_ms);
-        if (SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6) && SD.cardType() != CARD_NONE) {
+        const bool begin_ok = SD.begin(PIN_SD_CS, *_spi, kBootMount[a].hz, "/sd", 6);
+        const bool card_ready = begin_ok && SD.cardType() != CARD_NONE;
+        sdMountDiagAttempt(kBootMount[a].hz, begin_ok, card_ready);
+        if (card_ready) {
           sd_mounted = true;
           mounted_hz = kBootMount[a].hz;
         }
@@ -1151,13 +1166,18 @@ void setup() {
       if (sd_mounted && mounted_hz < 4000000) {
         SD.end();
         delay(60);
-        if (SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6) && SD.cardType() != CARD_NONE) {
+        const bool fast_begin_ok = SD.begin(PIN_SD_CS, *_spi, 4000000, "/sd", 6);
+        const bool fast_ready = fast_begin_ok && SD.cardType() != CARD_NONE;
+        sdMountDiagAttempt(4000000, fast_begin_ok, fast_ready);
+        if (fast_ready) {
           Serial.printf("[BOOT] SD renegotiated %lu -> 4000000 Hz\n", (unsigned long)mounted_hz);
           mounted_hz = 4000000;
         } else {
           SD.end();
           delay(120);
-          sd_mounted = SD.begin(PIN_SD_CS, *_spi, mounted_hz, "/sd", 6) && SD.cardType() != CARD_NONE;
+          const bool fallback_begin_ok = SD.begin(PIN_SD_CS, *_spi, mounted_hz, "/sd", 6);
+          sd_mounted = fallback_begin_ok && SD.cardType() != CARD_NONE;
+          sdMountDiagAttempt(mounted_hz, fallback_begin_ok, sd_mounted);
           if (sd_mounted) Serial.printf("[BOOT] SD stays at %lu Hz (4 MHz renegotiation failed)\n", (unsigned long)mounted_hz);
         }
       }
@@ -1165,6 +1185,7 @@ void setup() {
       if (sd_mounted) { mounted_hz = sdTryFastClock(PIN_SD_CS, *_spi, mounted_hz, "BOOT"); sd_mounted = mounted_hz != 0; }
       if (sd_mounted) { extern uint32_t g_sd_operating_hz; g_sd_operating_hz = mounted_hz; }   // About-page readout (UITask.cpp)
     }
+    sdMountDiagSetMounted(sd_mounted, mounted_hz);
 #endif
     if (sd_mounted) {
       g_contacts_on_sd = true;   // every branch below routes contacts/channels to the card
@@ -1336,7 +1357,7 @@ void setup() {
   #if defined(HAS_WIO_TRACKER_L2)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD_MMC : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
-  #elif defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #elif defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else

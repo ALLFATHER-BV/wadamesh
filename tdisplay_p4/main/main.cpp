@@ -212,13 +212,18 @@ static void wadameshSetup() {
       { true,  SDMMC_FREQ_DEFAULT, "1-bit 20MHz" },
       { true,  5000,               "1-bit 5MHz"  },
     };
+    sdMountDiagBegin();
+    uint32_t mounted_hz = 0;
     for (auto &t : tries) {
-      g_sd_ok = SD_MMC.begin("/sdcard", t.onebit, false, t.khz) && SD_MMC.cardType() != CARD_NONE;
+      const bool begin_ok = SD_MMC.begin("/sdcard", t.onebit, false, t.khz);
+      g_sd_ok = begin_ok && SD_MMC.cardType() != CARD_NONE;
+      sdMountDiagAttempt((uint32_t)t.khz * 1000u, begin_ok, g_sd_ok);
       printf("[storage] SD_MMC try %s -> %s\n", t.tag, g_sd_ok ? "OK" : "fail");
-      if (g_sd_ok) break;
+      if (g_sd_ok) { mounted_hz = (uint32_t)t.khz * 1000u; break; }
       SD_MMC.end();
       delay(120);
     }
+    sdMountDiagSetMounted(g_sd_ok, mounted_hz);
   }
   printf("[storage] SD_MMC = %s\n", g_sd_ok ? "OK" : "no card");
   if (g_sd_ok) {

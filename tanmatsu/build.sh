@@ -12,8 +12,47 @@ set -e
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
+# VS Code may launch this wrapper from PlatformIO's virtualenv. Pin the
+# project-local IDF environment before export.sh inspects that unrelated Python.
+if [ -z "${IDF_PYTHON_ENV_PATH:-}" ]; then
+  for idf_py_env in "$IDF_TOOLS_PATH"/python_env/idf5.5_py*_env; do
+    if [ -x "$idf_py_env/bin/python" ]; then
+      export IDF_PYTHON_ENV_PATH="$idf_py_env"
+      break
+    fi
+  done
+fi
+unset VIRTUAL_ENV CONDA_PREFIX
 # shellcheck disable=SC1091
 source esp-idf/export.sh >/dev/null 2>&1
+
+# Firmware tag shown on About + used by the update check. Derived from git so dev
+# builds are honest ("beta_28-14-gabc123" = 14 commits past beta_28) and a release
+# build on a fresh beta_N tag bakes exactly "beta_N".
+WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
+WADA_FW_DATE="$(date '+%-d %b %Y')"
+IDF_ARGS=(-B build/tanmatsu \
+  -DDEVICE=tanmatsu \
+  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh" \
+  -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
+  -DIDF_TARGET=esp32p4)
+
+# A fresh clone has no managed_components yet. Configure once to download them,
+# then apply the compatibility patches below before the first compilation.
+if [ ! -f managed_components/espressif__libsodium/CMakeLists.txt ]; then
+  idf.py "${IDF_ARGS[@]}" reconfigure
+fi
+
+# --- Build-time patch: libsodium forced includes in paths with spaces -----------------------------
+# The managed component emits `SHELL:-include <absolute path>`. CMake leaves that
+# path unquoted in Ninja, so a checkout such as "T7 Shield" reaches GCC as two
+# input files. GCC accepts the joined -include<path> form, which cannot split.
+SODIUM_CMAKE="managed_components/espressif__libsodium/CMakeLists.txt"
+if [ -f "$SODIUM_CMAKE" ] && grep -q 'SHELL:-include' "$SODIUM_CMAKE"; then
+  sed -i '' -e 's|SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}|-include${CMAKE_CURRENT_SOURCE_DIR}|g' \
+             -e 's|SHELL:-include${CMAKE_CURRENT_SOURCE_DIR}|-include${CMAKE_CURRENT_SOURCE_DIR}|g' "$SODIUM_CMAKE"
+  echo "[build.sh] patched libsodium forced includes (space-safe paths)"
+fi
 
 # --- Build-time patch: arduino-esp32 esp-hosted WiFi init (Tanmatsu) ------------------------------
 # esp_hosted is force-initialised by an unconditional constructor in the esp_hosted component BEFORE
@@ -22,8 +61,7 @@ source esp-idf/export.sh >/dev/null 2>&1
 # esp_wifi_init(), leaving WiFi at WIFI_NOT_INIT. Apply the fix the arduino source itself flags
 # ("uncomment when second init is fixed"): also accept ESP_ERR_NOT_ALLOWED. Idempotent + re-applies
 # after a dependency re-fetch. This patches a BUILD DEPENDENCY on this machine only — it compiles into
-# our app .bin and never touches the device's own firmware. (On a brand-new checkout managed_components
-# doesn't exist yet, so the very first build ships unpatched; a second build picks it up.)
+# our app .bin and never touches the device's own firmware.
 HOSTED_C="managed_components/espressif__arduino-esp32/cores/esp32/esp32-hal-hosted.c"
 if [ -f "$HOSTED_C" ] && grep -q 'if (err != ESP_OK) {  *//&& err != ESP_ERR_NOT_ALLOWED' "$HOSTED_C"; then
   sed -i '' 's|if (err != ESP_OK) {  *//&& err != ESP_ERR_NOT_ALLOWED.*|if (err != ESP_OK \&\& err != ESP_ERR_NOT_ALLOWED) {  // wadamesh: tolerate esp_hosted pre-init|' "$HOSTED_C"
@@ -41,19 +79,11 @@ if [ -f "$BLEDEV_CPP" ] && grep -q 'int rc = ble_gap_read_local_irk(irk);' "$BLE
   echo "[build.sh] patched arduino BLEDevice.cpp (stub renamed ble_gap_read_local_irk)"
 fi
 
-# Firmware tag shown on About + used by the update check. Derived from git so dev
-# builds are honest ("beta_28-14-gabc123" = 14 commits past beta_28) and a release
-# build on a fresh beta_N tag bakes exactly "beta_N" — no more hand-bumping the
-# old hardcoded CMake define (which left every dev flash claiming the last beta).
-# Passed as a CMake cache var: idf.py reconfigures automatically when it changes.
-# A caller (the app-store publish) can pass the exact release tag via the env, since
-# the beta_N git tag may not be fetched locally when gh created it remotely. Fall back
-# to git describe for dev builds ("beta_28-14-gabc123" = 14 commits past the tag).
-WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
-WADA_FW_DATE="$(date '+%-d %b %Y')"
+# Tanmatsu ships application.bin inside the 8 MB AppFS partition, not either
+# 2 MB OTA slot in the device partition table. Build the image target directly
+# so the full compile/link runs without IDF's irrelevant OTA partition check.
+if [ "$#" -eq 1 ] && [ "$1" = build ]; then
+  exec idf.py "${IDF_ARGS[@]}" gen_project_binary
+fi
 
-exec idf.py -B build/tanmatsu \
-  -DDEVICE=tanmatsu \
-  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh" \
-  -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
-  -DIDF_TARGET=esp32p4 "$@"
+exec idf.py "${IDF_ARGS[@]}" "$@"

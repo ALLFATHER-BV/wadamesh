@@ -3148,7 +3148,7 @@ static inline uint32_t txtFloodFp(mesh::Packet* pkt) {
 
 void MyMesh::sendFloodScoped(const TransportKey& scope, mesh::Packet* pkt, uint32_t delay_millis) {
   uiTrackSentFp(txtFloodFp(pkt));
-  uint8_t phs = (uint8_t)(_prefs.path_hash_mode + 1);
+  const uint8_t phs = floodPathHashSize();
   if (scope.isNull()) {
     sendFlood(pkt, delay_millis, phs);
   } else {
@@ -3170,7 +3170,7 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
   // is honoured here; otherwise unscoped. Channel/group floods keep default_scope
   // — see the GroupChannel overload below — so public-channel containment is intact.
   if (send_unscoped) {
-    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
+    sendFlood(pkt, delay_millis, floodPathHashSize());
   } else if (!send_scope.isNull()) {
     sendFloodScoped(send_scope, pkt, delay_millis);   // explicit per-send override (app CMD_SET_FLOOD_SCOPE)
   } else if (scope_direct_floods) {
@@ -3182,14 +3182,14 @@ void MyMesh::sendFloodScoped(const ContactInfo& recipient, mesh::Packet* pkt, ui
     memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));
     sendFloodScoped(default_scope, pkt, delay_millis);
   } else {
-    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);   // default: unscoped (cross-region safe)
+    sendFlood(pkt, delay_millis, floodPathHashSize());   // default: unscoped (cross-region safe)
   }
 }
 void MyMesh::sendFloodScoped(const mesh::GroupChannel& channel, mesh::Packet* pkt, uint32_t delay_millis) {
   uiTrackSentFp(txtFloodFp(pkt));
   // TODO: have per-channel send_scope
   if (send_unscoped) {
-    sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);  // app has explicitly requested un-scoped
+    sendFlood(pkt, delay_millis, floodPathHashSize());  // app has explicitly requested un-scoped
   } else {
     TransportKey default_scope;
     memcpy(&default_scope.key, _prefs.default_scope_key, sizeof(default_scope.key));

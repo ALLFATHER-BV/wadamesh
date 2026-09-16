@@ -30,6 +30,7 @@ static Config safeDefaults() {
   c.attaky_notify_enabled = 0;
   c.attaky_notify_room_color = 0;
   c.attaky_notify_dm_color = 1;
+  c.home_key_keeps_drawer = 0;
   return c;
 }
 
@@ -125,7 +126,8 @@ int main() {
             + sizeof(Config::gps_fuzz_m) + sizeof(Config::attaky_notify_enabled)
             + sizeof(Config::attaky_notify_room_color)
             + sizeof(Config::attaky_notify_dm_color)
-                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
+                  + sizeof(Config::telem_loc_exact)
+                  + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -167,6 +169,7 @@ int main() {
   current.attaky_notify_enabled = 1;
   current.attaky_notify_room_color = 6;
   current.attaky_notify_dm_color = 4;
+  current.home_key_keeps_drawer = 1;
   migrated = safeDefaults();
   assert(TouchPrefsSchema::overlayStored(migrated, &current, sizeof(current), &stored_version));
   assert(stored_version == TouchPrefsSchema::CURRENT_VERSION);
@@ -198,7 +201,8 @@ int main() {
                     + sizeof(Config::attaky_notify_enabled)
                     + sizeof(Config::attaky_notify_room_color)
                     + sizeof(Config::attaky_notify_dm_color)
-                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
+                    + sizeof(Config::telem_loc_exact)
+                    + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -220,7 +224,8 @@ int main() {
   static_assert(v57_size + sizeof(Config::attaky_notify_enabled)
                     + sizeof(Config::attaky_notify_room_color)
                     + sizeof(Config::attaky_notify_dm_color)
-                    + sizeof(Config::telem_loc_exact) == sizeof(Config),
+                    + sizeof(Config::telem_loc_exact)
+                    + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;
@@ -235,6 +240,22 @@ int main() {
   assert(migrated.attaky_notify_enabled == 0);
   assert(migrated.attaky_notify_room_color == 0);
   assert(migrated.attaky_notify_dm_color == 1);
+
+  // #491 appends the M9 Home-key drawer behavior at v60. A v59 blob keeps
+  // every prior setting, while the new option defaults OFF to preserve the
+  // established Commander/drawer toggle until the user opts in.
+  constexpr size_t v59_size = offsetof(Config, home_key_keeps_drawer);
+  static_assert(v59_size + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+                "v59 is the current layout minus the Home-key drawer option");
+  Config v59 = safeDefaults();
+  v59.ver = 59;
+  v59.telem_loc_exact = 1;
+  v59.home_key_keeps_drawer = 1;   // outside the stored v59 extent
+  migrated = safeDefaults();
+  assert(TouchPrefsSchema::overlayStored(migrated, &v59, v59_size, &stored_version));
+  assert(stored_version == 59);
+  assert(migrated.telem_loc_exact == 1);
+  assert(migrated.home_key_keeps_drawer == 0);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};
