@@ -30011,11 +30011,21 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Per-board OTA download bin name (the app-only <name>.bin under releases/<ch>/beta_<N>/).
-// MUST match the release artifact names exactly, or the self-update 404s. Every touch board is
-// dual-slot OTA-capable (CAP_OTA=1 + app0/app1 partitions + FIRMWARE_OTA_ENV) EXCEPT the Tanmatsu
-// (AppFS/launcher, CAP_OTA=0, never reaches this file). Keep this chain in sync when adding a board.
+// MUST match the release artifact names exactly. Every touch board is dual-slot OTA-capable
+// (CAP_OTA=1 + app0/app1 partitions + FIRMWARE_OTA_ENV) EXCEPT the Tanmatsu (AppFS/launcher,
+// CAP_OTA=0, never reaches this file).
+//
+// A missing entry does NOT 404. This chain used to end in a bare #else naming the Heltec V4 TFT,
+// so a board nobody added here silently fetched ANOTHER board's firmware -- and Update.end() only
+// checks the image is valid for an ESP32-S3, which the V4 build is. The Wio Tracker L2 shipped
+// exactly like that (beta_79's image carries "wadamesh-heltec-v4-tft"): an on-device update
+// would flash V4 firmware onto Wio hardware. The T-Deck Pro would have followed it the moment it
+// was published. Every board is now listed explicitly and anything else refuses to compile, so
+// forgetting this table is a build break instead of a field brick.
 #if defined(HAS_TDECK_GT911)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
+#elif defined(HAS_TDECK_PRO)
+static const char* const OTA_BIN_NAME = "wadamesh-tdeck-pro";
 #elif defined(HAS_TDISPLAY_P4)
   #if defined(HAS_TDP4_LCD)
 static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4-lcd";   // T-Display P4 TFT-LCD SKU
@@ -30036,8 +30046,12 @@ static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-sx1262";
   #endif
 #elif defined(ATTAKY_MESH_SERIES)
 static const char* const OTA_BIN_NAME = "wadamesh-attaky";
+#elif defined(HAS_WIO_TRACKER_L2)
+static const char* const OTA_BIN_NAME = "wadamesh-wio-tracker-l2";
+#elif defined(HELTEC_LORA_V4_TFT)
+static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // V4-R8 also defines this; its branch is above
 #else
-static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // Heltec V4 TFT (Tanmatsu excluded above)
+#error "OTA_BIN_NAME: this board has no release artifact name. Add it here AND to scripts/release.sh ENVS, or a self-update fetches another board's firmware."
 #endif
 // Download the latest published app-only bin over plain HTTP and flash it into the spare A/B slot
 // via the Arduino Update writer. Runs on the tile-fetcher worker (off the UI thread); reports
