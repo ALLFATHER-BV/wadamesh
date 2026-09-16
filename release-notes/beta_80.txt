@@ -1,0 +1,37 @@
+# beta_80 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Community ------------------------------------------------------------------------------------
+This drop is almost entirely Michael A. Cojocari's: 54 of its 61 changes, gathered into one consolidated set so they could be reviewed together. Thanks also to aigarslv for the Latvian keyboard and tmetz1987 for Wardrive 1.2.
+
+# --- Seeed Wio Tracker L2 owners: update from the website ------------------------------------
+Update your Wio Tracker L2 from wadamesh.com over USB this time, not from the update prompt on the device. Earlier builds looked for the wrong file when updating themselves and would have installed the Heltec V4 firmware, which needs a USB reflash to undo. This build fixes it, so later updates on the device are safe once you are on it. Every board is now required to name its own update file, so this cannot happen quietly to another board.
+Backups on the Wio Tracker L2 now go to the SD card. The SD path had been left out of that board's build, so they never did before. By Michael A. Cojocari.
+
+# --- New board --------------------------------------------------------------------------------------
+The LilyGo T-Deck Pro can be flashed from the website, marked experimental. It has an e-paper screen, a keyboard and touch, and the radio, GPS, microSD and battery all work, but it has only been tested on one unit so far, so please report what you find. The screen redraws the way e-paper does rather than updating instantly. By Michael A. Cojocari.
+
+# --- ThinkNode M9 -------------------------------------------------------------------------------------
+The jump-to-latest arrow is back in conversations. beta_79 removed it on the assumption that it only mattered on touchscreens, but on the M9 it was the quickest way to the newest message. Reported by jadestarwatcher and Buko84.
+Up and down move through a conversation one message at a time, in order. Message info, the admin log and the discovered contacts list all scroll properly, and the text cursor stays inside the field while you type.
+The navigation shortcuts work from anywhere, the selection cursor is easier to see, System Information and Memory detail can be navigated, and a new channel puts the cursor straight in the message field.
+The file list shows when each file was written, which makes it clear which crash report is the latest. Requested by DenRalle.
+When the app drawer is your home screen, a new "Lock home to drawer" switch keeps the Home key there. Requested by Buko84.
+All of the above by Michael A. Cojocari, most of it from reports by Buko84.
+
+# --- Fixes for everyone ----------------------------------------------------------------------------
+The battery life estimate works again after a restart. Samples written before the clock was set made a normal discharge look flat, so it said "charging / steady". By Michael A. Cojocari, reported by Danie10.
+The lock screen notification no longer shows a direct message as 64 hops away. By Michael A. Cojocari, reported by Buko84.
+Polling a node for telemetry now stops on its own, after 10 requests by default, instead of carrying on until someone remembers to switch it off. It was flooding the mesh. By Michael A. Cojocari, reported by Colni777.
+Quick replies can be longer. By Michael A. Cojocari, requested by Danie10.
+The System Information page title is translated again. Its translation key had been renamed in the generated table but not in the language files it is built from, so every build put the old name back.
+A Lua app that clears its screen while showing a map no longer frees that map twice. By Michael A. Cojocari, reported by tmetz1987.
+The About page shows microSD diagnostics, so a card that will not mount says why. By Michael A. Cojocari.
+
+# --- Keyboards and apps ------------------------------------------------------------------------
+A Latvian keyboard layout, and Romanian no longer labels itself as English on the layout button. By aigarslv.
+Wardrive 1.2 lets you review a run on the device after it finishes. By tmetz1987.
+
+# --- For testers ---------------------------------------------------------------------------------
+On a T-Deck Pro, anything at all is worth reporting, including which hardware revision you have.
+Not in this build: an MQTT Observer mode, which is written but held back for discussion (#520).
