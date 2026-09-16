@@ -828,7 +828,7 @@ Switch	Пребаци
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Пребацити на спољну антену?\n\nПрво провери да ли је антена стварно прикључена на спољни прикључак. Предаја без антене може оштетити радио.\n\nПри сваком рестарту враћа се на уграђену.
 Sync clock from system	Синхронизуј сат
 System	Систем
-System info	Информације о систему
+System Information	Информације о систему
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS клијенти %d  GPS %s  Зујалица %s
 TCP off	TCP искљ
 TCP on	TCP укљ

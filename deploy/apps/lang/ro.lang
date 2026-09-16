@@ -828,7 +828,7 @@ Switch	Comută
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Comuţi pe antena externă?\n\nAsigură-te întâi că e chiar conectată o antenă la mufa externă. Transmisia fără antenă poate defecta radioul.\n\nRevine la antena integrată la fiecare repornire.
 Sync clock from system	Sincronizează ceasul din sistem
 System	Sistem
-System info	Informaţii sistem
+System Information	Informaţii sistem
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nClienţi WS %d  GPS %s  Buzzer %s
 TCP off	TCP oprit
 TCP on	TCP pornit

@@ -827,7 +827,7 @@ Switch	Trocar
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Mudar para a antena externa?\n\nPrimeiro confirme que há mesmo uma antena no conector externo. Transmitir sem nada pode danificar o rádio.\n\nVolta à antena embutida a cada reinicialização.
 Sync clock from system	Sincronizar relógio do sistema
 System	Sistema
-System info	Info do sistema
+System Information	Info do sistema
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nClientes WS %d  GPS %s  Buzzer %s
 TCP off	TCP desligado
 TCP on	TCP ligado

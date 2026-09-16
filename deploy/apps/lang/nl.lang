@@ -825,7 +825,7 @@ Switch	Wisselen
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Overschakelen naar de externe antenne?\n\nControleer eerst of er echt een antenne op de externe aansluiting zit. Zenden zonder antenne kan de radio beschadigen.\n\nValt bij elke herstart terug op de interne antenne.
 Sync clock from system	Klok synchroniseren
 System	Systeem
-System info	Systeeminfo
+System Information	Systeeminfo
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS-clients %d  GPS %s  Zoemer %s
 TCP off	TCP uit
 TCP on	TCP aan

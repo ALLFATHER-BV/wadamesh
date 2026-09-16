@@ -843,7 +843,7 @@ Switch	Kapcsoló
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Váltasz a külső antennára?\n\nElőbb győződj meg róla, hogy tényleg van antenna a külső aljzatban. Antenna nélkül adni károsíthatja a rádiót.\n\nMinden újraindításkor visszaáll a beépített antennára.
 Sync clock from system	Óra szinkronizálása a rendszerből
 System	Rendszer
-System info	Rendszerinfó
+System Information	Rendszerinfó
 Target	Célpont
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s BLE %s\nWS kliensek %d GPS %s Buzzer %s
 TCP off	TCP kikapcsolva

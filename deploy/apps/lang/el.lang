@@ -828,7 +828,7 @@ Switch	Εναλλαγή
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Αλλαγή στην εξωτερική κεραία;\n\nΒεβαιωθείτε πρώτα ότι υπάρχει κεραία στην υποδοχή. Η εκπομπή χωρίς κεραία μπορεί να βλάψει τον πομποδέκτη.\n\nΕπανέρχεται στην ενσωματωμένη σε κάθε επανεκκίνηση.
 Sync clock from system	Συγχρονισμός ρολογιού
 System	Σύστημα
-System info	Πληροφορίες συστήματος
+System Information	Πληροφορίες συστήματος
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nΠελάτες WS %d  GPS %s  Βομβητής %s
 TCP off	TCP όχι
 TCP on	TCP ναι

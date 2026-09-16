@@ -828,7 +828,7 @@ Switch	Переключить
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Переключиться на внешнюю антенну?\n\nСначала убедитесь, что антенна действительно подключена к разъёму. Передача без антенны может повредить радио.\n\nПри каждой перезагрузке возвращается на встроенную.
 Sync clock from system	Синхронизировать часы
 System	Система
-System info	О системе
+System Information	О системе
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS-клиенты %d  GPS %s  Зуммер %s
 TCP off	TCP выкл
 TCP on	TCP вкл

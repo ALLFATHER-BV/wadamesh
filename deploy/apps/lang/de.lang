@@ -824,7 +824,7 @@ Streams the device screen as a live picture you tap to control. Heavier; the pan
 Switch	Wechseln
 Switch to the external antenna?\n\nMake sure an antenna is actually connected to the external antenna socket first. Transmitting with nothing attached can damage the radio.\n\nResets to the on-board antenna on every reboot.	Auf die externe Antenne wechseln?\n\nErst sicherstellen, dass wirklich eine Antenne an der Buchse steckt. Senden ohne Antenne kann das Funkmodul beschädigen.\n\nFällt bei jedem Neustart auf die interne Antenne zurück.
 Sync clock from system	Uhr synchronisieren
-System info	Systeminfo
+System Information	Systeminfo
 TCP %s  BLE %s\nWS clients %d  GPS %s  Buzzer %s	TCP %s  BLE %s\nWS-Clients %d  GPS %s  Summer %s
 TCP off	TCP aus
 TCP on	TCP ein
