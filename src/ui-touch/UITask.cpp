@@ -28602,6 +28602,9 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_font(s_home_chart_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_align(s_home_chart_legend, LV_ALIGN_TOP_LEFT, 0, chart_y);
   lv_obj_add_flag(s_home_chart_legend, LV_OBJ_FLAG_CLICKABLE);
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_add_flag(s_home_chart_legend, NAV_SKIP_FLAG);
+#endif
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
