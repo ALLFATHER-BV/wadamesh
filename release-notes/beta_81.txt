@@ -1,0 +1,32 @@
+# beta_81 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Community ------------------------------------------------------------------------------------
+Half of this drop is Michael A. Cojocari's again, gathered into one reviewed set (PR #523), and most of the rest came out of reports from PD0RCM, jesshampshire, Steve8677 and Buko84. Thanks all.
+
+# --- Bluetooth keyboards on every board with Bluetooth --------------------------------------
+Bluetooth now serves either the phone app or a keyboard, and you choose which under Settings, Bluetooth. Pairing lists the keyboards that are in pairing mode and pairs with a code or without one, and the keyboard you paired reconnects by itself after that.
+Keys are read the way a phone or a computer reads them, from the keyboard's own report map, so media keys and touchpads are left alone. Pick the layout to match your keyboard: US, UK, German, French or Belgian, including AltGr and the dead keys for accents.
+On a touchscreen board the on-screen keyboard stays down while a keyboard is connected, and a second tap on a field brings it up anyway when you want it.
+The arrows, Tab, Enter and Page Up and Down drive the highlight, so the whole interface works without touching the screen, and the letter hotkeys over the tab bar switch pages.
+Esc is the back button. Some keyboards type a character instead of sending Esc, so the Back key setting captures whichever key you press and treats that one as back from then on.
+The Command key tapped on its own opens the emoji picker while you are writing a message, and the status bar shows a keyboard instead of the Bluetooth glyph while one is connected.
+Not on the Tanmatsu or the T-Display P4, which have no Bluetooth of their own.
+
+# --- From Michael A. Cojocari's PR #523 --------------------------------------------------------
+T-Lora Pager: the microSD card mounts again after the card has been read on a computer, and powering off unmounts it properly. Reported by comraderachel.
+At a glance: emoji in a notification render as emoji instead of squares. Reported by B0N3-GD.
+Transfer page: upload a folder of offline OSM tiles straight to the SD card, with resumable writes. Requested by wpawelczyk-wq.
+LilyGo T-Deck Pro: touch releases are debounced, holding a chat row is timed in hardware, and typing a space no longer starts the screen lock.
+Heltec V4 with the original Expansion Kit: the IO button goes back on a tap and home on a hold, the keys are larger with a magnified preview, and the status bar targets are easier to hit. Reported by jesshampshire.
+
+# --- Fixes for everyone ----------------------------------------------------------------------------
+The web interface can unlock the screen again. A locked screen absorbs every tap on purpose, and unlocking on the device means holding the trackball or the button, so a browser had no way back from a screen it had locked itself. The page now shows an Unlock button whenever the device is locked. Reported by PD0RCM.
+Console mode can be left without typing: hold a finger on the screen for three seconds and it comes back to the normal interface. Console mode also applies the Older keyboard protocol setting now, which it was ignoring, so a T-Deck that needs that setting no longer types garbage in the console with no way out. Reported by jesshampshire.
+A touch wakes a dark console screen again on the boards that have no keyboard, where nothing else could.
+Pasting a key into the channel secret or the public key field takes the key out of whatever you copied, so pasting the whole message somebody sent you works instead of filling the field with their words. Reported by Steve8677.
+ThinkNode M9: a firmware update waiting for you is visible on the screen, next to the message and contact notices. That board never had an update signal at all. Requested by Buko84.
+The Settings tile in the app drawer carries the same update mark on every board.
+
+# --- For testers ---------------------------------------------------------------------------------
+Bluetooth keyboards are new on every board: worth reporting which keyboard you used, whether it paired with a code or without one, whether Esc acts as back, and whether typing survives the keyboard going to sleep and coming back.
