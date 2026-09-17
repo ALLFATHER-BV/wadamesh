@@ -48,6 +48,29 @@ int main() {
   long_name[65] = '\0';
   assert(!fileNameValid(long_name));
 
+  MapTilePath tile = {};
+  assert(mapTilePathValid("3/0/0.png", &tile));
+  assert(tile.zoom == 3 && tile.x == 0 && tile.y == 0);
+  assert(mapTilePathValid("15/17642/10765.png", &tile));
+  assert(tile.zoom == 15 && tile.x == 17642 && tile.y == 10765);
+  assert(mapTilePathValid("19/524287/524287.PNG", &tile));
+  assert(!mapTilePathValid("2/0/0.png"));
+  assert(!mapTilePathValid("20/0/0.png"));
+  assert(!mapTilePathValid("3/8/0.png"));
+  assert(!mapTilePathValid("3/0/8.png"));
+  assert(!mapTilePathValid("15/x/10765.png"));
+  assert(!mapTilePathValid("15/17642/-1.png"));
+  assert(!mapTilePathValid("15/17642/10765.jpg"));
+  assert(!mapTilePathValid("/15/17642/10765.png"));
+  assert(!mapTilePathValid("15/17642/../10765.png"));
+  assert(!mapTilePathValid("15/17642/10765.png/extra"));
+
+  const uint8_t png_signature[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+  const uint8_t jpeg_signature[] = { 0xFF, 0xD8, 0xFF, 0xE0, 0, 0, 0, 0 };
+  assert(pngSignatureValid(png_signature, sizeof png_signature));
+  assert(!pngSignatureValid(png_signature, sizeof png_signature - 1));
+  assert(!pngSignatureValid(jpeg_signature, sizeof jpeg_signature));
+
   assert(readablePath("/screenshots/capture.png"));
   assert(readablePath("/transfer/archive.bin"));
   assert(readablePath("/wadamesh-crash.elf"));

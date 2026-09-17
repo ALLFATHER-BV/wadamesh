@@ -60,6 +60,12 @@ void TLoraPagerBoard::begin() {
       delay(1); // stagger rail turn-on, mirrors the vendor's bring-up order
     }
 
+    // A software power-off leaves the XL9555 alive in deep sleep. If a card is
+    // removed, used by a host, and reinserted while asleep, SD_EN can therefore
+    // stay HIGH across the whole cycle and the card never sees a clean power-on
+    // reset. Pulse only its dedicated rail before the first mount attempt.
+    resetSdCardPower();
+
     io_expander.pinMode(PAGER_EXPAND_SD_DET, INPUT);
     io_expander.pinMode(PAGER_EXPAND_SD_PULLEN, INPUT);
 
@@ -118,6 +124,23 @@ bool TLoraPagerBoard::sdCardPresent() {
   // a live VFS because card-detect I2C was temporarily unavailable. A real,
   // non-formatting SD transaction remains the final mount/alive arbiter.
   return sdCardState() != SdCardState::Absent;
+}
+
+bool TLoraPagerBoard::setSdCardPower(bool on) {
+  if (!expander_ready_ || !expander_mutex_) return false;
+  if (xSemaphoreTake(expander_mutex_, pdMS_TO_TICKS(100)) != pdTRUE) return false;
+  io_expander.pinMode(PAGER_EXPAND_SD_EN, OUTPUT);
+  io_expander.digitalWrite(PAGER_EXPAND_SD_EN, on ? HIGH : LOW);
+  xSemaphoreGive(expander_mutex_);
+  return true;
+}
+
+bool TLoraPagerBoard::resetSdCardPower() {
+  if (!setSdCardPower(false)) return false;
+  delay(100);
+  if (!setSdCardPower(true)) return false;
+  delay(250);
+  return true;
 }
 
 void TLoraPagerBoard::setAmpEnabled(bool on) {

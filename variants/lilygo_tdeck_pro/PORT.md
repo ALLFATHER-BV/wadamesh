@@ -53,8 +53,10 @@ the controller's ten-event FIFO. The Pro matrix order is covered by
 `test/test_tdeck_pro_keyboard_state.cpp`.
 
 Touch probes CST3530 first and falls back to CST328. It is polled inline with
-the UI to keep the shared I2C bus single-owner. While asleep, touch and keyboard
-events are drained but do not wake the display; GPIO0 is the wake control.
+the UI and from the panel BUSY callback during e-paper refreshes, keeping the
+shared I2C bus single-owner while still observing releases during a blocked
+refresh. While asleep, touch and keyboard events are drained but do not wake the
+display; GPIO0 is the wake control.
 
 ## Validation status
 

@@ -40,7 +40,11 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   see [variants/lilygo_tdeck_pro/PORT.md](variants/lilygo_tdeck_pro/PORT.md).
 - **Heltec V4 + TFT**: touch UI with the on-screen keyboard; the optional
   Expansion Kit adds environment sensors (home-screen chart) and a piezo
-  buzzer. V4.3 boards get the switchable high-gain receive LNA toggle.
+  buzzer. On the original Expansion Kit, tap **IO** for Back or hold it for one
+  second to return Home; this reuses GPIO35, so that target no longer drives the
+  same line as a TX LED. **PWR** remains the expansion board's hardware power
+  control and is not readable by firmware. V4.3 boards get the switchable
+  high-gain receive LNA toggle.
 - **Tanmatsu**: keyboard-driven UI (no touchscreen) with the coloured function
   keys mapped to tabs, ALT accent picker, UI scaling (Normal/Large/Huge),
   microSD for all persistent data. Ships through the Tanmatsu launcher store,

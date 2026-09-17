@@ -51,6 +51,55 @@ inline bool fileNameValid(const char* name) {
   return true;
 }
 
+struct MapTilePath {
+  uint8_t zoom;
+  uint32_t x;
+  uint32_t y;
+};
+
+inline bool parseDecimalSegment(const char* begin, const char* end, uint32_t* value) {
+  if (!begin || !end || !value || begin >= end) return false;
+  uint32_t out = 0;
+  for (const char* cursor = begin; cursor < end; ++cursor) {
+    if (*cursor < '0' || *cursor > '9') return false;
+    const uint32_t digit = static_cast<uint32_t>(*cursor - '0');
+    if (out > (UINT32_MAX - digit) / 10u) return false;
+    out = out * 10u + digit;
+  }
+  *value = out;
+  return true;
+}
+
+inline bool mapTilePathValid(const char* path, MapTilePath* parsed = nullptr) {
+  if (!path || !path[0] || strlen(path) > 48) return false;
+  const char* first_slash = strchr(path, '/');
+  if (!first_slash) return false;
+  const char* second_slash = strchr(first_slash + 1, '/');
+  if (!second_slash || strchr(second_slash + 1, '/')) return false;
+  const char* extension = strrchr(second_slash + 1, '.');
+  if (!extension || (strcmp(extension, ".png") != 0 && strcmp(extension, ".PNG") != 0))
+    return false;
+
+  uint32_t zoom = 0, x = 0, y = 0;
+  if (!parseDecimalSegment(path, first_slash, &zoom) ||
+      !parseDecimalSegment(first_slash + 1, second_slash, &x) ||
+      !parseDecimalSegment(second_slash + 1, extension, &y) ||
+      zoom < 3 || zoom > 19) return false;
+  const uint32_t span = 1u << zoom;
+  if (x >= span || y >= span) return false;
+  if (parsed) {
+    parsed->zoom = static_cast<uint8_t>(zoom);
+    parsed->x = x;
+    parsed->y = y;
+  }
+  return true;
+}
+
+inline bool pngSignatureValid(const uint8_t* data, size_t len) {
+  static const uint8_t signature[] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+  return data && len >= sizeof signature && memcmp(data, signature, sizeof signature) == 0;
+}
+
 inline bool firmwareExportName(const char* name) {
   if (!fileNameValid(name)) return false;
   if (strcmp(name, "wadamesh-crash.elf") == 0 ||
