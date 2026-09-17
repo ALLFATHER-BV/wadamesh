@@ -137,7 +137,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
 
 #if defined(HAS_TOUCH_UI)
   #include <lvgl.h>
-  #include <helpers/input/HeltecV4CapTouch.h>
+  #include "../helpers/input/HeltecV4CapTouch.h"
   #if CAP_TRACKBALL
     #include <helpers/input/TDeckTrackball.h>
   #endif
@@ -8652,10 +8652,8 @@ static void chatDeleteApply() {
   g_lv.task->showAlert(is_channel ? TR("Channel removed") : TR("Chat removed"), 1000);
 }
 
-static void threadLongPressCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED || !g_lv.task) return;
-  auto* ctx = static_cast<LvThreadButtonCtx*>(lv_event_get_user_data(e));
-  if (!ctx) return;
+static void openThreadActionSheetFromCtx(LvThreadButtonCtx* ctx) {
+  if (!ctx || !g_lv.task) return;
   bool ch; uint16_t unread; uint32_t ts;
   char name[UITask::MAX_THREAD_NAME + 1] = "";
   if (!g_lv.task->getThreadInfo(ctx->idx, ch, unread, ts, name, sizeof(name))) return;
@@ -8671,6 +8669,44 @@ static void threadLongPressCb(lv_event_t* e) {
   // Both DMs and channels get an action sheet: Mark as read, plus manage
   // (channels: Share secret / Remove; DMs: Delete chat).
   openThreadActionSheet(ctx->idx, name, ch);
+}
+
+#if defined(HAS_TDECK_PRO)
+static lv_obj_t* s_thread_hold_row = nullptr;
+static bool s_thread_hold_opened = false;
+static constexpr uint32_t kTDeckProThreadHoldMs = 800;
+#endif
+
+static void threadLongPressCb(lv_event_t* e) {
+#if defined(HAS_TDECK_PRO)
+  const lv_event_code_t code = lv_event_get_code(e);
+  lv_obj_t* row = lv_event_get_current_target(e);
+  if (code == LV_EVENT_PRESSED) {
+    s_thread_hold_row = row;
+    s_thread_hold_opened = false;
+    return;
+  }
+  if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+    if (s_thread_hold_row == row) {
+      s_thread_hold_row = nullptr;
+      s_thread_hold_opened = false;
+    }
+    return;
+  }
+  if (code != LV_EVENT_PRESSING || s_thread_hold_row != row ||
+      s_thread_hold_opened || heltecV4CapTouchHeldMs() < kTDeckProThreadHoldMs)
+    return;
+
+  // E-paper refreshes can delay LVGL's release sample long enough to satisfy
+  // its software timer after a physical tap has ended. Use the touch driver's
+  // hardware-sampled duration instead; debounce misses never count toward it.
+  if (heltecV4CapTouchIsSwiping()) return;
+  s_thread_hold_opened = true;
+#else
+  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+#endif
+  auto* ctx = static_cast<LvThreadButtonCtx*>(lv_event_get_user_data(e));
+  openThreadActionSheetFromCtx(ctx);
 }
 
 // Per-row gear: opens the SAME thread-settings sheet as a long-press (and as the in-chat cog).
@@ -39157,7 +39193,14 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_add_flag(btn, NAV_THREAD_ROW_FLAG);
     lv_obj_set_user_data(btn, reinterpret_cast<void*>(static_cast<intptr_t>(idxs[i] + 1)));
     lv_obj_add_event_cb(btn, threadSelectCb,    LV_EVENT_CLICKED,      &p.ctx_store[i]);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_PRESSED,      &p.ctx_store[i]);
+    lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_PRESSING,     &p.ctx_store[i]);
+    lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_RELEASED,     &p.ctx_store[i]);
+    lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_PRESS_LOST,   &p.ctx_store[i]);
+#else
     lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_LONG_PRESSED, &p.ctx_store[i]);
+#endif
   }
   // Put the scroll back where it was so a data-driven rebuild doesn't snap to the top.
   lv_obj_update_layout(p.list_cont);
@@ -40163,6 +40206,7 @@ static void updatePagerAltBackspaceChord() {
 // isn't a real hold).
 static lv_obj_t* s_pager_locking_popup = nullptr;
 static lv_obj_t* s_pager_locking_bar   = nullptr;
+static bool      s_pager_space_text_press = false;
 
 static void pagerLockingPopupHide() {
   if (s_pager_locking_popup) { popupClose(&s_pager_locking_popup); s_pager_locking_bar = nullptr; }
@@ -40206,18 +40250,36 @@ static void pagerLockingPopupShow() {
 }
 
 static void updatePagerSpaceHold(unsigned long now) {
-  // Never engage mid-typing (space just types normally there) or once already
-  // locked/off (nothing left to do -- updatePagerBackspaceUnlockHold owns the
-  // reverse direction).
-  if ((g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) || navFocusedTextarea()) {
-    pagerLockingPopupHide();
-    return;
-  }
   const bool held = pagerKeyboardSpaceHeld();
   static constexpr uint32_t kLongPressMs = 1000;
   static bool     s_was_held    = false;
   static uint32_t s_press_start = 0;
   static bool     s_long_fired  = false;
+
+  bool text_input_active = navFocusedTextarea() != nullptr;
+#if defined(HAS_TDECK_PRO)
+  // Pro typing follows the textarea bound to the hidden LVGL keyboard. Focus
+  // can temporarily move to another chat control while that composer remains
+  // the active edit target, so navFocusedTextarea() alone is not authoritative.
+  lv_obj_t* bound_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
+  text_input_active = bound_ta && lv_obj_is_valid(bound_ta) &&
+                      (!s_kbd_nav || s_nav_ta_editing);
+#endif
+
+  // Never engage mid-typing (space just types normally there) or once already
+  // locked/off (nothing left to do -- updatePagerBackspaceUnlockHold owns the
+  // reverse direction). Once a press has belonged to an editor, suppress that
+  // whole physical press through key-up even if focus changes in the meantime.
+  if (text_input_active && held) s_pager_space_text_press = true;
+  if ((g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) ||
+      text_input_active || s_pager_space_text_press) {
+    pagerLockingPopupHide();
+    if (!held) s_pager_space_text_press = false;
+    s_was_held = held;
+    s_press_start = 0;
+    s_long_fired = false;
+    return;
+  }
 
   if (held && !s_was_held) {
     s_press_start = now;
@@ -42940,6 +43002,12 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     }
     return;
   }
+#if defined(HAS_PAGER_KEYBOARD)
+  // This is the authoritative classification for the Space press: it reached
+  // the same textarea path that will insert the character below. Keep that
+  // physical press ineligible for lock even if focus changes before key-up.
+  if (key == ' ') s_pager_space_text_press = true;
+#endif
   txtMenuHide();   // any keypress while editing dismisses an open edit menu
 #if CAP_KEYPAD_NAV
   // Accent-variant / @-mention popups (issues #22, #42) are otherwise
@@ -56738,7 +56806,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   ::display.setBusyHook([] {
       static uint32_t last_poll = 0;
       const uint32_t now = millis();
-      if (now - last_poll >= 8) { last_poll = now; pagerKeyboardPoll(); }
+      if (now - last_poll >= 8) {
+        last_poll = now;
+        (void)heltecV4CapTouchCheck();
+        pagerKeyboardPoll();
+      }
       delay(1);
     });
 #endif
@@ -59724,6 +59796,10 @@ void UITask::loop() {
       // GPIO47/48 but use different driver locks. Keep every transaction on
       // loopTask so the touch poll cannot interrupt an expander/ADC transfer.
       pushDiagLine("touch inline (shared I2C)");
+    #elif defined(HAS_TDECK_PRO)
+      // The e-paper BUSY callback keeps this inline driver polling while the
+      // panel blocks the UI task, so physical releases cannot remain stale.
+      pushDiagLine("touch inline + e-paper busy");
     #else
       // Once hardware is up, hand the chsc6x poll off to a pinned task on
       // core 0 so it runs at a fixed ~125 Hz independent of LVGL render and

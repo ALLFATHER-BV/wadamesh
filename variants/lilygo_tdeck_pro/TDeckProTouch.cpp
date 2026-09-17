@@ -19,10 +19,13 @@ bool swiping = false;
 uint16_t x = 0, y = 0, start_x = 0, start_y = 0, tap_x = 0, tap_y = 0;
 int8_t swipe_x = 0, swipe_y = 0;
 uint32_t down_at = 0;
+uint8_t release_misses = 0;
+constexpr uint8_t RELEASE_DEBOUNCE = 2;
 
 void poll() {
   uint16_t next_x = 0, next_y = 0;
   if (display.getTouchPoint(next_x, next_y)) {
+    release_misses = 0;
     x = next_x;
     y = next_y;
     live = true;
@@ -39,6 +42,11 @@ void poll() {
     return;
   }
 
+  if (down && release_misses < RELEASE_DEBOUNCE) {
+    ++release_misses;
+    return;
+  }
+  release_misses = 0;
   live = false;
   if (!down) return;
   down = false;
@@ -75,6 +83,12 @@ bool heltecV4CapTouchGetLive(uint16_t* out_x, uint16_t* out_y) {
   if (out_x) *out_x = x;
   if (out_y) *out_y = y;
   return true;
+}
+uint32_t heltecV4CapTouchHeldMs() {
+  // A debounce miss keeps LVGL's pointer stable, but must not extend a short
+  // physical tap into a hold. Only a fresh positive controller sample counts.
+  if (!down || !live || release_misses != 0 || down_at == 0) return 0;
+  return millis() - down_at;
 }
 bool heltecV4CapTouchPopSwipe(int8_t* out_x, int8_t* out_y) {
   if (!swipe_pending) return false;
