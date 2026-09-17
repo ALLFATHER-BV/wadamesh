@@ -78,6 +78,14 @@ public:
   void requestExit() { _exit_req = true; }
   bool takeExit() { bool v = _exit_req; _exit_req = false; return v; }
 
+  // ---- screen lock (#506): a browser can't hold the trackball or press BOOT, so the
+  //      page shows an Unlock button while the device is manually locked (device ->
+  //      browser) and sends the unlock request back (browser -> device). ----
+  void setLocked(bool l) { _locked = l; }
+  bool locked() const { return _locked; }
+  void requestUnlock() { _unlock_req = true; }
+  bool takeUnlock() { bool v = _unlock_req; _unlock_req = false; return v; }
+
   // ============ web mesh terminal (text CLI over WS; separate from the framebuffer) ============
   // Lightweight text path: browser sends a command line, the device runs runLocalCli() and
   // streams the CLI reply text back. No framebuffer, no reboot. Runtime toggle; the WS server
@@ -131,6 +139,8 @@ private:
   volatile bool _remote = false;          // remote mode -> browser shows the Rotate button
   volatile uint8_t _orient_req = 0;       // browser-requested orientation (1=landscape, 2=portrait, 0=none)
   volatile bool _exit_req = false;        // browser asked to leave remote mode
+  volatile bool _locked = false;          // device screen is manually locked
+  volatile bool _unlock_req = false;      // browser asked to unlock the screen
 
   // ---- web terminal channels ----
   volatile bool _term_on = false;

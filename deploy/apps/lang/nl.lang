@@ -698,6 +698,7 @@ SD card inserted	SD-kaart geplaatst
 SD card lost - reinsert to recover	SD-kaart verloren - plaats opnieuw
 SD card remounted	SD-kaart opnieuw gekoppeld
 SD card removed	SD-kaart verwijderd
+SD card unavailable	SD card unavailable
 SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
 SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	SD-data niet beschikbaar - identiteit, instellingen, contacten en kanalen kunnen pas na opnieuw plaatsen van de kaart worden opgeslagen.
 SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	SD-datamigratie onvolledig. Identiteit en instellingen blijven intern; gebruik Interne data naar SD kopiëren om opnieuw te proberen.

@@ -128,6 +128,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 // The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
 // must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
@@ -6065,11 +6066,14 @@ static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over 
 #if defined(HAS_THINKNODE_M9)
 static lv_obj_t* s_m9_mail_indicator = nullptr;
 static lv_obj_t* s_m9_contact_indicator = nullptr;
+static lv_obj_t* s_m9_update_indicator = nullptr;   // firmware update waiting (#443)
 static void hideM9NoticeIndicators() {
   if (s_m9_mail_indicator && lv_obj_is_valid(s_m9_mail_indicator))
     lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
   if (s_m9_contact_indicator && lv_obj_is_valid(s_m9_contact_indicator))
     lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+  if (s_m9_update_indicator && lv_obj_is_valid(s_m9_update_indicator))
+    lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
 }
 #endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
@@ -10315,6 +10319,18 @@ static void txtMenuHide() {
 
 enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM };
 
+// A key field takes the key out of whatever was pasted (#526): a copied message
+// carries text around it, and the field's length cap would otherwise keep that
+// text and cut the key off. Other fields get the clipboard as it is. The
+// extraction itself is host-tested (PasteHexKey.h, test_paste_hex_key.cpp).
+static const char* pasteTextFor(lv_obj_t* ta, const char* clip, char* buf, size_t cap) {
+  lv_obj_t* const real = (ta == s_kb_mirror_ta && s_kb_bind_ta) ? s_kb_bind_ta : ta;
+  size_t want = 0;
+  if (real && real == s_addch_secret_ta)   want = 32;   // channel secret (16 bytes)
+  else if (real && real == s_addct_pub_ta) want = 64;   // contact public key (32 bytes)
+  return PasteHexKey::extract(clip, want, buf, cap);
+}
+
 static void txtMenuCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
@@ -10353,7 +10369,8 @@ static void txtMenuCellCb(lv_event_t* e) {
   } else if (act == TXT_PASTE) {
     if (s_clipboard[0]) {
       if (sel) taDeleteRange(ta, s_cp, e_cp);
-      lv_textarea_add_text(ta, s_clipboard);
+      char key[65];
+      lv_textarea_add_text(ta, pasteTextFor(ta, s_clipboard, key, sizeof key));
     }
   }
   taClearSelection(ta);
@@ -47883,8 +47900,9 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_height(lb, lv_font_get_line_height(lv_obj_get_style_text_font(lb, LV_PART_MAIN)));
   lv_obj_align(lb, LV_ALIGN_BOTTOM_MID, 0, -2);
 
-  // Notification badge: a small red count pill in the top-right corner.
-  if (badge > 0) {
+  // Notification badge: a small red count pill in the top-right corner; a
+  // negative badge is the "!" of a pending firmware update (#443).
+  if (badge != 0) {
     lv_obj_t* bdg = lv_obj_create(t);
     lv_obj_remove_style_all(bdg);
     lv_obj_clear_flag(bdg, LV_OBJ_FLAG_CLICKABLE);   // taps pass through to the tile
@@ -47895,7 +47913,9 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_size(bdg, LV_SIZE_CONTENT, 18);
     lv_obj_align(bdg, LV_ALIGN_TOP_MID, chip / 2 - 6, 2);   // overhang the chip's top-right corner
     lv_obj_t* bt = lv_label_create(bdg);
-    char bn[8]; snprintf(bn, sizeof bn, "%d", badge > 99 ? 99 : badge);
+    char bn[8];
+    if (badge < 0) snprintf(bn, sizeof bn, "!");
+    else           snprintf(bn, sizeof bn, "%d", badge > 99 ? 99 : badge);
     lv_label_set_text(bt, bn);
     lv_obj_set_style_text_color(bt, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
     lv_obj_set_style_text_font(bt, &g_font_12, LV_PART_MAIN);
@@ -48122,7 +48142,8 @@ static void openAppDrawer() {
   // First tile is "Command" (back to the command centre); the rest are the apps.
   const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
   const int mentions = g_lv.task ? g_lv.task->getUnreadMentionCount() : 0;
-  s_appdrawer_badge_sig = ((uint32_t)(unread & 0xFFFF) << 16) | (uint32_t)(mentions & 0xFFFF);
+  s_appdrawer_badge_sig = ((uint32_t)(unread & 0x7FFF) << 16) | (uint32_t)(mentions & 0xFFFF) |
+                          (s_update_available ? 0x80000000u : 0u);
   // Per-tile icon colour. Command (house) + Signal follow the theme accent; the
   // rest get a dedicated, meaningful hue so the grid isn't a wall of one colour.
   struct { const char* icon; const char* label; int act; int badge; uint32_t color; } tiles[] = {
@@ -48142,7 +48163,7 @@ static void openAppDrawer() {
     { nullptr,             "Signal",    APPACT_SIGNAL,   0,         COLOR_ACCENT },  // theme (drawn signal bars)
     { TOUCH_SYM_ANTENNA,   "Spectrum",  APPACT_SPECTRUM, 0,         0xE8A33D },      // RF spectrum analyzer amber
     { "@",                 "Mentions",  APPACT_MENTIONS, mentions,  0xF2A33C },      // mention amber
-    { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, 0,         0x9AA3AD },      // neutral gear grey
+    { LV_SYMBOL_SETTINGS,  "Settings",  APPACT_SETTINGS, s_update_available ? -1 : 0, 0x9AA3AD },   // neutral gear grey; "!" = update
 #if defined(HAS_TOUCH_UI)
     { ">_",                "Terminal",  APPACT_TERMINAL, 0,         0x3DD27A },      // console green
 #endif
@@ -49066,8 +49087,9 @@ static void updateGlobalStatusBar() {
   // Rebuild on an actual change of the counts, not every tick, using the same
   // close/open idiom the tile-changing settings already use.
   if (s_appdrawer_root && g_lv.task) {
-    const uint32_t sig = ((uint32_t)(g_lv.task->getUnreadTotal() & 0xFFFF) << 16)
-                       | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0xFFFF);
+    const uint32_t sig = ((uint32_t)(g_lv.task->getUnreadTotal() & 0x7FFF) << 16)
+                       | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0xFFFF)
+                       | (s_update_available ? 0x80000000u : 0u);
     if (sig != s_appdrawer_badge_sig && !appDrawerCovered()) {
       // Only when nothing is in front of it. Lua apps and the other tools open
       // OVER the drawer without closing it, deliberately (see appTileCb), and
@@ -52108,6 +52130,9 @@ static void buildUiTree() {
   };
   s_m9_mail_indicator = makeM9Notice(LV_SYMBOL_ENVELOPE, 0);
   s_m9_contact_indicator = makeM9Notice(TOUCH_SYM_PERSON, 1);
+  // The bottom-bar gear badge below is this board's #else, so an available
+  // firmware update had nowhere to show on the M9 (#443). Third notice slot.
+  s_m9_update_indicator = makeM9Notice(LV_SYMBOL_DOWNLOAD, 2);
 #else
   // Red "!" update badge over the Settings gear (rightmost bottom tab). A child
   // of the screen (so it has no layout overriding its alignment) created BEFORE
@@ -57440,6 +57465,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
                   FIRMWARE_VERSION);
     consoleWriteLineC(CC_DIM, "'help' for everything, 'ui' for the graphical interface");
+#if CAP_TOUCH
+    // The way out that needs no typing (#507) -- the one that matters when the
+    // keyboard itself is what went wrong.
+    consoleWriteLineC(CC_DIM, "or hold the screen for 3 seconds to leave console mode");
+#endif
     consoleWriteLine("");
     Serial.println("[BOOT] console: text ok"); Serial.flush();
     the_mesh.setTerminalSink(&consoleWriteLine);
@@ -57448,6 +57478,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // stayed at its constructor value and the panel never slept: the console
     // stayed lit indefinitely. Same pref the UI reads.
     touchPrefsBegin();
+#if defined(HAS_TDECK_KEYBOARD)
+    // Settings > Keyboard > "Older keyboard protocol", the escape hatch for a
+    // controller the probe gets wrong (#351). The graphical path applies it far
+    // below this early return, so console mode was running with detection only:
+    // on a T-Deck that needs the older protocol every keystroke was garbage, and
+    // `ui` -- the way out -- could not be typed (#507). Applied before the input
+    // task starts in loop(), so the first poll already has it.
+    tdeckKeyboardForceLegacy(touchPrefsGetKbForceLegacy());
+#endif
     _screen_timeout_ms = (uint32_t)touchPrefsGetScreenTimeoutSecs() * 1000u;
     _last_input_ms     = millis();
     _screen_off        = false;
@@ -60698,7 +60737,17 @@ void UITask::loop() {
     }
 #endif
 #if CAP_TOUCH
-    { uint16_t _tx, _ty; if (heltecV4CapTouchGetLive(&_tx, &_ty)) { con_activity = true; } }
+    {
+      uint16_t _tx, _ty;
+      if (heltecV4CapTouchGetLive(&_tx, &_ty)) {
+        con_activity = true;
+        // A dark console on a touch-only board had nothing left to wake it: the
+        // keyboard wake above needs a keyboard, and the PIN_USER_BTN handling
+        // sits below this branch's return. The waking touch is swallowed so it
+        // cannot also type on the drawn keypad.
+        if (_screen_off) { wakeScreen(); consoleSwallowTouch(); }
+      }
+    }
 #endif
 #if defined(HAS_TDECK_TRACKBALL)
     // Trackball scrolls the scrollback. Roll up for history, down for live.
@@ -61464,7 +61513,7 @@ void UITask::loop() {
   if (now >= _next_refresh) {
     refreshStatusLabels();
 #if defined(HAS_THINKNODE_M9)
-    if (s_m9_mail_indicator && s_m9_contact_indicator) {
+    if (s_m9_mail_indicator && s_m9_contact_indicator && s_m9_update_indicator) {
       lv_obj_t* top = lv_layer_top();
       const bool top_has_content = navTopHasVisibleChild(top);
       const bool drawer_front = top_has_content && s_appdrawer_root &&
@@ -61487,6 +61536,16 @@ void UITask::loop() {
       else                          lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
       if (contact_pending && blink_on) lv_obj_clear_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
       else                             lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
+      // Update notice: steady amber, not blinking. The blink marks something
+      // that just arrived and wants reading; an update can wait for you.
+      const bool update_pending = notice_surface && s_update_available;
+      if (update_pending) {
+        lv_obj_move_foreground(s_m9_update_indicator);
+        lv_obj_set_style_text_color(s_m9_update_indicator, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+        lv_obj_clear_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
+      }
     }
 #endif
     // Unread-count badge over the Chats tab icon (bottom bar).
@@ -61826,6 +61885,10 @@ void UITask::loop() {
   }
 #endif
 #if !defined(HAS_TANMATSU)
+  // A browser can't hold the trackball or press BOOT: while the screen is manually
+  // locked the web page shows an Unlock button, which lands here (#506).
+  g_web_mirror.setLocked(_manual_lock);
+  if (g_web_mirror.takeUnlock() && _manual_lock) unlockScreen();
   // While a web-mirror browser is connected, count it as activity so the device screen
   // stays awake (otherwise the idle timer would dim it and swallow remote input).
   if (g_web_mirror.active()) {

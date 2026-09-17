@@ -708,6 +708,7 @@ SD card inserted	SD-kártya behelyezve
 SD card lost - reinsert to recover	SD-kártya elveszett - helyezze be újra a helyreállításhoz
 SD card remounted	SD kártya újracsatolva
 SD card removed	SD-kártya eltávolítva
+SD card unavailable	SD card unavailable
 SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
 SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	Az SD-kártya adatai nem érhetők el – az azonosító, a beállítások, a névjegyek és a csatornák nem menthetők a kártya újbóli behelyezéséig.
 SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	Az SD-kártya adatainak áthelyezése nem teljes. Az azonosító és a beállítások továbbra is a belső tárhelyen vannak; a folytatáshoz használd a "Belső adatok másolása SD-kártyára" lehetőséget.

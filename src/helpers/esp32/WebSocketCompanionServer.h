@@ -61,6 +61,7 @@ struct WSClientState {
   bool is_term;        // this client is a web mesh terminal (GET /term)
   bool is_files;       // authenticated browser file transfer (GET /files)
   bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
+  uint8_t lock_sent;   // mirror: lock state last sent to this browser (0xFF = not yet)
 #if WADA_WEB_FILE_TRANSFER
   bool files_authed;
   bool files_close_after_tx;

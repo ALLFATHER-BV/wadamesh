@@ -64,4 +64,10 @@ void consoleScroll(int delta);
 // Feed one character from a hardware keyboard. '\n' submits, '\b' deletes.
 // Returns true if the console consumed it.
 bool consoleKey(int c);
+
+#if CAP_TOUCH
+// Called by the host when a touch wakes a dark console: that same press must not
+// type on the drawn keypad or start the hold-to-leave count.
+void consoleSwallowTouch();
+#endif
 #endif

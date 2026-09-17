@@ -51,6 +51,8 @@ static const char WS_HTTP_INFO_PAGE[] =
   "#rot:active{background:#19d6c2;color:#000;border-color:#19d6c2}\n"
   "#xit{padding:7px 15px;font-size:12px;background:#1e1416;color:#e0a6a6;border:1px solid #4a2a2e;border-radius:8px;display:none}\n"
   "#xit:active{background:#ff6b6b;color:#000;border-color:#ff6b6b}\n"
+  "#unl{padding:8px 16px;font-size:14px;background:#19d6c2;color:#000;border:1px solid #19d6c2;border-radius:8px;font-weight:600;display:none}\n"
+  "#unl:active{background:#0f8f82;border-color:#0f8f82}\n"
   "#k{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px}\n"
   "#hdr{position:fixed;top:14px;left:18px;display:none;align-items:center;gap:11px;z-index:5}\n"
   "#hdr .wm{font-family:'JetBrains Mono','Courier New',monospace;font-weight:700;font-size:22px;letter-spacing:2px;color:#e8e8ea}\n"
@@ -64,7 +66,8 @@ static const char WS_HTTP_INFO_PAGE[] =
   "<div id=cap><b>wadamesh</b> &nbsp; live UI</div>\n"
   "<canvas id=c width=320 height=240></canvas>\n"
   "<div id=s>connecting...</div>\n"
-  "<div id=ctl><button id=kb>&#9000; Keyboard</button>\n"
+  "<div id=ctl><button id=unl>Unlock screen</button>\n"
+  "<button id=kb>&#9000; Keyboard</button>\n"
   "<button id=rot>&#8635; Rotate</button>\n"
   "<button id=xit>&#10005; Exit remote</button></div>\n"
   "<textarea id=k autocomplete=off autocorrect=off autocapitalize=off spellcheck=false></textarea>\n"
@@ -75,11 +78,12 @@ static const char WS_HTTP_INFO_PAGE[] =
   "var DW=320,DH=240,down=false,last=0,ws;\n"
   "var isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0,kbT=null;\n"
   "var ROT=document.getElementById('rot'),XIT=document.getElementById('xit'),CTL=document.getElementById('ctl');\n"
+  "var UNL=document.getElementById('unl'),LK=false;\n"
   "function st(t,k){S.textContent=t;S.className=k||''}\n"
   "function conn(){\n"
   " ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/mirror');\n"
   " ws.binaryType='arraybuffer';\n"
-  " ws.onopen=function(){st('connected','ok')};\n"
+  " ws.onopen=function(){LK=false;UNL.style.display='none';st('connected','ok')};\n"
   " ws.onclose=function(){st('disconnected - retrying','err');setTimeout(conn,1500)};\n"
   " ws.onerror=function(){st('connection error','err')};\n"
   " ws.onmessage=function(e){\n"
@@ -88,6 +92,7 @@ static const char WS_HTTP_INFO_PAGE[] =
   "   if(valid){DW=nw;DH=nh;if(C.width!=DW)C.width=DW;if(C.height!=DH)C.height=DH}else{st('screen stream unavailable - use Exit remote','err')}\n"
   "   ROT.style.display=(rem&&valid)?'inline-block':'none';XIT.style.display=(rem||!valid)?'inline-block':'none';fit();return}\n"
   "  if(a[0]==3){clearTimeout(kbT);if(a[1])K.focus();else K.blur();return}\n"
+  "  if(a[0]==6){var l=!!a[1];if(l!=LK){LK=l;UNL.style.display=l?'inline-block':'none';st(l?'screen locked':'connected',l?'':'ok');fit()}return}\n"
   "  if(a[0]==1){\n"
   "   var fl=a[1],x=a[2]|(a[3]<<8),y=a[4]|(a[5]<<8),w=a[6]|(a[7]<<8),h=a[8]|(a[9]<<8);\n"
   "   var hf=fl&2,ow=hf?((w+1)>>1):w,oh=hf?((h+1)>>1):h;\n"
@@ -115,6 +120,7 @@ static const char WS_HTTP_INFO_PAGE[] =
   "var K=document.getElementById('k');\n"
   "document.getElementById('kb').addEventListener('click',function(){K.value=' ';K.focus();try{K.setSelectionRange(1,1)}catch(x){}});\n"
   "ROT.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;st('rotating - reconnecting','');ws.send(new Uint8Array([4,DW<DH?1:0]))});\n"
+  "UNL.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;ws.send(new Uint8Array([6]))});\n"
   "XIT.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;if(!confirm('Leave remote mode? The device reboots to its normal screen.'))return;st('leaving remote - rebooting','');ws.send(new Uint8Array([5]))});\n"
   "function skey(cp){if(!ws||ws.readyState!=1)return;ws.send(new Uint8Array([2,cp&255,(cp>>8)&255]))}\n"
   "K.addEventListener('beforeinput',function(e){var t=e.inputType;\n"
@@ -526,6 +532,7 @@ WebSocketCompanionServer::WebSocketCompanionServer()
     _clients[i].is_term = false;
     _clients[i].is_files = false;
     _clients[i].meta_sent = false;
+    _clients[i].lock_sent = 0xFF;
   #if WADA_WEB_FILE_TRANSFER
     _clients[i].files_authed = false;
     _clients[i].files_close_after_tx = false;
@@ -621,6 +628,7 @@ void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
   _clients[slot].is_term = false;
   _clients[slot].is_files = false;
   _clients[slot].meta_sent = false;
+  _clients[slot].lock_sent = 0xFF;
 #if WADA_WEB_FILE_TRANSFER
   _clients[slot].files_authed = false;
   _clients[slot].files_close_after_tx = false;
@@ -723,6 +731,7 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
 
           if (c->is_mirror || c->is_term || c->is_files) c->client.setNoDelay(true);   // low latency: small frames, no Nagle coalescing
           c->meta_sent = false;
+          c->lock_sent = 0xFF;
           c->handshake_done = true;
           c->ws_state = WS_STATE_HEADER_0;
           c->comp_state = COMP_STATE_IDLE;
@@ -1092,6 +1101,8 @@ void WebSocketCompanionServer::drainMirrorInput(int idx, WebMirror& m) {
               m.requestOrient(c->comp_rx_buf[1] ? 1 : 2);     // 1=landscape, 2=portrait; UI thread reboots into it
             } else if (ty == 0x05) {                          // exit remote mode
               m.requestExit();
+            } else if (ty == 0x06) {                          // unlock the screen (#506)
+              m.requestUnlock();
             }
           } else if (c->ws_opcode == 0x08) {   // client close
             disconnectClient(idx);
@@ -1416,6 +1427,12 @@ void WebSocketCompanionServer::serviceMirror(WebMirror& m) {
       if (writeBinaryFrame(i, meta, 6) == 6) { c->meta_sent = true; m.requestFullRepaint(); }
     }
     if (kb_changed && c->tx_len == 0) { uint8_t km[2] = { 0x03, (uint8_t)(kf ? 1 : 0) }; writeBinaryFrame(i, km, 2); }
+    // Lock state, tracked per browser so a late joiner or a busy link still gets it.
+    const uint8_t lk = m.locked() ? 1 : 0;
+    if (c->meta_sent && c->tx_len == 0 && c->lock_sent != lk) {
+      uint8_t lm[2] = { 0x06, lk };
+      if (writeBinaryFrame(i, lm, 2) == 2) c->lock_sent = lk;
+    }
     drainMirrorInput(i, m);
   }
 

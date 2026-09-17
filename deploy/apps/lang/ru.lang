@@ -699,6 +699,7 @@ SD card inserted	SD-карта вставлена
 SD card lost - reinsert to recover	SD-карта потеряна - переставьте её
 SD card remounted	SD-карта перемонтирована
 SD card removed	SD-карта извлечена
+SD card unavailable	SD card unavailable
 SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
 SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
 SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	

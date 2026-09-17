@@ -698,6 +698,7 @@ SD card inserted	Carte SD insérée
 SD card lost - reinsert to recover	Carte SD perdue - réinsérez-la
 SD card remounted	Carte SD remontée
 SD card removed	Carte SD retirée
+SD card unavailable	SD card unavailable
 SD data is unavailable - contacts and channels cannot be saved until the card is reinserted.	
 SD data is unavailable - identity, settings, contacts and channels cannot be saved until the card is reinserted.	
 SD data migration is incomplete. Identity and settings remain internal; use Copy internal data to SD to retry.	

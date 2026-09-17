@@ -201,6 +201,16 @@ uint16_t colourFor(uint8_t c) {
   }
 }
 
+#if defined(ESP32)
+void exitToUi();   // defined with the command dispatch below (needs render())
+#endif
+
+#if CAP_TOUCH
+// The touch that woke a dark console must not also act: it would type on the
+// drawn keypad, or start the hold-to-leave count on a board that has one.
+bool s_touch_swallow = false;
+#endif
+
 #if CAP_TOUCH && !CAP_KEYBOARD
 // ---- on-screen keypad -------------------------------------------------------
 // Touch boards have no hardware keyboard and the firmware's own on-screen one is
@@ -279,6 +289,11 @@ void touchTick() {
   uint16_t tx, ty;
   const bool pressed = heltecV4CapTouchGetLive(&tx, &ty);
   const uint32_t now = millis();
+  if (s_touch_swallow) {
+    if (pressed) { s_touch_start = 0; return; }   // still the finger that woke the screen
+    s_touch_swallow = false;                      // lifted: taps count again
+    return;
+  }
   if (pressed && !s_touch_start) {
     s_touch_start = now;
     s_touch_x = tx; s_touch_y = ty;
@@ -305,11 +320,54 @@ void touchTick() {
   if (s_scroll_mode) {
     if (s_touch_y < s_kb_top / 2) { if (s_scroll < s_count - s_rows) { s_scroll++; s_dirty = true; } }
     else                          { if (s_scroll > 0)                { s_scroll--; s_dirty = true; } }
-  } else if (held >= 1200) {
-    consoleWriteLine("(hold registered - use the 'ui' command to leave console mode)");
   }
+  (void)held;   // a long press is handled live by exitHoldTick(), not on release
 }
 #endif  // CAP_TOUCH && !CAP_KEYBOARD
+
+#if CAP_TOUCH
+// ---- the typing-free way out (#507) -----------------------------------------
+// Hold the panel for three seconds and console mode ends, the same gesture that
+// leaves remote mode. This matters most on a board whose ONLY console input is
+// the hardware keyboard (the T-Deck): if that controller's protocol is
+// misdetected, every keystroke is garbage, `ui` cannot be typed, and the setting
+// that fixes it lives in the graphical UI. Reported by jesshampshire, who had to
+// side-load a second firmware to get the device back.
+constexpr uint32_t kExitHoldMs = 3000;
+constexpr uint32_t kExitHintMs = 1000;
+uint32_t s_exit_hold   = 0;       // press start, 0 = not counting
+bool     s_exit_hinted = false;
+bool     s_exit_armed  = false;   // only a press that STARTED after boot counts
+
+void exitHoldTick() {
+  uint16_t tx = 0, ty = 0;
+  const uint32_t now = millis();
+  const bool pressed = heltecV4CapTouchGetLive(&tx, &ty);
+  if (s_touch_swallow && pressed) { s_exit_hold = 0; s_exit_hinted = false; return; }
+  if (!pressed) {
+    // A panel already reporting a press at boot (a wedged GT911 does exactly
+    // that) must not count as a hold, so arming waits for a real release.
+    s_touch_swallow = false;
+    s_exit_armed = true;
+    s_exit_hold = 0;
+    s_exit_hinted = false;
+    return;
+  }
+  if (!s_exit_armed) return;
+#if !CAP_KEYBOARD
+  if (ty >= s_kb_top) { s_exit_hold = 0; s_exit_hinted = false; return; }   // the drawn keypad owns the bottom
+#endif
+  if (!s_exit_hold) { s_exit_hold = now ? now : 1; return; }
+  const uint32_t held = now - s_exit_hold;
+  if (!s_exit_hinted && held >= kExitHintMs) {
+    s_exit_hinted = true;
+    consoleWriteLineC(CC_DIM, "keep holding to leave console mode...");
+  }
+#if defined(ESP32)
+  if (held >= kExitHoldMs) { s_exit_hold = 0; exitToUi(); }
+#endif
+}
+#endif  // CAP_TOUCH
 
 // ---- metrics ----------------------------------------------------------------
 // DisplayDriver has getTextWidth but no text height, and the concrete drivers
@@ -516,6 +574,20 @@ void cmdMenu() {
   }
 }
 
+#if defined(ESP32)
+// Leave console mode: say so on the panel, then reboot into the graphical UI.
+// Shared by the `ui` / `exit` commands and the touch-and-hold above.
+void exitToUi() {
+  consoleWriteLine("switching to the graphical UI, rebooting...");
+  render();
+  delay(600);            // let the line land on the panel before the reset
+  // Clears the pref AND flushes it. Doing the write here and calling
+  // ESP.restart() left the queued snapshot unwritten, so this came straight
+  // back to the console.
+  consoleHostRebootToUi();
+}
+#endif
+
 // ---- command dispatch -------------------------------------------------------
 void submit() {
   if (s_input_len == 0) return;
@@ -549,20 +621,14 @@ void submit() {
   }
 #if defined(ESP32)
   // The way back to the graphical UI. One of three, per CONSOLE_MODE.md: this,
-  // a key held at boot, and clearing the pref over serial or the flasher.
-  if (!strcasecmp(cmd, "ui") || !strcasecmp(cmd, "exit")) {
-    consoleWriteLine("switching to the graphical UI, rebooting...");
-    render();
-    delay(600);            // let the line land on the panel before the reset
-    // Clears the pref AND flushes it. Doing the write here and calling
-    // ESP.restart() left the queued snapshot unwritten, so this came straight
-    // back to the console.
-    consoleHostRebootToUi();
-    return;
-  }
+  // a touch-and-hold on the panel, and clearing the pref over serial or the flasher.
+  if (!strcasecmp(cmd, "ui") || !strcasecmp(cmd, "exit")) { exitToUi(); return; }
 #endif
   if (!strcasecmp(cmd, "help")) {
     consoleWriteLineC(CC_HEAD, "console  clear, help, menu, mem, ui");
+#if CAP_TOUCH
+    consoleWriteLine("         (or hold the screen for 3 s to leave)");
+#endif
     consoleWriteLine("mesh     contacts, chans, unread");
     consoleWriteLine("         chat <name>    show a thread");
     consoleWriteLine("         discover / discovered");
@@ -883,10 +949,17 @@ bool consoleKey(int c) {
   return true;
 }
 
+#if CAP_TOUCH
+void consoleSwallowTouch() { s_touch_swallow = true; }
+#endif
+
 void consoleLoop() {
   if (!s_active || !s_disp) return;
 #if CAP_TOUCH && !CAP_KEYBOARD
   touchTick();
+#endif
+#if CAP_TOUCH
+  exitHoldTick();     // hold the panel for 3 s to leave console mode (#507)
 #endif
   const uint32_t now = millis();
   bool blink_flip = false;
