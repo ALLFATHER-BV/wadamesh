@@ -8,6 +8,7 @@
 #endif
 #include <esp_heap_caps.h>
 #include <string.h>
+#include "../../ui-touch/BleKeyboard.h"   // stackGoingDown() before NimBLE teardown
 
 // Companion push code for the per-packet RX log (matches MyMesh.cpp). It is kept OFF
 // the BLE transport in writeFrameToAll — see the note there (issues #46, #54) — EXCEPT
@@ -210,7 +211,7 @@ void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, 
   _ble_enabled = true;
   _ota_ble_released = false;
   _ota_ble_was_enabled = false;
-  _ble.enable();
+  if (!_ble_phone_paused) _ble.enable();
 }
 
 void MultiTransportCompanionInterface::enableBle() {
@@ -251,7 +252,10 @@ void MultiTransportCompanionInterface::enableBle() {
   }
   _ble_enabled = true;
   wifiConfigSetBleEnabled(true);    // persist so it survives reboot
-  _ble.enable();
+  if (!_ble_phone_paused) _ble.enable();
+#if CAP_BLE_KEYBOARD
+  BleKbd::suspend(false);           // back from a Pager Wi-Fi handoff, if it was one
+#endif
 #if defined(TLORA_PAGER)
   // A successful live enable means NimBLE is now resident. Do not let the
   // Arduino Wi-Fi event path enter WPA automatically after a later link loss.
@@ -278,6 +282,14 @@ static void bleDetachServerCallbacks() {
 }
 #endif
 
+void MultiTransportCompanionInterface::setBlePhoneLinkPaused(bool paused) {
+  if (paused == _ble_phone_paused) return;
+  _ble_phone_paused = paused;
+  if (!_ble_begun || !_ble_enabled) return;   // nothing advertising; enable paths check the flag
+  if (paused) _ble.disable();   // stop advertising and drop the phone
+  else        _ble.enable();
+}
+
 void MultiTransportCompanionInterface::disableBle() {
   _ble_enabled = false;
   wifiConfigSetBleEnabled(false);   // persist so BT stays off across reboot
@@ -294,6 +306,9 @@ void MultiTransportCompanionInterface::disableBle() {
 #if defined(TLORA_PAGER)
   if (_ble_begun) {
     bleDetachServerCallbacks();
+#if CAP_BLE_KEYBOARD
+    BleKbd::stackGoingDown();
+#endif
     NimBLEDevice::deinit(true);
     _ble_begun = false;
   }
@@ -311,17 +326,26 @@ bool MultiTransportCompanionInterface::suspendBleForWifiReconnect() {
   // without invalidating that long-term security state.
   if (_ble_begun) {
     if (_ble_enabled) _ble.disable();
+#if CAP_BLE_KEYBOARD
+    BleKbd::suspend(true);   // a keyboard link is on air too; enableBle() lets it back
+#endif
     // ble_gap_terminate() is asynchronous. Do not start WPA while the old BLE
     // link is still on air; that recreates the exact overlap this handoff is
     // meant to prevent. Wait for the NimBLE host's connection table to drain,
     // with a bounded failure so a wedged peer cannot stall the main loop/WDT.
     NimBLEServer* server = NimBLEDevice::getServer();
+    auto on_air = [server]() {
+      bool busy = server && server->getConnectedCount() != 0;
+#if CAP_BLE_KEYBOARD
+      busy = busy || BleKbd::linkUp();
+#endif
+      return busy;
+    };
     const uint32_t started = millis();
-    while (server && server->getConnectedCount() != 0 &&
-           (uint32_t)(millis() - started) < 1000u) {
+    while (on_air() && (uint32_t)(millis() - started) < 1000u) {
       delay(1);
     }
-    if (server && server->getConnectedCount() != 0) {
+    if (on_air()) {
       Serial.println("[ble] disconnect timed out; Wi-Fi handoff cancelled");
       _ble_enabled = false;
       return false;
@@ -409,6 +433,9 @@ void MultiTransportCompanionInterface::prepareForHttpOta() {
     _ota_ble_was_enabled = _ble_enabled;
     if (_ble_enabled) _ble.disable();
     bleDetachServerCallbacks();
+#if CAP_BLE_KEYBOARD
+    BleKbd::stackGoingDown();
+#endif
     NimBLEDevice::deinit(true);
     _ble_begun = false;
     _ble_enabled = false;
@@ -440,7 +467,7 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
     _ble.begin(_ble_prefix, ble_name, _ble_pin_code);
     _ble_begun = true;
     _ble_enabled = _ota_ble_was_enabled;
-    if (_ble_enabled) _ble.enable();
+    if (_ble_enabled && !_ble_phone_paused) _ble.enable();
     _ota_ble_released = false;
     _ota_ble_was_enabled = false;
     meshcoreRepeaterTcpOtaEmitLine("OTA: restored BLE stack");

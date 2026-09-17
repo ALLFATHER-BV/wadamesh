@@ -538,6 +538,8 @@ public:
   // Returns false when a required cold start cannot be made safely.
   bool enableBle();
   void disableBle() { if (_serial) _serial->disableBle(); }
+  // The companion transport, for board code that knows its concrete type.
+  BaseSerialInterface* serialInterface() const { return _serial; }
   int getWsConnectedCount() const { return _serial ? _serial->getWsConnectedCount() : 0; }
   /** Push the ESP32 system clock into the mesh RTC. false = never synced, mesh clock untouched. */
   bool setDeviceTimeFromSystemClock();

@@ -150,6 +150,12 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.attaky_notify_dm_color   = 1;  // green
   c.compact_chat      = 0;      // OFF: bubble chat layout (opt-in IRC-style dense rows)
   c.home_key_keeps_drawer = 0;  // OFF: preserve Home-key Commander/drawer toggle
+  c.ble_kbd_mode      = 0;      // Bluetooth serves the phone app
+  c.ble_kbd_layout    = 0;      // US
+  memset(c.ble_kbd_addr, 0, sizeof c.ble_kbd_addr);   // no keyboard paired
+  c.ble_kbd_addr_type = 0;
+  memset(c.ble_kbd_name, 0, sizeof c.ble_kbd_name);
+  c.ble_kbd_back      = 0;      // only Esc goes back
   c.clock_floor       = 0;      // no persisted send-timestamp floor yet
   c.rx_queue          = 1;      // ON: buffered receive (test-channel default; opt-out toggle in Radio & Mesh)
   c.retry_echo        = 0;      // OFF: auto-retry is opt-in (toggle in Radio & Mesh)
@@ -266,6 +272,14 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 57) { s_cfg.gps_fuzz_m = 0; }   // OFF: real position
         if (stored_version < 59) { s_cfg.telem_loc_exact = 0; }   // OFF: answers stay displaced
         if (stored_version < 60) { s_cfg.home_key_keeps_drawer = 0; } // preserve Home-key toggle
+        if (stored_version < 61) {   // no keyboard: Bluetooth stays with the phone app
+          s_cfg.ble_kbd_mode = 0;
+          s_cfg.ble_kbd_layout = 0;
+          memset(s_cfg.ble_kbd_addr, 0, sizeof s_cfg.ble_kbd_addr);
+          s_cfg.ble_kbd_addr_type = 0;
+          memset(s_cfg.ble_kbd_name, 0, sizeof s_cfg.ble_kbd_name);
+        }
+        if (stored_version < 62) s_cfg.ble_kbd_back = 0;   // only Esc goes back
         if (stored_version < 58) {
           s_cfg.attaky_notify_enabled = 0;
           s_cfg.attaky_notify_room_color = 0;
@@ -1407,6 +1421,67 @@ bool touchPrefsGetHomeKeyKeepsDrawer() {
 bool touchPrefsSetHomeKeyKeepsDrawer(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.home_key_keeps_drawer = on ? 1 : 0;
+  return cfgFlush();
+}
+
+bool touchPrefsGetBleKbdMode() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.ble_kbd_mode != 0;
+}
+
+bool touchPrefsSetBleKbdMode(bool keyboard) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ble_kbd_mode = keyboard ? 1 : 0;
+  return cfgFlush();
+}
+
+uint8_t touchPrefsGetBleKbdLayout() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.ble_kbd_layout;
+}
+
+bool touchPrefsSetBleKbdLayout(uint8_t layout) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ble_kbd_layout = layout;
+  return cfgFlush();
+}
+
+uint8_t touchPrefsGetBleKbdBackKey() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.ble_kbd_back;
+}
+
+bool touchPrefsSetBleKbdBackKey(uint8_t usage) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ble_kbd_back = usage;
+  return cfgFlush();
+}
+
+bool touchPrefsGetBleKbdPeer(uint8_t addr[6], uint8_t* addr_type, char* name, size_t name_cap) {
+  if (!s_begun) touchPrefsBegin();
+  static const uint8_t kNone[6] = {0, 0, 0, 0, 0, 0};
+  if (memcmp(s_cfg.ble_kbd_addr, kNone, 6) == 0) return false;
+  if (addr) memcpy(addr, s_cfg.ble_kbd_addr, 6);
+  if (addr_type) *addr_type = s_cfg.ble_kbd_addr_type;
+  if (name && name_cap) {
+    size_t n = strnlen(s_cfg.ble_kbd_name, sizeof s_cfg.ble_kbd_name);
+    if (n >= name_cap) n = name_cap - 1;
+    memcpy(name, s_cfg.ble_kbd_name, n);
+    name[n] = '\0';
+  }
+  return true;
+}
+
+bool touchPrefsSetBleKbdPeer(const uint8_t addr[6], uint8_t addr_type, const char* name) {
+  if (!s_begun) touchPrefsBegin();
+  memset(s_cfg.ble_kbd_addr, 0, sizeof s_cfg.ble_kbd_addr);
+  memset(s_cfg.ble_kbd_name, 0, sizeof s_cfg.ble_kbd_name);
+  s_cfg.ble_kbd_addr_type = 0;
+  if (addr) {
+    memcpy(s_cfg.ble_kbd_addr, addr, 6);
+    s_cfg.ble_kbd_addr_type = addr_type;
+    if (name) strncpy(s_cfg.ble_kbd_name, name, sizeof s_cfg.ble_kbd_name - 1);
+  }
   return cfgFlush();
 }
 

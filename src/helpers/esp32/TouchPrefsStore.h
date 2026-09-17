@@ -293,6 +293,17 @@ bool    touchPrefsSetHomeIsDrawer(bool on);
  * pressing Home stays in or returns to the drawer instead of toggling Commander. */
 bool    touchPrefsGetHomeKeyKeepsDrawer();
 bool    touchPrefsSetHomeKeyKeepsDrawer(bool on);
+// External Bluetooth LE keyboard (v61): Bluetooth serves the phone app (false)
+// or the keyboard (true); the keyboard's layout; the paired keyboard, if any.
+bool    touchPrefsGetBleKbdMode();
+bool    touchPrefsSetBleKbdMode(bool keyboard);
+uint8_t touchPrefsGetBleKbdLayout();
+bool    touchPrefsSetBleKbdLayout(uint8_t layout);
+// v62: the HID usage of a key that acts as Back besides Esc (0 = none).
+uint8_t touchPrefsGetBleKbdBackKey();
+bool    touchPrefsSetBleKbdBackKey(uint8_t usage);
+bool    touchPrefsGetBleKbdPeer(uint8_t addr[6], uint8_t* addr_type, char* name, size_t name_cap);
+bool    touchPrefsSetBleKbdPeer(const uint8_t addr[6], uint8_t addr_type, const char* name);
 
 /** Hide the device/profile name in the status bar and move the clock to the
  *  left where the name used to be. Default false (name shown). */

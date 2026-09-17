@@ -198,6 +198,20 @@
   #define CAP_KEYBOARD 0
 #endif
 
+// External Bluetooth LE keyboard (BleKeyboard.cpp): needs NimBLE-Arduino's central
+// role, which every ESP32-S3 board's phone-app link already brings. Keyboard
+// boards route its keys through handleHwKey(); the others type into the bound
+// field and keep the on-screen keyboard down while it is connected. All of them
+// drive the focus group with its arrows, Enter and Esc. The P4 boards are out:
+// the T-Display P4's C6 firmware has no Bluetooth, and the Tanmatsu runs another
+// NimBLE wrapper.
+#if defined(BLE_PIN_CODE) && defined(MULTI_TRANSPORT_COMPANION) && \
+    !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
+  #define CAP_BLE_KEYBOARD 1
+#else
+  #define CAP_BLE_KEYBOARD 0
+#endif
+
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
 // the pager (no touch at all — the rotary encoder is its only nav input, so
 // like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
@@ -210,7 +224,10 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES)
+// Touchscreen-only boards that take a Bluetooth keyboard join too: the group
+// stays empty (and invisible) until a keyboard connects.
+#if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
+    (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

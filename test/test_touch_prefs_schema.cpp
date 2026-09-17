@@ -127,7 +127,11 @@ int main() {
             + sizeof(Config::attaky_notify_room_color)
             + sizeof(Config::attaky_notify_dm_color)
                   + sizeof(Config::telem_loc_exact)
-                  + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+                  + sizeof(Config::home_key_keeps_drawer)
+                    + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
+                    + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
+                    + sizeof(Config::ble_kbd_name)
+                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -170,6 +174,13 @@ int main() {
   current.attaky_notify_room_color = 6;
   current.attaky_notify_dm_color = 4;
   current.home_key_keeps_drawer = 1;
+  current.ble_kbd_mode = 1;
+  current.ble_kbd_layout = 4;
+  const uint8_t kbd_addr[6] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
+  memcpy(current.ble_kbd_addr, kbd_addr, sizeof kbd_addr);
+  current.ble_kbd_addr_type = 1;
+  strncpy(current.ble_kbd_name, "Test keyboard", sizeof current.ble_kbd_name - 1);
+  current.ble_kbd_back = 0x64;
   migrated = safeDefaults();
   assert(TouchPrefsSchema::overlayStored(migrated, &current, sizeof(current), &stored_version));
   assert(stored_version == TouchPrefsSchema::CURRENT_VERSION);
@@ -202,7 +213,11 @@ int main() {
                     + sizeof(Config::attaky_notify_room_color)
                     + sizeof(Config::attaky_notify_dm_color)
                     + sizeof(Config::telem_loc_exact)
-                    + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+                    + sizeof(Config::home_key_keeps_drawer)
+                    + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
+                    + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
+                    + sizeof(Config::ble_kbd_name)
+                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -225,7 +240,11 @@ int main() {
                     + sizeof(Config::attaky_notify_room_color)
                     + sizeof(Config::attaky_notify_dm_color)
                     + sizeof(Config::telem_loc_exact)
-                    + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+                    + sizeof(Config::home_key_keeps_drawer)
+                    + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
+                    + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
+                    + sizeof(Config::ble_kbd_name)
+                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;
@@ -245,7 +264,11 @@ int main() {
   // every prior setting, while the new option defaults OFF to preserve the
   // established Commander/drawer toggle until the user opts in.
   constexpr size_t v59_size = offsetof(Config, home_key_keeps_drawer);
-  static_assert(v59_size + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+  static_assert(v59_size + sizeof(Config::home_key_keeps_drawer)
+                    + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
+                    + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
+                    + sizeof(Config::ble_kbd_name)
+                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
                 "v59 is the current layout minus the Home-key drawer option");
   Config v59 = safeDefaults();
   v59.ver = 59;
@@ -256,6 +279,54 @@ int main() {
   assert(stored_version == 59);
   assert(migrated.telem_loc_exact == 1);
   assert(migrated.home_key_keeps_drawer == 0);
+
+  // v61 appends the Bluetooth keyboard settings. A v60 blob keeps the Home-key
+  // option, and Bluetooth stays with the phone app with no keyboard paired,
+  // whatever bytes followed the old blob.
+  constexpr size_t v60_size = offsetof(Config, ble_kbd_mode);
+  static_assert(v60_size + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
+                    + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
+                    + sizeof(Config::ble_kbd_name)
+                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                "v60 is the current layout minus the Bluetooth keyboard settings");
+  Config v60 = safeDefaults();
+  v60.ver = 60;
+  v60.home_key_keeps_drawer = 1;
+  v60.ble_kbd_mode = 1;             // outside the stored v60 extent
+  v60.ble_kbd_layout = 3;
+  v60.ble_kbd_addr[0] = 0xAA;
+  migrated = safeDefaults();
+  assert(TouchPrefsSchema::overlayStored(migrated, &v60, v60_size, &stored_version));
+  assert(stored_version == 60);
+  assert(migrated.home_key_keeps_drawer == 1);
+  assert(migrated.ble_kbd_mode == 0);
+  assert(migrated.ble_kbd_layout == 0);
+  assert(migrated.ble_kbd_addr[0] == 0);
+  assert(migrated.ble_kbd_name[0] == '\0');
+  assert(migrated.ble_kbd_back == 0);
+
+  // v62 appends the extra Back key. A v61 blob keeps the paired keyboard and
+  // its settings; only Esc goes back until the user picks another key.
+  constexpr size_t v61_size = offsetof(Config, ble_kbd_back);
+  static_assert(v61_size + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                "v61 is the current layout minus the Back key");
+  Config v61 = safeDefaults();
+  v61.ver = 61;
+  v61.ble_kbd_mode = 1;
+  v61.ble_kbd_layout = 4;
+  v61.ble_kbd_addr[5] = 0x4D;
+  v61.ble_kbd_addr_type = 1;
+  strncpy(v61.ble_kbd_name, "Sologic - Keyboard", sizeof v61.ble_kbd_name - 1);
+  v61.ble_kbd_back = 0x64;          // outside the stored v61 extent
+  migrated = safeDefaults();
+  assert(TouchPrefsSchema::overlayStored(migrated, &v61, v61_size, &stored_version));
+  assert(stored_version == 61);
+  assert(migrated.ble_kbd_mode == 1);
+  assert(migrated.ble_kbd_layout == 4);
+  assert(migrated.ble_kbd_addr[5] == 0x4D);
+  assert(migrated.ble_kbd_addr_type == 1);
+  assert(strcmp(migrated.ble_kbd_name, "Sologic - Keyboard") == 0);
+  assert(migrated.ble_kbd_back == 0);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};

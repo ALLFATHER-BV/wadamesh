@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 60;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Day/Night firmware theme, #296; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF)
+static constexpr uint8_t CURRENT_VERSION = 62;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Day/Night firmware theme, #296; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF); v61: ble_kbd_* (Bluetooth serves a keyboard instead of the phone app, its layout and the paired keyboard; default phone app); v62: ble_kbd_back (a second key that acts as Back; 0 = only Esc)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -117,6 +117,17 @@ struct __attribute__((packed)) Config {
   // arguably too blunt (honza_87628). OFF keeps the displacement, matching the advert.
   uint8_t  telem_loc_exact;
   uint8_t  home_key_keeps_drawer; // v60: M9 Home key stays in/returns to the app drawer
+  // v61: an external Bluetooth LE keyboard. Bluetooth serves either the phone app
+  // (0) or the keyboard (1). The layout decodes the keyboard's key positions
+  // (BleKbd::Layout). An all-zero address means no keyboard is paired.
+  uint8_t  ble_kbd_mode;
+  uint8_t  ble_kbd_layout;
+  uint8_t  ble_kbd_addr[6];
+  uint8_t  ble_kbd_addr_type;
+  char     ble_kbd_name[32];
+  // v62: the HID usage of a key that acts as Back besides Esc, for keyboards
+  // whose Esc key sends something else. 0 = none.
+  uint8_t  ble_kbd_back;
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -129,10 +140,10 @@ static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeo
 // rejection is silent: cfgFlush just returns false and every preference stops
 // persisting, with nothing in the log to say why. The struct grows most releases,
 // so guard the ceiling here rather than discover it as "settings do not save" on
-// whichever board is using the file backend. 121 bytes today.
+// whichever board is using the file backend. 163 bytes today.
 static_assert(sizeof(Config) <= 2048,
               "Config exceeds the SdNvsPrefs value cap; prefs would silently stop saving");
-static_assert(offsetof(Config, home_key_keeps_drawer) + sizeof(Config::home_key_keeps_drawer) == sizeof(Config),
+static_assert(offsetof(Config, ble_kbd_back) + sizeof(Config::ble_kbd_back) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is
@@ -173,6 +184,24 @@ static_assert(offsetof(Config, telem_loc_exact) ==
 static_assert(offsetof(Config, home_key_keeps_drawer) ==
           offsetof(Config, telem_loc_exact) + sizeof(Config::telem_loc_exact),
         "home_key_keeps_drawer must follow telem_loc_exact");
+static_assert(offsetof(Config, ble_kbd_mode) ==
+          offsetof(Config, home_key_keeps_drawer) + sizeof(Config::home_key_keeps_drawer),
+        "ble_kbd_mode must follow home_key_keeps_drawer");
+static_assert(offsetof(Config, ble_kbd_layout) ==
+          offsetof(Config, ble_kbd_mode) + sizeof(Config::ble_kbd_mode),
+        "ble_kbd_layout must follow ble_kbd_mode");
+static_assert(offsetof(Config, ble_kbd_addr) ==
+          offsetof(Config, ble_kbd_layout) + sizeof(Config::ble_kbd_layout),
+        "ble_kbd_addr must follow ble_kbd_layout");
+static_assert(offsetof(Config, ble_kbd_addr_type) ==
+          offsetof(Config, ble_kbd_addr) + sizeof(Config::ble_kbd_addr),
+        "ble_kbd_addr_type must follow ble_kbd_addr");
+static_assert(offsetof(Config, ble_kbd_name) ==
+          offsetof(Config, ble_kbd_addr_type) + sizeof(Config::ble_kbd_addr_type),
+        "ble_kbd_name must follow ble_kbd_addr_type");
+static_assert(offsetof(Config, ble_kbd_back) ==
+          offsetof(Config, ble_kbd_name) + sizeof(Config::ble_kbd_name),
+        "ble_kbd_back must follow ble_kbd_name");
 
 // Overlay a persisted blob on caller-provided defaults. Beta 57 wrote v44 with
 // retry_echo inserted before web_mirror, shifting every later value. That blob

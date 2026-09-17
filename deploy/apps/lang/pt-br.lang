@@ -1172,3 +1172,79 @@ Direct message color	Direct message color
 Incoming message blink	Incoming message blink
 Notifications	Notifications
 Room / channel color	Room / channel color
+%s holds no plottable rows yet	%s holds no plottable rows yet
+Answering with your displaced position	Answering with your displaced position
+Answering with your exact position	Answering with your exact position
+Back is Esc only	Back is Esc only
+Back key	Back key
+Back key saved	Back key saved
+Bluetooth is not running.	Bluetooth is not running.
+Bluetooth now serves a keyboard	Bluetooth now serves a keyboard
+Bluetooth now serves the phone app	Bluetooth now serves the phone app
+Colour	Colour
+Connected. Start typing.	Connected. Start typing.
+Could not connect. Is the keyboard in pairing mode?	Could not connect. Is the keyboard in pairing mode?
+Disc.	Disc.
+Do Not Disturb is on	Do Not Disturb is on
+Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
+Exact position to those contacts	Exact position to those contacts
+Forget	Forget
+Forget keyboard	Forget keyboard
+Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Keyboard connected	Keyboard connected
+Keyboard forgotten	Keyboard forgotten
+Keyboard layout	Keyboard layout
+LoRa coverage survey	LoRa coverage survey
+Lock home to drawer	Lock home to drawer
+Looking for keyboards...	Looking for keyboards...
+Name this run	Name this run
+No keyboard paired	No keyboard paired
+Not connected. Press a key on the keyboard to wake it.	Not connected. Press a key on the keyboard to wake it.
+Pair a keyboard	Pair a keyboard
+Pair another keyboard	Pair another keyboard
+Pair it again	Pair it again
+Pair with %s:	Pair with %s:
+Pair with a code	Pair with a code
+Pair without a code	Pair without a code
+Pairing failed. Try pairing with a code.	Pairing failed. Try pairing with a code.
+Pairing failed. Type the code on the keyboard, then press Enter.	Pairing failed. Type the code on the keyboard, then press Enter.
+Pairing...	Pairing...
+Phone app	Phone app
+Pick the layout printed on the keys, or letters and symbols come out wrong.	Pick the layout printed on the keys, or letters and symbols come out wrong.
+Press a key...	Press a key...
+Put the keyboard in pairing mode, then tap Pair a keyboard.	Put the keyboard in pairing mode, then tap Pair a keyboard.
+Put the keyboard in pairing mode; it shows up below. Only Bluetooth Low Energy keyboards work.	Put the keyboard in pairing mode; it shows up below. Only Bluetooth Low Energy keyboards work.
+Refit	Refit
+Requests left	Requests left
+Review run	Review run
+Run review	Run review
+Search again	Search again
+Sound is off	Sound is off
+Start	Start
+Survey running	Survey running
+Survey stopped	Survey stopped
+That device does not offer keyboard input.	That device does not offer keyboard input.
+The keyboard needs to be paired again.	The keyboard needs to be paired again.
+This board cannot send discovery probes,	This board cannot send discovery probes,
+Turn Bluetooth on to use a keyboard.	Turn Bluetooth on to use a keyboard.
+Type into any text field. Arrow keys and Tab move around, Enter opens, Esc goes back.	Type into any text field. Arrow keys and Tab move around, Enter opens, Esc goes back.
+Type this code on the keyboard, then press Enter:	Type this code on the keyboard, then press Enter:
+US (QWERTY)\nUK (QWERTY)\nGerman (QWERTZ)\nFrench (AZERTY)\nBelgian (AZERTY)	US (QWERTY)\nUK (QWERTY)\nGerman (QWERTZ)\nFrench (AZERTY)\nBelgian (AZERTY)
+Unnamed device	Unnamed device
+Upload, download, or delete files from a browser on the same Wi-Fi.	Upload, download, or delete files from a browser on the same Wi-Fi.
+Use Bluetooth for	Use Bluetooth for
+With a code, one appears here: type it on the keyboard and press Enter. Use it when pairing without a code fails.	With a code, one appears here: type it on the keyboard and press Enter. Use it when pairing without a code fails.
+colour: balance, green even, red one-sided	colour: balance, green even, red one-sided
+colour: how well WE heard them	colour: how well WE heard them
+colour: how well they heard US	colour: how well they heard US
+held by 	held by 
+no tiles cached here - blank ground, not open water	no tiles cached here - blank ground, not open water
+nothing has answered a probe yet	nothing has answered a probe yet
+reading %s ... %d rows	reading %s ... %d rows
+route shape, not to scale - %d of %d stops	route shape, not to scale - %d of %d stops
+screen on	screen on
+so it cannot run a coverage survey.	so it cannot run a coverage survey.
+strongest first	strongest first
+then stop	then stop
+this device	this device
+waiting for a GPS fix - samples are discarded until then	waiting for a GPS fix - samples are discarded until then

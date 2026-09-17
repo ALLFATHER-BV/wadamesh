@@ -47,6 +47,11 @@ public:
 #endif
   bool isBleEnabled() const override { return _ble_enabled; }
   bool isBleStackBegun() const { return _ble_begun; }
+  // Keyboard mode: Bluetooth stays on for an external keyboard, but the phone-app
+  // link is dropped and no longer advertised. The saved on/off preference is not
+  // touched, so switching back resumes the phone link as it was.
+  void setBlePhoneLinkPaused(bool paused);
+  bool isBlePhoneLinkPaused() const { return _ble_phone_paused; }
 #if defined(HAS_TDISPLAY_P4)
   // T-Display P4: the factory C6 ESP-AT firmware has its BLE advertising commands stubbed
   // (BLEADVDATA/ADVSTART all ERROR — Meck-P4 hit the same wall and ships Wi-Fi companion), and
@@ -149,6 +154,7 @@ private:
 #ifdef BLE_PIN_CODE
   SerialBLEInterface _ble;
   bool _ble_begun;    // beginBle() was called
+  bool _ble_phone_paused = false;   // keyboard mode: no phone link, stack still up
   bool _ble_enabled;  // user has BLE on (toggle via UI)
   bool _ota_ble_released;
   bool _ota_ble_was_enabled;

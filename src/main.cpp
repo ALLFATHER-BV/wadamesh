@@ -20,6 +20,7 @@
 #include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
+#include "ui-touch/device_caps.h"            // CAP_BLE_KEYBOARD: keyboard mode keeps the phone link paused from boot
 #endif
 
 // Believe it or not, this std C function is busted on some platforms!
@@ -1557,6 +1558,11 @@ void setup() {
   { NodePrefs* _np = the_mesh.getNodePrefs();
     _np->node_name[sizeof(_np->node_name) - 1] = '\0'; }
   serial_interface.prepareBle(BLE_NAME_PREFIX, the_mesh.getNodePrefs()->node_name, the_mesh.getBLEPin());
+#if CAP_BLE_KEYBOARD
+  // Bluetooth serves a keyboard: never advertise the phone link, not even
+  // between BLE start-up and the UI taking over.
+  serial_interface.setBlePhoneLinkPaused(touchPrefsGetBleKbdMode());
+#endif
 #if defined(TLORA_PAGER)
   {
     const bool want_ble = pager_want_ble;
