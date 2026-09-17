@@ -42900,6 +42900,16 @@ static bool bleKbdTabHotkey(int cp) {
   return true;
 }
 
+static bool m9LockedHomeDrawerFrontmost() {
+#if defined(HAS_THINKNODE_M9)
+  return getActiveTab() == HOME_TAB_INDEX &&
+         s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
+         s_home_drawer_mode && s_appdrawer_root && !appDrawerCovered();
+#else
+  return false;
+#endif
+}
+
 // Esc is the back button: one press, one layer, innermost first. The M9 Back
 // key's order, without its map-pan and screen-history rungs, and with the
 // status bar's own Back detail that a settings page opened from the Control
@@ -42922,6 +42932,7 @@ static void bleKbdBack() {
   }
   // A chat covers its tab page, the Home app drawer included: close the chat first.
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+  else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
   else if (anyPopupOpen())                       hwKeyDismissTopPopup();
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   s_nav_show = true;
@@ -43136,8 +43147,10 @@ static bool m9HandleNavKey(int key) {
       // app (reported bug). Close the page itself; the drawer is then the
       // next, visible Back target.
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-      else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
+      else if (popupRegistryAnyOver() || s_ct_select_mode) hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
+      else if (anyPopupOpen())                       hwKeyDismissTopPopup();
       // Every layer that was covering the screen is peeled — NOW go back a
       // screen. This rung is what the ladder was missing: without it Back fell
       // straight through to LV_KEY_ESC, which nothing in this build consumes
@@ -43202,7 +43215,7 @@ static bool m9HandleNavKey(int key) {
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
         const bool keep_drawer = s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer();
-        if (!(keep_drawer && was_open && s_appdrawer_root && !appDrawerCovered())) {
+        if (!m9LockedHomeDrawerFrontmost()) {
           // Stop on a key-blocker row (SD format / bulk delete progress) instead of
           // spinning eight times closing nothing and then toggling the drawer out
           // from under a running operation.
