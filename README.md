@@ -46,6 +46,48 @@ Lua apps use the on-device SDK described in [LUA_APPS.md](LUA_APPS.md). For
 WAV/MP3 playback, including a ready-to-sideload transport test app and exact SD
 and internal-storage paths, see [AUDIO_PLAYBACK_TESTING.md](AUDIO_PLAYBACK_TESTING.md).
 
+## Offline map tiles
+
+Builds with a microSD card expose a **Transfer** app for authenticated browser
+uploads over the local Wi-Fi network. WadaMesh accepts unpacked 256x256 PNG XYZ
+tiles in a `z/x/y.png` directory tree.
+
+To create a compatible pack with [QGIS](https://qgis.org/):
+
+1. Add a map source whose licence and service terms explicitly permit offline
+  or bulk use. A self-hosted source is also suitable. Do **not** bulk-download
+  from `tile.openstreetmap.org`: the official
+  [OSM tile policy](https://operations.osmfoundation.org/policies/tiles/)
+  prohibits offline downloads from that community service.
+2. Frame only the area needed in the QGIS map canvas. Tile counts quadruple at
+  every added zoom level, so a small region and a practical range such as
+  zoom 8 through 16 are preferable to exporting an entire country at zoom 19.
+3. Open **Processing Toolbox → Raster tools → Generate XYZ tiles (Directory)**.
+4. Use the map-canvas extent, choose minimum and maximum zooms within 3–19,
+  select **PNG**, set tile width and height to **256**, leave **Use inverted
+  tile Y axis (TMS conventions)** disabled, and select an output directory.
+5. Confirm the output contains paths such as `12/2048/1362.png`. If obtaining
+  an existing pack instead, extract it first and confirm it has the same XYZ
+  directory layout and that its provider permits offline use and redistribution.
+
+To upload the pack:
+
+1. Connect the device and the browser to the same Wi-Fi network.
+2. Open **Transfer** from the device's app drawer, visit the displayed URL, and
+  enter the six-digit session code.
+3. Choose **Offline OSM map (/tiles)**, select the generated output folder, and
+  start the upload. The browser ignores unrelated files and uploads valid tiles
+  sequentially while preserving their coordinates.
+4. Existing tiles are skipped by default, allowing an interrupted upload to be
+  resumed. Enable **Replace existing map tiles** when intentionally refreshing
+  a pack.
+5. Close Transfer after completion. In **Map options**, disable **Topographic
+  map** and enable **Tiles from SD card**. Disable Wi-Fi to verify that the
+  uploaded area renders offline.
+
+Individual PNG tiles must be no larger than 256 KB. Keep the map provider's
+required attribution and licence information with any pack you distribute.
+
 ## Build
 
 [PlatformIO](https://platformio.org/) pulls the core fork and all libraries

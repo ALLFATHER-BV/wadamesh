@@ -5832,6 +5832,9 @@ static void renderMapTiles();
 static void renderMapMarkers();
 static void freeMapTiles();
 static void mapNoteStorageChanged();   // tile storage appeared/vanished: adopt, invalidate, re-render
+#if CAP_MICROSD && !CAP_SD
+static volatile bool s_map_sd_storage_changed = false;   // defer SD_MMC backend swaps out of active file I/O
+#endif
 // Single entry point used by tabChangedCb. Recenters on self GPS and
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
@@ -23925,8 +23928,31 @@ static void fmRefresh() {
 static bool     s_tan_sd_mounted     = false;
 static uint64_t s_tan_sd_size        = 0;
 static uint32_t s_tan_sd_retry_after = 0;   // backoff so an absent/cold card isn't re-probed every render
+static uint32_t s_tan_sd_probe_ok_ms = 0;
+
+static bool tanSdProbeAlive(bool force = false) {
+  if (!s_tan_sd_mounted || SD_MMC.cardType() == CARD_NONE) return false;
+  const uint32_t now = millis();
+  if (!force && s_tan_sd_probe_ok_ms && now - s_tan_sd_probe_ok_ms < 1000) return true;
+  File root = SD_MMC.open("/", FILE_READ);
+  const bool alive = root && root.isDirectory();
+  if (root) root.close();
+  if (alive) {
+    s_tan_sd_probe_ok_ms = now ? now : 1;
+    return true;
+  }
+  s_tan_sd_mounted = false;
+  s_tan_sd_probe_ok_ms = 0;
+  s_tan_sd_retry_after = now + 8000;
+  sdMountDiagSetMounted(false, 0);
+#if CAP_MICROSD && !CAP_SD
+  s_map_sd_storage_changed = true;
+#endif
+  return false;
+}
+
 static bool tanSdTryMount() {
-  if (s_tan_sd_mounted) return true;
+  if (s_tan_sd_mounted) return tanSdProbeAlive();
 #if CAP_LUA_AUDIO
   if (luaAudioStorageBusy()) return false;
 #endif
@@ -23935,8 +23961,11 @@ static bool tanSdTryMount() {
   if (SD_MMC.cardType() != CARD_NONE) {
     s_tan_sd_mounted = true;
     s_tan_sd_size = SD_MMC.cardSize();
-    sdMountDiagSetMounted(true, 0);   // preserve the boot-recorded clock when adopting its mount
-    return true;
+    if (tanSdProbeAlive(true)) {
+      sdMountDiagSetMounted(true, 0);   // preserve the boot-recorded clock when adopting its mount
+      return true;
+    }
+    return false;
   }
   sdMountDiagBegin();
   bool attempted = false;
@@ -23963,8 +23992,11 @@ static bool tanSdTryMount() {
   if (card_ready) {
     s_tan_sd_mounted = true;
     s_tan_sd_size = SD_MMC.cardSize();
-    sdMountDiagSetMounted(true, mount_hz);
-    return true;
+    if (tanSdProbeAlive(true)) {
+      sdMountDiagSetMounted(true, mount_hz);
+      return true;
+    }
+    return false;
   }
 #if defined(HAS_WIO_TRACKER_L2)
   // On the L2 the card is not just a browse target: when boot adopted it,
@@ -23989,7 +24021,12 @@ static bool tanSdTryMount() {
 static void tanSdClickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_tan_sd_retry_after = 0;                  // user tapped explicitly — bypass the backoff
-  if (tanSdTryMount()) fmOpenStorage(&SD_MMC, "SD", "/");
+  if (tanSdTryMount()) {
+#if CAP_MICROSD && !CAP_SD
+    s_map_sd_storage_changed = true;
+#endif
+    fmOpenStorage(&SD_MMC, "SD", "/");
+  }
   else if (g_lv.task)  g_lv.task->showAlert(TR("No SD card (or unreadable format)"), 2000);
 }
 #endif
@@ -25959,8 +25996,12 @@ static uint32_t s_file_transfer_download_offset = 0;
 static char s_file_transfer_name[65] = {0};
 static char s_file_transfer_final[96] = {0};
 static char s_file_transfer_result[112] = {0};
+static bool s_file_transfer_map_upload = false;
+static bool s_file_transfer_replace_existing = false;
+static bool s_file_transfer_map_dirty = false;
 static constexpr const char* kFileTransferTemp = "/transfer/.upload.part";
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
+static constexpr uint32_t kMapTileMaxBytes = 256u * 1024u;
 static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
 static constexpr uint32_t kFileTransferChunkTimeoutMs = 30000u;
 static void closeFileTransferPage();
@@ -25975,7 +26016,7 @@ static fs::FS& fileTransferStorage() {
 
 static bool fileTransferStorageMounted() {
 #if WADA_WEB_FILE_TRANSFER_SDMMC
-  return SD_MMC.cardType() != CARD_NONE;
+  return s_tan_sd_mounted && SD_MMC.cardType() != CARD_NONE;
 #else
   return s_sd_mounted && SD.cardType() != CARD_NONE;
 #endif
@@ -25996,6 +26037,9 @@ static void fileTransferStorageIoFailed() {
   s_tan_sd_mounted = false;
   s_tan_sd_retry_after = millis() + 8000;
   sdMountDiagSetMounted(false, 0);
+#if CAP_MICROSD && !CAP_SD
+  s_map_sd_storage_changed = true;
+#endif
 #endif
 }
 
@@ -26015,6 +26059,8 @@ static void fileTransferResetUpload(bool remove_temp) {
   s_file_transfer_crc = 0xFFFFFFFFu;
   s_file_transfer_name[0] = '\0';
   s_file_transfer_final[0] = '\0';
+  s_file_transfer_map_upload = false;
+  s_file_transfer_replace_existing = false;
 }
 
 static void fileTransferResetRead(bool clear_queued_data = true) {
@@ -26044,6 +26090,75 @@ static void fileTransferFail(const char* text) {
   fileTransferReply(reply);
 }
 
+static bool fileTransferPrepareUpload() {
+  if (!fileTransferStorageReady()) {
+    fileTransferFail("SD card unavailable");
+    return false;
+  }
+
+  fs::FS& storage = fileTransferStorage();
+  fileTransferResetRead();
+  fileTransferResetUpload(true);
+  if (storage.exists(kFileTransferTemp)) {
+    fileTransferFail("cannot clear temporary file");
+    return false;
+  }
+  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+    fileTransferStorageIoFailed();
+    fileTransferFail("cannot create transfer directory");
+    return false;
+  }
+  return true;
+}
+
+static bool fileTransferEnsureDirectory(fs::FS& storage, const char* path) {
+  if (storage.exists(path)) {
+    File entry = storage.open(path, FILE_READ);
+    const bool directory = entry && entry.isDirectory();
+    if (entry) entry.close();
+    return directory;
+  }
+  return storage.mkdir(path);
+}
+
+enum class FileTransferExistingMode : uint8_t { Reject, Skip, Replace };
+
+static void fileTransferStartUpload(uint32_t declared, const char* name,
+                                    const char* final_path,
+                                    FileTransferExistingMode existing_mode,
+                                    bool map_upload) {
+  fs::FS& storage = fileTransferStorage();
+  snprintf(s_file_transfer_final, sizeof s_file_transfer_final, "%s", final_path);
+  if (storage.exists(s_file_transfer_final)) {
+    if (existing_mode == FileTransferExistingMode::Skip) {
+      snprintf(s_file_transfer_result, sizeof s_file_transfer_result,
+               "Skipped existing %s", name);
+      fileTransferReply("SKIP");
+      return;
+    }
+    if (existing_mode == FileTransferExistingMode::Reject) {
+      fileTransferFail("file already exists");
+      return;
+    }
+  }
+  s_file_transfer_file = storage.open(kFileTransferTemp, FILE_WRITE);
+  markSdIo();
+  if (!s_file_transfer_file) {
+    fileTransferStorageIoFailed();
+    fileTransferFail("cannot create temporary file");
+    return;
+  }
+  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", name);
+  s_file_transfer_expected = declared;
+  s_file_transfer_received = 0;
+  s_file_transfer_crc = 0xFFFFFFFFu;
+  s_file_transfer_result[0] = '\0';
+  s_file_transfer_map_upload = map_upload;
+  s_file_transfer_replace_existing = existing_mode == FileTransferExistingMode::Replace;
+  s_file_transfer_uploading = true;
+  fileTransferReply("READY");
+}
+
 static void fileTransferBegin(const char* command) {
   unsigned long declared = 0;
   char name[65] = {0};
@@ -26054,42 +26169,60 @@ static void fileTransferBegin(const char* command) {
     fileTransferFail("invalid file name or size");
     return;
   }
-  if (!fileTransferStorageReady()) {
-    fileTransferFail("SD card unavailable");
+  if (!fileTransferPrepareUpload()) return;
+  char final_path[96];
+  snprintf(final_path, sizeof final_path, "/transfer/%s", name);
+  fileTransferStartUpload(static_cast<uint32_t>(declared), name, final_path,
+                          FileTransferExistingMode::Reject, false);
+}
+
+static void fileTransferBeginMap(const char* command) {
+  unsigned long declared = 0;
+  char mode = 0;
+  char relative[49] = {0};
+  char extra = 0;
+  WebFileTransferProtocol::MapTilePath tile = {};
+  if (!command || sscanf(command, "MAPBEGIN %lu %c %48s %c",
+                         &declared, &mode, relative, &extra) != 3 ||
+      declared == 0 || declared > kMapTileMaxBytes ||
+      (mode != 'S' && mode != 'R') ||
+      !WebFileTransferProtocol::mapTilePathValid(relative, &tile)) {
+    fileTransferFail("invalid map tile path or size");
     return;
   }
+  if (!fileTransferPrepareUpload()) return;
 
   fs::FS& storage = fileTransferStorage();
-  fileTransferResetRead();
-  fileTransferResetUpload(true);
-  if (storage.exists(kFileTransferTemp)) {
-    fileTransferFail("cannot clear temporary file");
-    return;
-  }
-  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+  char zoom_dir[32], x_dir[48], final_path[80], canonical[49];
+  snprintf(zoom_dir, sizeof zoom_dir, "/tiles/%u", static_cast<unsigned>(tile.zoom));
+  snprintf(x_dir, sizeof x_dir, "%s/%lu", zoom_dir, static_cast<unsigned long>(tile.x));
+  if (!fileTransferEnsureDirectory(storage, "/tiles") ||
+      !fileTransferEnsureDirectory(storage, zoom_dir) ||
+      !fileTransferEnsureDirectory(storage, x_dir)) {
     fileTransferStorageIoFailed();
-    fileTransferFail("cannot create transfer directory");
+    fileTransferFail("cannot create map tile directories");
     return;
   }
-  snprintf(s_file_transfer_final, sizeof s_file_transfer_final, "/transfer/%s", name);
-  if (storage.exists(s_file_transfer_final)) {
-    fileTransferFail("file already exists");
-    return;
+  snprintf(canonical, sizeof canonical, "%u/%lu/%lu.png",
+           static_cast<unsigned>(tile.zoom), static_cast<unsigned long>(tile.x),
+           static_cast<unsigned long>(tile.y));
+  snprintf(final_path, sizeof final_path, "/tiles/%s", canonical);
+  char backup_path[sizeof s_file_transfer_final];
+  snprintf(backup_path, sizeof backup_path, "%s.bak", final_path);
+  if (storage.exists(backup_path)) {
+    const bool recovered = storage.exists(final_path)
+        ? storage.remove(backup_path)
+        : storage.rename(backup_path, final_path);
+    if (!recovered) {
+      fileTransferStorageIoFailed();
+      fileTransferFail("cannot recover map tile backup");
+      return;
+    }
   }
-  s_file_transfer_file = storage.open(kFileTransferTemp, FILE_WRITE);
-  markSdIo();
-  if (!s_file_transfer_file) {
-    fileTransferStorageIoFailed();
-    fileTransferFail("cannot create temporary file");
-    return;
-  }
-  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", name);
-  s_file_transfer_expected = static_cast<uint32_t>(declared);
-  s_file_transfer_received = 0;
-  s_file_transfer_crc = 0xFFFFFFFFu;
-  s_file_transfer_result[0] = '\0';
-  s_file_transfer_uploading = true;
-  fileTransferReply("READY");
+  fileTransferStartUpload(static_cast<uint32_t>(declared), canonical, final_path,
+                          mode == 'R' ? FileTransferExistingMode::Replace
+                                      : FileTransferExistingMode::Skip,
+                          true);
 }
 
 static void fileTransferChunk(const uint8_t* frame, size_t len) {
@@ -26140,16 +26273,47 @@ static void fileTransferEnd(const char* command) {
   s_file_transfer_file.close();
   markSdIo();
   fs::FS& storage = fileTransferStorage();
+  if (s_file_transfer_map_upload) {
+    File tile = storage.open(kFileTransferTemp, FILE_READ);
+    uint8_t signature[8] = {0};
+    const bool valid_png = tile && tile.read(signature, sizeof signature) == sizeof signature &&
+      WebFileTransferProtocol::pngSignatureValid(signature, sizeof signature);
+    if (tile) tile.close();
+    markSdIo();
+    if (!valid_png) {
+      fileTransferFail("map tile is not a PNG file");
+      return;
+    }
+  }
+  char replace_backup[96] = {0};
+  bool existing_backed_up = false;
+  if (s_file_transfer_replace_existing && storage.exists(s_file_transfer_final)) {
+    snprintf(replace_backup, sizeof replace_backup, "%s.bak", s_file_transfer_final);
+    if (storage.exists(replace_backup) && !storage.remove(replace_backup)) {
+      fileTransferStorageIoFailed();
+      fileTransferFail("cannot clear map tile backup");
+      return;
+    }
+    if (!storage.rename(s_file_transfer_final, replace_backup)) {
+      fileTransferStorageIoFailed();
+      fileTransferFail("cannot replace existing map tile");
+      return;
+    }
+    existing_backed_up = true;
+  }
   if (!storage.rename(kFileTransferTemp, s_file_transfer_final)) {
+    if (storage.exists(kFileTransferTemp)) storage.remove(kFileTransferTemp);
+    if (existing_backed_up) storage.rename(replace_backup, s_file_transfer_final);
     fileTransferStorageIoFailed();
-    if (!storage.remove(kFileTransferTemp)) fileTransferStorageIoFailed();
     fileTransferResetUpload(false);
     snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Could not commit upload");
     fileTransferReply("ERR could not commit upload");
     return;
   }
+  if (existing_backed_up) storage.remove(replace_backup);   // stale backup is recovered on the next upload if this fails
   markSdIo();
   const uint32_t completed = s_file_transfer_received;
+  if (s_file_transfer_map_upload) s_file_transfer_map_dirty = true;
   char completed_name[sizeof s_file_transfer_name];
   snprintf(completed_name, sizeof completed_name, "%s", s_file_transfer_name);
   fileTransferResetUpload(false);
@@ -26400,7 +26564,8 @@ static void webFileTransferTick() {
     }
     frame[len] = 0;
     const char* command = reinterpret_cast<const char*>(frame);
-    if (strncmp(command, "BEGIN ", 6) == 0) fileTransferBegin(command);
+    if (strncmp(command, "MAPBEGIN ", 9) == 0) fileTransferBeginMap(command);
+    else if (strncmp(command, "BEGIN ", 6) == 0) fileTransferBegin(command);
     else if (strncmp(command, "END ", 4) == 0) fileTransferEnd(command);
     else if (strcmp(command, "LIST") == 0) fileTransferListBegin();
     else if (strcmp(command, "LIST NEXT") == 0) fileTransferListNext();
@@ -26465,6 +26630,10 @@ static void closeFileTransferPage() {
   if (s_file_transfer_root) { popupClose(&s_file_transfer_root); }
   s_file_transfer_status = nullptr;
   appPageEnd(&closeFileTransferPage);
+  if (s_file_transfer_map_dirty) {
+    s_file_transfer_map_dirty = false;
+    mapNoteStorageChanged();
+  }
 }
 
 static void fileTransferStopCb(lv_event_t* e) {
@@ -28887,6 +29056,55 @@ static bool           s_tiles_fs_ready = false;
 // so the core-0 fetch task and the core-1 render thread can't corrupt the SD.
 static fs::FS*        s_tile_fs   = nullptr;
 static char           s_tile_root[16] = "";
+#if CAP_MICROSD
+static fs::FS* mapSdStorage() {
+#if CAP_SD
+  return &SD;
+#else
+  return &SD_MMC;
+#endif
+}
+
+static bool mapSdStorageMounted() {
+#if CAP_SD
+  return s_sd_mounted && SD.cardType() != CARD_NONE;
+#else
+  return s_tan_sd_mounted && SD_MMC.cardType() != CARD_NONE;
+#endif
+}
+
+static bool mapSdStorageReady() {
+#if CAP_SD
+  return sdAdoptLiveMount() || fmSdTryMount();
+#else
+  return tanSdTryMount();
+#endif
+}
+
+static bool mapSdReadBlocked() {
+#if CAP_SD
+  return s_sd_fail_note_ms != 0;
+#else
+  return !s_tan_sd_mounted && millis() < s_tan_sd_retry_after;
+#endif
+}
+
+static void mapSdReadFailed() {
+#if CAP_SD
+  sdReadFailedCardDead();
+#else
+  tanSdProbeAlive(true);
+#endif
+}
+
+static void mapSdWriteFailed() {
+#if CAP_SD
+  sdNoteIoFailure();
+#else
+  s_map_sd_storage_changed = true;
+#endif
+}
+#endif
 // The cache backend for NON-microSD-tile mode (the LittleFS "tiles" partition, or
 // the SD /tiles fallback when that partition is absent) — captured at boot so
 // toggling microSD-tile mode off restores it. In microSD-tile mode the cache is
@@ -30660,16 +30878,16 @@ static void tileFetchTaskFn(void* arg) {
             } else {
               ++s_tile_fetch_short_wr;
               s_tile_fetch_last_wr = 'P';            // short/failed disk write (card full or SD error)
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-              if (s_tile_fs == &SD) sdNoteIoFailure();   // wedge tell (worker task — stamp only)
+#if CAP_MICROSD
+              if (s_tile_fs == mapSdStorage()) mapSdWriteFailed();   // wedge tell (worker task — stamp only)
 #endif
             }
           }
         } else {
           ++s_tile_fetch_open_fail;
           s_tile_fetch_last_wr = 'O';                // open("w") failed: dir missing / write-protect / SD bus
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-          if (s_tile_fs == &SD) sdNoteIoFailure();       // wedge tell (worker task — stamp only)
+#if CAP_MICROSD
+          if (s_tile_fs == mapSdStorage()) mapSdWriteFailed();       // wedge tell (worker task — stamp only)
 #endif
         }
       } else {
@@ -30842,7 +31060,7 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
   // internal cache while that card is absent, so maps stay online through the
   // fallback until it returns. Boards without one keep the plain offline guard:
   // no SD packs exist there, so microSD-tile mode can only mean "don't fetch".
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   if (!s_tiles_fs_ready || !s_tile_fs) return;
 #else
   if (s_map_style == 0 && s_tiles_from_sd) return;
@@ -30988,15 +31206,16 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   char path[48];
   snprintf(path, sizeof(path), "%s/%u/%ld/%ld.jpg",
            mapTileRoot(), (unsigned)z, (long)x, (long)y);
-#if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
+#if CAP_MICROSD
+  fs::FS* map_sd = mapSdStorage();
+  if (s_tiles_from_sd && s_tile_fs == map_sd && s_map_style == 0) {   // SD packs are OSM-only; topo uses the online /tiles/topo cache
     // Tile source = microSD: read straight off the card (fully offline, no server fetch).
-    if (s_sd_fail_note_ms) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
+    if (mapSdReadBlocked()) return false;   // card suspected dead — don't stack per-tile SPI timeouts (sdHealthTick arbitrates)
     // Mounted check only — a render loop must never walk the multi-second
     // mount ladder per tile (with the card out that read as recurring UI
     // freezes). Mounting is owned by boot adoption, sdHealthTick's reinsert
     // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
-    if (!s_sd_mounted) return false;
+    if (!mapSdStorageMounted()) return false;
     markSdIo();                          // SD read activity -> status-bar LED
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
@@ -31018,7 +31237,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
       for (int e = 0; e < 2 && !fsd; ++e) {
         snprintf(ppath, sizeof(ppath), "%s/osm/%u/%ld/%ld.%s",
                  kMapRoots[r], (unsigned)z, (long)x, (long)y, kPngExt[e]);
-        fsd = SD.open(ppath, FILE_READ);
+        fsd = map_sd->open(ppath, FILE_READ);
       }
     }
     // Plain /tiles/<z>/<x>/<y>.{png,PNG} — a PNG pack dropped straight into /tiles/
@@ -31026,11 +31245,11 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // /maps/osm PNGs above; the .jpg fallback below covers JPEG /tiles/ packs.
     if (!fsd) {
       snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.png", (unsigned)z, (long)x, (long)y);
-      fsd = SD.open(ppath, FILE_READ);
+      fsd = map_sd->open(ppath, FILE_READ);
     }
     if (!fsd) {
       snprintf(ppath, sizeof(ppath), "/tiles/%u/%ld/%ld.PNG", (unsigned)z, (long)x, (long)y);
-      fsd = SD.open(ppath, FILE_READ);
+      fsd = map_sd->open(ppath, FILE_READ);
     }
     // /tiles/<z>/<x>/<y>.jpg is the WRITABLE download cache (where the fetcher
     // merges Wi-Fi tiles into the library), not a read-only pack — track that so
@@ -31038,17 +31257,17 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // legs above are user-supplied packs and must never be removed.
     bool sd_writable_cache = false;
     if (!fsd) {
-      fsd = SD.open(path, FILE_READ);
+      fsd = map_sd->open(path, FILE_READ);
       sd_writable_cache = (bool)fsd;
     }
-    if (!fsd) { sdReadFailedCardDead(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
+    if (!fsd) { mapSdReadFailed(); return false; }   // missing tile (cheap, silent) vs dead card (stamp + short-circuit)
     const size_t szsd = fsd.size();
     if (szsd == 0 || szsd > 256 * 1024) { fsd.close(); return false; }   // PNG tiles run larger than JPEG
     uint8_t* bufsd = (uint8_t*)lvglPsramAlloc(szsd);
     if (!bufsd) { fsd.close(); return false; }
     const size_t nsd = fsd.read(bufsd, szsd);
     fsd.close();
-    if (nsd != szsd) { lvglPsramFree(bufsd); sdReadFailedCardDead(); return false; }   // short read mid-tile = card died under us
+    if (nsd != szsd) { lvglPsramFree(bufsd); mapSdReadFailed(); return false; }   // short read mid-tile = card died under us
     // A garbled/partial download in the writable cache decodes to a blank/half
     // tile and, because the decode failure path does not re-queue, stuck there
     // until a manual "Reload visible tiles". Drop it so the render miss below
@@ -31058,7 +31277,7 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
         (nsd < 4 || bufsd[0] != 0xFF || bufsd[1] != 0xD8 || bufsd[2] != 0xFF ||
          bufsd[nsd - 2] != 0xFF || bufsd[nsd - 1] != 0xD9)) {
       lvglPsramFree(bufsd);
-      SD.remove(path);
+      map_sd->remove(path);
 #if defined(MULTI_TRANSPORT_COMPANION)
       tileFetchForget(z, x, y);
 #endif
@@ -31076,15 +31295,15 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
   // re-downloaded forever and rendered nothing (#tiles). open() is the real existence test; read up to
   // the 100 KB writer cap and use the ACTUAL bytes read. (S3 boards: f.size() works there, but this is
   // equally correct — a transient 100 KB PSRAM buffer per tile, freed right after decode.)
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-  // Launcher installs cache tiles on the raw SD (s_tile_fs == &SD) — same
-  // dead-card short-circuit as the SD-pack path above.
-  if (s_tile_fs == &SD && s_sd_fail_note_ms) return false;
+#if CAP_MICROSD
+  // A removable-card cache uses the same dead-card short-circuit as the
+  // explicit offline-pack path above, regardless of SPI or SDMMC transport.
+  if (s_tile_fs == mapSdStorage() && mapSdReadBlocked()) return false;
 #endif
   File f = tileCacheOpen(path, "r");
   if (!f) {
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-    if (s_tile_fs == &SD) sdReadFailedCardDead();
+#if CAP_MICROSD
+    if (s_tile_fs == mapSdStorage()) mapSdReadFailed();
 #endif
     return false;
   }
@@ -31141,7 +31360,7 @@ static void freeMapTiles() {
 //     outage are retried instead of being remembered as in-flight forever
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   // A fetch snapshots its paths but still dereferences the global backend for
   // every filesystem operation of the request, so the pointer may only move at
   // a worker request boundary. The ownership handshake pauses dequeueing there;
@@ -31154,14 +31373,16 @@ static void mapNoteStorageChanged() {
   // leaves the pointer stale: most callers (a remount that changed nothing, a
   // reinsert while already on the card) need no swap at all, and those must
   // still repaint below even while a fetch is in flight.
-  const bool wants_teardown = !s_sd_mounted && s_tile_fs == &SD;
-  const bool wants_adopt    = s_sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
-  const bool wants_swap     = wants_teardown || (wants_adopt && s_tile_fs != &SD);
+  fs::FS* map_sd = mapSdStorage();
+  const bool sd_mounted = mapSdStorageMounted();
+  const bool wants_teardown = !sd_mounted && s_tile_fs == map_sd;
+  const bool wants_adopt    = sd_mounted && (s_tiles_from_sd || !s_tiles_fs_ready);
+  const bool wants_swap     = wants_teardown || (wants_adopt && s_tile_fs != map_sd);
   const bool may_swap       = !wants_swap || tileBackendSwapTryBegin();
   const bool swap_deferred  =
       !may_swap && wants_swap;
   if (may_swap && wants_teardown) {
-    if (s_tile_fs_default && s_tile_fs_default != &SD) {
+    if (s_tile_fs_default && s_tile_fs_default != map_sd) {
       // SD tile mode lost its card, but the dedicated LittleFS cache is still
       // mounted. Keep maps online instead of disabling that healthy fallback.
       s_tile_fs = s_tile_fs_default;
@@ -31179,10 +31400,10 @@ static void mapNoteStorageChanged() {
     // Reinserted while SD mode is selected, or no internal backend exists.
     // Preserve an existing LittleFS default so toggling SD mode off remains a
     // valid fallback after any number of remove/reinsert cycles.
-    s_tile_fs = &SD;
+    s_tile_fs = map_sd;
     s_tile_root[0] = '\0';
     if (!s_tile_fs_default) {
-      s_tile_fs_default = &SD;
+      s_tile_fs_default = map_sd;
       s_tile_root_default[0] = '\0';
     }
     s_tiles_fs_ready = true;
@@ -31191,11 +31412,14 @@ static void mapNoteStorageChanged() {
   // notification must not clear a pause owned by card removal/remount or the
   // health probe while that lifecycle operation is still draining consumers.
   if (wants_swap && may_swap) tileBackendSwapFinish();
+#if !CAP_SD
+  s_map_sd_storage_changed = swap_deferred;
+#endif
 #endif
   for (int i = 0; i < k_tile_fetch_dedup_size; ++i) s_tile_fetch_dedup[i] = 0;
   s_tile_fetch_dedup_head = 0;
   freeMapTiles();
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   // Drop the stale tiles above either way, but do not paint through a pointer
   // we already know is wrong — that would probe &SD for a card that is gone and
   // pay a full SPI timeout per tile on the loop task. Only skip when a swap was
@@ -31209,10 +31433,11 @@ static void mapNoteStorageChanged() {
 #if defined(ESP32)
 // Is *some* tile source available to probe at all? (SD pack or LittleFS /tiles.)
 static bool mapTileSourceReady() {
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   // Mirror loadTileJpeg's source selection: SD packs are OSM-only, so topo
   // reads the generic /tiles/topo cache and its readiness is s_tiles_fs_ready.
-  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) return s_sd_mounted;
+  if (s_tiles_from_sd && s_tile_fs == mapSdStorage() && s_map_style == 0)
+    return mapSdStorageMounted();
 #endif
   return s_tiles_fs_ready;
 }
@@ -31222,10 +31447,11 @@ static bool mapTileSourceReady() {
 // online cache), so an SD /maps/osm offline pack was invisible to zoom — the loader
 // drew its tiles but the buttons reported "Max/Min zoom for this pack" offline.
 static bool tileExistsAt(uint8_t z, long x, long y) {
-#if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
-    if (s_sd_fail_note_ms) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
-    if (!s_sd_mounted) return false;       // never ladder from the zoom guard (see loadTileJpeg)
+#if CAP_MICROSD
+  fs::FS* map_sd = mapSdStorage();
+  if (s_tiles_from_sd && s_tile_fs == map_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
+    if (mapSdReadBlocked()) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
+    if (!mapSdStorageMounted()) return false;       // never ladder from the zoom guard (see loadTileJpeg)
     char p[56];
     // Both directory spellings, upper first: our own card bootstrap creates "/MAPS"
     // while this only ever probed "/maps" (#286). Must stay in step with the loader in
@@ -31233,16 +31459,16 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     for (const char* root : { "/MAPS", "/maps" }) {
       for (const char* ext : { "png", "PNG" }) {
         snprintf(p, sizeof p, "%s/osm/%u/%ld/%ld.%s", root, (unsigned)z, x, y, ext);
-        if (SD.exists(p)) return true;
+        if (map_sd->exists(p)) return true;
       }
     }
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.png", (unsigned)z, x, y);      // PNG pack in /tiles/
-    if (SD.exists(p)) return true;
+    if (map_sd->exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.PNG", (unsigned)z, x, y);
-    if (SD.exists(p)) return true;
+    if (map_sd->exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
-    if (SD.exists(p)) return true;
-    sdReadFailedCardDead();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    if (map_sd->exists(p)) return true;
+    mapSdReadFailed();   // all five missing: either past the pack edge (cheap, silent) or the card died
     return false;
   }
 #endif
@@ -31597,11 +31823,11 @@ static void renderMapTiles() {
   }
 
 #if defined(ESP32)
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   // s_map_style == 0: SD packs are OSM-only. In topo the loader reads the
   // online /tiles/topo cache, so pointing the user at /maps/osm would be wrong
   // and would hide the download progress/diagnostics below.
-  if (s_tiles_from_sd && s_tile_fs == &SD && s_map_style == 0) {
+  if (s_tiles_from_sd && s_tile_fs == mapSdStorage() && s_map_style == 0) {
     lv_label_set_text(s_map_status_lbl,
         TR("Map tiles: microSD\n\n"
         "/maps/osm/z/x/y.png\n"
@@ -31651,14 +31877,10 @@ static void renderMapTiles() {
         "ok %u   fail %u   http %d   wr %c\n"
         "open-fail %u   short-wr %u\n\n"
         "Keep Wi-Fi connected.\nTiles appear as they arrive.",
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
-        (s_tile_fs == &SD_MMC ? "SD cache" : "flash cache"),
-#else
-#if CAP_SD || defined(TLORA_PAGER)
-        (s_tile_fs == &SD ? "SD cache" : "flash cache"),
+#if CAP_MICROSD
+  (s_tile_fs == mapSdStorage() ? "SD cache" : "flash cache"),
 #else
         (s_tile_root[0] ? "SD cache" : "flash cache"),
-#endif
 #endif
         (unsigned)s_tile_fetch_ok, (unsigned)s_tile_fetch_failed,
         (int)s_tile_fetch_last_code, (char)s_tile_fetch_last_wr,
@@ -32734,7 +32956,7 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
   mapZoomControlsApply();
 }
 
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
@@ -32761,14 +32983,18 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   // the SD reader looks), so fetched tiles merge with the library; OFF -> the boot
   // default backend (LittleFS partition / SD fallback).
   if (on) {
-    if (fmSdTryMount() || SD.cardType() != CARD_NONE) {
-      s_tile_fs = &SD;
+    if (mapSdStorageReady()) {
+      s_tile_fs = mapSdStorage();
       s_tile_root[0] = '\0';
       s_tiles_fs_ready = true;
       if (!s_tile_fs_default) {
-        s_tile_fs_default = &SD;
+        s_tile_fs_default = mapSdStorage();
         s_tile_root_default[0] = '\0';
       }
+    } else {
+      s_tiles_from_sd = false;
+      touchPrefsSetTilesFromSd(false);
+      lv_obj_clear_state(lv_event_get_target(e), LV_STATE_CHECKED);
     }
   } else {
     s_tile_fs = s_tile_fs_default;
@@ -32777,7 +33003,10 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
   tileBackendSwapFinish();       // queued requests resume against the selected backend
-  if (g_lv.task) g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
+  if (g_lv.task) {
+    if (on && !s_tiles_from_sd) g_lv.task->showAlert(TR("SD card unavailable"), 1600);
+    else g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
+  }
 }
 #endif
 
@@ -32980,7 +33209,7 @@ static void openMapOptions() {
   lv_obj_set_pos(title, 0, 0);
   int y = 26;
 
-#if CAP_SD || defined(TLORA_PAGER)
+#if CAP_MICROSD
   // Row: tile source — microSD (offline) vs the tile server. The important one,
   // so it sits at the very top.
   {
@@ -55946,7 +56175,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // mounted by main.cpp at boot — XL9535 SD_EN must be LOW, it gates the slot's power); else the
   // internal 8 MB FFat 'storage' partition — a standard FFat mount of OUR OWN partition, so none of
   // the Tanmatsu locfd metadata quirks apply. Either way the map gets a working Wi-Fi tile cache.
-  else if (SD_MMC.cardType() != CARD_NONE) {
+  else if (tanSdTryMount()) {
     s_tile_fs        = &SD_MMC;
     s_tile_root[0]   = '\0';
     s_tiles_fs_ready = true;
@@ -55965,7 +56194,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
 #endif
 #if defined(HAS_WIO_TRACKER_L2)
-  else if (SD_MMC.cardType() != CARD_NONE) {
+  else if (tanSdTryMount()) {
     s_tile_fs = &SD_MMC;
     s_tile_root[0] = '\0';
     s_tiles_fs_ready = true;
@@ -55984,13 +56213,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // mirrors this when the toggle flips at runtime.
   s_tile_fs_default = s_tile_fs;
   strncpy(s_tile_root_default, s_tile_root, sizeof s_tile_root_default - 1);
-#if CAP_SD || defined(TLORA_PAGER)
-  if (s_tiles_from_sd && (sdAdoptLiveMount() || fmSdTryMount())) {
-    s_tile_fs = &SD;
+#if CAP_MICROSD
+  if (s_tiles_from_sd && mapSdStorageReady()) {
+    s_tile_fs = mapSdStorage();
     s_tile_root[0] = '\0';
     s_tiles_fs_ready = true;
     if (!s_tile_fs_default) {
-      s_tile_fs_default = &SD;
+      s_tile_fs_default = mapSdStorage();
       s_tile_root_default[0] = '\0';
     }
     WIRE_DBG("[TILE] microSD-tile mode -> caching Wi-Fi tiles on SD /tiles (merges with library)");
@@ -59574,6 +59803,15 @@ void UITask::loop() {
     else if (g_lv.ch.detail_open) jumpBtnsSetDim(&g_lv.ch, true);
     else                          s_jump_dimmed = true;   // nothing open: park the state
   }
+#if CAP_MICROSD && !CAP_SD
+  // SD_MMC failures are discovered inside map/file I/O. Repoint the tile
+  // backend here, outside those operations, and retry until the tile worker
+  // reaches a safe request boundary.
+  if (s_map_sd_storage_changed) {
+    if (s_tan_sd_mounted) tanSdProbeAlive(true);
+    mapNoteStorageChanged();
+  }
+#endif
 #if CAP_SD || defined(TLORA_PAGER)
   sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
   // microSD insert/remove detection — only while the file manager is open, so

@@ -70,6 +70,19 @@ you leave the map or anything opens over it, so a stale pan can never eat a
 key press later. Auto-follow pauses while you pan and resumes when you exit.
 Entering the map fresh always starts in normal navigation.
 
+## Files and offline maps
+
+From the Home tab, press **HOME** to open the app drawer. **Files** browses and
+organizes the M9's SD card. **Transfer** starts an authenticated browser session
+for uploads and downloads over the same Wi-Fi network.
+
+To install an offline map, open Transfer, visit the displayed URL, enter the
+six-digit code, choose **Offline OSM map (/tiles)**, and select an unpacked
+folder containing `z/x/y.png` tiles. After it completes, open Map options,
+select OSM, and enable **Tiles from SD card**. See the
+[offline map tile guide](README.md#offline-map-tiles) for the QGIS export steps
+and map-provider policy requirements.
+
 ## Typing & editing
 
 Inside a text field the left/right arrows move the caret — and when the caret
