@@ -11,6 +11,10 @@ void HeltecV4Board::begin() {
 
     loRaFEMControl.init();
 
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+    pinMode(HELTEC_V4_EXPANSION_IO_PIN, INPUT_PULLUP);
+#endif
+
 #if defined(HELTEC_LORA_V4_R8) && defined(PIN_SD_CS)
     // Park the shared-FSPI micro-SD's chip-select HIGH before LGFX starts
     // driving the bus (display.begin + logo blit run before the first
@@ -48,12 +52,16 @@ void HeltecV4Board::begin() {
   }
 
   void HeltecV4Board::onBeforeTransmit(void) {
+#ifdef P_LORA_TX_LED
     digitalWrite(P_LORA_TX_LED, HIGH);   // turn TX LED on
+#endif
     loRaFEMControl.setTxModeEnable();
   }
 
   void HeltecV4Board::onAfterTransmit(void) {
+#ifdef P_LORA_TX_LED
     digitalWrite(P_LORA_TX_LED, LOW);   // turn TX LED off
+#endif
     loRaFEMControl.setRxModeEnable();
   }
 

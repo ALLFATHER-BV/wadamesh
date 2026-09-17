@@ -1918,7 +1918,11 @@ static inline lv_coord_t chatComposerBaseH() {
 // composer automatically reclaims space from the message list. Reset to
 // CHAT_COMP_H on each chat-panel (re)build; updated by chatComposerAutoGrow().
 static lv_coord_t s_comp_h = CHAT_COMP_H;
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+constexpr int CHAT_KB_H        = 160;  // larger original-V4 touch targets
+#else
 constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
+#endif
 // Bottom tab-bar height (matches lv_tabview_create in buildUiTree). A tab
 // page's usable content area is the screen minus the status bar and tab bar —
 // queried live so it tracks the current rotation (240×260 portrait /
@@ -10378,6 +10382,21 @@ static void kbBackspaceSelCb(lv_event_t* e) {
   txtMenuHide();
   lv_event_stop_processing(e);
 }
+
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+static void kbV4SpecialPageCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  const uint32_t button = lv_btnmatrix_get_selected_btn(kb);
+  if (button == LV_BTNMATRIX_BTN_NONE) return;
+  const char* text = lv_btnmatrix_get_btn_text(kb, button);
+  if (!text) return;
+  if (strcmp(text, "#+") == 0) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_USER_1);
+  else if (strcmp(text, "123") == 0) lv_keyboard_set_mode(kb, LV_KEYBOARD_MODE_SPECIAL);
+  else return;
+  lv_event_stop_processing(e);
+}
+#endif
 
 static void closeSettingsModal() {
   hideKb();
@@ -40711,6 +40730,7 @@ static bool drawerPopupOpen() {
 // once behaves consistently everywhere. Adding a popup = one registry row.
 static bool popupRegistryAny();
 static bool popupRegistryDismissTop();
+static int popupRegistryDismissTopAboveAppDrawer();
 static bool popupRegistryBlocksSwipe();
 
 // True if any popup/modal is currently up (rows flagged PF_COUNT).
@@ -47310,6 +47330,11 @@ static void buildGlobalStatusBar() {
     // vertical centreline with the clock and connection/battery indicators.
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
     const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
+  #elif defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+    // Original V4 Expansion Kit: partition row 2 into larger, non-overlapping
+    // cells; the former 30x20 actions were too easy to miss or hit beside.
+    const lv_coord_t BH = 22, BW = 42, GAP = 8, BX0 = 4;
+    const lv_coord_t BY = STATUSBAR_H;
 #else
   const bool portrait = lv_disp_get_hor_res(nullptr) < lv_disp_get_ver_res(nullptr);
   const lv_coord_t BH = portrait ? 20 : (lv_coord_t)((STATUSBAR_H * 2 - 4) * 7 / 10);
@@ -47327,6 +47352,10 @@ static void buildGlobalStatusBar() {
       styleButton(b);
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
       lv_obj_set_style_border_opa(b, LV_OPA_20, LV_PART_MAIN);   // dim the edge so it blends
+    #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+      // Three pixels each side still leave two pixels between adjacent hits.
+      lv_obj_set_ext_click_area(b, 3);
+    #endif
       lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
       return b;
     };
@@ -47400,7 +47429,11 @@ static void buildGlobalStatusBar() {
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 44, 0);   // gap after the back chevron
 #endif
   lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_CLICKABLE);
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+  lv_obj_set_ext_click_area(g_statusbar.chan_gear, 12);
+#else
   lv_obj_set_ext_click_area(g_statusbar.chan_gear, 10);
+#endif
   lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_event_cb(g_statusbar.chan_gear, channelGearCb, LV_EVENT_CLICKED, nullptr);
 #if defined(HAS_TANMATSU)
@@ -50776,11 +50809,20 @@ static void buildUiTree() {
   lv_obj_set_size(g_lv.keyboard, lv_disp_get_hor_res(nullptr), CHAT_KB_H);
   lv_obj_align(g_lv.keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_add_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+  // Magnify the selected key above the finger before release. The compact V4
+  // maps mark character keys as POPOVER-capable; LVGL leaves the feature off
+  // unless it is explicitly enabled on the keyboard widget.
+  lv_keyboard_set_popovers(g_lv.keyboard, true);
+#endif
   // Insert our backspace-deletes-selection interceptor AHEAD of the keyboard's
   // own default handler: remove the auto-registered default, add the interceptor
   // first, then re-add the default after it. The interceptor runs first and can
   // stop_processing to replace the default single-char delete when text is selected.
   lv_obj_remove_event_cb(g_lv.keyboard, lv_keyboard_def_event_cb);
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+  lv_obj_add_event_cb(g_lv.keyboard, kbV4SpecialPageCb,       LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
   lv_obj_add_event_cb(g_lv.keyboard, kbBackspaceSelCb,         LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, keyboardCb, LV_EVENT_READY,         nullptr);
@@ -59462,6 +59504,74 @@ void UITask::loop() {
     snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
     showAlert(msg, 3500);
   }
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+  // Original V4 Expansion Kit SW3 "IO" (GPIO35, active-low). Debounce before
+  // starting the hold clock: short release walks Back; a one-second hold goes
+  // directly Home. A press that only wakes an idle-dimmed screen is consumed.
+  {
+    static bool s_io_inited = false;
+    static uint8_t s_io_raw = HIGH;
+    static uint8_t s_io_stable = HIGH;
+    static uint32_t s_io_changed_ms = 0;
+    static uint32_t s_io_down_ms = 0;
+    static bool s_io_long_fired = false;
+    static bool s_io_wake_consumed = false;
+    constexpr uint32_t kIoDebounceMs = 25;
+    constexpr uint32_t kIoHomeHoldMs = 1000;
+
+    const uint8_t raw = digitalRead(HELTEC_V4_EXPANSION_IO_PIN);
+    if (!s_io_inited) {
+      s_io_raw = s_io_stable = raw;
+      s_io_down_ms = now;
+      s_io_wake_consumed = raw == LOW;   // held through boot: wait for a clean release
+      s_io_inited = true;
+    }
+    if (raw != s_io_raw) {
+      s_io_raw = raw;
+      s_io_changed_ms = now;
+    }
+    if (s_io_stable != s_io_raw && now - s_io_changed_ms >= kIoDebounceMs) {
+      const uint8_t previous = s_io_stable;
+      s_io_stable = s_io_raw;
+      if (s_io_stable == LOW) {
+        s_io_down_ms = now;
+        s_io_long_fired = false;
+        s_io_wake_consumed = _screen_off;
+        if (_screen_off && !_manual_lock) wakeScreen();
+      } else if (previous == LOW && !s_io_long_fired && !s_io_wake_consumed) {
+        // Match the established keypad Back ladder: frontmost controls first,
+        // then app page, popup, chat, and finally the Home tab.
+        const int popup_result = popupRegistryDismissTopAboveAppDrawer();
+        if (popup_result == 0) {
+          if      (s_apppage_close)                    s_apppage_close();
+          else if (anyPopupOpen())                     popupRegistryDismissTop();
+          else if (g_lv.dm.detail_open)                closeChatPanel(&g_lv.dm);
+          else if (g_lv.ch.detail_open)                closeChatPanel(&g_lv.ch);
+          else if (getActiveTab() != HOME_TAB_INDEX)   goToTab(HOME_TAB_INDEX);
+        }
+        noteUserInput();
+      }
+    }
+    if (s_io_stable == LOW && !s_io_long_fired && !s_io_wake_consumed &&
+        now - s_io_down_ms >= kIoHomeHoldMs) {
+      // Home is a deliberate root action. Respect an undismissable progress
+      // overlay, otherwise close every layer and return to Commander.
+      bool clear = true;
+      for (int i = 0; i < 8 && anyPopupOpen(); ++i) {
+        if (!popupRegistryDismissTop()) { clear = false; break; }
+      }
+      if (clear && !anyPopupOpen()) {
+        if (s_apppage_close) s_apppage_close();
+        if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
+        if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
+        goToTab(HOME_TAB_INDEX);
+        setHomeDrawer(false);
+        noteUserInput();
+      }
+      s_io_long_fired = true;
+    }
+  }
+#endif
 #if CAP_SD || defined(TLORA_PAGER)
   // Manual telemetry request timed out — flip the open window to "failed" (it
   // still shows the history). Auto-poll has no deadline, so it never lands here.
@@ -60831,6 +60941,20 @@ static bool popupRegistryDismissTop() {
       return false;
     }
   return false;
+}
+static int popupRegistryDismissTopAboveAppDrawer() {
+  // The app drawer is the registry's final row and intentionally stays open
+  // beneath a launched app. Dismiss a visible popup above that app first, but
+  // leave the hidden drawer for the app-page rung in the caller.
+  const size_t count = sizeof(k_popup_registry) / sizeof(k_popup_registry[0]);
+  for (size_t i = 0; i + 1 < count; ++i) {
+    const PopupEnt& entry = k_popup_registry[i];
+    if (!entry.is_open()) continue;
+    if (!entry.close) return -1;   // an active progress overlay blocks Back
+    entry.close();
+    return 1;
+  }
+  return 0;
 }
 static bool popupRegistryBlocksSwipe() {
   for (const auto& e : k_popup_registry)

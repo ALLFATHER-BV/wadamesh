@@ -221,6 +221,139 @@ static const lv_btnmatrix_ctrl_t kb_en_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+// Original V4 Expansion Kit: the 240 px portrait keyboard's stock first row
+// spends most of its width on mode/backspace controls, leaving ~18 px letters.
+// Keep QWERTY order but move controls to the bottom so letters get 24-27 px.
+static const char* const kb_v4_lower[] = {
+    "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "\n",
+    "a", "s", "d", "f", "g", "h", "j", "k", "l", "\n",
+    "z", "x", "c", "v", "b", "n", "m", ".", ",", "\n",
+    "ABC", "1#", LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT,
+    LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, ""
+};
+static const char* const kb_v4_upper[] = {
+    "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", "\n",
+    "A", "S", "D", "F", "G", "H", "J", "K", "L", "\n",
+    "Z", "X", "C", "V", "B", "N", "M", ".", ",", "\n",
+    "abc", "1#", LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT,
+    LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, ""
+};
+static const lv_btnmatrix_ctrl_t kb_v4_text_ctrl[] = {
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 5,
+    LV_BTNMATRIX_CTRL_CHECKED | 2, LV_BTNMATRIX_CTRL_CHECKED | 2,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
+// Five columns give each number/punctuation key roughly 48 px. "#+" switches
+// to the second page; "123" returns. UITask intercepts those two controls
+// before LVGL's default handler so their labels are never inserted as text.
+static const char* const kb_v4_special[] = {
+    "1", "2", "3", "4", "5", "\n",
+    "6", "7", "8", "9", "0", "\n",
+    ".", ",", "?", "!", "@", "\n",
+    "-", "_", "+", "=", "/", "\n",
+    "#+", "abc", LV_SYMBOL_BACKSPACE, " ", LV_SYMBOL_OK, ""
+};
+static const char* const kb_v4_special_more[] = {
+    "#", "$", "%", "&", "*", "\n",
+    "(", ")", "[", "]", "{", "\n",
+    "}", ":", ";", "'", "\"", "\n",
+    "\\", "|", "<", ">", "^", "\n",
+    "123", "abc", LV_SYMBOL_BACKSPACE, " ", LV_SYMBOL_OK, ""
+};
+static const lv_btnmatrix_ctrl_t kb_v4_special_ctrl[] = {
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2,
+    LV_BTNMATRIX_CTRL_CHECKED | 2, 5, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+static_assert(sizeof(kb_v4_lower) / sizeof(kb_v4_lower[0]) ==
+              sizeof(kb_v4_text_ctrl) / sizeof(kb_v4_text_ctrl[0]) + 4,
+              "V4 lower map/control count mismatch");
+static_assert(sizeof(kb_v4_upper) / sizeof(kb_v4_upper[0]) ==
+              sizeof(kb_v4_text_ctrl) / sizeof(kb_v4_text_ctrl[0]) + 4,
+              "V4 upper map/control count mismatch");
+static_assert(sizeof(kb_v4_special) / sizeof(kb_v4_special[0]) ==
+              sizeof(kb_v4_special_ctrl) / sizeof(kb_v4_special_ctrl[0]) + 5,
+              "V4 symbols map/control count mismatch");
+static_assert(sizeof(kb_v4_special_more) / sizeof(kb_v4_special_more[0]) ==
+              sizeof(kb_v4_special_ctrl) / sizeof(kb_v4_special_ctrl[0]) + 5,
+              "V4 more-symbols map/control count mismatch");
+
+static const char* kb_v4_secondary_lower[64];
+static const char* kb_v4_secondary_upper[64];
+static lv_btnmatrix_ctrl_t kb_v4_secondary_lower_ctrl[56];
+static lv_btnmatrix_ctrl_t kb_v4_secondary_upper_ctrl[56];
+
+static bool kbV4TextControl(const char* key) {
+    return strcmp(key, "1#") == 0 || strcmp(key, "ABC") == 0 ||
+           strcmp(key, "abc") == 0 || strcmp(key, LV_SYMBOL_UP) == 0 ||
+           strcmp(key, LV_SYMBOL_NEW_LINE) == 0 ||
+           strcmp(key, LV_SYMBOL_KEYBOARD) == 0 ||
+           strcmp(key, LV_SYMBOL_LEFT) == 0 || strcmp(key, " ") == 0 ||
+           strcmp(key, LV_SYMBOL_RIGHT) == 0 ||
+           strcmp(key, LV_SYMBOL_BACKSPACE) == 0 ||
+           strcmp(key, LV_SYMBOL_OK) == 0;
+}
+
+static bool kbV4InlinePunctuation(const char* key) {
+    return strcmp(key, "_") == 0 || strcmp(key, "-") == 0 ||
+           strcmp(key, ".") == 0 || strcmp(key, ",") == 0 ||
+           strcmp(key, ":") == 0;
+}
+
+static void kbV4BuildSecondary(const char* const* source, bool upper,
+                               const char** map, lv_btnmatrix_ctrl_t* controls) {
+    size_t map_count = 0;
+    size_t control_count = 0;
+    bool row_has_key = false;
+    for (size_t i = 0; source[i] && source[i][0]; ++i) {
+        const char* key = source[i];
+        if (strcmp(key, "\n") == 0) {
+            if (row_has_key) map[map_count++] = "\n";
+            row_has_key = false;
+            continue;
+        }
+        if (kbV4TextControl(key) || kbV4InlinePunctuation(key)) continue;
+        map[map_count++] = key;
+        controls[control_count++] = EN_KB_BTN(1);
+        row_has_key = true;
+    }
+    if (row_has_key) map[map_count++] = "\n";
+
+    static const char* const footer_lower[] = {
+        "ABC", "1#", LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT,
+        LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK
+    };
+    static const char* const footer_upper[] = {
+        "abc", "1#", LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT,
+        LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK
+    };
+    const char* const* footer = upper ? footer_upper : footer_lower;
+    for (size_t i = 0; i < 8; ++i) map[map_count++] = footer[i];
+    map[map_count] = "";
+    controls[control_count++] = LV_KEYBOARD_CTRL_BTN_FLAGS | 2;
+    controls[control_count++] = LV_KEYBOARD_CTRL_BTN_FLAGS | 2;
+    controls[control_count++] = LV_KEYBOARD_CTRL_BTN_FLAGS | 2;
+    controls[control_count++] = LV_BTNMATRIX_CTRL_CHECKED | 2;
+    controls[control_count++] = 5;
+    controls[control_count++] = LV_BTNMATRIX_CTRL_CHECKED | 2;
+    controls[control_count++] = LV_BTNMATRIX_CTRL_CHECKED | 2;
+    controls[control_count] = LV_KEYBOARD_CTRL_BTN_FLAGS | 2;
+}
+#endif
+
 /* ---------- French (AZERTY) on-screen keyboard ---------- */
 /* Keeps the proven LVGL control rows/punctuation, but swaps the alpha rows to
  * a familiar French AZERTY order. Accents still come from the existing popup. */
@@ -806,8 +939,30 @@ void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
     if (!keyboard) return;
 
   const OsKeyboardLayout& lo = k_os_layouts[static_cast<int>(id)];
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+    if (id == KeyboardLayoutId::EN) {
+        lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
+                                                const_cast<const char**>(kb_v4_lower), kb_v4_text_ctrl);
+        lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
+                                                const_cast<const char**>(kb_v4_upper), kb_v4_text_ctrl);
+    } else {
+        kbV4BuildSecondary(lo.lower_map, false, kb_v4_secondary_lower,
+                           kb_v4_secondary_lower_ctrl);
+        kbV4BuildSecondary(lo.upper_map, true, kb_v4_secondary_upper,
+                           kb_v4_secondary_upper_ctrl);
+        lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER,
+                            kb_v4_secondary_lower, kb_v4_secondary_lower_ctrl);
+        lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER,
+                            kb_v4_secondary_upper, kb_v4_secondary_upper_ctrl);
+    }
+    lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_SPECIAL,
+                                            const_cast<const char**>(kb_v4_special), kb_v4_special_ctrl);
+    lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_USER_1,
+                                            const_cast<const char**>(kb_v4_special_more), kb_v4_special_ctrl);
+#else
   lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(lo.lower_map), lo.lower_ctrl);   // maps now in flash; LVGL never writes them
   lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, const_cast<const char**>(lo.upper_map), lo.upper_ctrl);
+#endif
 }
 
 KeyboardLayoutId keyboardLayoutsGetCurrent() {
