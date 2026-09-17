@@ -36508,6 +36508,11 @@ static void settingsCatOpenCb(lv_event_t* e) {
   const int cat = (int)(intptr_t)lv_event_get_user_data(e);
 #if CAP_LUA_APPS
   if (cat == CAT_LANGUAGE) {   // languages live in the Lua Store now (files + picker)
+#if defined(HAS_M9_KEYBOARD)
+    // Store is a separate top-layer page, so retain this persistent Settings
+    // card until the landing page owns navigation again.
+    s_m9_focus_pending = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+#endif
     luaStoreOpenLanguages();
     return;
   }
