@@ -86,11 +86,11 @@ local function mklabel(text, x, y, size, col)
   checkstr(text, "label text"); if x then checkint(x, "label x") end; if y then checkint(y, "label y") end
   if size then checkint(size, "label size") end; checkcol(col, "label")
   widgets.labels = widgets.labels + 1
-  local l = { text = tostring(text), x = x, y = y }
+  local l = { text = tostring(text), x = x, y = y, size = size }
   function l:set(s) checkstr(s, "label:set"); l.text = tostring(s) end
   function l:pos(px, py) checkint(px, "label:pos"); checkint(py, "label:pos") end
   function l:color(c) checkcol(c, "label:color") end
-  function l:width(w) checkint(w, "label:width") end
+  function l:width(w) checkint(w, "label:width"); l.w = w end
   labels[#labels + 1] = l
   return l
 end
@@ -103,6 +103,151 @@ local function mkbutton(text, x, y, w, h, fn)
   local b = mklabel(text, x, y, 14, nil); b.fn = fn; buttons[#buttons + 1] = b
   return b
 end
+
+-- wada.ui.list: rows with optional callbacks, same argument checks as uiList/lsAdd
+local lists = {}
+local function mklist(x, y, w, h)
+  checkint(x, "list x"); checkint(y, "list y"); checkint(w, "list w"); checkint(h, "list h")
+  assert(w > 0 and h > 0, "list: width and height must be positive")
+  local l = { rows = {}, x = x, y = y, w = w, h = h }
+  function l:add(text, fn)
+    checkstr(text, "list:add text"); assert(fn == nil or type(fn) == "function", "list:add fn")
+    l.rows[#l.rows + 1] = { text = tostring(text), fn = fn }; return #l.rows
+  end
+  function l:set(i, text) checkint(i, "list:set"); checkstr(text, "list:set"); if l.rows[i] then l.rows[i].text = tostring(text) end end
+  function l:color(i, c) checkint(i, "list:color"); checkcol(c, "list:color") end
+  function l:clear() l.rows = {} end
+  function l:count() return #l.rows end
+  function l:select(i) checkint(i, "list:select") end
+  function l:selected() return 0 end
+  function l:pos(px, py) checkint(px, "list:pos"); checkint(py, "list:pos") end
+  lists[#lists + 1] = l
+  return l
+end
+
+-- ---- mock SD card: mirrors wada.sd in LuaAppHost.cpp -------------------------
+-- cfg.sdtree is built by mktree(): a dir is { dir = {name -> node}, order = {names} },
+-- a file is { data = "bytes" }. Paging, path rules, error strings and the threat
+-- policy (SdThreat.h) all follow the firmware, so an app tested here behaves the
+-- same on a card.
+local SD_PAGE_MAX = 192
+local SD_THREAT_EXT = {
+  exe = "Windows program", scr = "Windows program", com = "Windows program",
+  pif = "Windows program", cpl = "Windows program", msi = "Windows program",
+  msp = "Windows program", dll = "Windows program", jar = "Windows program",
+  bat = "Windows script", cmd = "Windows script", vbs = "Windows script",
+  vbe = "Windows script", js = "Windows script", jse = "Windows script",
+  wsf = "Windows script", wsh = "Windows script", hta = "Windows script",
+  ps1 = "Windows script", reg = "Windows script", msc = "Windows script",
+  lnk = "Windows shortcut", url = "Windows shortcut", scf = "Windows shortcut",
+}
+local function sd_safe(path)
+  if type(path) ~= "string" or path == "" or path:sub(1, 1) ~= "/" or #path >= 192 then return false end
+  if #path > 1 and path:sub(-1) == "/" then return false end
+  if path:find("[\0-\31\127\\]") or path:find("//", 1, true) then return false end
+  for seg in path:gmatch("[^/]+") do if seg == "." or seg == ".." then return false end end
+  return true
+end
+local function sd_node(path)
+  local node = cfg.sdtree or { dir = {}, order = {} }
+  for seg in path:gmatch("[^/]+") do
+    if not node.dir then return nil end
+    node = node.dir[seg]
+    if not node then return nil end
+  end
+  return node
+end
+local function sd_classify(path, node)
+  local name = path:match("[^/]+$")
+  if name:lower() == "autorun.inf" then return "autorun file" end
+  local e = name:match("%.([^.]+)$")
+  if e and SD_THREAT_EXT[e:lower()] then return SD_THREAT_EXT[e:lower()] end
+  local d = node.data
+  if #d >= 64 and d:sub(1, 2) == "MZ" then
+    local off = d:byte(0x3D) | (d:byte(0x3E) << 8) | (d:byte(0x3F) << 16) | (d:byte(0x40) << 24)
+    if off >= 64 and off <= 65536 and off <= #d - 4 and d:sub(off + 1, off + 4) == "PE\0\0" then
+      return "renamed Windows program"
+    end
+  end
+  return nil
+end
+local function sd_file(path)
+  if not sd_safe(path) or path == "/" then return nil, "bad path" end
+  if cfg.sd_nocard then return nil, "no sd" end
+  local node = sd_node(path)
+  if not node then return nil, "not found" end
+  if node.dir then return nil, "not a file" end
+  return node
+end
+local function sdmock_list(path, start, max)
+  if path == nil then path = "/" end
+  checkstr(path, "sd.list path")
+  start = start or 1; checkint(start, "sd.list start")
+  assert(start >= 1, "sd.list: start must be 1 or more")
+  max = max or SD_PAGE_MAX; checkint(max, "sd.list max")
+  assert(max >= 1 and max <= SD_PAGE_MAX, "sd.list: max must be 1..192")
+  if not sd_safe(path) then return nil, "bad path" end
+  if cfg.sd_nocard then return nil, "no sd" end
+  local node = sd_node(path)
+  if not node then return nil, "not found" end
+  if not node.dir then return nil, "not a directory" end
+  cfg.sd_calls = cfg.sd_calls or {}
+  cfg.sd_calls[#cfg.sd_calls + 1] = { path = path, start = start, max = max }
+  local out, count, i = {}, 0, start
+  while node.order[i] do
+    if count >= max then out.truncated = true; out.next = start + count; break end
+    local name = node.order[i]
+    local child = node.dir[name]
+    count = count + 1
+    out[count] = { name = name, type = child.dir and "dir" or "file",
+                   size = child.data and #child.data or 0, mtime = 0 }
+    i = i + 1
+  end
+  return out
+end
+local function sdmock_check(path)
+  checkstr(path, "sd.check path")
+  local node, err = sd_file(path)
+  if not node then return nil, err end
+  return sd_classify(path, node) or false
+end
+local function sdmock_remove(path)
+  checkstr(path, "sd.remove path")
+  local node, err = sd_file(path)
+  if not node then return nil, err end
+  local why = sd_classify(path, node)
+  if not why then return nil, "not a threat" end
+  if cfg.sd_remove_fail and cfg.sd_remove_fail[path] then return nil, cfg.sd_remove_fail[path] end
+  local parent = sd_node(path:match("^(.*)/[^/]+$") ~= "" and path:match("^(.*)/[^/]+$") or "/")
+  local name = path:match("[^/]+$")
+  parent.dir[name] = nil
+  for i, n in ipairs(parent.order) do if n == name then table.remove(parent.order, i); break end end
+  cfg.sd_removed = cfg.sd_removed or {}
+  cfg.sd_removed[#cfg.sd_removed + 1] = path
+  return why
+end
+
+-- Build a card from { ["/path/file"] = "bytes" | true (an empty folder) }.
+local function mktree(files)
+  local root = { dir = {}, order = {} }
+  local paths = {}
+  for path in pairs(files) do paths[#paths + 1] = path end
+  table.sort(paths)
+  for _, path in ipairs(paths) do
+    local node, segs = root, {}
+    for seg in path:gmatch("[^/]+") do segs[#segs + 1] = seg end
+    for i, seg in ipairs(segs) do
+      if not node.dir[seg] then
+        local is_dir = i < #segs or files[path] == true
+        node.dir[seg] = is_dir and { dir = {}, order = {} } or { data = files[path] }
+        node.order[#node.order + 1] = seg
+      end
+      node = node.dir[seg]
+    end
+  end
+  return root
+end
+local function sd_exists(path) return sd_node(path) ~= nil end
 
 local function build_wada()
   local wada = { ui = {}, sys = {}, mesh = {}, store = {}, timer = {}, net = {}, fs = {} }
@@ -119,6 +264,18 @@ local function build_wada()
     return math.floor(n * ((sz or 12) + 4) * 0.48)
   end
   wada.ui.chart = function() error("chart not mocked") end
+  wada.ui.list = mklist
+  wada.ui.clear = function() labels, buttons, lists = {}, {}, {}; widgets.cleared = (widgets.cleared or 0) + 1 end
+  wada.ui.text_lines = function(str, width, sz)
+    checkstr(str, "text_lines"); checkint(width, "text_lines width")
+    if width <= 0 then return 1 end
+    local lines = 0
+    for part in (tostring(str) .. "\n"):gmatch("(.-)\n") do
+      local w = wada.ui.text_w(part, sz or 14)
+      lines = lines + math.max(1, (w + width - 1) // width)
+    end
+    return lines
+  end
 
   wada.sys.millis = function() return clock_ms end
   wada.sys.keep_awake = function(on) cfg.awake = (on == nil) or on end
@@ -132,6 +289,7 @@ local function build_wada()
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
                                        sd_list = cfg.caps.sd_list or false,
+                                       sd_clean = cfg.caps.sd_clean or false,
                                        audio = cfg.caps.audio or false,
                                        audio_wav = cfg.caps.audio or false,
                                        audio_mp3 = cfg.caps.audio or false,
@@ -210,10 +368,8 @@ local function build_wada()
     end
   end
   if cfg.caps.sd_list then
-    wada.sd = { list = function(path)
-      assert(path == "/", "mock SD only exposes the root")
-      return {}
-    end }
+    wada.sd = { list = sdmock_list }
+    if cfg.caps.sd_clean then wada.sd.check = sdmock_check; wada.sd.remove = sdmock_remove end
   end
   return wada
 end
@@ -247,6 +403,7 @@ end
 local function reset_world()
   widgets = { canvases = 0, labels = 0, buttons = 0, scroll = false, timer_ms = nil }
   labels, buttons, toasts, drawlog = {}, {}, {}, { text = {}, circles = {}, ops = 0 }
+  lists = {}
   clock_ms = 1000
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
   audio_log = {}
@@ -887,7 +1044,316 @@ scenarios.cost = function()
   assert(worst < BUDGET / 4, "tick too expensive")
 end
 
-local order = APP_PATH:find("/wardrive/", 1, true)
+-- ---- SD Scan (deploy/apps/sdscan) --------------------------------------------
+local PNG = "\137PNG\r\n\26\n" .. string.rep("\0", 120)
+-- A file carrying real DOS + PE headers and nothing else: no code at all.
+local function pe_bytes(n, e_lfanew)
+  e_lfanew = e_lfanew or 0x80
+  local t = {}
+  for i = 1, n do t[i] = "\0" end
+  t[1], t[2] = "M", "Z"
+  for k = 0, 3 do t[0x3C + 1 + k] = string.char((e_lfanew >> (8 * k)) & 0xFF) end
+  t[e_lfanew + 1], t[e_lfanew + 2] = "P", "E"
+  return table.concat(t)
+end
+local NBSP = "\194\160"   -- the worm's blank-looking folder name
+-- The M9 card as the advisory describes it, plus wadamesh's own data and tiles.
+local function infected_card(extra)
+  local f = {
+    ["/autorun.inf"] = "[autorun]\r\nopen=" .. NBSP .. "\\svchost.exe\r\n",
+    ["/" .. NBSP .. "/svchost.exe"] = pe_bytes(512),
+    ["/tiles.lnk"] = "L\0\0\0\1\20\2\0" .. string.rep("\0", 80),
+    ["/RECYCLER/S-1-5-21-1004/desktop.dat"] = pe_bytes(300, 0x78),   -- a program under a harmless name
+    ["/copyright.png"] = PNG,
+    ["/test file.txt"] = "test",
+    ["/wadamesh/contacts3"] = "MZ" .. string.rep("\165", 200),        -- starts with MZ by chance
+    ["/wadamesh/ui_threads_v1.bin"] = string.rep("\1", 300),
+    ["/wadamesh/lang/hu.lang"] = "# ver: 22\n",
+    ["/autorun"] = true,                                              -- an empty "vaccine" folder
+  }
+  for z = 8, 10 do for x = 130, 133 do for y = 80, 83 do
+    f[string.format("/maps/osm/%d/%d/%d.png", z, x, y)] = PNG
+  end end end
+  for k, v in pairs(extra or {}) do f[k] = v end
+  return mktree(f)
+end
+local function sd_cfg(w, h, extra_caps)
+  local c = { w = w or 320, h = h or 196,
+              caps = { sdk_ext = true, keyboard = true, touch = false, sd_list = true, sd_clean = true } }
+  for k, v in pairs(extra_caps or {}) do c.caps[k] = v end
+  return c
+end
+local function press(text)
+  for i = #buttons, 1, -1 do
+    if buttons[i].text == text then
+      assert(guarded(BUDGET, buttons[i].fn), "button '" .. text .. "' failed")
+      return
+    end
+  end
+  error("no '" .. text .. "' button; screen: " .. label_dump())
+end
+local function has_button(text)
+  for _, b in ipairs(buttons) do if b.text == text then return true end end
+  return false
+end
+local function screen_has(text) return label_dump():find(text, 1, true) ~= nil end
+local function scan_until(app, text, max_ticks)
+  for _ = 1, max_ticks or 4000 do
+    if screen_has(text) then return end
+    tick(app, 1, 50)
+  end
+  error("never reached '" .. text .. "'; screen: " .. label_dump())
+end
+local function found_paths()
+  local out = {}
+  for _, l in ipairs(lists) do for _, r in ipairs(l.rows) do out[#out + 1] = r.text end end
+  return out
+end
+local function rows_mention(needle)
+  for _, r in ipairs(found_paths()) do if r:find(needle, 1, true) then return true end end
+  return false
+end
+
+-- Wrapped text on the current screen must end above every button below it.
+local function assert_no_overlap(where)
+  for _, l in ipairs(labels) do
+    if l.w and l.text ~= "" then
+      local bottom = l.y + wada.ui.text_lines(l.text, l.w, l.size or 12) * wada.ui.text_h(l.size or 12)
+      for _, b in ipairs(buttons) do
+        if b.y > l.y then
+          assert(bottom <= b.y, string.format("%s: text runs into the '%s' button (%d > %d): %s",
+            where, b.text, bottom, b.y, l.text:sub(1, 40)))
+        end
+      end
+    end
+  end
+end
+local NOTICE_START = "SD Scan only removes files it recognises"
+
+scenarios.sdscan_layouts = function()
+  for _, dims in ipairs({ { 320, 196 }, { 240, 276 }, { 480, 178 }, { 222, 436 } }) do
+    reset_world()
+    cfg = sd_cfg(dims[1], dims[2])
+    cfg.sdtree = infected_card()
+    wada = build_wada()
+    local app = load_app()
+    local where = dims[1] .. "x" .. dims[2]
+    assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+    assert(screen_has(NOTICE_START), where .. ": the start screen must carry the notice")
+    assert_no_overlap(where .. " start")
+    press("Scan")
+    scan_until(app, "threats found")
+    assert_no_overlap(where .. " results")
+    press("Remove all")
+    assert_no_overlap(where .. " confirm")
+    press("Remove")
+    scan_until(app, "Removed 4 files.")
+    assert(screen_has(NOTICE_START), where .. ": the removal screen must carry the notice")
+    assert(not screen_has("safe to put"), where .. ": do not tell people the card is safe")
+    assert_no_overlap(where .. " removed")
+    press("Scan again")
+    press("Scan")
+    scan_until(app, "No known Windows malware found.")
+    assert(screen_has(NOTICE_START), where .. ": a clean result must carry the notice")
+    assert_no_overlap(where .. " clean")
+  end
+end
+
+-- The card root of a real infected M9 (photographed 2026-09-18), autorun.inf text
+-- as it was on the card: Sality's pattern, with the payload as xlfqf.pif.
+local SALITY_AUTORUN = table.concat({
+  ";jedgRfgxKpOwxYkkslpwEyPfQXwXltdBYsJ", "XCmmWo aRguMqaH",
+  "sHell\\EXplore\\COmmanD=xlfqf.pif", "sHELl\\OpEN\\Default=1",
+  ";qaApt  hKlVtplou hjPQkb", "shell\\opEn\\CoMmanD = xlfqf.pif",
+  ";vpWCt WxgC", "ShelL\\AUTopLay\\ComMaNd=xlfqf.pif", ";", "" }, "\r\n")
+scenarios.sdscan_real_m9 = function()
+  cfg = sd_cfg(320, 196)
+  local f = {
+    ["/autorun.inf"] = SALITY_AUTORUN,
+    ["/xlfqf.pif"] = pe_bytes(4096),
+    ["/copyright.png"] = PNG,
+    ["/bl/list"] = "0",
+    ["/meshcomod/contacts3"] = string.rep("\3", 300),
+    ["/meshcomod/ui_threads_v1.bin"] = string.rep("\1", 300),
+  }
+  for x = 130, 133 do for y = 80, 83 do f[string.format("/tiles/8/%d/%d.png", x, y)] = PNG end end
+  cfg.sdtree = mktree(f)
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "threats found")
+  assert(screen_has("2 threats found"), label_dump())
+  assert(rows_mention("autorun file: /autorun.inf"))
+  assert(rows_mention("Windows program: /xlfqf.pif"))
+  press("Remove all")
+  press("Remove")
+  scan_until(app, "Removed 2 files.")
+  assert(not sd_exists("/autorun.inf") and not sd_exists("/xlfqf.pif"))
+  for _, keep in ipairs({ "/copyright.png", "/bl/list", "/meshcomod/contacts3",
+                          "/meshcomod/ui_threads_v1.bin", "/tiles/8/130/80.png" }) do
+    assert(sd_exists(keep), "removed something that is not the worm: " .. keep)
+  end
+  press("Scan again")
+  press("Scan")
+  scan_until(app, "No known Windows malware found.")
+end
+
+scenarios.sdscan_m9 = function()
+  cfg = sd_cfg(320, 196)
+  cfg.sdtree = infected_card()
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.timer_ms and widgets.timer_ms <= 100, "the scan needs a steady tick")
+  press("Scan")
+  assert(cfg.awake, "the screen must stay on while scanning")
+  scan_until(app, "threats found")
+  assert(not cfg.awake, "keep_awake must be released when the scan ends")
+  assert(screen_has("4 threats found"), "expected exactly 4 threats; " .. label_dump())
+  assert(rows_mention("autorun file: /autorun.inf"))
+  assert(rows_mention("Windows program: /" .. NBSP .. "/svchost.exe"))
+  assert(rows_mention("Windows shortcut: /tiles.lnk"))
+  assert(rows_mention("renamed Windows program"), "a program under another name was missed")
+  assert(not rows_mention("contacts3"), "a data file that starts with MZ is not a program")
+  assert(screen_has("map tiles skipped"), "a quick scan should say it skipped the tile folders")
+  for _, c in ipairs(cfg.sd_calls) do assert(c.max <= 24, "pages must stay small: " .. c.max) end
+
+  press("Remove all")
+  assert(screen_has("Remove 4 files?"))
+  assert(buttons[1].text == "Cancel", "Cancel must come first so a stray Enter deletes nothing")
+  press("Cancel")
+  assert(screen_has("4 threats found") and not cfg.sd_removed, "Cancel must not remove anything")
+  press("Remove all")
+  press("Remove")
+  scan_until(app, "Removed 4 files.")
+  assert(#cfg.sd_removed == 4)
+  for _, keep in ipairs({ "/copyright.png", "/test file.txt", "/wadamesh/contacts3",
+                          "/wadamesh/ui_threads_v1.bin", "/wadamesh/lang/hu.lang",
+                          "/maps/osm/8/130/80.png", "/autorun" }) do
+    assert(sd_exists(keep), "removed something that is not a threat: " .. keep)
+  end
+  assert(not sd_exists("/autorun.inf") and not sd_exists("/tiles.lnk"))
+
+  press("Scan again")
+  press("Scan")
+  scan_until(app, "No known Windows malware found.")
+end
+
+scenarios.sdscan_paging_and_full = function()
+  cfg = sd_cfg(320, 196)
+  local extra = { ["/maps/osm/8/130/evil.exe"] = pe_bytes(200), ["/wadamesh/history/zz.vbs"] = "WScript.Echo 1" }
+  for i = 1, 100 do extra[string.format("/wadamesh/history/seg%03d", i)] = string.rep("\2", 90) end
+  cfg.sdtree = infected_card(extra)
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "threats found")
+  assert(rows_mention("zz.vbs"), "the 101st file of a folder was never reached: paging broken")
+  assert(not rows_mention("evil.exe"), "a quick scan should not walk the tiles")
+  local paged = 0
+  for _, c in ipairs(cfg.sd_calls) do if c.path == "/wadamesh/history" and c.start > 1 then paged = paged + 1 end end
+  assert(paged >= 4, "expected the history folder to be read in pages, got " .. paged)
+  press("Scan again")
+  press("Full scan")
+  scan_until(app, "threats found")
+  assert(rows_mention("evil.exe"), "a full scan must walk the tile folders")
+  assert(not screen_has("map tiles skipped"))
+end
+
+scenarios.sdscan_old_firmware = function()
+  cfg = sd_cfg(320, 196, { sd_clean = false })
+  cfg.sdtree = infected_card()
+  wada = build_wada()
+  assert(not wada.sd.remove and not wada.sd.check)
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(screen_has("can only find them"), "the intro should say removal needs newer firmware")
+  press("Scan")
+  scan_until(app, "threats found")
+  assert(screen_has("3 threats found"), "by name: autorun, program, shortcut; " .. label_dump())
+  assert(not has_button("Remove all"), "no Remove button without firmware support")
+  assert(has_button("Scan again"))
+  assert(screen_has("format the card"))
+end
+
+scenarios.sdscan_no_access = function()
+  cfg = sd_cfg(320, 196, { sd_list = false, sd_clean = false })
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(screen_has("no SD card access"), label_dump())
+  assert(not has_button("Scan"))
+end
+
+scenarios.sdscan_no_card = function()
+  cfg = sd_cfg(320, 196)
+  cfg.sd_nocard = true
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "No SD card found.")
+  assert(has_button("Scan again"))
+end
+
+scenarios.sdscan_remove_fails = function()
+  cfg = sd_cfg(320, 196)
+  cfg.sdtree = infected_card()
+  cfg.sd_remove_fail = { ["/tiles.lnk"] = "remove failed" }
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "threats found")
+  press("Remove all")
+  press("Remove")
+  scan_until(app, "could not be removed")
+  assert(screen_has("Removed 3, 1 could not be removed."), label_dump())
+  assert(rows_mention("/tiles.lnk") and rows_mention("remove failed"))
+end
+
+scenarios.sdscan_portrait = function()
+  cfg = sd_cfg(240, 276, { keyboard = false, touch = true })
+  cfg.sdtree = infected_card()
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "threats found")
+  for _, l in ipairs(lists) do assert(l.y + l.h <= cfg.h - 40, "the list runs under the buttons") end
+end
+
+scenarios.sdscan_cost = function()
+  cfg = sd_cfg(320, 196)
+  local extra = {}
+  for i = 1, 400 do extra[string.format("/wadamesh/history/seg%03d", i)] = string.rep("\2", 90) end
+  cfg.sdtree = infected_card(extra)
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Full scan")
+  local worst, ticks = 0, 0
+  while not screen_has("threats found") and ticks < 5000 do
+    local n = 0
+    debug.sethook(function() n = n + 100 end, "", 100)
+    clock_ms = clock_ms + 50
+    local ok, err = pcall(app.on_tick, 50)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+    ticks = ticks + 1
+  end
+  print(string.format("  full scan of %d files: %d ticks, worst tick ~%d instructions (budget %d)",
+    400 + 60, ticks, worst, BUDGET))
+  assert(worst < BUDGET / 4, "tick too expensive")
+end
+
+local order = APP_PATH:find("/sdscan/", 1, true)
+  and { "sdscan_real_m9", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
+        "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
+  or APP_PATH:find("/wardrive/", 1, true)
   and { "wardrive_utf8" }
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do

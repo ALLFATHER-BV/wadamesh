@@ -53,6 +53,8 @@ extern void             luaHostAudioStatus(uint32_t owner, char* state, size_t s
 #if CAP_LUA_SD_LIST
 extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
 extern bool             luaHostSdReadFailed();                    // failed open was a dead card
+extern bool             luaHostSdClearAttributes(const char* path); // drop read-only/hidden/system
+#include "SdThreat.h"   // the SD malware policy wada.sd.check/remove enforce
 #endif
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
@@ -931,6 +933,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
   lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
+  lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_clean");   // wada.sd.check/remove + list paging
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio");
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_wav");
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_mp3");
@@ -1704,13 +1707,21 @@ static int sdListError(lua_State* L, const char* error) {
   return 2;
 }
 
-// wada.sd.list(path) -> entries | nil,error
-// entries is an array of { name, type = "file"|"dir", size, mtime } and gains
-// entries.truncated = true only when the directory exceeds kSdMaxEntries.
+// wada.sd.list(path [, start [, max]]) -> entries | nil,error
+// entries is an array of { name, type = "file"|"dir", size, mtime }. A directory
+// bigger than one page is returned a page at a time: entries.truncated = true and
+// entries.next is the start index of the next page. `max` sets the page size
+// (1..kSdMaxEntries, default the maximum). Paging exists because the SD Scan app
+// has to see every file in a folder, and small pages because every entry costs a
+// file open, so a full 192-entry page of a tile folder stalls the screen.
 int sdList(lua_State* L) {
   const char* requested = "/";
   size_t requested_len = 1;
   if (!lua_isnoneornil(L, 1)) requested = luaL_checklstring(L, 1, &requested_len);
+  const lua_Integer start = luaL_optinteger(L, 2, 1);
+  luaL_argcheck(L, start >= 1, 2, "start must be 1 or more");
+  const lua_Integer page = luaL_optinteger(L, 3, kSdMaxEntries);
+  luaL_argcheck(L, page >= 1 && page <= kSdMaxEntries, 3, "max must be 1..192");
   char path[kSdMaxPath];
   if (!sdSafePath(requested, requested_len, path, sizeof path))
     return sdListError(L, "bad path");
@@ -1722,6 +1733,16 @@ int sdList(lua_State* L) {
   if (!dir) return sdListError(L, luaHostSdReadFailed() ? "no sd" : "not found");
   if (!dir.isDirectory()) { dir.close(); return sdListError(L, "not a directory"); }
 
+  // Skip to the requested page by reading names only: openNextFile() opens and
+  // stats every entry, which on a tile folder is most of the cost of a page.
+  for (lua_Integer seen = 1; seen < start; ) {
+    const String next = dir.getNextFileName();
+    if (!next.length()) break;
+    const char* base = strrchr(next.c_str(), '/');
+    base = base ? base + 1 : next.c_str();
+    if (base[0]) ++seen;
+  }
+
   lua_newtable(L);
   int count = 0;
   bool truncated = false;
@@ -1730,7 +1751,7 @@ int sdList(lua_State* L) {
     const char* base = full ? strrchr(full, '/') : nullptr;
     base = base ? base + 1 : full;
     if (!base || !base[0]) { entry.close(); continue; }
-    if (count >= kSdMaxEntries) { truncated = true; entry.close(); break; }
+    if (count >= page) { truncated = true; entry.close(); break; }
 
     const bool is_dir = entry.isDirectory();
     lua_createtable(L, 0, 4);
@@ -1744,7 +1765,91 @@ int sdList(lua_State* L) {
     entry.close();
   }
   dir.close();
-  if (truncated) { lua_pushboolean(L, 1); lua_setfield(L, -2, "truncated"); }
+  if (truncated) {
+    lua_pushboolean(L, 1);             lua_setfield(L, -2, "truncated");
+    lua_pushinteger(L, start + count); lua_setfield(L, -2, "next");
+  }
+  return 1;
+}
+
+// ---- wada.sd.check / wada.sd.remove: Windows malware on the card -----------
+// Written for the ThinkNode M9 SD-card worm (Elecrow advisory, Sept 2026). The
+// policy lives in SdThreat.h and is applied HERE, in firmware: remove() deletes
+// a file only when the firmware classifies it as a Windows malware carrier, so
+// an app can find and offer, but can never use this to delete anything else.
+
+// Classify one file; *err is set (and None returned) when it cannot be read.
+static SdThreat::Kind sdClassify(fs::FS* fs, const char* path, const char** err) {
+  *err = nullptr;
+  File f = fs->open(path, "r");
+  if (!f) { *err = luaHostSdReadFailed() ? "no sd" : "not found"; return SdThreat::None; }
+  if (f.isDirectory()) { f.close(); *err = "not a file"; return SdThreat::None; }
+  const char* base = strrchr(path, '/');
+  base = base ? base + 1 : path;
+  SdThreat::Kind kind = SdThreat::byName(base);
+  if (kind == SdThreat::None) {
+    // A Windows program under a harmless name. Stack buffers on purpose: SD
+    // transfers need DMA-capable memory, which PSRAM is not.
+    uint8_t head[SdThreat::kHeadBytes];
+    const size_t size = f.size();
+    if (size >= sizeof head && f.read(head, sizeof head) == sizeof head &&
+        SdThreat::mzHeader(head, sizeof head)) {
+      const uint32_t off = SdThreat::peOffset(head);
+      uint8_t sig[4];
+      if (SdThreat::peOffsetPlausible(off, (uint32_t)size) && f.seek(off) &&
+          f.read(sig, sizeof sig) == sizeof sig && SdThreat::peSignature(sig, sizeof sig))
+        kind = SdThreat::RenamedProgram;
+    }
+  }
+  f.close();
+  return kind;
+}
+
+static bool sdFilePath(lua_State* L, char* path, size_t cap) {
+  size_t len = 0;
+  const char* requested = luaL_checklstring(L, 1, &len);
+  return sdSafePath(requested, len, path, cap) && strcmp(path, "/") != 0;
+}
+
+// wada.sd.check(path) -> reason | false | nil,error
+// reason names the threat ("autorun file", "Windows program", "renamed Windows
+// program", ...); false means the file is not one.
+int sdCheck(lua_State* L) {
+  char path[kSdMaxPath];
+  if (!sdFilePath(L, path, sizeof path)) return sdListError(L, "bad path");
+  bool busy = false;
+  fs::FS* fs = luaHostSdFs(&busy);
+  if (!fs) return sdListError(L, busy ? "busy" : "no sd");
+  const char* err = nullptr;
+  const SdThreat::Kind kind = sdClassify(fs, path, &err);
+  if (err) return sdListError(L, err);
+  if (kind == SdThreat::None) lua_pushboolean(L, 0);
+  else lua_pushstring(L, SdThreat::label(kind));
+  return 1;
+}
+
+// wada.sd.remove(path) -> reason | nil,error
+// Deletes the file only if check() would name it; "not a threat" otherwise.
+// Directories are never removed. Worms mark their files read-only, hidden and
+// system, and FAT refuses to delete a read-only file, so those attributes are
+// cleared first -- on a file already judged a threat, never on anything else.
+int sdRemove(lua_State* L) {
+  char path[kSdMaxPath];
+  if (!sdFilePath(L, path, sizeof path)) return sdListError(L, "bad path");
+  bool busy = false;
+  fs::FS* fs = luaHostSdFs(&busy);
+  if (!fs) return sdListError(L, busy ? "busy" : "no sd");
+  const char* err = nullptr;
+  const SdThreat::Kind kind = sdClassify(fs, path, &err);
+  if (err) return sdListError(L, err);
+  if (kind == SdThreat::None) return sdListError(L, "not a threat");
+  if (!fs->remove(path)) {
+    luaHostSdClearAttributes(path);
+    if (!fs->remove(path))
+      return sdListError(L, luaHostSdReadFailed() ? "no sd" : "remove failed");
+  }
+  Serial.printf("[lua] sd.remove %s (%s)\n", path, SdThreat::label(kind));
+  lua_pushstring(L, SdThreat::label(kind));
   return 1;
 }
 #endif
@@ -2471,7 +2576,9 @@ void openWada(lua_State* L) {
 
 #if CAP_LUA_SD_LIST
   lua_newtable(L);                                       // wada.sd (read-only physical card)
-  lua_pushcfunction(L, sdList); lua_setfield(L, -2, "list");
+  lua_pushcfunction(L, sdList);   lua_setfield(L, -2, "list");
+  lua_pushcfunction(L, sdCheck);  lua_setfield(L, -2, "check");    // SD malware policy
+  lua_pushcfunction(L, sdRemove); lua_setfield(L, -2, "remove");   // threats only, see SdThreat.h
   lua_setfield(L, -2, "sd");
 #endif
 
