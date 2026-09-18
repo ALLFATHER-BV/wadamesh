@@ -163,7 +163,8 @@ bool touchPrefsGetSleepIdle();
 bool touchPrefsSetSleepIdle(bool on);
 
 /* UI-size preset. Large-screen boards retain their 0..2 percentage mapping;
- * the T-Pager exposes four 0..3 semantic font presets. Reboot to apply. */
+ * V4-R8 uses 0..2 font-only presets, and T-Pager uses four 0..3 semantic font
+ * presets. Reboot to apply. */
 uint8_t touchPrefsGetUiScale();
 bool    touchPrefsSetUiScale(uint8_t scale);
 

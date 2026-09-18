@@ -181,9 +181,9 @@
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
-// expose it; the Pager adds font-only presets because its 480x222 viewport is
-// wide enough for larger type but too short for global geometry scaling.
-#if CAP_LARGE_SCREEN || defined(TLORA_PAGER)
+// expose it; the Pager and V4-R8 add font-only presets because their compact
+// viewports cannot safely take global geometry scaling.
+#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
   #define CAP_UI_SIZE 1
 #else
   #define CAP_UI_SIZE 0

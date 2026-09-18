@@ -910,6 +910,28 @@ static void initTouchFontFallbacks() {
       break;
   }
   g_font_tab = lv_font_montserrat_16;
+#elif defined(HELTEC_LORA_V4_R8)
+  // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
+  // controls retain their established dimensions and remain scrollable.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
 #elif CAP_LARGE_SCREEN
   // Crisp "UI size": render bigger by swapping in larger built-in Montserrat fonts (NOT by
   // upscaling a low-res frame). g_font_12/14/16 are what the whole UI draws with, so this scales
@@ -1708,9 +1730,17 @@ static inline lv_coord_t statusBarCurH() { return STATUSBAR_H; }
 #else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top);
+#endif
 static void statusBarSetTall(bool tall) {
   s_statusbar_tall = tall;
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
+#if defined(HELTEC_LORA_V4_R8)
+  // R8 portrait mapping is identity, but a tall clickable bar used to cover the
+  // first row of the tab view. Keep visible content below its live hitbox.
+  r8ResizeContentBelowStatusBar(statusBarCurH());
+#endif
   // (updateGlobalStatusBar drives this every tick + refreshes the left zone; it must
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
@@ -1721,8 +1751,18 @@ void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats
 // Thin wrappers over the machinery just above, exported so the self-contained app
 // modules (SnakeGame) build the same page as the in-file tool
 // pages instead of hand-rolling it against a hardcoded bar height.
-lv_coord_t appPageContentTop() { return STATUSBAR_H; }
-lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+lv_coord_t appPageContentTop() {
+#if defined(HELTEC_LORA_V4_R8)
+  // appPageCreateRoot() runs before appPageBegin(), so reserve the height the
+  // latter is about to activate rather than reading the current one-row state.
+  return (lv_coord_t)(STATUSBAR_H * 2);
+#else
+  return STATUSBAR_H;
+#endif
+}
+lv_coord_t appPageContentH() {
+  return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - appPageContentTop());
+}
 
 lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
   lv_obj_t* root = lv_obj_create(lv_layer_top());
@@ -2000,8 +2040,8 @@ static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
-#if defined(HAS_TDECK_PRO)
-// E-paper cannot render the glass title row cleanly, so chat content starts below it.
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
+// E-paper and R8 content start below the complete status-bar hitbox.
 static inline lv_coord_t chatContentTop(){ return chatBarH(); }
 #else
 static inline lv_coord_t chatContentTop(){ return STATUSBAR_H; }
@@ -2633,6 +2673,19 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
+
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
+  if (!g_lv.tabview) return;
+  lv_obj_set_pos(g_lv.tabview, 0, top);
+  lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr),
+                  lv_disp_get_ver_res(nullptr) - top);
+  if (g_lv.dm.list_cont) {
+    lv_obj_set_size(g_lv.dm.list_cont, lv_disp_get_hor_res(nullptr),
+                    lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
+  }
+}
+#endif
 
 /** If `cp` has no glyph in `font`, show '*' instead of LVGL's missing-glyph box. Preserves \\n \\r \\t. */
 static bool uiFontHasGlyph(const lv_font_t* font, uint32_t cp) {
@@ -14862,6 +14915,8 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
     lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
+#elif defined(HELTEC_LORA_V4_R8)
+  lv_dropdown_set_options(dd, TR("Normal\nLarge text\nHuge text"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
@@ -27496,7 +27551,11 @@ static void openFileTransferPage() {
 
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_file_transfer_root = appPageCreateRoot(COLOR_BG);
+#if defined(HELTEC_LORA_V4_R8)
+  lv_obj_set_style_pad_top(s_file_transfer_root, 10, LV_PART_MAIN);
+#else
   lv_obj_set_style_pad_top(s_file_transfer_root, STATUSBAR_H + 10, LV_PART_MAIN);
+#endif
   lv_obj_set_style_pad_left(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_right(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(s_file_transfer_root, 14, LV_PART_MAIN);
@@ -35544,7 +35603,8 @@ static void makeChatDetail(LvChatPanel& p) {
   p.overlay = lv_obj_create(lv_scr_act());
   lv_obj_set_size(p.overlay, chatScreenW(), chatScreenH());
   // Most boards start below the solid row and let the glass title row overlap the
-  // list. T-Deck Pro starts below both rows because e-paper needs opaque separation.
+  // list. T-Deck Pro and R8 start below both rows: e-paper needs opaque separation,
+  // while R8 must not show tappable content beneath the bar's touch hitbox.
   lv_obj_set_pos(p.overlay, 0, chatContentTop());
   styleSurface(p.overlay, COLOR_BG, 0);
   lv_obj_set_style_pad_all(p.overlay, 0, LV_PART_MAIN);   // prevent child-position offset
@@ -35577,7 +35637,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // The status bar's glass lower row floats over the TOP of the list on boards
   // with a two-row chat header. Pager keeps the chat header in one regular row,
   // so retaining that old row-sized inset only wastes message space.
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
@@ -35623,7 +35683,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_border_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_ext_click_area(p.jump_oldest_btn, 6);
-#if defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + 2);
 #else
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + STATUSBAR_H + 2);
@@ -36462,20 +36522,25 @@ static void openSettingsCategory(int cat) {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
 
-  // On the BASE screen layer (like the chat overlay), so the status bar — which lives on
-  // lv_layer_top above it — paints its glass lower row OVER this sheet and the page
-  // content scrolls UNDER the bar. (On lv_layer_top the sheet would sit above the bar and
-  // the glass would reveal the settings landing behind the bar instead of this page.)
+  // On the BASE screen layer (like the chat overlay), so the status bar remains
+  // above it. The R8 keeps the entire sheet below the bar's live touch hitbox.
   lv_obj_t* root = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(root);
   // Settings detail pages use a DOUBLE-height status bar (its back chevron + title become
   // a tall title bar). Set the category first so the bar paints the title + goes tall.
-  // The sheet starts under the SOLID top row (STATUSBAR_H); the page insets its top by
-  // the glass lower-row height so content rests below the bar but scrolls under it.
+  // Most boards start under the solid row and inset the page below the glass row.
+  // R8 starts the sheet itself below both rows so no visible content is untappable.
   s_settings_open_cat = cat;
   statusBarSetTall(true);
-  lv_obj_set_size(root, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(root, 0, STATUSBAR_H);
+#if defined(HELTEC_LORA_V4_R8)
+  const lv_coord_t settings_top = statusBarCurH();
+  const lv_coord_t settings_pad_top = 8;
+#else
+  const lv_coord_t settings_top = STATUSBAR_H;
+  const lv_coord_t settings_pad_top = STATUSBAR_H + 8;
+#endif
+  lv_obj_set_size(root, sw, sh - settings_top);
+  lv_obj_set_pos(root, 0, settings_top);
   styleSurface(root, COLOR_BG, 0);
   lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
@@ -36484,9 +36549,9 @@ static void openSettingsCategory(int cat) {
 
   lv_obj_t* page = lv_obj_create(root);
   lv_obj_set_pos(page, 0, 0);
-  lv_obj_set_size(page, sw, sh - STATUSBAR_H);
+  lv_obj_set_size(page, sw, sh - settings_top);
   prepSettingsPage(page);
-  lv_obj_set_style_pad_top(page, STATUSBAR_H + 8, LV_PART_MAIN);   // clear the glass lower bar row
+  lv_obj_set_style_pad_top(page, settings_pad_top, LV_PART_MAIN);
 
   resetSettingsModalState();
   s_settings_page = page;
@@ -58126,6 +58191,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
+#if defined(HELTEC_LORA_V4_R8)
+    // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
+    // needs two extra pixels to avoid clipping regular one-row status text.
+    const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
+    if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
+#endif
 #endif
     // Allocate the draw buffer in PSRAM so the ~12 KB it costs comes out of
     // the 8 MB external RAM instead of the 320 KB internal DRAM that WiFi
