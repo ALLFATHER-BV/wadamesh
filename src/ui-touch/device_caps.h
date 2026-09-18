@@ -224,10 +224,10 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-// Touchscreen-only boards that take a Bluetooth keyboard join too: the group
-// stays empty (and invisible) until a keyboard connects.
+// Touchscreen-only boards that take a Bluetooth or CardKB keyboard join too:
+// the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+    defined(HAS_CARDKB) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

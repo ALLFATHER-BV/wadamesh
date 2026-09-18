@@ -148,6 +148,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
+  #if defined(HAS_CARDKB)
+    #include "../helpers/input/CardKbKeyboard.h"
+  #endif
   #include "BleKeyboard.h"   // external Bluetooth keyboard (self-gated on CAP_BLE_KEYBOARD)
   #if CAP_BLE_KEYBOARD
     #include "../helpers/esp32/MultiTransportCompanionInterface.h"
@@ -2275,7 +2278,7 @@ static bool terminalHandleVirtualKeyboardReady();
 // end-cursor, so backspace deleted the last character no matter where the caret
 // was. When this returns false, kbMirrorBind binds the field directly and the
 // mirror sync / redirects below are skipped.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Set while the on-screen keys were summoned for this editing session over an
 // external keyboard (the module's '#', or a second tap on a field a Bluetooth
 // keyboard types into); hideKb clears it.
@@ -2286,34 +2289,33 @@ static bool s_osk_forced = false;
 static inline bool bleKbdTyping() { return BleKbd::state() == BleKbd::State::Connected; }
 #endif
 
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+static inline bool externalKeyboardTyping() {
+  bool active = false;
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  active = active || attakyKeyboardPresent();
+#endif
+#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+  active = active || bleKbdTyping();
+#endif
+#if defined(HAS_CARDKB)
+  active = active || cardKbPresent();
+#endif
+  return active;
+}
+#endif
+
 static inline bool kbMirrorActive() {
 #if CAP_KEYBOARD
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-  // Keyboard is a detachable module, so decide at runtime, not via CAP_KEYBOARD:
-  // suppress the on-screen keys while the module answers on I2C, unless '#' has
-  // summoned them back for this field. No module: behave like stock upstream.
-#if CAP_BLE_KEYBOARD
-  return !((attakyKeyboardPresent() || bleKbdTyping()) && !s_osk_forced);
-#else
-  return !(attakyKeyboardPresent() && !s_osk_forced);
-#endif
-#elif CAP_BLE_KEYBOARD
-  // Same for a connected Bluetooth keyboard: it types straight into the field,
-  // so the on-screen keys stay down unless a second tap asked for them.
-  return !(bleKbdTyping() && !s_osk_forced);
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+  // Detachable keyboards are detected at runtime. Keep the on-screen keys down
+  // while one is present unless a second tap summoned them for this field.
+  return !(externalKeyboardTyping() && !s_osk_forced);
 #else
   return true;
 #endif
 }
-
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) && CAP_BLE_KEYBOARD
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent() || bleKbdTyping(); }
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent(); }
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-static inline bool externalKeyboardTyping() { return bleKbdTyping(); }
-#endif
 
 // ---- Chats "+" add-channel modal pointers (see lower in file for impl) ----
 static lv_obj_t* s_addch_sheet      = nullptr;
@@ -7239,7 +7241,7 @@ static void hideKb() {
   // reveal does not inherit the symbol mode the summon opened.
   if (s_osk_forced && g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
   s_osk_forced = false;
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#elif (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
   s_osk_forced = false;   // the summon lasts one editing session
 #endif
   if (s_kb_mirror_root) lv_obj_add_flag(s_kb_mirror_root, LV_OBJ_FLAG_HIDDEN);
@@ -7309,7 +7311,7 @@ static void showKb(LvChatPanel* p) {
 #if !CAP_KEYBOARD
   // No on-screen keyboard on the T-Deck — the physical keyboard types straight
   // into the composer (already visible), so skip showing the keys + the lift.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD || defined(HAS_CARDKB)
   // Same while an external keyboard types (the attached module, or a connected
   // Bluetooth keyboard) until the keys are summoned for this field. kbMirrorActive()
   // guards the settings path; the chat composer comes through here and needs its own.
@@ -7325,18 +7327,18 @@ static void showKb(LvChatPanel* p) {
 #endif
 }
 
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-// Second tap on a field a Bluetooth keyboard types into: bring the on-screen keys
+#if (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+// Second tap on a field an external keyboard types into: bring the on-screen keys
 // up for it anyway, in case the keyboard is out of reach. A field's PRESSED
 // arrives before LVGL moves the focus, so "already bound" there means the field
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
-static void bleKbdNoteFieldPress(lv_obj_t* ta) {
+static void externalKbdNoteFieldPress(lv_obj_t* ta) {
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
-  s_osk_press_ta = (bound && bleKbdTyping() && !s_osk_forced) ? ta : nullptr;
+  s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
 // On CLICKED: for such a second tap, summon the keys for this editing session.
-static void bleKbdSecondTap(lv_obj_t* ta) {
+static void externalKbdSecondTap(lv_obj_t* ta) {
   if (ta && ta == s_osk_press_ta) s_osk_forced = true;
   s_osk_press_ta = nullptr;
 }
@@ -8141,7 +8143,7 @@ static void composerFocusCb(lv_event_t* e) {
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(lv_event_get_target(e));
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
 #endif
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
 }
@@ -8833,7 +8835,7 @@ static void threadSelectCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Send the panel composer's text and clear it. Split from the send button's
 // callback so an external keyboard's Enter can reach the same path.
 static void composerSendFromPanel(LvChatPanel* p) {
@@ -10044,7 +10046,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(ta);
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
 #endif
   s_kb_panel = nullptr;
   kbMirrorBind(ta);
@@ -10159,7 +10161,7 @@ static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  bleKbdNoteFieldPress(lv_event_get_target(e));
+  externalKbdNoteFieldPress(lv_event_get_target(e));
 #endif
 }
 
@@ -42859,6 +42861,25 @@ static int bleKbdLuaCode(int key) {
   return 0;
 }
 
+#if defined(HAS_CARDKB)
+static int cardKbUiKey(int raw) {
+  switch (raw) {
+    case 0x08:
+    case 0x7F: return BLE_KEY_BACKSPACE;
+    case 0x09: return BLE_KEY_TAB;
+    case 0x0A:
+    case 0x0D: return BLE_KEY_ENTER;
+    case 0x1B: return BLE_KEY_ESC;
+    case 0xB4: return BLE_KEY_LEFT;
+    case 0xB5: return BLE_KEY_UP;
+    case 0xB6: return BLE_KEY_DOWN;
+    case 0xB7: return BLE_KEY_RIGHT;
+    default:
+      return (raw >= 0x20 && raw < 0x7F) ? (BLE_KEY_TEXT | raw) : 0;
+  }
+}
+#endif
+
 // Command alone opens the emoji picker while writing a message, and closes it
 // again. While it is open the arrows walk its grid and Enter inserts; Esc
 // closes it through Back and typing still reaches the message. Returns true
@@ -44545,7 +44566,7 @@ static void bleKbdNavEnable(bool on) {
 // put them away and keep the field bound, so typing carries on on the keyboard.
 // (When the keyboard goes away the field stays as it is; the next tap brings
 // the on-screen keys, since nothing suppresses them any more.)
-static void bleKbdTookOverField() {
+static void externalKbdTookOverField() {
   if (!g_lv.keyboard || s_osk_forced || lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) return;
   LvChatPanel* const panel = s_kb_panel;
   lv_obj_t* const    field = s_kb_bind_ta;
@@ -44582,18 +44603,26 @@ static void bleKbdPageRefresh();   // pairing screen + Bluetooth page status (de
 // Once per UI loop: persist what the worker changed, then route the keys.
 static void bleKbdUiTick() {
   bleKbdBoot();
-  static bool s_was_connected = false;
+#if defined(HAS_CARDKB)
+  cardKbPoll();
+#endif
   const bool connected = BleKbd::state() == BleKbd::State::Connected;
-  if (connected != s_was_connected) {
-    s_was_connected = connected;
+  const bool external_connected = connected
+#if defined(HAS_CARDKB)
+      || cardKbPresent()
+#endif
+      ;
+  static bool s_was_external_connected = false;
+  if (external_connected != s_was_external_connected) {
+    s_was_external_connected = external_connected;
 #if BLE_KBD_OWNS_NAV
-    bleKbdNavEnable(connected);
+    bleKbdNavEnable(external_connected);
 #endif
 #if !CAP_KEYBOARD
-    if (connected) bleKbdTookOverField();
+    if (external_connected) externalKbdTookOverField();
 #endif
 #if CAP_KEYPAD_NAV
-    s_ble_kbd_hotkeys = connected;
+    s_ble_kbd_hotkeys = external_connected;
     navMenubarKeysSync();
 #endif
   }
@@ -44620,6 +44649,18 @@ static void bleKbdUiTick() {
     }
     bleKbdDispatch(key);
   }
+#if defined(HAS_CARDKB)
+  for (int i = 0; i < 16; ++i) {
+    const int raw = cardKbReadKey();
+    if (!raw) break;
+    if (s_remote_mode) {
+      if (raw == ' ') remotePhysicalKey(' ');
+      continue;
+    }
+    const int key = cardKbUiKey(raw);
+    if (key) bleKbdDispatch(key);
+  }
+#endif
 }
 #endif  // CAP_BLE_KEYBOARD
 
@@ -60851,6 +60892,18 @@ void UITask::loop() {
       if (c) consoleKey(c);
     }
 #endif
+#if defined(HAS_CARDKB)
+    cardKbPoll();
+    for (int kbi = 0; kbi < 16; ++kbi) {
+      int key = cardKbReadKey();
+      if (!key) break;
+      con_activity = true;
+      if (_screen_off) { wakeScreen(); continue; }
+      if (key == 0x7F) key = 0x08;
+      if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B ||
+          (key >= 0x20 && key < 0x7F)) consoleKey(key);
+    }
+#endif
 #if CAP_TOUCH
     {
       uint16_t _tx, _ty;
@@ -61935,7 +61988,7 @@ void UITask::loop() {
   serviceLockingCountdown(now);
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdUiTick();   // external Bluetooth keyboard: persist pairing changes, route keys
+  bleKbdUiTick();   // external Bluetooth/CardKB keyboards: update presence and route keys
 #endif
 #if defined(ATTAKY_MESH_SERIES)
   // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off
