@@ -17,9 +17,10 @@ API — `wada.ui` (widgets, colours, a text prompt), `wada.sys`, `wada.store`
 (persistence), `wada.timer`, and on the larger boards `wada.fs`, `wada.net`,
 `wada.crypto` and the writable half of `wada.mesh`. Supported boards also expose
 asynchronous WAV/MP3 playback through `wada.audio`; plain filenames come from the
-app sandbox on internal flash, SD, or SD_MMC. Read-only physical-SD directory
-metadata is available through `wada.sd`, and direct card playback uses an explicit
-`sd:/...` path. There is no general-purpose filesystem or network access; the API
+app sandbox on internal flash, SD, or SD_MMC. Physical-SD directory metadata
+is available through `wada.sd`, which can also find and delete Windows malware on the
+card (the firmware decides what counts, so it cannot delete anything else), and
+direct card playback uses an explicit `sd:/...` path. There is no general-purpose filesystem or network access; the API
 is the whole surface, which is what makes reviewing tractable. It is documented at
 [wadamesh.com/sdk.html](https://wadamesh.com/sdk.html).
 

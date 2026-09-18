@@ -1250,3 +1250,31 @@ strongest first	strongest first
 then stop	then stop
 this device	this device
 waiting for a GPS fix - samples are discarded until then	waiting for a GPS fix - samples are discarded until then
+This SD card has Windows malware on it, like the worm some ThinkNode M9 cards shipped with. It cannot run on this radio, but it will on a Windows PC. Before the card goes in a computer, remove it with SD Scan or, safest, format the card.	This SD card has Windows malware on it, like the worm some ThinkNode M9 cards shipped with. It cannot run on this radio, but it will on a Windows PC. Before the card goes in a computer, remove it with SD Scan or, safest, format the card.
+Open SD Scan	Open SD Scan
+%d of %d	%d of %d
+%d threats found	%d threats found
+%s files in %s folders	%s files in %s folders
+, %d unreadable	, %d unreadable
+, map tiles skipped (%s folders)	, map tiles skipped (%s folders)
+Checked 	Checked 
+Full scan	Full scan
+Full scan...	Full scan...
+Insert the card and scan again.	Insert the card and scan again.
+No SD card found.	No SD card found.
+Remove %d files?	Remove %d files?
+Remove all	Remove all
+Removed %d files.	Removed %d files.
+Removed %d, %d could not be removed.	Removed %d, %d could not be removed.
+Removing...	Removing...
+SD card malware check	SD card malware check
+Scan	Scan
+Scanning...	Scanning...
+Stopped after 	Stopped after 
+They are Windows programs, scripts, shortcuts or autorun files. A mesh radio never uses them, and nothing else on the card is touched.	They are Windows programs, scripts, shortcuts or autorun files. A mesh radio never uses them, and nothing else on the card is touched.
+This board has no SD card access for apps.	This board has no SD card access for apps.
+This firmware can only find them. Update wadamesh to remove them here.	This firmware can only find them. Update wadamesh to remove them here.
+Finds and removes Windows programs, scripts, shortcuts and autorun files, like the worm on some ThinkNode M9 cards. A mesh radio never uses these.	Finds and removes Windows programs, scripts, shortcuts and autorun files, like the worm on some ThinkNode M9 cards. A mesh radio never uses these.
+No known Windows malware found.	No known Windows malware found.
+This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
+SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.

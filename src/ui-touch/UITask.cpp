@@ -129,6 +129,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
+#include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 // The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
 // must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
@@ -47357,6 +47358,75 @@ static void luaStoreOpenLanguages() {
 }
 #endif  // CAP_LUA_APPS (store page)
 
+#if CAP_LUA_APPS && CAP_LUA_SD_LIST
+// ===== SD-card malware warning =============================================
+// Some ThinkNode M9 cards shipped with a dormant Windows worm (Elecrow security
+// advisory, September 2026): a hidden autorun.inf and programs disguised as
+// shortcuts. Harmless on this radio, live on the first Windows PC the card goes
+// into. The SD Scan store app finds and removes them; this makes sure somebody
+// who never read the advisory hears about it, by looking at the card's top
+// folder every time a card is mounted, at boot or when one is inserted.
+//
+// Names only, one directory read and no file opens. The thorough check, every
+// folder and programs under other names, is SD Scan's job.
+static bool     s_sdmal_mounted = false;   // mount state seen on the last tick
+static uint32_t s_sdmal_due_ms  = 0;       // when the check is due (0 = none)
+
+static int sdRootThreatCount() {
+  File root = SD.open("/");
+  if (!root) return 0;
+  if (!root.isDirectory()) { root.close(); return 0; }
+  int n = 0;
+  bool is_dir = false;
+  for (String p = root.getNextFileName(&is_dir); p.length(); p = root.getNextFileName(&is_dir)) {
+    if (is_dir) continue;   // a FOLDER named autorun.inf is the vaccine trick, not the worm
+    const char* base = strrchr(p.c_str(), '/');
+    base = base ? base + 1 : p.c_str();
+    if (SdThreat::byName(base) != SdThreat::None) ++n;
+  }
+  root.close();
+  return n;
+}
+
+// The warning's button: SD Scan itself when it is installed, else the Store,
+// where it is one tap away.
+static void sdMalwareOpenScan() {
+  luaStoreScanInstalled();
+  for (int i = 0; i < s_lua_inst_n; ++i) {
+    if (strcmp(s_lua_inst[i].id, "sdscan") != 0) continue;
+    const char* emb = luaBuiltinSrc(s_lua_inst[i].id);
+    luaAppLaunchFile(s_lua_inst[i].id, s_lua_inst[i].name, emb, emb ? strlen(emb) : 0);
+    return;
+  }
+  openLuaStorePage();
+}
+
+static void sdMalwareTick(uint32_t now) {
+  if (s_sd_mounted != s_sdmal_mounted) {
+    s_sdmal_mounted = s_sd_mounted;
+    // Let a fresh mount settle first: boot restores and the insert toast.
+    s_sdmal_due_ms = s_sd_mounted ? ((now + 5000u) | 1u) : 0;
+  }
+  if (!s_sdmal_due_ms || (int32_t)(now - s_sdmal_due_ms) < 0) return;
+  // Never over another dialog, an open app or a card lifecycle change.
+  if (sdRuntimeLifecycleBusy() || s_confirm_modal || luaAppIsOpen()) {
+    s_sdmal_due_ms = (now + 3000u) | 1u;
+    return;
+  }
+  s_sdmal_due_ms = 0;
+  if (!s_sd_mounted) return;
+  markSdIo();
+  const int n = sdRootThreatCount();
+  if (n <= 0) return;
+  Serial.printf("[sd] Windows malware on the card: %d file(s) in the top folder\n", n);
+  showConfirm(TR("This SD card has Windows malware on it, like the worm some ThinkNode M9 cards "
+                 "shipped with. It cannot run on this radio, but it will on a Windows PC. "
+                 "Before the card goes in a computer, remove it with SD Scan or, safest, "
+                 "format the card."),
+              TR("Open SD Scan"), sdMalwareOpenScan);
+}
+#endif
+
 // ===== App drawer (full-screen grid launcher) =============================
 // Toggle-in alternative to the command-centre home: a grid of every tool. The
 // home's "Apps" button opens it; its own "Home" button (and the back key) close
@@ -54591,6 +54661,28 @@ fs::FS* luaHostSdFs(bool* busy) {
   return &SD;
 }
 bool luaHostSdReadFailed() { return sdReadFailedCardDead(); }
+
+// Clear read-only/hidden/system on one card file so it can be deleted (FAT
+// refuses to delete a read-only file, and worms set all three). Only called by
+// wada.sd.remove() on a file the SD malware policy already named a threat.
+// fs::FS has no attribute call, so this goes to FatFs directly: the Arduino SD
+// library mounts drive "<pdrv>:" and keeps pdrv in a protected member, read here
+// through the standard pointer-to-member route rather than by guessing drive 0.
+// Declared by hand like f_mkfs above: ff.h drags FatFs' BYTE/WORD typedefs into
+// this file. FRESULT is an int-sized enum and FR_OK is 0.
+extern "C" int f_chmod(const char* path, uint8_t attr, uint8_t mask);
+struct SdPdrvAccess : fs::SDFS {
+  static uint8_t of(const fs::SDFS& sd) { return sd.*(&SdPdrvAccess::_pdrv); }
+};
+bool luaHostSdClearAttributes(const char* path) {
+  if (!s_sd_mounted || !path || path[0] != '/') return false;
+  char ffpath[200];
+  const int n = snprintf(ffpath, sizeof ffpath, "%u:%s", (unsigned)SdPdrvAccess::of(SD), path);
+  if (n <= 0 || n >= (int)sizeof ffpath) return false;
+  markSdIo();
+  constexpr uint8_t kAmRdo = 0x01, kAmHid = 0x02, kAmSys = 0x04;   // FatFs AM_RDO/AM_HID/AM_SYS
+  return f_chmod(ffpath, 0, kAmRdo | kAmHid | kAmSys) == 0;
+}
 #endif
 // ---- wada.mesh read-only bridges (no mesh types cross into the host TU) ----
 // Hex-encode the first n bytes of a public key. 4 bytes (8 hex chars) is what the
@@ -61512,6 +61604,11 @@ void UITask::loop() {
   }
   if (now >= _next_refresh) {
     refreshStatusLabels();
+#if CAP_LUA_APPS && CAP_LUA_SD_LIST
+    // Here rather than below the HAS_TOUCH_UI gate: the ThinkNode M9, the board
+    // this warning exists for, does not define HAS_TOUCH_UI.
+    sdMalwareTick((uint32_t)now);
+#endif
 #if defined(HAS_THINKNODE_M9)
     if (s_m9_mail_indicator && s_m9_contact_indicator && s_m9_update_indicator) {
       lv_obj_t* top = lv_layer_top();
