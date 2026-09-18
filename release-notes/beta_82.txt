@@ -1,0 +1,15 @@
+# beta_82 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- ThinkNode M9 SD cards: Windows malware -------------------------------------------------------
+Some ThinkNode M9 cards shipped with a Windows worm on them (Elecrow security advisory, September 2026). It cannot run on the radio, but it runs on the first Windows PC the card is put into, which is exactly where you take the card to copy map tiles. On the infected cards seen so far it is a hidden autorun.inf and a program called xlfqf.pif in the top folder of the card.
+New in the Store: SD Scan. It looks through the SD card for Windows programs, scripts, shortcuts and autorun files, shows what it found and why, and removes it after you confirm. A mesh radio never uses any of these files, and nothing else on the card is touched.
+SD Scan only removes files it recognises. If a card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
+When a card with Windows malware in its top folder is in the radio at startup, or is inserted, wadamesh now warns you and offers to open SD Scan.
+If your M9 card has already been in a Windows PC, run a full virus scan on that PC as well.
+
+# --- For app authors ------------------------------------------------------------------------------
+wada.sd.check and wada.sd.remove find and delete Windows malware on the card. The firmware decides what counts, and remove refuses everything else, so no app can use it to delete anything else on the card. wada.sd.list can now page through big folders. All documented at wadamesh.com/sdk.html.
+
+# --- For testers ----------------------------------------------------------------------------------
+SD Scan is tested on a T-Deck. M9 owners: worth reporting whether the scan, the removal and the startup warning all work with the M9's keys.
