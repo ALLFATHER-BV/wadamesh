@@ -112,8 +112,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_tilexyz  = 0;      // v50: the "z12  12/2105/1376" tile-path line is developer clutter on the map; opt-in via Map options
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
-#if defined(TLORA_PAGER)
-  c.ui_scale          = 0;      // Pager: Small/current typography by default
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
+  c.ui_scale          = 0;      // Font-only presets start at the existing typography.
 #else
   c.ui_scale          = 1;      // large-screen boards keep their existing 150% default
 #endif
@@ -280,6 +280,11 @@ static void cfgLoadOrMigrate() {
           memset(s_cfg.ble_kbd_name, 0, sizeof s_cfg.ble_kbd_name);
         }
         if (stored_version < 62) s_cfg.ble_kbd_back = 0;   // only Esc goes back
+#if defined(HELTEC_LORA_V4_R8)
+        // ui_scale existed before the R8 exposed a selector and inherited the
+        // unrelated large-screen default. Preserve its current appearance once.
+        if (stored_version < 63) s_cfg.ui_scale = 0;
+#endif
         if (stored_version < 58) {
           s_cfg.attaky_notify_enabled = 0;
           s_cfg.attaky_notify_room_color = 0;

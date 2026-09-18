@@ -181,9 +181,9 @@
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
-// expose it; the Pager adds font-only presets because its 480x222 viewport is
-// wide enough for larger type but too short for global geometry scaling.
-#if CAP_LARGE_SCREEN || defined(TLORA_PAGER)
+// expose it; the Pager and V4-R8 add font-only presets because their compact
+// viewports cannot safely take global geometry scaling.
+#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
   #define CAP_UI_SIZE 1
 #else
   #define CAP_UI_SIZE 0
@@ -224,10 +224,10 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-// Touchscreen-only boards that take a Bluetooth keyboard join too: the group
-// stays empty (and invisible) until a keyboard connects.
+// Touchscreen-only boards that take a Bluetooth or CardKB keyboard join too:
+// the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+    defined(HAS_CARDKB) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

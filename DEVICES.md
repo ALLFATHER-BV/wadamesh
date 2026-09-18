@@ -44,7 +44,12 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   second to return Home; this reuses GPIO35, so that target no longer drives the
   same line as a TX LED. **PWR** remains the expansion board's hardware power
   control and is not readable by firmware. V4.3 boards get the switchable
-  high-gain receive LNA toggle.
+  high-gain receive LNA toggle. Both V4 targets auto-detect an optional M5Stack
+  CardKB at address `0x5F` on the board I2C bus (GPIO4/3 on V4, GPIO17/18 on
+  V4-R8). It provides text and focus navigation; the on-screen keyboard remains
+  available when CardKB is absent or when the active field is tapped again.
+  V4-R8 also offers font-only Normal, Large and Huge text presets under Display;
+  controls retain their normal geometry so the compact screen stays navigable.
 - **Tanmatsu**: keyboard-driven UI (no touchscreen) with the coloured function
   keys mapped to tabs, ALT accent picker, UI scaling (Normal/Large/Huge),
   microSD for all persistent data. Ships through the Tanmatsu launcher store,

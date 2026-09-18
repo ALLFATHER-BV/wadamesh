@@ -1030,15 +1030,33 @@ void setup() {
   // (ESP_ERR_TIMEOUT) that takes prefs, contacts and chat history down with it. The
   // T-Display P4 hot-insert path already drops to this rate for the same reason.
   sdMountDiagBegin();
-  bool wio_l2_sd_begun = false;
   const bool wio_l2_sd_bus_ready = WioTrackerL2Io::ready() &&
                                    WioTrackerL2Io::setSdPower(true) &&
                                    SD_MMC.setPins(2, 3, 1);
-  if (wio_l2_sd_bus_ready)
-    wio_l2_sd_begun = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT);
-  const bool wio_l2_sd_ready = wio_l2_sd_begun && SD_MMC.cardType() != CARD_NONE;
-  if (wio_l2_sd_bus_ready)
-    sdMountDiagAttempt((uint32_t)SDMMC_FREQ_DEFAULT * 1000u, wio_l2_sd_begun, wio_l2_sd_ready);
+  bool wio_l2_sd_ready = false;
+  if (wio_l2_sd_bus_ready) {
+    const auto try_wio_l2_sd_mount = []() {
+      const bool begin_ok = SD_MMC.begin("/sdcard", true, false, SDMMC_FREQ_DEFAULT);
+      const bool card_ready = begin_ok && SD_MMC.cardType() != CARD_NONE;
+      sdMountDiagAttempt((uint32_t)SDMMC_FREQ_DEFAULT * 1000u, begin_ok, card_ready);
+      return card_ready;
+    };
+
+    // The expander-controlled rail has only just risen. Some cards are not yet
+    // responsive when SD_MMC starts its handshake, especially after flashing.
+    delay(150);
+    wio_l2_sd_ready = try_wio_l2_sd_mount();
+    if (!wio_l2_sd_ready) {
+      SD_MMC.end();
+      (void)WioTrackerL2Io::setSdPower(false);
+      delay(100);
+      if (WioTrackerL2Io::setSdPower(true)) {
+        delay(250);
+        Serial.println("[BOOT] wio-l2 SD_MMC: retrying after rail power cycle");
+        wio_l2_sd_ready = try_wio_l2_sd_mount();
+      }
+    }
+  }
   sdMountDiagSetMounted(wio_l2_sd_ready,
                         wio_l2_sd_ready ? (uint32_t)SDMMC_FREQ_DEFAULT * 1000u : 0);
   if (wio_l2_sd_ready) {
@@ -1047,7 +1065,7 @@ void setup() {
     g_full_data_on_sd = sd_storage;
     Serial.printf("[BOOT] wio-l2 SD_MMC: %s\n", sd_storage ? "adopted" : "mount only");
   } else {
-    if (wio_l2_sd_begun) SD_MMC.end();
+    SD_MMC.end();
     (void)WioTrackerL2Io::setSdPower(false);
     Serial.println("[BOOT] wio-l2 SD_MMC unavailable; using SPIFFS");
   }

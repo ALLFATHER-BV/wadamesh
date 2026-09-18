@@ -148,6 +148,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
   #endif
+  #if defined(HAS_CARDKB)
+    #include "../helpers/input/CardKbKeyboard.h"
+  #endif
   #include "BleKeyboard.h"   // external Bluetooth keyboard (self-gated on CAP_BLE_KEYBOARD)
   #if CAP_BLE_KEYBOARD
     #include "../helpers/esp32/MultiTransportCompanionInterface.h"
@@ -896,6 +899,28 @@ static void initTouchFontFallbacks() {
       break;
     case 2:
     case 3:   // Jumbo keeps Large chrome; chat message text is bumped separately.
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
+#elif defined(HELTEC_LORA_V4_R8)
+  // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
+  // controls retain their established dimensions and remain scrollable.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
       g_font_12 = lv_font_montserrat_18;
       g_font_14 = lv_font_montserrat_20;
       g_font_16 = lv_font_montserrat_24;
@@ -1705,9 +1730,17 @@ static inline lv_coord_t statusBarCurH() { return STATUSBAR_H; }
 #else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top);
+#endif
 static void statusBarSetTall(bool tall) {
   s_statusbar_tall = tall;
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
+#if defined(HELTEC_LORA_V4_R8)
+  // R8 portrait mapping is identity, but a tall clickable bar used to cover the
+  // first row of the tab view. Keep visible content below its live hitbox.
+  r8ResizeContentBelowStatusBar(statusBarCurH());
+#endif
   // (updateGlobalStatusBar drives this every tick + refreshes the left zone; it must
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
@@ -1718,8 +1751,18 @@ void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats
 // Thin wrappers over the machinery just above, exported so the self-contained app
 // modules (SnakeGame) build the same page as the in-file tool
 // pages instead of hand-rolling it against a hardcoded bar height.
-lv_coord_t appPageContentTop() { return STATUSBAR_H; }
-lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+lv_coord_t appPageContentTop() {
+#if defined(HELTEC_LORA_V4_R8)
+  // appPageCreateRoot() runs before appPageBegin(), so reserve the height the
+  // latter is about to activate rather than reading the current one-row state.
+  return (lv_coord_t)(STATUSBAR_H * 2);
+#else
+  return STATUSBAR_H;
+#endif
+}
+lv_coord_t appPageContentH() {
+  return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - appPageContentTop());
+}
 
 lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
   lv_obj_t* root = lv_obj_create(lv_layer_top());
@@ -1997,8 +2040,8 @@ static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
-#if defined(HAS_TDECK_PRO)
-// E-paper cannot render the glass title row cleanly, so chat content starts below it.
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
+// E-paper and R8 content start below the complete status-bar hitbox.
 static inline lv_coord_t chatContentTop(){ return chatBarH(); }
 #else
 static inline lv_coord_t chatContentTop(){ return STATUSBAR_H; }
@@ -2275,7 +2318,7 @@ static bool terminalHandleVirtualKeyboardReady();
 // end-cursor, so backspace deleted the last character no matter where the caret
 // was. When this returns false, kbMirrorBind binds the field directly and the
 // mirror sync / redirects below are skipped.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Set while the on-screen keys were summoned for this editing session over an
 // external keyboard (the module's '#', or a second tap on a field a Bluetooth
 // keyboard types into); hideKb clears it.
@@ -2286,34 +2329,33 @@ static bool s_osk_forced = false;
 static inline bool bleKbdTyping() { return BleKbd::state() == BleKbd::State::Connected; }
 #endif
 
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+static inline bool externalKeyboardTyping() {
+  bool active = false;
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  active = active || attakyKeyboardPresent();
+#endif
+#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+  active = active || bleKbdTyping();
+#endif
+#if defined(HAS_CARDKB)
+  active = active || cardKbPresent();
+#endif
+  return active;
+}
+#endif
+
 static inline bool kbMirrorActive() {
 #if CAP_KEYBOARD
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-  // Keyboard is a detachable module, so decide at runtime, not via CAP_KEYBOARD:
-  // suppress the on-screen keys while the module answers on I2C, unless '#' has
-  // summoned them back for this field. No module: behave like stock upstream.
-#if CAP_BLE_KEYBOARD
-  return !((attakyKeyboardPresent() || bleKbdTyping()) && !s_osk_forced);
-#else
-  return !(attakyKeyboardPresent() && !s_osk_forced);
-#endif
-#elif CAP_BLE_KEYBOARD
-  // Same for a connected Bluetooth keyboard: it types straight into the field,
-  // so the on-screen keys stay down unless a second tap asked for them.
-  return !(bleKbdTyping() && !s_osk_forced);
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+  // Detachable keyboards are detected at runtime. Keep the on-screen keys down
+  // while one is present unless a second tap summoned them for this field.
+  return !(externalKeyboardTyping() && !s_osk_forced);
 #else
   return true;
 #endif
 }
-
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) && CAP_BLE_KEYBOARD
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent() || bleKbdTyping(); }
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent(); }
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-static inline bool externalKeyboardTyping() { return bleKbdTyping(); }
-#endif
 
 // ---- Chats "+" add-channel modal pointers (see lower in file for impl) ----
 static lv_obj_t* s_addch_sheet      = nullptr;
@@ -2631,6 +2673,19 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
+
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
+  if (!g_lv.tabview) return;
+  lv_obj_set_pos(g_lv.tabview, 0, top);
+  lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr),
+                  lv_disp_get_ver_res(nullptr) - top);
+  if (g_lv.dm.list_cont) {
+    lv_obj_set_size(g_lv.dm.list_cont, lv_disp_get_hor_res(nullptr),
+                    lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
+  }
+}
+#endif
 
 /** If `cp` has no glyph in `font`, show '*' instead of LVGL's missing-glyph box. Preserves \\n \\r \\t. */
 static bool uiFontHasGlyph(const lv_font_t* font, uint32_t cp) {
@@ -7239,7 +7294,7 @@ static void hideKb() {
   // reveal does not inherit the symbol mode the summon opened.
   if (s_osk_forced && g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
   s_osk_forced = false;
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#elif (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
   s_osk_forced = false;   // the summon lasts one editing session
 #endif
   if (s_kb_mirror_root) lv_obj_add_flag(s_kb_mirror_root, LV_OBJ_FLAG_HIDDEN);
@@ -7309,7 +7364,7 @@ static void showKb(LvChatPanel* p) {
 #if !CAP_KEYBOARD
   // No on-screen keyboard on the T-Deck — the physical keyboard types straight
   // into the composer (already visible), so skip showing the keys + the lift.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD || defined(HAS_CARDKB)
   // Same while an external keyboard types (the attached module, or a connected
   // Bluetooth keyboard) until the keys are summoned for this field. kbMirrorActive()
   // guards the settings path; the chat composer comes through here and needs its own.
@@ -7325,18 +7380,18 @@ static void showKb(LvChatPanel* p) {
 #endif
 }
 
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-// Second tap on a field a Bluetooth keyboard types into: bring the on-screen keys
+#if (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+// Second tap on a field an external keyboard types into: bring the on-screen keys
 // up for it anyway, in case the keyboard is out of reach. A field's PRESSED
 // arrives before LVGL moves the focus, so "already bound" there means the field
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
-static void bleKbdNoteFieldPress(lv_obj_t* ta) {
+static void externalKbdNoteFieldPress(lv_obj_t* ta) {
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
-  s_osk_press_ta = (bound && bleKbdTyping() && !s_osk_forced) ? ta : nullptr;
+  s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
 // On CLICKED: for such a second tap, summon the keys for this editing session.
-static void bleKbdSecondTap(lv_obj_t* ta) {
+static void externalKbdSecondTap(lv_obj_t* ta) {
   if (ta && ta == s_osk_press_ta) s_osk_forced = true;
   s_osk_press_ta = nullptr;
 }
@@ -8141,7 +8196,7 @@ static void composerFocusCb(lv_event_t* e) {
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(lv_event_get_target(e));
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
 #endif
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
 }
@@ -8833,7 +8888,7 @@ static void threadSelectCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Send the panel composer's text and clear it. Split from the send button's
 // callback so an external keyboard's Enter can reach the same path.
 static void composerSendFromPanel(LvChatPanel* p) {
@@ -10044,7 +10099,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(ta);
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
 #endif
   s_kb_panel = nullptr;
   kbMirrorBind(ta);
@@ -10159,7 +10214,7 @@ static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  bleKbdNoteFieldPress(lv_event_get_target(e));
+  externalKbdNoteFieldPress(lv_event_get_target(e));
 #endif
 }
 
@@ -14860,6 +14915,8 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
     lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
+#elif defined(HELTEC_LORA_V4_R8)
+  lv_dropdown_set_options(dd, TR("Normal\nLarge text\nHuge text"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
@@ -27494,7 +27551,11 @@ static void openFileTransferPage() {
 
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_file_transfer_root = appPageCreateRoot(COLOR_BG);
+#if defined(HELTEC_LORA_V4_R8)
+  lv_obj_set_style_pad_top(s_file_transfer_root, 10, LV_PART_MAIN);
+#else
   lv_obj_set_style_pad_top(s_file_transfer_root, STATUSBAR_H + 10, LV_PART_MAIN);
+#endif
   lv_obj_set_style_pad_left(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_right(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(s_file_transfer_root, 14, LV_PART_MAIN);
@@ -28603,6 +28664,9 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_font(s_home_chart_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_align(s_home_chart_legend, LV_ALIGN_TOP_LEFT, 0, chart_y);
   lv_obj_add_flag(s_home_chart_legend, LV_OBJ_FLAG_CLICKABLE);
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_add_flag(s_home_chart_legend, NAV_SKIP_FLAG);
+#endif
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
@@ -35539,7 +35603,8 @@ static void makeChatDetail(LvChatPanel& p) {
   p.overlay = lv_obj_create(lv_scr_act());
   lv_obj_set_size(p.overlay, chatScreenW(), chatScreenH());
   // Most boards start below the solid row and let the glass title row overlap the
-  // list. T-Deck Pro starts below both rows because e-paper needs opaque separation.
+  // list. T-Deck Pro and R8 start below both rows: e-paper needs opaque separation,
+  // while R8 must not show tappable content beneath the bar's touch hitbox.
   lv_obj_set_pos(p.overlay, 0, chatContentTop());
   styleSurface(p.overlay, COLOR_BG, 0);
   lv_obj_set_style_pad_all(p.overlay, 0, LV_PART_MAIN);   // prevent child-position offset
@@ -35572,7 +35637,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // The status bar's glass lower row floats over the TOP of the list on boards
   // with a two-row chat header. Pager keeps the chat header in one regular row,
   // so retaining that old row-sized inset only wastes message space.
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
@@ -35618,7 +35683,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_border_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_ext_click_area(p.jump_oldest_btn, 6);
-#if defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + 2);
 #else
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + STATUSBAR_H + 2);
@@ -36457,20 +36522,25 @@ static void openSettingsCategory(int cat) {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
 
-  // On the BASE screen layer (like the chat overlay), so the status bar — which lives on
-  // lv_layer_top above it — paints its glass lower row OVER this sheet and the page
-  // content scrolls UNDER the bar. (On lv_layer_top the sheet would sit above the bar and
-  // the glass would reveal the settings landing behind the bar instead of this page.)
+  // On the BASE screen layer (like the chat overlay), so the status bar remains
+  // above it. The R8 keeps the entire sheet below the bar's live touch hitbox.
   lv_obj_t* root = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(root);
   // Settings detail pages use a DOUBLE-height status bar (its back chevron + title become
   // a tall title bar). Set the category first so the bar paints the title + goes tall.
-  // The sheet starts under the SOLID top row (STATUSBAR_H); the page insets its top by
-  // the glass lower-row height so content rests below the bar but scrolls under it.
+  // Most boards start under the solid row and inset the page below the glass row.
+  // R8 starts the sheet itself below both rows so no visible content is untappable.
   s_settings_open_cat = cat;
   statusBarSetTall(true);
-  lv_obj_set_size(root, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(root, 0, STATUSBAR_H);
+#if defined(HELTEC_LORA_V4_R8)
+  const lv_coord_t settings_top = statusBarCurH();
+  const lv_coord_t settings_pad_top = 8;
+#else
+  const lv_coord_t settings_top = STATUSBAR_H;
+  const lv_coord_t settings_pad_top = STATUSBAR_H + 8;
+#endif
+  lv_obj_set_size(root, sw, sh - settings_top);
+  lv_obj_set_pos(root, 0, settings_top);
   styleSurface(root, COLOR_BG, 0);
   lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
@@ -36479,9 +36549,9 @@ static void openSettingsCategory(int cat) {
 
   lv_obj_t* page = lv_obj_create(root);
   lv_obj_set_pos(page, 0, 0);
-  lv_obj_set_size(page, sw, sh - STATUSBAR_H);
+  lv_obj_set_size(page, sw, sh - settings_top);
   prepSettingsPage(page);
-  lv_obj_set_style_pad_top(page, STATUSBAR_H + 8, LV_PART_MAIN);   // clear the glass lower bar row
+  lv_obj_set_style_pad_top(page, settings_pad_top, LV_PART_MAIN);
 
   resetSettingsModalState();
   s_settings_page = page;
@@ -36506,6 +36576,11 @@ static void settingsCatOpenCb(lv_event_t* e) {
   const int cat = (int)(intptr_t)lv_event_get_user_data(e);
 #if CAP_LUA_APPS
   if (cat == CAT_LANGUAGE) {   // languages live in the Lua Store now (files + picker)
+#if defined(HAS_M9_KEYBOARD)
+    // Store is a separate top-layer page, so retain this persistent Settings
+    // card until the landing page owns navigation again.
+    s_m9_focus_pending = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+#endif
     luaStoreOpenLanguages();
     return;
   }
@@ -39718,6 +39793,8 @@ static void refreshChatList(LvChatPanel& p) {
     // lv_list_add_btn creates: child[0]=icon label, child[1]=text label.
     lv_obj_t* text_lbl = lv_obj_get_child(btn, 1);
     if (text_lbl) {
+      lv_obj_set_style_text_color(text_lbl,
+          lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
       // Leave room on the right for the gear + time + unread badge.
       lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116 - time_w - gear_w);
@@ -42849,6 +42926,25 @@ static int bleKbdLuaCode(int key) {
   return 0;
 }
 
+#if defined(HAS_CARDKB)
+static int cardKbUiKey(int raw) {
+  switch (raw) {
+    case 0x08:
+    case 0x7F: return BLE_KEY_BACKSPACE;
+    case 0x09: return BLE_KEY_TAB;
+    case 0x0A:
+    case 0x0D: return BLE_KEY_ENTER;
+    case 0x1B: return BLE_KEY_ESC;
+    case 0xB4: return BLE_KEY_LEFT;
+    case 0xB5: return BLE_KEY_UP;
+    case 0xB6: return BLE_KEY_DOWN;
+    case 0xB7: return BLE_KEY_RIGHT;
+    default:
+      return (raw >= 0x20 && raw < 0x7F) ? (BLE_KEY_TEXT | raw) : 0;
+  }
+}
+#endif
+
 // Command alone opens the emoji picker while writing a message, and closes it
 // again. While it is open the arrows walk its grid and Enter inserts; Esc
 // closes it through Back and typing still reaches the message. Returns true
@@ -42901,6 +42997,16 @@ static bool bleKbdTabHotkey(int cp) {
   return true;
 }
 
+static bool m9LockedHomeDrawerFrontmost() {
+#if defined(HAS_THINKNODE_M9)
+  return getActiveTab() == HOME_TAB_INDEX &&
+         s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
+         s_home_drawer_mode && s_appdrawer_root && !appDrawerCovered();
+#else
+  return false;
+#endif
+}
+
 // Esc is the back button: one press, one layer, innermost first. The M9 Back
 // key's order, without its map-pan and screen-history rungs, and with the
 // status bar's own Back detail that a settings page opened from the Control
@@ -42923,6 +43029,7 @@ static void bleKbdBack() {
   }
   // A chat covers its tab page, the Home app drawer included: close the chat first.
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+  else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
   else if (anyPopupOpen())                       hwKeyDismissTopPopup();
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   s_nav_show = true;
@@ -43137,8 +43244,10 @@ static bool m9HandleNavKey(int key) {
       // app (reported bug). Close the page itself; the drawer is then the
       // next, visible Back target.
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-      else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
+      else if (popupRegistryAnyOver() || s_ct_select_mode) hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
+      else if (anyPopupOpen())                       hwKeyDismissTopPopup();
       // Every layer that was covering the screen is peeled — NOW go back a
       // screen. This rung is what the ladder was missing: without it Back fell
       // straight through to LV_KEY_ESC, which nothing in this build consumes
@@ -43203,7 +43312,7 @@ static bool m9HandleNavKey(int key) {
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
         const bool keep_drawer = s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer();
-        if (!(keep_drawer && was_open && s_appdrawer_root && !appDrawerCovered())) {
+        if (!m9LockedHomeDrawerFrontmost()) {
           // Stop on a key-blocker row (SD format / bulk delete progress) instead of
           // spinning eight times closing nothing and then toggling the drawer out
           // from under a running operation.
@@ -44522,7 +44631,7 @@ static void bleKbdNavEnable(bool on) {
 // put them away and keep the field bound, so typing carries on on the keyboard.
 // (When the keyboard goes away the field stays as it is; the next tap brings
 // the on-screen keys, since nothing suppresses them any more.)
-static void bleKbdTookOverField() {
+static void externalKbdTookOverField() {
   if (!g_lv.keyboard || s_osk_forced || lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) return;
   LvChatPanel* const panel = s_kb_panel;
   lv_obj_t* const    field = s_kb_bind_ta;
@@ -44559,18 +44668,26 @@ static void bleKbdPageRefresh();   // pairing screen + Bluetooth page status (de
 // Once per UI loop: persist what the worker changed, then route the keys.
 static void bleKbdUiTick() {
   bleKbdBoot();
-  static bool s_was_connected = false;
+#if defined(HAS_CARDKB)
+  cardKbPoll();
+#endif
   const bool connected = BleKbd::state() == BleKbd::State::Connected;
-  if (connected != s_was_connected) {
-    s_was_connected = connected;
+  const bool external_connected = connected
+#if defined(HAS_CARDKB)
+      || cardKbPresent()
+#endif
+      ;
+  static bool s_was_external_connected = false;
+  if (external_connected != s_was_external_connected) {
+    s_was_external_connected = external_connected;
 #if BLE_KBD_OWNS_NAV
-    bleKbdNavEnable(connected);
+    bleKbdNavEnable(external_connected);
 #endif
 #if !CAP_KEYBOARD
-    if (connected) bleKbdTookOverField();
+    if (external_connected) externalKbdTookOverField();
 #endif
 #if CAP_KEYPAD_NAV
-    s_ble_kbd_hotkeys = connected;
+    s_ble_kbd_hotkeys = external_connected;
     navMenubarKeysSync();
 #endif
   }
@@ -44597,6 +44714,18 @@ static void bleKbdUiTick() {
     }
     bleKbdDispatch(key);
   }
+#if defined(HAS_CARDKB)
+  for (int i = 0; i < 16; ++i) {
+    const int raw = cardKbReadKey();
+    if (!raw) break;
+    if (s_remote_mode) {
+      if (raw == ' ') remotePhysicalKey(' ');
+      continue;
+    }
+    const int key = cardKbUiKey(raw);
+    if (key) bleKbdDispatch(key);
+  }
+#endif
 }
 #endif  // CAP_BLE_KEYBOARD
 
@@ -58062,6 +58191,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
+#if defined(HELTEC_LORA_V4_R8)
+    // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
+    // needs two extra pixels to avoid clipping regular one-row status text.
+    const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
+    if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
+#endif
 #endif
     // Allocate the draw buffer in PSRAM so the ~12 KB it costs comes out of
     // the 8 MB external RAM instead of the 320 KB internal DRAM that WiFi
@@ -60828,6 +60963,18 @@ void UITask::loop() {
       if (c) consoleKey(c);
     }
 #endif
+#if defined(HAS_CARDKB)
+    cardKbPoll();
+    for (int kbi = 0; kbi < 16; ++kbi) {
+      int key = cardKbReadKey();
+      if (!key) break;
+      con_activity = true;
+      if (_screen_off) { wakeScreen(); continue; }
+      if (key == 0x7F) key = 0x08;
+      if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B ||
+          (key >= 0x20 && key < 0x7F)) consoleKey(key);
+    }
+#endif
 #if CAP_TOUCH
     {
       uint16_t _tx, _ty;
@@ -61912,7 +62059,7 @@ void UITask::loop() {
   serviceLockingCountdown(now);
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdUiTick();   // external Bluetooth keyboard: persist pairing changes, route keys
+  bleKbdUiTick();   // external Bluetooth/CardKB keyboards: update presence and route keys
 #endif
 #if defined(ATTAKY_MESH_SERIES)
   // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off

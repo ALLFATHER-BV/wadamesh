@@ -30,7 +30,7 @@
 // own title and close button UNDERNEATH the real status bar with no reachable exit. Going
 // through here instead means a page can never disagree with the bar about its own height.
 
-/** y of the first usable content row: immediately under the (possibly tall) status bar. */
+/** y of the first usable content row below the target's reserved status-bar area. */
 lv_coord_t appPageContentTop();
 
 /** Usable content height below the status bar. */
