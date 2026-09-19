@@ -86,7 +86,8 @@ local function mklabel(text, x, y, size, col)
   checkstr(text, "label text"); if x then checkint(x, "label x") end; if y then checkint(y, "label y") end
   if size then checkint(size, "label size") end; checkcol(col, "label")
   widgets.labels = widgets.labels + 1
-  local l = { text = tostring(text), x = x, y = y, size = size }
+  widgets.seq = (widgets.seq or 0) + 1
+  local l = { text = tostring(text), x = x, y = y, size = size, seq = widgets.seq }
   function l:set(s) checkstr(s, "label:set"); l.text = tostring(s) end
   function l:pos(px, py) checkint(px, "label:pos"); checkint(py, "label:pos") end
   function l:color(c) checkcol(c, "label:color") end
@@ -109,7 +110,8 @@ local lists = {}
 local function mklist(x, y, w, h)
   checkint(x, "list x"); checkint(y, "list y"); checkint(w, "list w"); checkint(h, "list h")
   assert(w > 0 and h > 0, "list: width and height must be positive")
-  local l = { rows = {}, x = x, y = y, w = w, h = h }
+  widgets.seq = (widgets.seq or 0) + 1
+  local l = { rows = {}, x = x, y = y, w = w, h = h, seq = widgets.seq }
   function l:add(text, fn)
     checkstr(text, "list:add text"); assert(fn == nil or type(fn) == "function", "list:add fn")
     l.rows[#l.rows + 1] = { text = tostring(text), fn = fn }; return #l.rows
@@ -1130,6 +1132,23 @@ local function assert_no_overlap(where)
 end
 local NOTICE_START = "SD Scan only removes files it recognises"
 
+-- SD Scan 1.1: on a keyboard board the focus order is creation order, and the
+-- firmware's key navigation collects at most kNavMax = 160 focus stops per
+-- screen. So the buttons must be created before (and sit above) any list, and
+-- a screen must stay well under 160 stops however many files were found.
+local NAV_MAX = 160
+local function assert_buttons_first(where)
+  local stops = #buttons
+  for _, l in ipairs(lists) do
+    stops = stops + #l.rows
+    for _, b in ipairs(buttons) do
+      assert(b.seq < l.seq, where .. ": the '" .. b.text .. "' button comes after the list in focus order")
+      assert(b.y + 32 <= l.y, where .. ": the '" .. b.text .. "' button is not above the list")
+    end
+  end
+  assert(stops < NAV_MAX, where .. ": " .. stops .. " focus stops, the firmware collects " .. NAV_MAX)
+end
+
 scenarios.sdscan_layouts = function()
   for _, dims in ipairs({ { 320, 196 }, { 240, 276 }, { 480, 178 }, { 222, 436 } }) do
     reset_world()
@@ -1144,6 +1163,7 @@ scenarios.sdscan_layouts = function()
     press("Scan")
     scan_until(app, "threats found")
     assert_no_overlap(where .. " results")
+    assert_buttons_first(where .. " results")
     press("Remove all")
     assert_no_overlap(where .. " confirm")
     press("Remove")
@@ -1197,6 +1217,29 @@ scenarios.sdscan_real_m9 = function()
   press("Scan again")
   press("Scan")
   scan_until(app, "No known Windows malware found.")
+end
+
+scenarios.sdscan_many = function()
+  cfg = sd_cfg(320, 196)
+  local f = { ["/autorun.inf"] = SALITY_AUTORUN, ["/copyright.png"] = PNG, ["/meshcomod/contacts3"] = "x" }
+  for i = 1, 372 do f[string.format("/RECYCLER/p%03d.pif", i)] = pe_bytes(256) end
+  cfg.sdtree = mktree(f)
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  press("Scan")
+  scan_until(app, "threats found")
+  assert(screen_has("373 threats found"), label_dump())
+  assert(#lists == 1)
+  local rows = lists[1].rows
+  assert(#rows == 61, "expected 60 rows plus the summary row, got " .. #rows)
+  assert(rows[61].text:find("and 313 more", 1, true), "last row: " .. rows[61].text)
+  assert_buttons_first("373 findings")
+  press("Remove all")
+  press("Remove")
+  scan_until(app, "Removed 373 files.", 2000)
+  assert(sd_exists("/copyright.png") and sd_exists("/meshcomod/contacts3"))
+  assert(not sd_exists("/autorun.inf"))
 end
 
 scenarios.sdscan_m9 = function()
@@ -1322,7 +1365,7 @@ scenarios.sdscan_portrait = function()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   press("Scan")
   scan_until(app, "threats found")
-  for _, l in ipairs(lists) do assert(l.y + l.h <= cfg.h - 40, "the list runs under the buttons") end
+  assert_buttons_first("portrait")
 end
 
 scenarios.sdscan_cost = function()
@@ -1351,7 +1394,7 @@ scenarios.sdscan_cost = function()
 end
 
 local order = APP_PATH:find("/sdscan/", 1, true)
-  and { "sdscan_real_m9", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
+  and { "sdscan_real_m9", "sdscan_many", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
         "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
   or APP_PATH:find("/wardrive/", 1, true)
   and { "wardrive_utf8" }
