@@ -37,6 +37,10 @@
 #endif
 #endif
 
+// True while the USB Files app owns the USB serial port (ui-touch/UsbFilesSession.h).
+// Defined in UITask.cpp, which every target builds.
+extern volatile bool g_usb_files_owns_serial;
+
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 /** While `ota url` runs, pin WS/TCP reply target so OTA progress survives yield() and checkRecvFrame. */
 static int s_companion_ota_pinned_reply_target = -1;
@@ -5888,7 +5892,11 @@ void MyMesh::loop() {
   // transmits only when a connection is armed and due (see the room login branch).
   checkConnections();
 
-  if (_cli_rescue) {
+  if (g_usb_files_owns_serial) {
+    // USB Files owns the USB serial port (ui-touch/UsbFilesSession.h): no console
+    // on it, and the companion link skips its USB leg. BLE/TCP/WS still run.
+    checkSerialInterface();
+  } else if (_cli_rescue) {
     checkCLIRescueCmd();
   } else {
     // Prefer plain-text console commands (e.g. flasher Console) before binary

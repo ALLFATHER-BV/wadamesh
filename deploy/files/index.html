@@ -1,0 +1,705 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WADAMESH Files</title>
+<meta name="description" content="Browse, upload and download the files on your wadamesh device over a USB cable.">
+<link rel="icon" href="https://wadamesh.com/wadamesh-badge.svg">
+<meta name="theme-color" content="#ffffff">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<script>
+  if (location.protocol === 'http:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1')
+    location.replace(location.href.replace(/^http:/, 'https:'));
+</script>
+<style>
+  :root{--bg:#fff;--bg2:#f4f6f2;--ink:#15181e;--mut:#5d6770;--line:#e5e8e2;--teal:#15b6a6;--cyan:#19d6c2;
+    --teal-ink:#0e8d80;--warn:#b4542d;--warn-bg:#fdf1ec;--risk:#b3261e;--risk-bg:#fdecea;color-scheme:light}
+  *{box-sizing:border-box;margin:0;padding:0}
+  [hidden]{display:none!important}
+  body{font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--ink);
+    min-height:100vh;display:flex;flex-direction:column;align-items:center;-webkit-font-smoothing:antialiased}
+  body::before{content:"";position:fixed;inset:-25% -10% auto -10%;height:60vh;z-index:-1;
+    background:radial-gradient(44vw 36vh at 50% 0%,rgba(25,214,194,.14),transparent 62%)}
+  a{color:var(--teal-ink);text-decoration:none}
+  .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
+  header{text-align:center;padding:44px 20px 4px}
+  header svg{width:92px;height:auto}
+  h1{font-family:'JetBrains Mono',ui-monospace,monospace;font-weight:700;letter-spacing:3px;font-size:clamp(1.5rem,5vw,2.1rem);margin-top:6px}
+  h1 span{color:var(--teal)}
+  .tag{color:var(--mut);margin-top:6px}
+  main{width:100%;max-width:880px;padding:22px 16px 60px}
+  .card{border:1px solid var(--line);border-radius:14px;background:#fff;padding:22px;box-shadow:0 18px 40px -30px rgba(21,24,30,.35)}
+  .steps{padding-left:22px;margin:0 0 18px;color:var(--ink)}
+  .steps li{margin:4px 0}
+  button{font:inherit;cursor:pointer;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    padding:8px 14px;transition:border-color .15s,background .15s,color .15s}
+  button:hover:not(:disabled){border-color:var(--teal);color:var(--teal-ink)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--teal);border-color:var(--teal);color:#fff;font-weight:600;padding:10px 22px}
+  button.primary:hover:not(:disabled){background:var(--teal-ink);border-color:var(--teal-ink);color:#fff}
+  button.small{padding:4px 10px;font-size:.85rem}
+  button.danger:hover:not(:disabled){border-color:var(--warn);color:var(--warn)}
+  .linkish{background:none;border:none;padding:0;color:var(--teal-ink);text-decoration:underline;font-size:.88rem}
+  .status{margin-top:12px;color:var(--mut);min-height:1.5em}
+  .status.err{color:var(--warn)}
+  .notice{border:1px solid #f3c9b8;background:var(--warn-bg);color:var(--warn);border-radius:12px;padding:14px 16px;margin-bottom:16px}
+  .devbar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+  .devbar .who{flex:1;min-width:200px}
+  .devbar .who b{font-size:1.05rem}
+  .devbar .who span{color:var(--mut);font-size:.88rem;margin-left:8px}
+  .roots{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .roots button{border-radius:100px;padding:6px 16px}
+  .roots button.on{background:var(--ink);border-color:var(--ink);color:#fff}
+  .roots button.off{color:var(--mut)}
+  .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+  .crumbs{flex:1;min-width:220px;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:.9rem;word-break:break-all}
+  .crumbs button{border:none;background:none;padding:2px 3px;color:var(--teal-ink)}
+  .crumbs button:last-child{color:var(--ink);font-weight:600}
+  .opts{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:.88rem}
+  .hint{color:var(--mut);font-size:.86rem;margin:2px 0 10px}
+  .space{display:flex;align-items:center;gap:10px;color:var(--mut);font-size:.86rem;margin-bottom:10px}
+  .meter{flex:0 0 160px;height:6px;border-radius:6px;background:var(--bg2);overflow:hidden}
+  .meter i{display:block;height:100%;background:var(--teal)}
+  .list{border:1px solid var(--line);border-radius:12px;overflow:hidden;position:relative;min-height:120px;background:#fff}
+  .list.drag{outline:2px dashed var(--teal);outline-offset:-6px;background:#f5fbfa}
+  .row{display:grid;grid-template-columns:26px 1fr auto auto;gap:10px;align-items:center;padding:8px 12px;border-top:1px solid var(--line)}
+  .row:first-child{border-top:none}
+  .row:hover{background:#fafbf9}
+  .row .ico{text-align:center;color:var(--mut)}
+  .row .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .name button{border:none;background:none;padding:0;color:var(--ink);font-weight:600;text-align:left}
+  .row .name button:hover{color:var(--teal-ink)}
+  .row .size{color:var(--mut);font-size:.85rem;font-variant-numeric:tabular-nums;text-align:right;min-width:70px}
+  .row .acts{display:flex;gap:6px;justify-content:flex-end}
+  .row .lock{color:var(--mut);font-size:.8rem;white-space:nowrap}
+  .empty{padding:28px;text-align:center;color:var(--mut)}
+  .xfer{margin-top:14px}
+  .xfer .line{display:flex;justify-content:space-between;gap:10px;font-size:.9rem;margin-bottom:6px}
+  .xfer .line span:last-child{color:var(--mut);font-variant-numeric:tabular-nums}
+  .bar{height:8px;border-radius:8px;background:var(--bg2);overflow:hidden}
+  .bar i{display:block;height:100%;width:0;background:var(--teal);transition:width .15s}
+  .xfer .foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;color:var(--mut);font-size:.86rem}
+  .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;
+    border-radius:10px;font-size:.9rem;max-width:min(560px,92vw);box-shadow:0 12px 30px -12px rgba(0,0,0,.4);opacity:0;
+    pointer-events:none;transition:opacity .2s}
+  .toast.show{opacity:1}
+  .toast.err{background:var(--warn)}
+  .row.risk .name button{color:var(--risk)}
+  .risk-tag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:100px;background:var(--risk-bg);
+    color:var(--risk);border:1px solid #f3c1bc;font-size:.72rem;font-weight:600;vertical-align:1px;cursor:help}
+  button.risky{border-color:#f3c1bc;color:var(--risk)}
+  button.risky:hover:not(:disabled){background:var(--risk);border-color:var(--risk);color:#fff}
+  dialog.risk{border:none;border-radius:14px;padding:0;max-width:min(470px,92vw);margin:auto;
+    box-shadow:0 30px 60px -20px rgba(0,0,0,.45)}
+  dialog.risk::backdrop{background:rgba(21,24,30,.5)}
+  dialog.risk .hd{background:var(--risk);color:#fff;padding:14px 18px;font-weight:700}
+  dialog.risk .bd{padding:16px 18px 6px}
+  dialog.risk .bd p{margin:0 0 10px}
+  dialog.risk .ft{display:flex;justify-content:flex-end;gap:8px;padding:6px 18px 16px}
+  footer{color:var(--mut);font-size:.85rem;padding:0 20px 36px;text-align:center}
+  @media(max-width:560px){.row{grid-template-columns:22px 1fr auto}.row .size{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <svg viewBox="0 0 180 120" fill="none" aria-hidden="true">
+    <path d="M10 60 L50 108 L90 60 L130 108 L170 60" stroke="#15181E" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M10 60 L50 12 L90 60 L130 12 L170 60" stroke="#15181E" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    <g fill="#19d6c2"><circle cx="10" cy="60" r="9"/><circle cx="50" cy="12" r="9"/><circle cx="50" cy="108" r="9"/>
+      <circle cx="90" cy="60" r="9"/><circle cx="130" cy="12" r="9"/><circle cx="130" cy="108" r="9"/><circle cx="170" cy="60" r="9"/></g>
+  </svg>
+  <h1>WADAMESH <span>FILES</span></h1>
+  <p class="tag">The SD card and internal storage of your device, over a USB cable.</p>
+</header>
+
+<main>
+  <div id="unsupported" class="notice" hidden>
+    This page needs <b>Chrome, Edge or Opera on a computer</b>. Your browser cannot talk to a USB serial device (no Web Serial).
+  </div>
+
+  <section id="start" class="card">
+    <ol class="steps">
+      <li>On the device, open <b>USB Files</b> in the app drawer.</li>
+      <li>Connect it to this computer with a USB cable.</li>
+      <li>Click <b>Connect</b> and choose the device.</li>
+    </ol>
+    <button id="connect" class="primary">Connect</button>
+    <button id="connect-any" class="linkish" style="margin-left:12px">My device is not in the list</button>
+    <p id="start-status" class="status"></p>
+  </section>
+
+  <section id="browser" class="card" hidden>
+    <div class="devbar">
+      <div class="who"><b id="dev-name"></b><span id="dev-meta"></span></div>
+      <button id="disconnect" class="small">Disconnect</button>
+    </div>
+    <div class="roots" id="roots"></div>
+    <div class="toolbar">
+      <div class="crumbs" id="crumbs"></div>
+      <button id="up-files" class="small">Upload files</button>
+      <button id="up-folder" class="small">Upload folder</button>
+      <button id="new-folder" class="small">New folder</button>
+      <button id="refresh" class="small">Refresh</button>
+    </div>
+    <div class="toolbar">
+      <label class="opts"><input type="checkbox" id="replace"> Replace files that already exist</label>
+    </div>
+    <p class="hint" id="hint"></p>
+    <div class="space" id="space" hidden><div class="meter"><i id="space-bar"></i></div><span id="space-text"></span></div>
+    <div class="list" id="list"></div>
+    <div class="xfer" id="xfer" hidden>
+      <div class="line"><span id="xfer-name"></span><span id="xfer-bytes"></span></div>
+      <div class="bar"><i id="xfer-bar"></i></div>
+      <div class="foot"><span id="xfer-count"></span><button id="xfer-cancel" class="small danger">Cancel</button></div>
+    </div>
+  </section>
+</main>
+
+<footer>Open source (GPL-3.0) · <a href="https://github.com/ALLFATHER-BV/wadamesh">github.com/ALLFATHER-BV/wadamesh</a> · <a href="https://wadamesh.com">wadamesh.com</a></footer>
+<input type="file" id="pick-files" multiple hidden>
+<input type="file" id="pick-folder" webkitdirectory multiple hidden>
+<div class="toast" id="toast"></div>
+<dialog class="risk" id="risk">
+  <div class="hd">&#9888; Risky file: likely Windows malware</div>
+  <div class="bd">
+    <p><b id="risk-name"></b> is <b id="risk-kind"></b>, the kind of file SD Scan on the device removes.</p>
+    <p>Files like this are how SD card worms spread: opening one on a Windows PC can infect that PC. A mesh radio never uses them.</p>
+    <p>Safer: delete it here, or scan the card with SD Scan on the device.</p>
+  </div>
+  <div class="ft"><button id="risk-go" class="small risky">Download anyway</button><button id="risk-cancel" class="primary">Don't download</button></div>
+</dialog>
+
+<script>
+'use strict';
+// USB Files protocol (src/helpers/esp32/UsbFilesProtocol.h in the firmware repo).
+// Frame: E7 5A | type | seq u16 | len u16 | payload | crc32 u32, little-endian.
+const T = {HELLO:1, LIST:2, STAT:3, READ:4, WBEGIN:5, WDATA:6, WEND:7, REMOVE:8, MKDIR:9, RENAME:10,
+           SPACE:11, ABORT:12, PING:13, BEACON:0x40, BYE:0x41, REPLY:0x80};
+const S = {OK:0, NOT_FOUND:2, EXISTS:3, PROTECTED:4, NO_SPACE:5, BAD_PATH:7, BAD_OFFSET:11, NO_MEDIA:13, NOT_EMPTY:14};
+const STATUS_TEXT = {1:'bad request', 2:'not found', 3:'already exists', 4:'read-only on the device', 5:'not enough space',
+  6:'storage error', 7:'name not allowed', 8:'busy', 9:'too big', 10:'checksum mismatch', 11:'out of step',
+  12:'not supported', 13:'no SD card', 14:'folder not empty'};
+const MAX_PAYLOAD = 4096 + 256;
+// SD Scan's verdicts (SdThreat::Kind in the firmware), as the device reports them.
+const RISK = {1: 'an autorun file', 2: 'a Windows program', 3: 'a Windows script', 4: 'a Windows shortcut', 5: 'a renamed Windows program'};
+const enc = new TextEncoder(), dec = new TextDecoder();
+const $ = id => document.getElementById(id);
+
+const CRC = new Uint32Array(256);
+for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); CRC[n] = c >>> 0; }
+const crcUpdate = (c, a) => { for (let i = 0; i < a.length; i++) c = CRC[(c ^ a[i]) & 255] ^ (c >>> 8); return c >>> 0; };
+const crc32 = a => (crcUpdate(0xFFFFFFFF, a) ^ 0xFFFFFFFF) >>> 0;
+
+function frame(type, seq, payload) {
+  const out = new Uint8Array(7 + payload.length + 4), dv = new DataView(out.buffer);
+  out[0] = 0xE7; out[1] = 0x5A; out[2] = type; dv.setUint16(3, seq, true); dv.setUint16(5, payload.length, true);
+  out.set(payload, 7);
+  dv.setUint32(7 + payload.length, crc32(out.subarray(2, 7 + payload.length)), true);
+  return out;
+}
+function concat(...parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0; for (const p of parts) { out.set(p, o); o += p.length; } return out;
+}
+const le32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v, true); return b; };
+const le16 = v => { const b = new Uint8Array(2); new DataView(b.buffer).setUint16(0, v, true); return b; };
+
+class DeviceError extends Error {
+  constructor(status, body) {
+    super(status === S.BAD_OFFSET ? STATUS_TEXT[status] : (dec.decode(body) || STATUS_TEXT[status] || 'error ' + status));
+    this.status = status; this.body = body;
+  }
+}
+
+class Link {
+  constructor(port) {
+    this.port = port; this.buf = new Uint8Array(0); this.seq = 1 + Math.floor(Math.random() * 60000);
+    this.pending = null; this.chain = Promise.resolve(); this.closed = false; this.lastIo = 0;
+    this.onBeacon = () => {}; this.onBye = () => {}; this.onClose = () => {};
+  }
+  async open() {
+    await this.port.open({baudRate: 115200, bufferSize: 1 << 16});
+    // DTR and RTS together, in one request: the chip's own USB serial resets the
+    // board on RTS without DTR, and TinyUSB only sends once DTR is up.
+    try { await this.port.setSignals({dataTerminalReady: true, requestToSend: true}); } catch (_) {}
+    this.writer = this.port.writable.getWriter();
+    this.readLoop();
+  }
+  async readLoop() {
+    try {
+      this.reader = this.port.readable.getReader();
+      for (;;) {
+        const {value, done} = await this.reader.read();
+        if (done) break;
+        if (value && value.length) this.feed(value);
+      }
+    } catch (_) { /* cable pulled or port closed */ }
+    this.shutdown();
+  }
+  feed(bytes) {
+    this.buf = this.buf.length ? concat(this.buf, bytes) : bytes;
+    for (;;) {
+      const b = this.buf;
+      let i = 0;
+      while (i + 1 < b.length && !(b[i] === 0xE7 && b[i + 1] === 0x5A)) i++;
+      if (i + 1 >= b.length) { this.buf = b.length && b[b.length - 1] === 0xE7 ? b.slice(-1) : new Uint8Array(0); return; }
+      if (i) { this.buf = b.slice(i); continue; }
+      if (b.length < 7) return;
+      const dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+      const len = dv.getUint16(5, true);
+      if (len > MAX_PAYLOAD) { this.buf = b.slice(1); continue; }
+      if (b.length < 11 + len) return;
+      if (dv.getUint32(7 + len, true) !== crc32(b.subarray(2, 7 + len))) { this.buf = b.slice(1); continue; }
+      const type = b[2], seq = dv.getUint16(3, true), payload = b.slice(7, 7 + len);
+      this.buf = b.slice(11 + len);
+      this.dispatch(type, seq, payload);
+    }
+  }
+  dispatch(type, seq, payload) {
+    this.lastIo = Date.now();
+    if (type === T.BEACON) { this.gone = false; try { this.onBeacon(JSON.parse(dec.decode(payload))); } catch (_) {} return; }
+    if (type === T.BYE) {
+      // From here on the port belongs to the companion link again: send nothing
+      // until the device announces USB Files anew.
+      this.gone = true;
+      if (this.pending) { this.pending.reject(new Error('USB Files was closed on the device')); this.pending = null; }
+      this.onBye(); return;
+    }
+    const p = this.pending;
+    if (p && type === (p.type | T.REPLY) && seq === p.seq) { this.pending = null; p.resolve(payload); }
+  }
+  // One request at a time: the device's USB serial drops bytes it has no room for.
+  request(type, payload = new Uint8Array(0), {timeout = 3000, retries = 3} = {}) {
+    const run = async () => {
+      if (this.closed) throw new Error('Disconnected');
+      if (this.gone) throw new Error('USB Files was closed on the device');
+      this.seq = this.seq % 65535 + 1;
+      const seq = this.seq, bytes = frame(type, seq, payload);
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        const reply = new Promise((resolve, reject) => { this.pending = {type, seq, resolve, reject}; });
+        this.lastIo = Date.now();
+        await this.writer.write(bytes);
+        const timer = new Promise(r => setTimeout(() => r(null), timeout));
+        const got = await Promise.race([reply, timer]);
+        if (got) {
+          if (got[0] !== S.OK) throw new DeviceError(got[0], got.subarray(1));
+          return got.subarray(1);
+        }
+        if (this.closed || this.gone) break;
+      }
+      this.pending = null;
+      throw new Error('The device stopped answering');
+    };
+    const p = this.chain.then(run, run);
+    this.chain = p.catch(() => {});
+    return p;
+  }
+  shutdown() {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.pending) { this.pending.reject(new Error('Disconnected')); this.pending = null; }
+    this.onClose();
+  }
+  async close() {
+    this.closed = true;
+    try { await this.reader?.cancel(); } catch (_) {}
+    try { this.reader?.releaseLock(); } catch (_) {}
+    try { this.writer?.releaseLock(); } catch (_) {}
+    try { await this.port.close(); } catch (_) {}
+  }
+  // ---- operations ----
+  async hello() { return JSON.parse(dec.decode(await this.request(T.HELLO, new Uint8Array([1])))); }
+  async list(path) {
+    const out = [], seen = new Set();
+    for (let start = 0; start >= 0;) {
+      const r = JSON.parse(dec.decode(await this.request(T.LIST, concat(le32(start), le16(64), enc.encode(path)), {timeout: 8000})));
+      for (const [name, dir, size, w, t] of r.e) {
+        const key = name + (dir ? '/' : '');
+        if (!seen.has(key)) { seen.add(key); out.push({name, dir: !!dir, size, w: !!w, t: t | 0}); }
+      }
+      start = r.n;
+    }
+    return out;
+  }
+  async stat(path) { return JSON.parse(dec.decode(await this.request(T.STAT, enc.encode(path)))); }
+  async space(root) { return JSON.parse(dec.decode(await this.request(T.SPACE, enc.encode(root)))); }
+  remove(path) { return this.request(T.REMOVE, enc.encode(path), {timeout: 8000}); }
+  mkdir(path) { return this.request(T.MKDIR, enc.encode(path)); }
+  rename(from, to) { const f = enc.encode(from); return this.request(T.RENAME, concat(le16(f.length), f, enc.encode(to)), {timeout: 8000}); }
+  abort() { return this.gone ? Promise.resolve() : this.request(T.ABORT).catch(() => {}); }
+}
+
+// ---- page state ----
+let link = null, info = null, root = null, cwd = '/', entries = [], busy = false, cancelled = false, pingTimer = 0;
+const rootsById = {};
+const HINTS = {
+  sd: 'The meshcomod folder is the device\'s own data. You can download it, but not change it here.',
+  internal: 'Files the device keeps in use (identity, contacts, settings, chat history) are download-only. Put your own files in the transfer folder; settings backups (meshcore-*.json) go in the top folder.',
+  tiles: 'Offline map tiles, stored as zoom/x/y.png. Upload a tile folder to use it on the map.',
+};
+
+function toast(text, err = false) {
+  const t = $('toast'); t.textContent = text; t.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(t._h); t._h = setTimeout(() => { t.className = 'toast'; }, err ? 5200 : 2800);
+}
+function setStart(text, err = false) { $('start-status').textContent = text; $('start-status').className = 'status' + (err ? ' err' : ''); }
+function human(n) {
+  if (n < 1024) return n + ' B';
+  const u = ['KB', 'MB', 'GB']; let i = -1; do { n /= 1024; i++; } while (n >= 1024 && i < 2);
+  return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
+}
+const join = (dir, name) => (dir === '/' ? '' : dir) + '/' + name;
+const vpath = rel => '/' + root + (rel === '/' ? '' : rel);
+const errText = e => (e && e.message) || String(e);
+
+function showStart() { $('start').hidden = false; $('browser').hidden = true; }
+function showBrowser() { $('start').hidden = true; $('browser').hidden = false; }
+
+if (!('serial' in navigator)) {
+  $('unsupported').hidden = false; $('connect').disabled = true; $('connect-any').hidden = true;
+}
+
+async function connect(filtered) {
+  let port;
+  try {
+    port = await navigator.serial.requestPort(filtered ? {filters: [{usbVendorId: 0x303A}, {usbVendorId: 0x1A86}, {usbVendorId: 0x10C4}]} : {});
+  } catch (_) { return; }   // picker cancelled
+  if (link) await link.close();
+  link = new Link(port);
+  link.onBeacon = beacon => { if (!info && !link.helloing) startSession(beacon); };
+  link.onBye = () => { stopPing(); info = null; showStart(); setStart('USB Files was closed on the device. Open it again to continue.'); };
+  link.onClose = () => { stopPing(); info = null; showStart(); setStart('The device was disconnected.', true); };
+  try { await link.open(); }
+  catch (e) { setStart('Could not open the port: ' + errText(e) + '. Is another program (the flasher, a serial monitor) using it?', true); link = null; return; }
+  $('connect').textContent = 'Reconnect';
+  setStart('Connected to the port. Waiting for USB Files: open it on the device (app drawer).');
+}
+
+async function startSession(beacon) {
+  link.helloing = true;
+  try {
+    info = await link.hello();
+  } catch (e) { setStart('The device did not answer: ' + errText(e), true); link.helloing = false; return; }
+  link.helloing = false;
+  $('dev-name').textContent = info.name || 'wadamesh';
+  $('dev-meta').textContent = [info.board, info.fw].filter(Boolean).join(' · ');
+  const box = $('roots'); box.textContent = '';
+  for (const r of info.roots) {
+    rootsById[r.id] = r;
+    const b = document.createElement('button');
+    b.textContent = r.label + (r.ok ? '' : ' (not available)');
+    b.dataset.id = r.id; b.className = r.ok ? '' : 'off';
+    b.onclick = () => { if (!busy) openRoot(r.id); };
+    box.appendChild(b);
+  }
+  showBrowser();
+  startPing();
+  const first = info.roots.find(r => r.ok);
+  if (first) openRoot(first.id); else { $('list').innerHTML = '<div class="empty">No storage is available on the device right now.</div>'; }
+}
+
+function startPing() {
+  stopPing();
+  pingTimer = setInterval(() => {
+    if (link && !link.closed && !busy && Date.now() - link.lastIo > 2000) link.request(T.PING).catch(() => {});
+  }, 1000);
+}
+function stopPing() { clearInterval(pingTimer); pingTimer = 0; }
+
+async function openRoot(id) {
+  root = id; cwd = '/';
+  for (const b of $('roots').children) b.classList.toggle('on', b.dataset.id === id);
+  $('hint').textContent = HINTS[id] || '';
+  await refresh();
+  updateSpace();
+}
+
+async function updateSpace() {
+  try {
+    const s = await link.space('/' + root);
+    $('space').hidden = false;
+    $('space-bar').style.width = Math.min(100, s.u / s.t * 100).toFixed(1) + '%';
+    $('space-text').textContent = human(s.u) + ' used of ' + human(s.t) + (s.r ? ' (' + human(s.r) + ' kept free for the device)' : '');
+  } catch (_) { $('space').hidden = true; }
+}
+
+function renderCrumbs() {
+  const c = $('crumbs'); c.textContent = '';
+  const parts = cwd === '/' ? [] : cwd.slice(1).split('/');
+  const add = (label, rel) => {
+    const b = document.createElement('button'); b.textContent = label;
+    b.onclick = () => { if (!busy) { cwd = rel; refresh(); } };
+    c.appendChild(b);
+  };
+  add((rootsById[root] || {}).label || root, '/');
+  let acc = '';
+  for (const p of parts) { acc += '/' + p; c.appendChild(document.createTextNode(' / ')); add(p, acc); }
+}
+
+async function refresh() {
+  renderCrumbs();
+  const list = $('list');
+  list.innerHTML = '<div class="empty">Reading…</div>';
+  try {
+    entries = await link.list(vpath(cwd));
+  } catch (e) {
+    list.innerHTML = ''; const d = document.createElement('div'); d.className = 'empty';
+    d.textContent = 'Could not read this folder: ' + errText(e); list.appendChild(d); return;
+  }
+  entries.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}));
+  renderList();
+}
+
+function renderList() {
+  const list = $('list'); list.textContent = '';
+  if (cwd !== '/') {
+    const up = row('↰', '..', '', true);
+    up.querySelector('.name button').onclick = () => { if (!busy) { cwd = cwd.slice(0, cwd.lastIndexOf('/')) || '/'; refresh(); } };
+    list.appendChild(up);
+  }
+  if (!entries.length) {
+    const d = document.createElement('div'); d.className = 'empty';
+    d.textContent = 'This folder is empty. Drop files here, or use Upload.'; list.appendChild(d); return;
+  }
+  for (const e of entries) {
+    const r = row(e.dir ? '📁' : '📄', e.name, e.dir ? '' : human(e.size), e.dir);
+    const rel = join(cwd, e.name);
+    if (e.dir) r.querySelector('.name button').onclick = () => { if (!busy) { cwd = rel; refresh(); } };
+    else r.querySelector('.name button').onclick = () => download(rel, e.name, e.size);
+    const acts = r.querySelector('.acts');
+    if (e.t) {
+      r.classList.add('risk');
+      const tag = document.createElement('span'); tag.className = 'risk-tag'; tag.textContent = '\u26A0 Malware risk';
+      tag.title = 'SD Scan flags this as ' + (RISK[e.t] || 'a Windows file') + '. Risky to download: it can infect a Windows PC.';
+      r.querySelector('.name').appendChild(tag);
+    }
+    if (!e.dir) acts.appendChild(btn('Download', () => download(rel, e.name, e.size), e.t ? 'risky' : ''));
+    if (e.w) {
+      acts.appendChild(btn('Rename', () => renameEntry(e)));
+      acts.appendChild(btn('Delete', () => deleteEntry(e), 'danger'));
+    } else {
+      const l = document.createElement('span'); l.className = 'lock'; l.textContent = '🔒 in use';
+      l.title = 'The device keeps this in use. You can download it, but not change it here.';
+      acts.appendChild(l);
+    }
+    list.appendChild(r);
+  }
+}
+function row(icon, name, size, isDir) {
+  const r = document.createElement('div'); r.className = 'row';
+  r.innerHTML = '<div class="ico"></div><div class="name"><button></button></div><div class="size"></div><div class="acts"></div>';
+  r.querySelector('.ico').textContent = icon;
+  r.querySelector('.name button').textContent = name + (isDir && name !== '..' ? '/' : '');
+  r.querySelector('.size').textContent = size;
+  return r;
+}
+function btn(label, fn, cls = '') {
+  const b = document.createElement('button'); b.className = 'small ' + cls; b.textContent = label;
+  b.onclick = () => { if (!busy) fn(); }; return b;
+}
+
+// ---- transfers ----
+function xferShow(on) { $('xfer').hidden = !on; for (const id of ['up-files', 'up-folder', 'new-folder', 'refresh']) $(id).disabled = on; }
+function xferUpdate(name, done, total, count) {
+  $('xfer-name').textContent = name;
+  $('xfer-bytes').textContent = human(done) + ' / ' + human(total);
+  $('xfer-bar').style.width = (total ? done / total * 100 : 100).toFixed(1) + '%';
+  $('xfer-count').textContent = count || '';
+}
+$('xfer-cancel').onclick = () => { cancelled = true; };
+
+function riskDialog(name, kind) {
+  return new Promise(resolve => {
+    const d = $('risk');
+    $('risk-name').textContent = name;
+    $('risk-kind').textContent = RISK[kind] || 'a Windows file';
+    const done = ok => { d.close(); resolve(ok); };
+    $('risk-cancel').onclick = () => done(false);
+    $('risk-go').onclick = () => done(true);
+    d.oncancel = ev => { ev.preventDefault(); done(false); };
+    d.showModal();
+    $('risk-cancel').focus();
+  });
+}
+
+async function download(rel, name, size) {
+  if (busy) return;
+  // The device checks the name AND the first bytes, so a Windows program under a
+  // harmless name is caught here too, before a single byte reaches this computer.
+  try {
+    const st = await link.stat(vpath(rel));
+    size = st.s;
+    if (st.t && !(await riskDialog(name, st.t))) return;
+  } catch (e) { toast(errText(e), true); return; }
+  if (busy) return;
+  busy = true; cancelled = false; xferShow(true);
+  const chunk = info.chunk || 4096, parts = [];
+  let got = 0;
+  try {
+    while (got < size) {
+      if (cancelled) throw new Error('Download cancelled');
+      const body = await link.request(T.READ, concat(le32(got), le16(chunk), enc.encode(vpath(rel))));
+      const off = new DataView(body.buffer, body.byteOffset).getUint32(0, true);
+      if (off !== got) throw new Error('The device sent the wrong part of the file');
+      const data = body.slice(4);
+      if (!data.length) break;
+      parts.push(data); got += data.length;
+      xferUpdate(name, got, size, 'Downloading');
+    }
+    const url = URL.createObjectURL(new Blob(parts));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    toast('Downloaded ' + name);
+  } catch (e) { toast(errText(e), true); }
+  busy = false; xferShow(false);
+}
+
+// items: [{rel: path under cwd ("a/b.png"), file: File}], dirs: set of relative folder paths
+async function upload(items, dirs) {
+  if (busy || !items.length) return;
+  busy = true; cancelled = false; xferShow(true);
+  const replace = $('replace').checked, chunk = info.chunk || 4096;
+  const total = items.reduce((n, it) => n + it.file.size, 0);
+  let doneBytes = 0, ok = 0, skipped = 0, failed = 0, firstError = '';
+  // Folders first, parents before children. Internal storage has no real
+  // folders; the device answers mkdir there without creating anything.
+  for (const d of [...dirs].sort((a, b) => a.split('/').length - b.split('/').length)) {
+    if (cancelled) break;
+    try { await link.mkdir(vpath(join(cwd, d))); } catch (e) { if (e.status !== S.EXISTS) { failed++; firstError = firstError || d + ': ' + errText(e); } }
+  }
+  for (let i = 0; i < items.length && !cancelled; i++) {
+    const {rel, file} = items[i];
+    const target = vpath(join(cwd, rel));
+    const count = 'File ' + (i + 1) + ' of ' + items.length + (skipped ? ', ' + skipped + ' skipped' : '');
+    try {
+      await link.request(T.WBEGIN, concat(le32(file.size), new Uint8Array([replace ? 1 : 0]), enc.encode(target)));
+    } catch (e) {
+      if (e.status === S.EXISTS && !replace) skipped++;
+      else { failed++; firstError = firstError || rel + ': ' + errText(e); }
+      doneBytes += file.size; continue;
+    }
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      let off = 0, crc = 0xFFFFFFFF;
+      while (off < data.length) {
+        if (cancelled) throw new Error('cancelled');
+        const piece = data.subarray(off, Math.min(off + chunk, data.length));
+        let body;
+        try { body = await link.request(T.WDATA, concat(le32(off), piece)); }
+        catch (e) {
+          if (e.status !== S.BAD_OFFSET || e.body.length < 4) throw e;
+          body = e.body;   // the device says where it wants to continue
+          off = new DataView(body.buffer, body.byteOffset).getUint32(0, true);
+          crc = crcUpdate(0xFFFFFFFF, data.subarray(0, off));
+          continue;
+        }
+        crc = crcUpdate(crc, piece);
+        off = new DataView(body.buffer, body.byteOffset).getUint32(0, true);
+        xferUpdate(rel, doneBytes + off, total, count);
+      }
+      await link.request(T.WEND, le32((crc ^ 0xFFFFFFFF) >>> 0), {timeout: 15000});
+      ok++;
+    } catch (e) {
+      await link.abort();
+      if (!cancelled) { failed++; firstError = firstError || rel + ': ' + errText(e); }
+    }
+    doneBytes += file.size;
+    xferUpdate(rel, doneBytes, total, count);
+  }
+  busy = false; xferShow(false);
+  const summary = [ok + ' uploaded', skipped && skipped + ' already there (tick Replace to overwrite)', failed && failed + ' failed'].filter(Boolean).join(', ');
+  if (cancelled) toast('Upload cancelled. ' + summary, true);
+  else if (failed) toast(summary + '. ' + firstError, true);
+  else toast(summary);
+  await refresh(); updateSpace();
+}
+
+function filesToItems(files) {
+  const items = [], dirs = new Set();
+  for (const f of files) {
+    const rel = f.webkitRelativePath || f.name;
+    items.push({rel, file: f});
+    const parts = rel.split('/'); parts.pop();
+    for (let i = 1; i <= parts.length; i++) dirs.add(parts.slice(0, i).join('/'));
+  }
+  return {items, dirs};
+}
+
+$('up-files').onclick = () => $('pick-files').click();
+$('up-folder').onclick = () => $('pick-folder').click();
+$('pick-files').onchange = e => { const {items, dirs} = filesToItems(e.target.files); e.target.value = ''; upload(items, dirs); };
+$('pick-folder').onchange = e => { const {items, dirs} = filesToItems(e.target.files); e.target.value = ''; upload(items, dirs); };
+$('refresh').onclick = () => { if (!busy) { refresh(); updateSpace(); } };
+$('disconnect').onclick = async () => { stopPing(); info = null; if (link) { await link.close(); link = null; } showStart(); setStart('Disconnected.'); $('connect').textContent = 'Connect'; };
+$('connect').onclick = () => connect(true);
+$('connect-any').onclick = () => connect(false);
+
+$('new-folder').onclick = async () => {
+  const name = prompt('New folder name');
+  if (!name) return;
+  try { await link.mkdir(vpath(join(cwd, name.trim()))); await refresh(); }
+  catch (e) { toast('Could not create the folder: ' + errText(e), true); }
+};
+
+async function renameEntry(e) {
+  const name = prompt('New name for ' + e.name, e.name);
+  if (!name || name === e.name) return;
+  try { await link.rename(vpath(join(cwd, e.name)), vpath(join(cwd, name.trim()))); await refresh(); }
+  catch (err) { toast('Could not rename: ' + errText(err), true); }
+}
+
+async function deleteEntry(e) {
+  const rel = join(cwd, e.name);
+  if (!e.dir) {
+    if (!confirm('Delete ' + e.name + ' from the device?')) return;
+    try { await link.remove(vpath(rel)); } catch (err) { toast('Could not delete: ' + errText(err), true); }
+    await refresh(); updateSpace(); return;
+  }
+  if (!confirm('Delete the folder ' + e.name + ' and everything in it?')) return;
+  busy = true; cancelled = false; xferShow(true);
+  let n = 0;
+  const wipe = async dir => {
+    for (const c of await link.list(vpath(dir))) {
+      if (cancelled) throw new Error('Delete cancelled');
+      const p = join(dir, c.name);
+      if (c.dir) await wipe(p); else { await link.remove(vpath(p)); n++; xferUpdate('Deleting ' + c.name, n, n, n + ' deleted'); }
+    }
+    await link.remove(vpath(dir));
+  };
+  try { await wipe(rel); toast('Deleted ' + e.name); }
+  catch (err) { toast(errText(err), true); }
+  busy = false; xferShow(false);
+  await refresh(); updateSpace();
+}
+
+// Drag and drop, folders included.
+const listEl = $('list');
+listEl.addEventListener('dragover', ev => { ev.preventDefault(); if (!busy) listEl.classList.add('drag'); });
+listEl.addEventListener('dragleave', () => listEl.classList.remove('drag'));
+listEl.addEventListener('drop', async ev => {
+  ev.preventDefault(); listEl.classList.remove('drag');
+  if (busy || !info) return;
+  const items = [], dirs = new Set();
+  const readAll = reader => new Promise(res => { const all = []; const step = () => reader.readEntries(b => { if (!b.length) res(all); else { all.push(...b); step(); } }, () => res(all)); step(); });
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      items.push({rel: prefix + entry.name, file});
+    } else if (entry.isDirectory) {
+      dirs.add(prefix + entry.name);
+      for (const child of await readAll(entry.createReader())) await walk(child, prefix + entry.name + '/');
+    }
+  };
+  const roots = [...ev.dataTransfer.items].map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (roots.length) { for (const r of roots) await walk(r, ''); }
+  else for (const f of ev.dataTransfer.files) items.push({rel: f.name, file: f});
+  upload(items, dirs);
+});
+
+if ('serial' in navigator) navigator.serial.addEventListener('disconnect', ev => { if (link && ev.target === link.port) link.shutdown(); });
+</script>
+</body>
+</html>

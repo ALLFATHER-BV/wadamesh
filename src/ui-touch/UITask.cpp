@@ -130,6 +130,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
+#include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 // The split refuses a "SenderName: " prefix wider than the wire can carry, so that cap
 // must never sit BELOW what UIMessage::sender can hold — otherwise a name the field
@@ -1782,6 +1783,10 @@ static void batteryTapCb(lv_event_t* e);   // fwd decl (defined near the battery
 // only touches LVGL when the lit/dark state actually flips. Written from both
 // cores (core-0 fetch task + core-1 UI) — an aligned word store is atomic on the
 // S3, and a stale read only ever mistimes the LED by a frame, which is harmless.
+// True while the USB Files app owns the USB serial port: the companion link skips
+// its USB leg and MyMesh's plain-text console stays off it (UsbFilesSession.h).
+// Defined here, not in main.cpp: the P4 targets build this file but not that one.
+volatile bool g_usb_files_owns_serial = false;
 static volatile uint32_t g_sd_io_ms = 0;
 static inline void markSdIo() { const uint32_t t = millis(); g_sd_io_ms = t ? t : 1; }
 
@@ -6008,6 +6013,7 @@ enum {
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
   APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
   APPHIDE_FILE_TRANSFER = 1u << 13,
+  APPHIDE_USB_FILES = 1u << 14,
 };
 #endif
 
@@ -46848,6 +46854,9 @@ static void luaStoreRebuildList() {
 #if WADA_WEB_FILE_TRANSFER
   { "Transfer", APPHIDE_FILE_TRANSFER },
 #endif
+#if CAP_USB_FILES
+  { "USB Files", APPHIDE_USB_FILES },
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       { "MQTT bridge", APPHIDE_MQTT },   // a Settings section, not a drawer tile
 #endif
@@ -47427,6 +47436,268 @@ static void sdMalwareTick(uint32_t now) {
 }
 #endif
 
+#if CAP_USB_FILES
+// ============================================================================
+// USB Files app (app drawer -> APPACT_USB_FILES): files.wadamesh.com browses,
+// uploads, downloads and deletes this device's files over the USB cable (Web
+// Serial). UsbFilesSession does the protocol and every file operation, and holds
+// the access rules; this is the board glue (which storages exist, mounting the
+// card, free space, the SD LED) and the screen: what to do on the computer, and
+// what is happening now.
+// ============================================================================
+static lv_obj_t*   s_usbfiles_root   = nullptr;
+static lv_obj_t*   s_usbfiles_status = nullptr;
+static lv_obj_t*   s_usbfiles_bar    = nullptr;
+static lv_timer_t* s_usbfiles_timer  = nullptr;
+static bool        s_usbfiles_map_dirty = false;   // tiles or the card changed: re-check the map
+static void closeUsbFilesPage();
+
+#if CAP_SD
+// FatFs drive of the Arduino SD mount, for the session's fast folder listings.
+// Same pointer-to-member route as luaHostSdClearAttributes (further down).
+struct UsbFilesSdDrive : fs::SDFS {
+  static uint8_t of(const fs::SDFS& sd) { return sd.*(&UsbFilesSdDrive::_pdrv); }
+};
+#endif
+
+class UiUsbFilesHost : public UsbFilesHost {
+ public:
+  bool root(UsbFiles::Root r, UsbFilesRootInfo* out, bool mount) override {
+    switch (r) {
+#if CAP_SD
+      case UsbFiles::ROOT_SD: {
+        out->id = r;
+        out->label = TR("SD card");
+        out->vfs = "/sd";
+        out->fat = true;
+        const bool up = mount ? fmSdTryMount() : s_sd_mounted;
+        if (up && SD.cardType() != CARD_NONE) {
+          out->fs = &SD;
+          snprintf(out->drive, sizeof out->drive, "%u:", (unsigned)UsbFilesSdDrive::of(SD));
+        }
+        return true;
+      }
+#endif
+      case UsbFiles::ROOT_INTERNAL: {
+        // A device that keeps its data on the SD card may never have formatted
+        // this partition (the known boot bug in main.cpp: an SD-native store skips
+        // the SPIFFS repair). Then there is nothing to show: leave the storage out
+        // rather than list it as "not available". Everything the device keeps is
+        // on the card, which USB Files shows in full.
+        const size_t total = SPIFFS.totalBytes();
+        if (!total) return false;
+        out->id = r;
+        out->label = TR("Internal");
+        out->vfs = "/spiffs";
+        out->flat = true;
+        out->max_rel = 31;   // SPIFFS keeps the whole path in a 32-byte name
+        out->fs = &SPIFFS;
+        // Uploads leave 15% (at least 512 KB) free: history, contacts and settings
+        // live here too, and a nearly full SPIFFS stalls on garbage collection.
+        const uint32_t pct = (uint32_t)(total * 15 / 100);
+        out->reserve = pct > 512u * 1024u ? pct : 512u * 1024u;
+        return true;
+      }
+      case UsbFiles::ROOT_TILES:
+        if (!s_tiles_fs_ready) return false;
+        out->id = r;
+        out->label = TR("Map tiles");
+        out->vfs = "/tiles_lfs";
+        out->fs = &s_tiles_fs;
+        out->reserve = 64u * 1024u;
+        return true;
+      default:
+        return false;
+    }
+  }
+  bool space(UsbFiles::Root r, uint64_t* total, uint64_t* used) override {
+    switch (r) {
+      case UsbFiles::ROOT_INTERNAL:
+        *total = SPIFFS.totalBytes();
+        *used = SPIFFS.usedBytes();
+        return *total != 0;
+      case UsbFiles::ROOT_TILES:
+        if (!s_tiles_fs_ready) return false;
+        *total = s_tiles_fs.totalBytes();
+        *used = s_tiles_fs.usedBytes();
+        return *total != 0;
+      default:
+        return false;   // the card: counting free FAT clusters can read the whole FAT
+    }
+  }
+  void noteIo(UsbFiles::Root r) override {
+    if (r == UsbFiles::ROOT_SD) markSdIo();
+  }
+  void noteIoFailure(UsbFiles::Root r) override {
+#if CAP_SD
+    if (r == UsbFiles::ROOT_SD) sdNoteIoFailure();
+#else
+    (void)r;
+#endif
+  }
+  void noteChanged(UsbFiles::Root r) override {
+    if (r == UsbFiles::ROOT_TILES || r == UsbFiles::ROOT_SD) s_usbfiles_map_dirty = true;
+  }
+  void describe(char* out, size_t cap) override {
+#if defined(HAS_TDECK_GT911)
+    static const char* kBoard = "LilyGo T-Deck";
+#elif defined(HELTEC_LORA_V4_TFT)
+    static const char* kBoard = "Heltec V4 TFT";
+#else
+    static const char* kBoard = "wadamesh";
+#endif
+    const char* fw = FIRMWARE_RELEASE_TAG[0] ? FIRMWARE_RELEASE_TAG : "dev";
+    size_t pos = 0;
+    auto put = [&](const char* key, const char* val) {
+      const int n = snprintf(out + pos, cap - pos, "%s\"%s\":\"", pos ? "," : "", key);
+      if (n <= 0 || pos + (size_t)n >= cap) return;
+      pos += (size_t)n;
+      const size_t np = UsbFiles::jsonAppendEscaped(out, pos, cap, val);
+      if (np + 1 >= cap) { out[pos] = '\0'; return; }
+      pos = np;
+      out[pos++] = '"';
+      out[pos] = '\0';
+    };
+    out[0] = '\0';
+    put("name", the_mesh.getNodePrefs()->node_name);
+    put("board", kBoard);
+    put("fw", fw);
+  }
+};
+static UiUsbFilesHost  s_usbfiles_host;
+// Allocated while the screen is open, in PSRAM: ~0.9 KB the V4's internal RAM
+// should not carry for an app that is closed nearly all the time.
+static UsbFilesSession* s_usbfiles = nullptr;
+
+static void usbFilesRefresh() {
+  if (!s_usbfiles_status || !s_usbfiles) return;
+  UsbFilesSession& ses = *s_usbfiles;
+  char buf[128];
+  const uint32_t done = ses.progressDone();
+  const uint32_t total = ses.progressTotal();
+  const UsbFilesSession::Activity act = ses.activity();
+  const bool moving = act == UsbFilesSession::RECEIVING || act == UsbFilesSession::SENDING;
+  if (act == UsbFilesSession::RECEIVING) {
+    snprintf(buf, sizeof buf, TR("Receiving %s"), ses.fileName());
+  } else if (act == UsbFilesSession::SENDING) {
+    snprintf(buf, sizeof buf, TR("Sending %s"), ses.fileName());
+  } else if (act == UsbFilesSession::CONNECTED) {
+    if (ses.lastResult() == UsbFilesSession::RESULT_RECEIVED)
+      snprintf(buf, sizeof buf, TR("Received %s"), ses.fileName());
+    else if (ses.lastResult() == UsbFilesSession::RESULT_STOPPED)
+      snprintf(buf, sizeof buf, TR("Upload of %s stopped"), ses.fileName());
+    else
+      snprintf(buf, sizeof buf, "%s", TR("Connected to the computer"));
+  } else {
+    snprintf(buf, sizeof buf, "%s", TR("Waiting for the computer"));
+  }
+  lv_label_set_text(s_usbfiles_status, buf);
+  if (s_usbfiles_bar) {
+    if (moving && total > 0) {
+      lv_bar_set_value(s_usbfiles_bar, (int32_t)((uint64_t)done * 100 / total), LV_ANIM_OFF);
+      lv_obj_clear_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+
+static void usbFilesTimerCb(lv_timer_t*) { usbFilesRefresh(); }
+
+static void usbFilesStopCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeUsbFilesPage();
+}
+
+static void closeUsbFilesPage() {
+  if (s_usbfiles_timer) { lv_timer_del(s_usbfiles_timer); s_usbfiles_timer = nullptr; }
+  if (s_usbfiles) {
+    s_usbfiles->end();
+    s_usbfiles->~UsbFilesSession();
+    heap_caps_free(s_usbfiles);
+    s_usbfiles = nullptr;
+  }
+  if (s_usbfiles_root) { popupClose(&s_usbfiles_root); }
+  s_usbfiles_status = nullptr;
+  s_usbfiles_bar = nullptr;
+  appPageEnd(&closeUsbFilesPage);
+  if (s_usbfiles_map_dirty) {
+    s_usbfiles_map_dirty = false;
+    mapNoteStorageChanged();
+  }
+}
+
+static void openUsbFilesPage() {
+  closeUsbFilesPage();
+  void* mem = heap_caps_malloc(sizeof(UsbFilesSession), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!mem) mem = heap_caps_malloc(sizeof(UsbFilesSession), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (mem) s_usbfiles = new (mem) UsbFilesSession();
+  if (!s_usbfiles || !s_usbfiles->begin(&s_usbfiles_host)) {
+    if (s_usbfiles) { s_usbfiles->~UsbFilesSession(); s_usbfiles = nullptr; }
+    heap_caps_free(mem);
+    if (g_lv.task) g_lv.task->showAlert(TR("USB Files: low memory"), 1800);
+    return;
+  }
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  s_usbfiles_root = appPageCreateRoot(COLOR_BG);
+  lv_obj_set_style_pad_top(s_usbfiles_root, STATUSBAR_H + 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(s_usbfiles_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(s_usbfiles_root, 14, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(s_usbfiles_root, 14, LV_PART_MAIN);
+  lv_obj_add_flag(s_usbfiles_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(s_usbfiles_root, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(s_usbfiles_root, LV_SCROLLBAR_MODE_ON);
+  lv_obj_set_style_bg_color(s_usbfiles_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(s_usbfiles_root, LV_OPA_80, LV_PART_SCROLLBAR);
+  lv_obj_set_style_width(s_usbfiles_root, 5, LV_PART_SCROLLBAR);
+  lv_obj_set_flex_flow(s_usbfiles_root, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(s_usbfiles_root, LV_FLEX_ALIGN_START,
+                        LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  lv_obj_set_style_pad_row(s_usbfiles_root, 10, LV_PART_MAIN);
+  appPageBegin("USB Files", &closeUsbFilesPage);
+
+  const lv_coord_t width = sw - 28;
+  auto text = [&](const char* t, const lv_font_t* font, uint32_t color) {
+    lv_obj_t* l = lv_label_create(s_usbfiles_root);
+    lv_label_set_text(l, t);
+    lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, width);
+    return l;
+  };
+  text(TR("Add, download or delete files on this device from a computer."),
+       &g_font_14, COLOR_TEXT);
+  text(TR("1. Connect this device to the computer with a USB cable.\n"
+          "2. Open this address in Chrome or Edge:"),
+       &g_font_12, COLOR_SUB);
+  text("files.wadamesh.com", &g_font_16, COLOR_ACCENT);
+  text(TR("3. Click Connect and choose this device."), &g_font_12, COLOR_SUB);
+
+  s_usbfiles_status = text("", &g_font_14, COLOR_TEXT);
+  s_usbfiles_bar = lv_bar_create(s_usbfiles_root);
+  lv_obj_set_size(s_usbfiles_bar, width, 8);
+  lv_bar_set_range(s_usbfiles_bar, 0, 100);
+  lv_obj_set_style_bg_color(s_usbfiles_bar, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_add_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
+
+  text(TR("While this screen is open, the companion app cannot use USB."),
+       &g_font_12, COLOR_SUB);
+
+  lv_obj_t* stop = lv_btn_create(s_usbfiles_root);
+  lv_obj_set_size(stop, width, SC(40));
+  styleButton(stop);
+  lv_obj_add_event_cb(stop, usbFilesStopCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* stop_label = lv_label_create(stop);
+  lv_label_set_text(stop_label, TR("Stop USB Files"));
+  lv_obj_set_style_text_font(stop_label, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(stop_label);
+
+  usbFilesRefresh();
+  s_usbfiles_timer = lv_timer_create(usbFilesTimerCb, 300, nullptr);
+}
+#endif  // CAP_USB_FILES
+
 // ===== App drawer (full-screen grid launcher) =============================
 // Toggle-in alternative to the command-centre home: a grid of every tool. The
 // home's "Apps" button opens it; its own "Home" button (and the back key) close
@@ -47437,6 +47708,7 @@ enum AppDrawerAction {
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
   APPACT_TERMINAL, APPACT_FILES, APPACT_FILE_TRANSFER, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER, APPACT_STORE,
+  APPACT_USB_FILES,
   APPACT_LUA_BASE = 100,   // APPACT_LUA_BASE + i = installed Lua app s_lua_inst[i]
 };
 
@@ -47736,6 +48008,9 @@ static void appTileCb(lv_event_t* e) {
 #if WADA_WEB_FILE_TRANSFER
     case APPACT_FILE_TRANSFER: openFileTransferPage(); return;
 #endif
+#if CAP_USB_FILES
+    case APPACT_USB_FILES: openUsbFilesPage(); return;
+#endif
     default: break;
   }
   // Navigation tiles: leave the drawer for the chosen tab.
@@ -47781,6 +48056,7 @@ static uint32_t appHideBitFor(int act) {
     case APPACT_TERMINAL: return APPHIDE_TERMINAL;
     case APPACT_FILES:    return APPHIDE_FILES;
     case APPACT_FILE_TRANSFER: return APPHIDE_FILE_TRANSFER;
+    case APPACT_USB_FILES: return APPHIDE_USB_FILES;
     case APPACT_SIGNAL:   return APPHIDE_SIGNAL;
     case APPACT_MENTIONS: return APPHIDE_MENTIONS;
     default:              return 0;   // core tiles (Chats/Map/Settings/...) stay put
@@ -48243,6 +48519,9 @@ static void openAppDrawer() {
 #if WADA_WEB_FILE_TRANSFER
     { LV_SYMBOL_UPLOAD,    "Transfer",  APPACT_FILE_TRANSFER, 0,    0x2FB8A6 },      // authenticated browser upload
 #endif
+#if CAP_USB_FILES
+    { LV_SYMBOL_USB,       "USB Files", APPACT_USB_FILES, 0,        0x5B8DEF },      // files.wadamesh.com over the cable
+#endif
 #if !CAP_LUA_APPS
     { nullptr,             "Snake",     APPACT_SNAKE,    0,         0x53C06B },      // native snake (Lua boards install it from the Store)
 #else
@@ -48265,6 +48544,7 @@ static void openAppDrawer() {
       case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
       case APPACT_FILES:    return hide_mask & APPHIDE_FILES;
       case APPACT_FILE_TRANSFER: return hide_mask & APPHIDE_FILE_TRANSFER;
+      case APPACT_USB_FILES: return hide_mask & APPHIDE_USB_FILES;
       case APPACT_SIGNAL:   return hide_mask & APPHIDE_SIGNAL;
       case APPACT_MENTIONS: return hide_mask & APPHIDE_MENTIONS;
       default:              return false;
@@ -48608,7 +48888,7 @@ static void docCaptureTour() {
 // ---- Idle power-save hooks (see TouchSleep.h) ----
 // Called by touchSleep::gatePasses(); each hook probes the relevant subsystem.
 static bool tsScreenOff()  { return g_lv.task && g_lv.task->isScreenOff(); }
-static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0; }   // public accessor (proto_num_clients is private)
+static bool tsNoClient()   { return the_mesh.getProtoNumClients() == 0 && !g_usb_files_owns_serial; }   // public accessor (proto_num_clients is private)
 // tsWifiOff: true only when the WiFi radio is actually powered off. The question
 // the gate is asking is "is the modem drawing power", and WiFi.getMode() answers
 // exactly that — WIFI_OFF means esp_wifi is stopped. (WiFi.status() != WL_CONNECTED,
@@ -60911,6 +61191,9 @@ void UITask::loop() {
 #if WADA_WEB_FILE_TRANSFER
   webFileTransferTick();
 #endif
+#if CAP_USB_FILES
+  if (s_usbfiles) s_usbfiles->tick();
+#endif
 #if !defined(HAS_TANMATSU)
   // REMOTE mode: draw/refresh the physical-panel placeholder (first pass via the IP
   // sentinel, then whenever the IP changes), and clear the bootloop guard once this
@@ -62447,6 +62730,9 @@ static const PopupEnt k_popup_registry[] = {
 #endif
 #if WADA_WEB_FILE_TRANSFER
   { P_OPEN(s_file_transfer_root),     []{ closeFileTransferPage(); },       PF_COUNT },
+#endif
+#if CAP_USB_FILES
+  { P_OPEN(s_usbfiles_root),          []{ closeUsbFilesPage(); },           PF_COUNT },
 #endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   { P_OPEN(s_wifi_sheet),            []{ wifiSheetClose(); },             PF_COUNT },   // was in no registry at all

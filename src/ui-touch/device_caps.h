@@ -452,6 +452,20 @@
   #endif
 #endif
 
+// ---- USB Files ---------------------------------------------------------------
+// files.wadamesh.com browses and edits the SD card and internal storage over the
+// USB cable (Web Serial) while the USB Files app is open (UsbFilesSession.h).
+// Prototype boards first: the T-Deck (HW-CDC) and the Heltec V4 TFT (TinyUSB
+// CDC), one of each USB serial driver. Others follow once tested on hardware.
+#ifndef CAP_USB_FILES
+  #if (defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)) || \
+      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+    #define CAP_USB_FILES 1
+  #else
+    #define CAP_USB_FILES 0
+  #endif
+#endif
+
 // Read-only access to a physical SD card's directory tree from Lua. This first
 // pass follows the existing shared-SPI Arduino SD lifecycle; P4 SD_MMC needs its
 // own removal/recovery contract before it can safely expose the same API.

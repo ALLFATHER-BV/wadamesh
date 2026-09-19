@@ -1,0 +1,15 @@
+# beta_83 - test build. Stable stays beta_65.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- USB Files -------------------------------------------------------------------------------------
+New on the T-Deck and the Heltec V4: USB Files. Open it from the app drawer, connect the device to a computer with a USB cable and go to files.wadamesh.com in Chrome or Edge. You can browse the SD card, internal storage and the map tiles, upload files and whole folders, and download, rename or delete them.
+The device carries out every file operation itself, so what it relies on stays safe: identity, contacts, settings and chat history can be downloaded but not changed or deleted. On the SD card that is the meshcomod folder.
+Files that SD Scan would flag, like Windows programs, scripts, shortcuts and autorun.inf, show in red on the page, and downloading one asks you first. The device also checks a file's first bytes, so a Windows program under a harmless name is caught too.
+Your files go straight from the device to your computer over the cable. Nothing passes through our server.
+While USB Files is open, the companion app cannot use USB. Bluetooth, Wi-Fi and the radio keep working.
+
+# --- Website ---------------------------------------------------------------------------------------
+The buttons on the sides of wadamesh.com now have labels, and a new folder button opens USB Files.
+
+# --- For testers -----------------------------------------------------------------------------------
+USB Files is tested on a T-Deck. Heltec V4 owners: worth reporting whether connecting, uploading and downloading work. Other boards follow once tested.
