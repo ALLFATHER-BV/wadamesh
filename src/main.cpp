@@ -1412,9 +1412,11 @@ void setup() {
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
-    char nodeHex[13] = {};
-    for (int i = 0; i < 6; ++i) snprintf(nodeHex + i * 2, 3, "%02x", the_mesh.self_id.pub_key[i]);
-    mqtt_bridge.begin(nodeHex);
+    NodePrefs* prefs = the_mesh.getNodePrefs();
+    mqtt_bridge.begin(&the_mesh.self_id, prefs ? prefs->node_name : "WADAMESH",
+                      prefs ? prefs->freq : 0.0f, prefs ? prefs->bw : 0.0f,
+                      prefs ? prefs->sf : 0, prefs ? prefs->cr : 0,
+                      FIRMWARE_VERSION);
   }
 #endif
 
