@@ -2,6 +2,7 @@
 #include "TouchSleep.h"
 
 #include "../MyMesh.h"
+#include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
 
@@ -10855,6 +10856,10 @@ static void saveRadioParamsCb(lv_event_t* e) {
     size_t rl = strlen(r);
     while (rl && (r[rl-1]==' '||r[rl-1]=='\t'||r[rl-1]=='\n'||r[rl-1]=='\r')) r[--rl] = '\0';
     memmove(region, r, strlen(r) + 1);
+    if (!RegionDiscoveryResults::validPublicScope(region)) {
+      if (!silent) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+      return;
+    }
   }
 #if defined(TLORA_PAGER)
   // Blur auto-save fires on EVERY field defocus, including pure keyboard/encoder nav that
@@ -51365,6 +51370,10 @@ static void chanScopeSaveCb(lv_event_t* e) {
   if (s_chanscope_slot >= 0 && s_chanscope_ta) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
+    if (!RegionDiscoveryResults::validPublicScope(t ? t : "")) {
+      if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+      return;
+    }
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
     // #271: register it now rather than at next boot, so messages arriving in
     // this region are named from the next packet on. Idempotent; the old region
@@ -51375,6 +51384,15 @@ static void chanScopeSaveCb(lv_event_t* e) {
   }
   chanScopeClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Channel scope saved"), 1200);
+}
+static void chanScopeRegionPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !s_chanscope_ta) return;
+  lv_obj_t* dropdown = lv_event_get_target(e);
+  if (lv_dropdown_get_selected(dropdown) == 0) return;
+  char selected[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+  lv_dropdown_get_selected_str(dropdown, selected, sizeof selected);
+  lv_textarea_set_text(s_chanscope_ta, selected);
+  lv_dropdown_set_selected(dropdown, 0);
 }
 // ---- Blocked-users (ignore-list) manager ----------------------------------
 static lv_obj_t* s_blocked_modal = nullptr;
@@ -51442,11 +51460,152 @@ static void blockedUnblockNameCb(lv_event_t* e) {
 // resolving, it just stops being matched from now on. See RegionRegistry.
 static lv_obj_t* s_regions_modal = nullptr;
 static lv_obj_t* s_regions_ta    = nullptr;
+static lv_obj_t* s_regions_list  = nullptr;
+static lv_obj_t* s_regions_scan_btn = nullptr;
+static lv_obj_t* s_regions_scan_status = nullptr;
+static lv_timer_t* s_regions_scan_timer = nullptr;
+static RegionDiscoveryResults s_region_candidates;
+static constexpr uint8_t REGION_SCAN_MAX_REPEATERS = 16;
+static uint8_t s_region_scan_keys[REGION_SCAN_MAX_REPEATERS][PUB_KEY_SIZE] = {};
+static uint8_t s_region_scan_count = 0;
+static uint8_t s_region_scan_next = 0;
+static bool s_region_scan_waiting = false;
+static uint32_t s_region_scan_deadline_ms = 0;
+static uint32_t s_region_scan_stop_ms = 0;
+enum class RegionScanPhase : uint8_t { Idle, Discovering, Querying };
+static RegionScanPhase s_region_scan_phase = RegionScanPhase::Idle;
 static void openRegionsModal();   // fwd: the add/remove callbacks rebuild the page
+static void regionsRenderList();
+static void regionsRenderListAsync(void*) { regionsRenderList(); }
+
+static bool regionsNameIsActive(const char* name) {
+  if (!name) return false;
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* known = reg.nameForSlot(slot);
+    if (known && strcmp(known, name) == 0) return true;
+  }
+  return false;
+}
+
+static uint8_t regionsCandidateCount() {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < s_region_candidates.count(); ++i)
+    if (!regionsNameIsActive(s_region_candidates.name(i))) ++count;
+  return count;
+}
+
+static void regionsScanFinish() {
+  if (s_regions_scan_timer) {
+    lv_timer_del(s_regions_scan_timer);
+    s_regions_scan_timer = nullptr;
+  }
+  if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
+  s_region_scan_waiting = false;
+  s_region_scan_phase = RegionScanPhase::Idle;
+  if (s_regions_scan_btn && lv_obj_is_valid(s_regions_scan_btn))
+    lv_obj_clear_state(s_regions_scan_btn, LV_STATE_DISABLED);
+  if (s_regions_scan_status && lv_obj_is_valid(s_regions_scan_status))
+    lv_label_set_text_fmt(s_regions_scan_status, "%s: %u", TR("Discovered"),
+                          (unsigned)s_region_candidates.count());
+  regionsRenderList();
+}
+
+static void regionsScanTimerCb(lv_timer_t*) {
+  const uint32_t now = millis();
+  if ((int32_t)(now - s_region_scan_stop_ms) >= 0) { regionsScanFinish(); return; }
+  if (s_region_scan_phase == RegionScanPhase::Discovering) {
+    if ((int32_t)(now - s_region_scan_deadline_ms) < 0) return;
+    s_region_scan_count = 0;
+    auto add_repeater = [&](const uint8_t pub_key[PUB_KEY_SIZE]) {
+      if (s_region_scan_count >= REGION_SCAN_MAX_REPEATERS) return;
+      for (uint8_t j = 0; j < s_region_scan_count; ++j)
+        if (memcmp(s_region_scan_keys[j], pub_key, PUB_KEY_SIZE) == 0) return;
+      memcpy(s_region_scan_keys[s_region_scan_count++], pub_key, PUB_KEY_SIZE);
+    };
+    const int contact_count = the_mesh.getNumContacts();
+    for (int i = 0; i < contact_count; ++i) {
+      ContactInfo contact;
+      if (the_mesh.getContactByIdx((uint32_t)i, contact) &&
+          contact.type == ADV_TYPE_REPEATER && contact.out_path_len == 0)
+        add_repeater(contact.id.pub_key);
+    }
+    const uint8_t count = the_mesh.discoverCount();
+    for (uint8_t i = 0; i < count && s_region_scan_count < REGION_SCAN_MAX_REPEATERS; ++i) {
+      MyMesh::DiscoverHit hit;
+      if (!the_mesh.discoverGet(i, hit) || hit.node_type != ADV_TYPE_REPEATER || hit.path_len != 0)
+        continue;
+      add_repeater(hit.pubkey);
+    }
+    s_region_scan_next = 0;
+    s_region_scan_phase = RegionScanPhase::Querying;
+    if (s_region_scan_count == 0) { regionsScanFinish(); return; }
+  }
+
+  if (s_region_scan_phase != RegionScanPhase::Querying) return;
+  if (s_region_scan_waiting) {
+    if ((int32_t)(now - s_region_scan_deadline_ms) < 0) return;
+    the_mesh.cancelUIPingPending();
+    s_region_scan_waiting = false;
+    ++s_region_scan_next;
+  }
+  while (s_region_scan_next < s_region_scan_count) {
+    if (the_mesh.hasUIRequestPending() || the_mesh.getRemainingTxBudget() < 300) return;
+    uint32_t timeout_ms = 0;
+    const int result = the_mesh.sendRegionsRequestForUI(
+        s_region_scan_keys[s_region_scan_next], timeout_ms);
+    if (result == MSG_SEND_SENT_DIRECT) {
+      s_region_scan_waiting = true;
+      if (timeout_ms < 2500) timeout_ms = 2500;
+      if (timeout_ms > 10000) timeout_ms = 10000;
+      s_region_scan_deadline_ms = now + timeout_ms + 1000;
+      markMeshRequest();
+      if (s_regions_scan_status && lv_obj_is_valid(s_regions_scan_status))
+        lv_label_set_text_fmt(s_regions_scan_status, "%s %u/%u", TR("Scanning\xE2\x80\xA6"),
+                              (unsigned)(s_region_scan_next + 1),
+                              (unsigned)s_region_scan_count);
+      return;
+    }
+    ++s_region_scan_next;
+  }
+  regionsScanFinish();
+}
+
+static void regionsScanCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      s_region_scan_phase != RegionScanPhase::Idle) return;
+  if (the_mesh.getRemainingTxBudget() < 300) {
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+    return;
+  }
+  s_region_candidates.clear();
+  regionsRenderList();
+  the_mesh.discoverClear();
+  if (the_mesh.uiStartDiscoverScan((uint8_t)(1u << ADV_TYPE_REPEATER)) == 0) {
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+    return;
+  }
+  s_region_scan_phase = RegionScanPhase::Discovering;
+  s_region_scan_deadline_ms = millis() + 4000;
+  s_region_scan_stop_ms = millis() + 120000;
+  if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Scanning\xE2\x80\xA6"));
+  if (s_regions_scan_btn) lv_obj_add_state(s_regions_scan_btn, LV_STATE_DISABLED);
+  s_regions_scan_timer = lv_timer_create(regionsScanTimerCb, 200, nullptr);
+  if (!s_regions_scan_timer) {
+    s_region_scan_phase = RegionScanPhase::Idle;
+    if (s_regions_scan_btn) lv_obj_clear_state(s_regions_scan_btn, LV_STATE_DISABLED);
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+  }
+}
 
 static void regionsModalClose() {
+  if (s_regions_scan_timer) { lv_timer_del(s_regions_scan_timer); s_regions_scan_timer = nullptr; }
+  if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
+  s_region_scan_phase = RegionScanPhase::Idle;
+  s_region_scan_waiting = false;
   if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
-  s_regions_ta = nullptr;
+  s_regions_ta = s_regions_list = s_regions_scan_btn = s_regions_scan_status = nullptr;
   if (s_apppage_close == regionsModalClose) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -51456,7 +51615,10 @@ static void regionsAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!s_regions_ta) return;
   const char* t = lv_textarea_get_text(s_regions_ta);
-  if (!t || !t[0]) { if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400); return; }
+  if (!RegionDiscoveryResults::validPublicScope(t ? t : "", false)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+    return;
+  }
   RegionRegistry& reg = the_mesh.regionRegistry();
   if (reg.ensureRegion(t) == REGION_SLOT_NONE) {
     // Two different failures, and the user can only act on one of them: the list
@@ -51466,13 +51628,90 @@ static void regionsAddCb(lv_event_t* e) {
                                                      : TR("Enter a region name"), 2000);
     return;
   }
-  openRegionsModal();   // rebuild (closes first)
+  lv_textarea_set_text(s_regions_ta, "");
+  regionsRenderList();
 }
 static void regionsRemoveCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const uint8_t slot = (uint8_t)(intptr_t)lv_event_get_user_data(e);
   the_mesh.regionRegistry().retire(slot);
-  openRegionsModal();   // rebuild
+  lv_async_call(regionsRenderListAsync, nullptr);
+}
+
+static void regionsCandidateAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t index = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  const char* name = s_region_candidates.name(index);
+  if (!name) return;
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.ensureRegion(name) == REGION_SLOT_NONE) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Region list is full"), 1800);
+    return;
+  }
+  lv_async_call(regionsRenderListAsync, nullptr);
+}
+
+static void regionsRenderList() {
+  if (!s_regions_list || !lv_obj_is_valid(s_regions_list)) return;
+  lv_obj_clean(s_regions_list);
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  bool any = false;
+  auto section = [&](const char* text) {
+    lv_obj_t* label = lv_label_create(s_regions_list);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
+  };
+  auto row = [&](const char* name, const char* action, lv_event_cb_t callback, uintptr_t value) {
+    lv_obj_t* item = lv_obj_create(s_regions_list);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, lv_pct(100), SC(36));
+    lv_obj_set_style_bg_color(item, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(item, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(item, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* label = lv_label_create(item);
+    lv_label_set_text(label, name);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(65));
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, SC(6), 0);
+    lv_obj_t* button = lv_btn_create(item);
+    lv_obj_set_size(button, SC(72), SC(28));
+    lv_obj_align(button, LV_ALIGN_RIGHT_MID, -SC(5), 0);
+    styleButton(button);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, (void*)value);
+    lv_obj_t* button_label = lv_label_create(button);
+    lv_label_set_text(button_label, action);
+    lv_obj_set_style_text_font(button_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(button_label);
+  };
+
+  if (reg.count() > 0) section(TR("Known regions"));
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* name = reg.nameForSlot(slot);
+    if (!name || !name[0]) continue;
+    row(name, TR("Remove"), regionsRemoveCb, slot);
+    any = true;
+  }
+  if (regionsCandidateCount() > 0) section(TR("Discovered"));
+  for (uint8_t i = 0; i < s_region_candidates.count(); ++i) {
+    const char* name = s_region_candidates.name(i);
+    if (!name || regionsNameIsActive(name)) continue;
+    row(name, TR("Add"), regionsCandidateAddCb, i);
+    any = true;
+  }
+  if (!any) {
+    lv_obj_t* empty = lv_label_create(s_regions_list);
+    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
+    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty, lv_pct(100));
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
+  }
+  navMarkDirty();
 }
 
 static void openRegionsModal() {
@@ -51527,55 +51766,34 @@ static void openRegionsModal() {
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
   y += SC(38);
 
-  RegionRegistry& reg = the_mesh.regionRegistry();
-  if (reg.count() <= 0) {
-    lv_obj_t* empty = lv_label_create(s_regions_modal);
-    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
-    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(empty, sw - pad * 2);
-    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_pos(empty, pad, y);
-    return;
-  }
+  s_regions_scan_btn = lv_btn_create(s_regions_modal);
+  lv_obj_set_size(s_regions_scan_btn, SC(72), SC(30));
+  lv_obj_set_pos(s_regions_scan_btn, pad, y);
+  styleButton(s_regions_scan_btn);
+  lv_obj_add_event_cb(s_regions_scan_btn, regionsScanCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* label = lv_label_create(s_regions_scan_btn); lv_label_set_text(label, TR("Scan"));
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN); lv_obj_center(label); }
+  s_regions_scan_status = lv_label_create(s_regions_modal);
+  if (s_region_candidates.count() > 0)
+    lv_label_set_text_fmt(s_regions_scan_status, "%s: %u", TR("Discovered"),
+                          (unsigned)s_region_candidates.count());
+  else
+    lv_label_set_text(s_regions_scan_status, "");
+  lv_label_set_long_mode(s_regions_scan_status, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(s_regions_scan_status, sw - pad * 3 - SC(72));
+  lv_obj_set_style_text_color(s_regions_scan_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_regions_scan_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(s_regions_scan_status, pad * 2 + SC(72), y + SC(7));
+  y += SC(36);
 
-  lv_obj_t* list = lv_obj_create(s_regions_modal);
-  lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
-  lv_obj_set_pos(list, pad, y);
-  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
-  lv_obj_set_scroll_dir(list, LV_DIR_VER);
-
-  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
-    if (!reg.isActive(slot)) continue;
-    const char* nm = reg.nameForSlot(slot);
-    if (!nm || !nm[0]) continue;
-
-    lv_obj_t* row = lv_obj_create(list);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, sw - pad * 2 - SC(4), SC(36));
-    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, nm);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(lbl, sw - pad * 2 - SC(4) - SC(84));
-    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, SC(6), 0);
-
-    lv_obj_t* rm = lv_btn_create(row);
-    lv_obj_set_size(rm, SC(72), SC(28));
-    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -SC(5), 0);
-    styleButton(rm);
-    lv_obj_add_event_cb(rm, regionsRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
-    { lv_obj_t* l = lv_label_create(rm); lv_label_set_text(l, TR("Remove"));
-      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
-  }
+  s_regions_list = lv_obj_create(s_regions_modal);
+  lv_obj_remove_style_all(s_regions_list);
+  lv_obj_set_size(s_regions_list, sw - pad * 2, sh - top - y - SC(6));
+  lv_obj_set_pos(s_regions_list, pad, y);
+  lv_obj_set_flex_flow(s_regions_list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_regions_list, SC(5), LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_regions_list, LV_DIR_VER);
+  regionsRenderList();
 }
 
 static void openBlockedUsersModal() {
@@ -51751,7 +51969,9 @@ static void openChannelScopeModal(int slot, const char* name) {
   s_chanscope_ta = lv_textarea_create(s_chanscope_modal);
   lv_textarea_set_one_line(s_chanscope_ta, true);
   lv_textarea_set_max_length(s_chanscope_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
-  lv_obj_set_size(s_chanscope_ta, sw - 16, SC(34));
+  const lv_coord_t picker_w = SC(94);
+  const lv_coord_t picker_gap = SC(6);
+  lv_obj_set_size(s_chanscope_ta, sw - 16 - picker_w - picker_gap, SC(34));
   lv_obj_set_pos(s_chanscope_ta, SC(8), SC(72));
 #if defined(ESP32)
   { char cur[TOUCH_REGION_SCOPE_MAXLEN] = {0};
@@ -51764,6 +51984,27 @@ static void openChannelScopeModal(int slot, const char* name) {
   taSetPlaceholder(s_chanscope_ta, TR("(no default)"));
 #endif
   attachSettingsTaEvents(s_chanscope_ta);
+
+#if defined(ESP32)
+  lv_obj_t* region_picker = lv_dropdown_create(s_chanscope_modal);
+  lv_obj_set_size(region_picker, picker_w, SC(34));
+  lv_obj_set_pos(region_picker, sw - SC(8) - picker_w, SC(72));
+  char options[512];
+  size_t used = (size_t)snprintf(options, sizeof options, "%s", TR("Known regions"));
+  RegionRegistry& registry = the_mesh.regionRegistry();
+  for (uint8_t region_slot = 1; region_slot <= REGION_SLOT_MAX && used < sizeof options; ++region_slot) {
+    if (!registry.isActive(region_slot)) continue;
+    const char* region_name = registry.nameForSlot(region_slot);
+    if (!region_name || !region_name[0]) continue;
+    const int wrote = snprintf(options + used, sizeof options - used, "\n%s", region_name);
+    if (wrote < 0 || (size_t)wrote >= sizeof options - used) break;
+    used += (size_t)wrote;
+  }
+  lv_dropdown_set_options(region_picker, options);
+  styleDropdown(region_picker);
+  lv_obj_add_event_cb(region_picker, chanScopeRegionPickCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  if (registry.count() == 0) lv_obj_add_state(region_picker, LV_STATE_DISABLED);
+#endif
 
   // ---- Mute notification sound for THIS channel (per-channel; public stays audible) ----
   lv_obj_t* mute_lbl = lv_label_create(s_chanscope_modal);
@@ -52848,6 +53089,17 @@ void UITask::onThreadsChanged() {
 #endif
 }
 
+void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  if (s_region_scan_phase != RegionScanPhase::Querying || !s_region_scan_waiting ||
+      s_region_scan_next >= s_region_scan_count ||
+      memcmp(contact.id.pub_key, s_region_scan_keys[s_region_scan_next], PUB_KEY_SIZE) != 0)
+    return;
+  s_region_candidates.addResponse(data, len);
+  s_region_scan_waiting = false;
+  ++s_region_scan_next;
+  regionsRenderList();
+}
+
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
   s_ui_ping_deadline_ms = 0;  // reply arrived, cancel timeout
 
@@ -53027,7 +53279,7 @@ static void telemetryPollTick(uint32_t now_ms) {
   // Hold auto-poll while a manual request is awaiting its reply — an auto-poll
   // REQ would overwrite the manual request's pending tag and orphan its reply.
   // It'll poll on the next interval (the manual pending window is short).
-  if (s_telem_manual_pending) return;
+  if (s_telem_manual_pending || the_mesh.hasUIRequestPending()) return;
   if (s_telem_poll_next_send_ms != 0 &&
       (int32_t)(now_ms - s_telem_poll_next_send_ms) < 0) return;
   if (the_mesh.getRemainingTxBudget() < 300) return;

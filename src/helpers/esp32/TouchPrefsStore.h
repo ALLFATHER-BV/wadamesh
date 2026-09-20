@@ -552,7 +552,7 @@ bool touchPrefsSetTileServer(const char* url);
  *  mesh NodePrefs (default_scope_key, derived via MyMesh::setDefaultFloodScope);
  *  this just remembers the human-readable "#region" the user typed so the radio
  *  settings field can show it back. Empty = unscoped. */
-constexpr int TOUCH_REGION_SCOPE_MAXLEN = 40;
+constexpr int TOUCH_REGION_SCOPE_MAXLEN = 31;  // '#' + 29-byte public name + NUL
 int  touchPrefsGetRegionScope(char* out, int out_cap);
 bool touchPrefsSetRegionScope(const char* name);
 
