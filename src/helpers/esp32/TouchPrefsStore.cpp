@@ -884,12 +884,14 @@ bool touchPrefsSetAccentColor(uint32_t rgb) {
 
 uint8_t touchPrefsGetThemeMode() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.theme_mode == TOUCH_THEME_DAY ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT;
+  return s_cfg.theme_mode <= TOUCH_THEME_NIGHT_HIGH_CONTRAST
+      ? s_cfg.theme_mode : TOUCH_THEME_NIGHT;
 }
 bool touchPrefsSetThemeMode(uint8_t mode) {
   if (!s_begun) touchPrefsBegin();
   const uint8_t old_mode = s_cfg.theme_mode;
-  s_cfg.theme_mode = mode == TOUCH_THEME_DAY ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT;
+  s_cfg.theme_mode = mode <= TOUCH_THEME_NIGHT_HIGH_CONTRAST
+      ? mode : TOUCH_THEME_NIGHT;
   if (cfgFlush()) return true;
   s_cfg.theme_mode = old_mode;
   return false;

@@ -11,6 +11,8 @@
 
 static constexpr uint8_t TOUCH_THEME_NIGHT = 0;
 static constexpr uint8_t TOUCH_THEME_DAY   = 1;
+static constexpr uint8_t TOUCH_THEME_DAY_HIGH_CONTRAST = 2;
+static constexpr uint8_t TOUCH_THEME_NIGHT_HIGH_CONTRAST = 3;
 
 void touchPrefsBegin();
 // Force a fresh load of the settings blob. Call after SdNvsPrefs::useFile() at
@@ -30,7 +32,7 @@ bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);
 uint8_t touchPrefsGetBrightness();
 bool    touchPrefsSetBrightness(uint8_t pct);
 
-/** Firmware palette: 0 = Night (default), 1 = Day. Applied after restart. */
+/** Firmware palette: Night/Day, each standard or High contrast. Applied after restart. */
 uint8_t touchPrefsGetThemeMode();
 bool    touchPrefsSetThemeMode(uint8_t mode);
 

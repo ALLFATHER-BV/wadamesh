@@ -556,7 +556,33 @@ static constexpr TouchPalette kDayPalette = {
   0xFFFFFF, 0xD8E0E6, 0xD5DDE3, 0xF8FAFB,
 };
 
+static constexpr TouchPalette kDayHighContrastPalette = {
+  0xFFFFFF, 0xFFFFFF, 0x000000, 0x202020,
+  0xFFFFFF, 0xE0E0E0, 0x004C99, 0xFFF0A8,
+  0x006B2E, 0x00491F, 0xFFD400, 0xB00020, 0x780016,
+  0x005A26, 0x5C4600, 0xA00018,
+  0x005EA8,
+  0x000000, 0xFFFFFF, 0xFFFFFF, 0xD6D6D6, 0xE5E5E5,
+  0xD8F3F0, 0x005A52, 0x000000, 0x202020,
+  0xFFFFFF, 0xD9D9D9, 0x404040, 0xFFFFFF,
+};
+
+static constexpr TouchPalette kNightHighContrastPalette = {
+  0x000000, 0x000000, 0xFFFFFF, 0xD6D6D6,
+  0x003B5C, 0x202020, 0x66B5FF, 0x003F7F,
+  0x007A35, 0x005A26, 0xFFD400, 0xB00020, 0x780016,
+  0x55FF8A, 0xFFD400, 0xFF5A70,
+  0x005EA8,
+  0xFFFFFF, 0x000000, 0x000000, 0x202020, 0x303030,
+  0x003B36, 0x58FFF0, 0x404040, 0xFFFFFF,
+  0x101010, 0x303030, 0x404040, 0x000000,
+};
+
+static uint8_t s_theme_mode = TOUCH_THEME_NIGHT;
+// Keep the established light/dark role flag separate from contrast: many call
+// sites use it to select a surface appropriate to the palette's base luminance.
 static bool s_theme_day = false;
+static bool s_theme_high_contrast = false;
 static uint32_t COLOR_BG            = kNightPalette.bg;
 static uint32_t COLOR_PANEL         = kNightPalette.panel;
 // Earlier accent was 0x4E5C66 — RGB (78,92,102), cool blue-leaning. Even
@@ -590,7 +616,7 @@ static inline uint32_t accentDarken(uint32_t rgb, int pct) {
 }
 // Clamp a picked accent dark enough that text/icons stay readable on solid fills.
 static inline uint32_t accentClampReadable(uint32_t rgb) {
-  const uint32_t kMaxLuma = s_theme_day ? 105 : 140;
+  const uint32_t kMaxLuma = s_theme_high_contrast ? 90 : (s_theme_day ? 105 : 140);
   uint32_t L = accentLuma(rgb);
   if (L > kMaxLuma) return accentDarken(rgb, (int)(kMaxLuma * 100 / L));
   return rgb & 0xFFFFFFu;
@@ -634,8 +660,14 @@ static void applyThemeMode(uint8_t mode) {
 #if defined(HAS_TDECK_PRO)
   mode = TOUCH_THEME_DAY;   // monochrome e-paper: black content on a white field
 #endif
-  s_theme_day = mode == TOUCH_THEME_DAY;
-  const TouchPalette& p = s_theme_day ? kDayPalette : kNightPalette;
+  if (mode > TOUCH_THEME_NIGHT_HIGH_CONTRAST) mode = TOUCH_THEME_NIGHT;
+  s_theme_mode = mode;
+  s_theme_day = mode == TOUCH_THEME_DAY || mode == TOUCH_THEME_DAY_HIGH_CONTRAST;
+  s_theme_high_contrast = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ||
+                          mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
+  const TouchPalette& p = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ? kDayHighContrastPalette
+                        : mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST ? kNightHighContrastPalette
+                        : s_theme_day ? kDayPalette : kNightPalette;
   COLOR_BG = p.bg;
   COLOR_PANEL = p.panel;
   COLOR_TEXT = p.text;
@@ -666,20 +698,31 @@ static void applyThemeMode(uint8_t mode) {
   COLOR_SECONDARY_ACTION = p.secondary_action;
   COLOR_TRACK = p.track;
   COLOR_CHART_BG = p.chart_bg;
-  COLOR_ON_ACCENT = s_theme_day ? 0xFFFFFFu : p.text;
-  COLOR_ON_STATUS_OK = s_theme_day ? 0x15351Du : p.text;
-  COLOR_ON_STATUS_DANGER = s_theme_day ? 0x571515u : p.text;
-  COLOR_ON_STATUS_INFO = s_theme_day ? 0x103A5Au : p.text;
+  COLOR_ON_ACCENT = s_theme_high_contrast
+      ? (s_theme_day ? 0xFFFFFFu : 0x000000u)
+      : (s_theme_day ? 0xFFFFFFu : p.text);
+  COLOR_ON_STATUS_OK = s_theme_high_contrast ? 0xFFFFFFu
+                                             : (s_theme_day ? 0x15351Du : p.text);
+  COLOR_ON_STATUS_DANGER = s_theme_high_contrast ? 0xFFFFFFu
+                                                 : (s_theme_day ? 0x571515u : p.text);
+  COLOR_ON_STATUS_INFO = s_theme_high_contrast ? 0xFFFFFFu
+                                               : (s_theme_day ? 0x103A5Au : p.text);
   COLOR_CHAT_TEXT = s_theme_day ? 0xFFFFFFu : p.text;
-  COLOR_CHAT_META = s_theme_day ? 0xFFFFFFu : p.sub;
-  COLOR_CHAT_LINK = s_theme_day ? 0x9EDBFFu : 0x4EA1FFu;
-  COLOR_CHAT_SENT_BG = s_theme_day ? 0x28556Bu : p.sent_bg;
-  COLOR_CHAT_RECV_BG = s_theme_day ? 0x3C4852u : p.recv_bg;
-  COLOR_CHAT_MENTION_BG = s_theme_day ? 0x1D5F8Au : p.mention_bg;
+  COLOR_CHAT_META = s_theme_high_contrast ? 0xFFFFFFu
+                                          : (s_theme_day ? 0xFFFFFFu : p.sub);
+  COLOR_CHAT_LINK = s_theme_high_contrast ? 0xBFE4FFu
+                                          : (s_theme_day ? 0x9EDBFFu : 0x4EA1FFu);
+  COLOR_CHAT_SENT_BG = s_theme_high_contrast ? 0x003B5Cu
+                                             : (s_theme_day ? 0x28556Bu : p.sent_bg);
+  COLOR_CHAT_RECV_BG = s_theme_high_contrast ? 0x202020u
+                                             : (s_theme_day ? 0x3C4852u : p.recv_bg);
+  COLOR_CHAT_MENTION_BG = s_theme_high_contrast ? 0x003F7Fu
+                                                : (s_theme_day ? 0x1D5F8Au : p.mention_bg);
 }
 
 static inline uint32_t themeRole(uint32_t night, uint32_t day) {
-  return s_theme_day ? day : night;
+  // HC palettes use semantic role colors rather than legacy Night literals.
+  return (s_theme_day || s_theme_high_contrast) ? day : night;
 }
 
 // LVGL 8.3 / Montserrat doesn't ship a STAR glyph. We carry a small custom
@@ -3308,7 +3351,7 @@ static void styleSurface(lv_obj_t* obj, uint32_t bg, lv_coord_t radius = 10) {
 
 static void styleCard(lv_obj_t* obj) {
   styleSurface(obj, COLOR_PANEL, 10);
-  lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_width(obj, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
   lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
 }
 
@@ -3317,7 +3360,7 @@ static inline uint32_t lightSurfaceTextRgb(uint32_t color) {
   (void)color;
   return 0x000000;
 #else
-  return color;
+  return s_theme_high_contrast ? COLOR_TEXT : color;
 #endif
 }
 
@@ -3394,9 +3437,11 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_bg_opa(obj, LV_OPA_10, LV_PART_MAIN);
   lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(obj, LV_OPA_50, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_opa(obj, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_set_style_border_color(obj,
+      lv_color_hex(s_theme_high_contrast ? COLOR_BORDER : COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_width(obj, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(obj,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 #endif
   // ...and the font, for the same reason as the text colour. A button carries a
@@ -5680,7 +5725,9 @@ static void navBuildTabKeyHints() {
   lv_obj_set_style_pad_all(bar, 0, LV_PART_ITEMS);
   // The active page is shown by a clearly-lit rounded "pill" behind its cell (no dimming of the
   // others) — a lighter fill than the dark bar so the current tab stands out on its own.
-  lv_obj_set_style_bg_color(bar, lv_color_hex(0x4A555F), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(bar,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : 0x4A555F),
+      LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_radius(bar, 8, LV_PART_ITEMS | LV_STATE_CHECKED);
 
@@ -5689,7 +5736,7 @@ static void navBuildTabKeyHints() {
   const uint32_t cols[5]  = { 0xF5A623, 0xFFD400, 0x2ECC40, 0x2E9BFF, 0xC724B1 };
   const char*    icons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME, LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
   for (int i = 0; i < 5; i++) {
-    lv_color_t col = lv_color_hex(cols[i]);
+    lv_color_t col = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : cols[i]);
     lv_obj_t* cv = lv_canvas_create(bar);
     lv_obj_clear_flag(cv, LV_OBJ_FLAG_CLICKABLE);
     uint8_t* buf = (uint8_t*)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(34, 34), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -14282,8 +14329,13 @@ static void themeModeRestart(uint8_t mode) {
   // rebooting straight from this callback paints no notice at all, so the device
   // appears to restart by itself, which reads as a crash rather than as the
   // setting working.
-  rebootWithNotice(mode == TOUCH_THEME_DAY ? TR("Day theme - restarting to apply it\xE2\x80\xA6")
-                                           : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
+  const bool high_contrast = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ||
+                             mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
+  const char* notice = high_contrast
+      ? TR("High contrast - restarting to apply it\xE2\x80\xA6")
+      : (mode == TOUCH_THEME_DAY ? TR("Day theme - restarting to apply it\xE2\x80\xA6")
+                                 : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
+  rebootWithNotice(notice);
 }
 
 static lv_obj_t* s_clockset_ta = nullptr;   // manual clock entry (#105)
@@ -14363,6 +14415,14 @@ static void gpsFuzzSelectCb(lv_event_t* e) {
 static void themeModeSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+static void themeContrastToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool high_contrast = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  themeModeRestart(high_contrast
+      ? (s_theme_day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
+      : (s_theme_day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT));
 }
 
 static void buildDeviceSettings(int sec) {
@@ -14483,7 +14543,7 @@ static void buildDeviceSettings(int sec) {
     // with this setting has been that nobody could find it, and a row of choices
     // shows every option and the current one without being touched at all. A
     // cycling button hides three of four values, and a dropdown hides all of
-    // them until it is opened. Same shape as the Night/Day selector.
+    // them until it is opened. Same shape as the Appearance selector.
     static const struct { uint16_t m; const char* label; } k_fuzz[] = {
       { 0,    "Exact"  },
       { 100,  "100 m"  },
@@ -15070,31 +15130,40 @@ static void buildDeviceSettings(int sec) {
      every LVGL object is rebuilt with one coherent set of colours. */
   {
     y += settingsRowLabel(body, y, 0, TR("Appearance"), COLOR_SUB, &g_font_12, 0) + 4;
-    const uint8_t current = touchPrefsGetThemeMode();
     const lv_coord_t gap = 4;
     const lv_coord_t row_w = s_settings_content_w - 2;
     const lv_coord_t button_w = (row_w - gap) / 2;
-    const char* labels[2] = { TR("Night"), TR("Day") };
-    for (uint8_t mode = TOUCH_THEME_NIGHT; mode <= TOUCH_THEME_DAY; ++mode) {
+    for (uint8_t day = 0; day <= 1; ++day) {
+      const uint8_t mode = s_theme_high_contrast
+          ? (day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
+          : (day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT);
       lv_obj_t* button = lv_btn_create(body);
       lv_obj_set_size(button, button_w, SC(34));
-      lv_obj_set_pos(button, 2 + mode * (button_w + gap), y);
+      lv_obj_set_pos(button, 2 + day * (button_w + gap), y);
       styleButton(button);
-      if (mode == current) {
+      if ((day != 0) == s_theme_day) {
         lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_opa(button, LV_OPA_COVER, LV_PART_MAIN);
       }
       lv_obj_set_style_text_color(button,
-          lv_color_hex(mode == current ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+          lv_color_hex((day != 0) == s_theme_day ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_obj_add_event_cb(button, themeModeSelectCb, LV_EVENT_CLICKED,
                           (void*)(uintptr_t)mode);
       lv_obj_t* label = lv_label_create(button);
       char text[32];
-      snprintf(text, sizeof(text), "%s%s", mode == current ? LV_SYMBOL_OK "  " : "", labels[mode]);
+      const char* base = day ? TR("Day") : TR("Night");
+      snprintf(text, sizeof(text), "%s%s", (day != 0) == s_theme_day ? LV_SYMBOL_OK "  " : "", base);
       lv_label_set_text(label, text);
       lv_obj_center(label);
     }
     y += SC(42);
+
+    int h = settingsRowLabel(body, y, 6, TR("High contrast"), COLOR_SUB, nullptr, 90);
+    lv_obj_t* contrast_sw = lv_switch_create(body);
+    lv_obj_align(contrast_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_theme_high_contrast) lv_obj_add_state(contrast_sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(contrast_sw, themeContrastToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
   }
 
   /* Accent colour: opens a colour-wheel + hex picker. */
@@ -28881,6 +28950,8 @@ static void makeHome(lv_obj_t* tab) {
   styleButton(adv);
   lv_obj_set_style_bg_color(adv, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(adv, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(adv, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(adv, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_text_color(adv, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
   if (home_land) {
 #if CAP_LARGE_SCREEN
@@ -28928,8 +28999,8 @@ static void makeHome(lv_obj_t* tab) {
     styleButton(apb);
     lv_obj_set_size(apb, half, btn_h);
     lv_obj_align(apb, LV_ALIGN_TOP_LEFT, apps_x, apps_y);
-    const uint32_t inv_accent = s_theme_day
-                    ? COLOR_ACCENT_SURFACE
+    const uint32_t inv_accent = s_theme_high_contrast ? COLOR_CONTROL_PRESSED
+            : s_theme_day ? COLOR_ACCENT_SURFACE
                     : 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
     lv_obj_set_style_bg_color(apb, lv_color_hex(inv_accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(apb, LV_OPA_COVER, LV_PART_MAIN);
@@ -28987,14 +29058,14 @@ static void makeHome(lv_obj_t* tab) {
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(label));
       lv_obj_set_style_text_font(l, bh >= 44 ? &g_font_14 : &g_font_12, LV_PART_MAIN);
-        lv_obj_set_style_text_color(l,
+      lv_obj_set_style_text_color(l,
           lv_color_hex(bg ? themeRole(0xFFFFFF, COLOR_TEXT) : COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(l);
       return b;
     };
     // The accent's inverse — used for the "Apps" pop colour and the Control-panel button.
-    const uint32_t inv_accent = s_theme_day
-                    ? COLOR_ACCENT_SURFACE
+    const uint32_t inv_accent = s_theme_high_contrast ? COLOR_CONTROL_PRESSED
+            : s_theme_day ? COLOR_ACCENT_SURFACE
                     : 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
 #if CAP_LARGE_SCREEN
     s_home_nav_right[HOME_NAV_TERMINAL] = make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
@@ -29745,7 +29816,8 @@ static void makeContactsTab(lv_obj_t* tab) {
     s_ct_disc_badge = lv_label_create(b);   // red count pill, right side (updated by the loop)
     lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 16);
     lv_obj_set_style_radius(s_ct_disc_badge, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_ct_disc_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ct_disc_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge, lv_color_white(), LV_PART_MAIN);
     // This is fixed-size chrome inside a 16-px pill, not semantic body text.
@@ -35088,7 +35160,8 @@ static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  if (touchSleep::enabled()) c = lv_color_hex(0xFFD60A);   // iOS systemYellow ≈ Low Power Mode
+  if (touchSleep::enabled())
+    c = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xFFD60A);
 #endif
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
 }
@@ -36694,7 +36767,8 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_clear_flag(s_update_subtab_badge, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_set_size(s_update_subtab_badge, 9, 9);
       lv_obj_set_style_radius(s_update_subtab_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(s_update_subtab_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_update_subtab_badge,
+          lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(s_update_subtab_badge, LV_OPA_COVER, LV_PART_MAIN);
       lv_obj_align(s_update_subtab_badge, LV_ALIGN_RIGHT_MID, landscape ? -12 : -32, 0);
       lv_obj_add_flag(s_update_subtab_badge, LV_OBJ_FLAG_HIDDEN);
@@ -37520,8 +37594,10 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_add_event_cb(bodywrap, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
   // Thin visible scrollbar (remove_style_all wiped the theme's).
   lv_obj_set_style_width(bodywrap, 4, LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_color(bodywrap, lv_color_hex(0x6FA8DA), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(bodywrap, LV_OPA_70, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_color(bodywrap,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0x6FA8DA), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(bodywrap,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_70, LV_PART_SCROLLBAR);
   lv_obj_set_style_radius(bodywrap, 2, LV_PART_SCROLLBAR);
 
   lv_obj_t* lbl = lv_label_create(bodywrap);
@@ -38112,7 +38188,9 @@ static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
     switch (m.deliv_state) {
       case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
       case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend";
+                                     deliv_fg = s_theme_high_contrast
+                                         ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
       default: break;
     }
   }
@@ -38199,7 +38277,7 @@ static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int
 #if defined(HAS_TDECK_PRO)
   const bool colorful_bubbles = false;
 #else
-  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  const bool colorful_bubbles = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
 #endif
   lv_color_t dark_sender_col = lv_color_hex(COLOR_RECV_BG);
   lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
@@ -38228,7 +38306,8 @@ static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int
       case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD;          dfg = COLOR_SUB;    break;
       case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; dfg = COLOR_ACCENT; break;
       case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend";
-                    dfg = s_theme_day ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
+                                     dfg = (s_theme_day || s_theme_high_contrast)
+                                         ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
     }
   }
   char reps[12] = "";
@@ -38651,7 +38730,8 @@ static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
   lv_obj_remove_style_all(dline);
   lv_obj_set_size(dline, kContentW, 1);
   lv_obj_set_pos(dline, 0, 8);
-  lv_obj_set_style_bg_color(dline, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dline,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(dline, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_t* dlbl = lv_label_create(div);
   lv_label_set_text(dlbl, TR("New"));
@@ -38910,7 +38990,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 #if defined(HAS_TDECK_PRO)
   const bool colorful_bubbles = false;
 #else
-  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  const bool colorful_bubbles = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
 #endif
 
   lv_obj_t* bubble = lv_obj_create(p->msgs);
@@ -38941,6 +39021,12 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_style_border_color(bubble, lv_color_black(), LV_PART_MAIN);
   lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
   lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+#else
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(bubble, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+  }
 #endif
   lv_obj_set_style_pad_hor(bubble, kChatBubblePadH, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(bubble, kChatBubblePadV, LV_PART_MAIN);
@@ -45260,11 +45346,14 @@ static void ccGpsNoneCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("No onboard GPS"), 1200);
 }
 #endif
-// Day/Night chip: persist the opposite palette and rebuild the complete UI on restart.
+// Theme chip: cycle all palettes and rebuild the complete UI on restart.
 static void ccThemeCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeControlCenter();
-  themeModeRestart(s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
+  const uint8_t next = s_theme_high_contrast
+      ? (s_theme_day ? TOUCH_THEME_NIGHT_HIGH_CONTRAST : TOUCH_THEME_DAY_HIGH_CONTRAST)
+      : (s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
+  themeModeRestart(next);
 }
 
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
@@ -46298,11 +46387,9 @@ static void openControlCenter() {
            CAT_GPS, nullptr, CC_NAV_GPS);
 #endif
 #if !defined(HAS_TDECK_PRO)
-  // Icon stays the sun in both states (#414): the chip's own fill carries on/off,
-  // exactly as the DND chip does since #396, and a glyph that also changes reads
-  // as a different control rather than the same one toggled. The keypad-nav id
-  // comes from #412, which branched before that decision.
-  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_day,
+  // Keep one centered sun icon for all modes (#414); Display settings shows
+  // the selected Night/Day and High contrast state explicitly.
+  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_mode != TOUCH_THEME_NIGHT,
            ccThemeCb, tw, th, CAT_DISPLAY, nullptr, CC_NAV_THEME);
 #endif
 #if CAP_KEYBOARD
@@ -47044,11 +47131,12 @@ static void luaStoreRebuildList() {
       const bool info = col == 0x4F9DF7;
       lv_obj_set_style_bg_color(b,
           lv_color_hex(danger ? themeRole(col, COLOR_STATUS_DANGER)
-                              : info ? COLOR_STATUS_INFO : col), LV_PART_MAIN);
+                    : info ? COLOR_STATUS_INFO
+                    : s_theme_high_contrast ? COLOR_ACCENT : col), LV_PART_MAIN);
       lv_obj_t* bl = lv_label_create(b);
       lv_label_set_text(bl, txt);
       lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
-      if (s_theme_day) {
+      if (s_theme_day || s_theme_high_contrast) {
         lv_obj_set_style_text_color(bl,
             lv_color_hex(danger ? COLOR_ON_STATUS_DANGER
                                 : info ? COLOR_ON_STATUS_INFO : COLOR_ON_ACCENT), LV_PART_MAIN);
@@ -47289,7 +47377,7 @@ static void luaStoreRebuildList() {
     } else {
       lv_obj_add_event_cb(b, luaStoreInstallBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
-    if (s_theme_day) {
+    if (s_theme_day || s_theme_high_contrast) {
       lv_obj_set_style_text_color(bl,
           lv_color_hex(!runnable && !inst ? COLOR_TEXT
                        : inst && cur ? COLOR_ON_STATUS_DANGER
@@ -47344,7 +47432,7 @@ static void luaStoreRebuildList() {
     lv_obj_t* bl = lv_label_create(b);
     lv_label_set_text(bl, TR("Remove"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
-    if (s_theme_day)
+    if (s_theme_day || s_theme_high_contrast)
       lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_ON_STATUS_DANGER), LV_PART_MAIN);
     lv_obj_center(bl);
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -47941,6 +48029,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
                        uint32_t icon_col, bool big = false) {
 #if defined(HAS_TDECK_PRO)
   icon_col = 0x000000u;
+#else
+  if (s_theme_high_contrast) icon_col = COLOR_TEXT;
 #endif
   // App-style tile: a rounded-square icon chip with the label UNDERNEATH it,
   // instead of a filled box with the text inside. Same grid footprint (w×h);
@@ -47951,8 +48041,17 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_pos(t, x, y);
   lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : COLOR_ACCENT),
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(t,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20,
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(t, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(t, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(t, LV_OPA_COVER, LV_PART_MAIN);
+  }
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 #if CAP_LUA_APPS
   if (act >= APPACT_LUA_BASE || appHideBitFor(act))
@@ -47978,11 +48077,13 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_size(chip_o, chip, chip);
   lv_obj_align(chip_o, LV_ALIGN_TOP_MID, 0, 5);
   lv_obj_set_style_bg_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(chip_o, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(chip_o,
+      s_theme_high_contrast ? LV_OPA_TRANSP : LV_OPA_20, LV_PART_MAIN);
   lv_obj_set_style_radius(chip_o, chip * 22 / 100, LV_PART_MAIN);   // ~22% squircle, not a circle
   lv_obj_set_style_border_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
-  lv_obj_set_style_border_width(chip_o, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_opa(chip_o, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_border_width(chip_o, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(chip_o,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
 
   if (act == APPACT_SNAKE) {
     // The 🐍 emoji (U+1F40D) isn't in the baked colour-emoji set, so a plain
@@ -48012,7 +48113,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_clear_flag(eye, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(eye, 2, 2);
     lv_obj_set_pos(eye, 14, 1);
-    lv_obj_set_style_bg_color(eye, lv_color_hex(0x0E1216), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(eye,
+      lv_color_hex(s_theme_high_contrast ? COLOR_BG : 0x0E1216), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(eye, 1, LV_PART_MAIN);
   } else if (act == APPACT_READER) {
@@ -48105,7 +48207,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_t* bdg = lv_obj_create(t);
     lv_obj_remove_style_all(bdg);
     lv_obj_clear_flag(bdg, LV_OBJ_FLAG_CLICKABLE);   // taps pass through to the tile
-    lv_obj_set_style_bg_color(bdg, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bdg,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bdg, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(bdg, 9, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(bdg, 4, LV_PART_MAIN);
@@ -48331,8 +48434,10 @@ static void openAppDrawer() {
   lv_obj_set_style_pad_bottom(s_appdrawer_root, 10, LV_PART_MAIN);   // room past the last row when scrolled
   // A clearly visible scrollbar so users discover the lower rows. The mode is
   // set after the grid is measured (ON when it overflows, OFF when it all fits).
-  lv_obj_set_style_bg_color(s_appdrawer_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(s_appdrawer_root, LV_OPA_70, LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_color(s_appdrawer_root,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : COLOR_ACCENT), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(s_appdrawer_root,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_70, LV_PART_SCROLLBAR);
   lv_obj_set_style_width(s_appdrawer_root, 5, LV_PART_SCROLLBAR);
   lv_obj_set_style_radius(s_appdrawer_root, 3, LV_PART_SCROLLBAR);
   lv_obj_set_style_pad_right(s_appdrawer_root, 2, LV_PART_SCROLLBAR);
@@ -48476,8 +48581,17 @@ static void openAppDrawer() {
   lv_obj_add_flag(cog, LV_OBJ_FLAG_FLOATING);
   lv_obj_align(cog, LV_ALIGN_TOP_RIGHT, -4, 2);
   lv_obj_set_style_bg_opa(cog, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(cog, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(cog, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(cog,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : 0xFFFFFF),
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(cog,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20,
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(cog, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(cog, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(cog, LV_OPA_COVER, LV_PART_MAIN);
+  }
   lv_obj_set_style_radius(cog, 15, LV_PART_MAIN);
   lv_obj_add_event_cb(cog, appDrawerSettingsCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cogl = lv_label_create(cog);
@@ -48486,7 +48600,8 @@ static void openAppDrawer() {
 #if defined(HAS_TDECK_PRO)
   lv_obj_set_style_text_color(cogl, lv_color_black(), LV_PART_MAIN);
 #else
-  lv_obj_set_style_text_color(cogl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(cogl,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
 #endif
   lv_obj_center(cogl);
   lv_obj_move_foreground(cog);
@@ -48947,7 +49062,8 @@ static void buildGlobalStatusBar() {
       lv_obj_set_pos(b, BX0 + slot_from_left * (BW + GAP), BY);
       styleButton(b);
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
-      lv_obj_set_style_border_opa(b, LV_OPA_20, LV_PART_MAIN);   // dim the edge so it blends
+        lv_obj_set_style_border_opa(b,
+          s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
     #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
       // Three pixels each side still leave two pixels between adjacent hits.
       lv_obj_set_ext_click_area(b, 3);
@@ -48958,6 +49074,8 @@ static void buildGlobalStatusBar() {
     g_statusbar.inbox_add  = mk(0);   // leftmost — green primary
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(g_statusbar.inbox_add, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
@@ -49165,7 +49283,8 @@ static void buildGlobalStatusBar() {
   lv_obj_remove_style_all(g_statusbar.sd_icon);
   lv_obj_set_size(g_statusbar.sd_icon, 8, 8);
   lv_obj_set_style_radius(g_statusbar.sd_icon, 4, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(g_statusbar.sd_icon, lv_color_hex(0xF5A623), LV_PART_MAIN);  // amber = SD activity
+  lv_obj_set_style_bg_color(g_statusbar.sd_icon,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xF5A623), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(g_statusbar.sd_icon, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
@@ -49212,7 +49331,8 @@ static void buildGlobalStatusBar() {
       lv_obj_set_pos(b, i * (bw + gap), 12 - hh[i]);   // bottom-aligned
       lv_obj_set_style_radius(b, 1, LV_PART_MAIN);
       lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(b, lv_color_hex(0x33363B), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(b,
+          lv_color_hex(s_theme_high_contrast ? COLOR_SUB : 0x33363B), LV_PART_MAIN);
       g_statusbar.sig_bars[i] = b;
     }
   }
@@ -49776,7 +49896,9 @@ static void updateGlobalStatusBar() {
       for (int i = 0; i < 4; i++)
         if (g_statusbar.sig_bars[i])
           lv_obj_set_style_bg_color(g_statusbar.sig_bars[i],
-              lv_color_hex(i < level ? COLOR_ACCENT : 0x33363B), LV_PART_MAIN);
+              lv_color_hex(i < level ? COLOR_ACCENT
+                                     : s_theme_high_contrast ? COLOR_SUB : 0x33363B),
+              LV_PART_MAIN);
     }
   }
 
@@ -49878,7 +50000,10 @@ static void updateGlobalStatusBar() {
   if ((current ? 1 : 0) != s_last_clock_current) {
     s_last_clock_current = current ? 1 : 0;
     lv_obj_set_style_text_color(g_statusbar.clock,
-        lv_color_hex(current ? COLOR_SUB : COLOR_STATUS_WARN), LV_PART_MAIN);
+      lv_color_hex(current ? COLOR_SUB
+                 : s_theme_high_contrast ? COLOR_STATUS_WARN_TEXT
+                             : COLOR_STATUS_WARN),
+      LV_PART_MAIN);
   }
 #endif
 
@@ -50881,25 +51006,28 @@ static void setupRerunCb(lv_event_t* e) {
 // Theme accent colour: live apply + (wheel + hex) picker
 // ============================================================
 static void applyAccent(uint32_t rgb) {
-  COLOR_ACCENT       = accentClampReadable(rgb);
-  COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
+  if (s_theme_high_contrast) {
+    COLOR_ACCENT = s_theme_day ? 0x000000u : 0xFFFFFFu;
+    COLOR_ACCENT_PRESS = s_theme_day ? 0x303030u : 0xD6D6D6u;
+  } else {
+    COLOR_ACCENT       = accentClampReadable(rgb);
+    COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
+  }
   // Applied UI-wide on the next build: the Theme picker saves then restarts, so
   // every widget adopts the colour at once. (A live re-style only ever caught
   // the always-on tab bar, which is what looked half-applied before.)
 }
 
 // Theme apply callback: runs for every object as it's created (chained after the
-// default theme via lv_theme_set_parent). The stock theme paints the switch
-// "on" indicator with its blue primary; recolour it to the user's accent so all
-// toggles follow the Theme colour instead of being hard-coded blue. Reads the
-// live COLOR_ACCENT (set by applyAccent at boot before any widget is built), and
-// a local style override beats the theme's shared style. Knob stays white.
+// default theme via lv_theme_set_parent). It replaces stock-theme control colors
+// with the active palette, including stronger outlines and inverse knobs/checks
+// in HC. Reads COLOR_ACCENT after applyAccent has initialized it at boot.
 static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
   if (lv_obj_check_type(obj, &lv_switch_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
                               LV_PART_INDICATOR | LV_STATE_CHECKED);
   }
-  if (!s_theme_day) return;
+  if (!s_theme_day && !s_theme_high_contrast) return;
 #if defined(HAS_TDECK_PRO)
   if (lv_obj_check_type(obj, &lv_textarea_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_white(), LV_PART_MAIN);
@@ -50958,19 +51086,46 @@ static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    if (s_theme_high_contrast) lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_SUB), LV_PART_TEXTAREA_PLACEHOLDER);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_CURSOR);
   } else if (lv_obj_check_type(obj, &lv_dropdown_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    if (s_theme_high_contrast) lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+  } else if (s_theme_high_contrast && lv_obj_check_type(obj, &lv_dropdownlist_class)) {
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
+    lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                              LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                                LV_PART_SELECTED | LV_STATE_CHECKED);
   } else if (lv_obj_check_type(obj, &lv_slider_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
   } else if (lv_obj_check_type(obj, &lv_checkbox_class)) {
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    if (s_theme_high_contrast) {
+      lv_obj_set_style_border_width(obj, 2, LV_PART_INDICATOR);
+      lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                                LV_PART_INDICATOR | LV_STATE_CHECKED);
+      lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
+    }
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  } else if (s_theme_high_contrast && lv_obj_check_type(obj, &lv_switch_class)) {
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                              LV_PART_KNOB | LV_STATE_CHECKED);
   }
 }
 static lv_theme_t s_touch_theme;   // our wrapper theme (parent = stock default)
@@ -52342,7 +52497,8 @@ static void buildUiTree() {
   lv_label_set_text(s_update_badge, "!");
   lv_obj_set_size(s_update_badge, 16, 16);
   lv_obj_set_style_radius(s_update_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(s_update_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_update_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_update_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_update_badge, lv_color_white(), LV_PART_MAIN);
   // Bottom-bar badges are fixed chrome too: a Large-preset 18-px line cannot
@@ -52366,7 +52522,8 @@ static void buildUiTree() {
   lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 16);
   lv_obj_set_style_min_width(s_chat_unread_badge, 16, LV_PART_MAIN);
   lv_obj_set_style_radius(s_chat_unread_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_chat_unread_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_chat_unread_badge, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -52397,7 +52554,8 @@ static void buildUiTree() {
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(s_tab_indicator, 26, 4);
   lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_tab_indicator, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_tab_indicator,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
   lv_obj_set_style_radius(s_tab_indicator, 2, LV_PART_MAIN);
   lv_obj_set_style_shadow_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_shadow_width(s_tab_indicator, 8, LV_PART_MAIN);
@@ -53225,8 +53383,6 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
-    useChainedFont(sl);
-    y += 42;
   }
 }
 
@@ -61785,7 +61941,8 @@ void UITask::loop() {
       const bool update_pending = notice_surface && s_update_available;
       if (update_pending) {
         lv_obj_move_foreground(s_m9_update_indicator);
-        lv_obj_set_style_text_color(s_m9_update_indicator, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_m9_update_indicator,
+            lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xE2A23A), LV_PART_MAIN);
         lv_obj_clear_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
