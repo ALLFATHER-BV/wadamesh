@@ -1,0 +1,182 @@
+# beta_83 promoted to STABLE - cumulative over beta_66..beta_83 (previous stable: beta_65)
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Curated from the 18 beta notes: per-build framing and "still open" lists dropped,
+# supersessions collapsed to what actually ships, everything else kept.
+
+# --- Read this first if you are coming from beta_65 -----------------------------------------
+If you keep an offline map pack on an SD card, older firmware was deleting tiles out of it: every tile it wanted as a .jpg erased the .png sitting next to it. That is fixed, but the deletions already made cannot be undone, so check whether areas of your pack are missing and re-copy them. Found and fixed by Christopher Van Hoose on a ThinkNode M9.
+ThinkNode M9 owners: some of the SD cards Elecrow shipped carry a Windows worm (their advisory, September 2026). It cannot run on the radio, but it runs on the first Windows PC the card is put into, which is exactly where you take it to copy map tiles. This firmware warns you when such a card is in the device at startup or is inserted, and offers SD Scan. If your card has already been in a PC, run a virus scan on that PC too.
+Bluetooth now serves either the phone app or a Bluetooth keyboard, and you choose which under Settings, Bluetooth. The phone app stays the default, so nothing changes unless you go looking for it.
+Changing the theme, rotating the screen or switching remote mode restarts the device. All three now tell you why before they do it.
+
+# --- Two new boards --------------------------------------------------------------------------
+The Seeed Wio Tracker L2 is supported: display, touch, GPS, microSD, battery and buttons were all brought up on real hardware by Michael A. Cojocari, who owns the board and maintains it.
+The LilyGo T-Deck Pro can be flashed from the website, marked experimental. E-paper screen, keyboard and touch, with radio, GPS, microSD and battery working. The screen redraws the way e-paper does rather than updating instantly. By Michael A. Cojocari, tested on one unit, so please report what you find.
+
+# --- USB Files ---------------------------------------------------------------------------------
+New on the T-Deck and the Heltec V4: USB Files. Open it from the app drawer, connect the device to a computer with a USB cable and go to files.wadamesh.com in Chrome or Edge. You can browse the SD card, internal storage and the map tiles, upload files and whole folders, and download, rename or delete them.
+The device carries out every file operation itself, so what it relies on stays safe: identity, contacts, settings and chat history can be downloaded but not changed or deleted. On the SD card that is the meshcomod folder.
+Files that SD Scan would flag, like Windows programs, scripts, shortcuts and autorun.inf, show in red on the page, and downloading one asks you first. The device also checks a file's first bytes, so a Windows program under a harmless name is caught too.
+Your files go straight from the device to your computer over the cable. Nothing passes through our server. While USB Files is open the companion app cannot use USB; Bluetooth, Wi-Fi and the radio keep working.
+USB Files is tested on a T-Deck. Heltec V4 owners: worth reporting whether connecting, uploading and downloading work. Other boards follow once tested.
+
+# --- Files on and off the device over Wi-Fi ----------------------------------------------------
+Copy files between a browser and the device's card, protected by a six digit code shown on screen. Uploads are verified with a checksum and committed atomically, so an interrupted transfer cannot leave a half written file in place, and three wrong codes lock attempts out for thirty seconds. Available on every board with a removable card. By Michael A. Cojocari.
+The same page lists crash reports, settings backups and transferred files as well as screenshots, filters them by type and can delete them. A settings backup contains your private key, so the page says so before you download one. By Michael A. Cojocari, requested by DenRalle.
+A folder of offline OSM tiles can be uploaded straight to the SD card, with resumable writes. By Michael A. Cojocari, requested by wpawelczyk-wq.
+
+# --- Bluetooth keyboards on every board with Bluetooth ------------------------------------------
+Pairing lists the keyboards that are in pairing mode and pairs with a code or without one, and the keyboard you paired reconnects by itself after that.
+Keys are read the way a phone or a computer reads them, from the keyboard's own report map, so media keys and touchpads are left alone. Pick the layout to match your keyboard: US, UK, German, French or Belgian, including AltGr and the dead keys for accents.
+On a touchscreen board the on-screen keyboard stays down while a keyboard is connected, and a second tap on a field brings it up anyway when you want it.
+The arrows, Tab, Enter and Page Up and Down drive the highlight, so the whole interface works without touching the screen, and the letter hotkeys over the tab bar switch pages.
+Esc is the back button. Some keyboards type a character instead of sending Esc, so the Back key setting captures whichever key you press and treats that one as back from then on.
+The Command key tapped on its own opens the emoji picker while you are writing a message, and the status bar shows a keyboard instead of the Bluetooth glyph while one is connected.
+Not on the Tanmatsu or the T-Display P4, which have no Bluetooth of their own.
+
+# --- SD Scan ---------------------------------------------------------------------------------------
+New in the Store: SD Scan. It looks through the SD card for Windows programs, scripts, shortcuts and autorun files, shows what it found and why, and removes it after you confirm. A mesh radio never uses any of these files, and nothing else on the card is touched.
+SD Scan only removes files it recognises. If a card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
+
+# --- Day and Night themes ---------------------------------------------------------------------
+The firmware has a light theme. Settings, Display, Appearance switches between Night and Day, and the Theme chip in the control centre toggles it directly. Night is still the default and looks exactly as it did.
+Day is a full palette rather than an inverted one: text, panels, fields, borders, controls, focus rings, charts, status colours and chat bubbles each got their own light values. Changing it restarts the device so every part of the interface is rebuilt from one set of colours instead of half-repainted. By Michael A. Cojocari.
+
+# --- Location privacy -----------------------------------------------------------------------------
+Settings, GPS has a Location privacy option: Exact, or displaced by up to 100 m, 250 m or 1 km. Only what you broadcast is moved; your own map and GPS page still show your real position. All four choices are buttons, so the current one is visible without tapping anything. Requested by Danie10.
+The displacement is the same every time rather than random per advert. A fresh random offset would scatter points around where you really are, and anyone collecting a night of them could average out your true location; a fixed shift instead looks like a node that simply sits somewhere else. It also changes with the distance you pick, so switching between 100 m and 1 km can no longer be crossed to find you. Found by jesshampshire.
+You can choose to answer a position request from your chosen contacts with your real position. A reply goes encrypted to one contact who already has your permission and who asked for it, so treating it like a broadcast was too blunt. Off unless you turn it on, and what you advertise stays displaced either way.
+
+# --- Set the clock, and the lock screen ----------------------------------------------------------
+Settings, Clock takes the time by hand now, as local time. With no GPS fix, no network and no companion app there was previously no way to set it at all, and message timestamps are built from it. The field starts filled with the current reading. Requested by dreirund.
+A message arriving on the lock screen says who sent it and how far away they are, not just which conversation it was in. A channel post shows the channel, the sender and the hop count; a direct message shows the contact and "direct" when they are one hop away.
+Messages in a muted channel no longer light the screen. Muting silenced the sound but still woke the display and printed the message in large type. Mentions are separate, so a channel muted for chatter still shows an @-mention.
+Support for a DS3231 clock module fitted to a T-Deck, so the time survives a full power-off without GPS or Wi-Fi. Requested and built by jrote1.
+
+# --- Console mode: an early preview ---------------------------------------------------------------
+Console mode boots the device into a plain text console with no graphical interface at all: no widgets, no draw buffer, and the memory and processor time the interface would use are yours instead. It is off by default and lives in Settings, General, marked experimental.
+Type "ui" or "exit" to come back, or hold a finger on the screen for three seconds. If it ever crashes on the way up the device returns to the graphical interface by itself, and boards with no way to type into a console are no longer offered the mode at all.
+What works today: contacts, channels, unread counts, reading a thread, sending to a contact or a channel, a live monitor of arriving messages, radio and battery and Wi-Fi readouts, discovery, and anything the node CLI already answers. There is no map, no file manager, no Lua apps and no settings editor.
+
+# --- The ThinkNode M9 -------------------------------------------------------------------------------
+The M9's magnetometer was on the board and nothing had ever talked to it. It does now, with a driver written from the chip's own register map, and the axis orientation was measured on real hardware at four headings ninety degrees apart, so a calibrated device points north with no setup from you. By Christopher Van Hoose.
+A GPS Compass app in the Store: a dial with bearing and range to a chosen contact, a satellite meter, hard iron calibration and per row imperial or metric units. On boards without a magnetometer it falls back to GPS course over ground.
+Turning the screen off used to turn only the backlight off while the panel kept refreshing the same image behind it, which is what burns an image into the glass. It now stops driving the panel properly. Reported and photographed by Buko84.
+Opening Contacts no longer stalls partway through. While adverts were arriving the whole list was being torn down and rebuilt every two and a half seconds; now only the parts an advert actually changes are updated in place. Reported by Buko84.
+The SD card could stop responding entirely until a reboot, when opening Settings, About at the wrong moment parked the tile worker and the recovery path against each other. Traced from the code by Christopher Van Hoose, who filed it without being able to reproduce it.
+Keyboard navigation across the board: up and down move through a conversation one message at a time, the jump-to-latest arrow is back, message info and the admin log and the discovered list scroll, the text cursor stays inside the field while you type, the navigation shortcuts work from anywhere, and System Information and Memory detail can be navigated.
+Replying no longer needs a five second hold: Enter on a selected message does it, and unlocking is a double press of the d-pad centre. Contact search, the contacts menu delay, the composer focus when a chat opens, and the drawer jumping to the settings gear are all fixed.
+Accented and special characters can be typed and selected, the colour picker no longer turns the swatch you are on white, the battery saver shows in the status icons, the notification text on a dark screen is sized for a 240x320 panel, and the file list shows when each file was written.
+When the app drawer is your home screen, a new "Lock home to drawer" switch keeps the Home key there. A firmware update waiting for you is now visible on the screen, which that board never had.
+The map opens in about 1.5 seconds instead of 2.6, Back returns to the previous screen rather than jumping out of where you were, the card is remounted properly after formatting, live labels no longer overlap the rows beneath them, and GPS acquisition time is measured from when the search started.
+Spectrum runs to the radio chip's specification: roughly twice as fast per sweep, correct frequency limits, and opening it mid-transmission waits rather than cutting the packet off the air.
+Most of the M9 work above is Michael A. Cojocari's and Christopher Van Hoose's, from reports by Buko84 and DenRalle.
+
+# --- Crashes and lockups fixed ----------------------------------------------------------------------
+Adding or removing known regions and then leaving that screen crashed the device. When a text field is destroyed the interface library sends it one last "you lost focus" event, and seven fields in the firmware save their value on losing focus, so a field was reading and rewriting itself from inside its own destructor. All seven now ignore a blur that is really a deletion. Found by decoding the core dump attached to the report.
+A device could crash while starting up, before it finished booting, and on an unlucky unit that means it never comes up at all. The firmware was adding its Wi-Fi event handlers after the radio had already started, and a disconnect arriving in that moment could be handled while the list of handlers was being rebuilt underneath. They are all registered before the radio starts now. Found from a crash dump on a Heltec V4-R8.
+Running a Lua app could reboot the device outright. The firmware never told Lua what to do when an error escapes, so Lua fell back to aborting the whole program, which on a radio is a reset. The gap is closed, and anything that still escapes prints its error text instead of taking the device down with it.
+A crash where the device rebooted while sitting on the home screen: boards with the Expansion Kit were reading the temperature sensor over I2C about once a second, and a stalled reading could leave the shared bus in a state that panics the firmware. The reading is cached now.
+Powering off the T-Display P4 from the power menu appeared to freeze it, under a message telling you to click a trackball it does not have. It really was powering off with nothing configured that could wake it, so boards that cannot be woken no longer offer the option. Reported by wb6zsu.
+Long sender names are stored in full. Names can be 31 characters and only the first 24 were kept, so anything longer was cut permanently on arrival. A long name no longer pushes the message text out of shape either, and a colon inside an ordinary message is no longer mistaken for an author name. Both by Ruben Laban, a first contribution.
+Granting an app permission could silently take a permission away from a different app, which is why apps reported "permission denied" with every permission granted. Two separate causes, both fixed: the grant wrote the whole permission set rather than the single switch, and the switches packed the app's position and the permission into too few bits.
+
+# --- If your T-Deck typed the wrong letters ------------------------------------------------------------
+Pressing "a" produced "q " and "m" produced "qa " on the older T-Deck keyboards, the ones without the controllable backlight. The firmware asks the keyboard at startup whether it speaks the newer protocol that modifier latching needs, and an older keyboard's answer looked enough like a yes to be taken as one.
+Nothing can tell the two keyboards apart while nobody is typing, so the firmware corrects itself: the first letter you press is unmistakably a character rather than a key-position report, and it switches to the older protocol on the spot and delivers that letter. Newer keyboards are unaffected and keep latching.
+There is also a switch you can reach without typing: Settings, Keyboard, "Older keyboard protocol". It skips the detection entirely, is operated by touch and applies immediately.
+
+# --- Radio, battery and power ------------------------------------------------------------------------
+The idle power saver works again. It refused to arm because it consulted a saved Wi-Fi setting that reads as "on" when it has never been written, so anyone who had not explicitly switched Wi-Fi off inside this firmware was blocked forever. It now looks at whether the radio is actually powered, and the radio is properly powered down when you turn Wi-Fi off, which a network scan could previously leave running. Reported by jrote1.
+The Battery page says what is keeping the device awake, for example "held by mesh busy 62%". A low "asleep" figure could mean the device parks badly or simply that it was rarely allowed to park, and there was no way to tell which. Requested by jrote1.
+The battery life estimate works again after a restart. Samples written before the clock was set made a normal discharge look flat, so it said "charging / steady". Reported by Danie10.
+The charging icon appears on the ThinkNode M9 and every other board that was missing it. Charge detection was only ever compiled for two boards, and every other one answered "not charging" no matter what the hardware was doing. Reported by museifu696 and thesupergeek.
+The T-Deck reported a full battery as 4.09 V. The conversion from the board's voltage divider was slightly off, so every T-Deck read low.
+The T-Display P4 battery percentage comes from the fuel gauge chip instead of being guessed from voltage, and no longer flickers to 0 when a reading is lost. The gauge counts charge in and out and knows the real state of charge; voltage is driven by the charger, which is why the reading jumped to 100% the moment you plugged USB in and once showed 71% on a pack that was actually at 11%. Reported by D-Melhede and wb6zsu.
+On the T-Display P4, Wi-Fi came back on by itself after a power cycle while every switch in the interface said it was off. The co-processor rejoins your last network on its own at power-on, and the firmware only ever acted when the setting changed. Reported by wb6zsu.
+Polling a node for telemetry now stops on its own, after 10 requests by default, instead of carrying on until someone remembers to switch it off. It was flooding the mesh. Reported by Colni777.
+An open Discover page probed the neighbourhood every four seconds for as long as it was open, which is airtime spent on everyone's radio and not only yours. It backs off to every thirty seconds now, and starts over when you open the page or press Scan.
+Asking a contact for telemetry from the device always failed, while the phone app got it from the same contact, and that contact's position never moved on the map. Every request the device sent was preceded by a login that only repeaters and room servers understand. Reported by christianprim.
+The remote web page showed a bandwidth of 62.5 as 62, and pressing Apply sent 62 back to the device, so opening the page and applying anything reconfigured the radio onto a bandwidth the mesh was not using. Both halves are fixed.
+
+# --- Messages, map and the interface ---------------------------------------------------------------
+The map stopped drawing contacts after 31 of them while the counter in the corner kept counting every one. The limit is 256 now, the counter says "31 of 45 on map" if it is ever reached, and Map options gained a "Max dots" setting.
+Opening the Map used to cost about two and a half seconds every time, because leaving the tab threw away every decoded tile. Boards with the memory to spare keep them, so a return to the map is roughly ten times faster.
+The map zoom level is shown when you use the +/- buttons instead of the slider, and your own position marker is readable on light maps.
+Each hop in a message route shows its path prefix next to the repeater name. When a repeater is named misleadingly, or two share a name, the prefix is the part that still identifies it.
+Share a contact with whoever is next to you: the contact menu re-broadcasts that contact so nodes in direct range can add them. Deliberately direct-range only, because putting someone else's node on the whole mesh is a lot of airtime for a packet nobody asked for.
+The Discovered list showed impossible hop counts like "255 hop". That value means the path is unknown, which is what an advert that reached you by flood carries; it says so now, says "direct" for zero hops, and counts hops in plural. The list also shows the same icons as Contacts. Reported by jesshampshire.
+The message box shows a character count as you approach the 160 character limit and marks it when you reach it. The limit used to be silent, so typing simply stopped. Requested by jrote1.
+Wi-Fi passwords can be shown while you type them. Requested by jesshampshire.
+Notification sounds behave the way the settings page claims. The sample chime, the volume buttons and each switch played regardless of the master Sound switch and of Do Not Disturb, while an arriving message respected both. A preview is now silent exactly when a real notification would be, and says which of the two silenced it. Reported by PD0RCM.
+A louder notification chime, in Settings, Sound. The buzzer on these boards has no volume control, so this raises the pitch into the range a piezo is loudest at instead. Off by default. Requested by Buko84.
+New setting, Settings, Radio & Mesh, "Ignore 1-character messages", off by default. Most mesh spam is a single character because that is the cheapest message to send, and it still costs every receiver a notification and a chime.
+Regions are a list you can add to, and a message scoped to a region says which one it came from. By Michael A. Cojocari, reported by D-Melhede.
+Quick replies can be longer, and the save indicator has been removed from the home screen: it read "Save FAIL" permanently on one board, and everything it showed is on Settings, About, Chat store.
+The panels that hold text scale with the text they contain, including the lock and unlock progress cards, the on-screen keyboard's text line and the accent colour row, so a longer translation has room and Large or Huge text sizes no longer cut the first line of a page in half.
+
+# --- Keyboards and typing --------------------------------------------------------------------------
+Shift latches like the symbol and alt keys do: tap once for the next letter, tap twice to lock until you tap again. No more holding shift down while reaching for a key.
+Accented and Nordic letters can be typed on the ThinkNode M9, and the last variant in a set is reachable on the T-Lora Pager, which happened to be the one Nordic users want. Requested by leon699.
+Accent popups work again for anyone typing on a physical keyboard. The accent box and the @-mention picker share one piece of code and the accent half had been dropped from the path a physical keyboard uses.
+@-mention autocomplete in the device chat and the web interface, suggesting people whose adverts this device actually heard rather than everyone in your contacts. By Michael A. Cojocari.
+A Latvian keyboard layout, and Romanian no longer labels itself as English on the layout button. By aigarslv.
+Keyboard backlight controls are hidden on the older T-Decks, which have no controllable backlight, so they no longer look like settings that do nothing. Requested by jesshampshire.
+The Attaky Mesh Deck's front D-pad and SELECT button work, where the board has nine buttons and only the power button did anything.
+Heltec V4 with the original Expansion Kit: the IO button goes back on a tap and home on a hold, the keys are larger with a magnified preview, and the status bar targets are easier to hit. By Michael A. Cojocari, reported by jesshampshire.
+Pasting a key into the channel secret or the public key field takes the key out of whatever you copied, so pasting a whole message somebody sent you works. Reported by Steve8677.
+
+# --- Screens, wake and notifications -------------------------------------------------------------
+A new "At a glance" notification style: when a message arrives while the screen is dimmed, it shows a short preview without fully waking the device or lighting the keyboard. Optional, and it can be limited to when the device is unlocked. By Tesso M Costa.
+Emoji in an "At a glance" notification render as emoji instead of squares. Reported by B0N3-GD.
+The web interface can unlock the screen again. A locked screen absorbs every tap on purpose, and unlocking on the device means holding the trackball or the button, so a browser had no way back from a screen it had locked itself. Reported by PD0RCM.
+A touch wakes a dark console screen again on the boards that have no keyboard, where nothing else could.
+Screenshots from the Control Center on the ThinkNode M9 and both T-Lora Pagers, with a timer for immediate, 3-second or 10-second capture. By Michael A. Cojocari.
+Download mode says what it is for and how to leave it: the entry says "wait for USB flash" and the message says RESET cancels. It waits for a USB flash with the interface stopped, which looked like the device had frozen. Reported as a freeze by dreirund.
+The message count on the app drawer no longer stays stale after unlocking, a Lua app is no longer covered by the drawer when a message arrives, and a message arriving while you are on the second row of the drawer no longer jumps you back to the first.
+The Ctrl key closes the Control Center as well as opening it, the theme button keeps one icon in both states, and the Do Not Disturb chip uses a crescent moon rather than a bell.
+The selection cursor on keyboard-driven boards is an accent outline rather than a block of reverse video, which used to hide whatever it landed on. The Pager, Tanmatsu, M9 and T-Deck trackball all look the same now. By Michael A. Cojocari.
+The lock screen notification no longer shows a direct message as 64 hops away, and the T-Display P4 no longer offers a lock screen it had no way into or out of. Reported by Buko84 and Piguyraspberry.
+
+# --- The other boards -------------------------------------------------------------------------------
+The T-Lora Pager: the microSD card mounts again after the card has been read on a computer, powering off unmounts it properly, a card that will not read is no longer a dead end, Remote Mode no longer leaves a black screen with no way out, "Save update bin to SD" is offered, and there is a shortcut to the special-character picker. By Michael A. Cojocari.
+The LilyGo T-Deck Pro: touch releases are debounced, holding a chat row is timed in hardware, and typing a space no longer starts the screen lock. By Michael A. Cojocari.
+The Seeed Wio Tracker L2: wake and screen controls, Enter on the on-screen keyboard running the terminal command, backups going to the SD card, and the Memory detail page matching the other full-screen pages. By Michael A. Cojocari.
+The T-Display P4: the first line of a Lua app is no longer cut in half by the status bar, the app drawer's options fit the screen, and the GPS screen can be left after changing the displacement. Reported by D-Melhede and Leon P.
+The Heltec V4-R8: chat history and the battery log follow the SD card properly, a reboot trap in the Orientation setting is defused, and a crash when Wi-Fi associated with Bluetooth already on is fixed. By Christopher Van Hoose.
+"Store data on SD" is honoured on the ThinkNode M9, with chat history and the map tile cache following it, deep sleep really drops the power rails, and the keyboard, terminal and update paths gained the features that had been quietly limited to the T-Deck. By Christopher Van Hoose.
+Known regions can be left again on the Tanmatsu, where the page was missing from the list the Back key walks. Reported by DenRalle.
+Every board now names its own firmware file for updates, so a board can never quietly install another board's firmware.
+The About page shows microSD diagnostics, so a card that will not mount says why. By Michael A. Cojocari.
+Map tile packs placed in MAPS/ on the card load, where the tile loader only ever looked for the lower-case spelling. Reported via pisti87 on behalf of w7aaf.
+The supported-device list finally matches reality: the T-Lora Pager, Heltec V4-R8, T-Display P4 and Attaky Mesh Series all ship and none of them were listed.
+
+# --- For people writing Lua apps -----------------------------------------------------------------
+An app can hold a whole conversation: send a direct message to a contact, post to a room server, list the channels configured on the device, and receive incoming messages tagged as channel, dm or room.
+Permissions went from two to four, split the way the risk actually splits: post to channels as me, read channel messages, send private messages as me, read private messages. Settings, App permissions lists all four per app and takes any of them back.
+Apps can put the real map on their page: the same OpenStreetMap tiles, projection and cache the Map tab uses, with markers and lines placed by latitude and longitude, taps turned back into coordinates, and a tile count so an app can say "nothing cached here".
+Apps got a scrollable list whose rows are real buttons, so keyboard and trackball navigation walks them on boards without a touchscreen.
+Apps can be told about each packet as it arrives instead of polling a 16-deep ring on a timer. Every frame is delivered once, in order, and says who sent it as far as the frame honestly can: an advert carries a real public key, addressed frames carry one-byte hashes, anything else stays anonymous.
+Apps can ask the mesh who is out there. A discovery probe is a zero-hop request that every node in earshot answers, with its own permission because it costs airtime on every neighbour's radio, and each reply carries both directions of the link.
+Text entry using the firmware's own dialog and keyboard, distance and bearing computed in C, environment sensors on the boards that have them, more than one timer including one-shot ones, uploads as well as downloads, and coordinates with exact integers alongside the decimals plus GPS altitude and satellite time.
+wada.crypto: SHA-1, SHA-256, both HMACs and hex, on every board, because a HMAC in pure Lua does not fit inside the per-callback instruction budget.
+wada.ui.clear() takes a page back to empty, contacts can be paged through with an offset and a limit past the old 100 and 200 ceilings, and an app can be 192 KB instead of 64 KB.
+Apps can read speed and heading from the GPS, the raw field vector from the magnetometer where there is one, WAV and MP3 audio from the card or memory, and a read-only listing of the SD card that can page through big folders.
+wada.sd.check and wada.sd.remove find and delete Windows malware on the card. The firmware decides what counts and remove refuses everything else, so no app can use it to delete anything else.
+wada.mesh.send() returns a fingerprint for what it sent, and wada.mesh.repeats(fp) tells you how many repeaters were heard rebroadcasting it.
+Apps can use the firmware's own translations, the icon in an app's manifest is finally drawn, and an app that clears its screen while showing a map no longer frees that map twice.
+On the T-Deck an app now receives A, P, Q, Enter and Backspace and the trackball button, which were held back or thrown away. All reported by Jade, who is building against the SDK.
+The Store says what an app needs and stops offering apps your board cannot run, and an app opened from the store no longer keeps its title bar over the app.
+New in the Store over this run: 2048 by pisti87, Wardrive and Nearby, GPS Compass, SD Scan, and Wardrive 1.2 by tmetz1987, which lets you review a run on the device after it finishes.
+All of it is documented at wadamesh.com/sdk.html, including the instruction budget and what it costs.
+
+# --- Translations -------------------------------------------------------------------------------------
+Fifty one strings could never be translated by anyone, and nobody could have known: the check that decides which text belongs in a language file recognised one way of marking text as translatable, and three other ways are used throughout the firmware. That is the whole map options sheet, the sort menus, the contacts filters and the home screen buttons.
+Language file v18 contained 202 invented entries, like "Paste (move)Paste (copy)" glued together and a phrase that appears only inside a source-code comment. They are gone from all thirteen files, nothing a translator had actually translated was touched, and the tool no longer joins the two halves of a choice or reads text out of comments.
+The map's About and credits sheet, the signal card, Known regions, the Bluetooth pairing hint, the Wi-Fi rescan and hidden-network rows, the update check, the downgrade prompt and the System Information title are all translatable and translated.
+Language files and Store apps are published by a script now, so a translation or a new app actually reaches devices instead of sitting in the project.
+Hungarian keeps pace with the firmware throughout this run, by pisti87.
+
+# --- Thanks ---------------------------------------------------------------------------------------------
+Most of these eighteen builds are community work. Michael A. Cojocari contributed the majority of several drops and tests each one on his own hardware; Christopher Van Hoose audited the ThinkNode M9 and Heltec V4-R8 and wrote the M9 compass; Tesso M Costa wrote At a glance; pisti87 kept Hungarian current and wrote the first community Store app; aigarslv, tmetz1987 and Ruben Laban each contributed as well.
+Thanks also to everyone who reported a bug with their board name and what they did, and to the people who sent crash dumps: three of the crashes above were found by decoding one.
