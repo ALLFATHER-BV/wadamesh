@@ -5,6 +5,18 @@
 #include <cstring>
 
 TDeckProDisplay::BusyHook TDeckProDisplay::_busy_hook = nullptr;
+#if defined(HAS_TDECK_MAX)
+// T-Deck Max: the CST3530 signals each report with a short LOW pulse on INT and
+// goes back to sleep, so a poll that only reads when INT is LOW right now misses
+// almost every touch. Latch the falling edge here (what the factory Hynitron
+// driver does) and let readCst3530() consume it on the next poll.
+static volatile bool s_cst3530_irq_pending = false;
+static void IRAM_ATTR cst3530IntIsr() { s_cst3530_irq_pending = true; }
+// Front capacitive pads (CST3530 keys): press-edge latch for the UI to consume.
+static bool    s_key_down[3] = { false, false, false };
+static bool    s_key_press_pending = false;
+static uint8_t s_key_press_id = 0;
+#endif
 
 TDeckProDisplay::TDeckProDisplay()
     : DisplayDriver(WIDTH, HEIGHT),
@@ -41,6 +53,12 @@ bool TDeckProDisplay::begin() {
   ledcSetup(TDECK_PRO_FRONTLIGHT_CHANNEL, 12000, 8);
   ledcAttachPin(PIN_TFT_LEDA_CTL, TDECK_PRO_FRONTLIGHT_CHANNEL);
   writeBrightness(0);
+#if defined(HAS_TDECK_MAX)
+  // Every panel update re-applies _brightness (serviceRefresh). Its constructor
+  // default of 255 lit the front-light on the boot wordmark's first refresh and
+  // left it on until the UI took over ~a minute later. Boot dark instead.
+  _brightness = 0;
+#endif
 
   Wire.begin(PIN_BOARD_SDA, PIN_BOARD_SCL, 400000);
   resetTouch();
@@ -48,6 +66,10 @@ bool TDeckProDisplay::begin() {
   if (_touch_is_cst3530) {
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
     _touch_ready = initCst3530();
+#if defined(HAS_TDECK_MAX)
+    s_cst3530_irq_pending = false;
+    attachInterrupt(digitalPinToInterrupt(PIN_TOUCH_INT), cst3530IntIsr, FALLING);
+#endif
   } else {
     _touch_ready = _cst328.begin();
     _cst328.setRotation(0);
@@ -296,13 +318,31 @@ bool TDeckProDisplay::readCst3530(int16_t& x, int16_t& y) {
   const uint8_t clear_command[] = { 0xD0, 0x00, 0x02, 0xAB };
   uint8_t response[50] = {};
 
+#if defined(HAS_TDECK_MAX)
+  const bool pending = s_cst3530_irq_pending;
+  if (pending) s_cst3530_irq_pending = false;
+  if (!pending && digitalRead(PIN_TOUCH_INT) != LOW) return false;
+#else
   if (digitalRead(PIN_TOUCH_INT) != LOW) return false;
+#endif
   Wire.beginTransmission((uint8_t)PIN_TOUCH_ADDR);
   Wire.write(read_command, sizeof(read_command));
   if (Wire.endTransmission() != 0 || Wire.requestFrom((int)PIN_TOUCH_ADDR, 9) != 9) return false;
   size_t received = Wire.readBytes(response, 9);
   const uint8_t fingers = response[3] & 0x0F;
   const uint8_t keys = (response[3] >> 4) & 0x0F;
+#if defined(HAS_TDECK_MAX)
+  // Key report (factory cst66xx layout): id in the low nibble of byte 8, state
+  // in the high nibble (1 = pressed). Latch the press edge; releases just clear.
+  if (keys) {
+    const uint8_t kid = response[8] & 0x0F;
+    const bool kdown = ((response[8] >> 4) == 1);
+    if (kid < 3) {
+      if (kdown && !s_key_down[kid]) { s_key_press_pending = true; s_key_press_id = kid; }
+      s_key_down[kid] = kdown;
+    }
+  }
+#endif
   const uint8_t total = (uint8_t)(fingers + keys);
   if (total > 1) {
     size_t extra = (size_t)(total - 1) * 5u;
@@ -321,6 +361,15 @@ bool TDeckProDisplay::readCst3530(int16_t& x, int16_t& y) {
   y = (int16_t)(response[index + 5] | ((uint16_t)(response[index + 7] & 0xF0) << 4));
   return true;
 }
+
+#if defined(HAS_TDECK_MAX)
+bool TDeckProDisplay::takeFrontKeyPress(uint8_t& key_id) {
+  if (!s_key_press_pending) return false;
+  s_key_press_pending = false;
+  key_id = s_key_press_id;
+  return true;
+}
+#endif
 
 bool TDeckProDisplay::getTouchPoint(uint16_t& x, uint16_t& y) {
   if (!_touch_ready) return false;

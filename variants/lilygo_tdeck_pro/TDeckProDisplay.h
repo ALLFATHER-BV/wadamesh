@@ -37,6 +37,11 @@ public:
   static void prepareMapTileRGB565(uint16_t* pixels, int width, int height);
   void setDisplayRotation(uint8_t rotation);
   void setBrightness(uint8_t brightness);
+#if defined(HAS_TDECK_MAX)
+  // The three capacitive pads below the glass are CST3530 keys. Returns true
+  // once per press (edge), with the key id (Meck: 0 = heart, 1 = bubble, 2 = send).
+  bool takeFrontKeyPress(uint8_t& key_id);
+#endif
   bool getTouchPoint(uint16_t& x, uint16_t& y);
   void serviceRefresh(bool force = false);
   void setBusyHook(BusyHook hook) { _busy_hook = hook; }
