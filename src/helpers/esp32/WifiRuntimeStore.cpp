@@ -104,7 +104,14 @@ void wifiConfigClear() {
 
 bool wifiConfigGetRadioEnabled() {
   if (!s_begun) wifiConfigBegin();
+#if defined(HAS_TDECK_MAX)
+  // T-Deck Max: Wi-Fi OFF until the user turns it on. Wi-Fi and BLE together
+  // at boot left ~28% of internal RAM free on this board; BLE (default on) is
+  // the companion transport. The Settings toggle persists whatever is chosen.
+  return s_prefs.getUChar(WIFI_CONFIG_RADIO_EN_KEY, 0) != 0;
+#else
   return s_prefs.getUChar(WIFI_CONFIG_RADIO_EN_KEY, 1) != 0;
+#endif
 }
 
 void wifiConfigSetRadioEnabled(bool enabled) {
