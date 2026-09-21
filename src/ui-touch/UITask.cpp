@@ -30617,6 +30617,10 @@ static uint8_t* decodeJpegScaledToRgb565(const uint8_t* jpeg, size_t jpeg_len,
 static double   s_map_center_lat = 0.0;
 static double   s_map_center_lon = 0.0;
 static uint8_t  s_map_zoom       = k_map_zoom_default;
+static bool     s_map_location_valid = false;
+static double   s_map_location_lat = 0.0;
+static double   s_map_location_lon = 0.0;
+static lv_obj_t* s_map_location_marker = nullptr;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
@@ -33316,6 +33320,10 @@ static void discoverJumpToMapHere() {
 }
 
 static void freeMapMarkers() {
+  if (s_map_location_marker) {
+    lv_obj_del(s_map_location_marker);
+    s_map_location_marker = nullptr;
+  }
   for (auto& m : s_map_markers) {
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
     m.mesh_idx = -2;   // "slot empty" sentinel
@@ -33333,6 +33341,7 @@ static void freeMapMarkers() {
 static void openMarkerPopupForContact(int mesh_idx);
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
 static void openMapPicker(const int* idxs, int n);
+static void removeMapLocation();
 // (onMapMarkerClickedCb removed — marker taps are now dispatched centrally
 // from the canvas's RELEASED handler in mapCanvasEventCb. See the marker
 // scan in the tap branch below.)
@@ -33487,6 +33496,29 @@ static void renderMapMarkers() {
     ++slot;
   }
   s_map_markers_drawn = slot - 1;   // slot 0 is self
+
+  // Selected message coordinate. Keep this separate from contact markers so it
+  // remains visible even when contact markers are disabled or capped, and draw
+  // it last so a contact at the same location cannot hide it.
+  if (s_map_location_valid) {
+    double lwx, lwy;
+    latLonToWorldPx(s_map_location_lat, s_map_location_lon, s_map_zoom, &lwx, &lwy);
+    const int sx = (int)(lwx - cwx + k_map_canvas_w / 2);
+    const int sy = (int)(lwy - cwy + k_map_canvas_h / 2);
+    if (sx >= -12 && sx < k_map_canvas_w + 12 &&
+        sy >= -12 && sy < k_map_canvas_h + 12) {
+      s_map_location_marker = lv_obj_create(parent);
+      lv_obj_remove_style_all(s_map_location_marker);
+      lv_obj_set_size(s_map_location_marker, 14, 14);
+      lv_obj_set_pos(s_map_location_marker, sx - 7, sy - 7);
+      lv_obj_set_style_bg_color(s_map_location_marker, lv_color_hex(0xE04455), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(s_map_location_marker, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_radius(s_map_location_marker, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+      lv_obj_set_style_border_color(s_map_location_marker, lv_color_hex(0x101418), LV_PART_MAIN);
+      lv_obj_set_style_border_width(s_map_location_marker, 2, LV_PART_MAIN);
+      lv_obj_clear_flag(s_map_location_marker, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+  }
 
   // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
   if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
@@ -34384,12 +34416,17 @@ static void mapPickerBackdropCb(lv_event_t* e) {
   if (a) lv_indev_wait_release(a);
   closeMapPicker();
 }
+static void openMapLocationMenu();
 static void mapPickerRowCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   lv_indev_t* a = lv_indev_get_act();
   if (a) lv_indev_wait_release(a);
   closeMapPicker();
+  if (idx == -2) {
+    openMapLocationMenu();
+    return;
+  }
   openMarkerPopupForContact(idx);
 }
 
@@ -34442,7 +34479,9 @@ static void openMapPicker(const int* idxs, int n) {
   for (int i = 0; i < n; ++i) {
     const int midx = idxs[i];
     char row_label[40];
-    if (midx < 0) {
+    if (midx == -2) {
+      snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  %s", TR("POI"));
+    } else if (midx < 0) {
       snprintf(row_label, sizeof(row_label), LV_SYMBOL_GPS "  (you)");
     } else {
       ContactInfo c;
@@ -34470,6 +34509,74 @@ static void openMapPicker(const int* idxs, int n) {
     lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
     y += btn_h + gap;
   }
+}
+
+static lv_obj_t* s_map_location_menu_root = nullptr;
+
+static void closeMapLocationMenu() {
+  if (s_map_location_menu_root) popupClose(&s_map_location_menu_root);
+}
+
+static void mapLocationMenuBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a) lv_indev_wait_release(a);
+  closeMapLocationMenu();
+}
+
+static void mapLocationDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a) lv_indev_wait_release(a);
+  closeMapLocationMenu();
+  removeMapLocation();
+}
+
+static void openMapLocationMenu() {
+  closeMapLocationMenu();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const int card_w = PCW(220), card_h = PSC(112), pad = PSC(10);
+  s_map_location_menu_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_map_location_menu_root);
+  lv_obj_set_size(s_map_location_menu_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_map_location_menu_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_map_location_menu_root, lv_color_hex(0x000000), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_map_location_menu_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_map_location_menu_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_map_location_menu_root, mapLocationMenuBackdropCb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* card = lv_obj_create(s_map_location_menu_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(card, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, pad, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  addCloseXBadge(card, mapLocationMenuBackdropCb);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("POI"));
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_pos(title, 0, 0);
+
+  lv_obj_t* remove = lv_btn_create(card);
+  lv_obj_set_size(remove, card_w - 2 * pad, PSC(36));
+  lv_obj_set_pos(remove, 0, PSC(40));
+  styleButton(remove);
+  lv_obj_set_style_bg_color(remove,
+                             lv_color_hex(themeRole(0xB23A48, COLOR_STATUS_DANGER)), LV_PART_MAIN);
+  lv_obj_add_event_cb(remove, mapLocationDeleteCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* label = lv_label_create(remove);
+  lv_label_set_text(label, TR(LV_SYMBOL_TRASH "  Delete"));
+  lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(label, lv_color_hex(COLOR_ON_STATUS_DANGER), LV_PART_MAIN);
+  lv_obj_center(label);
 }
 
 // ===== "Show contact on map" — list every contact that has GPS coords, tap one
@@ -34537,6 +34644,27 @@ static void actionSheetShowOnMapCb(lv_event_t* e) {
   s_map_view_inited = true;   // keep this centre — don't recentre on self on open
   if (s_map_zoom < k_map_zoom_max) s_map_zoom = (uint8_t)(s_map_zoom + 1);
   goToTab(MAP_TAB_INDEX);      // onMapTabActivated renders tiles + markers + overlay
+}
+
+static void openMapAtCoords(double lat, double lon) {
+  s_map_location_valid = true;
+  s_map_location_lat = lat;
+  s_map_location_lon = lon;
+  s_map_center_lat = lat;
+  s_map_center_lon = lon;
+  s_map_view_inited = true;
+  s_map_zoom = 15;
+  if (s_map_zoom_slider)
+    lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+  goToTab(MAP_TAB_INDEX);
+}
+
+static void removeMapLocation() {
+  s_map_location_valid = false;
+  s_map_location_lat = 0.0;
+  s_map_location_lon = 0.0;
+  renderMapMarkers();
+  refreshMapInfoLabel();
 }
 
 // One GPS-bearing contact, with the derived sort keys precomputed.
@@ -34825,9 +34953,21 @@ static void mapCanvasEventCb(lv_event_t* e) {
         if (n_hits < k_map_markers_max) hits[n_hits++] = m.mesh_idx;
       }
     }
-    if (n_hits == 1) {
+    if (s_map_location_marker) {
+      lv_area_t a;
+      lv_obj_get_coords(s_map_location_marker, &a);
+      const int mx = (a.x1 + a.x2) / 2;
+      const int my = (a.y1 + a.y2) / 2;
+      const int ddx = mx - p.x;
+      const int ddy = my - p.y;
+      if (ddx * ddx + ddy * ddy <= R2 && n_hits < k_map_markers_max)
+        hits[n_hits++] = -2;   // pinned message location / POI
+    }
+    if (n_hits == 1 && hits[0] == -2) {
+      openMapLocationMenu();
+    } else if (n_hits == 1) {
       openMarkerPopupForContact(hits[0]);
-    } else if (n_hits > 1) {
+    } else if (n_hits > 0) {
       openMapPicker(hits, n_hits);
     }
     return;
@@ -36894,6 +37034,115 @@ static bool textMentionsMe(const char* text) {
   return false;
 }
 
+static bool chatCoordDigit(char c) { return c >= '0' && c <= '9'; }
+static bool chatCoordAlpha(char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
+static bool chatCoordSpace(char c) { return c == ' ' || c == '\n' || c == '\r' || c == '\t'; }
+
+static bool chatCoordBeforeOk(const char* s, int i) {
+  if (i <= 0) return true;
+  const char c = s[i - 1];
+  return !(chatCoordDigit(c) || chatCoordAlpha(c) || c == '.');
+}
+
+static bool chatCoordAfterOk(char c) {
+  if (c == '\0' || chatCoordSpace(c)) return true;
+  if (c == ')' || c == ']' || c == '}' || c == ',' || c == '.' || c == ';' || c == '!' ||
+      c == '?' || c == '\'' || c == '"' || c == ':') return true;
+  return false;
+}
+
+static bool chatParseCoordNumber(const char* s, const char** endp, double* out, int* decimal_digits) {
+  if (!s || !endp || !out || !decimal_digits) return false;
+  const char* p = s;
+  double sign = 1.0;
+  *decimal_digits = 0;
+  if (*p == '+' || *p == '-') {
+    if (*p == '-') sign = -1.0;
+    ++p;
+  }
+  int digits = 0;
+  double value = 0.0;
+  while (chatCoordDigit(*p)) {
+    if (++digits > 3) return false;
+    value = value * 10.0 + (double)(*p - '0');
+    ++p;
+  }
+  if (digits == 0) return false;
+  if (*p == '.') {
+    ++p;
+    if (!chatCoordDigit(*p)) return false;
+    double place = 0.1;
+    while (chatCoordDigit(*p)) {
+      value += (double)(*p - '0') * place;
+      ++*decimal_digits;
+      place *= 0.1;
+      ++p;
+    }
+  }
+  if (*decimal_digits < 3) return false;
+  *out = value * sign;
+  *endp = p;
+  return true;
+}
+
+static bool chatCoordSpan(const char* s, int from, int* a, int* b, double* lat, double* lon) {
+  if (!s || !a || !b || !lat || !lon) return false;
+  if (from < 0) from = 0;
+  for (int i = from; s[i]; ++i) {
+    bool marked = false;
+    int coord_start = i;
+    if ((s[i] == 'm' || s[i] == 'M') && s[i + 1] == ':' &&
+        (i == 0 || !chatCoordAlpha(s[i - 1]))) {
+      marked = true;
+      coord_start = i + 2;
+    } else {
+      if (!(chatCoordDigit(s[i]) || s[i] == '+' || s[i] == '-')) continue;
+      if (!chatCoordBeforeOk(s, i)) continue;
+    }
+    const char* p = s + coord_start;
+    double cand_lat = 0.0, cand_lon = 0.0;
+    int lat_decimal_digits = 0, lon_decimal_digits = 0;
+    if (!chatParseCoordNumber(p, &p, &cand_lat, &lat_decimal_digits)) continue;
+    while (chatCoordSpace(*p)) ++p;
+    if (*p != ',') continue;
+    ++p;
+    while (chatCoordSpace(*p)) ++p;
+    if (!chatParseCoordNumber(p, &p, &cand_lon, &lon_decimal_digits)) continue;
+    if (cand_lat < -90.0 || cand_lat > 90.0 || cand_lon < -180.0 || cand_lon > 180.0) continue;
+    if (!chatCoordAfterOk(*p) && !(marked && *p == '|')) continue;
+    *a = coord_start;
+    *b = (int)(p - s);
+    *lat = cand_lat;
+    *lon = cand_lon;
+    return true;
+  }
+  return false;
+}
+
+static bool chatFirstCoord(const char* s, double* lat, double* lon) {
+  int a, b;
+  return chatCoordSpan(s, 0, &a, &b, lat, lon);
+}
+
+static bool chatRecolorCoords(const char* in, char* out, int cap) {
+  if (!in || strchr(in, '#')) return false;
+  int a, b;
+  double lat, lon;
+  if (!chatCoordSpan(in, 0, &a, &b, &lat, &lon)) return false;
+  int o = 0, i = 0;
+  while (in[i] && o < cap - 12) {
+    if (i == a) {
+      o += snprintf(out + o, cap - o, "#%06X ",
+                    (unsigned)(COLOR_CHAT_LINK & 0xFFFFFFu));
+      while (i < b && o < cap - 2) out[o++] = in[i++];
+      if (o < cap - 1) out[o++] = '#';
+      if (!chatCoordSpan(in, i, &a, &b, &lat, &lon)) a = -1;
+    } else out[o++] = in[i++];
+  }
+  out[o] = 0;
+  return true;
+}
+
 static lv_obj_t* s_msg_menu_root = nullptr;
 static lv_obj_t* s_msg_info_root = nullptr;
 static lv_obj_t* s_msg_info_body = nullptr;
@@ -36907,6 +37156,9 @@ static char      s_msg_menu_text[UITask::MAX_MSG_TEXT + 1] = {0};
 // rotated) ring. s_msg_menu_channel picks which composer to drop it into.
 static char      s_msg_menu_ack[UITask::MAX_MSG_TEXT + 1] = {0};
 static bool      s_msg_menu_channel = false;
+static bool      s_msg_menu_has_coords = false;
+static double    s_msg_menu_lat = 0.0;
+static double    s_msg_menu_lon = 0.0;
 
 static void closeMsgActionMenu() {
   if (s_msg_menu_root) {
@@ -37010,6 +37262,16 @@ static void msgMenuInfoCb(lv_event_t* e) {
   const int idx = s_msg_menu_idx;
   closeMsgActionMenu();
   openMessageInfoPopup(idx);
+}
+
+static void msgMenuShowCoordsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_msg_menu_has_coords) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a) lv_indev_wait_release(a);
+  const double lat = s_msg_menu_lat;
+  const double lon = s_msg_menu_lon;
+  closeMsgActionMenu();
+  openMapAtCoords(lat, lon);
 }
 
 // Insert "@[<sender>] " into the channel composer so you can @mention them. The
@@ -37183,11 +37445,13 @@ static void openMessageActionMenu(int msg_idx) {
   // before the button is tapped). s_msg_menu_channel picks the composer to fill.
   s_msg_menu_channel = m.channel;
   buildAckText(m, s_msg_menu_ack, sizeof s_msg_menu_ack);
+  s_msg_menu_has_coords = chatFirstCoord(s_msg_menu_text, &s_msg_menu_lat, &s_msg_menu_lon);
   // "Ack" (quick link-quality confirmation) + "Mention" are for incoming messages.
   const bool can_ack     = !m.outgoing && m.sender[0];   // ack its sender (channel or DM)
   const bool can_mention = m.channel && !m.outgoing && m.sender[0];
   const bool can_block   = !m.outgoing;   // block the sender — never for our own messages
   const bool can_resend  = m.outgoing && m.text[0];   // re-send one of OUR messages (DM or channel)
+  const bool can_map     = s_msg_menu_has_coords;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -37227,7 +37491,7 @@ static void openMessageActionMenu(int msg_idx) {
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + (can_map ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
   const int nrows  = (nbtn + 1) / 2;
   int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
@@ -37284,6 +37548,7 @@ static void openMessageActionMenu(int msg_idx) {
     mk_btn(ml, msgMenuMentionCb);
   }
   mk_btn(TR(LV_SYMBOL_COPY "  Copy"), msgMenuCopyCb);
+  if (can_map) mk_btn(TR(LV_SYMBOL_GPS "  Map"), msgMenuShowCoordsCb);
   mk_btn(TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
   if (can_block)  mk_btn(TR(LV_SYMBOL_CLOSE   "  Block"), msgMenuBlockCb);
   if (can_resend) mk_btn(TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
@@ -39013,6 +39278,15 @@ static void bubbleUrlTapCb(lv_event_t* e) {
   if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
 }
 
+static void bubbleCoordTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  double lat = 0.0, lon = 0.0;
+  if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
+}
+
 static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_idx,
                                        lv_coord_t vp_y, lv_coord_t* out_jump_y) {
   if (!p || !g_lv.task) return 0;
@@ -39148,10 +39422,15 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   // Clickable URLs: tint any link blue (recolor tags are zero-width, so wrapping/height
   // below still measure from the plain d.san_text and stay correct).
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
+  int _ca, _cb; double _clat, _clon;
+  const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
 #if !defined(HAS_TDECK_PRO)
   if (has_url) {
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorUrls(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
+  } else if (has_coords) {
+    char rc[UITask::MAX_MSG_TEXT + 40];
+    if (chatRecolorCoords(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
   }
 #endif
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
@@ -39166,6 +39445,9 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   // outgoing sends keep their tap-to-resend.
   if (has_url && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(bubble, bubbleUrlTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  else if (has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(bubble, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   // Failed sends keep the pre-virtualization one-tap resend (the compact path
   // already has it); delivery status on the top meta row spells the affordance out.
@@ -39247,6 +39529,11 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   // exactly like the bubble path.
   lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
                       reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  double compact_lat = 0.0, compact_lon = 0.0;
+  const bool compact_has_coords = chatFirstCoord(m.text, &compact_lat, &compact_lon);
+  if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
