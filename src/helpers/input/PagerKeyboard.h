@@ -86,5 +86,10 @@ void pagerKeyboardToggleCaps();
  *  reports held for this press, so it can't also fire the plain-Backspace
  *  hold-to-back/hold-to-unlock gestures. Consumes the pending flag on read. */
 bool pagerKeyboardConsumeAltBackspaceChord();
+#if defined(HAS_TDECK_MAX)
+/** One-shot: true exactly once after both Shift keys were pressed together
+ *  (T-Deck Max keyboard-backlight chord). Consumes the pending flag on read. */
+bool pagerKeyboardConsumeBothShiftChord();
+#endif
 
 #endif
