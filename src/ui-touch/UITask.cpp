@@ -43554,15 +43554,25 @@ static bool m9ChatMoveMessage(bool down) {
     if (!row || !lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE) ||
         lv_obj_has_flag(row, LV_OBJ_FLAG_HIDDEN)) continue;
     if (reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) != target_i) continue;
-    s_m9_chat_focus_i = -1;
-    s_nav_show = true;
-    lv_group_focus_obj(row);
-    return true;
+    // Overscan keeps rows materialized outside the viewport. Those floating
+    // rows cannot rely on LVGL's generic focus scroll; use the virtual scroll
+    // path below unless the complete target extent is already visible.
+    if (!s_chat_virt.offsets) break;
+    const int32_t view_top = chatVirtEffectiveVirtTop(cp);
+    const int32_t view_bottom = view_top + chatVirtMsgsViewH(cp);
+    if (s_chat_virt.offsets[target_i] >= view_top &&
+        chatVirtMsgVirtBottom(target_i) <= view_bottom) {
+      s_m9_chat_focus_i = -1;
+      s_nav_show = true;
+      lv_group_focus_obj(row);
+      return true;
+    }
+    break;
   }
 
-  // The adjacent message is outside the materialized window. Centre its
-  // virtual extent in the viewport, then let chatVirtRenderWindow recreate and
-  // focus that exact logical row through the pending-index hook above.
+  // The adjacent message is outside the viewport. Centre its virtual extent,
+  // then let chatVirtRenderWindow focus that exact logical row through the
+  // pending-index hook above.
   if (!s_chat_virt.offsets) return false;
   const int32_t target_mid =
       (s_chat_virt.offsets[target_i] + chatVirtMsgVirtBottom(target_i)) / 2;
