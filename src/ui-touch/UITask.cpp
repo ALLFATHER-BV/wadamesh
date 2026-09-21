@@ -30756,7 +30756,8 @@ struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; cha
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
 // by luaAppIconGlyph(); empty = the generic app symbol.
 struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
-static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
+static const int kLuaCatMax = 16, kLuaInstMax = 16;
+static const int kLangCatMax = LANG_COUNT + 2, kLangInstMax = LANG_COUNT;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
 static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)

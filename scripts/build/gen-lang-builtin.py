@@ -23,7 +23,7 @@ OUT = os.path.join(ROOT, 'src/ui-touch/i18n_builtin.h')
 
 # Index order must match the UiLang enum in i18n.h.
 CODES = ["en", "hu", "nl", "de", "fr", "es", "it",
-         "ru", "uk", "bg", "sr", "el", "pt-br", "ro"]
+         "ru", "uk", "bg", "sr", "el", "pt-br", "ro", "cs"]
 
 
 def c_escape(s):

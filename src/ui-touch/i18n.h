@@ -12,12 +12,13 @@
 // papers over the one HU insert; do not add more remaps).
 enum UiLang : uint8_t {
   LANG_EN = 0, LANG_HU, LANG_NL, LANG_DE, LANG_FR, LANG_ES, LANG_IT,
-  LANG_RU, LANG_UK, LANG_BG, LANG_SR, LANG_EL, LANG_PT_BR, LANG_RO, LANG_COUNT
+  LANG_RU, LANG_UK, LANG_BG, LANG_SR, LANG_EL, LANG_PT_BR, LANG_RO, LANG_CS,
+  LANG_COUNT
 };
 
 // Native names for the language picker (e.g. "Nederlands", "Русский", "Ελληνικά").
 extern const char* const kUiLangNames[LANG_COUNT];
-// Short file/catalog codes, same order ("en","hu","nl",... "pt-br","ro"). Used as
+// Short file/catalog codes, same order ("en","hu","nl",... "ro","cs"). Used as
 // the .lang filename and the `# base:` fallback column in language files.
 extern const char* const kUiLangCodes[LANG_COUNT];
 
