@@ -1,0 +1,31 @@
+# beta_84 - test build. Stable is now beta_83.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- New board ---------------------------------------------------------------------------------
+New board: the LilyGo T-Deck Max, contributed and tested by pelgraine. It is the T-Deck Pro's hardware with the peripheral power rails and resets behind an I/O expander and a fuel gauge for the battery, and it reuses the Pro's display and touch drivers. The e-paper screen gets its own handling: no fades, no black frame left on the glass when it sleeps, tap to wake, and the keyboard backlight on a both-Shift chord. It starts with Wi-Fi off and Bluetooth on, because both at once leave this board short of memory. Experimental, so please report what works.
+
+# --- Reading the screen outdoors ---------------------------------------------------------------
+High contrast day and night themes, for sunlight where the normal palette washes out. Settings, Display, Theme.
+
+# --- Regions -----------------------------------------------------------------------------------
+Channel regions can be discovered instead of typed: the region page scans for repeaters you can hear and lists the regions they allow, and channel scope offers them in a picker.
+
+# --- Languages ---------------------------------------------------------------------------------
+Czech, contributed by brebtatv. Settings, Language.
+
+# --- ThinkNode M9 ------------------------------------------------------------------------------
+With the home drawer locked, Back (and Esc on a Bluetooth keyboard) now stays on it instead of escaping to the tabs behind it.
+The Language settings cursor returns where it was after visiting the Store, and a channel keeps its unread colour.
+
+# --- Heltec V4 and V4-R8 -----------------------------------------------------------------------
+An M5Stack CardKB can be plugged into the board's I2C bus and used as a keyboard. It is detected when present, so nothing changes without one.
+V4-R8: bigger text sizes to choose from, and the top row of the screen no longer swallows taps meant for the page.
+
+# --- Fixes -------------------------------------------------------------------------------------
+Radio settings save again when the region field holds a name the new rules reject, such as one with capitals. Only the region is skipped now, instead of the frequency, bandwidth and power going with it.
+The Show button on telemetry shows its label in Russian, Ukrainian, Bulgarian, Serbian and Greek instead of empty boxes.
+Scanning for regions no longer leaves nameless entries behind in Contacts.
+Wio Tracker L2: the SD card gets a power cycle and a second try when it does not mount at boot.
+
+# --- For testers -------------------------------------------------------------------------------
+Region discovery is new on-air traffic and has not been tested on a live mesh yet. Worth reporting whether a scan finds your repeaters' regions.

@@ -49,6 +49,12 @@ BOARDS = {
     "manifest-tdisplay-p4.json":      ("wadamesh - LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
 }
 for fn, (name, binf, chip) in BOARDS.items():
+    # A board that joined the matrix after this tag has no image in this feed
+    # (promoting an older tag to stable). Writing a manifest for it would hand
+    # the flasher a 404, so leave it out of this channel.
+    if not os.path.exists(os.path.join(outdir, binf)):
+        print("note: %s missing in %s -> no %s" % (binf, outdir, fn))
+        continue
     manifest = {
         "name": name + ("" if channel == "stable" else " (beta)"),
         "version": tag,

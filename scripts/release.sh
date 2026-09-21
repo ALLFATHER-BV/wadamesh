@@ -92,6 +92,12 @@ else
   fi
   for pair in $ENVS; do
     name="${pair##*:}"
+    # A board added after this tag was cut has no bins to promote. Skip it
+    # instead of aborting the whole promotion (set -e), and say so.
+    if [ ! -f "$SRC/$name-merged.bin" ]; then
+      echo "note: $name has no $TAG build (board added later) — not in this stable set"
+      continue
+    fi
     cp "$SRC/$name.bin"        "$ARCH/$TAG/$name.bin"
     cp "$SRC/$name-merged.bin" "$ARCH/$TAG/$name-merged.bin"
     cp "$SRC/$name-merged.bin" "$FEED/$name-merged.bin"
