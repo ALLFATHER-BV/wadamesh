@@ -5799,9 +5799,15 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     // otherwise press the UI underneath and trigger the action before you see
     // it (issue #4). Applies to both boards (V4 + T-Deck).
     if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) {
+#if defined(HAS_TDECK_MAX)
+      // Max: a tap wakes an idle-dark screen (swallowed, not delivered), as on
+      // every non-Pro board. The Pro's side-button-only policy stays for the Pro.
+      if (!g_lv.task->isManualLock()) g_lv.task->noteUserInput();
+#else
     #if !defined(HAS_TDECK_PRO)
       if (!g_lv.task->isManualLock()) g_lv.task->noteUserInput();
     #endif
+#endif
       s_wake_swallow = true;
       data->state = LV_INDEV_STATE_RELEASED;
       return;
@@ -38051,12 +38057,23 @@ static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
   char rep_buf[12] = "";
   if (m.outgoing && m.sent_fp) {
     const uint8_t reps = the_mesh.uiRepeatsForFp(m.sent_fp);
+#if defined(HAS_TDECK_MAX)
+    // E-paper: a little air around the icon so it doesn't read as glued to the
+    // time and the count.
+    if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), "  " LV_SYMBOL_REFRESH " %u", (unsigned)reps);
+  } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
+                         && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
+    const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
+    snprintf(rep_buf, sizeof(rep_buf), "  " LV_SYMBOL_SHUFFLE " %u", (unsigned)hops);
+  }
+#else
     if (reps > 0) snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_REFRESH "%u", (unsigned)reps);
   } else if (!m.outgoing && (m.meta_flags & UITask::MSG_META_HAS_RX)
                          && (m.meta_flags & UITask::MSG_META_IS_FLOOD)) {
     const uint8_t hops = static_cast<uint8_t>(m.path_len & 0x3F);
     snprintf(rep_buf, sizeof(rep_buf), " " LV_SYMBOL_SHUFFLE "%u", (unsigned)hops);
   }
+#endif
 
   snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
   if (out_fg) *out_fg = s_theme_day ? COLOR_CHAT_META
@@ -40987,6 +41004,17 @@ static void updatePagerAltShiftChord() {
 // Backspace press: PagerKeyboard.cpp suppresses the '\b' ring-push and the
 // hold-to-back/hold-to-unlock tracking entirely for an Alt-held Backspace
 // press, so there's no double-action to guard against here.
+#if defined(HAS_TDECK_MAX)
+// Both Shifts together: keyboard light On <-> Off (Auto counts as "not on").
+// No alert popup: on e-paper that is a ~650 ms repaint, and the light itself
+// is the feedback. Persists like the control-centre chip does.
+static void updateMaxBothShiftChord() {
+  if (!pagerKeyboardConsumeBothShiftChord()) return;
+  s_kb_bl_mode = (s_kb_bl_mode == 1) ? 0 : 1;
+  touchPrefsSetKbBacklight(s_kb_bl_mode);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
 static void updatePagerAltBackspaceChord() {
   if (!pagerKeyboardConsumeAltBackspaceChord()) return;
   // The accent/@-mention pickers live on lv_layer_top(), outside the tab
@@ -45582,11 +45610,31 @@ static void applyBrightness(uint8_t pct) {
 #elif defined(HAS_TDECK_PRO)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 100;
+#if defined(HAS_TDECK_MAX)
+// T-Deck Max: the e-paper reads fine without its front-light, so the light is
+// never tied to screen on/off (Meck's model on this board). Off at boot; lit
+// by the control-centre slider at the slider's level or by the heart pad below
+// the glass; put out by the heart pad again or by the idle screen timeout; a
+// screen wake never re-lights it.
+static bool s_max_frontlight_on = false;
+static void maxFrontlightOff() {
+  s_max_frontlight_on = false;
+  display.setBrightness(0);
+}
+static void maxFrontlightOn() {
+  s_max_frontlight_on = true;
+  display.setBrightness((uint8_t)((uint32_t)s_brightness_pct * 255u / 100u));
+}
+#endif
 static void applyBrightness(uint8_t pct) {
   if (pct < 5) pct = 5;
   if (pct > 100) pct = 100;
   s_brightness_pct = pct;
+#if defined(HAS_TDECK_MAX)
+  maxFrontlightOn();
+#else
   display.setBrightness((uint8_t)((uint32_t)pct * 255u / 100u));
+#endif
 }
 #elif defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
 #define HAS_BACKLIGHT_PWM 1
@@ -50851,10 +50899,19 @@ static void setupRegionRowCb(lv_event_t* e) {
     lv_obj_t* c = lv_obj_get_child(s_setup_region_list, i);
     if (c) {
       const bool selected = (int)i == idx;
+#if defined(HAS_TDECK_MAX)
+      // 1-bit panel: the day palette's "selected" green thresholds to white, so
+      // a picked row looked identical to the others. Invert it instead.
+      lv_obj_set_style_bg_color(
+        c, lv_color_hex(selected ? 0x000000u : COLOR_CONTROL), LV_PART_MAIN);
+      lv_obj_set_style_text_color(
+        c, lv_color_hex(selected ? 0xFFFFFFu : COLOR_TEXT), LV_PART_MAIN);
+#else
       lv_obj_set_style_bg_color(
         c, lv_color_hex(selected ? COLOR_STATUS_OK : COLOR_CONTROL), LV_PART_MAIN);
       lv_obj_set_style_text_color(
         c, lv_color_hex(selected ? COLOR_ON_STATUS_OK : COLOR_TEXT), LV_PART_MAIN);
+#endif
     }
   }
 #if CAP_KEYPAD_NAV
@@ -50882,10 +50939,17 @@ static void setupFillRegionList() {
     lv_obj_t* r = lv_btn_create(s_setup_region_list);
     lv_obj_set_size(r, rw, 34);
     styleButton(r);
+#if defined(HAS_TDECK_MAX)
+    lv_obj_set_style_bg_color(r, lv_color_hex(i == s_setup_region_sel ? 0x000000u : COLOR_CONTROL),
+                              LV_PART_MAIN);
+    lv_obj_set_style_text_color(r,
+      lv_color_hex(i == s_setup_region_sel ? 0xFFFFFFu : COLOR_TEXT), LV_PART_MAIN);
+#else
     lv_obj_set_style_bg_color(r, lv_color_hex(i == s_setup_region_sel ? COLOR_STATUS_OK : COLOR_CONTROL),
                               LV_PART_MAIN);
     lv_obj_set_style_text_color(r,
       lv_color_hex(i == s_setup_region_sel ? COLOR_ON_STATUS_OK : COLOR_TEXT), LV_PART_MAIN);
+#endif
     lv_obj_add_event_cb(r, setupRegionRowCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     lv_obj_t* l = lv_label_create(r);
     lv_label_set_text(l, k_mesh_radio_presets[i].label);
@@ -58511,7 +58575,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
 #if defined(HAS_CC_BRIGHTNESS)
+#if defined(HAS_TDECK_MAX)
+    {   // remember the saved level, but boot with the front-light off
+      uint8_t pct = (uint8_t)touchPrefsGetBrightness();
+      if (pct < 5) pct = 5;
+      if (pct > 100) pct = 100;
+      s_brightness_pct = pct;
+      maxFrontlightOff();   // file-scope helper: uses the global panel, not this function's DisplayDriver* parameter
+    }
+#else
     applyBrightness(touchPrefsGetBrightness());
+#endif
 #endif
 #if defined(HAS_CC_KBD_BACKLIGHT)
     applyKbdBacklight(touchPrefsGetKbdBacklight());
@@ -59728,6 +59802,36 @@ static void touchPanelSleep(bool slp) {
 static inline void touchPanelSleep(bool) {}
 #endif
 
+#if defined(HAS_TDECK_MAX)
+// "Asleep" strip for the e-paper: full width, over the ~22 px status-bar band.
+static lv_obj_t* s_max_sleep_banner = nullptr;
+static void maxSleepBannerShow(bool show) {
+  if (!g_lv.ready) return;
+  if (!s_max_sleep_banner) {
+    // lv_layer_sys, not lv_layer_top: the status bar and chat headers live on
+    // the top layer, so the strip must sit a layer above them to overlay cleanly.
+    s_max_sleep_banner = lv_obj_create(lv_layer_sys());
+    lv_obj_remove_style_all(s_max_sleep_banner);
+    lv_obj_set_style_bg_color(s_max_sleep_banner, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_max_sleep_banner, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_clear_flag(s_max_sleep_banner, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(s_max_sleep_banner, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_max_sleep_banner, NAV_SKIP_FLAG);
+    lv_obj_set_size(s_max_sleep_banner, lv_disp_get_hor_res(nullptr), 22);
+    lv_obj_set_pos(s_max_sleep_banner, 0, 0);
+    lv_obj_t* l = lv_label_create(s_max_sleep_banner);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_white(), LV_PART_MAIN);
+    // U+1F90D (white heart) from the baked emoji image font: it renders light,
+    // so it survives the 1-bit threshold on this black strip (the black and red
+    // hearts do not). The UTF-8 bytes are spelled out to keep this line ASCII.
+    lv_label_set_text(l, "Asleep:Tap Screen or \xF0\x9F\xA4\x8D to Wake");
+    lv_obj_center(l);
+  }
+  if (show) { lv_obj_clear_flag(s_max_sleep_banner, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_max_sleep_banner); }
+  else      { lv_obj_add_flag(s_max_sleep_banner, LV_OBJ_FLAG_HIDDEN); }
+}
+#endif
 /* Screen sleep = backlight off + ST7789 sleep-in (not a full panel reset).
  * Panel RAM survives SLPIN, so wake is near-instant and the previous image is
  * still on the glass when the LED lights back up — no partial re-render. */
@@ -59743,8 +59847,24 @@ static inline void touchScreenBacklight(bool on) {
   if (on) { touchPanelSleep(false); display.setBrightness(s_brightness_pct); }
   else    { display.setBrightness(0); touchPanelSleep(true); }
 #elif defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_MAX)
+  // Screen wake never lights the front-light; screen off always puts it out.
+  // E-paper keeps the last page on the glass, so "asleep" is invisible: paint
+  // a strip over the status-bar band saying how to wake, refresh once, then
+  // power down. The wake's full refresh removes it.
+  if (on) {
+    maxSleepBannerShow(false);
+    display.turnOn();
+  } else {
+    maxSleepBannerShow(true);
+    if (g_lv.ready) { lv_refr_now(nullptr); display.serviceRefresh(true); }
+    maxFrontlightOff();
+    display.turnOff();
+  }
+#else
   if (on) { display.turnOn(); applyBrightness(s_brightness_pct); }
   else    display.turnOff();
+#endif
 #elif defined(HAS_BACKLIGHT_PWM)
   // Both touch boards drive the backlight via LEDC PWM on PIN_TFT_LEDA_CTL once
   // applyBrightness() has claimed the pin at boot. A plain digitalWrite would
@@ -60181,15 +60301,39 @@ static void atGlanceHide() {
 // `fade_in`: true on the first reveal of a burst (screen was off), false when
 // a later message in the same burst just updates the text on an already-lit
 // overlay -- no need to re-fade something already fully visible.
+#if defined(HAS_TDECK_MAX)
+// A tap anywhere on the glance dismisses it (consumed in UITask::loop()).
+static bool s_max_glance_tapped = false;
+static void maxGlanceTapCb(lv_event_t*) { s_max_glance_tapped = true; }
+// Bubble pad: straight to Home. Same closers the Alt+Backspace chord and the
+// pager back ladder use, so nothing is left floating over the Home tab.
+static void maxGoHome() {
+  accentBoxHide();
+  mentionBoxHide();
+  for (int i = 0; i < 4 && anyPopupOpen(); ++i) hwKeyDismissTopPopup();
+  if (s_apppage_close) s_apppage_close();
+  if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+  navGoToMainTab(HOME_TAB_INDEX);
+}
+#endif
 static void atGlanceShow(const char* title, const char* body, bool fade_in) {
   if (!g_lv.ready) return;
   if (!s_glance_root) {
     s_glance_root = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(s_glance_root);
+#if defined(HAS_TDECK_MAX)
+    // E-paper: black ink on a white page, never a black page (a black overlay
+    // left on the glass at power-off is what the user sees until the next wake).
+    lv_obj_set_style_bg_color(s_glance_root, lv_color_white(), LV_PART_MAIN);
+#else
     lv_obj_set_style_bg_color(s_glance_root, lv_color_black(), LV_PART_MAIN);
+#endif
     lv_obj_set_style_bg_opa(s_glance_root, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(s_glance_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps -- no UI leak underneath
+#if defined(HAS_TDECK_MAX)
+    lv_obj_add_event_cb(s_glance_root, maxGlanceTapCb, LV_EVENT_CLICKED, nullptr);
+#endif
     // Never a keyboard/encoder nav target on any board: same reasoning as the
     // lock screen's NAV_SKIP_FLAG (see lockscreenShow()) -- a CLICKABLE
     // top-layer overlay with nothing to navigate to would otherwise be
@@ -60202,7 +60346,11 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
     // dominant size/position below and this stays a secondary context cue.
     s_glance_title = lv_label_create(s_glance_root);
     lv_obj_set_style_text_font(s_glance_title, &g_font_16, LV_PART_MAIN);
+#if defined(HAS_TDECK_MAX)
+    lv_obj_set_style_text_color(s_glance_title, lv_color_black(), LV_PART_MAIN);
+#else
     lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+#endif
     lv_obj_set_width(s_glance_title, lv_pct(85));
     lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);   // single line, ellipsize -- guaranteed to fit every board's width
@@ -60214,8 +60362,14 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
     // still never shows a missing-glyph box at this size.
     atGlanceEnsureFont();
     s_glance_body = lv_label_create(s_glance_root);
+#if defined(HAS_TDECK_MAX)
+    // Small type and full wrapping so the whole message fits on the page.
+    lv_obj_set_style_text_font(s_glance_body, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_glance_body, lv_color_black(), LV_PART_MAIN);
+#else
     lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
+#endif
     lv_obj_set_width(s_glance_body, lv_pct(85));
     lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
     // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST
@@ -60232,7 +60386,11 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
       const lv_coord_t line_h  = lv_font_get_line_height(&s_glance_body_font);
       lv_obj_set_height(s_glance_body, avail_h > line_h ? avail_h : line_h);
     }
+#if defined(HAS_TDECK_MAX)
+    lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_WRAP);
+#else
     lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
+#endif
     lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 14, 60);   // a bit more clearance now the title above is 16 px, not 12
   }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -60247,7 +60405,13 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
   lv_anim_del(s_glance_body,  atGlanceOpaCb);
   lv_obj_clear_flag(s_glance_root, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(s_glance_root);
+#if defined(HAS_TDECK_MAX)
+  (void)fade_in;   // no fades on e-paper: every step is a ~650 ms repaint
+  s_max_glance_tapped = false;
+  if (false) {
+#else
   if (fade_in) {
+#endif
     // Only the TEXT fades in, never the root: the root's bg_opa is COVER (solid
     // black) from the moment it's created and stays that way, so the very first
     // frame -- forced-painted BEFORE the backlight comes on (see newMsgImpl()) --
@@ -61687,10 +61851,43 @@ void UITask::loop() {
   // off to the user actually looking at the screen now -- don't snatch it
   // back off from underneath them; just stop tracking it and let the normal
   // idle timeout (already bumped by that real input) take over.
+#if defined(HAS_TDECK_MAX)
+  {   // Front pads: heart toggles the front-light (Meck's shortcut on this board).
+    uint8_t key_id = 0;
+    if (display.takeFrontKeyPress(key_id)) {
+      if (key_id == 0) {
+        if (_screen_off) wakeScreen();
+        if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+        _last_input_ms = millis();
+      } else if (key_id == 1) {   // bubble pad: Home (Meck's id; confirm with the [key] line)
+        if (_screen_off) wakeScreen(); else maxGoHome();
+        _last_input_ms = millis();
+      }
+    }
+  }
+#endif
   if (s_glance_lit_ms) {
+#if defined(HAS_TDECK_MAX)
+    // E-paper glance: after 6 s (the panel only shows it ~1 s after the timer
+    // starts), or on a tap, drop the overlay and repaint the page underneath
+    // (the lockScreen() idiom), then leave the screen ON showing the home UI;
+    // the normal idle timeout takes it from there.
+    const int32_t max_elapsed = (int32_t)(now - s_glance_lit_ms);
+    if (_screen_off) {
+      atGlanceHide();
+    } else if (s_max_glance_tapped || _last_input_ms > s_glance_lit_ms || max_elapsed >= 6000) {
+      s_max_glance_tapped = false;
+      atGlanceHide();
+      lv_refr_now(nullptr);
+      display.serviceRefresh(true);
+      _last_input_ms = now;
+    }
+    if (false) {
+#else
     if (_screen_off)                          atGlanceHide();   // already dark again some other way
     else if (_last_input_ms > s_glance_lit_ms) atGlanceHide();   // user took over
     else {
+#endif
       const int32_t elapsed = (int32_t)(now - s_glance_lit_ms);
       if (!s_glance_fading_out && elapsed >= 4800) {
         s_glance_fading_out = true;
@@ -62039,6 +62236,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if defined(HAS_TDECK_MAX)
+    pagerKeyboardConsumeBothShiftChord();
+#endif
   } else if (g_lv.task && g_lv.task->isScreenOff()) {
     // Same rationale as updatePagerEncoder(): no touch/trackball wake path on
     // this board, so a keypress while idle-dimmed just wakes the screen
@@ -62061,6 +62261,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if defined(HAS_TDECK_MAX)
+    pagerKeyboardConsumeBothShiftChord();
+#endif
     // Hard-locked: an ordinary keypress must NOT wake/unlock -- only holding
     // Backspace does (updatePagerBackspaceUnlockHold, polled unconditionally
     // above off the raw held-state, so it's unaffected by this drain either
@@ -62093,6 +62296,9 @@ void UITask::loop() {
     }
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
+#if defined(HAS_TDECK_MAX)
+    updateMaxBothShiftChord();
+#endif
     updatePagerBackspaceHold(now);
     updatePagerSpaceHold(now);
     // Missing on this board until now (T-Deck/M9 both already call it in their

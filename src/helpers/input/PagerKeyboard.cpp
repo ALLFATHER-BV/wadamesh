@@ -147,5 +147,10 @@ void pagerKeyboardToggleCaps() { s_state.toggleCaps(); }
 bool pagerKeyboardConsumeAltBackspaceChord() {
   return s_state.consumeAltBackspaceChord();
 }
+#if defined(HAS_TDECK_MAX)
+bool pagerKeyboardConsumeBothShiftChord() {
+  return s_state.consumeBothShiftChord();
+}
+#endif
 
 #endif

@@ -45,7 +45,11 @@ static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v
 // Defaults (kept identical to the historical per-key defaults).
 static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
 static const uint8_t  DEFAULT_BRIGHTNESS       = 100;
+#if defined(HAS_TDECK_MAX)
+static const uint8_t  DEFAULT_KB_BL            = 0;          // T-Deck Max: off -- no light ever comes on by itself
+#else
 static const uint8_t  DEFAULT_KB_BL            = 2;          // auto
+#endif
 static const uint8_t  DEFAULT_KB_LAYOUT        = 0;          // English
 static const uint8_t  DEFAULT_KB_SECONDARY     = 0;          // None
 static const uint32_t DEFAULT_LOCK_COLOR       = 0xE6F2FFu;  // soft white

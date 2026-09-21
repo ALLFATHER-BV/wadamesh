@@ -73,8 +73,18 @@ class PagerKeyboardState {
         } else {
           shift_held_ = true;
         }
+#if defined(HAS_TDECK_MAX)
+        // T-Deck Max: both Shift keys down together = keyboard-backlight chord
+        // (Meck's shortcut on this keyboard). Latched on the second press only,
+        // so a normal held Shift never fires it. The UI consumes the flag.
+        if (code == SHIFT_POS) shift_l_held_ = true; else shift_r_held_ = true;
+        if (shift_l_held_ && shift_r_held_ && !alt_.held()) both_shift_chord_pending_ = true;
+#endif
       } else {
         shift_held_ = false;
+#if defined(HAS_TDECK_MAX)
+        if (code == SHIFT_POS) shift_l_held_ = false; else shift_r_held_ = false;
+#endif
       }
       return 0;
     }
@@ -133,6 +143,13 @@ class PagerKeyboardState {
     alt_backspace_chord_pending_ = false;
     return pending;
   }
+#if defined(HAS_TDECK_MAX)
+  bool consumeBothShiftChord() {
+    const bool pending = both_shift_chord_pending_;
+    both_shift_chord_pending_ = false;
+    return pending;
+  }
+#endif
 
  private:
   LatchedModifier alt_;
@@ -142,4 +159,9 @@ class PagerKeyboardState {
   bool alt_backspace_chord_pending_ = false;
   bool backspace_held_ = false;
   bool space_held_ = false;
+#if defined(HAS_TDECK_MAX)
+  bool shift_l_held_ = false;
+  bool shift_r_held_ = false;
+  bool both_shift_chord_pending_ = false;
+#endif
 };
