@@ -1185,6 +1185,16 @@ public:
     return true;
   }
 
+  /** Drop a contact that a UI scan installed only so an encrypted reply could be
+   *  matched (sendRegionsRequestForUI installs unknown repeaters as ADV_TYPE_NONE).
+   *  Those are never written to flash, so this only frees the RAM slot. Refuses
+   *  anything that is a real contact, whatever the caller passes. */
+  bool removeTransientContact(const uint8_t pub_key[PUB_KEY_SIZE]) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot || slot->type != ADV_TYPE_NONE) return false;
+    return removeContact(*slot);
+  }
+
   /** Clear channel slot `idx` (zero name + secret), persist, and ping the UI
    *  so the chats list drops the entry. Returns false if the index is out of
    *  range. Used by the long-press → Delete action on the chats list. */

@@ -10,6 +10,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 |---|---|---|---|---|---|
 | LilyGo T-Deck / T-Deck Plus | ESP32-S3, SX1262 | 2.8" 320x240 touch, QWERTY, trackball | Web flasher (standalone) or Launcher app image | Stable | Fully supported, reference device |
 | LilyGo T-Deck Pro | ESP32-S3, SX1262 | 3.1" 240x320 e-paper touch, TCA8418 QWERTY | Development build only | Experimental | Initial target; display, touch, keyboard, radio, GPS and microSD validation pending (#62) |
+| LilyGo T-Deck Max | ESP32-S3, SX1262 | 3.1" 240x320 e-paper touch, TCA8418 QWERTY | Web flasher | Experimental (new in beta_84) | The Pro's hardware with the peripheral power rails and resets on an XL9555 expander and a BQ27220 fuel gauge; contributed and tested by the author of PR #545 |
 | Heltec V4 + TFT | ESP32-S3, SX1262 | 2.4" 240x320 touch (CHSC6x) | Web flasher | Stable | Fully supported; Expansion Kit sensors, V4.3 high-gain RX toggle |
 | Tanmatsu | ESP32-P4 + ESP32-C6, SX1262 | 4" 800x480, 69-key keyboard (no touch) | Tanmatsu app store on the device (runs under the badge.team launcher, not web-flashable) | Store tracks the test channel | Fully supported; LoRa + Wi-Fi + Bluetooth simultaneously, standalone and companion in one |
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
@@ -38,6 +39,11 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   TCA8418 matrix. Keyboard events are drained during the panel BUSY interval so
   a refresh cannot overflow the controller FIFO. Hardware validation is pending;
   see [variants/lilygo_tdeck_pro/PORT.md](variants/lilygo_tdeck_pro/PORT.md).
+- **T-Deck Max**: `LilyGo_TDeck_Max_companion_radio_touch`. The same e-paper,
+  keyboard and radio as the Pro, whose display and touch drivers it reuses; the
+  differences are an XL9555 expander in front of the peripheral power enables and
+  resets, a BQ27220 fuel gauge, and the three capacitive pads under the glass.
+  See variants/lilygo_tdeck_max/PORT.md.
 - **Heltec V4 + TFT**: touch UI with the on-screen keyboard; the optional
   Expansion Kit adds environment sensors (home-screen chart) and a piezo
   buzzer. On the original Expansion Kit, tap **IO** for Back or hold it for one

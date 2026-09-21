@@ -482,8 +482,13 @@
 // ON for boards where the Lua Store is not dependable — the V4 runs at ~95%
 // internal RAM with Wi-Fi up, so its net worker and the store are fragile and
 // it would otherwise be stuck on English. Costs ~400 KB of FLASH, no RAM.
+// NOT the V4-R8, although its build defines HELTEC_LORA_V4_TFT to reuse the UI:
+// it has 8 MB of PSRAM, so its net worker and the store work as well as on any
+// other 8 MB board and it downloads its language like they do. Carrying the
+// table anyway put its image over the app partition once the text-size presets
+// added the larger fonts (101.3% of 3.875 MB).
 #ifndef CAP_BUILTIN_LANGS
-  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+  #if !defined(HELTEC_LORA_V4_R8) && (defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4))
     #define CAP_BUILTIN_LANGS 1
   #else
     #define CAP_BUILTIN_LANGS 0

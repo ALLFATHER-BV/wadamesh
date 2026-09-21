@@ -10855,6 +10855,7 @@ static void saveRadioParamsCb(lv_event_t* e) {
   // Region scope — trimmed the same way it's persisted, so it can be compared below.
   char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
   const bool has_region_ta = (g_set_modal.region_ta != nullptr);
+  bool region_ok = true;
   if (has_region_ta) {
     strncpy(region, lv_textarea_get_text(g_set_modal.region_ta), sizeof(region) - 1);
     char* r = region;                                    // trim so the stored name matches the key
@@ -10863,8 +10864,14 @@ static void saveRadioParamsCb(lv_event_t* e) {
     while (rl && (r[rl-1]==' '||r[rl-1]=='\t'||r[rl-1]=='\n'||r[rl-1]=='\r')) r[--rl] = '\0';
     memmove(region, r, strlen(r) + 1);
     if (!RegionDiscoveryResults::validPublicScope(region)) {
-      if (!silent) g_lv.task->showAlert(TR("Enter a region name"), 1400);
-      return;
+      // Only the region is unusable: keep the radio values saving and leave the
+      // stored region alone. Returning here threw away frequency, bandwidth, SF,
+      // CR and TX power as well, so anyone whose saved region predates this rule
+      // (an uppercase letter, or a "$private" scope) could no longer change the
+      // radio at all -- and on the pager, where this path is the silent blur
+      // auto-save, it stopped saving with nothing on screen to say so.
+      if (!silent) g_lv.task->showAlert(TR("Region not saved: use a-z, 0-9 and -"), 2200);
+      region_ok = false;
     }
   }
 #if defined(TLORA_PAGER)
@@ -10887,7 +10894,7 @@ static void saveRadioParamsCb(lv_event_t* e) {
         && prefs->cr == (uint8_t)cr
         && prefs->tx_power_dbm == (int8_t)tx
         && std::fabs(static_cast<double>(prefs->airtime_factor) - af) <= 0.005
-        && (!has_region_ta || strcmp(cur_region, region) == 0);
+        && (!has_region_ta || !region_ok || strcmp(cur_region, region) == 0);
     if (unchanged) return;
   }
 #endif
@@ -10897,7 +10904,7 @@ static void saveRadioParamsCb(lv_event_t* e) {
   // flood-scope key from the typed "#region" (blank clears it back to unscoped),
   // and remember the display name for next time the form is shown.
   bool has_region = false;
-  if (has_region_ta) {
+  if (has_region_ta && region_ok) {
     the_mesh.setDefaultFloodScope(region);
     touchPrefsSetRegionScope(region);
     // #271: keep the registry in step with the region we just adopted, so its
@@ -51777,6 +51784,17 @@ static uint8_t regionsCandidateCount() {
   return count;
 }
 
+// A scan installs an unknown repeater as a transient contact so its encrypted
+// reply can be matched (MyMesh::sendRegionsRequestForUI). Those are never saved
+// to flash, but they stay in the RAM table and show up in Contacts as nameless
+// "none" entries, and repeated scans would eventually fill it. Drop them again.
+static void regionsScanDropTransientContacts() {
+  for (uint8_t i = 0; i < s_region_scan_count; ++i)
+    the_mesh.removeTransientContact(s_region_scan_keys[i]);
+  s_region_scan_count = 0;
+  s_region_scan_next = 0;
+}
+
 static void regionsScanFinish() {
   if (s_regions_scan_timer) {
     lv_timer_del(s_regions_scan_timer);
@@ -51785,6 +51803,7 @@ static void regionsScanFinish() {
   if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
   s_region_scan_waiting = false;
   s_region_scan_phase = RegionScanPhase::Idle;
+  regionsScanDropTransientContacts();
   if (s_regions_scan_btn && lv_obj_is_valid(s_regions_scan_btn))
     lv_obj_clear_state(s_regions_scan_btn, LV_STATE_DISABLED);
   if (s_regions_scan_status && lv_obj_is_valid(s_regions_scan_status))
@@ -51831,7 +51850,10 @@ static void regionsScanTimerCb(lv_timer_t*) {
     s_region_scan_waiting = false;
     ++s_region_scan_next;
   }
-  while (s_region_scan_next < s_region_scan_count) {
+  // One attempt per 200 ms tick: every sendAnonReq derives a shared secret, so
+  // looping over all 16 repeaters in one tick is that many key operations back
+  // to back on the loop task, which shows up as an LVGL stall.
+  if (s_region_scan_next < s_region_scan_count) {
     if (the_mesh.hasUIRequestPending() || the_mesh.getRemainingTxBudget() < 300) return;
     uint32_t timeout_ms = 0;
     const int result = the_mesh.sendRegionsRequestForUI(
@@ -51849,6 +51871,7 @@ static void regionsScanTimerCb(lv_timer_t*) {
       return;
     }
     ++s_region_scan_next;
+    if (s_region_scan_next < s_region_scan_count) return;   // the rest on later ticks
   }
   regionsScanFinish();
 }
@@ -51885,6 +51908,7 @@ static void regionsModalClose() {
   if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
   s_region_scan_phase = RegionScanPhase::Idle;
   s_region_scan_waiting = false;
+  regionsScanDropTransientContacts();
   if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
   s_regions_ta = s_regions_list = s_regions_scan_btn = s_regions_scan_status = nullptr;
   if (s_apppage_close == regionsModalClose) {
@@ -53916,6 +53940,7 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
+    useChainedFont(sl);   // the translated label needs the fallback chain (Cyrillic, Greek)
   }
 }
 

@@ -35,17 +35,18 @@ with open(os.path.join(outdir, "version.json"), "w") as f:
 # manifest filename -> (display name, merged-bin filename, chipFamily).
 # chipFamily is ESP32-S3 for every board except the P4-class T-Display P4.
 BOARDS = {
-    "manifest-tdeck.json":            ("wadamesh — LilyGo T-Deck", "wadamesh-tdeck-merged.bin", "ESP32-S3"),
-    "manifest-heltec-v4-tft.json":    ("wadamesh — Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin", "ESP32-S3"),
-    "manifest-thinknode-m9.json":     ("wadamesh — ThinkNode M9", "wadamesh-thinknode-m9-merged.bin", "ESP32-S3"),
-    "manifest-rak-tap-v2.json":       ("wadamesh — RAK WisMesh Tap V2", "wadamesh-rak-tap-v2-merged.bin", "ESP32-S3"),
-    "manifest-heltec-v4-r8-tft.json": ("wadamesh — Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin", "ESP32-S3"),
-    "manifest-tlora-pager-lr1121.json": ("wadamesh — LilyGo T-LoRa Pager (LR1121)", "wadamesh-tlora-pager-lr1121-merged.bin", "ESP32-S3"),
-    "manifest-tlora-pager-sx1262.json": ("wadamesh — LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
-    "manifest-attaky.json":           ("wadamesh — Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
-    "manifest-wio-tracker-l2.json": ("wadamesh — Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
-    "manifest-tdeck-pro.json":        ("wadamesh — LilyGo T-Deck Pro (experimental)", "wadamesh-tdeck-pro-merged.bin", "ESP32-S3"),
-    "manifest-tdisplay-p4.json":      ("wadamesh — LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
+    "manifest-tdeck.json":            ("wadamesh - LilyGo T-Deck", "wadamesh-tdeck-merged.bin", "ESP32-S3"),
+    "manifest-heltec-v4-tft.json":    ("wadamesh - Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin", "ESP32-S3"),
+    "manifest-thinknode-m9.json":     ("wadamesh - ThinkNode M9", "wadamesh-thinknode-m9-merged.bin", "ESP32-S3"),
+    "manifest-rak-tap-v2.json":       ("wadamesh - RAK WisMesh Tap V2", "wadamesh-rak-tap-v2-merged.bin", "ESP32-S3"),
+    "manifest-heltec-v4-r8-tft.json": ("wadamesh - Heltec V4-R8 (experimental)", "wadamesh-heltec-v4-r8-tft-merged.bin", "ESP32-S3"),
+    "manifest-tlora-pager-lr1121.json": ("wadamesh - LilyGo T-LoRa Pager (LR1121)", "wadamesh-tlora-pager-lr1121-merged.bin", "ESP32-S3"),
+    "manifest-tlora-pager-sx1262.json": ("wadamesh - LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
+    "manifest-attaky.json":           ("wadamesh - Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
+    "manifest-wio-tracker-l2.json": ("wadamesh - Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
+    "manifest-tdeck-pro.json":        ("wadamesh - LilyGo T-Deck Pro (experimental)", "wadamesh-tdeck-pro-merged.bin", "ESP32-S3"),
+    "manifest-tdeck-max.json":        ("wadamesh - LilyGo T-Deck Max (experimental)", "wadamesh-tdeck-max-merged.bin", "ESP32-S3"),
+    "manifest-tdisplay-p4.json":      ("wadamesh - LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
 }
 for fn, (name, binf, chip) in BOARDS.items():
     manifest = {
