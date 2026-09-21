@@ -2,6 +2,7 @@
 #include "TouchSleep.h"
 
 #include "../MyMesh.h"
+#include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
 
@@ -148,6 +149,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include "../helpers/input/TDeckKeyboard.h"
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
+  #endif
+  #if defined(HAS_CARDKB)
+    #include "../helpers/input/CardKbKeyboard.h"
   #endif
   #include "BleKeyboard.h"   // external Bluetooth keyboard (self-gated on CAP_BLE_KEYBOARD)
   #if CAP_BLE_KEYBOARD
@@ -554,7 +558,33 @@ static constexpr TouchPalette kDayPalette = {
   0xFFFFFF, 0xD8E0E6, 0xD5DDE3, 0xF8FAFB,
 };
 
+static constexpr TouchPalette kDayHighContrastPalette = {
+  0xFFFFFF, 0xFFFFFF, 0x000000, 0x202020,
+  0xFFFFFF, 0xE0E0E0, 0x004C99, 0xFFF0A8,
+  0x006B2E, 0x00491F, 0xFFD400, 0xB00020, 0x780016,
+  0x005A26, 0x5C4600, 0xA00018,
+  0x005EA8,
+  0x000000, 0xFFFFFF, 0xFFFFFF, 0xD6D6D6, 0xE5E5E5,
+  0xD8F3F0, 0x005A52, 0x000000, 0x202020,
+  0xFFFFFF, 0xD9D9D9, 0x404040, 0xFFFFFF,
+};
+
+static constexpr TouchPalette kNightHighContrastPalette = {
+  0x000000, 0x000000, 0xFFFFFF, 0xD6D6D6,
+  0x003B5C, 0x202020, 0x66B5FF, 0x003F7F,
+  0x007A35, 0x005A26, 0xFFD400, 0xB00020, 0x780016,
+  0x55FF8A, 0xFFD400, 0xFF5A70,
+  0x005EA8,
+  0xFFFFFF, 0x000000, 0x000000, 0x202020, 0x303030,
+  0x003B36, 0x58FFF0, 0x404040, 0xFFFFFF,
+  0x101010, 0x303030, 0x404040, 0x000000,
+};
+
+static uint8_t s_theme_mode = TOUCH_THEME_NIGHT;
+// Keep the established light/dark role flag separate from contrast: many call
+// sites use it to select a surface appropriate to the palette's base luminance.
 static bool s_theme_day = false;
+static bool s_theme_high_contrast = false;
 static uint32_t COLOR_BG            = kNightPalette.bg;
 static uint32_t COLOR_PANEL         = kNightPalette.panel;
 // Earlier accent was 0x4E5C66 — RGB (78,92,102), cool blue-leaning. Even
@@ -588,7 +618,7 @@ static inline uint32_t accentDarken(uint32_t rgb, int pct) {
 }
 // Clamp a picked accent dark enough that text/icons stay readable on solid fills.
 static inline uint32_t accentClampReadable(uint32_t rgb) {
-  const uint32_t kMaxLuma = s_theme_day ? 105 : 140;
+  const uint32_t kMaxLuma = s_theme_high_contrast ? 90 : (s_theme_day ? 105 : 140);
   uint32_t L = accentLuma(rgb);
   if (L > kMaxLuma) return accentDarken(rgb, (int)(kMaxLuma * 100 / L));
   return rgb & 0xFFFFFFu;
@@ -632,8 +662,14 @@ static void applyThemeMode(uint8_t mode) {
 #if defined(HAS_TDECK_PRO)
   mode = TOUCH_THEME_DAY;   // monochrome e-paper: black content on a white field
 #endif
-  s_theme_day = mode == TOUCH_THEME_DAY;
-  const TouchPalette& p = s_theme_day ? kDayPalette : kNightPalette;
+  if (mode > TOUCH_THEME_NIGHT_HIGH_CONTRAST) mode = TOUCH_THEME_NIGHT;
+  s_theme_mode = mode;
+  s_theme_day = mode == TOUCH_THEME_DAY || mode == TOUCH_THEME_DAY_HIGH_CONTRAST;
+  s_theme_high_contrast = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ||
+                          mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
+  const TouchPalette& p = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ? kDayHighContrastPalette
+                        : mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST ? kNightHighContrastPalette
+                        : s_theme_day ? kDayPalette : kNightPalette;
   COLOR_BG = p.bg;
   COLOR_PANEL = p.panel;
   COLOR_TEXT = p.text;
@@ -664,20 +700,31 @@ static void applyThemeMode(uint8_t mode) {
   COLOR_SECONDARY_ACTION = p.secondary_action;
   COLOR_TRACK = p.track;
   COLOR_CHART_BG = p.chart_bg;
-  COLOR_ON_ACCENT = s_theme_day ? 0xFFFFFFu : p.text;
-  COLOR_ON_STATUS_OK = s_theme_day ? 0x15351Du : p.text;
-  COLOR_ON_STATUS_DANGER = s_theme_day ? 0x571515u : p.text;
-  COLOR_ON_STATUS_INFO = s_theme_day ? 0x103A5Au : p.text;
+  COLOR_ON_ACCENT = s_theme_high_contrast
+      ? (s_theme_day ? 0xFFFFFFu : 0x000000u)
+      : (s_theme_day ? 0xFFFFFFu : p.text);
+  COLOR_ON_STATUS_OK = s_theme_high_contrast ? 0xFFFFFFu
+                                             : (s_theme_day ? 0x15351Du : p.text);
+  COLOR_ON_STATUS_DANGER = s_theme_high_contrast ? 0xFFFFFFu
+                                                 : (s_theme_day ? 0x571515u : p.text);
+  COLOR_ON_STATUS_INFO = s_theme_high_contrast ? 0xFFFFFFu
+                                               : (s_theme_day ? 0x103A5Au : p.text);
   COLOR_CHAT_TEXT = s_theme_day ? 0xFFFFFFu : p.text;
-  COLOR_CHAT_META = s_theme_day ? 0xFFFFFFu : p.sub;
-  COLOR_CHAT_LINK = s_theme_day ? 0x9EDBFFu : 0x4EA1FFu;
-  COLOR_CHAT_SENT_BG = s_theme_day ? 0x28556Bu : p.sent_bg;
-  COLOR_CHAT_RECV_BG = s_theme_day ? 0x3C4852u : p.recv_bg;
-  COLOR_CHAT_MENTION_BG = s_theme_day ? 0x1D5F8Au : p.mention_bg;
+  COLOR_CHAT_META = s_theme_high_contrast ? 0xFFFFFFu
+                                          : (s_theme_day ? 0xFFFFFFu : p.sub);
+  COLOR_CHAT_LINK = s_theme_high_contrast ? 0xBFE4FFu
+                                          : (s_theme_day ? 0x9EDBFFu : 0x4EA1FFu);
+  COLOR_CHAT_SENT_BG = s_theme_high_contrast ? 0x003B5Cu
+                                             : (s_theme_day ? 0x28556Bu : p.sent_bg);
+  COLOR_CHAT_RECV_BG = s_theme_high_contrast ? 0x202020u
+                                             : (s_theme_day ? 0x3C4852u : p.recv_bg);
+  COLOR_CHAT_MENTION_BG = s_theme_high_contrast ? 0x003F7Fu
+                                                : (s_theme_day ? 0x1D5F8Au : p.mention_bg);
 }
 
 static inline uint32_t themeRole(uint32_t night, uint32_t day) {
-  return s_theme_day ? day : night;
+  // HC palettes use semantic role colors rather than legacy Night literals.
+  return (s_theme_day || s_theme_high_contrast) ? day : night;
 }
 
 // LVGL 8.3 / Montserrat doesn't ship a STAR glyph. We carry a small custom
@@ -897,6 +944,28 @@ static void initTouchFontFallbacks() {
       break;
     case 2:
     case 3:   // Jumbo keeps Large chrome; chat message text is bumped separately.
+      g_font_12 = lv_font_montserrat_18;
+      g_font_14 = lv_font_montserrat_20;
+      g_font_16 = lv_font_montserrat_24;
+      break;
+    default:
+      g_font_12 = lv_font_montserrat_12;
+      g_font_14 = lv_font_montserrat_14;
+      g_font_16 = lv_font_montserrat_16;
+      break;
+  }
+  g_font_tab = lv_font_montserrat_16;
+#elif defined(HELTEC_LORA_V4_R8)
+  // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
+  // controls retain their established dimensions and remain scrollable.
+  s_ui_fscale = 100;
+  switch (touchPrefsGetUiScale()) {
+    case 1:
+      g_font_12 = lv_font_montserrat_16;
+      g_font_14 = lv_font_montserrat_18;
+      g_font_16 = lv_font_montserrat_20;
+      break;
+    case 2:
       g_font_12 = lv_font_montserrat_18;
       g_font_14 = lv_font_montserrat_20;
       g_font_16 = lv_font_montserrat_24;
@@ -1706,9 +1775,17 @@ static inline lv_coord_t statusBarCurH() { return STATUSBAR_H; }
 #else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
 #endif
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top);
+#endif
 static void statusBarSetTall(bool tall) {
   s_statusbar_tall = tall;
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
+#if defined(HELTEC_LORA_V4_R8)
+  // R8 portrait mapping is identity, but a tall clickable bar used to cover the
+  // first row of the tab view. Keep visible content below its live hitbox.
+  r8ResizeContentBelowStatusBar(statusBarCurH());
+#endif
   // (updateGlobalStatusBar drives this every tick + refreshes the left zone; it must
   // NOT be called from here — it calls back into statusBarSetTall = recursion.)
 }
@@ -1719,8 +1796,18 @@ void reserveTileFetchStack();   // fwd: claim the worker stack before Wi-Fi eats
 // Thin wrappers over the machinery just above, exported so the self-contained app
 // modules (SnakeGame) build the same page as the in-file tool
 // pages instead of hand-rolling it against a hardcoded bar height.
-lv_coord_t appPageContentTop() { return STATUSBAR_H; }
-lv_coord_t appPageContentH()   { return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - STATUSBAR_H); }
+lv_coord_t appPageContentTop() {
+#if defined(HELTEC_LORA_V4_R8)
+  // appPageCreateRoot() runs before appPageBegin(), so reserve the height the
+  // latter is about to activate rather than reading the current one-row state.
+  return (lv_coord_t)(STATUSBAR_H * 2);
+#else
+  return STATUSBAR_H;
+#endif
+}
+lv_coord_t appPageContentH() {
+  return (lv_coord_t)(lv_disp_get_ver_res(nullptr) - appPageContentTop());
+}
 
 lv_obj_t* appPageCreateRoot(uint32_t bg_color) {
   lv_obj_t* root = lv_obj_create(lv_layer_top());
@@ -2002,8 +2089,8 @@ static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
-#if defined(HAS_TDECK_PRO)
-// E-paper cannot render the glass title row cleanly, so chat content starts below it.
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
+// E-paper and R8 content start below the complete status-bar hitbox.
 static inline lv_coord_t chatContentTop(){ return chatBarH(); }
 #else
 static inline lv_coord_t chatContentTop(){ return STATUSBAR_H; }
@@ -2280,7 +2367,7 @@ static bool terminalHandleVirtualKeyboardReady();
 // end-cursor, so backspace deleted the last character no matter where the caret
 // was. When this returns false, kbMirrorBind binds the field directly and the
 // mirror sync / redirects below are skipped.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Set while the on-screen keys were summoned for this editing session over an
 // external keyboard (the module's '#', or a second tap on a field a Bluetooth
 // keyboard types into); hideKb clears it.
@@ -2291,34 +2378,33 @@ static bool s_osk_forced = false;
 static inline bool bleKbdTyping() { return BleKbd::state() == BleKbd::State::Connected; }
 #endif
 
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+static inline bool externalKeyboardTyping() {
+  bool active = false;
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  active = active || attakyKeyboardPresent();
+#endif
+#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+  active = active || bleKbdTyping();
+#endif
+#if defined(HAS_CARDKB)
+  active = active || cardKbPresent();
+#endif
+  return active;
+}
+#endif
+
 static inline bool kbMirrorActive() {
 #if CAP_KEYBOARD
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-  // Keyboard is a detachable module, so decide at runtime, not via CAP_KEYBOARD:
-  // suppress the on-screen keys while the module answers on I2C, unless '#' has
-  // summoned them back for this field. No module: behave like stock upstream.
-#if CAP_BLE_KEYBOARD
-  return !((attakyKeyboardPresent() || bleKbdTyping()) && !s_osk_forced);
-#else
-  return !(attakyKeyboardPresent() && !s_osk_forced);
-#endif
-#elif CAP_BLE_KEYBOARD
-  // Same for a connected Bluetooth keyboard: it types straight into the field,
-  // so the on-screen keys stay down unless a second tap asked for them.
-  return !(bleKbdTyping() && !s_osk_forced);
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+  // Detachable keyboards are detected at runtime. Keep the on-screen keys down
+  // while one is present unless a second tap summoned them for this field.
+  return !(externalKeyboardTyping() && !s_osk_forced);
 #else
   return true;
 #endif
 }
-
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) && CAP_BLE_KEYBOARD
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent() || bleKbdTyping(); }
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
-static inline bool externalKeyboardTyping() { return attakyKeyboardPresent(); }
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-static inline bool externalKeyboardTyping() { return bleKbdTyping(); }
-#endif
 
 // ---- Chats "+" add-channel modal pointers (see lower in file for impl) ----
 static lv_obj_t* s_addch_sheet      = nullptr;
@@ -2636,6 +2722,19 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
+
+#if defined(HELTEC_LORA_V4_R8)
+static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
+  if (!g_lv.tabview) return;
+  lv_obj_set_pos(g_lv.tabview, 0, top);
+  lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr),
+                  lv_disp_get_ver_res(nullptr) - top);
+  if (g_lv.dm.list_cont) {
+    lv_obj_set_size(g_lv.dm.list_cont, lv_disp_get_hor_res(nullptr),
+                    lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
+  }
+}
+#endif
 
 /** If `cp` has no glyph in `font`, show '*' instead of LVGL's missing-glyph box. Preserves \\n \\r \\t. */
 static bool uiFontHasGlyph(const lv_font_t* font, uint32_t cp) {
@@ -3258,7 +3357,7 @@ static void styleSurface(lv_obj_t* obj, uint32_t bg, lv_coord_t radius = 10) {
 
 static void styleCard(lv_obj_t* obj) {
   styleSurface(obj, COLOR_PANEL, 10);
-  lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_width(obj, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
   lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
 }
 
@@ -3267,7 +3366,7 @@ static inline uint32_t lightSurfaceTextRgb(uint32_t color) {
   (void)color;
   return 0x000000;
 #else
-  return color;
+  return s_theme_high_contrast ? COLOR_TEXT : color;
 #endif
 }
 
@@ -3344,9 +3443,11 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_bg_opa(obj, LV_OPA_10, LV_PART_MAIN);
   lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_bg_opa(obj, LV_OPA_50, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_border_width(obj, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_opa(obj, LV_OPA_40, LV_PART_MAIN);
+  lv_obj_set_style_border_color(obj,
+      lv_color_hex(s_theme_high_contrast ? COLOR_BORDER : COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_style_border_width(obj, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(obj,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_40, LV_PART_MAIN);
   lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 #endif
   // ...and the font, for the same reason as the text colour. A button carries a
@@ -5630,7 +5731,9 @@ static void navBuildTabKeyHints() {
   lv_obj_set_style_pad_all(bar, 0, LV_PART_ITEMS);
   // The active page is shown by a clearly-lit rounded "pill" behind its cell (no dimming of the
   // others) — a lighter fill than the dark bar so the current tab stands out on its own.
-  lv_obj_set_style_bg_color(bar, lv_color_hex(0x4A555F), LV_PART_ITEMS | LV_STATE_CHECKED);
+  lv_obj_set_style_bg_color(bar,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : 0x4A555F),
+      LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_radius(bar, 8, LV_PART_ITEMS | LV_STATE_CHECKED);
 
@@ -5639,7 +5742,7 @@ static void navBuildTabKeyHints() {
   const uint32_t cols[5]  = { 0xF5A623, 0xFFD400, 0x2ECC40, 0x2E9BFF, 0xC724B1 };
   const char*    icons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME, LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
   for (int i = 0; i < 5; i++) {
-    lv_color_t col = lv_color_hex(cols[i]);
+    lv_color_t col = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : cols[i]);
     lv_obj_t* cv = lv_canvas_create(bar);
     lv_obj_clear_flag(cv, LV_OBJ_FLAG_CLICKABLE);
     uint8_t* buf = (uint8_t*)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(34, 34), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -7245,7 +7348,7 @@ static void hideKb() {
   // reveal does not inherit the symbol mode the summon opened.
   if (s_osk_forced && g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
   s_osk_forced = false;
-#elif CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#elif (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
   s_osk_forced = false;   // the summon lasts one editing session
 #endif
   if (s_kb_mirror_root) lv_obj_add_flag(s_kb_mirror_root, LV_OBJ_FLAG_HIDDEN);
@@ -7315,7 +7418,7 @@ static void showKb(LvChatPanel* p) {
 #if !CAP_KEYBOARD
   // No on-screen keyboard on the T-Deck — the physical keyboard types straight
   // into the composer (already visible), so skip showing the keys + the lift.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD || defined(HAS_CARDKB)
   // Same while an external keyboard types (the attached module, or a connected
   // Bluetooth keyboard) until the keys are summoned for this field. kbMirrorActive()
   // guards the settings path; the chat composer comes through here and needs its own.
@@ -7331,18 +7434,18 @@ static void showKb(LvChatPanel* p) {
 #endif
 }
 
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-// Second tap on a field a Bluetooth keyboard types into: bring the on-screen keys
+#if (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+// Second tap on a field an external keyboard types into: bring the on-screen keys
 // up for it anyway, in case the keyboard is out of reach. A field's PRESSED
 // arrives before LVGL moves the focus, so "already bound" there means the field
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
-static void bleKbdNoteFieldPress(lv_obj_t* ta) {
+static void externalKbdNoteFieldPress(lv_obj_t* ta) {
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
-  s_osk_press_ta = (bound && bleKbdTyping() && !s_osk_forced) ? ta : nullptr;
+  s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
 // On CLICKED: for such a second tap, summon the keys for this editing session.
-static void bleKbdSecondTap(lv_obj_t* ta) {
+static void externalKbdSecondTap(lv_obj_t* ta) {
   if (ta && ta == s_osk_press_ta) s_osk_forced = true;
   s_osk_press_ta = nullptr;
 }
@@ -8147,7 +8250,7 @@ static void composerFocusCb(lv_event_t* e) {
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(lv_event_get_target(e));
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
 #endif
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
 }
@@ -8839,7 +8942,7 @@ static void threadSelectCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
 // Send the panel composer's text and clear it. Split from the send button's
 // callback so an external keyboard's Enter can reach the same path.
 static void composerSendFromPanel(LvChatPanel* p) {
@@ -10050,7 +10153,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) bleKbdSecondTap(ta);
+  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
 #endif
   s_kb_panel = nullptr;
   kbMirrorBind(ta);
@@ -10165,7 +10268,7 @@ static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
-  bleKbdNoteFieldPress(lv_event_get_target(e));
+  externalKbdNoteFieldPress(lv_event_get_target(e));
 #endif
 }
 
@@ -10759,6 +10862,10 @@ static void saveRadioParamsCb(lv_event_t* e) {
     size_t rl = strlen(r);
     while (rl && (r[rl-1]==' '||r[rl-1]=='\t'||r[rl-1]=='\n'||r[rl-1]=='\r')) r[--rl] = '\0';
     memmove(region, r, strlen(r) + 1);
+    if (!RegionDiscoveryResults::validPublicScope(region)) {
+      if (!silent) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+      return;
+    }
   }
 #if defined(TLORA_PAGER)
   // Blur auto-save fires on EVERY field defocus, including pure keyboard/encoder nav that
@@ -14233,8 +14340,13 @@ static void themeModeRestart(uint8_t mode) {
   // rebooting straight from this callback paints no notice at all, so the device
   // appears to restart by itself, which reads as a crash rather than as the
   // setting working.
-  rebootWithNotice(mode == TOUCH_THEME_DAY ? TR("Day theme - restarting to apply it\xE2\x80\xA6")
-                                           : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
+  const bool high_contrast = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ||
+                             mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
+  const char* notice = high_contrast
+      ? TR("High contrast - restarting to apply it\xE2\x80\xA6")
+      : (mode == TOUCH_THEME_DAY ? TR("Day theme - restarting to apply it\xE2\x80\xA6")
+                                 : TR("Night theme - restarting to apply it\xE2\x80\xA6"));
+  rebootWithNotice(notice);
 }
 
 static lv_obj_t* s_clockset_ta = nullptr;   // manual clock entry (#105)
@@ -14314,6 +14426,14 @@ static void gpsFuzzSelectCb(lv_event_t* e) {
 static void themeModeSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
+}
+
+static void themeContrastToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool high_contrast = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  themeModeRestart(high_contrast
+      ? (s_theme_day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
+      : (s_theme_day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT));
 }
 
 static void buildDeviceSettings(int sec) {
@@ -14434,7 +14554,7 @@ static void buildDeviceSettings(int sec) {
     // with this setting has been that nobody could find it, and a row of choices
     // shows every option and the current one without being touched at all. A
     // cycling button hides three of four values, and a dropdown hides all of
-    // them until it is opened. Same shape as the Night/Day selector.
+    // them until it is opened. Same shape as the Appearance selector.
     static const struct { uint16_t m; const char* label; } k_fuzz[] = {
       { 0,    "Exact"  },
       { 100,  "100 m"  },
@@ -14866,6 +14986,8 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
     lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
+#elif defined(HELTEC_LORA_V4_R8)
+  lv_dropdown_set_options(dd, TR("Normal\nLarge text\nHuge text"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
 #endif
@@ -15019,31 +15141,40 @@ static void buildDeviceSettings(int sec) {
      every LVGL object is rebuilt with one coherent set of colours. */
   {
     y += settingsRowLabel(body, y, 0, TR("Appearance"), COLOR_SUB, &g_font_12, 0) + 4;
-    const uint8_t current = touchPrefsGetThemeMode();
     const lv_coord_t gap = 4;
     const lv_coord_t row_w = s_settings_content_w - 2;
     const lv_coord_t button_w = (row_w - gap) / 2;
-    const char* labels[2] = { TR("Night"), TR("Day") };
-    for (uint8_t mode = TOUCH_THEME_NIGHT; mode <= TOUCH_THEME_DAY; ++mode) {
+    for (uint8_t day = 0; day <= 1; ++day) {
+      const uint8_t mode = s_theme_high_contrast
+          ? (day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
+          : (day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT);
       lv_obj_t* button = lv_btn_create(body);
       lv_obj_set_size(button, button_w, SC(34));
-      lv_obj_set_pos(button, 2 + mode * (button_w + gap), y);
+      lv_obj_set_pos(button, 2 + day * (button_w + gap), y);
       styleButton(button);
-      if (mode == current) {
+      if ((day != 0) == s_theme_day) {
         lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_opa(button, LV_OPA_COVER, LV_PART_MAIN);
       }
       lv_obj_set_style_text_color(button,
-          lv_color_hex(mode == current ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+          lv_color_hex((day != 0) == s_theme_day ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_obj_add_event_cb(button, themeModeSelectCb, LV_EVENT_CLICKED,
                           (void*)(uintptr_t)mode);
       lv_obj_t* label = lv_label_create(button);
       char text[32];
-      snprintf(text, sizeof(text), "%s%s", mode == current ? LV_SYMBOL_OK "  " : "", labels[mode]);
+      const char* base = day ? TR("Day") : TR("Night");
+      snprintf(text, sizeof(text), "%s%s", (day != 0) == s_theme_day ? LV_SYMBOL_OK "  " : "", base);
       lv_label_set_text(label, text);
       lv_obj_center(label);
     }
     y += SC(42);
+
+    int h = settingsRowLabel(body, y, 6, TR("High contrast"), COLOR_SUB, nullptr, 90);
+    lv_obj_t* contrast_sw = lv_switch_create(body);
+    lv_obj_align(contrast_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_theme_high_contrast) lv_obj_add_state(contrast_sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(contrast_sw, themeContrastToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
   }
 
   /* Accent colour: opens a colour-wheel + hex picker. */
@@ -27500,7 +27631,11 @@ static void openFileTransferPage() {
 
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_file_transfer_root = appPageCreateRoot(COLOR_BG);
+#if defined(HELTEC_LORA_V4_R8)
+  lv_obj_set_style_pad_top(s_file_transfer_root, 10, LV_PART_MAIN);
+#else
   lv_obj_set_style_pad_top(s_file_transfer_root, STATUSBAR_H + 10, LV_PART_MAIN);
+#endif
   lv_obj_set_style_pad_left(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_right(s_file_transfer_root, 14, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(s_file_transfer_root, 14, LV_PART_MAIN);
@@ -28609,6 +28744,9 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_style_text_font(s_home_chart_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_align(s_home_chart_legend, LV_ALIGN_TOP_LEFT, 0, chart_y);
   lv_obj_add_flag(s_home_chart_legend, LV_OBJ_FLAG_CLICKABLE);
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_add_flag(s_home_chart_legend, NAV_SKIP_FLAG);
+#endif
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
@@ -28823,6 +28961,8 @@ static void makeHome(lv_obj_t* tab) {
   styleButton(adv);
   lv_obj_set_style_bg_color(adv, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_bg_color(adv, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(adv, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(adv, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_text_color(adv, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
   if (home_land) {
 #if CAP_LARGE_SCREEN
@@ -28870,8 +29010,8 @@ static void makeHome(lv_obj_t* tab) {
     styleButton(apb);
     lv_obj_set_size(apb, half, btn_h);
     lv_obj_align(apb, LV_ALIGN_TOP_LEFT, apps_x, apps_y);
-    const uint32_t inv_accent = s_theme_day
-                    ? COLOR_ACCENT_SURFACE
+    const uint32_t inv_accent = s_theme_high_contrast ? COLOR_CONTROL_PRESSED
+            : s_theme_day ? COLOR_ACCENT_SURFACE
                     : 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
     lv_obj_set_style_bg_color(apb, lv_color_hex(inv_accent), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(apb, LV_OPA_COVER, LV_PART_MAIN);
@@ -28929,14 +29069,14 @@ static void makeHome(lv_obj_t* tab) {
       lv_obj_t* l = lv_label_create(b);
       lv_label_set_text(l, TR(label));
       lv_obj_set_style_text_font(l, bh >= 44 ? &g_font_14 : &g_font_12, LV_PART_MAIN);
-        lv_obj_set_style_text_color(l,
+      lv_obj_set_style_text_color(l,
           lv_color_hex(bg ? themeRole(0xFFFFFF, COLOR_TEXT) : COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(l);
       return b;
     };
     // The accent's inverse — used for the "Apps" pop colour and the Control-panel button.
-    const uint32_t inv_accent = s_theme_day
-                    ? COLOR_ACCENT_SURFACE
+    const uint32_t inv_accent = s_theme_high_contrast ? COLOR_CONTROL_PRESSED
+            : s_theme_day ? COLOR_ACCENT_SURFACE
                     : 0xFFFFFFu ^ (COLOR_ACCENT & 0xFFFFFFu);
 #if CAP_LARGE_SCREEN
     s_home_nav_right[HOME_NAV_TERMINAL] = make_launcher(TR(">_  Terminal"), tanBtnY(1), homeTerminalCb, 0, tan_btn_h);
@@ -29687,7 +29827,8 @@ static void makeContactsTab(lv_obj_t* tab) {
     s_ct_disc_badge = lv_label_create(b);   // red count pill, right side (updated by the loop)
     lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 16);
     lv_obj_set_style_radius(s_ct_disc_badge, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(s_ct_disc_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ct_disc_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge, lv_color_white(), LV_PART_MAIN);
     // This is fixed-size chrome inside a 16-px pill, not semantic body text.
@@ -30621,7 +30762,8 @@ struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; cha
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
 // by luaAppIconGlyph(); empty = the generic app symbol.
 struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
-static const int kLuaCatMax = 16, kLuaInstMax = 16, kLangCatMax = LANG_COUNT + 2, kLangInstMax = 12;
+static const int kLuaCatMax = 16, kLuaInstMax = 16;
+static const int kLangCatMax = LANG_COUNT + 2, kLangInstMax = LANG_COUNT;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
 static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)
@@ -35030,7 +35172,8 @@ static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
-  if (touchSleep::enabled()) c = lv_color_hex(0xFFD60A);   // iOS systemYellow ≈ Low Power Mode
+  if (touchSleep::enabled())
+    c = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xFFD60A);
 #endif
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
 }
@@ -35545,7 +35688,8 @@ static void makeChatDetail(LvChatPanel& p) {
   p.overlay = lv_obj_create(lv_scr_act());
   lv_obj_set_size(p.overlay, chatScreenW(), chatScreenH());
   // Most boards start below the solid row and let the glass title row overlap the
-  // list. T-Deck Pro starts below both rows because e-paper needs opaque separation.
+  // list. T-Deck Pro and R8 start below both rows: e-paper needs opaque separation,
+  // while R8 must not show tappable content beneath the bar's touch hitbox.
   lv_obj_set_pos(p.overlay, 0, chatContentTop());
   styleSurface(p.overlay, COLOR_BG, 0);
   lv_obj_set_style_pad_all(p.overlay, 0, LV_PART_MAIN);   // prevent child-position offset
@@ -35578,7 +35722,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // The status bar's glass lower row floats over the TOP of the list on boards
   // with a two-row chat header. Pager keeps the chat header in one regular row,
   // so retaining that old row-sized inset only wastes message space.
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
@@ -35624,7 +35768,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_border_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(p.jump_oldest_btn, 0, LV_PART_MAIN);
   lv_obj_set_ext_click_area(p.jump_oldest_btn, 6);
-#if defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + 2);
 #else
   lv_obj_set_pos(p.jump_oldest_btn, chatScreenW() - 28, CHAT_HDR_H + STATUSBAR_H + 2);
@@ -36463,20 +36607,25 @@ static void openSettingsCategory(int cat) {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
 
-  // On the BASE screen layer (like the chat overlay), so the status bar — which lives on
-  // lv_layer_top above it — paints its glass lower row OVER this sheet and the page
-  // content scrolls UNDER the bar. (On lv_layer_top the sheet would sit above the bar and
-  // the glass would reveal the settings landing behind the bar instead of this page.)
+  // On the BASE screen layer (like the chat overlay), so the status bar remains
+  // above it. The R8 keeps the entire sheet below the bar's live touch hitbox.
   lv_obj_t* root = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(root);
   // Settings detail pages use a DOUBLE-height status bar (its back chevron + title become
   // a tall title bar). Set the category first so the bar paints the title + goes tall.
-  // The sheet starts under the SOLID top row (STATUSBAR_H); the page insets its top by
-  // the glass lower-row height so content rests below the bar but scrolls under it.
+  // Most boards start under the solid row and inset the page below the glass row.
+  // R8 starts the sheet itself below both rows so no visible content is untappable.
   s_settings_open_cat = cat;
   statusBarSetTall(true);
-  lv_obj_set_size(root, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(root, 0, STATUSBAR_H);
+#if defined(HELTEC_LORA_V4_R8)
+  const lv_coord_t settings_top = statusBarCurH();
+  const lv_coord_t settings_pad_top = 8;
+#else
+  const lv_coord_t settings_top = STATUSBAR_H;
+  const lv_coord_t settings_pad_top = STATUSBAR_H + 8;
+#endif
+  lv_obj_set_size(root, sw, sh - settings_top);
+  lv_obj_set_pos(root, 0, settings_top);
   styleSurface(root, COLOR_BG, 0);
   lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
@@ -36485,9 +36634,9 @@ static void openSettingsCategory(int cat) {
 
   lv_obj_t* page = lv_obj_create(root);
   lv_obj_set_pos(page, 0, 0);
-  lv_obj_set_size(page, sw, sh - STATUSBAR_H);
+  lv_obj_set_size(page, sw, sh - settings_top);
   prepSettingsPage(page);
-  lv_obj_set_style_pad_top(page, STATUSBAR_H + 8, LV_PART_MAIN);   // clear the glass lower bar row
+  lv_obj_set_style_pad_top(page, settings_pad_top, LV_PART_MAIN);
 
   resetSettingsModalState();
   s_settings_page = page;
@@ -36512,6 +36661,11 @@ static void settingsCatOpenCb(lv_event_t* e) {
   const int cat = (int)(intptr_t)lv_event_get_user_data(e);
 #if CAP_LUA_APPS
   if (cat == CAT_LANGUAGE) {   // languages live in the Lua Store now (files + picker)
+#if defined(HAS_M9_KEYBOARD)
+    // Store is a separate top-layer page, so retain this persistent Settings
+    // card until the landing page owns navigation again.
+    s_m9_focus_pending = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+#endif
     luaStoreOpenLanguages();
     return;
   }
@@ -36625,7 +36779,8 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_clear_flag(s_update_subtab_badge, LV_OBJ_FLAG_CLICKABLE);
       lv_obj_set_size(s_update_subtab_badge, 9, 9);
       lv_obj_set_style_radius(s_update_subtab_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(s_update_subtab_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(s_update_subtab_badge,
+          lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
       lv_obj_set_style_bg_opa(s_update_subtab_badge, LV_OPA_COVER, LV_PART_MAIN);
       lv_obj_align(s_update_subtab_badge, LV_ALIGN_RIGHT_MID, landscape ? -12 : -32, 0);
       lv_obj_add_flag(s_update_subtab_badge, LV_OBJ_FLAG_HIDDEN);
@@ -37451,8 +37606,10 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_add_event_cb(bodywrap, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
   // Thin visible scrollbar (remove_style_all wiped the theme's).
   lv_obj_set_style_width(bodywrap, 4, LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_color(bodywrap, lv_color_hex(0x6FA8DA), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(bodywrap, LV_OPA_70, LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_color(bodywrap,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0x6FA8DA), LV_PART_SCROLLBAR);
+  lv_obj_set_style_bg_opa(bodywrap,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_70, LV_PART_SCROLLBAR);
   lv_obj_set_style_radius(bodywrap, 2, LV_PART_SCROLLBAR);
 
   lv_obj_t* lbl = lv_label_create(bodywrap);
@@ -38043,7 +38200,9 @@ static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
     switch (m.deliv_state) {
       case UITask::DELIV_SENT:      deliv_glyph = " " LV_SYMBOL_OK; deliv_fg = COLOR_SUB; break;
       case UITask::DELIV_DELIVERED: deliv_glyph = " " LV_SYMBOL_OK LV_SYMBOL_OK; deliv_fg = COLOR_ACCENT; break;
-      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend"; deliv_fg = 0xE08080; break;
+      case UITask::DELIV_FAILED:    deliv_glyph = " " LV_SYMBOL_CLOSE " tap to resend";
+                                     deliv_fg = s_theme_high_contrast
+                                         ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
       default: break;
     }
   }
@@ -38130,7 +38289,7 @@ static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int
 #if defined(HAS_TDECK_PRO)
   const bool colorful_bubbles = false;
 #else
-  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  const bool colorful_bubbles = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
 #endif
   lv_color_t dark_sender_col = lv_color_hex(COLOR_RECV_BG);
   lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
@@ -38159,7 +38318,8 @@ static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int
       case UITask::DELIV_SENT:      dglyph = LV_SYMBOL_UPLOAD;          dfg = COLOR_SUB;    break;
       case UITask::DELIV_DELIVERED: dglyph = LV_SYMBOL_OK LV_SYMBOL_OK; dfg = COLOR_ACCENT; break;
       case UITask::DELIV_FAILED:    dglyph = LV_SYMBOL_CLOSE " tap to resend";
-                    dfg = s_theme_day ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
+                                     dfg = (s_theme_day || s_theme_high_contrast)
+                                         ? COLOR_STATUS_DANGER_TEXT : 0xE08080; break;
     }
   }
   char reps[12] = "";
@@ -38582,7 +38742,8 @@ static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
   lv_obj_remove_style_all(dline);
   lv_obj_set_size(dline, kContentW, 1);
   lv_obj_set_pos(dline, 0, 8);
-  lv_obj_set_style_bg_color(dline, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dline,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(dline, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_t* dlbl = lv_label_create(div);
   lv_label_set_text(dlbl, TR("New"));
@@ -38841,7 +39002,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 #if defined(HAS_TDECK_PRO)
   const bool colorful_bubbles = false;
 #else
-  const bool colorful_bubbles = touchPrefsGetColorfulBubbles();
+  const bool colorful_bubbles = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
 #endif
 
   lv_obj_t* bubble = lv_obj_create(p->msgs);
@@ -38872,6 +39033,12 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_style_border_color(bubble, lv_color_black(), LV_PART_MAIN);
   lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
   lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+#else
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(bubble, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+  }
 #endif
   lv_obj_set_style_pad_hor(bubble, kChatBubblePadH, LV_PART_MAIN);
   lv_obj_set_style_pad_ver(bubble, kChatBubblePadV, LV_PART_MAIN);
@@ -39724,6 +39891,8 @@ static void refreshChatList(LvChatPanel& p) {
     // lv_list_add_btn creates: child[0]=icon label, child[1]=text label.
     lv_obj_t* text_lbl = lv_obj_get_child(btn, 1);
     if (text_lbl) {
+      lv_obj_set_style_text_color(text_lbl,
+          lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
       // Leave room on the right for the gear + time + unread badge.
       lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116 - time_w - gear_w);
@@ -42855,6 +43024,25 @@ static int bleKbdLuaCode(int key) {
   return 0;
 }
 
+#if defined(HAS_CARDKB)
+static int cardKbUiKey(int raw) {
+  switch (raw) {
+    case 0x08:
+    case 0x7F: return BLE_KEY_BACKSPACE;
+    case 0x09: return BLE_KEY_TAB;
+    case 0x0A:
+    case 0x0D: return BLE_KEY_ENTER;
+    case 0x1B: return BLE_KEY_ESC;
+    case 0xB4: return BLE_KEY_LEFT;
+    case 0xB5: return BLE_KEY_UP;
+    case 0xB6: return BLE_KEY_DOWN;
+    case 0xB7: return BLE_KEY_RIGHT;
+    default:
+      return (raw >= 0x20 && raw < 0x7F) ? (BLE_KEY_TEXT | raw) : 0;
+  }
+}
+#endif
+
 // Command alone opens the emoji picker while writing a message, and closes it
 // again. While it is open the arrows walk its grid and Enter inserts; Esc
 // closes it through Back and typing still reaches the message. Returns true
@@ -42907,6 +43095,16 @@ static bool bleKbdTabHotkey(int cp) {
   return true;
 }
 
+static bool m9LockedHomeDrawerFrontmost() {
+#if defined(HAS_THINKNODE_M9)
+  return getActiveTab() == HOME_TAB_INDEX &&
+         s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
+         s_home_drawer_mode && s_appdrawer_root && !appDrawerCovered();
+#else
+  return false;
+#endif
+}
+
 // Esc is the back button: one press, one layer, innermost first. The M9 Back
 // key's order, without its map-pan and screen-history rungs, and with the
 // status bar's own Back detail that a settings page opened from the Control
@@ -42929,6 +43127,7 @@ static void bleKbdBack() {
   }
   // A chat covers its tab page, the Home app drawer included: close the chat first.
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+  else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
   else if (anyPopupOpen())                       hwKeyDismissTopPopup();
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
   s_nav_show = true;
@@ -43143,8 +43342,10 @@ static bool m9HandleNavKey(int key) {
       // app (reported bug). Close the page itself; the drawer is then the
       // next, visible Back target.
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-      else if (anyPopupOpen() || s_ct_select_mode)   hwKeyDismissTopPopup();
+      else if (popupRegistryAnyOver() || s_ct_select_mode) hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
+      else if (anyPopupOpen())                       hwKeyDismissTopPopup();
       // Every layer that was covering the screen is peeled — NOW go back a
       // screen. This rung is what the ladder was missing: without it Back fell
       // straight through to LV_KEY_ESC, which nothing in this build consumes
@@ -43209,7 +43410,7 @@ static bool m9HandleNavKey(int key) {
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
         const bool keep_drawer = s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer();
-        if (!(keep_drawer && was_open && s_appdrawer_root && !appDrawerCovered())) {
+        if (!m9LockedHomeDrawerFrontmost()) {
           // Stop on a key-blocker row (SD format / bulk delete progress) instead of
           // spinning eight times closing nothing and then toggling the drawer out
           // from under a running operation.
@@ -44528,7 +44729,7 @@ static void bleKbdNavEnable(bool on) {
 // put them away and keep the field bound, so typing carries on on the keyboard.
 // (When the keyboard goes away the field stays as it is; the next tap brings
 // the on-screen keys, since nothing suppresses them any more.)
-static void bleKbdTookOverField() {
+static void externalKbdTookOverField() {
   if (!g_lv.keyboard || s_osk_forced || lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) return;
   LvChatPanel* const panel = s_kb_panel;
   lv_obj_t* const    field = s_kb_bind_ta;
@@ -44565,18 +44766,26 @@ static void bleKbdPageRefresh();   // pairing screen + Bluetooth page status (de
 // Once per UI loop: persist what the worker changed, then route the keys.
 static void bleKbdUiTick() {
   bleKbdBoot();
-  static bool s_was_connected = false;
+#if defined(HAS_CARDKB)
+  cardKbPoll();
+#endif
   const bool connected = BleKbd::state() == BleKbd::State::Connected;
-  if (connected != s_was_connected) {
-    s_was_connected = connected;
+  const bool external_connected = connected
+#if defined(HAS_CARDKB)
+      || cardKbPresent()
+#endif
+      ;
+  static bool s_was_external_connected = false;
+  if (external_connected != s_was_external_connected) {
+    s_was_external_connected = external_connected;
 #if BLE_KBD_OWNS_NAV
-    bleKbdNavEnable(connected);
+    bleKbdNavEnable(external_connected);
 #endif
 #if !CAP_KEYBOARD
-    if (connected) bleKbdTookOverField();
+    if (external_connected) externalKbdTookOverField();
 #endif
 #if CAP_KEYPAD_NAV
-    s_ble_kbd_hotkeys = connected;
+    s_ble_kbd_hotkeys = external_connected;
     navMenubarKeysSync();
 #endif
   }
@@ -44603,6 +44812,18 @@ static void bleKbdUiTick() {
     }
     bleKbdDispatch(key);
   }
+#if defined(HAS_CARDKB)
+  for (int i = 0; i < 16; ++i) {
+    const int raw = cardKbReadKey();
+    if (!raw) break;
+    if (s_remote_mode) {
+      if (raw == ' ') remotePhysicalKey(' ');
+      continue;
+    }
+    const int key = cardKbUiKey(raw);
+    if (key) bleKbdDispatch(key);
+  }
+#endif
 }
 #endif  // CAP_BLE_KEYBOARD
 
@@ -45137,11 +45358,14 @@ static void ccGpsNoneCb(lv_event_t* e) {
   g_lv.task->showAlert(TR("No onboard GPS"), 1200);
 }
 #endif
-// Day/Night chip: persist the opposite palette and rebuild the complete UI on restart.
+// Theme chip: cycle all palettes and rebuild the complete UI on restart.
 static void ccThemeCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeControlCenter();
-  themeModeRestart(s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
+  const uint8_t next = s_theme_high_contrast
+      ? (s_theme_day ? TOUCH_THEME_NIGHT_HIGH_CONTRAST : TOUCH_THEME_DAY_HIGH_CONTRAST)
+      : (s_theme_day ? TOUCH_THEME_NIGHT : TOUCH_THEME_DAY);
+  themeModeRestart(next);
 }
 
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
@@ -46175,11 +46399,9 @@ static void openControlCenter() {
            CAT_GPS, nullptr, CC_NAV_GPS);
 #endif
 #if !defined(HAS_TDECK_PRO)
-  // Icon stays the sun in both states (#414): the chip's own fill carries on/off,
-  // exactly as the DND chip does since #396, and a glyph that also changes reads
-  // as a different control rather than the same one toggled. The keypad-nav id
-  // comes from #412, which branched before that decision.
-  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_day,
+  // Keep one centered sun icon for all modes (#414); Display settings shows
+  // the selected Night/Day and High contrast state explicitly.
+  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_mode != TOUCH_THEME_NIGHT,
            ccThemeCb, tw, th, CAT_DISPLAY, nullptr, CC_NAV_THEME);
 #endif
 #if CAP_KEYBOARD
@@ -46924,11 +47146,12 @@ static void luaStoreRebuildList() {
       const bool info = col == 0x4F9DF7;
       lv_obj_set_style_bg_color(b,
           lv_color_hex(danger ? themeRole(col, COLOR_STATUS_DANGER)
-                              : info ? COLOR_STATUS_INFO : col), LV_PART_MAIN);
+                    : info ? COLOR_STATUS_INFO
+                    : s_theme_high_contrast ? COLOR_ACCENT : col), LV_PART_MAIN);
       lv_obj_t* bl = lv_label_create(b);
       lv_label_set_text(bl, txt);
       lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
-      if (s_theme_day) {
+      if (s_theme_day || s_theme_high_contrast) {
         lv_obj_set_style_text_color(bl,
             lv_color_hex(danger ? COLOR_ON_STATUS_DANGER
                                 : info ? COLOR_ON_STATUS_INFO : COLOR_ON_ACCENT), LV_PART_MAIN);
@@ -47169,7 +47392,7 @@ static void luaStoreRebuildList() {
     } else {
       lv_obj_add_event_cb(b, luaStoreInstallBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     }
-    if (s_theme_day) {
+    if (s_theme_day || s_theme_high_contrast) {
       lv_obj_set_style_text_color(bl,
           lv_color_hex(!runnable && !inst ? COLOR_TEXT
                        : inst && cur ? COLOR_ON_STATUS_DANGER
@@ -47224,7 +47447,7 @@ static void luaStoreRebuildList() {
     lv_obj_t* bl = lv_label_create(b);
     lv_label_set_text(bl, TR("Remove"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
-    if (s_theme_day)
+    if (s_theme_day || s_theme_high_contrast)
       lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_ON_STATUS_DANGER), LV_PART_MAIN);
     lv_obj_center(bl);
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
@@ -48088,6 +48311,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
                        uint32_t icon_col, bool big = false) {
 #if defined(HAS_TDECK_PRO)
   icon_col = 0x000000u;
+#else
+  if (s_theme_high_contrast) icon_col = COLOR_TEXT;
 #endif
   // App-style tile: a rounded-square icon chip with the label UNDERNEATH it,
   // instead of a filled box with the text inside. Same grid footprint (w×h);
@@ -48098,8 +48323,17 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_pos(t, x, y);
   lv_obj_set_style_bg_opa(t, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_radius(t, 12, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(t, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(t, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(t,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : COLOR_ACCENT),
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(t,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20,
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(t, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(t, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(t, LV_OPA_COVER, LV_PART_MAIN);
+  }
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 #if CAP_LUA_APPS
   if (act >= APPACT_LUA_BASE || appHideBitFor(act))
@@ -48125,11 +48359,13 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_size(chip_o, chip, chip);
   lv_obj_align(chip_o, LV_ALIGN_TOP_MID, 0, 5);
   lv_obj_set_style_bg_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(chip_o, LV_OPA_20, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(chip_o,
+      s_theme_high_contrast ? LV_OPA_TRANSP : LV_OPA_20, LV_PART_MAIN);
   lv_obj_set_style_radius(chip_o, chip * 22 / 100, LV_PART_MAIN);   // ~22% squircle, not a circle
   lv_obj_set_style_border_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
-  lv_obj_set_style_border_width(chip_o, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_opa(chip_o, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_border_width(chip_o, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(chip_o,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
 
   if (act == APPACT_SNAKE) {
     // The 🐍 emoji (U+1F40D) isn't in the baked colour-emoji set, so a plain
@@ -48159,7 +48395,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_clear_flag(eye, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(eye, 2, 2);
     lv_obj_set_pos(eye, 14, 1);
-    lv_obj_set_style_bg_color(eye, lv_color_hex(0x0E1216), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(eye,
+      lv_color_hex(s_theme_high_contrast ? COLOR_BG : 0x0E1216), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(eye, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(eye, 1, LV_PART_MAIN);
   } else if (act == APPACT_READER) {
@@ -48252,7 +48489,8 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_t* bdg = lv_obj_create(t);
     lv_obj_remove_style_all(bdg);
     lv_obj_clear_flag(bdg, LV_OBJ_FLAG_CLICKABLE);   // taps pass through to the tile
-    lv_obj_set_style_bg_color(bdg, lv_color_hex(0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bdg,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(bdg, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_radius(bdg, 9, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(bdg, 4, LV_PART_MAIN);
@@ -48478,8 +48716,10 @@ static void openAppDrawer() {
   lv_obj_set_style_pad_bottom(s_appdrawer_root, 10, LV_PART_MAIN);   // room past the last row when scrolled
   // A clearly visible scrollbar so users discover the lower rows. The mode is
   // set after the grid is measured (ON when it overflows, OFF when it all fits).
-  lv_obj_set_style_bg_color(s_appdrawer_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(s_appdrawer_root, LV_OPA_70, LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_color(s_appdrawer_root,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : COLOR_ACCENT), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(s_appdrawer_root,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_70, LV_PART_SCROLLBAR);
   lv_obj_set_style_width(s_appdrawer_root, 5, LV_PART_SCROLLBAR);
   lv_obj_set_style_radius(s_appdrawer_root, 3, LV_PART_SCROLLBAR);
   lv_obj_set_style_pad_right(s_appdrawer_root, 2, LV_PART_SCROLLBAR);
@@ -48627,8 +48867,17 @@ static void openAppDrawer() {
   lv_obj_add_flag(cog, LV_OBJ_FLAG_FLOATING);
   lv_obj_align(cog, LV_ALIGN_TOP_RIGHT, -4, 2);
   lv_obj_set_style_bg_opa(cog, LV_OPA_TRANSP, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(cog, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_bg_opa(cog, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_color(cog,
+      lv_color_hex(s_theme_high_contrast ? COLOR_CONTROL_PRESSED : 0xFFFFFF),
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(cog,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20,
+      LV_PART_MAIN | LV_STATE_PRESSED);
+  if (s_theme_high_contrast) {
+    lv_obj_set_style_border_color(cog, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(cog, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(cog, LV_OPA_COVER, LV_PART_MAIN);
+  }
   lv_obj_set_style_radius(cog, 15, LV_PART_MAIN);
   lv_obj_add_event_cb(cog, appDrawerSettingsCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* cogl = lv_label_create(cog);
@@ -48637,7 +48886,8 @@ static void openAppDrawer() {
 #if defined(HAS_TDECK_PRO)
   lv_obj_set_style_text_color(cogl, lv_color_black(), LV_PART_MAIN);
 #else
-  lv_obj_set_style_text_color(cogl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(cogl,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
 #endif
   lv_obj_center(cogl);
   lv_obj_move_foreground(cog);
@@ -49098,7 +49348,8 @@ static void buildGlobalStatusBar() {
       lv_obj_set_pos(b, BX0 + slot_from_left * (BW + GAP), BY);
       styleButton(b);
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
-      lv_obj_set_style_border_opa(b, LV_OPA_20, LV_PART_MAIN);   // dim the edge so it blends
+        lv_obj_set_style_border_opa(b,
+          s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
     #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
       // Three pixels each side still leave two pixels between adjacent hits.
       lv_obj_set_ext_click_area(b, 3);
@@ -49109,6 +49360,8 @@ static void buildGlobalStatusBar() {
     g_statusbar.inbox_add  = mk(0);   // leftmost — green primary
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(g_statusbar.inbox_add, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
@@ -49316,7 +49569,8 @@ static void buildGlobalStatusBar() {
   lv_obj_remove_style_all(g_statusbar.sd_icon);
   lv_obj_set_size(g_statusbar.sd_icon, 8, 8);
   lv_obj_set_style_radius(g_statusbar.sd_icon, 4, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(g_statusbar.sd_icon, lv_color_hex(0xF5A623), LV_PART_MAIN);  // amber = SD activity
+  lv_obj_set_style_bg_color(g_statusbar.sd_icon,
+      lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xF5A623), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(g_statusbar.sd_icon, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID,
@@ -49363,7 +49617,8 @@ static void buildGlobalStatusBar() {
       lv_obj_set_pos(b, i * (bw + gap), 12 - hh[i]);   // bottom-aligned
       lv_obj_set_style_radius(b, 1, LV_PART_MAIN);
       lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
-      lv_obj_set_style_bg_color(b, lv_color_hex(0x33363B), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(b,
+          lv_color_hex(s_theme_high_contrast ? COLOR_SUB : 0x33363B), LV_PART_MAIN);
       g_statusbar.sig_bars[i] = b;
     }
   }
@@ -49927,7 +50182,9 @@ static void updateGlobalStatusBar() {
       for (int i = 0; i < 4; i++)
         if (g_statusbar.sig_bars[i])
           lv_obj_set_style_bg_color(g_statusbar.sig_bars[i],
-              lv_color_hex(i < level ? COLOR_ACCENT : 0x33363B), LV_PART_MAIN);
+              lv_color_hex(i < level ? COLOR_ACCENT
+                                     : s_theme_high_contrast ? COLOR_SUB : 0x33363B),
+              LV_PART_MAIN);
     }
   }
 
@@ -50029,7 +50286,10 @@ static void updateGlobalStatusBar() {
   if ((current ? 1 : 0) != s_last_clock_current) {
     s_last_clock_current = current ? 1 : 0;
     lv_obj_set_style_text_color(g_statusbar.clock,
-        lv_color_hex(current ? COLOR_SUB : COLOR_STATUS_WARN), LV_PART_MAIN);
+      lv_color_hex(current ? COLOR_SUB
+                 : s_theme_high_contrast ? COLOR_STATUS_WARN_TEXT
+                             : COLOR_STATUS_WARN),
+      LV_PART_MAIN);
   }
 #endif
 
@@ -51032,25 +51292,28 @@ static void setupRerunCb(lv_event_t* e) {
 // Theme accent colour: live apply + (wheel + hex) picker
 // ============================================================
 static void applyAccent(uint32_t rgb) {
-  COLOR_ACCENT       = accentClampReadable(rgb);
-  COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
+  if (s_theme_high_contrast) {
+    COLOR_ACCENT = s_theme_day ? 0x000000u : 0xFFFFFFu;
+    COLOR_ACCENT_PRESS = s_theme_day ? 0x303030u : 0xD6D6D6u;
+  } else {
+    COLOR_ACCENT       = accentClampReadable(rgb);
+    COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
+  }
   // Applied UI-wide on the next build: the Theme picker saves then restarts, so
   // every widget adopts the colour at once. (A live re-style only ever caught
   // the always-on tab bar, which is what looked half-applied before.)
 }
 
 // Theme apply callback: runs for every object as it's created (chained after the
-// default theme via lv_theme_set_parent). The stock theme paints the switch
-// "on" indicator with its blue primary; recolour it to the user's accent so all
-// toggles follow the Theme colour instead of being hard-coded blue. Reads the
-// live COLOR_ACCENT (set by applyAccent at boot before any widget is built), and
-// a local style override beats the theme's shared style. Knob stays white.
+// default theme via lv_theme_set_parent). It replaces stock-theme control colors
+// with the active palette, including stronger outlines and inverse knobs/checks
+// in HC. Reads COLOR_ACCENT after applyAccent has initialized it at boot.
 static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
   if (lv_obj_check_type(obj, &lv_switch_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
                               LV_PART_INDICATOR | LV_STATE_CHECKED);
   }
-  if (!s_theme_day) return;
+  if (!s_theme_day && !s_theme_high_contrast) return;
 #if defined(HAS_TDECK_PRO)
   if (lv_obj_check_type(obj, &lv_textarea_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_white(), LV_PART_MAIN);
@@ -51109,19 +51372,46 @@ static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    if (s_theme_high_contrast) lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_SUB), LV_PART_TEXTAREA_PLACEHOLDER);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_CURSOR);
   } else if (lv_obj_check_type(obj, &lv_dropdown_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    if (s_theme_high_contrast) lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+  } else if (s_theme_high_contrast && lv_obj_check_type(obj, &lv_dropdownlist_class)) {
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
+    lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                              LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                                LV_PART_SELECTED | LV_STATE_CHECKED);
   } else if (lv_obj_check_type(obj, &lv_slider_class)) {
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_TRACK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
   } else if (lv_obj_check_type(obj, &lv_checkbox_class)) {
     lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    if (s_theme_high_contrast) {
+      lv_obj_set_style_border_width(obj, 2, LV_PART_INDICATOR);
+      lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                                LV_PART_INDICATOR | LV_STATE_CHECKED);
+      lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                                  LV_PART_INDICATOR | LV_STATE_CHECKED);
+    }
     lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  } else if (s_theme_high_contrast && lv_obj_check_type(obj, &lv_switch_class)) {
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
+    lv_obj_set_style_border_color(obj, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ACCENT),
+                              LV_PART_INDICATOR | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_TEXT), LV_PART_KNOB);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(COLOR_ON_ACCENT),
+                              LV_PART_KNOB | LV_STATE_CHECKED);
   }
 }
 static lv_theme_t s_touch_theme;   // our wrapper theme (parent = stock default)
@@ -51361,6 +51651,10 @@ static void chanScopeSaveCb(lv_event_t* e) {
   if (s_chanscope_slot >= 0 && s_chanscope_ta) {
     const char* t = lv_textarea_get_text(s_chanscope_ta);
 #if defined(ESP32)
+    if (!RegionDiscoveryResults::validPublicScope(t ? t : "")) {
+      if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+      return;
+    }
     touchPrefsSetChannelScope(s_chanscope_slot, t ? t : "");
     // #271: register it now rather than at next boot, so messages arriving in
     // this region are named from the next packet on. Idempotent; the old region
@@ -51371,6 +51665,15 @@ static void chanScopeSaveCb(lv_event_t* e) {
   }
   chanScopeClose();
   if (g_lv.task) g_lv.task->showAlert(TR("Channel scope saved"), 1200);
+}
+static void chanScopeRegionPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !s_chanscope_ta) return;
+  lv_obj_t* dropdown = lv_event_get_target(e);
+  if (lv_dropdown_get_selected(dropdown) == 0) return;
+  char selected[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+  lv_dropdown_get_selected_str(dropdown, selected, sizeof selected);
+  lv_textarea_set_text(s_chanscope_ta, selected);
+  lv_dropdown_set_selected(dropdown, 0);
 }
 // ---- Blocked-users (ignore-list) manager ----------------------------------
 static lv_obj_t* s_blocked_modal = nullptr;
@@ -51438,11 +51741,152 @@ static void blockedUnblockNameCb(lv_event_t* e) {
 // resolving, it just stops being matched from now on. See RegionRegistry.
 static lv_obj_t* s_regions_modal = nullptr;
 static lv_obj_t* s_regions_ta    = nullptr;
+static lv_obj_t* s_regions_list  = nullptr;
+static lv_obj_t* s_regions_scan_btn = nullptr;
+static lv_obj_t* s_regions_scan_status = nullptr;
+static lv_timer_t* s_regions_scan_timer = nullptr;
+static RegionDiscoveryResults s_region_candidates;
+static constexpr uint8_t REGION_SCAN_MAX_REPEATERS = 16;
+static uint8_t s_region_scan_keys[REGION_SCAN_MAX_REPEATERS][PUB_KEY_SIZE] = {};
+static uint8_t s_region_scan_count = 0;
+static uint8_t s_region_scan_next = 0;
+static bool s_region_scan_waiting = false;
+static uint32_t s_region_scan_deadline_ms = 0;
+static uint32_t s_region_scan_stop_ms = 0;
+enum class RegionScanPhase : uint8_t { Idle, Discovering, Querying };
+static RegionScanPhase s_region_scan_phase = RegionScanPhase::Idle;
 static void openRegionsModal();   // fwd: the add/remove callbacks rebuild the page
+static void regionsRenderList();
+static void regionsRenderListAsync(void*) { regionsRenderList(); }
+
+static bool regionsNameIsActive(const char* name) {
+  if (!name) return false;
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* known = reg.nameForSlot(slot);
+    if (known && strcmp(known, name) == 0) return true;
+  }
+  return false;
+}
+
+static uint8_t regionsCandidateCount() {
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < s_region_candidates.count(); ++i)
+    if (!regionsNameIsActive(s_region_candidates.name(i))) ++count;
+  return count;
+}
+
+static void regionsScanFinish() {
+  if (s_regions_scan_timer) {
+    lv_timer_del(s_regions_scan_timer);
+    s_regions_scan_timer = nullptr;
+  }
+  if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
+  s_region_scan_waiting = false;
+  s_region_scan_phase = RegionScanPhase::Idle;
+  if (s_regions_scan_btn && lv_obj_is_valid(s_regions_scan_btn))
+    lv_obj_clear_state(s_regions_scan_btn, LV_STATE_DISABLED);
+  if (s_regions_scan_status && lv_obj_is_valid(s_regions_scan_status))
+    lv_label_set_text_fmt(s_regions_scan_status, "%s: %u", TR("Discovered"),
+                          (unsigned)s_region_candidates.count());
+  regionsRenderList();
+}
+
+static void regionsScanTimerCb(lv_timer_t*) {
+  const uint32_t now = millis();
+  if ((int32_t)(now - s_region_scan_stop_ms) >= 0) { regionsScanFinish(); return; }
+  if (s_region_scan_phase == RegionScanPhase::Discovering) {
+    if ((int32_t)(now - s_region_scan_deadline_ms) < 0) return;
+    s_region_scan_count = 0;
+    auto add_repeater = [&](const uint8_t pub_key[PUB_KEY_SIZE]) {
+      if (s_region_scan_count >= REGION_SCAN_MAX_REPEATERS) return;
+      for (uint8_t j = 0; j < s_region_scan_count; ++j)
+        if (memcmp(s_region_scan_keys[j], pub_key, PUB_KEY_SIZE) == 0) return;
+      memcpy(s_region_scan_keys[s_region_scan_count++], pub_key, PUB_KEY_SIZE);
+    };
+    const int contact_count = the_mesh.getNumContacts();
+    for (int i = 0; i < contact_count; ++i) {
+      ContactInfo contact;
+      if (the_mesh.getContactByIdx((uint32_t)i, contact) &&
+          contact.type == ADV_TYPE_REPEATER && contact.out_path_len == 0)
+        add_repeater(contact.id.pub_key);
+    }
+    const uint8_t count = the_mesh.discoverCount();
+    for (uint8_t i = 0; i < count && s_region_scan_count < REGION_SCAN_MAX_REPEATERS; ++i) {
+      MyMesh::DiscoverHit hit;
+      if (!the_mesh.discoverGet(i, hit) || hit.node_type != ADV_TYPE_REPEATER || hit.path_len != 0)
+        continue;
+      add_repeater(hit.pubkey);
+    }
+    s_region_scan_next = 0;
+    s_region_scan_phase = RegionScanPhase::Querying;
+    if (s_region_scan_count == 0) { regionsScanFinish(); return; }
+  }
+
+  if (s_region_scan_phase != RegionScanPhase::Querying) return;
+  if (s_region_scan_waiting) {
+    if ((int32_t)(now - s_region_scan_deadline_ms) < 0) return;
+    the_mesh.cancelUIPingPending();
+    s_region_scan_waiting = false;
+    ++s_region_scan_next;
+  }
+  while (s_region_scan_next < s_region_scan_count) {
+    if (the_mesh.hasUIRequestPending() || the_mesh.getRemainingTxBudget() < 300) return;
+    uint32_t timeout_ms = 0;
+    const int result = the_mesh.sendRegionsRequestForUI(
+        s_region_scan_keys[s_region_scan_next], timeout_ms);
+    if (result == MSG_SEND_SENT_DIRECT) {
+      s_region_scan_waiting = true;
+      if (timeout_ms < 2500) timeout_ms = 2500;
+      if (timeout_ms > 10000) timeout_ms = 10000;
+      s_region_scan_deadline_ms = now + timeout_ms + 1000;
+      markMeshRequest();
+      if (s_regions_scan_status && lv_obj_is_valid(s_regions_scan_status))
+        lv_label_set_text_fmt(s_regions_scan_status, "%s %u/%u", TR("Scanning\xE2\x80\xA6"),
+                              (unsigned)(s_region_scan_next + 1),
+                              (unsigned)s_region_scan_count);
+      return;
+    }
+    ++s_region_scan_next;
+  }
+  regionsScanFinish();
+}
+
+static void regionsScanCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      s_region_scan_phase != RegionScanPhase::Idle) return;
+  if (the_mesh.getRemainingTxBudget() < 300) {
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+    return;
+  }
+  s_region_candidates.clear();
+  regionsRenderList();
+  the_mesh.discoverClear();
+  if (the_mesh.uiStartDiscoverScan((uint8_t)(1u << ADV_TYPE_REPEATER)) == 0) {
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+    return;
+  }
+  s_region_scan_phase = RegionScanPhase::Discovering;
+  s_region_scan_deadline_ms = millis() + 4000;
+  s_region_scan_stop_ms = millis() + 120000;
+  if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Scanning\xE2\x80\xA6"));
+  if (s_regions_scan_btn) lv_obj_add_state(s_regions_scan_btn, LV_STATE_DISABLED);
+  s_regions_scan_timer = lv_timer_create(regionsScanTimerCb, 200, nullptr);
+  if (!s_regions_scan_timer) {
+    s_region_scan_phase = RegionScanPhase::Idle;
+    if (s_regions_scan_btn) lv_obj_clear_state(s_regions_scan_btn, LV_STATE_DISABLED);
+    if (s_regions_scan_status) lv_label_set_text(s_regions_scan_status, TR("Paused"));
+  }
+}
 
 static void regionsModalClose() {
+  if (s_regions_scan_timer) { lv_timer_del(s_regions_scan_timer); s_regions_scan_timer = nullptr; }
+  if (s_region_scan_waiting) the_mesh.cancelUIPingPending();
+  s_region_scan_phase = RegionScanPhase::Idle;
+  s_region_scan_waiting = false;
   if (s_regions_modal) { hideKb(); popupClose(&s_regions_modal); }
-  s_regions_ta = nullptr;
+  s_regions_ta = s_regions_list = s_regions_scan_btn = s_regions_scan_status = nullptr;
   if (s_apppage_close == regionsModalClose) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -51452,7 +51896,10 @@ static void regionsAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!s_regions_ta) return;
   const char* t = lv_textarea_get_text(s_regions_ta);
-  if (!t || !t[0]) { if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400); return; }
+  if (!RegionDiscoveryResults::validPublicScope(t ? t : "", false)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Enter a region name"), 1400);
+    return;
+  }
   RegionRegistry& reg = the_mesh.regionRegistry();
   if (reg.ensureRegion(t) == REGION_SLOT_NONE) {
     // Two different failures, and the user can only act on one of them: the list
@@ -51462,13 +51909,90 @@ static void regionsAddCb(lv_event_t* e) {
                                                      : TR("Enter a region name"), 2000);
     return;
   }
-  openRegionsModal();   // rebuild (closes first)
+  lv_textarea_set_text(s_regions_ta, "");
+  regionsRenderList();
 }
 static void regionsRemoveCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const uint8_t slot = (uint8_t)(intptr_t)lv_event_get_user_data(e);
   the_mesh.regionRegistry().retire(slot);
-  openRegionsModal();   // rebuild
+  lv_async_call(regionsRenderListAsync, nullptr);
+}
+
+static void regionsCandidateAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const uint8_t index = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  const char* name = s_region_candidates.name(index);
+  if (!name) return;
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  if (reg.ensureRegion(name) == REGION_SLOT_NONE) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Region list is full"), 1800);
+    return;
+  }
+  lv_async_call(regionsRenderListAsync, nullptr);
+}
+
+static void regionsRenderList() {
+  if (!s_regions_list || !lv_obj_is_valid(s_regions_list)) return;
+  lv_obj_clean(s_regions_list);
+  RegionRegistry& reg = the_mesh.regionRegistry();
+  bool any = false;
+  auto section = [&](const char* text) {
+    lv_obj_t* label = lv_label_create(s_regions_list);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN);
+  };
+  auto row = [&](const char* name, const char* action, lv_event_cb_t callback, uintptr_t value) {
+    lv_obj_t* item = lv_obj_create(s_regions_list);
+    lv_obj_remove_style_all(item);
+    lv_obj_set_size(item, lv_pct(100), SC(36));
+    lv_obj_set_style_bg_color(item, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(item, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(item, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* label = lv_label_create(item);
+    lv_label_set_text(label, name);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, lv_pct(65));
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, SC(6), 0);
+    lv_obj_t* button = lv_btn_create(item);
+    lv_obj_set_size(button, SC(72), SC(28));
+    lv_obj_align(button, LV_ALIGN_RIGHT_MID, -SC(5), 0);
+    styleButton(button);
+    lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, (void*)value);
+    lv_obj_t* button_label = lv_label_create(button);
+    lv_label_set_text(button_label, action);
+    lv_obj_set_style_text_font(button_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(button_label);
+  };
+
+  if (reg.count() > 0) section(TR("Known regions"));
+  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
+    if (!reg.isActive(slot)) continue;
+    const char* name = reg.nameForSlot(slot);
+    if (!name || !name[0]) continue;
+    row(name, TR("Remove"), regionsRemoveCb, slot);
+    any = true;
+  }
+  if (regionsCandidateCount() > 0) section(TR("Discovered"));
+  for (uint8_t i = 0; i < s_region_candidates.count(); ++i) {
+    const char* name = s_region_candidates.name(i);
+    if (!name || regionsNameIsActive(name)) continue;
+    row(name, TR("Add"), regionsCandidateAddCb, i);
+    any = true;
+  }
+  if (!any) {
+    lv_obj_t* empty = lv_label_create(s_regions_list);
+    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
+    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty, lv_pct(100));
+    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
+  }
+  navMarkDirty();
 }
 
 static void openRegionsModal() {
@@ -51523,55 +52047,34 @@ static void openRegionsModal() {
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
   y += SC(38);
 
-  RegionRegistry& reg = the_mesh.regionRegistry();
-  if (reg.count() <= 0) {
-    lv_obj_t* empty = lv_label_create(s_regions_modal);
-    lv_label_set_text(empty, TR("No regions yet.\n\nAdd a #region to have messages\nscoped to it named in message details."));
-    lv_label_set_long_mode(empty, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(empty, sw - pad * 2);
-    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_pos(empty, pad, y);
-    return;
-  }
+  s_regions_scan_btn = lv_btn_create(s_regions_modal);
+  lv_obj_set_size(s_regions_scan_btn, SC(72), SC(30));
+  lv_obj_set_pos(s_regions_scan_btn, pad, y);
+  styleButton(s_regions_scan_btn);
+  lv_obj_add_event_cb(s_regions_scan_btn, regionsScanCb, LV_EVENT_CLICKED, nullptr);
+  { lv_obj_t* label = lv_label_create(s_regions_scan_btn); lv_label_set_text(label, TR("Scan"));
+    lv_obj_set_style_text_font(label, &g_font_12, LV_PART_MAIN); lv_obj_center(label); }
+  s_regions_scan_status = lv_label_create(s_regions_modal);
+  if (s_region_candidates.count() > 0)
+    lv_label_set_text_fmt(s_regions_scan_status, "%s: %u", TR("Discovered"),
+                          (unsigned)s_region_candidates.count());
+  else
+    lv_label_set_text(s_regions_scan_status, "");
+  lv_label_set_long_mode(s_regions_scan_status, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(s_regions_scan_status, sw - pad * 3 - SC(72));
+  lv_obj_set_style_text_color(s_regions_scan_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_regions_scan_status, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(s_regions_scan_status, pad * 2 + SC(72), y + SC(7));
+  y += SC(36);
 
-  lv_obj_t* list = lv_obj_create(s_regions_modal);
-  lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - pad * 2, sh - top - y - SC(6));
-  lv_obj_set_pos(list, pad, y);
-  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_style_pad_row(list, SC(5), LV_PART_MAIN);
-  lv_obj_set_scroll_dir(list, LV_DIR_VER);
-
-  for (uint8_t slot = 1; slot <= REGION_SLOT_MAX; ++slot) {
-    if (!reg.isActive(slot)) continue;
-    const char* nm = reg.nameForSlot(slot);
-    if (!nm || !nm[0]) continue;
-
-    lv_obj_t* row = lv_obj_create(list);
-    lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, sw - pad * 2 - SC(4), SC(36));
-    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(row, 6, LV_PART_MAIN);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, nm);
-    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(lbl, sw - pad * 2 - SC(4) - SC(84));
-    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, SC(6), 0);
-
-    lv_obj_t* rm = lv_btn_create(row);
-    lv_obj_set_size(rm, SC(72), SC(28));
-    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, -SC(5), 0);
-    styleButton(rm);
-    lv_obj_add_event_cb(rm, regionsRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)slot);
-    { lv_obj_t* l = lv_label_create(rm); lv_label_set_text(l, TR("Remove"));
-      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN); lv_obj_center(l); }
-  }
+  s_regions_list = lv_obj_create(s_regions_modal);
+  lv_obj_remove_style_all(s_regions_list);
+  lv_obj_set_size(s_regions_list, sw - pad * 2, sh - top - y - SC(6));
+  lv_obj_set_pos(s_regions_list, pad, y);
+  lv_obj_set_flex_flow(s_regions_list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(s_regions_list, SC(5), LV_PART_MAIN);
+  lv_obj_set_scroll_dir(s_regions_list, LV_DIR_VER);
+  regionsRenderList();
 }
 
 static void openBlockedUsersModal() {
@@ -51747,7 +52250,9 @@ static void openChannelScopeModal(int slot, const char* name) {
   s_chanscope_ta = lv_textarea_create(s_chanscope_modal);
   lv_textarea_set_one_line(s_chanscope_ta, true);
   lv_textarea_set_max_length(s_chanscope_ta, TOUCH_REGION_SCOPE_MAXLEN - 1);
-  lv_obj_set_size(s_chanscope_ta, sw - 16, SC(34));
+  const lv_coord_t picker_w = SC(94);
+  const lv_coord_t picker_gap = SC(6);
+  lv_obj_set_size(s_chanscope_ta, sw - 16 - picker_w - picker_gap, SC(34));
   lv_obj_set_pos(s_chanscope_ta, SC(8), SC(72));
 #if defined(ESP32)
   { char cur[TOUCH_REGION_SCOPE_MAXLEN] = {0};
@@ -51760,6 +52265,27 @@ static void openChannelScopeModal(int slot, const char* name) {
   taSetPlaceholder(s_chanscope_ta, TR("(no default)"));
 #endif
   attachSettingsTaEvents(s_chanscope_ta);
+
+#if defined(ESP32)
+  lv_obj_t* region_picker = lv_dropdown_create(s_chanscope_modal);
+  lv_obj_set_size(region_picker, picker_w, SC(34));
+  lv_obj_set_pos(region_picker, sw - SC(8) - picker_w, SC(72));
+  char options[512];
+  size_t used = (size_t)snprintf(options, sizeof options, "%s", TR("Known regions"));
+  RegionRegistry& registry = the_mesh.regionRegistry();
+  for (uint8_t region_slot = 1; region_slot <= REGION_SLOT_MAX && used < sizeof options; ++region_slot) {
+    if (!registry.isActive(region_slot)) continue;
+    const char* region_name = registry.nameForSlot(region_slot);
+    if (!region_name || !region_name[0]) continue;
+    const int wrote = snprintf(options + used, sizeof options - used, "\n%s", region_name);
+    if (wrote < 0 || (size_t)wrote >= sizeof options - used) break;
+    used += (size_t)wrote;
+  }
+  lv_dropdown_set_options(region_picker, options);
+  styleDropdown(region_picker);
+  lv_obj_add_event_cb(region_picker, chanScopeRegionPickCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  if (registry.count() == 0) lv_obj_add_state(region_picker, LV_STATE_DISABLED);
+#endif
 
   // ---- Mute notification sound for THIS channel (per-channel; public stays audible) ----
   lv_obj_t* mute_lbl = lv_label_create(s_chanscope_modal);
@@ -52493,7 +53019,8 @@ static void buildUiTree() {
   lv_label_set_text(s_update_badge, "!");
   lv_obj_set_size(s_update_badge, 16, 16);
   lv_obj_set_style_radius(s_update_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(s_update_badge, lv_color_hex(0xE2403A), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_update_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_update_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_update_badge, lv_color_white(), LV_PART_MAIN);
   // Bottom-bar badges are fixed chrome too: a Large-preset 18-px line cannot
@@ -52517,7 +53044,8 @@ static void buildUiTree() {
   lv_obj_set_size(s_chat_unread_badge, LV_SIZE_CONTENT, 16);
   lv_obj_set_style_min_width(s_chat_unread_badge, 16, LV_PART_MAIN);
   lv_obj_set_style_radius(s_chat_unread_badge, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(0xE0533D), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_chat_unread_badge,
+      lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge, lv_color_white(), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_chat_unread_badge, &lv_font_montserrat_12, LV_PART_MAIN);
@@ -52548,7 +53076,8 @@ static void buildUiTree() {
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(s_tab_indicator, 26, 4);
   lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_tab_indicator, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_tab_indicator,
+      s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
   lv_obj_set_style_radius(s_tab_indicator, 2, LV_PART_MAIN);
   lv_obj_set_style_shadow_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_shadow_width(s_tab_indicator, 8, LV_PART_MAIN);
@@ -52841,6 +53370,17 @@ void UITask::onThreadsChanged() {
 #endif
 }
 
+void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  if (s_region_scan_phase != RegionScanPhase::Querying || !s_region_scan_waiting ||
+      s_region_scan_next >= s_region_scan_count ||
+      memcmp(contact.id.pub_key, s_region_scan_keys[s_region_scan_next], PUB_KEY_SIZE) != 0)
+    return;
+  s_region_candidates.addResponse(data, len);
+  s_region_scan_waiting = false;
+  ++s_region_scan_next;
+  regionsRenderList();
+}
+
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
   s_ui_ping_deadline_ms = 0;  // reply arrived, cancel timeout
 
@@ -53020,7 +53560,7 @@ static void telemetryPollTick(uint32_t now_ms) {
   // Hold auto-poll while a manual request is awaiting its reply — an auto-poll
   // REQ would overwrite the manual request's pending tag and orphan its reply.
   // It'll poll on the next interval (the manual pending window is short).
-  if (s_telem_manual_pending) return;
+  if (s_telem_manual_pending || the_mesh.hasUIRequestPending()) return;
   if (s_telem_poll_next_send_ms != 0 &&
       (int32_t)(now_ms - s_telem_poll_next_send_ms) < 0) return;
   if (the_mesh.getRemainingTxBudget() < 300) return;
@@ -53376,8 +53916,6 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     styleButton(showb);
     lv_obj_add_event_cb(showb, telemWinApplyCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* sl = lv_label_create(showb); lv_label_set_text(sl, TR("Show")); lv_obj_center(sl);
-    useChainedFont(sl);
-    y += 42;
   }
 }
 
@@ -58342,6 +58880,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
+#if defined(HELTEC_LORA_V4_R8)
+    // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
+    // needs two extra pixels to avoid clipping regular one-row status text.
+    const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
+    if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
+#endif
 #endif
     // Allocate the draw buffer in PSRAM so the ~12 KB it costs comes out of
     // the 8 MB external RAM instead of the 320 KB internal DRAM that WiFi
@@ -61108,6 +61652,18 @@ void UITask::loop() {
       if (c) consoleKey(c);
     }
 #endif
+#if defined(HAS_CARDKB)
+    cardKbPoll();
+    for (int kbi = 0; kbi < 16; ++kbi) {
+      int key = cardKbReadKey();
+      if (!key) break;
+      con_activity = true;
+      if (_screen_off) { wakeScreen(); continue; }
+      if (key == 0x7F) key = 0x08;
+      if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B ||
+          (key >= 0x20 && key < 0x7F)) consoleKey(key);
+    }
+#endif
 #if CAP_TOUCH
     {
       uint16_t _tx, _ty;
@@ -61921,7 +62477,8 @@ void UITask::loop() {
       const bool update_pending = notice_surface && s_update_available;
       if (update_pending) {
         lv_obj_move_foreground(s_m9_update_indicator);
-        lv_obj_set_style_text_color(s_m9_update_indicator, lv_color_hex(0xE2A23A), LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_m9_update_indicator,
+            lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xE2A23A), LV_PART_MAIN);
         lv_obj_clear_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
       } else {
         lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
@@ -62195,7 +62752,7 @@ void UITask::loop() {
   serviceLockingCountdown(now);
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdUiTick();   // external Bluetooth keyboard: persist pairing changes, route keys
+  bleKbdUiTick();   // external Bluetooth/CardKB keyboards: update presence and route keys
 #endif
 #if defined(ATTAKY_MESH_SERIES)
   // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off

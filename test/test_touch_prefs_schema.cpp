@@ -168,7 +168,7 @@ int main() {
   current.boot_wifi_time = 1;
   current.boot_wifi_open = 1;
   current.loud_alerts = 1;
-  current.theme_mode = 1;
+  current.theme_mode = 3;   // Night high contrast (#544)
   current.gps_fuzz_m = 150;
   current.attaky_notify_enabled = 1;
   current.attaky_notify_room_color = 6;

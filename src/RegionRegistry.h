@@ -70,19 +70,22 @@ class RegionRegistry {
   // whitespace, then force a leading '#'. Case is NOT touched, because the name
   // is key material (SHA256 over these bytes), so lowercasing would silently derive a
   // different key and the region would stop matching.
-  static void canonicalise(const char* in, char* out, size_t out_sz) {
-    if (!out || out_sz == 0) return;
+  static bool canonicalise(const char* in, char* out, size_t out_sz) {
+    if (!out || out_sz == 0) return false;
     out[0] = '\0';
-    if (!in) return;
+    if (!in) return false;
     size_t b = 0, e = strlen(in);
     while (b < e && (in[b] == ' ' || in[b] == '\t' || in[b] == '\r' || in[b] == '\n')) b++;
     while (e > b && (in[e-1] == ' ' || in[e-1] == '\t' || in[e-1] == '\r' || in[e-1] == '\n')) e--;
-    if (b >= e) return;                       // blank => unscoped, not a region
+    if (b >= e || in[b] == '$') return false; // blank/private => not a public region
+    const size_t needed = (e - b) + (in[b] == '#' ? 0 : 1);
+    if (needed >= out_sz) return false;        // reject; never hash/store a truncated name
     size_t o = 0;
-    if (in[b] != '#' && in[b] != '$' && o < out_sz - 1) out[o++] = '#';
-    for (size_t i = b; i < e && o < out_sz - 1; ++i) out[o++] = in[i];
+    if (in[b] != '#') out[o++] = '#';
+    for (size_t i = b; i < e; ++i) out[o++] = in[i];
     out[o] = '\0';
-    if (out[0] == '#' && out[1] == '\0') out[0] = '\0';   // a bare '#' is not a region
+    if (out[0] == '#' && out[1] == '\0') { out[0] = '\0'; return false; }
+    return true;
   }
 
   void loadSlots() {
@@ -137,8 +140,7 @@ public:
   uint8_t ensureRegion(const char* name) {
     if (!_ready) return REGION_SLOT_NONE;
     char tag[31];
-    canonicalise(name, tag, sizeof tag);
-    if (tag[0] == '\0') return REGION_SLOT_NONE;
+    if (!canonicalise(name, tag, sizeof tag)) return REGION_SLOT_NONE;
 
     RegionEntry* e = _map.findByName(tag);
     if (!e) e = _map.putRegion(tag, 0);

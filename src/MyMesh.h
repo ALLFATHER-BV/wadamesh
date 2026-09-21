@@ -350,7 +350,7 @@ protected:
 public:
   /** Which kind of touch-UI request is currently in flight, so the response
    *  matcher in onContactResponse routes to the right callback. */
-  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2 };
+  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3 };
 
   /** Fire a REQ_TYPE_GET_STATUS from the touch UI side. Result is delivered
    *  via AbstractUITask::onPingReply when the reply arrives.
@@ -548,6 +548,10 @@ public:
   }
   /** True if a UI ping is still waiting on a reply. */
   bool hasUIPingPending() const { return _ui_pending_status != 0; }
+  /** True while any single-flight UI request or its prerequisite login is active. */
+  bool hasUIRequestPending() const {
+    return _ui_pending_status != 0 || _ui_login_then != 0;
+  }
 
   /** Register an expected ACK hash that came out of a touch-UI sendMessage
    *  call, so MyMesh::processAck can match the inbound ACK and dispatch
@@ -942,6 +946,38 @@ public:
       _ui_pending_tag  = tag;   // request tag, reflected by the repeater
     }
     return r;
+  }
+
+  /** Ask a directly-heard repeater for the public regions it allows. Region
+   *  discovery is direct-only in MeshCore, so this deliberately sends zero-hop
+   *  and requests a zero-hop reply even when the contact has a saved flood path.
+   *  Unknown discovery hits are installed as transient ADV_TYPE_NONE contacts
+   *  so the encrypted response can be matched and decrypted, but are never
+   *  persisted by getContactForSave(). */
+  int sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_t& est_timeout) {
+    if (!pub_key || hasUIRequestPending()) return MSG_SEND_FAILED;
+    ContactInfo* recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!recipient) {
+      ContactInfo anon = {};
+      memcpy(anon.id.pub_key, pub_key, PUB_KEY_SIZE);
+      anon.type = ADV_TYPE_NONE;
+      anon.out_path_len = 0;
+      if (!addContact(anon)) return MSG_SEND_FAILED;
+      recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+      if (!recipient) return MSG_SEND_FAILED;
+    }
+
+    ContactInfo direct = *recipient;
+    direct.out_path_len = 0;
+    const uint8_t req[] = { 0x01, 0x00 };  // REGIONS + zero-hop reply path
+    uint32_t tag = 0;
+    const int result = sendAnonReq(direct, req, sizeof(req), tag, est_timeout);
+    if (result == MSG_SEND_SENT_DIRECT) {
+      memcpy(&_ui_pending_status, pub_key, 4);
+      _ui_pending_kind = UiReqKind::Regions;
+      _ui_pending_tag = tag;
+    }
+    return result;
   }
 
 private:

@@ -165,14 +165,45 @@ uint8_t ringGetSpl2(int i) {
 // which definition happens to win at link time.
 #define RGB565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 bool s_day_theme = false;
+bool s_high_contrast_theme = false;
 uint16_t consoleBg() {
   if (s_disp && s_disp->isEink()) return UIColor::window_bkg;
+  if (s_high_contrast_theme)
+    return s_day_theme ? RGB565(0xFF, 0xFF, 0xFF) : RGB565(0x00, 0x00, 0x00);
   return s_day_theme ? RGB565(0xF1, 0xF4, 0xF6) : RGB565(0x0E, 0x12, 0x16);
 }
 
 uint16_t colourFor(uint8_t c) {
   // e-ink has one ink colour; anything else is invisible or dithered.
   if (s_disp && s_disp->isEink()) return UIColor::primary_txt;
+  if (s_high_contrast_theme) {
+    if (!s_day_theme) {
+      switch (c) {
+        case CC_DIM:    return RGB565(0xD6, 0xD6, 0xD6);
+        case CC_ECHO:
+        case CC_OK:     return RGB565(0x55, 0xFF, 0x8A);
+        case CC_WARN:   return RGB565(0xFF, 0xD4, 0x00);
+        case CC_ERR:    return RGB565(0xFF, 0x5A, 0x70);
+        case CC_CHAN:   return RGB565(0x66, 0xB5, 0xFF);
+        case CC_SENDER: return RGB565(0xFF, 0xCC, 0x66);
+        case CC_DM:     return RGB565(0xD6, 0xA8, 0xFF);
+        case CC_HEAD:   return RGB565(0x58, 0xFF, 0xF0);
+        default:        return RGB565(0xFF, 0xFF, 0xFF);
+      }
+    }
+    switch (c) {
+      case CC_DIM:    return RGB565(0x30, 0x30, 0x30);
+      case CC_ECHO:
+      case CC_OK:     return RGB565(0x00, 0x5A, 0x26);
+      case CC_WARN:   return RGB565(0x5C, 0x46, 0x00);
+      case CC_ERR:    return RGB565(0xA0, 0x00, 0x18);
+      case CC_CHAN:   return RGB565(0x00, 0x4C, 0x99);
+      case CC_SENDER: return RGB565(0x70, 0x48, 0x00);
+      case CC_DM:     return RGB565(0x5A, 0x26, 0x7A);
+      case CC_HEAD:   return RGB565(0x00, 0x5A, 0x52);
+      default:        return RGB565(0x00, 0x00, 0x00);
+    }
+  }
   if (s_day_theme) {
     switch (c) {
       case CC_DIM:    return RGB565(0x56, 0x60, 0x6C);
@@ -791,8 +822,13 @@ void consoleBegin(DisplayDriver* d) {
   if (!s_disp) return;
 #if defined(HAS_TDECK_PRO)
   s_day_theme = true;
+  s_high_contrast_theme = false;
 #elif defined(ESP32)
-  s_day_theme = touchPrefsGetThemeMode() == TOUCH_THEME_DAY;
+  const uint8_t theme_mode = touchPrefsGetThemeMode();
+  s_day_theme = theme_mode == TOUCH_THEME_DAY ||
+                theme_mode == TOUCH_THEME_DAY_HIGH_CONTRAST;
+  s_high_contrast_theme = theme_mode == TOUCH_THEME_DAY_HIGH_CONTRAST ||
+                          theme_mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
 #endif
   if (!s_ring) {
     const size_t bytes = (size_t)kMaxLines * (kLineCap + 1);

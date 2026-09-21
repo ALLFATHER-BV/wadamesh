@@ -56,11 +56,10 @@
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1
-/* Larger Montserrat sizes for the large-screen boards' crisp "UI size" (Large/Huge) — render the
- * UI bigger at native resolution instead of upscaling a low-res frame. Gated to the CAP_LARGE_SCREEN
- * P4 boards (Tanmatsu + T-Display P4) so the flash-tighter S3 touch builds don't pay for fonts they
- * never use. (device_caps.h isn't included here, so match on the board macros directly.) */
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+/* Larger Montserrat sizes for crisp UI/text-size presets at native resolution. The P4 boards scale
+ * text and geometry; V4-R8 uses the same fonts without geometry scaling. Other flash-tighter S3
+ * builds don't pay for fonts they never use. (Match board macros because device_caps.h isn't here.) */
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8)
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_20 1
 #define LV_FONT_MONTSERRAT_24 1

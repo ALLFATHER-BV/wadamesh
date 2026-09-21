@@ -9,14 +9,14 @@
 const char* const kUiLangNames[LANG_COUNT] = {
   "English", "Magyar","Nederlands", "Deutsch", "Français", "Español", "Italiano",
   "Русский", "Українська", "Български", "Српски", "Ελληνικά",
-  "Português (BR)", "Română",
+  "Português (BR)", "Română", "Čeština",
 };
 
 // File/catalog codes, index order == UiLang. Keep in sync with the enum AND with
 // the deploy/apps/lang/*.lang filenames (the canonical translation source).
 const char* const kUiLangCodes[LANG_COUNT] = {
   "en", "hu", "nl", "de", "fr", "es", "it",
-  "ru", "uk", "bg", "sr", "el", "pt-br", "ro",
+  "ru", "uk", "bg", "sr", "el", "pt-br", "ro", "cs",
 };
 
 static uint8_t s_ui_lang = LANG_EN;

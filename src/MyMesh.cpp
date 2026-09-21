@@ -3399,6 +3399,7 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
 }
 
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
+  if (!data || len < 4) return;
   uint32_t tag;
   memcpy(&tag, data, 4);
 
@@ -3422,6 +3423,8 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     if (kind == UiReqKind::Telemetry) {
       // CayenneLPP payload — let the UI decode the LPP channels.
       _ui->onTelemetryReply(contact, &data[4], (size_t)(len - 4));
+    } else if (kind == UiReqKind::Regions) {
+      _ui->onRegionListReply(contact, data, len);
     } else {
       // STATUS or unknown — let the UI fall through its RepeaterStats /
       // JSON parser path.

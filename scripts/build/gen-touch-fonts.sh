@@ -92,7 +92,7 @@ if [[ $("${font_conv[@]}" --version) != "1.5.3" ]]; then
   exit 1
 fi
 
-symbols='•·–—‘’“”…°±×÷€£¥§©®™½¼¾℃℉'
+symbols='•·–—‘’„“”…°±×÷€£¥§©®™½¼¾℃℉'
 # Arrows (U+2190-2193) and the comparison operators (U+2260/2264/2265) are NOT in
 # Noto Sans. Asking $noto_sans for them, as this script did until #261, silently
 # produced nothing — lv_font_conv omits a glyph the source font lacks instead of
@@ -113,13 +113,25 @@ normalise() {
   local raw=$1
   local output=$2
   local sources=$3
-  local guard=${4:-}
+  local guard_expr=${4:-}
+  local guard_label=${5:-$guard_expr}
+  local include_caps=${6:-0}
+  local note=${7:-}
 
-  awk -v sources="$sources" -v guard="$guard" '
+  awk -v sources="$sources" -v guard_expr="$guard_expr" \
+      -v guard_label="$guard_label" -v include_caps="$include_caps" -v note="$note" '
     BEGIN {
-      if (guard != "") {
+      if (include_caps == "1") {
         print "#include \"device_caps.h\""
-        print "#if defined(" guard ")"
+      }
+      if (note != "") {
+        count = split(note, lines, "|")
+        for (i = 1; i <= count; ++i) print lines[i]
+      }
+      if (guard_expr != "") {
+        print "#if " guard_expr
+        print ""
+      } else if (include_caps == "1" || note != "") {
         print ""
       }
     }
@@ -134,9 +146,9 @@ normalise() {
     }
     { print }
     END {
-      if (guard != "") {
+      if (guard_expr != "") {
         print ""
-        print "#endif /* " guard " */"
+        print "#endif /* " guard_label " */"
       }
     }
   ' "$raw" > "$output"
@@ -145,7 +157,8 @@ normalise() {
 
 generate_extras() {
   local size=$1
-  local guard=${2:-}
+  local guard_expr=${2:-}
+  local guard_label=${3:-$guard_expr}
   local raw="$work_dir/extras_font_${size}.c"
   local output="$stage/src/ui-touch/extras_font_${size}.c"
 
@@ -169,11 +182,15 @@ generate_extras() {
 
   normalise "$raw" "$output" \
     "Montserrat Medium (LVGL v8.4.0), Noto Sans 2.015, Noto Sans Symbols 2.008, Noto Sans Arabic UI 2.011" \
-    "$guard"
+    "$guard_expr" "$guard_label" "$([[ -n $guard_expr ]] && echo 1 || echo 0)"
 }
 
 generate_latin_extras() {
   local size=$1
+  local guard_expr=${2:-}
+  local guard_label=${3:-$guard_expr}
+  local include_caps=${4:-0}
+  local note=${5:-}
   local raw="$work_dir/extras_lat_${size}.c"
   local output="$stage/src/ui-touch/extras_lat_${size}.c"
 
@@ -184,12 +201,13 @@ generate_latin_extras() {
     --font "$montserrat" \
     -r 0x00C0-0x00FF \
     -r 0x0100-0x017F \
+    --symbols "„" \
     --lv-font-name "extras_lat_${size}" \
     -o "$raw"
 
   normalise "$raw" "$output" \
     "Montserrat Medium (LVGL v8.4.0)" \
-    "HAS_TANMATSU"
+    "$guard_expr" "$guard_label" "$include_caps" "$note"
 }
 
 generate_star() {
@@ -215,11 +233,17 @@ for size in 12 14 16; do
   generate_extras "$size"
 done
 for size in 20 24; do
-  generate_extras "$size" "TLORA_PAGER"
+  generate_extras "$size" "defined(TLORA_PAGER)" "TLORA_PAGER"
 done
-for size in 20 24 28; do
-  generate_latin_extras "$size"
-done
+# At-a-glance uses 20 px on T-Deck/M9 and 28 px across boards; the 24 px face
+# remains the Tanmatsu Large/Huge UI fallback.
+generate_latin_extras 20 \
+  "defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)" \
+  "HAS_TANMATSU || HAS_TDECK_GT911 || HAS_THINKNODE_M9" 1 \
+  "// Was HAS_TANMATSU-only (Large/Huge UI-scale accented-Latin fallback); the T-Deck|// now also builds this for the \"at a glance\" notification's 20 px message body|// (see atGlanceEnsureFont() in UITask.cpp) -- an experiment to see whether a|// smaller-than-28px glance body is still legible on that panel."
+generate_latin_extras 24 "defined(HAS_TANMATSU)" "HAS_TANMATSU" 1
+generate_latin_extras 28 "" "" 1 \
+  "// Was HAS_TANMATSU-only (only consumer used to be the Tanmatsu's Large/Huge UI-scale|// accented-Latin fallback); now compiled on every board too for the \"at a glance\"|// notification's 28 px message body (see atGlanceEnsureFont() in UITask.cpp), which|// needs accented Latin / em-dash / ellipsis glyph coverage at that size on any board."
 for size in 14 28; do
   generate_star "$size"
 done

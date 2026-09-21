@@ -134,6 +134,13 @@ public:
   virtual void onTelemetryReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
     onPingReply(contact, data, len);
   }
+  /** A local repeater answered the MeshCore anonymous REGIONS request. `data`
+   *  contains the reflected request tag, repeater clock, then CSV region names. */
+  virtual void onRegionListReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+    (void)contact;
+    (void)data;
+    (void)len;
+  }
   /** Admin-login finished. `success=true` means the repeater accepted the
    *  password and added us to its ACL; `perms` is the granted permission
    *  bitmask (e.g. PERM_ACL_ADMIN | PERM_ACL_GUEST). On `success=false` the
