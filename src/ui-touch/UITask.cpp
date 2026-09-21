@@ -11150,9 +11150,11 @@ static void advertDismissCb(lv_event_t* e) {
   closeAdvertPage();
 }
 
-#if defined(HAS_TDECK_PRO)
-static void advertBackCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeAdvertPage();
+#if CAP_TOUCH
+static void advertHomeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeAdvertPage();
+  goToTab(HOME_TAB_INDEX);
 }
 #endif
 
@@ -11177,16 +11179,26 @@ static void openAdvertPage() {
   statusBarSetTall(true);
   updateGlobalStatusBar();
   const int top = STATUSBAR_H + 8;
-#if defined(HAS_TDECK_PRO)
-  lv_obj_t* back = lv_btn_create(s_advert_root);
-  lv_obj_set_size(back, SC(82), SC(32));
-  lv_obj_set_pos(back, 4, top);
-  styleButton(back);
-  lv_obj_add_event_cb(back, advertBackCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* back_label = lv_label_create(back);
-  lv_label_set_text_fmt(back_label, LV_SYMBOL_LEFT "  %s", TR("Back"));
-  lv_obj_set_style_text_color(back_label, lv_color_black(), LV_PART_MAIN);
-  lv_obj_center(back_label);
+#if CAP_TOUCH
+  // Match the floating Home affordance used by Terminal and Files. Aligning to
+  // the right edge keeps it reachable on both Heltec portrait and wide screens.
+  lv_obj_t* home = lv_btn_create(s_advert_root);
+  lv_obj_set_size(home, 40, 28);
+  lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, top);
+  styleButton(home);
+  if (s_theme_day) {
+    lv_obj_set_style_bg_color(home, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(home, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+  }
+  lv_obj_add_event_cb(home, advertHomeCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* home_label = lv_label_create(home);
+  useChainedFont(home_label);
+  lv_label_set_text(home_label, LV_SYMBOL_HOME);
+  if (s_theme_day) lv_obj_set_style_text_font(home_label, &g_font_16, LV_PART_MAIN);
+  lv_obj_center(home_label);
+  lv_obj_move_foreground(home);
   const int scroll_top = top + SC(40);
 #else
   const int scroll_top = top;
