@@ -37739,8 +37739,13 @@ static constexpr int         kChatVirtOverscanPx = 120;
 static constexpr lv_coord_t  kChatBubblePadH     = 8;
 static constexpr lv_coord_t  kChatBubblePadV     = 5;
 static constexpr lv_coord_t  kChatSideGutter     = 2;
+#if defined(HAS_TDECK_PRO)
+static constexpr lv_coord_t  kChatRowGap         = 6;
+static constexpr lv_coord_t  kChatCompactRowGap = 4;
+#else
 static constexpr lv_coord_t  kChatRowGap         = 4;
 static constexpr lv_coord_t  kChatCompactRowGap = 2;
+#endif
 static constexpr lv_coord_t  kChatDividerH       = 16;
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
@@ -39136,10 +39141,11 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
       lv_label_set_text(slbl, d.san_sender);
       lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
-      if (sender_label_w < sender_w) {
-        lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(slbl, sender_label_w);
-      }
+      if (sender_label_w > inner_w) sender_label_w = inner_w;
+      // Height measurement reserves one header line; LONG_DOT needs that fixed
+      // height too, otherwise a wrapped name grows down over the message body.
+      lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
+      lv_obj_set_size(slbl, sender_label_w, line_h);
       lv_obj_set_pos(slbl, 0, inner_y);
     }
     if (meta_fit[0]) {
