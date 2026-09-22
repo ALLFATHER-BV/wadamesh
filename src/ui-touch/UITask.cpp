@@ -43155,9 +43155,11 @@ static bool bleKbdTabHotkey(int cp) {
 
 static bool m9LockedHomeDrawerFrontmost() {
 #if defined(HAS_THINKNODE_M9)
+  lv_obj_t* top = lv_layer_top();
   return getActiveTab() == HOME_TAB_INDEX &&
          s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
-         s_home_drawer_mode && s_appdrawer_root && !appDrawerCovered();
+         s_home_drawer_mode && s_appdrawer_root &&
+         navTopHasVisibleChild(top) && navTopFrontmostChild(top) == s_appdrawer_root;
 #else
   return false;
 #endif
