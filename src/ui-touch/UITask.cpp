@@ -49805,7 +49805,7 @@ static void updateGlobalStatusBar() {
     // without this the TALL bar's lower half (back chevron + title) is covered by the page.
     // Settings sheets sit on lv_scr_act so they never need this. One condition covers every
     // page now that Snake and Airtime set s_apppage_title too.
-    const bool want_fg = (s_apppage_title != nullptr);
+    const bool want_fg = (s_apppage_title != nullptr) && !g_lv.task->isManualLock();
     if (want_fg) {
       // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
       // re-assert every tick (a page opened over a chat can otherwise let the chat's
