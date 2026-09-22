@@ -36,7 +36,7 @@ bool    touchPrefsSetBrightness(uint8_t pct);
 uint8_t touchPrefsGetThemeMode();
 bool    touchPrefsSetThemeMode(uint8_t mode);
 
-/** Keyboard backlight mode: 0 = off, 1 = on, 2 = auto (on while typing). Default auto. */
+/** Keyboard backlight mode: 0 = off, 1 = on, 2 = auto (on after activity until the screen timeout). Default auto. */
 uint8_t touchPrefsGetKbBacklight();
 bool    touchPrefsSetKbBacklight(uint8_t mode);
 

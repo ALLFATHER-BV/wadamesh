@@ -3315,12 +3315,17 @@ static void refreshSensorsTab();
 static void refreshSensorsHistoryCharts();
 #endif
 #if CAP_KEYBOARD
-// Keyboard backlight: mode 0=off, 1=on, 2=auto (on while typing, off after idle).
+// Keyboard backlight: mode 0=off, 1=on, 2=auto (on after activity until the
+// configured screen timeout expires).
 static uint8_t       s_kb_bl_mode    = 2;
 static unsigned long s_kb_last_key_ms = 0;
-constexpr unsigned long kKbBacklightIdleMs = 3000;   // auto: off 3 s after last key
 // Register input activity (keypress / field focus / tap) for the auto backlight.
 static inline void noteKbActivity() { s_kb_last_key_ms = millis(); }
+static inline bool kbBacklightAutoActive(unsigned long now) {
+  if (!g_lv.task) return false;
+  const uint32_t timeout_ms = (uint32_t)g_lv.task->getScreenTimeoutSecs() * 1000u;
+  return timeout_ms == 0 || (int32_t)(now - s_kb_last_key_ms) < (int32_t)timeout_ms;
+}
 #else
 static inline void noteKbActivity() {}
 #endif
@@ -15341,7 +15346,7 @@ static void buildDeviceSettings(int sec) {
     y += SC(38);
   }
 #elif defined(HAS_PAGER_KEYBOARD)
-  /* Keyboard backlight: off / on / auto (lit while typing, dark after ~3 s idle).
+  /* Keyboard backlight: off / on / auto (lit after activity until the screen timeout).
      No brightness slider here (unlike the T-Deck) -- this board's backlight is a
      simple on/off strip, so there's nothing to dial in beyond the mode. */
   {
@@ -41355,7 +41360,7 @@ static void updatePagerBackspaceUnlockHold(unsigned long now) {
 static void updatePagerKbBacklight(unsigned long now) {
   uint8_t kb_bl = 0;
   if (s_kb_bl_mode == 1) kb_bl = 255;
-  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+  else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
   if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) kb_bl = 0;
   static uint8_t s_last = 0xFF;   // only hit the LEDC write when the value actually changes
   if (kb_bl != s_last) { s_last = kb_bl; pagerKeyboardSetBacklight(kb_bl); }
@@ -45933,13 +45938,13 @@ static void applyKbdBacklight(uint8_t pct) {      // keyboard backlight (CH32 co
   s_kbd_bl_pct = pct;
 }
 // Drive the keyboard backlight from mode + Keys-slider brightness: off → dark,
-// on → slider brightness, auto → slider brightness while recently active then dark.
+// on → slider brightness, auto → slider brightness after activity until the screen timeout.
 // (Screen-off forcing to 0 is handled by the caller in the apply loop.)
 static void tanKbBacklightTick(bool off = false) {
   uint8_t v = 0;
   if (!off) {
     if (s_kb_bl_mode == 1) v = s_kbd_bl_pct;
-    else if (s_kb_bl_mode == 2 && (millis() - s_kb_last_key_ms) < kKbBacklightIdleMs) v = s_kbd_bl_pct;
+    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(millis())) v = s_kbd_bl_pct;
   }
   static uint8_t s_last = 0xFF;   // per-frame caller: only hit the CH32 over I2C when it changes
   if (v != s_last) { s_last = v; bsp_input_set_backlight_brightness(v); }
@@ -61921,7 +61926,7 @@ void UITask::loop() {
     {
       uint8_t kb_bl = 0;
       if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
-      else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+      else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
       if (_screen_off) kb_bl = 0;
       tdeckKeyboardSetBacklight(kb_bl);
     }
@@ -62788,10 +62793,10 @@ void UITask::loop() {
     if (cur_ta && cur_ta != s_kb_prev_ta) s_kb_last_key_ms = now;
     s_kb_prev_ta = cur_ta;
   }
-  // Keyboard backlight: off / on / auto (lit after activity, off after idle).
+  // Keyboard backlight: off / on / auto (Auto follows the configured screen timeout).
   uint8_t kb_bl = 0;
   if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
-  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+  else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
   if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
   // New-message notify flash: light the screen so the user sees a message arrived. When the
   // screen is hard-locked, REVEAL the lock screen (lights the wallpaper, keeps the lock) rather
@@ -62978,7 +62983,7 @@ void UITask::loop() {
   {
     uint8_t kb_bl = 0;
     if (s_kb_bl_mode == 1) kb_bl = 255;
-    else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
     // Cache the last duty the controller ACTUALLY took, not the last one
