@@ -44150,7 +44150,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       return;
     }
 #endif
-#if CAP_TRACKBALL || defined(HAS_THINKNODE_M9)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
     // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
     // letter-nav keys keep navigating until you explicitly enter the field (matches navPump).
     // navFocusedTextarea() (nav-group focus), not the local ta_focused (kbd-bound field): the
@@ -44164,27 +44164,29 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_M9_KEYBOARD)
     if (m9HandleNavKey(key)) return;        // ← runs INSIDE the if(!ta) block only
 #endif
-    if (s_setup_root) return;
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Spacebar (while NOT editing a text field) locks the screen: backlight off
     // + manual lock, so touch and trackball-scroll are ignored — only a
     // trackball CLICK unlocks it. The T-Deck's only side button is a hardware
     // reset (unremappable), so the spacebar is the keyboard lock key. NB this
     // overrides the old "space = Home tab" shortcut — use 'h' for Home.
-    if (key == ' ') {
+    if (!s_setup_root && key == ' ') {
       startLockingCountdown();   // 1 s "Locking…" countdown; tap / any other key cancels
       return;
     }
 #endif
-#if CAP_TRACKBALL
-    // Keyboard navigation (opt-in): with no text field focused, the WASDZ cluster
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+    // Physical-keyboard navigation: with no text field focused, the WASDZ cluster
     // moves focus through s_nav_group — W up, Z down, A left, D right, S select,
     // Q back — and the programmable tab hotkeys (default E/R/T/U/I) jump straight to
-    // a main tab. Lets you reach + drive the whole UI from the keyboard while the
-    // trackball stays a mouse cursor. navMaybeRebuild() (in the loop) keeps the
-    // focus group synced to the screen.
+    // a main tab. On Pro/Max, Return also selects because there is no trackball click.
+    // navMaybeRebuild() (in the loop) keeps the focus group synced to the screen.
     if (s_kbd_nav) {
-      const int act = navDirForKey(key);   // 0-5 = up,down,left,right,select,back (programmable), or -1
+      const int act =
+#if defined(HAS_TDECK_PRO)
+          (key == '\r' || key == '\n') ? 4 :
+#endif
+          navDirForKey(key);   // 0-7 = directions/select/back/scroll (programmable), or -1
       if (act >= 0) {
         switch (act) {
           case 0: navMoveDir(NAV_UP);    break;
@@ -44222,6 +44224,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       if (on_textfield) { if (g_lv.task) g_lv.task->noteUserInput(); return; }   // field focused: never tab-jump on a letter
     }
 #endif
+    if (s_setup_root) return;   // wizard accepts navigation only; swallow unrelated shortcuts
     // Not editing a field. If a popup is up, the dismiss keys close it; on a
     // bare tab, the navigation keys jump between the bottom tabs.
     if (anyPopupOpen()) {
@@ -44307,7 +44310,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       taDeleteRange(ta, bs_s, bs_e);
       taClearSelection(ta);
     } else {
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
       // Keyboard nav: backspace in an EMPTY field drops back to navigate mode — the
       // discoverable keyboard way OUT of the auto-focused chat composer (Enter on an
       // empty composer already did this, silently). Reveal the focus highlight so the
@@ -44383,7 +44386,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
           }
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
         }
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
         else if (s_kbd_nav) { s_nav_ta_editing = false; s_nav_show = true; }   // Enter on an EMPTY composer: drop to navigate mode, highlight visible
 #endif
       }
@@ -59469,8 +59472,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
-    s_kbd_nav = true;   // keyboard-only device: nav is always on (no touch to fall back to)
+#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_PRO)
+    // Pro/Max have touch, but no trackball and no keyboard-navigation setting;
+    // keep their physical keyboard usable as the setup and touch-failure fallback.
+    s_kbd_nav = true;
 #elif defined(ATTAKY_MESH_SERIES)
     // Soldered-on D-pad, and no settings row toggles it (the "Keyboard navigation"
     // switch is CAP_TRACKBALL-only) — reading the pref here would let a value left
