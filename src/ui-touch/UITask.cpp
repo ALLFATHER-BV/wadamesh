@@ -28980,6 +28980,13 @@ static void makeHome(lv_obj_t* tab) {
   // a compact button parked in the top-right strip (next to the status text),
   // which is why the chart above was allowed to run full-height.
   const int adv_y = chart_body_y + chart_h + 8;
+#if defined(HAS_TDECK_PRO)
+  // Keep the signal graph unchanged and split the remaining portrait space into
+  // two compact launcher rows: Advert/Apps, then Control/Files.
+  const int pro_btn_gap = 4;
+  const int pro_btn_h = (home_avail - adv_y - pro_btn_gap) / 2;
+  const int pro_row2_y = adv_y + pro_btn_h + pro_btn_gap;
+#endif
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
   (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
 #endif
@@ -29007,6 +29014,9 @@ static void makeHome(lv_obj_t* tab) {
     // Portrait-large (T-Display P4): Advert = grid slot row 0 left (grid laid out above).
     lv_obj_set_size(adv, (cw - p4_btn_gap) / 2, p4_btn_h);
     lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, p4_grid_y);
+#elif defined(HAS_TDECK_PRO)
+    lv_obj_set_size(adv, (cw - 8) / 2, pro_btn_h);
+    lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, adv_y);
 #else
     // Portrait (V4): share the row with an "Apps" button — Advert on the left half,
     // Apps on the right half. (Landscape boards get Apps in the launcher column below.)
@@ -29030,6 +29040,11 @@ static void makeHome(lv_obj_t* tab) {
     const int btn_h  = p4_btn_h;
     const int apps_x = half + p4_btn_gap;
     const int apps_y = p4_grid_y;
+#elif defined(HAS_TDECK_PRO)
+    const int half   = (cw - 8) / 2;
+    const int btn_h  = pro_btn_h;
+    const int apps_x = half + 8;
+    const int apps_y = adv_y;
 #else
     const int half   = (cw - 8) / 2;
     const int btn_h  = 36;
@@ -29053,6 +29068,26 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_color(apl,
       lv_color_hex(themeRole(0xFFFFFF, COLOR_TEXT)), LV_PART_MAIN);
     lv_obj_center(apl);
+#if defined(HAS_TDECK_PRO)
+    s_home_nav_right[HOME_NAV_APPS] = apb;
+    auto pro_launcher = [&](const char* label, int x, lv_event_cb_t cb) -> lv_obj_t* {
+      lv_obj_t* b = lv_btn_create(tab);
+      styleButton(b);
+      lv_obj_set_size(b, half, pro_btn_h);
+      lv_obj_align(b, LV_ALIGN_TOP_LEFT, x, pro_row2_y);
+      lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, TR(label));
+      lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(l);
+      return b;
+    };
+    s_home_nav_right[HOME_NAV_CONTROL] =
+        pro_launcher(LV_SYMBOL_BARS "  Control", 0, homeControlPanelCb);
+    s_home_nav_right[HOME_NAV_FILES] =
+        pro_launcher(LV_SYMBOL_DIRECTORY "  Files", apps_x, homeFilesCb);
+#endif
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
     // Rows 1–2 of the portrait-large launcher grid: Terminal | Files, then Control full-width.
     // (The tall screen has the room the other portrait board lacks; Files is live now that the
