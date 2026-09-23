@@ -128,7 +128,10 @@
   // Phone-class AMOLED handheld: RM69A10 MIPI-DSI 568x1232 portrait, HI8561 cap touch, SX1262,
   // C6 Wi-Fi/BLE (esp-hosted), SD_MMC. 32 MB PSRAM — web browser fits easily.
   #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0   // fixed portrait panel (SW-rotate later if wanted)
+  // The MIPI-DSI panel cannot MADCTL-rotate, so landscape is LVGL's software
+  // rotation, exactly as the Tanmatsu does it on the same silicon. Opt-in from
+  // Settings, Display; portrait stays the default.
+  #define CAP_ROTATABLE    1
   #define CAP_LARGE_SCREEN 1   // 568x1232 -> UI upscaling like the Tanmatsu
   // CAP_SD gates the *Arduino SD* (shared-SPI) path used by the T-Deck/M9/R8. The P4's
   // card is SD_MMC (slot 0), mounted in main.cpp and used as the DataStore backend —
@@ -181,9 +184,9 @@
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
-// expose it; the Pager and V4-R8 add font-only presets because their compact
-// viewports cannot safely take global geometry scaling.
-#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
+// expose it; the Pager, V4-R8 and ThinkNode M9 add font-only presets because
+// their compact viewports cannot safely take global geometry scaling.
+#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   #define CAP_UI_SIZE 1
 #else
   #define CAP_UI_SIZE 0

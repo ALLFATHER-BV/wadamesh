@@ -19,6 +19,13 @@ ThinkNode M9: pressing down at the bottom of a conversation reveals the next mes
 T-Deck Pro and Max: the sender and the message no longer overdraw each other, first-run setup can be driven from the keyboard, and Commander has two rows of controls.
 T-Deck Pro and Max: the lock screen is drawn for the screen it is on, the e-paper keeps an unambiguous locked frame instead of the last live view, and a hard lock survives waking the front pad.
 
+# --- Text size on the ThinkNode M9 ------------------------------------------------------------------
+The M9 has text size presets: Settings, Display, UI size, with Normal, Large text and Huge text. It grows the text and leaves the layout alone, so rows, cards and controls keep their size and nothing becomes unreachable, which is how the Heltec V4-R8 does it on the same size panel. Your current setting is untouched by the update.
+
+# --- Landscape on the LilyGo T-Display P4 -------------------------------------------------------------
+The T-Display P4 can run landscape. Settings, Display, Orientation, and it restarts to apply. The panel itself cannot rotate, so the interface is rotated in software the way the Tanmatsu already does it on the same chip.
+I did not have my P4 with me to test this, so it goes out untested on the hardware. If you have one, this is the thing to try and report: whether it is smooth, and whether taps land where you put them, particularly near the edges. Portrait is still the default and one tap puts it back.
+
 # --- Also ------------------------------------------------------------------------------------------
 Coordinates in a chat message can be opened on the map. The message menu gains Map, tapping the message does the same, and the spot is marked so you can find it again or remove it. By TerryTel93.
 Compact chat messages have a small gap between them on the T-Deck Pro and Max, which have no alternating row colour to separate them.

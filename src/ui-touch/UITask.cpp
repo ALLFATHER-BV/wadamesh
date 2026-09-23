@@ -957,9 +957,11 @@ static void initTouchFontFallbacks() {
       break;
   }
   g_font_tab = lv_font_montserrat_16;
-#elif defined(HELTEC_LORA_V4_R8)
+#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
-  // controls retain their established dimensions and remain scrollable.
+  // controls retain their established dimensions and remain scrollable. The M9
+  // has the same panel as the V4-R8 and takes the same numbers deliberately: two
+  // tables for one screen size is two things to keep in step.
   s_ui_fscale = 100;
   switch (touchPrefsGetUiScale()) {
     case 1:
@@ -15052,7 +15054,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* dd = lv_dropdown_create(body);
 #if defined(TLORA_PAGER)
     lv_dropdown_set_options(dd, TR("Small\nMedium\nLarge\nJumbo"));
-#elif defined(HELTEC_LORA_V4_R8)
+#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   lv_dropdown_set_options(dd, TR("Normal\nLarge text\nHuge text"));
 #else
     lv_dropdown_set_options(dd, TR("Normal (100%)\nLarge (150%)\nHuge (200%)"));
@@ -60193,6 +60195,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Apply the 270° software rotation now that the driver is registered: logical surface
     // becomes 800x480 and lv_disp_get_hor/ver_res report landscape for every layout query.
     lv_disp_set_rotation(lv_disp_get_default(), LV_DISP_ROT_270);
+#elif defined(HAS_TDISPLAY_P4)
+    // Same mechanism, from the saved preference rather than pinned: this panel is
+    // MIPI-DSI too, so there is no MADCTL to rotate and LVGL has to turn each
+    // flushed area into panel coordinates itself. The logical surface becomes
+    // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows.
+    if (ui_landscape) lv_disp_set_rotation(lv_disp_get_default(),
+                                           static_cast<lv_disp_rot_t>(s_ui_rotation));
 #endif
 
     // Make the full glyph set the INHERITED default font. The default theme sets
@@ -60222,7 +60231,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     }
 
     if (ui_landscape) {
+#if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
+#endif
+      // LVGL does not transform input points for a software-rotated display any
+      // more than it does for a hardware-rotated one, so the driver maps them
+      // either way.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
     // Swipe-axis transform always matches the visible orientation.

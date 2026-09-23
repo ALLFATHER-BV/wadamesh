@@ -231,13 +231,21 @@ bool heltecV4CapTouchBegin() {
 
 static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
   int sx, sy;
+  const bool rotated = (s_point_rotation == 1 || s_point_rotation == 3);
   switch (s_point_rotation) {
     case 1:  sx = (RAW_H - 1) - (int)ry; sy = (int)rx;                 break;  // ROT_90
     case 3:  sx = (int)ry;               sy = (RAW_W - 1) - (int)rx;   break;  // ROT_270
     default: sx = (int)rx;               sy = (int)ry;                 break;  // portrait / 180
   }
-  if (sx < 0) sx = 0; if (sx >= SCR_W) sx = SCR_W - 1;
-  if (sy < 0) sy = 0; if (sy >= SCR_H) sy = SCR_H - 1;
+  // Clamp to the space the point now lives in, not the portrait one. Rotating
+  // swaps the axes, so a landscape X runs to SCR_H and a landscape Y to SCR_W;
+  // clamping both against the portrait bounds pinned every touch past 284 px to
+  // the screen edge. This path had never run: the rotation cases were carried
+  // "for parity" while the panel was portrait-only.
+  const int max_x = (rotated ? SCR_H : SCR_W) - 1;
+  const int max_y = (rotated ? SCR_W : SCR_H) - 1;
+  if (sx < 0) sx = 0; if (sx > max_x) sx = max_x;
+  if (sy < 0) sy = 0; if (sy > max_y) sy = max_y;
   *ox = (uint16_t)sx;
   *oy = (uint16_t)sy;
 }
