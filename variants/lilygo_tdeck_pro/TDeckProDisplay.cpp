@@ -5,13 +5,13 @@
 #include <cstring>
 
 TDeckProDisplay::BusyHook TDeckProDisplay::_busy_hook = nullptr;
-#if defined(HAS_TDECK_MAX)
-// T-Deck Max: the CST3530 signals each report with a short LOW pulse on INT and
-// goes back to sleep, so a poll that only reads when INT is LOW right now misses
-// almost every touch. Latch the falling edge here (what the factory Hynitron
-// driver does) and let readCst3530() consume it on the next poll.
+// The CST3530 signals each report with a short LOW pulse on INT and goes back to
+// sleep, so polling the current pin level misses almost every touch. Latch the
+// falling edge here (as the factory Hynitron driver does) and consume it on the
+// next poll. Both T-Deck Pro touch revisions and the Max use this shared driver.
 static volatile bool s_cst3530_irq_pending = false;
 static void IRAM_ATTR cst3530IntIsr() { s_cst3530_irq_pending = true; }
+#if defined(HAS_TDECK_MAX)
 // Front capacitive pads (CST3530 keys): press-edge latch for the UI to consume.
 static bool    s_key_down[3] = { false, false, false };
 static bool    s_key_press_pending = false;
@@ -66,10 +66,8 @@ bool TDeckProDisplay::begin() {
   if (_touch_is_cst3530) {
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
     _touch_ready = initCst3530();
-#if defined(HAS_TDECK_MAX)
     s_cst3530_irq_pending = false;
     attachInterrupt(digitalPinToInterrupt(PIN_TOUCH_INT), cst3530IntIsr, FALLING);
-#endif
   } else {
     _touch_ready = _cst328.begin();
     _cst328.setRotation(0);
@@ -318,13 +316,9 @@ bool TDeckProDisplay::readCst3530(int16_t& x, int16_t& y) {
   const uint8_t clear_command[] = { 0xD0, 0x00, 0x02, 0xAB };
   uint8_t response[50] = {};
 
-#if defined(HAS_TDECK_MAX)
   const bool pending = s_cst3530_irq_pending;
   if (pending) s_cst3530_irq_pending = false;
   if (!pending && digitalRead(PIN_TOUCH_INT) != LOW) return false;
-#else
-  if (digitalRead(PIN_TOUCH_INT) != LOW) return false;
-#endif
   Wire.beginTransmission((uint8_t)PIN_TOUCH_ADDR);
   Wire.write(read_command, sizeof(read_command));
   if (Wire.endTransmission() != 0 || Wire.requestFrom((int)PIN_TOUCH_ADDR, 9) != 9) return false;

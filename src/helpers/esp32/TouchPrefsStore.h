@@ -24,7 +24,27 @@ void touchPrefsTick(uint32_t now_ms);
 bool touchPrefsFlush(uint32_t timeout_ms = 12000);
 bool touchPrefsIoBusy();
 
-/** Screen timeout in seconds; 0 = never sleep. Default 20. */
+/** Discrete screen-timeout stops used by storage and the settings slider. */
+static constexpr uint16_t TOUCH_SCREEN_TIMEOUT_SECS[] = {
+  30, 60, 120, 300, 600, 900, 1800, 3600, 0
+};
+static constexpr uint8_t TOUCH_SCREEN_TIMEOUT_COUNT =
+    sizeof(TOUCH_SCREEN_TIMEOUT_SECS) / sizeof(TOUCH_SCREEN_TIMEOUT_SECS[0]);
+
+/** Return the nearest timeout stop; ties round upward. Zero always means Never. */
+static inline uint8_t touchPrefsScreenTimeoutIndex(uint16_t seconds) {
+  if (seconds == 0) return TOUCH_SCREEN_TIMEOUT_COUNT - 1;
+  uint8_t best = 0;
+  uint32_t best_delta = UINT32_MAX;
+  for (uint8_t i = 0; i + 1 < TOUCH_SCREEN_TIMEOUT_COUNT; ++i) {
+    const uint16_t option = TOUCH_SCREEN_TIMEOUT_SECS[i];
+    const uint32_t delta = seconds > option ? seconds - option : option - seconds;
+    if (delta <= best_delta) { best = i; best_delta = delta; }
+  }
+  return best;
+}
+
+/** Screen timeout in seconds; 0 = never sleep. Default 30 seconds. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);
 
@@ -36,7 +56,7 @@ bool    touchPrefsSetBrightness(uint8_t pct);
 uint8_t touchPrefsGetThemeMode();
 bool    touchPrefsSetThemeMode(uint8_t mode);
 
-/** Keyboard backlight mode: 0 = off, 1 = on, 2 = auto (on while typing). Default auto. */
+/** Keyboard backlight mode: 0 = off, 1 = on, 2 = auto (on after activity until the screen timeout). Default auto. */
 uint8_t touchPrefsGetKbBacklight();
 bool    touchPrefsSetKbBacklight(uint8_t mode);
 
@@ -520,7 +540,7 @@ bool    touchPrefsGetScrollReverse();          // invert trackball/scrollball di
 void    touchPrefsSetScrollReverse(bool on);
 bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scroll content (default false)
 void    touchPrefsSetEdgeScroll(bool on);
-bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
+bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks (default false; forced on for Pro/Max e-paper)
 void    touchPrefsSetLockOnScreenOff(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
 void    touchPrefsSetGlanceWhenLocked(bool on);

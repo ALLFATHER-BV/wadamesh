@@ -227,8 +227,8 @@ needed.
 
 - **Off** — always dark
 - **On** — always lit
-- **Auto** (default) — lights up on any keypress, turns off ~3 seconds after
-  the last one
+- **Auto** (default) — lights up on any keypress and follows the configured
+  **Screen timeout**; `0 = never` keeps it lit until the screen is turned off
 
 Unlike the T-Deck, this is a plain on/off strip under the keys, not a
 dimmable brightness curve.

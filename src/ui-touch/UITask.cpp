@@ -49,7 +49,9 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
   #if CAP_LOCK_SCREEN
-    #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #if !defined(HAS_TDECK_PRO)
+      #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #endif
     #if defined(TLORA_PAGER)
       #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
     #endif
@@ -2881,8 +2883,9 @@ struct SettingsModalState {
   lv_obj_t* log_rx_btn;
   lv_obj_t* log_raw_btn;
   uint8_t log_mode; // 0 = rx summary, 1 = raw
-  /** Device modal: screen-timeout (seconds, 0=never) textarea. */
-  lv_obj_t* screen_to_ta;
+  /** Device modal: discrete screen-timeout slider and live value label. */
+  lv_obj_t* screen_to_slider;
+  lv_obj_t* screen_to_value;
   /** Device modal (Keyboard): backlight-brightness slider (issue #84). */
   lv_obj_t* kbbl_slider;
   /** Device modal: live GPS fix-status line under the GPS toggle. */
@@ -3315,12 +3318,17 @@ static void refreshSensorsTab();
 static void refreshSensorsHistoryCharts();
 #endif
 #if CAP_KEYBOARD
-// Keyboard backlight: mode 0=off, 1=on, 2=auto (on while typing, off after idle).
+// Keyboard backlight: mode 0=off, 1=on, 2=auto (on after activity until the
+// configured screen timeout expires).
 static uint8_t       s_kb_bl_mode    = 2;
 static unsigned long s_kb_last_key_ms = 0;
-constexpr unsigned long kKbBacklightIdleMs = 3000;   // auto: off 3 s after last key
 // Register input activity (keypress / field focus / tap) for the auto backlight.
 static inline void noteKbActivity() { s_kb_last_key_ms = millis(); }
+static inline bool kbBacklightAutoActive(unsigned long now) {
+  if (!g_lv.task) return false;
+  const uint32_t timeout_ms = (uint32_t)g_lv.task->getScreenTimeoutSecs() * 1000u;
+  return timeout_ms == 0 || (int32_t)(now - s_kb_last_key_ms) < (int32_t)timeout_ms;
+}
 #else
 static inline void noteKbActivity() {}
 #endif
@@ -5792,7 +5800,7 @@ static inline void navMarkDirty() {}
 
 static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
 static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
-static bool s_lock_on_screen_off = false;     // idle screen-off also engages the manual lock (cached pref)
+static bool s_lock_on_screen_off = false;     // cached pref; forced on for Pro/Max so e-paper shows a lock indicator
 
 #if !defined(HAS_TANMATSU)
 // Web UI mirror: a virtual pointer indev fed by a phone browser's taps over the
@@ -11184,9 +11192,11 @@ static void advertDismissCb(lv_event_t* e) {
   closeAdvertPage();
 }
 
-#if defined(HAS_TDECK_PRO)
-static void advertBackCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeAdvertPage();
+#if CAP_TOUCH
+static void advertHomeCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeAdvertPage();
+  goToTab(HOME_TAB_INDEX);
 }
 #endif
 
@@ -11211,16 +11221,26 @@ static void openAdvertPage() {
   statusBarSetTall(true);
   updateGlobalStatusBar();
   const int top = STATUSBAR_H + 8;
-#if defined(HAS_TDECK_PRO)
-  lv_obj_t* back = lv_btn_create(s_advert_root);
-  lv_obj_set_size(back, SC(82), SC(32));
-  lv_obj_set_pos(back, 4, top);
-  styleButton(back);
-  lv_obj_add_event_cb(back, advertBackCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* back_label = lv_label_create(back);
-  lv_label_set_text_fmt(back_label, LV_SYMBOL_LEFT "  %s", TR("Back"));
-  lv_obj_set_style_text_color(back_label, lv_color_black(), LV_PART_MAIN);
-  lv_obj_center(back_label);
+#if CAP_TOUCH
+  // Match the floating Home affordance used by Terminal and Files. Aligning to
+  // the right edge keeps it reachable on both Heltec portrait and wide screens.
+  lv_obj_t* home = lv_btn_create(s_advert_root);
+  lv_obj_set_size(home, 40, 28);
+  lv_obj_align(home, LV_ALIGN_TOP_RIGHT, -6, top);
+  styleButton(home);
+  if (s_theme_day) {
+    lv_obj_set_style_bg_color(home, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(home, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(home, LV_OPA_COVER, LV_PART_MAIN);
+  }
+  lv_obj_add_event_cb(home, advertHomeCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* home_label = lv_label_create(home);
+  useChainedFont(home_label);
+  lv_label_set_text(home_label, LV_SYMBOL_HOME);
+  if (s_theme_day) lv_obj_set_style_text_font(home_label, &g_font_16, LV_PART_MAIN);
+  lv_obj_center(home_label);
+  lv_obj_move_foreground(home);
   const int scroll_top = top + SC(40);
 #else
   const int scroll_top = top;
@@ -11987,46 +12007,6 @@ static void buildProfileSettings() {
     y += SC(42);
   }
 
-  // "Export settings" — write a MeshCore-app-compatible JSON backup (identity,
-  // radio/position, channels, contacts) to SD if a card is in, else internal
-  // flash. The file opens in the stock app / web client.
-  {
-    lv_obj_t* eb = lv_btn_create(body);
-    lv_obj_set_size(eb, lv_pct(100), SC(34));
-    lv_obj_set_pos(eb, 2, y);
-    styleButton(eb);
-    lv_obj_add_event_cb(eb, +[](lv_event_t* e) {
-      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      // Fixed, app-compatible name so the stock app / web client can read it back.
-      doExportBackupFile("meshcore-backup.json");
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* el = lv_label_create(eb);
-    lv_label_set_text(el, TR("Export settings"));
-    lv_obj_set_style_text_color(el, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
-    lv_obj_center(el);
-    y += SC(42);
-  }
-
-  // "Import settings" — restore a MeshCore-app-compatible JSON backup from
-  // /meshcore-backup.json (SD if present, else internal). Replaces identity,
-  // channels and contacts, then reboots so radio settings take effect.
-  {
-    lv_obj_t* ib = lv_btn_create(body);
-    lv_obj_set_size(ib, lv_pct(100), SC(34));
-    lv_obj_set_pos(ib, 2, y);
-    styleButton(ib);
-    lv_obj_add_event_cb(ib, +[](lv_event_t* e) {
-      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      openBackupPicker();
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* il = lv_label_create(ib);
-    lv_label_set_text(il, TR("Import settings"));
-    lv_obj_set_style_text_color(il, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(il, &g_font_14, LV_PART_MAIN);
-    lv_obj_center(il);
-    y += SC(42);
-  }
 }
 
 // Single-character spam filter. A lot of mesh spam is a 1-byte payload — the cheapest
@@ -12114,17 +12094,34 @@ static void clampDropdownListCb(lv_event_t* e) {
 // clamp keeps a list that opens upward from sliding under the tall app-page title bar.
 static void styleDropdown(lv_obj_t* dd) {
   lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(dd, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(dd, lv_color_black(), LV_PART_MAIN);
+  styleEpaperControlOutline(dd, LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+#endif
   if (lv_obj_t* list = lv_dropdown_get_list(dd)) {   // created by the constructor, so it exists already
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_color(list, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(list, lv_color_black(), LV_PART_MAIN);
+    styleEpaperControlOutline(list, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(list, lv_color_black(), LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(list, lv_color_white(), LV_PART_SELECTED | LV_STATE_CHECKED);
+#else
     lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(list, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(list, &g_font_12, LV_PART_MAIN);
     // The highlighted option (LVGL draws it in LV_PART_SELECTED with the CHECKED state).
     lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(list, lv_color_hex(COLOR_ON_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
+#endif
+    lv_obj_set_style_text_font(list, &g_font_12, LV_PART_MAIN);
   }
   lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
 }
@@ -12314,17 +12311,8 @@ static void buildRadioSettings() {
     lv_obj_set_size(g_set_modal.radio_preset_dd, lv_pct(100),SC(34));
     lv_obj_set_pos(g_set_modal.radio_preset_dd, 2, y);
     lv_dropdown_set_options(g_set_modal.radio_preset_dd, preset_opt_buf ? preset_opt_buf : "Custom (manual)");
-    lv_obj_set_style_text_font(g_set_modal.radio_preset_dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    /* Dropdown list (the popup once tapped) */
-    lv_obj_t* preset_list = lv_dropdown_get_list(g_set_modal.radio_preset_dd);
-    lv_obj_set_style_bg_color(preset_list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(preset_list, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(preset_list, &g_font_12, LV_PART_MAIN);
+    styleDropdown(g_set_modal.radio_preset_dd);
     lv_obj_add_event_cb(g_set_modal.radio_preset_dd, radioPresetChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(g_set_modal.radio_preset_dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
 
@@ -12440,19 +12428,11 @@ static void buildRadioSettings() {
     lv_obj_set_pos(dd, 2, y);
     // Order MUST match TELEM_MODE_*: 0 = deny, 1 = allow-flags, 2 = allow-all.
     lv_dropdown_set_options(dd, TR("Never\nChosen contacts only\nAnyone who asks"));
-    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_t* loclist = lv_dropdown_get_list(dd);
-    lv_obj_set_style_bg_color(loclist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(loclist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(loclist, &g_font_12, LV_PART_MAIN);
+    styleDropdown(dd);
     uint8_t lm = prefs ? prefs->telemetry_mode_loc : TELEM_MODE_DENY;
     if (lm > TELEM_MODE_ALLOW_ALL) lm = TELEM_MODE_DENY;
     lv_dropdown_set_selected(dd, lm);
     lv_obj_add_event_cb(dd, locTelemetryModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
   {
@@ -12510,19 +12490,11 @@ static void buildRadioSettings() {
     lv_obj_set_size(dd, lv_pct(100), SC(34));
     lv_obj_set_pos(dd, 2, y);
     lv_dropdown_set_options(dd, TR("1 byte (legacy)\n2 bytes\n3 bytes"));
-    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_t* phlist = lv_dropdown_get_list(dd);
-    lv_obj_set_style_bg_color(phlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(phlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(phlist, &g_font_12, LV_PART_MAIN);
+    styleDropdown(dd);
     uint8_t phm = prefs ? prefs->path_hash_mode : 0;
     if (phm > 2) phm = 0;
     lv_dropdown_set_selected(dd, phm);
     lv_obj_add_event_cb(dd, pathHashModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
 
@@ -12901,24 +12873,31 @@ static void buildQuickReplySettings() {
   lv_obj_center(l);
 }
 
-static void saveScreenTimeoutCb(lv_event_t* e) {
-  if (blurFromDelete(e)) return;   // the widget is being destroyed
-  const lv_event_code_t _c = lv_event_get_code(e);
-  if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
-  if (!g_set_modal.screen_to_ta) return;
-  kbMirrorSyncToReal();
-  int secs = atoi(lv_textarea_get_text(g_set_modal.screen_to_ta));
-  if (secs < 0) secs = 0;
-  if (secs != 0 && secs < 10) secs = 10;   // 0 = never; any real timeout is at least 10 s
-  if (secs > 3600) secs = 3600;
-  if (g_lv.task->setScreenTimeoutSecs(static_cast<uint16_t>(secs))) {
-    char msg[48];
-    if (secs == 0) snprintf(msg, sizeof(msg), TR("Screen timeout: never"));
-    else           snprintf(msg, sizeof(msg), TR("Screen timeout: %ds"), secs);
-    g_lv.task->showAlert(msg, 1200);
-  } else {
+static void screenTimeoutFormat(uint8_t index, char* out, size_t cap) {
+  const uint16_t seconds = TOUCH_SCREEN_TIMEOUT_SECS[index];
+  if (seconds == 0) snprintf(out, cap, "%s", TR("Never"));
+  else if (seconds < 60) snprintf(out, cap, "%u sec", (unsigned)seconds);
+  else if (seconds < 3600) snprintf(out, cap, "%u min", (unsigned)(seconds / 60));
+  else snprintf(out, cap, "1 hour");
+}
+
+static void screenTimeoutLabelRefresh(uint8_t index) {
+  if (!g_set_modal.screen_to_value) return;
+  char text[20];
+  screenTimeoutFormat(index, text, sizeof text);
+  lv_label_set_text(g_set_modal.screen_to_value, text);
+}
+
+static void screenTimeoutSliderChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  screenTimeoutLabelRefresh((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+static void screenTimeoutSliderReleasedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_RELEASED || !g_lv.task) return;
+  const uint8_t index = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+  if (!g_lv.task->setScreenTimeoutSecs(TOUCH_SCREEN_TIMEOUT_SECS[index]))
     g_lv.task->showAlert(TR("Save failed"), 1200);
-  }
 }
 
 // ===== System info modal =====================================================
@@ -15008,22 +14987,55 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_DISPLAY) {   // --- Display ---
-  /* Screen timeout (seconds, 0 = never). Persists in NVS via TouchPrefsStore. */
+  /* Discrete screen timeout: 30 s through 1 h, then Never. */
   {
-    y += settingsRowLabel(body, y, 0, TR("Screen timeout (s, 0 = never, min 10)"), COLOR_SUB, &g_font_12, 0) + 2;
-    g_set_modal.screen_to_ta = lv_textarea_create(body);
-    lv_obj_set_size(g_set_modal.screen_to_ta, SC(100), SC(30));
-    lv_obj_set_pos(g_set_modal.screen_to_ta, 2, y);
-    lv_textarea_set_one_line(g_set_modal.screen_to_ta, true);
-    lv_textarea_set_max_length(g_set_modal.screen_to_ta, 4);
-    attachSettingsTaEvents(g_set_modal.screen_to_ta);
-    lv_obj_add_event_cb(g_set_modal.screen_to_ta, saveScreenTimeoutCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save on blur (no Save button)
-    if (g_lv.task) {
-      char buf[8];
-      snprintf(buf, sizeof(buf), "%u", (unsigned)g_lv.task->getScreenTimeoutSecs());
-      lv_textarea_set_text(g_set_modal.screen_to_ta, buf);
-    }
-    y += SC(38);
+    y += settingsRowLabel(body, y, 0, TR("Screen timeout"), COLOR_SUB, &g_font_12, 0) + 2;
+
+    g_set_modal.screen_to_value = lv_label_create(body);
+    lv_obj_set_width(g_set_modal.screen_to_value, lv_pct(100));
+    lv_obj_set_pos(g_set_modal.screen_to_value, 0, y);
+    lv_obj_set_style_text_align(g_set_modal.screen_to_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_set_modal.screen_to_value, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_set_modal.screen_to_value, &g_font_16, LV_PART_MAIN);
+    y += SC(22);
+
+    g_set_modal.screen_to_slider = lv_slider_create(body);
+    lv_obj_set_size(g_set_modal.screen_to_slider, lv_pct(96), SC(8));
+    lv_obj_set_pos(g_set_modal.screen_to_slider, 4, y + SC(6));
+    lv_slider_set_range(g_set_modal.screen_to_slider, 0, TOUCH_SCREEN_TIMEOUT_COUNT - 1);
+    const uint8_t timeout_index = touchPrefsScreenTimeoutIndex(
+        g_lv.task ? g_lv.task->getScreenTimeoutSecs() : 30);
+    lv_slider_set_value(g_set_modal.screen_to_slider, timeout_index, LV_ANIM_OFF);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_white(), LV_PART_MAIN);
+    styleEpaperControlOutline(g_set_modal.screen_to_slider, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_black(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_white(), LV_PART_KNOB);
+    styleEpaperControlOutline(g_set_modal.screen_to_slider, LV_PART_KNOB);
+#else
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_TRACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+#endif
+    lv_obj_set_style_pad_all(g_set_modal.screen_to_slider, 6, LV_PART_KNOB);
+    lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderChangedCb,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderReleasedCb,
+                        LV_EVENT_RELEASED, nullptr);
+    screenTimeoutLabelRefresh(timeout_index);
+    y += SC(28);
+
+    lv_obj_t* min_label = lv_label_create(body);
+    lv_label_set_text(min_label, "30 sec");
+    lv_obj_set_style_text_font(min_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(min_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(min_label, 2, y);
+    lv_obj_t* max_label = lv_label_create(body);
+    lv_label_set_text(max_label, TR("Never"));
+    lv_obj_set_style_text_font(max_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(max_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(max_label, LV_ALIGN_TOP_RIGHT, 0, y);
+    y += SC(22);
   }
 
 #if CAP_UI_SIZE
@@ -15363,7 +15375,7 @@ static void buildDeviceSettings(int sec) {
     y += SC(38);
   }
 #elif defined(HAS_PAGER_KEYBOARD)
-  /* Keyboard backlight: off / on / auto (lit while typing, dark after ~3 s idle).
+  /* Keyboard backlight: off / on / auto (lit after activity until the screen timeout).
      No brightness slider here (unlike the T-Deck) -- this board's backlight is a
      simple on/off strip, so there's nothing to dial in beyond the mode. */
   {
@@ -15743,10 +15755,17 @@ static void buildDeviceSettings(int sec) {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(HAS_TDECK_PRO)
+    // E-paper retains its last frame when powered down. Pro/Max always paint
+    // the lock view first so the glass never looks live after timeout.
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_state(sw, LV_STATE_DISABLED);
+#else
 #if defined(ESP32)
     if (touchPrefsGetLockOnScreenOff()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
     y += LV_MAX(40, h + 12);
   }
 #endif
@@ -15778,25 +15797,31 @@ static void buildDeviceSettings(int sec) {
   {
     y += settingsRowLabel(body, y, 0, TR("Custom UTC offset (hours)"), COLOR_SUB, &g_font_12, 0) + 2;
 
-    lv_obj_t* bminus = lv_btn_create(body);
+    lv_obj_t* offset_row = lv_obj_create(body);
+    lv_obj_remove_style_all(offset_row);
+    lv_obj_set_size(offset_row, lv_pct(100), SC(34));
+    lv_obj_set_pos(offset_row, 0, y);
+    lv_obj_set_flex_flow(offset_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(offset_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(offset_row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(offset_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bminus = lv_btn_create(offset_row);
     lv_obj_set_size(bminus, SC(50), SC(34));
-    lv_obj_set_pos(bminus, 2, y);
     styleButton(bminus);
     lv_obj_add_event_cb(bminus, timeOffsetMinusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, "-1 h"); lv_obj_center(lm);
     useChainedFont(lm);
 
-    s_time_offset_lbl = lv_label_create(body);
-    lv_obj_set_width(s_time_offset_lbl, 100);
+    s_time_offset_lbl = lv_label_create(offset_row);
+    lv_obj_set_flex_grow(s_time_offset_lbl, 1);
     lv_obj_set_style_text_align(s_time_offset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_time_offset_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_time_offset_lbl, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_pos(s_time_offset_lbl, 58, y + 9);
     timeOffsetLabelRefresh();
 
-    lv_obj_t* bplus = lv_btn_create(body);
+    lv_obj_t* bplus = lv_btn_create(offset_row);
     lv_obj_set_size(bplus, SC(50), SC(34));
-    lv_obj_set_pos(bplus, 168, y);
     styleButton(bplus);
     lv_obj_add_event_cb(bplus, timeOffsetPlusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, "+1 h"); lv_obj_center(lp);
@@ -28997,6 +29022,13 @@ static void makeHome(lv_obj_t* tab) {
   // a compact button parked in the top-right strip (next to the status text),
   // which is why the chart above was allowed to run full-height.
   const int adv_y = chart_body_y + chart_h + 8;
+#if defined(HAS_TDECK_PRO)
+  // Keep the signal graph unchanged and split the remaining portrait space into
+  // two compact launcher rows: Advert/Apps, then Control/Files.
+  const int pro_btn_gap = 4;
+  const int pro_btn_h = (home_avail - adv_y - pro_btn_gap) / 2;
+  const int pro_row2_y = adv_y + pro_btn_h + pro_btn_gap;
+#endif
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
   (void)adv_y;   // P4 portrait-large uses the grid Ys (p4_grid_y); adv_y feeds the other layouts
 #endif
@@ -29024,6 +29056,9 @@ static void makeHome(lv_obj_t* tab) {
     // Portrait-large (T-Display P4): Advert = grid slot row 0 left (grid laid out above).
     lv_obj_set_size(adv, (cw - p4_btn_gap) / 2, p4_btn_h);
     lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, p4_grid_y);
+#elif defined(HAS_TDECK_PRO)
+    lv_obj_set_size(adv, (cw - 8) / 2, pro_btn_h);
+    lv_obj_align(adv, LV_ALIGN_TOP_LEFT, 0, adv_y);
 #else
     // Portrait (V4): share the row with an "Apps" button — Advert on the left half,
     // Apps on the right half. (Landscape boards get Apps in the launcher column below.)
@@ -29047,6 +29082,11 @@ static void makeHome(lv_obj_t* tab) {
     const int btn_h  = p4_btn_h;
     const int apps_x = half + p4_btn_gap;
     const int apps_y = p4_grid_y;
+#elif defined(HAS_TDECK_PRO)
+    const int half   = (cw - 8) / 2;
+    const int btn_h  = pro_btn_h;
+    const int apps_x = half + 8;
+    const int apps_y = adv_y;
 #else
     const int half   = (cw - 8) / 2;
     const int btn_h  = 36;
@@ -29070,6 +29110,26 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_color(apl,
       lv_color_hex(themeRole(0xFFFFFF, COLOR_TEXT)), LV_PART_MAIN);
     lv_obj_center(apl);
+#if defined(HAS_TDECK_PRO)
+    s_home_nav_right[HOME_NAV_APPS] = apb;
+    auto pro_launcher = [&](const char* label, int x, lv_event_cb_t cb) -> lv_obj_t* {
+      lv_obj_t* b = lv_btn_create(tab);
+      styleButton(b);
+      lv_obj_set_size(b, half, pro_btn_h);
+      lv_obj_align(b, LV_ALIGN_TOP_LEFT, x, pro_row2_y);
+      lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* l = lv_label_create(b);
+      lv_label_set_text(l, TR(label));
+      lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(l);
+      return b;
+    };
+    s_home_nav_right[HOME_NAV_CONTROL] =
+        pro_launcher(LV_SYMBOL_BARS "  Control", 0, homeControlPanelCb);
+    s_home_nav_right[HOME_NAV_FILES] =
+        pro_launcher(LV_SYMBOL_DIRECTORY "  Files", apps_x, homeFilesCb);
+#endif
 #if defined(HAS_TDISPLAY_P4) && CAP_LARGE_SCREEN
     // Rows 1–2 of the portrait-large launcher grid: Terminal | Files, then Control full-width.
     // (The tall screen has the room the other portrait board lacks; Files is live now that the
@@ -38188,8 +38248,13 @@ static constexpr int         kChatVirtOverscanPx = 120;
 static constexpr lv_coord_t  kChatBubblePadH     = 8;
 static constexpr lv_coord_t  kChatBubblePadV     = 5;
 static constexpr lv_coord_t  kChatSideGutter     = 2;
+#if defined(HAS_TDECK_PRO)
+static constexpr lv_coord_t  kChatRowGap         = 6;
+static constexpr lv_coord_t  kChatCompactRowGap = 4;
+#else
 static constexpr lv_coord_t  kChatRowGap         = 4;
 static constexpr lv_coord_t  kChatCompactRowGap = 2;
+#endif
 static constexpr lv_coord_t  kChatDividerH       = 16;
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
@@ -39585,10 +39650,11 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
       lv_label_set_text(slbl, d.san_sender);
       lv_obj_set_style_text_font(slbl, &g_font_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(slbl, sender_col, LV_PART_MAIN);
-      if (sender_label_w < sender_w) {
-        lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
-        lv_obj_set_width(slbl, sender_label_w);
-      }
+      if (sender_label_w > inner_w) sender_label_w = inner_w;
+      // Height measurement reserves one header line; LONG_DOT needs that fixed
+      // height too, otherwise a wrapped name grows down over the message body.
+      lv_label_set_long_mode(slbl, LV_LABEL_LONG_DOT);
+      lv_obj_set_size(slbl, sender_label_w, line_h);
       lv_obj_set_pos(slbl, 0, inner_y);
     }
     if (meta_fit[0]) {
@@ -41809,7 +41875,7 @@ static void updatePagerBackspaceUnlockHold(unsigned long now) {
 static void updatePagerKbBacklight(unsigned long now) {
   uint8_t kb_bl = 0;
   if (s_kb_bl_mode == 1) kb_bl = 255;
-  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+  else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
   if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) kb_bl = 0;
   static uint8_t s_last = 0xFF;   // only hit the LEDC write when the value actually changes
   if (kb_bl != s_last) { s_last = kb_bl; pagerKeyboardSetBacklight(kb_bl); }
@@ -42321,6 +42387,9 @@ static int8_t       s_lock_clock_current = -1;    // refresh immediately when cl
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
+#if defined(HAS_TDECK_PRO)
+static bool s_lock_epaper_default = false;         // built-in white lock view vs custom wallpaper
+#endif
 #if defined(TLORA_PAGER)
 static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
 static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
@@ -42389,7 +42458,9 @@ static void lockscreenUpdateClock() {
     mm = (int)((millis() / 60000u) % 60u);
   }
   lv_label_set_text(s_lock_clock, b);
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO)
+  const lv_color_t normal_color = s_lock_epaper_default ? lv_color_black() : lv_color_white();
+#elif defined(TLORA_PAGER)
   const lv_color_t normal_color = lv_color_hex(0xFFFFFFu);
 #else
   const lv_color_t normal_color = lv_color_hex(touchPrefsGetLockTextColor());
@@ -42486,25 +42557,29 @@ static void lockscreenShow() {
   if (s_lock_root) { lv_obj_move_foreground(s_lock_root); return; }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
+  touchPrefsGetLockWallpaper(wpath, sizeof wpath);
+#if defined(HAS_TDECK_PRO)
+  s_lock_epaper_default = !strcmp(wpath, "/lock/placeholder.jpg");
+#endif
 
   s_lock_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_lock_root);
   lv_obj_set_size(s_lock_root, sw, sh);
   lv_obj_set_pos(s_lock_root, 0, 0);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(s_lock_root,
+      s_lock_epaper_default ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_color(s_lock_root, lv_color_black(), LV_PART_MAIN);
+#endif
   lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_lock_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_lock_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps (no UI leak)
-#if defined(TLORA_PAGER)
-  // Keep the lock overlay OUT of the keyboard/encoder nav focus group. The root
-  // is CLICKABLE (to absorb taps) and it lives on lv_layer_top, so on this
-  // no-touch board navMaybeRebuild() would otherwise collect it as the only
-  // focusable element in the overlay and focus it -- at which point navFocusCb's
-  // shared cursor would otherwise glow around the full-screen overlay instead
-  // of a real control. NAV_SKIP_FLAG keeps the passive lock view out of the
-  // navigation tree entirely.
+  // This is a passive input shield, not a control. Without NAV_SKIP_FLAG,
+  // keypad-nav boards collect the clickable full-screen root and draw a focus
+  // glow around the lock view.
   lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
-#endif
 
   // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
@@ -42521,12 +42596,22 @@ static void lockscreenShow() {
     lvglPsramFree(s_lock_wall);
     s_lock_wall = nullptr;
   }
-  char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
-  touchPrefsGetLockWallpaper(wpath, sizeof wpath);
   if (!strcmp(wpath, "/lock/placeholder.jpg")) {
     // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
     // with no JPEG round-trip to re-introduce gradient banding.
-#if defined(TLORA_PAGER)
+#if defined(HAS_TDECK_PRO)
+    // The shared default is a 320x240 landscape bitmap. Cover-scaling it onto
+    // this 240x320 portrait panel crops both ends of WADAMESH and magnifies its
+    // padlock. Draw a native monochrome wordmark instead: no crop, no giant icon.
+    lv_obj_t* brand = lv_label_create(s_lock_root);
+    lv_label_set_text(brand, "WADAMESH");
+    lv_obj_set_width(brand, sw - 24);
+    lv_obj_set_style_text_align(brand, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(brand, &lv_font_unscii_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(brand, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(brand, 2, LV_PART_MAIN);
+    lv_obj_align(brand, LV_ALIGN_CENTER, 0, 6);
+#elif defined(TLORA_PAGER)
     // Native 480x222 crop of the same icon+wordmark, repositioned to the left
     // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
     // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
@@ -42569,7 +42654,11 @@ static void lockscreenShow() {
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
   }
 
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO)
+  // The built-in Pro/Max lock view is black on white for clean 1-bit e-paper.
+  // Custom wallpapers keep the prior white overlay text for contrast.
+  const lv_color_t col = s_lock_epaper_default ? lv_color_black() : lv_color_white();
+#elif defined(TLORA_PAGER)
   // Force a guaranteed-visible white here rather than the shared, user-
   // customizable touchPrefsGetLockTextColor() -- on this board that pref was
   // rendering noticeably dim/dark (reported/photographed against this panel's
@@ -42631,6 +42720,10 @@ static void lockscreenShow() {
   useChainedFont(hint);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
+#elif defined(HAS_TDECK_PRO)
+  // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
+  // for them: GPIO0 is the deliberate unlock control.
+  lv_label_set_text(hint, TR("press the button to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
   // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
   // Backspace tap, or the new-message notify flash while locked) is gated on
@@ -42639,16 +42732,26 @@ static void lockscreenShow() {
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("double-press d-pad center to unlock"));
-#elif defined(HAS_TDECK_PRO)
-  lv_label_set_text(hint, TR("press the button to unlock"));
 #elif defined(HAS_WIO_TRACKER_L2)
   lv_label_set_text(hint, TR("hold the wake button to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
-  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint,
+#if defined(HAS_TDECK_PRO)
+      &g_font_14,
+#else
+      &g_font_12,
+#endif
+      LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_width(hint, sw - 24);
+  lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_opa(hint, LV_OPA_COVER, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
+#endif
 #if defined(TLORA_PAGER)
   lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -6, -8);   // bottom-right corner, clear of the icon/clock column above
   s_lock_hint = hint;
@@ -42699,7 +42802,7 @@ static void serviceLockscreen() {
   unsigned long now = millis();
   if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
 }
-#endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
+#endif  // CAP_LOCK_SCREEN
 
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
@@ -43126,18 +43229,30 @@ static void doBackupImportChosen() {
   touchPrefsFlush();
   ESP.restart();
 }
+static void confirmBackupImport(const char* stored) {
+  if (!stored) return;
+  strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
+  s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
+}
 static void backupChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const char* stored = (const char*)lv_event_get_user_data(e);
   if (!stored) return;
-  strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
-  s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   backupPickerClose();
-  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
+  confirmBackupImport(stored);
 }
 static void openBackupPicker() {
   backupScan();
   backupPickerClose();
+  if (s_backup_count == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No backups available to restore."), 2000);
+    return;
+  }
+  if (s_backup_count == 1) {
+    confirmBackupImport(s_backup_paths[0]);
+    return;
+  }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_backup_picker = lv_obj_create(lv_layer_top());
@@ -43170,12 +43285,6 @@ static void openBackupPicker() {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
-  if (s_backup_count == 0) {
-    lv_obj_t* empty = lv_label_create(list);
-    lv_label_set_text(empty, TR("No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash."));
-    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-  }
   for (int i = 0; i < s_backup_count; ++i) {
     lv_obj_t* b = lv_btn_create(list);
     lv_obj_set_width(b, lv_pct(100));
@@ -43196,6 +43305,12 @@ static void openBackupPicker() {
 // with a Delete button, plus a Factory-reset action. The detail page is rebuilt
 // after a delete so the list stays accurate.
 static char s_backup_del_path[160] = {0};
+static bool s_backup_append_timestamp = true;
+
+static void backupAppendTimestampCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_backup_append_timestamp = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
 
 // Rebuild the Backups detail page (after an export/delete). Deferred via
 // lv_async_call so we never tear the sheet down from inside one of its own
@@ -43370,8 +43485,8 @@ static void buildBackupsSettings() {
   const lv_coord_t cw = s_settings_content_w;
   int y = 0;
 
-  // Create a fresh backup right here (goes to the SD card if one is in, else
-  // internal flash) and re-list so the new file shows up immediately.
+  // One full-backup action. With the option below checked it creates a unique
+  // snapshot; unchecked it writes the stock-app-compatible fixed filename.
   {
     lv_obj_t* eb = lv_btn_create(body);
     lv_obj_set_size(eb, cw, SC(40));
@@ -43382,23 +43497,37 @@ static void buildBackupsSettings() {
     lv_obj_set_style_text_color(eb, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(eb, +[](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      char fn[48]; backupMakeFilename(fn, sizeof fn);
-      doExportBackupFile(fn);
+      char timestamped[48];
+      const char* filename = "meshcore-backup.json";
+      if (s_backup_append_timestamp) {
+        backupMakeFilename(timestamped, sizeof timestamped);
+        filename = timestamped;
+      }
+      doExportBackupFile(filename);
       lv_async_call(backupsRebuildAsyncCb, nullptr);   // re-list once the event unwinds
     }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* el = lv_label_create(eb);
-    char eblbl[56]; snprintf(eblbl, sizeof eblbl, LV_SYMBOL_SAVE "  %s", TR("Export new backup"));
+    char eblbl[56]; snprintf(eblbl, sizeof eblbl, LV_SYMBOL_SAVE "  %s", TR("Export Backup"));
     lv_label_set_text(el, eblbl);
     lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(el, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_center(el);
     y += SC(48);
+
+    lv_obj_t* append_cb = lv_checkbox_create(body);
+    lv_checkbox_set_text(append_cb, TR("Append timestamp"));
+    lv_obj_set_width(append_cb, cw);
+    lv_obj_set_pos(append_cb, 2, y);
+    lv_obj_set_style_text_color(append_cb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(append_cb, &g_font_14, LV_PART_MAIN);
+    if (s_backup_append_timestamp) lv_obj_add_state(append_cb, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(append_cb, backupAppendTimestampCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_update_layout(append_cb);
+    y += lv_obj_get_height(append_cb) + SC(12);
   }
 
-#if defined(HAS_TANMATSU)
-  // Import a saved backup right here. The T-Deck / V4 reach the picker via the Identity page's
-  // "Import settings" button; the Tanmatsu surfaces it next to Export so the whole round-trip
-  // (export a .json, then restore it) lives on one page. Opens the same internal+SD .json picker.
+  // Import from every known internal or SD/SD_MMC JSON backup. The picker shows
+  // all discovered files, then confirms the selected restore before applying it.
   {
     lv_obj_t* ib = lv_btn_create(body);
     lv_obj_set_size(ib, cw, SC(40));
@@ -43416,14 +43545,13 @@ static void buildBackupsSettings() {
     lv_obj_center(il);
     y += SC(48);
   }
-#endif
 
   y += settingsRowLabel(body, y, 0, TR("Saved backups"), COLOR_SUB, &g_font_12, 0) + 4;
 
   backupScan();
   if (s_backup_count == 0) {
     y += settingsRowLabel(body, y, 0,
-            TR("No backups yet. Tap Export new backup above to create one."),
+            TR("No backups yet. Use Export Backup above to create one."),
             COLOR_SUB, &g_font_12, 0) + 6;
   }
   for (int i = 0; i < s_backup_count; ++i) {
@@ -43598,9 +43726,11 @@ static bool bleKbdTabHotkey(int cp) {
 
 static bool m9LockedHomeDrawerFrontmost() {
 #if defined(HAS_THINKNODE_M9)
+  lv_obj_t* top = lv_layer_top();
   return getActiveTab() == HOME_TAB_INDEX &&
          s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
-         s_home_drawer_mode && s_appdrawer_root && !appDrawerCovered();
+         s_home_drawer_mode && s_appdrawer_root &&
+         navTopHasVisibleChild(top) && navTopFrontmostChild(top) == s_appdrawer_root;
 #else
   return false;
 #endif
@@ -44020,15 +44150,25 @@ static bool m9ChatMoveMessage(bool down) {
     if (!row || !lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE) ||
         lv_obj_has_flag(row, LV_OBJ_FLAG_HIDDEN)) continue;
     if (reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) != target_i) continue;
-    s_m9_chat_focus_i = -1;
-    s_nav_show = true;
-    lv_group_focus_obj(row);
-    return true;
+    // Overscan keeps rows materialized outside the viewport. Those floating
+    // rows cannot rely on LVGL's generic focus scroll; use the virtual scroll
+    // path below unless the complete target extent is already visible.
+    if (!s_chat_virt.offsets) break;
+    const int32_t view_top = chatVirtEffectiveVirtTop(cp);
+    const int32_t view_bottom = view_top + chatVirtMsgsViewH(cp);
+    if (s_chat_virt.offsets[target_i] >= view_top &&
+        chatVirtMsgVirtBottom(target_i) <= view_bottom) {
+      s_m9_chat_focus_i = -1;
+      s_nav_show = true;
+      lv_group_focus_obj(row);
+      return true;
+    }
+    break;
   }
 
-  // The adjacent message is outside the materialized window. Centre its
-  // virtual extent in the viewport, then let chatVirtRenderWindow recreate and
-  // focus that exact logical row through the pending-index hook above.
+  // The adjacent message is outside the viewport. Centre its virtual extent,
+  // then let chatVirtRenderWindow focus that exact logical row through the
+  // pending-index hook above.
   if (!s_chat_virt.offsets) return false;
   const int32_t target_mid =
       (s_chat_virt.offsets[target_i] + chatVirtMsgVirtBottom(target_i)) / 2;
@@ -44546,7 +44686,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       return;
     }
 #endif
-#if CAP_TRACKBALL || defined(HAS_THINKNODE_M9)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
     // A field is focused but we're in navigate mode: select/Enter starts editing it, so the
     // letter-nav keys keep navigating until you explicitly enter the field (matches navPump).
     // navFocusedTextarea() (nav-group focus), not the local ta_focused (kbd-bound field): the
@@ -44560,27 +44700,29 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_M9_KEYBOARD)
     if (m9HandleNavKey(key)) return;        // ← runs INSIDE the if(!ta) block only
 #endif
-    if (s_setup_root) return;
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
     // Spacebar (while NOT editing a text field) locks the screen: backlight off
     // + manual lock, so touch and trackball-scroll are ignored — only a
     // trackball CLICK unlocks it. The T-Deck's only side button is a hardware
     // reset (unremappable), so the spacebar is the keyboard lock key. NB this
     // overrides the old "space = Home tab" shortcut — use 'h' for Home.
-    if (key == ' ') {
+    if (!s_setup_root && key == ' ') {
       startLockingCountdown();   // 1 s "Locking…" countdown; tap / any other key cancels
       return;
     }
 #endif
-#if CAP_TRACKBALL
-    // Keyboard navigation (opt-in): with no text field focused, the WASDZ cluster
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+    // Physical-keyboard navigation: with no text field focused, the WASDZ cluster
     // moves focus through s_nav_group — W up, Z down, A left, D right, S select,
     // Q back — and the programmable tab hotkeys (default E/R/T/U/I) jump straight to
-    // a main tab. Lets you reach + drive the whole UI from the keyboard while the
-    // trackball stays a mouse cursor. navMaybeRebuild() (in the loop) keeps the
-    // focus group synced to the screen.
+    // a main tab. On Pro/Max, Return also selects because there is no trackball click.
+    // navMaybeRebuild() (in the loop) keeps the focus group synced to the screen.
     if (s_kbd_nav) {
-      const int act = navDirForKey(key);   // 0-5 = up,down,left,right,select,back (programmable), or -1
+      const int act =
+#if defined(HAS_TDECK_PRO)
+          (key == '\r' || key == '\n') ? 4 :
+#endif
+          navDirForKey(key);   // 0-7 = directions/select/back/scroll (programmable), or -1
       if (act >= 0) {
         switch (act) {
           case 0: navMoveDir(NAV_UP);    break;
@@ -44618,6 +44760,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       if (on_textfield) { if (g_lv.task) g_lv.task->noteUserInput(); return; }   // field focused: never tab-jump on a letter
     }
 #endif
+    if (s_setup_root) return;   // wizard accepts navigation only; swallow unrelated shortcuts
     // Not editing a field. If a popup is up, the dismiss keys close it; on a
     // bare tab, the navigation keys jump between the bottom tabs.
     if (anyPopupOpen()) {
@@ -44703,7 +44846,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       taDeleteRange(ta, bs_s, bs_e);
       taClearSelection(ta);
     } else {
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
       // Keyboard nav: backspace in an EMPTY field drops back to navigate mode — the
       // discoverable keyboard way OUT of the auto-focused chat composer (Enter on an
       // empty composer already did this, silently). Reveal the focus highlight so the
@@ -44779,7 +44922,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
           }
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
         }
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
         else if (s_kbd_nav) { s_nav_ta_editing = false; s_nav_show = true; }   // Enter on an EMPTY composer: drop to navigate mode, highlight visible
 #endif
       }
@@ -46377,13 +46520,13 @@ static void applyKbdBacklight(uint8_t pct) {      // keyboard backlight (CH32 co
   s_kbd_bl_pct = pct;
 }
 // Drive the keyboard backlight from mode + Keys-slider brightness: off → dark,
-// on → slider brightness, auto → slider brightness while recently active then dark.
+// on → slider brightness, auto → slider brightness after activity until the screen timeout.
 // (Screen-off forcing to 0 is handled by the caller in the apply loop.)
 static void tanKbBacklightTick(bool off = false) {
   uint8_t v = 0;
   if (!off) {
     if (s_kb_bl_mode == 1) v = s_kbd_bl_pct;
-    else if (s_kb_bl_mode == 2 && (millis() - s_kb_last_key_ms) < kKbBacklightIdleMs) v = s_kbd_bl_pct;
+    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(millis())) v = s_kbd_bl_pct;
   }
   static uint8_t s_last = 0xFF;   // per-frame caller: only hit the CH32 over I2C when it changes
   if (v != s_last) { s_last = v; bsp_input_set_backlight_brightness(v); }
@@ -50249,7 +50392,7 @@ static void updateGlobalStatusBar() {
     // without this the TALL bar's lower half (back chevron + title) is covered by the page.
     // Settings sheets sit on lv_scr_act so they never need this. One condition covers every
     // page now that Snake and Airtime set s_apppage_title too.
-    const bool want_fg = (s_apppage_title != nullptr);
+    const bool want_fg = (s_apppage_title != nullptr) && !g_lv.task->isManualLock();
     if (want_fg) {
       // Keep the bar the TOPMOST lv_layer_top child so its back tap is always hittable —
       // re-assert every tick (a page opened over a chat can otherwise let the chat's
@@ -59350,7 +59493,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   touchPrefsBegin();
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
+#if defined(HAS_TDECK_PRO)
+  // Unlike an LCD, the e-paper keeps showing the previous live UI after power
+  // down. Always route timeout through lockScreen(), which paints an unambiguous
+  // retained lock frame before sleeping. Max inherits HAS_TDECK_PRO.
+  s_lock_on_screen_off = true;
+#else
   s_lock_on_screen_off = touchPrefsGetLockOnScreenOff();
+#endif
 #if defined(HAS_TDECK_KEYBOARD)
   // Applied here rather than at tdeckKeyboardBegin(), which runs on the touch
   // task before prefs are up. The driver re-checks this every poll, so it takes
@@ -59865,8 +60015,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9)
-    s_kbd_nav = true;   // keyboard-only device: nav is always on (no touch to fall back to)
+#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_PRO)
+    // Pro/Max have touch, but no trackball and no keyboard-navigation setting;
+    // keep their physical keyboard usable as the setup and touch-failure fallback.
+    s_kbd_nav = true;
 #elif defined(ATTAKY_MESH_SERIES)
     // Soldered-on D-pad, and no settings row toggles it (the "Keyboard navigation"
     // switch is CAP_TRACKBALL-only) — reading the pref here would let a value left
@@ -60891,7 +61043,10 @@ static inline void touchScreenBacklight(bool on) {
     maxSleepBannerShow(false);
     display.turnOn();
   } else {
-    maxSleepBannerShow(true);
+    // A hard lock already paints an explicit lock frame. Keep the generic
+    // "Asleep" banner for unlocked sleeps only; its tap-to-wake hint is false
+    // while touch is deliberately blocked by the lock.
+    maxSleepBannerShow(!(g_lv.task && g_lv.task->isManualLock()));
     if (g_lv.ready) { lv_refr_now(nullptr); display.serviceRefresh(true); }
     maxFrontlightOff();
     display.turnOff();
@@ -61019,6 +61174,10 @@ void UITask::lockScreen() {
   // before sleeping so a locked device never leaves the live UI on the glass.
   _manual_lock = true;
   _screen_off = false;
+  // The arrows live on lv_layer_sys above the lock overlay. Hide any controls
+  // inherited from the previous scrollable page before committing this retained
+  // frame; the fixed lock content itself has nothing to page-scroll.
+  epaperScrollControlsSync(true);
   setCpuForScreen(true);
   lockscreenShow();
   lv_refr_now(nullptr);
@@ -62365,7 +62524,7 @@ void UITask::loop() {
     {
       uint8_t kb_bl = 0;
       if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
-      else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+      else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
       if (_screen_off) kb_bl = 0;
       tdeckKeyboardSetBacklight(kb_bl);
     }
@@ -62902,7 +63061,16 @@ void UITask::loop() {
   {   // Front pads: heart toggles the front-light (Meck's shortcut on this board).
     uint8_t key_id = 0;
     if (display.takeFrontKeyPress(key_id)) {
-      if (key_id == 0) {
+      if (_manual_lock) {
+        // Front pads may reveal the retained lock view, but GPIO0 remains the
+        // deliberate unlock control. wakeScreen() would clear _manual_lock and
+        // leave the lock overlay stranded on screen.
+        if (_screen_off) lockscreenReveal();
+        if (key_id == 0) {
+          if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+        }
+        _last_input_ms = millis();
+      } else if (key_id == 0) {
         if (_screen_off) wakeScreen();
         if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
         _last_input_ms = millis();
@@ -63232,10 +63400,10 @@ void UITask::loop() {
     if (cur_ta && cur_ta != s_kb_prev_ta) s_kb_last_key_ms = now;
     s_kb_prev_ta = cur_ta;
   }
-  // Keyboard backlight: off / on / auto (lit after activity, off after idle).
+  // Keyboard backlight: off / on / auto (Auto follows the configured screen timeout).
   uint8_t kb_bl = 0;
   if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();
-  else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = tdeckKbBlLevel();
+  else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
   if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keep the keyboard dark too
   // New-message notify flash: light the screen so the user sees a message arrived. When the
   // screen is hard-locked, REVEAL the lock screen (lights the wallpaper, keeps the lock) rather
@@ -63422,7 +63590,7 @@ void UITask::loop() {
   {
     uint8_t kb_bl = 0;
     if (s_kb_bl_mode == 1) kb_bl = 255;
-    else if (s_kb_bl_mode == 2 && (now - s_kb_last_key_ms) < kKbBacklightIdleMs) kb_bl = 255;
+    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
     // Cache the last duty the controller ACTUALLY took, not the last one
