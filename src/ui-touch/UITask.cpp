@@ -2898,6 +2898,12 @@ struct SettingsModalState {
   lv_obj_t* mqtt_pwd_ta;
   lv_obj_t* mqtt_ch_sw;
   lv_obj_t* mqtt_dm_sw;
+  lv_obj_t* mqtt_obs_sw;
+  lv_obj_t* mqtt_obs_profile_dd;
+  lv_obj_t* mqtt_obs_origin_ta;
+  lv_obj_t* mqtt_obs_iata_ta;
+  lv_obj_t* mqtt_obs_topic_ta;
+  lv_obj_t* mqtt_obs_token_ta;
   lv_obj_t* mqtt_psk_ta;
   lv_obj_t* mqtt_consent_cb;
 };
@@ -18003,7 +18009,41 @@ static void mqttSaveCb(lv_event_t* e) {
   bool en = consent && g_set_modal.mqtt_en_sw && lv_obj_has_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
   bool pub_ch = !g_set_modal.mqtt_ch_sw || lv_obj_has_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
   bool pub_dm = g_set_modal.mqtt_dm_sw && lv_obj_has_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
+  bool pub_obs = g_set_modal.mqtt_obs_sw && lv_obj_has_state(g_set_modal.mqtt_obs_sw, LV_STATE_CHECKED);
+  const MqttObserverProfile obs_profile = g_set_modal.mqtt_obs_profile_dd
+      ? MqttBridge::observerProfileFromIndex(lv_dropdown_get_selected(g_set_modal.mqtt_obs_profile_dd))
+      : MqttObserverProfile::Custom;
+  const char* obs_origin = g_set_modal.mqtt_obs_origin_ta
+                             ? lv_textarea_get_text(g_set_modal.mqtt_obs_origin_ta) : "";
+  const char* obs_iata = g_set_modal.mqtt_obs_iata_ta
+                           ? lv_textarea_get_text(g_set_modal.mqtt_obs_iata_ta) : "";
+  const char* obs_topic = g_set_modal.mqtt_obs_topic_ta
+                            ? lv_textarea_get_text(g_set_modal.mqtt_obs_topic_ta) : "";
+  const char* obs_token = g_set_modal.mqtt_obs_token_ta
+                            ? lv_textarea_get_text(g_set_modal.mqtt_obs_token_ta) : "";
+  if (en && pub_obs && MqttBridge::observerProfileNeedsIata(obs_profile) &&
+      (!obs_iata || !obs_iata[0])) {
+    g_lv.task->showAlert(TR("Set a location / IATA code for this profile"), 2200);
+    return;
+  }
+  if (en && pub_obs && MqttBridge::observerProfileNeedsToken(obs_profile) &&
+      (!obs_token || !obs_token[0])) {
+    g_lv.task->showAlert(TR("Set the profile token"), 1800);
+    return;
+  }
+  if (en && pub_obs && MqttBridge::observerProfileNeedsUsername(obs_profile) &&
+      (!user || !user[0])) {
+    g_lv.task->showAlert(TR("Set the broker username"), 1800);
+    return;
+  }
+  if (en && pub_obs && MqttBridge::observerProfileNeedsPassword(obs_profile) &&
+      (!pwd || !pwd[0])) {
+    g_lv.task->showAlert(TR("Set the broker password"), 1800);
+    return;
+  }
   MqttBridge::saveConfig(host, port, user, pwd, pub_dm, pub_ch, psk, en);
+  MqttBridge::saveObserverConfig(pub_obs, obs_profile, obs_origin, obs_iata,
+                                 obs_topic, obs_token);
   { SdNvsPrefs p; if (p.begin("mqtt", false)) { p.putBool("consent", consent); p.end(); } }   // file-backed, not NVS (GH #128)
   mqtt_bridge.reloadConfig();
   closeSettingsModal();
@@ -18018,7 +18058,7 @@ static void buildMqttSettings() {
 
   // ---- Privacy warning (read before enabling) ----
   lv_obj_t* warn = lv_label_create(body);
-  lv_label_set_text(warn, TR("Highly experimental. This forwards the text, sender name and timestamp of every message your node receives to an MQTT broker, where anyone able to read the broker can read them. Direct messages are private messages from other people who never agreed to be shared. Use a broker you control, set an encryption key below, and never a public broker."));
+  lv_label_set_text(warn, TR("Highly experimental. Decoded message forwarding exposes message text to the configured broker; direct messages are private and stay off by default. Observer mode sends raw RF packet bytes and radio metadata. Use Custom only with a broker you trust; community profiles publish to that community network."));
   lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(warn, cw);
   lv_obj_set_style_text_color(warn, lightSurfaceTextColor(0xCC6A00), LV_PART_MAIN);
@@ -18098,7 +18138,7 @@ static void buildMqttSettings() {
   lv_obj_set_pos(g_set_modal.mqtt_user_ta, 0, y);
   lv_textarea_set_one_line(g_set_modal.mqtt_user_ta, true);
   taSetPlaceholder(g_set_modal.mqtt_user_ta, TR("Leave empty if not required"));
-  lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 31);
+  lv_textarea_set_max_length(g_set_modal.mqtt_user_ta, 64);
   attachSettingsTaEvents(g_set_modal.mqtt_user_ta);
   y += SC(36);
 
@@ -18115,7 +18155,7 @@ static void buildMqttSettings() {
   lv_textarea_set_one_line(g_set_modal.mqtt_pwd_ta, true);
   lv_textarea_set_password_mode(g_set_modal.mqtt_pwd_ta, true);
   taSetPlaceholder(g_set_modal.mqtt_pwd_ta, TR("Leave empty if not required"));
-  lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 31);
+  lv_textarea_set_max_length(g_set_modal.mqtt_pwd_ta, 96);
   attachSettingsTaEvents(g_set_modal.mqtt_pwd_ta);
   m9AttachSymbolButton(g_set_modal.mqtt_pwd_ta);
   y += SC(36);
@@ -18139,9 +18179,136 @@ static void buildMqttSettings() {
   lv_obj_align(g_set_modal.mqtt_dm_sw, LV_ALIGN_TOP_RIGHT, 0, y);
   y += SC(38);
 
-  // ---- Encryption key (PSK): seals payloads with AES-GCM; empty = plaintext ----
+  // ---- MeshCore Observer: raw RX packets in the community analyzer format ----
+  lv_obj_t* obs_title = lv_label_create(body);
+  lv_label_set_text(obs_title, TR("MeshCore Observer v1"));
+  lv_obj_set_style_text_color(obs_title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(obs_title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_pos(obs_title, 2, y);
+  y += SC(20);
+
+  lv_obj_t* obs_help = lv_label_create(body);
+  lv_label_set_text(obs_help, TR("Publish every received RF packet with RSSI, SNR, route, path and raw data."));
+  lv_label_set_long_mode(obs_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(obs_help, cw);
+  lv_obj_set_style_text_color(obs_help, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(obs_help, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(obs_help, 2, y);
+  lv_obj_update_layout(obs_help);
+  y += lv_obj_get_height(obs_help) + SC(8);
+
+  lv_obj_t* profile_lbl = lv_label_create(body);
+  lv_label_set_text(profile_lbl, TR("Observer profile"));
+  lv_obj_set_style_text_color(profile_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(profile_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(profile_lbl, 2, y + 8);
+  g_set_modal.mqtt_obs_profile_dd = lv_dropdown_create(body);
+  lv_dropdown_set_options(g_set_modal.mqtt_obs_profile_dd,
+                          MqttBridge::observerProfileOptions());
+  lv_obj_set_size(g_set_modal.mqtt_obs_profile_dd, 142, SC(32));
+  lv_obj_align(g_set_modal.mqtt_obs_profile_dd, LV_ALIGN_TOP_RIGHT, 0, y);
+  y += SC(38);
+
+  lv_obj_t* profile_help = lv_label_create(body);
+  lv_label_set_text(profile_help, TR("Built-in profiles apply their endpoint, authentication and standard topic automatically. Username/password are used only by profiles that require them."));
+  lv_label_set_long_mode(profile_help, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(profile_help, cw);
+  lv_obj_set_style_text_color(profile_help, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(profile_help, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(profile_help, 2, y);
+  lv_obj_update_layout(profile_help);
+  y += lv_obj_get_height(profile_help) + SC(8);
+
+  lv_obj_t* obs_lbl = lv_label_create(body);
+  lv_label_set_text(obs_lbl, TR("Enable Observer reporting"));
+  lv_obj_set_style_text_color(obs_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(obs_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(obs_lbl, 2, y + 8);
+  g_set_modal.mqtt_obs_sw = lv_switch_create(body);
+  lv_obj_align(g_set_modal.mqtt_obs_sw, LV_ALIGN_TOP_RIGHT, 0, y);
+  y += SC(38);
+
+  MqttBridgeStatus obs_status;
+  mqtt_bridge.getStatus(obs_status);
+  lv_obj_t* obs_stats = lv_label_create(body);
+  lv_label_set_text_fmt(obs_stats, TR("Observer: %lu sent, %u queued, %lu dropped"),
+                        (unsigned long)obs_status.observerPublished,
+                        (unsigned)obs_status.observerQueued,
+                        (unsigned long)obs_status.observerDropped);
+  lv_label_set_long_mode(obs_stats, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(obs_stats, cw);
+  lv_obj_set_style_text_color(obs_stats, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(obs_stats, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(obs_stats, 2, y);
+  lv_obj_update_layout(obs_stats);
+  y += lv_obj_get_height(obs_stats) + SC(8);
+
+  lv_obj_t* origin_lbl = lv_label_create(body);
+  lv_label_set_text(origin_lbl, TR("Observer name"));
+  lv_obj_set_style_text_color(origin_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(origin_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(origin_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_obs_origin_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_obs_origin_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_obs_origin_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_obs_origin_ta, true);
+  lv_textarea_set_max_length(g_set_modal.mqtt_obs_origin_ta, 32);
+  attachSettingsTaEvents(g_set_modal.mqtt_obs_origin_ta);
+  y += SC(36);
+
+  lv_obj_t* iata_lbl = lv_label_create(body);
+  lv_label_set_text(iata_lbl, TR("Location / IATA code"));
+  lv_obj_set_style_text_color(iata_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(iata_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(iata_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_obs_iata_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_obs_iata_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_obs_iata_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_obs_iata_ta, true);
+  lv_textarea_set_accepted_chars(g_set_modal.mqtt_obs_iata_ta,
+                                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_");
+  lv_textarea_set_max_length(g_set_modal.mqtt_obs_iata_ta, 7);
+  taSetPlaceholder(g_set_modal.mqtt_obs_iata_ta, "OMA");
+  attachSettingsTaEvents(g_set_modal.mqtt_obs_iata_ta);
+  y += SC(36);
+
+  lv_obj_t* topic_lbl = lv_label_create(body);
+  lv_label_set_text(topic_lbl, TR("Observer topic template"));
+  lv_obj_set_style_text_color(topic_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(topic_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(topic_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_obs_topic_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_obs_topic_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_obs_topic_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_obs_topic_ta, true);
+  lv_textarea_set_max_length(g_set_modal.mqtt_obs_topic_ta, 95);
+  attachSettingsTaEvents(g_set_modal.mqtt_obs_topic_ta);
+  m9AttachSymbolButton(g_set_modal.mqtt_obs_topic_ta);
+  y += SC(36);
+
+  lv_obj_t* token_lbl = lv_label_create(body);
+  lv_label_set_text(token_lbl, TR("Profile token (MeshRank)"));
+  lv_obj_set_style_text_color(token_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_font(token_lbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(token_lbl, 2, y);
+  y += SC(16);
+  g_set_modal.mqtt_obs_token_ta = lv_textarea_create(body);
+  lv_obj_set_size(g_set_modal.mqtt_obs_token_ta, lv_pct(100), SC(30));
+  lv_obj_set_pos(g_set_modal.mqtt_obs_token_ta, 0, y);
+  lv_textarea_set_one_line(g_set_modal.mqtt_obs_token_ta, true);
+  lv_textarea_set_password_mode(g_set_modal.mqtt_obs_token_ta, true);
+  lv_textarea_set_max_length(g_set_modal.mqtt_obs_token_ta, 64);
+  taSetPlaceholder(g_set_modal.mqtt_obs_token_ta, TR("Only required by token profiles"));
+  attachSettingsTaEvents(g_set_modal.mqtt_obs_token_ta);
+  y += SC(36);
+
+  // ---- Encryption key (PSK): seals decoded message payloads only. Observer
+  // packets stay standard JSON so analyzer networks can consume them. ----
   lv_obj_t* psk_lbl = lv_label_create(body);
-  lv_label_set_text(psk_lbl, TR("Encryption key (optional)"));
+  lv_label_set_text(psk_lbl, TR("Message encryption key (optional)"));
   lv_obj_set_style_text_color(psk_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(psk_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_pos(psk_lbl, 2, y);
@@ -18160,12 +18327,19 @@ static void buildMqttSettings() {
   // ---- Load current config ----
   {
     SdNvsPrefs p;   // file-backed, matches MqttBridge (GH #128)
-    bool cur_en = false, cur_dm = false, cur_ch = true, cur_consent = false;
-    char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[32] = {}, cur_pwd[32] = {}, cur_psk[33] = {};
+    bool cur_en = false, cur_dm = false, cur_ch = true, cur_obs = false, cur_consent = false;
+    uint32_t cur_obs_profile = 0;
+    char cur_host[64] = {}, cur_port_s[8] = "1883", cur_user[65] = {}, cur_pwd[97] = {}, cur_psk[33] = {};
+    char cur_obs_origin[33] = {}, cur_obs_iata[8] = {}, cur_obs_topic[96] = "meshcore/{iata}/{device}";
+    char cur_obs_token[65] = {};
+    const NodePrefs* node_prefs = the_mesh.getNodePrefs();
+    if (node_prefs) snprintf(cur_obs_origin, sizeof(cur_obs_origin), "%s", node_prefs->node_name);
     if (p.begin("mqtt", true)) {
       cur_en = p.getBool("en", false);
       cur_dm = p.getBool("dm", false);
       cur_ch = p.getBool("ch", true);
+      cur_obs = p.getBool("obs", false);
+      cur_obs_profile = p.getUInt("obs_profile", 0);
       cur_consent = p.getBool("consent", false);
       uint16_t port = (uint16_t)p.getUInt("port", 1883);
       snprintf(cur_port_s, sizeof(cur_port_s), "%u", port);
@@ -18173,6 +18347,10 @@ static void buildMqttSettings() {
       if (p.isKey("user")) p.getString("user", cur_user, sizeof(cur_user));
       if (p.isKey("pwd"))  p.getString("pwd",  cur_pwd,  sizeof(cur_pwd));
       if (p.isKey("psk"))  p.getString("psk",  cur_psk,  sizeof(cur_psk));
+      if (p.isKey("obs_origin")) p.getString("obs_origin", cur_obs_origin, sizeof(cur_obs_origin));
+      if (p.isKey("obs_iata"))   p.getString("obs_iata", cur_obs_iata, sizeof(cur_obs_iata));
+      if (p.isKey("obs_topic"))  p.getString("obs_topic", cur_obs_topic, sizeof(cur_obs_topic));
+      if (p.isKey("obs_token"))  p.getString("obs_token", cur_obs_token, sizeof(cur_obs_token));
       p.end();
     }
     if (cur_consent) {
@@ -18182,10 +18360,18 @@ static void buildMqttSettings() {
     if (cur_en && cur_consent) lv_obj_add_state(g_set_modal.mqtt_en_sw, LV_STATE_CHECKED);
     if (cur_ch) lv_obj_add_state(g_set_modal.mqtt_ch_sw, LV_STATE_CHECKED);
     if (cur_dm) lv_obj_add_state(g_set_modal.mqtt_dm_sw, LV_STATE_CHECKED);
+    if (cur_obs) lv_obj_add_state(g_set_modal.mqtt_obs_sw, LV_STATE_CHECKED);
+    lv_dropdown_set_selected(g_set_modal.mqtt_obs_profile_dd,
+                             cur_obs_profile < MqttBridge::observerProfileCount()
+                               ? (uint16_t)cur_obs_profile : 0);
     lv_textarea_set_text(g_set_modal.mqtt_host_ta, cur_host);
     lv_textarea_set_text(g_set_modal.mqtt_port_ta, cur_port_s);
     lv_textarea_set_text(g_set_modal.mqtt_user_ta, cur_user);
     lv_textarea_set_text(g_set_modal.mqtt_pwd_ta,  cur_pwd);
+    lv_textarea_set_text(g_set_modal.mqtt_obs_origin_ta, cur_obs_origin);
+    lv_textarea_set_text(g_set_modal.mqtt_obs_iata_ta, cur_obs_iata);
+    lv_textarea_set_text(g_set_modal.mqtt_obs_topic_ta, cur_obs_topic);
+    lv_textarea_set_text(g_set_modal.mqtt_obs_token_ta, cur_obs_token);
     lv_textarea_set_text(g_set_modal.mqtt_psk_ta,  cur_psk);
   }
 

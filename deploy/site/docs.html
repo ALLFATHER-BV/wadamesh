@@ -468,11 +468,12 @@
         <div class="scard">
           <div class="thumb"><img src="docs-img/set_mqtt_bridge.png" alt="MQTT bridge settings"></div>
           <h3>MQTT bridge <span class="tag">experimental</span></h3>
-          <div class="lede">Forward received messages to your own MQTT broker.</div>
+          <div class="lede">Forward decoded messages or MeshCore Observer packets over MQTT.</div>
           <ul>
             <li>Publishes the <b>text, sender and time</b> of messages your node hears to an MQTT broker</li>
-            <li>Broker <b>host, port and topic</b>, plus an <b>encryption key</b></li>
-            <li>Stays off until you <b>accept the privacy note</b> &mdash; anyone who can read the broker sees the messages, so use one you control, never a public broker</li>
+            <li>Optional <b>MeshCore Observer v1</b> reporting includes raw packets, RSSI, SNR, routes, paths and packet hashes</li>
+            <li>Choose from <b>39 profiles</b>: configurable MQTT, Analyzer US/EU, MeshMapper, NebraskaMesh, MichMesh and regional community brokers</li>
+            <li>Stays off until you <b>accept the privacy note</b>; decoded direct-message forwarding remains separately opt-in</li>
           </ul>
         </div>
       </div>

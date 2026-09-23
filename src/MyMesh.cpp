@@ -343,16 +343,22 @@ static void mqttFormatStatus(char* out, size_t cap) {
     return;
   }
   if (status.phase == MqttBridgePhase::Misconfigured) {
-    snprintf(out, cap, "mqtt: misconfigured (broker host is empty)");
+    if (status.observerProfile == MqttObserverProfile::Custom)
+      snprintf(out, cap, "mqtt: misconfigured (broker host is empty)");
+    else
+      snprintf(out, cap, "mqtt: misconfigured (profile needs IATA, token, or credentials)");
     return;
   }
 
   const uint32_t now = millis();
   char state[64];
-  char timing[96] = {};
+  char timing[160] = {};
   switch (status.phase) {
     case MqttBridgePhase::WaitingForWifi:
       snprintf(state, sizeof(state), "mqtt: waiting for Wi-Fi");
+      break;
+    case MqttBridgePhase::WaitingForTime:
+      snprintf(state, sizeof(state), "mqtt: waiting for valid UTC time");
       break;
     case MqttBridgePhase::Connecting: {
       char age[32];
@@ -375,8 +381,16 @@ static void mqttFormatStatus(char* out, size_t cap) {
       if (status.lastResultMs) {
         char age[32];
         mqttFormatAge(age, sizeof(age), status.lastResultMs, now);
-        snprintf(timing, sizeof(timing), "last error: %d (%s), %s",
-                 (int)status.lastResult, mqttResultText(status.lastResult), age);
+        if (status.lastTlsError || status.lastTlsStackError || status.lastSocketError) {
+          snprintf(timing, sizeof(timing),
+                   "last error: %ld (%s), %s\ntls: %ld stack: %ld socket: %ld",
+                   (long)status.lastResult, mqttResultText(status.lastResult), age,
+                   (long)status.lastTlsError, (long)status.lastTlsStackError,
+                   (long)status.lastSocketError);
+        } else {
+          snprintf(timing, sizeof(timing), "last error: %ld (%s), %s",
+                   (long)status.lastResult, mqttResultText(status.lastResult), age);
+        }
       }
       break;
     }
@@ -384,10 +398,15 @@ static void mqttFormatStatus(char* out, size_t cap) {
       snprintf(state, sizeof(state), "mqtt: unavailable on this build");
       break;
   }
-  snprintf(out, cap, "%s\nbroker: %s:%u\npublish: channels=%s dm=%s encrypted=%s%s%s",
+  snprintf(out, cap,
+           "%s\nbroker: %s:%u\nprofile: %s\npublish: channels=%s dm=%s observer=%s encrypted=%s"
+           "\nobserver: %lu sent, %u queued, %lu dropped%s%s",
            state, status.host, (unsigned)status.port,
+           MqttBridge::observerProfileLabel(status.observerProfile),
            status.publishChannel ? "on" : "off", status.publishDm ? "on" : "off",
-           status.encrypted ? "yes" : "no", timing[0] ? "\n" : "", timing);
+           status.publishObserver ? "on" : "off", status.encrypted ? "yes" : "no",
+           (unsigned long)status.observerPublished, (unsigned)status.observerQueued,
+           (unsigned long)status.observerDropped, timing[0] ? "\n" : "", timing);
 }
 #endif
 
@@ -831,7 +850,7 @@ bool MyMesh::handleMeshcomodCommand(const char* text, int text_len) {
     while (*q == ' ' || *q == '\t') q++;
     if (isCmd(q, "status")) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-      char reply[320];
+      char reply[512];
       mqttFormatStatus(reply, sizeof(reply));
       pushMeshcomodReply(reply);
 #else
@@ -2323,6 +2342,9 @@ void MyMesh::companionRetryService() {
 
 void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   companionRetryObserveRaw(raw, len);
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  mqtt_bridge.observeRx(snr, rssi, raw, len);
+#endif
 
   const int8_t   snr_q4 = (int8_t)(snr * 4.0f);
   const uint32_t now_ms = millis();
@@ -5463,7 +5485,7 @@ void MyMesh::checkCLIRescueCmd() {
                strcmp(cli_command, "get mqtt.status") == 0 ||
                strcmp(cli_command, "mqtt status") == 0) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-      char reply[320];
+      char reply[512];
       mqttFormatStatus(reply, sizeof(reply));
       Serial.printf("  > %s\n", reply);
 #else
