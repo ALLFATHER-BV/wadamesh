@@ -177,7 +177,9 @@ const API = 'https://firmware.wadamesh.com/report/matrix.json';
 const LABEL = {radio:'radio and messaging', map:'map and GPS', link:'phone-app link',
                input:'keyboard and input', storage:'storage and SD'};
 const STATE = {green:'green', amber:'needs a second report', red:'problem reported', none:'no reports'};
-const RAN = {boot:'just flashed', day:'about a day', week:'a week or more'};
+// Phrased as durations, not bare spans: next to the "57 min ago" timestamp,
+// "about a day" read as a contradiction rather than as how long they ran it.
+const RAN = {boot:'ran it for minutes', day:'ran it for about a day', week:'ran it for a week or more'};
 
 function ago(ts){
   if(!ts) return '';
@@ -261,7 +263,7 @@ function render(d){
     nb.innerHTML = notes.map(([b, n]) =>
       '<div class="n"><div class="who">' + esc(b.name) + ', '
       + (n.status === 'works' ? 'works' : 'problem') + ', ' + (RAN[n.ran] || n.ran)
-      + ', ' + ago(n.at) + '</div>' + esc(n.note) + '</div>').join('');
+      + ', reported ' + ago(n.at) + '</div>' + esc(n.note) + '</div>').join('');
   }
 
   document.getElementById('stamp').textContent =

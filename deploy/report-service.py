@@ -98,7 +98,8 @@ AREA_LABEL = {
     "storage": "storage and SD",
 }
 RAN = ("boot", "day", "week")
-RAN_LABEL = {"boot": "just flashed", "day": "about a day", "week": "a week or more"}
+RAN_LABEL = {"boot": "ran it for minutes", "day": "ran it for about a day",
+             "week": "ran it for a week or more"}
 
 # Boards with no web-flasher manifest to take a display name from.
 NAME_FALLBACK = {
