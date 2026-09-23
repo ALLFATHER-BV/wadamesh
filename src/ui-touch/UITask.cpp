@@ -3326,8 +3326,15 @@ static unsigned long s_kb_last_key_ms = 0;
 static inline void noteKbActivity() { s_kb_last_key_ms = millis(); }
 static inline bool kbBacklightAutoActive(unsigned long now) {
   if (!g_lv.task) return false;
-  const uint32_t timeout_ms = (uint32_t)g_lv.task->getScreenTimeoutSecs() * 1000u;
-  return timeout_ms == 0 || (int32_t)(now - s_kb_last_key_ms) < (int32_t)timeout_ms;
+  uint32_t timeout_ms = (uint32_t)g_lv.task->getScreenTimeoutSecs() * 1000u;
+  // Screen timeout Never must not mean "keyboard lit forever". Auto is the
+  // default mode, so a base station left on the desk would burn its keyboard
+  // backlight until the battery gave out, and the old three-second window at
+  // least ended. Bound the Never case instead: long enough to finish typing,
+  // short enough that nobody loses a night to it. Hold the key down (mode On)
+  // if you want it permanently lit.
+  if (timeout_ms == 0) timeout_ms = 60u * 1000u;
+  return (int32_t)(now - s_kb_last_key_ms) < (int32_t)timeout_ms;
 }
 #else
 static inline void noteKbActivity() {}
@@ -40035,7 +40042,16 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   lv_obj_set_width(row, s_chat_virt.content_w);
   lv_label_set_text(row, line);
   lv_obj_set_style_pad_hor(row, 3, LV_PART_MAIN);
+  // Compact rows lean on the alternating row tint to show where one message
+  // ends. E-paper has no tint to lean on, so consecutive messages ran into each
+  // other, worst of all when one wrapped (#563). A little vertical padding is
+  // the separator there. It is measured into the row height below, so the
+  // virtualizer's offsets follow it.
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_pad_ver(row, 4, LV_PART_MAIN);
+#else
   lv_obj_set_style_pad_ver(row, 1, LV_PART_MAIN);
+#endif
   lv_obj_set_style_radius(row, 3, LV_PART_MAIN);
 #if defined(HAS_TDECK_PRO)
   if (epaper_channel) {
@@ -64396,6 +64412,7 @@ static constexpr uint8_t PF_BASE  = 4;
 static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
   { P_OPEN(s_report_root),           []{ closeReportForm(); },            PF_COUNT },   // beta test report form
+  { P_OPEN(s_map_location_menu_root),[]{ closeMapLocationMenu(); },       PF_COUNT },   // map POI marker menu (#549)
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },
