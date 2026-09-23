@@ -77,11 +77,10 @@ uint8_t* s_ring_spl2  = nullptr;    // length of segment 2 (the rest is CC_TEXT)
 int      s_head       = 0;          // next write slot
 int      s_count      = 0;
 int      s_scroll     = 0;          // lines scrolled back from the newest
-// Two levels of dirt, because startFrame() is a full fillScreen() and endFrame()
-// is a no-op: drawing is direct to the panel with no buffer. A full redraw for
-// every cursor blink flashed the whole screen twice a second, and one per
-// keystroke did the same while typing. Only the scrollback changing needs the
-// full clear; the input line and the cursor repaint their own few pixels.
+// Two levels of dirt. TFT drivers draw directly, so only scrollback changes
+// need a full clear; the input line and cursor can repaint a few pixels. Pro/Max
+// e-paper draws into a sprite and only endFrame() reaches the glass, so its loop
+// promotes input-row dirt to a committed render and never blinks the cursor.
 bool     s_dirty      = true;      // scrollback changed -> full redraw
 bool     s_dirty_in   = false;     // only the input line / cursor changed
 bool     s_active     = false;
@@ -167,15 +166,18 @@ uint8_t ringGetSpl2(int i) {
 bool s_day_theme = false;
 bool s_high_contrast_theme = false;
 uint16_t consoleBg() {
-  if (s_disp && s_disp->isEink()) return UIColor::window_bkg;
+  // Do not depend on whichever core display object supplied UIColor's global
+  // definitions at link time. Every e-paper console is white paper, explicitly.
+  if (s_disp && s_disp->isEink()) return RGB565(0xFF, 0xFF, 0xFF);
   if (s_high_contrast_theme)
     return s_day_theme ? RGB565(0xFF, 0xFF, 0xFF) : RGB565(0x00, 0x00, 0x00);
   return s_day_theme ? RGB565(0xF1, 0xF4, 0xF6) : RGB565(0x0E, 0x12, 0x16);
 }
 
 uint16_t colourFor(uint8_t c) {
-  // e-ink has one ink colour; anything else is invisible or dithered.
-  if (s_disp && s_disp->isEink()) return UIColor::primary_txt;
+  // E-paper has one ink colour; anything else is invisible or dithered. Use
+  // literal black so Day/Night and linked UIColor definitions cannot alter it.
+  if (s_disp && s_disp->isEink()) return RGB565(0x00, 0x00, 0x00);
   if (s_high_contrast_theme) {
     if (!s_day_theme) {
       switch (c) {
@@ -470,7 +472,9 @@ void render() {
     y += s_line_h;
   }
 
-  drawInputLine(s_blink_on);
+  // A blinking e-paper cursor would require a panel refresh twice per second.
+  // Keep it solid; TFT consoles retain the normal blink below.
+  drawInputLine(s_disp->isEink() ? true : s_blink_on);
 
 #if CAP_TOUCH && !CAP_KEYBOARD
   keypadDraw();
@@ -998,17 +1002,24 @@ void consoleLoop() {
   exitHoldTick();     // hold the panel for 3 s to leave console mode (#507)
 #endif
   const uint32_t now = millis();
+  const bool eink = s_disp->isEink();
   bool blink_flip = false;
-  if (now - s_blink_ms >= 530) {
+  if (!eink && now - s_blink_ms >= 530) {
     s_blink_ms = now;
     s_blink_on = !s_blink_on;
     blink_flip = true;
   }
-  // Cheapest repaint that covers what actually changed. An idle console paints
-  // one character cell every half second; typing repaints one row; only new
-  // output clears the screen.
+  // Cheapest repaint that covers what actually changed. TFT drivers draw
+  // directly, so typing repaints one row and blinking one cell. Pro/Max draw
+  // into a sprite: those incremental calls do not reach the e-paper until
+  // endFrame(), so coalesce a content/input change into a committed full render.
+  // No idle cursor refresh occurs on e-paper.
   if (s_dirty)          { render(); s_dirty_in = false; }
-  else if (s_dirty_in)  { drawInputLine(s_blink_on); s_dirty_in = false; }
+  else if (s_dirty_in)  {
+    if (eink) render();
+    else      drawInputLine(s_blink_on);
+    s_dirty_in = false;
+  }
   else if (blink_flip)  { drawCursorOnly(s_blink_on); }
 }
 
