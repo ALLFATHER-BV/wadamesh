@@ -24,7 +24,27 @@ void touchPrefsTick(uint32_t now_ms);
 bool touchPrefsFlush(uint32_t timeout_ms = 12000);
 bool touchPrefsIoBusy();
 
-/** Screen timeout in seconds; 0 = never sleep. Default 20. */
+/** Discrete screen-timeout stops used by storage and the settings slider. */
+static constexpr uint16_t TOUCH_SCREEN_TIMEOUT_SECS[] = {
+  30, 60, 120, 300, 600, 900, 1800, 3600, 0
+};
+static constexpr uint8_t TOUCH_SCREEN_TIMEOUT_COUNT =
+    sizeof(TOUCH_SCREEN_TIMEOUT_SECS) / sizeof(TOUCH_SCREEN_TIMEOUT_SECS[0]);
+
+/** Return the nearest timeout stop; ties round upward. Zero always means Never. */
+static inline uint8_t touchPrefsScreenTimeoutIndex(uint16_t seconds) {
+  if (seconds == 0) return TOUCH_SCREEN_TIMEOUT_COUNT - 1;
+  uint8_t best = 0;
+  uint32_t best_delta = UINT32_MAX;
+  for (uint8_t i = 0; i + 1 < TOUCH_SCREEN_TIMEOUT_COUNT; ++i) {
+    const uint16_t option = TOUCH_SCREEN_TIMEOUT_SECS[i];
+    const uint32_t delta = seconds > option ? seconds - option : option - seconds;
+    if (delta <= best_delta) { best = i; best_delta = delta; }
+  }
+  return best;
+}
+
+/** Screen timeout in seconds; 0 = never sleep. Default 30 seconds. */
 uint16_t touchPrefsGetScreenTimeoutSecs();
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds);
 

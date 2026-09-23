@@ -2883,8 +2883,9 @@ struct SettingsModalState {
   lv_obj_t* log_rx_btn;
   lv_obj_t* log_raw_btn;
   uint8_t log_mode; // 0 = rx summary, 1 = raw
-  /** Device modal: screen-timeout (seconds, 0=never) textarea. */
-  lv_obj_t* screen_to_ta;
+  /** Device modal: discrete screen-timeout slider and live value label. */
+  lv_obj_t* screen_to_slider;
+  lv_obj_t* screen_to_value;
   /** Device modal (Keyboard): backlight-brightness slider (issue #84). */
   lv_obj_t* kbbl_slider;
   /** Device modal: live GPS fix-status line under the GPS toggle. */
@@ -12838,24 +12839,31 @@ static void buildQuickReplySettings() {
   lv_obj_center(l);
 }
 
-static void saveScreenTimeoutCb(lv_event_t* e) {
-  if (blurFromDelete(e)) return;   // the widget is being destroyed
-  const lv_event_code_t _c = lv_event_get_code(e);
-  if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
-  if (!g_set_modal.screen_to_ta) return;
-  kbMirrorSyncToReal();
-  int secs = atoi(lv_textarea_get_text(g_set_modal.screen_to_ta));
-  if (secs < 0) secs = 0;
-  if (secs != 0 && secs < 10) secs = 10;   // 0 = never; any real timeout is at least 10 s
-  if (secs > 3600) secs = 3600;
-  if (g_lv.task->setScreenTimeoutSecs(static_cast<uint16_t>(secs))) {
-    char msg[48];
-    if (secs == 0) snprintf(msg, sizeof(msg), TR("Screen timeout: never"));
-    else           snprintf(msg, sizeof(msg), TR("Screen timeout: %ds"), secs);
-    g_lv.task->showAlert(msg, 1200);
-  } else {
+static void screenTimeoutFormat(uint8_t index, char* out, size_t cap) {
+  const uint16_t seconds = TOUCH_SCREEN_TIMEOUT_SECS[index];
+  if (seconds == 0) snprintf(out, cap, "%s", TR("Never"));
+  else if (seconds < 60) snprintf(out, cap, "%u sec", (unsigned)seconds);
+  else if (seconds < 3600) snprintf(out, cap, "%u min", (unsigned)(seconds / 60));
+  else snprintf(out, cap, "1 hour");
+}
+
+static void screenTimeoutLabelRefresh(uint8_t index) {
+  if (!g_set_modal.screen_to_value) return;
+  char text[20];
+  screenTimeoutFormat(index, text, sizeof text);
+  lv_label_set_text(g_set_modal.screen_to_value, text);
+}
+
+static void screenTimeoutSliderChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  screenTimeoutLabelRefresh((uint8_t)lv_slider_get_value(lv_event_get_target(e)));
+}
+
+static void screenTimeoutSliderReleasedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_RELEASED || !g_lv.task) return;
+  const uint8_t index = (uint8_t)lv_slider_get_value(lv_event_get_target(e));
+  if (!g_lv.task->setScreenTimeoutSecs(TOUCH_SCREEN_TIMEOUT_SECS[index]))
     g_lv.task->showAlert(TR("Save failed"), 1200);
-  }
 }
 
 // ===== System info modal =====================================================
@@ -14945,22 +14953,55 @@ static void buildDeviceSettings(int sec) {
   }
 
   if (sec == DSEC_DISPLAY) {   // --- Display ---
-  /* Screen timeout (seconds, 0 = never). Persists in NVS via TouchPrefsStore. */
+  /* Discrete screen timeout: 30 s through 1 h, then Never. */
   {
-    y += settingsRowLabel(body, y, 0, TR("Screen timeout (s, 0 = never, min 10)"), COLOR_SUB, &g_font_12, 0) + 2;
-    g_set_modal.screen_to_ta = lv_textarea_create(body);
-    lv_obj_set_size(g_set_modal.screen_to_ta, SC(100), SC(30));
-    lv_obj_set_pos(g_set_modal.screen_to_ta, 2, y);
-    lv_textarea_set_one_line(g_set_modal.screen_to_ta, true);
-    lv_textarea_set_max_length(g_set_modal.screen_to_ta, 4);
-    attachSettingsTaEvents(g_set_modal.screen_to_ta);
-    lv_obj_add_event_cb(g_set_modal.screen_to_ta, saveScreenTimeoutCb, LV_EVENT_DEFOCUSED, nullptr);  // auto-save on blur (no Save button)
-    if (g_lv.task) {
-      char buf[8];
-      snprintf(buf, sizeof(buf), "%u", (unsigned)g_lv.task->getScreenTimeoutSecs());
-      lv_textarea_set_text(g_set_modal.screen_to_ta, buf);
-    }
-    y += SC(38);
+    y += settingsRowLabel(body, y, 0, TR("Screen timeout"), COLOR_SUB, &g_font_12, 0) + 2;
+
+    g_set_modal.screen_to_value = lv_label_create(body);
+    lv_obj_set_width(g_set_modal.screen_to_value, lv_pct(100));
+    lv_obj_set_pos(g_set_modal.screen_to_value, 0, y);
+    lv_obj_set_style_text_align(g_set_modal.screen_to_value, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_set_modal.screen_to_value, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_set_modal.screen_to_value, &g_font_16, LV_PART_MAIN);
+    y += SC(22);
+
+    g_set_modal.screen_to_slider = lv_slider_create(body);
+    lv_obj_set_size(g_set_modal.screen_to_slider, lv_pct(96), SC(8));
+    lv_obj_set_pos(g_set_modal.screen_to_slider, 4, y + SC(6));
+    lv_slider_set_range(g_set_modal.screen_to_slider, 0, TOUCH_SCREEN_TIMEOUT_COUNT - 1);
+    const uint8_t timeout_index = touchPrefsScreenTimeoutIndex(
+        g_lv.task ? g_lv.task->getScreenTimeoutSecs() : 30);
+    lv_slider_set_value(g_set_modal.screen_to_slider, timeout_index, LV_ANIM_OFF);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_white(), LV_PART_MAIN);
+    styleEpaperControlOutline(g_set_modal.screen_to_slider, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_black(), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_white(), LV_PART_KNOB);
+    styleEpaperControlOutline(g_set_modal.screen_to_slider, LV_PART_KNOB);
+#else
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_TRACK), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
+#endif
+    lv_obj_set_style_pad_all(g_set_modal.screen_to_slider, 6, LV_PART_KNOB);
+    lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderChangedCb,
+                        LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderReleasedCb,
+                        LV_EVENT_RELEASED, nullptr);
+    screenTimeoutLabelRefresh(timeout_index);
+    y += SC(28);
+
+    lv_obj_t* min_label = lv_label_create(body);
+    lv_label_set_text(min_label, "30 sec");
+    lv_obj_set_style_text_font(min_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(min_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(min_label, 2, y);
+    lv_obj_t* max_label = lv_label_create(body);
+    lv_label_set_text(max_label, TR("Never"));
+    lv_obj_set_style_text_font(max_label, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(max_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_align(max_label, LV_ALIGN_TOP_RIGHT, 0, y);
+    y += SC(22);
   }
 
 #if CAP_UI_SIZE

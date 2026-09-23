@@ -43,7 +43,7 @@ static const uint8_t  TOUCH_CFG_VER   = TouchPrefsSchema::CURRENT_VERSION;  // v
 // contributing branch; v54 and v55 were taken by boot_wifi_* and loud_alerts
 // before this merged, so the field moved to the tail behind them.
 // Defaults (kept identical to the historical per-key defaults).
-static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 20;
+static const uint16_t DEFAULT_SCREEN_TIMEOUT_S = 30;
 static const uint8_t  DEFAULT_BRIGHTNESS       = 100;
 #if defined(HAS_TDECK_MAX)
 static const uint8_t  DEFAULT_KB_BL            = 0;          // T-Deck Max: off -- no light ever comes on by itself
@@ -423,12 +423,12 @@ static String prefsGetStr(const char* key, const String& def) {
 
 uint16_t touchPrefsGetScreenTimeoutSecs() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.scr_to_s;
+  return TOUCH_SCREEN_TIMEOUT_SECS[touchPrefsScreenTimeoutIndex(s_cfg.scr_to_s)];
 }
 
 bool touchPrefsSetScreenTimeoutSecs(uint16_t seconds) {
   if (!s_begun) touchPrefsBegin();
-  s_cfg.scr_to_s = seconds;
+  s_cfg.scr_to_s = TOUCH_SCREEN_TIMEOUT_SECS[touchPrefsScreenTimeoutIndex(seconds)];
   return cfgFlush();
 }
 
