@@ -31232,6 +31232,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 // forgetting this table is a build break instead of a field brick.
 #if defined(HAS_TDECK_GT911)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
+#elif defined(HAS_TDECK_MAX)
+static const char* const OTA_BIN_NAME = "wadamesh-tdeck-max";   // must precede the Pro branch: the Max env defines HAS_TDECK_PRO too (it reuses the Pro's display and touch drivers)
 #elif defined(HAS_TDECK_PRO)
 static const char* const OTA_BIN_NAME = "wadamesh-tdeck-pro";
 #elif defined(HAS_TDISPLAY_P4)
