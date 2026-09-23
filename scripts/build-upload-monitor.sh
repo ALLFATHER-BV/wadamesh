@@ -7,7 +7,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 TDECK_ENV="LilyGo_TDeck_companion_radio_touch"
-TDECK_PRO_ENV="LilyGo_TDeck_Pro_companion_radio_touch"
+TDECK_PRO_V1_0_ENV="LilyGo_TDeck_Pro_v1_0_companion_radio_touch"
+TDECK_PRO_V1_1_ENV="LilyGo_TDeck_Pro_v1_1_companion_radio_touch"
 TDECK_MAX_ENV="LilyGo_TDeck_Max_companion_radio_touch"
 HELTEC_ENV="heltec_v4_tft_companion_radio_usb_tcp_touch"
 HELTEC_R8_ENV="heltec_v4_r8_tft_companion_radio_usb_tcp_touch"
@@ -30,13 +31,15 @@ has_env() {
 }
 
 all_envs() {
-  sed -n 's/^\[env:\(.*\)\]$/\1/p' platformio.ini
+  sed -n 's/^\[env:\(.*\)\]$/\1/p' platformio.ini |
+    grep -v '^LilyGo_TDeck_Pro_companion_radio_touch$'
 }
 
 env_label() {
   case "$1" in
     "$TDECK_ENV")        echo "LilyGo T-Deck" ;;
-    "$TDECK_PRO_ENV")    echo "LilyGo T-Deck Pro" ;;
+    "$TDECK_PRO_V1_0_ENV") echo "LilyGo T-Deck Pro V1.0" ;;
+    "$TDECK_PRO_V1_1_ENV") echo "LilyGo T-Deck Pro V1.1" ;;
     "$TDECK_MAX_ENV")    echo "LilyGo T-Deck Max" ;;
     "$HELTEC_ENV")       echo "Heltec V4" ;;
     "$HELTEC_R8_ENV")    echo "Heltec V4-R8" ;;
@@ -56,7 +59,8 @@ Usage: $0 [device] [options]
 
 Devices:
   --tdeck                 LilyGo T-Deck
-  --tdeck-pro             LilyGo T-Deck Pro
+  --tdeck-pro-v1-0        LilyGo T-Deck Pro V1.0
+  --tdeck-pro-v1-1        LilyGo T-Deck Pro V1.1
   --tdeck-max             LilyGo T-Deck Max
   --heltec                Heltec V4
   --heltec-r8             Heltec V4-R8
@@ -96,7 +100,8 @@ select_env() {
 prompt_for_device() {
   local options=(
     "$TDECK_ENV"
-    "$TDECK_PRO_ENV"
+    "$TDECK_PRO_V1_0_ENV"
+    "$TDECK_PRO_V1_1_ENV"
     "$TDECK_MAX_ENV"
     "$M9_ENV"
     "$HELTEC_ENV"
@@ -170,7 +175,8 @@ sha256_file() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --tdeck)        select_env "$TDECK_ENV" ;;
-    --tdeck-pro)    select_env "$TDECK_PRO_ENV" ;;
+    --tdeck-pro-v1-0) select_env "$TDECK_PRO_V1_0_ENV" ;;
+    --tdeck-pro-v1-1) select_env "$TDECK_PRO_V1_1_ENV" ;;
     --tdeck-max)    select_env "$TDECK_MAX_ENV" ;;
     --heltec)       select_env "$HELTEC_ENV" ;;
     --heltec-r8)    select_env "$HELTEC_R8_ENV" ;;

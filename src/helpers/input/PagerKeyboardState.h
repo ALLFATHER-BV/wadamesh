@@ -16,6 +16,9 @@ class PagerKeyboardState {
   static constexpr uint8_t SHIFT_POS_2 = 3 * COLS + 4;
   static constexpr uint8_t BACKSPACE_POS = 1 * COLS;
   static constexpr uint8_t SPACE_POS = 3 * COLS + 2;
+#if !defined(HAS_TDECK_MAX)
+  static constexpr uint8_t ALT_B_POS = 2 * COLS + 4;
+#endif
 #else
   static constexpr uint8_t ALT_POS = 2 * COLS;
   static constexpr uint8_t SHIFT_POS = 2 * COLS + 8;
@@ -57,6 +60,9 @@ class PagerKeyboardState {
         || code == SYMBOL_POS
 #endif
        ) {
+  #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+      if (code == ALT_POS) alt_key_held_ = pressed;
+  #endif
       if (pressed) alt_.press();
       else         alt_.release(now_ms);
       return 0;
@@ -113,6 +119,14 @@ class PagerKeyboardState {
     }
     if (!pressed) return 0;
 
+#if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+    if (code == ALT_B_POS && alt_key_held_) {
+      alt_.markHeldUsed();
+      alt_b_chord_pending_ = true;
+      return 0;
+    }
+#endif
+
     const uint8_t row = code / COLS;
     const uint8_t col = code % COLS;
     if (row >= ROWS) return 0;
@@ -129,6 +143,9 @@ class PagerKeyboardState {
     alt_.discard();
     alt_shift_chord_pending_ = false;
     alt_backspace_chord_pending_ = false;
+  #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+    alt_b_chord_pending_ = false;
+  #endif
   }
   bool backspaceHeld() const { return backspace_held_; }
   bool spaceHeld() const { return space_held_; }
@@ -143,6 +160,13 @@ class PagerKeyboardState {
     alt_backspace_chord_pending_ = false;
     return pending;
   }
+#if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+  bool consumeAltBChord() {
+    const bool pending = alt_b_chord_pending_;
+    alt_b_chord_pending_ = false;
+    return pending;
+  }
+#endif
 #if defined(HAS_TDECK_MAX)
   bool consumeBothShiftChord() {
     const bool pending = both_shift_chord_pending_;
@@ -159,6 +183,10 @@ class PagerKeyboardState {
   bool alt_backspace_chord_pending_ = false;
   bool backspace_held_ = false;
   bool space_held_ = false;
+#if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+  bool alt_key_held_ = false;
+  bool alt_b_chord_pending_ = false;
+#endif
 #if defined(HAS_TDECK_MAX)
   bool shift_l_held_ = false;
   bool shift_r_held_ = false;

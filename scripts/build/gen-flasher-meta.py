@@ -44,7 +44,8 @@ BOARDS = {
     "manifest-tlora-pager-sx1262.json": ("wadamesh - LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
     "manifest-attaky.json":           ("wadamesh - Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
     "manifest-wio-tracker-l2.json": ("wadamesh - Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
-    "manifest-tdeck-pro.json":        ("wadamesh - LilyGo T-Deck Pro (experimental)", "wadamesh-tdeck-pro-merged.bin", "ESP32-S3"),
+    "manifest-tdeck-pro-v1-0.json":   ("wadamesh - LilyGo T-Deck Pro V1.0 (experimental)", "wadamesh-tdeck-pro-v1-0-merged.bin", "ESP32-S3"),
+    "manifest-tdeck-pro-v1-1.json":   ("wadamesh - LilyGo T-Deck Pro V1.1 (experimental)", "wadamesh-tdeck-pro-v1-1-merged.bin", "ESP32-S3"),
     "manifest-tdeck-max.json":        ("wadamesh - LilyGo T-Deck Max (experimental)", "wadamesh-tdeck-max-merged.bin", "ESP32-S3"),
     "manifest-tdisplay-p4.json":      ("wadamesh - LilyGo T-Display P4", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
 }

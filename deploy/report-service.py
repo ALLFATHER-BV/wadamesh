@@ -103,6 +103,8 @@ RAN_LABEL = {"boot": "ran it for minutes", "day": "ran it for about a day",
 
 # Boards with no web-flasher manifest to take a display name from.
 NAME_FALLBACK = {
+    "tdeck-pro-v1-0":  "LilyGo T-Deck Pro V1.0",
+    "tdeck-pro-v1-1":  "LilyGo T-Deck Pro V1.1",
     "tdisplay-p4-lcd": "LilyGo T-Display P4 (LCD)",
     "tanmatsu":        "Tanmatsu",
 }

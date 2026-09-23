@@ -31345,8 +31345,12 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "tdeck"
 #elif defined(HAS_TDECK_MAX)              // must precede the Pro: the Max env defines both
 #define WADA_BOARD_ID "tdeck-max"
+#elif defined(HAS_TDECK_PRO_V1_0)
+#define WADA_BOARD_ID "tdeck-pro-v1-0"
+#elif defined(HAS_TDECK_PRO_V1_1)
+#define WADA_BOARD_ID "tdeck-pro-v1-1"
 #elif defined(HAS_TDECK_PRO)
-#define WADA_BOARD_ID "tdeck-pro"
+#define WADA_BOARD_ID "tdeck-pro-v1-1"
 #elif defined(HAS_TDISPLAY_P4)
   #if defined(HAS_TDP4_LCD)
 #define WADA_BOARD_ID "tdisplay-p4-lcd"
@@ -42061,6 +42065,17 @@ static void updateMaxBothShiftChord() {
   if (g_lv.task) g_lv.task->noteUserInput();
 }
 #endif
+#if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+// Physical Alt+B: keyboard light On <-> Off (Auto counts as "not on").
+// This is resolved by matrix position before the symbol map, so Symbol+B still
+// types '!' while the Alt chord is consumed and never reaches a text field.
+static void updateProAltBChord() {
+  if (!pagerKeyboardConsumeAltBChord()) return;
+  s_kb_bl_mode = (s_kb_bl_mode == 1) ? 0 : 1;
+  touchPrefsSetKbBacklight(s_kb_bl_mode);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
 static void updatePagerAltBackspaceChord() {
   if (!pagerKeyboardConsumeAltBackspaceChord()) return;
   // The accent/@-mention pickers live on lv_layer_top(), outside the tab
@@ -42204,9 +42219,9 @@ static void updatePagerBackspaceUnlockHold(unsigned long now) {
 }
 
 // Keyboard backlight: off/on/auto (s_kb_bl_mode, shared with every CAP_KEYBOARD
-// board) applied to the physical GPIO46 LEDC PWM. Unlike the T-Deck's slider,
-// this board has no brightness curve to honour -- the backlight is a simple
-// full-on/off strip under the keys, so "on" is just max PWM duty (255). Runs
+// board) applied to the physical LEDC PWM pin (Pager GPIO46, Pro GPIO42).
+// Unlike the T-Deck's slider, these boards have no brightness curve to honour --
+// the backlight is a simple full-on/off strip, so "on" is max PWM duty (255). Runs
 // UNCONDITIONALLY, even while the screen is off/locked -- forcing it dark in
 // that state is exactly its job here, so (unlike updatePagerBackspaceHold,
 // which must NOT act while off) it can't be skipped the same way.
@@ -42215,8 +42230,10 @@ static void updatePagerKbBacklight(unsigned long now) {
   if (s_kb_bl_mode == 1) kb_bl = 255;
   else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
   if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) kb_bl = 0;
-  static uint8_t s_last = 0xFF;   // only hit the LEDC write when the value actually changes
-  if (kb_bl != s_last) { s_last = kb_bl; pagerKeyboardSetBacklight(kb_bl); }
+  // 255 is a valid first value (On, or Auto during the initial activity window),
+  // so an uint8_t 0xFF sentinel would skip LEDC attachment and leave the light dark.
+  static int s_last = -1;
+  if ((int)kb_bl != s_last) { pagerKeyboardSetBacklight(kb_bl); s_last = kb_bl; }
 }
 #endif
 
@@ -46806,7 +46823,7 @@ static void applyBrightness(uint8_t pct) {
   s_brightness_pct = pct;
   display.setBrightness(pct);
 }
-#elif defined(HAS_TDECK_PRO)
+#elif defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_PRO_V1_0)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 100;
 #if defined(HAS_TDECK_MAX)
@@ -61422,6 +61439,9 @@ static inline void touchScreenBacklight(bool on) {
     maxFrontlightOff();
     display.turnOff();
   }
+#elif defined(HAS_TDECK_PRO_V1_0)
+  if (on) display.turnOn();
+  else    display.turnOff();
 #else
   if (on) { display.turnOn(); applyBrightness(s_brightness_pct); }
   else    display.turnOff();
@@ -63879,10 +63899,16 @@ void UITask::loop() {
     for (int kbi = 0; kbi < 12; ++kbi) {
       int key = pagerKeyboardReadKey();
       if (key <= 0) break;
+#if defined(HAS_TDECK_PRO)
+      noteKbActivity();   // Pro keypresses re-arm keyboard-light Auto mode
+#endif
       handleHwKey(key);
     }
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
+  #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+    updateProAltBChord();
+  #endif
 #if defined(HAS_TDECK_MAX)
     updateMaxBothShiftChord();
 #endif

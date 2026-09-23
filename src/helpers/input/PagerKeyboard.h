@@ -86,6 +86,11 @@ void pagerKeyboardToggleCaps();
  *  reports held for this press, so it can't also fire the plain-Backspace
  *  hold-to-back/hold-to-unlock gestures. Consumes the pending flag on read. */
 bool pagerKeyboardConsumeAltBackspaceChord();
+#if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
+/** One-shot: true after physical Alt+B is pressed on T-Deck Pro. The B press
+ *  is consumed rather than emitted as the symbol-layer exclamation mark. */
+bool pagerKeyboardConsumeAltBChord();
+#endif
 #if defined(HAS_TDECK_MAX)
 /** One-shot: true exactly once after both Shift keys were pressed together
  *  (T-Deck Max keyboard-backlight chord). Consumes the pending flag on read. */
