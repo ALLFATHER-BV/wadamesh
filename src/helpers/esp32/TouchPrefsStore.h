@@ -513,7 +513,7 @@ bool    touchPrefsGetScrollReverse();          // invert trackball/scrollball di
 void    touchPrefsSetScrollReverse(bool on);
 bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scroll content (default false)
 void    touchPrefsSetEdgeScroll(bool on);
-bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks; only a deliberate hold wakes (default false)
+bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks (default false; forced on for Pro/Max e-paper)
 void    touchPrefsSetLockOnScreenOff(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
 void    touchPrefsSetGlanceWhenLocked(bool on);

@@ -49,7 +49,9 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
   #if CAP_LOCK_SCREEN
-    #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #if !defined(HAS_TDECK_PRO)
+      #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
+    #endif
     #if defined(TLORA_PAGER)
       #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
     #endif
@@ -5797,7 +5799,7 @@ static inline void navMarkDirty() {}
 
 static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
 static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
-static bool s_lock_on_screen_off = false;     // idle screen-off also engages the manual lock (cached pref)
+static bool s_lock_on_screen_off = false;     // cached pref; forced on for Pro/Max so e-paper shows a lock indicator
 
 #if !defined(HAS_TANMATSU)
 // Web UI mirror: a virtual pointer indev fed by a phone browser's taps over the
@@ -11970,46 +11972,6 @@ static void buildProfileSettings() {
     y += SC(42);
   }
 
-  // "Export settings" — write a MeshCore-app-compatible JSON backup (identity,
-  // radio/position, channels, contacts) to SD if a card is in, else internal
-  // flash. The file opens in the stock app / web client.
-  {
-    lv_obj_t* eb = lv_btn_create(body);
-    lv_obj_set_size(eb, lv_pct(100), SC(34));
-    lv_obj_set_pos(eb, 2, y);
-    styleButton(eb);
-    lv_obj_add_event_cb(eb, +[](lv_event_t* e) {
-      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      // Fixed, app-compatible name so the stock app / web client can read it back.
-      doExportBackupFile("meshcore-backup.json");
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* el = lv_label_create(eb);
-    lv_label_set_text(el, TR("Export settings"));
-    lv_obj_set_style_text_color(el, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
-    lv_obj_center(el);
-    y += SC(42);
-  }
-
-  // "Import settings" — restore a MeshCore-app-compatible JSON backup from
-  // /meshcore-backup.json (SD if present, else internal). Replaces identity,
-  // channels and contacts, then reboots so radio settings take effect.
-  {
-    lv_obj_t* ib = lv_btn_create(body);
-    lv_obj_set_size(ib, lv_pct(100), SC(34));
-    lv_obj_set_pos(ib, 2, y);
-    styleButton(ib);
-    lv_obj_add_event_cb(ib, +[](lv_event_t* e) {
-      if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      openBackupPicker();
-    }, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* il = lv_label_create(ib);
-    lv_label_set_text(il, TR("Import settings"));
-    lv_obj_set_style_text_color(il, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(il, &g_font_14, LV_PART_MAIN);
-    lv_obj_center(il);
-    y += SC(42);
-  }
 }
 
 // Single-character spam filter. A lot of mesh spam is a 1-byte payload — the cheapest
@@ -12097,17 +12059,34 @@ static void clampDropdownListCb(lv_event_t* e) {
 // clamp keeps a list that opens upward from sliding under the tall app-page title bar.
 static void styleDropdown(lv_obj_t* dd) {
   lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(dd, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dd, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(dd, lv_color_black(), LV_PART_MAIN);
+  styleEpaperControlOutline(dd, LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+#endif
   if (lv_obj_t* list = lv_dropdown_get_list(dd)) {   // created by the constructor, so it exists already
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_color(list, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(list, lv_color_black(), LV_PART_MAIN);
+    styleEpaperControlOutline(list, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(list, lv_color_black(), LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(list, lv_color_white(), LV_PART_SELECTED | LV_STATE_CHECKED);
+#else
     lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
     lv_obj_set_style_text_color(list, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(list, &g_font_12, LV_PART_MAIN);
     // The highlighted option (LVGL draws it in LV_PART_SELECTED with the CHECKED state).
     lv_obj_set_style_bg_color(list, lv_color_hex(COLOR_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
     lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_SELECTED | LV_STATE_CHECKED);
     lv_obj_set_style_text_color(list, lv_color_hex(COLOR_ON_ACCENT), LV_PART_SELECTED | LV_STATE_CHECKED);
+#endif
+    lv_obj_set_style_text_font(list, &g_font_12, LV_PART_MAIN);
   }
   lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
 }
@@ -12297,17 +12276,8 @@ static void buildRadioSettings() {
     lv_obj_set_size(g_set_modal.radio_preset_dd, lv_pct(100),SC(34));
     lv_obj_set_pos(g_set_modal.radio_preset_dd, 2, y);
     lv_dropdown_set_options(g_set_modal.radio_preset_dd, preset_opt_buf ? preset_opt_buf : "Custom (manual)");
-    lv_obj_set_style_text_font(g_set_modal.radio_preset_dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_set_modal.radio_preset_dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    /* Dropdown list (the popup once tapped) */
-    lv_obj_t* preset_list = lv_dropdown_get_list(g_set_modal.radio_preset_dd);
-    lv_obj_set_style_bg_color(preset_list, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(preset_list, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(preset_list, &g_font_12, LV_PART_MAIN);
+    styleDropdown(g_set_modal.radio_preset_dd);
     lv_obj_add_event_cb(g_set_modal.radio_preset_dd, radioPresetChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(g_set_modal.radio_preset_dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
 
@@ -12423,19 +12393,11 @@ static void buildRadioSettings() {
     lv_obj_set_pos(dd, 2, y);
     // Order MUST match TELEM_MODE_*: 0 = deny, 1 = allow-flags, 2 = allow-all.
     lv_dropdown_set_options(dd, TR("Never\nChosen contacts only\nAnyone who asks"));
-    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_t* loclist = lv_dropdown_get_list(dd);
-    lv_obj_set_style_bg_color(loclist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(loclist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(loclist, &g_font_12, LV_PART_MAIN);
+    styleDropdown(dd);
     uint8_t lm = prefs ? prefs->telemetry_mode_loc : TELEM_MODE_DENY;
     if (lm > TELEM_MODE_ALLOW_ALL) lm = TELEM_MODE_DENY;
     lv_dropdown_set_selected(dd, lm);
     lv_obj_add_event_cb(dd, locTelemetryModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
   {
@@ -12493,19 +12455,11 @@ static void buildRadioSettings() {
     lv_obj_set_size(dd, lv_pct(100), SC(34));
     lv_obj_set_pos(dd, 2, y);
     lv_dropdown_set_options(dd, TR("1 byte (legacy)\n2 bytes\n3 bytes"));
-    lv_obj_set_style_text_font(dd, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dd, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(dd, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_border_color(dd, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_t* phlist = lv_dropdown_get_list(dd);
-    lv_obj_set_style_bg_color(phlist, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-    lv_obj_set_style_text_color(phlist, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_style_text_font(phlist, &g_font_12, LV_PART_MAIN);
+    styleDropdown(dd);
     uint8_t phm = prefs ? prefs->path_hash_mode : 0;
     if (phm > 2) phm = 0;
     lv_dropdown_set_selected(dd, phm);
     lv_obj_add_event_cb(dd, pathHashModeChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);
     y += SC(40);
   }
 
@@ -15726,10 +15680,17 @@ static void buildDeviceSettings(int sec) {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
     lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(HAS_TDECK_PRO)
+    // E-paper retains its last frame when powered down. Pro/Max always paint
+    // the lock view first so the glass never looks live after timeout.
+    lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_state(sw, LV_STATE_DISABLED);
+#else
 #if defined(ESP32)
     if (touchPrefsGetLockOnScreenOff()) lv_obj_add_state(sw, LV_STATE_CHECKED);
 #endif
     lv_obj_add_event_cb(sw, lockOnScreenOffToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
     y += LV_MAX(40, h + 12);
   }
 #endif
@@ -15761,25 +15722,31 @@ static void buildDeviceSettings(int sec) {
   {
     y += settingsRowLabel(body, y, 0, TR("Custom UTC offset (hours)"), COLOR_SUB, &g_font_12, 0) + 2;
 
-    lv_obj_t* bminus = lv_btn_create(body);
+    lv_obj_t* offset_row = lv_obj_create(body);
+    lv_obj_remove_style_all(offset_row);
+    lv_obj_set_size(offset_row, lv_pct(100), SC(34));
+    lv_obj_set_pos(offset_row, 0, y);
+    lv_obj_set_flex_flow(offset_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(offset_row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(offset_row, 6, LV_PART_MAIN);
+    lv_obj_clear_flag(offset_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bminus = lv_btn_create(offset_row);
     lv_obj_set_size(bminus, SC(50), SC(34));
-    lv_obj_set_pos(bminus, 2, y);
     styleButton(bminus);
     lv_obj_add_event_cb(bminus, timeOffsetMinusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lm = lv_label_create(bminus); lv_label_set_text(lm, "-1 h"); lv_obj_center(lm);
     useChainedFont(lm);
 
-    s_time_offset_lbl = lv_label_create(body);
-    lv_obj_set_width(s_time_offset_lbl, 100);
+    s_time_offset_lbl = lv_label_create(offset_row);
+    lv_obj_set_flex_grow(s_time_offset_lbl, 1);
     lv_obj_set_style_text_align(s_time_offset_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_time_offset_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_time_offset_lbl, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_pos(s_time_offset_lbl, 58, y + 9);
     timeOffsetLabelRefresh();
 
-    lv_obj_t* bplus = lv_btn_create(body);
+    lv_obj_t* bplus = lv_btn_create(offset_row);
     lv_obj_set_size(bplus, SC(50), SC(34));
-    lv_obj_set_pos(bplus, 168, y);
     styleButton(bplus);
     lv_obj_add_event_cb(bplus, timeOffsetPlusCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* lp = lv_label_create(bplus); lv_label_set_text(lp, "+1 h"); lv_obj_center(lp);
@@ -41913,6 +41880,9 @@ static int8_t       s_lock_clock_current = -1;    // refresh immediately when cl
 static lv_obj_t*    s_lock_unread    = nullptr;   // envelope + unread count under the clock (issue #93)
 static int          s_lock_unread_n  = -1;        // last count drawn (redraw guard)
 static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
+#if defined(HAS_TDECK_PRO)
+static bool s_lock_epaper_default = false;         // built-in white lock view vs custom wallpaper
+#endif
 #if defined(TLORA_PAGER)
 static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
 static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
@@ -41981,7 +41951,9 @@ static void lockscreenUpdateClock() {
     mm = (int)((millis() / 60000u) % 60u);
   }
   lv_label_set_text(s_lock_clock, b);
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO)
+  const lv_color_t normal_color = s_lock_epaper_default ? lv_color_black() : lv_color_white();
+#elif defined(TLORA_PAGER)
   const lv_color_t normal_color = lv_color_hex(0xFFFFFFu);
 #else
   const lv_color_t normal_color = lv_color_hex(touchPrefsGetLockTextColor());
@@ -42078,25 +42050,29 @@ static void lockscreenShow() {
   if (s_lock_root) { lv_obj_move_foreground(s_lock_root); return; }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
+  touchPrefsGetLockWallpaper(wpath, sizeof wpath);
+#if defined(HAS_TDECK_PRO)
+  s_lock_epaper_default = !strcmp(wpath, "/lock/placeholder.jpg");
+#endif
 
   s_lock_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_lock_root);
   lv_obj_set_size(s_lock_root, sw, sh);
   lv_obj_set_pos(s_lock_root, 0, 0);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(s_lock_root,
+      s_lock_epaper_default ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_color(s_lock_root, lv_color_black(), LV_PART_MAIN);
+#endif
   lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_lock_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_lock_root, LV_OBJ_FLAG_CLICKABLE);   // absorb taps (no UI leak)
-#if defined(TLORA_PAGER)
-  // Keep the lock overlay OUT of the keyboard/encoder nav focus group. The root
-  // is CLICKABLE (to absorb taps) and it lives on lv_layer_top, so on this
-  // no-touch board navMaybeRebuild() would otherwise collect it as the only
-  // focusable element in the overlay and focus it -- at which point navFocusCb's
-  // shared cursor would otherwise glow around the full-screen overlay instead
-  // of a real control. NAV_SKIP_FLAG keeps the passive lock view out of the
-  // navigation tree entirely.
+  // This is a passive input shield, not a control. Without NAV_SKIP_FLAG,
+  // keypad-nav boards collect the clickable full-screen root and draw a focus
+  // glow around the lock view.
   lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
-#endif
 
   // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
@@ -42113,12 +42089,22 @@ static void lockscreenShow() {
     lvglPsramFree(s_lock_wall);
     s_lock_wall = nullptr;
   }
-  char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
-  touchPrefsGetLockWallpaper(wpath, sizeof wpath);
   if (!strcmp(wpath, "/lock/placeholder.jpg")) {
     // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
     // with no JPEG round-trip to re-introduce gradient banding.
-#if defined(TLORA_PAGER)
+#if defined(HAS_TDECK_PRO)
+    // The shared default is a 320x240 landscape bitmap. Cover-scaling it onto
+    // this 240x320 portrait panel crops both ends of WADAMESH and magnifies its
+    // padlock. Draw a native monochrome wordmark instead: no crop, no giant icon.
+    lv_obj_t* brand = lv_label_create(s_lock_root);
+    lv_label_set_text(brand, "WADAMESH");
+    lv_obj_set_width(brand, sw - 24);
+    lv_obj_set_style_text_align(brand, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(brand, &lv_font_unscii_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(brand, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(brand, 2, LV_PART_MAIN);
+    lv_obj_align(brand, LV_ALIGN_CENTER, 0, 6);
+#elif defined(TLORA_PAGER)
     // Native 480x222 crop of the same icon+wordmark, repositioned to the left
     // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
     // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
@@ -42161,7 +42147,11 @@ static void lockscreenShow() {
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
   }
 
-#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO)
+  // The built-in Pro/Max lock view is black on white for clean 1-bit e-paper.
+  // Custom wallpapers keep the prior white overlay text for contrast.
+  const lv_color_t col = s_lock_epaper_default ? lv_color_black() : lv_color_white();
+#elif defined(TLORA_PAGER)
   // Force a guaranteed-visible white here rather than the shared, user-
   // customizable touchPrefsGetLockTextColor() -- on this board that pref was
   // rendering noticeably dim/dark (reported/photographed against this panel's
@@ -42223,6 +42213,10 @@ static void lockscreenShow() {
   useChainedFont(hint);
 #if defined(HAS_TANMATSU)
   lv_label_set_text(hint, TR("press Volume Down to unlock"));
+#elif defined(HAS_TDECK_PRO)
+  // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
+  // for them: GPIO0 is the deliberate unlock control.
+  lv_label_set_text(hint, TR("press the button to unlock"));
 #elif defined(HAS_PAGER_KEYBOARD)
   // lockscreenShow() DOES run on this board -- lockscreenReveal() (peek on a
   // Backspace tap, or the new-message notify flash while locked) is gated on
@@ -42231,16 +42225,26 @@ static void lockscreenShow() {
   lv_label_set_text(hint, TR("hold Backspace to unlock"));
 #elif defined(HAS_THINKNODE_M9)
   lv_label_set_text(hint, TR("double-press d-pad center to unlock"));
-#elif defined(HAS_TDECK_PRO)
-  lv_label_set_text(hint, TR("press the button to unlock"));
 #elif defined(HAS_WIO_TRACKER_L2)
   lv_label_set_text(hint, TR("hold the wake button to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
-  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(hint,
+#if defined(HAS_TDECK_PRO)
+      &g_font_14,
+#else
+      &g_font_12,
+#endif
+      LV_PART_MAIN);
   lv_obj_set_style_text_color(hint, col, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_width(hint, sw - 24);
+  lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_opa(hint, LV_OPA_COVER, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
+#endif
 #if defined(TLORA_PAGER)
   lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -6, -8);   // bottom-right corner, clear of the icon/clock column above
   s_lock_hint = hint;
@@ -42291,7 +42295,7 @@ static void serviceLockscreen() {
   unsigned long now = millis();
   if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
 }
-#endif  // core lock screen (HAS_TDECK_GT911 || HAS_TANMATSU)
+#endif  // CAP_LOCK_SCREEN
 
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
@@ -42718,18 +42722,30 @@ static void doBackupImportChosen() {
   touchPrefsFlush();
   ESP.restart();
 }
+static void confirmBackupImport(const char* stored) {
+  if (!stored) return;
+  strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
+  s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
+}
 static void backupChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const char* stored = (const char*)lv_event_get_user_data(e);
   if (!stored) return;
-  strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
-  s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   backupPickerClose();
-  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
+  confirmBackupImport(stored);
 }
 static void openBackupPicker() {
   backupScan();
   backupPickerClose();
+  if (s_backup_count == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No backups available to restore."), 2000);
+    return;
+  }
+  if (s_backup_count == 1) {
+    confirmBackupImport(s_backup_paths[0]);
+    return;
+  }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_backup_picker = lv_obj_create(lv_layer_top());
@@ -42762,12 +42778,6 @@ static void openBackupPicker() {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
-  if (s_backup_count == 0) {
-    lv_obj_t* empty = lv_label_create(list);
-    lv_label_set_text(empty, TR("No .json backups found.\nExport one first, or copy a\nmeshcore-backup.json to the\nSD card or internal flash."));
-    lv_obj_set_style_text_color(empty, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_set_style_text_font(empty, &g_font_12, LV_PART_MAIN);
-  }
   for (int i = 0; i < s_backup_count; ++i) {
     lv_obj_t* b = lv_btn_create(list);
     lv_obj_set_width(b, lv_pct(100));
@@ -42788,6 +42798,12 @@ static void openBackupPicker() {
 // with a Delete button, plus a Factory-reset action. The detail page is rebuilt
 // after a delete so the list stays accurate.
 static char s_backup_del_path[160] = {0};
+static bool s_backup_append_timestamp = true;
+
+static void backupAppendTimestampCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_backup_append_timestamp = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
 
 // Rebuild the Backups detail page (after an export/delete). Deferred via
 // lv_async_call so we never tear the sheet down from inside one of its own
@@ -42962,8 +42978,8 @@ static void buildBackupsSettings() {
   const lv_coord_t cw = s_settings_content_w;
   int y = 0;
 
-  // Create a fresh backup right here (goes to the SD card if one is in, else
-  // internal flash) and re-list so the new file shows up immediately.
+  // One full-backup action. With the option below checked it creates a unique
+  // snapshot; unchecked it writes the stock-app-compatible fixed filename.
   {
     lv_obj_t* eb = lv_btn_create(body);
     lv_obj_set_size(eb, cw, SC(40));
@@ -42974,23 +42990,37 @@ static void buildBackupsSettings() {
     lv_obj_set_style_text_color(eb, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(eb, +[](lv_event_t* e) {
       if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-      char fn[48]; backupMakeFilename(fn, sizeof fn);
-      doExportBackupFile(fn);
+      char timestamped[48];
+      const char* filename = "meshcore-backup.json";
+      if (s_backup_append_timestamp) {
+        backupMakeFilename(timestamped, sizeof timestamped);
+        filename = timestamped;
+      }
+      doExportBackupFile(filename);
       lv_async_call(backupsRebuildAsyncCb, nullptr);   // re-list once the event unwinds
     }, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* el = lv_label_create(eb);
-    char eblbl[56]; snprintf(eblbl, sizeof eblbl, LV_SYMBOL_SAVE "  %s", TR("Export new backup"));
+    char eblbl[56]; snprintf(eblbl, sizeof eblbl, LV_SYMBOL_SAVE "  %s", TR("Export Backup"));
     lv_label_set_text(el, eblbl);
     lv_obj_set_style_text_font(el, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(el, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_center(el);
     y += SC(48);
+
+    lv_obj_t* append_cb = lv_checkbox_create(body);
+    lv_checkbox_set_text(append_cb, TR("Append timestamp"));
+    lv_obj_set_width(append_cb, cw);
+    lv_obj_set_pos(append_cb, 2, y);
+    lv_obj_set_style_text_color(append_cb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(append_cb, &g_font_14, LV_PART_MAIN);
+    if (s_backup_append_timestamp) lv_obj_add_state(append_cb, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(append_cb, backupAppendTimestampCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_update_layout(append_cb);
+    y += lv_obj_get_height(append_cb) + SC(12);
   }
 
-#if defined(HAS_TANMATSU)
-  // Import a saved backup right here. The T-Deck / V4 reach the picker via the Identity page's
-  // "Import settings" button; the Tanmatsu surfaces it next to Export so the whole round-trip
-  // (export a .json, then restore it) lives on one page. Opens the same internal+SD .json picker.
+  // Import from every known internal or SD/SD_MMC JSON backup. The picker shows
+  // all discovered files, then confirms the selected restore before applying it.
   {
     lv_obj_t* ib = lv_btn_create(body);
     lv_obj_set_size(ib, cw, SC(40));
@@ -43008,14 +43038,13 @@ static void buildBackupsSettings() {
     lv_obj_center(il);
     y += SC(48);
   }
-#endif
 
   y += settingsRowLabel(body, y, 0, TR("Saved backups"), COLOR_SUB, &g_font_12, 0) + 4;
 
   backupScan();
   if (s_backup_count == 0) {
     y += settingsRowLabel(body, y, 0,
-            TR("No backups yet. Tap Export new backup above to create one."),
+            TR("No backups yet. Use Export Backup above to create one."),
             COLOR_SUB, &g_font_12, 0) + 6;
   }
   for (int i = 0; i < s_backup_count; ++i) {
@@ -58957,7 +58986,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   touchPrefsBegin();
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
+#if defined(HAS_TDECK_PRO)
+  // Unlike an LCD, the e-paper keeps showing the previous live UI after power
+  // down. Always route timeout through lockScreen(), which paints an unambiguous
+  // retained lock frame before sleeping. Max inherits HAS_TDECK_PRO.
+  s_lock_on_screen_off = true;
+#else
   s_lock_on_screen_off = touchPrefsGetLockOnScreenOff();
+#endif
 #if defined(HAS_TDECK_KEYBOARD)
   // Applied here rather than at tdeckKeyboardBegin(), which runs on the touch
   // task before prefs are up. The driver re-checks this every poll, so it takes
@@ -60500,7 +60536,10 @@ static inline void touchScreenBacklight(bool on) {
     maxSleepBannerShow(false);
     display.turnOn();
   } else {
-    maxSleepBannerShow(true);
+    // A hard lock already paints an explicit lock frame. Keep the generic
+    // "Asleep" banner for unlocked sleeps only; its tap-to-wake hint is false
+    // while touch is deliberately blocked by the lock.
+    maxSleepBannerShow(!(g_lv.task && g_lv.task->isManualLock()));
     if (g_lv.ready) { lv_refr_now(nullptr); display.serviceRefresh(true); }
     maxFrontlightOff();
     display.turnOff();
@@ -60628,6 +60667,10 @@ void UITask::lockScreen() {
   // before sleeping so a locked device never leaves the live UI on the glass.
   _manual_lock = true;
   _screen_off = false;
+  // The arrows live on lv_layer_sys above the lock overlay. Hide any controls
+  // inherited from the previous scrollable page before committing this retained
+  // frame; the fixed lock content itself has nothing to page-scroll.
+  epaperScrollControlsSync(true);
   setCpuForScreen(true);
   lockscreenShow();
   lv_refr_now(nullptr);
@@ -62511,7 +62554,16 @@ void UITask::loop() {
   {   // Front pads: heart toggles the front-light (Meck's shortcut on this board).
     uint8_t key_id = 0;
     if (display.takeFrontKeyPress(key_id)) {
-      if (key_id == 0) {
+      if (_manual_lock) {
+        // Front pads may reveal the retained lock view, but GPIO0 remains the
+        // deliberate unlock control. wakeScreen() would clear _manual_lock and
+        // leave the lock overlay stranded on screen.
+        if (_screen_off) lockscreenReveal();
+        if (key_id == 0) {
+          if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+        }
+        _last_input_ms = millis();
+      } else if (key_id == 0) {
         if (_screen_off) wakeScreen();
         if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
         _last_input_ms = millis();
