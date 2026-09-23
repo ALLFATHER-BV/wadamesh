@@ -41856,6 +41856,10 @@ static void updateTrackball(unsigned long now) {
     s_tb_click_press = false;
     if (!lv_obj_has_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN))
       lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+    if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) {
+      if (s_map_tb_pan_pending) mapTrackballFinalizePan();
+      return;
+    }
     if (moved && (dx != 0 || dy != 0)) {
       const int sdx = dx * kTbCursorStepPx;
       const int sdy = dy * kTbCursorStepPx;
