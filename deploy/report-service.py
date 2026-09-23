@@ -347,6 +347,49 @@ def post_ping():
 PING_WINDOW = 21 * 86400          # a device silent for three weeks is not "on" a tag
 
 
+def stable_tag():
+    """The tag the stable channel is serving, from the feed the devices read."""
+    try:
+        with open(os.path.join(FW_ROOT, "latest", "version.json")) as f:
+            t = json.load(f).get("tag", "")
+        if RE_TAG.match(t):
+            return t
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def tag_n(tag):
+    try:
+        return int(tag.split("_")[1])
+    except (IndexError, ValueError):
+        return -1
+
+
+def tags_since_stable(limit=12):
+    """Every beta published above the current stable, newest first.
+
+    This is the set a promote decision spans. They are kept SEPARATE on purpose:
+    a report is about one build, so a green on beta_85 vouches for beta_85 and
+    for nothing that came after it. Merging them would quietly let an old tester
+    sign off code they never ran.
+    """
+    floor = tag_n(stable_tag() or "")
+    out = []
+    try:
+        for name in os.listdir(os.path.join(FW_ROOT, "releases", "BETA")):
+            if RE_TAG.match(name) and tag_n(name) > floor:
+                out.append(name)
+    except OSError:
+        pass
+    # Anything reported on but no longer on disk still belongs in the list.
+    for r in db().execute("SELECT DISTINCT tag FROM reports").fetchall():
+        if RE_TAG.match(r["tag"]) and tag_n(r["tag"]) > floor and r["tag"] not in out:
+            out.append(r["tag"])
+    out.sort(key=tag_n, reverse=True)
+    return out[:limit]
+
+
 def current_beta():
     """Highest beta_N with bins on disk; falls back to the newest tag reported."""
     d = os.path.join(FW_ROOT, "releases", "BETA")
@@ -412,14 +455,24 @@ def build_matrix(tag):
             ][-6:],
         })
 
-    red   = [b for b in out if b["status"] == "red"]
-    # A board nobody owns cannot be made green, so it must not block a promote.
-    # A board somebody IS running and has not vouched for, can and should.
-    blocking = [b for b in out if b["status"] in ("amber", "none") and b["devices"] > 0]
+    red = [b for b in out if b["status"] == "red"]
+    # Which boards are OUT THERE, so that silence on one of them means untested
+    # rather than unowned. The install count would be the obvious signal, but it
+    # is opt-in and most people will leave it off, which would let one green
+    # board declare a whole release ready. So a board also counts as owned once
+    # anybody has ever reported on it, on any build: reports are not opt-in, and
+    # somebody who reported on beta_85 still has that board when beta_86 lands.
+    owned = {r["board"] for r in conn.execute(
+        "SELECT DISTINCT board FROM reports").fetchall()}
+    owned |= {b for b in ping_by_board}
+    blocking = [b for b in out
+                if b["status"] in ("amber", "none") and (b["devices"] > 0 or b["board"] in owned)]
     return {
         "tag": tag,
         "generated": int(time.time()),
         "issue": state_get("issue:" + tag),
+        "stable": stable_tag(),
+        "tags": tag_summaries(),
         "boards": out,
         "summary": {
             "green": sum(1 for b in out if b["status"] == "green"),
@@ -433,9 +486,35 @@ def build_matrix(tag):
             # that is exactly the habit this is meant to replace. At least one
             # board has to have been vouched for.
             "promote_ready": not red and not blocking and any(b["status"] == "green" for b in out),
+            "owned": sorted(owned),
             "blocked_by": [b["board"] for b in red] + [b["board"] for b in blocking],
         },
     }
+
+
+def tag_summaries():
+    """One row per beta above stable, for the selector. Counts only."""
+    conn = db()
+    cutoff = int(time.time()) - PING_WINDOW
+    rows = []
+    for t in tags_since_stable():
+        reps = conn.execute("SELECT board, status, ran FROM reports WHERE tag=?", (t,)).fetchall()
+        devs = conn.execute("SELECT COUNT(DISTINCT rid) c FROM pings WHERE tag=? AND last_seen>?",
+                            (t, cutoff)).fetchone()["c"]
+        by_board = defaultdict(list)
+        for r in reps:
+            by_board[r["board"]].append(r)
+        green = red = amber = 0
+        for b, mine in by_board.items():
+            if any(r["status"] == "issues" for r in mine):
+                red += 1
+            elif sum(1 for r in mine if r["status"] == "works" and r["ran"] in ("day", "week")) >= 2:
+                green += 1
+            else:
+                amber += 1
+        rows.append({"tag": t, "green": green, "amber": amber, "red": red,
+                     "reports": len(reps), "devices": devs})
+    return rows
 
 
 _matrix_cache = {}
@@ -509,8 +588,9 @@ def render_issue(m):
         L.append("**Not ready to promote.** Waiting on: %s." % blocked)
     L.append("")
     L.append("Green needs two separate devices whose owners ran the build for a day or more. "
-             "A board nobody is running cannot go green and does not block the promote; a board "
-             "somebody is running and has not vouched for does.")
+             "A board nobody has ever reported on cannot go green and does not block the "
+             "promote; a board somebody has reported on before is known to be out there, so "
+             "silence on it now blocks until somebody vouches for this build.")
     notes = [(b, n) for b in m["boards"] for n in b["notes"]]
     if notes:
         L.append("")

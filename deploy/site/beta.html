@@ -40,6 +40,22 @@
   .lede{color:var(--mut); max-width:68ch}
   h2{font-size:1.15rem; margin:38px 0 10px}
 
+  /* One chip per test build published since the current stable. They stay
+     separate because a report is about one build: a green on beta_85 vouches
+     for beta_85 and for nothing cut after it. */
+  .tags{display:flex; flex-wrap:wrap; gap:8px; margin:22px 0 0}
+  .tagchip{display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:100px;
+    border:1px solid var(--line); background:#fff; font-size:.85rem; cursor:pointer; color:var(--ink);
+    font-family:'JetBrains Mono',monospace}
+  .tagchip:hover{background:var(--bg2); text-decoration:none}
+  .tagchip.on{border-color:var(--teal); background:rgba(21,182,166,.10); color:var(--teal-ink); font-weight:600}
+  .tagchip .dot{width:8px; height:8px; border-radius:50%; background:var(--none)}
+  .tagchip .dot.green{background:var(--green)}
+  .tagchip .dot.amber{background:var(--amber)}
+  .tagchip .dot.red{background:var(--red)}
+  .tagchip .n{color:var(--mut); font-size:.78rem}
+  .stableline{margin-top:10px; color:var(--mut); font-size:.85rem}
+
   .verdict{margin:22px 0 6px; padding:16px 18px; border-radius:14px; border:1px solid var(--line); background:var(--bg2)}
   .verdict.go{border-color:rgba(27,158,90,.35); background:var(--green-bg)}
   .verdict b{display:block; font-size:1.05rem; margin-bottom:3px}
@@ -109,6 +125,8 @@
     is promoted on evidence rather than on nobody having complained.
   </p>
 
+  <div id="tags" class="tags"></div>
+  <p id="tagnote" class="stableline" hidden>Every test build since the current stable is listed separately. A report vouches for the build it was sent from and for nothing cut after it, so these never merge.</p>
   <div id="verdict" class="verdict"><b>Loading</b><span>Fetching the latest reports.</span></div>
 
   <div id="grid"></div>
@@ -138,8 +156,14 @@
   <p class="lede">
     Green needs two separate devices whose owners ran the build for a day or more. One
     report, or a report from somebody who only watched it boot, is recorded and is not
-    enough to promote on. A board nobody is running cannot go green and does not hold the
-    release up. A board somebody is running and nobody has vouched for does.
+    enough to promote on.
+  </p>
+  <p class="lede">
+    Silence is read two different ways, and the difference is the whole point. A board
+    nobody has ever reported on is treated as a board nobody here owns: it cannot go green
+    and it does not hold a release up. A board somebody has reported on before, on any
+    build, is one we know is out there, so silence on it now means untested and it does
+    hold the release up until somebody vouches for this build.
   </p>
 
   <div class="foot">
@@ -166,6 +190,23 @@ function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&'
 
 function render(d){
   document.getElementById('tag').textContent = d.tag;
+
+  // Every build published since the current stable, because reports keep
+  // arriving on a build after the next one has already been cut.
+  const tb = document.getElementById('tags');
+  const tags = d.tags || [];
+  if(tags.length > 1 || (tags.length === 1 && tags[0].tag !== d.tag)){
+    tb.innerHTML = tags.map(t => {
+      const cls = t.red ? 'red' : (t.green && !t.amber ? 'green' : (t.reports ? 'amber' : ''));
+      return '<a class="tagchip' + (t.tag === d.tag ? ' on' : '') + '" href="?tag=' + encodeURIComponent(t.tag) + '">'
+           + '<span class="dot ' + cls + '"></span>' + esc(t.tag)
+           + '<span class="n">' + (t.reports ? t.reports + (t.reports === 1 ? ' report' : ' reports') : 'no reports') + '</span></a>';
+    }).join('');
+    document.getElementById('tagnote').hidden = false;
+  } else {
+    tb.innerHTML = '';
+    document.getElementById('tagnote').hidden = true;
+  }
   document.title = 'WADAMESH — Test matrix for ' + d.tag;
 
   const s = d.summary, v = document.getElementById('verdict');
@@ -223,7 +264,8 @@ function render(d){
       + ', ' + ago(n.at) + '</div>' + esc(n.note) + '</div>').join('');
   }
 
-  document.getElementById('stamp').textContent = 'Updated ' + ago(d.generated) + '. ';
+  document.getElementById('stamp').textContent =
+    'Updated ' + ago(d.generated) + '. ' + (d.stable ? 'Stable is ' + d.stable + '. ' : '');
   document.getElementById('issuelink').innerHTML = d.issue
     ? 'Tracked on <a href="https://github.com/ALLFATHER-BV/wadamesh/issues/' + d.issue + '">GitHub</a>.'
     : '';
