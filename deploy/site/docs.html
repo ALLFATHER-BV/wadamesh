@@ -144,6 +144,7 @@
     <a href="#updates">Updates &amp; test builds</a>
     <a href="#settings-pages">Settings pages</a>
     <a href="#apps">Apps</a>
+    <a href="#testing">Testing a beta</a>
     <a href="#translations">Translating WADAMESH</a>
   </nav>
 
@@ -602,6 +603,7 @@
           <ul>
             <li><b>Firmware version</b> plus update check / install</li>
             <li><b>Get test builds (beta)</b> switch: opt into the <a href="#updates">test channel</a></li>
+            <li><b>Report this build</b> and <b>Report a bug</b>: see <a href="#testing">Testing a beta</a></li>
             <li>Full <b>system diagnostics</b> — uptime, chip, memory, flash, storage</li>
             <li><b>Device ID</b> and crash-report export</li>
           </ul>
@@ -621,6 +623,25 @@
       <div class="gallery">
         <div class="mini"><img src="docs-img/app_rfmonitor.png" alt="RF Monitor"><div class="cap">RF Monitor</div></div>
         <div class="mini"><img src="docs-img/app_spectrum.png" alt="Spectrum analyzer"><div class="cap">Spectrum analyzer</div></div>
+      </div>
+    </section>
+
+    <section class="doc" id="testing">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span> Testing a beta</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>A test build becomes the stable release when it has been shown to work, and with thirteen board images most of them are in hands we never hear from. So the device can report: <b>Settings, About, "Report this build"</b>. What you send appears on the <a href="beta.html">test matrix</a>, which is what the next promote is decided on.</p>
+
+        <h3>What a report says</h3>
+        <p>Tick only the areas you actually exercised, say how long you have been running the build, and add a line if you have something to say. The areas matter: "it works" from somebody who watched it boot and "it works" from somebody who messaged on it all week are not the same claim, and a board only turns green on two reports of the second kind from two different devices.</p>
+        <p>The report carries the board, the version, your ticks, the free memory and whether you store data on SD. It carries no name, no contacts and no position, and the device lists exactly what it will send before it sends it. It needs Wi-Fi.</p>
+        <p>Your device is identified by a salted hash of its public key, truncated, so a second report replaces your first rather than counting twice, and nobody reading the matrix can work back to a node.</p>
+
+        <h3>Counting devices</h3>
+        <p>A board with no reports might be a board nobody tested or a board nobody owns, and those need opposite responses. The optional <b>Count this device</b> switch, on the same page, lets the update check say which board and version it is running so the matrix has a denominator. It is off until you turn it on and sends nothing else.</p>
+
+        <h3>Reporting a bug</h3>
+        <p><b>Report a bug</b> draws a QR code. Scan it with your phone and it opens a GitHub issue form with your board, firmware version and diagnostics already filled in, so you only type what went wrong. The issue is filed under your own GitHub account, which means you get the replies.</p>
+        <p>If the device saved a crash report, attach it: a crash report usually turns a guess into a line number. You can get it off the device with <a href="https://files.wadamesh.com">USB Files</a> or the browser transfer page.</p>
       </div>
     </section>
 

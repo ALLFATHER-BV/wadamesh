@@ -270,6 +270,13 @@ bool     touchPrefsSetLocalAdvMin(uint16_t mins);
 bool    touchPrefsGetBetaUpdates();
 bool    touchPrefsSetBetaUpdates(bool on);
 
+// Beta test reports. The ping is the opt-in anonymous install count; the
+// reported-beta number is the build this device has already reported on.
+bool     touchPrefsGetReportPing();
+bool     touchPrefsSetReportPing(bool on);
+uint16_t touchPrefsGetReportedBeta();
+bool     touchPrefsSetReportedBeta(uint16_t n);
+
 /* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
  * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
  * / map / settings. Defaults E/R/T/U/I. Programmable in Settings → Keyboard. */

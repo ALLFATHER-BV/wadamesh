@@ -422,7 +422,11 @@ def build_matrix(tag):
             "none": sum(1 for b in out if b["status"] == "none"),
             "reports": len(rows),
             "devices": sum(ping_by_board.values()),
-            "promote_ready": not red and not blocking,
+            # No reports is not the same as a clean bill of health: with nothing
+            # in the table "no reds and nothing blocking" is trivially true, and
+            # that is exactly the habit this is meant to replace. At least one
+            # board has to have been vouched for.
+            "promote_ready": not red and not blocking and any(b["status"] == "green" for b in out),
             "blocked_by": [b["board"] for b in red] + [b["board"] for b in blocking],
         },
     }

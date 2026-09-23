@@ -6202,6 +6202,17 @@ static lv_obj_t* s_sleep_diag_lbl  = nullptr;   // Idle-sleep instrumentation la
 static lv_obj_t* s_sleep_diag_lbl2 = nullptr;   // Idle-sleep instrumentation label (Lock settings, line 2)
 #endif
 static bool      s_update_available = false;
+// Beta test reports. The state lives up here beside the version-check flags
+// because the same tick reads both; the builders and the worker are further down
+// with the rest of the HTTP code.
+static char          s_report_body[420];
+static volatile bool s_report_request = false;   // UI -> worker: send s_report_body
+static volatile bool s_report_done    = false;   // worker -> UI: result ready
+static volatile int  s_report_result  = 0;       // 1 sent, -1 failed
+static volatile bool s_ping_request   = false;   // opt-in install count, fire and forget
+static char          s_ping_body[128];
+static void reportBuildPing();                   // fills s_ping_body
+
 static bool      s_verchk_ran       = false;     // a check has completed (ok or failed)
 static volatile bool s_verchk_request  = false;  // UI -> core-0 worker: please check
 static volatile bool s_verchk_done     = false;  // worker -> UI: result ready
@@ -6823,9 +6834,32 @@ static void versionCheckService(unsigned long now) {
     ensureTileFetchTaskRunning();                   // worker idles out — make sure it's up
     s_verchk_request = true;
   }
+  // The report worker's answer, and the opt-in install count. The ping rides
+  // after a successful version check rather than at boot: by then Wi-Fi has
+  // actually carried a request, so a failure here means the service, not DHCP.
+  if (s_report_done) {
+    s_report_done = false;
+    if (g_lv.task) {
+      if (s_report_result > 0) {
+        touchPrefsSetReportedBeta((uint16_t)firmwareReleaseN());
+        g_lv.task->showAlert(TR("Thank you. Your report is on wadamesh.com/beta"), 2600);
+      } else {
+        g_lv.task->showAlert(TR("Could not send the report. Try again later."), 2600);
+      }
+    }
+  }
   if (s_verchk_done) {
     s_verchk_done = false;
     s_verchk_ran  = true;
+    {
+      static bool pinged = false;
+      if (!pinged && s_verchk_latest_n >= 0 &&
+          touchPrefsGetReportPing() && firmwareReleaseN() >= 0) {
+        pinged = true;
+        reportBuildPing();
+        s_ping_request = true;
+      }
+    }
     s_update_available = (s_verchk_latest_n > firmwareReleaseN());
     if (s_verchk_latest_n < 0) {
       // Fetch failed (DNS/socket/parse): retry with backoff — 1 min for the first
@@ -31217,6 +31251,147 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #endif
 }
 
+// ---- the board's own name, in one place -------------------------------------
+// Used by the OTA download filename below AND by the beta test report, which
+// needs a board id on the Tanmatsu too (CAP_OTA=0 there, so it never reaches the
+// OTA table). Two tables meant a board could be half-added: the T-Deck Max shipped
+// in beta_84 taking the T-Deck Pro's OTA name, because its env defines
+// HAS_TDECK_PRO as well and the Pro branch came first. One list, and the #else is
+// a build break, so the next board is added once or not at all.
+//
+// These ids are the release artifact names minus the "wadamesh-" prefix, and the
+// report service validates them against the bins actually published for the tag.
+#if defined(HAS_TDECK_GT911)
+#define WADA_BOARD_ID "tdeck"
+#elif defined(HAS_TDECK_MAX)              // must precede the Pro: the Max env defines both
+#define WADA_BOARD_ID "tdeck-max"
+#elif defined(HAS_TDECK_PRO)
+#define WADA_BOARD_ID "tdeck-pro"
+#elif defined(HAS_TDISPLAY_P4)
+  #if defined(HAS_TDP4_LCD)
+#define WADA_BOARD_ID "tdisplay-p4-lcd"
+  #else
+#define WADA_BOARD_ID "tdisplay-p4"
+  #endif
+#elif defined(HAS_TANMATSU)
+#define WADA_BOARD_ID "tanmatsu"
+#elif defined(HELTEC_LORA_V4_R8)          // must precede the V4-TFT fallback
+#define WADA_BOARD_ID "heltec-v4-r8-tft"
+#elif defined(HAS_THINKNODE_M9)
+#define WADA_BOARD_ID "thinknode-m9"
+#elif defined(HAS_RAK_TAP_V2)
+#define WADA_BOARD_ID "rak-tap-v2"
+#elif defined(TLORA_PAGER)
+  #if defined(USE_LR1121)
+#define WADA_BOARD_ID "tlora-pager-lr1121"
+  #else
+#define WADA_BOARD_ID "tlora-pager-sx1262"
+  #endif
+#elif defined(ATTAKY_MESH_SERIES)
+#define WADA_BOARD_ID "attaky"
+#elif defined(HAS_WIO_TRACKER_L2)
+#define WADA_BOARD_ID "wio-tracker-l2"
+#elif defined(HELTEC_LORA_V4_TFT)
+#define WADA_BOARD_ID "heltec-v4-tft"
+#else
+#error "WADA_BOARD_ID: this board has no release artifact name. Add it here AND to scripts/release.sh ENVS, or a self-update fetches another board's firmware and its test reports land under the wrong board."
+#endif
+
+
+// ---- beta test reports -------------------------------------------------------
+// A tester says "this build works on my board" from the device, and that lands in
+// the matrix at wadamesh.com/beta which the next stable promote is decided on.
+//
+// It posts to our own host over plain HTTP, not to GitHub, for two reasons that
+// are not going to change: mbedTLS wants ~30 KB of internal heap for a handshake
+// and about 5 KB survives Wi-Fi association on the 2 MB boards, and a GitHub
+// token inside a GPL firmware image is a token everybody has. The service on the
+// other end holds the credential and renders the tracking issue. Nothing secret
+// may travel this way, which is why a report carries tick boxes and a salted hash
+// and nothing else. Bug reports do not come through here at all: those are a QR
+// to a prefilled GitHub issue form, filed under the reporter's own account.
+
+// One device, one report per build: a second send from the same device replaces
+// the first instead of counting twice. That needs a stable id, and the id must not
+// say who you are, so it is a salted SHA-256 of the public key, truncated to 64
+// bits. Nobody who does not already hold the key can work back to a node from it.
+static void reportDeviceId(char out[17]) {
+  static const char k_salt[] = "wadamesh-report-v1";
+  uint8_t h[32];
+  mesh::Utils::sha256(h, sizeof h,
+                      the_mesh.self_id.pub_key, PUB_KEY_SIZE,
+                      reinterpret_cast<const uint8_t*>(k_salt), (int)sizeof(k_salt) - 1);
+  for (int i = 0; i < 8; i++) snprintf(out + i * 2, 3, "%02x", h[i]);
+  out[16] = 0;
+}
+
+// Escape the free-text note into JSON. The note is the only field a person types,
+// so it is the only one that can break the request; quotes, backslashes and
+// control characters go, and the length is capped well inside the buffer.
+static void reportEscapeNote(const char* in, char* out, size_t cap) {
+  size_t o = 0;
+  for (size_t i = 0; in && in[i] && o + 2 < cap; i++) {
+    unsigned char c = (unsigned char)in[i];
+    if (c == '"' || c == '\\') { out[o++] = '\\'; out[o++] = (char)c; }
+    else if (c >= 0x20)        { out[o++] = (char)c; }
+    else if (o + 1 < cap)      { out[o++] = ' '; }
+  }
+  out[o] = 0;
+}
+
+// areas is a bitmask in the order of k_report_areas; ran is 0 boot / 1 day / 2 week.
+static const char* const k_report_areas[5] = { "radio", "map", "link", "input", "storage" };
+static const char* const k_report_ran[3]   = { "boot", "day", "week" };
+static const char* const k_report_ran_label[3] = { "minutes", "about a day", "a week or more" };
+
+static void reportBuildBody(bool works, uint8_t areas, uint8_t ran, const char* note) {
+  char rid[17];  reportDeviceId(rid);
+  char esc[140]; reportEscapeNote(note, esc, sizeof esc);
+
+  char area_json[72]; area_json[0] = 0;
+  size_t ao = 0;
+  for (int i = 0; i < 5; i++) {
+    if (!(areas & (1u << i))) continue;
+    ao += snprintf(area_json + ao, sizeof(area_json) - ao, "%s\"%s\"",
+                   ao ? "," : "", k_report_areas[i]);
+    if (ao >= sizeof(area_json) - 12) break;
+  }
+
+  const char* store =
+#if CAP_SD
+      touchPrefsGetUseSdStorage() ? "sd" : "internal";
+#else
+      "internal";
+#endif
+  snprintf(s_report_body, sizeof s_report_body,
+           "{\"v\":1,\"tag\":\"%s\",\"board\":\"%s\",\"rid\":\"%s\",\"status\":\"%s\","
+           "\"areas\":[%s],\"ran\":\"%s\",\"note\":\"%s\","
+           "\"hw\":{\"heap\":%u,\"psram\":%u,\"store\":\"%s\",\"up\":%lu}}",
+           FIRMWARE_RELEASE_TAG, WADA_BOARD_ID, rid, works ? "works" : "issues",
+           area_json, k_report_ran[ran < 3 ? ran : 0], esc,
+           (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram(), store,
+           (unsigned long)(millis() / 1000));
+}
+
+static void reportBuildPing() {
+  char rid[17]; reportDeviceId(rid);
+  snprintf(s_ping_body, sizeof s_ping_body,
+           "{\"v\":1,\"tag\":\"%s\",\"board\":\"%s\",\"rid\":\"%s\"}",
+           FIRMWARE_RELEASE_TAG, WADA_BOARD_ID, rid);
+}
+
+// Worker side. Runs on the core-0 tile/update worker and reuses its client and
+// HTTPClient, like the version check: a second pair on that ~8 KB stack overflows it.
+static bool reportPostWorker(WiFiClient& client, HTTPClient& http,
+                             const char* path, const char* body) {
+  char url[64];
+  snprintf(url, sizeof url, "http://firmware.wadamesh.com/report/%s", path);
+  char reply[96];
+  return luaStoreHttpReq(client, http, url, reply, sizeof reply,
+                         reinterpret_cast<const uint8_t*>(body), strlen(body),
+                         "application/json") >= 0;
+}
+
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
 // Per-board OTA download bin name (the app-only <name>.bin under releases/<ch>/beta_<N>/).
 // MUST match the release artifact names exactly. Every touch board is dual-slot OTA-capable
@@ -31230,39 +31405,7 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 // would flash V4 firmware onto Wio hardware. The T-Deck Pro would have followed it the moment it
 // was published. Every board is now listed explicitly and anything else refuses to compile, so
 // forgetting this table is a build break instead of a field brick.
-#if defined(HAS_TDECK_GT911)
-static const char* const OTA_BIN_NAME = "wadamesh-tdeck";
-#elif defined(HAS_TDECK_MAX)
-static const char* const OTA_BIN_NAME = "wadamesh-tdeck-max";   // must precede the Pro branch: the Max env defines HAS_TDECK_PRO too (it reuses the Pro's display and touch drivers)
-#elif defined(HAS_TDECK_PRO)
-static const char* const OTA_BIN_NAME = "wadamesh-tdeck-pro";
-#elif defined(HAS_TDISPLAY_P4)
-  #if defined(HAS_TDP4_LCD)
-static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4-lcd";   // T-Display P4 TFT-LCD SKU
-  #else
-static const char* const OTA_BIN_NAME = "wadamesh-tdisplay-p4";       // T-Display P4 AMOLED SKU
-  #endif
-#elif defined(HELTEC_LORA_V4_R8)
-static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-r8-tft";   // must precede the V4-TFT fallback
-#elif defined(HAS_THINKNODE_M9)
-static const char* const OTA_BIN_NAME = "wadamesh-thinknode-m9";
-#elif defined(HAS_RAK_TAP_V2)
-static const char* const OTA_BIN_NAME = "wadamesh-rak-tap-v2";
-#elif defined(TLORA_PAGER)
-  #if defined(USE_LR1121)
-static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-lr1121";
-  #else
-static const char* const OTA_BIN_NAME = "wadamesh-tlora-pager-sx1262";
-  #endif
-#elif defined(ATTAKY_MESH_SERIES)
-static const char* const OTA_BIN_NAME = "wadamesh-attaky";
-#elif defined(HAS_WIO_TRACKER_L2)
-static const char* const OTA_BIN_NAME = "wadamesh-wio-tracker-l2";
-#elif defined(HELTEC_LORA_V4_TFT)
-static const char* const OTA_BIN_NAME = "wadamesh-heltec-v4-tft";   // V4-R8 also defines this; its branch is above
-#else
-#error "OTA_BIN_NAME: this board has no release artifact name. Add it here AND to scripts/release.sh ENVS, or a self-update fetches another board's firmware."
-#endif
+static const char* const OTA_BIN_NAME = "wadamesh-" WADA_BOARD_ID;
 // Download the latest published app-only bin over plain HTTP and flash it into the spare A/B slot
 // via the Arduino Update writer. Runs on the tile-fetcher worker (off the UI thread); reports
 // progress through s_ota_state / s_ota_pct / s_ota_msg for the UI poll timer. We fetch the
@@ -31496,6 +31639,21 @@ static void tileFetchTaskFn(void* arg) {
       s_verchk_request = false;
       s_verchk_latest_n = verchkFetchLatest(client, http);   // reuse the worker's client/http
       s_verchk_done = true;
+      continue;
+    }
+    // Beta test report. Same reasoning as the check above: one short request,
+    // infrequent, on this worker's stack and client rather than a second pair.
+    if (s_report_request) {
+      s_report_request = false;
+      s_report_result = reportPostWorker(client, http, "test", s_report_body) ? 1 : -1;
+      s_report_done = true;
+      continue;
+    }
+    // Opt-in install count. Fire and forget: nothing in the UI waits on it, and a
+    // failure is not worth telling anyone about.
+    if (s_ping_request) {
+      s_ping_request = false;
+      reportPostWorker(client, http, "ping", s_ping_body);
       continue;
     }
 #if CAP_LUA_APPS
@@ -36334,6 +36492,248 @@ static void crashReportMaybePrompt() {
 }
 #endif  // ESP32
 
+
+// ---- the report form ---------------------------------------------------------
+// One tap from Settings, About. Tick what you actually exercised, say how long you
+// have run it, send. The areas matter: "it works" from somebody who watched it boot
+// and "it works" from somebody who messaged on it all week are not the same claim,
+// and the matrix only turns a board green on the second kind.
+static void openUrlQrPopup(const char* url);      // defined with the chat URL popups
+
+static lv_obj_t* s_report_root    = nullptr;
+static lv_obj_t* s_report_note_ta = nullptr;
+static lv_obj_t* s_report_cb[5]   = { nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_report_ran_btn[3] = { nullptr, nullptr, nullptr };
+static uint8_t   s_report_ran_sel = 1;            // "about a day" is the common case
+static bool      s_report_works   = true;
+static lv_obj_t* s_report_works_sw = nullptr;
+
+static void closeReportForm() {
+  if (!s_report_root) return;
+  popupClose(&s_report_root);
+  s_report_note_ta = nullptr; s_report_works_sw = nullptr;
+  for (int i = 0; i < 5; i++) s_report_cb[i] = nullptr;
+  for (int i = 0; i < 3; i++) s_report_ran_btn[i] = nullptr;
+}
+static void reportFormCloseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  closeReportForm();
+}
+
+static void reportRanStyle() {
+  for (int i = 0; i < 3; i++) {
+    if (!s_report_ran_btn[i]) continue;
+    lv_obj_set_style_bg_color(s_report_ran_btn[i],
+        lv_color_hex(i == s_report_ran_sel ? COLOR_ACCENT : COLOR_PANEL), LV_PART_MAIN);
+  }
+}
+static void reportRanCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_report_ran_sel = (uint8_t)(intptr_t)lv_obj_get_user_data(lv_event_get_target(e));
+  reportRanStyle();
+}
+static void reportWorksCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_report_works = !lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+}
+
+// Sending is deliberately two taps: the second one shows the exact bytes that
+// leave the device. The site promises that, and a report travels unencrypted.
+static void reportSendApply() {
+  s_report_request = true;
+  if (g_lv.task) g_lv.task->showAlert(TR("Sending your report..."), 1200);
+  closeReportForm();
+}
+
+static void reportSendCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  // Associated is not the same as reachable: WL_CONNECTED lands before DHCP on
+  // the esp-hosted P4 and on a slow AP, exactly as the version check found.
+  if (WiFi.status() != WL_CONNECTED || (uint32_t)WiFi.localIP() == 0) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Turn Wi-Fi on to send a report"), 2200);
+    return;
+  }
+  uint8_t areas = 0;
+  for (int i = 0; i < 5; i++)
+    if (s_report_cb[i] && lv_obj_has_state(s_report_cb[i], LV_STATE_CHECKED)) areas |= (1u << i);
+  const char* note = s_report_note_ta ? lv_textarea_get_text(s_report_note_ta) : "";
+  reportBuildBody(s_report_works, areas, s_report_ran_sel, note);
+
+  char rid[17]; reportDeviceId(rid);
+  char area_txt[96]; area_txt[0] = 0;
+  for (int i = 0; i < 5; i++)
+    if (areas & (1u << i))
+      snprintf(area_txt + strlen(area_txt), sizeof(area_txt) - strlen(area_txt),
+               "%s%s", area_txt[0] ? ", " : "", k_report_areas[i]);
+  if (!area_txt[0]) strncpy(area_txt, "-", sizeof area_txt);
+
+  char msg[420];
+  snprintf(msg, sizeof msg,
+           "%s\n\n%s %s\n%s\n%s: %s\n%s: %s\n%s: %s",
+           TR("This is everything that leaves the device. No name, no contacts, no position."),
+           FIRMWARE_RELEASE_TAG, WADA_BOARD_ID,
+           s_report_works ? TR("Works") : TR("Has a problem"),
+           TR("Used"), area_txt,
+           TR("Running it for"), TR(k_report_ran_label[s_report_ran_sel < 3 ? s_report_ran_sel : 0]),
+           TR("Device id"), rid);
+  showConfirm(msg, TR("Send"), reportSendApply);
+}
+
+static void reportOpenForm() {
+  closeReportForm();
+  s_report_works = true;      // the switch below starts unchecked; these must agree
+  lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+
+  s_report_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_report_root);
+  lv_obj_set_size(s_report_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_report_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_report_root, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_report_root, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_clear_flag(s_report_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_report_root, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s_report_root, reportFormCloseCb, LV_EVENT_CLICKED, nullptr);
+
+  int card_w = modalAvailW(); if (card_w > PCW(320)) card_w = PCW(320);
+  lv_obj_t* card = lv_obj_create(s_report_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_width(card, card_w);
+  lv_obj_set_height(card, LV_MIN(modalAvailH(), PSC(330)));
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 10);
+  lv_obj_set_style_pad_all(card, SC(10), LV_PART_MAIN);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(card, SC(6), LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  addCloseXBadge(card, reportFormCloseCb);
+
+  lv_obj_t* title = lv_label_create(card);
+  char tbuf[72];
+  snprintf(tbuf, sizeof tbuf, TR("Report %s"), FIRMWARE_RELEASE_TAG);
+  lv_label_set_text(title, tbuf);
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+
+  // Works / has a problem. A switch rather than two buttons: the overwhelmingly
+  // common report is "it works", so that is the resting state.
+  {
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t* l = lv_label_create(row);
+    lv_label_set_text(l, TR("I hit a problem"));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    s_report_works_sw = lv_switch_create(row);
+    lv_obj_add_event_cb(s_report_works_sw, reportWorksCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  }
+
+  lv_obj_t* hint = lv_label_create(card);
+  lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(hint, lv_pct(100));
+  lv_label_set_text(hint, TR("Tick only what you actually used:"));
+  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+
+  static const char* const k_area_labels[5] = {
+    "Radio and messaging", "Map and GPS", "Phone-app link", "Keyboard and input", "Storage and SD",
+  };
+  for (int i = 0; i < 5; i++) {
+    s_report_cb[i] = lv_checkbox_create(card);
+    lv_checkbox_set_text(s_report_cb[i], TR(k_area_labels[i]));
+    lv_obj_set_style_text_font(s_report_cb[i], &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_report_cb[i], lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  }
+
+  lv_obj_t* rl = lv_label_create(card);
+  lv_label_set_text(rl, TR("Running it for:"));
+  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  {
+    lv_obj_t* row = lv_obj_create(card);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, SC(4), LV_PART_MAIN);
+    static const char* const k_ran_labels[3] = { "Minutes", "A day", "A week" };
+    for (int i = 0; i < 3; i++) {
+      s_report_ran_btn[i] = lv_btn_create(row);
+      lv_obj_set_flex_grow(s_report_ran_btn[i], 1);
+      lv_obj_set_height(s_report_ran_btn[i], SC(30));
+      styleButton(s_report_ran_btn[i]);
+      lv_obj_set_user_data(s_report_ran_btn[i], (void*)(intptr_t)i);
+      lv_obj_add_event_cb(s_report_ran_btn[i], reportRanCb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_t* l = lv_label_create(s_report_ran_btn[i]);
+      lv_label_set_text(l, TR(k_ran_labels[i]));
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_center(l);
+    }
+    reportRanStyle();
+  }
+
+  s_report_note_ta = lv_textarea_create(card);
+  lv_obj_set_width(s_report_note_ta, lv_pct(100));
+  lv_obj_set_height(s_report_note_ta, SC(46));
+  lv_textarea_set_one_line(s_report_note_ta, false);
+  lv_textarea_set_max_length(s_report_note_ta, 120);
+  lv_textarea_set_placeholder_text(s_report_note_ta, TR("Anything worth saying (optional)"));
+  lv_obj_set_style_text_font(s_report_note_ta, &g_font_12, LV_PART_MAIN);
+  // Without these the field is decorative: tapping it would not raise the
+  // on-screen keyboard and a physical keyboard would type nowhere.
+  lv_obj_add_event_cb(s_report_note_ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
+  lv_obj_add_event_cb(s_report_note_ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* send = lv_btn_create(card);
+  lv_obj_set_width(send, lv_pct(100));
+  lv_obj_set_height(send, SC(34));
+  styleButton(send);
+  lv_obj_set_style_bg_color(send, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_add_event_cb(send, reportSendCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* sl = lv_label_create(send);
+  lv_label_set_text(sl, TR("Send"));
+  lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_center(sl);
+}
+
+static void reportOpenCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  reportOpenForm();
+}
+
+// A bug report does NOT come through our service. The device draws a QR for a
+// prefilled GitHub issue form and the reporter files it from their phone under
+// their own account: right attribution, GitHub's own spam handling, and no write
+// token anywhere in a public firmware image. The URL has to stay short enough to
+// scan off a 240 px panel, so it carries the three fields a maintainer always has
+// to ask for and nothing else.
+static void reportBugQrCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  char url[240];
+  snprintf(url, sizeof url,
+           "https://github.com/ALLFATHER-BV/wadamesh/issues/new?template=bug.yml"
+           "&board=%s&version=%s&diag=heap%%20%uk%%20store%%20%s",
+           WADA_BOARD_ID, FIRMWARE_RELEASE_TAG,
+           (unsigned)(ESP.getFreeHeap() / 1024),
+#if CAP_SD
+           touchPrefsGetUseSdStorage() ? "sd" : "internal");
+#else
+           "internal");
+#endif
+  openUrlQrPopup(url);
+}
+
+static void reportPingToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetReportPing(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
 static void settingsCatBuild(int cat) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   s_wifi_list_cont = nullptr;   // previous page's content was cleaned; buildWifiSettings re-sets it
@@ -36455,6 +36855,70 @@ static void settingsCatBuild(int cat) {
           lv_label_set_text(beta_note, TR("Receive unreleased test firmware — newer features, but less tested. The update check and Install update both follow the beta channel."));
           lv_obj_set_style_text_font(beta_note, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(beta_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+        }
+
+        // Report this build. The whole point of a test channel is finding out
+        // whether it works on boards we do not own, and until now the only way to
+        // say so was Discord, which nobody collates. This posts a structured
+        // report per board per build; wadamesh.com/beta is what a promote is
+        // decided on. Same gate as the beta toggle: a dev build with no release
+        // tag has nothing to report against.
+        {
+          lv_obj_t* rep_spacer = lv_obj_create(page);      // LVGL 8.4 has no margins here
+          lv_obj_remove_style_all(rep_spacer);
+          lv_obj_set_size(rep_spacer, lblw, SC(8));
+
+          lv_obj_t* rep_btn = lv_btn_create(page);
+          lv_obj_set_size(rep_btn, lblw, SC(34));
+          styleButton(rep_btn);
+          lv_obj_add_event_cb(rep_btn, reportOpenCb, LV_EVENT_CLICKED, nullptr);
+          lv_obj_t* l = lv_label_create(rep_btn);
+          const bool done = (touchPrefsGetReportedBeta() == (uint16_t)firmwareReleaseN());
+          lv_label_set_text(l, done ? TR("Report this build again") : TR("Report this build"));
+          lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+          lv_obj_center(l);
+
+          lv_obj_t* bug_btn = lv_btn_create(page);
+          lv_obj_set_size(bug_btn, lblw, SC(34));
+          styleButton(bug_btn);
+          lv_obj_add_event_cb(bug_btn, reportBugQrCb, LV_EVENT_CLICKED, nullptr);
+          lv_obj_t* bl = lv_label_create(bug_btn);
+          lv_label_set_text(bl, TR("Report a bug"));
+          lv_obj_set_style_text_font(bl, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+          lv_obj_center(bl);
+
+          lv_obj_t* rep_note = lv_label_create(page);
+          lv_label_set_long_mode(rep_note, LV_LABEL_LONG_WRAP);
+          lv_obj_set_width(rep_note, lblw);
+          lv_label_set_text(rep_note, TR("Say whether this build works on your board, so a stable release is promoted on evidence. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account."));
+          lv_obj_set_style_text_font(rep_note, &g_font_12, LV_PART_MAIN);
+          lv_obj_set_style_text_color(rep_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+
+          // The count is the only thing here that would leave without you
+          // pressing Send, so it is off until you say otherwise.
+          lv_obj_t* ping_row = lv_obj_create(page);
+          lv_obj_remove_style_all(ping_row);
+          lv_obj_set_size(ping_row, lblw, LV_SIZE_CONTENT);
+          lv_obj_set_style_pad_top(ping_row, SC(8), LV_PART_MAIN);
+          lv_obj_clear_flag(ping_row, LV_OBJ_FLAG_SCROLLABLE);
+          lv_obj_set_flex_flow(ping_row, LV_FLEX_FLOW_ROW);
+          lv_obj_set_flex_align(ping_row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+          lv_obj_t* pl = lv_label_create(ping_row);
+          lv_label_set_text(pl, TR("Count this device"));
+          lv_obj_set_style_text_font(pl, &g_font_14, LV_PART_MAIN);
+          lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+          lv_obj_t* psw = lv_switch_create(ping_row);
+          if (touchPrefsGetReportPing()) lv_obj_add_state(psw, LV_STATE_CHECKED);
+          lv_obj_add_event_cb(psw, reportPingToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+          lv_obj_t* pnote = lv_label_create(page);
+          lv_label_set_long_mode(pnote, LV_LABEL_LONG_WRAP);
+          lv_obj_set_width(pnote, lblw);
+          lv_label_set_text(pnote, TR("Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else."));
+          lv_obj_set_style_text_font(pnote, &g_font_12, LV_PART_MAIN);
+          lv_obj_set_style_text_color(pnote, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
         }
 
 // Gated on the CAPABILITY, not a list of board names: this needs a writable Arduino-SD
@@ -63476,6 +63940,7 @@ static constexpr uint8_t PF_BASE  = 4;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
+  { P_OPEN(s_report_root),           []{ closeReportForm(); },            PF_COUNT },   // beta test report form
   { P_OPEN(s_urlmenu_root),          []{ closeUrlMenu(); },               PF_COUNT },   // chat URL -> action menu
   { P_OPEN(s_discover_root),         []{ closeDiscoverPage(); },          PF_COUNT },
   { P_OPEN(s_spec_root),             []{ closeSpectrumPage(); },          PF_COUNT },

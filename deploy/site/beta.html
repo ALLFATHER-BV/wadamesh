@@ -122,8 +122,8 @@
       <h3>It works</h3>
       <p>On the device: Settings, About, "Report this build". Tick what you actually
       exercised, say how long you have been running it, and send. It takes one tap and
-      needs Wi-Fi on the device. Nothing identifying is sent, and the device shows you
-      the exact payload first.</p>
+      needs Wi-Fi on the device. Nothing identifying is sent, and the device lists
+      exactly what it will send before it sends it.</p>
     </div>
     <div class="card">
       <h3>Something is broken</h3>
@@ -179,8 +179,11 @@ function render(d){
       return row ? row.name : b;
     });
     v.className = 'verdict';
-    v.innerHTML = '<b>Not ready to promote</b><span>Waiting on: ' + esc(names.join(', ') || 'nothing')
-      + '. ' + s.green + ' green, ' + s.amber + ' part-way, ' + s.red + ' with a problem, '
+    const head = s.reports ? 'Not ready to promote' : 'No reports yet';
+    const waiting = names.length ? 'Waiting on: ' + esc(names.join(', ')) + '. '
+                                 : 'Nothing has been reported on this build yet. ';
+    v.innerHTML = '<b>' + head + '</b><span>' + waiting
+      + s.green + ' green, ' + s.amber + ' part-way, ' + s.red + ' with a problem, '
       + s.none + ' with no reports at all.</span>';
   }
 

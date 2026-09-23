@@ -139,6 +139,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.flood_adv_hrs     = 0;      // OFF: no periodic flood self-advert (advertise manually)
   c.local_adv_min     = 0;      // OFF: no periodic zero-hop self-advert
   c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
+  c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
+  c.report_done_n     = 0;      // no beta reported on yet
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
   c.console_monitor   = 1;      // ON: the console shows messages as they arrive
@@ -259,6 +261,9 @@ static void cfgLoadOrMigrate() {
         if (stored_version < 26) s_cfg.msg_flash = 0;
         if (stored_version < 27) { s_cfg.flood_adv_hrs = 0; s_cfg.local_adv_min = 0; }
         if (stored_version < 28) s_cfg.beta_updates = 0;
+        // v64 new trailing fields. Forced off rather than inherited: a garbage 1
+        // would start sending an install count nobody opted into.
+        if (stored_version < 64) { s_cfg.report_ping = 0; s_cfg.report_done_n = 0; }
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -1377,6 +1382,28 @@ bool touchPrefsGetBetaUpdates() {
 bool touchPrefsSetBetaUpdates(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.beta_updates = on ? 1 : 0;
+  return cfgFlush();
+}
+
+// Beta test reports (v64). The ping is the only part that leaves the device
+// without the user pressing Send, so it is opt-in and stored separately from the
+// report itself.
+bool touchPrefsGetReportPing() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.report_ping != 0;
+}
+bool touchPrefsSetReportPing(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.report_ping = on ? 1 : 0;
+  return cfgFlush();
+}
+uint16_t touchPrefsGetReportedBeta() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.report_done_n;
+}
+bool touchPrefsSetReportedBeta(uint16_t n) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.report_done_n = n;
   return cfgFlush();
 }
 

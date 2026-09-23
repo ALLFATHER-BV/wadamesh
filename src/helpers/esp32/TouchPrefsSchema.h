@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 63;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Night/Day, with high-contrast variants, #296/#544; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF); v61: ble_kbd_* (Bluetooth serves a keyboard instead of the phone app, its layout and the paired keyboard; default phone app); v62: ble_kbd_back (a second key that acts as Back; 0 = only Esc); v63: V4-R8 ui_scale reset before exposing font-only presets (#536)
+static constexpr uint8_t CURRENT_VERSION = 64;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Night/Day, with high-contrast variants, #296/#544; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF); v61: ble_kbd_* (Bluetooth serves a keyboard instead of the phone app, its layout and the paired keyboard; default phone app); v62: ble_kbd_back (a second key that acts as Back; 0 = only Esc); v63: V4-R8 ui_scale reset before exposing font-only presets (#536); v64: report_ping + report_done_n (beta test reports: the opt-in install count and the tag this device already reported on; both default 0)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -128,6 +128,14 @@ struct __attribute__((packed)) Config {
   // v62: the HID usage of a key that acts as Back besides Esc, for keyboards
   // whose Esc key sends something else. 0 = none.
   uint8_t  ble_kbd_back;
+  // v64: beta test reports (see deploy/report-service.py). report_ping opts into
+  // the anonymous "this device is running beta_N" count that gives the test
+  // matrix a denominator, and is OFF until somebody turns it on: the count is
+  // telemetry, however thin, and this project promises none by default.
+  // report_done_n is the beta number this device has already reported on, so the
+  // page can say so rather than asking twice.
+  uint8_t  report_ping;
+  uint16_t report_done_n;
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -143,7 +151,7 @@ static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeo
 // whichever board is using the file backend. 163 bytes today.
 static_assert(sizeof(Config) <= 2048,
               "Config exceeds the SdNvsPrefs value cap; prefs would silently stop saving");
-static_assert(offsetof(Config, ble_kbd_back) + sizeof(Config::ble_kbd_back) == sizeof(Config),
+static_assert(offsetof(Config, report_done_n) + sizeof(Config::report_done_n) == sizeof(Config),
               "new preference fields must remain trailing");
 // lang_file must stay immediately before the tail, or a v48-era blob overlays
 // onto the wrong bytes. Checking both ends means the next person to append is

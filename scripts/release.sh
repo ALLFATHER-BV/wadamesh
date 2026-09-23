@@ -81,6 +81,11 @@ if [ "$MODE" = "beta" ]; then
 else
   # 2s. STABLE promotion: NO rebuild — copy the already-tested beta bins so what
   #     ships to stable is byte-for-byte what the community tested.
+  #
+  # What the testers actually said, before promoting on their behalf. This never
+  # blocks: a board nobody owns can never go green, and some promotes are made on
+  # other evidence. It exists so the promote is a decision rather than a habit.
+  "$(dirname "$0")/build/matrix-check.sh" "$TAG" || true
   SRC="$OUT/releases/BETA/$TAG"
   if [ ! -d "$SRC" ] || ! ls "$SRC/"*.bin >/dev/null 2>&1; then
     # beta_20 + any pre-channel build already lives under releases/TOUCH/<tag>/.
