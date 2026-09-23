@@ -36708,6 +36708,7 @@ static void crashReportMaybePrompt() {
 static void openUrlQrPopup(const char* url);      // defined with the chat URL popups
 
 static lv_obj_t* s_report_root    = nullptr;
+static lv_obj_t* s_report_card    = nullptr;
 static lv_obj_t* s_report_note_ta = nullptr;
 static lv_obj_t* s_report_cb[5]   = { nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_report_ran_btn[3] = { nullptr, nullptr, nullptr };
@@ -36718,6 +36719,7 @@ static lv_obj_t* s_report_works_sw = nullptr;
 static void closeReportForm() {
   if (!s_report_root) return;
   popupClose(&s_report_root);
+  s_report_card = nullptr;
   s_report_note_ta = nullptr; s_report_works_sw = nullptr;
   for (int i = 0; i < 5; i++) s_report_cb[i] = nullptr;
   for (int i = 0; i < 3; i++) s_report_ran_btn[i] = nullptr;
@@ -36725,6 +36727,22 @@ static void closeReportForm() {
 static void reportFormCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
+  closeReportForm();
+}
+
+// Tap-outside-to-close, with the emphasis on OUTSIDE: compare the point against
+// the card's own area rather than trusting that nothing inside the card can
+// reach this handler.
+static void reportBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_indev_t* a = lv_indev_get_act();
+  if (a && s_report_card) {
+    lv_point_t p; lv_indev_get_point(a, &p);
+    lv_area_t card;
+    lv_obj_get_coords(s_report_card, &card);
+    if (p.x >= card.x1 && p.x <= card.x2 && p.y >= card.y1 && p.y <= card.y2) return;
+  }
+  if (a) lv_indev_wait_release(a);
   closeReportForm();
 }
 
@@ -36800,24 +36818,35 @@ static void reportOpenForm() {
   lv_obj_set_style_bg_opa(s_report_root, LV_OPA_60, LV_PART_MAIN);
   lv_obj_clear_flag(s_report_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(s_report_root, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(s_report_root, reportFormCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(s_report_root, reportBackdropCb, LV_EVENT_CLICKED, nullptr);
 
   int card_w = modalAvailW(); if (card_w > PCW(320)) card_w = PCW(320);
   lv_obj_t* card = lv_obj_create(s_report_root);
+  s_report_card = card;
   lv_obj_remove_style_all(card);
   lv_obj_set_width(card, card_w);
+  // Fit the panel, not a guess: eleven rows do not fit a 240 px screen, and a
+  // card taller than the backdrop puts its own controls outside the area that
+  // catches taps. Cap to what is available and scroll the rest.
   lv_obj_set_height(card, LV_MIN(modalAvailH(), PSC(330)));
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 10);
   lv_obj_set_style_pad_all(card, SC(10), LV_PART_MAIN);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(card, SC(6), LV_PART_MAIN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  // CLICKABLE, deliberately: a non-clickable card is invisible to hit-testing,
+  // so every tap that missed a checkbox went through to whatever sat behind the
+  // popup. It absorbs instead. Events do not bubble unless asked to in LVGL 8,
+  // so this does not re-trigger the backdrop's close.
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
   addCloseXBadge(card, reportFormCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
   char tbuf[72];
-  snprintf(tbuf, sizeof tbuf, TR("Report %s"), FIRMWARE_RELEASE_TAG);
+  snprintf(tbuf, sizeof tbuf, TR("Test report: %s"), FIRMWARE_RELEASE_TAG);
   lv_label_set_text(title, tbuf);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -37081,7 +37110,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_add_event_cb(rep_btn, reportOpenCb, LV_EVENT_CLICKED, nullptr);
           lv_obj_t* l = lv_label_create(rep_btn);
           const bool done = (touchPrefsGetReportedBeta() == (uint16_t)firmwareReleaseN());
-          lv_label_set_text(l, done ? TR("Report this build again") : TR("Report this build"));
+          lv_label_set_text(l, done ? TR("Send another test report") : TR("Send a test report"));
           lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
           lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
           lv_obj_center(l);
@@ -37099,7 +37128,7 @@ static void settingsCatBuild(int cat) {
           lv_obj_t* rep_note = lv_label_create(page);
           lv_label_set_long_mode(rep_note, LV_LABEL_LONG_WRAP);
           lv_obj_set_width(rep_note, lblw);
-          lv_label_set_text(rep_note, TR("Say whether this build works on your board, so a stable release is promoted on evidence. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account."));
+          lv_label_set_text(rep_note, TR("Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account."));
           lv_obj_set_style_text_font(rep_note, &g_font_12, LV_PART_MAIN);
           lv_obj_set_style_text_color(rep_note, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
 

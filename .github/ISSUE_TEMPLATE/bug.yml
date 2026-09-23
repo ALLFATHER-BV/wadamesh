@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **From your device:** Settings, About, "Report this build", then "Report a bug".
+        **From your device:** Settings, About, then "Report a bug".
         The device shows a QR code that opens this form with your board, firmware
         version and diagnostics already filled in, so you only type what went wrong.
 

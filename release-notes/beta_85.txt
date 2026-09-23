@@ -2,7 +2,7 @@
 # One user-facing note per non-blank, non-# line; # lines are section comments.
 
 # --- Report a build from the device ------------------------------------------------------------
-Settings, About has "Report this build". Say whether it works on your board, tick what you actually used, say how long you have run it, and send. What comes in is at wadamesh.com/beta, and that is what the next stable release gets promoted on, instead of nobody having complained. It takes one tap and needs Wi-Fi.
+Settings, About has "Send a test report". Say whether it works on your board, tick what you actually used, say how long you have run it, and send. What comes in is at wadamesh.com/beta, and that is what the next stable release gets promoted on, instead of nobody having complained. It takes one tap and needs Wi-Fi.
 The report carries the board, the version, your ticks and the free memory. No name, no contacts, no position, and the device lists exactly what it will send before it sends it.
 "Report a bug" on the same page draws a QR code. Scan it with your phone and a GitHub issue form opens with your board, version and diagnostics already filled in, so you only type what went wrong, and it is filed under your own account.
 Optional, off by default: "Count this device" lets the update check say which board and build it is running, so a board nobody has reported on can be told apart from a board nobody owns.

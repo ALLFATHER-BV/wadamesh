@@ -565,7 +565,7 @@ def render_issue(m):
     L.append("This body is rewritten automatically as reports arrive. Do not edit it by hand; "
              "comments are read, the table is not.")
     L.append("")
-    L.append("**To report:** on the device, Settings, About, \"Report this build\". "
+    L.append("**To report:** on the device, Settings, About, \"Send a test report\". "
              "To report a bug instead, use the QR on that page, which opens a prefilled issue form.")
     L.append("")
     L.append("| Board | State | Works | Problems | Running it | Untested areas |")
