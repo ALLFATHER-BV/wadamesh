@@ -38553,10 +38553,12 @@ static constexpr lv_coord_t  kChatBubblePadV     = 5;
 static constexpr lv_coord_t  kChatSideGutter     = 2;
 #if defined(HAS_TDECK_PRO)
 static constexpr lv_coord_t  kChatRowGap         = 6;
-static constexpr lv_coord_t  kChatCompactRowGap = 4;
+static constexpr lv_coord_t  kChatCompactRowGap = 6;
+static constexpr lv_coord_t  kChatCompactPadV   = 4;
 #else
 static constexpr lv_coord_t  kChatRowGap         = 4;
-static constexpr lv_coord_t  kChatCompactRowGap = 2;
+static constexpr lv_coord_t  kChatCompactRowGap = 4;
+static constexpr lv_coord_t  kChatCompactPadV   = 1;
 #endif
 static constexpr lv_coord_t  kChatDividerH       = 16;
 
@@ -39250,14 +39252,13 @@ static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChat
   char line[640];
   chatBuildCompactPlainLine(m, p, d, line, sizeof(line));
   static constexpr lv_coord_t kPadH = 3;
-  static constexpr lv_coord_t kPadV = 1;
   const lv_coord_t inner_w = (s_chat_virt.content_w > kPadH * 2)
                                  ? s_chat_virt.content_w - kPadH * 2
                                  : s_chat_virt.content_w;
   lv_point_t wrapped;
   lv_txt_get_size(&wrapped, line, chatMessageFont(), 0, 0,
                   inner_w > 0 ? inner_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  return wrapped.y + kPadV * 2;
+  return wrapped.y + kChatCompactPadV * 2;
 }
 
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
@@ -40078,11 +40079,7 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   // other, worst of all when one wrapped (#563). A little vertical padding is
   // the separator there. It is measured into the row height below, so the
   // virtualizer's offsets follow it.
-#if defined(HAS_TDECK_PRO)
-  lv_obj_set_style_pad_ver(row, 4, LV_PART_MAIN);
-#else
-  lv_obj_set_style_pad_ver(row, 1, LV_PART_MAIN);
-#endif
+  lv_obj_set_style_pad_ver(row, kChatCompactPadV, LV_PART_MAIN);
   lv_obj_set_style_radius(row, 3, LV_PART_MAIN);
 #if defined(HAS_TDECK_PRO)
   if (epaper_channel) {
