@@ -4176,9 +4176,16 @@ static void navSwitchTab(int dir) {
 // rows (SD-format progress, bulk-delete progress) have a null closer by design, and the old
 // unconditional loop spun eight times closing nothing and then switched tabs out from under the
 // running operation anyway. Callers that ignore the result still compile unchanged.
+#if defined(HAS_M9_KEYBOARD)
+static bool m9DismissShortcutPopups();
+#endif
 static bool navGoToMainTab(int tab) {
+#if defined(HAS_M9_KEYBOARD)
+  if (!m9DismissShortcutPopups()) return false;
+#else
   for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
   if (anyPopupOpen()) return false;
+#endif
   goToTab(tab);
   return true;
 }
@@ -44067,6 +44074,31 @@ static bool m9LockedHomeDrawerFrontmost() {
 #endif
 }
 
+#if defined(HAS_M9_KEYBOARD)
+// Function-row shortcuts are lateral navigation, not a request to leave a
+// locked app-drawer Home root. The drawer is the registry's PF_BASE final row;
+// generic popup dismissal closes it and flips s_home_drawer_mode false, so Back
+// later exposes Commander. Preserve that base while dismissing anything above
+// it. Elsewhere, retain the ordinary all-popup cleanup and blocker semantics.
+static bool m9DismissShortcutPopups() {
+  const bool preserve_drawer = getActiveTab() == HOME_TAB_INDEX &&
+      s_home_is_drawer && touchPrefsGetHomeKeyKeepsDrawer() &&
+      s_home_drawer_mode && s_appdrawer_root;
+  if (preserve_drawer) {
+    for (int i = 0; i < 8; ++i) {
+      const int result = popupRegistryDismissTopAboveAppDrawer();
+      if (result < 0) return false;
+      if (result == 0) return true;
+    }
+    return popupRegistryDismissTopAboveAppDrawer() == 0;
+  }
+  for (int i = 0; i < 8 && anyPopupOpen(); ++i) {
+    if (!hwKeyDismissTopPopup()) break;
+  }
+  return !anyPopupOpen();
+}
+#endif
+
 // Esc is the back button: one press, one layer, innermost first. The M9 Back
 // key's order, without its map-pan and screen-history rungs, and with the
 // status bar's own Back detail that a settings page opened from the Control
@@ -44400,8 +44432,7 @@ static bool m9HandleNavKey(int key) {
       // a null-close progress row (SD format, bulk delete) owns the screen, so
       // closing the page first would leave the user with neither the page nor
       // the jump.
-      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
       else                                      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
@@ -44414,8 +44445,7 @@ static bool m9HandleNavKey(int key) {
       // rename prompt, …) becomes Back's silent (invisible) next target.
       // Same bounded loop as HOME; a null-close progress row stops the walk
       // (blocker semantics), in which case don't stack the overlay either.
-      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();
       openMentionsScreen();
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
@@ -44430,8 +44460,7 @@ static bool m9HandleNavKey(int key) {
       } else {
         s_m9_map_pan = false;   // fresh entry always starts in nav mode
         // Blocker check before destroying the page — see M9_KEY_LEFT_MESSAGE.
-        for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-        if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+        if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
         if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
         navGoToMainTab(MAP_TAB_INDEX);
       }
@@ -44440,8 +44469,7 @@ static bool m9HandleNavKey(int key) {
       if (s_setup_root) return true;
       s_m9_map_pan = false;   // the page covers the map: same stale-pan clear as SUB_MESSAGE
       // Same full dismiss as SUB_MESSAGE: nothing may stay open beneath.
-      for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-      if (anyPopupOpen()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
+      if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       // Close an open app page first — openAdvertPage() takes the single
       // s_apppage_close slot, so opening OVER a Lua app would steal its only
       // key-exit and strand the app unreachable behind the advert page.
