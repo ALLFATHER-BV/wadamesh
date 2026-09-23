@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WADAMESH — Beta test matrix</title>
+<meta name="description" content="Which boards have been vouched for on the current WADAMESH test build, reported from the devices themselves, and what is still holding up the next stable release.">
+<link rel="icon" href="wadamesh-badge.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#ffffff; --bg2:#f4f6f2; --ink:#15181e; --mut:#5d6770;
+    --line:#e5e8e2; --teal:#15b6a6; --teal-ink:#0e8d80;
+    --green:#1b9e5a; --green-bg:rgba(27,158,90,.10);
+    --amber:#b7791f; --amber-bg:rgba(183,121,31,.12);
+    --red:#c0392b;   --red-bg:rgba(192,57,43,.10);
+    --none:#8a939b;  --none-bg:rgba(138,147,155,.12);
+    color-scheme:light;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased}
+  a{color:var(--teal-ink); text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .top{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px; padding:12px 22px;
+    background:rgba(255,255,255,.88); backdrop-filter:saturate(1.2) blur(8px); border-bottom:1px solid var(--line)}
+  .top .word{font-weight:700; letter-spacing:2px; font-size:1.05rem; color:var(--ink)}
+  .top .word .t{color:var(--teal)}
+  .top .tag{font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); border:1px solid var(--line); border-radius:100px; padding:4px 9px}
+  .top .sp{flex:1}
+  .top .home{display:inline-flex; align-items:center; gap:7px; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:#fff}
+  .top .home:hover{color:var(--teal-ink); background:var(--bg2); border-color:#bfe6e0; text-decoration:none}
+  .top .home svg{width:16px;height:16px}
+
+  .wrap{max-width:980px; margin:0 auto; padding:0 22px 70px}
+  h1{font-size:1.9rem; line-height:1.2; margin:34px 0 8px; letter-spacing:-.01em}
+  h1 .tagname{font-family:'JetBrains Mono',monospace; color:var(--teal-ink)}
+  .lede{color:var(--mut); max-width:68ch}
+  h2{font-size:1.15rem; margin:38px 0 10px}
+
+  .verdict{margin:22px 0 6px; padding:16px 18px; border-radius:14px; border:1px solid var(--line); background:var(--bg2)}
+  .verdict.go{border-color:rgba(27,158,90,.35); background:var(--green-bg)}
+  .verdict b{display:block; font-size:1.05rem; margin-bottom:3px}
+  .verdict span{color:var(--mut); font-size:.93rem}
+
+  table{width:100%; border-collapse:collapse; margin-top:14px; font-size:.94rem}
+  th{text-align:left; font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.13em;
+     text-transform:uppercase; color:var(--mut); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--line)}
+  td{padding:11px 10px; border-bottom:1px solid var(--line); vertical-align:top}
+  tr:hover td{background:var(--bg2)}
+  td.board{font-weight:600}
+  td.num{text-align:center; font-variant-numeric:tabular-nums; width:64px}
+  td.areas{color:var(--mut); font-size:.88rem}
+  .age{font-weight:400; font-size:.78rem; color:var(--mut)}
+  .compact{display:none}
+
+  .pill{display:inline-block; padding:3px 10px; border-radius:100px; font-size:.78rem; font-weight:600; white-space:nowrap}
+  .pill.green{color:var(--green); background:var(--green-bg)}
+  .pill.amber{color:var(--amber); background:var(--amber-bg)}
+  .pill.red{color:var(--red); background:var(--red-bg)}
+  .pill.none{color:var(--none); background:var(--none-bg)}
+
+  .notes{margin-top:10px; border:1px solid var(--line); border-radius:14px; overflow:hidden}
+  .notes .n{padding:12px 16px; border-bottom:1px solid var(--line)}
+  .notes .n:last-child{border-bottom:0}
+  .notes .who{font-size:.8rem; color:var(--mut); margin-bottom:2px}
+  .how{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:12px}
+  .how .card{border:1px solid var(--line); border-radius:14px; padding:16px 18px; background:var(--bg2)}
+  .how .card h3{font-size:.95rem; margin-bottom:6px}
+  .how .card p{font-size:.9rem; color:var(--mut)}
+  .foot{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); color:var(--mut); font-size:.85rem}
+  .err{padding:16px 18px; border:1px solid var(--line); border-radius:14px; background:var(--bg2); color:var(--mut)}
+  @media (max-width:860px){
+    td.areas{display:none} th.areas{display:none}
+  }
+  /* On a phone the counts move under the board name: five columns and a pill
+     that reads as a sentence do not fit 360 px, and a table that scrolls
+     sideways is a table nobody reads. */
+  @media (max-width:620px){
+    .how{grid-template-columns:1fr}
+    .c-works,.c-issues,.c-dev{display:none}
+    .age{display:none}
+    .compact{display:block; font-weight:400; font-size:.79rem; color:var(--mut); margin-top:2px}
+    .pill{white-space:normal}
+    h1{font-size:1.5rem}
+    .wrap{padding:0 16px 60px}
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <span class="word">WADA<span class="t">MESH</span></span>
+  <span class="tag">beta testing</span>
+  <span class="sp"></span>
+  <a class="home" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
+    Home
+  </a>
+</header>
+
+<div class="wrap">
+  <h1>Test matrix for <span class="tagname" id="tag">the current beta</span></h1>
+  <p class="lede">
+    Every board wadamesh ships is in this table. A tick comes from somebody running that
+    build on that board and saying so from the device itself, so the next stable release
+    is promoted on evidence rather than on nobody having complained.
+  </p>
+
+  <div id="verdict" class="verdict"><b>Loading</b><span>Fetching the latest reports.</span></div>
+
+  <div id="grid"></div>
+
+  <h2>What testers wrote</h2>
+  <div id="notes" class="notes"></div>
+
+  <h2>How to report</h2>
+  <div class="how">
+    <div class="card">
+      <h3>It works</h3>
+      <p>On the device: Settings, About, "Report this build". Tick what you actually
+      exercised, say how long you have been running it, and send. It takes one tap and
+      needs Wi-Fi on the device. Nothing identifying is sent, and the device shows you
+      the exact payload first.</p>
+    </div>
+    <div class="card">
+      <h3>Something is broken</h3>
+      <p>Same page, "Report a bug". The device draws a QR code that opens a GitHub issue
+      form with your board, firmware version and diagnostics already filled in. You scan
+      it with your phone and type what went wrong, and the issue is filed under your own
+      GitHub account.</p>
+    </div>
+  </div>
+
+  <h2>How a board goes green</h2>
+  <p class="lede">
+    Green needs two separate devices whose owners ran the build for a day or more. One
+    report, or a report from somebody who only watched it boot, is recorded and is not
+    enough to promote on. A board nobody is running cannot go green and does not hold the
+    release up. A board somebody is running and nobody has vouched for does.
+  </p>
+
+  <div class="foot">
+    <span id="stamp"></span>
+    <span id="issuelink"></span>
+  </div>
+</div>
+
+<script>
+const API = 'https://firmware.wadamesh.com/report/matrix.json';
+const LABEL = {radio:'radio and messaging', map:'map and GPS', link:'phone-app link',
+               input:'keyboard and input', storage:'storage and SD'};
+const STATE = {green:'green', amber:'needs a second report', red:'problem reported', none:'no reports'};
+const RAN = {boot:'just flashed', day:'about a day', week:'a week or more'};
+
+function ago(ts){
+  if(!ts) return '';
+  const s = Math.floor(Date.now()/1000) - ts;
+  if(s < 3600) return Math.max(1, Math.floor(s/60)) + ' min ago';
+  if(s < 86400) return Math.floor(s/3600) + ' h ago';
+  return Math.floor(s/86400) + ' d ago';
+}
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function render(d){
+  document.getElementById('tag').textContent = d.tag;
+  document.title = 'WADAMESH — Test matrix for ' + d.tag;
+
+  const s = d.summary, v = document.getElementById('verdict');
+  if(s.promote_ready){
+    v.className = 'verdict go';
+    v.innerHTML = '<b>Ready to promote</b><span>No problems outstanding, and every board anyone is'
+      + ' known to be running has been vouched for by two testers who lived with it.</span>';
+  } else {
+    const names = s.blocked_by.map(b => {
+      const row = d.boards.find(x => x.board === b);
+      return row ? row.name : b;
+    });
+    v.className = 'verdict';
+    v.innerHTML = '<b>Not ready to promote</b><span>Waiting on: ' + esc(names.join(', ') || 'nothing')
+      + '. ' + s.green + ' green, ' + s.amber + ' part-way, ' + s.red + ' with a problem, '
+      + s.none + ' with no reports at all.</span>';
+  }
+
+  let h = '<table><thead><tr><th>Board</th><th>State</th><th class="num c-works">Works</th>'
+        + '<th class="num c-issues">Problems</th><th class="num c-dev">Running it</th>'
+        + '<th class="areas">Nobody has tested</th></tr></thead><tbody>';
+  for(const b of d.boards){
+    const missing = b.status === 'none' ? 'anything on this board'
+      : (b.missing_areas.map(a => LABEL[a] || a).join(', ') || 'nothing, every area covered');
+    const compact = [
+      b.works ? (b.works === 1 ? '1 says it works' : b.works + ' say it works') : 'nobody has vouched for it',
+      b.issues ? (b.issues === 1 ? '1 problem' : b.issues + ' problems') : '',
+      b.devices ? b.devices + ' running it' : '',
+      ago(b.last)].filter(Boolean).join(', ');
+    h += '<tr><td class="board">' + esc(b.name)
+       + (b.last ? '<div class="age">' + ago(b.last) + '</div>' : '')
+       + '<div class="compact">' + esc(compact) + '</div>'
+       + '</td><td><span class="pill ' + b.status + '">' + STATE[b.status] + '</span></td>'
+       + '<td class="num c-works">' + b.works + '</td><td class="num c-issues">' + b.issues + '</td>'
+       + '<td class="num c-dev">' + (b.devices || '?') + '</td>'
+       + '<td class="areas">' + esc(missing) + '</td></tr>';
+  }
+  h += '</tbody></table>';
+  document.getElementById('grid').innerHTML = h;
+
+  const notes = [];
+  for(const b of d.boards) for(const n of (b.notes || [])) notes.push([b, n]);
+  notes.sort((a, z) => z[1].at - a[1].at);
+  const nb = document.getElementById('notes');
+  if(!notes.length){
+    nb.innerHTML = '<div class="n"><span class="who">Nothing yet.</span> Reports without a written'
+      + ' note still count towards the table above.</div>';
+  } else {
+    nb.innerHTML = notes.map(([b, n]) =>
+      '<div class="n"><div class="who">' + esc(b.name) + ', '
+      + (n.status === 'works' ? 'works' : 'problem') + ', ' + (RAN[n.ran] || n.ran)
+      + ', ' + ago(n.at) + '</div>' + esc(n.note) + '</div>').join('');
+  }
+
+  document.getElementById('stamp').textContent = 'Updated ' + ago(d.generated) + '. ';
+  document.getElementById('issuelink').innerHTML = d.issue
+    ? 'Tracked on <a href="https://github.com/ALLFATHER-BV/wadamesh/issues/' + d.issue + '">GitHub</a>.'
+    : '';
+}
+
+function load(){
+  const q = new URLSearchParams(location.search).get('tag');
+  fetch(API + (q ? '?tag=' + encodeURIComponent(q) : ''), {cache:'no-store'})
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(render)
+    .catch(() => {
+      document.getElementById('verdict').innerHTML =
+        '<b>No reports yet</b><span>The reporting service has nothing for this build, or is not'
+        + ' reachable right now. Reports arrive from devices running the newest test build.</span>';
+      document.getElementById('grid').innerHTML = '';
+      document.getElementById('notes').innerHTML = '<div class="n err">Nothing to show yet.</div>';
+    });
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

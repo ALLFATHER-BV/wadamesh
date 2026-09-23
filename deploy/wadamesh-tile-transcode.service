@@ -6,9 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/wadamesh-tiles
-# Runs from a venv so it doesn't depend on the system Python's package set.
-# Falls back to /usr/bin/python3 if the venv isn't present (see deploy notes).
-ExecStart=/opt/wadamesh-tiles/venv/bin/python /opt/wadamesh-tiles/tile-transcode.py
+# The system python, with flask/pillow/requests from apt. There is no venv on
+# the box and systemd does not fall back, so this must name a real interpreter:
+# the repo said venv for months while the live unit said this. Corrected to what
+# actually runs.
+ExecStart=/usr/bin/python3 /opt/wadamesh-tiles/tile-transcode.py
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

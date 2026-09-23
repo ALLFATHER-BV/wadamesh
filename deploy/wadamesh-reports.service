@@ -1,0 +1,26 @@
+[Unit]
+Description=wadamesh beta report service (test matrix + opt-in install counts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/wadamesh-reports
+# The GitHub token lives here and nowhere else. Root-owned, 0600: it is the one
+# write credential in this system, and the firmware deliberately has no copy.
+EnvironmentFile=-/etc/wadamesh-reports.env
+# The system python, with flask and requests from apt. Not a venv: the box's
+# python3.14 ships without ensurepip, so `python3 -m venv` cannot bootstrap pip
+# at all. This is how the tile service already runs.
+ExecStart=/usr/bin/python3 /opt/wadamesh-reports/report-service.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+# It reads the release tree to validate tags and board names, and writes only
+# its own SQLite database.
+ReadOnlyPaths=/srv/wadamesh/firmware
+ReadWritePaths=/opt/wadamesh-reports
+
+[Install]
+WantedBy=multi-user.target

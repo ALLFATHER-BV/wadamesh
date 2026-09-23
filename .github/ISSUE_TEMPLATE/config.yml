@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Ask on Discord
+    url: https://discord.gg/T8X2UaQ7Sm
+    about: Questions, help with flashing, and anything you are not sure is a bug.
+  - name: User guide
+    url: https://wadamesh.com/docs.html
+    about: How the firmware works, board by board.
+  - name: Beta test matrix
+    url: https://wadamesh.com/beta.html
+    about: Which boards have been vouched for on the current test build, and how to report yours.

@@ -1,0 +1,75 @@
+name: Bug report
+description: Something in the firmware does not work. Best opened from the device, which fills most of this in for you.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **From your device:** Settings, About, "Report this build", then "Report a bug".
+        The device shows a QR code that opens this form with your board, firmware
+        version and diagnostics already filled in, so you only type what went wrong.
+
+  - type: input
+    id: board
+    attributes:
+      label: Board
+      description: Which device, and which revision if you know it.
+      placeholder: LilyGo T-Deck Plus
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: Settings, About. A beta number such as beta_84, or the stable version.
+      placeholder: beta_84
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what the device did instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      description: >
+        Every step from a known state, starting at a reboot if you can. A bug we
+        can reproduce is usually fixed the same day; one we cannot often waits
+        for a crash dump.
+      placeholder: |
+        1. Open Contacts
+        2. Press down past the last row
+        3. The device reboots
+
+  - type: input
+    id: diag
+    attributes:
+      label: Diagnostics
+      description: >
+        Filled in by the device. Free heap, storage backend and similar. Leave it
+        alone if you opened this form from the QR code.
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Crash report or screenshot
+      description: >
+        If the device saved a crash report, attach it: Files, or USB Files at
+        files.wadamesh.com. A crash report turns a guess into a line number.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you send
+      options:
+        - label: I am on the newest build, or I have said which build I am on above
+          required: true
+        - label: I have looked for an existing issue about this
+          required: false
