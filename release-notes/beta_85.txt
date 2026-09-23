@@ -1,0 +1,28 @@
+# beta_85 - test build. Stable is beta_83.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- Report a build from the device ------------------------------------------------------------
+Settings, About has "Report this build". Say whether it works on your board, tick what you actually used, say how long you have run it, and send. What comes in is at wadamesh.com/beta, and that is what the next stable release gets promoted on, instead of nobody having complained. It takes one tap and needs Wi-Fi.
+The report carries the board, the version, your ticks and the free memory. No name, no contacts, no position, and the device lists exactly what it will send before it sends it.
+"Report a bug" on the same page draws a QR code. Scan it with your phone and a GitHub issue form opens with your board, version and diagnostics already filled in, so you only type what went wrong, and it is filed under your own account.
+Optional, off by default: "Count this device" lets the update check say which board and build it is running, so a board nobody has reported on can be told apart from a board nobody owns.
+
+# --- T-Deck Max ----------------------------------------------------------------------------------
+A T-Deck Max that updated itself installed T-Deck Pro firmware. The Max reuses the Pro's display and touch drivers, and the table that picks the download file matched the Pro first, so the update check found the right release and then fetched the wrong image for it. If you have a Max on beta_84, update this one over USB from wadamesh.com rather than from the device.
+
+# --- Community work, by Michael A. Cojocari -------------------------------------------------------
+The screen timeout is a slider with fixed stops now, from 30 seconds to an hour, plus Never, instead of a free-text field. Existing settings move to the nearest stop and the default is 30 seconds.
+The keyboard backlight in Auto follows your screen timeout instead of switching off after about three seconds, which was too short to finish typing.
+Advert can be left from the screen itself on every touch board, not just with a hardware key.
+Export and Import moved out of Profile into Backups, as one Export action with an optional timestamp in the filename. Import finds the backups on internal storage and the card by itself and only asks which one when there is more than one.
+ThinkNode M9: pressing down at the bottom of a conversation reveals the next message instead of stopping, Back stays in the app drawer when the drawer is your home screen, and a page title no longer sits on top of the lock screen.
+T-Deck Pro and Max: the sender and the message no longer overdraw each other, first-run setup can be driven from the keyboard, and Commander has two rows of controls.
+T-Deck Pro and Max: the lock screen is drawn for the screen it is on, the e-paper keeps an unambiguous locked frame instead of the last live view, and a hard lock survives waking the front pad.
+
+# --- Also ------------------------------------------------------------------------------------------
+Coordinates in a chat message can be opened on the map. The message menu gains Map, tapping the message does the same, and the spot is marked so you can find it again or remove it. By TerryTel93.
+Compact chat messages have a small gap between them on the T-Deck Pro and Max, which have no alternating row colour to separate them.
+
+# --- For testers -------------------------------------------------------------------------------------
+Reporting from the device is new and has never run on real hardware. If it fails, say so the old way, on Discord or GitHub.
+The screen timeout default changed for everyone: check Settings, Display if your screen now sleeps sooner or later than you expect.
