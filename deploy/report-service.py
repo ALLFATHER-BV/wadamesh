@@ -56,6 +56,12 @@ Environment
     WADA_FW_ROOT       firmware tree       (default /srv/wadamesh/firmware)
     WADA_GH_TOKEN      GitHub token with issues:write on the repo. Absent = the
                        service runs normally and simply never publishes.
+                       DELIBERATELY UNSET (Kaj's call, 2026-09-23): the matrix
+                       lives on wadamesh.com/beta only, so no write credential
+                       exists for this anywhere. /report/health reporting
+                       publishes:false is the expected state, not a fault. The
+                       publishing code below stays in place because turning it
+                       on later is then one line in /etc/wadamesh-reports.env.
     WADA_GH_REPO       owner/name          (default ALLFATHER-BV/wadamesh)
     WADA_REPORTS_PORT  listen port         (default 5006)
 """

@@ -23,7 +23,9 @@
 #   WADA_GH_REPO=ALLFATHER-BV/wadamesh
 #
 # Without it the service runs normally and simply never publishes to GitHub, so
-# reports are still collected and the site still shows them.
+# reports are still collected and the site still shows them. That is the current
+# arrangement on purpose: the matrix lives at wadamesh.com/beta and no token for
+# it exists. `publishes:false` from /report/health is expected.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -88,4 +90,5 @@ echo
 echo "deployed. checking the live endpoint:"
 curl -fsS "http://firmware.wadamesh.com/report/health" && echo
 echo
-echo 'publishes:false means no GitHub token on the box yet (see the header of this script).'
+echo 'publishes:false is the expected state: the matrix lives at wadamesh.com/beta'
+echo 'and no GitHub token exists for it. See the header if that ever changes.'
