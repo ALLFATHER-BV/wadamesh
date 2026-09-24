@@ -16289,7 +16289,15 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
 #endif
   lv_point_t cf_tsz;
   lv_txt_get_size(&cf_tsz, TR(msg), &g_font_14, 0, 2, cf_lblw, LV_TEXT_FLAG_NONE);
-  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + PSC(14) + PSC(34));  // pads + gap + buttons
+  // Portrait (or any card too narrow for both buttons side by side): stack them, OK
+  // over Cancel at full width. Side by side, the fixed PSC(80) Cancel and SC(100) OK
+  // overran each other on the portrait panels, e.g. the backup Import prompt.
+  const lv_coord_t cf_btn_gap = PSC(8);
+  const bool cf_stack =
+      lv_disp_get_ver_res(nullptr) > lv_disp_get_hor_res(nullptr) ||
+      PSC(80) + SC(100) + cf_btn_gap > PCW(210) - PSC(12) * 2;
+  const lv_coord_t cf_btns_h = cf_stack ? (lv_coord_t)(PSC(34) * 2 + cf_btn_gap) : PSC(34);
+  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + PSC(14) + cf_btns_h);  // pads + gap + buttons
   lv_coord_t cf_h = (lv_coord_t)(cf_tsz.y + cf_chrome);
   if (cf_h < PSC(160)) cf_h = PSC(160);
   const lv_coord_t cf_max = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
@@ -16324,7 +16332,8 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
   lv_obj_t* b_cancel = lv_btn_create(card);
-  lv_obj_set_size(b_cancel, PSC(80), PSC(34));
+  const lv_coord_t cf_cancel_w = cf_stack ? lv_pct(100) : PSC(80);
+  lv_obj_set_size(b_cancel, cf_cancel_w, PSC(34));
   lv_obj_align(b_cancel, LV_ALIGN_BOTTOM_LEFT, 0, 0);
   styleButton(b_cancel);
   lv_obj_set_style_bg_color(b_cancel, lv_color_hex(COLOR_SECONDARY_ACTION), LV_PART_MAIN);
@@ -16334,18 +16343,23 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_t* lc = lv_label_create(b_cancel);
   useChainedFont(lc);
   lv_label_set_text(lc, TR("Cancel"));
-  uiFitLabelWidth(lc, PSC(80) - 8);
+  uiFitLabelWidth(lc, (cf_stack ? PCW(210) - PSC(12) * 2 : PSC(80)) - 8);
   lv_obj_center(lc);
 
   lv_obj_t* b_ok = lv_btn_create(card);
-  lv_obj_set_size(b_ok, SC(100), SC(34));
-  lv_obj_align(b_ok, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  if (cf_stack) {
+    lv_obj_set_size(b_ok, lv_pct(100), PSC(34));
+    lv_obj_align(b_ok, LV_ALIGN_BOTTOM_LEFT, 0, -(PSC(34) + cf_btn_gap));   // directly above Cancel
+  } else {
+    lv_obj_set_size(b_ok, SC(100), SC(34));
+    lv_obj_align(b_ok, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+  }
   styleButton(b_ok);
   lv_obj_add_event_cb(b_ok, confirmOkEvt, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lo = lv_label_create(b_ok);
   useChainedFont(lo);
   lv_label_set_text(lo, ok_label ? TR(ok_label) : "OK");
-  uiFitLabelWidth(lo, SC(100) - 8);
+  uiFitLabelWidth(lo, (cf_stack ? PCW(210) - PSC(12) * 2 : SC(100)) - 8);
   lv_obj_center(lo);
 #if CAP_KEYPAD_NAV
   if (focus_confirm || actions_only_nav) {
