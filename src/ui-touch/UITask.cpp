@@ -2956,22 +2956,64 @@ static float meshPresetAirtimeFactor(uint8_t pct) {
   return af > 9.0f ? 9.0f : af;
 }
 
+static bool meshRadioPresetMatches(const MeshRadioPreset& p, const NodePrefs* prefs) {
+  if (std::fabs(prefs->freq - p.freq_mhz) > 0.002) return false;
+  if (std::fabs(prefs->bw - p.bw_khz) > 0.02) return false;
+  if (prefs->sf != p.sf) return false;
+  if (prefs->cr != p.cr) return false;
+  if (prefs->tx_power_dbm != p.tx_dbm) return false;
+  const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
+  const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
+  const double cur    = static_cast<double>(prefs->airtime_factor);
+  return std::fabs(cur - exp_af) <= 0.05 || std::fabs(cur - old_af) <= 0.05;
+}
+
 static int findMatchingMeshRadioPreset(const NodePrefs* prefs) {
   if (!prefs) return -1;
-  for (size_t i = 0; i < k_mesh_radio_preset_count; ++i) {
-    const MeshRadioPreset& p = k_mesh_radio_presets[i];
-    if (std::fabs(prefs->freq - p.freq_mhz) > 0.002) continue;
-    if (std::fabs(prefs->bw - p.bw_khz) > 0.02) continue;
-    if (prefs->sf != p.sf) continue;
-    if (prefs->cr != p.cr) continue;
-    if (prefs->tx_power_dbm != p.tx_dbm) continue;
-    const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
-    const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
-    const double cur    = static_cast<double>(prefs->airtime_factor);
-    if (std::fabs(cur - exp_af) > 0.05 && std::fabs(cur - old_af) > 0.05) continue;
-    return static_cast<int>(i);
-  }
+  for (size_t i = 0; i < k_mesh_radio_preset_count; ++i)
+    if (meshRadioPresetMatches(k_mesh_radio_presets[i], prefs)) return static_cast<int>(i);
   return -1;
+}
+
+// The preset the user last picked, by label. Several presets share identical radio
+// parameters (EU/UK, Switzerland and Slovakia Narrow; US/Canada, San Francisco and
+// Pacific NW; Brazil and Australia SA/WA), so the parameters alone cannot say which
+// one was chosen, and matching them picked the first in the list: choose Switzerland,
+// leave Radio & mesh, come back, and it said EU/UK. The label is stored (not the
+// index) so reordering or inserting presets never renames someone's choice.
+static const char* kRadioPresetKey = "radio_preset";
+static char s_radio_preset_label[40] = {0};
+static bool s_radio_preset_loaded = false;
+static void rememberMeshRadioPreset(const char* label) {
+  strncpy(s_radio_preset_label, label ? label : "", sizeof(s_radio_preset_label) - 1);
+  s_radio_preset_label[sizeof(s_radio_preset_label) - 1] = '\0';
+  s_radio_preset_loaded = true;
+#if defined(ESP32)
+  const size_t n = strlen(s_radio_preset_label);
+  touchPrefsSetBlob(kRadioPresetKey, (const uint8_t*)s_radio_preset_label, n);   // 0 bytes clears
+#endif
+}
+
+// Which preset the picker should show for the current parameters: the remembered
+// one while the radio still matches it, otherwise the first matching preset.
+static int displayedMeshRadioPreset(const NodePrefs* prefs) {
+  if (!prefs) return -1;
+#if defined(ESP32)
+  if (!s_radio_preset_loaded) {
+    const size_t n = touchPrefsGetBlob(kRadioPresetKey, (uint8_t*)s_radio_preset_label,
+                                       sizeof(s_radio_preset_label) - 1);
+    s_radio_preset_label[n] = '\0';
+    s_radio_preset_loaded = true;
+  }
+#endif
+  if (s_radio_preset_label[0]) {
+    for (size_t i = 0; i < k_mesh_radio_preset_count; ++i) {
+      const MeshRadioPreset& p = k_mesh_radio_presets[i];
+      if (strcmp(p.label, s_radio_preset_label) == 0 && meshRadioPresetMatches(p, prefs))
+        return static_cast<int>(i);
+    }
+  }
+  return findMatchingMeshRadioPreset(prefs);
 }
 
 // #161 boot heal: devices configured by the OLD preset code carry af = pct/100 (~91% duty on a
@@ -3016,14 +3058,21 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.airtime_ta, buf);
 }
 
+static void saveRadioParams(bool silent);   // defined with saveRadioParamsCb
+
 static void radioPresetChangedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || g_radio_preset_cb_silent) return;
   if (!g_set_modal.radio_preset_dd || !g_set_modal.freq_ta) return;
   const uint16_t sel = lv_dropdown_get_selected(g_set_modal.radio_preset_dd);
-  if (sel == 0) return;
+  if (sel == 0) { rememberMeshRadioPreset(""); return; }   // "Custom (manual)"
   const unsigned idx = static_cast<unsigned>(sel - 1u);
   if (idx >= k_mesh_radio_preset_count) return;
   applyMeshRadioPresetFields(idx);
+  rememberMeshRadioPreset(k_mesh_radio_presets[idx].label);
+  // Apply it now. Picking a preset used to only fill in the fields below, and a
+  // dropdown never blurs a field, so nothing reached the radio or flash unless
+  // the user also tapped Apply — leaving the screen threw the choice away.
+  saveRadioParams(false);
 }
 
 /** Subtitle labels on Set tab section rows (titles are static; see `refreshSettingsSectionSubtitles`). */
@@ -6217,6 +6266,7 @@ static void hideM9NoticeIndicators() {
 }
 #endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
+static constexpr lv_coord_t TAB_INDICATOR_W = 26;
 static lv_obj_t* s_update_subtab_badge = nullptr;// red dot over the "About" sub-tab button
 static lv_obj_t* s_update_about_lbl = nullptr;   // status line on the About sub-tab
 static lv_obj_t* s_sysinfo_lbl      = nullptr;   // System-info popup LIVE tier (uptime/heap, 1 Hz while open)
@@ -9733,19 +9783,31 @@ static void updateTabIndicator() {
   if (!s_tab_indicator || !g_lv.tabview) return;
   const int idx = getActiveTab();
   if (idx == MAP_TAB_INDEX) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
 #if defined(HAS_EXPANSION_KIT)
   // Tab count is runtime: 6 cells with the Sensors tab, 5 without (TAB_LAST is 5
-  // or 4 accordingly). Using (TAB_LAST + 1) keeps the indicator centred under the
-  // active tab in either layout.
-  const int cell = sw / (TAB_LAST + 1);          // equal tab cells (Sensors present or not)
-  const int xoff = cell * idx + cell/2 - sw/2;   // center of tab idx relative to screen mid
+  // or 4 accordingly).
+  const int n = TAB_LAST + 1;
 #else
-  const int cell = sw / 5;                 // 5 equal tab cells
-  const int xoff = (idx - 2) * cell;       // Home (index 2) is the centred tab
+  const int n = 5;
 #endif
+  // Measure the real button row rather than assuming it spans the screen: on
+  // round-cornered panels (CAP_ROUND_CORNERS) the bar is inset by SB_INSET_X on
+  // both sides, and a full-width cell put the bar ~13 px off under the outer tabs.
+  // n equal buttons separated by pad_column gaps: button i's centre is at
+  // content_x1 + i*(w+gap) + w/2, with w+gap = (content_w + gap) / n.
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  lv_obj_update_layout(bar);
+  lv_area_t a;
+  lv_obj_get_coords(bar, &a);
+  const lv_coord_t pl  = lv_obj_get_style_pad_left(bar, LV_PART_MAIN);
+  const lv_coord_t pr  = lv_obj_get_style_pad_right(bar, LV_PART_MAIN);
+  const lv_coord_t gap = lv_obj_get_style_pad_column(bar, LV_PART_MAIN);
+  const lv_coord_t content_w = lv_area_get_width(&a) - pl - pr;
+  const lv_coord_t step = (content_w + gap) / n;   // button width + gap
+  const lv_coord_t cx = a.x1 + pl + step * idx + (step - gap) / 2;
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_align(s_tab_indicator, LV_ALIGN_BOTTOM_MID, xoff, -2);
+  lv_obj_align(s_tab_indicator, LV_ALIGN_BOTTOM_LEFT,
+               cx - TAB_INDICATOR_W / 2, -2);
 }
 
 static void tabChangedCb(lv_event_t* e) {
@@ -10900,7 +10962,11 @@ static void saveRadioParamsCb(lv_event_t* e) {
   if (blurFromDelete(e)) return;   // the widget is being destroyed
   const lv_event_code_t _c = lv_event_get_code(e);
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
-  const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: apply quietly, no alerts
+  saveRadioParams(_c == LV_EVENT_DEFOCUSED);   // blur auto-save: apply quietly, no alerts
+}
+
+static void saveRadioParams(bool silent) {
+  if (!g_lv.task) return;
   kbMirrorSyncToReal();
   float freq = 0.0f, bw = 0.0f, af = 0.0f;
   int sf = 0, cr = 0, tx = 0;
@@ -12361,7 +12427,7 @@ static void buildRadioSettings() {
   }
 
   if (g_set_modal.radio_preset_dd) {
-    const int match = findMatchingMeshRadioPreset(prefs);
+    const int match = displayedMeshRadioPreset(prefs);
     g_radio_preset_cb_silent = true;
     lv_dropdown_set_selected(g_set_modal.radio_preset_dd, match < 0 ? 0 : static_cast<uint16_t>(match + 1));
     g_radio_preset_cb_silent = false;
@@ -30758,11 +30824,9 @@ static bool     s_map_has_pack   = false;   // toggles placeholder visibility
 static void mapSetHasPack(bool has_pack) {
   if (s_map_has_pack == has_pack) return;
   s_map_has_pack = has_pack;
-#if defined(HAS_WIO_TRACKER_L2)
-  // L2's empty canvas is dark, while loaded day tiles are light. Refresh the
-  // transparent map chrome when that background changes under the controls.
+  // The empty canvas (COLOR_FIELD) and loaded tiles differ in brightness; refresh
+  // the transparent map chrome when that background changes under the controls.
   if (getActiveTab() == MAP_TAB_INDEX) applyMapChrome(true);
-#endif
 }
 
 // lat/lon → world pixel at given zoom (Web Mercator).
@@ -35577,13 +35641,14 @@ static void applyBattColor() {
 // Because OSM tiles are LIGHT, the status-bar text/icons are switched to BLACK
 // for legibility, and reverted to the normal off-white when leaving the tab.
 static void applyMapChrome(bool on) {
-#if defined(HAS_WIO_TRACKER_L2)
-  // With no visible tiles the L2 shows COLOR_FIELD, a dark placeholder. Treat
-  // that like an inverted/night map so transparent navigation stays readable.
-  const bool light_map_chrome = on && (s_map_night || !s_map_has_pack);
-#else
-  const bool light_map_chrome = on && s_map_night;
-#endif
+  // With no tiles rendered (no location, no pack, panned off the saved area) the
+  // canvas shows its COLOR_FIELD placeholder instead of tiles, so the chrome has
+  // to contrast with THAT: off-white over the dark Night field, black over the
+  // light Day field. With tiles it follows the tiles (light day / dark night).
+  // This used to be Wio-Tracker-L2-only, which left black icons unreadable on
+  // the dark Night placeholder everywhere else (T-Display P4 report).
+  const bool light_map_chrome =
+      on && (s_map_has_pack ? s_map_night : accentLuma(COLOR_FIELD) < 128);
   // ---- Background tile canvas: show it + make the tabview see-through so it
   //      shows behind the (transparent) chrome. Hidden + opaque off-map. ----
   if (s_map_canvas) {
@@ -54106,7 +54171,13 @@ static void buildUiTree() {
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_LEFT,
                pagerTabIconBadgeX(4, pager_settings_tab_label, LV_SYMBOL_SETTINGS), -(TABBAR_H - 16));
 #else
+  // Round panels inset the tab row by SB_INSET_X (see the tab-bar styling), so
+  // the gear moves in by the same amount and the badge has to follow it.
+#if CAP_ROUND_CORNERS
+  lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8 - SB_INSET_X, -(TABBAR_H - 16));
+#else
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
+#endif
 #endif
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
@@ -54131,6 +54202,9 @@ static void buildUiTree() {
                pagerTabIconBadgeX(0, pager_chats_tab_label, LV_SYMBOL_ENVELOPE), -(TABBAR_H - 16));
 #elif defined(HAS_EXPANSION_KIT)
                lv_disp_get_hor_res(nullptr) / 12 + 7, -(TABBAR_H - 16));   // 6 tabs: half-cell over Chats
+#elif CAP_ROUND_CORNERS
+               SB_INSET_X + (lv_disp_get_hor_res(nullptr) - 2 * SB_INSET_X) / 10 + 7,
+               -(TABBAR_H - 16));   // 5 tabs inside the round-corner inset: half-cell over Chats
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
@@ -54148,7 +54222,7 @@ static void buildUiTree() {
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(s_tab_indicator, 26, 4);
+  lv_obj_set_size(s_tab_indicator, TAB_INDICATOR_W, 4);
   lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_tab_indicator,
       s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);

@@ -2573,6 +2573,35 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   // Match the stock app's shape exactly (it always emits these two as null).
   out.print("  \"other_settings\": null,\n");
   out.print("  \"auto_add_settings\": null,\n");
+  // Everything else a restore needs, in a block of our own so the fields the stock
+  // app reads keep exactly its shape. Without this, the radio's duty-cycle limit
+  // (airtime factor), the region scope, the auto-add rules, advert/telemetry
+  // policy and GPS settings were silently dropped: a restored node came back on
+  // the right frequency but transmitting on an unlimited duty cycle, unscoped, and
+  // auto-adding everything.
+  if (p) {
+    char l[256];
+    snprintf(l, sizeof l,
+      "  \"wadamesh_settings\": {\"version\": 1, \"airtime_factor\": %.3f, \"rx_boosted_gain\": %u, "
+      "\"multi_acks\": %u, \"manual_add_contacts\": %u, \"autoadd_config\": %u, \"autoadd_max_hops\": %u, ",
+      (double)p->airtime_factor, (unsigned)p->rx_boosted_gain, (unsigned)p->multi_acks,
+      (unsigned)p->manual_add_contacts, (unsigned)p->autoadd_config, (unsigned)p->autoadd_max_hops);
+    out.print(l);
+    snprintf(l, sizeof l,
+      "\"advert_loc_policy\": %u, \"telemetry_mode_base\": %u, \"telemetry_mode_loc\": %u, "
+      "\"telemetry_mode_env\": %u, \"gps_enabled\": %u, \"gps_interval\": %lu, \"path_hash_mode\": %u, "
+      "\"region_scope\": \"",
+      (unsigned)p->advert_loc_policy, (unsigned)p->telemetry_mode_base, (unsigned)p->telemetry_mode_loc,
+      (unsigned)p->telemetry_mode_env, (unsigned)p->gps_enabled, (unsigned long)p->gps_interval,
+      (unsigned)p->path_hash_mode);
+    out.print(l);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+    char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    touchPrefsGetRegionScope(region, sizeof(region));
+    esc(region);
+#endif
+    out.print("\"},\n");
+  }
   out.print("  \"channels\": [");
   bool first = true;
 #ifdef MAX_GROUP_CHANNELS
@@ -2651,6 +2680,41 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       if (!r["spreading_factor"].isNull()) { _prefs.sf = (uint8_t)r["spreading_factor"].as<int>(); prefs_dirty = true; }
       if (!r["coding_rate"].isNull())      { _prefs.cr = (uint8_t)r["coding_rate"].as<int>(); prefs_dirty = true; }
       if (!r["tx_power"].isNull())         { _prefs.tx_power_dbm = (int8_t)r["tx_power"].as<int>(); prefs_dirty = true; }
+    }
+  }
+  if (sections & 0x02) {  // radio + mesh behaviour exported by wadamesh (absent in stock-app files)
+    JsonObjectConst w = root["wadamesh_settings"].as<JsonObjectConst>();
+    if (!w.isNull()) {
+      auto u8 = [&](const char* k, uint8_t& dst, int max_v) {
+        if (w[k].isNull()) return;
+        const int v = w[k].as<int>();
+        if (v >= 0 && v <= max_v) { dst = (uint8_t)v; prefs_dirty = true; }
+      };
+      if (!w["airtime_factor"].isNull()) {
+        const float af = w["airtime_factor"].as<float>();
+        if (af >= 0.0f && af <= 9.0f) { _prefs.airtime_factor = af; prefs_dirty = true; }
+      }
+      u8("rx_boosted_gain", _prefs.rx_boosted_gain, 1);
+      u8("multi_acks", _prefs.multi_acks, 255);
+      u8("manual_add_contacts", _prefs.manual_add_contacts, 255);
+      u8("autoadd_config", _prefs.autoadd_config, 255);
+      u8("autoadd_max_hops", _prefs.autoadd_max_hops, 64);
+      u8("advert_loc_policy", _prefs.advert_loc_policy, 255);
+      u8("telemetry_mode_base", _prefs.telemetry_mode_base, 255);
+      u8("telemetry_mode_loc", _prefs.telemetry_mode_loc, 255);
+      u8("telemetry_mode_env", _prefs.telemetry_mode_env, 255);
+      u8("gps_enabled", _prefs.gps_enabled, 1);
+      u8("path_hash_mode", _prefs.path_hash_mode, 255);
+      if (!w["gps_interval"].isNull()) { _prefs.gps_interval = w["gps_interval"].as<uint32_t>(); prefs_dirty = true; }
+      const char* region = w["region_scope"].as<const char*>();
+      if (region) {
+        // setDefaultFloodScope saves prefs itself; the flag below covers the rest.
+        setDefaultFloodScope(region);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+        touchPrefsSetRegionScope(region);
+#endif
+        if (region[0]) _region_reg.ensureRegion(region);
+      }
     }
   }
   if (sections & 0x04) {  // position
