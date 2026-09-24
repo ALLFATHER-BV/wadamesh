@@ -14698,13 +14698,18 @@ static void buildDeviceSettings(int sec) {
     };
     const int n_fuzz  = (int)(sizeof(k_fuzz) / sizeof(k_fuzz[0]));
     const uint16_t cur_fz = touchPrefsGetGpsFuzzM();
+    // Two columns, two rows. Four across left each button too narrow for its label at
+    // the larger text sizes and translations ("250 m" / "Exact" clipped or overran).
+    constexpr int kFuzzCols = 2;
+    const int fuzz_rows   = (n_fuzz + kFuzzCols - 1) / kFuzzCols;
     const lv_coord_t gap  = SC(4);
+    const lv_coord_t bh   = SC(34);
     const lv_coord_t roww = s_settings_content_w - 2;
-    const lv_coord_t bw   = (roww - gap * (n_fuzz - 1)) / n_fuzz;
+    const lv_coord_t bw   = (roww - gap * (kFuzzCols - 1)) / kFuzzCols;
     for (int i = 0; i < n_fuzz; ++i) {
       lv_obj_t* b = lv_btn_create(body);
-      lv_obj_set_size(b, bw, SC(34));
-      lv_obj_set_pos(b, 2 + i * (bw + gap), y);
+      lv_obj_set_size(b, bw, bh);
+      lv_obj_set_pos(b, 2 + (i % kFuzzCols) * (bw + gap), y + (i / kFuzzCols) * (bh + gap));
       styleButton(b);
       const bool on = (k_fuzz[i].m == cur_fz);
       // Both states set explicitly, so repainting a selection later is symmetric
@@ -14724,7 +14729,7 @@ static void buildDeviceSettings(int sec) {
       lv_label_set_text(l, TR(k_fuzz[i].label));
       lv_obj_center(l);
     }
-    y += SC(38);
+    y += fuzz_rows * bh + (fuzz_rows - 1) * gap + SC(4);
     y += settingsRowLabel(body, y, 0,
           TR("position others see is shifted; your own map keeps the real fix"),
           COLOR_SUB, &g_font_12, 0) + 2;

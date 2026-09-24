@@ -2578,7 +2578,8 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   // (airtime factor), the region scope, the auto-add rules, advert/telemetry
   // policy and GPS settings were silently dropped: a restored node came back on
   // the right frequency but transmitting on an unlimited duty cycle, unscoped, and
-  // auto-adding everything.
+  // auto-adding everything. Also carried: RX delay, buzzer quiet, client repeat, the
+  // BLE pairing PIN and the location-privacy radius.
   if (p) {
     char l[256];
     snprintf(l, sizeof l,
@@ -2595,7 +2596,15 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
       (unsigned)p->telemetry_mode_env, (unsigned)p->gps_enabled, (unsigned long)p->gps_interval,
       (unsigned)p->path_hash_mode);
     out.print(l);
+    snprintf(l, sizeof l,
+      "\"rx_delay_base\": %.3f, \"buzzer_quiet\": %u, \"client_repeat\": %u, \"ble_pin\": %lu, ",
+      (double)p->rx_delay_base, (unsigned)p->buzzer_quiet, (unsigned)p->client_repeat,
+      (unsigned long)p->ble_pin);
+    out.print(l);
 #if defined(ESP32) && defined(HAS_TOUCH_UI)
+    // Location privacy radius: the shifted position others see (Settings > GPS).
+    snprintf(l, sizeof l, "\"gps_fuzz_m\": %u, ", (unsigned)touchPrefsGetGpsFuzzM());
+    out.print(l);
     char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
     touchPrefsGetRegionScope(region, sizeof(region));
     esc(region);
@@ -2706,6 +2715,24 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       u8("gps_enabled", _prefs.gps_enabled, 1);
       u8("path_hash_mode", _prefs.path_hash_mode, 255);
       if (!w["gps_interval"].isNull()) { _prefs.gps_interval = w["gps_interval"].as<uint32_t>(); prefs_dirty = true; }
+      u8("buzzer_quiet", _prefs.buzzer_quiet, 1);
+      u8("client_repeat", _prefs.client_repeat, 255);
+      if (!w["rx_delay_base"].isNull()) {
+        const float rd = w["rx_delay_base"].as<float>();
+        if (rd >= 0.0f && rd <= 20.0f) { _prefs.rx_delay_base = rd; prefs_dirty = true; }
+      }
+      if (!w["ble_pin"].isNull()) {
+        // Any six-digit code the Bluetooth page accepts (a leading 0 stores below 100000).
+        const uint32_t pin = w["ble_pin"].as<uint32_t>();
+        if (pin <= 999999) { _prefs.ble_pin = pin; prefs_dirty = true; }
+      }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+      if (!w["gps_fuzz_m"].isNull()) {
+        const uint32_t fz = w["gps_fuzz_m"].as<uint32_t>();
+        // Only the radii the Location privacy row offers (Exact / 100 m / 250 m / 1 km).
+        if (fz == 0 || fz == 100 || fz == 250 || fz == 1000) touchPrefsSetGpsFuzzM((uint16_t)fz);
+      }
+#endif
       const char* region = w["region_scope"].as<const char*>();
       if (region) {
         // setDefaultFloodScope saves prefs itself; the flag below covers the rest.
