@@ -26,6 +26,7 @@
 #include "../../src/helpers/esp32/MultiTransportCompanionInterface.h"
 #include <helpers/esp32/WifiRuntimeStore.h>   // wifiConfig* (runtime Wi-Fi state the loop drives)
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
+#include "../../src/helpers/esp32/BootTimeSync.h"   // opt-in cold-boot clock sync over saved Wi-Fi (#383)
 #include "esp_hosted.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -295,6 +296,25 @@ static void wadameshSetup() {
   store.begin();
 
   the_mesh.begin(disp != NULL);
+
+#if TDP4_C6_HOSTED
+  // Cold-boot clock sync over SAVED Wi-Fi (#383, BootTimeSync.h) -- the same opt-in
+  // Settings > Clock switch the T-Deck/M9 have. Same place in the sequence as the S3
+  // main.cpp: before the TCP/WS/BLE transports exist, so its temporary Wi-Fi session has
+  // nothing live to disturb. Returns Skipped at no cost unless this was a true power-on,
+  // the user turned it on, and the PCF8563 did not already give a trustworthy time.
+  {
+    wifiConfigBegin();
+    uint32_t synced_epoch = 0;
+    const BootTimeSyncResult r = bootTimeSyncRun(rtc_clock.timeIsCurrent(), synced_epoch);
+    if (r == BootTimeSyncResult::Ok) {
+      rtc_clock.setCurrentTime(synced_epoch);   // floor + system clock + RTC chip, like an NTP sync
+      printf("[BOOT] cold-boot time sync ok: %lu\n", (unsigned long)synced_epoch);
+    } else if (r != BootTimeSyncResult::Skipped) {
+      printf("[BOOT] cold-boot time sync: %s\n", bootTimeSyncResultName(r));
+    }
+  }
+#endif
 
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
   serial_interface.setBroadcastResponses(true);
