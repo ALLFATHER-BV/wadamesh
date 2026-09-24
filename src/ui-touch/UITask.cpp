@@ -21016,6 +21016,21 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
 static void openJoinPrivateChannelModal() {
   lv_obj_t* body = createSettingsModal(TR("Join private channel"), SettingsModalKind::ChJoinPrv);
   int y = 0;
+#if !CAP_KEYBOARD
+  // On-screen keyboard boards: the form is short and the page tall (the P4 left most
+  // of it empty), so sit the whole form just above where the keyboard opens, letting
+  // the fields and Join stay in view while typing instead of hugging the header.
+  {
+    constexpr int kFormH = 32 + (16 + 36) * 2 + 24 + 36;   // hint, name, secret, error, Join
+    lv_obj_update_layout(body);
+    lv_area_t ba;
+    lv_obj_get_coords(body, &ba);
+    const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+    const lv_coord_t kb_h = (sw > sh) ? sh / 2 : CHAT_KB_H;   // matches kbApplyLayoutForRotation
+    const int free_h = (sh - kb_h) - ba.y1 - kFormH - 8;
+    if (free_h > 0) y = free_h;
+  }
+#endif
 
   lv_obj_t* hint = lv_label_create(body);
   lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
