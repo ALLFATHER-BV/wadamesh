@@ -52293,7 +52293,7 @@ static void setupShowStep(int step) {
   const lv_coord_t btn_y = sh - kSetupBtnH - 10;
 
   if (step == 0) {
-    setupHeader(TR("Welcome to WADAMESH"), nullptr, nullptr);
+    const int header_bottom = setupHeader(TR("Welcome to WADAMESH"), nullptr, nullptr);
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
         TR("Let's set up your device.\n\n"
@@ -52302,9 +52302,21 @@ static void setupShowStep(int step) {
     lv_obj_set_width(m, sw - 24);
     lv_obj_set_style_text_font(m, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(m, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_pos(m, 12, 46);
-    setupBtn(TR("Skip"), setupSkipCb, false, 12, btn_y, 96);
-    setupBtn(TR("Get Started"), setupGetStartedCb, true, 12 + 96 + 8, btn_y, sw - 24 - 96 - 8);
+    lv_obj_set_style_text_align(m, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    // The message and its Skip / Get Started buttons sit together as one block in
+    // the middle of the screen, rather than text pinned under the title and buttons
+    // pinned to the bottom edge (a large empty gap on tall panels like the P4). Never
+    // above the title, and never below the old bottom-edge position on short panels.
+    lv_obj_update_layout(m);
+    constexpr lv_coord_t kGap = 20;
+    const lv_coord_t block_h = lv_obj_get_height(m) + kGap + kSetupBtnH;
+    lv_coord_t top = (sh - block_h) / 2;
+    top = LV_MAX(top, (lv_coord_t)(header_bottom + 8));
+    top = LV_MIN(top, (lv_coord_t)(btn_y - kGap - lv_obj_get_height(m)));
+    lv_obj_set_pos(m, 12, top);
+    const lv_coord_t row_y = top + lv_obj_get_height(m) + kGap;
+    setupBtn(TR("Skip"), setupSkipCb, false, 12, row_y, 96);
+    setupBtn(TR("Get Started"), setupGetStartedCb, true, 12 + 96 + 8, row_y, sw - 24 - 96 - 8);
   } else if (step == 1) {
     int y = setupHeader(TR("Choose your name"), TR("How you'll appear to other nodes. You can change this later in Settings."), TR("Step 1 of 3"));
     s_setup_name_ta = lv_textarea_create(s_setup_root);
