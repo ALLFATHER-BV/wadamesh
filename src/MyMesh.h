@@ -218,7 +218,8 @@ public:
    *  export shape so the file opens in the app / web client. */
   void uiExportBackup(Print& out, double node_lat, double node_lon);
   /** Apply a parsed backup. `sections` bit flags choose what to apply:
-   *  bit0=identity(name+key) bit1=radio bit2=position bit3=channels bit4=contacts.
+   *  bit0=identity(name+key) bit1=radio bit2=position bit3=channels bit4=contacts
+   *  bit5=screen/app preferences + Wi-Fi (touch builds; "app_settings" in the file).
    *  `replace_*` clears existing channels/contacts first. Returns false on a
    *  malformed document. Fills counts (channels/contacts applied) if non-null. */
   bool uiImportBackup(Stream& in, uint8_t sections,

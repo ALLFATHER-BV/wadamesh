@@ -43702,7 +43702,7 @@ static void doBackupImportChosen() {
   // per-core idle watchdogs for the duration and only restore them if we bail.
   wdtHeavyBegin();
   int nch = 0, nco = 0;
-  bool ok = f && the_mesh.uiImportBackup(f, 0x1F, true, true, &nch, &nco);
+  bool ok = f && the_mesh.uiImportBackup(f, 0x3F, true, true, &nch, &nco);   // 0x20 = screen/app prefs
   if (f) f.close();
   if (!ok) {
     wdtHeavyEnd();

@@ -2611,6 +2611,30 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
 #endif
     out.print("\"},\n");
   }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+  // Screen and app preferences (display, sounds, keyboard, map, notifications, quick
+  // replies, favourites/ignores, channel mute/emoji/scope, repeater passwords, saved
+  // Wi-Fi networks) plus the active Wi-Fi connection. See touchPrefsBackupExport for
+  // what is deliberately left on the unit.
+  out.print("  \"app_settings\": {\"version\": 1,\n");
+#if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+  {
+    char ssid[65] = {0}, pwd[65] = {0};
+    wifiConfigGetSsid(ssid, sizeof ssid);
+    wifiConfigGetPwd(pwd, sizeof pwd);
+    out.print("    \"wifi\": {\"ssid\": \""); esc(ssid);
+    out.print("\", \"password\": \""); esc(pwd);
+    char l[96];
+    snprintf(l, sizeof l, "\", \"radio\": %u, \"ble\": %u, \"chosen\": %u},\n",
+             (unsigned)wifiConfigGetRadioEnabled(), (unsigned)wifiConfigGetBleEnabled(),
+             (unsigned)wifiConfigGetWifiChosen());
+    out.print(l);
+  }
+#endif
+  out.print("    \"prefs\": ");
+  touchPrefsBackupExport(out);
+  out.print("\n  },\n");
+#endif
   out.print("  \"channels\": [");
   bool first = true;
 #ifdef MAX_GROUP_CHANNELS
@@ -2797,6 +2821,32 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       saveContacts();
     }
   }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+  if (sections & 0x20) {  // screen and app preferences (absent in stock-app files)
+    JsonObjectConst app = root["app_settings"].as<JsonObjectConst>();
+    if (!app.isNull()) {
+      for (JsonVariantConst ev : app["prefs"].as<JsonArrayConst>()) {
+        JsonArrayConst e = ev.as<JsonArrayConst>();
+        const char* key = e[0].as<const char*>();
+        const char* type = e[1].as<const char*>();
+        const char* val = e[2].as<const char*>();
+        if (key && type && type[0] && !type[1] && val) touchPrefsBackupRestore(key, type[0], val);
+      }
+#if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+      JsonObjectConst wf = app["wifi"].as<JsonObjectConst>();
+      if (!wf.isNull()) {
+        const char* ssid = wf["ssid"].as<const char*>();
+        const char* pwd = wf["password"].as<const char*>();
+        if (ssid) wifiConfigSetSsid(ssid);
+        if (pwd) wifiConfigSetPwd(pwd);
+        if (!wf["radio"].isNull())  wifiConfigSetRadioEnabled(wf["radio"].as<int>() != 0);
+        if (!wf["ble"].isNull())    wifiConfigSetBleEnabled(wf["ble"].as<int>() != 0);
+        if (!wf["chosen"].isNull()) wifiConfigSetWifiChosen(wf["chosen"].as<int>() != 0);
+      }
+#endif
+    }
+  }
+#endif
   if (out_channels) *out_channels = nch;
   if (out_contacts) *out_contacts = nco;
   return true;

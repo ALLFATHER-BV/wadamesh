@@ -681,4 +681,16 @@ uint16_t touchPrefsGetSigPollMins();
  * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
 bool     touchPrefsSetSigPollMins(uint16_t mins);
 
+/** Settings backup: the screen and app preferences (display, sounds, keyboard,
+ *  map, notifications, quick replies, favourites/ignores, channel mute/emoji/scope,
+ *  repeater passwords, saved Wi-Fi networks...). Export writes a JSON array of
+ *  ["key","type","value"] triples (type c=u8 s=u16 u=u32 t=string b=hex blob) to
+ *  `out`; each import call restores one triple, accepting only keys and types
+ *  this build would write itself. The packed "cfg" blob is merged field by field,
+ *  keeping settings tied to this particular unit (battery calibration, GPS baud,
+ *  paired BLE keyboard, boot modes, clock floor, FEM, beta-report counters). */
+class Print;
+void touchPrefsBackupExport(Print& out);
+bool touchPrefsBackupRestore(const char* key, char type, const char* value);
+
 #endif
