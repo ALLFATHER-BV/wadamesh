@@ -18,6 +18,12 @@ PAGER_LR1121_ENV="tlora_pager_lr1121_companion_radio_touch"
 PAGER_SX1262_ENV="tlora_pager_sx1262_companion_radio_touch"
 M9_ENV="ThinkNode_M9_companion_radio_touch"
 RAK_ENV="rak_tap_v2_companion_radio_touch"
+# The T-Display P4 is not a PlatformIO env: it is a standalone ESP-IDF app built by
+# tdisplay_p4/build.sh (which ends in `exec idf.py ...`). These two names are the
+# script's own handles for its two panel SKUs; they never reach `pio`.
+P4_ENV="tdisplay_p4"
+P4_LCD_ENV="tdisplay_p4_lcd"
+P4_BUILD="$ROOT/tdisplay_p4/build.sh"
 
 PIO="${PIO:-$(command -v pio || true)}"
 ENV_NAME=""
@@ -27,7 +33,34 @@ FULLCLEAN=false
 JUST_BUILD=false
 
 has_env() {
+  is_p4_env "$1" && return 0
   grep -q "^\[env:$1\]$" platformio.ini
+}
+
+is_p4_env() {
+  [ "$1" = "$P4_ENV" ] || [ "$1" = "$P4_LCD_ENV" ]
+}
+
+# The P4 reuses the Tanmatsu's project-local ESP-IDF (see tdisplay_p4/build.sh).
+p4_toolchain_ready() {
+  [ -f "$ROOT/tanmatsu/esp-idf/export.sh" ]
+}
+
+# run_p4 <env> <idf.py actions...>
+# Runs tdisplay_p4/build.sh for the chosen SKU. `reconfigure` goes first because
+# both SKUs share build/tdisplay_p4 and WADA_P4_LCD is only read at CMake configure
+# time — without it, switching SKU would silently rebuild the previous panel.
+# PORT=/dev/cu.usbmodemXXXX pins the serial port; otherwise idf.py auto-detects.
+run_p4() {
+  local env_name="$1"; shift
+  local port_args=()
+  [ -n "${PORT:-}" ] && port_args=(-p "$PORT")
+  echo "[IDF] $(env_label "$env_name"): $*"
+  if [ "$env_name" = "$P4_LCD_ENV" ]; then
+    WADA_P4_LCD=1 "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
+  else
+    env -u WADA_P4_LCD "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
+  fi
 }
 
 all_envs() {
@@ -49,6 +82,8 @@ env_label() {
     "$PAGER_SX1262_ENV") echo "LilyGo T-LoRa Pager SX1262" ;;
     "$M9_ENV")           echo "ThinkNode M9" ;;
     "$RAK_ENV")          echo "RAK TAP V2" ;;
+    "$P4_ENV")           echo "LilyGo T-Display P4 (AMOLED)" ;;
+    "$P4_LCD_ENV")       echo "LilyGo T-Display P4 (LCD)" ;;
     *)                     echo "$1" ;;
   esac
 }
@@ -70,16 +105,22 @@ Devices:
   --pager-sx1262          LilyGo T-LoRa Pager SX1262
   --m9                    ThinkNode M9
   --rak                   RAK TAP V2
+  --tdisplay-p4           LilyGo T-Display P4, AMOLED (ESP-IDF: tdisplay_p4/build.sh)
+  --tdisplay-p4-lcd       LilyGo T-Display P4, HI8561 LCD SKU (ESP-IDF)
 
 Options:
   --erase, -E             Erase flash before upload
   --fullclean, -F         Run PlatformIO fullclean first
   --just-build, -B        Build only; do not upload or monitor
                           With no device, build every PlatformIO environment
+                          plus both T-Display P4 SKUs (skipped if ESP-IDF is
+                          not installed)
   --help, -h              Show this help
 
 With no device flag, an interactive shell prompts for a target. A non-interactive
 upload defaults to --tdeck. Set PIO=/path/to/pio to override the CLI executable.
+For the T-Display P4, set PORT=/dev/cu.usbmodemXXXX to pick the serial port
+(idf.py auto-detects otherwise).
 EOF
 }
 
@@ -111,6 +152,8 @@ prompt_for_device() {
     "$PAGER_LR1121_ENV"
     "$PAGER_SX1262_ENV"
     "$RAK_ENV"
+    "$P4_ENV"
+    "$P4_LCD_ENV"
   )
   local available=()
   local env_name
@@ -186,6 +229,8 @@ while [ $# -gt 0 ]; do
     --pager-sx1262) select_env "$PAGER_SX1262_ENV" ;;
     --m9)           select_env "$M9_ENV" ;;
     --rak)          select_env "$RAK_ENV" ;;
+    --tdisplay-p4)  select_env "$P4_ENV" ;;
+    --tdisplay-p4-lcd) select_env "$P4_LCD_ENV" ;;
     --erase|-E)     ERASE_FIRST=true ;;
     --fullclean|-F) FULLCLEAN=true ;;
     --just-build|-B) JUST_BUILD=true ;;
@@ -199,10 +244,19 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ -z "$PIO" ]; then
-  echo "PlatformIO CLI not found. Install it or set PIO=/path/to/pio." >&2
-  exit 1
-fi
+need_pio() {
+  if [ -z "$PIO" ]; then
+    echo "PlatformIO CLI not found. Install it or set PIO=/path/to/pio." >&2
+    exit 1
+  fi
+}
+need_p4_toolchain() {
+  if ! p4_toolchain_ready; then
+    echo "ESP-IDF for the T-Display P4 is not installed: run make -C tanmatsu sdk," >&2
+    echo "then tanmatsu/fetch-deps.sh and tdisplay_p4/fetch-deps.sh." >&2
+    exit 1
+  fi
+}
 
 if [ "$JUST_BUILD" = true ]; then
   if [ "$ERASE_FIRST" = true ]; then
@@ -217,6 +271,13 @@ if [ "$JUST_BUILD" = true ]; then
     while IFS= read -r env_name; do
       [ -n "$env_name" ] && build_envs+=("$env_name")
     done < <(all_envs)
+    build_envs+=("$P4_ENV" "$P4_LCD_ENV")
+  fi
+  for env_name in "${build_envs[@]}"; do
+    is_p4_env "$env_name" || { need_pio; break; }
+  done
+  if [ "$ENV_EXPLICIT" = true ] && is_p4_env "$ENV_NAME"; then
+    need_p4_toolchain
   fi
   if [ "${#build_envs[@]}" -eq 0 ]; then
     echo "No PlatformIO environments found." >&2
@@ -233,6 +294,26 @@ if [ "$JUST_BUILD" = true ]; then
     echo "[PIO] Building $(env_label "$ENV_NAME") ($ENV_NAME)"
     echo "===================================================================="
     env_start="$(date +%s)"
+    if is_p4_env "$ENV_NAME"; then
+      if ! p4_toolchain_ready; then
+        results+=("skip  $ENV_NAME  (ESP-IDF not installed)")
+        continue
+      fi
+      p4_actions=(build)
+      [ "$FULLCLEAN" = true ] && p4_actions=(fullclean build)
+      if run_p4 "$ENV_NAME" "${p4_actions[@]}"; then
+        env_end="$(date +%s)"
+        size_note=""
+        bin_path="tdisplay_p4/build/tdisplay_p4/application.bin"
+        [ -f "$bin_path" ] && size_note="  $(( $(wc -c < "$bin_path") / 1024 )) KB"
+        results+=("ok    $ENV_NAME  $(format_duration "$((env_end - env_start))")$size_note")
+      else
+        env_end="$(date +%s)"
+        results+=("FAIL  $ENV_NAME  $(format_duration "$((env_end - env_start))")")
+        failed=$((failed + 1))
+      fi
+      continue
+    fi
     if [ "$FULLCLEAN" = true ] && ! "$PIO" run -e "$ENV_NAME" -t fullclean; then
       env_end="$(date +%s)"
       results+=("FAIL  $ENV_NAME  (fullclean)  $(format_duration "$((env_end - env_start))")")
@@ -270,6 +351,22 @@ fi
 if [ "$ENV_EXPLICIT" = false ]; then
   prompt_for_device
 fi
+
+if is_p4_env "$ENV_NAME"; then
+  need_p4_toolchain
+  p4_actions=()
+  [ "$FULLCLEAN" = true ]   && p4_actions+=(fullclean)
+  [ "$ERASE_FIRST" = true ] && p4_actions+=(erase-flash)
+  p4_actions+=(build flash)
+  start="$(date +%s)"
+  run_p4 "$ENV_NAME" "${p4_actions[@]}"
+  end="$(date +%s)"
+  echo "[IDF] Build/flash completed in $(format_duration "$((end - start))")."
+  run_p4 "$ENV_NAME" monitor
+  exit $?
+fi
+
+need_pio
 
 if [ "$ERASE_FIRST" = true ]; then
   run_target erase "Erase flash"
