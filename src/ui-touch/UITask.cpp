@@ -29134,6 +29134,21 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_line_space(keys, info_ls, LV_PART_MAIN);
     lv_obj_align(keys, LV_ALIGN_TOP_LEFT, 0, 0);
 
+    // The keys are static, so size the values column from their real width instead of a
+    // fixed SC(100) offset (which left a wide empty gap after short labels like "Node"),
+    // with a thin divider between the two columns.
+    lv_obj_update_layout(keys);
+    const lv_coord_t col_gap = SC(6);
+    const lv_coord_t div_x   = lv_obj_get_width(keys) + col_gap;
+    const lv_coord_t vals_x  = div_x + 1 + col_gap;
+    lv_obj_t* col_div = lv_obj_create(card);
+    lv_obj_remove_style_all(col_div);
+    lv_obj_clear_flag(col_div, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(col_div, 1, lv_obj_get_height(keys));
+    lv_obj_set_style_bg_color(col_div, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(col_div, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(col_div, LV_ALIGN_TOP_LEFT, div_x, 0);
+
     s_home_info = lv_label_create(card);
     lv_label_set_text(s_home_info, "...");
     lv_obj_set_style_text_color(s_home_info, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -29141,9 +29156,9 @@ static void makeHome(lv_obj_t* tab) {
     lv_obj_set_style_text_line_space(s_home_info, info_ls, LV_PART_MAIN);
     // Constrain + clip the values column at the card's padding edge — a long node name or
     // radio string otherwise ran to the card border and was cut mid-glyph against it.
-    lv_obj_set_width(s_home_info, info_w - 16 - SC(100));
+    lv_obj_set_width(s_home_info, info_w - 16 - vals_x);
     lv_label_set_long_mode(s_home_info, LV_LABEL_LONG_CLIP);
-    lv_obj_align(s_home_info, LV_ALIGN_TOP_LEFT, SC(100), 0);   // values column clears the keys
+    lv_obj_align(s_home_info, LV_ALIGN_TOP_LEFT, vals_x, 0);   // just right of the divider
   }
 #endif
 
@@ -50827,6 +50842,19 @@ static void buildGlobalStatusBar() {
 // centre the different glyph heights within their row. Base X offsets mirror the
 // single-row builder so the horizontal spacing is unchanged; +SB_INSET_X keeps the end
 // glyphs clear of the corner arcs.
+// Right edge (px from the bar's right) of the row-2 sub-battery cluster: after the widest
+// the percentage can get ("100%" in its font), not a fixed 64 px -- with the scaled font
+// the signal box sat on top of "100%".
+static bool s_crumb_capped = false;   // round panel: breadcrumb width capped on row 2
+static int statusClusterStart() {
+  const lv_font_t* pct_font = &g_font_12;
+  if (g_statusbar.batt_pct) pct_font = lv_obj_get_style_text_font(g_statusbar.batt_pct, LV_PART_MAIN);
+  const int pct_w = lv_txt_get_width("100%", 4, pct_font, 0, LV_TEXT_FLAG_NONE);
+  return LV_MAX(64, 26 + pct_w + 6);
+}
+// Left edge of the whole row-2 status cluster, measured from the bar's right edge.
+static int statusClusterLeftExtent() { return statusClusterStart() + 62 + 14 + SB_INSET_X; }
+
 static void statusBarLayoutTwoRow(int slide) {
   const int ins = SB_INSET_X;
   // Row 2 — status cluster, right→left, evenly spaced. Battery pinned at the inset;
@@ -50837,10 +50865,14 @@ static void statusBarLayoutTwoRow(int slide) {
   // updateGlobalStatusBar).
   if (g_statusbar.batt_icon) lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_TOP_RIGHT, -(2   + ins),         SB_ROW2_Y - 2);
   if (g_statusbar.batt_pct)  lv_obj_align(g_statusbar.batt_pct,  LV_ALIGN_TOP_RIGHT, -(26  + ins),         SB_ROW2_Y);
-  if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(64  + ins - slide), SB_ROW2_Y + 2);
-  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(86  + ins - slide), SB_ROW2_Y + 4);
-  if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(102 + ins - slide), SB_ROW2_Y);
-  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(126 + ins - slide), SB_ROW2_Y);
+  const int cl = statusClusterStart();
+  // Charging hides the % column; the cluster then closes up to 32 px from the battery
+  // (the historical position), whatever width the % column had reserved.
+  if (slide) slide = cl - 32;
+  if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(cl      + ins - slide), SB_ROW2_Y + 2);
+  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(cl + 22 + ins - slide), SB_ROW2_Y + 4);
+  if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(cl + 38 + ins - slide), SB_ROW2_Y);
+  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(cl + 62 + ins - slide), SB_ROW2_Y);
   // Row 1 — clock at the right inset (+ keyboard-layout tag to its left when typing).
   if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_TOP_RIGHT, -ins,        SB_ROW1_Y);
   if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_TOP_RIGHT, -(48 + ins), SB_ROW1_Y);
@@ -51034,13 +51066,26 @@ static void updateGlobalStatusBar() {
 #if CAP_ROUND_CORNERS
   // Round panel placement of the left zone:
   //  - open chat: thread name centred on ROW 1 (back/cog on row-1 left, clock row-1 right).
-  //  - settings/tool page: "‹ Title" on ROW 1 left.
+  //  - settings/tool page: "‹ Title" on ROW 2 left, its top level with the battery
+  //    readout on the right (and clear of the clock on row 1).
   //  - home / other tabs: the scrolling profile name (or ✉ unread badge) sits on ROW 2,
   //    the SAME line as the battery/status cluster (per request), left-aligned.
+  if (s_crumb_capped && !(s_settings_open_cat >= 0 || s_apppage_title)) {
+    // Leaving a settings/tool page: drop the breadcrumb's width cap (the home tab's
+    // marquee config, applied further down, sets its own when it is the home tab).
+    lv_obj_set_width(g_statusbar.left_label, LV_SIZE_CONTENT);
+    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_WRAP);
+    s_crumb_capped = false;
+  }
   if (in_chan_chat) {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_MID, 0, SB_ROW1_Y);
   } else if (s_settings_open_cat >= 0 || s_apppage_title) {
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW1_Y);
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW2_Y);
+    // Sharing row 2 with the status cluster: cap the title short of it (ellipsis).
+    const int crumb_w = lv_obj_get_width(g_statusbar.root) - SB_INSET_X - statusClusterLeftExtent() - 6;
+    lv_obj_set_width(g_statusbar.left_label, LV_MAX(40, crumb_w));
+    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+    s_crumb_capped = true;
   } else {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW2_Y);
   }
@@ -51118,8 +51163,14 @@ static void updateGlobalStatusBar() {
     // A settings detail sheet OR a tool page is open: the bar carries its Back chevron +
     // page title, CENTRED in the tall bar and a size up (tapping the bar goes Back). The
     // chevron is tinted with the theme accent (the title text stays default).
+#if CAP_ROUND_CORNERS
+    // Round panel: the title shares row 2 with the battery readout, so it uses that
+    // row's size rather than the tall bar's larger one.
+    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
+#else
     lv_obj_set_style_text_font(g_statusbar.left_label,
                                s_statusbar_tall ? &g_font_16 : &g_font_14, LV_PART_MAIN);
+#endif
     lv_label_set_recolor(g_statusbar.left_label, true);
     char sbuf[56];
     snprintf(sbuf, sizeof sbuf, "#%06X %s#  %s", (unsigned)(COLOR_ACCENT & 0xFFFFFF),
