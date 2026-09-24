@@ -2590,8 +2590,7 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
     out.print(l);
     snprintf(l, sizeof l,
       "\"advert_loc_policy\": %u, \"telemetry_mode_base\": %u, \"telemetry_mode_loc\": %u, "
-      "\"telemetry_mode_env\": %u, \"gps_enabled\": %u, \"gps_interval\": %lu, \"path_hash_mode\": %u, "
-      "\"region_scope\": \"",
+      "\"telemetry_mode_env\": %u, \"gps_enabled\": %u, \"gps_interval\": %lu, \"path_hash_mode\": %u, ",
       (unsigned)p->advert_loc_policy, (unsigned)p->telemetry_mode_base, (unsigned)p->telemetry_mode_loc,
       (unsigned)p->telemetry_mode_env, (unsigned)p->gps_enabled, (unsigned long)p->gps_interval,
       (unsigned)p->path_hash_mode);
@@ -2605,6 +2604,12 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
     // Location privacy radius: the shifted position others see (Settings > GPS).
     snprintf(l, sizeof l, "\"gps_fuzz_m\": %u, ", (unsigned)touchPrefsGetGpsFuzzM());
     out.print(l);
+#endif
+    // region_scope is the block's LAST field: it is the one string, opened here and
+    // closed with the block. (Anything printed between its opening quote and the
+    // closing one lands inside the string and breaks the file's JSON.)
+    out.print("\"region_scope\": \"");
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
     char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
     touchPrefsGetRegionScope(region, sizeof(region));
     esc(region);
