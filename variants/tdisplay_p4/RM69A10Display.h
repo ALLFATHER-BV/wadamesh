@@ -7,15 +7,15 @@
 // TanmatsuDisplay's contract. The panel RESET line is on the XL9535 (released in powerOnSequence),
 // so the vendor driver's reset_gpio_num = -1. Timing from LilyGo rm69a10_driver.h (TDISPLAY_P4_PORT.md).
 #include <stdint.h>
-#include <helpers/ui/DisplayDriver.h>
+#include "P4PanelPainter.h"   // native-resolution fills/text for non-LVGL screens (Remote UI)
 #include "esp_lcd_types.h"
 
-class RM69A10Display : public DisplayDriver {
+class RM69A10Display : public P4PanelPainter {
   bool _on = true;
   esp_lcd_panel_handle_t _panel = nullptr;
   esp_lcd_panel_io_handle_t _dbi_io = nullptr;   // DCS command channel (runtime brightness 0x51)
 public:
-  RM69A10Display() : DisplayDriver(568, 1232) {}
+  RM69A10Display() : P4PanelPainter(568, 1232) {}
 
   bool begin();   // full DSI bring-up; returns false on failure (logs the stage)
 
@@ -23,21 +23,15 @@ public:
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels);
   void setDisplayRotation(int rot) { (void)rot; }   // TODO(device): panel rotation / SW-rotate
   void startFrame() {}
+  // Explicit forward (no default arg) so startFrame() stays unambiguous next to the no-arg one.
+  void startFrame(ColorVal bkg) override { P4PanelPainter::startFrame(bkg); }
   void endFrame()   {}
 
-  // --- DisplayDriver contract (minimal; LVGL does the real drawing) ---
+  // --- DisplayDriver contract: fills/text come from P4PanelPainter; LVGL does the UI ---
   bool isOn() override { return _on; }
   void turnOn() override;
   void turnOff() override;
   void setBrightness(uint8_t b);   // RM69A10 cmd 0x51
-  void clear() override {}
-  void startFrame(ColorVal) override {}
-  void setTextSize(int) override {}
-  void setColor(ColorVal) override {}
-  void setCursor(int, int) override {}
-  void print(const char*) override {}
-  void fillRect(int, int, int, int) override {}
-  void drawRect(int, int, int, int) override {}
-  void drawXbm(int, int, const uint8_t*, int, int) override {}
-  uint16_t getTextWidth(const char*) override { return 0; }
+protected:
+  void writeNativeRGB565(int x, int y, int w, int h, const uint16_t* px) override;
 };

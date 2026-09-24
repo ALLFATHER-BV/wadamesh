@@ -3679,6 +3679,33 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
     display.setColor((ColorVal)0xFFE0);
     display.drawTextCentered(W / 2, 304, "or press SPACE twice within 3s");
   }
+#elif defined(HAS_TDISPLAY_P4)
+  // Tall 568x1232 (AMOLED) / 540x1168 (LCD) portrait panel. Text comes from P4PanelPainter at
+  // the UI's 2x scale (size 1 = 28 px, size 2 = 56 px), so the spacing is laid out for that,
+  // not for the ~8 px text the generic layout below assumes. writePixelsRGB565 upscales 2x on
+  // these panels, so the mark is placed in half-resolution coordinates and lands centred at 2x.
+  display.writePixelsRGB565((W / 2 - WADAMESH_MARK_W) / 2, 80,
+                            WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
+  display.setColor((ColorVal)0xFFFF);
+  display.setTextSize(2);
+  display.drawTextCentered(W / 2, 400, "REMOTE MODE");
+  display.setTextSize(1);
+  if (up) {
+    char u[48];
+    snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+    display.setColor((ColorVal)0xFFFF);
+    display.drawTextCentered(W / 2, 500, "Open this address in a browser");
+    display.setColor((ColorVal)0x07E0);
+    display.drawTextCentered(W / 2, 548, u);
+  } else {
+    display.setColor((ColorVal)0xFD20);
+    display.drawTextCentered(W / 2, 520, "Connecting to Wi-Fi...");
+  }
+  display.setColor(exit_armed ? (ColorVal)0x07E0 : (ColorVal)0xFFE0);
+  display.drawTextCentered(W / 2, H - 150,
+                           exit_armed ? "Keep holding to exit..." : "Touch and hold 3s to exit");
+  display.setColor((ColorVal)0xFFFF);
+  display.drawTextCentered(W / 2, H - 104, "or tap Exit in the browser");
 #else
   // wadamesh mesh mark up top (same white-on-black artwork as the boot splash). The
   // touch DisplayDriver runs at scale 1.0, so writePixelsRGB565 shares text coords.
