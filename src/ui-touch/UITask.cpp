@@ -1745,7 +1745,7 @@ struct GlobalStatusBar {
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
   lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
-  lv_obj_t* inbox_add;      // chat/channel-overview actions: [+ add | ✓ read | QR]
+  lv_obj_t* inbox_add;      // chat/channel-overview actions: [✓ read | + add | QR]
   lv_obj_t* inbox_mark;
   lv_obj_t* inbox_qr;
   lv_obj_t* chat_back;      // "‹" affordance shown while in a chat (tap the bar = close)
@@ -5364,8 +5364,8 @@ static LvChatPanel* s_nav_prev_chat = nullptr;   // last chat panel we focused (
 // The global status bar has NAV_SKIP_FLAG so its passive glyphs (time / signal / battery)
 // never become keyboard/trackball-nav targets — but that also skipped its ACTION buttons.
 // Re-add the VISIBLE, clickable ones by hand after a rebuild so nav can reach them: the
-// chat-overview [ + ✓ QR ] and (in an open channel) the settings gear. (Trackball-nav
-// couldn't reach the + / ✓ / QR on the Chats tab.)
+// chat-overview [ ✓ + QR ] and (in an open channel) the settings gear. (Trackball-nav
+// couldn't reach the ✓ / + / QR on the Chats tab.)
 static void navAddStatusBarActions() {
   if (!s_nav_group) return;
   auto add = [](lv_obj_t* o) {
@@ -5378,7 +5378,7 @@ static void navAddStatusBarActions() {
     if (s_nav_count < kNavMax) s_nav_objs[s_nav_count] = o;
     s_nav_count++;
   };
-  add(g_statusbar.inbox_add); add(g_statusbar.inbox_mark); add(g_statusbar.inbox_qr);
+  add(g_statusbar.inbox_mark); add(g_statusbar.inbox_add); add(g_statusbar.inbox_qr);
   add(g_statusbar.chan_gear);
   // On a settings detail / tool page (Monitor, Spectrum) the bar's left_label is the
   // "‹ Title" Back affordance — make it reachable so nav can go Back from a double-topbar page.
@@ -6012,7 +6012,7 @@ static void openLogModalCb(lv_event_t* e);
 static void logModeRxCb(lv_event_t* e);
 static void logModeRawCb(lv_event_t* e);
 static void showConfirm(const char* msg, const char* ok_label, void (*on_confirm)(),
-                        bool actions_only_nav = false);
+                        bool actions_only_nav = false, bool focus_confirm = false);
 static void clipboardSet(const char* text, const char* tag);
 static void copyLabelLongPressCb(lv_event_t* e);
 static void taClearSelection(lv_obj_t* ta);   // clear composer text-selection before an insert
@@ -16188,7 +16188,7 @@ void confirmOkEvt(lv_event_t* e) {
 }  // namespace
 
 static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confirm,
-                        bool actions_only_nav) {
+                        bool actions_only_nav, bool focus_confirm) {
   confirmDismiss();
   s_confirm_cb = on_confirm;
 
@@ -16282,8 +16282,8 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   uiFitLabelWidth(lo, SC(100) - 8);
   lv_obj_center(lo);
 #if CAP_KEYPAD_NAV
-  if (actions_only_nav) {
-    s_nav_focus_hint = b_cancel;
+  if (focus_confirm || actions_only_nav) {
+    s_nav_focus_hint = focus_confirm ? b_ok : b_cancel;
     navMarkDirty();
   }
 #endif
@@ -21168,7 +21168,8 @@ static void markAllReadApply() {
 }
 static void chatsMarkAllReadBtnCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  showConfirm(TR("Mark all chats and channels as read?"), TR("Mark read"), markAllReadApply);
+  showConfirm(TR("Mark all chats and channels as read?"), TR("Mark read"), markAllReadApply,
+              false, true);
 }
 
 // ---- Share-my-contact QR popup ------------------------------------------
@@ -29259,7 +29260,7 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   styleSurface(tab, COLOR_BG, 0);
   lv_obj_set_style_pad_all(tab, 0, LV_PART_MAIN);
 
-  // Inbox/overview tab: the [+ add | ✓ mark-read | QR share] actions normally live in
+  // Inbox/overview tab: the [✓ mark-read | + add | QR share] actions normally live in
   // a second status-bar row, so the list needs one row of top inset. Pager puts those
   // compact actions in the regular status row instead; reserving the old second row
   // there leaves a full chat-row-sized hole above the first thread.
@@ -50349,7 +50350,7 @@ static void buildGlobalStatusBar() {
     }
   }
 
-  // Chat/channel-OVERVIEW actions: [+ add | ✓ mark-read | QR share]. Hidden by
+  // Chat/channel-OVERVIEW actions: [✓ mark-read | + add | QR share]. Hidden by
   // default and shown only on the overview (updateGlobalStatusBar). Most square
   // panels centre them across the double-height bar; Pager keeps them aligned
   // with the first-row status cluster so the compact header reads as one row.
@@ -50397,7 +50398,12 @@ static void buildGlobalStatusBar() {
       lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
       return b;
     };
-    g_statusbar.inbox_add  = mk(0);   // leftmost — green primary
+    g_statusbar.inbox_mark = mk(0);   // leftmost — mark all read
+    lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
+    { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
+      lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
+    g_statusbar.inbox_add  = mk(1);   // middle — add channel
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN);
@@ -50407,11 +50413,6 @@ static void buildGlobalStatusBar() {
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
       lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN); lv_obj_center(l); }
-    g_statusbar.inbox_mark = mk(1);   // middle — mark all read
-    lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
-    { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
-      lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
@@ -50806,7 +50807,7 @@ static void updateGlobalStatusBar() {
 
   // ---- Double-height bar driver (edge-triggered) ----
   // The bar goes 2× tall for (a) settings detail pages, (b) the chat/channel OVERVIEW
-  // (lower row = [+ ✓ QR] actions), and (c) an OPEN chat (lower row = thread name, cog
+  // (lower row = [✓ + QR] actions), and (c) an OPEN chat (lower row = thread name, cog
   // centred across both rows). Pager's compact overview and open-chat controls share
   // the regular top row, so both states stay single-height.
   // An open app/tool page (the reader, RF Monitor, …) takes over the bar even when a
