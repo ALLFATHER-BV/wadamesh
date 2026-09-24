@@ -55,6 +55,13 @@ run_p4() {
   local env_name="$1"; shift
   local port_args=()
   [ -n "${PORT:-}" ] && port_args=(-p "$PORT")
+  # build.sh handles a lone `fullclean` itself (removes only the generated tree): idf.py's
+  # stock fullclean rejects the intentionally patched managed components and aborts.
+  if [ "${1:-}" = "fullclean" ]; then
+    "$P4_BUILD" fullclean || return 1
+    shift
+    [ $# -eq 0 ] && return 0
+  fi
   echo "[IDF] $(env_label "$env_name"): $*"
   if [ "$env_name" = "$P4_LCD_ENV" ]; then
     WADA_P4_LCD=1 "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"

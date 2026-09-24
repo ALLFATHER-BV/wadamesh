@@ -234,7 +234,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
       #endif
       #include "../helpers/esp32/WifiRuntimeStore.h"   // QUOTED: this tree's copy (wifiScan*Active), not the lib's stale one
       #include "helpers/esp32/MqttBridge.h"
-      #if defined(HAS_TDISPLAY_P4)
+      #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
         // T-Display P4: the C6 runs ESP-AT, so Arduino's real WiFi object must NEVER be driven (its
         // mode()/begin() re-init esp_hosted and panic). These facades rebind every WiFi.* below to the
         // c6_at AT-over-SDIO driver — scans/joins become real, status reads come from a cache — and
@@ -31393,7 +31393,35 @@ static void uiLangFileBootLoad() {
 // results with WiFi.SSID(i).
 static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
   s_swd_status = (uint8_t)WiFi.status();
-#if defined(HAS_TANMATSU)
+#if defined(HAS_TDISPLAY_P4)
+  // The P4 facade queues AT+CWLAP on the separate C6 worker. That command has
+  // its own 10 s timeout, so the S3 path's 8 s caller cap cleared RUNNING and
+  // queued another scan before the first could publish results. Wait beyond
+  // the worker deadline; retry only after the prior request has completed.
+  const uint32_t p4_cap_ms = cap_ms < 18000UL ? 18000UL : cap_ms;
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    WiFi.scanDelete();
+    const uint32_t t0 = millis();
+    const int16_t kick = WiFi.scanNetworks(true, true, false, per_chan_ms, 0);
+    s_swd_kick = kick;
+    if (kick == WIFI_SCAN_FAILED) {
+      s_swd_st = WIFI_SCAN_FAILED;
+      s_swd_dur = millis() - t0;
+      vTaskDelay(pdMS_TO_TICKS(300));
+      continue;
+    }
+    int16_t st;
+    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING &&
+           (millis() - t0) < p4_cap_ms)
+      vTaskDelay(pdMS_TO_TICKS(100));
+    s_swd_st = st;
+    s_swd_dur = millis() - t0;
+    if (st > 0) return st;
+    if (st == WIFI_SCAN_RUNNING) return 0;   // worker is wedged; outer 60 s guard recovers
+    vTaskDelay(pdMS_TO_TICKS(300));
+  }
+  return 0;
+#elif defined(HAS_TANMATSU)
   // esp-hosted C6: a real scan takes ~8 s but it ALSO fires a spurious early
   // "done, 0 items" event the Arduino layer latches. Wait for the real completion;
   // reject a 0 that came back < 4 s (spurious) and re-scan. (Tanmatsu-only — the S3

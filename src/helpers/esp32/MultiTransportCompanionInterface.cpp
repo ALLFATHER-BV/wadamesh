@@ -44,7 +44,7 @@ void MultiTransportCompanionInterface::begin(Stream& usb_serial, uint16_t tcp_po
 }
 
 void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // ESP-AT allows ONE listening port, so the router server (_p4_srv) owns it and dispatches
   // each inbound connection by first byte — see p4RouteClients(). _tcp/_ws never listen
   // themselves here; started flags only mark them willing to adopt routed clients.
@@ -69,7 +69,7 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
 #endif
 }
 
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
 // One AT listener serves BOTH protocols. Accept every inbound connection here, peek its first
 // byte, and hand the socket to the right server: HTTP requests start with an ASCII verb
 // (GET/HEAD/POST/PUT/OPTIONS/DELETE...) and cover the web viewer page, the mirror/terminal
@@ -137,7 +137,7 @@ static void wsMirrorStreamTask(void* arg) {
 }
 
 void MultiTransportCompanionInterface::tickWebSocketHandshake() {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
 #endif
   if (_ws_started) {
@@ -158,7 +158,7 @@ void MultiTransportCompanionInterface::stopTcpServer() {
     _tcp.stop();
     _tcp_started = false;
   }
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   _p4_srv.stop();          // the router owns the AT listener (see startTcpServer)
   for (size_t i = 0; i < sizeof(_p4_pend) / sizeof(_p4_pend[0]); i++) {
     if (_p4_pend[i].used) {
@@ -478,7 +478,7 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
   }
 #endif
   if (_ota_tcp_suspended) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
     _tcp_started = true;   // the router still owns the AT listener; just resume adopting
 #else
     _tcp.begin(_tcp_port);
@@ -488,7 +488,7 @@ void MultiTransportCompanionInterface::restoreAfterHttpOta() {
     meshcoreRepeaterTcpOtaEmitLine("OTA: restored companion TCP server");
   }
   if (_ota_ws_suspended) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
     _ws_started = true;    // ditto — never begin a second AT listener on _ws_port
 #else
     _ws.begin(_ws_port);

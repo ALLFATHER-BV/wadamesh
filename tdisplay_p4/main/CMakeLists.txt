@@ -42,8 +42,16 @@ idf_build_set_property(COMPILE_OPTIONS "${_co}")
 # it uses the core's RadioLib path like the S3 boards — except SX1262 RESET + DIO1 sit on the XL9535
 # I2C GPIO expander (the variant's target.cpp drives them; the raw P_LORA_RESET/DIO_1 are -1 = "none").
 # Pins from LilyGo's components/private_library/t_display_p4_config.h (see [[tdisplay-p4-port]]).
+if(DEFINED ENV{WADA_P4_LEGACY_AT})
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=0)
+  message(STATUS "wadamesh: P4 C6 backend = legacy ESP-AT")
+else()
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=1)
+  message(STATUS "wadamesh: P4 C6 backend = esp-hosted")
+endif()
 set(WADA_DEFS
   HAS_TDISPLAY_P4=1 ESP32_PLATFORM MC_VENDORED_TOUCH_APP UI_LVGL=1 HAS_TOUCH_UI=1
+  ${P4_C6_BACKEND_DEF}
   MULTI_TRANSPORT_COMPANION TCP_PORT=5000 WS_PORT=8765 BLE_PIN_CODE=123456
   LORA_FREQ=869.618 LORA_BW=62.5 LORA_SF=8            # EU 868 (same as the V4)
   LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # SX1262 PA max (dBm); user-tunable in Settings

@@ -123,3 +123,20 @@ mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng);   // fresh random identity from SX1262 RSSI noise
 }
+
+extern "C" bool tdisplay_p4_reset_c6() {
+  if (!xl9535.ok()) return false;
+  // Match the factory-era Meck/LilyGo Esp_At driver exactly: release first,
+  // assert for 50 ms, then release and allow one second for ESP-AT to boot.
+  xl9535.write(Xl9535::IO_C6_EN, true);
+  delay(50);
+  xl9535.write(Xl9535::IO_C6_EN, false);
+  delay(50);
+  xl9535.write(Xl9535::IO_C6_EN, true);
+  delay(1000);
+  return true;
+}
+
+extern "C" int hosted_reset_slave_callback() {
+  return tdisplay_p4_reset_c6() ? 0 : -1;
+}

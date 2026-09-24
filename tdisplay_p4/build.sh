@@ -5,8 +5,22 @@
 # symlinks, and the board-neutral components (meshcore/ardlibs/lvgl/esp_hosted).
 #   ./build.sh build          # compile
 #   ./build.sh flash -p /dev/cu.usbmodemXXXX
+#   ./build.sh fullclean      # remove generated build output; keep patched managed components
 #   ./build.sh menuconfig
 set -e
+
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# This project intentionally applies compatibility fixes inside managed_components
+# before every build. ESP-IDF's stock fullclean also runs remove_managed_components,
+# which rejects those expected hash changes and aborts. A P4 full clean therefore
+# removes only the generated CMake/Ninja tree; dependencies stay in place and the
+# idempotent patches below remain valid.
+if [ "$#" -eq 1 ] && [ "$1" = "fullclean" ]; then
+  cmake -E remove_directory "$PROJECT_DIR/build/tdisplay_p4"
+  echo "[build.sh] removed build/tdisplay_p4 (patched managed components preserved)"
+  exit 0
+fi
 
 # Keep the baked-in translation + Lua app tables in step with deploy/apps/.
 # Same for the seeded Lua apps. The PlatformIO envs get this from a pre: hook;
@@ -16,7 +30,7 @@ python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 # anim_timer use-after-free fix (#428) still needs it. Idempotent; fails on drift.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_anim_uaf.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_anim.c"
-cd "$(dirname "$0")"
+cd "$PROJECT_DIR"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # VS Code may launch this wrapper from PlatformIO's virtualenv. Pin the
 # project-local IDF environment before export.sh inspects that unrelated Python.
@@ -39,6 +53,16 @@ IDF_ARGS=(-B build/tdisplay_p4 \
   -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/wadamesh;sdkconfigs/tdisplay_p4" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4)
+
+# Existing checkouts may carry a generated sdkconfig from the old host-only
+# UART-HCI setup. sdkconfig.defaults does not override an already-saved value,
+# so migrate it before CMake runs. Hosted supplies NimBLE's HCI transport over
+# SDIO; GPIO4/5 UART HCI has no controller attached and ends in hci_h4 asserts.
+if [ -z "${WADA_P4_LEGACY_AT:-}" ] && [ -f sdkconfig ] &&
+   grep -q '^CONFIG_BT_NIMBLE_TRANSPORT_UART=y$' sdkconfig; then
+  sed -i '' 's/^CONFIG_BT_NIMBLE_TRANSPORT_UART=y$/# CONFIG_BT_NIMBLE_TRANSPORT_UART is not set/' sdkconfig
+  echo "[build.sh] disabled stale NimBLE UART HCI (P4 uses hosted HCI over SDIO)"
+fi
 
 # A fresh clone has no managed_components yet. Configure once to download them,
 # then apply the compatibility patches below before the first compilation.
@@ -76,15 +100,20 @@ if [ -f "$SDMMC_C" ] && ! grep -q 'wadamesh P4: slot0 pullups' "$SDMMC_C"; then
   echo "[build.sh] patched arduino SD_MMC.cpp (slot-0 struct pull-up flag)"
 fi
 
-# --- Build-time patch: arduino-esp32 must NEVER start esp-hosted on the P4 ------------------------
-# The T-Display P4's C6 runs ESP-AT (driven by the c6_at component over SDIO). If ANY code path
-# reaches Arduino's real WiFi (i.e. not rebound to the C6WifiShim facade), its hostedInit() would run
-# esp_hosted_init() and grab the C6 SDIO out from under c6_at -> panic ("connect Wi-Fi blue screen").
-# Hard-stub hostedInit() to fail fast instead. Patches only the P4's own managed copy. Idempotent.
+# --- Build-time patch: select Arduino's hosted entry point per C6 firmware generation ------------
+# Current P4 units ship hosted C6 firmware; old units can opt into ESP-AT with
+# WADA_P4_LEGACY_AT=1. Restore hostedInit normally and hard-stub it only for legacy builds.
 HOSTED_C="managed_components/espressif__arduino-esp32/cores/esp32/esp32-hal-hosted.c"
-if [ -f "$HOSTED_C" ] && ! grep -q 'wadamesh P4: never start esp_hosted' "$HOSTED_C"; then
-  sed -i '' 's|^static bool hostedInit() {|static bool hostedInit() { return false; // wadamesh P4: never start esp_hosted (C6 runs ESP-AT; see components/c6_at)|' "$HOSTED_C"
-  echo "[build.sh] hard-stubbed arduino hostedInit() (P4 uses c6_at, never esp-hosted)"
+if [ -f "$HOSTED_C" ]; then
+  if [ -n "${WADA_P4_LEGACY_AT:-}" ]; then
+    if ! grep -q 'wadamesh P4: never start esp_hosted' "$HOSTED_C"; then
+      sed -i '' 's|^static bool hostedInit() {|static bool hostedInit() { return false; // wadamesh P4: never start esp_hosted (legacy C6 uses ESP-AT)|' "$HOSTED_C"
+      echo "[build.sh] hard-stubbed arduino hostedInit() (legacy ESP-AT build)"
+    fi
+  elif grep -q 'wadamesh P4: never start esp_hosted' "$HOSTED_C"; then
+    sed -i '' 's|^static bool hostedInit() { return false; // wadamesh P4: never start esp_hosted.*$|static bool hostedInit() {|' "$HOSTED_C"
+    echo "[build.sh] restored arduino hostedInit() (hosted C6 build)"
+  fi
 fi
 BLEDEV_CPP="managed_components/espressif__arduino-esp32/libraries/BLE/src/BLEDevice.cpp"
 if [ -f "$BLEDEV_CPP" ] && grep -q 'int rc = ble_gap_read_local_irk(irk);' "$BLEDEV_CPP"; then
@@ -93,21 +122,17 @@ if [ -f "$BLEDEV_CPP" ] && grep -q 'int rc = ble_gap_read_local_irk(irk);' "$BLE
 fi
 
 # --- Build-time patch: neutralize esp-hosted's auto-init constructor (P4-ONLY) --------------------
-# The T-Display P4's on-board C6 runs ESP-AT firmware, which we drive over SDIO via the c6_at
-# component (ESSL). esp-hosted (pulled in transitively by arduino-esp32) force-initialises itself in
-# an unconditional __attribute__((constructor)) before app_main and grabs the same SDIO — its rx task
-# then steals the interrupts/tokens our ESSL send needs, so essl_send_packet fails. There is no
-# Kconfig to disable it, so stub the constructor's init call. This patches ONLY the P4's own copy of
-# the managed component (tdisplay_p4/managed_components); the Tanmatsu's copy is untouched, so its
-# genuine esp-hosted C6 still inits normally.
+# Initialization must happen after XL9535 power/reset is available. Stub the pre-app_main
+# constructor for both backends: hosted builds initialize lazily through Arduino hostedInit(),
+# while legacy AT builds reserve slot 1 for c6_at.
 # Two copies get pulled in (espressif__esp_hosted via arduino-esp32, and the nicolaielectronics__
 # esp-hosted-tanmatsu fork via tanmatsu-wifi/badge-bsp). The build actually links the fork, so patch
 # BOTH so whichever is linked never grabs the SDIO.
 for HDIR in espressif__esp_hosted nicolaielectronics__esp-hosted-tanmatsu; do
   HINIT_C="managed_components/$HDIR/host/port/esp/freertos/src/port_esp_hosted_host_init.c"
   if [ -f "$HINIT_C" ] && grep -q 'ESP_ERROR_CHECK(esp_hosted_init());' "$HINIT_C"; then
-    sed -i '' 's|ESP_ERROR_CHECK(esp_hosted_init());|/* wadamesh P4: C6 runs ESP-AT (driven by c6_at over SDIO) — skip esp-hosted auto-init */|' "$HINIT_C"
-    echo "[build.sh] neutralized $HDIR auto-init constructor (P4 uses AT, not esp-hosted)"
+    sed -i '' 's|ESP_ERROR_CHECK(esp_hosted_init());|/* wadamesh P4: initialize C6 only after XL9535 board power */|' "$HINIT_C"
+    echo "[build.sh] neutralized $HDIR auto-init constructor (defer until board power)"
   fi
 done
 

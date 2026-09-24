@@ -30,16 +30,19 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "lvgl.h"
-#include "c6_at.h"                 // AT-over-SDIO Wi-Fi/BLE driver for the on-board ESP32-C6 (P4-only)
-#include <C6Socket.h>              // C6Client — used directly by httpDateProbe() below
+#if !TDP4_C6_HOSTED
+  #include "c6_at.h"               // legacy AT-over-SDIO backend
+  #include <C6Socket.h>
+#endif
 #include "esp_vfs_fat.h"                    // native SD probe (esp_vfs_fat_sdmmc_mount)
 #include "driver/sdmmc_host.h"              // SDMMC_HOST_DEFAULT / sdmmc_slot_config_t for the probe
 #include "sdmmc_cmd.h"
 #include "sd_pwr_ctrl_by_on_chip_ldo.h"     // SD IO rail = P4 on-chip LDO channel 4
-// LAST include: rebind every WiFi.* below to the c6_at facade. Arduino's real WiFi object re-inits
-// esp_hosted at mode()/begin() time and panics the P4 (the C6 runs ESP-AT, not an esp-hosted slave).
-// With the facade, this file's Wi-Fi state machine drives REAL AT scans/joins instead.
-#include <C6WifiShim.h>
+// Legacy builds rebind WiFi.* to the ESP-AT facade. Current units ship hosted
+// C6 firmware and use Arduino's standard remote Wi-Fi implementation.
+#if !TDP4_C6_HOSTED
+  #include <C6WifiShim.h>
+#endif
 
 #ifndef TCP_PORT
 #define TCP_PORT 5000
@@ -56,18 +59,14 @@
 // TDISPLAY_P4_PORT.md), gate ALL C6-dependent bring-up OFF so the display + touch + LoRa come up.
 // LoRa is a raw SX1262 on P4 GPIOs, independent of the C6, so the mesh still works over USB/LoRa.
 // Flip to 1 once the C6 link is solid to restore Wi-Fi + BLE.
-#ifndef TDP4_C6_READY
-// C6 reset+enabled via the Meck-P4 C6_EN pulse (Xl9535::powerOnSequence) + host esp-hosted pinned to
-// 2.0.17 to match the factory C6 slave protocol (see idf_component.yml). SDIO card inits AND the RPC
-// channel should now sync, so connect to the C6 for Wi-Fi + BLE. (If the link ever misframes again the
-// P4 reset-loops — set this back to 0 and re-flash the safe build.)
-#define TDP4_C6_READY 0   // C6 connect OFF: factory C6 firmware misframes esp-hosted even at host 2.0.17 (see notes)
-#endif
+#define TDP4_C6_READY TDP4_C6_HOSTED
 // BLE over the C6 uses arduino-esp32's hostedInitBLE(), which only exists in arduino-esp32 >=3.3.10.
 // We pin 3.3.0 (so esp_hosted can be the C6-compatible 2.0.17), which predates hostedInitBLE — so BLE
 // needs its own bring-up. Keep BLE gated OFF until that's provided; Wi-Fi (esp_wifi_remote) works now.
-#ifndef TDP4_BLE_READY
-#define TDP4_BLE_READY 0
+#define TDP4_BLE_READY TDP4_C6_HOSTED
+
+#if TDP4_C6_HOSTED && defined(CONFIG_BT_NIMBLE_TRANSPORT_UART)
+#error "T-Display P4 hosted C6 requires NimBLE hosted HCI; disable CONFIG_BT_NIMBLE_TRANSPORT_UART"
 #endif
 
 extern "C" bool hostedInitBLE();   // arduino-esp32 BLE controller bring-up over esp-hosted
@@ -92,15 +91,7 @@ static MyMesh& makeTheMesh() {
 }
 MyMesh& the_mesh = makeTheMesh();
 
-static void hostedConnectC6() {
-  esp_hosted_init();                         // no-op if the constructor already ran
-  int rc = -1;
-  for (int i = 0; i < 4 && rc != 0; i++) {
-    rc = esp_hosted_connect_to_slave();
-    if (rc != 0) { printf("[BOOT] C6 connect try %d -> %d\n", i, rc); delay(250); }
-  }
-  printf("[BOOT] C6 hosted link: %s\n", rc == 0 ? "UP" : "FAILED");
-}
+static constexpr bool s_hosted_c6_up = true;   // hostedInit() connects lazily on first Wi-Fi/BLE use
 
 // Recursive FS→FS copy for the one-time SD adoption migration (FFat store → SD /meshcomod).
 // Skips files that already exist at the destination, so a partial earlier run just completes.
@@ -159,8 +150,8 @@ static void wadameshSetup() {
   //    decision 2026-07-15). Wi-Fi comes up via the c6_at AT-over-SDIO worker spawned at the end of
   //    setup; BLE companion is unavailable on this AT build (advertising commands stubbed) so the
   //    phone pairs over Wi-Fi (TCP:5000) or USB.
-#if TDP4_C6_READY
-  hostedConnectC6();   // never taken (TDP4_C6_READY=0): kept only as a reference to the hosted path
+#if TDP4_C6_HOSTED
+  printf("[BOOT] C6 = esp-hosted (lazy Wi-Fi/BLE initialization)\n");
 #else
   printf("[BOOT] C6 = factory ESP-AT (Wi-Fi via c6_at worker; BLE companion unavailable on this build)\n");
 #endif
@@ -340,7 +331,7 @@ static void wadameshSetup() {
     // a stuck "acquiring" is a FIX problem (antenna / sky view). Zero bytes => the link is dead.
     // 1.2 s, not longer: this runs on every boot and it CONSUMES bytes the NMEA parser would
     // otherwise see, so it is deliberately just long enough to catch one of each sentence type
-    // (the L76K repeats the full set about once a second).
+    // (the P4's factory-configured L76K emits its enabled set at 5 Hz).
     uint32_t bytes = 0, lines = 0;
     char first[96]; first[0] = '\0';
     char cur[96];   size_t cl = 0;
@@ -373,8 +364,9 @@ static void wadameshSetup() {
       delay(5);
     }
     printf("[GPS] setting_registered=%d (forced by ENV_SKIP_GPS_DETECT, proves nothing)\n", (int)has_setting);
-    printf("[GPS] UART probe: %lu bytes, %lu lines in 1.2s @ %d baud, module TX -> GPIO%d\n",
-           (unsigned long)bytes, (unsigned long)lines, (int)GPS_BAUD_RATE, (int)PIN_GPS_TX);
+        const uint32_t active_baud = touchPrefsGetGpsBaud(GPS_BAUD_RATE);
+        printf("[GPS] UART probe: %lu bytes, %lu lines in 1.2s @ %lu baud, module TX -> GPIO%d\n",
+          (unsigned long)bytes, (unsigned long)lines, (unsigned long)active_baud, (int)PIN_GPS_TX);
     if (first[0])        printf("[GPS] first sentence: %s\n", first);
     else if (bytes)      printf("[GPS] bytes but no complete '$' sentence -> wrong baud or line noise\n");
     else                 printf("[GPS] NOTHING on the UART -> check wake (XL9535 IO11 HIGH), rails, RX pin\n");
@@ -402,10 +394,10 @@ static void wadameshSetup() {
   printf("[BOOT] setup done (helper)\n");
   return;
 #endif
-  // C6 AT/SDIO Wi-Fi: spawn the c6_at worker (non-blocking — it brings the AT link up itself on
-  // core 1 with retries). The Wi-Fi state machine in app_main's loop then drives scans/joins through
-  // the C6WifiShim facade exactly like the other boards drive Arduino WiFi.
+#if !TDP4_C6_HOSTED
+  // Legacy factory ESP-AT units use the asynchronous AT worker.
   c6at_worker_start();
+#endif
 }
 
 // Time-sync fallback: pull UTC from the Date header of a plain-HTTP HEAD to the firmware
@@ -413,7 +405,11 @@ static void wadameshSetup() {
 // port-80 HTTP is proven open on this device (tiles + version checks ride it). Returns a
 // UTC epoch, or 0. Runs on the loop thread only while the clock is still unsynced.
 static uint32_t httpDateProbe(void) {
+#if TDP4_C6_HOSTED
+  WiFiClient c;
+#else
   C6Client c;
+#endif
   if (!c.connect("firmware.wadamesh.com", 80, 8000)) return 0;
   static const char req[] =
       "HEAD / HTTP/1.1\r\nHost: firmware.wadamesh.com\r\nConnection: close\r\n\r\n";
@@ -464,7 +460,11 @@ extern "C" void app_main(void) {
     // WiFi.* here is the C6WifiShim facade (AT-over-SDIO), so this state machine drives REAL joins:
     // start once the c6_at worker has the AT link up + the user wants Wi-Fi. The 10 s retry branch
     // doubles as auto-reconnect. (TDP4_C6_READY still gates the unused esp-hosted path elsewhere.)
+  #if TDP4_C6_HOSTED
+    const bool c6_up = s_hosted_c6_up;
+  #else
     const bool c6_up = c6at_is_up();
+  #endif
     bool wifi_radio_en = c6_up && wifiConfigWantsWifi();
     // The C6 runs its own AT firmware with auto-connect enabled, so after a power
     // cycle it rejoins the last AP by itself, before this loop ever asks it to.
@@ -518,7 +518,15 @@ extern "C" void app_main(void) {
         // netif on this board, so esp_sntp/configTzTime can't sync. Pull the UTC epoch when ready.
         if (!sntp_pushed) {
           if (sntp_kick_ms == 0) sntp_kick_ms = millis();   // connected-since stamp for the fallback below
+#if TDP4_C6_HOSTED
+          if (!sntp_kicked) {
+            configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+            sntp_kicked = true;
+          }
+          uint32_t e = (uint32_t)time(nullptr);
+#else
           uint32_t e = c6at_sntp_epoch();
+#endif
           if (e > 1700000000) { rtc_clock.setCurrentTime(e); sntp_pushed = true; printf("[C6-AT] SNTP -> rtc %lu\n", (unsigned long)e); }
           // Bench-verified 2026-07-15: on some networks SNTP never completes (UDP/123
           // blocked) — the clock then stays wrong forever, since BLE is parked and the
