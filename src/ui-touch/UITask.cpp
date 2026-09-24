@@ -15115,8 +15115,14 @@ static void buildDeviceSettings(int sec) {
     y += SC(22);
 
     g_set_modal.screen_to_slider = lv_slider_create(body);
-    lv_obj_set_size(g_set_modal.screen_to_slider, lv_pct(96), SC(8));
-    lv_obj_set_pos(g_set_modal.screen_to_slider, 4, y + SC(6));
+    // The knob overhangs the track ends by its padding plus half the track height, so a
+    // track starting 4 px in drew the knob past the left edge at the lowest setting.
+    // Inset the track by that overhang on both sides.
+    const lv_coord_t to_track_h  = SC(8);
+    const lv_coord_t to_knob_pad = 6;
+    const lv_coord_t to_inset    = to_track_h / 2 + to_knob_pad;
+    lv_obj_set_size(g_set_modal.screen_to_slider, s_settings_content_w - 2 * to_inset, to_track_h);
+    lv_obj_set_pos(g_set_modal.screen_to_slider, to_inset, y + SC(6));
     lv_slider_set_range(g_set_modal.screen_to_slider, 0, TOUCH_SCREEN_TIMEOUT_COUNT - 1);
     const uint8_t timeout_index = touchPrefsScreenTimeoutIndex(
         g_lv.task ? g_lv.task->getScreenTimeoutSecs() : 30);
@@ -15132,7 +15138,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(g_set_modal.screen_to_slider, lv_color_hex(COLOR_ACCENT), LV_PART_KNOB);
 #endif
-    lv_obj_set_style_pad_all(g_set_modal.screen_to_slider, 6, LV_PART_KNOB);
+    lv_obj_set_style_pad_all(g_set_modal.screen_to_slider, to_knob_pad, LV_PART_KNOB);
     lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderChangedCb,
                         LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(g_set_modal.screen_to_slider, screenTimeoutSliderReleasedCb,
