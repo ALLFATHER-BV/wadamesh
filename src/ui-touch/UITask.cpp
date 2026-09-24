@@ -49113,6 +49113,7 @@ static void tabBarGestureCb(lv_event_t* e) {
 // OVER the drawer (back returns to it). The bottom tab bar stays visible.
 static void closeMentionsScreen() {
   if (s_mentions_root) { popupClose(&s_mentions_root); }
+  appPageEnd(closeMentionsScreen);   // release the "‹ Mentions" bar (no-op if another page owns it)
 }
 
 // Channel thread index for a name, via the public getThreadInfo (findThreadByName
@@ -49164,10 +49165,6 @@ static void mentionRowCb(lv_event_t* e) {
   openThreadDetailByIdx(t, true);
 }
 
-static void mentionsBackCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) closeMentionsScreen();
-}
-
 static void openMentionsScreen() {
   closeMentionsScreen();
   if (!g_lv.task) return;
@@ -49182,26 +49179,14 @@ static void openMentionsScreen() {
   lv_obj_clear_flag(s_mentions_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(s_mentions_root);
 
-  // Header: "@ Mentions" + back-to-drawer button.
-  lv_obj_t* title = lv_label_create(s_mentions_root);
-  lv_label_set_text(title, TR("@  Mentions"));
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 12, 9);
-  lv_obj_t* back = lv_btn_create(s_mentions_root);
-  lv_obj_set_size(back, 40, 28);
-  lv_obj_align(back, LV_ALIGN_TOP_RIGHT, -8, 5);
-  styleButton(back);
-  lv_obj_add_event_cb(back, mentionsBackCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* bks = lv_label_create(back);
-  lv_label_set_text(bks, LV_SYMBOL_LEFT);
-  lv_obj_set_style_text_font(bks, uiChromeFont(), LV_PART_MAIN);
-  lv_obj_center(bks);
-
-  // The title follows the selected semantic font role. At the Pager's larger
-  // presets its live fallback line box is taller than the historical 38-px
-  // header, so measure it instead of letting the title overlap the list.
-  const int header_h = LV_MAX(38, 14 + lv_font_get_line_height(&g_font_16));
+  // Title + Back live in the global status bar ("‹ @ Mentions" on the left, tap =
+  // back to the drawer), like Send advert / Spectrum and every settings page. This
+  // screen used to draw its own header with the back chevron at the top RIGHT —
+  // the only screen whose breadcrumb sat on the right.
+  appPageBegin(TR("@  Mentions"), closeMentionsScreen);   // existing key: translated in every language
+  // Where the tall bar is two rows over the page (square panels), start below it;
+  // the round panel's bar keeps its height, so no extra offset there.
+  const lv_coord_t header_h = statusBarCurH() - STATUSBAR_H;
   lv_obj_t* list = lv_obj_create(s_mentions_root);
   lv_obj_remove_style_all(list);
   lv_obj_set_size(list, sw, (sh - STATUSBAR_H - TABBAR_H) - header_h);
