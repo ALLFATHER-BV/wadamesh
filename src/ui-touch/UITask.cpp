@@ -46834,7 +46834,7 @@ static void openPowerMenu() {
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
-  auto mk = [&](const char* txt, lv_event_cb_t cb, uint32_t bg, int y) {
+  auto mk = [&](const char* txt, lv_event_cb_t cb, uint32_t bg, int y, bool small = false) {
     lv_obj_t* b = lv_btn_create(card);
     lv_obj_set_size(b, card_w - 24, p_bh);
     lv_obj_align(b, LV_ALIGN_TOP_MID, 0, y);
@@ -46847,10 +46847,17 @@ static void openPowerMenu() {
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(txt));
-    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, small ? &g_font_12 : &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l,
       lv_color_hex(bg ? COLOR_ON_STATUS_DANGER
               : COLOR_TEXT), LV_PART_MAIN);
+    if (small) {
+      // Long label: wrap it inside the button (two lines, centred) instead of
+      // running past the edges. The translated text is unchanged.
+      lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+      lv_obj_set_width(l, card_w - 24 - 16);
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    }
     lv_obj_center(l);
     return b;
   };
@@ -46868,7 +46875,7 @@ static void openPowerMenu() {
 #endif
   mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
 #if !defined(HAS_RAK_TAP_V2)
-  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode (wait for USB flash)"), powerDownloadCb, 0,        p_y + p_step);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode (wait for USB flash)"), powerDownloadCb, 0,        p_y + p_step, true);
   mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
 #else
   mk(TR("Cancel"), powerCancelCb, 0, p_y + p_step);
