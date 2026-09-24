@@ -16319,17 +16319,21 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
 #else
   const lv_coord_t cf_lblw = 186 - 32;
 #endif
-  lv_point_t cf_tsz;
-  lv_txt_get_size(&cf_tsz, TR(msg), &g_font_14, 0, 2, cf_lblw, LV_TEXT_FLAG_NONE);
   // Portrait (or any card too narrow for both buttons side by side): stack them, OK
   // over Cancel at full width. Side by side, the fixed PSC(80) Cancel and SC(100) OK
-  // overran each other on the portrait panels, e.g. the backup Import prompt.
+  // overran each other on the portrait panels, e.g. the backup Import prompt. The
+  // stacked card also uses the smaller body font and leaves more room above the
+  // buttons, so a multi-line prompt does not sit hard against them.
   const lv_coord_t cf_btn_gap = PSC(8);
   const bool cf_stack =
       lv_disp_get_ver_res(nullptr) > lv_disp_get_hor_res(nullptr) ||
       PSC(80) + SC(100) + cf_btn_gap > PCW(210) - PSC(12) * 2;
+  const lv_font_t* cf_font = cf_stack ? &g_font_12 : &g_font_14;
+  const lv_coord_t cf_msg_gap = cf_stack ? PSC(22) : PSC(14);   // message -> buttons
+  lv_point_t cf_tsz;
+  lv_txt_get_size(&cf_tsz, TR(msg), cf_font, 0, 2, cf_lblw, LV_TEXT_FLAG_NONE);
   const lv_coord_t cf_btns_h = cf_stack ? (lv_coord_t)(PSC(34) * 2 + cf_btn_gap) : PSC(34);
-  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + PSC(14) + cf_btns_h);  // pads + gap + buttons
+  const lv_coord_t cf_chrome = (lv_coord_t)(PSC(12) * 2 + cf_msg_gap + cf_btns_h);  // pads + gap + buttons
   lv_coord_t cf_h = (lv_coord_t)(cf_tsz.y + cf_chrome);
   if (cf_h < PSC(160)) cf_h = PSC(160);
   const lv_coord_t cf_max = lv_disp_get_ver_res(nullptr) - STATUSBAR_H - 12;
@@ -16360,7 +16364,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_width(lbl, cf_lblw);
   lv_label_set_text(lbl, TR(msg));
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(lbl, cf_font, LV_PART_MAIN);
   lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
 
   lv_obj_t* b_cancel = lv_btn_create(card);
