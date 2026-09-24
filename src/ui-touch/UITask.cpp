@@ -7,9 +7,10 @@
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
 
 // Port the browser-facing web UI (VNC mirror / remote / terminal viewer page) listens on.
-// The T-Display P4's ESP-AT stack allows ONE listening port, so the web UI shares the
-// companion TCP port behind a first-byte router (MultiTransportCompanionInterface).
-#if defined(HAS_TDISPLAY_P4)
+// A T-Display P4 on the legacy ESP-AT C6 stack gets ONE listening port, so there the web UI
+// shares the companion TCP port behind a first-byte router (MultiTransportCompanionInterface).
+// The esp-hosted P4 build listens on WS_PORT like every other board.
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   #define WEB_UI_PORT_STR "5000"
 #else
   #define WEB_UI_PORT_STR "8765"
