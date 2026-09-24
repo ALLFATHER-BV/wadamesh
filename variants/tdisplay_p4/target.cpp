@@ -20,8 +20,16 @@ ESP32RTCClock fallback_clock;
 ClockFloorRTC rtc_clock(fallback_clock);
 
 #if ENV_INCLUDE_GPS
-  #include <helpers/sensors/MicroNMEALocationProvider.h>
-  MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1, &rtc_clock);
+  // Same approach as camillia-mt's working P4 port: the L76K is woken through the XL9535
+  // (Xl9535::powerOnSequence drives GPS_WAKE high before the UART opens), UART1 listens on
+  // GPIO22 / transmits on 23, and the link starts at 9600 and PROBES other rates until a
+  // checksummed NMEA sentence arrives. The receiver's rate depends on what last configured
+  // it (the chip's 9600 default, or 115200 persisted by LilyGo's factory firmware), and the
+  // core provider listened at one fixed rate, so a mismatch meant an open, silent UART.
+  // WadaNmeaLocationProvider saves the rate that works. No reset/enable GPIOs on this board.
+  #include "../../src/helpers/WadaNmeaLocationProvider.h"
+  WadaNmeaLocationProvider nmea(Serial1, &rtc_clock, -1 /*reset*/, -1 /*enable*/,
+                                PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE);
   EnvironmentSensorManager sensors = EnvironmentSensorManager(nmea);
 #else
   EnvironmentSensorManager sensors;

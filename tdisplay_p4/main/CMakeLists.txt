@@ -95,11 +95,12 @@ set(WADA_DEFS
   # (powerOnSequence) or the L76K sleeps.
   # ENV_SKIP_GPS_DETECT: like the T-Deck, force gps_detected=true — the P4's heavy boot can miss the
   # 1 s "any NMEA byte" detect window, and a false result then HIDES the GPS toggle and no-ops the
-  # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=115200:
-  # LilyGo's factory firmware configures the onboard L76K for 115200 and the receiver keeps that
-  # setting, so 9600 (the chip's power-on default) opened the UART but never heard a sentence.
-  # A saved GPS-baud override in NVS (Settings) still wins over this default. ---
-  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=115200
+  # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=9600
+  # is only the STARTING rate (the L76K's power-on default, as camillia-mt uses): the P4 builds
+  # WadaNmeaLocationProvider with UART probing (variants/tdisplay_p4/target.cpp), which walks
+  # 9600/19200/38400/57600/115200 until a checksummed sentence arrives (LilyGo's factory firmware
+  # leaves 115200 persisted) and saves the rate that works. ---
+  ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=9600
 
   # --- microSD on SDMMC slot 0 (CLK43/CMD44/D0-3=39-42); C6 esp-hosted is slot 1 ---
   BOARD_HAS_SDMMC=1 BOARD_SDMMC_SLOT=0
