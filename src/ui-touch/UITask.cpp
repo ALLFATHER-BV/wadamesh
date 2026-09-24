@@ -28038,7 +28038,7 @@ static void openVncPage() {
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_t* rl = lv_label_create(row);
   lv_label_set_text(rl, TR("Enable web access"));
-  lv_obj_set_style_text_font(rl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_t* sw2 = lv_switch_create(row);
@@ -28046,14 +28046,14 @@ static void openVncPage() {
 #if defined(HAS_TDECK_PRO)
   lv_obj_update_layout(row);
   const lv_coord_t label_w = lv_obj_get_content_width(row) - lv_obj_get_width(sw2) - 12;
-  lv_obj_set_size(rl, label_w, lv_font_get_line_height(&g_font_14));
+  lv_obj_set_size(rl, label_w, lv_font_get_line_height(&g_font_12));
   lv_label_set_long_mode(rl, LV_LABEL_LONG_DOT);
 #endif
   if (touchPrefsGetWebMirror()) lv_obj_add_state(sw2, LV_STATE_CHECKED);
   lv_obj_add_event_cb(sw2, vncToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
   s_vnc_url_lbl = lv_label_create(s_vnc_root);
-  lv_obj_set_style_text_font(s_vnc_url_lbl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(s_vnc_url_lbl, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(s_vnc_url_lbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_vnc_url_lbl, cw);
 
