@@ -21261,14 +21261,16 @@ static void openAddChannelSheet() {
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, TR(label));
-    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);   // a step below the title
     lv_obj_center(l);
     y += btn_h + row_gap;
   };
-  mk(TR("Create a private channel"), addChannelCreatePrivateCb);
-  mk(TR("Join a private channel"), addChannelJoinPrivateCb);
-  mk(TR("Join the public channel"), addChannelJoinPublicCb);
-  mk(TR("Join a hashtag channel"), addChannelJoinHashtagCb);
+  // Short labels. The first two reuse the (already translated) titles of the pages
+  // they open; the last two are new strings.
+  mk("Create private channel", addChannelCreatePrivateCb);
+  mk("Join private channel", addChannelJoinPrivateCb);
+  mk("Join Public channel", addChannelJoinPublicCb);
+  mk("Join # channel", addChannelJoinHashtagCb);
 }
 
 static void chatsAddBtnCb(lv_event_t* e) {
