@@ -138,3 +138,24 @@ is never touched. **Select the LCD at build time:** `WADA_P4_LCD=1 ./build.sh bu
 - **On-device verify (no LCD device in-house):** (1) screen lights + renders; (2) touch registers and
   is aligned — if offset, the HI8561 native touch grid ≠ 540×1168; read raw coords via the Map "Tile
   debug"/touch-debug overlay (`heltecV4CapTouchGetRaw`) and adjust `HI8561_NATIVE_W/H` + the /2 scale.
+
+## Software restarts, landscape touch and the landscape Cmdr screen (needs on-device verify)
+- **Every software restart is a full system reset.** `esp_restart()` on the P4 is a CPU reset that
+  leaves the MIPI-DSI host half-configured, so the display came back dark after any setting that
+  reboots (theme, rotation, language, remote mode, OTA) until a second, manual reboot.
+  `tdisplayP4InstallFullRestart()` (`target.cpp`, called first thing in `app_main`) registers a
+  shutdown handler that arms the RTC watchdog with `RESET_SYSTEM` instead — the same fix as
+  camillia-mt's P4 port. Those restarts then report `ESP_RST_WDT`, so an `RTC_NOINIT` marker
+  records that they were deliberate and `tdisplayP4ResetReason()` / `bootResetReason()` (UITask)
+  report them as `ESP_RST_SW`: the "restarted after a crash" prompt and Settings > About do not
+  call every reboot a crash.
+- **Landscape touch.** Landscape is LVGL *software* rotation, and LVGL 8 rotates pointer input on a
+  rotated display itself (`indev_pointer_proc`). The touch driver also maps points to landscape
+  (its swipe detection and the direct readers need that), so `lvglTouchRead` hands LVGL the point
+  back in the portrait panel frame. Without it every tap was rotated twice — (X, Y) arrived at
+  (615 − Y, X) in ROT_90 — and nav-bar taps never reached a tab button while swipes still worked.
+  Keyed on `s_ui_rotation`, so the chat keyboard's rotate trick on a portrait UI is unaffected.
+- **Landscape Cmdr (home) screen** follows the Wio Tracker L2's layout: status lines and the TX/RX
+  chart on the left, sized to the measured tab height and clear of a right-hand column of Advert /
+  Terminal / Apps / Control (6-px gaps, each 22–46 px tall). The info card is portrait-only; its
+  eight rows do not fit the 284-px-tall landscape screen.
