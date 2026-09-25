@@ -62303,6 +62303,47 @@ static void maxGoHome() {
   navGoToMainTab(HOME_TAB_INDEX);
 }
 #endif
+// Centre the channel/sender line and the message as one block, with a gap between
+// them. The title's fixed y=30 and the body's fixed y=60 overlapped whenever the
+// title font ran taller than 30 px (larger UI-size presets, bigger panels), and
+// left the rest of a tall screen empty.
+static void atGlanceLayout(lv_coord_t sw, lv_coord_t sh) {
+  const lv_coord_t kTop = 30;   // clear of the ~22 px status bar band (the real status bar renders above this overlay)
+  const lv_coord_t kBottom = 10;
+  const lv_coord_t kGap = 16;   // between the title and the message
+  const lv_coord_t w = sw * 85 / 100;
+
+  lv_obj_set_width(s_glance_title, w);
+  lv_obj_set_height(s_glance_title, LV_SIZE_CONTENT);
+  lv_obj_update_layout(s_glance_title);
+  const lv_coord_t th = lv_obj_get_height(s_glance_title);
+
+  // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST one
+  // on overflow) when the label has a fixed HEIGHT. Use the height the text needs,
+  // capped at what fits below the title, in whole lines so the cut lands on a line.
+  lv_obj_set_width(s_glance_body, w);
+  const lv_font_t* bf = lv_obj_get_style_text_font(s_glance_body, LV_PART_MAIN);
+  const lv_coord_t line_h = lv_font_get_line_height(bf);
+  const lv_coord_t line_sp = lv_obj_get_style_text_line_space(s_glance_body, LV_PART_MAIN);
+  lv_point_t tsz;
+  lv_txt_get_size(&tsz, lv_label_get_text(s_glance_body), bf,
+                  lv_obj_get_style_text_letter_space(s_glance_body, LV_PART_MAIN),
+                  line_sp, w, LV_TEXT_FLAG_NONE);
+  const lv_coord_t max_h = sh - kTop - th - kGap - kBottom;
+  lv_coord_t bh = tsz.y;
+  if (bh > max_h) {
+    const lv_coord_t step = line_h + line_sp;
+    bh = step > 0 ? ((max_h + line_sp) / step) * step - line_sp : max_h;
+  }
+  if (bh < line_h) bh = line_h;
+  lv_obj_set_height(s_glance_body, bh);
+
+  lv_coord_t top = (sh - (th + kGap + bh)) / 2;
+  if (top < kTop) top = kTop;
+  lv_obj_align(s_glance_title, LV_ALIGN_TOP_MID, 0, top);
+  lv_obj_align(s_glance_body, LV_ALIGN_TOP_MID, 0, top + th + kGap);
+}
+
 static void atGlanceShow(const char* title, const char* body, bool fade_in) {
   if (!g_lv.ready) return;
   if (!s_glance_root) {
@@ -62338,10 +62379,9 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
 #else
     lv_obj_set_style_text_color(s_glance_title, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
 #endif
-    lv_obj_set_width(s_glance_title, lv_pct(85));
-    lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_glance_title, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_glance_title, LV_LABEL_LONG_DOT);   // single line, ellipsize -- guaranteed to fit every board's width
-    lv_obj_align(s_glance_title, LV_ALIGN_TOP_LEFT, 14, 30);   // below the ~22 px status bar band (the real status bar renders above this overlay)
+    // Size and position are set per message by atGlanceLayout().
 
     // Message body: 28 px (bumped up from 16 -- 16 wasn't legible from a few
     // feet away on a desk-mounted device) via atGlanceEnsureFont()'s own
@@ -62357,28 +62397,12 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
     lv_obj_set_style_text_font(s_glance_body, &s_glance_body_font, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_glance_body, lv_color_hex(0xFFFFFFu), LV_PART_MAIN);
 #endif
-    lv_obj_set_width(s_glance_body, lv_pct(85));
-    lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_LEFT, LV_PART_MAIN);
-    // LV_LABEL_LONG_DOT only wraps across multiple lines (dot-ellipsizing the LAST
-    // one on overflow) when the label has a fixed HEIGHT, not just a fixed width --
-    // left at auto/content height (as this was), it sizes to exactly one line, so
-    // every board was effectively single-line regardless of panel size (reported:
-    // text cropped at the end of the first line instead of continuing on a second).
-    // Give it the actual remaining space below this label's own y-offset down to a
-    // small bottom margin, computed from this board's resolution + active body font,
-    // so it uses exactly what's available -- more lines on tall panels, fewer on the
-    // 222 px-tall Pager -- instead of a guessed fixed line count.
-    {
-      const lv_coord_t avail_h = lv_disp_get_ver_res(nullptr) - 60 - 10;
-      const lv_coord_t line_h  = lv_font_get_line_height(&s_glance_body_font);
-      lv_obj_set_height(s_glance_body, avail_h > line_h ? avail_h : line_h);
-    }
+    lv_obj_set_style_text_align(s_glance_body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
 #if defined(HAS_TDECK_MAX)
     lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_WRAP);
 #else
     lv_label_set_long_mode(s_glance_body, LV_LABEL_LONG_DOT);
 #endif
-    lv_obj_align(s_glance_body, LV_ALIGN_TOP_LEFT, 14, 60);   // a bit more clearance now the title above is 16 px, not 12
   }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -62386,6 +62410,7 @@ static void atGlanceShow(const char* title, const char* body, bool fade_in) {
   lv_obj_set_pos(s_glance_root, 0, 0);
   lv_label_set_text(s_glance_title, title ? title : "");
   lv_label_set_text(s_glance_body,  body  ? body  : "");
+  atGlanceLayout(sw, sh);
   // Cancel any fade-out already begun (by an earlier message in this burst) on
   // either label.
   lv_anim_del(s_glance_title, atGlanceOpaCb);
