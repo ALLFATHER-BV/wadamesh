@@ -45055,6 +45055,10 @@ static void handleHwKey(int key) {
   // The dismiss key is deliberately NOT forwarded: an app must never be able to
   // trap the user by swallowing its own exit, whether by bug or by design.
   if (luaAppIsOpen() && !keyReservedFromLuaApps(key)
+      // The app's own wada.ui.input prompt is open: the keys are for its text
+      // field. luaAppKey takes every key, so forwarding them here left the
+      // field unable to receive any text on a physical keyboard (#571).
+      && !s_fm_prompt
 #if defined(HAS_M9_KEYBOARD)
       // Locked or dark: the lock/wake handlers below must see the key — else
       // ENTER_LONG (this board's only unlock) is eaten by the app and the
@@ -45658,7 +45662,7 @@ static void bleKbdDispatch(int key) {
   // A key on a dark screen wakes it and goes no further, like a tap does.
   if (g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
 
-  if (luaAppIsOpen()) {
+  if (luaAppIsOpen() && !s_fm_prompt) {   // the app's ui.input prompt types, not the app (#571)
     const int code = bleKbdLuaCode(key);
     if (code && luaAppKey(code)) { g_lv.task->noteUserInput(); return; }
   }
@@ -45871,7 +45875,7 @@ static void bleKbdDispatch(int key) {
   if (g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
   g_lv.task->noteUserInput();
 
-  if (luaAppIsOpen()) {
+  if (luaAppIsOpen() && !s_fm_prompt) {   // the app's ui.input prompt types, not the app (#571)
     const int code = bleKbdLuaCode(key);
     if (code && luaAppKey(code)) return;
   }
