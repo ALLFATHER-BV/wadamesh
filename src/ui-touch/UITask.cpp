@@ -5909,6 +5909,28 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
      ) {
     p.x = static_cast<lv_coord_t>(x);
     p.y = static_cast<lv_coord_t>(y);
+#if defined(HAS_TDISPLAY_P4)
+    // P4 landscape is LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
+    // rotated display itself (indev_pointer_proc) -- it expects the point in the
+    // unrotated panel frame. The touch driver already maps to landscape, which its
+    // swipe detection and the direct readers (tab-bar guard, remote hold) need, so
+    // hand LVGL the panel-frame point back. Passing the landscape point through
+    // rotated it twice: a tap at (X,Y) arrived at (615-Y, X), so nav-bar taps hit
+    // the middle of the screen or nothing at all, while swipes still worked.
+    // Keyed on s_ui_rotation (what the driver maps by), not the display's live
+    // rotation: the chat keyboard's rotate trick turns LVGL on a portrait UI while
+    // the driver keeps reporting portrait points, and those must pass unchanged.
+    {
+      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = portrait panel frame
+      if (s_ui_rotation == LV_DISP_ROT_90) {
+        p.x = static_cast<lv_coord_t>(y);
+        p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - x);
+      } else if (s_ui_rotation == LV_DISP_ROT_270) {
+        p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - y);
+        p.y = static_cast<lv_coord_t>(x);
+      }
+    }
+#endif
     data->point = p;
     // A finger press must NOT reach the hidden/locked UI. When merely
     // idle-dimmed, noteUserInput() wakes it; on a manual lock the touch is
@@ -60278,9 +60300,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
 #endif
-      // LVGL does not transform input points for a software-rotated display any
-      // more than it does for a hardware-rotated one, so the driver maps them
-      // either way.
+      // The driver maps points into the rotated space for its own gesture logic.
+      // LVGL leaves input alone on a hardware-rotated panel, but DOES rotate it on
+      // a software-rotated one (the P4), so lvglTouchRead hands the P4's points
+      // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
     // Swipe-axis transform always matches the visible orientation.
