@@ -5993,6 +5993,28 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
      ) {
     p.x = static_cast<lv_coord_t>(x);
     p.y = static_cast<lv_coord_t>(y);
+#if defined(HAS_TDISPLAY_P4)
+    // P4 landscape is LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
+    // rotated display itself (indev_pointer_proc) -- it expects the point in the
+    // unrotated panel frame. The touch driver already maps to landscape, which its
+    // swipe detection and the direct readers (tab-bar guard, remote hold) need, so
+    // hand LVGL the panel-frame point back. Passing the landscape point through
+    // rotated it twice: a tap at (X,Y) arrived at (615-Y, X), so nav-bar taps hit
+    // the middle of the screen or nothing at all, while swipes still worked.
+    // Keyed on s_ui_rotation (what the driver maps by), not the display's live
+    // rotation: the chat keyboard's rotate trick turns LVGL on a portrait UI while
+    // the driver keeps reporting portrait points, and those must pass unchanged.
+    {
+      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = portrait panel frame
+      if (s_ui_rotation == LV_DISP_ROT_90) {
+        p.x = static_cast<lv_coord_t>(y);
+        p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - x);
+      } else if (s_ui_rotation == LV_DISP_ROT_270) {
+        p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - y);
+        p.y = static_cast<lv_coord_t>(x);
+      }
+    }
+#endif
     data->point = p;
     // A finger press must NOT reach the hidden/locked UI. When merely
     // idle-dimmed, noteUserInput() wakes it; on a manual lock the touch is
@@ -13015,6 +13037,18 @@ static void screenTimeoutSliderReleasedCb(lv_event_t* e) {
 // + revision, last reset reason, MeshCore + Meshcomod versions. One-shot
 // snapshot; no live updates while the modal is open.
 #if defined(ESP32)
+#if defined(HAS_TDISPLAY_P4)
+esp_reset_reason_t tdisplayP4ResetReason();   // variants/tdisplay_p4/target.cpp
+#endif
+// esp_reset_reason(), except on the T-Display P4, where every software restart is made a full system
+// reset (so the panel does not come back dark) and would otherwise read as a watchdog crash.
+static esp_reset_reason_t bootResetReason() {
+#if defined(HAS_TDISPLAY_P4)
+  return tdisplayP4ResetReason();
+#else
+  return esp_reset_reason();
+#endif
+}
 static const char* resetReasonString(esp_reset_reason_t r) {
   switch (r) {
     case ESP_RST_POWERON:    return "Power on";
@@ -13328,7 +13362,7 @@ static void sysInfoTextRest(char* buf, size_t cap) {
   }
 
   p += snprintf(buf + p, cap - p,
-                "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
+                "Last reset\n  %s\n\n", resetReasonString(bootResetReason()));
 #endif
   // beta_31 field-freeze tracer: recent loop stalls (>0.2 s), newest first — a
   // field tester photographs this instead of needing a serial console.
@@ -28979,7 +29013,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(ATTAKY_MESH_SERIES)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(ATTAKY_MESH_SERIES) || defined(HAS_TDISPLAY_P4)
   // Landscape boards keep the chart clear of the right-hand button strip.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
@@ -28989,17 +29023,45 @@ static void makeHome(lv_obj_t* tab) {
   // tab padding, the chart's top offset, and the Send-advert button + gaps.
   // Portrait keeps the full 96 px; landscape (short screen) shrinks it so the
   // button doesn't run off the bottom.
+#if defined(HAS_TDISPLAY_P4)
+  int home_avail = tabContentH() - 20;                       // inside 10-px pad
+  if (home_land) {
+    // The round-corner status bar leaves less than the formula says (see the info card below);
+    // landscape has no height to spare, so fit the chart + button column to the measured tab.
+    lv_obj_update_layout(tab);
+    const int measured = lv_obj_get_content_height(tab);
+    if (measured > 0 && measured < home_avail) home_avail = measured;
+  }
+#else
   const int home_avail = tabContentH() - 20;                 // inside 10-px pad
+#endif
   // Landscape: button sits in the right column, so the chart runs to the
   // bottom (no reserved button row). Portrait: reserve the button row below.
   int chart_h = home_avail - chart_body_y - 4 - (home_land ? 0 : (8 + 36));
   if (chart_h > 96) chart_h = 96;
   if (chart_h < 28) chart_h = 28;
 #if CAP_LARGE_SCREEN
+#if defined(HAS_TDISPLAY_P4)
+  // P4 landscape (616x284 logical) is laid out like the Wio Tracker L2's fixed 320x240 home:
+  // status lines + a chart sized to the height that is left, beside a right-hand column of
+  // Advert / Terminal / Apps / Control spread evenly down the content height (6-px gaps, each
+  // 22..46 px). No info card: at 284 px tall there is no room for its eight rows. Portrait keeps
+  // the column-flow layout below.
+  const bool p4_land = home_land;
+  const int tan_btn_gap = p4_land ? 6 : 12;
+  int tan_btn_h = (home_avail - 3 * tan_btn_gap) / 4;
+  if (p4_land) {
+    if (tan_btn_h > 46) tan_btn_h = 46;
+    if (tan_btn_h < 22) tan_btn_h = 22;
+  } else {
+    chart_h = 96;
+  }
+#else
   // Big screen: spread the four right-column buttons evenly down the FULL height.
   chart_h = 96;
   const int tan_btn_gap = 12;
   const int tan_btn_h    = (home_avail - 3 * tan_btn_gap) / 4;   // 4 buttons fill the right column
+#endif
   auto tanBtnY = [&](int slot) { return slot * (tan_btn_h + tan_btn_gap); };
   // At Large/Huge there isn't room for both the TX/RX chart AND the 8-row info panel — drop the
   // chart (TX/RX totals still show in the legend above) so the info panel gets the freed height.
@@ -29018,7 +29080,8 @@ static void makeHome(lv_obj_t* tab) {
   // Terminal/Files, Control full-width) → the info card fills the rest, full width. The old code
   // put the half-width Advert row at chart-bottom AND the (needlessly RSTRIP-narrowed) info card
   // 4 px below it — they overlapped, and portrait boards never got the launcher buttons at all.
-  chart_h = 84;   // was 110: with TX/RX idle the chart is near-invisible, and the freed height
+  if (!p4_land)
+    chart_h = 84; // was 110: with TX/RX idle the chart is near-invisible, and the freed height
                   // lets the info card below fit all 8 rows (Battery/Uptime were clipping off)
   const int p4_btn_h   = 40;
   const int p4_btn_gap = 8;
@@ -29100,6 +29163,9 @@ static void makeHome(lv_obj_t* tab) {
 #if CAP_LARGE_SCREEN
   // Commander info panel — fills the space below the chart on the big screen. Two columns:
   // static keys (left) + live values (right, s_home_info; refreshed in refreshStatusLabels).
+#if defined(HAS_TDISPLAY_P4)
+  if (!p4_land)
+#endif
   {
 #if defined(HAS_TDISPLAY_P4)
     const int info_y = p4_grid_bottom + 12;      // below the portrait launcher grid
@@ -36837,7 +36903,7 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
 #ifdef FIRMWARE_RELEASE_TAG
       tf.printf("firmware: %s\n", FIRMWARE_RELEASE_TAG);
 #endif
-      tf.printf("reset: %s\n", resetReasonString(esp_reset_reason()));
+      tf.printf("reset: %s\n", resetReasonString(bootResetReason()));
       if (s_crash_wdt_str[0]) tf.printf("%s\n", s_crash_wdt_str);
       tf.close();
     }
@@ -36883,7 +36949,7 @@ static void crashReportMaybePrompt() {
   // crash" on every manual reset / power-cycle until it was exported. Gate on this boot's reset reason;
   // the dump is still listed + exportable from Settings -> About (and via esptool) regardless.
   {
-    esp_reset_reason_t rr = esp_reset_reason();
+    esp_reset_reason_t rr = bootResetReason();
     if (rr != ESP_RST_PANIC && rr != ESP_RST_TASK_WDT && rr != ESP_RST_INT_WDT && rr != ESP_RST_WDT) return;
   }
   static char m[280];
@@ -60508,9 +60574,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
 #endif
-      // LVGL does not transform input points for a software-rotated display any
-      // more than it does for a hardware-rotated one, so the driver maps them
-      // either way.
+      // The driver maps points into the rotated space for its own gesture logic.
+      // LVGL leaves input alone on a hardware-rotated panel, but DOES rotate it on
+      // a software-rotated one (the P4), so lvglTouchRead hands the P4's points
+      // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
     // Swipe-axis transform always matches the visible orientation.

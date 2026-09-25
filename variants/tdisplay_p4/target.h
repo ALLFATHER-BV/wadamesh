@@ -21,6 +21,13 @@ extern "C" void set_boot_phase(int phase);
 #include "RM69A10Display.h"               // RM69A10 AMOLED (default SKU) — DISPLAY_CLASS=RM69A10Display
 #endif
 #include "Xl9535.h"
+#include <esp_system.h>
+
+// Makes every software restart a full system reset, so the MIPI-DSI host comes back clean and the
+// panel is not left dark after a settings reboot. Call first thing in app_main. See target.cpp.
+void tdisplayP4InstallFullRestart();
+// esp_reset_reason(), except that a restart made by the above reports ESP_RST_SW, not ESP_RST_WDT.
+esp_reset_reason_t tdisplayP4ResetReason();
 
 class TDisplayP4Board : public ESP32Board {
 public:
