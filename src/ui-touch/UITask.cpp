@@ -22478,6 +22478,10 @@ static const AdminCmdEntry k_term_cmds[] = {
   { "[ CHAT ]", nullptr },
   { "list - list contacts",           "list" },
   { "channels - list channels",       "channels" },
+  { "chan add <name> [key]",          "chan add " },
+  { "chan add #tag - hashtag chan",   "chan add #" },
+  { "chan del <ch> - delete chan",    "chan del " },
+  { "chan key <ch> - show chan key",  "chan key " },
   { "to <name> - join contact/chan",  "to " },
   { "send <text> - msg recipient",    "send " },
   { "public <text> - public channel", "public " },
@@ -22812,6 +22816,163 @@ static void termCmdChannels() {
   }
 }
 
+// ---- chan add / del / key: the Channels screen's add + delete, from the terminal ----
+// No rename: chat threads are matched to channels by name, so renaming would cut the
+// channel off from its history (the Channels screen has no rename for the same reason).
+
+// A channel by slot number or exact (case-insensitive) name; -1 if neither matches.
+static int termFindChannel(const char* arg) {
+  bool digits = (*arg != '\0');
+  for (const char* p = arg; *p; ++p) if (*p < '0' || *p > '9') { digits = false; break; }
+  ChannelDetails cd;
+  if (digits) {
+    const int s = atoi(arg);
+    return (s < MAX_GROUP_CHANNELS && the_mesh.getChannel(s, cd) && cd.name[0]) ? s : -1;
+  }
+  for (int s = 0; s < MAX_GROUP_CHANNELS; ++s)
+    if (the_mesh.getChannel(s, cd) && cd.name[0] && strcasecmp(cd.name, arg) == 0) return s;
+  return -1;
+}
+
+static void termLogChannelKey(const char* name, const uint8_t* secret) {
+  char hex[33];
+  for (int i = 0; i < 16; ++i) snprintf(hex + i * 2, 3, "%02x", secret[i]);
+  char r[96];
+  snprintf(r, sizeof r, "%s key: %s", name, hex);
+  termLogAppend(nullptr, r);
+}
+
+static void termChannelsChanged() {
+  if (!g_lv.task) return;
+  g_lv.task->refreshThreadsFromMesh();
+  g_lv.dirty_threads = true;
+}
+
+// chan add #tag           - join a hashtag channel (key derived from the name)
+// chan add <name>         - create a private channel with a random key
+// chan add <name> <key>   - join a private channel (key = 32 hex chars)
+static void termChanAdd(const char* arg) {
+  char buf[96];
+  strncpy(buf, arg, sizeof buf - 1);
+  buf[sizeof buf - 1] = '\0';
+  for (int i = (int)strlen(buf) - 1; i >= 0 && (buf[i] == ' ' || buf[i] == '\t'); --i) buf[i] = '\0';
+  if (!buf[0]) { termLogAppendC(TERM_C_ERR, nullptr, "usage: chan add <name> [key] | chan add #tag"); return; }
+
+  char name[32];
+  uint8_t secret[16];
+  bool show_key = false;
+  if (buf[0] == '#') {
+    // Same normalisation as the Join hashtag channel form: strip '#'s, drop
+    // whitespace, ASCII-lowercase, then key = sha256("#name")[0..16).
+    char norm[40]; int nn = 0;
+    const char* p = buf;
+    while (*p == '#') ++p;
+    while (*p && nn < (int)sizeof(norm) - 1) {
+      char c = *p++;
+      if (c == ' ' || c == '\t') continue;
+      if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+      norm[nn++] = c;
+    }
+    norm[nn] = '\0';
+    if (nn == 0) { termLogAppendC(TERM_C_ERR, nullptr, "usage: chan add #tag"); return; }
+    snprintf(name, sizeof name, "#%s", norm);
+    mesh::Utils::sha256(secret, sizeof(secret), reinterpret_cast<const uint8_t*>(name), (int)strlen(name));
+  } else {
+    // A trailing 32-hex word is the key; everything before it is the name.
+    char* last = strrchr(buf, ' ');
+    uint8_t parsed[16];
+    if (last && hexToSecret16(last + 1, parsed)) {
+      memcpy(secret, parsed, sizeof secret);
+      *last = '\0';
+      for (int i = (int)strlen(buf) - 1; i >= 0 && (buf[i] == ' ' || buf[i] == '\t'); --i) buf[i] = '\0';
+    } else if (hexToSecret16(buf, parsed)) {
+      termLogAppendC(TERM_C_ERR, nullptr, "give the channel a name: chan add <name> <key>");
+      return;
+    } else {
+#if defined(ESP32)
+      esp_fill_random(secret, sizeof(secret));
+#else
+      for (int i = 0; i < 16; ++i) secret[i] = static_cast<uint8_t>(rand() & 0xFF);
+#endif
+      show_key = true;   // a new private channel: others need this key to join
+    }
+    if (strlen(buf) >= sizeof name) { termLogAppendC(TERM_C_ERR, nullptr, "name too long (max 31)"); return; }
+    strncpy(name, buf, sizeof name);
+  }
+
+  if (termFindChannel(name) >= 0) {
+    char r[64];
+    snprintf(r, sizeof r, "channel %s already exists", name);
+    termLogAppendC(TERM_C_ERR, nullptr, r);
+    return;
+  }
+  const int slot = the_mesh.findFirstEmptyChannelSlot();
+  if (slot < 0) { termLogAppendC(TERM_C_ERR, nullptr, "channel table is full"); return; }
+  if (!the_mesh.uiAddOrUpdateChannel(slot, name, secret)) {
+    termLogAppendC(TERM_C_ERR, nullptr, "failed to save channel");
+    return;
+  }
+  termChannelsChanged();
+  char r[64];
+  snprintf(r, sizeof r, "added [%d] %s", slot, name);
+  termLogAppendC(TERM_C_INFO, nullptr, r);
+  if (show_key) termLogChannelKey(name, secret);
+}
+
+// chan del <slot|name>: same as Delete on the chats list (thread first, then the slot).
+static void termChanDel(const char* arg) {
+  if (!*arg) { termLogAppendC(TERM_C_ERR, nullptr, "usage: chan del <slot|name>"); return; }
+  const int slot = termFindChannel(arg);
+  ChannelDetails cd;
+  if (slot < 0 || !the_mesh.getChannel(slot, cd)) { termLogAppendC(TERM_C_ERR, nullptr, "channel not found"); return; }
+  if (g_lv.task) {
+    // The channel's thread, by slot (same lookup as the web chat's webThreadForChannel).
+    int idx[UITask::MAX_UI_THREADS];
+    const int n = g_lv.task->getCombinedInboxCount(idx, UITask::MAX_UI_THREADS);
+    for (int k = 0; k < n; ++k) {
+      bool ch = false; uint16_t u = 0; uint32_t ts = 0; char nm[48];
+      if (g_lv.task->getThreadInfo(idx[k], ch, u, ts, nm, sizeof nm) && ch
+          && g_lv.task->threadMeshChannelSlot(idx[k]) == slot) {
+        g_lv.task->removeThread(idx[k]);
+        break;
+      }
+    }
+  }
+  if (!the_mesh.uiDeleteChannel(slot)) { termLogAppendC(TERM_C_ERR, nullptr, "failed to delete channel"); return; }
+  // Don't leave the terminal "on" a channel that no longer exists.
+  if (s_term_to_set && s_term_to_is_channel && s_term_to_chan_slot == slot) {
+    s_term_to_set        = false;
+    s_term_to_is_channel = false;
+    s_term_to_chan_slot  = -1;
+    s_term_to_name[0]    = '\0';
+  }
+  termChannelsChanged();
+  char r[64];
+  snprintf(r, sizeof r, "deleted [%d] %s", slot, cd.name);
+  termLogAppendC(TERM_C_INFO, nullptr, r);
+}
+
+// chan key <slot|name>: print the key so it can be shared.
+static void termChanKey(const char* arg) {
+  if (!*arg) { termLogAppendC(TERM_C_ERR, nullptr, "usage: chan key <slot|name>"); return; }
+  const int slot = termFindChannel(arg);
+  ChannelDetails cd;
+  if (slot < 0 || !the_mesh.getChannel(slot, cd)) { termLogAppendC(TERM_C_ERR, nullptr, "channel not found"); return; }
+  termLogChannelKey(cd.name, cd.channel.secret);
+}
+
+static void termCmdChan(const char* arg) {
+  const char* rest = arg;
+  while (*rest && *rest != ' ' && *rest != '\t') ++rest;
+  const size_t n = (size_t)(rest - arg);
+  while (*rest == ' ' || *rest == '\t') ++rest;
+  if      (n == 3 && strncasecmp(arg, "add", 3) == 0) termChanAdd(rest);
+  else if (n == 3 && strncasecmp(arg, "del", 3) == 0) termChanDel(rest);
+  else if (n == 3 && strncasecmp(arg, "key", 3) == 0) termChanKey(rest);
+  else if (n == 0)                                    termCmdChannels();
+  else termLogAppendC(TERM_C_ERR, nullptr, "usage: chan add <name> [key] | chan add #tag | chan del <ch> | chan key <ch>");
+}
+
 static void termCmdSend(const char* text) {
   while (*text == ' ' || *text == '\t') ++text;
   if (!*text) { termLogAppendC(TERM_C_ERR, nullptr, "usage: send <text>"); return; }
@@ -22871,6 +23032,11 @@ static bool terminalRunChatCommand(const char* cmd) {
     termLogAppendC(TERM_C_INFO, nullptr, "messaging:");
     termLogAppend("  ", "list / contacts    - list your contacts");
     termLogAppend("  ", "channels           - list channels");
+    termLogAppend("  ", "chan add <name>    - new private channel (random key)");
+    termLogAppend("  ", "chan add <name> <key> - join a private channel (32 hex)");
+    termLogAppend("  ", "chan add #tag      - join a hashtag channel");
+    termLogAppend("  ", "chan del <ch>      - delete a channel (slot or name)");
+    termLogAppend("  ", "chan key <ch>      - show a channel's key");
     termLogAppend("  ", "to <name>          - talk to a contact or channel");
     termLogAppend("  ", "send <text>        - send to the current recipient");
     termLogAppend("  ", "public <text>      - send on the public channel");
@@ -22881,6 +23047,7 @@ static bool terminalRunChatCommand(const char* cmd) {
   }
   if (is(cmd, "list", &rest) || is(cmd, "contacts", &rest)) { termCmdList();     return true; }
   if (is(cmd, "channels", &rest))                           { termCmdChannels(); return true; }
+  if (is(cmd, "chan", &rest))                               { termCmdChan(rest); return true; }
   if (is(cmd, "to", &rest))                                 { termCmdTo(rest);   return true; }
   if (is(cmd, "exit", &rest) || is(cmd, "leave", &rest))    { termCmdExit();     return true; }
   if (is(cmd, "send", &rest))                               { termCmdSend(rest); return true; }
