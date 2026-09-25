@@ -41785,7 +41785,19 @@ static void refreshContactsList() {
   const int  loc_x   = star_x - (wide_cols ? 8 : (mid_cols ? 6 : 4)) - loc_w;   // Location column (pushed right)
   const int  heard_x = loc_x - col_gap - hrd_w;          // Heard column (left of Location)
   const int  icon_x  = sel_md ? 34 : 8;
-  const int  name_x  = icon_x + (mid_cols ? 24 : 20);    // the font-16 type glyph grazed the name's first letter
+  // mid_cols (P4 portrait): the antenna/room glyphs are wider than the person one and grow
+  // with the UI-size preset, so a fixed 24 px still let some names touch their icon.
+  // Clear the widest of the three type glyphs by 8 px instead.
+  int        icon_w  = 0;
+  if (mid_cols) {
+    static const char* const kTypeSyms[] = { TOUCH_SYM_PERSON, TOUCH_SYM_ANTENNA, LV_SYMBOL_LOOP };
+    for (const char* sym : kTypeSyms) {
+      lv_point_t isz;
+      lv_txt_get_size(&isz, sym, &g_font_16, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      icon_w = LV_MAX(icon_w, (int)isz.x);
+    }
+  }
+  const int  name_x  = icon_x + (mid_cols ? LV_MAX(24, icon_w + 8) : 20);    // the font-16 type glyph grazed the name's first letter
   // mid_cols (P4 284px): a single 34-px line can't hold name + age + distance without either
   // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
