@@ -12914,6 +12914,18 @@ static void screenTimeoutSliderReleasedCb(lv_event_t* e) {
 // + revision, last reset reason, MeshCore + Meshcomod versions. One-shot
 // snapshot; no live updates while the modal is open.
 #if defined(ESP32)
+#if defined(HAS_TDISPLAY_P4)
+esp_reset_reason_t tdisplayP4ResetReason();   // variants/tdisplay_p4/target.cpp
+#endif
+// esp_reset_reason(), except on the T-Display P4, where every software restart is made a full system
+// reset (so the panel does not come back dark) and would otherwise read as a watchdog crash.
+static esp_reset_reason_t bootResetReason() {
+#if defined(HAS_TDISPLAY_P4)
+  return tdisplayP4ResetReason();
+#else
+  return esp_reset_reason();
+#endif
+}
 static const char* resetReasonString(esp_reset_reason_t r) {
   switch (r) {
     case ESP_RST_POWERON:    return "Power on";
@@ -13227,7 +13239,7 @@ static void sysInfoTextRest(char* buf, size_t cap) {
   }
 
   p += snprintf(buf + p, cap - p,
-                "Last reset\n  %s\n\n", resetReasonString(esp_reset_reason()));
+                "Last reset\n  %s\n\n", resetReasonString(bootResetReason()));
 #endif
   // beta_31 field-freeze tracer: recent loop stalls (>0.2 s), newest first — a
   // field tester photographs this instead of needing a serial console.
@@ -36643,7 +36655,7 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
 #ifdef FIRMWARE_RELEASE_TAG
       tf.printf("firmware: %s\n", FIRMWARE_RELEASE_TAG);
 #endif
-      tf.printf("reset: %s\n", resetReasonString(esp_reset_reason()));
+      tf.printf("reset: %s\n", resetReasonString(bootResetReason()));
       if (s_crash_wdt_str[0]) tf.printf("%s\n", s_crash_wdt_str);
       tf.close();
     }
@@ -36689,7 +36701,7 @@ static void crashReportMaybePrompt() {
   // crash" on every manual reset / power-cycle until it was exported. Gate on this boot's reset reason;
   // the dump is still listed + exportable from Settings -> About (and via esptool) regardless.
   {
-    esp_reset_reason_t rr = esp_reset_reason();
+    esp_reset_reason_t rr = bootResetReason();
     if (rr != ESP_RST_PANIC && rr != ESP_RST_TASK_WDT && rr != ESP_RST_INT_WDT && rr != ESP_RST_WDT) return;
   }
   static char m[280];

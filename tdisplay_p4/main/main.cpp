@@ -448,6 +448,9 @@ static uint32_t httpDateProbe(void) {
 }
 
 extern "C" void app_main(void) {
+  // Before anything else registers a shutdown handler: a software restart must be a full system
+  // reset or the panel comes back dark (see target.cpp).
+  tdisplayP4InstallFullRestart();
   initArduino();
   wadameshSetup();
 
