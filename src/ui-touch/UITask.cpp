@@ -10864,6 +10864,16 @@ static void saveProfileNameCb(lv_event_t* e) {
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task || !g_set_modal.name_ta) return;
   kbMirrorSyncToReal();
   const char* name = lv_textarea_get_text(g_set_modal.name_ta);
+  // Blur with nothing edited: no save and no "Name saved". Moving focus past the field
+  // is a blur on keypad boards, so the M9 flashed the alert for every field it
+  // crossed (#570). Compared in the form the field was filled with (missing glyphs
+  // replaced), which also stops a blur rewriting the name with those replacements.
+  if (_c == LV_EVENT_DEFOCUSED) {
+    char cur_vis[40];
+    const char* raw = g_lv.task->getNodeNameCstr();
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, cur_vis, sizeof(cur_vis), raw ? raw : "");
+    if (strcmp(name, cur_vis) == 0) return;
+  }
   if (g_lv.task->setNodeName(name)) {
     g_lv.task->showAlert(TR("Name saved"), 1000);
     refreshStatusLabels();
@@ -10878,6 +10888,15 @@ static void saveProfilePosCb(lv_event_t* e) {
   if ((_c != LV_EVENT_CLICKED && _c != LV_EVENT_DEFOCUSED) || !g_lv.task) return;
   const bool silent = (_c == LV_EVENT_DEFOCUSED);   // blur auto-save: quiet if mid-edit
   kbMirrorSyncToReal();
+  // Blur with neither field edited: no save and no "Position saved" (#570, see
+  // saveProfileNameCb). The fields are filled with "%.6f", so compare in that form.
+  if (silent && g_set_modal.lat_ta && g_set_modal.lon_ta) {
+    char cur_lat[24], cur_lon[24];
+    snprintf(cur_lat, sizeof(cur_lat), "%.6f", g_lv.task->getNodeLat());
+    snprintf(cur_lon, sizeof(cur_lon), "%.6f", g_lv.task->getNodeLon());
+    if (strcmp(lv_textarea_get_text(g_set_modal.lat_ta), cur_lat) == 0 &&
+        strcmp(lv_textarea_get_text(g_set_modal.lon_ta), cur_lon) == 0) return;
+  }
   float lat = 0.0f, lon = 0.0f;
   if (!parseFloatField(g_set_modal.lat_ta, lat) || !parseFloatField(g_set_modal.lon_ta, lon)) {
     if (!silent) g_lv.task->showAlert(TR("Invalid lat/lon"), 1200);
