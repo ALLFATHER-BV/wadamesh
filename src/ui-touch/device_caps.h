@@ -256,8 +256,12 @@
 
 // A true power cut can leave these boards without trustworthy wall time. The
 // T-Deck has no RTC; the M9's PCF8563 can report lost integrity after shutdown.
-// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383.
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
+// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383. The
+// T-Display P4's PCF8563 has come back asserting impossible dates, so it gets the
+// same fallback -- on the esp-hosted C6 build only: the sync drives Arduino's real
+// WiFi, which the legacy ESP-AT build must never touch.
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || \
+    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
   #define CAP_BOOT_TIME_SYNC 1
 #else
   #define CAP_BOOT_TIME_SYNC 0

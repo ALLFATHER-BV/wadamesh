@@ -2573,6 +2573,73 @@ void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   // Match the stock app's shape exactly (it always emits these two as null).
   out.print("  \"other_settings\": null,\n");
   out.print("  \"auto_add_settings\": null,\n");
+  // Everything else a restore needs, in a block of our own so the fields the stock
+  // app reads keep exactly its shape. Without this, the radio's duty-cycle limit
+  // (airtime factor), the region scope, the auto-add rules, advert/telemetry
+  // policy and GPS settings were silently dropped: a restored node came back on
+  // the right frequency but transmitting on an unlimited duty cycle, unscoped, and
+  // auto-adding everything. Also carried: RX delay, buzzer quiet, client repeat, the
+  // BLE pairing PIN and the location-privacy radius.
+  if (p) {
+    char l[256];
+    snprintf(l, sizeof l,
+      "  \"wadamesh_settings\": {\"version\": 1, \"airtime_factor\": %.3f, \"rx_boosted_gain\": %u, "
+      "\"multi_acks\": %u, \"manual_add_contacts\": %u, \"autoadd_config\": %u, \"autoadd_max_hops\": %u, ",
+      (double)p->airtime_factor, (unsigned)p->rx_boosted_gain, (unsigned)p->multi_acks,
+      (unsigned)p->manual_add_contacts, (unsigned)p->autoadd_config, (unsigned)p->autoadd_max_hops);
+    out.print(l);
+    snprintf(l, sizeof l,
+      "\"advert_loc_policy\": %u, \"telemetry_mode_base\": %u, \"telemetry_mode_loc\": %u, "
+      "\"telemetry_mode_env\": %u, \"gps_enabled\": %u, \"gps_interval\": %lu, \"path_hash_mode\": %u, ",
+      (unsigned)p->advert_loc_policy, (unsigned)p->telemetry_mode_base, (unsigned)p->telemetry_mode_loc,
+      (unsigned)p->telemetry_mode_env, (unsigned)p->gps_enabled, (unsigned long)p->gps_interval,
+      (unsigned)p->path_hash_mode);
+    out.print(l);
+    snprintf(l, sizeof l,
+      "\"rx_delay_base\": %.3f, \"buzzer_quiet\": %u, \"client_repeat\": %u, \"ble_pin\": %lu, ",
+      (double)p->rx_delay_base, (unsigned)p->buzzer_quiet, (unsigned)p->client_repeat,
+      (unsigned long)p->ble_pin);
+    out.print(l);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+    // Location privacy radius: the shifted position others see (Settings > GPS).
+    snprintf(l, sizeof l, "\"gps_fuzz_m\": %u, ", (unsigned)touchPrefsGetGpsFuzzM());
+    out.print(l);
+#endif
+    // region_scope is the block's LAST field: it is the one string, opened here and
+    // closed with the block. (Anything printed between its opening quote and the
+    // closing one lands inside the string and breaks the file's JSON.)
+    out.print("\"region_scope\": \"");
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+    char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    touchPrefsGetRegionScope(region, sizeof(region));
+    esc(region);
+#endif
+    out.print("\"},\n");
+  }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+  // Screen and app preferences (display, sounds, keyboard, map, notifications, quick
+  // replies, favourites/ignores, channel mute/emoji/scope, repeater passwords, saved
+  // Wi-Fi networks) plus the active Wi-Fi connection. See touchPrefsBackupExport for
+  // what is deliberately left on the unit.
+  out.print("  \"app_settings\": {\"version\": 1,\n");
+#if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+  {
+    char ssid[65] = {0}, pwd[65] = {0};
+    wifiConfigGetSsid(ssid, sizeof ssid);
+    wifiConfigGetPwd(pwd, sizeof pwd);
+    out.print("    \"wifi\": {\"ssid\": \""); esc(ssid);
+    out.print("\", \"password\": \""); esc(pwd);
+    char l[96];
+    snprintf(l, sizeof l, "\", \"radio\": %u, \"ble\": %u, \"chosen\": %u},\n",
+             (unsigned)wifiConfigGetRadioEnabled(), (unsigned)wifiConfigGetBleEnabled(),
+             (unsigned)wifiConfigGetWifiChosen());
+    out.print(l);
+  }
+#endif
+  out.print("    \"prefs\": ");
+  touchPrefsBackupExport(out);
+  out.print("\n  },\n");
+#endif
   out.print("  \"channels\": [");
   bool first = true;
 #ifdef MAX_GROUP_CHANNELS
@@ -2653,6 +2720,59 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       if (!r["tx_power"].isNull())         { _prefs.tx_power_dbm = (int8_t)r["tx_power"].as<int>(); prefs_dirty = true; }
     }
   }
+  if (sections & 0x02) {  // radio + mesh behaviour exported by wadamesh (absent in stock-app files)
+    JsonObjectConst w = root["wadamesh_settings"].as<JsonObjectConst>();
+    if (!w.isNull()) {
+      auto u8 = [&](const char* k, uint8_t& dst, int max_v) {
+        if (w[k].isNull()) return;
+        const int v = w[k].as<int>();
+        if (v >= 0 && v <= max_v) { dst = (uint8_t)v; prefs_dirty = true; }
+      };
+      if (!w["airtime_factor"].isNull()) {
+        const float af = w["airtime_factor"].as<float>();
+        if (af >= 0.0f && af <= 9.0f) { _prefs.airtime_factor = af; prefs_dirty = true; }
+      }
+      u8("rx_boosted_gain", _prefs.rx_boosted_gain, 1);
+      u8("multi_acks", _prefs.multi_acks, 255);
+      u8("manual_add_contacts", _prefs.manual_add_contacts, 255);
+      u8("autoadd_config", _prefs.autoadd_config, 255);
+      u8("autoadd_max_hops", _prefs.autoadd_max_hops, 64);
+      u8("advert_loc_policy", _prefs.advert_loc_policy, 255);
+      u8("telemetry_mode_base", _prefs.telemetry_mode_base, 255);
+      u8("telemetry_mode_loc", _prefs.telemetry_mode_loc, 255);
+      u8("telemetry_mode_env", _prefs.telemetry_mode_env, 255);
+      u8("gps_enabled", _prefs.gps_enabled, 1);
+      u8("path_hash_mode", _prefs.path_hash_mode, 255);
+      if (!w["gps_interval"].isNull()) { _prefs.gps_interval = w["gps_interval"].as<uint32_t>(); prefs_dirty = true; }
+      u8("buzzer_quiet", _prefs.buzzer_quiet, 1);
+      u8("client_repeat", _prefs.client_repeat, 255);
+      if (!w["rx_delay_base"].isNull()) {
+        const float rd = w["rx_delay_base"].as<float>();
+        if (rd >= 0.0f && rd <= 20.0f) { _prefs.rx_delay_base = rd; prefs_dirty = true; }
+      }
+      if (!w["ble_pin"].isNull()) {
+        // Any six-digit code the Bluetooth page accepts (a leading 0 stores below 100000).
+        const uint32_t pin = w["ble_pin"].as<uint32_t>();
+        if (pin <= 999999) { _prefs.ble_pin = pin; prefs_dirty = true; }
+      }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+      if (!w["gps_fuzz_m"].isNull()) {
+        const uint32_t fz = w["gps_fuzz_m"].as<uint32_t>();
+        // Only the radii the Location privacy row offers (Exact / 100 m / 250 m / 1 km).
+        if (fz == 0 || fz == 100 || fz == 250 || fz == 1000) touchPrefsSetGpsFuzzM((uint16_t)fz);
+      }
+#endif
+      const char* region = w["region_scope"].as<const char*>();
+      if (region) {
+        // setDefaultFloodScope saves prefs itself; the flag below covers the rest.
+        setDefaultFloodScope(region);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+        touchPrefsSetRegionScope(region);
+#endif
+        if (region[0]) _region_reg.ensureRegion(region);
+      }
+    }
+  }
   if (sections & 0x04) {  // position
     JsonObjectConst ps = root["position_settings"].as<JsonObjectConst>();
     if (!ps.isNull()) {
@@ -2706,6 +2826,32 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       saveContacts();
     }
   }
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+  if (sections & 0x20) {  // screen and app preferences (absent in stock-app files)
+    JsonObjectConst app = root["app_settings"].as<JsonObjectConst>();
+    if (!app.isNull()) {
+      for (JsonVariantConst ev : app["prefs"].as<JsonArrayConst>()) {
+        JsonArrayConst e = ev.as<JsonArrayConst>();
+        const char* key = e[0].as<const char*>();
+        const char* type = e[1].as<const char*>();
+        const char* val = e[2].as<const char*>();
+        if (key && type && type[0] && !type[1] && val) touchPrefsBackupRestore(key, type[0], val);
+      }
+#if defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION)
+      JsonObjectConst wf = app["wifi"].as<JsonObjectConst>();
+      if (!wf.isNull()) {
+        const char* ssid = wf["ssid"].as<const char*>();
+        const char* pwd = wf["password"].as<const char*>();
+        if (ssid) wifiConfigSetSsid(ssid);
+        if (pwd) wifiConfigSetPwd(pwd);
+        if (!wf["radio"].isNull())  wifiConfigSetRadioEnabled(wf["radio"].as<int>() != 0);
+        if (!wf["ble"].isNull())    wifiConfigSetBleEnabled(wf["ble"].as<int>() != 0);
+        if (!wf["chosen"].isNull()) wifiConfigSetWifiChosen(wf["chosen"].as<int>() != 0);
+      }
+#endif
+    }
+  }
+#endif
   if (out_channels) *out_channels = nch;
   if (out_contacts) *out_contacts = nco;
   return true;

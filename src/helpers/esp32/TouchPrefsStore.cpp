@@ -2513,4 +2513,188 @@ bool touchPrefsSetGpsBaud(uint32_t baud) {
   return cfgFlush();
 }
 
+
+// ---------------------------------------------------------------------------
+// Settings backup: screen and app preferences
+// ---------------------------------------------------------------------------
+// An explicit allow-list rather than a namespace dump: SdNvsPrefs cannot list its
+// keys in both backends, the file backend does not keep value types, and import must
+// never write a key this build does not own (or with the wrong type — NVS refuses a
+// uchar read of a string key). Left out on purpose: "use_sd" (storage choice of this
+// unit), "setup_ok" (the wizard), "rgn_scope" (exported with the node settings, where
+// import also derives the flood-scope key), and the discovered-nodes cache.
+struct BkKey { char name[16]; char type; };
+static int backupKeys(BkKey* out, int cap) {
+  int n = 0;
+  auto add = [&](const char* k, char t) {
+    if (n < cap) { strncpy(out[n].name, k, sizeof(out[n].name) - 1); out[n].name[15] = '\0'; out[n].type = t; n++; }
+  };
+  add(KEY_CFG, 'b');
+  static const char* const k_u8[] = {
+    "snd_msg", "snd_men", "snd_dm", "snd_vol", "ign_tiny", "dsc_evict", "dsc_hops",
+    "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
+    "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
+  };
+  for (const char* k : k_u8) add(k, 'c');
+  add("map_cap", 's');
+  add(KEY_TILE_SRV, 't');
+  add(KEY_LOCK_WALL, 't');
+  for (int slot : {TOUCH_SND_MSG, TOUCH_SND_DM, TOUCH_SND_MEN}) add(soundFileKey(slot), 't');
+  char k[16];
+  for (int i = 0; i < TOUCH_QUICK_REPLY_COUNT; ++i) { qrKeyFor(i, k); add(k, 't'); }
+  for (int i = 0; i < 64; ++i) { chanScopeKey(i, k); add(k, 't'); }
+  add(KEY_FAV, 'b'); add(KEY_IGN, 'b'); add(KEY_IGN_NAMES, 'b');
+  add(KEY_CHM, 'b'); add(KEY_CHE, 'b'); add(KEY_RPW, 'b');
+  add("radio_preset", 'b');   // Radio & mesh: the community preset last picked (UITask)
+  for (int i = 0; i < TOUCH_WIFI_NET_COUNT; ++i) {
+    wifiNetKey(i, 's', k); add(k, 't');
+    wifiNetKey(i, 'p', k); add(k, 't');
+    wifiNetKey(i, 'f', k); add(k, 'c');
+    wifiNetKey(i, 'r', k); add(k, 'u');
+  }
+  add("wnctr", 'u');
+  for (int i = 0; i < TOUCH_WIFI_SLOT_COUNT; ++i) {
+    wifiSlotKey(i, 'l', k); add(k, 't');
+    wifiSlotKey(i, 's', k); add(k, 't');
+    wifiSlotKey(i, 'p', k); add(k, 't');
+  }
+  return n;
+}
+static constexpr int kBackupKeyCap = 160;
+static constexpr size_t kBackupBlobMax = 2048;
+
+static void bkPrintJsonStr(Print& out, const char* s) {
+  out.write('"');
+  for (; s && *s; ++s) {
+    const char c = *s;
+    if (c == '"' || c == '\\') { out.write('\\'); out.write((uint8_t)c); }
+    else if ((uint8_t)c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", (unsigned)(uint8_t)c); out.print(b); }
+    else out.write((uint8_t)c);
+  }
+  out.write('"');
+}
+
+void touchPrefsBackupExport(Print& out) {
+  if (!s_begun) touchPrefsBegin();
+  BkKey* keys = new BkKey[kBackupKeyCap];
+  uint8_t* blob = (uint8_t*)malloc(kBackupBlobMax);
+  if (!keys || !blob) { delete[] keys; free(blob); out.print("[]"); return; }
+  const int n = backupKeys(keys, kBackupKeyCap);
+  bool first = true;
+  out.print("[");
+  static const char* HX = "0123456789abcdef";
+  for (int i = 0; i < n; ++i) {
+    const char* key = keys[i].name;
+    if (!s_prefs.isKey(key)) continue;   // never set on this unit: its default applies on restore too
+    out.print(first ? "\n    [" : ",\n    [");
+    first = false;
+    bkPrintJsonStr(out, key);
+    out.print(", \"");
+    out.write((uint8_t)keys[i].type);
+    out.print("\", ");
+    char num[16];
+    switch (keys[i].type) {
+      case 'c': snprintf(num, sizeof num, "\"%u\"", (unsigned)s_prefs.getUChar(key, 0));   out.print(num); break;
+      case 's': snprintf(num, sizeof num, "\"%u\"", (unsigned)s_prefs.getUShort(key, 0));  out.print(num); break;
+      case 'u': snprintf(num, sizeof num, "\"%lu\"", (unsigned long)s_prefs.getUInt(key, 0)); out.print(num); break;
+      case 't': bkPrintJsonStr(out, s_prefs.getString(key, String("")).c_str()); break;
+      default: {
+        const size_t len = s_prefs.getBytes(key, blob, kBackupBlobMax);
+        out.write('"');
+        for (size_t j = 0; j < len && len <= kBackupBlobMax; ++j) { out.write(HX[blob[j] >> 4]); out.write(HX[blob[j] & 0xF]); }
+        out.write('"');
+      }
+    }
+    out.print("]");
+  }
+  out.print(first ? "]" : "\n  ]");
+  delete[] keys;
+  free(blob);
+}
+
+static int bkHexNib(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// Merge a backed-up "cfg" blob into this unit's current settings. Fields present in
+// the backup win; newer fields the backup predates keep their current values
+// (overlayStored copies only the stored prefix). Then the per-unit fields are put
+// back: they describe THIS hardware or a boot mode, and carrying them across could
+// break GPS, the battery gauge or the send clock, or boot another device straight
+// into remote/console mode.
+static bool bkRestoreCfg(const uint8_t* blob, size_t len) {
+  if (!s_cfg_loaded) cfgLoadOrMigrate();
+  TouchCfg merged = s_cfg;
+  uint8_t stored_version = 0;
+  if (!TouchPrefsSchema::overlayStored(merged, blob, len, &stored_version)) return false;
+  const TouchCfg& cur = s_cfg;
+  merged.magic            = cur.magic;
+  merged.ver              = cur.ver;
+  merged.batt_full_mv     = cur.batt_full_mv;
+  merged.gps_baud         = cur.gps_baud;
+  merged.clock_floor      = cur.clock_floor;
+  merged.p4_antenna       = cur.p4_antenna;
+  merged.fem_lna          = cur.fem_lna;
+  merged.remote_mode      = cur.remote_mode;
+  merged.console_mode     = cur.console_mode;
+  merged.kb_force_legacy  = cur.kb_force_legacy;
+  merged.ble_kbd_mode     = cur.ble_kbd_mode;
+  memcpy(merged.ble_kbd_addr, cur.ble_kbd_addr, sizeof(merged.ble_kbd_addr));
+  merged.ble_kbd_addr_type = cur.ble_kbd_addr_type;
+  memcpy(merged.ble_kbd_name, cur.ble_kbd_name, sizeof(merged.ble_kbd_name));
+  merged.report_ping      = cur.report_ping;
+  merged.report_done_n    = cur.report_done_n;
+  s_cfg = merged;
+  return cfgFlush();
+}
+
+bool touchPrefsBackupRestore(const char* key, char type, const char* value) {
+  if (!key || !value) return false;
+  if (!s_begun) touchPrefsBegin();
+  BkKey* keys = new BkKey[kBackupKeyCap];
+  if (!keys) return false;
+  const int n = backupKeys(keys, kBackupKeyCap);
+  bool allowed = false;
+  for (int i = 0; i < n && !allowed; ++i)
+    allowed = strcmp(keys[i].name, key) == 0 && keys[i].type == type;
+  delete[] keys;
+  if (!allowed) return false;
+
+  if (type == 'b') {
+    const size_t hl = strlen(value);
+    if (hl % 2 || hl / 2 > kBackupBlobMax) return false;
+    uint8_t* blob = (uint8_t*)malloc(hl / 2 + 1);
+    if (!blob) return false;
+    for (size_t j = 0; j < hl / 2; ++j) {
+      const int hi = bkHexNib(value[2 * j]), lo = bkHexNib(value[2 * j + 1]);
+      if (hi < 0 || lo < 0) { free(blob); return false; }
+      blob[j] = (uint8_t)((hi << 4) | lo);
+    }
+    bool ok;
+    if (strcmp(key, KEY_CFG) == 0) ok = bkRestoreCfg(blob, hl / 2);
+    else                           ok = touchPrefsSetBlob(key, blob, hl / 2);
+    free(blob);
+    return ok;
+  }
+
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok = false;
+  char* end = nullptr;
+  const unsigned long v = strtoul(value, &end, 10);
+  const bool num_ok = end && end != value && *end == '\0';
+  switch (type) {
+    case 'c': ok = num_ok && v <= 0xFF       && s_prefs.putUChar(key, (uint8_t)v) > 0;   break;
+    case 's': ok = num_ok && v <= 0xFFFF     && s_prefs.putUShort(key, (uint16_t)v) > 0; break;
+    case 'u': ok = num_ok && v <= 0xFFFFFFFF && s_prefs.putUInt(key, (uint32_t)v) > 0;   break;
+    case 't': ok = s_prefs.putString(key, value) > 0 || value[0] == '\0';                break;
+  }
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
 #endif

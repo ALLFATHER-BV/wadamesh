@@ -33,12 +33,14 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   this needs [LilyGO keyboard-controller firmware with raw matrix mode](https://github.com/Xinyuan-LilyGO/T-Deck/tree/master/examples/Keyboard_ESP32C3)
   (June 2025 or newer). Older controller firmware keeps normal typing and
   reports the unavailable latch mode on Serial.
-- **T-Deck Pro**: dedicated `LilyGo_TDeck_Pro_companion_radio_touch` development
-  target for the GDEQ031T10 e-paper model. It uses a monochrome shadow buffer,
-  coalesced partial refreshes, CST328/CST3530 touch detection and the Pro-specific
-  TCA8418 matrix. Keyboard events are drained during the panel BUSY interval so
-  a refresh cannot overflow the controller FIFO. Hardware validation is pending;
-  see [variants/lilygo_tdeck_pro/PORT.md](variants/lilygo_tdeck_pro/PORT.md).
+- **T-Deck Pro**: separate `LilyGo_TDeck_Pro_v1_0_companion_radio_touch` and
+  `LilyGo_TDeck_Pro_v1_1_companion_radio_touch` targets for the incompatible PCB
+  revisions. V1.0 has no frontlight and uses GPIO45 for touch reset; V1.1 uses
+  GPIO45 for its frontlight and GPIO38 for touch reset. Flashing the V1.1 image
+  onto V1.0 holds touch in reset. Both use the GDEQ031T10 e-paper panel,
+  CST328/CST3530 touch detection, and the Pro-specific TCA8418 matrix. See
+  [variants/lilygo_tdeck_pro/PORT.md](variants/lilygo_tdeck_pro/PORT.md) before
+  choosing a target.
 - **T-Deck Max**: `LilyGo_TDeck_Max_companion_radio_touch`. The same e-paper,
   keyboard and radio as the Pro, whose display and touch drivers it reuses; the
   differences are an XL9555 expander in front of the peripheral power enables and

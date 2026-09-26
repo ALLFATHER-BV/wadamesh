@@ -34,7 +34,13 @@ public:
     esp_deep_sleep_start();
   }
 
-  const char* getManufacturerName() const { return "LilyGo T-Deck Pro"; }
+  const char* getManufacturerName() const {
+#if defined(HAS_TDECK_PRO_V1_0)
+    return "LilyGo T-Deck Pro V1.0";
+#else
+    return "LilyGo T-Deck Pro V1.1";
+#endif
+  }
 
 private:
   bool bqRead(uint8_t reg, uint8_t& value);

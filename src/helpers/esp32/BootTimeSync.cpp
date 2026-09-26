@@ -18,7 +18,9 @@
 // the M9 (RTC integrity can be lost across its hard power cut). Keep the runtime
 // gate as narrow as the UI capability gate so a migrated preference file cannot
 // unexpectedly start Wi-Fi on another board.
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+// The T-Display P4 joins on its esp-hosted build (see CAP_BOOT_TIME_SYNC).
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || \
+    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
   #define BOOT_TIME_SYNC_SUPPORTED 1
 #else
   #define BOOT_TIME_SYNC_SUPPORTED 0

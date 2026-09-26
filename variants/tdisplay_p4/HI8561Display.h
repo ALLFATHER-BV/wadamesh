@@ -12,15 +12,15 @@
 // Backlight is HI8561-internal (no GPIO): brightness is DCS 0x51, like the RM69A10.
 // Selected at build time by HAS_TDP4_LCD (DISPLAY_CLASS=HI8561Display) — see tdisplay_p4/main/CMakeLists.txt.
 #include <stdint.h>
-#include <helpers/ui/DisplayDriver.h>
+#include "P4PanelPainter.h"   // native-resolution fills/text for non-LVGL screens (Remote UI)
 #include "esp_lcd_types.h"
 
-class HI8561Display : public DisplayDriver {
+class HI8561Display : public P4PanelPainter {
   bool _on = true;
   esp_lcd_panel_handle_t _panel = nullptr;
   esp_lcd_panel_io_handle_t _dbi_io = nullptr;   // DCS command channel (runtime brightness 0x51)
 public:
-  HI8561Display() : DisplayDriver(540, 1168) {}
+  HI8561Display() : P4PanelPainter(540, 1168) {}
 
   bool begin();   // full DSI bring-up; returns false on failure (logs the stage)
 
@@ -28,21 +28,15 @@ public:
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels);
   void setDisplayRotation(int rot) { (void)rot; }   // TODO(device): panel rotation / SW-rotate
   void startFrame() {}
+  // Explicit forward (no default arg) so startFrame() stays unambiguous next to the no-arg one.
+  void startFrame(ColorVal bkg) override { P4PanelPainter::startFrame(bkg); }
   void endFrame()   {}
 
-  // --- DisplayDriver contract (minimal; LVGL does the real drawing) ---
+  // --- DisplayDriver contract: fills/text come from P4PanelPainter; LVGL does the UI ---
   bool isOn() override { return _on; }
   void turnOn() override;
   void turnOff() override;
   void setBrightness(uint8_t b);   // HI8561 cmd 0x51 (integrated backlight)
-  void clear() override {}
-  void startFrame(ColorVal) override {}
-  void setTextSize(int) override {}
-  void setColor(ColorVal) override {}
-  void setCursor(int, int) override {}
-  void print(const char*) override {}
-  void fillRect(int, int, int, int) override {}
-  void drawRect(int, int, int, int) override {}
-  void drawXbm(int, int, const uint8_t*, int, int) override {}
-  uint16_t getTextWidth(const char*) override { return 0; }
+protected:
+  void writeNativeRGB565(int x, int y, int w, int h, const uint16_t* px) override;
 };

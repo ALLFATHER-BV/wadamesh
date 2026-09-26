@@ -7,13 +7,13 @@
 # are standalone ESP-IDF apps with their own build.sh wrappers, and release.sh
 # says so in a comment while building only the PlatformIO half. So a change that
 # broke an IDF-only board was invisible until someone cut a release by hand. This
-# builds all ten, keeps going after a failure, and prints one table at the end.
+# builds all eleven (both T-Display P4 panel SKUs), keeps going after a failure, and prints one table at the end.
 #
 # Usage:
 #   scripts/build-all-targets.sh                 # everything it can build here
 #   scripts/build-all-targets.sh --list          # show the targets, build nothing
 #   scripts/build-all-targets.sh --pio           # PlatformIO boards only
-#   scripts/build-all-targets.sh --idf           # Tanmatsu + T-Display P4 only
+#   scripts/build-all-targets.sh --idf           # Tanmatsu + both T-Display P4 SKUs only
 #   scripts/build-all-targets.sh --fail-fast     # stop at the first failure
 #   scripts/build-all-targets.sh -- -v           # pass the rest through to pio run
 #
@@ -57,8 +57,20 @@ while IFS= read -r e; do PIO_ENVS+=("$e"); done < <(sed -n 's/^\[env:\(.*\)\]$/\
 # ESP-IDF 5.5.1; the P4 reuses the Tanmatsu's via symlinks, so one check covers
 # both. Absent toolchain = SKIP, not failure: a laptop with only PlatformIO
 # installed should still be able to run this and get the eight boards checked.
-IDF_DIRS=(tanmatsu tdisplay_p4)
+# tdisplay_p4_lcd is the HI8561 LCD SKU: the same app built with WADA_P4_LCD=1.
+IDF_DIRS=(tanmatsu tdisplay_p4 tdisplay_p4_lcd)
 idf_available() { [ -f "$ROOT/tanmatsu/esp-idf/export.sh" ]; }
+
+# Both P4 SKUs share build/tdisplay_p4, and WADA_P4_LCD is read only at CMake
+# configure time, so every P4 build reconfigures first; otherwise the AMOLED
+# entry would quietly rebuild whichever panel was configured last.
+idf_build() {
+  case "$1" in
+    tdisplay_p4)     env -u WADA_P4_LCD "$ROOT/tdisplay_p4/build.sh" reconfigure build ;;
+    tdisplay_p4_lcd) WADA_P4_LCD=1      "$ROOT/tdisplay_p4/build.sh" reconfigure build ;;
+    *)               "$ROOT/$1/build.sh" build ;;
+  esac
+}
 
 if [ "$LIST_ONLY" = 1 ]; then
   echo "PlatformIO targets (${#PIO_ENVS[@]}):"
@@ -126,7 +138,7 @@ fi
 if [ "$DO_IDF" = 1 ]; then
   for d in "${IDF_DIRS[@]}"; do
     if idf_available; then
-      run_target "$d (esp-idf)" "$LOGDIR/$d.log" "$ROOT/$d/build.sh" build
+      run_target "$d (esp-idf)" "$LOGDIR/$d.log" idf_build "$d"
     else
       skip_target "$d (esp-idf)" "no tanmatsu/esp-idf - run: make -C tanmatsu sdk"
     fi

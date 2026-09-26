@@ -860,6 +860,17 @@ void setup() {
       else if (r == 3) display.setDisplayRotation(3);
     }
 #endif
+#if defined(HAS_TDECK_PRO)
+    // Never ink the retained e-paper black during the pre-LVGL boot. Console
+    // Mode keeps this polarity, and the graphical day UI replaces it later.
+    // This cannot depend on the mode preference: file-backed prefs are reloaded
+    // only after storage mounts, well after this first frame is committed.
+    display.startFrame((ColorVal)0xFFFF);
+    display.setColor((ColorVal)0x0000);
+    display.setTextSize(2);
+    display.drawTextCentered(display.width() / 2, display.height() / 2 - 8, "WADAMESH");
+    display.endFrame();
+#else
     // Paint the WADAMESH mesh mark the instant the panel is up, so the logo is on
     // screen from power-on — before LVGL is ready. Blitted as an anti-aliased
     // RGB565 bitmap via the full-res LVGL path (writePixelsRGB565), so the
@@ -869,12 +880,13 @@ void setup() {
     // hand-off stays in place.
     // Explicit black: startFrame()'s default is UIColor::window_bkg, and on boards
     // whose DISPLAY_CLASS is a core driver the 1.17 core's palette makes that WHITE
-    // (the boot logo grew a white border). Our pre-LVGL screens are always dark.
+    // (the boot logo grew a white border). Graphical pre-LVGL screens stay dark.
     display.startFrame((ColorVal)0x0000);
     display.writePixelsRGB565((display.width()  - WADAMESH_MARK_W) / 2,
                               (display.height() - WADAMESH_MARK_H) / 2,
                               WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
     display.endFrame();
+#endif
   }
 #endif
 

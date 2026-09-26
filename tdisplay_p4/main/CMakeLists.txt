@@ -42,8 +42,16 @@ idf_build_set_property(COMPILE_OPTIONS "${_co}")
 # it uses the core's RadioLib path like the S3 boards — except SX1262 RESET + DIO1 sit on the XL9535
 # I2C GPIO expander (the variant's target.cpp drives them; the raw P_LORA_RESET/DIO_1 are -1 = "none").
 # Pins from LilyGo's components/private_library/t_display_p4_config.h (see [[tdisplay-p4-port]]).
+if(DEFINED ENV{WADA_P4_LEGACY_AT})
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=0)
+  message(STATUS "wadamesh: P4 C6 backend = legacy ESP-AT")
+else()
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=1)
+  message(STATUS "wadamesh: P4 C6 backend = esp-hosted")
+endif()
 set(WADA_DEFS
   HAS_TDISPLAY_P4=1 ESP32_PLATFORM MC_VENDORED_TOUCH_APP UI_LVGL=1 HAS_TOUCH_UI=1
+  ${P4_C6_BACKEND_DEF}
   MULTI_TRANSPORT_COMPANION TCP_PORT=5000 WS_PORT=8765 BLE_PIN_CODE=123456
   LORA_FREQ=869.618 LORA_BW=62.5 LORA_SF=8            # EU 868 (same as the V4)
   LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # SX1262 PA max (dBm); user-tunable in Settings
@@ -84,11 +92,14 @@ set(WADA_DEFS
   # PIN_GPS_TX = the GPIO wired to the MODULE'S TX pin; PIN_GPS_RX = wired to the module's RX.
   # Matches LilyGo's t_display_p4_config.h "GPS_TX 22 / GPS_RX 23" naming. The first cut had them
   # swapped (silent: UART opens fine, just never hears NMEA). Wake: XL9535 GPS_WAKE must be HIGH
-  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default.
+  # (powerOnSequence) or the L76K sleeps.
   # ENV_SKIP_GPS_DETECT: like the T-Deck, force gps_detected=true — the P4's heavy boot can miss the
   # 1 s "any NMEA byte" detect window, and a false result then HIDES the GPS toggle and no-ops the
   # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=9600
-  # pins the correct L76K baud (a stale 38400 NVS override will still need clearing on-device). ---
+  # is only the STARTING rate (the L76K's power-on default, as camillia-mt uses): the P4 builds
+  # WadaNmeaLocationProvider with UART probing (variants/tdisplay_p4/target.cpp), which walks
+  # 9600/19200/38400/57600/115200 until a checksummed sentence arrives (LilyGo's factory firmware
+  # leaves 115200 persisted) and saves the rate that works. ---
   ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=9600
 
   # --- microSD on SDMMC slot 0 (CLK43/CMD44/D0-3=39-42); C6 esp-hosted is slot 1 ---

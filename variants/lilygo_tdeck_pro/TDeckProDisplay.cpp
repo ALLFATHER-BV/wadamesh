@@ -50,9 +50,13 @@ bool TDeckProDisplay::begin() {
   _epd.setRotation(0);
   _epd.epd2.setBusyCallback(&TDeckProDisplay::busyCallback);
 
+#if defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
   ledcSetup(TDECK_PRO_FRONTLIGHT_CHANNEL, 12000, 8);
   ledcAttachPin(PIN_TFT_LEDA_CTL, TDECK_PRO_FRONTLIGHT_CHANNEL);
   writeBrightness(0);
+#else
+  _brightness = 0;
+#endif
 #if defined(HAS_TDECK_MAX)
   // Every panel update re-applies _brightness (serviceRefresh). Its constructor
   // default of 255 lit the front-light on the boot wordmark's first refresh and
@@ -206,7 +210,11 @@ void TDeckProDisplay::setBrightness(uint8_t brightness) {
 }
 
 void TDeckProDisplay::writeBrightness(uint8_t brightness) {
+#if defined(PIN_TFT_LEDA_CTL) && (PIN_TFT_LEDA_CTL >= 0)
   ledcWrite(TDECK_PRO_FRONTLIGHT_CHANNEL, brightness);
+#else
+  (void)brightness;
+#endif
 }
 
 void TDeckProDisplay::requestRefresh(bool full) {
@@ -261,6 +269,7 @@ void TDeckProDisplay::canvasToMono() {
 }
 
 void TDeckProDisplay::resetTouch() {
+#if defined(PIN_TOUCH_RST) && (PIN_TOUCH_RST >= 0)
   pinMode(PIN_TOUCH_RST, OUTPUT);
   digitalWrite(PIN_TOUCH_RST, HIGH);
   delay(20);
@@ -268,6 +277,7 @@ void TDeckProDisplay::resetTouch() {
   delay(80);
   digitalWrite(PIN_TOUCH_RST, HIGH);
   delay(20);
+#endif
 }
 
 bool TDeckProDisplay::probeCst3530() {

@@ -20,8 +20,16 @@ ESP32RTCClock fallback_clock;
 ClockFloorRTC rtc_clock(fallback_clock);
 
 #if ENV_INCLUDE_GPS
-  #include <helpers/sensors/MicroNMEALocationProvider.h>
-  MicroNMEALocationProvider nmea = MicroNMEALocationProvider(Serial1, &rtc_clock);
+  // Same approach as camillia-mt's working P4 port: the L76K is woken through the XL9535
+  // (Xl9535::powerOnSequence drives GPS_WAKE high before the UART opens), UART1 listens on
+  // GPIO22 / transmits on 23, and the link starts at 9600 and PROBES other rates until a
+  // checksummed NMEA sentence arrives. The receiver's rate depends on what last configured
+  // it (the chip's 9600 default, or 115200 persisted by LilyGo's factory firmware), and the
+  // core provider listened at one fixed rate, so a mismatch meant an open, silent UART.
+  // WadaNmeaLocationProvider saves the rate that works. No reset/enable GPIOs on this board.
+  #include "../../src/helpers/WadaNmeaLocationProvider.h"
+  WadaNmeaLocationProvider nmea(Serial1, &rtc_clock, -1 /*reset*/, -1 /*enable*/,
+                                PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE);
   EnvironmentSensorManager sensors = EnvironmentSensorManager(nmea);
 #else
   EnvironmentSensorManager sensors;
@@ -122,4 +130,73 @@ bool radio_init() {
 mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
   return mesh::LocalIdentity(&rng);   // fresh random identity from SX1262 RSSI noise
+}
+
+extern "C" bool tdisplay_p4_reset_c6() {
+  if (!xl9535.ok()) return false;
+  // Match the factory-era Meck/LilyGo Esp_At driver exactly: release first,
+  // assert for 50 ms, then release and allow one second for ESP-AT to boot.
+  xl9535.write(Xl9535::IO_C6_EN, true);
+  delay(50);
+  xl9535.write(Xl9535::IO_C6_EN, false);
+  delay(50);
+  xl9535.write(Xl9535::IO_C6_EN, true);
+  delay(1000);
+  return true;
+}
+
+extern "C" int hosted_reset_slave_callback() {
+  return tdisplay_p4_reset_c6() ? 0 : -1;
+}
+
+// ---- Software restart = full system reset --------------------------------------------------------
+// esp_restart() on the ESP32-P4 is SW_CPU_RESET: esp_system_reset_modules_on_exit()
+// (esp_system/port/soc/esp32p4/system_internal.c) resets the DMA engines, UARTs, SDMMC and crypto,
+// but not the MIPI-DSI host or its DPI path. The display driver then initialises over a host still
+// half-configured from the session that restarted, and the panel stays dark. A power cycle or the
+// reset button is a full chip reset and always recovers it -- which is exactly what users saw: a
+// setting that reboots came up with the screen off, and the NEXT reboot by hand was fine.
+// (Same defect, same fix as camillia-mt's T-Display P4 port.)
+//
+// So a software restart becomes that full reset: the RTC watchdog's system reset, which resets the
+// CPU and all peripherals and spares only the RTC domain. Done as a shutdown handler so it covers
+// every restart path (rebootDevice, OTA, console, factory reset) without touching any of them.
+//
+// esp_restart() runs shutdown handlers newest first and this one never returns, so it is installed
+// before anything else registers one (Wi-Fi's among them) to run LAST, after the others have done
+// their work. RTC memory survives the system reset, which is how the next boot knows its watchdog
+// reset was a deliberate restart rather than a hang.
+#include <esp_system.h>
+#include <hal/wdt_hal.h>
+
+static constexpr uint32_t kFullRestartMagic = 0x50345253u;   // "P4RS"
+RTC_NOINIT_ATTR static uint32_t s_full_restart_marker;
+static bool s_boot_was_full_restart = false;
+
+static void tdisplayP4FullRestart() {
+  s_full_restart_marker = kFullRestartMagic;
+  wdt_hal_context_t rwdt = RWDT_HAL_CONTEXT_DEFAULT();
+  wdt_hal_write_protect_disable(&rwdt);
+  // Ticks of the slow clock: ~130 ms at 150 kHz, longer on a 32 kHz crystal. It only has to be short.
+  wdt_hal_config_stage(&rwdt, WDT_STAGE0, 20000, WDT_STAGE_ACTION_RESET_SYSTEM);
+  wdt_hal_enable(&rwdt);
+  wdt_hal_write_protect_enable(&rwdt);
+  while (true) {
+  }
+}
+
+void tdisplayP4InstallFullRestart() {
+  static bool s_installed = false;
+  if (s_installed) return;
+  // Latch (and clear) the marker left by the previous session's restart before anything can read it.
+  s_boot_was_full_restart = (s_full_restart_marker == kFullRestartMagic)
+                            && esp_reset_reason() == ESP_RST_WDT;
+  s_full_restart_marker = 0;
+  s_installed = (esp_register_shutdown_handler(tdisplayP4FullRestart) == ESP_OK);
+}
+
+esp_reset_reason_t tdisplayP4ResetReason() {
+  // Deliberate restarts arrive as RTC-watchdog resets on this board; report them as what they were,
+  // so the "restarted after a crash" prompt and Settings -> About do not call every reboot a crash.
+  return s_boot_was_full_restart ? ESP_RST_SW : esp_reset_reason();
 }
