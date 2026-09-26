@@ -20600,7 +20600,16 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // rooms (1), + line-of-sight (1), + Show on map (1 when contact has GPS and
   // !from_map).
   const int grid_items = (from_map ? 5 : 7) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
-  const int grid_rows  = (grid_items + 1) / 2;          // ceil
+  // P4 portrait: the 2-column grid cut most labels off with "..." on the narrow
+  // panel, so every action gets its own full-width row. The card grows to fit and
+  // the body scrolls past the screen height like any tall sheet. Landscape and the
+  // other boards keep the grid.
+#if CAP_ROUND_CORNERS
+  const bool one_col = lv_disp_get_hor_res(nullptr) <= lv_disp_get_ver_res(nullptr);
+#else
+  const bool one_col = false;
+#endif
+  const int grid_rows  = one_col ? grid_items : (grid_items + 1) / 2;   // ceil
   const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
   int card_h = 2 * padding + title_h + body_content_h;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
@@ -20655,9 +20664,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #else
   const int col_gap = 6;
 #endif
-  const int half_w  = (card_w - 2 * padding - col_gap) / 2;
+  const int half_w  = one_col ? (card_w - 2 * padding) : (card_w - 2 * padding - col_gap) / 2;
   int y   = 0;
-  int col = 0;   // 0 = left column, 1 = right column
+  int col = 0;   // 0 = left column, 1 = right column (always 0 when one_col)
   // Tanmatsu rows grow with the panel; the Pager uses fixed-size chrome so text
   // presets do not overfill compact rows. Other boards retain g_font_12.
 #if defined(TLORA_PAGER)
@@ -20685,7 +20694,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     lv_obj_set_size(l, half_w - 8, lv_font_get_line_height(row_font));
     lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_center(l);
-    if (col == 0) col = 1;
+    if (one_col)       y += btn_h + btn_gap;
+    else if (col == 0) col = 1;
     else { col = 0; y += btn_h + btn_gap; }
   };
   // Full-width row (Delete). Closes any half-open grid row first.
