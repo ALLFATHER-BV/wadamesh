@@ -8091,7 +8091,8 @@ static const AccentSet* accentSetFor(char c) {
   return nullptr;
 }
 static void accentBoxHide() {
-  if (s_accbox) { lv_obj_del(s_accbox); s_accbox = nullptr; }
+  // is_valid: a screen/layer clean can delete the box without passing through here.
+  if (s_accbox) { if (lv_obj_is_valid(s_accbox)) lv_obj_del(s_accbox); s_accbox = nullptr; }
   s_accbox_ta = nullptr;
 #if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
   s_accentnav_active = false;
@@ -8117,10 +8118,23 @@ static void accentNavConfirm() {
   }
 }
 #endif
+// The box outlives its text field whenever the field is deleted by a path that
+// doesn't call accentBoxHide() (a form closing after its send, a panel rebuild).
+// Tapping a cell then edited freed memory: the beta_85 T-Deck crash in #574
+// (loopTask LoadProhibited, accentBoxCellCb -> lv_textarea_del_char). Tie the box
+// to the field instead: when the field goes, drop the pointer and hide the box.
+// Only hide here, never delete: when a whole layer is being cleaned the box may be
+// deleted in the same pass, and a second delete would be its own crash.
+static void accentBoxTaDeleteCb(lv_event_t* e) {
+  if (lv_event_get_target(e) != s_accbox_ta) return;
+  s_accbox_ta = nullptr;
+  if (s_accbox && lv_obj_is_valid(s_accbox)) lv_obj_add_flag(s_accbox, LV_OBJ_FLAG_HIDDEN);
+}
 static void accentBoxCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const char* variant = static_cast<const char*>(lv_event_get_user_data(e));
   lv_obj_t* ta = s_accbox_ta;
+  if (ta && !lv_obj_is_valid(ta)) ta = nullptr;   // belt and braces for the hook above
   if (ta && variant) {
     lv_textarea_del_char(ta);             // remove the just-typed base letter
     lv_textarea_add_text(ta, variant);    // insert the chosen accent
@@ -8139,6 +8153,8 @@ static void accentBoxMaybeShow() {
   const AccentSet* set = accentSetFor(last[0]);
   if (!set) return;
   s_accbox_ta = ta;
+  lv_obj_remove_event_cb(ta, accentBoxTaDeleteCb);   // at most one hook per field
+  lv_obj_add_event_cb(ta, accentBoxTaDeleteCb, LV_EVENT_DELETE, nullptr);
 #if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
   s_accentnav_active = false;   // fresh box -> Fn+Space (re-)arms nav mode
   s_accentnav_idx = 0;
