@@ -11483,7 +11483,14 @@ static void openAdvertPage() {
   s_apppage_close = closeAdvertPage;
   statusBarSetTall(true);
   updateGlobalStatusBar();
-  const int top = STATUSBAR_H + 8;
+#if CAP_ROUND_CORNERS
+  // The round panel's status bar is already its full two rows and never doubles when
+  // "tall", so the extra STATUSBAR_H below only left an empty band between the bar
+  // and the Home button. The root already starts below the bar.
+  const int top = 8;
+#else
+  const int top = STATUSBAR_H + 8;   // clear the tall bar's second row, which overlaps the root
+#endif
 #if CAP_TOUCH
   // Match the floating Home affordance used by Terminal and Files. Aligning to
   // the right edge keeps it reachable on both Heltec portrait and wide screens.
@@ -11545,8 +11552,16 @@ static void openAdvertPage() {
   y += (hint_h > 0 ? hint_h : SC(40)) + 10;
 
   // ---- The two manual advert buttons share one row (flood left, zero-hop right). ----
+  // P4 portrait stacks them full width instead: side by side they were cramped on the
+  // narrow panel.
+#if CAP_ROUND_CORNERS
+  const bool stack_btns = sw <= sh;
+#else
+  const bool stack_btns = false;
+#endif
   const int gap   = 6;
-  const int bhalf = (sw - 8 - 14 - 4 - gap) / 2;   // content width (minus scrollbar gutter + margins) split in two
+  const int bfull = sw - 8 - 14 - 4;               // content width (minus scrollbar gutter + margins)
+  const int bhalf = stack_btns ? bfull : (bfull - gap) / 2;
   lv_obj_t* b_flood = lv_btn_create(body);
   lv_obj_set_size(b_flood, bhalf, SC(40));
   lv_obj_set_pos(b_flood, 2, y);
@@ -11557,9 +11572,10 @@ static void openAdvertPage() {
   lv_label_set_text(lf, TR(LV_SYMBOL_UPLOAD "  Flood"));
   lv_obj_center(lf);
 
+  if (stack_btns) y += SC(40) + gap;
   lv_obj_t* b_zh = lv_btn_create(body);
   lv_obj_set_size(b_zh, bhalf, SC(40));
-  lv_obj_set_pos(b_zh, 2 + bhalf + gap, y);
+  lv_obj_set_pos(b_zh, stack_btns ? 2 : 2 + bhalf + gap, y);
   styleButton(b_zh);
   lv_obj_add_event_cb(b_zh, advertZeroHopCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* lz = lv_label_create(b_zh);
