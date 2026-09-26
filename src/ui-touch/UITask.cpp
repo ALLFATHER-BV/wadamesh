@@ -28854,6 +28854,15 @@ static void openSpectrumPage() {
   statusBarSetTall(true);
   updateGlobalStatusBar();
   const int top = STATUSBAR_H + 8;
+  // Top of the spectrum itself (RBW/span line, chart, waterfall). The peak readout
+  // stays on the `top` line. On the narrow P4 portrait panel the right-aligned peak ran
+  // over the RBW/span line, and the tall panel has room to spare, so the spectrum
+  // starts one line lower there instead.
+#if CAP_ROUND_CORNERS
+  const int body_top = (sw <= sh) ? top + lv_font_get_line_height(&g_font_12) + 8 : top;
+#else
+  const int body_top = top;
+#endif
 
   // ---- readout line: RBW / span. The centre frequency lives on the axis below. ----
   s_spec_info_lbl = lv_label_create(s_spec_root);
@@ -28874,7 +28883,7 @@ static void openSpectrumPage() {
 #else
   lv_obj_set_style_text_color(s_spec_info_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
 #endif
-  lv_obj_set_pos(s_spec_info_lbl, 10, top + 3);
+  lv_obj_set_pos(s_spec_info_lbl, 10, body_top + 3);
 
   // Live peak readout: a dedicated line on Pro, right-aligned on the info row elsewhere.
   s_spec_peak_lbl = lv_label_create(s_spec_root);
@@ -28905,7 +28914,7 @@ static void openSpectrumPage() {
   const int chart_h = H - chart_y - 42;
 #else
   const int chart_x = 40;
-  const int chart_y = top + 21;
+  const int chart_y = body_top + 21;
   const int chart_w = sw - chart_x - 10;
   const int chart_h = H * 22 / 100;                 // sized so the waterfall + axis clear the screen
 #endif
