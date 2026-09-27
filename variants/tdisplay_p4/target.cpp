@@ -6,13 +6,32 @@
 TDisplayP4Board board;
 Xl9535 xl9535;                        // board-global expander (declared extern in Xl9535.h)
 
-// SX1262 on the P4 SPI (SCLK=2/MOSI=3/MISO=4, CS=24, BUSY=6). RESET + DIO1 are on the XL9535
+// SX1262/LR2021 on the P4 SPI (SCLK=2/MOSI=3/MISO=4, CS=24, BUSY=6). RESET + DIO1 are on the XL9535
 // (P_LORA_RESET/DIO_1 == -1 = RADIOLIB_NC): reset is pulsed via the expander in radio_init(); with
 // DIO1 == NC RadioLib polls for RX/TX-done instead of taking a hardware IRQ.
 // TODO(device): if polling RX is unreliable, route DIO1 through the XL9535 INT (GPIO5).
 static SPIClass spi(FSPI);
 RADIO_CLASS   radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, spi);
 WRAPPER_CLASS radio_driver(radio, board);
+
+#if defined(USE_LR2021)
+static const uint32_t s_lr2021_rf_switch_dios[] = {
+  RADIOLIB_LR2021_DIO6,
+  RADIOLIB_LR2021_DIO7,
+  RADIOLIB_LR2021_DIO8,
+  RADIOLIB_LR2021_DIO10,
+  RADIOLIB_NC,
+};
+
+static const Module::RfSwitchMode_t s_lr2021_rf_switch_table[] = {
+  { LR2021::MODE_STBY,  { LOW,  LOW,  LOW,  LOW,  LOW } },
+  { LR2021::MODE_RX,    { LOW,  LOW,  HIGH, LOW,  LOW } },
+  { LR2021::MODE_TX,    { LOW,  LOW,  HIGH, LOW,  LOW } },
+  { LR2021::MODE_RX_HF, { HIGH, LOW,  LOW,  HIGH, LOW } },
+  { LR2021::MODE_TX_HF, { LOW,  HIGH, LOW,  HIGH, LOW } },
+  END_OF_MODE_TABLE,
+};
+#endif
 
 DISPLAY_CLASS display;                 // RM69A10 MIPI-DSI
 
@@ -121,15 +140,19 @@ bool radio_init() {
     rtc_clock.noteHardwareTime();
   }
 
-  // SX1262 RESET is on the XL9535 — pulse it before RadioLib init.
-  xl9535.sx1262Reset();
+  // The radio RESET is on the XL9535 for both P4 V1 module variants.
+  xl9535.radioReset();
   spi.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, P_LORA_NSS);
-  return radio.std_init(&spi);
+  if (!radio.std_init(&spi)) return false;
+#if defined(USE_LR2021)
+  radio.setRfSwitchTable(s_lr2021_rf_switch_dios, s_lr2021_rf_switch_table);
+#endif
+  return true;
 }
 
 mesh::LocalIdentity radio_new_identity() {
   RadioNoiseListener rng(radio);
-  return mesh::LocalIdentity(&rng);   // fresh random identity from SX1262 RSSI noise
+  return mesh::LocalIdentity(&rng);   // fresh random identity from radio RSSI noise
 }
 
 extern "C" bool tdisplay_p4_reset_c6() {

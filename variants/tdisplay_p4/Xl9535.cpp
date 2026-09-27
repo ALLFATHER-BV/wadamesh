@@ -64,18 +64,18 @@ bool Xl9535::read(uint8_t io) {
   return (readReg(port /*in0=0x00,in1=0x01*/) >> bit) & 1;
 }
 
-void Xl9535::sx1262Reset() {
-  write(IO_SX1262_RST, false); delay(2);
-  write(IO_SX1262_RST, true);  delay(5);
+void Xl9535::radioReset() {
+  write(IO_RADIO_RST, false); delay(2);
+  write(IO_RADIO_RST, true);  delay(5);
 }
 
 void Xl9535::powerOnSequence() {
   if (!_ok) return;
-  // inputs: touch INT, ext-sensor INT, RTC INT, SX1262 DIO1
+  // inputs: touch INT, ext-sensor INT, RTC INT, radio DIO1
   setDir(IO_TOUCH_INT, true);
   setDir(IO_EXT_SENSOR_INT, true);
   setDir(IO_RTC_INT, true);
-  setDir(IO_SX1262_DIO1, true);
+  setDir(IO_RADIO_DIO1, true);
 
   // Power-rail bring-up — replicated EXACTLY from the tested-working LilyGo/Meck-P4 screen_lvgl
   // sequence. The rails are power-CYCLED with 200 ms settling and end in specific states (VCCA LOW,
@@ -95,7 +95,7 @@ void Xl9535::powerOnSequence() {
   write(IO_3V3_EN, false);
   delay(200);
 
-  // Board peripherals we still need (Meck's display-only example omits these): the SX1262.
+  // Board peripherals we still need (Meck's display-only example omits these): the radio.
   // SD_EN (IO15) is an ACTIVE-LOW load-switch enable for the SD slot's VDD (pad-sweep proven
   // 2026-07-15: SD_EN high -> all six SD pads clamp LOW through the unpowered card's ESD diodes,
   // even against the P4's internal pull-ups; SD_EN low or Hi-Z -> all pads high, card powered).
@@ -103,7 +103,7 @@ void Xl9535::powerOnSequence() {
   // defaults the switch ON — but OUR begin() parks every pin output-HIGH, which turned the slot
   // OFF and made every mount fail (0x107 OCR timeout / 0x109 CRC). Drive it LOW, always.
   write(IO_SD_EN, false);              // SD slot power ON (active-low)
-  write(IO_SX1262_RST, true);          // park high; radio_init pulses it
+  write(IO_RADIO_RST, true);          // park high; radio_init pulses it
   // Antenna select: park on the on-board antenna (RF1) before the radio exists, so the first
   // transmit after any boot cannot key the PA into a possibly-empty external socket. LilyGo's own
   // XL9535 init preloads this same level as its safe state. Choosing the external antenna is a

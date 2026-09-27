@@ -1,9 +1,9 @@
 # MeshCore core as an IDF component for the T-Display P4. Shares the SAME vendored
 # core source as the Tanmatsu (core/ is a symlink to ../../tanmatsu/components/meshcore/core),
 # but with P4-specific build rules: unlike the Tanmatsu (which reaches LoRa through the
-# TanmatsuLoraRadio bridge and drops RadioLib entirely), the T-Display P4 has a REAL SX1262,
+# TanmatsuLoraRadio bridge and drops RadioLib entirely), the T-Display P4 has a real SX1262 or LR2021,
 # so it compiles the core's helpers/radiolib/ RadioLib wrappers (RadioLibWrappers.cpp — the
-# CustomSX1262Wrapper + buffered-RX drain/acquire methods MyMesh calls) and REQUIREs RadioLib.
+# concrete radio wrappers + buffered-RX drain/acquire methods MyMesh calls) and REQUIREs RadioLib.
 #
 # Everything else mirrors the Tanmatsu selection (see its CMakeLists): drop nRF52/TBeam boards,
 # the S3 panel drivers, sensors, other-platform helpers, ESP-NOW, and the MC_VENDORED_TOUCH_APP
@@ -45,7 +45,7 @@ list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/ui/.*(Display|OLED|TFT|Epaper|EInk
 list(FILTER CORE_SRCS EXCLUDE REGEX "(LvglPsramAlloc|TouchDiagTrace)\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/esp32/(MultiTransportCompanionInterface|SdNvsPrefs|TCPCompanionServer|TouchPrefsStore|WifiRuntimeStore|WebSocketCompanionServer)\\.cpp$")
 list(FILTER CORE_SRCS EXCLUDE REGEX "/helpers/(nrf52|stm32|rp2040)/")
-list(FILTER CORE_SRCS EXCLUDE REGEX "/ESPNOWRadio\\.cpp$")               # ESP-NOW radio — the P4 uses the SX1262
+list(FILTER CORE_SRCS EXCLUDE REGEX "/ESPNOWRadio\\.cpp$")               # ESP-NOW radio — the P4 uses its external LoRa radio
 
 # Core's bundled ed25519 C implementation (Identity.cpp does #include <ed_25519.h>).
 file(GLOB ED25519_SRCS "${CMAKE_CURRENT_LIST_DIR}/core/lib/ed25519/*.c")

@@ -2,7 +2,7 @@
 #pragma once
 // XL9535 — 16-bit I2C GPIO expander (TCA9535/PCA9535-class) on the LilyGo T-Display P4.
 // It is the board's linchpin: it gates the power rails and the enable/reset lines for the
-// ESP32-C6, the SD card, the AMOLED, the touch panel, the SX1262 (RESET + DIO1) and the
+// ESP32-C6, the SD card, the display, the touch panel, the radio (RESET + DIO1) and the
 // RF switch. NOTHING comes up until begin() runs, so app_main must call it first.
 //
 // LilyGo names the pins IO0..IO7 (port 0) and IO10..IO17 (port 1); we keep that numbering.
@@ -33,8 +33,8 @@ public:
     IO_C6_WAKE       = 13,
     IO_C6_EN         = 14,
     IO_SD_EN         = 15,
-    IO_SX1262_RST    = 16,
-    IO_SX1262_DIO1   = 17,  // input (the LoRa IRQ)
+    IO_RADIO_RST    = 16,
+    IO_RADIO_DIO1   = 17,  // input (the LoRa IRQ)
   };
 
   // addr defaults to 0x20 (A0-A2 low). sda/scl default to the board I2C_1 pins.
@@ -47,12 +47,12 @@ public:
   bool read(uint8_t io);
 
   // Board power-on sequence: enable rails, bring up the C6 + SD, release the screen/touch
-  // resets, park the SX1262 RESET high. Conservative delays — TUNE against LilyGo on-device.
+  // resets, park the radio RESET high. Conservative delays — TUNE against LilyGo on-device.
   void powerOnSequence();
 
-  // Convenience for the SX1262 glue (RESET + DIO1 live here).
-  void sx1262Reset();            // active-low pulse on IO_SX1262_RST
-  bool sx1262Dio1() { return read(IO_SX1262_DIO1); }
+  // Convenience for the radio glue (RESET + DIO1 live here).
+  void radioReset();            // active-low pulse on IO_RADIO_RST
+  bool radioDio1() { return read(IO_RADIO_DIO1); }
   // IO1 drives the board's SKY13453 SP2T. It is the LoRa ANTENNA select — on-board antenna vs the
   // external socket — and NOT a TX/RX path switch. CONFIRMED against LilyGo's own sources (the
   // vendor names this exact pin kSky13453Vctl on IO1):
@@ -70,7 +70,7 @@ public:
   // vendor boots on the internal antenna too. Their driver NEVER toggles this line per transmit —
   // it cannot be a TX/RX switch anyway, since such a switch must settle within microseconds of the
   // PA ramping and an I2C expander write takes hundreds of microseconds on a bus shared with the
-  // touch panel, the RTC and the fuel gauge (the SX1262 has DIO2 for that job).
+  // touch panel, the RTC and the fuel gauge.
   //
   // This also explains the field report of -10 dB outbound against +12 dB inbound exactly: our old
   // per-TX toggle idled LOW to receive (= EXTERNAL, where the user's antenna is fitted, hence the

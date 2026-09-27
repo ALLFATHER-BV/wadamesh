@@ -31952,9 +31952,17 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "tdeck-pro-v1-1"
 #elif defined(HAS_TDISPLAY_P4)
   #if defined(HAS_TDP4_LCD)
+    #if defined(USE_LR2021)
+#define WADA_BOARD_ID "tdisplay-p4-lcd-lr2021"
+    #else
 #define WADA_BOARD_ID "tdisplay-p4-lcd"
+    #endif
   #else
+    #if defined(USE_LR2021)
+#define WADA_BOARD_ID "tdisplay-p4-lr2021"
+    #else
 #define WADA_BOARD_ID "tdisplay-p4"
+    #endif
   #endif
 #elif defined(HAS_TANMATSU)
 #define WADA_BOARD_ID "tanmatsu"

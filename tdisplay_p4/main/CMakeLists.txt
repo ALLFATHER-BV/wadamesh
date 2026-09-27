@@ -38,8 +38,8 @@ list(REMOVE_ITEM _co "-Werror=all")
 idf_build_set_property(COMPILE_OPTIONS "${_co}")
 
 # ---- LilyGo T-Display P4 (AMOLED) app define set. -------------------------------------------------
-# Unlike the Tanmatsu (badge-bsp + a LoRa bridge), the T-Display P4 has a RAW SX1262 on P4 GPIOs, so
-# it uses the core's RadioLib path like the S3 boards — except SX1262 RESET + DIO1 sit on the XL9535
+# Unlike the Tanmatsu (badge-bsp + a LoRa bridge), the T-Display P4 has a raw SX1262 or LR2021 on
+# P4 GPIOs, so it uses the core's RadioLib path like the S3 boards — except RESET + DIO1 sit on the XL9535
 # I2C GPIO expander (the variant's target.cpp drives them; the raw P_LORA_RESET/DIO_1 are -1 = "none").
 # Pins from LilyGo's components/private_library/t_display_p4_config.h (see [[tdisplay-p4-port]]).
 if(DEFINED ENV{WADA_P4_LEGACY_AT})
@@ -49,30 +49,40 @@ else()
   set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=1)
   message(STATUS "wadamesh: P4 C6 backend = esp-hosted")
 endif()
+if(DEFINED ENV{WADA_P4_LR2021})
+  set(P4_RADIO_DEFS
+    USE_LR2021 RADIO_CLASS=CustomLR2021 WRAPPER_CLASS=TDisplayP4LR2021Wrapper
+    LR2021_IRQ_DIO=11 LR2021_TCXO_VOLTAGE=3.3f LR2021_RX_BOOSTED_GAIN=1)
+  message(STATUS "wadamesh: P4 radio = LR2021")
+else()
+  set(P4_RADIO_DEFS
+    USE_SX1262 RADIO_CLASS=CustomSX1262 WRAPPER_CLASS=CustomSX1262Wrapper
+    SX126X_RX_BOOSTED_GAIN=1 SX126X_CURRENT_LIMIT=140)
+  message(STATUS "wadamesh: P4 radio = SX1262")
+endif()
 set(WADA_DEFS
   HAS_TDISPLAY_P4=1 ESP32_PLATFORM MC_VENDORED_TOUCH_APP UI_LVGL=1 HAS_TOUCH_UI=1
   ${P4_C6_BACKEND_DEF}
+  ${P4_RADIO_DEFS}
   MULTI_TRANSPORT_COMPANION TCP_PORT=5000 WS_PORT=8765 BLE_PIN_CODE=123456
   LORA_FREQ=869.618 LORA_BW=62.5 LORA_SF=8            # EU 868 (same as the V4)
-  LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # SX1262 PA max (dBm); user-tunable in Settings
+  LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # sub-GHz PA max (dBm); user-tunable in Settings
   MAX_CONTACTS=2000 MAX_GROUP_CHANNELS=40             # P4 + 32MB PSRAM: ample
   ENABLE_PRIVATE_KEY_IMPORT=1 ENABLE_PRIVATE_KEY_EXPORT=1
 
-  # --- LoRa SX1262 (SPI_1) — CS/BUSY/SPI on raw P4 GPIO; RST+DIO1 on the XL9535 expander ---
-  USE_SX1262 RADIO_CLASS=CustomSX1262 WRAPPER_CLASS=CustomSX1262Wrapper
+  # --- LoRa radio (SPI_1) — SX1262 or LR2021 selected above. Both P4 V1 modules use
+  # the same CS/BUSY/SPI pins, with RST+DIO1 on the XL9535 expander. ---
   P_LORA_NSS=24 P_LORA_BUSY=6 P_LORA_SCLK=2 P_LORA_MISO=4 P_LORA_MOSI=3
   P_LORA_RESET=-1 P_LORA_DIO_1=-1                     # on XL9535 IO16/IO17 — variant drives these
   MESH_RADIO_DIO1_POLLED=1                            # DIO1 behind the expander → poll RxDone/TxDone over SPI (no host IRQ)
   P_LORA_TX_LED=-1 P_LORA_TX_NEOPIXEL_LED=-1
-  SX126X_RX_BOOSTED_GAIN=1
   # OCP, and the reason the P4 would only ever transmit at about +14 dBm however high you
   # set the power (#283, measured on a test set: capped at +14.1 dBm while Meck-P4 reached
   # +21.0 dBm on the same board). The SX1262 needs ~118 mA to deliver +22 dBm, but its
   # over-current protection defaults to 60 mA, so the PA was being current-limited and the
   # power steps went non-monotonic near the top. Every S3 board already sets this; the P4
   # was the one target that never did. 140 mA matches them.
-  SX126X_CURRENT_LIMIT=140
-  XL9535_SX1262_RST_IO=16 XL9535_SX1262_DIO1_IO=17    # SX1262 reset + IRQ behind the expander
+  XL9535_RADIO_RST_IO=16 XL9535_RADIO_DIO1_IO=17      # radio reset + IRQ behind the expander
   XL9535_RF_SWITCH_IO=1                               # SKY13453 VCTL (TX/RX path)
 
   # --- Display: panel SKU (DISPLAY_CLASS / SCREEN_WIDTH / SCREEN_HEIGHT) is selected in the

@@ -1,15 +1,17 @@
-# LilyGo T-Display P4 (AMOLED) — wadamesh port tracker
+# LilyGo T-Display P4 — wadamesh port tracker
 
-A phone-class ESP32-P4 + ESP32-C6 handheld with a real SX1262. Essentially a **touchscreen
+A phone-class ESP32-P4 + ESP32-C6 handheld with an SX1262 or LR2021. Essentially a **touchscreen
 Tanmatsu**, so we reuse the Tanmatsu P4/IDF/esp-hosted foundation (approach A: standalone IDF app
 in `tdisplay_p4/`, sharing the Tanmatsu's ESP-IDF 5.5.1 via symlink). Full pinout + rationale:
 memory `tdisplay-p4-port`. Device confirmed: ESP32-P4, 16 MB flash, MAC 30:ed:a0:e1:c2:a7,
 flashes over the right-side USB (USB-Serial-JTAG). LoRa region = EU 868.
 
 ## Pinout (from LilyGo `components/private_library/t_display_p4_config.h`)
-- **SX1262** SPI SCLK=2/MOSI=3/MISO=4, CS=24, BUSY=6 (raw GPIO); **RST=XL9535-IO16, DIO1=XL9535-IO17**
+- **SX1262 / LR2021** SPI SCLK=2/MOSI=3/MISO=4, CS=24, BUSY=6 (raw GPIO); both use
+  **RST=XL9535-IO16, DIO1=XL9535-IO17**. LR2021 uses internal DIO11 for IRQ, DIO6/7/8/10 for
+  its RF paths, and a 3.3 V TCXO, matching LilyGo's V1 driver.
 - **XL9535 I2C expander** on I2C_1 (SDA=7/SCL=8, INT=GPIO5): power rails, C6-EN(IO14), SD-EN(IO15),
-  SCREEN_RST(IO2), TOUCH_RST(IO3)/INT(IO4), SX1262 RST(IO16)/DIO1(IO17), RF-switch VCTL(IO1), GPS-WAKE
+  SCREEN_RST(IO2), TOUCH_RST(IO3)/INT(IO4), radio RST(IO16)/DIO1(IO17), RF-switch VCTL(IO1), GPS-WAKE
 - **Display** two SKUs (LilyGo branches [rm69a10]/[hi8561]): RM69A10 AMOLED MIPI-DSI 568×1232, or
   HI8561 TFT-LCD MIPI-DSI 540×1168 — both portrait, reset via XL9535 IO2. Build-time select (below).
 - **Touch** per-SKU on I2C_1 (7/8), RST/INT via XL9535: AMOLED = Goodix GT9895 (0x5D); LCD = HI8561
@@ -21,7 +23,7 @@ flashes over the right-side USB (USB-Serial-JTAG). LoRa region = EU 868.
 - `tdisplay_p4/` created; `esp-idf`,`esp-idf-tools` + components `meshcore/ardlibs/lvgl/esp_hosted`
   + `sdkconfigs/{general,wadamesh}` symlinked to `../tanmatsu/`
 - `build.sh` (DEVICE=tdisplay_p4, target esp32p4, standalone), `CMakeLists.txt`
-- `main/CMakeLists.txt` — the full board WADA_DEFS (raw SX1262 pins, RM69A10, HI8561, XL9535 IOs)
+- `main/CMakeLists.txt` — the full board WADA_DEFS (SX1262/LR2021, RM69A10, HI8561, XL9535 IOs)
 - `components/wadamesh_app/CMakeLists.txt` — builds `src/` + `variants/tdisplay_p4/`, no badge-bsp
 - `sdkconfigs/tdisplay_p4` (P4/PSRAM/DSI/esp-hosted-SDIO_2), `partition_tables/tdisplay_p4_16M.csv`
 
@@ -39,8 +41,8 @@ flashes over the right-side USB (USB-Serial-JTAG). LoRa region = EU 868.
      x,y,x+w,y+h,px)` (EXCLUSIVE end coords — see TanmatsuDisplay). This is UITask's lvglFlush target.
 2b. ✅ DONE `esp_lcd_rm69a10.{cpp,h}` (LilyGo's vendor panel driver, ported verbatim) +
    `RM69A10Display.{h,cpp}` (the DSI bring-up recipe above → DisplayDriver + writePixelsRGB565).
-3. ✅ DONE `target.{h,cpp}` — `TDisplayP4Board : ESP32Board` (RF switch via XL9535 in onBefore/AfterTransmit),
-   raw SX1262 Module (RST/DIO1=RADIOLIB_NC), `radio_init()` = `xl9535.sx1262Reset()` + `radio.std_init(&spi)`,
+3. ✅ DONE `target.{h,cpp}` — `TDisplayP4Board : ESP32Board` (antenna switch via XL9535),
+   raw SX1262/LR2021 Module (RST/DIO1=RADIOLIB_NC), `radio_init()` = `xl9535.radioReset()` + `radio.std_init(&spi)`,
    RM69A10 `display`, PCF8563 RTC on Wire. `tdisplay_p4_compat.h` (adcAttachPin shim) copied.
 4. ✅ DONE `src/ui-touch/device_caps.h` — `HAS_TDISPLAY_P4` block (CAP_TOUCH/SD/GPS/FILESYSTEM/LARGE=1;
    web browser via the 32MB/#else path).
@@ -49,7 +51,7 @@ flashes over the right-side USB (USB-Serial-JTAG). LoRa region = EU 868.
 - **RadioLib is a P4-local IDF component** (`tdisplay_p4/components/RadioLib/`, v7.7.1 copied from the
   S3 libdep). Its CMake keeps the Arduino HAL and forces `RADIOLIB_BUILD_ARDUINO` + `RADIOLIB_GODMODE=1`
   + `RADIOLIB_STATIC_ONLY=1` **PUBLIC** (matches the S3 platformio flags; GODMODE is what lets the core's
-  CustomSX1262Wrapper/SX126xReset reach SX126x private members). NOT added to the shared `ardlibs` — the
+  radio wrappers reach protected RadioLib internals). NOT added to the shared `ardlibs` — the
   Tanmatsu stays RadioLib-free.
 - **P4 has its OWN meshcore component** (no longer a symlink to the Tanmatsu's): `core/` is symlinked to
   share the vendored source, but the P4 CMakeLists does NOT exclude `helpers/radiolib/` (compiles
@@ -110,13 +112,22 @@ rm69a10_driver.cpp,t_display_p4_driver.cpp}`.
 8. `./build.sh build` → fix (P4/IDF-specific) → flash → **first-boot-on-screen**. Then P2 radio, P3 Wi-Fi/SD/GPS,
    P4 the 568×1232 portrait UI layout.
 
-## Build
-`cd tdisplay_p4 && ./build.sh build`  ·  flash: `./build.sh flash -p /dev/cu.usbmodem<P4>`
+## Build matrix
+
+| Target | Panel | Radio | Command | Hardware status |
+|---|---|---|---|---|
+| `tdisplay_p4` | AMOLED | SX1262 | `./build.sh build` | Tested |
+| `tdisplay_p4_lr2021` | AMOLED | LR2021 | `WADA_P4_LR2021=1 ./build.sh build` | Compile-tested only |
+| `tdisplay_p4_lcd` | TFT-LCD | SX1262 | `WADA_P4_LCD=1 ./build.sh build` | Compile-tested only |
+| `tdisplay_p4_lcd_lr2021` | TFT-LCD | LR2021 | `WADA_P4_LCD=1 WADA_P4_LR2021=1 ./build.sh build` | Compile-tested only |
+
+Each combination has an isolated directory under `tdisplay_p4/build/`. Flash with the same selectors,
+for example `WADA_P4_LR2021=1 ./build.sh flash -p /dev/cu.usbmodem<P4>`.
 
 ## TFT-LCD SKU (HI8561) — second panel variant (DONE, needs on-device verify)
 The T-Display P4 ships in two panels; LilyGo branches its own firmware `[rm69a10]` (AMOLED) vs
-`[hi8561]` (TFT-LCD). We build a **separate bin per SKU** (vendor-style) so the proven AMOLED build
-is never touched. **Select the LCD at build time:** `WADA_P4_LCD=1 ./build.sh build`.
+`[hi8561]` (TFT-LCD). Each panel/radio combination has a separate build directory so the proven
+AMOLED/SX1262 build is never reused. **Select the LCD at build time:** `WADA_P4_LCD=1 ./build.sh build`.
 - **Display** `HI8561Display.{h,cpp}` — mirrors `RM69A10Display` line-for-line; only the vendor panel
   driver (`esp_lcd_new_panel_hi8561`), the resolution (**540×1168**) and the DPI timing (**48 MHz**,
   `hbp40/hpw20/hfp20 · vbp12/vpw2/vfp200`) differ. Same P4 DSI bring-up, same **1.83 V** DSI-PHY LDO

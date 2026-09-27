@@ -1,8 +1,8 @@
-// wadamesh on the LilyGo T-Display P4 (AMOLED) — the app entry point.
+// wadamesh on the LilyGo T-Display P4 — the app entry point.
 //
 // Standalone ESP-IDF app (NOT an AppFS/launcher app like the Tanmatsu): it owns the USB console,
 // drives the XL9535 expander to power the board, brings up the RM69A10 AMOLED + the C6 (esp-hosted)
-// + the raw SX1262, then runs the shared UITask. The board/radio/display globals + radio_init() live
+// + the raw SX1262 or LR2021, then runs the shared UITask. The board/radio/display globals + radio_init() live
 // in variants/tdisplay_p4/target.cpp (via target.h). Modeled on tanmatsu/main/main.cpp; the WiFi +
 // companion loop is ported faithfully. Bring-up TODOs (touch, brightness, DSI/power tuning) in
 // variants/tdisplay_p4/TDISPLAY_P4_PORT.md.
@@ -58,7 +58,7 @@
 // esp-hosted resets the P4 — a boot loop that never reaches ui_task.begin(), leaving the AMOLED dark.
 // Until the C6 reset/power/slave-firmware path is proven (needs a reset callback via the XL9535 — see
 // TDISPLAY_P4_PORT.md), gate ALL C6-dependent bring-up OFF so the display + touch + LoRa come up.
-// LoRa is a raw SX1262 on P4 GPIOs, independent of the C6, so the mesh still works over USB/LoRa.
+// LoRa is a raw SX1262/LR2021 on P4 GPIOs, independent of the C6, so the mesh still works over USB/LoRa.
 // Flip to 1 once the C6 link is solid to restore Wi-Fi + BLE.
 #define TDP4_C6_READY TDP4_C6_HOSTED
 // BLE over the C6 uses arduino-esp32's hostedInitBLE(), which only exists in arduino-esp32 >=3.3.10.
@@ -157,7 +157,7 @@ static void wadameshSetup() {
   printf("[BOOT] C6 = factory ESP-AT (Wi-Fi via c6_at worker; BLE companion unavailable on this build)\n");
 #endif
 
-  // 5. Radio (raw SX1262; reset via the XL9535 inside radio_init).
+  // 5. Radio (raw SX1262/LR2021; reset via the XL9535 inside radio_init).
   if (!radio_init()) printf("[BOOT] radio_init FAILED\n");
 
   DisplayDriver* disp = &display;

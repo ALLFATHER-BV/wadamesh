@@ -125,7 +125,7 @@
   #define CAP_LOCK_SCREEN  0
 
 #elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====
-  // Phone-class AMOLED handheld: RM69A10 MIPI-DSI 568x1232 portrait, HI8561 cap touch, SX1262,
+  // Phone-class handheld: RM69A10 AMOLED or HI8561 TFT, capacitive touch, SX1262 or LR2021,
   // C6 Wi-Fi/BLE (esp-hosted), SD_MMC. 32 MB PSRAM — web browser fits easily.
   #define CAP_TOUCH        1
   // The MIPI-DSI panel cannot MADCTL-rotate, so landscape is LVGL's software

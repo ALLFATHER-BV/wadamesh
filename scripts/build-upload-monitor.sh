@@ -19,10 +19,12 @@ PAGER_SX1262_ENV="tlora_pager_sx1262_companion_radio_touch"
 M9_ENV="ThinkNode_M9_companion_radio_touch"
 RAK_ENV="rak_tap_v2_companion_radio_touch"
 # The T-Display P4 is not a PlatformIO env: it is a standalone ESP-IDF app built by
-# tdisplay_p4/build.sh (which ends in `exec idf.py ...`). These two names are the
-# script's own handles for its two panel SKUs; they never reach `pio`.
+# tdisplay_p4/build.sh (which ends in `exec idf.py ...`). These names are the
+# script's own handles for its panel/radio combinations; they never reach `pio`.
 P4_ENV="tdisplay_p4"
+P4_LR2021_ENV="tdisplay_p4_lr2021"
 P4_LCD_ENV="tdisplay_p4_lcd"
+P4_LCD_LR2021_ENV="tdisplay_p4_lcd_lr2021"
 P4_BUILD="$ROOT/tdisplay_p4/build.sh"
 
 PIO="${PIO:-$(command -v pio || true)}"
@@ -38,7 +40,10 @@ has_env() {
 }
 
 is_p4_env() {
-  [ "$1" = "$P4_ENV" ] || [ "$1" = "$P4_LCD_ENV" ]
+  case "$1" in
+    "$P4_ENV"|"$P4_LR2021_ENV"|"$P4_LCD_ENV"|"$P4_LCD_LR2021_ENV") return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # The P4 reuses the Tanmatsu's project-local ESP-IDF (see tdisplay_p4/build.sh).
@@ -47,27 +52,29 @@ p4_toolchain_ready() {
 }
 
 # run_p4 <env> <idf.py actions...>
-# Runs tdisplay_p4/build.sh for the chosen SKU. `reconfigure` goes first because
-# both SKUs share build/tdisplay_p4 and WADA_P4_LCD is only read at CMake configure
-# time — without it, switching SKU would silently rebuild the previous panel.
+# Runs tdisplay_p4/build.sh for the chosen panel/radio combination. `reconfigure`
+# refreshes the selectors in that variant's isolated CMake build directory.
 # PORT=/dev/cu.usbmodemXXXX pins the serial port; otherwise idf.py auto-detects.
 run_p4() {
   local env_name="$1"; shift
   local port_args=()
+  local variant_env=()
   [ -n "${PORT:-}" ] && port_args=(-p "$PORT")
+  case "$env_name" in
+    "$P4_ENV")            variant_env=(env -u WADA_P4_LCD -u WADA_P4_LR2021) ;;
+    "$P4_LR2021_ENV")     variant_env=(env -u WADA_P4_LCD WADA_P4_LR2021=1) ;;
+    "$P4_LCD_ENV")        variant_env=(env -u WADA_P4_LR2021 WADA_P4_LCD=1) ;;
+    "$P4_LCD_LR2021_ENV") variant_env=(env WADA_P4_LCD=1 WADA_P4_LR2021=1) ;;
+  esac
   # build.sh handles a lone `fullclean` itself (removes only the generated tree): idf.py's
   # stock fullclean rejects the intentionally patched managed components and aborts.
   if [ "${1:-}" = "fullclean" ]; then
-    "$P4_BUILD" fullclean || return 1
+    "${variant_env[@]}" "$P4_BUILD" fullclean || return 1
     shift
     [ $# -eq 0 ] && return 0
   fi
   echo "[IDF] $(env_label "$env_name"): $*"
-  if [ "$env_name" = "$P4_LCD_ENV" ]; then
-    WADA_P4_LCD=1 "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
-  else
-    env -u WADA_P4_LCD "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
-  fi
+  "${variant_env[@]}" "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
 }
 
 all_envs() {
@@ -89,8 +96,10 @@ env_label() {
     "$PAGER_SX1262_ENV") echo "LilyGo T-LoRa Pager SX1262" ;;
     "$M9_ENV")           echo "ThinkNode M9" ;;
     "$RAK_ENV")          echo "RAK TAP V2" ;;
-    "$P4_ENV")           echo "LilyGo T-Display P4 (AMOLED)" ;;
-    "$P4_LCD_ENV")       echo "LilyGo T-Display P4 (LCD)" ;;
+    "$P4_ENV")              echo "LilyGo T-Display P4 (AMOLED, SX1262)" ;;
+    "$P4_LR2021_ENV")       echo "LilyGo T-Display P4 (AMOLED, LR2021)" ;;
+    "$P4_LCD_ENV")          echo "LilyGo T-Display P4 (LCD, SX1262)" ;;
+    "$P4_LCD_LR2021_ENV")   echo "LilyGo T-Display P4 (LCD, LR2021)" ;;
     *)                     echo "$1" ;;
   esac
 }
@@ -112,15 +121,17 @@ Devices:
   --pager-sx1262          LilyGo T-LoRa Pager SX1262
   --m9                    ThinkNode M9
   --rak                   RAK TAP V2
-  --tdisplay-p4           LilyGo T-Display P4, AMOLED (ESP-IDF: tdisplay_p4/build.sh)
-  --tdisplay-p4-lcd       LilyGo T-Display P4, HI8561 LCD SKU (ESP-IDF)
+  --tdisplay-p4              LilyGo T-Display P4, AMOLED + SX1262 (ESP-IDF)
+  --tdisplay-p4-lr2021       LilyGo T-Display P4, AMOLED + LR2021 (ESP-IDF)
+  --tdisplay-p4-lcd          LilyGo T-Display P4, HI8561 LCD + SX1262 (ESP-IDF)
+  --tdisplay-p4-lcd-lr2021   LilyGo T-Display P4, HI8561 LCD + LR2021 (ESP-IDF)
 
 Options:
   --erase, -E             Erase flash before upload
   --fullclean, -F         Run PlatformIO fullclean first
   --just-build, -B        Build only; do not upload or monitor
                           With no device, build every PlatformIO environment
-                          plus both T-Display P4 SKUs (skipped if ESP-IDF is
+                          plus all four T-Display P4 variants (skipped if ESP-IDF is
                           not installed)
   --help, -h              Show this help
 
@@ -160,7 +171,9 @@ prompt_for_device() {
     "$PAGER_SX1262_ENV"
     "$RAK_ENV"
     "$P4_ENV"
+    "$P4_LR2021_ENV"
     "$P4_LCD_ENV"
+    "$P4_LCD_LR2021_ENV"
   )
   local available=()
   local env_name
@@ -237,7 +250,9 @@ while [ $# -gt 0 ]; do
     --m9)           select_env "$M9_ENV" ;;
     --rak)          select_env "$RAK_ENV" ;;
     --tdisplay-p4)  select_env "$P4_ENV" ;;
+    --tdisplay-p4-lr2021) select_env "$P4_LR2021_ENV" ;;
     --tdisplay-p4-lcd) select_env "$P4_LCD_ENV" ;;
+    --tdisplay-p4-lcd-lr2021) select_env "$P4_LCD_LR2021_ENV" ;;
     --erase|-E)     ERASE_FIRST=true ;;
     --fullclean|-F) FULLCLEAN=true ;;
     --just-build|-B) JUST_BUILD=true ;;
@@ -278,7 +293,7 @@ if [ "$JUST_BUILD" = true ]; then
     while IFS= read -r env_name; do
       [ -n "$env_name" ] && build_envs+=("$env_name")
     done < <(all_envs)
-    build_envs+=("$P4_ENV" "$P4_LCD_ENV")
+    build_envs+=("$P4_ENV" "$P4_LR2021_ENV" "$P4_LCD_ENV" "$P4_LCD_LR2021_ENV")
   fi
   for env_name in "${build_envs[@]}"; do
     is_p4_env "$env_name" || { need_pio; break; }
@@ -311,7 +326,7 @@ if [ "$JUST_BUILD" = true ]; then
       if run_p4 "$ENV_NAME" "${p4_actions[@]}"; then
         env_end="$(date +%s)"
         size_note=""
-        bin_path="tdisplay_p4/build/tdisplay_p4/application.bin"
+        bin_path="tdisplay_p4/build/$ENV_NAME/application.bin"
         [ -f "$bin_path" ] && size_note="  $(( $(wc -c < "$bin_path") / 1024 )) KB"
         results+=("ok    $ENV_NAME  $(format_duration "$((env_end - env_start))")$size_note")
       else

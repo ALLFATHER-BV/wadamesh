@@ -4,7 +4,7 @@ dependencies:
   # backend; deprecated ESP-AT units use WADA_P4_LEGACY_AT=1 and the in-tree compatibility driver.
   badgeteam/badge-bsp: "^0.9.9"
   nicolaielectronics/tanmatsu-wifi: "^1.1.2"
-  nicolaielectronics/tanmatsu-lora: "^0.3.0"   # SX1262 LoRa over the C6 — TanmatsuLoraRadio bridge
+  nicolaielectronics/tanmatsu-lora: "^0.3.0"   # transitive badge-bsp dependency; P4 LoRa uses its local RadioLib component
   # tanmatsu-wifi supplies the hosted 2.12.3-compatible fork. build.sh defers its auto-init until
   # after the P4's XL9535 reset hook is available.
   # arduino-esp32 as an IDF component so the shared wadamesh src/ (Arduino API) compiles.

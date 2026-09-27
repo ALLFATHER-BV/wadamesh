@@ -464,15 +464,23 @@
               <esp-web-install-button id="inst-tdeck-max" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdeck-max.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdeck-max" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdeck-max-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Experimental and beta only. Please flash with care and report what works and what does not.</p></div>
-            <div class="board" data-search="lilygo t-display p4 tdisplay amoled rm69a10 esp32-p4 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(AMOLED)</span></h4><p>ESP32-P4 &middot; AMOLED touch handheld.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release. One exception: Bluetooth pairing isn't available on this board, a hardware limitation of its stock radio firmware. Use Wi-Fi or USB for the phone-app link.</span></span>
+            <div class="board" data-search="lilygo t-display p4 tdisplay amoled rm69a10 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(AMOLED)</span></h4><p>ESP32-P4 &middot; AMOLED touch handheld. Pick the image matching the radio chip.</p>
+              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The AMOLED + SX1262 model is hardware-tested. LR2021 support is compile-tested and needs device validation. Bluetooth pairing is unavailable; use Wi-Fi or USB for the phone-app link.</span></span>
+              <p style="color:var(--mut);font-size:.8rem;margin:0">Radio <b>SX1262</b>:</p>
               <esp-web-install-button id="inst-tdp4" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdisplay-p4.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdisplay-p4" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdisplay-p4-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
+              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
+              <esp-web-install-button id="inst-tdp4-lr2021"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-ver"></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
-            <div class="board" data-search="lilygo t-display p4 tdisplay lcd tft hi8561 esp32-p4 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(LCD)</span></h4><p>ESP32-P4 &middot; TFT-LCD touch handheld.</p>
-              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The LCD-screen model of the T-Display P4 (the AMOLED variant is listed above). Early port — the core works: LoRa mesh, chat, map, GPS and the phone-app link over Wi-Fi or USB. Bluetooth pairing isn't available on this board. Flash with care and report back.</span></span>
+            <div class="board" data-search="lilygo t-display p4 tdisplay lcd tft hi8561 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(LCD)</span></h4><p>ESP32-P4 &middot; TFT-LCD touch handheld. Pick the image matching the radio chip.</p>
+              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>Both LCD radio variants are compile-tested and need hardware validation. Bluetooth pairing is unavailable; use Wi-Fi or USB for the phone-app link.</span></span>
+              <p style="color:var(--mut);font-size:.8rem;margin:0">Radio <b>SX1262</b>:</p>
               <esp-web-install-button id="inst-tdp4-lcd"></esp-web-install-button>
               <a class="dl2" id="dl-tdp4-lcd" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-ver"></span></a>
+              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
+              <esp-web-install-button id="inst-tdp4-lcd-lr2021"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-lcd-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-ver"></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New screen variant, not yet hardware-tested &mdash; beta only. Flash with care and report back.</p></div>
             <div class="board" data-search="lilygo t-lora pager tlora esp32-s3 qwerty rotary encoder lr1121 sx1262"><h4>LilyGo T-LoRa Pager</h4><p>ESP32-S3 QWERTY + rotary encoder.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>New community port (thanks @codemonkeybr). The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. Pick the build that matches your radio chip.</span></span>
@@ -810,18 +818,22 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
   // toggle (beta-only boards stay pinned to latest-beta) and show the exact version
   // each feed serves — both channel tags are fetched once so every link is accurate.
   const WM_VER = {};
-  // The T-Display P4 LCD-screen variant ships only in the per-tag BETA archive (no
-  // rolling-feed bin, no server manifest), so wire its Install button to a manifest
-  // built client-side (same blob trick as the previous-version picker) and point its
-  // download at the immutable archive bin. Called once the beta tag is known.
-  window.wmWireP4Lcd = function(tag){
-    const bin = 'https://firmware.wadamesh.com/releases/BETA/' + tag + '/wadamesh-tdisplay-p4-lcd-merged.bin';
-    const btn = document.getElementById('inst-tdp4-lcd');
-    if (btn){ const m = { name:'wadamesh ' + tag + ' \u2014 T-Display P4 (LCD)', version:tag, new_install_prompt_erase:true,
-      builds:[{ chipFamily:'ESP32-P4', parts:[{ path:bin, offset:0 }] }] };
-      btn.setAttribute('manifest', URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'}))); }
-    const dl = document.getElementById('dl-tdp4-lcd');
-    if (dl){ dl.href = bin; const v = document.getElementById('dl-tdp4-lcd-ver'); if (v) v.textContent = tag; }
+  // P4 variants other than the established AMOLED/SX1262 image ship from the
+  // immutable per-tag beta archive. Build their install manifests client-side.
+  window.wmWireP4ArchiveVariants = function(tag){
+    [
+      ['tdp4-lr2021', 'tdisplay-p4-lr2021', 'T-Display P4 (AMOLED, LR2021)'],
+      ['tdp4-lcd', 'tdisplay-p4-lcd', 'T-Display P4 (LCD, SX1262)'],
+      ['tdp4-lcd-lr2021', 'tdisplay-p4-lcd-lr2021', 'T-Display P4 (LCD, LR2021)']
+    ].forEach(([id, board, label]) => {
+      const bin = 'https://firmware.wadamesh.com/releases/BETA/' + tag + '/wadamesh-' + board + '-merged.bin';
+      const btn = document.getElementById('inst-' + id);
+      if (btn){ const m = { name:'wadamesh ' + tag + ' \u2014 ' + label, version:tag, new_install_prompt_erase:true,
+        builds:[{ chipFamily:'ESP32-P4', parts:[{ path:bin, offset:0 }] }] };
+        btn.setAttribute('manifest', URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'}))); }
+      const dl = document.getElementById('dl-' + id);
+      if (dl){ dl.href = bin; const v = document.getElementById('dl-' + id + '-ver'); if (v) v.textContent = tag; }
+    });
   };
   window.wmUpdateDownloads = function(){
     document.querySelectorAll('[data-dl-board]').forEach(a => {
@@ -831,7 +843,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     });
   };
   ['latest','latest-beta'].forEach(feed => fetch('https://firmware.wadamesh.com/' + feed + '/version.json', {cache:'no-store'})
-    .then(r => r.ok ? r.json() : null).then(v => { if (v && v.tag) { WM_VER[feed] = v.tag; wmUpdateDownloads(); if (feed === 'latest-beta' && window.wmWireP4Lcd) wmWireP4Lcd(v.tag); } }).catch(()=>{}));
+    .then(r => r.ok ? r.json() : null).then(v => { if (v && v.tag) { WM_VER[feed] = v.tag; wmUpdateDownloads(); if (feed === 'latest-beta' && window.wmWireP4ArchiveVariants) wmWireP4ArchiveVariants(v.tag); } }).catch(()=>{}));
   document.querySelectorAll('[data-wm-ch]').forEach(b => b.addEventListener('click', () => wmSetChannel(b.getAttribute('data-wm-ch'))));
   wmSetChannel('stable');
 

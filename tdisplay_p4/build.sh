@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# wadamesh / LilyGo T-Display P4 (AMOLED) build wrapper. Standalone ESP-IDF app
+# wadamesh / LilyGo T-Display P4 build wrapper. Standalone ESP-IDF app
 # (NOT a launcher/AppFS app like the Tanmatsu) — flashes directly over USB.
 # Reuses the Tanmatsu's project-local ESP-IDF 5.5.1 (esp32p4) via the ../tanmatsu
 # symlinks, and the board-neutral components (meshcore/ardlibs/lvgl/esp_hosted).
 #   ./build.sh build          # compile
+#   WADA_P4_LR2021=1 ./build.sh build       # AMOLED + LR2021
+#   WADA_P4_LCD=1 ./build.sh build          # TFT-LCD + SX1262
+#   WADA_P4_LCD=1 WADA_P4_LR2021=1 ./build.sh build  # TFT-LCD + LR2021
 #   ./build.sh flash -p /dev/cu.usbmodemXXXX
 #   ./build.sh fullclean      # remove generated build output; keep patched managed components
 #   ./build.sh menuconfig
@@ -11,14 +14,27 @@ set -e
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+if [ -n "${WADA_P4_LCD:-}" ]; then
+  if [ -n "${WADA_P4_LR2021:-}" ]; then
+    P4_BUILD_TARGET="tdisplay_p4_lcd_lr2021"
+  else
+    P4_BUILD_TARGET="tdisplay_p4_lcd"
+  fi
+elif [ -n "${WADA_P4_LR2021:-}" ]; then
+  P4_BUILD_TARGET="tdisplay_p4_lr2021"
+else
+  P4_BUILD_TARGET="tdisplay_p4"
+fi
+P4_BUILD_DIR="$PROJECT_DIR/build/$P4_BUILD_TARGET"
+
 # This project intentionally applies compatibility fixes inside managed_components
 # before every build. ESP-IDF's stock fullclean also runs remove_managed_components,
 # which rejects those expected hash changes and aborts. A P4 full clean therefore
 # removes only the generated CMake/Ninja tree; dependencies stay in place and the
 # idempotent patches below remain valid.
 if [ "$#" -eq 1 ] && [ "$1" = "fullclean" ]; then
-  cmake -E remove_directory "$PROJECT_DIR/build/tdisplay_p4"
-  echo "[build.sh] removed build/tdisplay_p4 (patched managed components preserved)"
+  cmake -E remove_directory "$P4_BUILD_DIR"
+  echo "[build.sh] removed build/$P4_BUILD_TARGET (patched managed components preserved)"
   exit 0
 fi
 
@@ -48,7 +64,7 @@ source esp-idf/export.sh >/dev/null 2>&1
 
 WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
 WADA_FW_DATE="$(date '+%-d %b %Y')"
-IDF_ARGS=(-B build/tdisplay_p4 \
+IDF_ARGS=(-B "build/$P4_BUILD_TARGET" \
   -DDEVICE=tdisplay_p4 \
   -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/wadamesh;sdkconfigs/tdisplay_p4" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
