@@ -5,6 +5,11 @@
 #include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
+#if CAP_SPELLCHECK
+#include "spell.h"         // English spell suggestions over the chat composer
+#endif
+// The boards with no touch reach the spell row with their navigation keys.
+#define SPELL_KEY_NAV (CAP_SPELLCHECK && !CAP_TOUCH)
 
 // Port the browser-facing web UI (VNC mirror / remote / terminal viewer page) listens on.
 // The T-Display P4's ESP-AT stack allows ONE listening port, so the web UI shares the
@@ -4851,6 +4856,14 @@ static bool mentionNavActive();
 static void mentionNavMove(int delta);
 static void mentionNavConfirm();
 static void mentionBoxHide();
+#if SPELL_KEY_NAV
+static bool spellNavActive();
+static bool spellNavBegin();
+static void spellNavMove(int delta);
+static void spellNavConfirm();
+static void spellNavEnd();
+static void spellBoxHide();
+#endif
 // The UP/DOWN/LEFT/RIGHT action, factored out so a HELD arrow can auto-repeat it (navPump's
 // per-frame tick re-fires this). Recomputes the focused field each call so repeat stays correct.
 static void navArrowAction(uint32_t key) {
@@ -4995,6 +5008,38 @@ static void navPump() {
         if (c == 8 || c == 127)      { mentionBoxHide(); continue; }
       }
     }
+#if SPELL_KEY_NAV
+    // Spell row (outside the focus group too): Up from the field steps into
+    // it, Left/Right pick, Enter takes, Esc/F1/Backspace close it, and Down or
+    // typing steps back out, leaving it up.
+    if (ev.type == INPUT_EVENT_TYPE_NAVIGATION && ev.args_navigation.state) {
+      const int k = ev.args_navigation.key;
+      if (spellNavActive()) {
+        switch (k) {
+          case BSP_INPUT_NAVIGATION_KEY_LEFT:  spellNavMove(-1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RIGHT: spellNavMove(+1); continue;
+          case BSP_INPUT_NAVIGATION_KEY_UP:    continue;
+          case BSP_INPUT_NAVIGATION_KEY_DOWN:  spellNavEnd(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_RETURN:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_A:
+          case BSP_INPUT_NAVIGATION_KEY_JOYSTICK_PRESS:
+            spellNavConfirm(); continue;
+          case BSP_INPUT_NAVIGATION_KEY_F1:
+          case BSP_INPUT_NAVIGATION_KEY_ESC:
+          case BSP_INPUT_NAVIGATION_KEY_GAMEPAD_B:
+            spellBoxHide(); continue;
+          default: spellNavEnd(); break;
+        }
+      } else if (k == BSP_INPUT_NAVIGATION_KEY_UP && spellNavBegin()) {
+        continue;
+      }
+    } else if (ev.type == INPUT_EVENT_TYPE_KEYBOARD && spellNavActive()) {
+      const char c = ev.args_keyboard.ascii;
+      if (c == '\r' || c == '\n') { spellNavConfirm(); continue; }
+      if (c == 8 || c == 127)      { spellBoxHide(); continue; }
+      spellNavEnd();   // typing carries on into the field
+    }
+#endif
     // An open dropdown captures input: arrows move the highlight (LV_KEY_UP/DOWN, NOT prev/next),
     // Enter selects + closes, Esc/✕ closes. navMaybeRebuild() leaves the group alone while it's open.
     if (navOpenDropdown()) {
@@ -5995,6 +6040,7 @@ static void refreshLogModalView();
 static void hideKb();
 static void accentExit();      // long-press accent picker (issue #22, dead on touch)
 static void accentBoxHide();   // tap-to-pick accent box (issue #22)
+static void spellBoxHide();    // spell suggestion row over the chat composer
 static void mentionBoxHide();  // tap-to-pick @-mention contact picker (issue #42)
 static void txtMenuHide();     // cut/copy/paste/select-all edit menu
 static void showKb(LvChatPanel* p);
@@ -7396,6 +7442,7 @@ static void kbMirrorBind(lv_obj_t* real_ta) {
 static void hideKb() {
   accentExit();   // tear down any open accent picker
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();   // tear down any open @-mention picker
   txtMenuHide();   // tear down any open edit menu
   kbMirrorSyncToReal();
@@ -7846,6 +7893,309 @@ static void accentAltCb(lv_event_t* e) {
   }
 }
 
+// ---- Spell suggestions (English) -----------------------------------------
+// Ported from camillia-mt. Finish a word in a chat composer -- a space or
+// punctuation after it -- and if the word is not in the list (spell.h), a row
+// of what it might have been opens just above the field: the word as typed
+// first, dimmed, as the "leave it", then up to three suggestions, closest and
+// most common first. Tapping one swaps the word in place.
+//
+// The row stays up while the next word is typed, so it takes the slot right
+// above the field and the accent box, when a letter brings one up, stacks on
+// top of it (accentBoxMaybeShow). It closes when the next word is finished,
+// when the word it offers for is edited or the text changes under it (a send,
+// a paste, a delete), or on a pick. English UI only, because the list is.
+#if CAP_SPELLCHECK
+static bool      s_spell_check     = true;     // Settings > Keyboard switch (NVS, default on)
+static lv_obj_t* s_spellbox        = nullptr;
+static lv_obj_t* s_spellbox_ta     = nullptr;  // the field the row edits
+static char      s_spell_opts[spell::kMaxSuggest + 1][spell::kMaxWord + 1];
+static int       s_spell_n         = 0;        // options, the typed word included
+static uint32_t  s_spell_word      = 0;        // where the word starts, in bytes
+static uint32_t  s_spell_len       = 0;        // its length: ASCII, so bytes = characters
+static lv_obj_t* s_spell_prev_ta   = nullptr;  // the field last seen ...
+static uint32_t  s_spell_prev_len  = 0;        // ... and its byte length then
+static bool      s_spell_editing   = false;    // our own swap: ignore its VALUE_CHANGED
+static lv_coord_t s_spellbox_y     = 0;        // where spellBoxShow put the row ...
+static lv_coord_t s_spellbox_h     = 0;
+static bool      s_spellbox_below  = false;    // ... and whether that is under the field
+#if SPELL_KEY_NAV
+// No touch on these boards, and the cells are NAV_SKIP_FLAG. The row stays up
+// while the next word is typed, so unlike the accent box on the M9 it never
+// takes the arrows by itself: the user steps in on purpose -- Up on the M9 and
+// the Tanmatsu, Fn+Space on the Pager -- then Left/Right (or the encoder) walk
+// the cells, Enter takes one, Back/Backspace closes the row and Down (or any
+// typing) steps back out and leaves it up.
+static lv_obj_t* s_spell_cells[spell::kMaxSuggest + 1] = {};
+static bool      s_spellnav_active = false;
+static int       s_spellnav_idx    = 0;
+#endif
+
+static void spellBoxHide() {
+  // Async: a tap on one of the row's own cells closes it.
+  if (s_spellbox && lv_obj_is_valid(s_spellbox)) lv_obj_del_async(s_spellbox);
+  s_spellbox = nullptr;
+  s_spellbox_ta = nullptr;
+  s_spell_n = 0;
+#if SPELL_KEY_NAV
+  s_spellnav_active = false;
+  for (auto& c : s_spell_cells) c = nullptr;
+#endif
+}
+
+static bool spellBoxVisible() {
+  return s_spell_n > 0 && s_spellbox && lv_obj_is_valid(s_spellbox) && s_spellbox_ta &&
+         !lv_obj_has_flag(s_spellbox, LV_OBJ_FLAG_HIDDEN);
+}
+
+#if SPELL_KEY_NAV
+static bool spellNavActive() { return s_spellnav_active && spellBoxVisible(); }
+
+static void spellNavRestyle() {
+  for (int i = 0; i < s_spell_n; ++i)
+    if (s_spell_cells[i]) setSelectionGlow(s_spell_cells[i], s_spellnav_active && i == s_spellnav_idx, LV_PART_MAIN);
+}
+
+// Step into the row, on the first suggestion rather than the typed word. Only
+// from the field it offers for, and only while that field has the focus.
+static bool spellNavBegin() {
+  if (!spellBoxVisible() || navFocusedTextarea() != s_spellbox_ta) return false;
+  s_spellnav_active = true;
+  s_spellnav_idx = s_spell_n > 1 ? 1 : 0;
+  spellNavRestyle();
+  return true;
+}
+
+static void spellNavMove(int delta) {
+  if (!spellNavActive()) return;
+  s_spellnav_idx = ((s_spellnav_idx + delta) % s_spell_n + s_spell_n) % s_spell_n;
+  spellNavRestyle();
+}
+
+// Leave the row, keeping it up.
+static void spellNavEnd() {
+  if (!s_spellnav_active) return;
+  s_spellnav_active = false;
+  spellNavRestyle();
+}
+
+// Fire the highlighted cell's own CLICKED binding (spellCellCb), as a tap would.
+static void spellNavConfirm() {
+  if (spellNavActive() && s_spell_cells[s_spellnav_idx])
+    lv_event_send(s_spell_cells[s_spellnav_idx], LV_EVENT_CLICKED, nullptr);
+  else
+    spellBoxHide();
+}
+#endif
+
+// A field can go by a path that never closes the row (a form closing after its
+// send, a panel rebuild), and a pick would then edit freed memory. So when the
+// field goes, drop the pointer and hide the row. Only hide here, never delete:
+// when a whole layer is being cleaned the row may go in the same pass.
+static void spellTaDeleteCb(lv_event_t* e) {
+  lv_obj_t* t = lv_event_get_target(e);
+  if (t == s_spell_prev_ta) { s_spell_prev_ta = nullptr; s_spell_prev_len = 0; }
+  if (t != s_spellbox_ta) return;
+  s_spellbox_ta = nullptr;
+  if (s_spellbox && lv_obj_is_valid(s_spellbox)) lv_obj_add_flag(s_spellbox, LV_OBJ_FLAG_HIDDEN);
+}
+
+static bool spellIsWordChar(char c) {
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '\'';
+}
+
+// What ends a word and so gets it checked.
+static bool spellIsBoundary(char c) {
+  return c == ' ' || c == ',' || c == '.' || c == '!' || c == '?' || c == ';' ||
+         c == ':' || c == ')' || c == '"' || c == '\n';
+}
+
+// UTF-8 characters in the first `bytes` bytes of t, and the reverse.
+static uint32_t spellCharsIn(const char* t, uint32_t bytes) {
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < bytes && t[i]; ++i)
+    if ((static_cast<unsigned char>(t[i]) & 0xC0u) != 0x80u) ++n;
+  return n;
+}
+static uint32_t spellByteAt(const char* t, uint32_t chars) {
+  uint32_t i = 0;
+  for (; t[i]; ++i) {
+    if ((static_cast<unsigned char>(t[i]) & 0xC0u) == 0x80u) continue;
+    if (chars == 0) break;
+    --chars;
+  }
+  return i;
+}
+
+// The word the row offers for is still where it was, as typed, and still ends
+// there. Anything else means the text moved under the row.
+static bool spellWordIntact(const char* t, uint32_t len) {
+  if (!t || len <= s_spell_word + s_spell_len) return false;
+  if (memcmp(t + s_spell_word, s_spell_opts[0], s_spell_len) != 0) return false;
+  return !spellIsWordChar(t[s_spell_word + s_spell_len]);
+}
+
+static void spellCellCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  lv_obj_t* ta = s_spellbox_ta;
+  if (ta && !lv_obj_is_valid(ta)) ta = nullptr;
+  const char* t = ta ? lv_textarea_get_text(ta) : nullptr;
+  const uint32_t len = t ? (uint32_t)strlen(t) : 0;
+  // Cell 0 is the word as typed: tapping it just closes the row.
+  if (t && idx > 0 && idx < s_spell_n && spellWordIntact(t, len)) {
+    const char* rep = s_spell_opts[idx];
+    const uint32_t rl = (uint32_t)strlen(rep);
+    const uint32_t max_chars = lv_textarea_get_max_length(ta);
+    if (!max_chars || spellCharsIn(t, len) - s_spell_len + rl <= max_chars) {
+      char* next = (char*)malloc(len - s_spell_len + rl + 1);
+      if (next) {
+        memcpy(next, t, s_spell_word);
+        memcpy(next + s_spell_word, rep, rl);
+        strcpy(next + s_spell_word + rl, t + s_spell_word + s_spell_len);
+        // Keep the caret where it was relative to the text around it.
+        uint32_t caret = lv_textarea_get_cursor_pos(ta);
+        if (caret > spellCharsIn(t, s_spell_word)) caret = caret + rl - s_spell_len;
+        s_spell_editing = true;
+        lv_textarea_set_text(ta, next);
+        lv_textarea_set_cursor_pos(ta, (int32_t)caret);
+        if (ta == s_kb_mirror_ta) kbMirrorSyncToReal();
+        s_spell_editing = false;
+        free(next);
+        const char* now = lv_textarea_get_text(ta);
+        s_spell_prev_ta = ta;
+        s_spell_prev_len = now ? (uint32_t)strlen(now) : 0;
+      }
+    }
+  }
+  spellBoxHide();
+  accentBoxHide();   // set_text re-ran the composer hooks; a box for its last letter is noise
+}
+
+static void spellBoxShow(lv_obj_t* ta) {
+  const int ch = 34, gap = 4, pad = 5;
+  s_spellbox = lv_obj_create(lv_layer_top());
+  lv_obj_add_flag(s_spellbox, NAV_SKIP_FLAG);   // passive tap-only hint, like the accent box
+  lv_obj_remove_style_all(s_spellbox);
+  lv_obj_set_style_bg_color(s_spellbox, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_spellbox, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_spellbox, 8, LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_spellbox, lv_color_hex(COLOR_ACCENT_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_spellbox, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(s_spellbox, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(s_spellbox, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_spellbox, LV_FLEX_FLOW_ROW);
+  lv_obj_set_size(s_spellbox, LV_SIZE_CONTENT, ch + pad * 2);
+  lv_obj_clear_flag(s_spellbox, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cells[spell::kMaxSuggest + 1] = {};
+  for (int i = 0; i < s_spell_n; ++i) {
+    lv_obj_t* c = lv_btn_create(s_spellbox);
+    lv_obj_add_flag(c, NAV_SKIP_FLAG);
+    lv_obj_set_size(c, LV_SIZE_CONTENT, ch);
+    lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(c, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(c, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_add_event_cb(c, spellCellCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* l = lv_label_create(c);
+    lv_label_set_text(l, s_spell_opts[i]);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    // The typed word dimmer: it is the "no thanks", not a suggestion.
+    lv_obj_set_style_text_color(l, lv_color_hex(i == 0 ? COLOR_SUB : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+    cells[i] = c;
+  }
+  // Long words on a narrow panel: drop suggestions from the end until the row
+  // fits, keeping the typed word and at least one suggestion.
+  const lv_coord_t hres = lv_disp_get_hor_res(nullptr);
+  lv_obj_update_layout(s_spellbox);
+  while (s_spell_n > 2 && lv_obj_get_width(s_spellbox) > hres - 8) {
+    --s_spell_n;
+    lv_obj_del(cells[s_spell_n]);
+    lv_obj_update_layout(s_spellbox);
+  }
+  // Just above the field (below if there's no room above), clamped clear of
+  // the keyboard and, in a chat, the composer -- the accent box's rules.
+  lv_area_t a; lv_obj_get_coords(ta, &a);
+  const lv_coord_t bw = lv_obj_get_width(s_spellbox), bh = lv_obj_get_height(s_spellbox);
+  lv_coord_t by = a.y1 - bh - 4;
+  if (by < STATUSBAR_H + 2) by = a.y2 + 4;
+  if (g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN)) {
+    lv_coord_t limit = lv_disp_get_ver_res(nullptr) - chatKbH() - 6;
+    if (s_kb_panel) limit -= s_comp_h;
+    if (by + bh > limit) by = limit - bh;
+    if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
+  }
+  lv_obj_set_pos(s_spellbox, (hres - bw) / 2, by);
+  lv_obj_move_foreground(s_spellbox);
+#if SPELL_KEY_NAV
+  for (int i = 0; i < s_spell_n; ++i) s_spell_cells[i] = cells[i];
+  s_spellnav_active = false;
+#endif
+  s_spellbox_ta = ta;
+  s_spellbox_y = by;
+  s_spellbox_h = bh;
+  s_spellbox_below = by >= a.y2;
+}
+
+// Every VALUE_CHANGED of a chat composer (composerMentionRefresh). With the
+// on-screen keyboard's mirror bound, `ta` is the mirror: that is where the
+// caret is.
+static void spellComposerChanged(lv_obj_t* ta) {
+  if (s_spell_editing || !ta) return;
+  const char* t = lv_textarea_get_text(ta);
+  const uint32_t len = t ? (uint32_t)strlen(t) : 0;
+  const uint32_t prev = (ta == s_spell_prev_ta) ? s_spell_prev_len : len;
+  if (ta != s_spell_prev_ta) {
+    lv_obj_remove_event_cb(ta, spellTaDeleteCb);   // at most one hook per field
+    lv_obj_add_event_cb(ta, spellTaDeleteCb, LV_EVENT_DELETE, nullptr);
+  }
+  s_spell_prev_ta = ta;
+  s_spell_prev_len = len;
+  if (!s_spell_check || i18nGetLang() != LANG_EN) { spellBoxHide(); return; }
+
+  // One byte more than last time: a key typed. A paste, an emoji, a delete or
+  // the field clearing after a send never opens a row, and keeps one only
+  // while its word is untouched.
+  const uint32_t cur = (len == prev + 1) ? spellByteAt(t, lv_textarea_get_cursor_pos(ta)) : 0;
+  if (cur < 3 || !spellIsBoundary(t[cur - 1])) {
+    if (spellBoxVisible() && (ta != s_spellbox_ta || !spellWordIntact(t, len))) spellBoxHide();
+    return;
+  }
+
+  // A word was just finished: the row for the one before it is done with.
+  spellBoxHide();
+  const uint32_t end = cur - 1;
+  uint32_t start = end;
+  while (start > 0 && spellIsWordChar(t[start - 1])) --start;
+  // Only a word that stands on its own: not the tail of a URL, a number, an
+  // @mention or a #channel.
+  if (start > 0 && t[start - 1] != ' ' && t[start - 1] != '(' && t[start - 1] != '"' &&
+      t[start - 1] != '\n')
+    return;
+  const size_t n = end - start;
+  if (!spell::shouldCheck(t + start, n)) return;
+
+  const spell::Dict& d = spell::english();
+  if (spell::known(d, t + start, n)) return;
+  char opts[spell::kMaxSuggest][spell::kMaxWord + 1];
+  const int found = spell::suggest(d, t + start, n, opts, spell::kMaxSuggest);
+  if (found == 0) return;
+
+  memcpy(s_spell_opts[0], t + start, n);
+  s_spell_opts[0][n] = '\0';
+  for (int i = 0; i < found; ++i) memcpy(s_spell_opts[i + 1], opts[i], sizeof(opts[i]));
+  s_spell_n = found + 1;
+  s_spell_word = start;
+  s_spell_len = (uint32_t)n;
+  spellBoxShow(ta);
+}
+#else
+static void spellBoxHide() {}
+static void spellComposerChanged(lv_obj_t*) {}
+#endif  // CAP_SPELLCHECK
+
 // ---- Accent box: tap-to-pick accents (issue #22) -------------------------
 // When a letter with accent variants is typed (on-screen OR physical keyboard),
 // a floating box of its variants pops up; tapping one replaces the just-typed
@@ -7973,6 +8323,19 @@ static void accentBoxMaybeShow() {
     if (by + bh > limit) by = limit - bh;
     if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
   }
+#if CAP_SPELLCHECK
+  // A spell row already holds the slot next to the field: stack beyond it, so
+  // going out from the field it is text, suggestions, accents -- upward
+  // normally, downward when the field is too near the top for the row.
+  if (spellBoxVisible()) {
+    if (s_spellbox_below) {
+      by = s_spellbox_y + s_spellbox_h + 4;
+    } else {
+      by = s_spellbox_y - bh - 4;
+      if (by < STATUSBAR_H + 2) by = STATUSBAR_H + 2;
+    }
+  }
+#endif
   lv_obj_set_pos(s_accbox, bx, by);
   lv_obj_move_foreground(s_accbox);
 }
@@ -8219,8 +8582,9 @@ static bool mentionBoxMaybeShow(lv_obj_t* ta) {
   return true;
 }
 static void composerMentionRefresh(lv_obj_t* ta) {
-  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); return; }
+  if (mentionBoxMaybeShow(ta)) { accentBoxHide(); spellBoxHide(); return; }
   mentionBoxHide();
+  spellComposerChanged(ta);   // before the accent box, which stacks on the row
   // Fall through to the accent box, as this function's predecessor did. Losing
   // this is what killed accent popups for anyone typing on a PHYSICAL keyboard
   // (#338): those keystrokes reach the composer's own VALUE_CHANGED, which ends
@@ -13871,6 +14235,20 @@ static void accentPopupsToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Accent popups: on") : TR("Accent popups: off"), 1100);
 }
 
+#if CAP_SPELLCHECK
+// Spell suggestions on/off. Persisted + live, like the accent popups above.
+static void spellCheckToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_spell_check = on;
+#if defined(ESP32)
+  touchPrefsSetSpellCheck(on);
+#endif
+  if (!on) spellBoxHide();
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Spell suggestions: on") : TR("Spell suggestions: off"), 1100);
+}
+#endif
+
 // One handler for every per-language switch in the multi-select list. The
 // layout id is stashed in the switch's user_data. Flipping a switch updates the
 // enabled-mask (persisted + live) and refreshes the on-screen keyboard, which
@@ -15458,6 +15836,32 @@ static void buildDeviceSettings(int sec) {
     y += settingsRowLabel(body, y, 0, TR("pick accented letters as you type; off = plain typing"),
                           COLOR_SUB, &g_font_12, 0) + 2;
   }
+
+#if CAP_SPELLCHECK
+  /* Spell suggestions. Finishing a word the English list doesn't know offers
+     corrections above the message box. English UI only. Default on. */
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Spell suggestions"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+#if defined(ESP32)
+    if (touchPrefsGetSpellCheck()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#else
+    if (s_spell_check) lv_obj_add_state(sw, LV_STATE_CHECKED);
+#endif
+    lv_obj_add_event_cb(sw, spellCheckToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+
+#if defined(TLORA_PAGER)
+    const char* hint = TR("English: Fn+Space, then turn to a correction and click");
+#elif SPELL_KEY_NAV
+    const char* hint = TR("English: Up to the corrections, Left/Right, then Enter");
+#else
+    const char* hint = TR("English: tap a correction above the message box");
+#endif
+    y += settingsRowLabel(body, y, 0, hint, COLOR_SUB, &g_font_12, 0) + 2;
+  }
+#endif
 
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   /* Enter sends the message (default) vs. inserts a newline so you send only via
@@ -22659,6 +23063,7 @@ static bool terminalHandleVirtualKeyboardReady() {
   if (!s_term_input_ta || s_kb_bind_ta != s_term_input_ta) return false;
   accentExit();
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   terminalSubmit();
   hideKb();
@@ -42063,6 +42468,7 @@ static void updatePagerAltBackspaceChord() {
   // content navGoToMainTab() switches away from -- close them explicitly
   // first so a stray overlay doesn't keep floating over the Home screen.
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   navGoToMainTab(HOME_TAB_INDEX);
   if (g_lv.task) g_lv.task->noteUserInput();
@@ -42464,6 +42870,12 @@ static void updatePagerEncoder(unsigned long now) {
       for (; delta < 0; delta++) s_accentnav_idx = (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
     }
     if (turned) accentNavRestyle();
+#if SPELL_KEY_NAV
+  } else if (spellNavActive()) {
+    // Spell row (handleHwKey()'s Fn+Space entry): the same exclusive capture.
+    for (; delta > 0; delta--) spellNavMove(+1);
+    for (; delta < 0; delta++) spellNavMove(-1);
+#endif
   } else if (navOpenDropdown()) {
     // An open dropdown captures the encoder: lv_dropdown's own key handling only
     // understands LV_KEY_UP/DOWN to move the highlighted row (+ENTER to confirm,
@@ -42538,7 +42950,11 @@ static void updatePagerEncoder(unsigned long now) {
     // The keyboard layer lacks %, <, >, and several non-ASCII symbols. Holding
     // Fn before pressing the knob opens the shared picker for the active field.
     if (pagerKeyboardAltHeld() && !s_emoji_sheet && !s_mentionnav_active &&
-        !s_accentnav_active && !navOpenDropdown()) {
+        !s_accentnav_active &&
+#if SPELL_KEY_NAV
+        !spellNavActive() &&
+#endif
+        !navOpenDropdown()) {
       lv_obj_t* ta = navFocusedTextarea();
       if (ta && lv_obj_is_valid(ta)) {
         pagerKeyboardMarkAltUsed();
@@ -42557,6 +42973,9 @@ static void updatePagerEncoder(unsigned long now) {
     // handleHwKey()'s Enter branch exactly so both inputs agree.
     if (s_mentionnav_active)        mentionNavConfirm(); // picking a mention: confirm the highlighted one
     else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
+#if SPELL_KEY_NAV
+    else if (spellNavActive())      spellNavConfirm();   // picking a spelling: take the highlighted one
+#endif
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
   if (!held && s_was_held) s_press_consumed = false;
@@ -44244,6 +44663,25 @@ static bool m9AccentBoxHandleKey(int key) {
   return true;   // swallow the rest while picking
 }
 
+#if SPELL_KEY_NAV
+// The spell row, unlike the accent box, stays up while the next word is typed,
+// so it does not take LEFT/RIGHT by itself: UP from the field steps in, then
+// LEFT/RIGHT pick, Enter takes, Back/Backspace close, and DOWN or typing steps
+// back out and leaves the row up. Called after m9AccentBoxHandleKey(), which
+// owns the arrows while an accent box is up, and before m9HandleArrowKey().
+static bool m9SpellRowHandleKey(int key) {
+  if (!spellNavActive()) return key == M9_KEY_UP && spellNavBegin();
+  if (key == M9_KEY_LEFT)  { spellNavMove(-1); return true; }
+  if (key == M9_KEY_RIGHT) { spellNavMove(+1); return true; }
+  if (key == M9_KEY_UP)    return true;
+  if (key == M9_KEY_DOWN)  { spellNavEnd(); return true; }
+  if (key == 0x0D)         { spellNavConfirm(); return true; }
+  if (key == 0x08 || key == 0x7F || key == M9_KEY_HW_BACK) { spellBoxHide(); return true; }
+  spellNavEnd();
+  return false;   // typing carries on into the field
+}
+#endif
+
 static bool m9HandleNavKey(int key) {
   if (!s_kbd_nav) return false;
   switch (key) {
@@ -44929,6 +45367,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   // The box only exists for the moment after typing a base letter, so the
   // arrows go back to the caret the instant it closes.
   if (m9AccentBoxHandleKey(key)) return;
+#if SPELL_KEY_NAV
+  if (m9SpellRowHandleKey(key)) return;
+#endif
   if (m9HandleArrowKey(key, ta)) return;    // ← runs BEFORE the if(!ta) split
 #endif
   if (!ta) {
@@ -45156,6 +45597,17 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     accentNavRestyle();
     return;
   }
+#if SPELL_KEY_NAV
+  // Spell row: Fn+Space steps in when no accent box is up (right after a word
+  // is finished, there isn't one). Typing steps back out and leaves it up.
+  if (spellNavActive()) {
+    if (key == 0x08 || key == 0x7F) { spellBoxHide(); return; }
+    if (key == 0x0D)                { spellNavConfirm(); return; }
+    spellNavEnd();
+  } else if (key == ' ' && pagerKeyboardAltHeld() && spellNavBegin()) {
+    return;
+  }
+#endif
 #endif
 #if defined(HAS_M9_KEYBOARD)
   // M9 has a dedicated hardware Back key — unlike the CAP_TRACKBALL board's backspace-on-
@@ -45225,6 +45677,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
+    spellBoxHide();
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
@@ -45437,6 +45890,7 @@ static void bleKbdDispatch(int key) {
         s_nav_ta_editing = false;
         accentBoxHide();
         mentionBoxHide();
+        spellBoxHide();
       }
       bleKbdBack();
       break;
@@ -45481,6 +45935,7 @@ static void bleKbdTouchDelete(lv_obj_t* ta, bool forward) {
 static void bleKbdTouchEnter(lv_obj_t* ta) {
   accentBoxHide();
   mentionBoxHide();
+  spellBoxHide();
   if (s_editor_ta && ta == s_editor_ta) {           // multiline editor
     lv_textarea_add_char(ta, '\n');
   } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
@@ -45676,6 +46131,7 @@ static void bleKbdDispatch(int key) {
         s_nav_ta_editing = false;
         accentBoxHide();
         mentionBoxHide();
+        spellBoxHide();
       }
       bleKbdBack();
       break;
@@ -60120,6 +60576,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
     s_accent_popups = touchPrefsGetAccentPopups();
+#if CAP_SPELLCHECK
+    s_spell_check = touchPrefsGetSpellCheck();
+#endif
     {
       multi_heap_info_t hi{};
       heap_caps_get_info(&hi, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
@@ -61849,6 +62308,7 @@ static void maxGlanceTapCb(lv_event_t*) { s_max_glance_tapped = true; }
 // pager back ladder use, so nothing is left floating over the Home tab.
 static void maxGoHome() {
   accentBoxHide();
+  spellBoxHide();
   mentionBoxHide();
   for (int i = 0; i < 4 && anyPopupOpen(); ++i) hwKeyDismissTopPopup();
   if (s_apppage_close) s_apppage_close();
