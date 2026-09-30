@@ -131,5 +131,12 @@ variants/tdisplay_p4/P4Haptic.cpp and P4HapticWaveform.h)
     from src/chip/i2c/aw862xx_haptic_waveform_table.inc. Those two files keep
     upstream's terms (SPDX GPL-3.0-only).
 
+English word list for compose spell suggestions (dict/en.txt, compiled into
+src/ui-touch/spell_dict_en.h)
+    Hermit Dave — FrequencyWords, en_50k (OpenSubtitles 2018)
+    CC-BY-SA-4.0 — https://github.com/hermitdave/FrequencyWords
+    Cleaned and extended (mesh vocabulary, contractions) by
+    scripts/build/build_spell_wordlist.py; the list stays under CC-BY-SA-4.0.
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.
