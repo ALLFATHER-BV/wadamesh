@@ -175,6 +175,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.ct_purge_days     = TOUCH_CT_PURGE_DEFAULT_DAYS;
   c.chats_unread_only = 0;      // OFF: Chats lists every thread (v73, #824)
   c.report_done_n     = 0;      // no beta reported on yet
+  c.spell_check       = 1;      // ON: spell suggestions over the composer (v74)
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
   c.console_monitor   = 1;      // ON: the console shows messages as they arrive
@@ -339,6 +340,7 @@ static void cfgLoadOrMigrate() {
           s_cfg.ct_purge_days = TOUCH_CT_PURGE_DEFAULT_DAYS;
         }
         if (stored_version < 73) s_cfg.chats_unread_only = 0;   // v73 new trailing field: never stored before
+        if (stored_version < 74) s_cfg.spell_check = 1;   // v74 trailing field: suggestions on
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -899,6 +901,17 @@ bool touchPrefsGetAccentPopups() {
 bool touchPrefsSetAccentPopups(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.kb_accent = on ? 1 : 0;
+  return cfgFlush();
+}
+
+// Spell suggestions over the compose field (English). Default ON.
+bool touchPrefsGetSpellCheck() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.spell_check != 0;
+}
+bool touchPrefsSetSpellCheck(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.spell_check = on ? 1 : 0;
   return cfgFlush();
 }
 
