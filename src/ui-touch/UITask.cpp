@@ -1977,7 +1977,11 @@ static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t s
   lv_obj_remove_style(obj, &s_selection_glow_style, cursor_selector);
   lv_obj_remove_style(obj, &s_selection_glow_contrast_style, cursor_selector);
   if (selected) {
-    const bool on_accent = lv_obj_get_style_bg_opa(obj, cursor_part) == LV_OPA_COVER &&
+    // An accent outline vanishes on an accent fill, and not only a solid one:
+    // the Map's side buttons are accent at 70% over the tiles, and their cursor
+    // could barely be told from its neighbours (#576). Anything mostly accent
+    // takes the contrast outline instead.
+    const bool on_accent = lv_obj_get_style_bg_opa(obj, cursor_part) >= LV_OPA_50 &&
         lv_color_to32(lv_obj_get_style_bg_color(obj, cursor_part)) ==
         lv_color_to32(lv_color_hex(COLOR_ACCENT));
     lv_obj_add_style(obj, on_accent ? &s_selection_glow_contrast_style
