@@ -20,7 +20,8 @@
 //
 //  The board -D macros (HAS_TDECK_GT911, HAS_TANMATSU, HELTEC_LORA_V4_TFT, …) come
 //  from platformio.ini / the Tanmatsu CMakeLists and are available everywhere, so
-//  this header has no include dependencies. Only ui-touch/UITask.cpp includes it,
+//  this header has no include dependencies. Only ui-touch/UITask.cpp (and
+//  spell_en.cpp, for CAP_SPELLCHECK) include it,
 //  so the #else branch is always "the Heltec V4 TFT touch board".
 // =============================================================================
 
@@ -508,4 +509,15 @@
   #else
     #define CAP_BUILTIN_LUA_APPS 0
   #endif
+#endif
+
+// English spell suggestions over the chat composer (spell.h). The word list is
+// ~115 KB of FLASH, no RAM. Every board: touch boards tap a suggestion, and the
+// Pager, Tanmatsu and ThinkNode M9 step into the row with their navigation keys
+// (UITask.cpp, SPELL_KEY_NAV). Mind the plain Heltec V4: it also carries the
+// built-in translations and had ~160 KB left in its app partition before this,
+// so it is the first image to outgrow its slot. Define this 0 in a board's
+// block if one ever does.
+#ifndef CAP_SPELLCHECK
+  #define CAP_SPELLCHECK 1
 #endif

@@ -131,7 +131,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::spell_check) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -217,7 +219,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::spell_check) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -244,7 +248,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::spell_check) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;
@@ -268,7 +274,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::spell_check) == sizeof(Config),
                 "v59 is the current layout minus the Home-key drawer option");
   Config v59 = safeDefaults();
   v59.ver = 59;
@@ -287,7 +295,9 @@ int main() {
   static_assert(v60_size + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::spell_check) == sizeof(Config),
                 "v60 is the current layout minus the Bluetooth keyboard settings");
   Config v60 = safeDefaults();
   v60.ver = 60;
@@ -308,7 +318,8 @@ int main() {
   // v62 appends the extra Back key. A v61 blob keeps the paired keyboard and
   // its settings; only Esc goes back until the user picks another key.
   constexpr size_t v61_size = offsetof(Config, ble_kbd_back);
-  static_assert(v61_size + sizeof(Config::ble_kbd_back) == sizeof(Config),
+  static_assert(v61_size + sizeof(Config::ble_kbd_back) + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) + sizeof(Config::spell_check) == sizeof(Config),
                 "v61 is the current layout minus the Back key");
   Config v61 = safeDefaults();
   v61.ver = 61;
@@ -327,6 +338,22 @@ int main() {
   assert(migrated.ble_kbd_addr_type == 1);
   assert(strcmp(migrated.ble_kbd_name, "Sologic - Keyboard") == 0);
   assert(migrated.ble_kbd_back == 0);
+
+  // v66 appends spell_check. A v65 blob keeps everything it stored; the switch
+  // keeps the current default (on) instead of whatever byte followed the blob.
+  constexpr size_t v65_size = offsetof(Config, spell_check);
+  static_assert(v65_size + sizeof(Config::spell_check) == sizeof(Config),
+                "v65 is the current layout minus the spell check switch");
+  Config v65 = safeDefaults();
+  v65.ver = 65;
+  v65.report_done_n = 88;
+  v65.spell_check = 0;              // outside the stored v65 extent
+  migrated = safeDefaults();
+  migrated.spell_check = 1;
+  assert(TouchPrefsSchema::overlayStored(migrated, &v65, v65_size, &stored_version));
+  assert(stored_version == 65);
+  assert(migrated.report_done_n == 88);
+  assert(migrated.spell_check == 1);
 
   Config invalid = safeDefaults();
   uint8_t garbage[sizeof(Config)] = {};

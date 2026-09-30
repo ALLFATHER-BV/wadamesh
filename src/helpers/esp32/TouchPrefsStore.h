@@ -82,6 +82,8 @@ bool     touchPrefsSetEnabledLayouts(uint16_t mask);
  *  has accented variants pops up a tap-to-pick box; OFF means plain typing. */
 bool touchPrefsGetAccentPopups();
 bool touchPrefsSetAccentPopups(bool on);
+bool touchPrefsGetSpellCheck();
+bool touchPrefsSetSpellCheck(bool on);
 
 /** Web control panel: serve the live UI to a phone browser over the WebSocket
  *  server and inject taps back (remote control). Opt-in, default OFF. */

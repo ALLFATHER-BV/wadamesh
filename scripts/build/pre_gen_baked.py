@@ -44,3 +44,9 @@ lua_src += [os.path.join(ROOT, "deploy", "apps", "apps.json")]
 if _stale(LUAH, [f for f in lua_src if os.path.exists(f)]):
     print("lua: an app changed, regenerating lua_builtin.h")
     subprocess.run([sys.executable, LUAG], cwd=ROOT, check=True)
+
+SPELLH = os.path.join(ROOT, "src", "ui-touch", "spell_dict_en.h")
+SPELLG = os.path.join(HERE, "gen_spell_dict.py")
+if _stale(SPELLH, [os.path.join(ROOT, "dict", "en.txt")]):
+    print("spell: dict/en.txt changed, regenerating spell_dict_en.h")
+    subprocess.run([sys.executable, SPELLG], cwd=ROOT, check=True)
