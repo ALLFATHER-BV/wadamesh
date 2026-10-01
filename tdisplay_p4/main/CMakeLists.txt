@@ -97,6 +97,11 @@ set(WADA_DEFS
   # Detected at runtime; the on-screen keyboard stays while it is away (P4Keyboard.h). ---
   HAS_TDISPLAY_P4_KEYBOARD=1
 
+  # --- BOOT button (GPIO35, active low) as the wake/lock button, like the Wio Tracker L2's:
+  # a press wakes (or lights the lock screen), a 2 s hold locks / unlocks. GPIO35 is not an
+  # LP GPIO, so it cannot wake deep sleep: UITask keeps the Power-off row off this board. ---
+  PIN_USER_BTN=35
+
   # --- Board I2C_1 (XL9535 + touch + PCF8563 RTC + BQ27220 gauge) ---
   PIN_BOARD_SDA=7 PIN_BOARD_SCL=8
   XL9535_SDA=7 XL9535_SCL=8 XL9535_INT_PIN=5

@@ -49,14 +49,6 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
   #include "assets/lockscreen_placeholder_jpg.h"   // seeded to SPIFFS /lock/placeholder.jpg on first boot (PNG decode is broken on this board)
-  #if CAP_LOCK_SCREEN
-    #if !defined(HAS_TDECK_PRO)
-      #include "assets/lockscreen_wallpaper_rgb565.h"   // crisp pre-dithered default lock-screen wallpaper (no JPEG banding)
-    #endif
-    #if defined(TLORA_PAGER)
-      #include "assets/lockscreen_wallpaper_pager_rgb565.h"   // native 480x222 crop/layout for this board's wide/short panel
-    #endif
-  #endif
   #include <esp_timer.h>
   #include <esp_chip_info.h>
   #include <nvs.h>            // nvs_get_stats() for the About-tab NVS usage line
@@ -14039,6 +14031,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   const char* unlock_hint = on ? TR("Locks when screen off\n(double-press d-pad center to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_WIO_TRACKER_L2)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the wake button to unlock)") : TR("Screen-off just dims");
+#elif defined(HAS_TDISPLAY_P4)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the BOOT button to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #elif defined(TLORA_PAGER)
@@ -16126,10 +16120,8 @@ static void buildDeviceSettings(int sec) {
 #endif // HAS_TDECK_GT911 || HAS_THINKNODE_M9
 
   // Auto-lock on screen-off: when the idle timeout dims the screen, also hard-lock so the
-  // touchscreen is inert (Tim: pocket-taps while dark). NOT on the P4 — it has no unlock path
-  // (no button/trackball and no touch-unlock overlay yet), so a hard lock there is a power-cycle
-  // trap. The P4 still dims on idle (screen-off wakes on touch); a proper P4 lock is a follow-up.
-#if !defined(HAS_TDISPLAY_P4)
+  // touchscreen is inert (Tim: pocket-taps while dark). Every board here has a deliberate
+  // unlock control; the P4's is holding its BOOT button.
   {
     int h = settingsRowLabel(body, y, 6, TR("Lock when screen off"), COLOR_SUB, nullptr, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -16147,7 +16139,6 @@ static void buildDeviceSettings(int sec) {
 #endif
     y += LV_MAX(40, h + 12);
   }
-#endif
 
 
   }
@@ -41385,6 +41376,22 @@ static void formatChatRowTime(char* buf, size_t cap, uint32_t ts) {
   else                                                         strftime(buf, cap, "%d/%m/%y", &tmv);
 }
 
+// How far in from the row's right edge the per-row settings gear sits. On the
+// large panels the list's scrollbar is drawn over that edge and covered the
+// gear, so clear it: the scrollbar's own width and edge gap, plus a margin.
+static lv_coord_t threadGearRightInset(lv_obj_t* row) {
+#if CAP_LARGE_SCREEN
+  for (lv_obj_t* o = row ? lv_obj_get_parent(row) : nullptr; o; o = lv_obj_get_parent(o)) {
+    if (!lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE)) continue;
+    return lv_obj_get_style_width(o, LV_PART_SCROLLBAR) +
+           lv_obj_get_style_pad_right(o, LV_PART_SCROLLBAR) + 6;
+  }
+#else
+  (void)row;
+#endif
+  return 2;
+}
+
 static void refreshChatList(LvChatPanel& p) {
   if (!g_lv.task || !p.list_cont) return;
 
@@ -41481,13 +41488,14 @@ static void refreshChatList(LvChatPanel& p) {
     // Per-row settings gear on the far right — opens the thread-settings sheet (same as a long-press
     // and the in-chat cog). Tapping it swallows the gesture so the row's CLICKED can't open the chat.
     const lv_coord_t gear_w = 28;
+    const lv_coord_t gear_r = threadGearRightInset(btn);
     {
       lv_obj_t* gear = lv_btn_create(btn);
       lv_obj_remove_style_all(gear);
       lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_obj_add_flag(gear, NAV_HMOVE_FLAG);   // keyboard nav: reach the gear with RIGHT (not UP/DOWN); keeps the row itself focusable so the chat opens
       lv_obj_set_size(gear, gear_w, 30);
-      lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
+      lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -gear_r, 0);
       lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
       lv_obj_t* gl = lv_label_create(gear);
       lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
@@ -41496,7 +41504,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_center(gl);
     }
     // Last-message time, just left of the gear; the unread badge + @ sit to its left.
-    const lv_coord_t time_x = (lv_coord_t)(-(10 + gear_w));
+    const lv_coord_t time_x = (lv_coord_t)(-(8 + gear_r + gear_w));
     char tbuf[16];
     formatChatRowTime(tbuf, sizeof(tbuf), ts);
     lv_coord_t time_w = 0;
@@ -41652,13 +41660,14 @@ static void refreshChatList(LvChatPanel& p) {
 
     // Per-row settings gear on the far right (same behaviour as the compact rows).
     const lv_coord_t gear_w = 28;
+    const lv_coord_t gear_r = threadGearRightInset(btn);
     {
       lv_obj_t* gear = lv_btn_create(btn);
       lv_obj_remove_style_all(gear);
       lv_obj_add_flag(gear, LV_OBJ_FLAG_IGNORE_LAYOUT);
       lv_obj_add_flag(gear, NAV_HMOVE_FLAG);
       lv_obj_set_size(gear, gear_w, kThreadRowH - 8);
-      lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -2, 0);
+      lv_obj_align(gear, LV_ALIGN_RIGHT_MID, -gear_r, 0);
       lv_obj_add_event_cb(gear, threadGearCb, LV_EVENT_CLICKED, &p.ctx_store[i]);
       lv_obj_t* gl = lv_label_create(gear);
       lv_label_set_text(gl, LV_SYMBOL_SETTINGS);
@@ -41668,7 +41677,7 @@ static void refreshChatList(LvChatPanel& p) {
     }
 
     // Time, top-right (left of the gear).
-    const lv_coord_t time_x = (lv_coord_t)(-(10 + gear_w));
+    const lv_coord_t time_x = (lv_coord_t)(-(8 + gear_r + gear_w));
     char tbuf[16];
     formatChatRowTime(tbuf, sizeof(tbuf), ts);
     lv_coord_t time_w = 0;
@@ -43491,10 +43500,9 @@ static unsigned long s_lock_unread_ms = 0;        // 1 Hz poll limiter
 #if defined(HAS_TDECK_PRO)
 static bool s_lock_epaper_default = false;         // built-in white lock view vs custom wallpaper
 #endif
-#if defined(TLORA_PAGER)
-static lv_obj_t*    s_lock_status    = nullptr;   // "Screen locked" -- tracked for lockscreenHide() cleanup
-static lv_obj_t*    s_lock_hint      = nullptr;   // unlock hint -- tracked for lockscreenHide() cleanup
-#endif
+static lv_coord_t   s_lock_clock_y   = 30;        // the clock's place (lockscreenShow); the drift moves around it
+static lv_obj_t*    s_lock_batt      = nullptr;   // battery glyph + % to the right of the padlock
+static int          s_lock_batt_key  = -1;        // last level drawn (redraw guard; 1000 = charging)
 
 // How long the trackball must be held to unlock, in ms.
 static const unsigned long kLockUnlockHoldMs = 1000;
@@ -43574,20 +43582,9 @@ static void lockscreenUpdateClock() {
   // the panel. Deterministic from the minute, so it also moves on every reveal.
   const int dx = (mm % 5) * 3 - 6;         // -6 … +6 px
   const int dy = ((mm / 5) % 3) * 4 - 4;   // -4 … +4 px
-#if defined(TLORA_PAGER)
-  // Same anti-burn-in drift, but around this board's top-LEFT clock position
-  // (lockscreenShow()'s TOP_LEFT/6,30) instead of T-Deck's TOP_MID -- without
-  // this override every periodic clock update (this function runs on every
-  // minute rollover) silently snapped the clock back to horizontally
-  // centered, undoing the top-left placement the moment it first ticked.
-  // The unread badge stays in its own right-column spot (300,70) -- it
-  // doesn't ride with the clock on this layout, so no drift needed there.
-  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6 + dx, 30 + dy);
-#else
-  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, 30 + dy);
-  // The unread badge rides along with the same drift so it never parks either.
-  if (s_lock_unread) lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, dx, 68 + dy);
-#endif
+  // Around the place lockscreenShow() gave it: re-aligning to a fixed y here
+  // would put it back under the status bar / wordmark on the first tick.
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, dx, s_lock_clock_y + dy);
   s_lock_clock_min = mm;
 }
 
@@ -43603,6 +43600,22 @@ static void lockscreenUpdateUnread() {
   snprintf(b, sizeof b, LV_SYMBOL_ENVELOPE "  %d", n);
   lv_label_set_text(s_lock_unread, b);
   lv_obj_clear_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
+}
+
+// The battery readout beside the padlock: the status bar's glyph, plus the
+// percentage unless charging (the bolt says it then, as in the status bar).
+static void lockscreenUpdateBattery() {
+  if (!s_lock_batt) return;
+  const uint16_t mv = batteryMvSmoothed();
+  const bool charging = batteryIsCharging(mv);
+  const int pct = batteryPercentFromMv(mv);
+  const int key = charging ? 1000 : pct;
+  if (key == s_lock_batt_key) return;
+  s_lock_batt_key = key;
+  char b[24];
+  if (charging || pct < 0) snprintf(b, sizeof b, "%s", batteryGlyphForMv(mv));
+  else                     snprintf(b, sizeof b, "%s  %d%%", batteryGlyphForMv(mv), pct);
+  lv_label_set_text(s_lock_batt, b);
 }
 
 static void lockscreenUnlockPopupHide() {
@@ -43660,8 +43673,13 @@ static void lockscreenShow() {
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
   touchPrefsGetLockWallpaper(wpath, sizeof wpath);
+  // The default view is drawn from parts -- wordmark, clock, padlock -- rather
+  // than the old 320x240 bitmap with the padlock and wordmark baked in. Cover-
+  // scaled onto any other panel shape, that bitmap cropped the wordmark and
+  // zoomed everything into one jumble in the middle, under the clock.
+  const bool native = !strcmp(wpath, "/lock/placeholder.jpg");
 #if defined(HAS_TDECK_PRO)
-  s_lock_epaper_default = !strcmp(wpath, "/lock/placeholder.jpg");
+  s_lock_epaper_default = native;
 #endif
 
   s_lock_root = lv_obj_create(lv_layer_top());
@@ -43669,10 +43687,16 @@ static void lockscreenShow() {
   lv_obj_set_size(s_lock_root, sw, sh);
   lv_obj_set_pos(s_lock_root, 0, 0);
 #if defined(HAS_TDECK_PRO)
-  lv_obj_set_style_bg_color(s_lock_root,
-      s_lock_epaper_default ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
+  // 1-bit e-paper: the default view is black on white.
+  lv_obj_set_style_bg_color(s_lock_root, native ? lv_color_white() : lv_color_black(), LV_PART_MAIN);
 #else
-  lv_obj_set_style_bg_color(s_lock_root, lv_color_black(), LV_PART_MAIN);
+  if (native) {   // the old wallpaper's dark gradient
+    lv_obj_set_style_bg_color(s_lock_root, lv_color_hex(0x1C232B), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(s_lock_root, lv_color_hex(0x080B0F), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(s_lock_root, LV_GRAD_DIR_VER, LV_PART_MAIN);
+  } else {
+    lv_obj_set_style_bg_color(s_lock_root, lv_color_black(), LV_PART_MAIN);
+  }
 #endif
   lv_obj_set_style_bg_opa(s_lock_root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_lock_root, LV_OBJ_FLAG_SCROLLABLE);
@@ -43682,7 +43706,7 @@ static void lockscreenShow() {
   // glow around the lock view.
   lv_obj_add_flag(s_lock_root, NAV_SKIP_FLAG);
 
-  // Wallpaper, scaled to cover the screen (crop overflow, never letterbox).
+  // A custom wallpaper, scaled to cover the screen (crop overflow, never letterbox).
   int ww = 0, wh = 0;
   const uint8_t* wall_data = nullptr;
   if (s_lock_wall) {
@@ -43697,37 +43721,7 @@ static void lockscreenShow() {
     lvglPsramFree(s_lock_wall);
     s_lock_wall = nullptr;
   }
-  if (!strcmp(wpath, "/lock/placeholder.jpg")) {
-    // Default: the pre-dithered RGB565 embed, drawn straight from flash — crisp,
-    // with no JPEG round-trip to re-introduce gradient banding.
-#if defined(HAS_TDECK_PRO)
-    // The shared default is a 320x240 landscape bitmap. Cover-scaling it onto
-    // this 240x320 portrait panel crops both ends of WADAMESH and magnifies its
-    // padlock. Draw a native monochrome wordmark instead: no crop, no giant icon.
-    lv_obj_t* brand = lv_label_create(s_lock_root);
-    lv_label_set_text(brand, "WADAMESH");
-    lv_obj_set_width(brand, sw - 24);
-    lv_obj_set_style_text_align(brand, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_set_style_text_font(brand, &lv_font_unscii_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(brand, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(brand, 2, LV_PART_MAIN);
-    lv_obj_align(brand, LV_ALIGN_CENTER, 0, 6);
-#elif defined(TLORA_PAGER)
-    // Native 480x222 crop of the same icon+wordmark, repositioned to the left
-    // (see lockscreen_wallpaper_pager_rgb565.h) -- the shared 320x240 art's
-    // cover-fill on this much wider/shorter panel zoomed it ~1.5x and center-
-    // cropped ~70px off top+bottom, shoving it into the fixed-position text
-    // labels below (reported/photographed). Being screen-native, this needs
-    // no crop math at all: the cover-zoom below naturally computes ~1:1.
-    wall_data = (const uint8_t*)lockscreen_wallpaper_pager_rgb565;
-    ww = LOCKSCREEN_WALLPAPER_PAGER_W;
-    wh = LOCKSCREEN_WALLPAPER_PAGER_H;
-#else
-    wall_data = (const uint8_t*)lockscreen_wallpaper_rgb565;
-    ww = LOCKSCREEN_WALLPAPER_W;
-    wh = LOCKSCREEN_WALLPAPER_H;
-#endif
-  } else {
+  if (!native) {
     s_lock_wall = lockscreenDecodeWallpaper(&ww, &wh);   // custom wallpaper (JPEG)
     wall_data = s_lock_wall;
   }
@@ -43743,10 +43737,7 @@ static void lockscreenShow() {
     lv_img_set_antialias(img, true);
     lv_img_set_pivot(img, ww / 2, wh / 2);
     lv_obj_clear_flag(img, LV_OBJ_FLAG_CLICKABLE);
-    // Background wallpaper: same cover-fill-and-center treatment on every
-    // board, pager included -- only the text labels below get a pager-
-    // specific layout (they're what was actually unreadable/colliding; the
-    // wallpaper crop itself is unchanged from how it's always looked).
+    // Same cover-fill-and-center treatment on every board.
     uint32_t zx = (uint32_t)sw * 256u / (uint32_t)ww;
     uint32_t zy = (uint32_t)sh * 256u / (uint32_t)wh;
     uint32_t zoom = (zx > zy) ? zx : zy;             // cover
@@ -43754,11 +43745,12 @@ static void lockscreenShow() {
     lv_img_set_zoom(img, (uint16_t)zoom);
     lv_obj_align(img, LV_ALIGN_CENTER, 0, 0);
   }
-
 #if defined(HAS_TDECK_PRO)
   // The built-in Pro/Max lock view is black on white for clean 1-bit e-paper.
   // Custom wallpapers keep the prior white overlay text for contrast.
-  const lv_color_t col = s_lock_epaper_default ? lv_color_black() : lv_color_white();
+  const lv_color_t col   = native ? lv_color_black() : lv_color_white();
+  const lv_color_t brand_col = col;
+  const lv_color_t lock_col  = col;
 #elif defined(TLORA_PAGER)
   // Force a guaranteed-visible white here rather than the shared, user-
   // customizable touchPrefsGetLockTextColor() -- on this board that pref was
@@ -43766,56 +43758,140 @@ static void lockscreenShow() {
   // background) even at the shared soft-white default (0xE6F2FF), so this
   // board gets pure white instead of chasing a per-device pref/storage
   // question for a cosmetic lock screen.
-  const lv_color_t col = lv_color_hex(0xFFFFFFu);
+  const lv_color_t col   = lv_color_hex(0xFFFFFFu);
+  const lv_color_t brand_col = lv_color_white();
+  const lv_color_t lock_col  = lv_color_hex(0x3D9BFF);   // the old wallpaper's padlock blue
 #else
-  const lv_color_t col = lv_color_hex(touchPrefsGetLockTextColor());
+  const lv_color_t col   = lv_color_hex(touchPrefsGetLockTextColor());
+  const lv_color_t brand_col = lv_color_white();
+  const lv_color_t lock_col  = lv_color_hex(0x3D9BFF);   // the old wallpaper's padlock blue
 #endif
+
+  // Layout, top down from the status bar: WADAMESH (default view only), the
+  // clock, then a centre row [unread count]  padlock  [battery] with "Screen
+  // locked" under it, and the unlock hint at the bottom. The short panels (222-
+  // 320 px tall) get a smaller wordmark and padlock and tighter gaps; the centre
+  // row sits at mid-screen unless that would reach the clock.
+  const bool       short_panel = sh < 400;
+  const lv_coord_t gap      = short_panel ? 4 : 14;
+  const lv_font_t* brand_font = short_panel ? &lv_font_montserrat_16 : &lv_font_montserrat_28;
+  const lv_coord_t lock_w   = short_panel ? 40 : 64;
+  const lv_coord_t lock_h   = short_panel ? 48 : 78;
+  lv_coord_t y = STATUSBAR_H + gap;
+
+  if (native) {
+    lv_obj_t* brand = lv_label_create(s_lock_root);
+    lv_label_set_text(brand, "WADAMESH");
+    lv_obj_set_style_text_font(brand, brand_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(brand, brand_col, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(brand, short_panel ? 2 : 3, LV_PART_MAIN);
+    lv_obj_align(brand, LV_ALIGN_TOP_MID, 0, y);
+    y += lv_font_get_line_height(brand_font) + gap;
+  }
 
   s_lock_clock = lv_label_create(s_lock_root);
   lv_label_set_text(s_lock_clock, "--:--");
   lv_obj_set_style_text_font(s_lock_clock, &lv_font_montserrat_28, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_clock, col, LV_PART_MAIN);
-#if defined(TLORA_PAGER)
-  // Fixed-width box spanning the same 192px the composited icon occupies
-  // (lockscreen_wallpaper_pager_rgb565.h, pasted at x=6 width=192) with
-  // centered text, instead of just left-anchoring the label -- "10:37" and
-  // "8:05" are different pixel widths, so anchoring by the label's own LEFT
-  // edge left the clock's actual visual center drifting with the text
-  // instead of lining up with the icon below it. Centering within a box of
-  // the icon's own width keeps the two centers matched regardless of what
-  // the clock displays.
-  lv_obj_set_width(s_lock_clock, 192);
-  lv_obj_set_style_text_align(s_lock_clock, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_LEFT, 6, 30);   // top-left corner, below the 22 px status bar
-#else
-  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, 30);   // below the 22 px status bar
-#endif
+  // The clock drifts +/-4 px around this for burn-in (lockscreenUpdateClock), so
+  // it sits that much lower to keep clear of the wordmark above.
+  s_lock_clock_y = y + 4;
+  lv_obj_align(s_lock_clock, LV_ALIGN_TOP_MID, 0, s_lock_clock_y);
+  y = s_lock_clock_y + 4 + lv_font_get_line_height(&lv_font_montserrat_28) + (short_panel ? 6 : 18);
   s_lock_clock_min = -1;
   s_lock_clock_current = -1;
 
+  // Centre row anchor: the padlock's box (drawn on the default view only; a
+  // custom wallpaper keeps its own picture, and the row keeps its place).
+  lv_obj_t* lock = lv_obj_create(s_lock_root);
+  lv_obj_remove_style_all(lock);
+  lv_obj_set_size(lock, lock_w, lock_h);
+  lv_obj_clear_flag(lock, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  const lv_coord_t lock_y = LV_MAX((lv_coord_t)(sh / 2 - lock_h / 2), y);
+  lv_obj_align(lock, LV_ALIGN_TOP_MID, 0, lock_y);
+  if (native) {
+    // Shackle: the top half of a ring, with legs down into the body.
+    const lv_coord_t ring   = lock_w * 5 / 8;
+    const lv_coord_t stroke = short_panel ? 4 : 5;
+    const lv_coord_t body_y = lock_h * 7 / 16;
+    lv_obj_t* arc = lv_arc_create(lock);
+    lv_obj_remove_style_all(arc);
+    lv_obj_set_size(arc, ring, ring);
+    lv_obj_align(arc, LV_ALIGN_TOP_MID, 0, 0);
+    lv_arc_set_bg_angles(arc, 180, 360);
+    lv_obj_set_style_arc_width(arc, stroke, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, lock_col, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(arc, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(arc, LV_OPA_TRANSP, LV_PART_KNOB);
+    lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
+    for (int side = 0; side < 2; ++side) {
+      lv_obj_t* leg = lv_obj_create(lock);
+      lv_obj_remove_style_all(leg);
+      lv_obj_set_size(leg, stroke, body_y - ring / 2 + 2);
+      lv_obj_set_style_bg_color(leg, lock_col, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(leg, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_pos(leg, (lock_w - ring) / 2 + (side ? ring - stroke : 0), ring / 2);
+    }
+    // Body, with a keyhole.
+    lv_obj_t* body = lv_obj_create(lock);
+    lv_obj_remove_style_all(body);
+    lv_obj_set_size(body, lock_w, lock_h - body_y);
+    lv_obj_set_pos(body, 0, body_y);
+    lv_obj_set_style_radius(body, short_panel ? 6 : 10, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_color(body, lv_color_white(), LV_PART_MAIN);
+#else
+    lv_obj_set_style_bg_color(body, lv_color_hex(0x141A21), LV_PART_MAIN);
+#endif
+    lv_obj_set_style_bg_opa(body, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_color(body, lock_col, LV_PART_MAIN);
+    lv_obj_set_style_border_width(body, short_panel ? 3 : 4, LV_PART_MAIN);
+    const lv_coord_t hole_d = short_panel ? 7 : 10;
+    lv_obj_t* hole = lv_obj_create(body);
+    lv_obj_remove_style_all(hole);
+    lv_obj_set_size(hole, hole_d, hole_d);
+    lv_obj_set_style_radius(hole, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(hole, lock_col, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(hole, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(hole, LV_ALIGN_CENTER, 0, -hole_d / 2);
+    lv_obj_t* slot = lv_obj_create(body);
+    lv_obj_remove_style_all(slot);
+    lv_obj_set_size(slot, short_panel ? 3 : 4, hole_d + 2);
+    lv_obj_set_style_bg_color(slot, lock_col, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(slot, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(slot, LV_ALIGN_CENTER, 0, hole_d / 2 - 1);
+  }
+
+  // The two side readouts each get the whole space between the padlock and their
+  // screen edge, text centred in it: messages on the left, battery on the right.
+  const lv_coord_t side_w = LV_MAX(40, (lv_coord_t)((sw - lock_w) / 2));
   s_lock_unread = lv_label_create(s_lock_root);
   lv_obj_set_style_text_font(s_lock_unread, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_unread, col, LV_PART_MAIN);
-#if defined(TLORA_PAGER)
-  // Positioned once the hint label exists below -- see the bottom-right stack
-  // built after `hint` is created.
-#else
-  lv_obj_align(s_lock_unread, LV_ALIGN_TOP_MID, 0, 68);
-#endif
+  lv_obj_set_width(s_lock_unread, side_w);
+  lv_obj_set_style_text_align(s_lock_unread, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align_to(s_lock_unread, lock, LV_ALIGN_OUT_LEFT_MID, 0, 0);
   lv_obj_add_flag(s_lock_unread, LV_OBJ_FLAG_HIDDEN);
   s_lock_unread_n = -1;
+
+  s_lock_batt = lv_label_create(s_lock_root);
+  lv_obj_set_style_text_font(s_lock_batt, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_lock_batt, col, LV_PART_MAIN);
+  lv_obj_set_width(s_lock_batt, side_w);
+  lv_obj_set_style_text_align(s_lock_batt, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align_to(s_lock_batt, lock, LV_ALIGN_OUT_RIGHT_MID, 0, 0);
+  s_lock_batt_key = -1;
+
   lockscreenUpdateClock();
   lockscreenUpdateUnread();
+  lockscreenUpdateBattery();
 
   lv_obj_t* st = lv_label_create(s_lock_root);
   lv_label_set_text(st, TR("Screen locked"));
   lv_obj_set_style_text_font(st, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(st, col, LV_PART_MAIN);
-#if defined(TLORA_PAGER)
-  s_lock_status = st;   // positioned once the hint label exists below -- see the bottom-right stack
-#else
-  lv_obj_align(st, LV_ALIGN_TOP_MID, 0, 190);
-#endif
+  lv_obj_align_to(st, lock, LV_ALIGN_OUT_BOTTOM_MID, 0, short_panel ? 6 : 18);
 
   lv_obj_t* hint = lv_label_create(s_lock_root);
   useChainedFont(hint);
@@ -43835,6 +43911,8 @@ static void lockscreenShow() {
   lv_label_set_text(hint, TR("double-press d-pad center to unlock"));
 #elif defined(HAS_WIO_TRACKER_L2)
   lv_label_set_text(hint, TR("hold the wake button to unlock"));
+#elif defined(HAS_TDISPLAY_P4)
+  lv_label_set_text(hint, TR("hold the BOOT button to unlock"));
 #else
   lv_label_set_text(hint, TR("hold the trackball to unlock"));
 #endif
@@ -43853,26 +43931,13 @@ static void lockscreenShow() {
 #else
   lv_obj_set_style_text_opa(hint, LV_OPA_70, LV_PART_MAIN);
 #endif
-#if defined(TLORA_PAGER)
-  lv_obj_align(hint, LV_ALIGN_BOTTOM_RIGHT, -6, -8);   // bottom-right corner, clear of the icon/clock column above
-  s_lock_hint = hint;
-  // Message count + "Screen locked" stack right-aligned directly above the hint,
-  // each anchored to the one below it (not a fixed y) so the group holds
-  // together and stays right-aligned regardless of label width or whether the
-  // unread badge is visible.
-  lv_obj_align_to(st, hint, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
-  lv_obj_align_to(s_lock_unread, st, LV_ALIGN_OUT_TOP_RIGHT, 0, -4);
-#else
   lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -8);
-#endif
 }
 
 static void lockscreenHide() {
   lockscreenUnlockPopupHide();
   if (s_lock_root) { lv_obj_del(s_lock_root); s_lock_root = nullptr; s_lock_clock = nullptr; s_lock_unread = nullptr;
-#if defined(TLORA_PAGER)
-    s_lock_status = nullptr; s_lock_hint = nullptr;
-#endif
+    s_lock_batt = nullptr;
   }
   if (s_lock_wall) { lv_img_cache_invalidate_src(&s_lock_wall_dsc); lvglPsramFree(s_lock_wall); s_lock_wall = nullptr; }
   s_lock_clock_min = -1;
@@ -43901,7 +43966,11 @@ static void serviceLockscreen() {
   if (mm != s_lock_clock_min || (current ? 1 : 0) != s_lock_clock_current)
     lockscreenUpdateClock();
   unsigned long now = millis();
-  if (now - s_lock_unread_ms >= 1000) { s_lock_unread_ms = now; lockscreenUpdateUnread(); }
+  if (now - s_lock_unread_ms >= 1000) {
+    s_lock_unread_ms = now;
+    lockscreenUpdateUnread();
+    lockscreenUpdateBattery();
+  }
 }
 #endif  // CAP_LOCK_SCREEN
 
@@ -47331,7 +47400,7 @@ static void powerRebootCb(lv_event_t* e) {
 // finds the hardware switch — and that is what the T-Display P4 did: no wake
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
-#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2)
+#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4)
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
@@ -47533,8 +47602,9 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2)
+#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
   // No "Power off" here: nothing on this board can wake it from deep sleep.
+  // (The P4's BOOT button is GPIO35, not one of its LP GPIOs, so it cannot.)
   // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the L2's
   // wake button is behind an I2C expander, which cannot wake the ESP32-S3; the
   // T-Display P4 and Tanmatsu have no user button either. Offering a software
@@ -64241,9 +64311,10 @@ void UITask::loop() {
       s_tb_click_press = tb_pressed && !s_tb_wake_consume;
       if (s_tb_click_press) { s_tb_last_active_ms = now; noteUserInput(); }
     }
-#elif defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
     // Either physical button wakes/reveals immediately. Continuing to hold for
     // two seconds toggles the hard lock; releasing early cancels the transition.
+    // The T-Display P4's BOOT button (GPIO35) works the same way.
     static constexpr uint32_t kL2WakeHoldMs = 2000;
     static uint32_t s_l2_btn_down_ms = 0;
     static bool s_l2_press_active = false;
@@ -64358,19 +64429,15 @@ void UITask::loop() {
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
   if (_screen_timeout_ms > 0 && !_screen_off &&
       (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
-#if !defined(HAS_TDISPLAY_P4)
-    // The P4 has no unlock path (no button/overlay), so it must NEVER hard-lock, even if an old
-    // pref left the flag set — it always takes the plain screen-off branch below, which wakes on
-    // touch. (Guards the trap; the "Lock when screen off" toggle is also hidden on the P4.)
     if (s_lock_on_screen_off && !_manual_lock) {
       // "Lock when screen off": idle dim also hard-locks, so the touchscreen is
       // inert until a deliberate unlock (trackball hold on the T-Deck, BOOT
-      // press on the V4) — Tim's request to stop pocket-taps while dark. The
-      // !_manual_lock guard stops the Tanmatsu's lit lock screen from re-firing
-      // lockScreen() (and re-lighting) on every idle tick.
+      // press on the V4, holding BOOT on the P4) — Tim's request to stop
+      // pocket-taps while dark. The !_manual_lock guard stops the Tanmatsu's
+      // lit lock screen from re-firing lockScreen() (and re-lighting) on every
+      // idle tick.
       lockScreen();
     } else
-#endif
     {
       touchScreenBacklight(false);
       setCpuForScreen(false);   // idle dim (no lock) -> drop to 80 MHz too

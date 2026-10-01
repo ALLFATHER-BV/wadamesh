@@ -142,16 +142,12 @@
   #define CAP_FILESYSTEM   1   // SD_MMC + internal FFat 'storage'
   #define CAP_GPS          1   // L76K
   #define CAP_OTA          1   // standalone dual-OTA app
-  // 0, for the same reason as the V4-R8 above: nothing here is wired. There is no
-  // way to REACH the lock (the control-center Lock button is HAS_TDECK_GT911-only,
-  // and the pager/Tanmatsu triggers are their own boards), no unlock gesture (every
-  // unlock path is a trackball / Vol- / d-pad / wake-button branch, and the on-screen
-  // hint falls through to "hold the trackball", which this board does not have), and
-  // the DSEC_LOCK settings body is gated to the T-Deck and M9 -- so declaring the cap
-  // only produced an empty Lock screen settings card (#451). Turning this back on is
-  // a feature: a touch reveal + hold-to-unlock path, a P4 hint string, and the
-  // DSEC_LOCK gates. Until then, do not advertise it.
-  #define CAP_LOCK_SCREEN  0
+  // The BOOT button (GPIO35, PIN_USER_BTN) works like the Wio Tracker L2's wake
+  // button: a press wakes the screen or lights the lock screen, holding it 2 s
+  // locks / unlocks. That is both the way to reach the lock and the deliberate
+  // unlock #451 found missing; the lock hint names the button, and the Lock screen
+  // settings page carries the "Lock when screen off" switch (as on the L2).
+  #define CAP_LOCK_SCREEN  1
 
 #elif defined(ATTAKY_MESH_SERIES)
   #define CAP_TOUCH        1
