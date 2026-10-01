@@ -6204,7 +6204,7 @@ static void accentExit();      // long-press accent picker (issue #22, dead on t
 static void accentBoxHide();   // tap-to-pick accent box (issue #22)
 static void mentionBoxHide();  // tap-to-pick @-mention contact picker (issue #42)
 static void txtMenuHide();     // cut/copy/paste/select-all edit menu
-static void showKb(LvChatPanel* p);
+static void showKb(LvChatPanel* p, bool reveal = true);
 static void closeSettingsModal();
 static void contactSelectCb(lv_event_t* e);
 static double contactDistanceKm(double lat1, double lon1, double lat2, double lon2);
@@ -7674,7 +7674,9 @@ static void popupClose(lv_obj_t** root) {
   *root = nullptr;
 }
 
-static void showKb(LvChatPanel* p) {
+// reveal=false binds the composer (cursor shown, hardware keys type into it)
+// but leaves the on-screen keys down.
+static void showKb(LvChatPanel* p, bool reveal) {
   if (!g_lv.keyboard || !p || !p->composer_ta || !p->msgs || !p->composer_row) return;
   kbMirrorSyncToReal();
   s_kb_bind_ta = nullptr;
@@ -7696,6 +7698,7 @@ static void showKb(LvChatPanel* p) {
   // guards the settings path; the chat composer comes through here and needs its own.
   if (!kbMirrorActive()) return;
 #endif
+  if (!reveal) return;
   lv_obj_clear_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(g_lv.keyboard);
   // Shrink message area to keep composer visible above keyboard.
@@ -8597,7 +8600,13 @@ static void composerFocusCb(lv_event_t* e) {
 #if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
   if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
 #endif
+#if CAP_TOUCH && !CAP_KEYBOARD
+  // Opening a chat focuses its composer (nav-group rebuild): bind it, but leave
+  // the keys down so the conversation is readable. A tap (CLICKED) brings them up.
+  if (p && p->detail_open) { showKb(p, code == LV_EVENT_CLICKED); noteKbActivity(); }
+#else
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
+#endif
 }
 
 // Discord-style unread divider state. s_unread_at_open is the thread's unread
