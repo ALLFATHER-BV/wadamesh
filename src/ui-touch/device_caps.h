@@ -215,6 +215,16 @@
   #define CAP_BLE_KEYBOARD 0
 #endif
 
+// A keyboard that comes and goes at runtime and is routed like the Bluetooth
+// one above (bleKbdDispatch() and friends): Bluetooth itself, an M5Stack CardKB,
+// or the T-Display P4's clip-on keyboard expansion. CAP_BLE_KEYBOARD stays the
+// gate for what is Bluetooth's alone (pairing, the Bluetooth page, BleKbd::).
+#if CAP_BLE_KEYBOARD || defined(HAS_CARDKB) || defined(HAS_TDISPLAY_P4_KEYBOARD)
+  #define CAP_EXT_KEYBOARD 1
+#else
+  #define CAP_EXT_KEYBOARD 0
+#endif
+
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
 // the pager (no touch at all — the rotary encoder is its only nav input, so
 // like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
@@ -227,10 +237,10 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-// Touchscreen-only boards that take a Bluetooth or CardKB keyboard join too:
-// the group stays empty (and invisible) until a keyboard connects.
+// Touchscreen-only boards that take a Bluetooth, CardKB or clip-on keyboard join
+// too: the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    defined(HAS_CARDKB) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

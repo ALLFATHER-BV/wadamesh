@@ -2137,6 +2137,11 @@ bool touchPrefsGetIgnoreTinyMsgs() {
   return s_prefs.getUChar("ign_tiny", 0) != 0;
 }
 void touchPrefsSetIgnoreTinyMsgs(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ign_tiny", on ? 1 : 0); }
+uint8_t touchPrefsGetP4KbLight(uint8_t def) {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("p4kb_light", def);
+}
+void touchPrefsSetP4KbLight(uint8_t step) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("p4kb_light", step); }
 
 // Most contact dots to draw on the map at once. 0 = no limit (draw every positioned
 // contact in view, up to the firmware's own ceiling), which is the default: a map that

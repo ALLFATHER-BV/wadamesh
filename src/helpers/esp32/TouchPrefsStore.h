@@ -60,6 +60,12 @@ bool    touchPrefsSetThemeMode(uint8_t mode);
 uint8_t touchPrefsGetKbBacklight();
 bool    touchPrefsSetKbBacklight(uint8_t mode);
 
+/** T-Display P4 keyboard expansion backlight step (F11 cycles it; 0 = off, see
+ *  P4KB_LIGHT_STEPS). Its own key, separate from the off/on/auto mode above:
+ *  `def` is returned until the first F11 press is saved. */
+uint8_t touchPrefsGetP4KbLight(uint8_t def);
+void    touchPrefsSetP4KbLight(uint8_t step);
+
 /** Currently active keyboard layout. 0 = English, 1 = Bulgarian phonetic.
  *  Persisted so the device boots back into the last-used layout. */
 uint8_t touchPrefsGetKeyboardLayout();

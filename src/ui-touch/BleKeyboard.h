@@ -41,6 +41,9 @@ constexpr int BLE_KEY_ESC        = BLE_KEY_SPECIAL | 10;
 constexpr int BLE_KEY_TAB        = BLE_KEY_SPECIAL | 11;
 constexpr int BLE_KEY_SHIFT_TAB  = BLE_KEY_SPECIAL | 12;
 constexpr int BLE_KEY_EMOJI      = BLE_KEY_SPECIAL | 13;   // Command (Windows) key tapped on its own
+// Jump to main tab n (0-4, the tab bar left to right): BLE_KEY_GOTO_TAB + n.
+// No Bluetooth key sends these; the T-Display P4 keyboard's F1-F5 do.
+constexpr int BLE_KEY_GOTO_TAB   = BLE_KEY_SPECIAL | 0x100;
 constexpr int BLE_KEY_ENTER      = 0x0D;
 constexpr int BLE_KEY_BACKSPACE  = 0x08;
 

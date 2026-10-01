@@ -7,6 +7,7 @@
 // Wire. Clocking is fixed at MCLK = 256×fs from the MCLK pin, so one static divider row
 // ({4096000, 16000}: pre_div 1, mult 1x, adc/dac_div 1, bclk_div 4, osr 0x10) covers us.
 #include "P4Audio.h"
+#include "P4I2c1.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <math.h>
@@ -14,9 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-// t_display_p4_config.h (LilyGo): ES8311 on IIC_2, I2S pins below.
-#define P4A_I2C_SDA   20
-#define P4A_I2C_SCL   21
+// t_display_p4_config.h (LilyGo): ES8311 on IIC_2 (pins 20/21, in P4I2c1.cpp), I2S pins below.
 #define P4A_ADDR      0x18
 #define P4A_MCLK      13
 #define P4A_BCLK      12
@@ -93,10 +92,17 @@ bool p4AudioReady() {
   xSemaphoreTake(s_mtx, portMAX_DELAY);
   if (s_ready || s_failed) { xSemaphoreGive(s_mtx); return s_ready; }
 
-  Wire1.begin(P4A_I2C_SDA, P4A_I2C_SCL, 400000);
-  Wire1.beginTransmission(P4A_ADDR);
-  bool present = (Wire1.endTransmission() == 0);
-  if (!present || !es8311Init()) {
+  // Wire1 is shared with the keyboard expansion on other pins (P4I2c1.h): take it
+  // and point it at the codec for the register writes, then hand it back. The
+  // codec is not touched over I2C again once it is up.
+  bool present = false, inited = false;
+  if (p4I2c1Acquire(P4_I2C1_AUDIO, UINT32_MAX)) {
+    Wire1.beginTransmission(P4A_ADDR);
+    present = (Wire1.endTransmission() == 0);
+    inited = present && es8311Init();
+    p4I2c1Release();
+  }
+  if (!inited) {
     printf("[P4AUDIO] ES8311 %s\n", present ? "init failed" : "not found @0x18");
     s_failed = true;
     xSemaphoreGive(s_mtx);

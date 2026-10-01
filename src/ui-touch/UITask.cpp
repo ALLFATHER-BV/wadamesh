@@ -156,6 +156,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #if defined(HAS_CARDKB)
     #include "../helpers/input/CardKbKeyboard.h"
   #endif
+  #if defined(HAS_TDISPLAY_P4_KEYBOARD)
+    #include <P4Keyboard.h>   // clip-on keyboard expansion (variants/tdisplay_p4)
+  #endif
   #include "BleKeyboard.h"   // external Bluetooth keyboard (self-gated on CAP_BLE_KEYBOARD)
   #if CAP_BLE_KEYBOARD
     #include "../helpers/esp32/MultiTransportCompanionInterface.h"
@@ -2397,7 +2400,7 @@ static lv_indev_drv_t s_nav_keypad_drv;
 // Touchscreen-only boards whose only focus-group driver is a Bluetooth keyboard
 // (the Attaky's D-pad drives its own group): bleKbdUiTick() turns s_kbd_nav on
 // while a keyboard is connected. Off, the group stays empty and shows nothing.
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD && !defined(ATTAKY_MESH_SERIES)
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD && !defined(ATTAKY_MESH_SERIES)
 #define BLE_KBD_OWNS_NAV 1
 #else
 #define BLE_KBD_OWNS_NAV 0
@@ -2424,7 +2427,7 @@ static bool terminalHandleVirtualKeyboardReady();
 // end-cursor, so backspace deleted the last character no matter where the caret
 // was. When this returns false, kbMirrorBind binds the field directly and the
 // mirror sync / redirects below are skipped.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Set while the on-screen keys were summoned for this editing session over an
 // external keyboard (the module's '#', or a second tap on a field a Bluetooth
 // keyboard types into); hideKb clears it.
@@ -2435,7 +2438,7 @@ static bool s_osk_forced = false;
 static inline bool bleKbdTyping() { return BleKbd::state() == BleKbd::State::Connected; }
 #endif
 
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 static inline bool externalKeyboardTyping() {
   bool active = false;
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
@@ -2447,6 +2450,9 @@ static inline bool externalKeyboardTyping() {
 #if defined(HAS_CARDKB)
   active = active || cardKbPresent();
 #endif
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+  active = active || p4KeyboardPresent();
+#endif
   return active;
 }
 #endif
@@ -2454,7 +2460,7 @@ static inline bool externalKeyboardTyping() {
 static inline bool kbMirrorActive() {
 #if CAP_KEYBOARD
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
-#elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   // Detachable keyboards are detected at runtime. Keep the on-screen keys down
   // while one is present unless a second tap summoned them for this field.
   return !(externalKeyboardTyping() && !s_osk_forced);
@@ -4151,6 +4157,7 @@ static inline bool navFifoPop(NavKeyTr* out) {
 }
 static inline void navPushTap(uint32_t key) { navFifoPush(key, true); navFifoPush(key, false); }
 
+static lv_obj_t* appDrawerReturnFocus(lv_obj_t* root);   // app drawer section, below
 static lv_obj_t* s_nav_first = nullptr;   // first/last focusable collected each rebuild — the ←/→
 static lv_obj_t* s_nav_last  = nullptr;   // arrows jump to these (usually top item / primary action)
 static lv_obj_t* s_nav_entered_obj = nullptr;  // widget Enter was just sent to; if it's a selection
@@ -4427,8 +4434,8 @@ static int         s_navkey_capture    = -1;                       // binding id
 static lv_obj_t*   s_navkey_row_val[13] = { nullptr };             // the key labels in the settings rows (0-4 tabs, 5-12 dirs); refreshed on remap
 static lv_obj_t*   s_navkey_hint[5]    = { nullptr };              // small key labels over the menubar icons (tab hotkeys only)
 static bool        s_nav_mbar_keys     = false;                    // show those menubar letter hints? pref, default false = hidden
-#if CAP_BLE_KEYBOARD
-static bool        s_ble_kbd_hotkeys   = false;                    // a Bluetooth keyboard is connected: tab hotkeys + their hints on
+#if CAP_EXT_KEYBOARD
+static bool        s_ble_kbd_hotkeys   = false;                    // an external keyboard is connected: tab hotkeys + their hints on
 #endif
 static const char* const kNavTabNames[5] = { "Messages", "Contacts", "Home", "Map", "Settings" };
 static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Select", "Back", "Scroll up", "Scroll down" };
@@ -4842,6 +4849,32 @@ static void navRefocusFirstVisible(lv_obj_t* p) {
   if (best) { s_nav_show = true; lv_group_focus_obj(best); }
 }
 // Small key hints over each menubar icon — shown only while keyboard nav is on.
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+// Put a tab's F-key label directly right of its icon, centred on it vertically.
+// Measured from where the bar actually drew the button: the round-corner insets
+// (CAP_ROUND_CORNERS) and the rotation both make "a fifth of the bar" wrong.
+static void p4PlaceFKeyHint(lv_obj_t* bar, int i, lv_obj_t* hint) {
+  constexpr lv_coord_t kGap = 3;   // between the icon and the label
+  lv_obj_update_layout(bar);
+  const lv_btnmatrix_t* bm = (const lv_btnmatrix_t*)bar;
+  if (!bm->button_areas || i >= (int)bm->btn_cnt) return;
+  const lv_area_t& a = bm->button_areas[i];   // relative to the bar's outer top-left
+  const char* icon = lv_btnmatrix_get_btn_text(bar, i);
+  const lv_font_t* icon_font = lv_obj_get_style_text_font(bar, LV_PART_ITEMS);
+  const lv_coord_t icon_w = icon ? lv_txt_get_width(icon, strlen(icon), icon_font, 0, LV_TEXT_FLAG_NONE) : 0;
+  const lv_font_t* font = lv_obj_get_style_text_font(hint, LV_PART_MAIN);
+  const lv_coord_t h = lv_font_get_line_height(font);
+  const lv_coord_t icon_right = a.x1 + (lv_area_get_width(&a) + icon_w) / 2;
+  const lv_coord_t icon_cy   = (a.y1 + a.y2) / 2;
+  // Aligned positions are taken inside the bar's padding and border; the
+  // button areas are not, so take those back out.
+  const lv_coord_t bw = lv_obj_get_style_border_width(bar, LV_PART_MAIN);
+  const lv_coord_t x = icon_right + kGap - lv_obj_get_style_pad_left(bar, LV_PART_MAIN) - bw;
+  const lv_coord_t y = icon_cy - h / 2 - lv_obj_get_style_pad_top(bar, LV_PART_MAIN) - bw;
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, x, y);
+}
+#endif
+
 static void navMenubarKeysSync() {
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
@@ -4855,8 +4888,8 @@ static void navMenubarKeysSync() {
   const int bw = lv_obj_get_width(bar);
   const int cw = bw > 0 ? bw / 5 : 0;
   bool show = s_kbd_nav && s_nav_mbar_keys;
-#if CAP_BLE_KEYBOARD
-  show = show || s_ble_kbd_hotkeys;   // a Bluetooth keyboard always gets them
+#if CAP_EXT_KEYBOARD
+  show = show || s_ble_kbd_hotkeys;   // an external keyboard always gets them
 #endif
   for (int i = 0; i < 5; i++) {
     if (!show) { if (s_navkey_hint[i]) lv_obj_add_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN); continue; }
@@ -4869,9 +4902,25 @@ static void navMenubarKeysSync() {
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
       s_navkey_hint[i] = l;
     }
-    const int lk = navKeyLower(s_nav_keys[i]);
-    char b[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
-    lv_label_set_text(s_navkey_hint[i], b);
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+    // The clip-on keyboard reaches the tabs with F1-F5 (p4KbUiKey), so label
+    // those, smaller than the icons and directly to their right.
+    if (p4KeyboardPresent()) {
+      char fk[4];
+      snprintf(fk, sizeof fk, "F%d", i + 1);
+      lv_label_set_text(s_navkey_hint[i], fk);
+      lv_obj_set_style_text_font(s_navkey_hint[i], &lv_font_montserrat_12, LV_PART_MAIN);
+      lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
+      p4PlaceFKeyHint(bar, i, s_navkey_hint[i]);
+      continue;
+    }
+#endif
+    {
+      const int lk = navKeyLower(s_nav_keys[i]);
+      char b[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
+      lv_label_set_text(s_navkey_hint[i], b);
+      lv_obj_set_style_text_font(s_navkey_hint[i], &g_font_12, LV_PART_MAIN);
+    }
     lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
     if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
   }
@@ -4955,11 +5004,13 @@ static lv_obj_t* navOpenDropdown() {
   return nullptr;
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD) || \
+    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
 // long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
 // container, so identify one by its parent. Returns true if it handled the Enter. Shared by
-// Tanmatsu's navPump() (below) and the pager/M9 handleHwKey() Enter branches — board-agnostic,
+// Tanmatsu's navPump() (below), the pager/M9 handleHwKey() Enter branches and the
+// touchscreen boards' external-keyboard Enter (bleKbdDispatch) — board-agnostic,
 // only touches s_nav_group/navOpenChatPanel/plain lv_obj calls.
 static bool navEnterBubble() {
   lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
@@ -5631,6 +5682,12 @@ static void navMaybeRebuild() {
     }
   }
 #endif
+  // Back on the app drawer from an app launched from it: focus that app's tile
+  // again, not the drawer's first one. Called every rebuild -- it also notes
+  // when the app has taken over the screen, so only the return is caught.
+  if (lv_obj_t* back = appDrawerReturnFocus(root)) {
+    if (!focus_set) { lv_group_focus_obj(back); focus_set = true; }
+  }
   // A still-valid hint can belong to the page behind a newly opened overlay. Only a hint
   // collected into this rebuild may suppress the new-chat composer fallback (#436).
   lv_obj_t* collected_focus_hint = nullptr;
@@ -7571,7 +7628,7 @@ static void hideKb() {
   // reveal does not inherit the symbol mode the summon opened.
   if (s_osk_forced && g_lv.keyboard) lv_keyboard_set_mode(g_lv.keyboard, LV_KEYBOARD_MODE_TEXT_LOWER);
   s_osk_forced = false;
-#elif (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#elif CAP_EXT_KEYBOARD && !CAP_KEYBOARD
   s_osk_forced = false;   // the summon lasts one editing session
 #endif
   if (s_kb_mirror_root) lv_obj_add_flag(s_kb_mirror_root, LV_OBJ_FLAG_HIDDEN);
@@ -7641,7 +7698,7 @@ static void showKb(LvChatPanel* p) {
 #if !CAP_KEYBOARD
   // No on-screen keyboard on the T-Deck — the physical keyboard types straight
   // into the composer (already visible), so skip showing the keys + the lift.
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_BLE_KEYBOARD || defined(HAS_CARDKB)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || CAP_EXT_KEYBOARD
   // Same while an external keyboard types (the attached module, or a connected
   // Bluetooth keyboard) until the keys are summoned for this field. kbMirrorActive()
   // guards the settings path; the chat composer comes through here and needs its own.
@@ -7657,7 +7714,7 @@ static void showKb(LvChatPanel* p) {
 #endif
 }
 
-#if (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
 // Second tap on a field an external keyboard types into: bring the on-screen keys
 // up for it anyway, in case the keyboard is out of reach. A field's PRESSED
 // arrives before LVGL moves the focus, so "already bound" there means the field
@@ -8486,7 +8543,7 @@ static void keyboardCb(lv_event_t* e) {
     kbMirrorSyncToReal();
     lv_event_send(ready_ta, LV_EVENT_READY, nullptr);
   }
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   if (code == LV_EVENT_READY || code == LV_EVENT_CANCEL) {
     accentExit(); accentBoxHide();
     // Dismissing the keys must not stop the external keyboard: hideKb() unbinds the
@@ -8545,7 +8602,7 @@ static void composerFocusCb(lv_event_t* e) {
     if (act && (lv_indev_get_scroll_obj(act) || lv_indev_get_scroll_dir(act) != LV_DIR_NONE)) return;
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
   if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
 #endif
   if (p && p->detail_open) { showKb(p); noteKbActivity(); }
@@ -9238,7 +9295,7 @@ static void threadSelectCb(lv_event_t* e) {
 #endif
 }
 
-#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD) || defined(HAS_CARDKB)
+#if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Send the panel composer's text and clear it. Split from the send button's
 // callback so an external keyboard's Enter can reach the same path.
 static void composerSendFromPanel(LvChatPanel* p) {
@@ -10460,7 +10517,7 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   }
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
   if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
 #endif
   s_kb_panel = nullptr;
@@ -10575,7 +10632,7 @@ static void copyLabelLongPressCb(lv_event_t* e) {
 static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
-#if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
   externalKbdNoteFieldPress(lv_event_get_target(e));
 #endif
 }
@@ -19402,6 +19459,32 @@ static void openAdminCmdPicker() {
   }
 }
 
+// Send what is in the admin command field to the repeater and clear it.
+static void adminCmdSubmit() {
+  kbMirrorSyncToReal();
+  if (!s_admin_cmd_ta) return;
+  const char* text = lv_textarea_get_text(s_admin_cmd_ta);
+  if (!text || !text[0]) return;
+  // Resolve the contact each time — pointer-stale-after-rebuild is the
+  // standard gotcha (saved contacts can move when a refresh runs).
+  ContactInfo* c = the_mesh.lookupContactByPubKey(s_admin_pub32, PUB_KEY_SIZE);
+  if (!c) {
+    adminLogAppend("[err] ", "contact missing");
+    return;
+  }
+  int r = the_mesh.uiSendAdminCommand(*c, text);
+  char prompt_line[80];
+  snprintf(prompt_line, sizeof(prompt_line), "> %s", text);
+  adminLogAppend("", prompt_line);
+  if (r != MSG_SEND_SENT_FLOOD && r != MSG_SEND_SENT_DIRECT) {
+    adminLogAppend("[err] ", "send failed");
+  }
+  lv_textarea_set_text(s_admin_cmd_ta, "");
+  // Re-bind so a mirror strip (on-screen keys up) is emptied too and does not
+  // copy the old command back on the next keystroke; same as terminalSubmit().
+  if (g_lv.keyboard && s_kb_bind_ta == s_admin_cmd_ta) kbMirrorBind(s_admin_cmd_ta);
+}
+
 static void openAdminConsole(const ContactInfo& c) {
   closeAdminPwPrompt();
   closeAdminConsole();
@@ -19525,32 +19608,15 @@ static void openAdminConsole(const ContactInfo& c) {
   lv_obj_set_style_bg_color(send_btn, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
   lv_obj_set_style_text_color(send_btn, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
   lv_obj_add_event_cb(send_btn, [](lv_event_t* e) {
-    const lv_event_code_t code = lv_event_get_code(e);
-    if (code != LV_EVENT_CLICKED && code != LV_EVENT_READY) return;
-    kbMirrorSyncToReal();
-    if (!s_admin_cmd_ta) return;
-    const char* text = lv_textarea_get_text(s_admin_cmd_ta);
-    if (!text || !text[0]) return;
-    // Resolve the contact each time — pointer-stale-after-rebuild is the
-    // standard gotcha (saved contacts can move when a refresh runs).
-    ContactInfo* c = the_mesh.lookupContactByPubKey(s_admin_pub32, PUB_KEY_SIZE);
-    if (!c) {
-      adminLogAppend("[err] ", "contact missing");
-      return;
-    }
-    int r = the_mesh.uiSendAdminCommand(*c, text);
-    char prompt_line[80];
-    snprintf(prompt_line, sizeof(prompt_line), "> %s", text);
-    adminLogAppend("", prompt_line);
-    if (r != MSG_SEND_SENT_FLOOD && r != MSG_SEND_SENT_DIRECT) {
-      adminLogAppend("[err] ", "send failed");
-    }
-    lv_textarea_set_text(s_admin_cmd_ta, "");
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) adminCmdSubmit();
   }, LV_EVENT_CLICKED, nullptr);
-  lv_obj_add_event_cb(send_btn, [](lv_event_t* e) {
-    lv_event_send(static_cast<lv_obj_t*>(lv_event_get_user_data(e)),
-                  LV_EVENT_CLICKED, nullptr);
-  }, LV_EVENT_READY, send_btn);  // Enter key on textarea sends
+  // Enter sends. READY goes to the FIELD (the on-screen keyboard forwards it
+  // there, and a keypad's Enter raises it on a one-line field), so it is hooked
+  // here -- it used to sit on the Send button, where nothing ever raised it.
+  // The physical keyboards' Enter comes through cmdLineEnter() instead.
+  lv_obj_add_event_cb(s_admin_cmd_ta, [](lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_READY) adminCmdSubmit();
+  }, LV_EVENT_READY, nullptr);
   lv_obj_t* send_lbl = lv_label_create(send_btn);
   useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
@@ -23181,6 +23247,16 @@ static void terminalSubmit() {
   if (g_lv.keyboard) kbMirrorBind(s_term_input_ta);
 }
 
+// Enter from a physical keyboard (built in, clip-on, Bluetooth, CardKB, the
+// Attaky module) while a command line is the field being typed into: run the
+// command and keep the field ready for the next one. True when it was one.
+static bool cmdLineEnter() {
+  if (!s_kb_bind_ta) return false;
+  if (s_kb_bind_ta == s_term_input_ta) { terminalSubmit(); return true; }
+  if (s_kb_bind_ta == s_admin_cmd_ta)  { adminCmdSubmit(); return true; }
+  return false;
+}
+
 static bool terminalHandleVirtualKeyboardReady() {
   if (!s_term_input_ta || s_kb_bind_ta != s_term_input_ta) return false;
   accentExit();
@@ -23805,6 +23881,12 @@ static void buildTerminal(lv_obj_t* body) {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     terminalSubmit();
   }, LV_EVENT_CLICKED, nullptr);
+  // A keypad's Enter raises READY on a one-line field (the Tanmatsu's does):
+  // run the command. The on-screen keyboard's Enter is taken earlier, in
+  // terminalHandleVirtualKeyboardReady(), and never reaches the field.
+  lv_obj_add_event_cb(s_term_input_ta, [](lv_event_t* e) {
+    if (lv_event_get_code(e) == LV_EVENT_READY) terminalSubmit();
+  }, LV_EVENT_READY, nullptr);
   lv_obj_t* send_lbl = lv_label_create(send_btn);
   useChainedFont(send_lbl);
   lv_label_set_text(send_lbl, LV_SYMBOL_RIGHT);
@@ -27053,6 +27135,36 @@ static void openDiscoverPage() {
   useChainedFont(mlbl);
   lv_label_set_text(mlbl, TR("Map"));
   lv_obj_center(mlbl);
+#if CAP_LARGE_SCREEN
+  // Large panels draw these labels in the scaled UI font, which crowded the
+  // fixed 56 px buttons and left them 4 px apart. Size each to its label (56 px
+  // at least), give them real room between and off the edge, and end the
+  // status line short of them.
+  {
+    constexpr lv_coord_t kEdge = 12, kGap = 12, kPadX = 14;
+    for (lv_obj_t* b : { btn, mbtn }) {
+      lv_obj_set_width(b, LV_SIZE_CONTENT);
+      lv_obj_set_style_min_width(b, 56, LV_PART_MAIN);
+      lv_obj_set_style_pad_left(b, kPadX, LV_PART_MAIN);
+      lv_obj_set_style_pad_right(b, kPadX, LV_PART_MAIN);
+    }
+    // Stop becomes Scan: size it for the wider of the two once, so the Map
+    // button (placed once, against it) keeps its gap when the label flips.
+    {
+      const lv_font_t* f = lv_obj_get_style_text_font(s_discover_btn_lbl, LV_PART_MAIN);
+      const char* a = TR("Stop");
+      const char* z = TR("Scan");
+      const lv_coord_t tw = LV_MAX(lv_txt_get_width(a, strlen(a), f, 0, LV_TEXT_FLAG_NONE),
+                                   lv_txt_get_width(z, strlen(z), f, 0, LV_TEXT_FLAG_NONE));
+      lv_obj_set_width(btn, LV_MAX(56, tw + 2 * kPadX));
+    }
+    lv_obj_align(btn, LV_ALIGN_TOP_RIGHT, -kEdge, top - 4);
+    lv_obj_update_layout(btn);
+    lv_obj_align_to(mbtn, btn, LV_ALIGN_OUT_LEFT_MID, -kGap, 0);
+    lv_obj_update_layout(mbtn);
+    lv_obj_set_width(s_discover_status, LV_MAX(40, lv_obj_get_x(mbtn) - 10 - kGap));
+  }
+#endif
 
   lv_obj_t* sc = lv_obj_create(s_discover_root);
   lv_obj_remove_style_all(sc);
@@ -42069,8 +42181,11 @@ static void refreshContactsList() {
   // mid_cols (P4 portrait): the antenna/room glyphs are wider than the person one and grow
   // with the UI-size preset, so a fixed 24 px still let some names touch their icon.
   // Clear the widest of the three type glyphs by 8 px instead.
+  // The wide (landscape) rows on the large panels have the same problem, and got
+  // a fixed 20 px: clear the glyph there too, with a little more room.
+  const bool measure_icon = mid_cols || (wide_cols && CAP_LARGE_SCREEN);
   int        icon_w  = 0;
-  if (mid_cols) {
+  if (measure_icon) {
     static const char* const kTypeSyms[] = { TOUCH_SYM_PERSON, TOUCH_SYM_ANTENNA, LV_SYMBOL_LOOP };
     for (const char* sym : kTypeSyms) {
       lv_point_t isz;
@@ -42078,7 +42193,9 @@ static void refreshContactsList() {
       icon_w = LV_MAX(icon_w, (int)isz.x);
     }
   }
-  const int  name_x  = icon_x + (mid_cols ? LV_MAX(24, icon_w + 8) : 20);    // the font-16 type glyph grazed the name's first letter
+  const int  name_x  = icon_x + (mid_cols     ? LV_MAX(24, icon_w + 8)
+                              : measure_icon ? LV_MAX(20, icon_w + 10)
+                              : 20);    // the font-16 type glyph grazed the name's first letter
   // mid_cols (P4 284px): a single 34-px line can't hold name + age + distance without either
   // scrolling the name (rejected) or gluing the value columns. TWO-LINE rows instead:
   //   line 1: the full name (one line, dot-ellipsized — never scrolls)
@@ -44593,8 +44710,8 @@ static void buildBackupsSettings() {
           COLOR_SUB, &g_font_12, 0) + 4;
 }
 
-#if CAP_BLE_KEYBOARD
-// ---- External Bluetooth keyboard: helpers shared by every board ---------------
+#if CAP_EXT_KEYBOARD
+// ---- External keyboards (Bluetooth, CardKB, P4 clip-on): shared helpers -------
 #if CAP_KEYBOARD && !(defined(HAS_TDECK_KEYBOARD) || defined(HAS_PAGER_KEYBOARD) || defined(HAS_M9_KEYBOARD))
 #error "CAP_BLE_KEYBOARD on a keyboard board without handleHwKey(): give it a bleKbdDispatch()"
 #endif
@@ -44689,9 +44806,15 @@ static bool bleKbdEmojiKey(int key) {
 static void openControlCenter();   // defined in the control-center section below
 static bool popupRegistryAnyOver();   // the popup registry at EOF
 
-// A letter jumps to its tab (E/R/T/U/I by default, Settings > Keyboard) while a
-// Bluetooth keyboard is connected; the Home key on Home toggles the app drawer,
-// as tapping Home does. Returns true when the letter was a hotkey.
+// Jump to a main tab from the keyboard; the Home key on Home toggles the app
+// drawer, as tapping Home does.
+static void bleKbdGoToTab(int tab) {
+  if (tab == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+  else                                                           navGoToMainTab(tab);
+}
+
+// A letter jumps to its tab (E/R/T/U/I by default, Settings > Keyboard) while an
+// external keyboard is connected. Returns true when the letter was a hotkey.
 static bool bleKbdTabHotkey(int cp) {
   if (!s_ble_kbd_hotkeys || cp <= 0 || cp > 0x7F) return false;
 #if defined(TLORA_PAGER)
@@ -44703,8 +44826,7 @@ static bool bleKbdTabHotkey(int cp) {
 #if BLE_KBD_TRACE
   Serial.printf("[blekbd] hotkey '%c' -> tab %d\n", (char)cp, tab);
 #endif
-  if (tab == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
-  else                                                           navGoToMainTab(tab);
+  bleKbdGoToTab(tab);
   return true;
 }
 
@@ -44777,7 +44899,7 @@ static void bleKbdBack() {
 #endif
 }
 #endif
-#endif  // CAP_BLE_KEYBOARD
+#endif  // CAP_EXT_KEYBOARD
 
 // Reopen the HAS_TDECK_KEYBOARD region paused above for the backup picker; it
 // closes at that region's original #endif further below. (The next #if is the
@@ -45903,8 +46025,8 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
-    } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
-      terminalSubmit();   // terminal: run the command, keep the field focused
+    } else if (cmdLineEnter()) {
+      // terminal or repeater admin CLI: ran the command, the field stays focused
     } else
 #endif
     if (s_kb_panel) {
@@ -46129,7 +46251,7 @@ static void bleKbdDispatch(int key) {
 #endif  // CAP_BLE_KEYBOARD
 #endif
 
-#if CAP_BLE_KEYBOARD
+#if CAP_EXT_KEYBOARD
 #if !CAP_KEYBOARD
 // ---- External Bluetooth keyboard on a touchscreen-only board -------------------
 // There is no handleHwKey() here: keys go straight into the field the on-screen
@@ -46158,8 +46280,7 @@ static void bleKbdTouchEnter(lv_obj_t* ta) {
   mentionBoxHide();
   if (s_editor_ta && ta == s_editor_ta) {           // multiline editor
     lv_textarea_add_char(ta, '\n');
-  } else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
-    terminalSubmit();                                // terminal: run it, keep the field
+  } else if (cmdLineEnter()) {                       // terminal / admin CLI: run it, keep the field
   } else if (LvChatPanel* p = s_kb_panel) {
     if (!touchPrefsGetEnterSends()) {
       lv_textarea_add_char(ta, '\n');
@@ -46216,9 +46337,16 @@ static lv_obj_t* bleKbdTouchStartEditing(lv_obj_t* field) {
 
 // Where typed text goes, or nullptr: the field being edited, else the
 // highlighted field (editing starts).
+// Whether the keys edit the bound field. The terminal binds its command line
+// as it opens so the keys type at once; that counts as editing without a tap,
+// or a letter that is a tab hotkey would switch tabs and Enter would not run.
+static bool bleKbdTouchEditing(lv_obj_t* bound) {
+  return bound && (s_nav_ta_editing || bleKbdTouchRealField(bound) == s_term_input_ta);
+}
+
 static lv_obj_t* bleKbdTouchTypingTarget() {
   lv_obj_t* const bound = bleKbdTouchBound();
-  if (bound && s_nav_ta_editing) return bound;
+  if (bleKbdTouchEditing(bound)) return bound;
   if (lv_obj_t* hl = navFocusedTextarea())
     if (s_nav_show || bleKbdTouchRealField(bound) == hl) return bleKbdTouchStartEditing(hl);
   return nullptr;
@@ -46261,6 +46389,13 @@ static void bleKbdDispatch(int key) {
   }
   if (bleKbdEmojiKey(key)) return;
 
+  if (key >= BLE_KEY_GOTO_TAB && key < BLE_KEY_GOTO_TAB + 5) {   // a function key: its tab, from anywhere
+    s_nav_ta_editing = false;
+    hideKb();
+    bleKbdGoToTab(key - BLE_KEY_GOTO_TAB);
+    return;
+  }
+
   if (key & BLE_KEY_TEXT) {
     lv_obj_t* ta = bleKbdTouchTypingTarget();
     if (!ta && bleKbdTabHotkey(key & ~BLE_KEY_TEXT)) return;
@@ -46277,7 +46412,7 @@ static void bleKbdDispatch(int key) {
 
   // The textarea being edited, if any: the other keys navigate otherwise.
   lv_obj_t* const bound = bleKbdTouchBound();
-  lv_obj_t* const ta = (bound && s_nav_ta_editing) ? bound : nullptr;
+  lv_obj_t* const ta = bleKbdTouchEditing(bound) ? bound : nullptr;
   if (ta) txtMenuHide();
 
   switch (key) {
@@ -46287,6 +46422,7 @@ static void bleKbdDispatch(int key) {
       if (!bleKbdTouchHighlightShown()) break;
       if (lv_obj_t* hl = navFocusedTextarea()) { bleKbdTouchStartEditing(hl); break; }   // first Enter: start typing
       if (navOnTabBar())          { navSwitchTab(+1); break; }
+      if (navEnterBubble())       break;   // a message: its long-press action menu
       if (s_nav_group && lv_group_get_focused(s_nav_group)) {
         navMarkEntered(lv_group_get_focused(s_nav_group));
         navPushTap(LV_KEY_ENTER);
@@ -46392,6 +46528,7 @@ static void externalKbdTookOverField() {
 }
 #endif  // !CAP_KEYBOARD
 
+#if CAP_BLE_KEYBOARD
 // Keyboard mode follows two settings: Bluetooth on/off and "use Bluetooth for".
 static void bleKbdApplyMode() {
   if (!g_lv.task) return;
@@ -46415,17 +46552,64 @@ static void bleKbdBoot() {
 }
 
 static void bleKbdPageRefresh();   // pairing screen + Bluetooth page status (defined with them)
+#endif  // CAP_BLE_KEYBOARD
+
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+// The clip-on keyboard's codes (P4Keyboard.h) in the Bluetooth keyboard's terms,
+// so it routes through bleKbdDispatch() like the others.
+static int p4KbUiKey(int raw) {
+  switch (raw) {
+    case 0x08:       return BLE_KEY_BACKSPACE;
+    case 0x09:       return BLE_KEY_TAB;
+    case 0x0D:       return BLE_KEY_ENTER;
+    case 0x1B:       return BLE_KEY_ESC;
+    case P4KB_UP:    return BLE_KEY_UP;
+    case P4KB_DOWN:  return BLE_KEY_DOWN;
+    case P4KB_LEFT:  return BLE_KEY_LEFT;
+    case P4KB_RIGHT: return BLE_KEY_RIGHT;
+    case P4KB_EMOJI: return BLE_KEY_EMOJI;
+    default: break;
+  }
+  // F1-F5 follow the tab bar left to right: Messages, Contacts, Home, Map, Settings.
+  if (raw >= P4KB_F1 && raw < P4KB_F1 + 5) return BLE_KEY_GOTO_TAB + (raw - P4KB_F1);
+  return (raw >= 0x20 && raw < 0x7F) ? (BLE_KEY_TEXT | raw) : 0;
+}
+
+// The keyboard light's brightness step (F11) survives reboots: restored before
+// the first poll, so the expansion lights at the saved level when it attaches,
+// and saved whenever F11 moves it.
+static void p4KeyboardLightSync() {
+  static bool s_restored = false;
+  if (!s_restored) {
+    s_restored = true;
+    p4KeyboardSetLightStep(touchPrefsGetP4KbLight(P4KB_LIGHT_STEPS - 1));
+  }
+  if (p4KeyboardTakeLightChanged()) touchPrefsSetP4KbLight(p4KeyboardLightStep());
+}
+#endif
 
 // Once per UI loop: persist what the worker changed, then route the keys.
 static void bleKbdUiTick() {
+#if CAP_BLE_KEYBOARD
   bleKbdBoot();
+#endif
 #if defined(HAS_CARDKB)
   cardKbPoll();
 #endif
-  const bool connected = BleKbd::state() == BleKbd::State::Connected;
-  const bool external_connected = connected
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+  p4KeyboardLightSync();
+  p4KeyboardPoll();
+  p4KeyboardSetScreenOn(g_lv.task && !g_lv.task->isScreenOff() && !g_lv.task->isManualLock());
+#endif
+  const bool external_connected = false
+#if CAP_BLE_KEYBOARD
+      || BleKbd::state() == BleKbd::State::Connected
+#endif
 #if defined(HAS_CARDKB)
       || cardKbPresent()
+#endif
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+      || p4KeyboardPresent()
 #endif
       ;
   static bool s_was_external_connected = false;
@@ -46442,6 +46626,7 @@ static void bleKbdUiTick() {
     navMenubarKeysSync();
 #endif
   }
+#if CAP_BLE_KEYBOARD
   BleKbd::Device dev = {};
   if (BleKbd::takeNewPairing(&dev)) {
     touchPrefsSetBleKbdPeer(dev.addr, dev.addr_type, dev.name);
@@ -46465,6 +46650,7 @@ static void bleKbdUiTick() {
     }
     bleKbdDispatch(key);
   }
+#endif  // CAP_BLE_KEYBOARD
 #if defined(HAS_CARDKB)
   for (int i = 0; i < 16; ++i) {
     const int raw = cardKbReadKey();
@@ -46477,8 +46663,20 @@ static void bleKbdUiTick() {
     if (key) bleKbdDispatch(key);
   }
 #endif
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+  for (int i = 0; i < 16; ++i) {
+    const int raw = p4KeyboardReadKey();
+    if (!raw) break;
+    if (s_remote_mode) {
+      if (raw == ' ') remotePhysicalKey(' ');
+      continue;
+    }
+    const int key = p4KbUiKey(raw);
+    if (key) bleKbdDispatch(key);
+  }
+#endif
 }
-#endif  // CAP_BLE_KEYBOARD
+#endif  // CAP_EXT_KEYBOARD
 
 #if defined(ATTAKY_MESH_SERIES)
 // ---- Attaky front D-pad -> focus navigation ---------------------------------
@@ -49850,9 +50048,42 @@ static void openMentionsScreen() {
   }
 }
 
+// The drawer tile an app was launched from, so backing out of the app (Esc,
+// Back) puts the focus highlight on it again instead of the drawer's first
+// tile. Tools and apps open OVER the drawer, so it is still there to return to.
+static int  s_drawer_return_act = -1;      // APPACT_* of that tile, -1 = none
+static bool s_drawer_left       = false;   // the app has had the screen since
+
+#if CAP_KEYPAD_NAV
+static void appTileCb(lv_event_t* e);
+
+// For navMaybeRebuild(), with the root it is collecting: the tile to focus when
+// that root is the drawer again after the app, else nullptr.
+static lv_obj_t* appDrawerReturnFocus(lv_obj_t* root) {
+  if (!s_appdrawer_root) { s_drawer_return_act = -1; s_drawer_left = false; return nullptr; }
+  if (s_drawer_return_act < 0) return nullptr;
+  if (root != s_appdrawer_root) { s_drawer_left = true; return nullptr; }
+  if (!s_drawer_left) return nullptr;
+  const int act = s_drawer_return_act;
+  s_drawer_return_act = -1;
+  s_drawer_left = false;
+  // By the tile's action rather than its pointer: the drawer is rebuilt when its
+  // badges change, which can happen while the app is open.
+  const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  for (int i = 0; i < n; ++i) {
+    lv_obj_t* o = s_nav_objs[i];
+    if (o && lv_obj_is_valid(o) && (int)(intptr_t)lv_obj_get_event_user_data(o, appTileCb) == act) return o;
+  }
+  return nullptr;
+}
+#endif
+
 static void appTileCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int act = (int)(intptr_t)lv_event_get_user_data(e);
+  // Remember it for the way back. 0 (Chats) leaves the drawer, and is also what
+  // lv_obj_get_event_user_data() answers for an object that is not a tile.
+  if (act > 0) { s_drawer_return_act = act; s_drawer_left = false; }
   // Tools open OVER the drawer (do NOT close it), so dismissing them returns to
   // the drawer where they were launched — not the command centre.
 #if CAP_LUA_APPS
@@ -51367,6 +51598,21 @@ static void statusBarLayoutTwoRow(int slide) {
 }
 #endif
 
+#if CAP_ROUND_CORNERS
+// Row 2 has only STATUSBAR_H - SB_ROW2_Y below its text top. At the Large/Huge
+// UI sizes g_font_14 is taller than that, and the bar clipped the name's
+// descenders (g, y, p). Give the label the largest font whose whole line fits.
+static void statusBarFitRow2Font(lv_obj_t* l) {
+  const lv_coord_t room = STATUSBAR_H - SB_ROW2_Y;
+  const lv_font_t* const ladder[] = { &g_font_14, &g_font_12, &lv_font_montserrat_14, &lv_font_montserrat_12 };
+  const lv_font_t* pick = ladder[3];
+  for (const lv_font_t* f : ladder) {
+    if (lv_font_get_line_height(f) <= room) { pick = f; break; }
+  }
+  lv_obj_set_style_text_font(l, pick, LV_PART_MAIN);
+}
+#endif
+
 static void updateGlobalStatusBar() {
   // The drawer's badges are a snapshot taken when the grid was built, so a
   // message arriving while it is open -- including while the screen was locked
@@ -51722,6 +51968,9 @@ static void updateGlobalStatusBar() {
       // only when the name actually changes (else the scroll restarts each tick).
       const char* nm = g_lv.task->getNodeNameCstr();
       if (!nm || !nm[0]) nm = "WADAMESH";
+#if CAP_ROUND_CORNERS
+      statusBarFitRow2Font(g_statusbar.left_label);   // whole name inside the bar, descenders too
+#endif
       if (strncmp(s_left_home_name, nm, sizeof(s_left_home_name)) != 0) {
         strncpy(s_left_home_name, nm, sizeof(s_left_home_name) - 1);
         s_left_home_name[sizeof(s_left_home_name) - 1] = '\0';
@@ -54658,7 +54907,7 @@ static void buildUiTree() {
 #endif
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(HAS_TDISPLAY_P4_KEYBOARD)
   lv_obj_add_event_cb(tab_btns, navMenubarSizeCb, LV_EVENT_SIZE_CHANGED, nullptr);  // keep the keyboard-nav key hints positioned
 #endif
 #endif  // !HAS_THINKNODE_M9 — tab-bar chrome
@@ -63577,6 +63826,20 @@ void UITask::loop() {
           (key >= 0x20 && key < 0x7F)) consoleKey(key);
     }
 #endif
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+    // The clip-on keyboard: plain text, Enter, Backspace, Tab and Esc.
+    p4KeyboardLightSync();
+    p4KeyboardPoll();
+    p4KeyboardSetScreenOn(!_screen_off);
+    for (int kbi = 0; kbi < 16; ++kbi) {
+      const int key = p4KeyboardReadKey();
+      if (!key) break;
+      con_activity = true;
+      if (_screen_off) { wakeScreen(); continue; }
+      if (key == 0x08 || key == 0x09 || key == 0x0D || key == 0x1B ||
+          (key >= 0x20 && key < 0x7F)) consoleKey(key);
+    }
+#endif
 #if CAP_TOUCH
     {
       uint16_t _tx, _ty;
@@ -64721,8 +64984,8 @@ void UITask::loop() {
   serviceLockscreen();
   serviceLockingCountdown(now);
 #endif
-#if CAP_BLE_KEYBOARD
-  bleKbdUiTick();   // external Bluetooth/CardKB keyboards: update presence and route keys
+#if CAP_EXT_KEYBOARD
+  bleKbdUiTick();   // external Bluetooth/CardKB/P4 clip-on keyboards: update presence and route keys
 #endif
 #if defined(ATTAKY_MESH_SERIES)
   // POWER_BTN (AW9523 @0x59 P07) toggles the panel. Polled before the screen-off
@@ -64769,10 +65032,7 @@ void UITask::loop() {
           break;   // keyboard rebound above; akb_ta is stale from here
         }
         else if (s_kb_panel) lv_textarea_add_char(akb_ta, '\n');   // enter-sends off: compose multi-line
-        else if (s_term_input_ta && s_kb_bind_ta == s_term_input_ta) {
-          terminalSubmit();   // terminal: submit once, clear, and keep the field ready
-          break;
-        }
+        else if (cmdLineEnter()) break;   // terminal / admin CLI: run it, keep the field ready
         else                 lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);  // settings field: confirm
       }
       else if (key == 0x08 || key == 0x7F) lv_textarea_del_char(akb_ta);

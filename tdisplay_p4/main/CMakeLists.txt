@@ -93,6 +93,10 @@ set(WADA_DEFS
   HAS_HI8561_TOUCH=1 PIN_TOUCH_SDA=7 PIN_TOUCH_SCL=8
   XL9535_TOUCH_RST_IO=3 XL9535_TOUCH_INT_IO=4
 
+  # --- Clip-on keyboard expansion (TCA8418 on Wire1's 46/45 route, shared with the codec).
+  # Detected at runtime; the on-screen keyboard stays while it is away (P4Keyboard.h). ---
+  HAS_TDISPLAY_P4_KEYBOARD=1
+
   # --- Board I2C_1 (XL9535 + touch + PCF8563 RTC + BQ27220 gauge) ---
   PIN_BOARD_SDA=7 PIN_BOARD_SCL=8
   XL9535_SDA=7 XL9535_SCL=8 XL9535_INT_PIN=5

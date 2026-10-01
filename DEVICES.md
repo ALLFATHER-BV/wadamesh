@@ -81,6 +81,14 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   validated at boot; if it reports lost integrity, the same optional saved-Wi-Fi
   cold-boot sync offered on T-Deck is available in Clock settings. New in beta_38;
   report anything that feels off.
+- **T-Display P4**: touch UI with the on-screen keyboard. The optional clip-on
+  keyboard expansion can be attached or removed while running and is picked up
+  within a couple of seconds; while it is on, it types into the focused field
+  and the on-screen keyboard stays down (tap the field again to bring it up).
+  Arrows move the caret or the focus highlight, Esc goes back, F1-F5 open the
+  tabs left to right, F11 steps the keyboard light through off, low, medium and
+  high (the level is kept across reboots), Caps Lock lights its LEDs,
+  and Shift, Sym and Alt apply to the next key. Alt+Backspace goes back.
 - **RAK WisMesh Tap V2**: newest port, touch-driven. The browser-flash path is
   fresh; if the flasher cannot open the serial port, put the board in download
   mode manually and retry, and please report it.
