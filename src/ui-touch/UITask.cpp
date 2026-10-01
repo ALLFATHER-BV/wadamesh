@@ -16520,12 +16520,14 @@ namespace {
 typedef void (*SimpleCb)();
 SimpleCb s_confirm_cb = nullptr;
 lv_obj_t* s_confirm_modal = nullptr;
+lv_obj_t* s_confirm_msg_lbl = nullptr;   // the message, for confirmSetMessage()
 
 void confirmDismiss() {
   if (s_confirm_modal) {
     popupClose(&s_confirm_modal);
   }
   s_confirm_cb = nullptr;
+  s_confirm_msg_lbl = nullptr;
 }
 
 void confirmCancelEvt(lv_event_t* e) {
@@ -16622,6 +16624,7 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(lbl, cf_font, LV_PART_MAIN);
   lv_obj_align(lbl, LV_ALIGN_TOP_LEFT, 0, 0);
+  s_confirm_msg_lbl = lbl;
 
   lv_obj_t* b_cancel = lv_btn_create(card);
   const lv_coord_t cf_cancel_w = cf_stack ? lv_pct(100) : PSC(80);
@@ -16659,6 +16662,12 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
     navMarkDirty();
   }
 #endif
+}
+
+// Replace the open confirm dialog's message in place (a countdown). The text is
+// shown as given: translate it before formatting.
+static void confirmSetMessage(const char* msg) {
+  if (s_confirm_msg_lbl && lv_obj_is_valid(s_confirm_msg_lbl)) lv_label_set_text(s_confirm_msg_lbl, msg);
 }
 
 // ----- Bluetooth settings page -----
@@ -46644,6 +46653,71 @@ static int p4KbUiKey(int raw) {
   return (raw >= 0x20 && raw < 0x7F) ? (BLE_KEY_TEXT | raw) : 0;
 }
 
+// Clipping the keyboard on while the UI is portrait offers to restart in
+// landscape, where the keyboard sits along the long edge: a dialog counts down
+// 15 s, then saves landscape and restarts (the Settings orientation switch's
+// path). Cancel -- or taking the keyboard off again -- keeps portrait. Only a
+// keyboard that ARRIVES does this: one already on at boot does not, so choosing
+// Cancel is not asked again on every start.
+static constexpr int kP4KbRotateSecs = 15;
+static lv_timer_t*   s_p4kb_rot_timer = nullptr;
+static lv_obj_t*     s_p4kb_rot_modal = nullptr;   // the dialog this countdown owns
+static int           s_p4kb_rot_left  = 0;
+
+static void p4KbRotateStop() {
+  if (s_p4kb_rot_timer) { lv_timer_del(s_p4kb_rot_timer); s_p4kb_rot_timer = nullptr; }
+  s_p4kb_rot_modal = nullptr;
+}
+
+static void p4KbRotateNow() {
+  p4KbRotateStop();
+  touchPrefsSetUiRotation(LV_DISP_ROT_90);   // the landscape Settings switches to
+  rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
+}
+
+static void p4KbRotateMessage() {
+  char m[96];
+  snprintf(m, sizeof m, TR("Keyboard attached.\nRestarting in landscape in %d s."), s_p4kb_rot_left);
+  confirmSetMessage(m);
+}
+
+static void p4KbRotateTick(lv_timer_t*) {
+  // Cancel, the close badge or another dialog replaced ours: stand down.
+  if (!s_p4kb_rot_modal || s_confirm_modal != s_p4kb_rot_modal) { p4KbRotateStop(); return; }
+  if (--s_p4kb_rot_left <= 0) {
+    confirmDismiss();
+    p4KbRotateNow();
+    return;
+  }
+  p4KbRotateMessage();
+}
+
+static void p4KbRotateOffer() {
+  if (s_p4kb_rot_timer || s_ui_rotation != LV_DISP_ROT_NONE || !g_lv.task) return;
+  if (g_lv.task->isManualLock()) return;   // nothing can answer it under the lock screen
+  g_lv.task->noteUserInput();              // light the screen so the countdown is seen
+  s_p4kb_rot_left = kP4KbRotateSecs;
+  char m[96];
+  snprintf(m, sizeof m, TR("Keyboard attached.\nRestarting in landscape in %d s."), s_p4kb_rot_left);
+  showConfirm(m, "Reboot Now", p4KbRotateNow, false, true);
+  s_p4kb_rot_modal = s_confirm_modal;
+  s_p4kb_rot_timer = lv_timer_create(p4KbRotateTick, 1000, nullptr);
+  if (!s_p4kb_rot_timer) { confirmDismiss(); s_p4kb_rot_modal = nullptr; }   // no timer, no countdown to promise
+}
+
+// Called each UI tick after p4KeyboardPoll(): offers the restart when the
+// keyboard arrives, and calls it off if the keyboard leaves mid-countdown.
+static void p4KbRotateWatch() {
+  static int8_t s_prev = -1;   // -1 until the first probe: whatever is there at boot is not an arrival
+  const bool now = p4KeyboardPresent();
+  if (s_prev == 0 && now) p4KbRotateOffer();
+  if (s_prev == 1 && !now && s_p4kb_rot_timer) {
+    if (s_confirm_modal == s_p4kb_rot_modal) confirmDismiss();
+    p4KbRotateStop();
+  }
+  s_prev = now ? 1 : 0;
+}
+
 // The keyboard light's brightness step (F11) survives reboots: restored before
 // the first poll, so the expansion lights at the saved level when it attaches,
 // and saved whenever F11 moves it.
@@ -46668,6 +46742,7 @@ static void bleKbdUiTick() {
 #if defined(HAS_TDISPLAY_P4_KEYBOARD)
   p4KeyboardLightSync();
   p4KeyboardPoll();
+  p4KbRotateWatch();
   p4KeyboardSetScreenOn(g_lv.task && !g_lv.task->isScreenOff() && !g_lv.task->isManualLock());
 #endif
   const bool external_connected = false
