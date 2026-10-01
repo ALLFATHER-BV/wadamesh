@@ -15621,8 +15621,17 @@ static void buildDeviceSettings(int sec) {
   /* Accent colour: opens a colour-wheel + hex picker. */
   {
     y += settingsRowLabel(body, y, 0, TR("Accent colour"), COLOR_SUB, &g_font_12, 0) + 4;
+#if defined(HAS_TDISPLAY_P4)
+    // The P4's larger UI scale grew the button over the fixed-x swatch: narrower,
+    // with the swatch placed a gap past the button's end.
+    const lv_coord_t pick_w   = SC(110);
+    const lv_coord_t swatch_x = 2 + pick_w + SC(12);
+#else
+    const lv_coord_t pick_w   = SC(150);
+    const lv_coord_t swatch_x = 162;
+#endif
     lv_obj_t* b = lv_btn_create(body);
-    lv_obj_set_size(b, SC(150), SC(32));
+    lv_obj_set_size(b, pick_w, SC(32));
     lv_obj_set_pos(b, 2, y);
     styleButton(b);
     lv_obj_add_event_cb(b, openAccentPickerCb, LV_EVENT_CLICKED, nullptr);
@@ -15633,7 +15642,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_t* swatch = lv_obj_create(body);
     lv_obj_remove_style_all(swatch);
     lv_obj_set_size(swatch, SC(30), SC(30));
-    lv_obj_set_pos(swatch, 162, y + 1);
+    lv_obj_set_pos(swatch, swatch_x, y + 1);
     lv_obj_set_style_radius(swatch, 6, LV_PART_MAIN);
     lv_obj_set_style_bg_color(swatch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, LV_PART_MAIN);
