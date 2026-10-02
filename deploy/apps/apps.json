@@ -25,6 +25,13 @@
       "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
     },
     {
+      "id": "tripodometer",
+      "name": "Trip Odometer",
+      "ver": "1.0",
+      "desc": "GPS trip computer: distance, time, speed, altitude. Start/Stop to track, Reset to clear. Saves your trip across restarts. Contributed by samuelcoustet.",
+      "requires": "gps"
+    },
+    {
       "id": "breakout",
       "name": "Breakout",
       "ver": "1.0",
@@ -47,6 +54,13 @@
       "name": "Wardrive",
       "ver": "1.2",
       "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV, then plots the run back on the map so you can check coverage before driving it again. Reference app for wada.mesh.discover.",
+      "requires": "sdk_ext"
+    },
+    {
+      "id": "ping",
+      "name": "Ping",
+      "ver": "1.0",
+      "desc": "Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.",
       "requires": "sdk_ext"
     },
     {

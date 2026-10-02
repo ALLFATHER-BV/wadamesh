@@ -1,0 +1,1 @@
+{"id":"tripodometer","name":"Trip Odometer","ver":"1.0","desc":"GPS trip computer: distance, time, speed, altitude. Start/Stop to track, Reset to clear. Saves your trip across restarts. Contributed by samuelcoustet.","requires":"gps"}
