@@ -1046,6 +1046,113 @@ scenarios.cost = function()
   assert(worst < BUDGET / 4, "tick too expensive")
 end
 
+-- ---- Tetris (deploy/apps/tetris) --------------------------------------------
+
+scenarios.tetris_tdeck = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.canvases == 2, "expected 2 canvases (board + side), got " .. widgets.canvases)
+  assert(widgets.timer_ms == 700, "initial tick rate must be 700 ms, got " .. tostring(widgets.timer_ms))
+  tick(app, 5)
+  swipe(app, "right"); swipe(app, "left"); swipe(app, "up"); swipe(app, "down")
+  tick(app, 5)
+  print("  t-deck: OK  canvases=" .. widgets.canvases .. " timer=" .. tostring(widgets.timer_ms))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.tetris_v4 = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false } }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.canvases == 2, "expected 2 canvases")
+  tick(app, 20)
+  print("  v4: OK  timer=" .. tostring(widgets.timer_ms))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.tetris_keyboard = function()
+  cfg = { w = 480, h = 178, caps = { touch = false, keyboard = true } }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 5)
+  key(app, "left"); key(app, "right"); key(app, "up"); key(app, "down"); key(app, "enter")
+  tick(app, 5)
+  print("  keyboard: OK  timer=" .. tostring(widgets.timer_ms))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+local function tetris_text_has(s)
+  for i = #drawlog.text, math.max(1, #drawlog.text - 30), -1 do
+    if drawlog.text[i] == s then return true end
+  end
+  return false
+end
+
+local function tetris_run_to_gameover(app)
+  -- hard-drop repeatedly; draw_board() adds "tap to retry" before draw_side()
+  -- overwrites the tail of drawlog.text, so scan the last 30 entries
+  for _ = 1, 2000 do
+    tick(app, 1); swipe(app, "down")
+    if tetris_text_has("tap to retry") then return true end
+  end
+  return false
+end
+
+scenarios.tetris_logic = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(tetris_run_to_gameover(app), "game over never triggered in 2000 swipe-drops")
+  local ops_before = drawlog.ops
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  assert(drawlog.ops > ops_before, "tap after game over must redraw")
+  assert(widgets.timer_ms == 700, "restart must reset timer to 700 ms")
+  print("  logic: game-over triggered, restart OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.tetris_hiscore = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = { hiscore = 0 }
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(tetris_run_to_gameover(app), "game over never triggered")
+  local saved = storekv.hiscore
+  assert(type(saved) == "number", "hiscore must be saved as a number, got " .. type(saved))
+  print("  hiscore: saved=" .. tostring(saved))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.tetris_cost = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  local worst = 0
+  for i = 1, 100 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 700
+    local ok, err = pcall(app.on_tick, 700)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d), draw ops %d", worst, BUDGET, drawlog.ops))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
+end
+
 -- ---- SD Scan (deploy/apps/sdscan) --------------------------------------------
 local PNG = "\137PNG\r\n\26\n" .. string.rep("\0", 120)
 -- A file carrying real DOS + PE headers and nothing else: no code at all.
@@ -1398,6 +1505,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
         "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
   or APP_PATH:find("/wardrive/", 1, true)
   and { "wardrive_utf8" }
+  or APP_PATH:find("/tetris/", 1, true)
+  and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
