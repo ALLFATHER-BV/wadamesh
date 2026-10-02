@@ -6,6 +6,7 @@ local APP_PATH, SCENARIO = APP_PATH, SCENARIO
 local BUDGET, INIT_BUDGET = 100000, 500000
 local clock_ms = 1000
 local toasts, fails, maxinstr = {}, 0, 0
+local dm_sent = {}   -- send_dm call log: { {to, text}, ... }
 local function checkint(v, what) assert(math.tointeger(v) ~= nil, what .. ": not an integer: " .. tostring(v)) end
 local function checkcol(v, what) if v ~= nil then checkint(v, what .. " color") end end
 local function checkstr(v, what) assert(type(v) == "string" or type(v) == "number", what .. ": not a string") end
@@ -314,6 +315,35 @@ local function build_wada()
   wada.mesh.discover = function() return "probe-1" end
   wada.mesh.discovered = function() return cfg.discovered or {} end
   wada.mesh.discover_clear = function() cfg.discovered = {} end
+  wada.mesh.send_dm = function(name, text)
+    checkstr(name, "send_dm name"); checkstr(text, "send_dm text")
+    dm_sent[#dm_sent + 1] = { to = name, text = text }
+    return true
+  end
+
+  do
+    local R = 6371000.0
+    local function hav(a) local s = math.sin(a / 2); return s * s end
+    local function geo_dist(la1, lo1, la2, lo2)
+      local p1, p2 = math.rad(la1), math.rad(la2)
+      local dp, dl = math.rad(la2 - la1), math.rad(lo2 - lo1)
+      local a = hav(dp) + math.cos(p1) * math.cos(p2) * hav(dl)
+      return R * 2 * math.atan(math.sqrt(a), math.sqrt(1 - a))
+    end
+    local function geo_bear(la1, lo1, la2, lo2)
+      local p1, p2 = math.rad(la1), math.rad(la2)
+      local dl = math.rad(lo2 - lo1)
+      local y = math.sin(dl) * math.cos(p2)
+      local x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+      return (math.deg(math.atan(y, x)) + 360) % 360
+    end
+    local CARDS = {"N","NE","E","SE","S","SW","W","NW"}
+    wada.geo = {
+      distance = geo_dist,
+      bearing  = geo_bear,
+      cardinal = function(d) return CARDS[math.floor((d + 22.5) / 45) % 8 + 1] end,
+    }
+  end
 
   wada.fs.append = function(name, data) checkstr(name, "fs.append name"); checkstr(data, "fs.append data"); return true end
   wada.fs.remove = function(name) checkstr(name, "fs.remove name"); return true end
@@ -408,6 +438,7 @@ local function reset_world()
   lists = {}
   clock_ms = 1000
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
+  dm_sent = {}
   audio_log = {}
 end
 
@@ -1153,6 +1184,141 @@ scenarios.tetris_cost = function()
   assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
 end
 
+-- ---- Ping (deploy/apps/ping) ------------------------------------------------
+local function deliver_dm(app, sender, text)
+  if app.on_message then
+    guarded(BUDGET, app.on_message, { kind = "dm", sender = sender, text = text, channel = "" })
+  end
+end
+
+local PING_CONTACTS = {
+  { name = "Node-Alpha", lat = 48.9000, lon = 2.4000 },
+  { name = "Node-Beta",  lat = 48.8000, lon = 2.3000 },
+}
+local MY_GPS = { lat = 48.8566, lon = 2.3522, lat_e6 = 48856600, lon_e6 = 2352200, sats = 9 }
+local function gps_fix() return MY_GPS end
+
+scenarios.ping_tdeck = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, sdk_ext = true },
+          contacts = PING_CONTACTS, gps = gps_fix }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.labels >= 3,  "expected at least 3 labels (gps + 2 names), got " .. widgets.labels)
+  assert(widgets.buttons >= 2, "expected 2 Ping buttons, got " .. widgets.buttons)
+  assert(widgets.scroll,       "scroll should be enabled")
+  assert(widgets.timer_ms,     "timer not started")
+  print(string.format("  labels=%d buttons=%d timer=%dms", widgets.labels, widgets.buttons, widgets.timer_ms))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ping_v4 = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, sdk_ext = true },
+          contacts = PING_CONTACTS, gps = gps_fix }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.buttons >= 2, "expected 2 Ping buttons on V4")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ping_no_contacts = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, sdk_ext = true }, contacts = {} }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.buttons == 0, "no Ping buttons when no contacts")
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("No contacts") then found = true end end
+  assert(found, "should show 'No contacts' label")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ping_round_trip = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, sdk_ext = true },
+          contacts = PING_CONTACTS, gps = gps_fix }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+
+  local btn = buttons[1]; assert(btn and btn.fn, "no ping button")
+  assert(guarded(BUDGET, btn.fn))
+
+  assert(#dm_sent == 1, "expected 1 DM sent, got " .. #dm_sent)
+  assert(dm_sent[1].to == "Node-Alpha", "wrong target: " .. tostring(dm_sent[1].to))
+  local ping_msg = dm_sent[1].text
+  assert(ping_msg:sub(1, 9) == "WADAPING:", "wrong prefix: " .. ping_msg:sub(1, 9))
+  local ts_s, lat_s, lon_s = ping_msg:sub(10):match("(-?%d+):(-?%d+):(-?%d+)")
+  assert(ts_s, "could not parse PING message: " .. ping_msg)
+  print("  sent: " .. ping_msg)
+
+  clock_ms = clock_ms + 250
+  local their_lat6, their_lon6 = 48900000, 2400000
+  local pong = string.format("WADAPONG:%s:%d:%d", ts_s, their_lat6, their_lon6)
+  deliver_dm(app, "Node-Alpha", pong)
+
+  local result_ok = false
+  for _, l in ipairs(labels) do
+    if l.text:find("ms") then
+      print("  result: " .. l.text)
+      result_ok = true
+    end
+  end
+  assert(result_ok, "no RTT label found after PONG")
+  local last_toast = toasts[#toasts]
+  assert(last_toast and last_toast:find("Node-Alpha", 1, true), "toast must mention sender, got: " .. tostring(last_toast))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ping_auto_reply = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, sdk_ext = true },
+          contacts = PING_CONTACTS, gps = gps_fix }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+
+  local remote_ts = 999888
+  local remote_lat6, remote_lon6 = 48900000, 2400000
+  local ping_in = string.format("WADAPING:%d:%d:%d", remote_ts, remote_lat6, remote_lon6)
+  dm_sent = {}
+  deliver_dm(app, "Node-Alpha", ping_in)
+
+  assert(#dm_sent == 1, "expected auto-reply DM, got " .. #dm_sent)
+  assert(dm_sent[1].to == "Node-Alpha", "reply must go back to sender")
+  local reply = dm_sent[1].text
+  assert(reply:sub(1, 9) == "WADAPONG:", "reply must start with WADAPONG:")
+  local rts = reply:sub(10):match("(-?%d+):")
+  assert(rts == tostring(remote_ts),
+    string.format("reply ts %s != original %d", rts, remote_ts))
+  print("  auto-reply: " .. reply)
+
+  local before = #dm_sent
+  guarded(BUDGET, app.on_message, { kind = "channel", sender = "x", text = ping_in, channel = "c" })
+  assert(#dm_sent == before, "channel messages must not trigger auto-reply")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ping_cost = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, sdk_ext = true },
+          contacts = PING_CONTACTS, gps = gps_fix }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  local worst = 0
+  for _ = 1, 20 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 5000
+    local ok, err = pcall(app.on_tick, 5000)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d)", worst, BUDGET))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
 -- ---- SD Scan (deploy/apps/sdscan) --------------------------------------------
 local PNG = "\137PNG\r\n\26\n" .. string.rep("\0", 120)
 -- A file carrying real DOS + PE headers and nothing else: no code at all.
@@ -1507,6 +1673,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
+  or APP_PATH:find("/ping/", 1, true)
+  and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
