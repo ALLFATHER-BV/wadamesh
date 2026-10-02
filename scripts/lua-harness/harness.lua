@@ -1153,6 +1153,105 @@ scenarios.tetris_cost = function()
   assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
 end
 
+-- ---- Breakout (deploy/apps/breakout) ----------------------------------------
+
+local function breakout_text_has(s)
+  for i = #drawlog.text, math.max(1, #drawlog.text - 20), -1 do
+    if drawlog.text[i] == s then return true end
+  end
+  return false
+end
+
+local function breakout_drive_to_gameover(app)
+  -- keep launching (swipe up is a no-op once launched) and ticking;
+  -- scan backward through the last 20 text entries for "tap to restart"
+  for _ = 1, 3000 do
+    swipe(app, "up"); tick(app, 1)
+    if breakout_text_has("tap to restart") then return true end
+  end
+  return false
+end
+
+scenarios.breakout_tdeck = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.canvases == 1, "expected 1 canvas, got " .. widgets.canvases)
+  assert(widgets.timer_ms == 33, "timer must be 33 ms, got " .. tostring(widgets.timer_ms))
+  swipe(app, "left"); swipe(app, "right"); swipe(app, "up")
+  tick(app, 20)
+  print("  t-deck: OK  timer=" .. tostring(widgets.timer_ms) .. " ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_v4 = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  swipe(app, "up"); tick(app, 20)
+  print("  v4: OK  ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_keyboard = function()
+  cfg = { w = 480, h = 178, caps = { touch = false, keyboard = true } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  key(app, "left"); key(app, "right"); key(app, "up")
+  tick(app, 20)
+  print("  keyboard: OK  ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_logic = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(breakout_drive_to_gameover(app), "game over never triggered in 3000 ticks")
+  local ops_before = drawlog.ops
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  assert(drawlog.ops > ops_before, "tap after game over must redraw")
+  print("  logic: game-over triggered, restart OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_hiscore = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = { hiscore = 0 }; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(breakout_drive_to_gameover(app), "game over never triggered")
+  local saved = storekv.hiscore
+  assert(type(saved) == "number", "hiscore must be saved as a number, got " .. type(saved))
+  print("  hiscore: saved=" .. tostring(saved))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_cost = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  swipe(app, "up"); tick(app, 2)  -- launch
+  local worst = 0
+  for i = 1, 100 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 33
+    local ok, err = pcall(app.on_tick, 33)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d), draw ops %d", worst, BUDGET, drawlog.ops))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
 -- ---- SD Scan (deploy/apps/sdscan) --------------------------------------------
 local PNG = "\137PNG\r\n\26\n" .. string.rep("\0", 120)
 -- A file carrying real DOS + PE headers and nothing else: no code at all.
@@ -1507,6 +1606,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
+  or APP_PATH:find("/breakout/", 1, true)
+  and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
