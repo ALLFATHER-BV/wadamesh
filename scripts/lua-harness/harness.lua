@@ -1666,6 +1666,161 @@ scenarios.sdscan_cost = function()
   assert(worst < BUDGET / 4, "tick too expensive")
 end
 
+-- ---- ProTreck (deploy/apps/protreck) --------------------------------------------
+
+local function pt_has_text(s)
+  for i = #drawlog.text, math.max(1, #drawlog.text - 40), -1 do
+    if drawlog.text[i] == s then return true end
+  end
+  return false
+end
+
+scenarios.protreck_tdeck = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.canvases == 1, "expected 1 canvas")
+  assert(widgets.timer_ms == 500, "tick rate must be 500 ms, got " .. tostring(widgets.timer_ms))
+  tick(app, 5)
+  -- swipe through all 4 tabs
+  swipe(app, "left"); tick(app, 2)   -- CHRONO
+  swipe(app, "left"); tick(app, 2)   -- TIMER
+  swipe(app, "left"); tick(app, 2)   -- ALTI
+  swipe(app, "left"); tick(app, 2)   -- back to ASTRO
+  print("  t-deck: OK  canvases=" .. widgets.canvases .. " timer=" .. tostring(widgets.timer_ms))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_v4 = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return { lat = 37.75, lon = -122.45, sats = 6, alt_m = 120, speed_kmh = 5, course = 90 } end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 3)
+  swipe(app, "left"); tick(app, 2)   -- CHRONO
+  swipe(app, "right"); tick(app, 2)  -- back ASTRO
+  swipe(app, "right"); tick(app, 2)  -- wrap to ALTI
+  if app.on_close then guarded(BUDGET, app.on_close) end
+  print("  v4: OK")
+end
+
+scenarios.protreck_no_gps = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return nil end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 5)
+  -- must render without crash even when GPS is absent
+  swipe(app, "left"); tick(app, 2)   -- CHRONO
+  swipe(app, "left"); tick(app, 2)   -- TIMER
+  swipe(app, "left"); tick(app, 2)   -- ALTI
+  print("  no-gps: OK (no crash)")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_chrono = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return nil end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  -- switch to CHRONO tab
+  swipe(app, "left"); tick(app, 1)
+  -- start chrono
+  local ops0 = drawlog.ops
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 3)
+  -- lap
+  swipe(app, "up"); tick(app, 1)
+  assert(pt_has_text("Lap 1"), "lap must appear in draw after swipe-up")
+  -- stop
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 1)
+  -- reset
+  swipe(app, "down"); tick(app, 1)
+  print("  chrono: start / lap / stop / reset OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_timer = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return nil end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  -- switch to TIMER
+  swipe(app, "left"); swipe(app, "left"); tick(app, 1)
+  -- cycle preset a few times
+  swipe(app, "up"); swipe(app, "up"); tick(app, 1)
+  -- start timer
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 3)
+  -- stop
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 1)
+  -- reset
+  swipe(app, "down"); tick(app, 1)
+  assert(type(storekv.tmr_pi) == "number", "preset index must persist as a number")
+  print("  timer: preset cycle / start / stop / reset OK  preset_i=" .. tostring(storekv.tmr_pi))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_alti = function()
+  local alt = 1200
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function()
+    alt = alt + 1
+    return { lat = 45.8, lon = 6.9, sats = 10, alt_m = alt, speed_kmh = 3, course = 45 }
+  end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  -- switch to ALTI
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); tick(app, 1)
+  tick(app, 20)   -- accumulate samples
+  assert(storekv.alti_max ~= nil, "alti_max must be saved to store after GPS samples")
+  assert(type(storekv.alti_max) == "number", "alti_max must be a number")
+  -- reset min/max
+  swipe(app, "down"); tick(app, 2)
+  print("  alti: sampling OK  max=" .. tostring(storekv.alti_max))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_cost = function()
+  local alt = 500
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() alt = alt + 0.5; return { lat = 48.85, lon = 2.35, sats = 8, alt_m = alt, speed_kmh = 2, course = 0 } end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  -- switch to ALTI (heaviest draw: graph over 60 samples)
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left")
+  local worst = 0
+  for i = 1, 80 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 500
+    local ok, err = pcall(app.on_tick, 500)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d), ops %d", worst, BUDGET, drawlog.ops))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
 local order = APP_PATH:find("/sdscan/", 1, true)
   and { "sdscan_real_m9", "sdscan_many", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
         "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
@@ -1673,6 +1828,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
+  or APP_PATH:find("/protreck/", 1, true)
+  and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
