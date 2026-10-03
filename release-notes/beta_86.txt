@@ -1,0 +1,34 @@
+# beta_86 - test build. Stable is now beta_85.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- If you have a T-Display P4 -----------------------------------------------------------------
+Landscape works properly. In beta_85 switching to landscape left the touch screen rotated and offset, which meant the control to switch back could not be hit and the only way out was reflashing. Taps were being rotated twice, once by the touch driver and once by the interface. If you are on beta_85 and landscape left you stuck, this build fixes it.
+The P4 also gains support for the LR2021 radio variants, a clip-on keyboard, GPS that starts reliably, Wi-Fi through the C6 coprocessor, and a clock that syncs over saved Wi-Fi on a cold boot. Several screens that were cut off or overlapping in portrait are laid out properly.
+
+# --- A new board ---------------------------------------------------------------------------------
+The Elecrow CrowPanel Advance 3.5 inch is supported, contributed by Michael A. Cojocari. Treat it as new: if something is wrong on one, say so on GitHub.
+
+# --- T-Deck Pro owners ---------------------------------------------------------------------------
+There are now separate builds for the v1.0 and v1.1 hardware. The touchscreen that did nothing on some Pros was the wrong touch driver for that revision, and picking the build that matches your device fixes it. If you do not know which you have, try v1.1 first; it is what the single Pro build used to be, and updating from the device keeps working without you choosing.
+
+# --- Fixes -----------------------------------------------------------------------------------------
+The terminal on the T-Deck Pro and Max is readable: it was drawing black text on a black background on the e-paper screen.
+Compact chat messages no longer run into each other on the Pro and Max. The gap added in beta_85 was measured in one place and drawn in another, so wrapped messages still overlapped.
+The screen lock now holds the trackball as well as the touchscreen, so the map no longer pans underneath a locked screen and sits somewhere else when you unlock.
+A crash when tapping the accent popup after its text box had closed.
+Leaving a profile field you did not edit no longer claims it saved, and scrolling that page no longer says "saved" on every row.
+Settings backups were exported as invalid JSON, so they could not be imported again. They also now carry the screen and app preferences they were missing.
+ThinkNode M9: the back button behaves again, chats and channels can all be marked read at once, and the battery percentage no longer overlaps the signal bars at the larger text sizes.
+The map's side buttons show which one is selected.
+The lock screen shows the battery, on every panel.
+
+# --- New in the app Store ----------------------------------------------------------------------------
+Five apps, contributed by Samuel Coustet: Tetris, Breakout, Trip Odometer, Ping and ProTreck. Tetris, Breakout and Ping are built into boards that cannot reach the Store; Trip Odometer and ProTreck need GPS and sensors, so they are a download.
+Emoji can be put into any text field now, not just a chat message: long-press the field and the picker is there alongside Cut, Copy, Paste and Sym. That includes the text entry a Lua app opens.
+
+# --- For people writing Lua apps -----------------------------------------------------------------------
+Two things that were asked for already existed and are now documented: wada.sys.epoch() and wada.sys.datetime() give you the device clock, and the text entry wada.ui.input() opens is the firmware's own field, so it already has Cut, Copy, Paste, Sym and now Emoji on a long press.
+The SDK page had the wrong path for side-loading an app. On a device with an SD card it is /meshcomod/apps/, not /apps/ at the root of the card. Following the old wording silently did nothing.
+
+# --- For testers -------------------------------------------------------------------------------------
+The P4 landscape fix is the one worth confirming, and the CrowPanel 3.5 is brand new. Send a test report from Settings, About when you have run it a while.
