@@ -58434,6 +58434,21 @@ void luaHostTextPromptDismiss() {
   s_lua_prompt_cb = nullptr;
   fmPromptClose();
 }
+// The emoji picker, for an app that draws its own text entry. The long-press
+// menu only reaches a real textarea, so an app building its own buffer from key
+// events (Jade's composer does, because it shows a pad-bytes counter the
+// firmware's field cannot) had no way to insert one. Hands the chosen glyph back
+// as UTF-8; the callback is cleared by the sheet's own closer.
+static void (*s_lua_emoji_cb)(const char*) = nullptr;
+static void luaEmojiDeliver(const char* utf8) {
+  void (*cb)(const char*) = s_lua_emoji_cb;
+  s_lua_emoji_cb = nullptr;
+  if (cb) cb(utf8);
+}
+void luaHostEmojiPick(void (*cb)(const char*)) {
+  openEmojiPickerPick(luaEmojiDeliver, TR("Emoji"));   // resets pick state as it opens
+  s_lua_emoji_cb = cb;                                 // arm AFTER, like the text prompt
+}
 void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
   luaHostTextPromptCancel();              // a second prompt cancels the first
   // Register the callback AFTER the dialog exists. fmTextPrompt opens with its

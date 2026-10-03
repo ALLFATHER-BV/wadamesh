@@ -68,6 +68,7 @@ extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, 
                               int* type, int* rssi, float* snr, float* their_snr, int* hops,
                               uint32_t* first_ms_ago, uint32_t* last_ms_ago, int* heard);
 extern void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*));
+extern void luaHostEmojiPick(void (*cb)(const char*));
 extern void luaHostTextPromptDismiss();
 extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
                               uint32_t* rx_pkts, uint32_t* rx_err, int* budget_ms);
@@ -2357,6 +2358,34 @@ void promptDeliver(const char* text) {
   serviceDeferredClose();
 }
 
+// wada.ui.emoji(cb) -- open the emoji picker and hand the chosen glyph back as a
+// UTF-8 string, or nil if it was dismissed. The long-press Cut/Copy/Paste/Sym/
+// Emoji menu covers the firmware's own field, which is what wada.ui.input()
+// opens; this is for an app that draws its own text entry and keeps the buffer
+// itself, where there is no textarea to long-press. Asked for by Jade, whose
+// composer shows a pad-bytes counter the firmware's field has no way to show.
+int emoji_cb_ref = LUA_NOREF;
+void emojiDeliver(const char* utf8) {
+  if (!s_h || !s_h->L || emoji_cb_ref == LUA_NOREF) return;
+  lua_State* L = s_h->L;
+  lua_rawgeti(L, LUA_REGISTRYINDEX, emoji_cb_ref);
+  luaL_unref(L, LUA_REGISTRYINDEX, emoji_cb_ref);
+  emoji_cb_ref = LUA_NOREF;
+  if (utf8) lua_pushstring(L, utf8); else lua_pushnil(L);
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+
+int uiEmoji(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TFUNCTION);
+  if (!s_h) return luaL_error(L, "no app");
+  if (emoji_cb_ref != LUA_NOREF) return luaL_error(L, "the emoji picker is already open");
+  lua_pushvalue(L, 1);
+  emoji_cb_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+  luaHostEmojiPick(emojiDeliver);
+  return 0;
+}
+
 int uiInput(lua_State* L) {
   size_t title_length = 0, initial_length = 0;
   const char* title_raw = luaL_optlstring(L, 1, "", &title_length);
@@ -2528,6 +2557,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiInput); lua_setfield(L, -2, "input");   // modal text entry
   lua_pushcfunction(L, uiList);  lua_setfield(L, -2, "list");    // scrollable selectable rows
   lua_pushcfunction(L, uiClear); lua_setfield(L, -2, "clear");   // wipe the page (#318 / Discord)
+  lua_pushcfunction(L, uiEmoji); lua_setfield(L, -2, "emoji");   // glyph picker for an app's own text entry
   lua_setfield(L, -2, "ui");
 
   lua_newtable(L);                                       // wada.sys
