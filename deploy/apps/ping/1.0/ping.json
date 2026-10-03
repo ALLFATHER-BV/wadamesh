@@ -1,0 +1,1 @@
+{"id":"ping","name":"Ping","ver":"1.0","desc":"Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.","requires":"sdk_ext"}

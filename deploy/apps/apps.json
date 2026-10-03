@@ -19,6 +19,18 @@
       "desc": "The classic, in Lua. Swipe to steer."
     },
     {
+      "id": "tetris",
+      "name": "Tetris",
+      "ver": "1.0",
+      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
+    },
+    {
+      "id": "protreck",
+      "name": "ProTreck",
+      "ver": "1.0",
+      "desc": "Outdoor watch: sunrise/sunset + moon phase (ASTRO), chronometer with laps (CHRONO), countdown timer with alarm (TIMER), altimeter with trend graph (ALTI). Swipe left/right to switch modes. Contributed by samuelcoustet."
+    },
+    {
       "id": "sdktest",
       "name": "SDK Test",
       "ver": "1.7",
