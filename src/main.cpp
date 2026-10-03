@@ -56,9 +56,13 @@ static uint32_t _atoi(const char* sp) {
     #include <SD_MMC.h>
     #include <WioTrackerL2Io.h>
   #endif
-  #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
+    #if defined(HAS_CROWPANEL_35)
+    #include <CrowPanel35SD.h>
+    #else
     #include <SD.h>
     #include "SdFastClock.h"   // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
+    #endif
     #include <Preferences.h>
     #if defined(TLORA_PAGER)
       #include <mbedtls/sha256.h>
@@ -270,7 +274,7 @@ extern volatile uint8_t g_wifi_last_disc_reason;
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
 // Users who flipped "Store data on SD" before beta_36 ran with the toggle IGNORED
 // (the flag never survived a reboot), so their identity/prefs/contacts kept living
@@ -858,8 +862,22 @@ void setup() {
       uint8_t r = touchPrefsGetUiRotation();
       if (r == 1)      display.setDisplayRotation(1);
       else if (r == 3) display.setDisplayRotation(3);
+#if defined(HAS_CROWPANEL_35)
+      else             display.setDisplayRotation(0);  // restore saved portrait
+#endif
     }
 #endif
+#if defined(HAS_TDECK_PRO)
+    // Never ink the retained e-paper black during the pre-LVGL boot. Console
+    // Mode keeps this polarity, and the graphical day UI replaces it later.
+    // This cannot depend on the mode preference: file-backed prefs are reloaded
+    // only after storage mounts, well after this first frame is committed.
+    display.startFrame((ColorVal)0xFFFF);
+    display.setColor((ColorVal)0x0000);
+    display.setTextSize(2);
+    display.drawTextCentered(display.width() / 2, display.height() / 2 - 8, "WADAMESH");
+    display.endFrame();
+#else
     // Paint the WADAMESH mesh mark the instant the panel is up, so the logo is on
     // screen from power-on — before LVGL is ready. Blitted as an anti-aliased
     // RGB565 bitmap via the full-res LVGL path (writePixelsRGB565), so the
@@ -869,12 +887,13 @@ void setup() {
     // hand-off stays in place.
     // Explicit black: startFrame()'s default is UIColor::window_bkg, and on boards
     // whose DISPLAY_CLASS is a core driver the 1.17 core's palette makes that WHITE
-    // (the boot logo grew a white border). Our pre-LVGL screens are always dark.
+    // (the boot logo grew a white border). Graphical pre-LVGL screens stay dark.
     display.startFrame((ColorVal)0x0000);
     display.writePixelsRGB565((display.width()  - WADAMESH_MARK_W) / 2,
                               (display.height() - WADAMESH_MARK_H) / 2,
                               WADAMESH_MARK_W, WADAMESH_MARK_H, WADAMESH_MARK_RGB565);
     display.endFrame();
+#endif
   }
 #endif
 
@@ -1070,8 +1089,9 @@ void setup() {
     Serial.println("[BOOT] wio-l2 SD_MMC unavailable; using SPIFFS");
   }
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
   {
+   #if !defined(HAS_CROWPANEL_35)
    #if defined(TLORA_PAGER)
     extern SPIClass* tloraPagerSharedSPI();    // display/radio/SD shared bus
    #elif defined(HELTEC_LORA_V4_R8)
@@ -1080,6 +1100,7 @@ void setup() {
     extern SPIClass* m9SharedSPI();           // radio/display/SD shared bus
    #else
     extern SPIClass* tdeckSharedSPI();        // LoRa SPI bus
+   #endif
    #endif
     bool setup_done = false;
     { Preferences _p; if (_p.begin("touch", true)) {
@@ -1103,6 +1124,7 @@ void setup() {
     // device has no usable SPIFFS, the user opted in, or it's a brand-new device.
     bool want_full_sd = !spiffs_ok || use_sd_pref || fresh_install;
 
+   #if !defined(HAS_CROWPANEL_35)
    #if defined(TLORA_PAGER)
     SPIClass* _spi = tloraPagerSharedSPI();
    #elif defined(HELTEC_LORA_V4_R8)
@@ -1112,8 +1134,16 @@ void setup() {
    #else
     SPIClass* _spi = tdeckSharedSPI();
    #endif
+   #endif
     bool sd_mounted = false;
-#if defined(TLORA_PAGER)
+#if defined(HAS_CROWPANEL_35)
+    sdMountDiagBegin();
+    const bool begin_ok = SD.begin();
+    sd_mounted = begin_ok && SD.cardType() != CARD_NONE;
+    sdMountDiagAttempt(0, begin_ok, sd_mounted);
+    sdMountDiagSetMounted(sd_mounted, 0);
+    if (!sd_mounted) Serial.println("[BOOT] CrowPanel SD unavailable; using SPIFFS");
+#elif defined(TLORA_PAGER)
     sdMountDiagBegin();
     if (!_spi) {
       Serial.println("[BOOT] SD: shared SPI unavailable");
@@ -1305,6 +1335,10 @@ void setup() {
         if (adopt) {
           sd_storage = store.useSdStorage();
           g_full_data_on_sd = sd_storage;
+          if (!sd_storage) {
+            g_contacts_on_sd = false;
+            Serial.println("[BOOT] SD data directory setup failed; using SPIFFS");
+          }
           // On a genuine first run, persist the auto-pick so the "Store data on SD"
           // toggle reflects it and the choice sticks on every later boot.
           if (fresh_install && sd_storage && !use_sd_pref) {
@@ -1390,7 +1424,7 @@ void setup() {
   #if defined(HAS_WIO_TRACKER_L2)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD_MMC : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
-  #elif defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  #elif defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
     SdNvsPrefs::useFile(sd_storage ? (fs::FS*)&SD : (fs::FS*)&SPIFFS,
                         sd_storage ? "/meshcomod" : "/prefs");
   #else

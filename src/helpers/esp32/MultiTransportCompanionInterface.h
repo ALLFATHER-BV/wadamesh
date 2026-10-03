@@ -52,7 +52,7 @@ public:
   // touched, so switching back resumes the phone link as it was.
   void setBlePhoneLinkPaused(bool paused);
   bool isBlePhoneLinkPaused() const { return _ble_phone_paused; }
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // T-Display P4: the factory C6 ESP-AT firmware has its BLE advertising commands stubbed
   // (BLEADVDATA/ADVSTART all ERROR — Meck-P4 hit the same wall and ships Wi-Fi companion), and
   // reflashing the C6 is ruled out for users. Phone pairing on this board = Wi-Fi (TCP:5000) or
@@ -69,7 +69,7 @@ public:
   void disableTcp() override;
   bool isTcpEnabled() const override { return _tcp_enabled; }
   bool isWsStarted() const override { return _ws_started; }
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // The web UI shares the companion TCP port (single AT listener + first-byte router),
   // so that's the port to show/open — _ws_port is never listened on here.
   uint16_t getWsPort() const override { return _tcp_port; }
@@ -131,7 +131,7 @@ private:
   uint16_t _ws_port;
   bool _tcp_started;
   bool _ws_started;
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // ESP-AT allows ONE listening port, so this router server owns it: every inbound
   // connection is accepted here, held briefly, and dispatched on its first byte —
   // an HTTP verb ('G','H','P','O','D') goes to _ws (web mirror/VNC/remote/terminal +

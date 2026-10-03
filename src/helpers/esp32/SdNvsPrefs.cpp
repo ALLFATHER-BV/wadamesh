@@ -2,7 +2,11 @@
 #if defined(ESP32)
 
 #include <FS.h>
+#if defined(HAS_CROWPANEL_35)
+#include <CrowPanel35SD.h>
+#else
 #include <SD.h>
+#endif
 #include <SPIFFS.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>

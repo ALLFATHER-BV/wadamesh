@@ -1,30 +1,42 @@
 # LilyGo T-Deck Pro port
 
-PlatformIO environment:
+PlatformIO environments:
 
 ```text
-LilyGo_TDeck_Pro_companion_radio_touch
+LilyGo_TDeck_Pro_v1_0_companion_radio_touch
+LilyGo_TDeck_Pro_v1_1_companion_radio_touch
 ```
 
 This is the 3.1-inch, 240x320 GDEQ031T10 e-paper T-Deck Pro. It is not the
-T-Deck Max. Hardware definitions are based on the working `tdeck-pro` target in
-`~/Projects/camillia/camillia-mt` at v4.8.0, with LilyGo and Meshtastic's
-`t-deck-pro-v1_1` variant as secondary references.
+T-Deck Max. V1.0 and V1.1 have incompatible reset and frontlight wiring, so
+select the target matching the PCB revision. The legacy
+`LilyGo_TDeck_Pro_companion_radio_touch` environment remains a V1.1-only local
+compatibility alias and is not a release target.
+
+V1.0 has no DRV2605 at I2C address `0x5A`. V1.1 has the DRV2605 at `0x5A` and
+no XL9555; the T-Deck Max is the model with an XL9555 at `0x20`. Check the PCB
+marking first and use these I2C identities when the marking is unclear.
 
 ## Hardware
 
-| Function | Pins / device |
-|---|---|
-| Shared SPI | SCK 36, MISO 47, MOSI 33 |
-| E-paper | CS 34, DC 35, reset 16, BUSY 37, frontlight 45 |
-| SX1262 | CS 3, DIO1 5, reset 4, BUSY 6, module power 46, TCXO 2.4 V |
-| microSD | CS 48 on shared SPI |
-| I2C | SDA 13, SCL 14 |
-| Keyboard | TCA8418 at 0x34, INT 15, backlight 42 |
-| Touch | CST328 or CST3530 at 0x1A, INT 12, reset 38 |
-| GPS | MIA-M10Q, host RX 44, host TX 43, enable 39, 38400 baud |
-| Battery | BQ25896 at 0x6B |
-| User button | GPIO0, active low |
+| Function | Shared / V1.0 | V1.1 |
+|---|---|---|
+| Shared SPI | SCK 36, MISO 47, MOSI 33 | Same |
+| E-paper | CS 34, DC 35, BUSY 37, no reset | Reset 16; other pins the same |
+| Frontlight | None | GPIO45 |
+| Touch | CST328 or CST3530 at `0x1A`, INT 12, reset 45 | Reset 38; other pins the same |
+| 1.8 V enable | GPIO38, driven high before display/touch setup | Not required |
+| SX1262 | CS 3, DIO1 5, reset 4, BUSY 6, module power 46, TCXO 2.4 V | Same |
+| microSD | CS 48 on shared SPI | Same |
+| I2C | SDA 13, SCL 14 | Same |
+| Keyboard | TCA8418 at `0x34`, INT 15, backlight 42 | Same |
+| GPS | MIA-M10Q, host RX 44, host TX 43, enable 39, 38400 baud | Same |
+| Battery | BQ25896 at `0x6B` | Same |
+| User button | GPIO0, active low | Same |
+
+The V1.0 build never initializes frontlight PWM or shows a brightness control.
+Using the V1.1 map on V1.0 drives GPIO45 as frontlight PWM and can leave the
+touch controller permanently asserted in reset.
 
 The e-paper SPI tuple follows the hardware-tested Camillia implementation.
 Meshtastic currently publishes a conflicting e-paper MOSI alias while its
@@ -63,8 +75,9 @@ display; GPIO0 is the wake control.
 - PlatformIO configuration resolves and all declared dependencies install.
 - Pro and Pager keyboard-state host tests pass.
 - Static diagnostics and `git diff --check` pass.
-- The firmware has been exercised on LilyGo T-Deck Pro hardware. This is initial
-  validation only, not comprehensive release qualification.
+- The V1.1 firmware has been exercised on LilyGo T-Deck Pro hardware. The V1.0
+  target follows LilyGo's V1.0 hardware definitions and factory power-enable
+  sequence but still needs direct hardware validation.
 
 Substantial additional testing is required before release, including repeated
 boot/full-refresh cycles, partial-refresh cadence and ghosting, keyboard input

@@ -38,33 +38,51 @@ list(REMOVE_ITEM _co "-Werror=all")
 idf_build_set_property(COMPILE_OPTIONS "${_co}")
 
 # ---- LilyGo T-Display P4 (AMOLED) app define set. -------------------------------------------------
-# Unlike the Tanmatsu (badge-bsp + a LoRa bridge), the T-Display P4 has a RAW SX1262 on P4 GPIOs, so
-# it uses the core's RadioLib path like the S3 boards — except SX1262 RESET + DIO1 sit on the XL9535
+# Unlike the Tanmatsu (badge-bsp + a LoRa bridge), the T-Display P4 has a raw SX1262 or LR2021 on
+# P4 GPIOs, so it uses the core's RadioLib path like the S3 boards — except RESET + DIO1 sit on the XL9535
 # I2C GPIO expander (the variant's target.cpp drives them; the raw P_LORA_RESET/DIO_1 are -1 = "none").
 # Pins from LilyGo's components/private_library/t_display_p4_config.h (see [[tdisplay-p4-port]]).
+if(DEFINED ENV{WADA_P4_LEGACY_AT})
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=0)
+  message(STATUS "wadamesh: P4 C6 backend = legacy ESP-AT")
+else()
+  set(P4_C6_BACKEND_DEF TDP4_C6_HOSTED=1)
+  message(STATUS "wadamesh: P4 C6 backend = esp-hosted")
+endif()
+if(DEFINED ENV{WADA_P4_LR2021})
+  set(P4_RADIO_DEFS
+    USE_LR2021 RADIO_CLASS=CustomLR2021 WRAPPER_CLASS=TDisplayP4LR2021Wrapper
+    LR2021_IRQ_DIO=11 LR2021_TCXO_VOLTAGE=3.3f LR2021_RX_BOOSTED_GAIN=1)
+  message(STATUS "wadamesh: P4 radio = LR2021")
+else()
+  set(P4_RADIO_DEFS
+    USE_SX1262 RADIO_CLASS=CustomSX1262 WRAPPER_CLASS=CustomSX1262Wrapper
+    SX126X_RX_BOOSTED_GAIN=1 SX126X_CURRENT_LIMIT=140)
+  message(STATUS "wadamesh: P4 radio = SX1262")
+endif()
 set(WADA_DEFS
   HAS_TDISPLAY_P4=1 ESP32_PLATFORM MC_VENDORED_TOUCH_APP UI_LVGL=1 HAS_TOUCH_UI=1
+  ${P4_C6_BACKEND_DEF}
+  ${P4_RADIO_DEFS}
   MULTI_TRANSPORT_COMPANION TCP_PORT=5000 WS_PORT=8765 BLE_PIN_CODE=123456
   LORA_FREQ=869.618 LORA_BW=62.5 LORA_SF=8            # EU 868 (same as the V4)
-  LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # SX1262 PA max (dBm); user-tunable in Settings
+  LORA_TX_POWER=22 MAX_LORA_TX_POWER=22               # sub-GHz PA max (dBm); user-tunable in Settings
   MAX_CONTACTS=2000 MAX_GROUP_CHANNELS=40             # P4 + 32MB PSRAM: ample
   ENABLE_PRIVATE_KEY_IMPORT=1 ENABLE_PRIVATE_KEY_EXPORT=1
 
-  # --- LoRa SX1262 (SPI_1) — CS/BUSY/SPI on raw P4 GPIO; RST+DIO1 on the XL9535 expander ---
-  USE_SX1262 RADIO_CLASS=CustomSX1262 WRAPPER_CLASS=CustomSX1262Wrapper
+  # --- LoRa radio (SPI_1) — SX1262 or LR2021 selected above. Both P4 V1 modules use
+  # the same CS/BUSY/SPI pins, with RST+DIO1 on the XL9535 expander. ---
   P_LORA_NSS=24 P_LORA_BUSY=6 P_LORA_SCLK=2 P_LORA_MISO=4 P_LORA_MOSI=3
   P_LORA_RESET=-1 P_LORA_DIO_1=-1                     # on XL9535 IO16/IO17 — variant drives these
   MESH_RADIO_DIO1_POLLED=1                            # DIO1 behind the expander → poll RxDone/TxDone over SPI (no host IRQ)
   P_LORA_TX_LED=-1 P_LORA_TX_NEOPIXEL_LED=-1
-  SX126X_RX_BOOSTED_GAIN=1
   # OCP, and the reason the P4 would only ever transmit at about +14 dBm however high you
   # set the power (#283, measured on a test set: capped at +14.1 dBm while Meck-P4 reached
   # +21.0 dBm on the same board). The SX1262 needs ~118 mA to deliver +22 dBm, but its
   # over-current protection defaults to 60 mA, so the PA was being current-limited and the
   # power steps went non-monotonic near the top. Every S3 board already sets this; the P4
   # was the one target that never did. 140 mA matches them.
-  SX126X_CURRENT_LIMIT=140
-  XL9535_SX1262_RST_IO=16 XL9535_SX1262_DIO1_IO=17    # SX1262 reset + IRQ behind the expander
+  XL9535_RADIO_RST_IO=16 XL9535_RADIO_DIO1_IO=17      # radio reset + IRQ behind the expander
   XL9535_RF_SWITCH_IO=1                               # SKY13453 VCTL (TX/RX path)
 
   # --- Display: panel SKU (DISPLAY_CLASS / SCREEN_WIDTH / SCREEN_HEIGHT) is selected in the
@@ -75,6 +93,15 @@ set(WADA_DEFS
   HAS_HI8561_TOUCH=1 PIN_TOUCH_SDA=7 PIN_TOUCH_SCL=8
   XL9535_TOUCH_RST_IO=3 XL9535_TOUCH_INT_IO=4
 
+  # --- Clip-on keyboard expansion (TCA8418 on Wire1's 46/45 route, shared with the codec).
+  # Detected at runtime; the on-screen keyboard stays while it is away (P4Keyboard.h). ---
+  HAS_TDISPLAY_P4_KEYBOARD=1
+
+  # --- BOOT button (GPIO35, active low) as the wake/lock button, like the Wio Tracker L2's:
+  # a press wakes (or lights the lock screen), a 2 s hold locks / unlocks. GPIO35 is not an
+  # LP GPIO, so it cannot wake deep sleep: UITask keeps the Power-off row off this board. ---
+  PIN_USER_BTN=35
+
   # --- Board I2C_1 (XL9535 + touch + PCF8563 RTC + BQ27220 gauge) ---
   PIN_BOARD_SDA=7 PIN_BOARD_SCL=8
   XL9535_SDA=7 XL9535_SCL=8 XL9535_INT_PIN=5
@@ -84,11 +111,14 @@ set(WADA_DEFS
   # PIN_GPS_TX = the GPIO wired to the MODULE'S TX pin; PIN_GPS_RX = wired to the module's RX.
   # Matches LilyGo's t_display_p4_config.h "GPS_TX 22 / GPS_RX 23" naming. The first cut had them
   # swapped (silent: UART opens fine, just never hears NMEA). Wake: XL9535 GPS_WAKE must be HIGH
-  # (powerOnSequence) or the L76K sleeps. Baud: L76K power-on default 9600 = the core default.
+  # (powerOnSequence) or the L76K sleeps.
   # ENV_SKIP_GPS_DETECT: like the T-Deck, force gps_detected=true — the P4's heavy boot can miss the
   # 1 s "any NMEA byte" detect window, and a false result then HIDES the GPS toggle and no-ops the
   # saved-pref resume, so GPS stays dead with no recovery until a lucky reboot. GPS_BAUD_RATE=9600
-  # pins the correct L76K baud (a stale 38400 NVS override will still need clearing on-device). ---
+  # is only the STARTING rate (the L76K's power-on default, as camillia-mt uses): the P4 builds
+  # WadaNmeaLocationProvider with UART probing (variants/tdisplay_p4/target.cpp), which walks
+  # 9600/19200/38400/57600/115200 until a checksummed sentence arrives (LilyGo's factory firmware
+  # leaves 115200 persisted) and saves the rate that works. ---
   ENV_INCLUDE_GPS=1 PIN_GPS_TX=22 PIN_GPS_RX=23 ENV_SKIP_GPS_DETECT=1 GPS_BAUD_RATE=9600
 
   # --- microSD on SDMMC slot 0 (CLK43/CMD44/D0-3=39-42); C6 esp-hosted is slot 1 ---

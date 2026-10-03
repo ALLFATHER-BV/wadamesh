@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // c6_at — AT-over-SDIO client for the T-Display P4's ESP32-C6 (ESP-AT firmware). See c6_at.h.
-// Clean-room: SDIO transport via Espressif's public SDMMC + esp_serial_slave_link (ESSL); the AT
-// framing / worker / Wi-Fi logic on top is our own.
+// SDIO framing follows LilyGo's GPL-3.0 EspAt transport at pinned commit
+// ff99314e37f125fe9f18b41340639f000c2f1e83. The AT worker and Wi-Fi/socket
+// layers on top remain WadaMesh-owned.
 #include "c6_at.h"
 #include <string.h>
 #include <stdio.h>
@@ -14,11 +15,14 @@
 #include "driver/sdmmc_host.h"
 #include "driver/sdmmc_default_configs.h"
 #include "sdmmc_cmd.h"
-#include "esp_serial_slave_link/essl.h"
-#include "esp_serial_slave_link/essl_sdio.h"
 #include "esp_heap_caps.h"
 
 static const char *TAG = "c6_at";
+
+// Board-owned XL9535 hook. LilyGo's factory EspAt transport resets the C6
+// immediately before SDIO initialization; the early board power sequence is
+// too far ahead of this worker to provide the same startup contract.
+extern bool tdisplay_p4_reset_c6(void);
 
 // ---- C6 SDIO wiring (T-Display P4, "SDIO_2" — slot 1) ----
 #define C6_SDIO_SLOT   1
@@ -28,19 +32,21 @@ static const char *TAG = "c6_at";
 #define C6_SDIO_D1     15
 #define C6_SDIO_D2     16
 #define C6_SDIO_D3     17
-// ESP-AT SDIO uses a 2048-byte transfer buffer on the slave; the host recv size must match.
+// Worker scratch buffers. The ESP-AT ring itself is larger; reads drain it in
+// bounded chunks through the slave's packet-length register.
 #define C6_RECV_BUF    2048
 #define C6_TX_CAP      2048          // AT lines AND raw socket payload chunks go out through s_tx
 // SDIO clock: conservative for reliable bring-up; ESP-AT SDIO is happy at 20 MHz.
 #define C6_SDIO_KHZ    SDMMC_FREQ_DEFAULT   // 20 MHz
 
 static sdmmc_card_t *s_card  = NULL;
-static essl_handle_t s_essl  = NULL;
+static bool          s_transport_up = false;
+static bool          s_ready_checked = false;
+static uint32_t      s_rx_total_index = 0;
 static volatile bool s_up    = false;
 static volatile bool s_dead  = false;
-// ESSL SDIO transfers DMA straight from/into these buffers: they must be DMA-capable internal RAM,
-// and on the P4 (cached internal RAM) both the ADDRESS and the transfer SIZE must be cache-line
-// aligned — hence heap_caps_aligned_alloc(64) + padding sends up to a 64-multiple.
+// SDIO transfers DMA straight from/into these buffers: they must be DMA-capable internal RAM,
+// and on the P4 (cached internal RAM) the addresses must be cache-line aligned.
 static uint8_t      *s_rx = NULL;
 static uint8_t      *s_tx = NULL;
 static size_t        s_align = 64;   // ESP32-P4 L1 cache line
@@ -114,12 +120,164 @@ static TaskHandle_t  s_worker = NULL;
 
 // ---- transport ---------------------------------------------------------------------------------
 
+#define C6_SDIO_FN_ENABLE       0x002
+#define C6_SDIO_FN_READY        0x003
+#define C6_SDIO_INT_ENABLE      0x004
+#define C6_SDIO_BLOCK_SIZE_LO   0x010
+#define C6_SDIO_BLOCK_SIZE_HI   0x011
+#define C6_SDIO_FN1_BLOCK_LO    0x110
+#define C6_SDIO_FN1_BLOCK_HI    0x111
+#define C6_SDIO_FN2_BLOCK_LO    0x210
+#define C6_AT_TOKEN_RDATA       0x044
+#define C6_AT_PACKET_LENGTH     0x060
+#define C6_AT_INTERRUPT_RAW     0x050
+#define C6_AT_INTERRUPT_CLEAR   0x0D4
+#define C6_AT_RX_NEW_PACKET     (1UL << 23)
+#define C6_AT_CMD53_END_ADDR    0x1F800
+#define C6_AT_BLOCK_SIZE        512
+#define C6_AT_TX_BLOCK_OFFSET   16
+#define C6_AT_TX_BLOCK_MASK     0x0FFF
+#define C6_AT_RX_LENGTH_MASK    0x0FFFFF
+#define C6_AT_RX_LENGTH_WRAP    0x100000
+
+static bool sdio_write_byte(uint32_t function, uint32_t address, uint8_t value) {
+    return s_card && sdmmc_io_write_byte(s_card, function, address, value, NULL) == ESP_OK;
+}
+
+static bool sdio_read_u32(uint32_t address, uint32_t *value) {
+    return s_card && value &&
+           sdmmc_io_read_bytes(s_card, 1, address, value, sizeof(*value)) == ESP_OK;
+}
+
+static bool sdio_write_u32(uint32_t address, uint32_t value) {
+    return s_card &&
+           sdmmc_io_write_bytes(s_card, 1, address, &value, sizeof(value)) == ESP_OK;
+}
+
+static bool transport_configure(void) {
+    // Match LilyGo's EspAt CCCR/function setup: functions 1+2, master IRQ, and
+    // 512-byte block sizes. WadaMesh currently exchanges data on function 1.
+    if (!sdio_write_byte(0, C6_SDIO_FN_ENABLE, 6) ||
+        !sdio_write_byte(0, C6_SDIO_FN_READY, 6) ||
+        !sdio_write_byte(0, C6_SDIO_INT_ENABLE, 7) ||
+        !sdio_write_byte(0, C6_SDIO_BLOCK_SIZE_LO, 0) ||
+        !sdio_write_byte(0, C6_SDIO_BLOCK_SIZE_HI, 2) ||
+        !sdio_write_byte(0, C6_SDIO_FN1_BLOCK_LO, 0) ||
+        !sdio_write_byte(0, C6_SDIO_FN1_BLOCK_HI, 2) ||
+        !sdio_write_byte(0, C6_SDIO_FN2_BLOCK_LO, 0) ||
+        // The 2025 factory driver deliberately writes 0x210 twice; retain that
+        // quirk for the C6 image shipped on early P4 units.
+        !sdio_write_byte(0, C6_SDIO_FN2_BLOCK_LO, 2)) {
+        ESP_LOGE(TAG, "ESP-AT SDIO function configuration failed");
+        return false;
+    }
+    s_rx_total_index = 0;
+    s_ready_checked = false;
+    s_transport_up = true;
+    return true;
+}
+
+static uint32_t transport_rx_available(void) {
+    uint32_t total = 0;
+    if (!s_transport_up || !sdio_read_u32(C6_AT_PACKET_LENGTH, &total)) return 0;
+    total &= C6_AT_RX_LENGTH_MASK;
+    return (total + C6_AT_RX_LENGTH_WRAP - s_rx_total_index) % C6_AT_RX_LENGTH_WRAP;
+}
+
+static bool transport_receive_packet(uint8_t *data, size_t capacity, size_t *received) {
+    if (received) *received = 0;
+    if (!data || !received || capacity == 0 || !s_transport_up) return false;
+
+    uint32_t flags = 0;
+    if (sdio_read_u32(C6_AT_INTERRUPT_RAW, &flags) && (flags & C6_AT_RX_NEW_PACKET))
+        (void)sdio_write_u32(C6_AT_INTERRUPT_CLEAR, flags);
+
+    uint32_t available = transport_rx_available();
+    if (available == 0) return true;
+    size_t length = available < capacity ? (size_t)available : capacity;
+    const size_t block_length = (length / C6_AT_BLOCK_SIZE) * C6_AT_BLOCK_SIZE;
+    uint32_t remaining = available;
+    if (block_length) {
+        esp_err_t err = sdmmc_io_read_blocks(
+            s_card, 1, C6_AT_CMD53_END_ADDR - remaining, data, block_length);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ESP-AT block read: %s", esp_err_to_name(err));
+            return false;
+        }
+        remaining -= block_length;
+        s_rx_total_index = (s_rx_total_index + block_length) & C6_AT_RX_LENGTH_MASK;
+    }
+    const size_t tail_length = length - block_length;
+    if (tail_length) {
+        uint8_t tail[C6_AT_BLOCK_SIZE] __attribute__((aligned(4))) = {0};
+        const size_t aligned = (tail_length + 3) & ~(size_t)3;
+        esp_err_t err = sdmmc_io_read_bytes(
+            s_card, 1, C6_AT_CMD53_END_ADDR - remaining, tail, aligned);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ESP-AT tail read: %s", esp_err_to_name(err));
+            return false;
+        }
+        memcpy(data + block_length, tail, tail_length);
+        s_rx_total_index = (s_rx_total_index + tail_length) & C6_AT_RX_LENGTH_MASK;
+    }
+    *received = length;
+    return true;
+}
+
+static bool transport_send_packet(const uint8_t *data, size_t length, uint32_t timeout_ms) {
+    if (!data || length == 0 || length > C6_AT_CMD53_END_ADDR || !s_transport_up)
+        return false;
+    const uint32_t deadline = (uint32_t)(esp_timer_get_time() / 1000) + timeout_ms;
+    for (;;) {
+        uint32_t token = 0;
+        if (!sdio_read_u32(C6_AT_TOKEN_RDATA, &token)) return false;
+        if (((token >> C6_AT_TX_BLOCK_OFFSET) & C6_AT_TX_BLOCK_MASK) * C6_AT_BLOCK_SIZE >= length)
+            break;
+        if ((int32_t)((uint32_t)(esp_timer_get_time() / 1000) - deadline) >= 0) return false;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    const size_t block_length = (length / C6_AT_BLOCK_SIZE) * C6_AT_BLOCK_SIZE;
+    if (block_length) {
+        esp_err_t err = sdmmc_io_write_blocks(
+            s_card, 1, C6_AT_CMD53_END_ADDR - length, data, block_length);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ESP-AT block write: %s", esp_err_to_name(err));
+            return false;
+        }
+    }
+    const size_t tail_length = length - block_length;
+    if (tail_length) {
+        uint8_t tail[C6_AT_BLOCK_SIZE] __attribute__((aligned(4))) = {0};
+        memcpy(tail, data + block_length, tail_length);
+        const size_t aligned = (tail_length + 3) & ~(size_t)3;
+        esp_err_t err = sdmmc_io_write_bytes(
+            s_card, 1, C6_AT_CMD53_END_ADDR - tail_length, tail, aligned);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "ESP-AT tail write: %s", esp_err_to_name(err));
+            return false;
+        }
+    }
+    return true;
+}
+
+static void sdio_bring_down(void) {
+    s_transport_up = false;
+    s_ready_checked = false;
+    s_rx_total_index = 0;
+    if (s_card) {
+        free(s_card);
+        s_card = NULL;
+    }
+    // Slot 0 belongs to the SD card; release only the C6's dedicated slot 1.
+    (void)sdmmc_host_deinit_slot(C6_SDIO_SLOT);
+}
+
 static bool sdio_bring_up(void) {
+    if (s_transport_up) return true;
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.slot = C6_SDIO_SLOT;
-    // ALLOC_ALIGNED_BUF: generic ESSL reads its 4-byte status registers into unaligned stack vars —
-    // this flag makes the SDMMC layer auto-bounce those through an aligned buffer instead of
-    // returning INVALID_ARG on the cache-aligned P4. (Our own AT buffers skip the bounce.)
+    // Let SDMMC bounce small control-register reads through aligned storage when needed.
     host.flags = SDMMC_HOST_FLAG_4BIT | SDMMC_HOST_FLAG_ALLOC_ALIGNED_BUF;
     host.max_freq_khz = C6_SDIO_KHZ;
 
@@ -135,32 +293,46 @@ static bool sdio_bring_up(void) {
         ESP_LOGE(TAG, "sdmmc_host_init: %s", esp_err_to_name(err)); return false;
     }
     err = sdmmc_host_init_slot(C6_SDIO_SLOT, &slot);
-    if (err != ESP_OK) { ESP_LOGE(TAG, "sdmmc_host_init_slot: %s", esp_err_to_name(err)); return false; }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "sdmmc_host_init_slot: %s", esp_err_to_name(err));
+        sdio_bring_down();
+        return false;
+    }
 
     s_card = (sdmmc_card_t *)calloc(1, sizeof(sdmmc_card_t));
-    if (!s_card) return false;
-    err = sdmmc_card_init(&host, s_card);      // probes the C6 as an SDIO (IO) card
-    if (err != ESP_OK) { ESP_LOGE(TAG, "sdmmc_card_init (C6 not on SDIO?): %s", esp_err_to_name(err)); return false; }
-    ESP_LOGI(TAG, "SDIO card up");
-
-    essl_sdio_config_t cfg = { .card = s_card, .recv_buffer_size = C6_RECV_BUF };
-    err = essl_sdio_init_dev(&s_essl, &cfg);
-    if (err != ESP_OK) { ESP_LOGE(TAG, "essl_sdio_init_dev: %s", esp_err_to_name(err)); return false; }
-    err = essl_init(s_essl, 1000);
-    if (err != ESP_OK) { ESP_LOGE(TAG, "essl_init: %s", esp_err_to_name(err)); return false; }
-    (void)essl_wait_for_ready(s_essl, 2000);
+    if (!s_card) { sdio_bring_down(); return false; }
+    // Match LilyGo's HardwareSdio: C6 can still be leaving reset while the
+    // host slot is ready, so retry card identification before failing.
+    for (int attempt = 0; attempt < 30; ++attempt) {
+        err = sdmmc_card_init(&host, s_card);
+        if (err == ESP_OK) break;
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "sdmmc_card_init (C6 not on SDIO?): %s", esp_err_to_name(err));
+        sdio_bring_down();
+        return false;
+    }
+    err = sdmmc_io_enable_int(s_card);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "sdmmc_io_enable_int: %s", esp_err_to_name(err));
+        sdio_bring_down();
+        return false;
+    }
+    if (!transport_configure()) { sdio_bring_down(); return false; }
+    ESP_LOGI(TAG, "SDIO card up (ESP-AT register transport)");
     return true;
 }
 
 // Drain pending RX packets from the C6 into `out` (up to sz-1), NUL-terminate. Returns bytes read.
-// Polls essl_get_packet (the C6 AT slave doesn't reliably raise the SDIO interrupt for us); the echo
-// and the "OK" arrive as separate packets, so keep draining until 2 empty polls after data.
+// Poll the ESP-AT receive-length register; echo and OK may arrive separately, so
+// keep draining until two empty polls after data.
 static size_t drain_rx(char *out, size_t sz, uint32_t deadline_ms) {
     size_t n = 0;
     int empty = 0;
     while ((uint32_t)(esp_timer_get_time() / 1000) < deadline_ms) {
         size_t got = 0;
-        essl_get_packet(s_essl, s_rx, C6_RECV_BUF, &got, 50);
+        if (!transport_receive_packet(s_rx, C6_RECV_BUF, &got)) break;
         if (got > 0) {
             empty = 0;
             if (out) {
@@ -184,35 +356,42 @@ static size_t drain_rx(char *out, size_t sz, uint32_t deadline_ms) {
 static void urc_scan(const char *buf, size_t n);   // spot +IPD / <id>,CLOSED lines in any response
 
 bool c6at_command(const char *cmd, char *resp, size_t resp_sz, uint32_t timeout_ms) {
-    if (!s_essl || !s_tx) return false;
+    if (!s_transport_up || !s_tx) return false;
     int len = snprintf((char *)s_tx, C6_TX_CAP, "%s\r\n", cmd);
     if (len <= 0 || len >= C6_TX_CAP) return false;
-    // The SDIO DMA transfer size must be a multiple of the cache line: pad with '\n' (ESP-AT
-    // ignores empty lines).
-    size_t plen = ((size_t)len + s_align - 1) / s_align * s_align;
-    if (plen > C6_TX_CAP) plen = C6_TX_CAP;
-    for (size_t i = (size_t)len; i < plen; i++) s_tx[i] = '\n';
-
-    esp_err_t serr = essl_send_packet(s_essl, s_tx, plen, 1000);
-    if (serr != ESP_OK) { ESP_LOGW(TAG, "send '%s' failed: %s", cmd, esp_err_to_name(serr)); return false; }
+    if (!transport_send_packet(s_tx, (size_t)len, 1000)) {
+        ESP_LOGW(TAG, "send '%s' failed", cmd);
+        return false;
+    }
 
     // Collect the reply until a terminating status line appears. Static: only the worker calls this.
     static char buf[3584]; size_t n = 0; buf[0] = '\0';
     uint32_t deadline = (uint32_t)(esp_timer_get_time() / 1000) + timeout_ms;
-    bool ok = false, done = false;
+    bool ok = false, done = false, truncated = false;
     while (!done && (uint32_t)(esp_timer_get_time() / 1000) < deadline) {
         static char chunk[C6_RECV_BUF];
         size_t got = drain_rx(chunk, sizeof(chunk), deadline);
+        bool chunk_ok = false, chunk_err = false;
         if (got) {
+            // A dense CWLAP response can fill `buf` before ESP-AT sends its
+            // terminal status packet. Always inspect the fresh chunk too, or
+            // the discarded trailing OK turns a successful scan into TIMEOUT.
+            chunk_ok = strstr(chunk, "\r\nOK\r\n") || (got >= 4 && !strncmp(chunk, "OK\r\n", 4));
+            chunk_err = strstr(chunk, "\r\nERROR\r\n") || strstr(chunk, "\r\nFAIL\r\n");
             size_t cp = (n + got < sizeof(buf) - 1) ? got : (sizeof(buf) - 1 - n);
             memcpy(buf + n, chunk, cp); n += cp; buf[n] = '\0';
+            if (cp < got) truncated = true;
         }
-        if (strstr(buf, "\r\nOK\r\n")    || (n >= 4 && !strncmp(buf, "OK\r\n", 4)))   { ok = true;  done = true; }
-        else if (strstr(buf, "\r\nERROR\r\n") || strstr(buf, "\r\nFAIL\r\n"))          { ok = false; done = true; }
+        if (chunk_ok || strstr(buf, "\r\nOK\r\n") || (n >= 4 && !strncmp(buf, "OK\r\n", 4))) {
+            ok = true; done = true;
+        } else if (chunk_err || strstr(buf, "\r\nERROR\r\n") || strstr(buf, "\r\nFAIL\r\n")) {
+            ok = false; done = true;
+        }
     }
     urc_scan(buf, n);   // "+IPD"/"<id>,CLOSED" lines interleave with command output — never miss them
     if (resp) { strncpy(resp, buf, resp_sz - 1); resp[resp_sz - 1] = '\0'; }
-    ESP_LOGI(TAG, "AT '%s' -> %s (%u bytes)", cmd, ok ? "OK" : (done ? "ERR" : "TIMEOUT"), (unsigned)n);
+    ESP_LOGI(TAG, "AT '%s' -> %s (%u bytes%s)", cmd, ok ? "OK" : (done ? "ERR" : "TIMEOUT"),
+             (unsigned)n, truncated ? ", truncated" : "");
     return ok;
 }
 
@@ -236,21 +415,13 @@ static bool sysmfg_write_row(int idx, const char *row) {
     static char acc[512];
     int clen = snprintf((char *)s_tx, C6_TX_CAP, "AT+SYSMFG=2,\"ble_data\",\"cfg%d\",7,%u\r\n",
                         idx, (unsigned)strlen(row));
-    size_t plen = ((size_t)clen + s_align - 1) / s_align * s_align;
-    for (size_t i = (size_t)clen; i < plen; i++) s_tx[i] = '\n';
-    if (essl_send_packet(s_essl, s_tx, plen, 1000) != ESP_OK) return false;
+    if (!transport_send_packet(s_tx, (size_t)clen, 1000)) return false;
     if (!collect_until(">", acc, sizeof(acc), 3000)) { printf("[nus] cfg%d no prompt: %s\n", idx, acc); return false; }
     // Data phase: EXACT length first — pad bytes after the counted data desync the SYSMFG reader
     // (unlike CIPSEND, which tolerates them). ALLOC_ALIGNED_BUF bounces small unaligned DMA sends;
     // fall back to '\n' padding only if the raw send is rejected by the host driver.
     int dl = snprintf((char *)s_tx, C6_TX_CAP, "%s", row);
-    esp_err_t serr = essl_send_packet(s_essl, s_tx, (size_t)dl, 1000);
-    if (serr != ESP_OK) {
-        size_t dpad = ((size_t)dl + s_align - 1) / s_align * s_align;
-        for (size_t i = (size_t)dl; i < dpad; i++) s_tx[i] = '\n';
-        if (essl_send_packet(s_essl, s_tx, dpad, 1000) != ESP_OK) return false;
-        printf("[nus] cfg%d exact-len send rejected (0x%x), padded fallback used\n", idx, serr);
-    }
+    if (!transport_send_packet(s_tx, (size_t)dl, 1000)) return false;
     if (!collect_until("OK", acc, sizeof(acc), 3000)) { printf("[nus] cfg%d write FAIL: %s\n", idx, acc); return false; }
     printf("[nus] cfg%d <- %s\n", idx, row);
     // Self-sync: ping until the parser answers OK again (absorbs any queued stray responses).
@@ -317,7 +488,24 @@ bool c6at_begin(void) {
     if (!s_rx) s_rx = heap_caps_aligned_alloc(s_align, C6_RECV_BUF, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_tx) s_tx = heap_caps_aligned_alloc(s_align, C6_TX_CAP,   MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
     if (!s_rx || !s_tx) { ESP_LOGE(TAG, "DMA buffer alloc failed"); return false; }
-    if (!sdio_bring_up()) return false;
+    if (!s_transport_up && !sdio_bring_up()) return false;
+
+    if (!s_ready_checked) {
+        static char ready[256];
+        const uint32_t deadline = (uint32_t)(esp_timer_get_time() / 1000) + 2000;
+        const size_t ready_n = drain_rx(ready, sizeof(ready), deadline);
+        uint32_t token = 0, rx_total = 0, irq = 0;
+        const bool token_ok = sdio_read_u32(C6_AT_TOKEN_RDATA, &token);
+        const bool length_ok = sdio_read_u32(C6_AT_PACKET_LENGTH, &rx_total);
+        const bool irq_ok = sdio_read_u32(C6_AT_INTERRUPT_RAW, &irq);
+        ESP_LOGI(TAG,
+                 "ESP-AT startup: ready=%s bytes=%u token=%s%lu rxlen=%s%lu irq=%s0x%08lx",
+                 strstr(ready, "ready") ? "yes" : "no", (unsigned)ready_n,
+                 token_ok ? "" : "ERR/", (unsigned long)token,
+                 length_ok ? "" : "ERR/", (unsigned long)(rx_total & C6_AT_RX_LENGTH_MASK),
+                 irq_ok ? "" : "ERR/", (unsigned long)irq);
+        s_ready_checked = true;
+    }
 
     for (int i = 0; i < 10; i++) {                 // the C6 may still be booting ESP-AT
         char r[64];
@@ -403,7 +591,7 @@ static bool collect_until(const char *token, char *acc, size_t acc_sz, uint32_t 
     uint32_t deadline = (uint32_t)(esp_timer_get_time() / 1000) + timeout_ms;
     while ((uint32_t)(esp_timer_get_time() / 1000) < deadline) {
         size_t got = 0;
-        essl_get_packet(s_essl, s_rx, C6_RECV_BUF, &got, 40);
+        if (!transport_receive_packet(s_rx, C6_RECV_BUF, &got)) return false;
         if (got) {
             size_t cp = (n + got < acc_sz - 1) ? got : (acc_sz - 1 - n);
             memcpy(acc + n, s_rx, cp); n += cp; acc[n] = '\0';
@@ -441,16 +629,11 @@ static void worker_sock_send(c6_req_t *rq) {
         char cmd[40];
         snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d,%u", rq->id, (unsigned)chunk);
         int clen = snprintf((char *)s_tx, C6_TX_CAP, "%s\r\n", cmd);
-        size_t plen = ((size_t)clen + s_align - 1) / s_align * s_align;
-        for (size_t i = (size_t)clen; i < plen; i++) s_tx[i] = '\n';
-        if (essl_send_packet(s_essl, s_tx, plen, 1000) != ESP_OK) { ok = false; break; }
+        if (!transport_send_packet(s_tx, (size_t)clen, 1000)) { ok = false; break; }
         if (!collect_until(">", acc, sizeof(acc), 3000)) { ok = false; break; }
-        // Raw payload: exactly `chunk` bytes count; the '\n' padding lands in the AT parser as
-        // ignorable empty lines.
+        // Raw payload: exactly `chunk` bytes, as promised by CIPSEND.
         memcpy(s_tx, p, chunk);
-        size_t dlen = (chunk + s_align - 1) / s_align * s_align;
-        for (size_t i = chunk; i < dlen; i++) s_tx[i] = '\n';
-        if (essl_send_packet(s_essl, s_tx, dlen, 2000) != ESP_OK) { ok = false; break; }
+        if (!transport_send_packet(s_tx, chunk, 2000)) { ok = false; break; }
         // 4 s, not more: SEND OK normally lands in ms; it only drags when the peer stopped
         // ACKing and the C6's socket buffer is full. Every second spent here stalls the whole
         // AT worker (companion + HTTP + mirror), so fail fast and let the caller's reaper
@@ -476,9 +659,7 @@ static void worker_sock_pull(int id) {
     uint32_t want = space - 1; if (want > SOCK_PULL_MAX) want = SOCK_PULL_MAX;
 
     int clen = snprintf((char *)s_tx, C6_TX_CAP, "AT+CIPRECVDATA=%d,%u\r\n", id, (unsigned)want);
-    size_t plen = ((size_t)clen + s_align - 1) / s_align * s_align;
-    for (size_t i = (size_t)clen; i < plen; i++) s_tx[i] = '\n';
-    if (essl_send_packet(s_essl, s_tx, plen, 1000) != ESP_OK) return;
+    if (!transport_send_packet(s_tx, (size_t)clen, 1000)) return;
 
     static uint8_t acc[SOCK_PULL_MAX + 512];
     size_t n = 0;
@@ -486,7 +667,7 @@ static void worker_sock_pull(int id) {
     int hdr_at = -1, data_len = -1; size_t data_off = 0;
     while ((uint32_t)(esp_timer_get_time() / 1000) < deadline) {
         size_t got = 0;
-        essl_get_packet(s_essl, s_rx, C6_RECV_BUF, &got, 40);
+        if (!transport_receive_packet(s_rx, C6_RECV_BUF, &got)) break;
         if (got) {
             size_t cp = (n + got <= sizeof(acc)) ? got : (sizeof(acc) - n);
             memcpy(acc + n, s_rx, cp); n += cp;
@@ -640,12 +821,22 @@ static void worker_do_join(const char *ssid, const char *pass) {
 
 static void c6WorkerTask(void *arg) {
     (void)arg;
-    // Bring the link up ourselves (the C6 may still be booting ESP-AT after the C6_EN pulse).
-    vTaskDelay(pdMS_TO_TICKS(1500));
+    // Match LilyGo's factory transport lifecycle: reset immediately before
+    // configuring SDIO, then let ESP-AT reach its ready state.
+    if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "worker: C6 reset hook failed");
     bool up = false;
     for (int i = 0; i < 10 && !up; i++) {
         up = c6at_begin();
-        if (!up) vTaskDelay(pdMS_TO_TICKS(1000));
+        if (!up) {
+            // Reuse a successfully initialized slot while the C6 is merely
+            // booting, but periodically rebuild a poisoned/half-open SDIO link.
+            if (i == 2 || i == 5 || i == 8) {
+                ESP_LOGW(TAG, "worker: rebuilding C6 SDIO link after failed AT probes");
+                sdio_bring_down();
+                if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "worker: C6 reset hook failed");
+            }
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
     }
     if (!up) {
         s_dead = true;
@@ -708,7 +899,7 @@ static void c6WorkerTask(void *arg) {
             // 2. drain any stray unsolicited lines so +IPD/CLOSED aren't stuck in the C6's queue.
             if (!pulled) {
                 size_t got = 0;
-                essl_get_packet(s_essl, s_rx, C6_RECV_BUF, &got, 20);
+                (void)transport_receive_packet(s_rx, C6_RECV_BUF, &got);
                 if (got) { s_rx[got < C6_RECV_BUF ? got : C6_RECV_BUF - 1] = 0; urc_scan((char *)s_rx, got); }
             }
             // 3. bring the inbound listener up when asked (want-flag; also self-heals a request

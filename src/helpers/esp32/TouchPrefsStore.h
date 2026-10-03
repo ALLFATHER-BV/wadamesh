@@ -60,6 +60,12 @@ bool    touchPrefsSetThemeMode(uint8_t mode);
 uint8_t touchPrefsGetKbBacklight();
 bool    touchPrefsSetKbBacklight(uint8_t mode);
 
+/** T-Display P4 keyboard expansion backlight step (F11 cycles it; 0 = off, see
+ *  P4KB_LIGHT_STEPS). Its own key, separate from the off/on/auto mode above:
+ *  `def` is returned until the first F11 press is saved. */
+uint8_t touchPrefsGetP4KbLight(uint8_t def);
+void    touchPrefsSetP4KbLight(uint8_t step);
+
 /** Currently active keyboard layout. 0 = English, 1 = Bulgarian phonetic.
  *  Persisted so the device boots back into the last-used layout. */
 uint8_t touchPrefsGetKeyboardLayout();
@@ -680,5 +686,17 @@ uint16_t touchPrefsGetSigPollMins();
 /* NB: there is deliberately no touchPrefsGet/SetP4Antenna(). The T-Display P4 antenna choice is
  * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
 bool     touchPrefsSetSigPollMins(uint16_t mins);
+
+/** Settings backup: the screen and app preferences (display, sounds, keyboard,
+ *  map, notifications, quick replies, favourites/ignores, channel mute/emoji/scope,
+ *  repeater passwords, saved Wi-Fi networks...). Export writes a JSON array of
+ *  ["key","type","value"] triples (type c=u8 s=u16 u=u32 t=string b=hex blob) to
+ *  `out`; each import call restores one triple, accepting only keys and types
+ *  this build would write itself. The packed "cfg" blob is merged field by field,
+ *  keeping settings tied to this particular unit (battery calibration, GPS baud,
+ *  paired BLE keyboard, boot modes, clock floor, FEM, beta-report counters). */
+class Print;
+void touchPrefsBackupExport(Print& out);
+bool touchPrefsBackupRestore(const char* key, char type, const char* value);
 
 #endif

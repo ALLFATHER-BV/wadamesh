@@ -3,6 +3,17 @@
 These post-flash checks verify the setup-wizard keyboard fallback and CST3530
 touch fix on a LilyGo T-Deck Pro 4G.
 
+## Choose the hardware revision
+
+Flash `LilyGo_TDeck_Pro_v1_0_companion_radio_touch` on V1.0 hardware and
+`LilyGo_TDeck_Pro_v1_1_companion_radio_touch` on V1.1 hardware. Do not use the
+V1.1 image on V1.0: GPIO45 is touch reset on V1.0 but frontlight PWM on V1.1,
+so the wrong image can hold the touch controller in reset. V1.0 has no
+frontlight; V1.1 identifies a DRV2605 at I2C address `0x5A`.
+
+Run the checks below separately on each available PCB revision and include the
+revision and firmware target in the report.
+
 ## Boot check
 
 With a 115200-baud serial monitor attached, reboot the device and record this

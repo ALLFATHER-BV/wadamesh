@@ -16,6 +16,11 @@ void TDeckProBoard::begin() {
   Wire.begin(PIN_BOARD_SDA, PIN_BOARD_SCL, 400000);
   pinMode(PIN_USER_BTN, INPUT_PULLUP);
 
+#if defined(PIN_1V8_EN) && (PIN_1V8_EN >= 0)
+  pinMode(PIN_1V8_EN, OUTPUT);
+  digitalWrite(PIN_1V8_EN, HIGH);
+#endif
+
   const uint8_t selects[] = { PIN_TFT_CS, P_LORA_NSS, P_LORA_RESET, PIN_SD_CS };
   for (uint8_t pin : selects) {
     pinMode(pin, OUTPUT);

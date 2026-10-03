@@ -25,7 +25,18 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(HAS_WIO_TRACKER_L2)          // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
+#if defined(HAS_CROWPANEL_35)            // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
+  #define CAP_TOUCH        1   // GT911 capacitive touch
+  #define CAP_ROTATABLE    1   // ILI9488 native portrait, upright landscape = rotation 3
+  #define CAP_LARGE_SCREEN 0   // native 480x320, no upscaling
+  #define CAP_SD           1   // microSD over software SPI, SD-compatible filesystem API
+  #define CAP_FILESYSTEM   1   // internal SPIFFS + tiles LittleFS
+  #define CAP_GPS          1   // optional external UART1 GPS
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  0   // GPIO0 is LoRa NSS, no separate button to unlock
+  #define CAP_BATTERY      0   // no battery voltage sensing
+
+#elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    0
   #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
@@ -125,7 +136,7 @@
   #define CAP_LOCK_SCREEN  0
 
 #elif defined(HAS_TDISPLAY_P4)        // ===== LilyGo T-Display P4 (ESP32-P4 + C6) =====
-  // Phone-class AMOLED handheld: RM69A10 MIPI-DSI 568x1232 portrait, HI8561 cap touch, SX1262,
+  // Phone-class handheld: RM69A10 AMOLED or HI8561 TFT, capacitive touch, SX1262 or LR2021,
   // C6 Wi-Fi/BLE (esp-hosted), SD_MMC. 32 MB PSRAM — web browser fits easily.
   #define CAP_TOUCH        1
   // The MIPI-DSI panel cannot MADCTL-rotate, so landscape is LVGL's software
@@ -142,16 +153,12 @@
   #define CAP_FILESYSTEM   1   // SD_MMC + internal FFat 'storage'
   #define CAP_GPS          1   // L76K
   #define CAP_OTA          1   // standalone dual-OTA app
-  // 0, for the same reason as the V4-R8 above: nothing here is wired. There is no
-  // way to REACH the lock (the control-center Lock button is HAS_TDECK_GT911-only,
-  // and the pager/Tanmatsu triggers are their own boards), no unlock gesture (every
-  // unlock path is a trackball / Vol- / d-pad / wake-button branch, and the on-screen
-  // hint falls through to "hold the trackball", which this board does not have), and
-  // the DSEC_LOCK settings body is gated to the T-Deck and M9 -- so declaring the cap
-  // only produced an empty Lock screen settings card (#451). Turning this back on is
-  // a feature: a touch reveal + hold-to-unlock path, a P4 hint string, and the
-  // DSEC_LOCK gates. Until then, do not advertise it.
-  #define CAP_LOCK_SCREEN  0
+  // The BOOT button (GPIO35, PIN_USER_BTN) works like the Wio Tracker L2's wake
+  // button: a press wakes the screen or lights the lock screen, holding it 2 s
+  // locks / unlocks. That is both the way to reach the lock and the deliberate
+  // unlock #451 found missing; the lock hint names the button, and the Lock screen
+  // settings page carries the "Lock when screen off" switch (as on the L2).
+  #define CAP_LOCK_SCREEN  1
 
 #elif defined(ATTAKY_MESH_SERIES)
   #define CAP_TOUCH        1
@@ -174,9 +181,14 @@
   #define CAP_LOCK_SCREEN  0
 #endif
 
+// Boards without a battery ADC must not advertise battery history/calibration.
+#ifndef CAP_BATTERY
+  #define CAP_BATTERY 1
+#endif
+
 // Physical removable microSD slot, independent of the filesystem API used to
-// drive it. CAP_SD specifically means Arduino SD over SPI; these three boards
-// use SD_MMC instead but still need the same user-facing card diagnostics.
+// drive it. CAP_SD means the SD-compatible SPI API (hardware or software);
+// SD_MMC boards still need the same user-facing card diagnostics.
 #if CAP_SD || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   #define CAP_MICROSD 1
 #else
@@ -215,6 +227,16 @@
   #define CAP_BLE_KEYBOARD 0
 #endif
 
+// A keyboard that comes and goes at runtime and is routed like the Bluetooth
+// one above (bleKbdDispatch() and friends): Bluetooth itself, an M5Stack CardKB,
+// or the T-Display P4's clip-on keyboard expansion. CAP_BLE_KEYBOARD stays the
+// gate for what is Bluetooth's alone (pairing, the Bluetooth page, BleKbd::).
+#if CAP_BLE_KEYBOARD || defined(HAS_CARDKB) || defined(HAS_TDISPLAY_P4_KEYBOARD)
+  #define CAP_EXT_KEYBOARD 1
+#else
+  #define CAP_EXT_KEYBOARD 0
+#endif
+
 // Focus-group D-pad navigation (no pointer): Tanmatsu keypad, T-Deck trackball,
 // the pager (no touch at all — the rotary encoder is its only nav input, so
 // like Tanmatsu this is always-on, not an optional toggle like the T-Deck's),
@@ -227,10 +249,10 @@
 // CAP_TRACKBALL` block); the Attaky drains its expander queue in attakyNavPump().
 // NOTE: the Attaky is the first board here with CAP_KEYBOARD == 0, so anything
 // this flag pulls in must not assume a physical keyboard is also compiled.
-// Touchscreen-only boards that take a Bluetooth or CardKB keyboard join too:
-// the group stays empty (and invisible) until a keyboard connects.
+// Touchscreen-only boards that take a Bluetooth, CardKB or clip-on keyboard join
+// too: the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    defined(HAS_CARDKB) || (CAP_BLE_KEYBOARD && !CAP_KEYBOARD)
+    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
@@ -256,8 +278,12 @@
 
 // A true power cut can leave these boards without trustworthy wall time. The
 // T-Deck has no RTC; the M9's PCF8563 can report lost integrity after shutdown.
-// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383.
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
+// Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383. The
+// T-Display P4's PCF8563 has come back asserting impossible dates, so it gets the
+// same fallback -- on the esp-hosted C6 build only: the sync drives Arduino's real
+// WiFi, which the legacy ESP-AT build must never touch.
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || \
+    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
   #define CAP_BOOT_TIME_SYNC 1
 #else
   #define CAP_BOOT_TIME_SYNC 0

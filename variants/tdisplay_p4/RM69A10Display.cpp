@@ -178,6 +178,14 @@ bool RM69A10Display::begin() {
   return true;
 }
 
+// Native-resolution blit for P4PanelPainter (Remote UI placeholder etc.): no LVGL upscale,
+// exclusive end coords, and wait for the framebuffer copy before the caller reuses its buffer.
+void RM69A10Display::writeNativeRGB565(int x, int y, int w, int h, const uint16_t* px) {
+  if (!_panel || !px || w <= 0 || h <= 0) return;
+  esp_lcd_panel_draw_bitmap(_panel, x, y, x + w, y + h, px);
+  if (s_flush_sem) xSemaphoreTake(s_flush_sem, pdMS_TO_TICKS(100));
+}
+
 void RM69A10Display::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
   if (!_panel || !pixels || w <= 0 || h <= 0) return;
 #if defined(TDP4_FLUSH_TRACE)

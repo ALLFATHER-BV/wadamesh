@@ -3,7 +3,7 @@
 #include <helpers/BaseSerialInterface.h>
 #include <WiFi.h>
 
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // T-Display P4: TCP/IP lives on the C6 (ESP-AT over SDIO) — rebind the server + client types to
   // the c6_at facades BEFORE the class definitions below so every TU sees one consistent layout.
   // Inbound listening = AT+CIPSERVER (single port; it's this companion server's).

@@ -3,7 +3,11 @@
 #include "DataStore.h"
 #include <helpers/AdvertDataHelpers.h>   // ADV_TYPE_NONE (blank-record skip in loadContacts)
 #if defined(ESP32)
+#if defined(HAS_CROWPANEL_35)
+#include <CrowPanel35SD.h>
+#else
 #include <SD.h>
+#endif
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
@@ -319,7 +323,7 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
 namespace {
 
 void default_rx_boosted_gain_pref(uint8_t& out) {
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
   #ifdef SX126X_RX_BOOSTED_GAIN
   out = (SX126X_RX_BOOSTED_GAIN != 0) ? 1 : 0;
   #else
@@ -1127,9 +1131,13 @@ bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
 // Creates the folders, repoints _fs + the identity store, and sets the path
 // prefix so every subsequent read/write/exists/remove lands under /meshcomod.
 bool DataStore::useSdStorage() {
-  if (!SD.exists("/meshcomod"))          SD.mkdir("/meshcomod");
-  if (!SD.exists("/meshcomod/bl"))       SD.mkdir("/meshcomod/bl");
-  if (!SD.exists("/meshcomod/identity")) SD.mkdir("/meshcomod/identity");
+  static const char* const directories[] = { "/meshcomod", "/meshcomod/bl", "/meshcomod/identity" };
+  for (const char* path : directories) {
+    if (!SD.exists(path) && !SD.mkdir(path)) {
+      Serial.printf("[STORE] SD data directory unavailable: %s\n", path);
+      return false;
+    }
+  }
   strncpy(_root, "/meshcomod", sizeof(_root) - 1);
   _root[sizeof(_root) - 1] = '\0';
   _fs = &SD;

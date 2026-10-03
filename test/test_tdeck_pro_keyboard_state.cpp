@@ -49,5 +49,20 @@ int main() {
   assert(keyboard.spaceHeld());
   keyboard.event(PagerKeyboardState::SPACE_POS, false, 300);
   assert(!keyboard.spaceHeld());
+
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 310);
+  assert(keyboard.event(PagerKeyboardState::ALT_B_POS, true, 320) == 0);
+  assert(keyboard.consumeAltBChord());
+  assert(!keyboard.consumeAltBChord());
+  keyboard.event(PagerKeyboardState::ALT_B_POS, false, 330);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 340);
+  assert(keyboard.event(PagerKeyboardState::ALT_B_POS, true, 350) == 'b');
+  keyboard.event(PagerKeyboardState::ALT_B_POS, false, 360);
+
+  keyboard.event(PagerKeyboardState::SYMBOL_POS, true, 370);
+  assert(keyboard.event(PagerKeyboardState::ALT_B_POS, true, 380) == '!');
+  assert(!keyboard.consumeAltBChord());
+  keyboard.event(PagerKeyboardState::ALT_B_POS, false, 390);
+  keyboard.event(PagerKeyboardState::SYMBOL_POS, false, 400);
   return 0;
 }

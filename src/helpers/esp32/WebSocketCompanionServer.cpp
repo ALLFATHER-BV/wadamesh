@@ -45,8 +45,8 @@ static const char WS_HTTP_INFO_PAGE[] =
   "b{color:#19d6c2;letter-spacing:.5px}\n"
   "#ctl{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 8px)}\n"
   "#ctl button{margin:0;min-height:34px}\n"
-  "#kb{padding:8px 16px;font-size:14px;background:#1c1c1f;color:#e8e8ea;border:1px solid #333;border-radius:8px}\n"
-  "#kb:active{background:#19d6c2;color:#000;border-color:#19d6c2}\n"
+  "#kb,#pst{padding:8px 16px;font-size:14px;background:#1c1c1f;color:#e8e8ea;border:1px solid #333;border-radius:8px}\n"
+  "#kb:active,#pst:active{background:#19d6c2;color:#000;border-color:#19d6c2}\n"
   "#rot{padding:7px 15px;font-size:12px;background:#141416;color:#c8ccce;border:1px solid #2a2a2e;border-radius:8px;display:none}\n"
   "#rot:active{background:#19d6c2;color:#000;border-color:#19d6c2}\n"
   "#xit{padding:7px 15px;font-size:12px;background:#1e1416;color:#e0a6a6;border:1px solid #4a2a2e;border-radius:8px;display:none}\n"
@@ -68,6 +68,7 @@ static const char WS_HTTP_INFO_PAGE[] =
   "<div id=s>connecting...</div>\n"
   "<div id=ctl><button id=unl>Unlock screen</button>\n"
   "<button id=kb>&#9000; Keyboard</button>\n"
+  "<button id=pst>&#128203; Paste</button>\n"
   "<button id=rot>&#8635; Rotate</button>\n"
   "<button id=xit>&#10005; Exit remote</button></div>\n"
   "<textarea id=k autocomplete=off autocorrect=off autocapitalize=off spellcheck=false></textarea>\n"
@@ -133,6 +134,22 @@ static const char WS_HTTP_INFO_PAGE[] =
   " if(e.key=='Backspace'){skey(8);e.preventDefault()}\n"
   " else if(e.key=='Enter'){skey(13);e.preventDefault()}\n"
   " else if(e.key.length==1){skey(e.key.codePointAt(0));e.preventDefault()}});\n"
+  // Paste: typed into the device's focused field as ordinary keys. Line breaks become
+  // spaces (an Enter would send a half-pasted message), characters outside the BMP are
+  // dropped (keys are 16-bit), and the text goes out in small batches so the device's
+  // 256-entry key ring is never overrun. Ctrl/Cmd+V on desktop and a paste into the hidden
+  // input on phones both land in the document 'paste' event; the button covers phones,
+  // where a plain-HTTP page cannot read the clipboard from script.
+  "var PQ=[],PT=0;\n"
+  "function pdrain(){if(!PQ.length||!ws||ws.readyState!=1){PQ=[];PT=0;return}\n"
+  " for(var i=0;i<16&&PQ.length;i++)skey(PQ.shift());PT=setTimeout(pdrain,80)}\n"
+  "function ptxt(t){if(!t)return;t=t.replace(/\\r\\n?|\\n/g,' ');\n"
+  " for(var ch of t){var c=ch.codePointAt(0);if(c<=0xFFFF)PQ.push(c)}if(!PT)pdrain()}\n"
+  "document.addEventListener('paste',function(e){var d=e.clipboardData||window.clipboardData;\n"
+  " var t=d?d.getData('text'):'';if(t){ptxt(t);e.preventDefault()}\n"
+  " K.value=' ';try{K.setSelectionRange(1,1)}catch(x){}});\n"
+  "document.getElementById('pst').addEventListener('click',function(){\n"
+  " var t=prompt('Paste the text to type into the focused field on the device:');if(t)ptxt(t)});\n"
   "function fit(){var vv=window.visualViewport,vw=vv?vv.width:window.innerWidth,vh=vv?vv.height:window.innerHeight;\n"
   " var desk=matchMedia('(hover:hover) and (pointer:fine)').matches,f=desk?0.72:0.99,cap=document.getElementById('cap');\n"
   " var ch=6+S.offsetHeight+CTL.offsetHeight+16;if(cap.offsetParent!==null)ch+=cap.offsetHeight+8;\n"

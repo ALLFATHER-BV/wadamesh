@@ -30,11 +30,16 @@ CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_4BIT_BUS_SLOT_1=15
 CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D2_4BIT_BUS_SLOT_1=16
 CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D3_4BIT_BUS_SLOT_1=17
 # C6 EN/reset is on the XL9535 expander (IO14): we reset+enable the C6 OURSELVES with a C6_EN
-# HIGH->LOW->HIGH pulse in Xl9535::powerOnSequence() (exactly like the working Meck-P4 app_main),
-# so esp-hosted must NOT try its own reset. Match Meck's setup: stock esp_hosted defaults (no reset
-# callback) + reset-only-if-necessary, so the host just connects to the already-booted C6 slave.
+# HIGH->LOW->HIGH pulse through hosted_reset_slave_callback(), matching LilyGo's current hosted app.
 CONFIG_ESP_HOSTED_SLAVE_RESET_ONLY_IF_NECESSARY=y
 CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+# The P4 has no local Bluetooth controller. esp-hosted provides NimBLE's HCI
+# transport over SDIO; IDF's default host-only UART transport would instead
+# open GPIO4/5 at 921600 and time out forever waiting for a nonexistent UART controller.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+# CONFIG_BT_NIMBLE_TRANSPORT_UART is not set
 # Do NOT reboot the P4 when the C6 doesn't answer (default esp-hosted behaviour). During bring-up the
 # C6 SDIO/power path isn't proven yet; without this the host reboots ~10 s after a failed C6 init,
 # preventing the UI (and LoRa) from ever coming up. Keep the device alive; Wi-Fi/BLE just stay down.
@@ -75,10 +80,8 @@ CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 # These were only ever present in the GENERATED sdkconfig, never in this tracked fragment, so a
 # regeneration silently dropped them and esp-hosted fell back to resetting the slave via GPIO 54.
 # There is no such reset line on this board: the C6's enable/reset is C6_EN on the XL9535 expander
-# (see Xl9535::powerOnSequence), which can only be driven through a callback. Currently inert
-# because TDP4_C6_READY is 0 and the C6 runs factory ESP-AT via c6_at rather than esp-hosted, but
-# pinned here so the config is reproducible from the fragments and a future C6 bring-up does not
-# inherit a bogus GPIO reset.
+# (see Xl9535::powerOnSequence), which can only be driven through a callback. Keep this pinned so
+# hosted never falls back to a nonexistent raw reset GPIO.
 CONFIG_ESP_HOSTED_RESET_SLAVE_USING_CALLBACK=y
 CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
 

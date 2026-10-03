@@ -77,25 +77,24 @@ def merge_bin_action(source, target, env):
         "$ESP32_APP_OFFSET",
         source[0].get_abspath(),
     ]
-    merge_cmd = " ".join(
-        [
-            '"$PYTHONEXE"',
-            '"$OBJCOPY"',
-            "--chip",
-            board_config.get("build.mcu", "esp32"),
-            "merge_bin",
-            "-o",
-            merged_bin,
-            "--flash_mode",
-            board_config.get("build.flash_mode", "dio"),
-            "--flash_freq",
-            "${__get_board_f_flash(__env__)}",
-            "--flash_size",
-            board_config.get("upload.flash_size", "4MB"),
-            *flash_images,
-        ]
-    )
-    env.Execute(merge_cmd)
+    merge_cmd = [
+        "$PYTHONEXE",
+        "$OBJCOPY",
+        "--chip",
+        board_config.get("build.mcu", "esp32"),
+        "merge_bin",
+        "-o",
+        merged_bin,
+        "--flash_mode",
+        board_config.get("build.flash_mode", "dio"),
+        "--flash_freq",
+        "${__get_board_f_flash(__env__)}",
+        "--flash_size",
+        board_config.get("upload.flash_size", "4MB"),
+        *flash_images,
+    ]
+    merge_args = [env.subst(str(arg)) for arg in merge_cmd]
+    return subprocess.run(merge_args, env=env["ENV"]).returncode
 
 
 env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", copy_app_bin_to_out)

@@ -6,7 +6,7 @@
 #include <freertos/semphr.h>
 #include "WebFileTransferConfig.h"
 
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // Same type rebind as TCPCompanionServer.h (every TU must see one consistent class layout).
   // NB: begin() is never called on the P4 — ESP-AT has a single listening port, so a first-byte
   // router in MultiTransportCompanionInterface accepts everything on the companion port and
