@@ -1,0 +1,36 @@
+# beta_85 promoted to STABLE - cumulative over beta_84..beta_85 (previous stable: beta_83)
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Curated from the two beta notes: test-build framing dropped, and the one thing
+# that got worse called out at the top rather than left for a P4 owner to find.
+
+# --- Read this first if you have a T-Display P4 --------------------------------------------------
+Do not switch the screen to landscape on this build. Landscape was added in beta_85 and the touch screen comes back rotated and offset, so the control to switch back cannot be hit and the only way out is reflashing over USB. It is fixed in the beta_86 test build. Portrait is the default and is unaffected.
+
+# --- Read this first if you have a T-Deck Max ----------------------------------------------------
+A Max running beta_84 that updates itself installs T-Deck Pro firmware, because it is the firmware you are running that picks the file to download. Update to this one over USB from wadamesh.com rather than from the device. From beta_85 onwards it is fixed.
+
+# --- Tell us whether a build works, from the device -----------------------------------------------
+Settings, About has "Send a test report". Say whether it works on your board, tick what you actually used, say how long you have run it, and send. What comes in is at wadamesh.com/beta, and that is what the next stable release gets promoted on, instead of a build going out because nobody complained. It needs Wi-Fi.
+The report carries the board, the version, your ticks and the free memory. No name, no contacts, no position, and the device lists exactly what it will send before it sends it. Your device is identified by a salted hash of its public key, so a second report replaces your first rather than counting twice.
+"Report a bug" on the same page draws a QR code. Scan it with your phone and a GitHub issue form opens with your board, version and diagnostics already filled in, so you only type what went wrong, and it is filed under your own account.
+Optional and off by default: "Count this device" lets the update check say which board and build it is running, so a board nobody has reported on can be told apart from a board nobody owns.
+
+# --- New boards ------------------------------------------------------------------------------------
+The LilyGo T-Deck Max, contributed and tested by pelgraine. It is the T-Deck Pro's hardware with the peripheral power rails and resets behind an I/O expander and a fuel gauge for the battery. The e-paper screen gets its own handling: no fades, no black frame left on the glass when it sleeps, tap to wake, and the keyboard backlight on a both-Shift chord. Experimental.
+
+# --- Things you can do now ---------------------------------------------------------------------------
+High contrast day and night themes, for sunlight where the normal palette washes out. Settings, Display, Theme.
+Channel regions can be discovered instead of typed: the region page scans for repeaters you can hear and lists the regions they allow, and channel scope offers them in a picker.
+Text size presets on the ThinkNode M9: Settings, Display, UI size. It grows the text and leaves the layout alone, so nothing becomes unreachable. Your current setting is untouched by the update.
+Coordinates in a chat message can be opened on the map. The message menu gains Map, tapping the message does the same, and the spot is marked so you can find it again or remove it. By TerryTel93.
+Czech, contributed by brebtatv. Settings, Language.
+
+# --- Fixes ---------------------------------------------------------------------------------------------
+Radio settings save again when the region field holds a name the new rules reject, such as one with capitals. Only the region is skipped now, instead of the frequency, bandwidth and power going with it.
+The Show button on telemetry shows its label in Russian, Ukrainian, Bulgarian, Serbian and Greek instead of empty boxes.
+Scanning for regions no longer leaves nameless entries behind in Contacts.
+The V4-R8 image fits again: it no longer carries the compiled-in translations it inherited from the V4, which it never needed.
+Wio Tracker L2: the SD card gets a power cycle and a second try when it does not mount at boot.
+ThinkNode M9: with the home drawer locked, Back stays on it instead of escaping to the tabs behind it. The Language settings cursor returns where it was after visiting the Store, and a channel keeps its unread colour.
+An M5Stack CardKB can be plugged into the Heltec V4's I2C bus and used as a keyboard. It is detected when present, so nothing changes without one.
+V4-R8: bigger text sizes to choose from, and the top row of the screen no longer swallows taps meant for the page.
