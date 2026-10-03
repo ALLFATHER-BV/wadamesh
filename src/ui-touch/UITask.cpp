@@ -884,6 +884,25 @@ static lv_font_t* s_emoji_font[3] = { nullptr, nullptr, nullptr };  // one per t
 // stays the Normal size at every level.
 static int s_ui_fscale = 100;
 static inline lv_coord_t SC(int px) { return (lv_coord_t)((px * s_ui_fscale + 50) / 100); }
+
+// Status-bar X offsets. The right-hand chain (battery icon, battery %, signal
+// bars, Wi-Fi, Bluetooth, sleep, clock) is a ladder of fixed right-aligned
+// offsets tuned for 12 px text. On the boards whose UI-size presets grow the
+// FONT and deliberately leave geometry at 100% -- the M9, the V4-R8 and the
+// Pager -- the labels get wider while the ladder does not, so at Large the
+// battery percentage runs into the signal bars (reported by jd1227 on the M9
+// in beta_85, the release that gave that board the presets).
+//
+// Scale the ladder by how much the text actually grew. At Normal this returns
+// exactly SC(px), so nothing moves for anyone who has not chosen a bigger size.
+static inline lv_coord_t SBX(int px) {
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER)
+  const int base = 12;
+  const int grown = (int)lv_font_get_line_height(&g_font_12);   // 12 / 16 / 18 px
+  if (grown > base) return (lv_coord_t)((px * grown + base / 2) / base);
+#endif
+  return SC(px);
+}
 // Popup-card dimension scaler: the 800×480 Tanmatsu panel dwarfs dialogs sized for the
 // 320px T-Deck/V4 — scale their fixed card/menu W/H up so they don't look lost in the middle.
 // No-op (plain SC) on the smaller boards, so their popups stay byte-for-byte unchanged.
@@ -10803,7 +10822,7 @@ static void txtMenuHide() {
   s_txtmenu_ta = nullptr;
 }
 
-enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM };
+enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM, TXT_EMOJI };
 
 // A key field takes the key out of whatever was pasted (#526): a copied message
 // carries text around it, and the field's length cap would otherwise keep that
@@ -10828,6 +10847,10 @@ static void txtMenuCellCb(lv_event_t* e) {
   // sync. Same routing the old silent long-press paste used.
   if (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ta = s_kb_mirror_ta;
   if (act == TXT_SYM) { txtMenuHide(); openSpecialPicker(ta); return; }   // dedicated special-character picker
+  // Emoji into any field, not just the chat composer. Asked for by Jade, who
+  // writes Lua apps: wada.ui.input() uses this same menu, so an app's text entry
+  // gets the picker for free, and so does every settings field.
+  if (act == TXT_EMOJI) { txtMenuHide(); openEmojiPicker(ta, k_emoji_items, k_emoji_count, TR("Emoji")); return; }
   const char* txt = lv_textarea_get_text(ta);
   uint32_t s_cp = 0, e_cp = 0;
   bool sel = taHasSelection(ta, &s_cp, &e_cp);
@@ -10867,8 +10890,16 @@ static void txtMenuShow(lv_obj_t* ta) {
   txtMenuHide();
   if (!ta) return;
   s_txtmenu_ta = ta;
-  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym" };
-  const int n = 5, cw = 48, ch = 34, gap = 4, pad = 6;
+  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym", "Emoji" };
+  const int n = 6, ch = 34, gap = 4, pad = 6;
+  // Fit the row to the panel rather than to a number that happened to work on a
+  // 320 px screen: at the old fixed 48 px this was already 268 px wide, so the
+  // sixth cell would have hung off a 240 px board entirely.
+  const lv_coord_t avail = lv_disp_get_hor_res(nullptr) - 8;
+  int cw = 48;
+  if (n * cw + (n - 1) * gap + pad * 2 > avail)
+    cw = (int)((avail - (n - 1) * gap - pad * 2) / n);
+  if (cw < 30) cw = 30;
   s_txtmenu = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_txtmenu);
   lv_obj_set_style_bg_color(s_txtmenu, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -51578,7 +51609,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -32,
 #else
-               -SC(22),
+               -SBX(22),
 #endif
                0);
 
@@ -51608,12 +51639,12 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.clock, &g_font_12, LV_PART_MAIN);
   // Unified across all boards: extra slot reserved for the DND/sleep moon glyph
-  // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SC(105)).
+  // (T-Deck's sleep_icon and the all-board dnd_icon below both live at -SBX(105)).
   lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
                -210,
 #else
-               -SC(160),
+               -SBX(160),
 #endif
                0);
 
@@ -51628,7 +51659,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -104,
 #else
-               -SC(73),
+               -SBX(73),
 #endif
                0);
 
@@ -51638,12 +51669,12 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // Narrow bars (V4 portrait) have no DND slot beside BLE and their clock sits at -126, so BLE
-  // stays at -111 there; wide bars keep -SC(127) (tight to the DND moon at -144).
+  // stays at -111 there; wide bars keep -SBX(127) (tight to the DND moon at -144).
   lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
                -142,
 #else
-               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SC(127),
+               (lv_disp_get_hor_res(nullptr) < 300) ? -111 : -SBX(127),
 #endif
                0);
 
@@ -51654,7 +51685,7 @@ static void buildGlobalStatusBar() {
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SC(144), 0);
+  lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SBX(144), 0);
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_statusbar.sleep_icon, 8);
@@ -51675,7 +51706,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -164,
 #else
-               -SC(144),
+               -SBX(144),
 #endif
                0);
   lv_obj_add_flag(g_statusbar.dnd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while DND is active
@@ -51697,7 +51728,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -124,
 #else
-               -SC(91),
+               -SBX(91),
 #endif
                0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
@@ -51723,7 +51754,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                  -82,
 #else
-                 -SC(54),
+                 -SBX(54),
 #endif
                  0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);

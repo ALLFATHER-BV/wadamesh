@@ -204,7 +204,7 @@ end
 
 return app</code></pre>
         <div class="note"><p><b>The last line matters.</b> An app is a table you build and <code>return</code>; the firmware calls the <code>on_*</code> fields on that table. Callbacks defined as plain globals are never found, so the app opens to a blank page with no error. If nothing happens, check for <code>return app</code> first.</p></div>
-        <p>Copy it to <code>/apps/hello.lua</code> on the device's SD card (or internal storage on boards without a card), open the app drawer, and it is there. No manifest is required for a file you side-load yourself — see <a href="#install">Install yours</a>.</p>
+        <p>Copy it to <code>/meshcomod/apps/hello.lua</code> on the device's SD card, or to <code>/apps/hello.lua</code> on boards that store internally, open the app drawer, and it is there. The path differs because a card-backed device keeps everything under <code>/meshcomod</code>; putting the file in a bare <code>/apps</code> at the root of a card is the one mistake that looks like it should work and does not. No manifest is required for a file you side-load yourself — see <a href="#install">Install yours</a>.</p>
       </div></div>
     </section>
 
@@ -489,6 +489,7 @@ end</code></pre>
           <tr><td>wada.sys.random(n)</td><td>Integer in 1..n.</td></tr>
           <tr><td>wada.sys.epoch()</td><td>Unix time in seconds, or <code>nil</code> when the clock has not been set yet (no GPS fix and no NTP). Always handle the <code>nil</code>.</td></tr>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
+          <tr><td colspan="2" style="color:var(--mut)">Text entry you open with <code>wada.ui.input()</code> is the firmware's own field, so it comes with the firmware's editing: long-press it for Cut, Copy, Paste, All, Sym (special characters) and Emoji. You do not need to build any of that yourself, and anything copied from a chat pastes straight in.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
           <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
@@ -569,8 +570,11 @@ end</code></pre>
       <h2>App format</h2>
       <div class="row"><div class="prose">
         <p>On the device an app is one or two files on the active storage root:</p>
-        <pre><code>/apps/&lt;id&gt;.lua     the code
-/apps/&lt;id&gt;.json    the manifest (optional for side-loaded apps)</code></pre>
+        <pre><code>/meshcomod/apps/&lt;id&gt;.lua     the code        (SD card)
+/meshcomod/apps/&lt;id&gt;.json    the manifest    (optional for side-loaded apps)
+
+/apps/&lt;id&gt;.lua               on boards that store internally
+/apps/&lt;id&gt;.json</code></pre>
         <p>The manifest is what the Store and the drawer read — one line, all values quoted strings:</p>
         <pre><code>{"id":"airtime","name":"Airtime","ver":"1.3","desc":"Duty cycle and airtime budget.","icon":"chart"}</code></pre>
         <table class="api">
@@ -587,7 +591,7 @@ end</code></pre>
     <section class="doc" id="install">
       <h2>Install your own</h2>
       <div class="row"><div class="prose">
-        <p>Drop a bare <code>.lua</code> file into <code>/apps/</code> on the SD card and it shows up in the drawer — no manifest needed. The filename becomes the name. That is the fast loop while you are writing something.</p>
+        <p>Drop a bare <code>.lua</code> file into <code>/meshcomod/apps/</code> on the SD card (<code>/apps/</code> when the device stores internally) and it shows up in the drawer — no manifest needed. The filename becomes the name. That is the fast loop while you are writing something.</p>
         <p>Apps you side-load appear in the Store under <b>Your own apps</b>, where you can remove them again. A long press on the drawer tile also offers to remove.</p>
         <p>On boards without an SD card the same path lives on internal storage.</p>
         <p>No card slot you can reach (the ThinkNode M9's card is soldered on)? Push the files over the USB serial console instead: <code>scripts/sideload_app.py --port /dev/cu.wchusbserial10 --reboot deploy/apps/&lt;id&gt;/&lt;ver&gt;</code> sends the <code>.lua</code> + <code>.json</code> through the firmware's <code>fput</code>/<code>fadd</code>/<code>fend</code> commands into the same <code>/apps/</code> the Store uses (<code>--dest /lang</code> for a language file). Needs pyserial.</p>
