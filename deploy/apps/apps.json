@@ -70,6 +70,26 @@
       "desc": "Finds and removes Windows malware on the SD card, like the M9 worm.",
       "requires": "sd",
       "seed": false
+    },
+    {
+      "id": "tripodometer",
+      "name": "Trip Odometer",
+      "ver": "1.0",
+      "desc": "GPS trip computer: distance, time, speed, altitude. Start/Stop to track, Reset to clear. Saves your trip across restarts. Contributed by samuelcoustet.",
+      "requires": "gps"
+    },
+    {
+      "id": "breakout",
+      "name": "Breakout",
+      "ver": "1.0",
+      "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet."
+    },
+    {
+      "id": "ping",
+      "name": "Ping",
+      "ver": "1.0",
+      "desc": "Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.",
+      "requires": "sdk_ext"
     }
   ]
 }

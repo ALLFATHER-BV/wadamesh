@@ -437,6 +437,7 @@ local function reset_world()
   labels, buttons, toasts, drawlog = {}, {}, {}, { text = {}, circles = {}, ops = 0 }
   lists = {}
   clock_ms = 1000
+  dm_sent = {}
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
   dm_sent = {}
   audio_log = {}
@@ -1184,6 +1185,237 @@ scenarios.tetris_cost = function()
   assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
 end
 
+-- ---- Breakout (deploy/apps/breakout) ----------------------------------------
+
+local function breakout_text_has(s)
+  for i = #drawlog.text, math.max(1, #drawlog.text - 20), -1 do
+    if drawlog.text[i] == s then return true end
+  end
+  return false
+end
+
+local function breakout_drive_to_gameover(app)
+  -- keep launching (swipe up is a no-op once launched) and ticking;
+  -- scan backward through the last 20 text entries for "tap to restart"
+  for _ = 1, 3000 do
+    swipe(app, "up"); tick(app, 1)
+    if breakout_text_has("tap to restart") then return true end
+  end
+  return false
+end
+
+scenarios.breakout_tdeck = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.canvases == 1, "expected 1 canvas, got " .. widgets.canvases)
+  assert(widgets.timer_ms == 33, "timer must be 33 ms, got " .. tostring(widgets.timer_ms))
+  swipe(app, "left"); swipe(app, "right"); swipe(app, "up")
+  tick(app, 20)
+  print("  t-deck: OK  timer=" .. tostring(widgets.timer_ms) .. " ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_v4 = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  swipe(app, "up"); tick(app, 20)
+  print("  v4: OK  ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_keyboard = function()
+  cfg = { w = 480, h = 178, caps = { touch = false, keyboard = true } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  key(app, "left"); key(app, "right"); key(app, "up")
+  tick(app, 20)
+  print("  keyboard: OK  ops=" .. drawlog.ops)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_logic = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(breakout_drive_to_gameover(app), "game over never triggered in 3000 ticks")
+  local ops_before = drawlog.ops
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  assert(drawlog.ops > ops_before, "tap after game over must redraw")
+  print("  logic: game-over triggered, restart OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_hiscore = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = { hiscore = 0 }; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(breakout_drive_to_gameover(app), "game over never triggered")
+  local saved = storekv.hiscore
+  assert(type(saved) == "number", "hiscore must be saved as a number, got " .. type(saved))
+  print("  hiscore: saved=" .. tostring(saved))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.breakout_cost = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  swipe(app, "up"); tick(app, 2)  -- launch
+  local worst = 0
+  for i = 1, 100 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 33
+    local ok, err = pcall(app.on_tick, 33)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d), draw ops %d", worst, BUDGET, drawlog.ops))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- ---- Trip Odometer (deploy/apps/tripodometer) --------------------------------
+
+scenarios.trip_v4 = function()
+  -- portrait touch board, no GPS fix → shows "no fix", all zeros
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return nil end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(widgets.buttons == 2, "expected 2 buttons (Start/Stop + Reset)")
+  tick(app, 5)
+  local dump = label_dump()
+  print("  no fix:", dump)
+  assert(dump:find("no fix") or dump:find("no GPS"), "expected no-fix indicator")
+  assert(dump:find("0:00"), "expected zero elapsed time")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.trip_tdeck = function()
+  -- landscape T-Deck with GPS fix, start tracking
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return { lat = 37.75, lon = -122.45, sats = 8, alt_m = 42, speed_kmh = 25.0, course = 90.0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 2)
+  local dump = label_dump()
+  print("  fix before start:", dump)
+  assert(dump:find("25") or dump:find("25.0"), "expected speed displayed")
+  -- start tracking
+  buttons[1].fn(); tick(app, 3)
+  dump = label_dump()
+  print("  tracking:", dump)
+  assert(dump:find("tracking"), "expected tracking status after Start")
+  -- stop
+  buttons[1].fn(); tick(app, 1)
+  dump = label_dump()
+  print("  paused:", dump)
+  assert(dump:find("paused"), "expected paused status after Stop")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.trip_moving = function()
+  -- simulate movement: distance and max speed accumulate
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  local step = 0
+  cfg.gps = function()
+    step = step + 1
+    return { lat = 37.75 + step * 0.001, lon = -122.45, sats = 8, alt_m = 100 + step, speed_kmh = 30.0 + step }
+  end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  buttons[1].fn()   -- start tracking
+  tick(app, 20)     -- 20 GPS fixes, each ~111 m north → ~2.2 km total
+  local dump = label_dump()
+  print("  after 20 ticks:", dump)
+  assert(not dump:find("| 0 m |"), "expected non-zero distance after movement")
+  assert(dump:find("km/h"), "expected max speed displayed")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.trip_persist = function()
+  -- on_close saves; on_open restores
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  local step = 0
+  cfg.gps = function()
+    step = step + 1
+    return { lat = 37.75 + step * 0.001, lon = -122.45, sats = 7, alt_m = 50, speed_kmh = 15.0 }
+  end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  guarded(BUDGET, app.on_open, cfg.w, cfg.h)
+  buttons[1].fn(); tick(app, 10)   -- run ~1 km
+  if app.on_close then guarded(BUDGET, app.on_close) end
+  assert(storekv.trip_km_x1000 ~= nil and storekv.trip_km_x1000 > 0, "expected trip_km_x1000 saved")
+  -- re-open same store → distance should be restored
+  wada = build_wada()
+  local app2 = load_app()
+  guarded(BUDGET, app2.on_open, cfg.w, cfg.h)
+  local dump = label_dump()
+  print("  restored:", dump)
+  assert(not dump:find("| 0 m |"), "expected restored non-zero distance")
+  if app2.on_close then guarded(BUDGET, app2.on_close) end
+end
+
+scenarios.trip_reset = function()
+  -- Reset button clears everything
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  local step = 0
+  cfg.gps = function()
+    step = step + 1
+    return { lat = 37.75 + step * 0.001, lon = -122.45, sats = 6, alt_m = 50, speed_kmh = 20.0 }
+  end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  guarded(BUDGET, app.on_open, cfg.w, cfg.h)
+  buttons[1].fn(); tick(app, 10)   -- accumulate some distance
+  buttons[2].fn(); tick(app, 1)    -- Reset
+  local dump = label_dump()
+  print("  after reset:", dump)
+  assert(dump:find("0:00"), "expected zero time after reset")
+  assert(dump:find("| 0 m |") or dump:find("0.00"), "expected zero distance after reset")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.trip_cost = function()
+  cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  local step = 0
+  cfg.gps = function()
+    step = step + 1
+    return { lat = 37.75 + step * 0.0001, lon = -122.45, sats = 8, alt_m = 42, speed_kmh = 10.0 }
+  end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  buttons[1].fn()  -- start tracking
+  local worst = 0
+  for i = 1, 100 do
+    local n = 0
+    debug.sethook(function() n = n + 1000 end, "", 1000)
+    clock_ms = clock_ms + 2000
+    local ok, err = pcall(app.on_tick, 2000)
+    debug.sethook()
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  print(string.format("  worst tick ~%d instructions (budget %d)", worst, BUDGET))
+  assert(worst < BUDGET / 4, "tick too expensive: " .. worst .. " > " .. BUDGET / 4)
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
 -- ---- Ping (deploy/apps/ping) ------------------------------------------------
 local function deliver_dm(app, sender, text)
   if app.on_message then
@@ -1191,6 +1423,7 @@ local function deliver_dm(app, sender, text)
   end
 end
 
+-- contacts used by all ping scenarios
 local PING_CONTACTS = {
   { name = "Node-Alpha", lat = 48.9000, lon = 2.4000 },
   { name = "Node-Beta",  lat = 48.8000, lon = 2.3000 },
@@ -1287,11 +1520,13 @@ scenarios.ping_auto_reply = function()
   assert(dm_sent[1].to == "Node-Alpha", "reply must go back to sender")
   local reply = dm_sent[1].text
   assert(reply:sub(1, 9) == "WADAPONG:", "reply must start with WADAPONG:")
+  -- timestamp in reply must match original
   local rts = reply:sub(10):match("(-?%d+):")
   assert(rts == tostring(remote_ts),
     string.format("reply ts %s != original %d", rts, remote_ts))
   print("  auto-reply: " .. reply)
 
+  -- non-DM messages are ignored
   local before = #dm_sent
   guarded(BUDGET, app.on_message, { kind = "channel", sender = "x", text = ping_in, channel = "c" })
   assert(#dm_sent == before, "channel messages must not trigger auto-reply")
@@ -1828,6 +2063,10 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
+  or APP_PATH:find("/breakout/", 1, true)
+  and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
+  or APP_PATH:find("/tripodometer/", 1, true)
+  and { "trip_v4", "trip_tdeck", "trip_moving", "trip_persist", "trip_reset", "trip_cost" }
   or APP_PATH:find("/protreck/", 1, true)
   and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
