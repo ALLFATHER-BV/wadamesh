@@ -1,0 +1,13 @@
+# beta_87 - test build. Stable is beta_85.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+
+# --- A memory leak in Lua apps -------------------------------------------------------------------
+Lua apps leaked memory every time they redrew a screen, and the more a screen had on it the faster it went. Clearing a page destroyed the buttons and list rows but kept the code attached to each one, so an app that rebuilds a list of twenty contacts left twenty of those behind every redraw, until the app ran out of memory and failed to draw. If you write apps and have seen them get slower or start failing to build a screen the longer they run, this is why.
+The same fault could also have made a button do the wrong thing: the firmware matched the leftover code to a button by its address, and those addresses get reused, so a new button with nothing attached could have run something left over from a screen you had already closed.
+Found after Jade reported it while writing a one-time-pad app, and it was never about the app.
+
+# --- For people writing Lua apps -------------------------------------------------------------------
+New: wada.ui.emoji(cb) opens the emoji picker and gives you the chosen emoji back, so an app that draws its own text entry can offer them. If you use wada.ui.input() you do not need it: the picker is already on that field's long-press menu, along with Cut, Copy, Paste and Sym.
+
+# --- For testers ---------------------------------------------------------------------------------------
+This build is two fixes for Lua apps and nothing else. If you do not write apps or run them, beta_86 is the same firmware for you.
