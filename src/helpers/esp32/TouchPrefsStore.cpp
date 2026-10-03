@@ -57,6 +57,11 @@ static const uint32_t DEFAULT_ACCENT           = 0x15B6A6u;  // brand teal
 static const bool     DEFAULT_DC_SHOW          = true;
 static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover probe ON
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
+#if defined(HAS_CROWPANEL_35)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
+#else
+static const uint8_t  DEFAULT_UI_ROTATION      = 0;
+#endif
 
 using TouchCfg = TouchPrefsSchema::Config;
 
@@ -91,7 +96,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.kb_layout     = DEFAULT_KB_LAYOUT;
   c.kb_secondary  = DEFAULT_KB_SECONDARY;
   c.ui_lang       = 0;
-  c.ui_rotation   = 0;
+  c.ui_rotation   = DEFAULT_UI_ROTATION;
   c.dc_show       = DEFAULT_DC_SHOW ? 1 : 0;
   c.use_miles     = 0;
   c.tiles_from_sd = 0;
@@ -356,7 +361,7 @@ static void cfgLoadOrMigrate() {
   if (s_prefs.isKey(LK_USE_MILES))    s_cfg.use_miles    = s_prefs.getBool(LK_USE_MILES, false) ? 1 : 0;
   if (s_prefs.isKey(LK_TILES_FROM_SD))s_cfg.tiles_from_sd= s_prefs.getBool(LK_TILES_FROM_SD, false) ? 1 : 0;
   if (s_prefs.isKey(LK_UI_LANG))      s_cfg.ui_lang      = s_prefs.getUChar(LK_UI_LANG, 0);
-  if (s_prefs.isKey(LK_UI_ROTATION))  s_cfg.ui_rotation  = s_prefs.getUChar(LK_UI_ROTATION, 0);
+  if (s_prefs.isKey(LK_UI_ROTATION))  s_cfg.ui_rotation  = s_prefs.getUChar(LK_UI_ROTATION, DEFAULT_UI_ROTATION);
   if (s_prefs.isKey(LK_BATT_FULL))    s_cfg.batt_full_mv = s_prefs.getUShort(LK_BATT_FULL, 0);
   if (s_prefs.isKey(LK_GPS_BAUD))     s_cfg.gps_baud     = s_prefs.getUInt(LK_GPS_BAUD, 0);
   // Enabled-layout mask: legacy used 0xFFFF as the "never written" sentinel and
@@ -1628,15 +1633,18 @@ bool touchPrefsSetLangFile(const char* code) {
 
 uint8_t touchPrefsGetUiRotation() {
   if (!s_begun) touchPrefsBegin();
-  uint8_t r = s_cfg.ui_rotation;   // default = portrait
-  return (r <= 3) ? r : 0;
+  const uint8_t r = s_cfg.ui_rotation;
+  return (s_cfg_loaded && r <= 3) ? r : DEFAULT_UI_ROTATION;
 }
 
 bool touchPrefsSetUiRotation(uint8_t rot) {
   if (rot > 3) rot = 0;
   if (!s_begun) touchPrefsBegin();
+  const uint8_t previous = s_cfg.ui_rotation;
   s_cfg.ui_rotation = rot;
-  return cfgFlush();
+  if (cfgFlush()) return true;
+  s_cfg.ui_rotation = previous;
+  return false;
 }
 
 uint16_t touchPrefsGetBattFullMv() {

@@ -25,7 +25,18 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(HAS_WIO_TRACKER_L2)          // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
+#if defined(HAS_CROWPANEL_35)            // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
+  #define CAP_TOUCH        1   // GT911 capacitive touch
+  #define CAP_ROTATABLE    1   // ILI9488 native portrait, upright landscape = rotation 3
+  #define CAP_LARGE_SCREEN 0   // native 480x320, no upscaling
+  #define CAP_SD           1   // microSD over software SPI, SD-compatible filesystem API
+  #define CAP_FILESYSTEM   1   // internal SPIFFS + tiles LittleFS
+  #define CAP_GPS          1   // optional external UART1 GPS
+  #define CAP_OTA          1
+  #define CAP_LOCK_SCREEN  0   // GPIO0 is LoRa NSS, no separate button to unlock
+  #define CAP_BATTERY      0   // no battery voltage sensing
+
+#elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    0
   #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
@@ -170,9 +181,14 @@
   #define CAP_LOCK_SCREEN  0
 #endif
 
+// Boards without a battery ADC must not advertise battery history/calibration.
+#ifndef CAP_BATTERY
+  #define CAP_BATTERY 1
+#endif
+
 // Physical removable microSD slot, independent of the filesystem API used to
-// drive it. CAP_SD specifically means Arduino SD over SPI; these three boards
-// use SD_MMC instead but still need the same user-facing card diagnostics.
+// drive it. CAP_SD means the SD-compatible SPI API (hardware or software);
+// SD_MMC boards still need the same user-facing card diagnostics.
 #if CAP_SD || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   #define CAP_MICROSD 1
 #else

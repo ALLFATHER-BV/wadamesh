@@ -71,7 +71,9 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   static inline esp_err_t esp_core_dump_image_erase() { return ESP_FAIL; }
   #endif
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if defined(HAS_CROWPANEL_35)
+  #include <CrowPanel35SD.h>
+#elif defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
   #include <SD.h>             // microSD — T-Deck/M9 on the LoRa SPI, V4-R8 on the TFT SPI
   #include "SdFastClock.h"    // post-mount operating-clock raise (SD_SPI_FAST_HZ boards)
   #include "sd_diskio.h"      // internal Arduino-SD drive helpers (sdcard_init / sd_*_raw)
@@ -186,6 +188,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #elif defined(HAS_WIO_TRACKER_L2)
     #include <WioTrackerL2Display.h>
     #include <WioTrackerL2Io.h>
+  #elif defined(HAS_CROWPANEL_35)
+    #include <CrowPanel35Display.h>
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
@@ -252,6 +256,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern ST7796LCDDisplay display;
   #elif defined(HAS_WIO_TRACKER_L2)
     extern WioTrackerL2Display display;
+  #elif defined(HAS_CROWPANEL_35)
+    extern CrowPanel35Display display;
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
@@ -1185,8 +1191,8 @@ static inline bool luaAudioStorageBusy() {
 }
 #endif
 
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_PRO)
-static bool fmSdTryMount();   // non-audio SD targets — fwd decl for sdRestoreRun
+#if CAP_SD || defined(TLORA_PAGER)
+static bool fmSdTryMount();   // storage callers precede the mount implementation
 #endif
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
 static constexpr int kI2sSampleRate = 16000;
@@ -1195,9 +1201,6 @@ static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // beeping while tiles are downloading — the I2S DMA buffers + Wi-Fi RX DMA + a
 // tile decode all contend for the scarce internal DMA RAM, and this build is
 // already tight enough that tile downloads can OOM-reboot on their own.
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
-static bool fmSdTryMount();   // defined far below (microSD mount)
-#endif
 #if defined(HAS_TDECK_GT911)
 // I2S is installed ON DEMAND for the duration of a tone and uninstalled after.
 // Holding the driver resident permanently kept ~2 KB of internal DMA RAM, which
@@ -2760,9 +2763,14 @@ void sdMountDiagSetMounted(bool mounted, uint32_t hz) {
 }
 
 static void sdDiagClockText(uint32_t hz, char* out, size_t cap) {
+#if defined(HAS_CROWPANEL_35)
+  (void)hz;
+  snprintf(out, cap, "software SPI");
+#else
   if (hz >= 1000000) snprintf(out, cap, "%lu MHz", (unsigned long)(hz / 1000000));
   else if (hz > 0)   snprintf(out, cap, "%lu kHz", (unsigned long)(hz / 1000));
   else               snprintf(out, cap, "unknown");
+#endif
 }
 static uint32_t    g_draw_buf_px  = 240 * LV_DRAW_BUF_LINES;   // actual buffer size in px; shrinks if the full alloc fails at boot
 #if CAP_LARGE_SCREEN
@@ -4049,6 +4057,9 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
+#if defined(HAS_CROWPANEL_35)
+  else                                  display.setDisplayRotation(0);
+#endif
 }
 
 // In-chat action openers, forward-declared here UNCONDITIONALLY — their click-callbacks
@@ -7449,13 +7460,12 @@ static void kbShowRotateArrows(bool show) {
   }
 }
 
-// The Wio Tracker L2 panel is fixed 320x240 LANDSCAPE (CAP_ROTATABLE 0), so
-// "rotate for landscape typing" has nothing to offer there — it would turn a
-// landscape keyboard into a portrait one. The arrows are not created on that
-// board and these, their only callers, go with them. Every other reference to
+// The Wio panel is fixed landscape; CrowPanel defaults to landscape and rotates
+// through Display settings. Neither needs a second keyboard-only orientation
+// control. The arrows are not created on these boards; every other reference to
 // the two pointers is null-guarded, so leaving them null is enough to remove
 // the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
-#if !defined(HAS_WIO_TRACKER_L2)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -13794,7 +13804,7 @@ static void useSdStorageToggleCb(lv_event_t* e) {
                                          : TR("Data -> internal on reboot"), 1800);
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if CAP_SD || defined(TLORA_PAGER)
 // "Copy internal data to SD": recovery for the beta_36 upgrades where the live
 // profile was orphaned on internal flash while the honored SD toggle adopted an
 // empty card. Pager resumes only onto a card with no identity or the identical
@@ -14280,11 +14290,19 @@ static const char* uiRotationLabel() {
 static void rotateScreenCycleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
-  // Simple toggle: portrait <-> landscape (90 degrees). One tap each way.
+  // Simple toggle: portrait <-> the board's upright landscape orientation.
   const uint8_t cur  = touchPrefsGetUiRotation();
+#if defined(HAS_CROWPANEL_35)
+  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_270
+                                                 : (uint8_t)LV_DISP_ROT_NONE;
+#else
   const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_90
                                                  : (uint8_t)LV_DISP_ROT_NONE;
-  touchPrefsSetUiRotation(next);
+#endif
+  if (!touchPrefsSetUiRotation(next)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1200);
+    return;
+  }
 #endif
   // Same as the theme and language switches: reboot on a timer so the notice is
   // actually painted first, rather than going dark under the user's finger.
@@ -15667,7 +15685,7 @@ static void buildDeviceSettings(int sec) {
     lv_obj_add_event_cb(sw, useSdStorageToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += LV_MAX(40, h + 12);
   }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if CAP_SD || defined(TLORA_PAGER)
   /* Where contacts ACTUALLY live this boot. The toggle above is only an intent — if the
      card failed to mount at boot (cold/slow card), contacts silently stay on internal flash
      even with it ON. This line shows the truth and flags that mismatch. */
@@ -15707,7 +15725,7 @@ static void buildDeviceSettings(int sec) {
      fresh-identity) card. This copies EVERYTHING from internal flash over the
      card's copies and reboots into the restored profile. This is a SPIFFS->SD
      recovery on T-Deck, V4-R8 and Pager; Tanmatsu uses SD_MMC with no SPIFFS. */
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if CAP_SD || defined(TLORA_PAGER)
   {
     lv_obj_t* b = lv_btn_create(body);
     lv_obj_set_size(b, lv_pct(96), SC(30));
@@ -22574,8 +22592,8 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // a generic fs::FS*; only &SD is real microSD I/O (Internal = SPIFFS). Browsing
 // (fmRefresh) and the file open/save paths call this; mutations re-list via
 // fmRefresh, so they blip the LED too.
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
-static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // Arduino SD (T-Deck/pager/M9 LoRa bus, V4-R8 TFT bus)
+#if CAP_SD || defined(TLORA_PAGER)
+static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // hardware or software SPI SD
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
@@ -24035,7 +24053,14 @@ static void fmFmtSize64(uint64_t bytes, char* out, size_t outsz) {
   else                                     snprintf(out, outsz, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)   // microSD mount/format helpers — Arduino SD on the shared SPI bus
+#if CAP_SD || defined(TLORA_PAGER)
+#if defined(HAS_CROWPANEL_35)
+static uint8_t sdDriveNumber() { return SD.driveNumber(); }
+#else
+struct SdDriveAccess : fs::SDFS {
+  static uint8_t of(const fs::SDFS& sd) { return sd.*(&SdDriveAccess::_pdrv); }
+};
+static uint8_t sdDriveNumber() { return SdDriveAccess::of(SD); }
 // One shared-SPI accessor per board: the T-Deck/M9 expose their pre-begun SPIClass
 // via tdeckSharedSPI()/m9SharedSPI(); the V4-R8's microSD shares its TFT FSPI bus
 // (heltecV4R8SharedSPI()); the pager accessor returns the same TFT_eSPI SPIClass
@@ -24049,6 +24074,7 @@ static inline SPIClass* sdSharedSPI() { return m9SharedSPI(); }
 #else
 static inline SPIClass* sdSharedSPI() { return tdeckSharedSPI(); }
 #endif
+#endif  // !HAS_CROWPANEL_35
 // Mount the microSD on its shared SPI bus. Safe to call repeatedly (no-op
 // once mounted). SD.begin's internal spi.begin() is a no-op because the bus is
 // already initialised by the radio/display, so those pins are untouched.
@@ -24060,6 +24086,14 @@ static bool sdAdoptLiveMount() {
   sdMountDiagSetMounted(true, g_sd_operating_hz);
   return true;
 }
+#if defined(HAS_CROWPANEL_35)
+static bool sdBeginTracked() {
+  const bool begin_ok = SD.begin();
+  const bool card_ready = begin_ok && SD.cardType() != CARD_NONE;
+  sdMountDiagAttempt(0, begin_ok, card_ready);
+  return card_ready;
+}
+#else
 static bool sdBeginTracked(SPIClass* spi, uint32_t hz, bool* begin_ok_out = nullptr) {
   const bool begin_ok = spi && SD.begin(PIN_SD_CS, *spi, hz, "/sd", 6);
   const bool card_ready = begin_ok && SD.cardType() != CARD_NONE;
@@ -24067,6 +24101,7 @@ static bool sdBeginTracked(SPIClass* spi, uint32_t hz, bool* begin_ok_out = null
   sdMountDiagAttempt(hz, begin_ok, card_ready);
   return card_ready;
 }
+#endif
 #if defined(TLORA_PAGER)
 static bool sdPagerBeginWithPowerRecovery(SPIClass* spi, bool* begin_ok_out) {
   bool begin_ok = false;
@@ -24108,10 +24143,17 @@ static bool fmSdTryMount() {
   // the multi-second mount ladder while the card is out, freezing the UI.
   // Explicit user retries clear the backoff first (fmSdMountOrFormatCb).
   if (s_sd_retry_after_ms && millis() < s_sd_retry_after_ms) return false;
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_CROWPANEL_35)
   if (sdRuntimeLifecycleBusy()) return false;
+#endif
+#if defined(TLORA_PAGER)
   if (!board.sdCardPresent()) return false;
 #endif
+#if defined(HAS_CROWPANEL_35)
+  sdMountDiagBegin();
+  const bool mounted = sdBeginTracked();
+  const uint32_t mounted_hz = 0;
+#else
   SPIClass* spi = sdSharedSPI();
   if (!spi) return false;
   sdMountDiagBegin();
@@ -24190,6 +24232,7 @@ static bool fmSdTryMount() {
     if (mounted) g_sd_operating_hz = mounted_hz;
   }
 #endif
+#endif  // !HAS_CROWPANEL_35
   if (mounted) {
     s_sd_mounted = true;
     s_sd_size = SD.cardSize();
@@ -24240,10 +24283,14 @@ static void fmSdUnmount() {
 // (opendir fails -> operator bool false). Healthy-card cost is sub-ms; a dead
 // card rides out the SPI timeouts once, so callers rate-limit the probe.
 static bool sdProbeAlive() {
+#if defined(HAS_CROWPANEL_35)
+  return SD.probeAlive();  // Explicit CMD13; a cached FAT root is not a card probe.
+#else
   File d = SD.open("/");
   const bool ok = d && d.isDirectory();
   if (d) d.close();
   return ok;
+#endif
 }
 // Discriminator for hot READ paths (map tile lookups run up to five SD opens
 // per tile on the loop task): a missing FILE on a healthy card must stay cheap
@@ -24265,24 +24312,20 @@ static void fmSdClickCb(lv_event_t* e) {
   if (s_sd_mounted) fmOpenStorage(&SD, "SD", "/");
 }
 
-#if defined(TLORA_PAGER)
-// Recovery entry for a card the Pager can SEE (card-detect asserted) but cannot
-// mount: exFAT/NTFS, or a damaged FAT. Without this the roots page renders no SD
-// row at all (fmShowRoots below), so there is no way to tell "no card" from "card
-// the firmware won't take", and no way to retry without a reboot.
-//
-// Deliberately NON-destructive. It clears the mount backoff and makes exactly the
-// one vendor-compatible 4 MHz attempt fmSdTryMount() already makes — it does not
-// add a retry ladder and never tears down the live shared display/radio bus. If
-// that attempt fails the card needs formatting, and on this board that is a
-// deliberate host-side task: see the format-helper guard below for why the in-app
-// formatter stays off for the Pager.
-static void fmSdPagerRetryMountCb(lv_event_t* e) {
+#if defined(TLORA_PAGER) || defined(HAS_CROWPANEL_35)
+// These ports offer only a non-destructive mount retry. Formatting stays on
+// the computer, rather than using the hardware-SPI formatter on an untested bus.
+static void fmSdRetryMountCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_sd_retry_after_ms = 0;                       // explicit user retry — bypass the backoff
   if (fmSdTryMount() && s_sd_mounted) { fmShowRoots(); return; }
-  if (g_lv.task)
+  if (g_lv.task) {
+#if defined(HAS_CROWPANEL_35)
+    g_lv.task->showAlert(TR("SD unavailable - insert a FAT32 card and retry"), 3600);
+#else
     g_lv.task->showAlert(TR("SD unreadable - format it as FAT32 on a computer"), 3600);
+#endif
+  }
 }
 #endif
 
@@ -25727,6 +25770,19 @@ static void fmShowRoots() {
     fmStyleRow(sd, COLOR_SUB);
     lv_obj_add_event_cb(sd, fmSdMountOrFormatCb, LV_EVENT_CLICKED, nullptr);
   }
+#elif defined(HAS_CROWPANEL_35)
+  if ((s_sd_mounted || millis() >= s_sd_retry_after_ms) && fmSdTryMount()) {
+    char sdl[48], cs[16];
+    fmFmtSize64(s_sd_size, cs, sizeof cs);
+    snprintf(sdl, sizeof sdl, TR("SD card   %s"), cs);
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, sdl);
+    fmStyleRow(sd, COLOR_TEXT);
+    lv_obj_add_event_cb(sd, fmSdClickCb, LV_EVENT_SHORT_CLICKED, nullptr);
+  } else {
+    lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (tap to mount)"));
+    fmStyleRow(sd, COLOR_SUB);
+    lv_obj_add_event_cb(sd, fmSdRetryMountCb, LV_EVENT_CLICKED, nullptr);
+  }
 #elif defined(TLORA_PAGER)   // microSD row — browse + mount recovery, no in-app format
   // The card-detect line makes "not present" unambiguous, unlike the T-Deck (no detect
   // pin at all) -- so unlike its always-shown "tap to mount/format" fallback row, a bare
@@ -25745,7 +25801,7 @@ static void fmShowRoots() {
     // absent case above, and gives a retry that bypasses the mount backoff.
     lv_obj_t* sd = lv_list_add_btn(s_fm_list, LV_SYMBOL_SD_CARD, TR("SD card   (unreadable - tap to retry)"));
     fmStyleRow(sd, COLOR_SUB);
-    lv_obj_add_event_cb(sd, fmSdPagerRetryMountCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_event_cb(sd, fmSdRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
@@ -26386,7 +26442,7 @@ static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t c
     s_reader_sd_busy = false;
     storage_claimed = false;
   };
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
   s_reader_sd_busy = true;
   s_reader_sd_owner = xTaskGetCurrentTaskHandle();
   storage_claimed = true;
@@ -29496,7 +29552,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(ATTAKY_MESH_SERIES) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(ATTAKY_MESH_SERIES) || defined(HAS_TDISPLAY_P4)
   // Landscape boards keep the chart clear of the right-hand button strip.
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 #else
@@ -32116,6 +32172,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "attaky"
 #elif defined(HAS_WIO_TRACKER_L2)
 #define WADA_BOARD_ID "wio-tracker-l2"
+#elif defined(HAS_CROWPANEL_35)
+#define WADA_BOARD_ID "crowpanel-35"
 #elif defined(HELTEC_LORA_V4_TFT)
 #define WADA_BOARD_ID "heltec-v4-tft"
 #else
@@ -33795,7 +33853,7 @@ static void renderMapTiles() {
   } else
 #endif
   if (!s_tiles_fs_ready) {
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
     // Pager included: under the launcher there's no "tiles" partition, so point the user at the
     // microSD fallback rather than the (launcher-wrong) "reflash the tiles partition" advice.
     // M9 included: its cache PREFERS the built-in 16 GB microSD (every unit ships with one), so
@@ -38196,6 +38254,9 @@ static void makeSettings(lv_obj_t* tab) {
   const lv_coord_t card_h = landscape ? 54 : 46;
 
   for (int c = 0; c < CAT_COUNT; ++c) {
+#if !CAP_BATTERY
+    if (c == CAT_BATTERY) continue;
+#endif
 #if !CAP_LOCK_SCREEN
     if (c == CAT_LOCK) continue;   // lock screen is a T-Deck / Tanmatsu feature
 #endif
@@ -47644,7 +47705,7 @@ static void openPowerMenu() {
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
-#elif defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
   // Power-off row hidden (see below) — 3 rows: Reboot / Download / Cancel.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
   const int p_bh = 34, p_y0 = 28, p_step = 40, card_h = p_y0 + 3 * p_step + 8;
@@ -47977,7 +48038,7 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
-#elif defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 63;
 static void applyBrightness(uint8_t pct) {
@@ -49716,14 +49777,6 @@ static lv_timer_t* s_usbfiles_timer  = nullptr;
 static bool        s_usbfiles_map_dirty = false;   // tiles or the card changed: re-check the map
 static void closeUsbFilesPage();
 
-#if CAP_SD
-// FatFs drive of the Arduino SD mount, for the session's fast folder listings.
-// Same pointer-to-member route as luaHostSdClearAttributes (further down).
-struct UsbFilesSdDrive : fs::SDFS {
-  static uint8_t of(const fs::SDFS& sd) { return sd.*(&UsbFilesSdDrive::_pdrv); }
-};
-#endif
-
 class UiUsbFilesHost : public UsbFilesHost {
  public:
   bool root(UsbFiles::Root r, UsbFilesRootInfo* out, bool mount) override {
@@ -49737,7 +49790,7 @@ class UiUsbFilesHost : public UsbFilesHost {
         const bool up = mount ? fmSdTryMount() : s_sd_mounted;
         if (up && SD.cardType() != CARD_NONE) {
           out->fs = &SD;
-          snprintf(out->drive, sizeof out->drive, "%u:", (unsigned)UsbFilesSdDrive::of(SD));
+          snprintf(out->drive, sizeof out->drive, "%u:", (unsigned)sdDriveNumber());
         }
         return true;
       }
@@ -51541,6 +51594,10 @@ static void buildGlobalStatusBar() {
   // the bar root's NAV_SKIP into its children, so each indicator opts out individually.)
   lv_obj_add_flag(g_statusbar.batt_icon, NAV_SKIP_FLAG);
   lv_obj_add_flag(g_statusbar.batt_pct,  NAV_SKIP_FLAG);
+#if !CAP_BATTERY
+  lv_obj_add_flag(g_statusbar.batt_icon, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(g_statusbar.batt_pct, LV_OBJ_FLAG_HIDDEN);
+#endif
 
   g_statusbar.clock = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.clock, "--:--");
@@ -55337,7 +55394,7 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
-#if !defined(HAS_WIO_TRACKER_L2)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
@@ -57657,13 +57714,10 @@ bool luaHostSdReadFailed() { return sdReadFailedCardDead(); }
 // Declared by hand like f_mkfs above: ff.h drags FatFs' BYTE/WORD typedefs into
 // this file. FRESULT is an int-sized enum and FR_OK is 0.
 extern "C" int f_chmod(const char* path, uint8_t attr, uint8_t mask);
-struct SdPdrvAccess : fs::SDFS {
-  static uint8_t of(const fs::SDFS& sd) { return sd.*(&SdPdrvAccess::_pdrv); }
-};
 bool luaHostSdClearAttributes(const char* path) {
   if (!s_sd_mounted || !path || path[0] != '/') return false;
   char ffpath[200];
-  const int n = snprintf(ffpath, sizeof ffpath, "%u:%s", (unsigned)SdPdrvAccess::of(SD), path);
+  const int n = snprintf(ffpath, sizeof ffpath, "%u:%s", (unsigned)sdDriveNumber(), path);
   if (n <= 0 || n >= (int)sizeof ffpath) return false;
   markSdIo();
   constexpr uint8_t kAmRdo = 0x01, kAmHid = 0x02, kAmSys = 0x04;   // FatFs AM_RDO/AM_HID/AM_SYS
@@ -58361,7 +58415,7 @@ static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
 #if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   return s_ui_data_fs == &SD_MMC;
-#elif defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#elif CAP_SD || defined(TLORA_PAGER)
   return s_ui_data_fs == &SD;
 #else
   return false;
@@ -58378,7 +58432,7 @@ static File uiDataOpen(const char* name, const char* mode) {
   if (!uiDataFsReady()) return File();
   char p[80]; snprintf(p, sizeof p, "%s%s", s_ui_data_root, name);
   File f = s_ui_data_fs->open(p, mode);
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
   // A failed WRITE open on the SD-backed history store is the wedge tell (reads
   // fail legitimately on first boot). Called from the loop task AND the core-0
   // history worker — sdNoteIoFailure is a volatile stamp, safe from both.
@@ -59032,7 +59086,7 @@ static bool uiMsgsWriteResult(bool ok) {
     s_msgs_write_fail_ms = m ? m : 1;
     s_msgs_write_fail_epoch = ep;
     if (s_msgs_write_fails < 0xFFFFu) s_msgs_write_fails = s_msgs_write_fails + 1;
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
     if (s_ui_data_fs == &SD) sdNoteIoFailure();
 #endif
   }
@@ -60736,7 +60790,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_tile_fs = &s_tiles_fs;
     s_tile_root[0] = '\0';
   }
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_GT911) || defined(HAS_CROWPANEL_35)
   // Under Launcher there's no "tiles" partition; cache to the SD card instead.
   // main.cpp already mounted the card for SD data storage (boot runs well before
   // ui_task.begin()), so PREFER that live mount via SD.cardType(). Calling
@@ -61088,6 +61142,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
 #if defined(HAS_RAK_TAP_V2) || defined(HAS_WIO_TRACKER_L2)
       const int draw_band_w = 320;
+#elif defined(HAS_CROWPANEL_35)
+      const int draw_band_w = 480;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
 #else
       const int draw_band_w = 240;
 #endif
@@ -61304,6 +61361,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #elif defined(HAS_WIO_TRACKER_L2)
   g_lv.disp_drv.hor_res  = 320;
   g_lv.disp_drv.ver_res  = 240;
+#elif defined(HAS_CROWPANEL_35)
+    g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 480 : 320);
+    g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 320 : 480);
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -61376,6 +61436,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
+#if defined(HAS_CROWPANEL_35)
+    else if (!s_remote_mode) {
+      // A file-backed portrait preference may not have been loaded at the boot logo.
+      applyHardwarePanelRotation(LV_DISP_ROT_NONE);
+    }
+#endif
     // Swipe-axis transform always matches the visible orientation.
     heltecV4CapTouchSetRotation(s_ui_rotation);
 
@@ -62589,9 +62655,8 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
-#elif defined(HAS_WIO_TRACKER_L2)
-  // L2: brightness is controlled by the display's I2C light controller, not a
-  // direct TFT_BL GPIO. Restore the saved level on wake and write zero on sleep.
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
+  // The display owns its backlight (I2C on Wio, PWM on CrowPanel).
   if (on) applyBrightness(s_brightness_pct);
   else    display.setBrightness(0);
 #elif defined(HAS_TDISPLAY_P4)
@@ -62653,6 +62718,11 @@ void UITask::wakeScreen() {
 }
 
 void UITask::lockScreen() {
+#if defined(HAS_CROWPANEL_35)
+  // No physical unlock button: imported lock preferences must still allow touch wake.
+  sleepScreen();
+  return;
+#endif
   // Backlight off + manual lock so touch is ignored (noteUserInput()
   // early-returns) until a deliberate unlock.
 #if defined(HAS_TDECK_PRO)
@@ -63711,10 +63781,14 @@ static void sdHealthTick() {
 #if defined(TLORA_PAGER)
     if (!board.sdCardPresent()) return;  // card-detect says the slot is empty
 #endif
+#if !defined(HAS_CROWPANEL_35)
     SPIClass* spi = sdSharedSPI();
     if (!spi) return;
+#endif
     sdMountDiagBegin();
-#if defined(TLORA_PAGER)
+#if defined(HAS_CROWPANEL_35)
+    const bool remounted = sdBeginTracked();
+#elif defined(TLORA_PAGER)
     // The Pager shares this SPIClass with display + radio: one 4 MHz attempt,
     // with every other CS parked HIGH. A failed attempt gets one dedicated
     // SD-rail power cycle before retrying; the display/radio bus stays live.
@@ -63739,7 +63813,7 @@ static void sdHealthTick() {
 #endif
       markSdIo();
       if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
       // Land the RAM ring on the card promptly, not up to 30+ s later: every
       // message received while the card was out is only in RAM. Armed as an
       // OFF-THREAD flush — a synchronous write here froze the UI for >30 s on
@@ -63880,7 +63954,7 @@ static void sdHealthTick() {
     s_sd_data_warn_next_ms = 0;
 #endif
     if (g_lv.task) g_lv.task->showAlert(TR("SD card remounted"), 1800);
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
     if (!s_ui_data_fs) uiDataFsReady();
     if (s_ui_data_fs == &SD) {
       SD.mkdir("/meshcomod");                          // fresh replacement card: recreate the data root
@@ -63914,15 +63988,19 @@ void UITask::loop() {
     // because LVGL is never initialised, so nothing ever started the poll task
     // and the keyboard was never even begun. That is why keys did nothing.
     //
-    // One call covers both: the background poll task owns the shared I2C bus
-    // and scans the touch panel AND (on the T-Deck) the keyboard, which is
-    // exactly why they must not be polled from two places at once.
+    // The background task scans touch and (on the T-Deck) the keyboard.
+    // CrowPanel keeps LovyanGFX and Wire transactions on this thread.
     static bool s_con_input_up = false;
     if (!s_con_input_up) {
       if (heltecV4CapTouchBegin()) {
+#if !defined(HAS_CROWPANEL_35)
         heltecV4CapTouchStartBackgroundPoll(8);
+#endif
         s_con_input_up = true;
       }
+    }
+    if (s_con_input_up && !heltecV4CapTouchIsAsyncPolling()) {
+      (void)heltecV4CapTouchCheck();
     }
 #endif
     // The physical-keyboard drain lives further down this function, below this
@@ -64668,10 +64746,10 @@ void UITask::loop() {
     }
     if (g_lv.touch_inited) {
       pushDiagLine("touch init ok");
-    #if defined(HAS_WIO_TRACKER_L2)
+    #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
       // GT911 (LovyanGFX) and the TCA9535/ADS1115 (Wire) share I2C0 on
-      // GPIO47/48 but use different driver locks. Keep every transaction on
-      // loopTask so the touch poll cannot interrupt an expander/ADC transfer.
+      // Wio's GPIO47/48; the CrowPanel's GT911 shares I2C0 on GPIO15/16.
+      // Keep every transaction on loopTask so polling cannot interrupt Wire.
       pushDiagLine("touch inline (shared I2C)");
     #elif defined(HAS_TDECK_PRO)
       // The e-paper BUSY callback keeps this inline driver polling while the
@@ -64779,7 +64857,7 @@ void UITask::loop() {
         // unmountable card spikes current / churns the bus and can reset the board.
         if (!sdRuntimeLifecycleBusy() && now >= s_sd_retry_after_ms && fmSdTryMount()) {
           showAlert(TR("SD card inserted"), 1500);
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+#if CAP_SD || defined(TLORA_PAGER)
           if (!s_ui_data_fs) uiDataFsReady();
           if (s_ui_data_fs == &SD) {
             SD.mkdir("/meshcomod"); // fresh replacement card: recreate the data root

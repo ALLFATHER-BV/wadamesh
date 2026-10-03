@@ -91,5 +91,11 @@ driver, variants/tdisplay_p4/P4Audio.cpp)
 LovyanGFX (RAK WisMesh Tap V2 display backend)
     Copyright (c) lovyan03 — FreeBSD License — https://github.com/lovyan03/LovyanGFX
 
+Camillia-MT (CrowPanel Advance 3.5 software-SPI microSD backend)
+    Copyright (c) 2025-2026 Michael A. Cojocari and contributors
+    GNU General Public License v3.0 or later
+    Adapted from src/sd_soft_spi.cpp; integrated with WadaMesh's filesystem
+    API and concurrent storage consumers.
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.
