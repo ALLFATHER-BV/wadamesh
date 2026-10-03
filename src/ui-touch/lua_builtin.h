@@ -328,6 +328,266 @@ end
 
 return app
 )WADALUA";
+static const char kLuaSrc_tetris[] = R"WADALUA(-- Tetris — wadamesh Lua app
+-- Swipe left/right to move  |  Swipe up to rotate  |  Swipe down to hard-drop
+-- Keyboard: arrows to move/rotate, Enter or Space to hard-drop
+-- Contributed by samuelcoustet
+
+local ui, sys, store, timer = wada.ui, wada.sys, wada.store, wada.timer
+local C = ui.colors
+
+local app = {}
+
+local COLS, ROWS = 10, 20
+local CELL = 12
+
+local COLORS = {
+  0x00d4ff,  -- 1 I: cyan
+  0xffe066,  -- 2 O: yellow
+  0xcc44ff,  -- 3 T: purple
+  0x00dd88,  -- 4 S: green
+  0xff4455,  -- 5 Z: red
+  0x3399ff,  -- 6 J: blue
+  0xff8833,  -- 7 L: orange
+}
+
+-- Piece rotations: each entry is 4 {dr, dc} offsets from bounding-box origin
+-- Row and column are 0-indexed; field coords = py+dr (row), px+dc (col)
+local PIECES = {
+  -- 1 I (4×4 bounding box)
+  { {{1,0},{1,1},{1,2},{1,3}}, {{0,2},{1,2},{2,2},{3,2}},
+    {{1,0},{1,1},{1,2},{1,3}}, {{0,1},{1,1},{2,1},{3,1}} },
+  -- 2 O
+  { {{0,0},{0,1},{1,0},{1,1}}, {{0,0},{0,1},{1,0},{1,1}},
+    {{0,0},{0,1},{1,0},{1,1}}, {{0,0},{0,1},{1,0},{1,1}} },
+  -- 3 T
+  { {{0,1},{1,0},{1,1},{1,2}}, {{0,1},{1,1},{1,2},{2,1}},
+    {{1,0},{1,1},{1,2},{2,1}}, {{0,1},{1,0},{1,1},{2,1}} },
+  -- 4 S
+  { {{0,1},{0,2},{1,0},{1,1}}, {{0,0},{1,0},{1,1},{2,1}},
+    {{0,1},{0,2},{1,0},{1,1}}, {{0,0},{1,0},{1,1},{2,1}} },
+  -- 5 Z
+  { {{0,0},{0,1},{1,1},{1,2}}, {{0,1},{1,0},{1,1},{2,0}},
+    {{0,0},{0,1},{1,1},{1,2}}, {{0,1},{1,0},{1,1},{2,0}} },
+  -- 6 J
+  { {{0,0},{1,0},{1,1},{1,2}}, {{0,1},{0,2},{1,1},{2,1}},
+    {{1,0},{1,1},{1,2},{2,2}}, {{0,1},{1,1},{2,0},{2,1}} },
+  -- 7 L
+  { {{0,2},{1,0},{1,1},{1,2}}, {{0,1},{1,1},{2,1},{2,2}},
+    {{1,0},{1,1},{1,2},{2,0}}, {{0,0},{0,1},{1,1},{2,1}} },
+}
+
+local board, cv, side_cv
+local px, py, rot, pid, npid
+local score, hiscore, level, cleared_total
+local over
+local SIDE_W = 58
+
+local function new_board()
+  local b = {}
+  for r = 1, ROWS do
+    b[r] = {}
+    for c = 1, COLS do b[r][c] = 0 end
+  end
+  return b
+end
+
+local function get_cells(p, r, bx, by)
+  local out = {}
+  for _, off in ipairs(PIECES[p][r]) do
+    out[#out+1] = {by + off[1], bx + off[2]}
+  end
+  return out
+end
+
+local function collides(p, r, bx, by)
+  for _, fc in ipairs(get_cells(p, r, bx, by)) do
+    local fr, fc2 = fc[1] + 1, fc[2] + 1  -- 0-indexed to 1-indexed
+    if fc[2] < 0 or fc[2] >= COLS or fc[1] >= ROWS then return true end
+    if fc[1] >= 0 and board[fr][fc2] ~= 0 then return true end
+  end
+  return false
+end
+
+local function lock_piece()
+  for _, fc in ipairs(get_cells(pid, rot, px, py)) do
+    local fr, fc2 = fc[1] + 1, fc[2] + 1
+    if fr >= 1 then board[fr][fc2] = pid end
+  end
+  local cleared = 0
+  local r = ROWS
+  while r >= 1 do
+    local full = true
+    for c = 1, COLS do
+      if board[r][c] == 0 then full = false; break end
+    end
+    if full then
+      table.remove(board, r)
+      table.insert(board, 1, {})
+      for c = 1, COLS do board[1][c] = 0 end
+      cleared = cleared + 1
+    else
+      r = r - 1
+    end
+  end
+  if cleared > 0 then
+    cleared_total = cleared_total + cleared
+    local pts = {100, 300, 500, 800}
+    score = score + (pts[cleared] or 800) * level
+    level = math.max(1, math.floor(cleared_total / 10) + 1)
+    timer.every(math.max(80, 700 - (level - 1) * 60))
+  end
+end
+
+local function spawn()
+  pid, npid = npid, sys.random(1, 7)
+  px = math.floor((COLS - 4) / 2)  -- center the 4-wide bounding box
+  py = 0
+  rot = 1
+  if collides(pid, rot, px, py) then
+    over = true
+    if score > hiscore then
+      hiscore = score
+      store.set("hiscore", hiscore)
+      sys.toast("New high score: " .. hiscore, 2000)
+    end
+  end
+end
+
+local function draw_board()
+  cv:fill(0x0d1117)
+  for r = 1, ROWS do
+    for c = 1, COLS do
+      local v = board[r][c]
+      if v ~= 0 then
+        cv:rect((c-1)*CELL+1, (r-1)*CELL+1, CELL-2, CELL-2, COLORS[v], true, 2)
+      end
+    end
+  end
+  if not over then
+    for _, fc in ipairs(get_cells(pid, rot, px, py)) do
+      local r, c = fc[1]+1, fc[2]+1
+      if r >= 1 then
+        cv:rect((c-1)*CELL+1, (r-1)*CELL+1, CELL-2, CELL-2, COLORS[pid], true, 2)
+      end
+    end
+  end
+  if over then
+    local mx = math.floor(COLS * CELL / 2)
+    local my = math.floor(ROWS * CELL / 2)
+    cv:rect(mx - 44, my - 18, 88, 36, 0x1a1f26, true, 4)
+    cv:text(mx - 38, my - 12, "GAME OVER", C.bad, 14)
+    cv:text(mx - 30, my + 4,  "tap to retry", C.sub, 11)
+  end
+end
+
+local function draw_side()
+  side_cv:fill(0x0d1117)
+  side_cv:text(6, 4, "NEXT", C.sub, 11)
+  local PC = 10
+  local ox = math.floor((SIDE_W - 4 * PC) / 2)
+  for _, off in ipairs(PIECES[npid][1]) do
+    side_cv:rect(ox + off[2]*PC+1, 20 + off[1]*PC+1, PC-2, PC-2, COLORS[npid], true, 2)
+  end
+  side_cv:text(6, 76,  "SCORE", C.sub, 11)
+  side_cv:text(6, 90,  tostring(score), C.text, 13)
+  side_cv:text(6, 116, "BEST", C.sub, 11)
+  side_cv:text(6, 130, tostring(hiscore), C.accent, 13)
+  side_cv:text(6, 156, "LEVEL", C.sub, 11)
+  side_cv:text(6, 170, tostring(level), C.good, 15)
+end
+
+local function try_rotate()
+  local nr = (rot % 4) + 1
+  if      not collides(pid, nr, px,   py) then rot = nr
+  elseif  not collides(pid, nr, px-1, py) then px = px-1; rot = nr
+  elseif  not collides(pid, nr, px+1, py) then px = px+1; rot = nr
+  end
+  draw_board()
+end
+
+local function hard_drop()
+  while not collides(pid, rot, px, py+1) do py = py+1 end
+  lock_piece()
+  spawn()
+  draw_board()
+  draw_side()
+end
+
+local function reset()
+  board = new_board()
+  score, cleared_total, level = 0, 0, 1
+  over = false
+  npid = sys.random(1, 7)
+  spawn()
+  draw_board()
+  draw_side()
+  timer.every(700)
+end
+
+function app.on_open(w, h)
+  hiscore = store.get("hiscore", 0)
+  local board_w = COLS * CELL
+  local board_h = ROWS * CELL
+  local total_w = board_w + 4 + SIDE_W
+  local ox = math.max(0, math.floor((w - total_w) / 2))
+  local oy = math.max(0, math.floor((h - board_h) / 2))
+  cv = ui.canvas(board_w, board_h)
+  cv:pos(ox, oy)
+  side_cv = ui.canvas(SIDE_W, board_h)
+  side_cv:pos(ox + board_w + 4, oy)
+  reset()
+end
+
+function app.on_input(ev)
+  if over then
+    if ev.type == "down" then reset() end
+    return
+  end
+  if ev.type == "swipe" then
+    local d = ev.dir
+    if d == "left" then
+      if not collides(pid, rot, px-1, py) then px = px-1; draw_board() end
+    elseif d == "right" then
+      if not collides(pid, rot, px+1, py) then px = px+1; draw_board() end
+    elseif d == "up" then
+      try_rotate()
+    elseif d == "down" then
+      hard_drop()
+    end
+  elseif ev.type == "key" then
+    local k = ev.key
+    if k == "left" then
+      if not collides(pid, rot, px-1, py) then px = px-1; draw_board() end
+    elseif k == "right" then
+      if not collides(pid, rot, px+1, py) then px = px+1; draw_board() end
+    elseif k == "up" then
+      try_rotate()
+    elseif k == "down" then
+      if not collides(pid, rot, px, py+1) then py = py+1; draw_board() end
+    elseif k == "enter" or k == " " then
+      hard_drop()
+    end
+  end
+end
+
+function app.on_tick(dt)
+  if over then return end
+  if collides(pid, rot, px, py+1) then
+    lock_piece()
+    spawn()
+    draw_board()
+    draw_side()
+  else
+    py = py + 1
+    draw_board()
+  end
+end
+
+function app.on_close() end
+
+return app
+)WADALUA";
 static const char kLuaSrc_sdktest[] = R"WADALUA(-- SDK self-test. Exercises the extended SDK so the results can be read off the
 -- screen instead of inferred from a build log. Published to the store as a
 -- developer/bench tool.
@@ -2364,14 +2624,376 @@ end
 
 return app
 )WADALUA";
+static const char kLuaSrc_breakout[] = R"WADALUA(-- Breakout — wadamesh Lua app
+-- Swipe left/right to move paddle  |  Swipe up to launch
+-- Keyboard: arrows to move, Enter / Space to launch
+-- Contributed by samuelcoustet
+
+local ui, sys, store, timer = wada.ui, wada.sys, wada.store, wada.timer
+local C = ui.colors
+local app = {}
+
+local COLS_B, ROWS_B = 8, 5
+local BRICK_H, BRICK_GAP = 10, 2
+local PADDLE_H, PADDLE_W = 7, 44
+local BALL_R = 5
+local TOP_H  = 18   -- score strip height
+local PAD_OFF = 22  -- paddle distance from bottom
+
+local COLORS = { 0xff3355, 0xff7722, 0xffdd33, 0x22cc77, 0x3399ff }
+local PTS    = { 7, 5, 4, 3, 1 }
+
+local cv, W, H, brick_w
+local bricks, n_alive
+local bx, by, bdx, bdy, speed
+local paddle_x
+local score, hiscore, lives, level
+local launched, over
+
+local function bk_x(c) return BRICK_GAP + (c-1)*(brick_w + BRICK_GAP) end
+local function bk_y(r) return TOP_H + 4 + (r-1)*(BRICK_H + BRICK_GAP) end
+local function pad_y() return H - PAD_OFF end
+
+local function new_bricks()
+  bricks = {}; n_alive = 0
+  for r = 1, ROWS_B do
+    bricks[r] = {}
+    for c = 1, COLS_B do bricks[r][c] = true; n_alive = n_alive + 1 end
+  end
+end
+
+local function reset_ball()
+  launched = false
+  bx = paddle_x
+  by = pad_y() - BALL_R - 1
+  bdx = 0; bdy = 0
+end
+
+local function launch_ball()
+  local a = sys.random(-40, 40) * math.pi / 180.0
+  bdx = speed * math.sin(a)
+  bdy = -speed * math.cos(a)
+  launched = true
+end
+
+local function draw_all()
+  cv:fill(0x0a0e14)
+  cv:text(6, 3, string.format("Score:%d  Best:%d  Lv:%d", score, hiscore, level), C.text, 11)
+  for i = 1, lives do
+    cv:circle(W - 6 - (i-1)*13, TOP_H // 2, 4, C.good, true)
+  end
+  for r = 1, ROWS_B do
+    for c = 1, COLS_B do
+      if bricks[r][c] then
+        cv:rect(bk_x(c), bk_y(r), brick_w, BRICK_H, COLORS[r], true, 2)
+      end
+    end
+  end
+  cv:rect(paddle_x - PADDLE_W // 2, pad_y(), PADDLE_W, PADDLE_H, C.accent, true, 3)
+  cv:circle(math.floor(bx), math.floor(by), BALL_R, 0xffffff, true)
+  if not launched and not over then
+    cv:text(W // 2 - 40, pad_y() - 20, "swipe up to launch", C.sub, 11)
+  end
+  if over then
+    cv:rect(W // 2 - 62, H // 2 - 22, 124, 44, 0x141a22, true, 6)
+    cv:text(W // 2 - 44, H // 2 - 14, "GAME  OVER", C.bad, 14)
+    cv:text(W // 2 - 34, H // 2 + 4, "tap to restart", C.sub, 11)
+  end
+end
+
+local function check_bricks()
+  for r = 1, ROWS_B do
+    for c = 1, COLS_B do
+      if bricks[r][c] then
+        local x1, y1 = bk_x(c), bk_y(r)
+        local ox = math.min(bx + BALL_R - x1, x1 + brick_w - (bx - BALL_R))
+        local oy = math.min(by + BALL_R - y1, y1 + BRICK_H - (by - BALL_R))
+        if ox > 0 and oy > 0 then
+          bricks[r][c] = false; n_alive = n_alive - 1
+          score = score + PTS[r] * level
+          if ox < oy then bdx = -bdx else bdy = -bdy end
+          return
+        end
+      end
+    end
+  end
+end
+
+local function step()
+  if over or not launched then return end
+  bx = bx + bdx
+  by = by + bdy
+  -- walls
+  if bx - BALL_R < 0        then bx = BALL_R;     bdx =  math.abs(bdx) end
+  if bx + BALL_R > W        then bx = W - BALL_R; bdx = -math.abs(bdx) end
+  if by - BALL_R < TOP_H    then by = TOP_H + BALL_R; bdy = math.abs(bdy) end
+  -- paddle
+  local py = pad_y()
+  if bdy > 0 and by + BALL_R >= py and by + BALL_R <= py + PADDLE_H + speed + 1 then
+    local half = PADDLE_W * 0.5
+    if bx >= paddle_x - half - BALL_R and bx <= paddle_x + half + BALL_R then
+      local rel = math.max(-1.0, math.min(1.0, (bx - paddle_x) / half))
+      bdx = speed * rel * 0.8
+      local sq = speed * speed - bdx * bdx
+      bdy = -(sq > 0 and math.sqrt(sq) or speed * 0.5)
+      by  = py - BALL_R - 1.0
+    end
+  end
+  -- bricks
+  check_bricks()
+  -- ball lost
+  if by - BALL_R > H + 10 then
+    lives = lives - 1
+    if lives <= 0 then
+      if score > hiscore then hiscore = score; store.set("hiscore", hiscore) end
+      over = true; launched = false; return
+    end
+    paddle_x = W // 2; reset_ball()
+  end
+  -- level won
+  if n_alive == 0 then
+    level  = level + 1
+    speed  = math.min(speed + 0.6, 9.0)
+    new_bricks(); reset_ball()
+  end
+end
+
+local function move_paddle(dx)
+  paddle_x = math.max(PADDLE_W // 2 + 2, math.min(W - PADDLE_W // 2 - 2, paddle_x + dx))
+  if not launched then bx = paddle_x end
+  draw_all()
+end
+
+function app.on_open(w, h)
+  W, H = w, h
+  hiscore = store.get("hiscore", 0)
+  brick_w = math.floor((W - (COLS_B + 1) * BRICK_GAP) / COLS_B)
+  cv = ui.canvas(W, H); cv:pos(0, 0)
+  score = 0; lives = 3; level = 1; speed = 3.5; over = false
+  paddle_x = W // 2
+  new_bricks(); reset_ball()
+  draw_all()
+  timer.every(33)
+end
+
+function app.on_input(ev)
+  if over then
+    if ev.type == "down" or (ev.type == "key" and ev.key == "enter") then
+      over = false; score = 0; lives = 3; level = 1; speed = 3.5
+      paddle_x = W // 2; new_bricks(); reset_ball(); draw_all()
+    end
+    return
+  end
+  if ev.type == "swipe" then
+    local d = ev.dir
+    if     d == "left"  then move_paddle(-32)
+    elseif d == "right" then move_paddle( 32)
+    elseif d == "up" and not launched then launch_ball(); draw_all()
+    end
+  elseif ev.type == "key" then
+    local k = ev.key
+    if     k == "left"  then move_paddle(-20)
+    elseif k == "right" then move_paddle( 20)
+    elseif (k == "up" or k == "enter" or k == " ") and not launched then
+      launch_ball(); draw_all()
+    end
+  elseif ev.type == "down" then
+    if     ev.x < W // 3        then move_paddle(-32)
+    elseif ev.x > (W * 2) // 3  then move_paddle( 32)
+    elseif not launched          then launch_ball(); draw_all()
+    end
+  end
+end
+
+function app.on_tick(dt)
+  step(); draw_all()
+end
+
+function app.on_close() end
+
+return app
+)WADALUA";
+static const char kLuaSrc_ping[] = R"WADALUA(-- Ping — wadamesh Lua app
+-- Send a DM to any contact and measure round-trip time.
+-- Both devices exchange their GPS position; the result shows RTT,
+-- distance and cardinal bearing when both have a fix.
+-- The app also auto-replies to incoming pings from other Ping users.
+-- Requires: sdk_ext
+
+local ui, sys, store, timer = wada.ui, wada.sys, wada.store, wada.timer
+local mesh = wada.mesh
+local geo   = wada.geo   -- great-circle helpers; nil on firmware without sdk_ext
+local C = ui.colors
+
+local app = {}
+
+local PING_PFX = "WADAPING:"
+local PONG_PFX = "WADAPONG:"
+
+local W, H
+local gps_lbl
+local rows = {}      -- {name, result_lbl}  (parallel with contacts table)
+local pending = {}   -- name → {sent_ms, lat_e6, lon_e6}
+
+-- ---- helpers ---------------------------------------------------------------
+
+local function gps_line()
+  local fix = sys.gps()
+  if not fix then return "no GPS fix" end
+  local ns = fix.lat >= 0 and "N" or "S"
+  local ew = fix.lon >= 0 and "E" or "W"
+  return string.format("%.4f°%s  %.4f°%s  %d sats",
+    math.abs(fix.lat), ns, math.abs(fix.lon), ew, fix.sats or 0)
+end
+
+local function dist_str(m)
+  if m < 1000 then return string.format("%dm", math.floor(m + 0.5))
+  else return string.format("%.1fkm", m / 1000.0) end
+end
+
+local function find_row(name)
+  for _, r in ipairs(rows) do
+    if r.name == name then return r end
+  end
+end
+
+local function set_row_result(name, rtt_ms, dist_m, cardinal)
+  local r = find_row(name)
+  if not r then return end
+  if rtt_ms then
+    local s = tostring(rtt_ms) .. "ms"
+    if dist_m and dist_m > 0 then
+      s = s .. "  " .. dist_str(dist_m)
+      if cardinal then s = s .. "  " .. cardinal end
+    end
+    r.result_lbl:set(s)
+    r.result_lbl:color(C.good)
+  else
+    r.result_lbl:set("waiting…")
+    r.result_lbl:color(C.sub)
+  end
+end
+
+local function do_ping(name)
+  local fix  = sys.gps()
+  local lat6 = fix and fix.lat_e6 or 0
+  local lon6 = fix and fix.lon_e6 or 0
+  local ts   = sys.millis()
+  local msg  = string.format("%s%d:%d:%d", PING_PFX, ts, lat6, lon6)
+  local ok, err = mesh.send_dm(name, msg)
+  if ok then
+    pending[name] = { sent_ms = ts, lat_e6 = lat6, lon_e6 = lon6 }
+    set_row_result(name, nil, nil, nil)   -- "waiting…"
+    sys.toast("Ping → " .. name, 800)
+  else
+    sys.toast("Error: " .. tostring(err), 2000)
+  end
+end
+
+-- ---- message handler -------------------------------------------------------
+
+function app.on_message(m)
+  if m.kind ~= "dm" then return end
+  local text = tostring(m.text or "")
+
+  -- ---- incoming PING: echo back with our position -------------------------
+  if text:sub(1, #PING_PFX) == PING_PFX then
+    local ts_s, _, _ = text:sub(#PING_PFX + 1):match("(-?%d+):(-?%d+):(-?%d+)")
+    if ts_s then
+      local fix = sys.gps()
+      local my6lat = fix and fix.lat_e6 or 0
+      local my6lon = fix and fix.lon_e6 or 0
+      mesh.send_dm(m.sender, string.format("%s%s:%d:%d", PONG_PFX, ts_s, my6lat, my6lon))
+    end
+    return
+  end
+
+  -- ---- incoming PONG: compute RTT + distance ------------------------------
+  if text:sub(1, #PONG_PFX) == PONG_PFX then
+    local ts_s, their_lat_s, their_lon_s =
+      text:sub(#PONG_PFX + 1):match("(-?%d+):(-?%d+):(-?%d+)")
+    if not ts_s then return end
+
+    local sent_ms = tonumber(ts_s)
+    local rtt     = sys.millis() - sent_ms
+
+    local dist_m, cardinal
+    local p = pending[m.sender]
+    if p and geo and tonumber(their_lat_s) ~= 0 and p.lat_e6 ~= 0 then
+      local my_lat  = p.lat_e6        / 1000000.0
+      local my_lon  = p.lon_e6        / 1000000.0
+      local th_lat  = tonumber(their_lat_s) / 1000000.0
+      local th_lon  = tonumber(their_lon_s) / 1000000.0
+      dist_m  = geo.distance(my_lat, my_lon, th_lat, th_lon)
+      local brg = geo.bearing(my_lat, my_lon, th_lat, th_lon)
+      cardinal  = geo.cardinal(brg)
+    end
+
+    pending[m.sender] = nil
+    set_row_result(m.sender, rtt, dist_m, cardinal)
+
+    local notice = m.sender .. ": " .. rtt .. "ms"
+    if dist_m then notice = notice .. "  " .. dist_str(dist_m) end
+    sys.toast(notice, 2500)
+    return
+  end
+end
+
+-- ---- lifecycle -------------------------------------------------------------
+
+function app.on_open(w, h)
+  W, H = w, h
+  ui.scroll(true)
+
+  local cy = 6
+  gps_lbl = ui.label(gps_line(), 6, cy, 11, C.sub)
+  gps_lbl:width(w - 12)
+  cy = cy + 20
+
+  local contacts = mesh.contacts()
+
+  if #contacts == 0 then
+    ui.label("No contacts visible", 8, cy, 12, C.sub)
+    timer.every(5000)
+    return
+  end
+
+  for _, ct in ipairs(contacts) do
+    local name = ct.name
+    local nl = ui.label(name, 8, cy, 13, C.text)
+    nl:width(w - 68)
+    local rl = ui.label("—", 8, cy + 16, 11, C.sub)
+    rl:width(w - 68)
+    local cap = name   -- capture for closure
+    ui.button("Ping", w - 60, cy + 4, 52, 28, function()
+      do_ping(cap)
+    end)
+    rows[#rows + 1] = { name = name, result_lbl = rl }
+    cy = cy + 44
+  end
+
+  timer.every(5000)
+end
+
+function app.on_tick(dt)
+  if gps_lbl then gps_lbl:set(gps_line()) end
+end
+
+function app.on_close() end
+
+return app
+)WADALUA";
 
 static const LuaBuiltinApp kLuaBuiltin[] = {
   { "monitor", "RF Monitor", "1.3", kLuaSrc_monitor },
   { "airtime", "Airtime", "1.4", kLuaSrc_airtime },
   { "snake", "Snake", "1.0", kLuaSrc_snake },
+  { "tetris", "Tetris", "1.0", kLuaSrc_tetris },
   { "sdktest", "SDK Test", "1.7", kLuaSrc_sdktest },
   { "2048", "2048", "1.2", kLuaSrc_2048 },
   { "wardrive", "Wardrive", "1.2", kLuaSrc_wardrive },
   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },
+  { "breakout", "Breakout", "1.0", kLuaSrc_breakout },
+  { "ping", "Ping", "1.0", kLuaSrc_ping },
 };
 static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));
