@@ -729,13 +729,28 @@ int uiTextLines(lua_State* L) {
 // accessors compare generations and null it, so the existing `if (u->obj)` guard
 // in every method turns a stale call into a no-op instead of a crash.
 static int uiClear(lua_State* L) {
-  (void)L;
   if (!s_h || !s_h->body) return 0;
 #if CAP_LUA_SDK_EXT
   destroyLiveMapView();
 #endif
   lv_obj_clean(s_h->body);   // deletes the children, keeps the page itself
   ++s_ui_gen;
+  // Drop the button callbacks with the buttons they belong to. The table is
+  // keyed by the LVGL object POINTER, and lv_obj_clean just freed every one of
+  // them, so every entry here is now stale by definition. Leaving them cost an
+  // app a table entry and a live closure (with its upvalues) per button per
+  // rebuild, which is unbounded: an app with a few screens it redraws is the
+  // normal case, and Jade's hit "screen memory errors, worse the longer it has
+  // been open" exactly this way.
+  //
+  // It was also a correctness bug waiting to happen. LVGL reuses freed
+  // addresses, so a NEW button created without a callback could land on an
+  // address a dead one left behind and fire that stale closure on the next tap.
+  if (s_h->L && s_h->ref_btncb != LUA_NOREF) {
+    lua_newtable(s_h->L);
+    lua_rawseti(s_h->L, LUA_REGISTRYINDEX, s_h->ref_btncb);
+  }
+  (void)L;
   return 0;
 }
 
