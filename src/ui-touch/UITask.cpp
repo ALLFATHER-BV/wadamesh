@@ -4166,12 +4166,16 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
 // Rotate the ST7789 panel in hardware for the landscape orientations. Uses the
 // global `display` (ST7789LCDDisplay) — a free function so it isn't shadowed by
 // UITask::begin's DisplayDriver* parameter, also called `display`. ROT_90 maps
-// to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited.
+// to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited, except
+// on the CrowPanel (0) and the Attaky (its build DISPLAY_ROTATION, 2), where
+// UITask::begin turns it back from a landscape the boot logo may have applied.
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
 #if defined(HAS_CROWPANEL_35)
   else                                  display.setDisplayRotation(0);
+#elif defined(ATTAKY_MESH_SERIES)
+  else                                  display.setDisplayRotation(DISPLAY_ROTATION);
 #endif
 }
 
@@ -61934,6 +61938,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Orientation. Landscape is the stored default (see TouchPrefsStore), and the
     // Mesh Deck build without a keyboard can flip to portrait, which runs at the
     // panel's DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4.
+    // UI init below turns the panel back to it: the boot logo may have left it landscape.
     // Only those two: the Orientation button toggles between them.
     if (s_ui_rotation != LV_DISP_ROT_NONE) s_ui_rotation = LV_DISP_ROT_90;
 #endif
@@ -62118,9 +62123,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(ATTAKY_MESH_SERIES)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
+      // The logo reads the legacy NVS copy before main.cpp moves prefs to SPIFFS. On
+      // the Attaky that copy says landscape (its default, and the v68 reset), so a
+      // saved portrait would otherwise render 240x320 into the landscape panel.
       applyHardwarePanelRotation(LV_DISP_ROT_NONE);
     }
 #endif
