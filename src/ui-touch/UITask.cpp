@@ -2569,6 +2569,26 @@ static void purgeDiscovered() {
   for (int i = 0; i < DISCOVERED_MAX; ++i) s_discovered[i].used = false;
 }
 
+#if defined(HAS_THINKNODE_M9)
+// The M9's bottom notices are a hint about what ARRIVED, so the person glyph has
+// to count what has not been looked at yet. discoveredCount() is a standing
+// total: on a live mesh it is non-zero from the first advert heard and only ever
+// falls when you add or purge, so driving the notice from it left the glyph lit
+// permanently. Watermark the count instead — at boot, because a ring restored
+// from flash is not news, and again whenever the Discovered list is opened.
+static int s_m9_disc_seen = -1;   // -1 = ring not loaded yet, nothing can be new
+static void m9DiscoveredMarkSeen() { s_m9_disc_seen = discoveredCount(); }
+static int m9DiscoveredUnseen() {
+  const int n = discoveredCount();
+  if (s_m9_disc_seen < 0) return 0;
+  // Purge, adding one to Contacts, and ring eviction all push the total back
+  // DOWN past the watermark; without this clamp the next genuine arrival would
+  // still read as "nothing new".
+  if (s_m9_disc_seen > n) s_m9_disc_seen = n;
+  return n - s_m9_disc_seen;
+}
+#endif
+
 // ---- Persist the discovered ring across reboots ---------------------------
 // High-churn discovery data has its own namespace so an advert burst never
 // rewrites the critical touch settings snapshot.
@@ -6437,13 +6457,49 @@ static lv_obj_t* s_chat_unread_badge = nullptr;  // red unread-count badge over 
 static lv_obj_t* s_m9_mail_indicator = nullptr;
 static lv_obj_t* s_m9_contact_indicator = nullptr;
 static lv_obj_t* s_m9_update_indicator = nullptr;   // firmware update waiting (#443)
+// Count pills riding beside the two countable notices. The update notice is a
+// single fact, so it has none.
+static lv_obj_t* s_m9_mail_count = nullptr;
+static lv_obj_t* s_m9_contact_count = nullptr;
 static void hideM9NoticeIndicators() {
-  if (s_m9_mail_indicator && lv_obj_is_valid(s_m9_mail_indicator))
-    lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
-  if (s_m9_contact_indicator && lv_obj_is_valid(s_m9_contact_indicator))
-    lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
-  if (s_m9_update_indicator && lv_obj_is_valid(s_m9_update_indicator))
-    lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_t* all[5] = { s_m9_mail_indicator, s_m9_contact_indicator, s_m9_update_indicator,
+                       s_m9_mail_count, s_m9_contact_count };
+  for (lv_obj_t* o : all)
+    if (o && lv_obj_is_valid(o)) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+// Drive one notice. Only touches LVGL when something actually changed: this runs
+// on the 250 ms refresh tick, and a style write or a z-reorder per tick
+// invalidates the bottom strip for nothing. These labels sit on layer_top OVER
+// page content (this board has no tab bar, TABBAR_H == 0), so needless redraws
+// there are visible.
+// `refront` says a new overlay has taken the front of layer_top since the last
+// tick, so an already-visible notice has to be lifted over it again. The old
+// code got this for free by re-foregrounding on every tick; doing it only on
+// the show transition would hide a live notice behind the app drawer, which is
+// the one overlay notices are allowed to sit on top of.
+static void m9NoticeSet(lv_obj_t* icon, lv_obj_t* count, bool show, int n, uint32_t color,
+                        bool refront) {
+  if (!icon || !lv_obj_is_valid(icon)) return;
+  if (show) {
+    const lv_color_t want = lv_color_hex(color);
+    if (lv_obj_get_style_text_color(icon, LV_PART_MAIN).full != want.full)
+      lv_obj_set_style_text_color(icon, want, LV_PART_MAIN);
+    if (count && lv_obj_is_valid(count)) {
+      char b[8];
+      if (n > 99) snprintf(b, sizeof b, "99+");
+      else        snprintf(b, sizeof b, "%d", n);
+      const char* cur = lv_label_get_text(count);
+      if (!cur || strcmp(cur, b) != 0) lv_label_set_text(count, b);
+    }
+  }
+  const bool was = !lv_obj_has_flag(icon, LV_OBJ_FLAG_HIDDEN);
+  if (show == was && !(show && refront)) return;
+  lv_obj_t* pair[2] = { icon, count };
+  for (lv_obj_t* o : pair) {
+    if (!o || !lv_obj_is_valid(o)) continue;
+    if (show) { lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(o); }
+    else      { lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); }
+  }
 }
 #endif
 static lv_obj_t* s_tab_indicator    = nullptr;   // thin rounded accent glow bar under the active tab
@@ -11994,6 +12050,9 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
 
 static void openDiscoveredModalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+#if defined(HAS_THINKNODE_M9)
+  m9DiscoveredMarkSeen();   // you are looking at the list; nothing in it is new any more
+#endif
   lv_obj_t* body = createSettingsModal(TR("Discovered"), SettingsModalKind::Discovered);
   int y = 0;
 
@@ -51383,6 +51442,37 @@ static void sleepIconTapCb(lv_event_t* e) {
 // bar-tap toggles, and the Snake overlay whose taps the bar swallows) are handled
 // by edge-triggered move_foreground in updateGlobalStatusBar. (Toast + trackball
 // cursor stay on lv_layer_sys, which is always above this.)
+
+// The battery percentage is right-anchored at SBX(22) and grows LEFT, with the
+// signal bars pinned at SBX(54) — so the text gets SBX(32) and no more. "100%"
+// is a whole glyph wider than "99%", and the bars are created after the label,
+// so at 100% the bars painted over the leading 1 (buko84, confirmed by jd1227,
+// both on the M9). This returns how far the three glyphs nearest the battery
+// have to slide left to clear it.
+//
+// Limited to the boards SBX actually scales for: they grow the FONT on a text
+// preset and leave the geometry at 100%, so they are the ones that run out of
+// room. Everywhere else the ladder is unchanged, and even here it is measured,
+// so a board whose text already fits does not move. The clock, the DND moon and
+// the BLE glyph never move at all.
+static int statusPctOverflow() {
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8)
+  if (!g_statusbar.batt_pct) return 0;
+  const lv_font_t* f = lv_obj_get_style_text_font(g_statusbar.batt_pct, LV_PART_MAIN);
+  if (!f) return 0;
+  const int need = lv_txt_get_width("100%", 4, f, 0, LV_TEXT_FLAG_NONE) + 2;   // +2 so it is not flush
+  const int over = need - (SBX(54) - SBX(22));
+  if (over <= 0) return 0;
+  // Hard ceiling: the next glyph out is the SD dot, and beyond it the BLE glyph
+  // sits at 111 even on the narrow panels. Never eat more than this, so a wrong
+  // measurement can crowd nothing.
+  const int cap = SBX(12);
+  return over < cap ? over : cap;
+#else
+  return 0;
+#endif
+}
+
 static void buildGlobalStatusBar() {
   g_statusbar.root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(g_statusbar.root);
@@ -51659,7 +51749,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -104,
 #else
-               -SBX(73),
+               -(SBX(73) + statusPctOverflow()),   // rides left with the bars
 #endif
                0);
 
@@ -51728,7 +51818,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                -124,
 #else
-               -SBX(91),
+               -(SBX(91) + statusPctOverflow()),   // rides left with the bars
 #endif
                0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
@@ -51754,7 +51844,7 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
                  -82,
 #else
-                 -SBX(54),
+                 -(SBX(54) + statusPctOverflow()),   // clear "100%" (see statusPctOverflow)
 #endif
                  0);
     lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
@@ -55254,10 +55344,40 @@ static void buildUiTree() {
     lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN | NAV_SKIP_FLAG);
     return icon;
   };
+  // Count pill for a notice, in the same red-circle language as the bottom-bar
+  // badges the other boards get. Positioned arithmetically from the slot rather
+  // than aligned to the glyph: the icon has only just been created, so its real
+  // geometry is not resolved until the first layout pass.
+  auto makeM9NoticeCount = [&](int slot) -> lv_obj_t* {
+    lv_obj_t* pill = lv_label_create(lv_layer_top());
+    lv_label_set_text(pill, "");
+    lv_obj_set_size(pill, LV_SIZE_CONTENT, 14);
+    lv_obj_set_style_min_width(pill, 14, LV_PART_MAIN);
+    lv_obj_set_style_radius(pill, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(pill,
+        lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE0533D), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pill, lv_color_white(), LV_PART_MAIN);
+    // Fixed 12 px like every other badge: the count must stay inside its circle
+    // at the Large/Huge font presets this board offers.
+    lv_obj_set_style_text_font(pill, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_align(pill, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(pill, 3, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(pill, 0, LV_PART_MAIN);
+    // Right of the centred glyph, on its vertical centre: the glyph occupies the
+    // middle ~16 px of a 48 px slot, so the pill starts where the glyph ends.
+    lv_obj_align(pill, LV_ALIGN_BOTTOM_LEFT, slot * m9_notice_slot_w + m9_notice_slot_w - 16, -8);
+    lv_obj_clear_flag(pill, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(pill, LV_OBJ_FLAG_HIDDEN | NAV_SKIP_FLAG);
+    return pill;
+  };
   s_m9_mail_indicator = makeM9Notice(LV_SYMBOL_ENVELOPE, 0);
+  s_m9_mail_count = makeM9NoticeCount(0);
   s_m9_contact_indicator = makeM9Notice(TOUCH_SYM_PERSON, 1);
+  s_m9_contact_count = makeM9NoticeCount(1);
   // The bottom-bar gear badge below is this board's #else, so an available
   // firmware update had nowhere to show on the M9 (#443). Third notice slot.
+  // No count: an update is one fact, not a quantity.
   s_m9_update_indicator = makeM9Notice(LV_SYMBOL_DOWNLOAD, 2);
 #else
   // Red "!" update badge over the Settings gear (rightmost bottom tab). A child
@@ -64338,7 +64458,16 @@ void UITask::loop() {
 #if defined(HAS_TANMATSU)
   if (s_msgled_flash_until) msgLedRefresh(getUnreadTotal() > 0);   // end the one-shot envelope-LED flash on time
 #endif
-  { static bool s_disc_loaded = false; if (!s_disc_loaded) { s_disc_loaded = true; loadDiscovered(); } }
+  { static bool s_disc_loaded = false;
+    if (!s_disc_loaded) {
+      s_disc_loaded = true;
+      loadDiscovered();
+#if defined(HAS_THINKNODE_M9)
+      // A ring restored from flash is history, not news — watermark it so the
+      // bottom notice starts clean after a reboot.
+      m9DiscoveredMarkSeen();
+#endif
+    } }
   uiCp("ui:disc");
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
@@ -64965,30 +65094,31 @@ void UITask::loop() {
                                   !s_apppage_title && !hasChatDetailOpen() &&
                                   getActiveTab() != CHAT_INBOX_TAB_INDEX &&
                                   (!anyPopupOpen() || drawer_front);
-      const bool mail_pending = notice_surface && !drawer_front && getUnreadTotal() > 0;
-      const bool contact_pending = notice_surface && discoveredCount() > 0;
-      const bool blink_on = ((now / 500u) & 1u) == 0;
-      if (mail_pending || contact_pending) {
-        lv_obj_move_foreground(s_m9_mail_indicator);
-        lv_obj_move_foreground(s_m9_contact_indicator);
-      }
-      lv_obj_set_style_text_color(s_m9_mail_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      lv_obj_set_style_text_color(s_m9_contact_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      if (mail_pending && blink_on) lv_obj_clear_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
-      else                          lv_obj_add_flag(s_m9_mail_indicator, LV_OBJ_FLAG_HIDDEN);
-      if (contact_pending && blink_on) lv_obj_clear_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
-      else                             lv_obj_add_flag(s_m9_contact_indicator, LV_OBJ_FLAG_HIDDEN);
-      // Update notice: steady amber, not blinking. The blink marks something
-      // that just arrived and wants reading; an update can wait for you.
-      const bool update_pending = notice_surface && s_update_available;
-      if (update_pending) {
-        lv_obj_move_foreground(s_m9_update_indicator);
-        lv_obj_set_style_text_color(s_m9_update_indicator,
-            lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xE2A23A), LV_PART_MAIN);
-        lv_obj_clear_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
-      } else {
-        lv_obj_add_flag(s_m9_update_indicator, LV_OBJ_FLAG_HIDDEN);
-      }
+      // Each notice carries its own count and is shown only while it means
+      // something. None of them blink: the glyphs sit on layer_top over page
+      // content on this board (no tab bar), so a 1 Hz toggle read as the screen
+      // flickering rather than as a notice, which is how it got reported.
+      const int mail_n = getUnreadTotal();
+      const int disc_n = m9DiscoveredUnseen();
+      // Suppress each one on the screen that already shows it in full. The
+      // inbox-tab case is folded into notice_surface above; Contacts owns the
+      // Discovered list, so the person glyph has no business sitting above it.
+      const bool mail_pending    = notice_surface && !drawer_front && mail_n > 0;
+      const bool contact_pending = notice_surface && disc_n > 0 &&
+                                   getActiveTab() != CONTACTS_TAB_INDEX;
+      const bool update_pending  = notice_surface && s_update_available;
+      // Notices are NAV_SKIP, so navTopFrontmostChild never returns one and
+      // lifting them cannot make this flip back and forth.
+      static lv_obj_t* s_m9_notice_front_prev = nullptr;
+      lv_obj_t* front_now = top_has_content ? navTopFrontmostChild(top) : nullptr;
+      const bool refront = (front_now != s_m9_notice_front_prev);
+      s_m9_notice_front_prev = front_now;
+      m9NoticeSet(s_m9_mail_indicator,    s_m9_mail_count,    mail_pending,    mail_n,
+                  COLOR_ACCENT, refront);
+      m9NoticeSet(s_m9_contact_indicator, s_m9_contact_count, contact_pending, disc_n,
+                  COLOR_ACCENT, refront);
+      m9NoticeSet(s_m9_update_indicator,  nullptr,            update_pending,  0,
+                  s_theme_high_contrast ? COLOR_TEXT : 0xE2A23Au, refront);
     }
 #endif
     // Unread-count badge over the Chats tab icon (bottom bar).
