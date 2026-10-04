@@ -345,8 +345,49 @@ local function build_wada()
     }
   end
 
-  wada.fs.append = function(name, data) checkstr(name, "fs.append name"); checkstr(data, "fs.append data"); return true end
-  wada.fs.remove = function(name) checkstr(name, "fs.remove name"); return true end
+  -- wada.fs: a real in-memory filesystem, not a set of no-ops. append used to
+  -- throw the data away and read/write/list were missing outright, so any app
+  -- that wrote a file and read it back failed here while working perfectly on
+  -- device. That is what made wardrive 1.2 look like it had regressed the
+  -- emoji fix: it errored on a nil fs.read at the first flush, long before
+  -- anything was rendered, and the scenario reported the unrendered label.
+  -- Semantics follow LuaAppHost.cpp: read returns data plus the file's TOTAL
+  -- size so a caller can window a growing log, an offset at or past the end is
+  -- an empty string rather than nil, and a missing file is nil.
+  fsfiles = {}
+  wada.fs.write = function(name, data)
+    checkstr(name, "fs.write name"); checkstr(data, "fs.write data")
+    fsfiles[name] = data; return true
+  end
+  wada.fs.append = function(name, data)
+    checkstr(name, "fs.append name"); checkstr(data, "fs.append data")
+    fsfiles[name] = (fsfiles[name] or "") .. data; return true
+  end
+  wada.fs.read = function(name, off, want)
+    checkstr(name, "fs.read name")
+    local d = fsfiles[name]
+    if d == nil then return nil end
+    off = off or 0
+    if off < 0 then return nil end
+    local total = #d
+    if off >= total then return "", total end
+    want = want or (total - off)
+    if want < 0 then return nil end
+    return d:sub(off + 1, off + want), total
+  end
+  wada.fs.list = function()
+    local out, names = {}, {}
+    for n in pairs(fsfiles) do names[#names + 1] = n end
+    table.sort(names)   -- deterministic: a hash order would make tests flaky
+    for _, n in ipairs(names) do out[#out + 1] = { name = n, size = #fsfiles[n] } end
+    return out
+  end
+  wada.fs.remove = function(name)
+    checkstr(name, "fs.remove name")
+    local had = fsfiles[name] ~= nil
+    fsfiles[name] = nil
+    return had
+  end
 
   wada.store.get = function(k, d) assert(type(k) == "string"); local v = storekv[k]; if v == nil then return d end return v end
   wada.store.set = function(k, v) assert(type(k) == "string", "store key must be a string")
@@ -2056,6 +2097,14 @@ scenarios.protreck_cost = function()
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
+-- True (and says so) when this app has no scenarios of its own. Returning a
+-- truthy value makes the dispatch below pick an EMPTY list rather than running
+-- someone else's tests against it.
+local function UNTESTED_APPS()
+  io.write("== no scenarios for this app; nothing was tested\n")
+  return true
+end
+
 local order = APP_PATH:find("/sdscan/", 1, true)
   and { "sdscan_real_m9", "sdscan_many", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
         "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
@@ -2071,6 +2120,12 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
+  -- The compass list below is gpscompass's own, NOT a default. An app with no
+  -- branch used to fall through to it and "fail" on tests written for a
+  -- different app -- six of the store apps do, so a full run came back red and
+  -- a real regression would not have stood out. Name them: they are untested,
+  -- which is worth saying out loud, but it is not a failure of the app.
+  or ((not APP_PATH:find("/gpscompass/", 1, true)) and UNTESTED_APPS() and {})
   or { "declination", "align_nofix", "bearings_absolute", "m9", "r8", "v4", "pager", "pager_portrait_jumbo", "tanmatsu", "audio_api", "cost" }
 for _, name in ipairs(order) do
   if SCENARIO == "all" or SCENARIO == name then
