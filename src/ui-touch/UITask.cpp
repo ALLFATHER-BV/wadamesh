@@ -14106,8 +14106,6 @@ static void uiScaleSelectCb(lv_event_t* e) {
 }
 #endif
 
-// Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -14120,8 +14118,8 @@ static void sleepIdleToggleCb(lv_event_t* e) {
   updateGlobalStatusBar();
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Idle sleep enabled") : TR("Idle sleep disabled"), 1200);
 }
-#endif
 
+// Hard-lock (not just dim) when the screen idles off, so the touchscreen is
 // inert until a deliberate unlock. Cached in s_lock_on_screen_off so the loop's
 // idle check never hits NVS.
 static void lockOnScreenOffToggleCb(lv_event_t* e) {
@@ -16408,21 +16406,14 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
-  // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
-  // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
-  // can't block it there, and the other gates are user state) + M9 (2026-09-02
-  // battery pass: the hooks were already installed and every gate works there —
-  // the throttle is a plain vTaskDelay in the loop task, wake is the keyboard
-  // poll that runs through it — but no M9 build ever compiled this switch, so
-  // on the M9 the pref was permanently OFF).
-  //
-  // That reasoning used to add "and the M9 is in batteryIsCharging's #else
-  // branch (compile-time false), so the USB-powered gate can never block".
-  // That is no longer true: charge detection is shared by every board now, so
-  // the M9 blocks on USB power like the rest, which is what the gate is for.
+  // Settings -> Lock so it lives with the battery. Every board: the hooks are
+  // installed and touchSleep::loopEnd runs on every touch build, and the gates
+  // are board-neutral (the throttle is a plain vTaskDelay in the loop task, and
+  // input is polled through it). This used to be a T-Deck / V4-R8 / M9 allowlist,
+  // which left the pref permanently OFF everywhere else (the M9 had exactly that
+  // bug until 2026-09-02; the T-Pager until #593).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -16437,7 +16428,6 @@ static void buildDeviceSettings(int sec) {
         reason ? reason : TR("Throttles the CPU when idle to save power"),
         COLOR_SUB, &g_font_12, 0) + 6;
   }
-#endif
 
   // Calibrate battery: capture the current voltage as 100% (for custom packs /
   // builds whose full voltage isn't 4.2 V). Tap = set 100%; long-press = reset.
@@ -36444,7 +36434,7 @@ static void onMapTabActivated() {
   refreshMapInfoLabel();
 }
 
-// Idle power-save indicator (iPhone Low-Power-Mode style, T-Deck and M9): instead of a separate moon
+// Idle power-save indicator (iPhone Low-Power-Mode style, every board): instead of a separate moon
 // glyph, the status-bar battery turns amber while idle power-save is enabled. s_batt_base holds the
 // colour the theme/map chrome wants (off-white off-map, black/white over light tiles); applyBattColor
 // overlays the amber when power-save is on, so the map-chrome setter and the per-tick refresh share
@@ -36453,10 +36443,8 @@ static lv_color_t s_batt_base = lv_color_hex(COLOR_TEXT);
 static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (touchSleep::enabled())
     c = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xFFD60A);
-#endif
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
 }
 
@@ -52550,14 +52538,12 @@ static void updateGlobalStatusBar() {
     lv_label_set_text(g_statusbar.batt_icon, g);
     s_last_glyph = g;
   }
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Re-tint the battery amber/normal when idle power-save toggles (the toggle cb routes through
   // here via updateGlobalStatusBar). Only on change, so no per-tick style churn.
   { static int s_last_pwr = -1;
     const int pwr = touchSleep::enabled() ? 1 : 0;
     if (pwr != s_last_pwr) { s_last_pwr = pwr; applyBattColor(); }
   }
-#endif
 
   // ---- Clock ----
 #if defined(ESP32)
