@@ -145,6 +145,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.local_adv_min     = 0;      // OFF: no periodic zero-hop self-advert
   c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
   c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
+  c.condense_nav      = 0;      // OFF: bottom nav bar + labelled Home launchers (v66, #592)
   c.report_done_n     = 0;      // no beta reported on yet
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
@@ -269,6 +270,7 @@ static void cfgLoadOrMigrate() {
         // v64 new trailing fields. Forced off rather than inherited: a garbage 1
         // would start sending an install count nobody opted into.
         if (stored_version < 64) { s_cfg.report_ping = 0; s_cfg.report_done_n = 0; }
+        if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -1407,6 +1409,17 @@ bool touchPrefsGetReportPing() {
 bool touchPrefsSetReportPing(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.report_ping = on ? 1 : 0;
+  return cfgFlush();
+}
+// Condense Nav (v66, #592): landscape nav rail + icon-only Home launchers.
+// Read once when the UI is built; changing it restarts.
+bool touchPrefsGetCondenseNav() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.condense_nav != 0;
+}
+bool touchPrefsSetCondenseNav(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.condense_nav = on ? 1 : 0;
   return cfgFlush();
 }
 uint16_t touchPrefsGetReportedBeta() {

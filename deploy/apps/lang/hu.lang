@@ -34,9 +34,12 @@ Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
 Accent colour	Kiemelőszín
 Appearance	Megjelenés
+Condense Nav (restart to apply)	Tömör navigáció (újraindítás az alkalmazáshoz)
+Condense Nav saved — restart to apply	Tömör navigáció mentve – indítsa újra az alkalmazáshoz
 Day	Nappali
 High contrast	Nagy kontraszt
 High contrast - restarting to apply it…	Nagy kontraszt - újraindítás az alkalmazáshoz…
+Landscape only	Csak fekvő tájolásban
 Night	Éjszakai
 Theme save failed	Téma mentése sikertelen
 Ack	Ack

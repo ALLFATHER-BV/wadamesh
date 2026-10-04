@@ -2072,17 +2072,48 @@ constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 // queried live so it tracks the current rotation (240×260 portrait /
 // 320×180 landscape).
 #if CAP_LARGE_SCREEN
-constexpr int TABBAR_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+constexpr int TABBAR_BOTTOM_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+constexpr int TABBAR_RAIL_W   = 56;   // Condense Nav rail: fits the 34-px F-key shapes with a margin
 #elif defined(HAS_THINKNODE_M9)
 // No tab bar on this board: it is tap-only chrome (navMaybeRebuild deliberately
 // never adds it to the focus group), and the M9 has no touch — the dedicated
 // HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles
 // cover every tab. Reclaims the row for content (user request).
-constexpr int TABBAR_H = 0;
+constexpr int TABBAR_BOTTOM_H = 0;
+constexpr int TABBAR_RAIL_W   = 0;    // and no rail: Condense Nav leaves the M9 as it is
 #else
-constexpr int TABBAR_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
+constexpr int TABBAR_BOTTOM_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
+constexpr int TABBAR_RAIL_W   = 40;   // Condense Nav rail: one icon (plus the Pager's key letter) per cell
 #endif
-static inline lv_coord_t tabContentW() { return lv_disp_get_hor_res(nullptr); }
+// Condense Nav (#592): in landscape the nav bar becomes a rail on the right edge
+// and Home's launcher column shows icons only. Decided ONCE when the UI tree is
+// built (buildUiTree) from the pref and the orientation at that moment, so a
+// portrait board's transient keyboard-landscape never flips it mid-session.
+// TABBAR_H is the bottom bar's height (0 when it is a rail); TABBAR_W is the
+// rail's width (0 when the bar is at the bottom).
+static bool s_nav_condensed = false;
+static int  TABBAR_H = TABBAR_BOTTOM_H;
+static int  TABBAR_W = 0;
+// Width of an icon-only Home launcher button with Condense Nav (the buttons keep
+// their height and spacing; only the width shrinks to about a square).
+#if CAP_LARGE_SCREEN
+constexpr int HOME_ICON_BTNW = 64;
+#else
+constexpr int HOME_ICON_BTNW = 44;
+#endif
+// A Home launcher label is "<icon>  <word>". With Condense Nav only the icon
+// (everything before the first space) is shown; otherwise the label as-is.
+static const char* homeLauncherText(const char* label, char* buf, size_t cap) {
+  if (!s_nav_condensed || !label) return label;
+  const char* sp = strchr(label, ' ');
+  if (!sp || sp == label) return label;
+  size_t n = (size_t)(sp - label);
+  if (n >= cap) n = cap - 1;
+  memcpy(buf, label, n);
+  buf[n] = '\0';
+  return buf;
+}
+static inline lv_coord_t tabContentW() { return lv_disp_get_hor_res(nullptr) - TABBAR_W; }
 static inline lv_coord_t tabContentH() { return lv_disp_get_ver_res(nullptr) - STATUSBAR_H - TABBAR_H; }
 // Usable area for a centered modal below the global status bar (small margin).
 // Popups were sized for the 320-tall portrait screen; these let them shrink to
@@ -2362,13 +2393,15 @@ constexpr int           kTbCursorStepPx   = 12;    // px per encoder step
 constexpr float         kTbCursorSmoothMs = 60.0f; // ease time-constant (smaller = snappier)
 constexpr unsigned long kTbCursorHideMs   = 800;   // auto-hide after idle
 
-// True while the trackball cursor is visible AND screen-Y is within the bottom
-// tab bar. Used to swallow stray FINGER touches on the tab bar while the user is
-// driving the cursor — a trackball CLICK on a tab still works (it arrives via
-// the cursor path, not as a raw touch).
-static bool tbFingerTouchOnTabBarBlocked(uint16_t y) {
+// True while the trackball cursor is visible AND the touch is within the tab
+// bar (the bottom strip, or the right-edge rail with Condense Nav). Used to
+// swallow stray FINGER touches on the tab bar while the user is driving the
+// cursor — a trackball CLICK on a tab still works (it arrives via the cursor
+// path, not as a raw touch).
+static bool tbFingerTouchOnTabBarBlocked(uint16_t x, uint16_t y) {
   if (!s_tb_cursor) return false;
   if ((millis() - s_tb_last_active_ms) >= kTbCursorHideMs) return false;  // cursor hidden
+  if (s_nav_condensed) return (int)x >= (lv_disp_get_hor_res(nullptr) - TABBAR_W);
   return (int)y >= (lv_disp_get_ver_res(nullptr) - TABBAR_H);
 }
 #endif
@@ -2825,6 +2858,39 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
 
+// Screen coordinates of tab cell i, measured from where the bar actually drew
+// it (button_areas are relative to the bar's outer top-left). Used for the
+// Condense Nav rail, where the cells stack vertically. False if not laid out.
+static bool tabBtnScreenArea(int i, lv_area_t* out) {
+  if (!g_lv.tabview || !out) return false;
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  if (!bar) return false;
+  lv_obj_update_layout(bar);
+  const lv_btnmatrix_t* bm = (const lv_btnmatrix_t*)bar;
+  if (!bm->button_areas || i < 0 || i >= (int)bm->btn_cnt) return false;
+  lv_area_t b;
+  lv_obj_get_coords(bar, &b);
+  *out = bm->button_areas[i];
+  out->x1 += b.x1; out->x2 += b.x1;
+  out->y1 += b.y1; out->y2 += b.y1;
+  return true;
+}
+
+// Position for a size w x h child of the tab bar, centred on cell i, in the
+// coordinates lv_obj_align(..., LV_ALIGN_TOP_LEFT, x, y) expects (inside the
+// bar's padding and border). Used to lay the per-tab key hints and F-key shapes
+// down the Condense Nav rail. False if the bar is not laid out yet.
+static bool tabBarChildPosForCell(int i, lv_coord_t w, lv_coord_t h, lv_coord_t* x, lv_coord_t* y) {
+  lv_area_t c;
+  if (!tabBtnScreenArea(i, &c)) return false;
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  lv_area_t b; lv_obj_get_coords(bar, &b);
+  const lv_coord_t bw = lv_obj_get_style_border_width(bar, LV_PART_MAIN);
+  *x = (c.x1 + c.x2) / 2 - w / 2 - (b.x1 + lv_obj_get_style_pad_left(bar, LV_PART_MAIN) + bw);
+  *y = (c.y1 + c.y2) / 2 - h / 2 - (b.y1 + lv_obj_get_style_pad_top(bar, LV_PART_MAIN) + bw);
+  return true;
+}
+
 #if defined(HELTEC_LORA_V4_R8)
 static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
   if (!g_lv.tabview) return;
@@ -2832,7 +2898,7 @@ static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
   lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr),
                   lv_disp_get_ver_res(nullptr) - top);
   if (g_lv.dm.list_cont) {
-    lv_obj_set_size(g_lv.dm.list_cont, lv_disp_get_hor_res(nullptr),
+    lv_obj_set_size(g_lv.dm.list_cont, tabContentW(),
                     lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
   }
 }
@@ -4926,6 +4992,22 @@ static void p4PlaceFKeyHint(lv_obj_t* bar, int i, lv_obj_t* hint) {
 }
 #endif
 
+#if !defined(HAS_TANMATSU) && !defined(TLORA_PAGER) && !defined(HAS_THINKNODE_M9)
+// Condense Nav rail: a tab's key hint goes centred UNDER its icon, since the
+// narrow rail has no room beside it.
+static void railPlaceKeyHint(int i, lv_obj_t* hint) {
+  const char* txt = lv_label_get_text(hint);
+  const lv_font_t* font = lv_obj_get_style_text_font(hint, LV_PART_MAIN);
+  const lv_coord_t w = lv_txt_get_width(txt, strlen(txt), font, 0, LV_TEXT_FLAG_NONE);
+  const lv_coord_t h = lv_font_get_line_height(font);
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  const lv_coord_t icon_h = lv_font_get_line_height(lv_obj_get_style_text_font(bar, LV_PART_ITEMS));
+  lv_coord_t x, y;
+  if (!tabBarChildPosForCell(i, w, h, &x, &y)) return;
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, x, y + icon_h / 2 + h / 2 - 2);
+}
+#endif
+
 static void navMenubarKeysSync() {
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
@@ -4962,7 +5044,8 @@ static void navMenubarKeysSync() {
       lv_label_set_text(s_navkey_hint[i], fk);
       lv_obj_set_style_text_font(s_navkey_hint[i], &lv_font_montserrat_12, LV_PART_MAIN);
       lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
-      p4PlaceFKeyHint(bar, i, s_navkey_hint[i]);
+      if (s_nav_condensed) railPlaceKeyHint(i, s_navkey_hint[i]);
+      else                 p4PlaceFKeyHint(bar, i, s_navkey_hint[i]);
       continue;
     }
 #endif
@@ -4973,7 +5056,8 @@ static void navMenubarKeysSync() {
       lv_obj_set_style_text_font(s_navkey_hint[i], &g_font_12, LV_PART_MAIN);
     }
     lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
-    if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
+    if (s_nav_condensed) railPlaceKeyHint(i, s_navkey_hint[i]);
+    else if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
   }
 #endif
 }
@@ -6024,7 +6108,11 @@ static void navBuildTabKeyHints() {
                 lv_canvas_draw_rect(cv, SZ-r, SZ-r, r, r, &rd); } break;
       default: { lv_point_t p[5] = {{SZ/2,1},{SZ-2,SZ/2},{SZ/2,SZ-2},{1,SZ/2},{SZ/2,1}}; lv_canvas_draw_line(cv, p, 5, &ld); } break; // ◇
     }
-    lv_obj_align(cv, LV_ALIGN_LEFT_MID, i * cell + (cell - SZ) / 2, 0);
+    lv_coord_t rx, ry;
+    if (s_nav_condensed && tabBarChildPosForCell(i, SZ, SZ, &rx, &ry))
+      lv_obj_align(cv, LV_ALIGN_TOP_LEFT, rx, ry);   // Condense Nav rail: stacked down the right edge
+    else
+      lv_obj_align(cv, LV_ALIGN_LEFT_MID, i * cell + (cell - SZ) / 2, 0);
     s_tabhint_cv[i] = cv;
 
     lv_obj_t* ic = lv_label_create(bar);
@@ -6148,7 +6236,7 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   if (raw_press
 #if CAP_TRACKBALL
       // Ignore a stray finger on the tab bar while the cursor is up.
-      && !tbFingerTouchOnTabBarBlocked(y)
+      && !tbFingerTouchOnTabBarBlocked(x, y)
 #endif
      ) {
     p.x = static_cast<lv_coord_t>(x);
@@ -10111,11 +10199,32 @@ static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 static bool s_home_drawer_mode = false;
 static bool s_home_is_drawer   = false;   // persistent pref: Home tab defaults to the app drawer (loaded at boot)
 static bool s_tab_changed = false;   // a real tab switch happened this tap; the Home-button toggle reads it
+// Condense Nav rail: pin a tab badge (unread count, update "!") to the top-right
+// corner of its cell. Aligned to the screen's right edge so a wider count grows
+// leftwards into the cell instead of off the panel.
+static void railPlaceBadge(lv_obj_t* badge, int tab) {
+  lv_area_t c;
+  if (!badge || !tabBtnScreenArea(tab, &c)) return;
+  const lv_coord_t right_gap = lv_disp_get_hor_res(nullptr) - 1 - c.x2;
+  lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -(right_gap + 2), c.y1 + 2);
+}
+
 // Slide the thin accent indicator bar under the active tab. Hidden on the
 // immersive map tab (transparent chrome, black icons over the tiles).
 static void updateTabIndicator() {
   if (!s_tab_indicator || !g_lv.tabview) return;
   const int idx = getActiveTab();
+  if (s_nav_condensed) {
+    // Rail: a short vertical bar on the rail's inner (left) edge, beside the
+    // active cell. The rail stays solid on the map, so it stays visible there.
+    lv_area_t c;
+    if (!tabBtnScreenArea(idx, &c)) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+    lv_area_t r; lv_obj_get_coords(bar, &r);
+    lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_tab_indicator, r.x1 + 2, (c.y1 + c.y2) / 2 - TAB_INDICATOR_W / 2);
+    return;
+  }
   if (idx == MAP_TAB_INDEX) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
 #if defined(HAS_EXPANSION_KIT)
   // Tab count is runtime: 6 cells with the Sensors tab, 5 without (TAB_LAST is 5
@@ -14115,6 +14224,16 @@ static void uiScaleSelectCb(lv_event_t* e) {
 }
 #endif
 
+#if !defined(HAS_THINKNODE_M9)
+// Condense Nav (#592). The bar's side and the Home column width are fixed when
+// the UI tree is built, so like the UI size this applies after a restart.
+static void condenseNavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetCondenseNav(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+  if (g_lv.task) g_lv.task->showAlert(TR("Condense Nav saved — restart to apply"), 2200);
+}
+#endif
+
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -15568,6 +15687,23 @@ static void buildDeviceSettings(int sec) {
     y += LV_MAX(40, h + 12);
   }
 #endif
+#endif
+
+#if !defined(HAS_THINKNODE_M9)
+  /* Condense Nav (#592): in landscape, the nav bar becomes a rail on the right
+     edge and Home's launcher column shows icons only. Portrait layouts keep the
+     bottom bar, so the switch is greyed out there. The M9 has no nav bar. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Condense Nav (restart to apply)"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetCondenseNav()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    if (!chatLandscape()) lv_obj_add_state(sw, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(sw, condenseNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+    if (!chatLandscape())
+      y += settingsRowLabel(body, y, 0, TR("Landscape only"), COLOR_SUB, &g_font_12, 0) + 6;
+  }
 #endif
 
   /* Distance units: OFF = km (default), ON = miles. Applies immediately. */
@@ -29487,17 +29623,20 @@ static void makeHome(lv_obj_t* tab) {
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
 #if defined(TLORA_PAGER)
   const uint8_t pager_size = touchPrefsGetUiScale();
-  const int BTNW = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
+  const int BTNW_LABEL = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
   const int home_line_h = lv_font_get_line_height(&g_font_14);
   const int home_state_y  = pager_size ? 2 : 4;
   const int home_unread_y = pager_size ? home_state_y + home_line_h + 2 : 22;
   const int home_stats_y  = pager_size ? home_unread_y + home_line_h + 2 : 40;
 #else
-  const int BTNW = SC(100);
+  const int BTNW_LABEL = SC(100);
   const int home_state_y  = SC(4);
   const int home_unread_y = SC(22);
   const int home_stats_y  = SC(40);
 #endif
+  // Condense Nav: the column shows icons only, so it narrows and the status
+  // text, chart and info card to its left widen by the difference.
+  const int BTNW = s_nav_condensed ? HOME_ICON_BTNW : BTNW_LABEL;
   const int RSTRIP = BTNW + 10;
 
   // The previous in-tab status row (heartbeat dot, MESHCOMOD title, clock,
@@ -29935,7 +30074,8 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_event_cb(adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* adv_l = lv_label_create(adv);
   // Shorter label in the narrow landscape button + the half-width portrait button so it doesn't clip.
-  lv_label_set_text(adv_l, TR(LV_SYMBOL_UPLOAD "  Advert"));
+  char adv_icon[16];
+  lv_label_set_text(adv_l, homeLauncherText(TR(LV_SYMBOL_UPLOAD "  Advert"), adv_icon, sizeof adv_icon));
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
 
@@ -30040,7 +30180,8 @@ static void makeHome(lv_obj_t* tab) {
                 lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN); }
       lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* l = lv_label_create(b);
-      lv_label_set_text(l, TR(label));
+      char icon[16];
+      lv_label_set_text(l, homeLauncherText(TR(label), icon, sizeof icon));
       lv_obj_set_style_text_font(l, bh >= 44 ? &g_font_14 : &g_font_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(l,
           lv_color_hex(bg ? themeRole(0xFFFFFF, COLOR_TEXT) : COLOR_TEXT), LV_PART_MAIN);
@@ -36508,7 +36649,8 @@ static void applyMapChrome(bool on) {
 #endif
   }
   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
-  if (g_lv.tabview) {
+  // The Condense Nav rail stays solid on the map (#592), so it keeps its normal look.
+  if (g_lv.tabview && !s_nav_condensed) {
     lv_obj_t* btns = lv_tabview_get_tab_btns(g_lv.tabview);
     if (btns) {
       // Fully transparent on the map — the black icons read directly over the
@@ -36549,7 +36691,10 @@ static void makeMapTab(lv_obj_t* tab) {
   // is on top), so panning is driven by a transparent touch-catcher in this
   // page (below). All tile/marker projection reads k_map_canvas_w/h → a
   // full-screen canvas projects to the full screen.
-  k_map_canvas_w = lv_disp_get_hor_res(nullptr);
+  // With Condense Nav the solid rail covers the right edge, so the canvas stops
+  // at the rail (tabContentW): the map centres in the visible area and the
+  // right-edge buttons, sized from this width, sit beside the rail.
+  k_map_canvas_w = tabContentW();
   k_map_canvas_h = lv_disp_get_ver_res(nullptr);
   mapComputeGridRadius();   // size the tile grid to cover this canvas edge-to-edge
   constexpr int kMapInfoH = 34;   // bottom info strip height (floats over the map)
@@ -38321,7 +38466,7 @@ static void makeSettings(lv_obj_t* tab) {
   // Category landing: a single-column list in portrait, a 2-column grid in
   // landscape (uses the extra width). Each card opens a focused detail sheet.
   const bool landscape = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
-  const lv_coord_t hor = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t hor = tabContentW();   // minus the Condense Nav rail, when there is one
 
   lv_obj_t* land = lv_obj_create(tab);
   s_settings_landing = land;
@@ -41705,7 +41850,7 @@ static void refreshChatList(LvChatPanel& p) {
           lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
       // Leave room on the right for the gear + time + unread badge.
-      lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116 - time_w - gear_w);
+      lv_obj_set_width(text_lbl, tabContentW() - 116 - time_w - gear_w);
     }
 
     // Right-aligned unread badge (pill with the count), left of the time.
@@ -41870,7 +42015,7 @@ static void refreshChatList(LvChatPanel& p) {
 
     // Name (top line) + last-message preview (bottom line), right of the avatar.
     const lv_coord_t text_x = 8 + kThreadAvatar + 8;
-    const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
+    const lv_coord_t name_w = (lv_coord_t)(tabContentW() - text_x - gear_w - time_w - 24);
     lv_obj_t* nm2 = lv_label_create(btn);
     lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_label_set_text(nm2, san_name);
@@ -41915,7 +42060,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60),
+    lv_obj_set_size(pv, (lv_coord_t)(tabContentW() - text_x - gear_w - 60),
 #if defined(TLORA_PAGER)
                     lv_font_get_line_height(&g_font_12)
 #else
@@ -50269,7 +50414,9 @@ static void tabBarGestureCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
   if (anyPopupOpen()) return;   // don't open the drawer over an open popup (or when already open)
   lv_indev_t* indev = lv_indev_get_act();
-  if (indev && lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
+  // Swipe up from the bottom bar, or in from the Condense Nav rail (swipe left).
+  const lv_dir_t open_dir = s_nav_condensed ? LV_DIR_LEFT : LV_DIR_TOP;
+  if (indev && lv_indev_get_gesture_dir(indev) == open_dir) {
     goToTab(HOME_TAB_INDEX);
     setHomeDrawer(true);
   }
@@ -50336,7 +50483,7 @@ static void mentionRowCb(lv_event_t* e) {
 static void openMentionsScreen() {
   closeMentionsScreen();
   if (!g_lv.task) return;
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sw = tabContentW();   // stops at the Condense Nav rail, which stays visible
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_mentions_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_mentions_root);
@@ -50993,7 +51140,7 @@ static const char* luaAppIconGlyph(const char* name) {
 
 static void openAppDrawer() {
   closeAppDrawer();
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sw = tabContentW();   // stops at the Condense Nav rail, which stays visible
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_appdrawer_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_appdrawer_root);
@@ -52834,7 +52981,7 @@ static void relayoutHomeCharts() {
   // content box; using the full screen width made the chart's top/right frame
   // look like a stray L drawn across the portrait screen.
   const int cw = tabContentW() - 20;
-  const int BTNW = SC(100);
+  const int BTNW = s_nav_condensed ? HOME_ICON_BTNW : SC(100);   // matches makeHome()
   const int RSTRIP = BTNW + 10;
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 
@@ -55265,8 +55412,18 @@ static void buildUiTree() {
   lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);   // zero default theme padding so overlays sit at (0,0)
   lv_obj_set_style_text_color(root, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 
+  // ---- Condense Nav (#592) ----
+  // Decide once, before anything sizes itself from TABBAR_H / TABBAR_W: the pref
+  // applies only to a landscape layout, and never on the M9 (no bar at all).
+#if !defined(HAS_THINKNODE_M9)
+  s_nav_condensed = touchPrefsGetCondenseNav() && chatLandscape();
+#endif
+  TABBAR_H = s_nav_condensed ? 0 : TABBAR_BOTTOM_H;
+  TABBAR_W = s_nav_condensed ? TABBAR_RAIL_W : 0;
+
   // ---- Tabview ----
-  g_lv.tabview = lv_tabview_create(root, LV_DIR_BOTTOM, TABBAR_H);
+  g_lv.tabview = s_nav_condensed ? lv_tabview_create(root, LV_DIR_RIGHT, TABBAR_W)
+                                 : lv_tabview_create(root, LV_DIR_BOTTOM, TABBAR_H);
   // Tabview leaves the top STATUSBAR_H pixels free so the global status
   // bar (on lv_layer_sys) doesn't paint over tab content. Sized from the
   // live display resolution so it fills the screen in either orientation
@@ -55328,12 +55485,26 @@ static void buildUiTree() {
                                LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_text_font(tab_btns, &g_font_14, LV_PART_MAIN);
 #if CAP_ROUND_CORNERS
-  // Round panel: inset the bottom tab row from the two bottom corner arcs (left/right)
-  // and lift the icons off the very bottom edge, so no tab glyph sits under a corner.
-  lv_obj_set_style_pad_left(tab_btns,   SB_INSET_X, LV_PART_MAIN);
-  lv_obj_set_style_pad_right(tab_btns,  SB_INSET_X, LV_PART_MAIN);
-  lv_obj_set_style_pad_bottom(tab_btns, SB_TOP_PAD, LV_PART_MAIN);
+  if (s_nav_condensed) {
+    // Rail on a round panel: keep the bottom cell clear of the bottom-right arc
+    // and the icons off the very right edge.
+    lv_obj_set_style_pad_bottom(tab_btns, SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(tab_btns,  SB_TOP_PAD, LV_PART_MAIN);
+  } else {
+    // Round panel: inset the bottom tab row from the two bottom corner arcs (left/right)
+    // and lift the icons off the very bottom edge, so no tab glyph sits under a corner.
+    lv_obj_set_style_pad_left(tab_btns,   SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(tab_btns,  SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(tab_btns, SB_TOP_PAD, LV_PART_MAIN);
+  }
 #endif
+  if (s_nav_condensed) {
+    // Rail: cells touch, so a two-line Pager cell (icon over key letter) fits
+    // the short screen's ~40 px per tab.
+    lv_obj_set_style_pad_row(tab_btns, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(tab_btns, 0, LV_PART_ITEMS);
+    lv_obj_set_style_text_line_space(tab_btns, -2, LV_PART_ITEMS);
+  }
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
 #if CAP_TRACKBALL || defined(HAS_TDISPLAY_P4_KEYBOARD)
@@ -55342,11 +55513,14 @@ static void buildUiTree() {
 #endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
   // Tab labels: icons-only on touch targets; the 480px-wide Pager appends each
-  // physical-keyboard mnemonic so the shortcuts are discoverable.
+  // physical-keyboard mnemonic so the shortcuts are discoverable (on the
+  // Condense Nav rail the letter sits under the icon instead of beside it).
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
 #if defined(TLORA_PAGER)
-  const char* const pager_chats_tab_label = LV_SYMBOL_ENVELOPE " M";
-  const char* const pager_settings_tab_label = LV_SYMBOL_SETTINGS " S";
+  const char* const pager_chats_tab_label =
+      s_nav_condensed ? LV_SYMBOL_ENVELOPE "\nM" : LV_SYMBOL_ENVELOPE " M";
+  const char* const pager_settings_tab_label =
+      s_nav_condensed ? LV_SYMBOL_SETTINGS "\nS" : LV_SYMBOL_SETTINGS " S";
   auto pagerTabIconBadgeX = [](int tab_index, const char* label, const char* icon) -> lv_coord_t {
     const lv_coord_t cell_w = lv_disp_get_hor_res(nullptr) / 5;
     const lv_coord_t label_w = lv_txt_get_width(label, strlen(label), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
@@ -55354,9 +55528,12 @@ static void buildUiTree() {
     return cell_w * tab_index + cell_w / 2 - (label_w - icon_w) / 2 - 8;
   };
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, pager_chats_tab_label);
-  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
-  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
-  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview,
+      s_nav_condensed ? TOUCH_SYM_PERSON "\nC" : TOUCH_SYM_PERSON " C");
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview,
+      s_nav_condensed ? LV_SYMBOL_HOME "\nH" : LV_SYMBOL_HOME " H");
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview,
+      s_nav_condensed ? LV_SYMBOL_GPS "\nA" : LV_SYMBOL_GPS " A");
 #else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
@@ -55494,6 +55671,7 @@ static void buildUiTree() {
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
 #endif
 #endif
+  if (s_nav_condensed) railPlaceBadge(s_update_badge, SETTINGS_TAB_INDEX);
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
@@ -55523,6 +55701,7 @@ static void buildUiTree() {
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
+  if (s_nav_condensed) railPlaceBadge(s_chat_unread_badge, CHAT_INBOX_TAB_INDEX);
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 #endif
 
@@ -55537,7 +55716,9 @@ static void buildUiTree() {
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(s_tab_indicator, TAB_INDICATOR_W, 4);
+  // Under the active tab on the bottom bar; beside it (vertical) on the rail.
+  if (s_nav_condensed) lv_obj_set_size(s_tab_indicator, 4, TAB_INDICATOR_W);
+  else                 lv_obj_set_size(s_tab_indicator, TAB_INDICATOR_W, 4);
   lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_tab_indicator,
       s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
