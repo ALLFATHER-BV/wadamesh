@@ -4626,6 +4626,20 @@ static bool navHomeMove(lv_obj_t* current, int dir) {
   return false;
 }
 
+// Move a slider one keyboard step (~20 steps end-to-end, at least 1, so a
+// 6-position slider like Screen timeout moves one position per step) and fire
+// VALUE_CHANGED for the live preview. Saving is the caller's job: sliders
+// persist on RELEASED, which the caller sends when the adjustment is final.
+static void navSliderNudge(lv_obj_t* s, int dir) {
+  const int32_t mn = lv_slider_get_min_value(s), mx = lv_slider_get_max_value(s);
+  int32_t step = (mx - mn) / 20; if (step < 1) step = 1;
+  int32_t v = lv_slider_get_value(s) + (dir > 0 ? step : -step);
+  if (v < mn) v = mn; else if (v > mx) v = mx;
+  if (v == lv_slider_get_value(s)) return;
+  lv_slider_set_value(s, v, LV_ANIM_OFF);
+  lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
+}
+
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -4678,12 +4692,7 @@ static void navMoveDir(int dir) {
   // (commit) so the slider's callbacks behave exactly like a drag+release: brightness
   // applies + persists, map zoom re-renders + persists, etc.
   if ((dir == NAV_LEFT || dir == NAV_RIGHT) && lv_obj_check_type(cur, &lv_slider_class)) {
-    const int32_t mn = lv_slider_get_min_value(cur), mx = lv_slider_get_max_value(cur);
-    int32_t step = (mx - mn) / 20; if (step < 1) step = 1;            // ~20 presses end-to-end, min 1
-    int32_t v = lv_slider_get_value(cur) + (dir == NAV_RIGHT ? step : -step);
-    if (v < mn) v = mn; else if (v > mx) v = mx;
-    lv_slider_set_value(cur, v, LV_ANIM_OFF);
-    lv_event_send(cur, LV_EVENT_VALUE_CHANGED, nullptr);
+    navSliderNudge(cur, dir == NAV_RIGHT ? +1 : -1);
     lv_event_send(cur, LV_EVENT_RELEASED, nullptr);
     s_nav_show = true;
     if (g_lv.task) g_lv.task->noteUserInput();
@@ -42923,7 +42932,13 @@ static void updateTrackball(unsigned long now) {
 // inside those nested views), else plain ESC. Shared by the rotary encoder's
 // long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
 // (updatePagerBackspaceHold) so both agree exactly.
+#if defined(HAS_PAGER_ENCODER)
+static bool pagerSliderEditCancel();
+#endif
 static void pagerNavGoBack() {
+#if defined(HAS_PAGER_ENCODER)
+  if (pagerSliderEditCancel()) return;           // editing a slider: Back undoes the edit, nothing else
+#endif
   if (anyPopupOpen())                            hwKeyDismissTopPopup();
   else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
@@ -43342,6 +43357,72 @@ static bool pagerChatComposerNav(bool up) {
   return false;
 }
 
+// Slider edit mode. A plain turn moves focus, so a focused slider could not be
+// adjusted with the wheel at all (only via the Q/E keys). Clicking the wheel on
+// a slider now enters edit mode: turns move the value with a live preview
+// (VALUE_CHANGED) and nothing is saved. Clicking again saves (RELEASED, the
+// same commit a touch drag ends with) and returns the wheel to focus
+// navigation. Back (long-press / Backspace-hold) puts the original value back
+// without saving, and so does anything that takes focus off the slider.
+static lv_obj_t* s_pager_slider_edit = nullptr;
+static int32_t   s_pager_slider_orig = 0;
+
+static void pagerSliderDeletedCb(lv_event_t*) { s_pager_slider_edit = nullptr; }
+
+static void pagerSliderEditEnd(bool commit) {
+  lv_obj_t* s = s_pager_slider_edit;
+  if (!s) return;
+  s_pager_slider_edit = nullptr;
+  lv_obj_remove_event_cb(s, pagerSliderDeletedCb);
+  lv_obj_clear_state(s, LV_STATE_EDITED);
+  if (commit) {
+    lv_event_send(s, LV_EVENT_RELEASED, nullptr);
+  } else if (lv_slider_get_value(s) != s_pager_slider_orig) {
+    lv_slider_set_value(s, s_pager_slider_orig, LV_ANIM_OFF);
+    lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);   // undo the live preview
+  }
+  s_nav_show = true;
+}
+
+static void pagerSliderEditBegin(lv_obj_t* s) {
+  s_pager_slider_edit = s;
+  s_pager_slider_orig = lv_slider_get_value(s);
+  lv_obj_add_event_cb(s, pagerSliderDeletedCb, LV_EVENT_DELETE, nullptr);
+  // Edit look: a bigger, contrasting knob, so "the wheel now moves this" reads
+  // differently from "this is focused". Read the pad before adding the state so
+  // it is the slider's own knob pad.
+  const lv_coord_t pad = lv_obj_get_style_pad_top(s, LV_PART_KNOB);
+  lv_obj_set_style_pad_all(s, pad + 3, LV_PART_KNOB | LV_STATE_EDITED);
+  lv_obj_set_style_bg_color(s, lv_color_hex(themeRole(0xFFFFFF, COLOR_TEXT)),
+                            LV_PART_KNOB | LV_STATE_EDITED);
+  lv_obj_add_state(s, LV_STATE_EDITED);
+  s_nav_show = true;
+}
+
+static bool pagerSliderEditCancel() {
+  if (!s_pager_slider_edit) return false;
+  pagerSliderEditEnd(false);
+  return true;
+}
+
+// Focus moved elsewhere (a hotkey, a popup, a rebuild that dropped the slider):
+// end the edit without saving.
+static void pagerSliderEditCheck() {
+  if (!s_pager_slider_edit) return;
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (foc != s_pager_slider_edit) pagerSliderEditEnd(false);
+}
+
+// A wheel click (or keyboard Enter) on a slider: the first enters edit mode,
+// the second saves and leaves it. False when the focus is not a slider.
+static bool pagerSliderEditClick() {
+  if (s_pager_slider_edit) { pagerSliderEditEnd(true); return true; }
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!foc || !lv_obj_check_type(foc, &lv_slider_class)) return false;
+  pagerSliderEditBegin(foc);
+  return true;
+}
+
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
@@ -43372,6 +43453,7 @@ static void updatePagerEncoder(unsigned long now) {
   // bug: waking via the encoder button selected "Skip" on the setup
   // wizard's welcome screen the instant the screen lit up.
   if (g_lv.task && g_lv.task->isScreenOff()) {
+    pagerSliderEditCancel();   // the screen timed out mid-edit: don't leave an unsaved preview applied
     // Hard-locked: a plain turn must NOT wake/unlock -- only holding Backspace
     // does (updatePagerBackspaceUnlockHold). Without this gate any idle turn
     // of the knob bypassed the lock entirely.
@@ -43388,6 +43470,8 @@ static void updatePagerEncoder(unsigned long now) {
   // Alt+turn is a modifier combo, not a solo tap -- mark it used so releasing
   // Alt afterward does not also arm the one-shot symbol layer.
   if (pagerKeyboardAltHeld() && delta != 0) pagerKeyboardMarkAltUsed();
+
+  pagerSliderEditCheck();
 
   if (s_mentionnav_active) {
     // @-mention contact picker (handleHwKey()'s Fn+Space entry / mentionNavConfirm()):
@@ -43410,6 +43494,10 @@ static void updatePagerEncoder(unsigned long now) {
       for (; delta < 0; delta++) s_accentnav_idx = (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
     }
     if (turned) accentNavRestyle();
+  } else if (s_pager_slider_edit) {
+    // Editing a slider: the wheel moves its value (preview only, see pagerSliderEditBegin).
+    for (; delta > 0; delta--) navSliderNudge(s_pager_slider_edit, +1);
+    for (; delta < 0; delta++) navSliderNudge(s_pager_slider_edit, -1);
   } else if (navOpenDropdown()) {
     // An open dropdown captures the encoder: lv_dropdown's own key handling only
     // understands LV_KEY_UP/DOWN to move the highlighted row (+ENTER to confirm,
@@ -43503,6 +43591,7 @@ static void updatePagerEncoder(unsigned long now) {
     // handleHwKey()'s Enter branch exactly so both inputs agree.
     if (s_mentionnav_active)        mentionNavConfirm(); // picking a mention: confirm the highlighted one
     else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
+    else if (pagerSliderEditClick()) {}                  // a slider: enter edit mode / save and leave it
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
   if (!held && s_was_held) s_press_consumed = false;
@@ -45979,6 +46068,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // shared with Tanmatsu's identical Enter-on-bubble handling, and with the
     // encoder's own short click in updatePagerEncoder() -- both inputs agree).
     if (key == 0x0D) {
+#if defined(HAS_PAGER_ENCODER)
+      if (pagerSliderEditClick()) { if (g_lv.task) g_lv.task->noteUserInput(); return; }
+#endif
       if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
@@ -46036,7 +46128,13 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
       lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
-        navMoveDir((key == 'e' || key == 'E') ? NAV_RIGHT : NAV_LEFT);
+        const bool right = (key == 'e' || key == 'E');
+#if defined(HAS_PAGER_ENCODER)
+        // In wheel edit mode the value is only saved on the closing click, so Q/E
+        // preview like a turn instead of committing each press.
+        if (focused == s_pager_slider_edit) { navSliderNudge(focused, right ? +1 : -1); return; }
+#endif
+        navMoveDir(right ? NAV_RIGHT : NAV_LEFT);
         return;
       }
     }
