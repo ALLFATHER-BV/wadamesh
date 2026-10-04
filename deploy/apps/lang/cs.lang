@@ -37,7 +37,9 @@ Appearance	Vzhled
 Condense Nav (restart to apply)	Kompaktní navigace (pro použití restartujte)
 Condense Nav saved — restart to apply	Kompaktní navigace uložena — pro použití restartujte
 Day	Den
+Keyboard nav: on	Navigace klávesnicí: zapnuta
 Landscape only	Pouze na šířku
+Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Písmena posouvají zvýraznění, když není aktivní textové pole. Enter vybírá; podržením Backspace se vrátíte zpět.
 Night	Noc
 Theme save failed	Uložení motivu selhalo
 Ack	Potvrzení

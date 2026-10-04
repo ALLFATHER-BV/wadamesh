@@ -66,6 +66,17 @@ static const uint8_t  DEFAULT_UI_ROTATION      = 0;
 using TouchCfg = TouchPrefsSchema::Config;
 
 static TouchCfg s_cfg;
+#if defined(TLORA_PAGER)
+// The Pager's keyboard-navigation keys (#591): I up, K down, J left, L right, no
+// Select/Back letter (Enter and Backspace-hold do those), U/O scroll. Clear of the
+// Pager's fixed letters (Q/E slider nudge, W/A/X/D map pan) and of its tab keys.
+static void touchPrefsPagerNavKeyDefaults(TouchCfg& c) {
+  const char* d = "ikjl";
+  for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)(i < 4 ? d[i] : 0);
+  c.nav_scroll_keys[0] = 'u';
+  c.nav_scroll_keys[1] = 'o';
+}
+#endif
 static bool     s_cfg_loaded = false;
 
 // Legacy per-key names — only referenced by the one-time migration below.
@@ -128,6 +139,8 @@ static void cfgSetDefaults(TouchCfg& c) {
 #endif
 #if defined(HAS_TANMATSU)
   c.kbd_nav           = 1;      // Tanmatsu: no touchscreen — keyboard nav is the only input, always on
+#elif defined(TLORA_PAGER)
+  c.kbd_nav           = 1;      // Pager (#591): letter navigation on by default (I/K/J/L, U/O)
 #else
   c.kbd_nav           = 0;      // T-Deck / V4: keyboard navigation OFF by default (opt-in; persists once toggled on)
 #endif
@@ -174,16 +187,24 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.app_hide          = (1u << 12);  // APPHIDE_MQTT: the MQTT bridge starts hidden (experimental + privacy)
   memset(c.lang_file, 0, sizeof c.lang_file);   // no file language: built-in ui_lang column
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
+#if defined(TLORA_PAGER)
+  { const char* d = "mchas"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // Pager tab mnemonics M/C/H/A/S (#591)
+#else
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
+#endif
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
 #if defined(HAS_TANMATSU)
   { const char* d = "wxads"; for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)d[i]; }  // Tanmatsu: W up/X down/A left/D right/S select; no Back letter (Esc/F-key), d[5]='\0'
+#elif defined(TLORA_PAGER)
+  touchPrefsPagerNavKeyDefaults(c);   // Pager (#591): I/K/J/L, no Select/Back letter, U/O scroll
 #else
   { const char* d = "wzadsq"; for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)d[i]; }  // default W/Z/A/D/S/Q
 #endif
   c.home_is_drawer    = 0;      // default: Home = Commander screen
 #if defined(HAS_TANMATSU)
   c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'v';   // Tanmatsu scroll-up F / scroll-down V
+#elif defined(TLORA_PAGER)
+  // set with the direction keys above (touchPrefsPagerNavKeyDefaults)
 #else
   c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'c';   // default scroll-up F / scroll-down C
 #endif
@@ -270,6 +291,17 @@ static void cfgLoadOrMigrate() {
         // v64 new trailing fields. Forced off rather than inherited: a garbage 1
         // would start sending an install count nobody opted into.
         if (stored_version < 64) { s_cfg.report_ping = 0; s_cfg.report_done_n = 0; }
+#if defined(TLORA_PAGER)
+        // v67 (#591): the Pager gains the T-Deck's keyboard navigation. Its kbd_nav and key
+        // bindings were never shown on this board, so the stored values are just the T-Deck
+        // defaults (W/Z/A/D..., E/R/T/U/I, nav off), which collide with the Pager's own
+        // letters. Put this board's defaults in once; later choices persist. No new field.
+        if (stored_version < 67) {
+          s_cfg.kbd_nav = 1;
+          { const char* d = "mchas"; for (int i = 0; i < 5; i++) s_cfg.nav_keys[i] = (uint8_t)d[i]; }
+          touchPrefsPagerNavKeyDefaults(s_cfg);
+        }
+#endif
         if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default

@@ -2444,6 +2444,14 @@ static bool           s_tb_nav         = false;  // no trackball — read by the
 static lv_indev_drv_t s_nav_keypad_drv;
 #endif
 
+#if defined(TLORA_PAGER)
+// Keyboard navigation (#591): the T-Deck's programmable letter nav on the Pager's
+// keyboard. Unlike the T-Deck this never gates the focus group (the wheel always
+// drives it); it only decides whether the navigation letters move the highlight.
+// On by default; loaded from the pref at init, toggled in Settings > Keyboard.
+static bool s_kbd_nav = true;
+#endif
+
 // Touchscreen-only boards whose only focus-group driver is a Bluetooth keyboard
 // (the Attaky's D-pad drives its own group): bleKbdUiTick() turns s_kbd_nav on
 // while a keyboard is connected. Off, the group stays empty and shows nothing.
@@ -4531,10 +4539,20 @@ static void navHideFocus() {
 }
 
 // ---- Keyboard-nav tab hotkeys (programmable; default E/R/T/U/I) ----
-static uint8_t     s_nav_keys[5]       = { 'e','r','t','u','i' };  // per main tab [chat,contacts,home,map,settings]; loaded from prefs at boot
+static uint8_t     s_nav_keys[5]       =
+#if defined(TLORA_PAGER)
+  { 'm','c','h','a','s' };   // Pager: its long-standing tab mnemonics, printed on the bar, now remappable (#591)
+#else
+  { 'e','r','t','u','i' };   // per main tab [chat,contacts,home,map,settings]; loaded from prefs at boot
+#endif
 static uint8_t     s_dir_keys[8]       =
 #if defined(HAS_TANMATSU)
   { 'w','x','a','d','s', 0, 'f','v' };  // Tanmatsu control keys: up,down,left,right,select,(no back — Esc/F-key),scroll-up,scroll-down
+#elif defined(TLORA_PAGER)
+  // Pager (#591): I/K/J/L move, U/O scroll. Select and Back stay on Enter and
+  // Backspace-hold (or the wheel's click / long-press), so those slots start empty.
+  // Clear of the Pager's fixed letters: M/C/H/A/S tabs, Q/E slider, W/A/X/D map pan.
+  { 'i','k','j','l', 0, 0, 'u','o' };
 #else
   { 'w','z','a','d','s','q','f','c' };  // control keys: up,down,left,right,select,back,scroll-up,scroll-down; loaded from prefs at boot
 #endif
@@ -5061,6 +5079,34 @@ static void navMenubarKeysSync() {
   }
 #endif
 }
+#if defined(TLORA_PAGER)
+// The Pager prints each tab's hotkey on the bar: the icon, then the letter beside it
+// (or under it on the Condense Nav rail). Built from s_nav_keys so a remap shows up.
+static void pagerTabLabel(int tab, char* out, size_t cap) {
+  static const char* const kIcons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME,
+                                         LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
+  if (tab < 0 || tab >= 5) { if (cap) out[0] = '\0'; return; }
+  const int lk = navKeyLower(s_nav_keys[tab]);
+  const char up = (lk >= 'a' && lk <= 'z') ? (char)(lk - 'a' + 'A') : (char)lk;
+  snprintf(out, cap, "%s%s%c", kIcons[tab], s_nav_condensed ? "\n" : " ", up);
+}
+static void pagerRefreshTabLabels() {
+  if (!g_lv.tabview) return;
+  char b[16];
+  for (int t = 0; t < 5; t++) { pagerTabLabel(t, b, sizeof b); lv_tabview_rename_tab(g_lv.tabview, t, b); }
+}
+// Letters the Pager uses for fixed actions, so a remap cannot take them: Q/E nudge a
+// slider, and W/A/X/D pan the map. A stays allowed as a tab key (it is the Map key by
+// default, and on the Map a pan would only ever follow a jump to the tab you are on).
+static bool pagerKeyReserved(int lk, bool tab_key) {
+  switch (lk) {
+    case 'q': case 'e': case 'w': case 'x': case 'd': return true;
+    case 'a': return !tab_key;
+    default:  return false;
+  }
+}
+#endif
+
 // Apply a captured key to the tab being remapped (Settings → Keyboard).
 static void navKeyCaptureApply(int key) {
   const int t = s_navkey_capture;   // 0-4 = tab hotkey, 5-12 = up/down/left/right/select/back/scroll-up/scroll-down
@@ -5069,13 +5115,20 @@ static void navKeyCaptureApply(int key) {
   if (key == 0x1B || key == 0x08 || key == 0x7F) { if (g_lv.task) g_lv.task->showAlert(TR("Cancelled"), 700); return; }
   if (!((key>='a'&&key<='z') || (key>='A'&&key<='Z'))) { if (g_lv.task) g_lv.task->showAlert(TR("Letters only"), 900); return; }
   const int lk = navKeyLower(key);
-  if (navKeyUsedBy(lk, t) >= 0) { if (g_lv.task) g_lv.task->showAlert(TR("Key already in use"), 1100); return; }
+  if (navKeyUsedBy(lk, t) >= 0
+#if defined(TLORA_PAGER)
+      || pagerKeyReserved(lk, t < 5)
+#endif
+     ) { if (g_lv.task) g_lv.task->showAlert(TR("Key already in use"), 1100); return; }
   if (t < 5) {
     s_nav_keys[t] = (uint8_t)lk;
 #if defined(ESP32)
     touchPrefsSetNavKey(t, (uint8_t)lk);
 #endif
     navMenubarKeysSync();   // tab hotkey changed → refresh the menubar hint
+#if defined(TLORA_PAGER)
+    pagerRefreshTabLabels();   // the Pager prints the letters in the tab labels themselves
+#endif
   } else {
     s_dir_keys[t - 5] = (uint8_t)lk;
 #if defined(ESP32)
@@ -14392,6 +14445,18 @@ static void navMbarKeysToggleCb(lv_event_t* e) {
 }
 #endif
 
+#if defined(TLORA_PAGER)
+// Keyboard navigation on the Pager (#591). Unlike the T-Deck's toggle this leaves the
+// focus group alone (the wheel always needs it); it only turns the letters on or off.
+static void pagerKbdNavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetKbdNav(on);
+  s_kbd_nav = on;
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Keyboard nav: on") : TR("Keyboard nav: off"), 1100);
+}
+#endif
+
 // Hide the device/profile name in the status bar and park the clock on the left
 // where the name used to be. Applies immediately via updateGlobalStatusBar().
 static void hideNameToggleCb(lv_event_t* e) {
@@ -15066,6 +15131,62 @@ static void themeContrastToggleCb(lv_event_t* e) {
       ? (s_theme_day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
       : (s_theme_day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT));
 }
+
+#if CAP_TRACKBALL || defined(TLORA_PAGER)
+// Settings > Keyboard: the programmable tab hotkeys and navigation keys, one row
+// each; tap (or click) a row, then press the new key. Shared by the T-Deck and the
+// Pager (#591) so both boards remap keys the same way. Returns the new y.
+static int settingsNavKeyRows(lv_obj_t* body, int y) {
+  // Programmable tab hotkeys — tap a row, then press a key to reassign it.
+  y += settingsRowLabel(body, y, 0, TR("Tab hotkeys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
+  for (int t = 0; t < 5; t++) {
+    lv_obj_t* row = lv_btn_create(body);
+    lv_obj_set_size(row, lv_pct(100), SC(30));
+    lv_obj_set_pos(row, 2, y);
+    styleButton(row);
+    lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, TR(kNavTabNames[t]));
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_t* kv = lv_label_create(row);
+    const int lk = navKeyLower(s_nav_keys[t]);
+    char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : (lk ? lk : '-')), 0 };
+    lv_label_set_text(kv, kb);
+    lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+    s_navkey_row_val[t] = kv;
+    y += SC(36);
+  }
+  // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
+  y += settingsRowLabel(body, y, 0, TR("Navigation keys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
+  for (int d = 0; d < 8; d++) {
+    const int bi = d + 5;   // binding index 5-12
+    lv_obj_t* row = lv_btn_create(body);
+    lv_obj_set_size(row, lv_pct(100), SC(30));
+    lv_obj_set_pos(row, 2, y);
+    styleButton(row);
+    lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)bi);
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, TR(kNavDirNames[d]));
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_t* kv = lv_label_create(row);
+    const int lk = navKeyLower(s_dir_keys[d]);
+    char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : (lk ? lk : '-')), 0 };
+    lv_label_set_text(kv, kb);
+    lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+    s_navkey_row_val[bi] = kv;
+    y += SC(36);
+  }
+  return y;
+}
+#endif
 
 static void buildDeviceSettings(int sec) {
   // One detail page per section: each block below is gated to its DSEC_* section
@@ -16177,6 +16298,24 @@ static void buildDeviceSettings(int sec) {
   }
 #endif
 
+#if defined(TLORA_PAGER)
+  /* Keyboard navigation (#591), the T-Deck's feature on the Pager: with no text field
+     focused, letters move the highlight (default I/K/J/L) and scroll (U/O), and the
+     tab keys are the letters printed on the bar. On by default. Applied live. */
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Keyboard navigation"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetKbdNav()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, pagerKbdNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+    y += settingsRowLabel(body, y, 0,
+        TR("Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back."),
+        COLOR_SUB, &g_font_12, 0) + 2;
+    y = settingsNavKeyRows(body, y);
+  }
+#endif
+
 #if CAP_TRACKBALL
 #if defined(HAS_TDECK_KEYBOARD)   // never the M9: nav is force-set on at boot there (the board's only input) and must not grow an off-switch
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
@@ -16224,53 +16363,7 @@ static void buildDeviceSettings(int sec) {
       lv_obj_add_event_cb(sw2, navMbarKeysToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
       y += LV_MAX(34, h2 + 10);
     }
-    // Programmable tab hotkeys — tap a row, then press a key to reassign it.
-    y += settingsRowLabel(body, y, 0, TR("Tab hotkeys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
-    for (int t = 0; t < 5; t++) {
-      lv_obj_t* row = lv_btn_create(body);
-      lv_obj_set_size(row, lv_pct(100), SC(30));
-      lv_obj_set_pos(row, 2, y);
-      styleButton(row);
-      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
-      lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, TR(kNavTabNames[t]));
-      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
-      lv_obj_t* kv = lv_label_create(row);
-      const int lk = navKeyLower(s_nav_keys[t]);
-      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
-      lv_label_set_text(kv, kb);
-      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
-      s_navkey_row_val[t] = kv;
-      y += SC(36);
-    }
-    // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
-    y += settingsRowLabel(body, y, 0, TR("Navigation keys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
-    for (int d = 0; d < 8; d++) {
-      const int bi = d + 5;   // binding index 5-12
-      lv_obj_t* row = lv_btn_create(body);
-      lv_obj_set_size(row, lv_pct(100), SC(30));
-      lv_obj_set_pos(row, 2, y);
-      styleButton(row);
-      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)bi);
-      lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, TR(kNavDirNames[d]));
-      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
-      lv_obj_t* kv = lv_label_create(row);
-      const int lk = navKeyLower(s_dir_keys[d]);
-      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
-      lv_label_set_text(kv, kb);
-      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
-      s_navkey_row_val[bi] = kv;
-      y += SC(36);
-    }
+    y = settingsNavKeyRows(body, y);   // tab hotkeys + navigation keys (shared with the Pager)
   }
 #endif
 
@@ -43866,14 +43959,9 @@ static int tabForKey(int key) {
   // an open chat, settings detail, app page, or popup they remain inert so a
   // letter cannot unexpectedly abandon the inner screen.
   if (!navOnMainPage()) return -1;
-  switch (key) {
-    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
-    case 'c': case 'C': return CONTACTS_TAB_INDEX;
-    case 'h': case 'H': return HOME_TAB_INDEX;
-    case 'a': case 'A': return MAP_TAB_INDEX;
-    case 's': case 'S': return SETTINGS_TAB_INDEX;
-    default: return -1;
-  }
+  // Programmable like the T-Deck's tab hotkeys (#591), defaulting to M/C/H/A/S
+  // (Settings > Keyboard). Always active, as the Pager's mnemonics always were.
+  return navTabForHotkey(key);
 #else
   // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
   // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
@@ -46148,7 +46236,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   { char _pb[28]; snprintf(_pb, sizeof _pb, "key 0x%02X '%c'", key & 0xFF,
       (key >= 32 && key < 127) ? (char)key : '.'); if (g_lv.task) g_lv.task->showAlert(_pb, 1400); }
 #endif
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(TLORA_PAGER)
   // Remapping a tab hotkey (Settings → Keyboard): capture the next key press.
   if (s_navkey_capture >= 0) { navKeyCaptureApply(key); return; }
 #endif
@@ -46297,6 +46385,40 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         case 'd': case 'D': mapNudge(3); break;
       }
       return;
+    }
+    // Keyboard navigation (#591): the T-Deck's programmable letters, defaulting here to
+    // I/K/J/L to move the highlight and U/O to scroll (Settings > Keyboard). Only with
+    // no text field focused (this is the !ta branch), so letters in a field still type.
+    // On the Map the letters move the highlight too; W/A/X/D above stay the map pan.
+    if (s_kbd_nav) {
+      const int act = navDirForKey(key);
+      if (act >= 0) {
+        lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+        (void)focused;
+        switch (act) {
+          case 0: navMoveDir(NAV_UP);   break;
+          case 1: navMoveDir(NAV_DOWN); break;
+          case 2: case 3:
+#if defined(HAS_PAGER_ENCODER)
+            // Wheel edit mode on a slider: preview only, saved on the closing click.
+            if (focused && focused == s_pager_slider_edit) { navSliderNudge(focused, act == 3 ? +1 : -1); break; }
+#endif
+            navMoveDir(act == 3 ? NAV_RIGHT : NAV_LEFT);
+            break;
+          case 4:   // select: the same as Enter / the wheel's click
+#if defined(HAS_PAGER_ENCODER)
+            if (pagerSliderEditClick()) break;
+#endif
+            if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
+            break;
+          case 5:  pagerNavGoBack();         break;   // back: the same as Backspace-hold / long-press
+          case 6:  navScrollFocused(true);   break;   // scroll up
+          default: navScrollFocused(false);  break;   // scroll down
+        }
+        s_nav_show = true;
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
     }
 #endif
 #if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
@@ -55551,10 +55673,11 @@ static void buildUiTree() {
   // Condense Nav rail the letter sits under the icon instead of beside it).
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
 #if defined(TLORA_PAGER)
-  const char* const pager_chats_tab_label =
-      s_nav_condensed ? LV_SYMBOL_ENVELOPE "\nM" : LV_SYMBOL_ENVELOPE " M";
-  const char* const pager_settings_tab_label =
-      s_nav_condensed ? LV_SYMBOL_SETTINGS "\nS" : LV_SYMBOL_SETTINGS " S";
+  // The letters are the (remappable, #591) tab hotkeys; see pagerTabLabel().
+  char pager_tab_labels[5][16];
+  for (int t = 0; t < 5; t++) pagerTabLabel(t, pager_tab_labels[t], sizeof pager_tab_labels[t]);
+  const char* const pager_chats_tab_label    = pager_tab_labels[CHAT_INBOX_TAB_INDEX];
+  const char* const pager_settings_tab_label = pager_tab_labels[4];
   auto pagerTabIconBadgeX = [](int tab_index, const char* label, const char* icon) -> lv_coord_t {
     const lv_coord_t cell_w = lv_disp_get_hor_res(nullptr) / 5;
     const lv_coord_t label_w = lv_txt_get_width(label, strlen(label), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
@@ -55562,12 +55685,9 @@ static void buildUiTree() {
     return cell_w * tab_index + cell_w / 2 - (label_w - icon_w) / 2 - 8;
   };
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, pager_chats_tab_label);
-  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview,
-      s_nav_condensed ? TOUCH_SYM_PERSON "\nC" : TOUCH_SYM_PERSON " C");
-  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview,
-      s_nav_condensed ? LV_SYMBOL_HOME "\nH" : LV_SYMBOL_HOME " H");
-  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview,
-      s_nav_condensed ? LV_SYMBOL_GPS "\nA" : LV_SYMBOL_GPS " A");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[CONTACTS_TAB_INDEX]);
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[HOME_TAB_INDEX]);
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[MAP_TAB_INDEX]);
 #else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
@@ -61974,6 +62094,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     else pushDiagLine("LVGL keypad indev failed");
 #if defined(HAS_TANMATSU)
     bsp_input_get_queue(&s_nav_queue);
+#endif
+#if defined(TLORA_PAGER)
+    // Keyboard navigation (#591): on/off plus the programmable tab and navigation keys.
+    s_kbd_nav = touchPrefsGetKbdNav();
+    for (int i = 0; i < 5; i++) { uint8_t k = touchPrefsGetNavKey(i);    if (k) s_nav_keys[i] = k; }
+    for (int i = 0; i < 8; i++) { uint8_t k = touchPrefsGetNavDirKey(i); if (k) s_dir_keys[i] = k; }
 #endif
 #else
     // Physical touchscreen indev — skipped in remote mode (the panel is a placeholder;
