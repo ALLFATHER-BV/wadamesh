@@ -52758,20 +52758,23 @@ static void updateGlobalStatusBar() {
       if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(144) + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -SC(182) + d, 0);
 #else
-      const int d = charging ? 32 : 0;
-      // Base offsets MUST match the builder (which shifted for the SD LED): the
-      // SD dot is at -91, ble -127, clock -142, layout -166. The dot slides with
-      // the cluster too so it stays between Wi-Fi and Bluetooth while charging.
-      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
-      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
+      // Base offsets MUST match the builder exactly, including its SBX() scaling and the
+      // battery-% overflow: these used to be raw 100% numbers, so on the M9 / V4-R8 at a
+      // bigger text size plugging in or unplugging snapped the cluster back to its 100% spots
+      // under the grown glyphs. The SD dot slides with the cluster too so it stays between
+      // Wi-Fi and Bluetooth while charging. The clock and the layout label are placed below
+      // (clock placement / layout indicator), which also re-run on a charging change.
+      const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;   // tuned raw at 100%, like its clock
+      const int d   = charging ? (narrow_bar ? 32 : SBX(32)) : 0;
+      const int ovf = statusPctOverflow();
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -(SBX(54) + ovf) + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -(SBX(73) + ovf) + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -(SBX(91) + ovf) + d, 0);
       // Narrow bar (V4 portrait) has no DND slot next to BLE (DND borrows the signal slot),
       // and its clock sits at -126 — so keep BLE at its pre-DND -111 there; -127 lands on the clock.
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300 ? -111 : -127) + d, 0);
-      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -160 + d, 0);
-      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
-      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -144 + d, 0);
-      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -144 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (narrow_bar ? -111 : -SBX(127)) + d, 0);
+      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
 #endif
     }
     s_last_pct = pct;
@@ -52834,54 +52837,86 @@ static void updateGlobalStatusBar() {
   // both the left-zone title (chat / Files / map credit) and the right-side icon
   // cluster, so it never collides with e.g. the "Files" header. Otherwise it's
   // top-right; charging slides it +32 to hug the bolt once the % column hides.
-  // Re-aligned only on a state change so it isn't laid out every tick.
-#if CAP_ROUND_CORNERS
-  // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
-  // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
-  // thread title, so the clock moves to row-1 right instead. Re-placed only when the chat
-  // state flips, so it isn't laid out every tick.
+  //
+  // The icons and the clock are a ladder of fixed offsets tuned per board at the
+  // normal text size, and a bigger text preset, the 12-hour clock, the
+  // Bluetooth-keyboard glyph or the centred clock could still land the clock on
+  // the Bluetooth (or DND) glyph. So after placing it, check: if the clock
+  // overlaps any visible icon on its row, move it to sit just left of the
+  // leftmost one. All of this runs only when something that moves or resizes
+  // the clock or those icons changes, not every tick.
   {
-    static int8_t s_clk_chat = -1;
-    if ((int8_t)chat_open != s_clk_chat) {
-      s_clk_chat = (int8_t)chat_open;
+    lv_obj_t* const sb_icons[] = { g_statusbar.ble_icon, g_statusbar.dnd_icon, g_statusbar.sleep_icon,
+                                   g_statusbar.conn_icon, g_statusbar.sig_box,
+                                   g_statusbar.batt_pct, g_statusbar.batt_icon };
+    auto visible = [](lv_obj_t* o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+    uint32_t sig = 2166136261u;   // FNV-1a over everything that moves or resizes the clock / icons
+    auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
+    auto mixText = [&mix](lv_obj_t* l) {
+      for (const char* t = l ? lv_label_get_text(l) : ""; t && *t; ++t) mix((uint8_t)*t);
+      mix(0xFFu);
+    };
+    mix(visible(g_statusbar.clock));
+    mix((uint32_t)lv_txt_get_width(lv_label_get_text(g_statusbar.clock),
+                                   strlen(lv_label_get_text(g_statusbar.clock)),
+                                   lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0,
+                                   LV_TEXT_FLAG_NONE));
+    mix(charging); mix(chat_open); mix(touchPrefsGetHideNodeName());
+    for (lv_obj_t* o : sb_icons) mix(visible(o));
+    mixText(g_statusbar.ble_icon);   // Bluetooth vs the wider keyboard glyph
+    static uint32_t s_clk_sig = 0;
+    if (sig != s_clk_sig && visible(g_statusbar.clock)) {
+      s_clk_sig = sig;
+#if CAP_ROUND_CORNERS
+      // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
+      // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
+      // thread title, so the clock moves to row-1 right instead.
       if (chat_open) lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -SB_INSET_X, SB_ROW1_Y);
       else           lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,           SB_ROW1_Y);
-      if (g_statusbar.async_icon)
-        lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
-    }
-  }
 #else
-  {
-    static int8_t s_clk_center = -1;   // -1 = unset -> forces the first align
-    static bool   s_clk_chg     = false;
-    const int8_t want = touchPrefsGetHideNodeName() ? 1 : 0;
-    if (want != s_clk_center || (!want && charging != s_clk_chg)) {
-      s_clk_center = want; s_clk_chg = charging;
-      if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
-      else {
+      if (touchPrefsGetHideNodeName()) {
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
+      } else {
         // The narrow V4 portrait bar (<300 px) has no sleep-moon slot, so the clock must sit at
         // its intended -126 build position; the wide-bar -142 ran it into the width-capped
         // node-name window on the left (the long-standing "clock overlaps the name" bug). Charging
         // slides it +32 as the % column hides.
         //
-        // Wide bar (T-Deck / Tanmatsu): the right-side icon cluster is laid out with SC() scaling
-        // (ble at -SC(111/127)), but the old wide clk_x was a RAW -142 — so at Large/Huge UI scale
-        // the icons marched left PAST the un-scaled clock and the wide "12:05 PM" clock overran the
-        // battery / Wi-Fi / BLE icons. Scale the wide clock with SC() too so it tracks the cluster at
-        // every UI scale (identical to the old -142/-110 at 100%, no node-name regression). Narrow
-        // bar keeps its raw values (it was tuned for the V4 portrait layout at 100% only).
+        // Wide bar: the right-side icon cluster is laid out with SBX() (SC() scaling, plus the
+        // font growth of the M9 / V4-R8 text presets), so the clock uses SBX() too and tracks
+        // the cluster at every UI size. It used plain SC(), which on those boards left the clock
+        // at its 100% spot while the Bluetooth glyph moved left onto it at Large / Huge.
         const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;
-        // Wide bar shifted 18px further left of its old -142/-110 to open a clean
-        // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
-        // side, instead of the old cramped 15px gap that used to sit here.
         const int clk_x =
 #if defined(TLORA_PAGER)
                           charging ? -165 : -210;
 #else
                           narrow_bar ? (charging ? -94 : -126)
-                                     : (charging ? -SC(128) : -SC(160));
+                                     : (charging ? -(SBX(160) - SBX(32)) : -SBX(160));
 #endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
+      }
+#endif
+      // Safety net: never on top of an icon on its own row.
+      lv_obj_update_layout(g_statusbar.root);
+      lv_area_t ca; lv_obj_get_coords(g_statusbar.clock, &ca);
+      constexpr lv_coord_t kGap = 4;
+      lv_coord_t left_edge = LV_COORD_MAX;
+      bool overlap = false;
+      for (lv_obj_t* o : sb_icons) {
+        if (!visible(o)) continue;
+        lv_area_t ia; lv_obj_get_coords(o, &ia);
+        if (ia.y2 < ca.y1 || ia.y1 > ca.y2) continue;   // another row (the round panel's two-row bar)
+        if (ia.x2 < ca.x1) continue;                    // left of the clock: not the right-hand cluster
+        if (ia.x1 < left_edge) left_edge = ia.x1;
+        if (ia.x1 < ca.x2 + kGap) overlap = true;
+      }
+      if (overlap) {
+        lv_area_t ba; lv_obj_get_coords(g_statusbar.root, &ba);
+        const lv_coord_t x = left_edge - kGap - lv_area_get_width(&ca)
+                           - (ba.x1 + lv_obj_get_style_pad_left(g_statusbar.root, LV_PART_MAIN));
+        const lv_coord_t y = ca.y1 - (ba.y1 + lv_obj_get_style_pad_top(g_statusbar.root, LV_PART_MAIN));
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_LEFT, x, y);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
       // so it never paints over the clock (incl. the centred hide-name mode).
@@ -52889,7 +52924,6 @@ static void updateGlobalStatusBar() {
         lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
   }
-#endif
 
   // ---- Layout indicator ----
   // Only while a chat/channel conversation is open (s_chat_title set): that is
