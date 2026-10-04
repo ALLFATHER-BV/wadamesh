@@ -1690,12 +1690,39 @@ uint8_t touchPrefsGetUiRotation() {
   return (s_cfg_loaded && r <= 3) ? r : DEFAULT_UI_ROTATION;
 }
 
+// The boot logo is painted before SPIFFS/SD mount, so it cannot see file-backed
+// settings. Keep a raw-NVS copy of the rotation for it. Best effort: Launcher
+// installs without usable NVS fall back to touchPrefsGetUiRotation().
+static const char* KEY_BOOT_UI_ROTATION = "boot_rot";
+
+static void bootUiRotationMirror(uint8_t rot) {
+  Preferences nvs;
+  if (!nvs.begin(TOUCH_NS, false)) return;
+  if (!nvs.isKey(KEY_BOOT_UI_ROTATION) || nvs.getUChar(KEY_BOOT_UI_ROTATION, 0xFF) != rot)
+    nvs.putUChar(KEY_BOOT_UI_ROTATION, rot);
+  nvs.end();
+}
+
+uint8_t touchPrefsGetBootUiRotation() {
+  Preferences nvs;
+  uint8_t r = 0xFF;
+  if (nvs.begin(TOUCH_NS, true)) {
+    if (nvs.isKey(KEY_BOOT_UI_ROTATION)) r = nvs.getUChar(KEY_BOOT_UI_ROTATION, 0xFF);
+    nvs.end();
+  }
+  return (r <= 3) ? r : touchPrefsGetUiRotation();
+}
+
+void touchPrefsSyncBootUiRotation() {
+  bootUiRotationMirror(touchPrefsGetUiRotation());
+}
+
 bool touchPrefsSetUiRotation(uint8_t rot) {
   if (rot > 3) rot = 0;
   if (!s_begun) touchPrefsBegin();
   const uint8_t previous = s_cfg.ui_rotation;
   s_cfg.ui_rotation = rot;
-  if (cfgFlush()) return true;
+  if (cfgFlush()) { bootUiRotationMirror(rot); return true; }
   s_cfg.ui_rotation = previous;
   return false;
 }

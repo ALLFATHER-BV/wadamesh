@@ -381,6 +381,10 @@ bool touchPrefsReadUseSdAtBoot();
  *  device so the UI rebuilds at the new orientation. */
 uint8_t touchPrefsGetUiRotation();
 bool    touchPrefsSetUiRotation(uint8_t rot);
+// Pre-storage boot copy of the rotation (raw NVS), for the boot logo. Falls back
+// to touchPrefsGetUiRotation() when absent. Sync after touchPrefsReload().
+uint8_t touchPrefsGetBootUiRotation();
+void    touchPrefsSyncBootUiRotation();
 
 /** Calibrated battery "full" voltage in mV — the reading captured when the pack
  *  was fully charged, treated as 100%. 0 = not calibrated (use the 4200 mV
