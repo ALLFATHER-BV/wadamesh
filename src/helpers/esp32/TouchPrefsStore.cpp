@@ -59,6 +59,8 @@ static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover 
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 #if defined(HAS_CROWPANEL_35)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
+#elif defined(ATTAKY_MESH_SERIES)
+static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else
 static const uint8_t  DEFAULT_UI_ROTATION      = 0;
 #endif
@@ -291,6 +293,12 @@ static void cfgLoadOrMigrate() {
         // v64 new trailing fields. Forced off rather than inherited: a garbage 1
         // would start sending an install count nobody opted into.
         if (stored_version < 64) { s_cfg.report_ping = 0; s_cfg.report_done_n = 0; }
+#if defined(ATTAKY_MESH_SERIES)
+        // v68: the Attaky gains the Orientation setting. Until now the UI ignored the
+        // stored value and always ran landscape, so whatever is stored (usually the old
+        // portrait default) was never seen. Start everyone on landscape once, as before.
+        if (stored_version < 68) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
+#endif
 #if defined(TLORA_PAGER)
         // v67 (#591): the Pager gains the T-Deck's keyboard navigation. Its kbd_nav and key
         // bindings were never shown on this board, so the stored values are just the T-Deck

@@ -162,7 +162,7 @@
 
 #elif defined(ATTAKY_MESH_SERIES)
   #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0
+  #define CAP_ROTATABLE    1   // landscape (ROT_90) by default; portrait for the build without a keyboard
   #define CAP_LARGE_SCREEN 0
   #define CAP_SD           0
   #define CAP_FILESYSTEM   0

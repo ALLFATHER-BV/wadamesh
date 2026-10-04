@@ -47363,6 +47363,22 @@ static void bleKbdUiTick() {
 // lives here instead. Deliberately narrower than the M9's: that board has no
 // touch, so it also needs d-pad paths for Back, Home, the chat-bubble action
 // menu and map panning — all of which are still a tap away here.
+// The D-pad is fixed to the case, and its directions are named for the landscape
+// UI (ROT_90). In portrait the screen is turned a quarter, so a physical press has
+// to turn with it: right becomes up, down becomes right, left becomes down and up
+// becomes left (the same quarter turn the touch transform applies). Other events
+// pass through.
+static int attakyNavForUi(int ev) {
+  static const int kCw[4] = { ATTAKY_NAV_UP, ATTAKY_NAV_RIGHT, ATTAKY_NAV_DOWN, ATTAKY_NAV_LEFT };
+  int idx = -1;
+  for (int i = 0; i < 4; ++i) if (kCw[i] == ev) idx = i;
+  if (idx < 0 || s_ui_rotation == LV_DISP_ROT_90) return ev;
+  const int turn = (s_ui_rotation == LV_DISP_ROT_NONE) ? 3      // a quarter back: right -> up
+                 : (s_ui_rotation == LV_DISP_ROT_270)  ? 2      // upside down from ROT_90
+                 :                                       1;     // ROT_180
+  return kCw[(idx + turn) % 4];
+}
+
 static void attakyNavPump() {
   // The field currently bound to the keyboard, and whether the D-pad should be
   // editing it: focus has to be really ON it (a tap sets s_nav_ta_editing), so
@@ -47371,7 +47387,7 @@ static void attakyNavPump() {
   lv_obj_t* const ta = (ta_focused && s_nav_ta_editing) ? ta_focused : nullptr;
 
   for (int i = 0; i < 8; ++i) {
-    const int ev = attakyNavKeyRead();
+    const int ev = attakyNavForUi(attakyNavKeyRead());
     if (ev == ATTAKY_NAV_NONE) break;
 
     switch (ev) {
@@ -61181,6 +61197,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // message stays unread until its thread is actually opened.
     allocMessageStore();
     Serial.println("[BOOT] console: begin"); Serial.flush();
+#if defined(ATTAKY_MESH_SERIES)
+    // The terminal stays in the panel's build orientation (portrait,
+    // DISPLAY_ROTATION) whatever the UI orientation is: the boot logo has just
+    // rotated the panel to match a landscape UI, and the console is laid out for
+    // portrait. (::display: the DisplayDriver base has no setDisplayRotation.)
+    ::display.setDisplayRotation(DISPLAY_ROTATION);
+#endif
     consoleBegin(_display);
     Serial.println("[BOOT] console: panel up"); Serial.flush();
     consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
@@ -61841,8 +61864,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
-    // Display and touch share this landscape transform.
-    s_ui_rotation = LV_DISP_ROT_90;
+    // Landscape (ROT_90, panel rotation 1) or portrait, from Settings > Display >
+    // Orientation. Landscape is the stored default (see TouchPrefsStore), and the
+    // Mesh Deck build without a keyboard can flip to portrait, which runs at the
+    // panel's DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4.
+    // Only those two: the Orientation button toggles between them.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) s_ui_rotation = LV_DISP_ROT_90;
 #endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
