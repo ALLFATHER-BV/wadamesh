@@ -28067,8 +28067,23 @@ static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
 static constexpr uint32_t kFileTransferChunkTimeoutMs = 30000u;
 static void closeFileTransferPage();
 
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+// No card slot: transfer to the internal LittleFS "tiles" partition. Defined next
+// to s_tiles_fs (further down), which owns that mount.
+static fs::FS& internalTransferFs();
+static bool    internalTransferFsReady();
+static size_t  internalTransferFsUsed();
+static size_t  internalTransferFsTotal();
+static size_t  internalTransferFsFree();
+// Room kept free for the map's own tile cache, which shares the partition
+// (the same floor tilesFsLowSpace() guards).
+static constexpr size_t kInternalTransferReserve = 320u * 1024u;
+#endif
+
 static fs::FS& fileTransferStorage() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFs();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return SD_MMC;
 #else
   return SD;
@@ -28076,7 +28091,9 @@ static fs::FS& fileTransferStorage() {
 }
 
 static bool fileTransferStorageMounted() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFsReady();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return s_tan_sd_mounted && SD_MMC.cardType() != CARD_NONE;
 #else
   return s_sd_mounted && SD.cardType() != CARD_NONE;
@@ -28084,7 +28101,9 @@ static bool fileTransferStorageMounted() {
 }
 
 static bool fileTransferStorageReady() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFsReady();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return tanSdTryMount() && SD_MMC.cardType() != CARD_NONE;
 #else
   return fmSdTryMount() && s_sd_mounted && SD.cardType() != CARD_NONE;
@@ -28092,7 +28111,9 @@ static bool fileTransferStorageReady() {
 }
 
 static void fileTransferStorageIoFailed() {
-#if WADA_WEB_FILE_TRANSFER_SPI_SD
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // Internal flash: nothing to unmount or re-probe; the failing operation reports itself.
+#elif WADA_WEB_FILE_TRANSFER_SPI_SD
   sdNoteIoFailure();
 #else
   s_tan_sd_mounted = false;
@@ -28202,6 +28223,14 @@ static void fileTransferStartUpload(uint32_t declared, const char* name,
       return;
     }
   }
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // The internal partition is small (4.75 MB) and shared with the map's tile
+  // cache: refuse up front what cannot fit, rather than failing part-way.
+  if ((size_t)declared + kInternalTransferReserve > internalTransferFsFree()) {
+    fileTransferFail("not enough free internal storage");
+    return;
+  }
+#endif
   s_file_transfer_file = storage.open(kFileTransferTemp, FILE_WRITE);
   markSdIo();
   if (!s_file_transfer_file) {
@@ -28251,6 +28280,12 @@ static void fileTransferBeginMap(const char* command) {
     fileTransferFail("invalid map tile path or size");
     return;
   }
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // The map reads uploaded tile libraries from an SD card only; on internal
+  // storage they would just fill the partition the tile cache needs.
+  fileTransferFail("map tiles need an SD card");
+  return;
+#endif
   if (!fileTransferPrepareUpload()) return;
 
   fs::FS& storage = fileTransferStorage();
@@ -28712,7 +28747,12 @@ static void openFileTransferPage() {
     return;
   }
   if (!fileTransferStorageReady()) {
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+    // The internal "tiles" partition did not mount (e.g. a partition table without it).
+    if (g_lv.task) g_lv.task->showAlert(TR("Map storage error.\nReflash the tiles partition."), 2400);
+#else
     if (g_lv.task) g_lv.task->showAlert(TR("File Transfer needs the SD card"), 2000);
+#endif
     return;
   }
   fs::FS& storage = fileTransferStorage();
@@ -28769,6 +28809,21 @@ static void openFileTransferPage() {
   lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(intro, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(intro, width);
+
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // No card on this board: say where the files go and how full it is.
+  {
+    char line[48], used[16], total[16];
+    fmFmtSize(internalTransferFsUsed(),  used,  sizeof used);
+    fmFmtSize(internalTransferFsTotal(), total, sizeof total);
+    snprintf(line, sizeof line, TR("Internal storage   %s / %s"), used, total);
+    lv_obj_t* st = lv_label_create(s_file_transfer_root);
+    lv_label_set_text(st, line);
+    lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(st, width);
+  }
+#endif
 
   lv_obj_t* url = lv_label_create(s_file_transfer_root);
   char url_text[72];
@@ -31212,6 +31267,17 @@ static volatile uint16_t s_tiles_free_kb = 0xFFFF;
 // After format, subsequent boots find a valid (empty) FS and mount fast.
 static fs::LittleFSFS s_tiles_fs;
 static bool           s_tiles_fs_ready = false;
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+// File Transfer's storage on the Attaky (declared with the transfer app above).
+static fs::FS& internalTransferFs()      { return s_tiles_fs; }
+static bool    internalTransferFsReady() { return s_tiles_fs_ready; }
+static size_t  internalTransferFsUsed()  { return s_tiles_fs.usedBytes(); }
+static size_t  internalTransferFsTotal() { return s_tiles_fs.totalBytes(); }
+static size_t  internalTransferFsFree() {
+  const size_t total = internalTransferFsTotal(), used = internalTransferFsUsed();
+  return total > used ? total - used : 0;
+}
+#endif
 
 // Active tile-cache backend + path prefix. Normally the dedicated "tiles"
 // LittleFS partition above (prefix ""). When that partition is ABSENT — e.g.
