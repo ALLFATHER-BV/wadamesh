@@ -34,6 +34,7 @@
 namespace {
 
 constexpr uint32_t kHotplugMs      = 1500;   // how often the expansion is looked for
+static bool s_scanned = false;   // one-shot bus scan (see p4KeyboardPoll)
 constexpr uint32_t kIdlePollMs     = 120;    // backstop drain when INT says nothing is waiting
 constexpr uint32_t kModTimeoutMs   = 1500;   // a one-shot modifier lapses after this
 constexpr uint32_t kRepeatDelayMs  = 450;
@@ -312,6 +313,28 @@ void p4KeyboardPoll() {
         s_next_probe_ms = now + kHotplugMs;
         uint8_t cfg = 0;
         const bool there = regRead(w, P4KB_EXP_ADDR, XL_CFG0, cfg);
+        // One-shot bus scan on the first probe. "It does not work" on this
+        // expansion has three very different causes and they are impossible to
+        // tell apart from the outside: the board is not clipped on, it is
+        // clipped on but unpowered (it carries its own cells, and the firmware
+        // has no enable for it), or it answers and the bring-up fails. An
+        // unpowered board does NOT give a clean NACK either: with its pull-ups
+        // dead the lines sit low through its ESD diodes and every transaction
+        // comes back ESP_ERR_INVALID_STATE, which reads like a driver fault.
+        // So print what is actually on the bus, once, and let the log say which
+        // of the three it is. Same one-shot scan the touch bring-up does.
+        if (!s_scanned) {
+          s_scanned = true;
+          char sc[96]; int n = 0;
+          n += snprintf(sc, sizeof sc, "[P4KB] i2c46/45 scan:");
+          for (uint8_t a = 0x08; a < 0x78 && n < (int)sizeof sc - 6; a++) {
+            w->beginTransmission(a);
+            if (w->endTransmission() == 0) n += snprintf(sc + n, sizeof sc - n, " %02X", a);
+          }
+          if (n < (int)sizeof sc - 24 && !there)
+            snprintf(sc + n, sizeof sc - n, "  (expansion absent)");
+          printf("%s\n", sc);
+        }
         if (there && !s_present) {
           if (!attach(w)) printf("[P4KB] keyboard expansion found, bring-up failed\n");
         } else if (!there && s_present) {

@@ -53,13 +53,23 @@
 #endif
 
 // --- C6 / esp-hosted bring-up gate -----------------------------------------------------------------
-// The ESP32-C6 (Wi-Fi/BLE co-processor over SDIO) doesn't come up yet: the SDIO bus inits, but the
-// C6's esp-hosted slave never signals ready, so esp_hosted_connect_to_slave() times out (~12 s) and
-// esp-hosted resets the P4 — a boot loop that never reaches ui_task.begin(), leaving the AMOLED dark.
-// Until the C6 reset/power/slave-firmware path is proven (needs a reset callback via the XL9535 — see
-// TDISPLAY_P4_PORT.md), gate ALL C6-dependent bring-up OFF so the display + touch + LoRa come up.
-// LoRa is a raw SX1262/LR2021 on P4 GPIOs, independent of the C6, so the mesh still works over USB/LoRa.
-// Flip to 1 once the C6 link is solid to restore Wi-Fi + BLE.
+// TWO HARDWARE GENERATIONS, and the image has to match the one in front of it. Current T-Display P4
+// V1 units ship the C6 with esp-hosted firmware (2.12.3) and are what TDP4_C6_HOSTED=1 (the default)
+// is for. OLDER units still carry the factory ESP-AT firmware and need WADA_P4_LEGACY_AT=1. Flash a
+// hosted image onto an ESP-AT unit and the SDIO stream never frames — the log fills with
+// "H_SDIO_DRV: len[...]>max[1524] ... Drop" and Wi-Fi/BLE simply never arrive.
+//
+// That mismatch must cost Wi-Fi and BLE and NOTHING ELSE. All C6-dependent bring-up therefore runs
+// at the END of setup, after ui_task.begin() — see the block there. LoRa is a raw SX1262/LR2021 on
+// P4 GPIOs, independent of the C6, so the mesh still works over USB/LoRa on a mismatched unit.
+//
+// esp-hosted RESETS THE HOST on a transport failure, which is what turns a mismatch into a boot
+// loop rather than a missing feature. There are two reset paths and they need separate switches:
+// CONFIG_ESP_HOSTED_HOST_RESTART_NO_COMMUNICATION_WITH_SLAVE=n covers one, and
+// CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE=n covers the one that actually fires here, about
+// 10 s after the connect attempt begins (sdio_drv.c, H_TRANSPORT_RESTART_ON_FAILURE). Both are off
+// in sdkconfigs/tdisplay_p4. Measured on an ESP-AT unit before the second one was set: five resets
+// in a 45 s capture, each rst:0x9 HP_SYS_LP_WDT_RESET. Do not re-enable either.
 #define TDP4_C6_READY TDP4_C6_HOSTED
 // BLE over the C6 uses arduino-esp32's hostedInitBLE(), which only exists in arduino-esp32 >=3.3.10.
 // We pin 3.3.0 (so esp_hosted can be the C6-compatible 2.0.17), which predates hostedInitBLE — so BLE
@@ -147,10 +157,10 @@ static void wadameshSetup() {
   esp_netif_init();
   esp_event_loop_create_default();
 
-  // 4. C6: runs the FACTORY ESP-AT firmware (never esp-hosted, never reflashed — Kaj's product
-  //    decision 2026-07-15). Wi-Fi comes up via the c6_at AT-over-SDIO worker spawned at the end of
-  //    setup; BLE companion is unavailable on this AT build (advertising commands stubbed) so the
-  //    phone pairs over Wi-Fi (TCP:5000) or USB.
+  // 4. C6: which firmware it runs depends on the unit's age — see the generation note at the top.
+  //    Either way nothing happens HERE: both backends are started at the end of setup, after the
+  //    UI. On the ESP-AT build the c6_at AT-over-SDIO worker carries Wi-Fi and the BLE companion is
+  //    unavailable (advertising commands stubbed), so the phone pairs over Wi-Fi (TCP:5000) or USB.
 #if TDP4_C6_HOSTED
   printf("[BOOT] C6 = esp-hosted (lazy Wi-Fi/BLE initialization)\n");
 #else
@@ -298,38 +308,12 @@ static void wadameshSetup() {
   the_mesh.begin(disp != NULL);
 
 #if TDP4_C6_HOSTED
-  // Cold-boot clock sync over SAVED Wi-Fi (#383, BootTimeSync.h) -- the same opt-in
-  // Settings > Clock switch the T-Deck/M9 have. Same place in the sequence as the S3
-  // main.cpp: before the TCP/WS/BLE transports exist, so its temporary Wi-Fi session has
-  // nothing live to disturb. Returns Skipped at no cost unless this was a true power-on,
-  // the user turned it on, and the PCF8563 did not already give a trustworthy time.
-  {
-    wifiConfigBegin();
-    uint32_t synced_epoch = 0;
-    const BootTimeSyncResult r = bootTimeSyncRun(rtc_clock.timeIsCurrent(), synced_epoch);
-    if (r == BootTimeSyncResult::Ok) {
-      rtc_clock.setCurrentTime(synced_epoch);   // floor + system clock + RTC chip, like an NTP sync
-      printf("[BOOT] cold-boot time sync ok: %lu\n", (unsigned long)synced_epoch);
-    } else if (r != BootTimeSyncResult::Skipped) {
-      printf("[BOOT] cold-boot time sync: %s\n", bootTimeSyncResultName(r));
-    }
-  }
+  wifiConfigBegin();   // NVS only, no radio — safe this early, and the getters assume it
 #endif
 
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
   serial_interface.setBroadcastResponses(true);
   the_mesh.startInterface(serial_interface);
-
-#if defined(BLE_PIN_CODE) && TDP4_C6_READY && TDP4_BLE_READY
-  if (hostedInitBLE()) {
-    char* nm = the_mesh.getNodePrefs()->node_name;
-    serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
-    if (wifiConfigGetBleEnabled())
-      serial_interface.beginBle("wadamesh-", nm, the_mesh.getBLEPin());
-  } else {
-    printf("[BOOT] hostedInitBLE FAILED\n");
-  }
-#endif
 
   // GPS UART resilience (same fix as the S3 boards): the core opens Serial1 with Arduino's
   // 256-byte RX ring; one long LVGL frame overflows it and corrupts NMEA, stretching TTFF from
@@ -414,9 +398,45 @@ static void wadameshSetup() {
   printf("[BOOT] setup done (helper)\n");
   return;
 #endif
+  // ---- C6 bring-up: AFTER the UI, for BOTH backends --------------------------------------------
+  // Nothing below here may run before ui_task.begin(). The C6 is a separate chip that can be
+  // unreachable — an older unit still carries the factory ESP-AT firmware while this build speaks
+  // esp-hosted, and then the SDIO stream never frames (H_SDIO_DRV drop storm). The legacy backend
+  // always started its worker here, after the UI, so a dead C6 cost you Wi-Fi and nothing else.
+  // The hosted backend was wired in ahead of the UI instead, so the same dead C6 held the AMOLED
+  // dark through a handshake that could not succeed, and the board read as bricked. Both now start
+  // here. A co-processor must never be able to take the display, touch and LoRa down with it.
 #if !TDP4_C6_HOSTED
   // Legacy factory ESP-AT units use the asynchronous AT worker.
   c6at_worker_start();
+#else
+#if defined(BLE_PIN_CODE) && TDP4_C6_READY && TDP4_BLE_READY
+  if (hostedInitBLE()) {
+    char* nm = the_mesh.getNodePrefs()->node_name;
+    serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
+    if (wifiConfigGetBleEnabled())
+      serial_interface.beginBle("wadamesh-", nm, the_mesh.getBLEPin());
+  } else {
+    printf("[BOOT] hostedInitBLE FAILED\n");
+  }
+#endif
+  // Cold-boot clock sync over SAVED Wi-Fi (#383, BootTimeSync.h) -- the same opt-in
+  // Settings > Clock switch the T-Deck/M9 have. Returns Skipped at no cost unless this was a
+  // true power-on, the user turned it on, and the PCF8563 did not already give a trustworthy
+  // time. It used to sit before the transports so its temporary Wi-Fi session had nothing live
+  // to disturb; from here the transports exist but none of them is associated yet, and the UI
+  // being up first is worth more than that ordering nicety. The clock simply corrects itself a
+  // moment after the screen appears instead of the screen waiting on the network.
+  {
+    uint32_t synced_epoch = 0;
+    const BootTimeSyncResult r = bootTimeSyncRun(rtc_clock.timeIsCurrent(), synced_epoch);
+    if (r == BootTimeSyncResult::Ok) {
+      rtc_clock.setCurrentTime(synced_epoch);   // floor + system clock + RTC chip, like an NTP sync
+      printf("[BOOT] cold-boot time sync ok: %lu\n", (unsigned long)synced_epoch);
+    } else if (r != BootTimeSyncResult::Skipped) {
+      printf("[BOOT] cold-boot time sync: %s\n", bootTimeSyncResultName(r));
+    }
+  }
 #endif
 }
 

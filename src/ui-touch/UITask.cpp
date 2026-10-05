@@ -32231,17 +32231,30 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #elif defined(HAS_TDECK_PRO)
 #define WADA_BOARD_ID "tdeck-pro-v1-1"
 #elif defined(HAS_TDISPLAY_P4)
+  // The C6 backend is part of the artifact identity, not just a build flavour. An
+  // older unit runs factory ESP-AT and MUST be built with WADA_P4_LEGACY_AT=1; the
+  // esp-hosted image boot-loops it (the SDIO stream never frames, and the transport
+  // resets the host every ~10 s). Both backends used to answer "tdisplay-p4" here,
+  // so an ESP-AT unit's self-update would fetch the hosted bin and put itself back
+  // into that loop with no way out but USB. That is precisely the T-Deck Max bug
+  // (a Max self-updating to Pro firmware), and this would have been the fourth time
+  // this table shipped wrong. Give the ESP-AT build its own name.
+  #if TDP4_C6_HOSTED
+    #define TDP4_C6_ID ""
+  #else
+    #define TDP4_C6_ID "-at"
+  #endif
   #if defined(HAS_TDP4_LCD)
     #if defined(USE_LR2021)
-#define WADA_BOARD_ID "tdisplay-p4-lcd-lr2021"
+#define WADA_BOARD_ID "tdisplay-p4-lcd-lr2021" TDP4_C6_ID
     #else
-#define WADA_BOARD_ID "tdisplay-p4-lcd"
+#define WADA_BOARD_ID "tdisplay-p4-lcd" TDP4_C6_ID
     #endif
   #else
     #if defined(USE_LR2021)
-#define WADA_BOARD_ID "tdisplay-p4-lr2021"
+#define WADA_BOARD_ID "tdisplay-p4-lr2021" TDP4_C6_ID
     #else
-#define WADA_BOARD_ID "tdisplay-p4"
+#define WADA_BOARD_ID "tdisplay-p4" TDP4_C6_ID
     #endif
   #endif
 #elif defined(HAS_TANMATSU)

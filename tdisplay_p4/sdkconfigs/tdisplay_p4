@@ -44,6 +44,18 @@ CONFIG_BT_CONTROLLER_DISABLED=y
 # C6 SDIO/power path isn't proven yet; without this the host reboots ~10 s after a failed C6 init,
 # preventing the UI (and LoRa) from ever coming up. Keep the device alive; Wi-Fi/BLE just stay down.
 CONFIG_ESP_HOSTED_HOST_RESTART_NO_COMMUNICATION_WITH_SLAVE=n
+# ...and the OTHER reset path, which is the one that actually bites. The line
+# above only covers "no communication with slave"; a transport failure after the
+# connect attempt times out goes through H_TRANSPORT_RESTART_ON_FAILURE in
+# sdio_drv.c and calls _h_restart_host() regardless. On a unit whose C6 still
+# runs factory ESP-AT the SDIO stream never frames, so that fires every ~10 s
+# and the board boot-loops: measured on Kaj's own P4, 2026-10-05, five resets in
+# a 45 s capture, each one rst:0x9 HP_SYS_LP_WDT_RESET right after
+# "Host is resetting itself, to avoid any sdio race condition".
+# A co-processor that cannot be reached must cost Wi-Fi and BLE, not the device.
+# The failure still arrives as ESP_HOSTED_EVENT_TRANSPORT_FAILURE either way,
+# which is what the app should surface instead.
+CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE=n
 
 # Panic coredump -> the dedicated 64K 'coredump' partition (see tdisplay_p4_16M.csv). Unlike the
 # Tanmatsu (whose table has no coredump partition, so UITask stubs the API), the P4 has one, so
