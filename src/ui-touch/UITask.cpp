@@ -30591,7 +30591,9 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   // Inset the top so the FIRST row rests just below the tall bar (the inbox opens at the
   // top, unlike the chat which opens at the bottom). Older rows still scroll UP under the
   // glass lower row — and now read through it because the rows are a visible grey.
-#if !defined(TLORA_PAGER)
+  // Round-corner panels (P4) skip it: their bar is a fixed two rows that sits wholly
+  // above the tab and never overlaps it, so the inset would only leave an empty band.
+#if !defined(TLORA_PAGER) && !CAP_ROUND_CORNERS
   if (inbox_combined) lv_obj_set_style_pad_top(p.list_cont, STATUSBAR_H, LV_PART_MAIN);
 #endif
   lv_obj_set_style_pad_row(p.list_cont, 1, LV_PART_MAIN);
