@@ -39566,6 +39566,24 @@ static uint32_t nodeSigColorHex(const char* s) {
   return lv_color_to32(nc) & 0xFFFFFFu;
 }
 
+// Name of the region a scoped message verified against (#271), for the Info popup
+// and the bubble meta line (#594): the registered region in its slot, else our own
+// scope when it matched our key. nullptr when nothing names it: unscoped, matched
+// no key we hold, or ambiguous. `home` backs the own-scope case; the bubble path
+// calls this per bubble, which is why touchPrefsGetRegionScope serves it from RAM.
+static const char* msgScopeRegionName(const UITask::UIMessage& m, char* home, size_t home_cap) {
+  if (!(m.meta_flags & UITask::MSG_META_HAS_SCOPE)) return nullptr;
+  const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+  if (rslot == REGION_SLOT_AMBIGUOUS) return nullptr;
+  const char* rname = rslot ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+  if (rname) return rname;
+  if ((m.meta_flags & UITask::MSG_META_SCOPE_HOME) && home && home_cap) {
+    touchPrefsGetRegionScope(home, (int)home_cap);
+    if (home[0]) return home;
+  }
+  return nullptr;
+}
+
 static void openMessageInfoPopup(int msg_idx) {
   if (!g_lv.task) return;
   UITask::UIMessage m;
@@ -39671,10 +39689,9 @@ static void openMessageInfoPopup(int msg_idx) {
       // name it outright. Fall back to the older my-region / another-region
       // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
-      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
-                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
-      if (rslot == REGION_SLOT_AMBIGUOUS) {
+      char home[TOUCH_REGION_SCOPE_MAXLEN];
+      const char* rname = msgScopeRegionName(m, home, sizeof home);
+      if (UITask::metaScopeSlot(m.meta_flags) == REGION_SLOT_AMBIGUOUS) {
         // Several registered regions produced this same 16-bit code. Naming any
         // one of them would be a guess, and a confident wrong region reads worse
         // than an honest "cannot tell". The tag is only 16 bits, so with N keys
@@ -39683,16 +39700,23 @@ static void openMessageInfoPopup(int msg_idx) {
       } else if (rname) {
         snprintf(region, sizeof region, "%s", rname);
       } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
-        char home[24] = {0};
-        touchPrefsGetRegionScope(home, sizeof home);
-        snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
+        snprintf(region, sizeof region, "%s", TR("my region"));
       } else {
         snprintf(region, sizeof region, "%s", TR("another region"));
       }
+      // This body is a recolor label, and region names are "#tag": unescaped, LVGL
+      // read "#de-mitte" as a colour command and swallowed the name, leaving only
+      // "Scope (0000)" (#594).
+      char region_esc[2 * sizeof region];
+      recolorEscape(region_esc, sizeof region_esc, region);
       // Key is "Scope" with no trailing space: TR() strips icon prefixes, NOT
       // trailing whitespace, so "Scope " would never match its .lang row.
-      blen += snprintf(body + blen, sizeof(body) - blen,
-                       "\n%s  %s (%04X)", TR("Scope"), region, (unsigned)m.in_scope);
+      blen += snprintf(body + blen, sizeof(body) - blen, "\n%s  %s", TR("Scope"), region_esc);
+      // The raw code is RAM-only (UiHistoryMsg does not persist it), so after a reboot
+      // it reads back 0, a value calcTransportCode reserves and never emits. Omit it
+      // then rather than print a "0000" that was never on the air.
+      if (m.in_scope)
+        blen += snprintf(body + blen, sizeof(body) - blen, " (%04X)", (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
@@ -40480,7 +40504,18 @@ static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
   }
 #endif
 
-  snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+  // Region the message was scoped to, when it resolves to a name (#594), as the
+  // iOS app shows it under each message. It leads the line so that the leading
+  // ellipsis on a narrow bubble trims the region before the time.
+  char scope_buf[40] = "";
+  if (!m.outgoing) {
+    char home[TOUCH_REGION_SCOPE_MAXLEN];
+    const char* rname = msgScopeRegionName(m, home, sizeof home);
+    if (rname && rname[0] == '#') ++rname;   // "#de-mitte" reads as "de-mitte"
+    if (rname && rname[0]) snprintf(scope_buf, sizeof scope_buf, "%s \xC2\xB7 ", rname);
+  }
+
+  snprintf(out, out_len, "%s%s%s%s", scope_buf, ts_buf, deliv_glyph, rep_buf);
   if (out_fg) *out_fg = s_theme_day ? COLOR_CHAT_META
                                     : (deliv_glyph[0] ? deliv_fg : COLOR_SUB);
 }
@@ -40511,7 +40546,7 @@ static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out,
   const size_t len = strlen(src);
   for (size_t i = 0; i < len; ++i) {
     if (chatUtf8Continuation(src[i])) continue;
-    char cand[48];
+    char cand[80];
     snprintf(cand, sizeof(cand), "%s%s", ell, src + i);
     if (chatTextWidth(cand) <= max_w) {
       snprintf(out, out_len, "%s", cand);
@@ -40527,7 +40562,7 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
   chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
   const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
   lv_coord_t inner_y = 0;
-  char meta_buf[48];
+  char meta_buf[80];
   chatBuildBubbleMeta(m, channel_mode, meta_buf, sizeof(meta_buf), nullptr);
   // Bubble layout: timestamp/meta always share the top row (channels, DMs, rooms).
   const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
@@ -41321,7 +41356,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
 
-  char meta_buf[48];
+  char meta_buf[80];
   uint32_t meta_fg = COLOR_SUB;
   chatBuildBubbleMeta(m, p->channel_mode, meta_buf, sizeof(meta_buf), &meta_fg);
 #if defined(HAS_TDECK_PRO)
@@ -41346,7 +41381,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   // lv_obj_get_width() right after create; unsettled layout can mis-place outgoing bubbles.
   if (show_sender_line || meta_buf[0]) {
     const lv_coord_t line_h = lv_font_get_line_height(&g_font_12);
-    char meta_fit[48] = "";
+    char meta_fit[80] = "";
     lv_coord_t meta_fit_w = 0;
     lv_coord_t sender_label_w = sender_w;
 

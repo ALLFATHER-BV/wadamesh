@@ -948,7 +948,7 @@ Your own apps	Je eigen apps
 Zero-hop	Zero-hop
 Zero-hop advert sent	Zero-hop advert verzonden
 Zoom: +/- buttons	Zoom: +/- knoppen
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	dubbelzinnig (meerdere regio's komen overeen)
 client connected	client verbonden
 command	opdracht
 contacts (%d):	contacten (%d):
@@ -993,9 +993,9 @@ tap to exit full screen	tik om volledig scherm te verlaten
 zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	~17 dB versterker voor stille/afgelegen gebieden; uit in drukke plekken.
-Scope	
-another region	
-my region	
+Scope	Bereik
+another region	andere regio
+my region	mijn regio
 Save FAIL x%u	
 Save migrating	
 Saved %s	
