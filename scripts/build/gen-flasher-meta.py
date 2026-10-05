@@ -52,6 +52,17 @@ BOARDS = {
     "manifest-tdisplay-p4-lr2021.json": ("wadamesh - LilyGo T-Display P4 (AMOLED, LR2021)", "wadamesh-tdisplay-p4-lr2021-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lcd.json":  ("wadamesh - LilyGo T-Display P4 (LCD, SX1262)", "wadamesh-tdisplay-p4-lcd-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lcd-lr2021.json": ("wadamesh - LilyGo T-Display P4 (LCD, LR2021)", "wadamesh-tdisplay-p4-lcd-lr2021-merged.bin", "ESP32-P4"),
+    # The T-Display P4 ships with one of TWO C6 co-processor firmwares and the
+    # image has to match. Current V1 units carry esp-hosted (the four entries
+    # above); OLDER units still have the factory ESP-AT, and on those the
+    # esp-hosted image cannot reach the C6 at all. Picking the wrong one is not
+    # subtle -- before b52c71f it boot-looped the board, and it still means no
+    # Wi-Fi and no BLE. The label has to let someone choose without a serial
+    # log, so it says what they can actually check: when it was bought.
+    "manifest-tdisplay-p4-at.json":   ("wadamesh - LilyGo T-Display P4 (AMOLED, SX1262) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-at-merged.bin", "ESP32-P4"),
+    "manifest-tdisplay-p4-lr2021-at.json": ("wadamesh - LilyGo T-Display P4 (AMOLED, LR2021) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lr2021-at-merged.bin", "ESP32-P4"),
+    "manifest-tdisplay-p4-lcd-at.json": ("wadamesh - LilyGo T-Display P4 (LCD, SX1262) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lcd-at-merged.bin", "ESP32-P4"),
+    "manifest-tdisplay-p4-lcd-lr2021-at.json": ("wadamesh - LilyGo T-Display P4 (LCD, LR2021) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lcd-lr2021-at-merged.bin", "ESP32-P4"),
 }
 for fn, (name, binf, chip) in BOARDS.items():
     # A board that joined the matrix after this tag has no image in this feed

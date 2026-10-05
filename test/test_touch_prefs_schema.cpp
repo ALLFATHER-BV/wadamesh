@@ -120,6 +120,12 @@ int main() {
   // survive, and both opt-ins must come back OFF rather than inheriting whatever
   // byte followed the blob — an inherited 1 would spend boot time on a Wi-Fi
   // session the user never asked for.
+  // EVERY sum below runs to the end of the struct, so each one has to list every
+  // field appended since. v64's report_ping + report_done_n were not added, so
+  // all five assertions stopped compiling -- and a test that does not compile is
+  // not a guard. This is the check that catches a mid-struct insert, which is
+  // what broke v44 and shipped the poisoned beta_57 layout. Append a field, add
+  // it here.
   constexpr size_t v53_size = offsetof(Config, boot_wifi_time);
   static_assert(v53_size + sizeof(Config::boot_wifi_time) + sizeof(Config::boot_wifi_open)
                     + sizeof(Config::loud_alerts) + sizeof(Config::theme_mode)
@@ -131,7 +137,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -217,7 +225,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -244,7 +254,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;
@@ -268,7 +280,9 @@ int main() {
                     + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v59 is the current layout minus the Home-key drawer option");
   Config v59 = safeDefaults();
   v59.ver = 59;
@@ -287,7 +301,9 @@ int main() {
   static_assert(v60_size + sizeof(Config::ble_kbd_mode) + sizeof(Config::ble_kbd_layout)
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
-                    + sizeof(Config::ble_kbd_back) == sizeof(Config),
+                    + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v60 is the current layout minus the Bluetooth keyboard settings");
   Config v60 = safeDefaults();
   v60.ver = 60;
@@ -308,7 +324,9 @@ int main() {
   // v62 appends the extra Back key. A v61 blob keeps the paired keyboard and
   // its settings; only Esc goes back until the user picks another key.
   constexpr size_t v61_size = offsetof(Config, ble_kbd_back);
-  static_assert(v61_size + sizeof(Config::ble_kbd_back) == sizeof(Config),
+  static_assert(v61_size + sizeof(Config::ble_kbd_back)
+                    + sizeof(Config::report_ping)
+                    + sizeof(Config::report_done_n) == sizeof(Config),
                 "v61 is the current layout minus the Back key");
   Config v61 = safeDefaults();
   v61.ver = 61;

@@ -33,7 +33,21 @@ P4_BUILD_DIR="$PROJECT_DIR/build/$P4_BUILD_TARGET"
 # removes only the generated CMake/Ninja tree; dependencies stay in place and the
 # idempotent patches below remain valid.
 if [ "$#" -eq 1 ] && [ "$1" = "fullclean" ]; then
-  cmake -E remove_directory "$P4_BUILD_DIR"
+  # Plain `rm -rf`, not `cmake -E remove_directory`: this branch runs BEFORE
+  # esp-idf/export.sh further down, so cmake is not on PATH yet and the clean
+  # failed with "cmake: command not found" -- while still exiting 0 and printing
+  # that it had removed the tree. Nothing reported it, so a caller that cleaned
+  # and rebuilt got an incremental build on the old configuration. That matters
+  # here beyond tidiness: the esp-hosted and ESP-AT builds SHARE a build dir
+  # (the C6 axis does not change P4_BUILD_TARGET) and CMake does not reconfigure
+  # on an env change, so a failed clean silently yields the other variant.
+  if [ -d "$P4_BUILD_DIR" ]; then
+    rm -rf "${P4_BUILD_DIR:?}" || { echo "[build.sh] FAILED to remove $P4_BUILD_DIR" >&2; exit 1; }
+  fi
+  if [ -d "$P4_BUILD_DIR" ]; then
+    echo "[build.sh] FAILED to remove $P4_BUILD_DIR" >&2
+    exit 1
+  fi
   echo "[build.sh] removed build/$P4_BUILD_TARGET (patched managed components preserved)"
   exit 0
 fi
