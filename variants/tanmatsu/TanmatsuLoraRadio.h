@@ -35,6 +35,15 @@ public:
   bool getRxBoostedGainMode() const { return _rx_boost; }
   void idle();                                             // → standby (RadioLibWrapper::idle)
   uint32_t getPacketsRecvErrors() const { return _n_recv_errors; }
+  // The modem the coprocessor drives ("SX1262" / "SX1268"), as reported by the
+  // C6 at init; nullptr if it did not say. Shown in Settings > Device (#596).
+  const char* chipName() const {
+    switch (_chip) {
+      case LORA_PROTOCOL_CHIP_SX1262: return "SX1262";
+      case LORA_PROTOCOL_CHIP_SX1268: return "SX1268";
+      default:                        return nullptr;
+    }
+  }
 
   // Buffered-receive API parity with RadioLibWrapper — no-op stubs. This bridge
   // drains the remote radio its own way; the S3 drain-task feature does not map
@@ -88,6 +97,7 @@ private:
   bool   _cfg_dirty  = false;   // runtime config change pending; applied by recvRaw() between polls
   bool   _sending    = false;
   bool   _rx_boost   = false;
+  int    _chip       = -1;      // lora_protocol_chip_t from lora_get_status(), -1 = unknown
   float  _last_rssi = 0.0f;
   float  _last_snr  = 0.0f;
   uint32_t _n_recv  = 0;

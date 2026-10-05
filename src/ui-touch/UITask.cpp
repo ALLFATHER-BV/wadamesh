@@ -6633,8 +6633,9 @@ static const char* deviceKeyboardText() {
 
 // The LoRa radio this build drives, from its RADIO_CLASS ("CustomSX1262" -> "SX1262").
 // Several boards ship with a choice of radio (the T-LoRa Pager in SX1262 and LR1121
-// builds), so this is the variant that matters most after the model. nullptr when
-// the build names no radio class.
+// builds, the P4 in SX1262 and LR2021), so this is the variant that matters most
+// after the model. The Tanmatsu has no RADIO_CLASS (its modem sits behind the C6),
+// so it reports what the coprocessor said at init, or the chip family if it did not.
 #define WADA_STR2(x) #x
 #define WADA_STR(x)  WADA_STR2(x)
 static const char* deviceRadioName() {
@@ -6642,8 +6643,11 @@ static const char* deviceRadioName() {
   const char* n = WADA_STR(RADIO_CLASS);
   if (!strncmp(n, "Custom", 6) && n[6]) n += 6;
   return n;
+#elif defined(HAS_TANMATSU)
+  const char* n = radio_driver.chipName();
+  return n ? n : "SX126x";
 #else
-  return nullptr;
+  return nullptr;   // a new board without RADIO_CLASS: add it here
 #endif
 }
 
