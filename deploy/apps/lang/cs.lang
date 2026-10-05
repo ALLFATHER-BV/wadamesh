@@ -1309,3 +1309,17 @@ Snake	Snake
 held by	held by
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+30 sec	30 s
+Timer	Časovač
+Screenshot	Snímek obrazovky
+Join Public channel	Připojit se k veřejnému kanálu
+Join # channel	Připojit se k # kanálu
+Peak -- dBm	Špička -- dBm
+Peak %d dBm @ %.1f MHz	Špička %d dBm @ %.1f MHz
+peak %d @ %.1f	špička %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Spí: klepněte na obrazovku nebo 🤍 pro probuzení
+Receiving %s\n%lu / %lu bytes	Přijímání %s\n%lu / %lu bajtů
+Sending %s\n%lu / %lu bytes	Odesílání %s\n%lu / %lu bajtů
+Reboot Now	Restartovat nyní
+File Transfer	Přenos souborů
+USB Files	Soubory USB

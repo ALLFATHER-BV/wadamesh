@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
 Keyboard nav: off	Navigare tastatură: oprită
 Keyboard navigation	Navigare cu tastatura
 Keys	
-Known regions	Known regions
+Known regions	Regiuni cunoscute
 LOS → %s	Linie vizuală → %s
 Landscape (desktop)	Peisaj (desktop)
 Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
@@ -1199,9 +1199,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Uită
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Uiţi această tastatură? Va trebui asociată din nou.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1288,3 +1288,17 @@ No known Windows malware found.	No known Windows malware found.
 This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
 SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
 and %d more	and %d more
+30 sec	30 s
+Timer	Temporizator
+Screenshot	Captură de ecran
+Join Public channel	Intră în canalul public
+Join # channel	Intră într-un canal #
+Peak -- dBm	Vârf -- dBm
+Peak %d dBm @ %.1f MHz	Vârf %d dBm @ %.1f MHz
+peak %d @ %.1f	vârf %d @ %.1f
+Asleep: tap screen or 🤍 to wake	În repaus: atinge ecranul sau 🤍 pentru trezire
+Receiving %s\n%lu / %lu bytes	Se primeşte %s\n%lu / %lu octeţi
+Sending %s\n%lu / %lu bytes	Se trimite %s\n%lu / %lu octeţi
+Reboot Now	Reporneşte acum
+File Transfer	Transfer de fişiere
+USB Files	Fişiere USB

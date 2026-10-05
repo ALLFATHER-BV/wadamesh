@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Навиг. тастатуром: WASDZ укљ.
 Keyboard nav: off	Навиг. тастатуром: искљ.
 Keyboard navigation	Навигација тастатуром
 Keys	
-Known regions	Known regions
+Known regions	Познати региони
 LOS → %s	Оптичка видљивост → %s
 Landscape (desktop)	Положено (десктоп)
 Landscape set - applies when remote mode starts.	Положено подешено - важи кад крене даљински режим.
@@ -1198,9 +1198,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Заборави
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Заборавити ову тастатуру? Мораћете поново да је упарите.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1287,3 +1287,17 @@ No known Windows malware found.	No known Windows malware found.
 This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
 SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
 and %d more	and %d more
+30 sec	30 с
+Timer	Тајмер
+Screenshot	Снимак екрана
+Join Public channel	Придружи се јавном каналу
+Join # channel	Придружи се # каналу
+Peak -- dBm	Врх -- dBm
+Peak %d dBm @ %.1f MHz	Врх %d dBm @ %.1f MHz
+peak %d @ %.1f	врх %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Спава: додирни екран или 🤍 за буђење
+Receiving %s\n%lu / %lu bytes	Пријем %s\n%lu / %lu бајтова
+Sending %s\n%lu / %lu bytes	Слање %s\n%lu / %lu бајтова
+Reboot Now	Рестартуј сада
+File Transfer	Пренос фајлова
+USB Files	USB фајлови
