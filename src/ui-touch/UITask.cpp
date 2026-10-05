@@ -2075,17 +2075,48 @@ constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 // queried live so it tracks the current rotation (240×260 portrait /
 // 320×180 landscape).
 #if CAP_LARGE_SCREEN
-constexpr int TABBAR_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+constexpr int TABBAR_BOTTOM_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
+constexpr int TABBAR_RAIL_W   = 56;   // Condense Nav rail: fits the 34-px F-key shapes with a margin
 #elif defined(HAS_THINKNODE_M9)
 // No tab bar on this board: it is tap-only chrome (navMaybeRebuild deliberately
 // never adds it to the focus group), and the M9 has no touch — the dedicated
 // HOME/MESSAGE/MAP keys and the app drawer's Chats/Contacts/Map/Settings tiles
 // cover every tab. Reclaims the row for content (user request).
-constexpr int TABBAR_H = 0;
+constexpr int TABBAR_BOTTOM_H = 0;
+constexpr int TABBAR_RAIL_W   = 0;    // and no rail: Condense Nav leaves the M9 as it is
 #else
-constexpr int TABBAR_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
+constexpr int TABBAR_BOTTOM_H = 30;   // bottom nav bar (trimmed from 38; icons stay g_font_16)
+constexpr int TABBAR_RAIL_W   = 40;   // Condense Nav rail: one icon (plus the Pager's key letter) per cell
 #endif
-static inline lv_coord_t tabContentW() { return lv_disp_get_hor_res(nullptr); }
+// Condense Nav (#592): in landscape the nav bar becomes a rail on the right edge
+// and Home's launcher column shows icons only. Decided ONCE when the UI tree is
+// built (buildUiTree) from the pref and the orientation at that moment, so a
+// portrait board's transient keyboard-landscape never flips it mid-session.
+// TABBAR_H is the bottom bar's height (0 when it is a rail); TABBAR_W is the
+// rail's width (0 when the bar is at the bottom).
+static bool s_nav_condensed = false;
+static int  TABBAR_H = TABBAR_BOTTOM_H;
+static int  TABBAR_W = 0;
+// Width of an icon-only Home launcher button with Condense Nav (the buttons keep
+// their height and spacing; only the width shrinks to about a square).
+#if CAP_LARGE_SCREEN
+constexpr int HOME_ICON_BTNW = 64;
+#else
+constexpr int HOME_ICON_BTNW = 44;
+#endif
+// A Home launcher label is "<icon>  <word>". With Condense Nav only the icon
+// (everything before the first space) is shown; otherwise the label as-is.
+static const char* homeLauncherText(const char* label, char* buf, size_t cap) {
+  if (!s_nav_condensed || !label) return label;
+  const char* sp = strchr(label, ' ');
+  if (!sp || sp == label) return label;
+  size_t n = (size_t)(sp - label);
+  if (n >= cap) n = cap - 1;
+  memcpy(buf, label, n);
+  buf[n] = '\0';
+  return buf;
+}
+static inline lv_coord_t tabContentW() { return lv_disp_get_hor_res(nullptr) - TABBAR_W; }
 static inline lv_coord_t tabContentH() { return lv_disp_get_ver_res(nullptr) - STATUSBAR_H - TABBAR_H; }
 // Usable area for a centered modal below the global status bar (small margin).
 // Popups were sized for the 320-tall portrait screen; these let them shrink to
@@ -2365,13 +2396,15 @@ constexpr int           kTbCursorStepPx   = 12;    // px per encoder step
 constexpr float         kTbCursorSmoothMs = 60.0f; // ease time-constant (smaller = snappier)
 constexpr unsigned long kTbCursorHideMs   = 800;   // auto-hide after idle
 
-// True while the trackball cursor is visible AND screen-Y is within the bottom
-// tab bar. Used to swallow stray FINGER touches on the tab bar while the user is
-// driving the cursor — a trackball CLICK on a tab still works (it arrives via
-// the cursor path, not as a raw touch).
-static bool tbFingerTouchOnTabBarBlocked(uint16_t y) {
+// True while the trackball cursor is visible AND the touch is within the tab
+// bar (the bottom strip, or the right-edge rail with Condense Nav). Used to
+// swallow stray FINGER touches on the tab bar while the user is driving the
+// cursor — a trackball CLICK on a tab still works (it arrives via the cursor
+// path, not as a raw touch).
+static bool tbFingerTouchOnTabBarBlocked(uint16_t x, uint16_t y) {
   if (!s_tb_cursor) return false;
   if ((millis() - s_tb_last_active_ms) >= kTbCursorHideMs) return false;  // cursor hidden
+  if (s_nav_condensed) return (int)x >= (lv_disp_get_hor_res(nullptr) - TABBAR_W);
   return (int)y >= (lv_disp_get_ver_res(nullptr) - TABBAR_H);
 }
 #endif
@@ -2412,6 +2445,14 @@ static lv_indev_drv_t s_nav_keypad_drv;
 static bool           s_kbd_nav        = true;
 static bool           s_tb_nav         = false;  // no trackball — read by the shared nav-rebuild gate, never set
 static lv_indev_drv_t s_nav_keypad_drv;
+#endif
+
+#if defined(TLORA_PAGER)
+// Keyboard navigation (#591): the T-Deck's programmable letter nav on the Pager's
+// keyboard. Unlike the T-Deck this never gates the focus group (the wheel always
+// drives it); it only decides whether the navigation letters move the highlight.
+// On by default; loaded from the pref at init, toggled in Settings > Keyboard.
+static bool s_kbd_nav = true;
 #endif
 
 // Touchscreen-only boards whose only focus-group driver is a Bluetooth keyboard
@@ -2828,6 +2869,39 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
 
+// Screen coordinates of tab cell i, measured from where the bar actually drew
+// it (button_areas are relative to the bar's outer top-left). Used for the
+// Condense Nav rail, where the cells stack vertically. False if not laid out.
+static bool tabBtnScreenArea(int i, lv_area_t* out) {
+  if (!g_lv.tabview || !out) return false;
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  if (!bar) return false;
+  lv_obj_update_layout(bar);
+  const lv_btnmatrix_t* bm = (const lv_btnmatrix_t*)bar;
+  if (!bm->button_areas || i < 0 || i >= (int)bm->btn_cnt) return false;
+  lv_area_t b;
+  lv_obj_get_coords(bar, &b);
+  *out = bm->button_areas[i];
+  out->x1 += b.x1; out->x2 += b.x1;
+  out->y1 += b.y1; out->y2 += b.y1;
+  return true;
+}
+
+// Position for a size w x h child of the tab bar, centred on cell i, in the
+// coordinates lv_obj_align(..., LV_ALIGN_TOP_LEFT, x, y) expects (inside the
+// bar's padding and border). Used to lay the per-tab key hints and F-key shapes
+// down the Condense Nav rail. False if the bar is not laid out yet.
+static bool tabBarChildPosForCell(int i, lv_coord_t w, lv_coord_t h, lv_coord_t* x, lv_coord_t* y) {
+  lv_area_t c;
+  if (!tabBtnScreenArea(i, &c)) return false;
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  lv_area_t b; lv_obj_get_coords(bar, &b);
+  const lv_coord_t bw = lv_obj_get_style_border_width(bar, LV_PART_MAIN);
+  *x = (c.x1 + c.x2) / 2 - w / 2 - (b.x1 + lv_obj_get_style_pad_left(bar, LV_PART_MAIN) + bw);
+  *y = (c.y1 + c.y2) / 2 - h / 2 - (b.y1 + lv_obj_get_style_pad_top(bar, LV_PART_MAIN) + bw);
+  return true;
+}
+
 #if defined(HELTEC_LORA_V4_R8)
 static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
   if (!g_lv.tabview) return;
@@ -2835,7 +2909,7 @@ static void r8ResizeContentBelowStatusBar(lv_coord_t top) {
   lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr),
                   lv_disp_get_ver_res(nullptr) - top);
   if (g_lv.dm.list_cont) {
-    lv_obj_set_size(g_lv.dm.list_cont, lv_disp_get_hor_res(nullptr),
+    lv_obj_set_size(g_lv.dm.list_cont, tabContentW(),
                     lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
   }
 }
@@ -4095,12 +4169,16 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
 // Rotate the ST7789 panel in hardware for the landscape orientations. Uses the
 // global `display` (ST7789LCDDisplay) — a free function so it isn't shadowed by
 // UITask::begin's DisplayDriver* parameter, also called `display`. ROT_90 maps
-// to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited.
+// to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited, except
+// on the CrowPanel (0) and the Attaky (its build DISPLAY_ROTATION, 2), where
+// UITask::begin turns it back from a landscape the boot logo may have applied.
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
 #if defined(HAS_CROWPANEL_35)
   else                                  display.setDisplayRotation(0);
+#elif defined(ATTAKY_MESH_SERIES)
+  else                                  display.setDisplayRotation(DISPLAY_ROTATION);
 #endif
 }
 
@@ -4468,10 +4546,20 @@ static void navHideFocus() {
 }
 
 // ---- Keyboard-nav tab hotkeys (programmable; default E/R/T/U/I) ----
-static uint8_t     s_nav_keys[5]       = { 'e','r','t','u','i' };  // per main tab [chat,contacts,home,map,settings]; loaded from prefs at boot
+static uint8_t     s_nav_keys[5]       =
+#if defined(TLORA_PAGER)
+  { 'm','c','h','a','s' };   // Pager: its long-standing tab mnemonics, printed on the bar, now remappable (#591)
+#else
+  { 'e','r','t','u','i' };   // per main tab [chat,contacts,home,map,settings]; loaded from prefs at boot
+#endif
 static uint8_t     s_dir_keys[8]       =
 #if defined(HAS_TANMATSU)
   { 'w','x','a','d','s', 0, 'f','v' };  // Tanmatsu control keys: up,down,left,right,select,(no back — Esc/F-key),scroll-up,scroll-down
+#elif defined(TLORA_PAGER)
+  // Pager (#591): I/K/J/L move, U/O scroll. Select and Back stay on Enter and
+  // Backspace-hold (or the wheel's click / long-press), so those slots start empty.
+  // Clear of the Pager's fixed letters: M/C/H/A/S tabs, Q/E slider, W/A/X/D map pan.
+  { 'i','k','j','l', 0, 0, 'u','o' };
 #else
   { 'w','z','a','d','s','q','f','c' };  // control keys: up,down,left,right,select,back,scroll-up,scroll-down; loaded from prefs at boot
 #endif
@@ -4629,6 +4717,20 @@ static bool navHomeMove(lv_obj_t* current, int dir) {
   return false;
 }
 
+// Move a slider one keyboard step (~20 steps end-to-end, at least 1, so a
+// 6-position slider like Screen timeout moves one position per step) and fire
+// VALUE_CHANGED for the live preview. Saving is the caller's job: sliders
+// persist on RELEASED, which the caller sends when the adjustment is final.
+static void navSliderNudge(lv_obj_t* s, int dir) {
+  const int32_t mn = lv_slider_get_min_value(s), mx = lv_slider_get_max_value(s);
+  int32_t step = (mx - mn) / 20; if (step < 1) step = 1;
+  int32_t v = lv_slider_get_value(s) + (dir > 0 ? step : -step);
+  if (v < mn) v = mn; else if (v > mx) v = mx;
+  if (v == lv_slider_get_value(s)) return;
+  lv_slider_set_value(s, v, LV_ANIM_OFF);
+  lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
+}
+
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
@@ -4681,12 +4783,7 @@ static void navMoveDir(int dir) {
   // (commit) so the slider's callbacks behave exactly like a drag+release: brightness
   // applies + persists, map zoom re-renders + persists, etc.
   if ((dir == NAV_LEFT || dir == NAV_RIGHT) && lv_obj_check_type(cur, &lv_slider_class)) {
-    const int32_t mn = lv_slider_get_min_value(cur), mx = lv_slider_get_max_value(cur);
-    int32_t step = (mx - mn) / 20; if (step < 1) step = 1;            // ~20 presses end-to-end, min 1
-    int32_t v = lv_slider_get_value(cur) + (dir == NAV_RIGHT ? step : -step);
-    if (v < mn) v = mn; else if (v > mx) v = mx;
-    lv_slider_set_value(cur, v, LV_ANIM_OFF);
-    lv_event_send(cur, LV_EVENT_VALUE_CHANGED, nullptr);
+    navSliderNudge(cur, dir == NAV_RIGHT ? +1 : -1);
     lv_event_send(cur, LV_EVENT_RELEASED, nullptr);
     s_nav_show = true;
     if (g_lv.task) g_lv.task->noteUserInput();
@@ -4920,6 +5017,22 @@ static void p4PlaceFKeyHint(lv_obj_t* bar, int i, lv_obj_t* hint) {
 }
 #endif
 
+#if !defined(HAS_TANMATSU) && !defined(TLORA_PAGER) && !defined(HAS_THINKNODE_M9)
+// Condense Nav rail: a tab's key hint goes centred UNDER its icon, since the
+// narrow rail has no room beside it.
+static void railPlaceKeyHint(int i, lv_obj_t* hint) {
+  const char* txt = lv_label_get_text(hint);
+  const lv_font_t* font = lv_obj_get_style_text_font(hint, LV_PART_MAIN);
+  const lv_coord_t w = lv_txt_get_width(txt, strlen(txt), font, 0, LV_TEXT_FLAG_NONE);
+  const lv_coord_t h = lv_font_get_line_height(font);
+  lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+  const lv_coord_t icon_h = lv_font_get_line_height(lv_obj_get_style_text_font(bar, LV_PART_ITEMS));
+  lv_coord_t x, y;
+  if (!tabBarChildPosForCell(i, w, h, &x, &y)) return;
+  lv_obj_align(hint, LV_ALIGN_TOP_LEFT, x, y + icon_h / 2 + h / 2 - 2);
+}
+#endif
+
 static void navMenubarKeysSync() {
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // Tanmatsu menubar uses the coloured F-key shapes, not letter hotkeys. The
@@ -4956,7 +5069,8 @@ static void navMenubarKeysSync() {
       lv_label_set_text(s_navkey_hint[i], fk);
       lv_obj_set_style_text_font(s_navkey_hint[i], &lv_font_montserrat_12, LV_PART_MAIN);
       lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
-      p4PlaceFKeyHint(bar, i, s_navkey_hint[i]);
+      if (s_nav_condensed) railPlaceKeyHint(i, s_navkey_hint[i]);
+      else                 p4PlaceFKeyHint(bar, i, s_navkey_hint[i]);
       continue;
     }
 #endif
@@ -4967,10 +5081,39 @@ static void navMenubarKeysSync() {
       lv_obj_set_style_text_font(s_navkey_hint[i], &g_font_12, LV_PART_MAIN);
     }
     lv_obj_clear_flag(s_navkey_hint[i], LV_OBJ_FLAG_HIDDEN);
-    if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
+    if (s_nav_condensed) railPlaceKeyHint(i, s_navkey_hint[i]);
+    else if (cw > 0) lv_obj_align(s_navkey_hint[i], LV_ALIGN_LEFT_MID, cw * i + cw / 2 - 15, 8);   // bottom-left of the icon
   }
 #endif
 }
+#if defined(TLORA_PAGER)
+// The Pager prints each tab's hotkey on the bar: the icon, then the letter beside it
+// (or under it on the Condense Nav rail). Built from s_nav_keys so a remap shows up.
+static void pagerTabLabel(int tab, char* out, size_t cap) {
+  static const char* const kIcons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME,
+                                         LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
+  if (tab < 0 || tab >= 5) { if (cap) out[0] = '\0'; return; }
+  const int lk = navKeyLower(s_nav_keys[tab]);
+  const char up = (lk >= 'a' && lk <= 'z') ? (char)(lk - 'a' + 'A') : (char)lk;
+  snprintf(out, cap, "%s%s%c", kIcons[tab], s_nav_condensed ? "\n" : " ", up);
+}
+static void pagerRefreshTabLabels() {
+  if (!g_lv.tabview) return;
+  char b[16];
+  for (int t = 0; t < 5; t++) { pagerTabLabel(t, b, sizeof b); lv_tabview_rename_tab(g_lv.tabview, t, b); }
+}
+// Letters the Pager uses for fixed actions, so a remap cannot take them: Q/E nudge a
+// slider, and W/A/X/D pan the map. A stays allowed as a tab key (it is the Map key by
+// default, and on the Map a pan would only ever follow a jump to the tab you are on).
+static bool pagerKeyReserved(int lk, bool tab_key) {
+  switch (lk) {
+    case 'q': case 'e': case 'w': case 'x': case 'd': return true;
+    case 'a': return !tab_key;
+    default:  return false;
+  }
+}
+#endif
+
 // Apply a captured key to the tab being remapped (Settings → Keyboard).
 static void navKeyCaptureApply(int key) {
   const int t = s_navkey_capture;   // 0-4 = tab hotkey, 5-12 = up/down/left/right/select/back/scroll-up/scroll-down
@@ -4979,13 +5122,20 @@ static void navKeyCaptureApply(int key) {
   if (key == 0x1B || key == 0x08 || key == 0x7F) { if (g_lv.task) g_lv.task->showAlert(TR("Cancelled"), 700); return; }
   if (!((key>='a'&&key<='z') || (key>='A'&&key<='Z'))) { if (g_lv.task) g_lv.task->showAlert(TR("Letters only"), 900); return; }
   const int lk = navKeyLower(key);
-  if (navKeyUsedBy(lk, t) >= 0) { if (g_lv.task) g_lv.task->showAlert(TR("Key already in use"), 1100); return; }
+  if (navKeyUsedBy(lk, t) >= 0
+#if defined(TLORA_PAGER)
+      || pagerKeyReserved(lk, t < 5)
+#endif
+     ) { if (g_lv.task) g_lv.task->showAlert(TR("Key already in use"), 1100); return; }
   if (t < 5) {
     s_nav_keys[t] = (uint8_t)lk;
 #if defined(ESP32)
     touchPrefsSetNavKey(t, (uint8_t)lk);
 #endif
     navMenubarKeysSync();   // tab hotkey changed → refresh the menubar hint
+#if defined(TLORA_PAGER)
+    pagerRefreshTabLabels();   // the Pager prints the letters in the tab labels themselves
+#endif
   } else {
     s_dir_keys[t - 5] = (uint8_t)lk;
 #if defined(ESP32)
@@ -6018,7 +6168,11 @@ static void navBuildTabKeyHints() {
                 lv_canvas_draw_rect(cv, SZ-r, SZ-r, r, r, &rd); } break;
       default: { lv_point_t p[5] = {{SZ/2,1},{SZ-2,SZ/2},{SZ/2,SZ-2},{1,SZ/2},{SZ/2,1}}; lv_canvas_draw_line(cv, p, 5, &ld); } break; // ◇
     }
-    lv_obj_align(cv, LV_ALIGN_LEFT_MID, i * cell + (cell - SZ) / 2, 0);
+    lv_coord_t rx, ry;
+    if (s_nav_condensed && tabBarChildPosForCell(i, SZ, SZ, &rx, &ry))
+      lv_obj_align(cv, LV_ALIGN_TOP_LEFT, rx, ry);   // Condense Nav rail: stacked down the right edge
+    else
+      lv_obj_align(cv, LV_ALIGN_LEFT_MID, i * cell + (cell - SZ) / 2, 0);
     s_tabhint_cv[i] = cv;
 
     lv_obj_t* ic = lv_label_create(bar);
@@ -6142,7 +6296,7 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   if (raw_press
 #if CAP_TRACKBALL
       // Ignore a stray finger on the tab bar while the cursor is up.
-      && !tbFingerTouchOnTabBarBlocked(y)
+      && !tbFingerTouchOnTabBarBlocked(x, y)
 #endif
      ) {
     p.x = static_cast<lv_coord_t>(x);
@@ -10105,11 +10259,32 @@ static lv_obj_t* s_mentions_root = nullptr;  // @-mentions list overlay
 static bool s_home_drawer_mode = false;
 static bool s_home_is_drawer   = false;   // persistent pref: Home tab defaults to the app drawer (loaded at boot)
 static bool s_tab_changed = false;   // a real tab switch happened this tap; the Home-button toggle reads it
+// Condense Nav rail: pin a tab badge (unread count, update "!") to the top-right
+// corner of its cell. Aligned to the screen's right edge so a wider count grows
+// leftwards into the cell instead of off the panel.
+static void railPlaceBadge(lv_obj_t* badge, int tab) {
+  lv_area_t c;
+  if (!badge || !tabBtnScreenArea(tab, &c)) return;
+  const lv_coord_t right_gap = lv_disp_get_hor_res(nullptr) - 1 - c.x2;
+  lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -(right_gap + 2), c.y1 + 2);
+}
+
 // Slide the thin accent indicator bar under the active tab. Hidden on the
 // immersive map tab (transparent chrome, black icons over the tiles).
 static void updateTabIndicator() {
   if (!s_tab_indicator || !g_lv.tabview) return;
   const int idx = getActiveTab();
+  if (s_nav_condensed) {
+    // Rail: a short vertical bar on the rail's inner (left) edge, beside the
+    // active cell. The rail stays solid on the map, so it stays visible there.
+    lv_area_t c;
+    if (!tabBtnScreenArea(idx, &c)) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
+    lv_obj_t* bar = lv_tabview_get_tab_btns(g_lv.tabview);
+    lv_area_t r; lv_obj_get_coords(bar, &r);
+    lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_pos(s_tab_indicator, r.x1 + 2, (c.y1 + c.y2) / 2 - TAB_INDICATOR_W / 2);
+    return;
+  }
   if (idx == MAP_TAB_INDEX) { lv_obj_add_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN); return; }
 #if defined(HAS_EXPANSION_KIT)
   // Tab count is runtime: 6 cells with the Sensors tab, 5 without (TAB_LAST is 5
@@ -14109,8 +14284,16 @@ static void uiScaleSelectCb(lv_event_t* e) {
 }
 #endif
 
-// Hard-lock (not just dim) when the screen idles off, so the touchscreen is
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+#if !defined(HAS_THINKNODE_M9)
+// Condense Nav (#592). The bar's side and the Home column width are fixed when
+// the UI tree is built, so like the UI size this applies after a restart.
+static void condenseNavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetCondenseNav(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+  if (g_lv.task) g_lv.task->showAlert(TR("Condense Nav saved — restart to apply"), 2200);
+}
+#endif
+
 // Toggle idle light-sleep via the Settings row. Updates NVS, the live
 // touchSleep state, and the status-bar icon in one shot (mirrors lockOnScreenOffToggleCb).
 static void sleepIdleToggleCb(lv_event_t* e) {
@@ -14123,8 +14306,8 @@ static void sleepIdleToggleCb(lv_event_t* e) {
   updateGlobalStatusBar();
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Idle sleep enabled") : TR("Idle sleep disabled"), 1200);
 }
-#endif
 
+// Hard-lock (not just dim) when the screen idles off, so the touchscreen is
 // inert until a deliberate unlock. Cached in s_lock_on_screen_off so the loop's
 // idle check never hits NVS.
 static void lockOnScreenOffToggleCb(lv_event_t* e) {
@@ -14266,6 +14449,18 @@ static void navMbarKeysToggleCb(lv_event_t* e) {
 #endif
   s_nav_mbar_keys = on;
   navMenubarKeysSync();   // apply immediately
+}
+#endif
+
+#if defined(TLORA_PAGER)
+// Keyboard navigation on the Pager (#591). Unlike the T-Deck's toggle this leaves the
+// focus group alone (the wheel always needs it); it only turns the letters on or off.
+static void pagerKbdNavToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetKbdNav(on);
+  s_kbd_nav = on;
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Keyboard nav: on") : TR("Keyboard nav: off"), 1100);
 }
 #endif
 
@@ -14959,6 +15154,62 @@ static void themeContrastToggleCb(lv_event_t* e) {
       : (s_theme_day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT));
 }
 
+#if CAP_TRACKBALL || defined(TLORA_PAGER)
+// Settings > Keyboard: the programmable tab hotkeys and navigation keys, one row
+// each; tap (or click) a row, then press the new key. Shared by the T-Deck and the
+// Pager (#591) so both boards remap keys the same way. Returns the new y.
+static int settingsNavKeyRows(lv_obj_t* body, int y) {
+  // Programmable tab hotkeys — tap a row, then press a key to reassign it.
+  y += settingsRowLabel(body, y, 0, TR("Tab hotkeys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
+  for (int t = 0; t < 5; t++) {
+    lv_obj_t* row = lv_btn_create(body);
+    lv_obj_set_size(row, lv_pct(100), SC(30));
+    lv_obj_set_pos(row, 2, y);
+    styleButton(row);
+    lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, TR(kNavTabNames[t]));
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_t* kv = lv_label_create(row);
+    const int lk = navKeyLower(s_nav_keys[t]);
+    char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : (lk ? lk : '-')), 0 };
+    lv_label_set_text(kv, kb);
+    lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+    s_navkey_row_val[t] = kv;
+    y += SC(36);
+  }
+  // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
+  y += settingsRowLabel(body, y, 0, TR("Navigation keys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
+  for (int d = 0; d < 8; d++) {
+    const int bi = d + 5;   // binding index 5-12
+    lv_obj_t* row = lv_btn_create(body);
+    lv_obj_set_size(row, lv_pct(100), SC(30));
+    lv_obj_set_pos(row, 2, y);
+    styleButton(row);
+    lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)bi);
+    lv_obj_t* nm = lv_label_create(row);
+    lv_label_set_text(nm, TR(kNavDirNames[d]));
+    lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_t* kv = lv_label_create(row);
+    const int lk = navKeyLower(s_dir_keys[d]);
+    char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : (lk ? lk : '-')), 0 };
+    lv_label_set_text(kv, kb);
+    lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
+    s_navkey_row_val[bi] = kv;
+    y += SC(36);
+  }
+  return y;
+}
+#endif
+
 static void buildDeviceSettings(int sec) {
   // One detail page per section: each block below is gated to its DSEC_* section
   // (skipped blocks don't advance y, so every page lays out from the top).
@@ -15581,6 +15832,23 @@ static void buildDeviceSettings(int sec) {
 #endif
 #endif
 
+#if !defined(HAS_THINKNODE_M9)
+  /* Condense Nav (#592): in landscape, the nav bar becomes a rail on the right
+     edge and Home's launcher column shows icons only. Portrait layouts keep the
+     bottom bar, so the switch is greyed out there. The M9 has no nav bar. */
+  {
+    int h = settingsRowLabel(body, y, 6, TR("Condense Nav (restart to apply)"), COLOR_SUB, nullptr, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetCondenseNav()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    if (!chatLandscape()) lv_obj_add_state(sw, LV_STATE_DISABLED);
+    lv_obj_add_event_cb(sw, condenseNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(40, h + 12);
+    if (!chatLandscape())
+      y += settingsRowLabel(body, y, 0, TR("Landscape only"), COLOR_SUB, &g_font_12, 0) + 6;
+  }
+#endif
+
   /* Distance units: OFF = km (default), ON = miles. Applies immediately. */
   {
     int h = settingsRowLabel(body, y, 6, TR("Distance in miles"), COLOR_SUB, nullptr, 56);
@@ -16056,6 +16324,24 @@ static void buildDeviceSettings(int sec) {
   }
 #endif
 
+#if defined(TLORA_PAGER)
+  /* Keyboard navigation (#591), the T-Deck's feature on the Pager: with no text field
+     focused, letters move the highlight (default I/K/J/L) and scroll (U/O), and the
+     tab keys are the letters printed on the bar. On by default. Applied live. */
+  {
+    int h = settingsRowLabel(body, y, 4, TR("Keyboard navigation"), COLOR_TEXT, &g_font_12, 56);
+    lv_obj_t* sw = lv_switch_create(body);
+    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (touchPrefsGetKbdNav()) lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, pagerKbdNavToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += LV_MAX(34, h + 10);
+    y += settingsRowLabel(body, y, 0,
+        TR("Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back."),
+        COLOR_SUB, &g_font_12, 0) + 2;
+    y = settingsNavKeyRows(body, y);
+  }
+#endif
+
 #if CAP_TRACKBALL
 #if defined(HAS_TDECK_KEYBOARD)   // never the M9: nav is force-set on at boot there (the board's only input) and must not grow an off-switch
   /* Keyboard navigation: off (default) vs on. When no text field is focused, the
@@ -16103,53 +16389,7 @@ static void buildDeviceSettings(int sec) {
       lv_obj_add_event_cb(sw2, navMbarKeysToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
       y += LV_MAX(34, h2 + 10);
     }
-    // Programmable tab hotkeys — tap a row, then press a key to reassign it.
-    y += settingsRowLabel(body, y, 0, TR("Tab hotkeys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
-    for (int t = 0; t < 5; t++) {
-      lv_obj_t* row = lv_btn_create(body);
-      lv_obj_set_size(row, lv_pct(100), SC(30));
-      lv_obj_set_pos(row, 2, y);
-      styleButton(row);
-      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)t);
-      lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, TR(kNavTabNames[t]));
-      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
-      lv_obj_t* kv = lv_label_create(row);
-      const int lk = navKeyLower(s_nav_keys[t]);
-      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
-      lv_label_set_text(kv, kb);
-      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
-      s_navkey_row_val[t] = kv;
-      y += SC(36);
-    }
-    // Programmable control keys (move/select/back + scroll up/down) — tap a row, press a key.
-    y += settingsRowLabel(body, y, 0, TR("Navigation keys \xe2\x80\x94 tap a row, then press a key"), COLOR_SUB, &g_font_12, 0) + 2;
-    for (int d = 0; d < 8; d++) {
-      const int bi = d + 5;   // binding index 5-12
-      lv_obj_t* row = lv_btn_create(body);
-      lv_obj_set_size(row, lv_pct(100), SC(30));
-      lv_obj_set_pos(row, 2, y);
-      styleButton(row);
-      lv_obj_add_event_cb(row, navKeyCaptureStartCb, LV_EVENT_CLICKED, (void*)(intptr_t)bi);
-      lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, TR(kNavDirNames[d]));
-      lv_obj_set_style_text_font(nm, &g_font_12, LV_PART_MAIN);
-      lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_align(nm, LV_ALIGN_LEFT_MID, 8, 0);
-      lv_obj_t* kv = lv_label_create(row);
-      const int lk = navKeyLower(s_dir_keys[d]);
-      char kb[2] = { (char)(lk >= 'a' && lk <= 'z' ? lk - 'a' + 'A' : lk), 0 };
-      lv_label_set_text(kv, kb);
-      lv_obj_set_style_text_font(kv, &g_font_14, LV_PART_MAIN);
-      lv_obj_set_style_text_color(kv, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-      lv_obj_align(kv, LV_ALIGN_RIGHT_MID, -10, 0);
-      s_navkey_row_val[bi] = kv;
-      y += SC(36);
-    }
+    y = settingsNavKeyRows(body, y);   // tab hotkeys + navigation keys (shared with the Pager)
   }
 #endif
 
@@ -16430,21 +16670,14 @@ static void buildDeviceSettings(int sec) {
     lv_obj_center(l_bat);
     y += SC(42);
   }
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Experimental battery saver (idle power-save) — throttles the CPU when the
   // device is parked (screen off, on battery, standalone). Moved here from
-  // Settings -> Lock so it lives with the battery. T-Deck + V4-R8 (the old
-  // "gate never passes on the V4" note was stale for the R8: batteryIsCharging
-  // can't block it there, and the other gates are user state) + M9 (2026-09-02
-  // battery pass: the hooks were already installed and every gate works there —
-  // the throttle is a plain vTaskDelay in the loop task, wake is the keyboard
-  // poll that runs through it — but no M9 build ever compiled this switch, so
-  // on the M9 the pref was permanently OFF).
-  //
-  // That reasoning used to add "and the M9 is in batteryIsCharging's #else
-  // branch (compile-time false), so the USB-powered gate can never block".
-  // That is no longer true: charge detection is shared by every board now, so
-  // the M9 blocks on USB power like the rest, which is what the gate is for.
+  // Settings -> Lock so it lives with the battery. Every board: the hooks are
+  // installed and touchSleep::loopEnd runs on every touch build, and the gates
+  // are board-neutral (the throttle is a plain vTaskDelay in the loop task, and
+  // input is polled through it). This used to be a T-Deck / V4-R8 / M9 allowlist,
+  // which left the pref permanently OFF everywhere else (the M9 had exactly that
+  // bug until 2026-09-02; the T-Pager until #593).
   {
     int h = settingsRowLabel(body, y, 6, TR("Battery saver (experimental)"), COLOR_TEXT, &g_font_12, 56);
     lv_obj_t* sw = lv_switch_create(body);
@@ -16459,7 +16692,6 @@ static void buildDeviceSettings(int sec) {
         reason ? reason : TR("Throttles the CPU when idle to save power"),
         COLOR_SUB, &g_font_12, 0) + 6;
   }
-#endif
 
   // Calibrate battery: capture the current voltage as 100% (for custom packs /
   // builds whose full voltage isn't 4.2 V). Tap = set 100%; long-press = reset.
@@ -27879,14 +28111,38 @@ static bool s_file_transfer_map_upload = false;
 static bool s_file_transfer_replace_existing = false;
 static bool s_file_transfer_map_dirty = false;
 static constexpr const char* kFileTransferTemp = "/transfer/.upload.part";
+// Backup generated for a browser download; deleted once sent or abandoned.
+static constexpr const char* kFileTransferBackupTemp = "/transfer/.backup.part";
+static constexpr uint32_t kFileTransferRestoreMaxBytes = 4u * 1024u * 1024u;
+static bool s_file_transfer_restore_upload = false;
+static bool s_file_transfer_backup_download = false;
+// Settings backup helpers, defined with the Backups settings page further down.
+static void backupMakeFilename(char* out, size_t cap);
+static bool backupImportAndReboot(fs::FS* fsp, const char* path,
+                                  void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
 static constexpr uint32_t kMapTileMaxBytes = 256u * 1024u;
 static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
 static constexpr uint32_t kFileTransferChunkTimeoutMs = 30000u;
 static void closeFileTransferPage();
 
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+// No card slot: transfer to the internal LittleFS "tiles" partition. Defined next
+// to s_tiles_fs (further down), which owns that mount.
+static fs::FS& internalTransferFs();
+static bool    internalTransferFsReady();
+static size_t  internalTransferFsUsed();
+static size_t  internalTransferFsTotal();
+static size_t  internalTransferFsFree();
+// Room kept free for the map's own tile cache, which shares the partition
+// (the same floor tilesFsLowSpace() guards).
+static constexpr size_t kInternalTransferReserve = 320u * 1024u;
+#endif
+
 static fs::FS& fileTransferStorage() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFs();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return SD_MMC;
 #else
   return SD;
@@ -27894,7 +28150,9 @@ static fs::FS& fileTransferStorage() {
 }
 
 static bool fileTransferStorageMounted() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFsReady();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return s_tan_sd_mounted && SD_MMC.cardType() != CARD_NONE;
 #else
   return s_sd_mounted && SD.cardType() != CARD_NONE;
@@ -27902,7 +28160,9 @@ static bool fileTransferStorageMounted() {
 }
 
 static bool fileTransferStorageReady() {
-#if WADA_WEB_FILE_TRANSFER_SDMMC
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  return internalTransferFsReady();
+#elif WADA_WEB_FILE_TRANSFER_SDMMC
   return tanSdTryMount() && SD_MMC.cardType() != CARD_NONE;
 #else
   return fmSdTryMount() && s_sd_mounted && SD.cardType() != CARD_NONE;
@@ -27910,7 +28170,9 @@ static bool fileTransferStorageReady() {
 }
 
 static void fileTransferStorageIoFailed() {
-#if WADA_WEB_FILE_TRANSFER_SPI_SD
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // Internal flash: nothing to unmount or re-probe; the failing operation reports itself.
+#elif WADA_WEB_FILE_TRANSFER_SPI_SD
   sdNoteIoFailure();
 #else
   s_tan_sd_mounted = false;
@@ -27940,12 +28202,21 @@ static void fileTransferResetUpload(bool remove_temp) {
   s_file_transfer_final[0] = '\0';
   s_file_transfer_map_upload = false;
   s_file_transfer_replace_existing = false;
+  s_file_transfer_restore_upload = false;
 }
 
 static void fileTransferResetRead(bool clear_queued_data = true) {
   if (s_file_transfer_read_file) {
     s_file_transfer_read_file.close();
     markSdIo();
+  }
+  if (s_file_transfer_backup_download) {
+    s_file_transfer_backup_download = false;
+    fs::FS& storage = fileTransferStorage();
+    if (fileTransferStorageMounted() && storage.exists(kFileTransferBackupTemp)) {
+      if (!storage.remove(kFileTransferBackupTemp)) fileTransferStorageIoFailed();
+      markSdIo();
+    }
   }
   if (s_file_transfer_list_dir) s_file_transfer_list_dir.close();
   s_file_transfer_downloading = false;
@@ -28020,6 +28291,14 @@ static void fileTransferStartUpload(uint32_t declared, const char* name,
       return;
     }
   }
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // The internal partition is small (4.75 MB) and shared with the map's tile
+  // cache: refuse up front what cannot fit, rather than failing part-way.
+  if ((size_t)declared + kInternalTransferReserve > internalTransferFsFree()) {
+    fileTransferFail("not enough free internal storage");
+    return;
+  }
+#endif
   s_file_transfer_file = storage.open(kFileTransferTemp, FILE_WRITE);
   markSdIo();
   if (!s_file_transfer_file) {
@@ -28069,6 +28348,12 @@ static void fileTransferBeginMap(const char* command) {
     fileTransferFail("invalid map tile path or size");
     return;
   }
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // The map reads uploaded tile libraries from an SD card only; on internal
+  // storage they would just fill the partition the tile cache needs.
+  fileTransferFail("map tiles need an SD card");
+  return;
+#endif
   if (!fileTransferPrepareUpload()) return;
 
   fs::FS& storage = fileTransferStorage();
@@ -28102,6 +28387,109 @@ static void fileTransferBeginMap(const char* command) {
                           mode == 'R' ? FileTransferExistingMode::Replace
                                       : FileTransferExistingMode::Skip,
                           true);
+}
+
+// Restore: the browser uploads a settings backup (.json) through the normal
+// chunk path into the temporary file; fileTransferEnd() then applies it exactly
+// as Settings -> Backups -> Import does, and the device reboots.
+static void fileTransferRestoreBegin(const char* command) {
+  unsigned long declared = 0;
+  char extra = 0;
+  if (!command || sscanf(command, "RESTORE %lu %c", &declared, &extra) != 1 ||
+      declared == 0 || declared > kFileTransferRestoreMaxBytes) {
+    fileTransferFail("invalid backup size");
+    return;
+  }
+  if (!fileTransferPrepareUpload()) return;
+  // The temp file is the destination: prepare just removed it, so the
+  // existing-file check in fileTransferStartUpload never trips.
+  fileTransferStartUpload(static_cast<uint32_t>(declared), "settings backup",
+                          kFileTransferTemp, FileTransferExistingMode::Replace, false);
+  if (s_file_transfer_uploading) s_file_transfer_restore_upload = true;
+}
+
+static void fileTransferRestoreImported(int nch, int nco) {
+  // The uploaded copy carries the private key; do not leave it behind.
+  fs::FS& storage = fileTransferStorage();
+  if (storage.exists(kFileTransferTemp)) storage.remove(kFileTransferTemp);
+  markSdIo();
+  char reply[48];
+  snprintf(reply, sizeof reply, "RESTORED %d %d", nco, nch);
+  fileTransferReply(reply);   // sent by the network task during the reboot notice
+}
+
+static void fileTransferRestoreApply(fs::FS& storage) {
+  fileTransferResetUpload(false);
+  File probe = storage.open(kFileTransferTemp, FILE_READ);
+  int first = -1;
+  while (probe && probe.available()) {
+    first = probe.read();
+    if (first != ' ' && first != '\t' && first != '\r' && first != '\n') break;
+  }
+  if (probe) probe.close();
+  markSdIo();
+  if (first != '{') {
+    fileTransferFail("not a settings backup (.json)");
+    return;
+  }
+  snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Restoring settings backup");
+  // Reboots on success; fileTransferFail() removes the temp file otherwise.
+  if (!backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported))
+    fileTransferFail("backup could not be imported (bad/unreadable JSON)");
+}
+
+// Backup: write a settings backup exactly as Settings -> Backups -> Export does,
+// to a temporary file, then stream it to the browser through the download path.
+static void fileTransferBackupBegin() {
+  if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
+    fileTransferReply("ERR transfer in progress");
+    return;
+  }
+  if (!g_lv.task || !fileTransferStorageReady()) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR SD card unavailable");
+    return;
+  }
+  fileTransferResetRead();
+  fs::FS& storage = fileTransferStorage();
+  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR cannot create transfer directory");
+    return;
+  }
+  File out = storage.open(kFileTransferBackupTemp, FILE_WRITE);
+  markSdIo();
+  if (!out) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR cannot create backup file");
+    return;
+  }
+  s_file_transfer_backup_download = true;   // from here on, fileTransferResetRead() removes it
+  { WdtHeavyGuard _wg;
+    { FileBufWriter bw(out);
+      the_mesh.uiExportBackup(bw, g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+      bw.flushBuf(); }
+    out.close(); }
+  markSdIo();
+
+  s_file_transfer_read_file = storage.open(kFileTransferBackupTemp, FILE_READ);
+  const uint64_t size = s_file_transfer_read_file ? s_file_transfer_read_file.size() : 0;
+  if (size == 0 || size > kFileTransferMaxBytes) {
+    fileTransferStorageIoFailed();
+    fileTransferResetRead();
+    fileTransferReply("ERR backup could not be written");
+    return;
+  }
+  char name[48];
+  backupMakeFilename(name, sizeof name);
+  s_file_transfer_downloading = true;
+  s_file_transfer_download_size = static_cast<uint32_t>(size);
+  s_file_transfer_download_offset = 0;
+  s_file_transfer_result[0] = '\0';
+  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", name);
+  char reply[WebFileTransfer::MAX_REPLY_BYTES];
+  snprintf(reply, sizeof reply, "FILE %lu %s", static_cast<unsigned long>(size), name);
+  fileTransferReply(reply);
 }
 
 static void fileTransferChunk(const uint8_t* frame, size_t len) {
@@ -28152,6 +28540,10 @@ static void fileTransferEnd(const char* command) {
   s_file_transfer_file.close();
   markSdIo();
   fs::FS& storage = fileTransferStorage();
+  if (s_file_transfer_restore_upload) {
+    fileTransferRestoreApply(storage);
+    return;
+  }
   if (s_file_transfer_map_upload) {
     File tile = storage.open(kFileTransferTemp, FILE_READ);
     uint8_t signature[8] = {0};
@@ -28451,6 +28843,8 @@ static void webFileTransferTick() {
     else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
     else if (strncmp(command, "DELETE ", 7) == 0) fileTransferDelete(command + 7);
     else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
+    else if (strcmp(command, "BACKUP") == 0) fileTransferBackupBegin();
+    else if (strncmp(command, "RESTORE ", 8) == 0) fileTransferRestoreBegin(command);
     else if (strcmp(command, "CANCEL") == 0) {
       fileTransferResetUpload(true);
       fileTransferResetRead();
@@ -28530,7 +28924,12 @@ static void openFileTransferPage() {
     return;
   }
   if (!fileTransferStorageReady()) {
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+    // The internal "tiles" partition did not mount (e.g. a partition table without it).
+    if (g_lv.task) g_lv.task->showAlert(TR("Map storage error.\nReflash the tiles partition."), 2400);
+#else
     if (g_lv.task) g_lv.task->showAlert(TR("File Transfer needs the SD card"), 2000);
+#endif
     return;
   }
   fs::FS& storage = fileTransferStorage();
@@ -28544,6 +28943,7 @@ static void openFileTransferPage() {
     if (g_lv.task) g_lv.task->showAlert(TR("Could not clear previous upload"), 2000);
     return;
   }
+  if (storage.exists(kFileTransferBackupTemp)) storage.remove(kFileTransferBackupTemp);
   markSdIo();
   if (g_lv.task && !g_lv.task->isTcpEnabled()) {
     g_lv.task->enableTcp();
@@ -28587,6 +28987,21 @@ static void openFileTransferPage() {
   lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(intro, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(intro, width);
+
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+  // No card on this board: say where the files go and how full it is.
+  {
+    char line[48], used[16], total[16];
+    fmFmtSize(internalTransferFsUsed(),  used,  sizeof used);
+    fmFmtSize(internalTransferFsTotal(), total, sizeof total);
+    snprintf(line, sizeof line, TR("Internal storage   %s / %s"), used, total);
+    lv_obj_t* st = lv_label_create(s_file_transfer_root);
+    lv_label_set_text(st, line);
+    lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(st, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_width(st, width);
+  }
+#endif
 
   lv_obj_t* url = lv_label_create(s_file_transfer_root);
   char url_text[72];
@@ -29534,17 +29949,20 @@ static void makeHome(lv_obj_t* tab) {
   // RSTRIP is the strip the left-hand content (status text + chart + info) must stay clear of.
 #if defined(TLORA_PAGER)
   const uint8_t pager_size = touchPrefsGetUiScale();
-  const int BTNW = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
+  const int BTNW_LABEL = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
   const int home_line_h = lv_font_get_line_height(&g_font_14);
   const int home_state_y  = pager_size ? 2 : 4;
   const int home_unread_y = pager_size ? home_state_y + home_line_h + 2 : 22;
   const int home_stats_y  = pager_size ? home_unread_y + home_line_h + 2 : 40;
 #else
-  const int BTNW = SC(100);
+  const int BTNW_LABEL = SC(100);
   const int home_state_y  = SC(4);
   const int home_unread_y = SC(22);
   const int home_stats_y  = SC(40);
 #endif
+  // Condense Nav: the column shows icons only, so it narrows and the status
+  // text, chart and info card to its left widen by the difference.
+  const int BTNW = s_nav_condensed ? HOME_ICON_BTNW : BTNW_LABEL;
   const int RSTRIP = BTNW + 10;
 
   // The previous in-tab status row (heartbeat dot, MESHCOMOD title, clock,
@@ -29982,7 +30400,8 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_event_cb(adv, openAdvertModalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* adv_l = lv_label_create(adv);
   // Shorter label in the narrow landscape button + the half-width portrait button so it doesn't clip.
-  lv_label_set_text(adv_l, TR(LV_SYMBOL_UPLOAD "  Advert"));
+  char adv_icon[16];
+  lv_label_set_text(adv_l, homeLauncherText(TR(LV_SYMBOL_UPLOAD "  Advert"), adv_icon, sizeof adv_icon));
   lv_obj_set_style_text_font(adv_l, &g_font_14, LV_PART_MAIN);
   lv_obj_center(adv_l);
 
@@ -30087,7 +30506,8 @@ static void makeHome(lv_obj_t* tab) {
                 lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN); }
       lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* l = lv_label_create(b);
-      lv_label_set_text(l, TR(label));
+      char icon[16];
+      lv_label_set_text(l, homeLauncherText(TR(label), icon, sizeof icon));
       lv_obj_set_style_text_font(l, bh >= 44 ? &g_font_14 : &g_font_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(l,
           lv_color_hex(bg ? themeRole(0xFFFFFF, COLOR_TEXT) : COLOR_TEXT), LV_PART_MAIN);
@@ -31025,6 +31445,17 @@ static volatile uint16_t s_tiles_free_kb = 0xFFFF;
 // After format, subsequent boots find a valid (empty) FS and mount fast.
 static fs::LittleFSFS s_tiles_fs;
 static bool           s_tiles_fs_ready = false;
+#if WADA_WEB_FILE_TRANSFER_INTERNAL
+// File Transfer's storage on the Attaky (declared with the transfer app above).
+static fs::FS& internalTransferFs()      { return s_tiles_fs; }
+static bool    internalTransferFsReady() { return s_tiles_fs_ready; }
+static size_t  internalTransferFsUsed()  { return s_tiles_fs.usedBytes(); }
+static size_t  internalTransferFsTotal() { return s_tiles_fs.totalBytes(); }
+static size_t  internalTransferFsFree() {
+  const size_t total = internalTransferFsTotal(), used = internalTransferFsUsed();
+  return total > used ? total - used : 0;
+}
+#endif
 
 // Active tile-cache backend + path prefix. Normally the dedicated "tiles"
 // LittleFS partition above (prefix ""). When that partition is ABSENT — e.g.
@@ -36503,7 +36934,7 @@ static void onMapTabActivated() {
   refreshMapInfoLabel();
 }
 
-// Idle power-save indicator (iPhone Low-Power-Mode style, T-Deck and M9): instead of a separate moon
+// Idle power-save indicator (iPhone Low-Power-Mode style, every board): instead of a separate moon
 // glyph, the status-bar battery turns amber while idle power-save is enabled. s_batt_base holds the
 // colour the theme/map chrome wants (off-white off-map, black/white over light tiles); applyBattColor
 // overlays the amber when power-save is on, so the map-chrome setter and the per-tick refresh share
@@ -36512,10 +36943,8 @@ static lv_color_t s_batt_base = lv_color_hex(COLOR_TEXT);
 static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (touchSleep::enabled())
     c = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xFFD60A);
-#endif
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
 }
 
@@ -36570,7 +36999,8 @@ static void applyMapChrome(bool on) {
 #endif
   }
   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
-  if (g_lv.tabview) {
+  // The Condense Nav rail stays solid on the map (#592), so it keeps its normal look.
+  if (g_lv.tabview && !s_nav_condensed) {
     lv_obj_t* btns = lv_tabview_get_tab_btns(g_lv.tabview);
     if (btns) {
       // Fully transparent on the map — the black icons read directly over the
@@ -36611,7 +37041,10 @@ static void makeMapTab(lv_obj_t* tab) {
   // is on top), so panning is driven by a transparent touch-catcher in this
   // page (below). All tile/marker projection reads k_map_canvas_w/h → a
   // full-screen canvas projects to the full screen.
-  k_map_canvas_w = lv_disp_get_hor_res(nullptr);
+  // With Condense Nav the solid rail covers the right edge, so the canvas stops
+  // at the rail (tabContentW): the map centres in the visible area and the
+  // right-edge buttons, sized from this width, sit beside the rail.
+  k_map_canvas_w = tabContentW();
   k_map_canvas_h = lv_disp_get_ver_res(nullptr);
   mapComputeGridRadius();   // size the tile grid to cover this canvas edge-to-edge
   constexpr int kMapInfoH = 34;   // bottom info strip height (floats over the map)
@@ -38383,7 +38816,7 @@ static void makeSettings(lv_obj_t* tab) {
   // Category landing: a single-column list in portrait, a 2-column grid in
   // landscape (uses the extra width). Each card opens a focused detail sheet.
   const bool landscape = lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr);
-  const lv_coord_t hor = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t hor = tabContentW();   // minus the Condense Nav rail, when there is one
 
   lv_obj_t* land = lv_obj_create(tab);
   s_settings_landing = land;
@@ -41767,7 +42200,7 @@ static void refreshChatList(LvChatPanel& p) {
           lv_color_hex(unread > 0 ? COLOR_ACCENT : COLOR_TEXT), LV_PART_MAIN);
       lv_label_set_long_mode(text_lbl, LV_LABEL_LONG_SCROLL_CIRCULAR);
       // Leave room on the right for the gear + time + unread badge.
-      lv_obj_set_width(text_lbl, lv_disp_get_hor_res(nullptr) - 116 - time_w - gear_w);
+      lv_obj_set_width(text_lbl, tabContentW() - 116 - time_w - gear_w);
     }
 
     // Right-aligned unread badge (pill with the count), left of the time.
@@ -41932,7 +42365,7 @@ static void refreshChatList(LvChatPanel& p) {
 
     // Name (top line) + last-message preview (bottom line), right of the avatar.
     const lv_coord_t text_x = 8 + kThreadAvatar + 8;
-    const lv_coord_t name_w = (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - time_w - 24);
+    const lv_coord_t name_w = (lv_coord_t)(tabContentW() - text_x - gear_w - time_w - 24);
     lv_obj_t* nm2 = lv_label_create(btn);
     lv_obj_add_flag(nm2, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_label_set_text(nm2, san_name);
@@ -41977,7 +42410,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_text_font(pv, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(pv, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_long_mode(pv, LV_LABEL_LONG_DOT);
-    lv_obj_set_size(pv, (lv_coord_t)(lv_disp_get_hor_res(nullptr) - text_x - gear_w - 60),
+    lv_obj_set_size(pv, (lv_coord_t)(tabContentW() - text_x - gear_w - 60),
 #if defined(TLORA_PAGER)
                     lv_font_get_line_height(&g_font_12)
 #else
@@ -42994,7 +43427,13 @@ static void updateTrackball(unsigned long now) {
 // inside those nested views), else plain ESC. Shared by the rotary encoder's
 // long-press (updatePagerEncoder) and the keyboard's Backspace-hold alternative
 // (updatePagerBackspaceHold) so both agree exactly.
+#if defined(HAS_PAGER_ENCODER)
+static bool pagerSliderEditCancel();
+#endif
 static void pagerNavGoBack() {
+#if defined(HAS_PAGER_ENCODER)
+  if (pagerSliderEditCancel()) return;           // editing a slider: Back undoes the edit, nothing else
+#endif
   if (anyPopupOpen())                            hwKeyDismissTopPopup();
   else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
@@ -43413,6 +43852,72 @@ static bool pagerChatComposerNav(bool up) {
   return false;
 }
 
+// Slider edit mode. A plain turn moves focus, so a focused slider could not be
+// adjusted with the wheel at all (only via the Q/E keys). Clicking the wheel on
+// a slider now enters edit mode: turns move the value with a live preview
+// (VALUE_CHANGED) and nothing is saved. Clicking again saves (RELEASED, the
+// same commit a touch drag ends with) and returns the wheel to focus
+// navigation. Back (long-press / Backspace-hold) puts the original value back
+// without saving, and so does anything that takes focus off the slider.
+static lv_obj_t* s_pager_slider_edit = nullptr;
+static int32_t   s_pager_slider_orig = 0;
+
+static void pagerSliderDeletedCb(lv_event_t*) { s_pager_slider_edit = nullptr; }
+
+static void pagerSliderEditEnd(bool commit) {
+  lv_obj_t* s = s_pager_slider_edit;
+  if (!s) return;
+  s_pager_slider_edit = nullptr;
+  lv_obj_remove_event_cb(s, pagerSliderDeletedCb);
+  lv_obj_clear_state(s, LV_STATE_EDITED);
+  if (commit) {
+    lv_event_send(s, LV_EVENT_RELEASED, nullptr);
+  } else if (lv_slider_get_value(s) != s_pager_slider_orig) {
+    lv_slider_set_value(s, s_pager_slider_orig, LV_ANIM_OFF);
+    lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);   // undo the live preview
+  }
+  s_nav_show = true;
+}
+
+static void pagerSliderEditBegin(lv_obj_t* s) {
+  s_pager_slider_edit = s;
+  s_pager_slider_orig = lv_slider_get_value(s);
+  lv_obj_add_event_cb(s, pagerSliderDeletedCb, LV_EVENT_DELETE, nullptr);
+  // Edit look: a bigger, contrasting knob, so "the wheel now moves this" reads
+  // differently from "this is focused". Read the pad before adding the state so
+  // it is the slider's own knob pad.
+  const lv_coord_t pad = lv_obj_get_style_pad_top(s, LV_PART_KNOB);
+  lv_obj_set_style_pad_all(s, pad + 3, LV_PART_KNOB | LV_STATE_EDITED);
+  lv_obj_set_style_bg_color(s, lv_color_hex(themeRole(0xFFFFFF, COLOR_TEXT)),
+                            LV_PART_KNOB | LV_STATE_EDITED);
+  lv_obj_add_state(s, LV_STATE_EDITED);
+  s_nav_show = true;
+}
+
+static bool pagerSliderEditCancel() {
+  if (!s_pager_slider_edit) return false;
+  pagerSliderEditEnd(false);
+  return true;
+}
+
+// Focus moved elsewhere (a hotkey, a popup, a rebuild that dropped the slider):
+// end the edit without saving.
+static void pagerSliderEditCheck() {
+  if (!s_pager_slider_edit) return;
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (foc != s_pager_slider_edit) pagerSliderEditEnd(false);
+}
+
+// A wheel click (or keyboard Enter) on a slider: the first enters edit mode,
+// the second saves and leaves it. False when the focus is not a slider.
+static bool pagerSliderEditClick() {
+  if (s_pager_slider_edit) { pagerSliderEditEnd(true); return true; }
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if (!foc || !lv_obj_check_type(foc, &lv_slider_class)) return false;
+  pagerSliderEditBegin(foc);
+  return true;
+}
+
 static void updatePagerEncoder(unsigned long now) {
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
@@ -43443,6 +43948,7 @@ static void updatePagerEncoder(unsigned long now) {
   // bug: waking via the encoder button selected "Skip" on the setup
   // wizard's welcome screen the instant the screen lit up.
   if (g_lv.task && g_lv.task->isScreenOff()) {
+    pagerSliderEditCancel();   // the screen timed out mid-edit: don't leave an unsaved preview applied
     // Hard-locked: a plain turn must NOT wake/unlock -- only holding Backspace
     // does (updatePagerBackspaceUnlockHold). Without this gate any idle turn
     // of the knob bypassed the lock entirely.
@@ -43459,6 +43965,8 @@ static void updatePagerEncoder(unsigned long now) {
   // Alt+turn is a modifier combo, not a solo tap -- mark it used so releasing
   // Alt afterward does not also arm the one-shot symbol layer.
   if (pagerKeyboardAltHeld() && delta != 0) pagerKeyboardMarkAltUsed();
+
+  pagerSliderEditCheck();
 
   if (s_mentionnav_active) {
     // @-mention contact picker (handleHwKey()'s Fn+Space entry / mentionNavConfirm()):
@@ -43481,6 +43989,10 @@ static void updatePagerEncoder(unsigned long now) {
       for (; delta < 0; delta++) s_accentnav_idx = (s_accentnav_idx - 1 + (int)s_accbox_cell_n) % (int)s_accbox_cell_n;
     }
     if (turned) accentNavRestyle();
+  } else if (s_pager_slider_edit) {
+    // Editing a slider: the wheel moves its value (preview only, see pagerSliderEditBegin).
+    for (; delta > 0; delta--) navSliderNudge(s_pager_slider_edit, +1);
+    for (; delta < 0; delta++) navSliderNudge(s_pager_slider_edit, -1);
   } else if (navOpenDropdown()) {
     // An open dropdown captures the encoder: lv_dropdown's own key handling only
     // understands LV_KEY_UP/DOWN to move the highlighted row (+ENTER to confirm,
@@ -43574,6 +44086,7 @@ static void updatePagerEncoder(unsigned long now) {
     // handleHwKey()'s Enter branch exactly so both inputs agree.
     if (s_mentionnav_active)        mentionNavConfirm(); // picking a mention: confirm the highlighted one
     else if (s_accentnav_active)    accentNavConfirm();  // picking an accent: confirm the highlighted one
+    else if (pagerSliderEditClick()) {}                  // a slider: enter edit mode / save and leave it
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
   if (!held && s_was_held) s_press_consumed = false;
@@ -43703,14 +44216,9 @@ static int tabForKey(int key) {
   // an open chat, settings detail, app page, or popup they remain inert so a
   // letter cannot unexpectedly abandon the inner screen.
   if (!navOnMainPage()) return -1;
-  switch (key) {
-    case 'm': case 'M': return CHAT_INBOX_TAB_INDEX;
-    case 'c': case 'C': return CONTACTS_TAB_INDEX;
-    case 'h': case 'H': return HOME_TAB_INDEX;
-    case 'a': case 'A': return MAP_TAB_INDEX;
-    case 's': case 'S': return SETTINGS_TAB_INDEX;
-    default: return -1;
-  }
+  // Programmable like the T-Deck's tab hotkeys (#591), defaulting to M/C/H/A/S
+  // (Settings > Keyboard). Always active, as the Pager's mnemonics always were.
+  return navTabForHotkey(key);
 #else
   // Old fixed letter tab-jumps (h/m/c/l/s) removed — tab jumps are now the
   // programmable keyboard-nav hotkeys (navTabForHotkey, default E/R/T/U/I), active
@@ -44589,14 +45097,12 @@ static void backupPickerClose() {
 static void backupPickerCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) backupPickerClose();
 }
-// Apply the file stashed in s_backup_chosen, then reboot.
-static void doBackupImportChosen() {
-  if (!g_lv.task || !s_backup_chosen[0]) return;
-  fs::FS* fsp = nullptr;
-  const char* path = s_backup_chosen;
-  if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
-  else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
-  if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
+// Import a backup file and, on success, show the counts and reboot (never
+// returns). On failure returns false with the "Importing…" overlay removed.
+// Shared by the on-device picker and the File Transfer page's Restore button.
+static bool backupImportAndReboot(fs::FS* fsp, const char* path,
+                                  void (*on_imported)(int nch, int nco)) {
+  if (!g_lv.task || !fsp || !path) return false;
   // "Importing…" overlay, painted before the blocking parse + apply.
   lv_obj_t* ov = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(ov);
@@ -44623,10 +45129,10 @@ static void doBackupImportChosen() {
   if (!ok) {
     wdtHeavyEnd();
     lv_obj_del(ov);
-    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
-    return;
+    return false;
   }
   g_lv.task->persistHistoryNow();   // nests under the guard above (ref-counted)
+  if (on_imported) on_imported(nch, nco);
   // Surface the result BEFORE the reboot. A silent restart that came back reading
   // "0 contacts" looked to users like the import "did nothing" — now the counts
   // are visible, and if they read 0 the problem is the file/JSON, not the apply.
@@ -44639,6 +45145,18 @@ static void doBackupImportChosen() {
   touchPrefsSetClockFloor(rtc_clock.getFloor());
   touchPrefsFlush();
   ESP.restart();
+  return true;
+}
+// Apply the file stashed in s_backup_chosen, then reboot.
+static void doBackupImportChosen() {
+  if (!g_lv.task || !s_backup_chosen[0]) return;
+  fs::FS* fsp = nullptr;
+  const char* path = s_backup_chosen;
+  if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
+  else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
+  if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
+  if (!backupImportAndReboot(fsp, path, nullptr))
+    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
 }
 static void confirmBackupImport(const char* stored) {
   if (!stored) return;
@@ -45985,7 +46503,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   { char _pb[28]; snprintf(_pb, sizeof _pb, "key 0x%02X '%c'", key & 0xFF,
       (key >= 32 && key < 127) ? (char)key : '.'); if (g_lv.task) g_lv.task->showAlert(_pb, 1400); }
 #endif
-#if CAP_TRACKBALL
+#if CAP_TRACKBALL || defined(TLORA_PAGER)
   // Remapping a tab hotkey (Settings → Keyboard): capture the next key press.
   if (s_navkey_capture >= 0) { navKeyCaptureApply(key); return; }
 #endif
@@ -46050,6 +46568,9 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // shared with Tanmatsu's identical Enter-on-bubble handling, and with the
     // encoder's own short click in updatePagerEncoder() -- both inputs agree).
     if (key == 0x0D) {
+#if defined(HAS_PAGER_ENCODER)
+      if (pagerSliderEditClick()) { if (g_lv.task) g_lv.task->noteUserInput(); return; }
+#endif
       if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
@@ -46107,7 +46628,13 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     if (key == 'q' || key == 'Q' || key == 'e' || key == 'E') {
       lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (focused && lv_obj_check_type(focused, &lv_slider_class)) {
-        navMoveDir((key == 'e' || key == 'E') ? NAV_RIGHT : NAV_LEFT);
+        const bool right = (key == 'e' || key == 'E');
+#if defined(HAS_PAGER_ENCODER)
+        // In wheel edit mode the value is only saved on the closing click, so Q/E
+        // preview like a turn instead of committing each press.
+        if (focused == s_pager_slider_edit) { navSliderNudge(focused, right ? +1 : -1); return; }
+#endif
+        navMoveDir(right ? NAV_RIGHT : NAV_LEFT);
         return;
       }
     }
@@ -46125,6 +46652,40 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         case 'd': case 'D': mapNudge(3); break;
       }
       return;
+    }
+    // Keyboard navigation (#591): the T-Deck's programmable letters, defaulting here to
+    // I/K/J/L to move the highlight and U/O to scroll (Settings > Keyboard). Only with
+    // no text field focused (this is the !ta branch), so letters in a field still type.
+    // On the Map the letters move the highlight too; W/A/X/D above stay the map pan.
+    if (s_kbd_nav) {
+      const int act = navDirForKey(key);
+      if (act >= 0) {
+        lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+        (void)focused;
+        switch (act) {
+          case 0: navMoveDir(NAV_UP);   break;
+          case 1: navMoveDir(NAV_DOWN); break;
+          case 2: case 3:
+#if defined(HAS_PAGER_ENCODER)
+            // Wheel edit mode on a slider: preview only, saved on the closing click.
+            if (focused && focused == s_pager_slider_edit) { navSliderNudge(focused, act == 3 ? +1 : -1); break; }
+#endif
+            navMoveDir(act == 3 ? NAV_RIGHT : NAV_LEFT);
+            break;
+          case 4:   // select: the same as Enter / the wheel's click
+#if defined(HAS_PAGER_ENCODER)
+            if (pagerSliderEditClick()) break;
+#endif
+            if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
+            break;
+          case 5:  pagerNavGoBack();         break;   // back: the same as Backspace-hold / long-press
+          case 6:  navScrollFocused(true);   break;   // scroll up
+          default: navScrollFocused(false);  break;   // scroll down
+        }
+        s_nav_show = true;
+        if (g_lv.task) g_lv.task->noteUserInput();
+        return;
+      }
     }
 #endif
 #if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
@@ -47069,6 +47630,22 @@ static void bleKbdUiTick() {
 // lives here instead. Deliberately narrower than the M9's: that board has no
 // touch, so it also needs d-pad paths for Back, Home, the chat-bubble action
 // menu and map panning — all of which are still a tap away here.
+// The D-pad is fixed to the case, and its directions are named for the landscape
+// UI (ROT_90). In portrait the screen is turned a quarter, so a physical press has
+// to turn with it: right becomes up, down becomes right, left becomes down and up
+// becomes left (the same quarter turn the touch transform applies). Other events
+// pass through.
+static int attakyNavForUi(int ev) {
+  static const int kCw[4] = { ATTAKY_NAV_UP, ATTAKY_NAV_RIGHT, ATTAKY_NAV_DOWN, ATTAKY_NAV_LEFT };
+  int idx = -1;
+  for (int i = 0; i < 4; ++i) if (kCw[i] == ev) idx = i;
+  if (idx < 0 || s_ui_rotation == LV_DISP_ROT_90) return ev;
+  const int turn = (s_ui_rotation == LV_DISP_ROT_NONE) ? 3      // a quarter back: right -> up
+                 : (s_ui_rotation == LV_DISP_ROT_270)  ? 2      // upside down from ROT_90
+                 :                                       1;     // ROT_180
+  return kCw[(idx + turn) % 4];
+}
+
 static void attakyNavPump() {
   // The field currently bound to the keyboard, and whether the D-pad should be
   // editing it: focus has to be really ON it (a tap sets s_nav_ta_editing), so
@@ -47077,7 +47654,7 @@ static void attakyNavPump() {
   lv_obj_t* const ta = (ta_focused && s_nav_ta_editing) ? ta_focused : nullptr;
 
   for (int i = 0; i < 8; ++i) {
-    const int ev = attakyNavKeyRead();
+    const int ev = attakyNavForUi(attakyNavKeyRead());
     if (ev == ATTAKY_NAV_NONE) break;
 
     switch (ev) {
@@ -50242,7 +50819,9 @@ static void tabBarGestureCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
   if (anyPopupOpen()) return;   // don't open the drawer over an open popup (or when already open)
   lv_indev_t* indev = lv_indev_get_act();
-  if (indev && lv_indev_get_gesture_dir(indev) == LV_DIR_TOP) {
+  // Swipe up from the bottom bar, or in from the Condense Nav rail (swipe left).
+  const lv_dir_t open_dir = s_nav_condensed ? LV_DIR_LEFT : LV_DIR_TOP;
+  if (indev && lv_indev_get_gesture_dir(indev) == open_dir) {
     goToTab(HOME_TAB_INDEX);
     setHomeDrawer(true);
   }
@@ -50309,7 +50888,7 @@ static void mentionRowCb(lv_event_t* e) {
 static void openMentionsScreen() {
   closeMentionsScreen();
   if (!g_lv.task) return;
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sw = tabContentW();   // stops at the Condense Nav rail, which stays visible
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_mentions_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_mentions_root);
@@ -50966,7 +51545,7 @@ static const char* luaAppIconGlyph(const char* name) {
 
 static void openAppDrawer() {
   closeAppDrawer();
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sw = tabContentW();   // stops at the Condense Nav rail, which stays visible
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_appdrawer_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_appdrawer_root);
@@ -52584,20 +53163,23 @@ static void updateGlobalStatusBar() {
       if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SC(144) + d, 0);
       if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -SC(182) + d, 0);
 #else
-      const int d = charging ? 32 : 0;
-      // Base offsets MUST match the builder (which shifted for the SD LED): the
-      // SD dot is at -91, ble -127, clock -142, layout -166. The dot slides with
-      // the cluster too so it stays between Wi-Fi and Bluetooth while charging.
-      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -54  + d, 0);
-      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -73  + d, 0);
-      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -91  + d, 0);
+      // Base offsets MUST match the builder exactly, including its SBX() scaling and the
+      // battery-% overflow: these used to be raw 100% numbers, so on the M9 / V4-R8 at a
+      // bigger text size plugging in or unplugging snapped the cluster back to its 100% spots
+      // under the grown glyphs. The SD dot slides with the cluster too so it stays between
+      // Wi-Fi and Bluetooth while charging. The clock and the layout label are placed below
+      // (clock placement / layout indicator), which also re-run on a charging change.
+      const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;   // tuned raw at 100%, like its clock
+      const int d   = charging ? (narrow_bar ? 32 : SBX(32)) : 0;
+      const int ovf = statusPctOverflow();
+      if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -(SBX(54) + ovf) + d, 0);
+      if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -(SBX(73) + ovf) + d, 0);
+      if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -(SBX(91) + ovf) + d, 0);
       // Narrow bar (V4 portrait) has no DND slot next to BLE (DND borrows the signal slot),
       // and its clock sits at -126 — so keep BLE at its pre-DND -111 there; -127 lands on the clock.
-      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (lv_disp_get_hor_res(nullptr) < 300 ? -111 : -127) + d, 0);
-      if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_RIGHT_MID, -160 + d, 0);
-      if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182 + d, 0);
-      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -144 + d, 0);
-      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -144 + d, 0);
+      if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (narrow_bar ? -111 : -SBX(127)) + d, 0);
+      if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
+      if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
 #endif
     }
     s_last_pct = pct;
@@ -52609,14 +53191,12 @@ static void updateGlobalStatusBar() {
     lv_label_set_text(g_statusbar.batt_icon, g);
     s_last_glyph = g;
   }
-#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // Re-tint the battery amber/normal when idle power-save toggles (the toggle cb routes through
   // here via updateGlobalStatusBar). Only on change, so no per-tick style churn.
   { static int s_last_pwr = -1;
     const int pwr = touchSleep::enabled() ? 1 : 0;
     if (pwr != s_last_pwr) { s_last_pwr = pwr; applyBattColor(); }
   }
-#endif
 
   // ---- Clock ----
 #if defined(ESP32)
@@ -52662,54 +53242,86 @@ static void updateGlobalStatusBar() {
   // both the left-zone title (chat / Files / map credit) and the right-side icon
   // cluster, so it never collides with e.g. the "Files" header. Otherwise it's
   // top-right; charging slides it +32 to hug the bolt once the % column hides.
-  // Re-aligned only on a state change so it isn't laid out every tick.
-#if CAP_ROUND_CORNERS
-  // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
-  // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
-  // thread title, so the clock moves to row-1 right instead. Re-placed only when the chat
-  // state flips, so it isn't laid out every tick.
+  //
+  // The icons and the clock are a ladder of fixed offsets tuned per board at the
+  // normal text size, and a bigger text preset, the 12-hour clock, the
+  // Bluetooth-keyboard glyph or the centred clock could still land the clock on
+  // the Bluetooth (or DND) glyph. So after placing it, check: if the clock
+  // overlaps any visible icon on its row, move it to sit just left of the
+  // leftmost one. All of this runs only when something that moves or resizes
+  // the clock or those icons changes, not every tick.
   {
-    static int8_t s_clk_chat = -1;
-    if ((int8_t)chat_open != s_clk_chat) {
-      s_clk_chat = (int8_t)chat_open;
+    lv_obj_t* const sb_icons[] = { g_statusbar.ble_icon, g_statusbar.dnd_icon, g_statusbar.sleep_icon,
+                                   g_statusbar.conn_icon, g_statusbar.sig_box,
+                                   g_statusbar.batt_pct, g_statusbar.batt_icon };
+    auto visible = [](lv_obj_t* o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+    uint32_t sig = 2166136261u;   // FNV-1a over everything that moves or resizes the clock / icons
+    auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
+    auto mixText = [&mix](lv_obj_t* l) {
+      for (const char* t = l ? lv_label_get_text(l) : ""; t && *t; ++t) mix((uint8_t)*t);
+      mix(0xFFu);
+    };
+    mix(visible(g_statusbar.clock));
+    mix((uint32_t)lv_txt_get_width(lv_label_get_text(g_statusbar.clock),
+                                   strlen(lv_label_get_text(g_statusbar.clock)),
+                                   lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0,
+                                   LV_TEXT_FLAG_NONE));
+    mix(charging); mix(chat_open); mix(touchPrefsGetHideNodeName());
+    for (lv_obj_t* o : sb_icons) mix(visible(o));
+    mixText(g_statusbar.ble_icon);   // Bluetooth vs the wider keyboard glyph
+    static uint32_t s_clk_sig = 0;
+    if (sig != s_clk_sig && visible(g_statusbar.clock)) {
+      s_clk_sig = sig;
+#if CAP_ROUND_CORNERS
+      // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
+      // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
+      // thread title, so the clock moves to row-1 right instead.
       if (chat_open) lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -SB_INSET_X, SB_ROW1_Y);
       else           lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,           SB_ROW1_Y);
-      if (g_statusbar.async_icon)
-        lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
-    }
-  }
 #else
-  {
-    static int8_t s_clk_center = -1;   // -1 = unset -> forces the first align
-    static bool   s_clk_chg     = false;
-    const int8_t want = touchPrefsGetHideNodeName() ? 1 : 0;
-    if (want != s_clk_center || (!want && charging != s_clk_chg)) {
-      s_clk_center = want; s_clk_chg = charging;
-      if (want) lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
-      else {
+      if (touchPrefsGetHideNodeName()) {
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
+      } else {
         // The narrow V4 portrait bar (<300 px) has no sleep-moon slot, so the clock must sit at
         // its intended -126 build position; the wide-bar -142 ran it into the width-capped
         // node-name window on the left (the long-standing "clock overlaps the name" bug). Charging
         // slides it +32 as the % column hides.
         //
-        // Wide bar (T-Deck / Tanmatsu): the right-side icon cluster is laid out with SC() scaling
-        // (ble at -SC(111/127)), but the old wide clk_x was a RAW -142 — so at Large/Huge UI scale
-        // the icons marched left PAST the un-scaled clock and the wide "12:05 PM" clock overran the
-        // battery / Wi-Fi / BLE icons. Scale the wide clock with SC() too so it tracks the cluster at
-        // every UI scale (identical to the old -142/-110 at 100%, no node-name regression). Narrow
-        // bar keeps its raw values (it was tuned for the V4 portrait layout at 100% only).
+        // Wide bar: the right-side icon cluster is laid out with SBX() (SC() scaling, plus the
+        // font growth of the M9 / V4-R8 text presets), so the clock uses SBX() too and tracks
+        // the cluster at every UI size. It used plain SC(), which on those boards left the clock
+        // at its 100% spot while the Bluetooth glyph moved left onto it at Large / Huge.
         const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;
-        // Wide bar shifted 18px further left of its old -142/-110 to open a clean
-        // ~16-17px gap for the DND moon icon (now at -SC(144)) on Bluetooth's left
-        // side, instead of the old cramped 15px gap that used to sit here.
         const int clk_x =
 #if defined(TLORA_PAGER)
                           charging ? -165 : -210;
 #else
                           narrow_bar ? (charging ? -94 : -126)
-                                     : (charging ? -SC(128) : -SC(160));
+                                     : (charging ? -(SBX(160) - SBX(32)) : -SBX(160));
 #endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
+      }
+#endif
+      // Safety net: never on top of an icon on its own row.
+      lv_obj_update_layout(g_statusbar.root);
+      lv_area_t ca; lv_obj_get_coords(g_statusbar.clock, &ca);
+      constexpr lv_coord_t kGap = 4;
+      lv_coord_t left_edge = LV_COORD_MAX;
+      bool overlap = false;
+      for (lv_obj_t* o : sb_icons) {
+        if (!visible(o)) continue;
+        lv_area_t ia; lv_obj_get_coords(o, &ia);
+        if (ia.y2 < ca.y1 || ia.y1 > ca.y2) continue;   // another row (the round panel's two-row bar)
+        if (ia.x2 < ca.x1) continue;                    // left of the clock: not the right-hand cluster
+        if (ia.x1 < left_edge) left_edge = ia.x1;
+        if (ia.x1 < ca.x2 + kGap) overlap = true;
+      }
+      if (overlap) {
+        lv_area_t ba; lv_obj_get_coords(g_statusbar.root, &ba);
+        const lv_coord_t x = left_edge - kGap - lv_area_get_width(&ca)
+                           - (ba.x1 + lv_obj_get_style_pad_left(g_statusbar.root, LV_PART_MAIN));
+        const lv_coord_t y = ca.y1 - (ba.y1 + lv_obj_get_style_pad_top(g_statusbar.root, LV_PART_MAIN));
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_LEFT, x, y);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
       // so it never paints over the clock (incl. the centred hide-name mode).
@@ -52717,7 +53329,6 @@ static void updateGlobalStatusBar() {
         lv_obj_align_to(g_statusbar.async_icon, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -4, 0);
     }
   }
-#endif
 
   // ---- Layout indicator ----
   // Only while a chat/channel conversation is open (s_chat_title set): that is
@@ -52809,7 +53420,7 @@ static void relayoutHomeCharts() {
   // content box; using the full screen width made the chart's top/right frame
   // look like a stray L drawn across the portrait screen.
   const int cw = tabContentW() - 20;
-  const int BTNW = SC(100);
+  const int BTNW = s_nav_condensed ? HOME_ICON_BTNW : SC(100);   // matches makeHome()
   const int RSTRIP = BTNW + 10;
   const int chart_w = home_land ? (cw - RSTRIP) : cw;
 
@@ -55240,8 +55851,18 @@ static void buildUiTree() {
   lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);   // zero default theme padding so overlays sit at (0,0)
   lv_obj_set_style_text_color(root, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 
+  // ---- Condense Nav (#592) ----
+  // Decide once, before anything sizes itself from TABBAR_H / TABBAR_W: the pref
+  // applies only to a landscape layout, and never on the M9 (no bar at all).
+#if !defined(HAS_THINKNODE_M9)
+  s_nav_condensed = touchPrefsGetCondenseNav() && chatLandscape();
+#endif
+  TABBAR_H = s_nav_condensed ? 0 : TABBAR_BOTTOM_H;
+  TABBAR_W = s_nav_condensed ? TABBAR_RAIL_W : 0;
+
   // ---- Tabview ----
-  g_lv.tabview = lv_tabview_create(root, LV_DIR_BOTTOM, TABBAR_H);
+  g_lv.tabview = s_nav_condensed ? lv_tabview_create(root, LV_DIR_RIGHT, TABBAR_W)
+                                 : lv_tabview_create(root, LV_DIR_BOTTOM, TABBAR_H);
   // Tabview leaves the top STATUSBAR_H pixels free so the global status
   // bar (on lv_layer_sys) doesn't paint over tab content. Sized from the
   // live display resolution so it fills the screen in either orientation
@@ -55303,12 +55924,26 @@ static void buildUiTree() {
                                LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_text_font(tab_btns, &g_font_14, LV_PART_MAIN);
 #if CAP_ROUND_CORNERS
-  // Round panel: inset the bottom tab row from the two bottom corner arcs (left/right)
-  // and lift the icons off the very bottom edge, so no tab glyph sits under a corner.
-  lv_obj_set_style_pad_left(tab_btns,   SB_INSET_X, LV_PART_MAIN);
-  lv_obj_set_style_pad_right(tab_btns,  SB_INSET_X, LV_PART_MAIN);
-  lv_obj_set_style_pad_bottom(tab_btns, SB_TOP_PAD, LV_PART_MAIN);
+  if (s_nav_condensed) {
+    // Rail on a round panel: keep the bottom cell clear of the bottom-right arc
+    // and the icons off the very right edge.
+    lv_obj_set_style_pad_bottom(tab_btns, SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(tab_btns,  SB_TOP_PAD, LV_PART_MAIN);
+  } else {
+    // Round panel: inset the bottom tab row from the two bottom corner arcs (left/right)
+    // and lift the icons off the very bottom edge, so no tab glyph sits under a corner.
+    lv_obj_set_style_pad_left(tab_btns,   SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(tab_btns,  SB_INSET_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(tab_btns, SB_TOP_PAD, LV_PART_MAIN);
+  }
 #endif
+  if (s_nav_condensed) {
+    // Rail: cells touch, so a two-line Pager cell (icon over key letter) fits
+    // the short screen's ~40 px per tab.
+    lv_obj_set_style_pad_row(tab_btns, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(tab_btns, 0, LV_PART_ITEMS);
+    lv_obj_set_style_text_line_space(tab_btns, -2, LV_PART_ITEMS);
+  }
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
 #if CAP_TRACKBALL || defined(HAS_TDISPLAY_P4_KEYBOARD)
@@ -55317,11 +55952,15 @@ static void buildUiTree() {
 #endif  // !HAS_THINKNODE_M9 — tab-bar chrome
 
   // Tab labels: icons-only on touch targets; the 480px-wide Pager appends each
-  // physical-keyboard mnemonic so the shortcuts are discoverable.
+  // physical-keyboard mnemonic so the shortcuts are discoverable (on the
+  // Condense Nav rail the letter sits under the icon instead of beside it).
   // Add order == index order: Chats(0), Contacts(1), Home(2, middle), Map(3), Settings(4).
 #if defined(TLORA_PAGER)
-  const char* const pager_chats_tab_label = LV_SYMBOL_ENVELOPE " M";
-  const char* const pager_settings_tab_label = LV_SYMBOL_SETTINGS " S";
+  // The letters are the (remappable, #591) tab hotkeys; see pagerTabLabel().
+  char pager_tab_labels[5][16];
+  for (int t = 0; t < 5; t++) pagerTabLabel(t, pager_tab_labels[t], sizeof pager_tab_labels[t]);
+  const char* const pager_chats_tab_label    = pager_tab_labels[CHAT_INBOX_TAB_INDEX];
+  const char* const pager_settings_tab_label = pager_tab_labels[4];
   auto pagerTabIconBadgeX = [](int tab_index, const char* label, const char* icon) -> lv_coord_t {
     const lv_coord_t cell_w = lv_disp_get_hor_res(nullptr) / 5;
     const lv_coord_t label_w = lv_txt_get_width(label, strlen(label), &g_font_tab, 0, LV_TEXT_FLAG_NONE);
@@ -55329,9 +55968,9 @@ static void buildUiTree() {
     return cell_w * tab_index + cell_w / 2 - (label_w - icon_w) / 2 - 8;
   };
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, pager_chats_tab_label);
-  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON " C");
-  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_HOME " H");
-  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_GPS " A");
+  lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[CONTACTS_TAB_INDEX]);
+  lv_obj_t* tab_home     = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[HOME_TAB_INDEX]);
+  lv_obj_t* tab_map      = lv_tabview_add_tab(g_lv.tabview, pager_tab_labels[MAP_TAB_INDEX]);
 #else
   lv_obj_t* tab_chats    = lv_tabview_add_tab(g_lv.tabview, LV_SYMBOL_ENVELOPE);
   lv_obj_t* tab_contacts = lv_tabview_add_tab(g_lv.tabview, TOUCH_SYM_PERSON);   // person icon (FA user)
@@ -55469,6 +56108,7 @@ static void buildUiTree() {
   lv_obj_align(s_update_badge, LV_ALIGN_BOTTOM_RIGHT, -8, -(TABBAR_H - 16));
 #endif
 #endif
+  if (s_nav_condensed) railPlaceBadge(s_update_badge, SETTINGS_TAB_INDEX);
   lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
 
   // Unread-count badge over the Chats (envelope) tab — leftmost of 5. Same
@@ -55498,6 +56138,7 @@ static void buildUiTree() {
 #else
                lv_disp_get_hor_res(nullptr) / 10 + 7, -(TABBAR_H - 16));   // 5 tabs: half-cell over Chats
 #endif
+  if (s_nav_condensed) railPlaceBadge(s_chat_unread_badge, CHAT_INBOX_TAB_INDEX);
   lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
 #endif
 
@@ -55512,7 +56153,9 @@ static void buildUiTree() {
   s_tab_indicator = lv_obj_create(lv_scr_act());
   lv_obj_remove_style_all(s_tab_indicator);
   lv_obj_clear_flag(s_tab_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(s_tab_indicator, TAB_INDICATOR_W, 4);
+  // Under the active tab on the bottom bar; beside it (vertical) on the rail.
+  if (s_nav_condensed) lv_obj_set_size(s_tab_indicator, 4, TAB_INDICATOR_W);
+  else                 lv_obj_set_size(s_tab_indicator, TAB_INDICATOR_W, 4);
   lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_tab_indicator,
       s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_50, LV_PART_MAIN);
@@ -60830,6 +61473,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // message stays unread until its thread is actually opened.
     allocMessageStore();
     Serial.println("[BOOT] console: begin"); Serial.flush();
+#if defined(ATTAKY_MESH_SERIES)
+    // The terminal stays in the panel's build orientation (portrait,
+    // DISPLAY_ROTATION) whatever the UI orientation is: the boot logo has just
+    // rotated the panel to match a landscape UI, and the console is laid out for
+    // portrait. (::display: the DisplayDriver base has no setDisplayRotation.)
+    ::display.setDisplayRotation(DISPLAY_ROTATION);
+#endif
     consoleBegin(_display);
     Serial.println("[BOOT] console: panel up"); Serial.flush();
     consoleBanner(the_mesh.getNodePrefs() ? the_mesh.getNodePrefs()->node_name : nullptr,
@@ -61496,8 +62146,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
-    // Display and touch share this landscape transform.
-    s_ui_rotation = LV_DISP_ROT_90;
+    // Landscape (ROT_90, panel rotation 1) or portrait, from Settings > Display >
+    // Orientation. Landscape is the stored default (see TouchPrefsStore), and the
+    // Mesh Deck build without a keyboard can flip to portrait, which runs at the
+    // panel's DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4.
+    // UI init below turns the panel back to it: the boot logo may have left it landscape.
+    // Only those two: the Orientation button toggles between them.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) s_ui_rotation = LV_DISP_ROT_90;
 #endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
@@ -61680,9 +62335,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(ATTAKY_MESH_SERIES)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
+      // The logo reads the legacy NVS copy before main.cpp moves prefs to SPIFFS. On
+      // the Attaky that copy says landscape (its default, and the v68 reset), so a
+      // saved portrait would otherwise render 240x320 into the landscape panel.
       applyHardwarePanelRotation(LV_DISP_ROT_NONE);
     }
 #endif
@@ -61749,6 +62407,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     else pushDiagLine("LVGL keypad indev failed");
 #if defined(HAS_TANMATSU)
     bsp_input_get_queue(&s_nav_queue);
+#endif
+#if defined(TLORA_PAGER)
+    // Keyboard navigation (#591): on/off plus the programmable tab and navigation keys.
+    s_kbd_nav = touchPrefsGetKbdNav();
+    for (int i = 0; i < 5; i++) { uint8_t k = touchPrefsGetNavKey(i);    if (k) s_nav_keys[i] = k; }
+    for (int i = 0; i < 8; i++) { uint8_t k = touchPrefsGetNavDirKey(i); if (k) s_dir_keys[i] = k; }
 #endif
 #else
     // Physical touchscreen indev — skipped in remote mode (the panel is a placeholder;

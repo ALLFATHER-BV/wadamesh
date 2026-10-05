@@ -857,9 +857,13 @@ void setup() {
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
     // Rotate the panel to the saved UI orientation BEFORE painting the boot
     // wordmark, so it's upright in landscape too (UITask applies the same
-    // hardware rotation later for the LVGL UI). ROT_90->1, ROT_270->3.
+    // hardware rotation later for the LVGL UI). ROT_90->1, ROT_270->3. Settings
+    // live in SPIFFS/SD, which aren't mounted yet, so read the NVS boot copy.
     {
-      uint8_t r = touchPrefsGetUiRotation();
+      uint8_t r = touchPrefsGetBootUiRotation();
+#if defined(ATTAKY_MESH_SERIES)
+      if (r != 0) r = 1;   // UI init coerces any landscape to ROT_90
+#endif
       if (r == 1)      display.setDisplayRotation(1);
       else if (r == 3) display.setDisplayRotation(3);
 #if defined(HAS_CROWPANEL_35)
@@ -1435,6 +1439,8 @@ void setup() {
   // file-saved values (theme accent, brightness, language, …) take effect this
   // boot — otherwise a theme change "reverts" on every restart.
   touchPrefsReload();
+  // Keep the boot logo's NVS copy of the rotation in step with the real one.
+  touchPrefsSyncBootUiRotation();
   // Restore replay protection before mesh startup or optional cold-boot NTP.
   // A trusted correction can then pull a poisoned future floor back through
   // ClockFloorRTC's guarded set path without a later restore undoing it.

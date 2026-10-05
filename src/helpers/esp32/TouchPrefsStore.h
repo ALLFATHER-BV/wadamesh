@@ -303,6 +303,12 @@ bool     touchPrefsSetReportPing(bool on);
 uint16_t touchPrefsGetReportedBeta();
 bool     touchPrefsSetReportedBeta(uint16_t n);
 
+// Condense Nav (#592): in landscape, the main nav bar becomes a rail on the
+// right edge and Home's launcher column shows icons only. Default off. Read
+// when the UI is built, so a change takes effect after a restart.
+bool     touchPrefsGetCondenseNav();
+bool     touchPrefsSetCondenseNav(bool on);
+
 /* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
  * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
  * / map / settings. Defaults E/R/T/U/I. Programmable in Settings → Keyboard. */
@@ -375,6 +381,10 @@ bool touchPrefsReadUseSdAtBoot();
  *  device so the UI rebuilds at the new orientation. */
 uint8_t touchPrefsGetUiRotation();
 bool    touchPrefsSetUiRotation(uint8_t rot);
+// Pre-storage boot copy of the rotation (raw NVS), for the boot logo. Falls back
+// to touchPrefsGetUiRotation() when absent. Sync after touchPrefsReload().
+uint8_t touchPrefsGetBootUiRotation();
+void    touchPrefsSyncBootUiRotation();
 
 /** Calibrated battery "full" voltage in mV — the reading captured when the pack
  *  was fully charged, treated as 100%. 0 = not calibrated (use the 4200 mV

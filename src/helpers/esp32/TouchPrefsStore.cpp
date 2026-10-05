@@ -59,6 +59,8 @@ static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover 
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 #if defined(HAS_CROWPANEL_35)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
+#elif defined(ATTAKY_MESH_SERIES)
+static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else
 static const uint8_t  DEFAULT_UI_ROTATION      = 0;
 #endif
@@ -66,6 +68,17 @@ static const uint8_t  DEFAULT_UI_ROTATION      = 0;
 using TouchCfg = TouchPrefsSchema::Config;
 
 static TouchCfg s_cfg;
+#if defined(TLORA_PAGER)
+// The Pager's keyboard-navigation keys (#591): I up, K down, J left, L right, no
+// Select/Back letter (Enter and Backspace-hold do those), U/O scroll. Clear of the
+// Pager's fixed letters (Q/E slider nudge, W/A/X/D map pan) and of its tab keys.
+static void touchPrefsPagerNavKeyDefaults(TouchCfg& c) {
+  const char* d = "ikjl";
+  for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)(i < 4 ? d[i] : 0);
+  c.nav_scroll_keys[0] = 'u';
+  c.nav_scroll_keys[1] = 'o';
+}
+#endif
 static bool     s_cfg_loaded = false;
 
 // Legacy per-key names — only referenced by the one-time migration below.
@@ -128,6 +141,8 @@ static void cfgSetDefaults(TouchCfg& c) {
 #endif
 #if defined(HAS_TANMATSU)
   c.kbd_nav           = 1;      // Tanmatsu: no touchscreen — keyboard nav is the only input, always on
+#elif defined(TLORA_PAGER)
+  c.kbd_nav           = 1;      // Pager (#591): letter navigation on by default (I/K/J/L, U/O)
 #else
   c.kbd_nav           = 0;      // T-Deck / V4: keyboard navigation OFF by default (opt-in; persists once toggled on)
 #endif
@@ -145,6 +160,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.local_adv_min     = 0;      // OFF: no periodic zero-hop self-advert
   c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
   c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
+  c.condense_nav      = 0;      // OFF: bottom nav bar + labelled Home launchers (v66, #592)
   c.report_done_n     = 0;      // no beta reported on yet
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
@@ -173,16 +189,24 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.app_hide          = (1u << 12);  // APPHIDE_MQTT: the MQTT bridge starts hidden (experimental + privacy)
   memset(c.lang_file, 0, sizeof c.lang_file);   // no file language: built-in ui_lang column
   c.sleep_idle        = 0;      // default: idle light-sleep OFF
+#if defined(TLORA_PAGER)
+  { const char* d = "mchas"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // Pager tab mnemonics M/C/H/A/S (#591)
+#else
   { const char* d = "ertui"; for (int i = 0; i < 5; i++) c.nav_keys[i] = (uint8_t)d[i]; }  // default tab hotkeys E/R/T/U/I
+#endif
   c.map_zoom_buttons  = 0;      // default: map zoom = slider
 #if defined(HAS_TANMATSU)
   { const char* d = "wxads"; for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)d[i]; }  // Tanmatsu: W up/X down/A left/D right/S select; no Back letter (Esc/F-key), d[5]='\0'
+#elif defined(TLORA_PAGER)
+  touchPrefsPagerNavKeyDefaults(c);   // Pager (#591): I/K/J/L, no Select/Back letter, U/O scroll
 #else
   { const char* d = "wzadsq"; for (int i = 0; i < 6; i++) c.nav_dir_keys[i] = (uint8_t)d[i]; }  // default W/Z/A/D/S/Q
 #endif
   c.home_is_drawer    = 0;      // default: Home = Commander screen
 #if defined(HAS_TANMATSU)
   c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'v';   // Tanmatsu scroll-up F / scroll-down V
+#elif defined(TLORA_PAGER)
+  // set with the direction keys above (touchPrefsPagerNavKeyDefaults)
 #else
   c.nav_scroll_keys[0] = 'f';  c.nav_scroll_keys[1] = 'c';   // default scroll-up F / scroll-down C
 #endif
@@ -269,6 +293,24 @@ static void cfgLoadOrMigrate() {
         // v64 new trailing fields. Forced off rather than inherited: a garbage 1
         // would start sending an install count nobody opted into.
         if (stored_version < 64) { s_cfg.report_ping = 0; s_cfg.report_done_n = 0; }
+#if defined(ATTAKY_MESH_SERIES)
+        // v68: the Attaky gains the Orientation setting. Until now the UI ignored the
+        // stored value and always ran landscape, so whatever is stored (usually the old
+        // portrait default) was never seen. Start everyone on landscape once, as before.
+        if (stored_version < 68) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
+#endif
+#if defined(TLORA_PAGER)
+        // v67 (#591): the Pager gains the T-Deck's keyboard navigation. Its kbd_nav and key
+        // bindings were never shown on this board, so the stored values are just the T-Deck
+        // defaults (W/Z/A/D..., E/R/T/U/I, nav off), which collide with the Pager's own
+        // letters. Put this board's defaults in once; later choices persist. No new field.
+        if (stored_version < 67) {
+          s_cfg.kbd_nav = 1;
+          { const char* d = "mchas"; for (int i = 0; i < 5; i++) s_cfg.nav_keys[i] = (uint8_t)d[i]; }
+          touchPrefsPagerNavKeyDefaults(s_cfg);
+        }
+#endif
+        if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -1409,6 +1451,17 @@ bool touchPrefsSetReportPing(bool on) {
   s_cfg.report_ping = on ? 1 : 0;
   return cfgFlush();
 }
+// Condense Nav (v66, #592): landscape nav rail + icon-only Home launchers.
+// Read once when the UI is built; changing it restarts.
+bool touchPrefsGetCondenseNav() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.condense_nav != 0;
+}
+bool touchPrefsSetCondenseNav(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.condense_nav = on ? 1 : 0;
+  return cfgFlush();
+}
 uint16_t touchPrefsGetReportedBeta() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.report_done_n;
@@ -1637,12 +1690,39 @@ uint8_t touchPrefsGetUiRotation() {
   return (s_cfg_loaded && r <= 3) ? r : DEFAULT_UI_ROTATION;
 }
 
+// The boot logo is painted before SPIFFS/SD mount, so it cannot see file-backed
+// settings. Keep a raw-NVS copy of the rotation for it. Best effort: Launcher
+// installs without usable NVS fall back to touchPrefsGetUiRotation().
+static const char* KEY_BOOT_UI_ROTATION = "boot_rot";
+
+static void bootUiRotationMirror(uint8_t rot) {
+  Preferences nvs;
+  if (!nvs.begin(TOUCH_NS, false)) return;
+  if (!nvs.isKey(KEY_BOOT_UI_ROTATION) || nvs.getUChar(KEY_BOOT_UI_ROTATION, 0xFF) != rot)
+    nvs.putUChar(KEY_BOOT_UI_ROTATION, rot);
+  nvs.end();
+}
+
+uint8_t touchPrefsGetBootUiRotation() {
+  Preferences nvs;
+  uint8_t r = 0xFF;
+  if (nvs.begin(TOUCH_NS, true)) {
+    if (nvs.isKey(KEY_BOOT_UI_ROTATION)) r = nvs.getUChar(KEY_BOOT_UI_ROTATION, 0xFF);
+    nvs.end();
+  }
+  return (r <= 3) ? r : touchPrefsGetUiRotation();
+}
+
+void touchPrefsSyncBootUiRotation() {
+  bootUiRotationMirror(touchPrefsGetUiRotation());
+}
+
 bool touchPrefsSetUiRotation(uint8_t rot) {
   if (rot > 3) rot = 0;
   if (!s_begun) touchPrefsBegin();
   const uint8_t previous = s_cfg.ui_rotation;
   s_cfg.ui_rotation = rot;
-  if (cfgFlush()) return true;
+  if (cfgFlush()) { bootUiRotationMirror(rot); return true; }
   s_cfg.ui_rotation = previous;
   return false;
 }

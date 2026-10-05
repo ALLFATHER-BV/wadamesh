@@ -138,8 +138,8 @@ int main() {
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
                     + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v53 is the current layout minus every byte appended since");
 
   Config v53 = safeDefaults();
@@ -226,8 +226,8 @@ int main() {
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
                     + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v55 is the current layout minus every byte appended since");
   Config v55 = safeDefaults();
   v55.ver = 55;
@@ -255,8 +255,8 @@ int main() {
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
                     + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v57 is the current layout minus the Attaky notification fields");
   Config v57 = safeDefaults();
   v57.ver = 57;
@@ -281,8 +281,8 @@ int main() {
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
                     + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v59 is the current layout minus the Home-key drawer option");
   Config v59 = safeDefaults();
   v59.ver = 59;
@@ -302,8 +302,8 @@ int main() {
                     + sizeof(Config::ble_kbd_addr) + sizeof(Config::ble_kbd_addr_type)
                     + sizeof(Config::ble_kbd_name)
                     + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v60 is the current layout minus the Bluetooth keyboard settings");
   Config v60 = safeDefaults();
   v60.ver = 60;
@@ -325,8 +325,8 @@ int main() {
   // its settings; only Esc goes back until the user picks another key.
   constexpr size_t v61_size = offsetof(Config, ble_kbd_back);
   static_assert(v61_size + sizeof(Config::ble_kbd_back)
-                    + sizeof(Config::report_ping)
-                    + sizeof(Config::report_done_n) == sizeof(Config),
+                    + sizeof(Config::report_ping) + sizeof(Config::report_done_n)
+                    + sizeof(Config::condense_nav) == sizeof(Config),
                 "v61 is the current layout minus the Back key");
   Config v61 = safeDefaults();
   v61.ver = 61;
