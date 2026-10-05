@@ -411,13 +411,22 @@ static void wadameshSetup() {
   c6at_worker_start();
 #else
 #if defined(BLE_PIN_CODE) && TDP4_C6_READY && TDP4_BLE_READY
-  if (hostedInitBLE()) {
-    char* nm = the_mesh.getNodePrefs()->node_name;
-    serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
-    if (wifiConfigGetBleEnabled())
+  // Only bring the C6 up for BLE when BLE is actually wanted. hostedInitBLE()
+  // is a full esp-hosted handshake, and it ran unconditionally here even though
+  // the boot banner says "lazy Wi-Fi/BLE initialization" -- so every boot paid
+  // for it, and on a unit whose C6 speaks ESP-AT it started a transport that
+  // can never come up for a radio the user had switched off. Honour the stored
+  // intent the way beginBle() below already did.
+  if (wifiConfigGetBleEnabled()) {
+    if (hostedInitBLE()) {
+      char* nm = the_mesh.getNodePrefs()->node_name;
+      serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
       serial_interface.beginBle("wadamesh-", nm, the_mesh.getBLEPin());
+    } else {
+      printf("[BOOT] hostedInitBLE FAILED\n");
+    }
   } else {
-    printf("[BOOT] hostedInitBLE FAILED\n");
+    printf("[BOOT] BLE off in settings: C6 not started for it\n");
   }
 #endif
   // Cold-boot clock sync over SAVED Wi-Fi (#383, BootTimeSync.h) -- the same opt-in

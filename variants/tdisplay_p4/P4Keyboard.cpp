@@ -35,6 +35,9 @@ namespace {
 
 constexpr uint32_t kHotplugMs      = 1500;   // how often the expansion is looked for
 static bool s_scanned = false;   // one-shot bus scan (see p4KeyboardPoll)
+constexpr uint32_t kHotplugIdleMs  = 15000;  // probe rate once the expansion looks absent
+constexpr uint8_t  kMissesBeforeBackoff = 4;
+static uint8_t     s_misses = 0;             // consecutive probes that found nothing
 constexpr uint32_t kIdlePollMs     = 120;    // backstop drain when INT says nothing is waiting
 constexpr uint32_t kModTimeoutMs   = 1500;   // a one-shot modifier lapses after this
 constexpr uint32_t kRepeatDelayMs  = 450;
@@ -310,9 +313,19 @@ void p4KeyboardPoll() {
   if (probe || drain_due) {
     if (TwoWire* w = p4I2c1Acquire(P4_I2C1_KEYBOARD, kBusWaitMs)) {
       if (probe) {
-        s_next_probe_ms = now + kHotplugMs;
+        // Back off while nothing is there. The probe is a real I2C transaction,
+        // and on an empty bus Arduino's Wire layer logs TWO [E] lines for every
+        // attempt -- at 1.5 s that is a permanent drip down the same USB-CDC the
+        // companion app talks over, for a board most people have never clipped
+        // on. After a few misses, look every kHotplugIdleMs instead; a hit puts
+        // it straight back to the responsive rate, so hot-plug still works, it
+        // just takes up to that long to notice.
+        s_next_probe_ms = now + (s_misses >= kMissesBeforeBackoff ? kHotplugIdleMs
+                                                                  : kHotplugMs);
         uint8_t cfg = 0;
         const bool there = regRead(w, P4KB_EXP_ADDR, XL_CFG0, cfg);
+        if (there) s_misses = 0;
+        else if (s_misses < kMissesBeforeBackoff) ++s_misses;
         // One-shot bus scan on the first probe. "It does not work" on this
         // expansion has three very different causes and they are impossible to
         // tell apart from the outside: the board is not clipped on, it is
