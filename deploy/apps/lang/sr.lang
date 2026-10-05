@@ -1301,3 +1301,66 @@ Sending %s\n%lu / %lu bytes	Слање %s\n%lu / %lu бајтова
 Reboot Now	Рестартуј сада
 File Transfer	Пренос фајлова
 USB Files	USB фајлови
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Повежите овај уређај са рачунаром USB каблом.\n2. Отворите ову адресу у Chrome-у или Edge-у:
+3. Click Connect and choose this device.	3. Кликните на Повежи и изаберите овај уређај.
+A day	Један дан
+A week	Једна недеља
+Add, download or delete files on this device from a computer.	Додајте, преузмите или обришите фајлове на овом уређају са рачунара.
+Anything worth saying (optional)	Још нешто (опционо)
+Append timestamp	Додај временску ознаку
+Connected to the computer	Повезано са рачунаром
+Could not send the report. Try again later.	Извештај није послат. Покушајте касније.
+Count this device	Урачунај овај уређај
+Device id	ID уређаја
+Double-tap SPACE while typing to switch	Двапут додирните РАЗМАК током куцања за промену
+Emoji	Емоџи
+Export Backup	Извези резервну копију
+Has a problem	Има проблем
+I hit a problem	Имао сам проблем
+Internal	Интерна
+Keyboard and input	Тастатура и унос
+Keyboard attached.\nRestarting in landscape in %d s.	Тастатура је повезана.\nПоновно покретање у пејзажу за %d с.
+Locks when screen off\n(hold the BOOT button to unlock)	Закључава се кад је екран искључен\n(држите дугме BOOT за откључавање)
+Map and GPS	Мапа и GPS
+Map tiles	Плочице мапе
+Minutes	Минути
+Never	Никад
+No backups available to restore.	Нема резервних копија за враћање.
+No backups yet. Use Export Backup above to create one.	Још нема резервних копија. Направите је дугметом „Извези резервну копију“ изнад.
+Normal\nLarge text\nHuge text	Нормално\nВелики текст\nОгроман текст
+Phone-app link	Веза са апликацијом на телефону
+Radio and messaging	Радио и поруке
+Received %s	%s примљен
+Receiving %s	Пријем %s
+Region not saved: use a-z, 0-9 and -	Регион није сачуван: користите a-z, 0-9 и -
+Report a bug	Пријави грешку
+Running it for	Користим већ
+Running it for:	Користим већ:
+SD card	SD картица
+SD unavailable - insert a FAT32 card and retry	SD није доступна - убаците FAT32 картицу и покушајте поново
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Реците да ли ово издање ради на вашој плочи, да би се стабилна верзија објављивала на основу доказа, а не зато што се нико није жалио. Пријава грешке се отвара као QR код: скенирајте га и пошаљите са телефона преко свог GitHub налога.
+Screen timeout	Гашење екрана
+Send	Пошаљи
+Send a test report	Пошаљи тест извештај
+Send another test report	Пошаљи још један тест извештај
+Sending %s	Слање %s
+Sending your report...	Слање извештаја…
+Stop USB Files	Заустави USB фајлове
+Storage and SD	Складиште и SD
+Tap the EN key on the keyboard to switch	Додирните тастер EN на тастатури за промену
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Јавља тест матрици колико уређаја користи ово издање, да би се плоча без извештаја разликовала од плоче коју нико нема. Шаље само плочу и верзију, ништа друго.
+Test report: %s	Тест извештај: %s
+Thank you. Your report is on wadamesh.com/beta	Хвала. Ваш извештај је на wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Ово је све што напушта уређај. Без имена, без контаката, без положаја.
+Tick only what you actually used:	Означите само оно што сте заиста користили:
+Turn Wi-Fi on to send a report	Укључите Wi-Fi да бисте послали извештај
+USB Files: low memory	USB фајлови: мало меморије
+Upload of %s stopped	Отпремање %s је заустављено
+Used	Коришћено
+Waiting for the computer	Чекање рачунара
+While this screen is open, the companion app cannot use USB.	Док је овај екран отворен, пратећа апликација не може да користи USB.
+Works	Ради
+a week or more	недељу или дуже
+about a day	отприлике дан
+hold the BOOT button to unlock	држите дугме BOOT за откључавање
+minutes	минути

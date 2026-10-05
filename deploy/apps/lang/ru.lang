@@ -1301,3 +1301,66 @@ Sending %s\n%lu / %lu bytes	Отправка %s\n%lu / %lu байт
 Reboot Now	Перезагрузить сейчас
 File Transfer	Передача файлов
 USB Files	Файлы USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Подключите это устройство к компьютеру кабелем USB.\n2. Откройте этот адрес в Chrome или Edge:
+3. Click Connect and choose this device.	3. Нажмите «Подключить» и выберите это устройство.
+A day	День
+A week	Неделя
+Add, download or delete files on this device from a computer.	Добавляйте, скачивайте и удаляйте файлы на этом устройстве с компьютера.
+Anything worth saying (optional)	Что-нибудь ещё (необязательно)
+Append timestamp	Добавить метку времени
+Connected to the computer	Подключено к компьютеру
+Could not send the report. Try again later.	Не удалось отправить отчёт. Попробуйте позже.
+Count this device	Учитывать это устройство
+Device id	ID устройства
+Double-tap SPACE while typing to switch	Чтобы переключить, дважды нажмите ПРОБЕЛ при наборе
+Emoji	Эмодзи
+Export Backup	Экспорт резервной копии
+Has a problem	Есть проблема
+I hit a problem	У меня возникла проблема
+Internal	Внутренняя
+Keyboard and input	Клавиатура и ввод
+Keyboard attached.\nRestarting in landscape in %d s.	Клавиатура подключена.\nПерезапуск в альбомном режиме через %d с.
+Locks when screen off\n(hold the BOOT button to unlock)	Блокируется при выключенном экране\n(для разблокировки удерживайте кнопку BOOT)
+Map and GPS	Карта и GPS
+Map tiles	Тайлы карты
+Minutes	Минуты
+Never	Никогда
+No backups available to restore.	Нет резервных копий для восстановления.
+No backups yet. Use Export Backup above to create one.	Резервных копий пока нет. Создайте её кнопкой «Экспорт резервной копии» выше.
+Normal\nLarge text\nHuge text	Обычный\nКрупный текст\nОчень крупный текст
+Phone-app link	Связь с приложением на телефоне
+Radio and messaging	Радио и сообщения
+Received %s	%s получен
+Receiving %s	Получение %s
+Region not saved: use a-z, 0-9 and -	Регион не сохранён: используйте a-z, 0-9 и -
+Report a bug	Сообщить об ошибке
+Running it for	Пользуюсь уже
+Running it for:	Пользуюсь уже:
+SD card	SD-карта
+SD unavailable - insert a FAT32 card and retry	SD недоступна — вставьте карту FAT32 и повторите
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Сообщите, работает ли эта сборка на вашей плате, чтобы стабильный выпуск выходил на основании данных, а не потому, что никто не жаловался. Отчёт об ошибке открывается как QR-код: отсканируйте его и отправьте с телефона под своей учётной записью GitHub.
+Screen timeout	Тайм-аут экрана
+Send	Отправить
+Send a test report	Отправить тестовый отчёт
+Send another test report	Отправить ещё один тестовый отчёт
+Sending %s	Отправка %s
+Sending your report...	Отправка отчёта…
+Stop USB Files	Остановить файлы USB
+Storage and SD	Хранилище и SD
+Tap the EN key on the keyboard to switch	Чтобы переключить, нажмите клавишу EN на клавиатуре
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Сообщает тестовой матрице, сколько устройств работает на этой сборке, чтобы плату без отчётов можно было отличить от платы, которой ни у кого нет. Отправляет только плату и версию, больше ничего.
+Test report: %s	Тестовый отчёт: %s
+Thank you. Your report is on wadamesh.com/beta	Спасибо. Ваш отчёт на wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Это всё, что покидает устройство. Ни имени, ни контактов, ни местоположения.
+Tick only what you actually used:	Отметьте только то, чем действительно пользовались:
+Turn Wi-Fi on to send a report	Включите Wi-Fi, чтобы отправить отчёт
+USB Files: low memory	Файлы USB: мало памяти
+Upload of %s stopped	Загрузка %s остановлена
+Used	Использовалось
+Waiting for the computer	Ожидание компьютера
+While this screen is open, the companion app cannot use USB.	Пока этот экран открыт, приложение-компаньон не может использовать USB.
+Works	Работает
+a week or more	неделю или больше
+about a day	около дня
+hold the BOOT button to unlock	для разблокировки удерживайте кнопку BOOT
+minutes	минуты

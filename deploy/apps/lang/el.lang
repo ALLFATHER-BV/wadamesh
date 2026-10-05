@@ -1301,3 +1301,66 @@ Sending %s\n%lu / %lu bytes	Αποστολή %s\n%lu / %lu byte
 Reboot Now	Επανεκκίνηση τώρα
 File Transfer	Μεταφορά αρχείων
 USB Files	Αρχεία USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Συνδέστε αυτή τη συσκευή στον υπολογιστή με καλώδιο USB.\n2. Ανοίξτε αυτή τη διεύθυνση σε Chrome ή Edge:
+3. Click Connect and choose this device.	3. Πατήστε Σύνδεση και επιλέξτε αυτή τη συσκευή.
+A day	Μία μέρα
+A week	Μία εβδομάδα
+Add, download or delete files on this device from a computer.	Προσθέστε, κατεβάστε ή διαγράψτε αρχεία σε αυτή τη συσκευή από υπολογιστή.
+Anything worth saying (optional)	Κάτι άλλο να αναφέρετε (προαιρετικό)
+Append timestamp	Προσθήκη χρονοσφραγίδας
+Connected to the computer	Συνδεδεμένο με τον υπολογιστή
+Could not send the report. Try again later.	Η αναφορά δεν στάλθηκε. Δοκιμάστε αργότερα.
+Count this device	Καταμέτρηση αυτής της συσκευής
+Device id	ID συσκευής
+Double-tap SPACE while typing to switch	Πατήστε δύο φορές ΔΙΑΣΤΗΜΑ ενώ γράφετε για εναλλαγή
+Emoji	Emoji
+Export Backup	Εξαγωγή αντιγράφου
+Has a problem	Έχει πρόβλημα
+I hit a problem	Αντιμετώπισα πρόβλημα
+Internal	Εσωτερική
+Keyboard and input	Πληκτρολόγιο και εισαγωγή
+Keyboard attached.\nRestarting in landscape in %d s.	Συνδέθηκε πληκτρολόγιο.\nΕπανεκκίνηση σε οριζόντια προβολή σε %d δ.
+Locks when screen off\n(hold the BOOT button to unlock)	Κλειδώνει όταν σβήνει η οθόνη\n(κρατήστε το κουμπί BOOT για ξεκλείδωμα)
+Map and GPS	Χάρτης και GPS
+Map tiles	Πλακίδια χάρτη
+Minutes	Λεπτά
+Never	Ποτέ
+No backups available to restore.	Δεν υπάρχουν αντίγραφα για επαναφορά.
+No backups yet. Use Export Backup above to create one.	Δεν υπάρχουν ακόμα αντίγραφα. Δημιουργήστε ένα με την «Εξαγωγή αντιγράφου» παραπάνω.
+Normal\nLarge text\nHuge text	Κανονικό\nΜεγάλο κείμενο\nΠολύ μεγάλο κείμενο
+Phone-app link	Σύνδεση με την εφαρμογή κινητού
+Radio and messaging	Ασύρματο και μηνύματα
+Received %s	Ελήφθη το %s
+Receiving %s	Λήψη %s
+Region not saved: use a-z, 0-9 and -	Η περιοχή δεν αποθηκεύτηκε: χρησιμοποιήστε a-z, 0-9 και -
+Report a bug	Αναφορά σφάλματος
+Running it for	Το χρησιμοποιώ για
+Running it for:	Το χρησιμοποιώ για:
+SD card	Κάρτα SD
+SD unavailable - insert a FAT32 card and retry	Η SD δεν είναι διαθέσιμη - βάλτε κάρτα FAT32 και ξαναδοκιμάστε
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Πείτε αν αυτή η έκδοση λειτουργεί στην πλακέτα σας, ώστε μια σταθερή έκδοση να προωθείται με βάση στοιχεία και όχι επειδή κανείς δεν παραπονέθηκε. Η αναφορά σφάλματος ανοίγει ως QR: σαρώστε το και υποβάλετέ την από το κινητό σας, με τον δικό σας λογαριασμό GitHub.
+Screen timeout	Σβήσιμο οθόνης
+Send	Αποστολή
+Send a test report	Αποστολή αναφοράς δοκιμής
+Send another test report	Αποστολή άλλης αναφοράς δοκιμής
+Sending %s	Αποστολή %s
+Sending your report...	Αποστολή της αναφοράς…
+Stop USB Files	Διακοπή αρχείων USB
+Storage and SD	Αποθήκευση και SD
+Tap the EN key on the keyboard to switch	Πατήστε το πλήκτρο EN στο πληκτρολόγιο για εναλλαγή
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Λέει στον πίνακα δοκιμών πόσες συσκευές τρέχουν αυτή την έκδοση, ώστε μια πλακέτα χωρίς αναφορές να ξεχωρίζει από μια που δεν έχει κανείς. Στέλνει μόνο την πλακέτα και την έκδοση, τίποτε άλλο.
+Test report: %s	Αναφορά δοκιμής: %s
+Thank you. Your report is on wadamesh.com/beta	Ευχαριστούμε. Η αναφορά σας είναι στο wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Αυτά είναι όλα όσα φεύγουν από τη συσκευή. Χωρίς όνομα, επαφές ή θέση.
+Tick only what you actually used:	Επιλέξτε μόνο ό,τι χρησιμοποιήσατε πραγματικά:
+Turn Wi-Fi on to send a report	Ενεργοποιήστε το Wi-Fi για να στείλετε αναφορά
+USB Files: low memory	Αρχεία USB: λίγη μνήμη
+Upload of %s stopped	Η μεταφόρτωση του %s σταμάτησε
+Used	Χρησιμοποιήθηκε
+Waiting for the computer	Αναμονή για τον υπολογιστή
+While this screen is open, the companion app cannot use USB.	Όσο είναι ανοιχτή αυτή η οθόνη, η συνοδευτική εφαρμογή δεν μπορεί να χρησιμοποιήσει το USB.
+Works	Λειτουργεί
+a week or more	μία εβδομάδα ή περισσότερο
+about a day	περίπου μία μέρα
+hold the BOOT button to unlock	κρατήστε το κουμπί BOOT για ξεκλείδωμα
+minutes	λεπτά

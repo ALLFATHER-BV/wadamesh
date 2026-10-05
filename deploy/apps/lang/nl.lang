@@ -1298,3 +1298,66 @@ Sending %s\n%lu / %lu bytes	%s verzenden\n%lu / %lu bytes
 Reboot Now	Nu herstarten
 File Transfer	Bestandsoverdracht
 USB Files	USB-bestanden
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Verbind dit apparaat met een USB-kabel met de computer.\n2. Open dit adres in Chrome of Edge:
+3. Click Connect and choose this device.	3. Klik op Verbinden en kies dit apparaat.
+A day	Een dag
+A week	Een week
+Add, download or delete files on this device from a computer.	Voeg bestanden toe, download of verwijder ze op dit apparaat vanaf een computer.
+Anything worth saying (optional)	Nog iets te melden (optioneel)
+Append timestamp	Tijdstempel toevoegen
+Connected to the computer	Verbonden met de computer
+Could not send the report. Try again later.	Rapport kon niet worden verzonden. Probeer het later opnieuw.
+Count this device	Dit apparaat meetellen
+Device id	Apparaat-ID
+Double-tap SPACE while typing to switch	Tik tijdens het typen twee keer op SPATIE om te wisselen
+Emoji	Emoji
+Export Backup	Back-up exporteren
+Has a problem	Heeft een probleem
+I hit a problem	Ik had een probleem
+Internal	Intern
+Keyboard and input	Toetsenbord en invoer
+Keyboard attached.\nRestarting in landscape in %d s.	Toetsenbord aangesloten.\nHerstart in liggende stand over %d s.
+Locks when screen off\n(hold the BOOT button to unlock)	Vergrendelt als het scherm uit is\n(houd de BOOT-knop ingedrukt om te ontgrendelen)
+Map and GPS	Kaart en GPS
+Map tiles	Kaarttegels
+Minutes	Minuten
+Never	Nooit
+No backups available to restore.	Geen back-ups om te herstellen.
+No backups yet. Use Export Backup above to create one.	Nog geen back-ups. Maak er een met 'Back-up exporteren' hierboven.
+Normal\nLarge text\nHuge text	Normaal\nGrote tekst\nZeer grote tekst
+Phone-app link	Koppeling met telefoon-app
+Radio and messaging	Radio en berichten
+Received %s	%s ontvangen
+Receiving %s	%s ontvangen…
+Region not saved: use a-z, 0-9 and -	Regio niet opgeslagen: gebruik a-z, 0-9 en -
+Report a bug	Bug melden
+Running it for	In gebruik sinds
+Running it for:	In gebruik sinds:
+SD card	SD-kaart
+SD unavailable - insert a FAT32 card and retry	SD niet beschikbaar - plaats een FAT32-kaart en probeer opnieuw
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Laat weten of deze build op je board werkt, zodat een stabiele versie op bewijs wordt vrijgegeven en niet omdat niemand klaagde. Een bugmelding opent als QR-code: scan hem en dien hem in vanaf je telefoon met je eigen GitHub-account.
+Screen timeout	Scherm-time-out
+Send	Verzenden
+Send a test report	Testrapport verzenden
+Send another test report	Nog een testrapport verzenden
+Sending %s	%s verzenden
+Sending your report...	Rapport wordt verzonden…
+Stop USB Files	USB-bestanden stoppen
+Storage and SD	Opslag en SD
+Tap the EN key on the keyboard to switch	Tik op de EN-toets van het toetsenbord om te wisselen
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Laat de testmatrix weten hoeveel apparaten deze build draaien, zodat een board zonder rapporten te onderscheiden is van een board dat niemand heeft. Verzendt alleen het board en de versie, verder niets.
+Test report: %s	Testrapport: %s
+Thank you. Your report is on wadamesh.com/beta	Bedankt. Je rapport staat op wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Dit is alles wat het apparaat verlaat. Geen naam, geen contacten, geen positie.
+Tick only what you actually used:	Vink alleen aan wat je echt hebt gebruikt:
+Turn Wi-Fi on to send a report	Zet wifi aan om een rapport te verzenden
+USB Files: low memory	USB-bestanden: weinig geheugen
+Upload of %s stopped	Upload van %s gestopt
+Used	Gebruikt
+Waiting for the computer	Wachten op de computer
+While this screen is open, the companion app cannot use USB.	Zolang dit scherm open is, kan de begeleidende app geen USB gebruiken.
+Works	Werkt
+a week or more	een week of langer
+about a day	ongeveer een dag
+hold the BOOT button to unlock	houd de BOOT-knop ingedrukt om te ontgrendelen
+minutes	minuten

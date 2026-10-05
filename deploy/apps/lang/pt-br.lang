@@ -1300,3 +1300,66 @@ Sending %s\n%lu / %lu bytes	Enviando %s\n%lu / %lu bytes
 Reboot Now	Reiniciar agora
 File Transfer	Transferência de arquivos
 USB Files	Arquivos USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Conecte este dispositivo ao computador com um cabo USB.\n2. Abra este endereço no Chrome ou no Edge:
+3. Click Connect and choose this device.	3. Clique em Conectar e escolha este dispositivo.
+A day	Um dia
+A week	Uma semana
+Add, download or delete files on this device from a computer.	Adicione, baixe ou apague arquivos neste dispositivo a partir de um computador.
+Anything worth saying (optional)	Algo mais a dizer (opcional)
+Append timestamp	Anexar data e hora
+Connected to the computer	Conectado ao computador
+Could not send the report. Try again later.	Não foi possível enviar o relatório. Tente mais tarde.
+Count this device	Contar este dispositivo
+Device id	ID do dispositivo
+Double-tap SPACE while typing to switch	Toque duas vezes em ESPAÇO ao digitar para alternar
+Emoji	Emoji
+Export Backup	Exportar backup
+Has a problem	Tem um problema
+I hit a problem	Tive um problema
+Internal	Interno
+Keyboard and input	Teclado e entrada
+Keyboard attached.\nRestarting in landscape in %d s.	Teclado conectado.\nReiniciando na horizontal em %d s.
+Locks when screen off\n(hold the BOOT button to unlock)	Bloqueia com a tela desligada\n(segure o botão BOOT para desbloquear)
+Map and GPS	Mapa e GPS
+Map tiles	Blocos do mapa
+Minutes	Minutos
+Never	Nunca
+No backups available to restore.	Nenhum backup para restaurar.
+No backups yet. Use Export Backup above to create one.	Ainda sem backups. Use "Exportar backup" acima para criar um.
+Normal\nLarge text\nHuge text	Normal\nTexto grande\nTexto enorme
+Phone-app link	Ligação com o app do celular
+Radio and messaging	Rádio e mensagens
+Received %s	%s recebido
+Receiving %s	Recebendo %s
+Region not saved: use a-z, 0-9 and -	Região não salva: use a-z, 0-9 e -
+Report a bug	Relatar um bug
+Running it for	Usando há
+Running it for:	Usando há:
+SD card	Cartão SD
+SD unavailable - insert a FAT32 card and retry	SD indisponível - insira um cartão FAT32 e tente de novo
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Diga se esta versão funciona na sua placa, para que uma versão estável seja promovida com base em evidências e não porque ninguém reclamou. Um relatório de bug abre como QR: escaneie e envie pelo celular, com sua própria conta do GitHub.
+Screen timeout	Tempo para desligar a tela
+Send	Enviar
+Send a test report	Enviar um relatório de teste
+Send another test report	Enviar outro relatório de teste
+Sending %s	Enviando %s
+Sending your report...	Enviando seu relatório…
+Stop USB Files	Parar Arquivos USB
+Storage and SD	Armazenamento e SD
+Tap the EN key on the keyboard to switch	Toque na tecla EN do teclado para alternar
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Informa à matriz de testes quantos dispositivos usam esta versão, para diferenciar uma placa sem relatórios de uma que ninguém tem. Envia só a placa e a versão, nada mais.
+Test report: %s	Relatório de teste: %s
+Thank you. Your report is on wadamesh.com/beta	Obrigado. Seu relatório está em wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Isto é tudo o que sai do dispositivo. Sem nome, sem contatos, sem posição.
+Tick only what you actually used:	Marque só o que você realmente usou:
+Turn Wi-Fi on to send a report	Ligue o Wi-Fi para enviar um relatório
+USB Files: low memory	Arquivos USB: pouca memória
+Upload of %s stopped	Envio de %s interrompido
+Used	Usado
+Waiting for the computer	Aguardando o computador
+While this screen is open, the companion app cannot use USB.	Enquanto esta tela estiver aberta, o app complementar não pode usar o USB.
+Works	Funciona
+a week or more	uma semana ou mais
+about a day	cerca de um dia
+hold the BOOT button to unlock	segure o botão BOOT para desbloquear
+minutes	minutos

@@ -1302,3 +1302,66 @@ Sending %s\n%lu / %lu bytes	Se trimite %s\n%lu / %lu octeţi
 Reboot Now	Reporneşte acum
 File Transfer	Transfer de fişiere
 USB Files	Fişiere USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Conectează acest dispozitiv la calculator cu un cablu USB.\n2. Deschide această adresă în Chrome sau Edge:
+3. Click Connect and choose this device.	3. Apasă Conectare şi alege acest dispozitiv.
+A day	O zi
+A week	O săptămână
+Add, download or delete files on this device from a computer.	Adaugă, descarcă sau şterge fişiere de pe acest dispozitiv de pe un calculator.
+Anything worth saying (optional)	Altceva de spus (opţional)
+Append timestamp	Adaugă marcaj de timp
+Connected to the computer	Conectat la calculator
+Could not send the report. Try again later.	Raportul nu a putut fi trimis. Încearcă mai târziu.
+Count this device	Numără acest dispozitiv
+Device id	ID dispozitiv
+Double-tap SPACE while typing to switch	Atinge de două ori SPAŢIU în timp ce scrii pentru a comuta
+Emoji	Emoji
+Export Backup	Exportă backup
+Has a problem	Are o problemă
+I hit a problem	Am avut o problemă
+Internal	Intern
+Keyboard and input	Tastatură şi introducere
+Keyboard attached.\nRestarting in landscape in %d s.	Tastatură conectată.\nRepornire în peisaj în %d s.
+Locks when screen off\n(hold the BOOT button to unlock)	Se blochează cu ecranul stins\n(ţine apăsat butonul BOOT pentru deblocare)
+Map and GPS	Hartă şi GPS
+Map tiles	Plăci de hartă
+Minutes	Minute
+Never	Niciodată
+No backups available to restore.	Niciun backup de restaurat.
+No backups yet. Use Export Backup above to create one.	Încă niciun backup. Foloseşte „Exportă backup” de mai sus pentru a crea unul.
+Normal\nLarge text\nHuge text	Normal\nText mare\nText foarte mare
+Phone-app link	Legătura cu aplicaţia de telefon
+Radio and messaging	Radio şi mesagerie
+Received %s	%s primit
+Receiving %s	Se primeşte %s
+Region not saved: use a-z, 0-9 and -	Regiune nesalvată: foloseşte a-z, 0-9 şi -
+Report a bug	Raportează o eroare
+Running it for	Folosit de
+Running it for:	Folosit de:
+SD card	Card SD
+SD unavailable - insert a FAT32 card and retry	SD indisponibil - introdu un card FAT32 şi reîncearcă
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Spune dacă această versiune merge pe placa ta, ca o versiune stabilă să fie promovată pe baza dovezilor, nu pentru că nu s-a plâns nimeni. Un raport de eroare se deschide ca cod QR: scanează-l şi trimite-l de pe telefon, din propriul cont GitHub.
+Screen timeout	Stingere ecran
+Send	Trimite
+Send a test report	Trimite un raport de test
+Send another test report	Trimite încă un raport de test
+Sending %s	Se trimite %s
+Sending your report...	Se trimite raportul…
+Stop USB Files	Opreşte Fişiere USB
+Storage and SD	Stocare şi SD
+Tap the EN key on the keyboard to switch	Atinge tasta EN de pe tastatură pentru a comuta
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Spune matricei de test câte dispozitive rulează această versiune, ca o placă fără rapoarte să poată fi deosebită de una pe care n-o are nimeni. Trimite doar placa şi versiunea, nimic altceva.
+Test report: %s	Raport de test: %s
+Thank you. Your report is on wadamesh.com/beta	Mulţumim. Raportul tău este pe wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Asta este tot ce părăseşte dispozitivul. Fără nume, fără contacte, fără poziţie.
+Tick only what you actually used:	Bifează doar ce ai folosit cu adevărat:
+Turn Wi-Fi on to send a report	Porneşte Wi-Fi pentru a trimite un raport
+USB Files: low memory	Fişiere USB: memorie insuficientă
+Upload of %s stopped	Încărcarea %s a fost oprită
+Used	Folosit
+Waiting for the computer	Se aşteaptă calculatorul
+While this screen is open, the companion app cannot use USB.	Cât timp acest ecran e deschis, aplicaţia însoţitoare nu poate folosi USB.
+Works	Funcţionează
+a week or more	o săptămână sau mai mult
+about a day	cam o zi
+hold the BOOT button to unlock	ţine apăsat butonul BOOT pentru deblocare
+minutes	minute

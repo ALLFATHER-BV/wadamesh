@@ -1300,3 +1300,66 @@ Sending %s\n%lu / %lu bytes	Envoi de %s\n%lu / %lu octets
 Reboot Now	Redémarrer maintenant
 File Transfer	Transfert de fichiers
 USB Files	Fichiers USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Reliez cet appareil à l'ordinateur avec un câble USB.\n2. Ouvrez cette adresse dans Chrome ou Edge :
+3. Click Connect and choose this device.	3. Cliquez sur Connecter et choisissez cet appareil.
+A day	Un jour
+A week	Une semaine
+Add, download or delete files on this device from a computer.	Ajoutez, téléchargez ou supprimez des fichiers sur cet appareil depuis un ordinateur.
+Anything worth saying (optional)	Autre chose à signaler (facultatif)
+Append timestamp	Ajouter l'horodatage
+Connected to the computer	Connecté à l'ordinateur
+Could not send the report. Try again later.	Impossible d'envoyer le rapport. Réessayez plus tard.
+Count this device	Compter cet appareil
+Device id	ID de l'appareil
+Double-tap SPACE while typing to switch	Touchez deux fois ESPACE pendant la saisie pour basculer
+Emoji	Emoji
+Export Backup	Exporter une sauvegarde
+Has a problem	A un problème
+I hit a problem	J'ai eu un problème
+Internal	Interne
+Keyboard and input	Clavier et saisie
+Keyboard attached.\nRestarting in landscape in %d s.	Clavier branché.\nRedémarrage en paysage dans %d s.
+Locks when screen off\n(hold the BOOT button to unlock)	Se verrouille écran éteint\n(maintenez le bouton BOOT pour déverrouiller)
+Map and GPS	Carte et GPS
+Map tiles	Tuiles de carte
+Minutes	Minutes
+Never	Jamais
+No backups available to restore.	Aucune sauvegarde à restaurer.
+No backups yet. Use Export Backup above to create one.	Aucune sauvegarde. Utilisez « Exporter une sauvegarde » ci-dessus pour en créer une.
+Normal\nLarge text\nHuge text	Normal\nGrand texte\nTrès grand texte
+Phone-app link	Lien avec l'app mobile
+Radio and messaging	Radio et messagerie
+Received %s	%s reçu
+Receiving %s	Réception de %s
+Region not saved: use a-z, 0-9 and -	Région non enregistrée : utilisez a-z, 0-9 et -
+Report a bug	Signaler un bug
+Running it for	Utilisé depuis
+Running it for:	Utilisé depuis :
+SD card	Carte SD
+SD unavailable - insert a FAT32 card and retry	SD indisponible - insérez une carte FAT32 et réessayez
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Dites si cette version fonctionne sur votre carte, pour qu'une version stable soit publiée sur des preuves et non parce que personne ne s'est plaint. Un rapport de bug s'ouvre en QR code : scannez-le et déposez-le depuis votre téléphone, avec votre propre compte GitHub.
+Screen timeout	Mise en veille de l'écran
+Send	Envoyer
+Send a test report	Envoyer un rapport de test
+Send another test report	Envoyer un autre rapport de test
+Sending %s	Envoi de %s
+Sending your report...	Envoi de votre rapport…
+Stop USB Files	Arrêter Fichiers USB
+Storage and SD	Stockage et SD
+Tap the EN key on the keyboard to switch	Touchez la touche EN du clavier pour basculer
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Indique à la matrice de test combien d'appareils utilisent cette version, pour distinguer une carte sans rapports d'une carte que personne ne possède. N'envoie que la carte et la version, rien d'autre.
+Test report: %s	Rapport de test : %s
+Thank you. Your report is on wadamesh.com/beta	Merci. Votre rapport est sur wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Voici tout ce qui quitte l'appareil. Aucun nom, aucun contact, aucune position.
+Tick only what you actually used:	Cochez uniquement ce que vous avez vraiment utilisé :
+Turn Wi-Fi on to send a report	Activez le Wi-Fi pour envoyer un rapport
+USB Files: low memory	Fichiers USB : mémoire insuffisante
+Upload of %s stopped	Envoi de %s interrompu
+Used	Utilisé
+Waiting for the computer	En attente de l'ordinateur
+While this screen is open, the companion app cannot use USB.	Tant que cet écran est ouvert, l'app compagnon ne peut pas utiliser l'USB.
+Works	Fonctionne
+a week or more	une semaine ou plus
+about a day	environ un jour
+hold the BOOT button to unlock	maintenez le bouton BOOT pour déverrouiller
+minutes	minutes

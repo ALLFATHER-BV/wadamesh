@@ -1317,3 +1317,66 @@ Sending %s\n%lu / %lu bytes	%s küldése\n%lu / %lu bájt
 Reboot Now	Újraindítás most
 File Transfer	Fájlátvitel
 USB Files	USB-fájlok
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Csatlakoztasd az eszközt a számítógéphez USB-kábellel.\n2. Nyisd meg ezt a címet Chrome-ban vagy Edge-ben:
+3. Click Connect and choose this device.	3. Kattints a Csatlakozás gombra, és válaszd ki ezt az eszközt.
+A day	Egy nap
+A week	Egy hét
+Add, download or delete files on this device from a computer.	Fájlok hozzáadása, letöltése vagy törlése ezen az eszközön számítógépről.
+Anything worth saying (optional)	Egyéb megjegyzés (nem kötelező)
+Append timestamp	Időbélyeg hozzáfűzése
+Connected to the computer	Csatlakozva a számítógéphez
+Could not send the report. Try again later.	A jelentést nem sikerült elküldeni. Próbáld később.
+Count this device	Az eszköz beszámítása
+Device id	Eszközazonosító
+Double-tap SPACE while typing to switch	Gépelés közben kétszer SZÓKÖZ a váltáshoz
+Emoji	Emoji
+Export Backup	Mentés exportálása
+Has a problem	Hibás
+I hit a problem	Hibába ütköztem
+Internal	Belső
+Keyboard and input	Billentyűzet és bevitel
+Keyboard attached.\nRestarting in landscape in %d s.	Billentyűzet csatlakoztatva.\nÚjraindítás fekvő módban %d mp múlva.
+Locks when screen off\n(hold the BOOT button to unlock)	Zár, ha a képernyő kikapcsol\n(a feloldáshoz tartsd lenyomva a BOOT gombot)
+Map and GPS	Térkép és GPS
+Map tiles	Térképcsempék
+Minutes	Perc
+Never	Soha
+No backups available to restore.	Nincs visszaállítható mentés.
+No backups yet. Use Export Backup above to create one.	Még nincs mentés. Készíts egyet a fenti „Mentés exportálása” gombbal.
+Normal\nLarge text\nHuge text	Normál\nNagy szöveg\nÓriási szöveg
+Phone-app link	Telefonos app kapcsolat
+Radio and messaging	Rádió és üzenetek
+Received %s	%s fogadva
+Receiving %s	%s fogadása
+Region not saved: use a-z, 0-9 and -	A régió nincs mentve: csak a-z, 0-9 és -
+Report a bug	Hiba bejelentése
+Running it for	Használat ideje
+Running it for:	Használat ideje:
+SD card	SD-kártya
+SD unavailable - insert a FAT32 card and retry	Az SD nem elérhető - helyezz be FAT32 kártyát, és próbáld újra
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Jelezd, hogy ez a build működik-e a lapodon, hogy a stabil kiadás bizonyítékok alapján készüljön, ne azért, mert senki sem panaszkodott. A hibajelentés QR-kódként nyílik meg: olvasd be, és add be a telefonodról a saját GitHub-fiókoddal.
+Screen timeout	Képernyő kikapcsolása
+Send	Küldés
+Send a test report	Tesztjelentés küldése
+Send another test report	Újabb tesztjelentés küldése
+Sending %s	%s küldése
+Sending your report...	Jelentés küldése…
+Stop USB Files	USB-fájlok leállítása
+Storage and SD	Tárhely és SD
+Tap the EN key on the keyboard to switch	Váltáshoz koppints a billentyűzet EN gombjára
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Jelzi a tesztmátrixnak, hány eszköz futtatja ezt a buildet, így egy jelentés nélküli lap megkülönböztethető attól, amit senki sem birtokol. Csak a lapot és a verziót küldi, mást nem.
+Test report: %s	Tesztjelentés: %s
+Thank you. Your report is on wadamesh.com/beta	Köszönjük. A jelentésed itt van: wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Csak ennyi hagyja el az eszközt. Se név, se névjegyek, se pozíció.
+Tick only what you actually used:	Csak azt jelöld be, amit tényleg használtál:
+Turn Wi-Fi on to send a report	Kapcsold be a Wi-Fit a jelentés küldéséhez
+USB Files: low memory	USB-fájlok: kevés a memória
+Upload of %s stopped	%s feltöltése leállt
+Used	Használt
+Waiting for the computer	Várakozás a számítógépre
+While this screen is open, the companion app cannot use USB.	Amíg ez a képernyő nyitva van, a kísérőalkalmazás nem használhatja az USB-t.
+Works	Működik
+a week or more	egy hét vagy több
+about a day	nagyjából egy nap
+hold the BOOT button to unlock	a feloldáshoz tartsd lenyomva a BOOT gombot
+minutes	perc
