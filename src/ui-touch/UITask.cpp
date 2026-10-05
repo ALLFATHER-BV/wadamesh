@@ -14358,10 +14358,25 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
   touchPrefsSetKeyboardLayout(static_cast<uint8_t>(keyboardLayoutsGetCurrent()));
 #endif
   if (g_lv.task) {
-    char buf[40];
-    snprintf(buf, sizeof(buf), "%s: %s",
-             keyboardLayoutName(static_cast<KeyboardLayoutId>(id)), on ? "on" : "off");
-    g_lv.task->showAlert(buf, 800);
+    const char* name = keyboardLayoutName(static_cast<KeyboardLayoutId>(id));
+    if (on) {
+      // Say how to get to the layout, not just that it is on: switching one on
+      // changes nothing until the user cycles to it, and a Pager user who did
+      // not know the shortcut read the setting as broken. Kept short enough
+      // for the 80-byte alert; the long form stays on the page above the rows.
+#if CAP_KEYBOARD
+      const char* how = TR("Double-tap SPACE while typing to switch");
+#else
+      const char* how = TR("Tap the EN key on the keyboard to switch");
+#endif
+      char buf[80];
+      snprintf(buf, sizeof(buf), "%s %s. %s", name, TR("on"), how);
+      g_lv.task->showAlert(buf, 2500);
+    } else {
+      char buf[40];
+      snprintf(buf, sizeof(buf), "%s: %s", name, TR("off"));
+      g_lv.task->showAlert(buf, 800);
+    }
   }
 }
 
@@ -15902,7 +15917,11 @@ static void buildDeviceSettings(int sec) {
   {
     y += settingsRowLabel(body, y, 0, TR("Secondary keyboards"), COLOR_SUB, &g_font_12, 0) + 2;
 
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
+    // CAP_KEYBOARD, not a board list: the T-LoRa Pager, T-Deck Pro and T-Deck Max
+    // build with HAS_PAGER_KEYBOARD and were falling through to the on-screen
+    // wording below, telling the user to tap an "EN" key their physical keyboard
+    // does not have, while double-tap SPACE (handleHwKey) was the real shortcut.
+#if CAP_KEYBOARD
     const char* kb_cycle_hint = "double-tap SPACE cycles through the ones you enable";
 #else
     const char* kb_cycle_hint = "tap the language key (e.g. EN) on the keyboard to cycle the ones you enable";
