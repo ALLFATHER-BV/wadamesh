@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Toetsenbordnav.: WASDZ aan
 Keyboard nav: off	Toetsenbordnav.: uit
 Keyboard navigation	Toetsenbordnavigatie
 Keys	Toetsen
-Known regions	Known regions
+Known regions	Bekende regio's
 LOS → %s	Zichtlijn → %s
 Landscape (desktop)	Liggend (desktop)
 Landscape set - applies when remote mode starts.	Liggend ingesteld - geldt zodra de externe modus start.
@@ -1194,9 +1194,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Vergeten
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Dit toetsenbord vergeten? Je moet het opnieuw koppelen.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1352,8 +1352,8 @@ Internal	Internal
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Deelnemen aan #-kanaal
+Join Public channel	Deelnemen aan openbaar kanaal
 Jul	Jul
 July	July
 Jun	Jun
@@ -1406,7 +1406,7 @@ Phone-app link	Phone-app link
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
 Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
+Reboot Now	Nu herstarten
 Received %s	Received %s
 Receiving %s	Receiving %s
 Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
@@ -1461,7 +1461,7 @@ Tue	Tue
 Tuesday	Tuesday
 Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
+USB Files	USB-bestanden
 USB Files: low memory	USB Files: low memory
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
@@ -1851,3 +1851,13 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Timer
+Screenshot	Schermafbeelding
+Peak -- dBm	Piek -- dBm
+Peak %d dBm @ %.1f MHz	Piek %d dBm @ %.1f MHz
+peak %d @ %.1f	piek %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Slaapstand: tik op het scherm of 🤍 om te wekken
+Receiving %s\n%lu / %lu bytes	%s ontvangen\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	%s verzenden\n%lu / %lu bytes
+File Transfer	Bestandsoverdracht

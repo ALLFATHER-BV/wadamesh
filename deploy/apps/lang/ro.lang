@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
 Keyboard nav: off	Navigare tastatură: oprită
 Keyboard navigation	Navigare cu tastatura
 Keys	
-Known regions	Known regions
+Known regions	Regiuni cunoscute
 LOS → %s	Linie vizuală → %s
 Landscape (desktop)	Peisaj (desktop)
 Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
@@ -1198,9 +1198,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Uită
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Uiţi această tastatură? Va trebui asociată din nou.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1356,8 +1356,8 @@ Internal	Internal
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Intră într-un canal #
+Join Public channel	Intră în canalul public
 Jul	Jul
 July	July
 Jun	Jun
@@ -1410,7 +1410,7 @@ Phone-app link	Phone-app link
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
 Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
+Reboot Now	Reporneşte acum
 Received %s	Received %s
 Receiving %s	Receiving %s
 Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
@@ -1465,7 +1465,7 @@ Tue	Tue
 Tuesday	Tuesday
 Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
+USB Files	Fişiere USB
 USB Files: low memory	USB Files: low memory
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
@@ -1855,3 +1855,13 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Temporizator
+Screenshot	Captură de ecran
+Peak -- dBm	Vârf -- dBm
+Peak %d dBm @ %.1f MHz	Vârf %d dBm @ %.1f MHz
+peak %d @ %.1f	vârf %d @ %.1f
+Asleep: tap screen or 🤍 to wake	În repaus: atinge ecranul sau 🤍 pentru trezire
+Receiving %s\n%lu / %lu bytes	Se primeşte %s\n%lu / %lu octeţi
+Sending %s\n%lu / %lu bytes	Se trimite %s\n%lu / %lu octeţi
+File Transfer	Transfer de fişiere

@@ -1376,8 +1376,8 @@ Internal	Internal
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Připojit se k # kanálu
+Join Public channel	Připojit se k veřejnému kanálu
 Jul	Jul
 July	July
 Jun	Jun
@@ -1428,7 +1428,7 @@ Phone-app link	Phone-app link
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
 Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
+Reboot Now	Restartovat nyní
 Received %s	Received %s
 Receiving %s	Receiving %s
 Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
@@ -1481,7 +1481,7 @@ Tue	Tue
 Tuesday	Tuesday
 Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
+USB Files	Soubory USB
 USB Files: low memory	USB Files: low memory
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
@@ -1871,3 +1871,13 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Časovač
+Screenshot	Snímek obrazovky
+Peak -- dBm	Špička -- dBm
+Peak %d dBm @ %.1f MHz	Špička %d dBm @ %.1f MHz
+peak %d @ %.1f	špička %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Spí: klepněte na obrazovku nebo 🤍 pro probuzení
+Receiving %s\n%lu / %lu bytes	Přijímání %s\n%lu / %lu bajtů
+Sending %s\n%lu / %lu bytes	Odesílání %s\n%lu / %lu bajtů
+File Transfer	Přenos souborů

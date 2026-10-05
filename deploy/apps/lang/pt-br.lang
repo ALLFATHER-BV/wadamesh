@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Nav. teclado: WASDZ ligado
 Keyboard nav: off	Nav. teclado: desligado
 Keyboard navigation	Navegação por teclado
 Keys	
-Known regions	Known regions
+Known regions	Regiões conhecidas
 LOS → %s	Linha de visada → %s
 Landscape (desktop)	Paisagem (desktop)
 Landscape set - applies when remote mode starts.	Paisagem definida - vale quando o modo remoto iniciar.
@@ -1196,9 +1196,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Esquecer
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Esquecer este teclado? Será preciso pareá-lo de novo.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1354,8 +1354,8 @@ Internal	Internal
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Entrar em canal #
+Join Public channel	Entrar no canal público
 Jul	Jul
 July	July
 Jun	Jun
@@ -1408,7 +1408,7 @@ Phone-app link	Phone-app link
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
 Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
+Reboot Now	Reiniciar agora
 Received %s	Received %s
 Receiving %s	Receiving %s
 Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
@@ -1463,7 +1463,7 @@ Tue	Tue
 Tuesday	Tuesday
 Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
+USB Files	Arquivos USB
 USB Files: low memory	USB Files: low memory
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
@@ -1853,3 +1853,13 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Temporizador
+Screenshot	Captura de tela
+Peak -- dBm	Pico -- dBm
+Peak %d dBm @ %.1f MHz	Pico %d dBm @ %.1f MHz
+peak %d @ %.1f	pico %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Em repouso: toque na tela ou 🤍 para acordar
+Receiving %s\n%lu / %lu bytes	Recebendo %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Enviando %s\n%lu / %lu bytes
+File Transfer	Transferência de arquivos
