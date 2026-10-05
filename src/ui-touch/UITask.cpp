@@ -1112,6 +1112,125 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
   }
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);   // still wide: 12 px beats clipping a bigger font
 }
+
+// ---- Button captions that fit any language (#418) ---------------------------------
+// A translation that fits most panels can still overflow a button on the narrowest
+// (the Heltec V4 with its kit) or at a large UI size, and asking translators to
+// shorten every string for the smallest screen only makes it worse everywhere else.
+// So the layout adapts instead: every button styled by styleButton() checks its
+// caption before it draws and, only when the text is wider than the button, steps
+// the font down 16 -> 14 -> 12, then wraps it onto two centred lines if the button
+// has the height, else ends it in "...". A caption that fits is never touched.
+//
+// Scope: buttons whose only visible label child is the caption. Icon + caption
+// pairs and anything with a deliberate scrolling label are left to their builders.
+// No spare object flag (USER_1..4 are all nav markers), so the state lives elsewhere:
+// a wrapped / dotted caption is recognised by the exact width step 2 gives it, and
+// queued fits sit in a small list.
+static lv_obj_t* s_fit_pending[12] = { nullptr };
+static bool uiFitPendingHas(lv_obj_t* b) {
+  for (lv_obj_t* p : s_fit_pending) if (p == b) return true;
+  return false;
+}
+static bool uiFitPendingAdd(lv_obj_t* b) {
+  for (lv_obj_t*& p : s_fit_pending) if (!p) { p = b; return true; }
+  return false;                        // full: the next draw asks again
+}
+static void uiFitPendingDrop(lv_obj_t* b) {
+  for (lv_obj_t*& p : s_fit_pending) if (p == b) p = nullptr;
+}
+
+static lv_obj_t* uiButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* cap = nullptr;
+  const uint32_t n = lv_obj_get_child_cnt(btn);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* c = lv_obj_get_child(btn, i);
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (!lv_obj_check_type(c, &lv_label_class)) continue;
+    if (cap) return nullptr;            // icon + caption: not ours to rearrange
+    cap = c;
+  }
+  if (!cap) return nullptr;
+  const lv_label_long_mode_t lm = lv_label_get_long_mode(cap);
+  if (lm == LV_LABEL_LONG_SCROLL || lm == LV_LABEL_LONG_SCROLL_CIRCULAR) return nullptr;
+  const char* t = lv_label_get_text(cap);
+  return (t && t[0]) ? cap : nullptr;
+}
+
+static lv_coord_t uiCaptionTextW(lv_obj_t* lbl, const lv_font_t* f) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN), 0, LV_COORD_MAX,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  return sz.x;
+}
+
+// Whether the caption still needs work: it overflows and either a smaller font is
+// left to try or it has not been wrapped / dotted yet.
+static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  if (avail_w <= 6) return false;
+  const lv_font_t* f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  if (uiCaptionTextW(lbl, f) <= avail_w) return false;
+  if (lv_font_get_line_height(f) > lv_font_get_line_height(&g_font_12)) return true;
+  return lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w;   // not wrapped / dotted yet
+}
+
+static void uiFitButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* lbl = uiButtonCaption(btn);
+  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  const lv_coord_t avail_h = lv_obj_get_content_height(btn);
+  // 1. The largest baked font, no bigger than the current one, that fits on one line.
+  const lv_font_t* cur = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  const lv_coord_t cur_h = lv_font_get_line_height(cur);
+  // Primary buttons are semibold; shrink them within that weight.
+  const bool semi = cur == &g_font_semi_16 || cur == &g_font_semi_14 || cur == &g_font_semi_12;
+  const lv_font_t* ladder[3] = { semi ? &g_font_semi_16 : &g_font_16, semi ? &g_font_semi_14 : &g_font_14,
+                                 semi ? &g_font_semi_12 : &g_font_12 };
+  const lv_font_t* use = nullptr;
+  for (const lv_font_t* f : ladder) {
+    if (lv_font_get_line_height(f) > cur_h) continue;
+    use = f;                                   // smallest-so-far; the last one is 12 px
+    if (uiCaptionTextW(lbl, f) <= avail_w) break;
+  }
+  if (use && use != cur) lv_obj_set_style_text_font(lbl, use, LV_PART_MAIN);
+  const lv_font_t* f = use ? use : cur;
+  if (uiCaptionTextW(lbl, f) <= avail_w) return;
+  // 2. Still too wide at 12 px: two centred lines when the button is tall enough,
+  //    otherwise one line ending in "..." rather than text spilling past the edge.
+  lv_point_t wrapped;
+  lv_txt_get_size(&wrapped, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN),
+                  lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN), avail_w,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  lv_obj_set_width(lbl, avail_w);
+  lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  if (wrapped.y <= avail_h) {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+  } else {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(lbl, lv_font_get_line_height(f));
+  }
+}
+
+static void uiFitButtonAsync(void* p) {
+  lv_obj_t* btn = static_cast<lv_obj_t*>(p);
+  uiFitPendingDrop(btn);
+  if (!btn || !lv_obj_is_valid(btn)) return;
+  uiFitButtonCaption(btn);
+}
+
+// Runs as the button starts to draw, i.e. once its size and caption are final.
+// Restyling mid-render is not allowed, so it only measures here and queues the fit
+// for right after the frame; a caption that fits costs one text measurement.
+static void uiFitButtonDrawCb(lv_event_t* e) {
+  lv_obj_t* btn = lv_event_get_target(e);
+  if (uiFitPendingHas(btn)) return;
+  lv_obj_t* lbl = uiButtonCaption(btn);
+  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
+  if (uiFitPendingAdd(btn)) lv_async_call(uiFitButtonAsync, btn);
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
@@ -4362,6 +4481,10 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 9, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+  // Captions that overflow shrink, then wrap (#418). Remove first: some buttons are
+  // restyled, and the callback must only be attached once.
+  lv_obj_remove_event_cb(obj, uiFitButtonDrawCb);
+  lv_obj_add_event_cb(obj, uiFitButtonDrawCb, LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
   styleLookPress(obj);
 }
 
