@@ -1290,19 +1290,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Conecte este dispositivo ao computador com um cabo USB.\n2. Abra este endereço no Chrome ou no Edge:
+3. Click Connect and choose this device.	3. Clique em Conectar e escolha este dispositivo.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	Um dia
+A week	Uma semana
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Adicione, baixe ou apague arquivos neste dispositivo a partir de um computador.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Algo mais a dizer (opcional)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Anexar data e hora
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1320,37 +1320,37 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Conectado ao computador
+Could not send the report. Try again later.	Não foi possível enviar o relatório. Tente mais tarde.
+Count this device	Contar este dispositivo
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID do dispositivo
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Double-tap SPACE while typing to switch	Toque duas vezes em ESPAÇO ao digitar para alternar
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Exportar backup
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Tem um problema
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Tive um problema
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Interno
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
@@ -1360,14 +1360,14 @@ Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Teclado e entrada
+Keyboard attached.\nRestarting in landscape in %d s.	Teclado conectado.\nReiniciando na horizontal em %d s.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Bloqueia com a tela desligada\n(segure o botão BOOT para desbloquear)
+Map and GPS	Mapa e GPS
+Map tiles	Blocos do mapa
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1380,19 +1380,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Minutos
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Nunca
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Nenhum backup para restaurar.
+No backups yet. Use Export Backup above to create one.	Ainda sem backups. Use "Exportar backup" acima para criar um.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Normal\nTexto grande\nTexto enorme
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1404,56 +1404,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Ligação com o app do celular
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
+Radio and messaging	Rádio e mensagens
 Reboot Now	Reiniciar agora
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Received %s	%s recebido
+Receiving %s	Recebendo %s
+Region not saved: use a-z, 0-9 and -	Região não salva: use a-z, 0-9 e -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Relatar um bug
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Usando há
+Running it for:	Usando há:
+SD card	Cartão SD
+SD unavailable - insert a FAT32 card and retry	SD indisponível - insira um cartão FAT32 e tente de novo
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Diga se esta versão funciona na sua placa, para que uma versão estável seja promovida com base em evidências e não porque ninguém reclamou. Um relatório de bug abre como QR: escaneie e envie pelo celular, com sua própria conta do GitHub.
+Screen timeout	Tempo para desligar a tela
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Enviar
+Send a test report	Enviar um relatório de teste
+Send another test report	Enviar outro relatório de teste
+Sending %s	Enviando %s
+Sending your report...	Enviando seu relatório…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Parar Arquivos USB
+Storage and SD	Armazenamento e SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Toque na tecla EN do teclado para alternar
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Informa à matriz de testes quantos dispositivos usam esta versão, para diferenciar uma placa sem relatórios de uma que ninguém tem. Envia só a placa e a versão, nada mais.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Relatório de teste: %s
+Thank you. Your report is on wadamesh.com/beta	Obrigado. Seu relatório está em wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Isto é tudo o que sai do dispositivo. Sem nome, sem contatos, sem posição.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Marque só o que você realmente usou:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1461,30 +1461,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Ligue o Wi-Fi para enviar um relatório
 Type 4 numbers or letters	Type 4 numbers or letters
 USB Files	Arquivos USB
-USB Files: low memory	USB Files: low memory
+USB Files: low memory	Arquivos USB: pouca memória
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Envio de %s interrompido
+Used	Usado
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Aguardando o computador
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Enquanto esta tela estiver aberta, o app complementar não pode usar o USB.
+Works	Funciona
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	uma semana ou mais
+about a day	cerca de um dia
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	segure o botão BOOT para desbloquear
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	minutos
 new	new
 node	node
 nodes	nodes

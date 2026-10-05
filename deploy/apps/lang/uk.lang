@@ -1291,19 +1291,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Під'єднайте цей пристрій до комп'ютера кабелем USB.\n2. Відкрийте цю адресу в Chrome або Edge:
+3. Click Connect and choose this device.	3. Натисніть «Під'єднати» й виберіть цей пристрій.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	День
+A week	Тиждень
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Додавайте, завантажуйте та видаляйте файли на цьому пристрої з комп'ютера.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Щось іще (необов'язково)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Додати позначку часу
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1321,37 +1321,37 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Під'єднано до комп'ютера
+Could not send the report. Try again later.	Не вдалося надіслати звіт. Спробуйте пізніше.
+Count this device	Враховувати цей пристрій
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID пристрою
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
-Emoji	Emoji
+Double-tap SPACE while typing to switch	Щоб перемкнути, двічі натисніть ПРОБІЛ під час набору
+Emoji	Емодзі
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Експорт резервної копії
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Є проблема
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	У мене виникла проблема
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Внутрішня
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
@@ -1361,14 +1361,14 @@ Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Клавіатура та введення
+Keyboard attached.\nRestarting in landscape in %d s.	Клавіатуру під'єднано.\nПерезапуск в альбомному режимі через %d с.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Блокується, коли екран вимкнено\n(щоб розблокувати, утримуйте кнопку BOOT)
+Map and GPS	Мапа та GPS
+Map tiles	Тайли мапи
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1381,19 +1381,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Хвилини
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Ніколи
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Немає резервних копій для відновлення.
+No backups yet. Use Export Backup above to create one.	Резервних копій ще немає. Створіть її кнопкою «Експорт резервної копії» вище.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Звичайний\nВеликий текст\nДуже великий текст
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1405,56 +1405,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Зв'язок із застосунком на телефоні
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
+Radio and messaging	Радіо та повідомлення
 Reboot Now	Перезавантажити зараз
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Received %s	%s отримано
+Receiving %s	Отримання %s
+Region not saved: use a-z, 0-9 and -	Регіон не збережено: використовуйте a-z, 0-9 і -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Повідомити про помилку
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Користуюся вже
+Running it for:	Користуюся вже:
+SD card	SD-картка
+SD unavailable - insert a FAT32 card and retry	SD недоступна — вставте картку FAT32 і повторіть
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Повідомте, чи працює ця збірка на вашій платі, щоб стабільний випуск виходив на підставі даних, а не тому, що ніхто не скаржився. Звіт про помилку відкривається як QR-код: відскануйте його й надішліть із телефона під своїм обліковим записом GitHub.
+Screen timeout	Тайм-аут екрана
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Надіслати
+Send a test report	Надіслати тестовий звіт
+Send another test report	Надіслати ще один тестовий звіт
+Sending %s	Надсилання %s
+Sending your report...	Надсилання звіту…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Зупинити файли USB
+Storage and SD	Сховище та SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Щоб перемкнути, натисніть клавішу EN на клавіатурі
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Повідомляє тестовій матриці, скільки пристроїв працює на цій збірці, щоб плату без звітів можна було відрізнити від плати, якої ні в кого немає. Надсилає лише плату й версію, більше нічого.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Тестовий звіт: %s
+Thank you. Your report is on wadamesh.com/beta	Дякуємо. Ваш звіт на wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Це все, що залишає пристрій. Ні імені, ні контактів, ні місцезнаходження.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Позначте лише те, чим справді користувалися:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1462,30 +1462,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Увімкніть Wi-Fi, щоб надіслати звіт
 Type 4 numbers or letters	Type 4 numbers or letters
 USB Files	Файли USB
-USB Files: low memory	USB Files: low memory
+USB Files: low memory	Файли USB: мало пам'яті
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Завантаження %s зупинено
+Used	Використовувалося
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Очікування комп'ютера
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Поки цей екран відкрито, застосунок-компаньйон не може використовувати USB.
+Works	Працює
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	тиждень або більше
+about a day	приблизно день
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	щоб розблокувати, утримуйте кнопку BOOT
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	хвилини
 new	new
 node	node
 nodes	nodes

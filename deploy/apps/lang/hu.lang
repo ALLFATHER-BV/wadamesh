@@ -1307,19 +1307,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Csatlakoztasd az eszközt a számítógéphez USB-kábellel.\n2. Nyisd meg ezt a címet Chrome-ban vagy Edge-ben:
+3. Click Connect and choose this device.	3. Kattints a Csatlakozás gombra, és válaszd ki ezt az eszközt.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	Egy nap
+A week	Egy hét
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Fájlok hozzáadása, letöltése vagy törlése ezen az eszközön számítógépről.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Egyéb megjegyzés (nem kötelező)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Időbélyeg hozzáfűzése
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1336,36 +1336,36 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Csatlakozva a számítógéphez
+Could not send the report. Try again later.	A jelentést nem sikerült elküldeni. Próbáld később.
+Count this device	Az eszköz beszámítása
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	Eszközazonosító
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Double-tap SPACE while typing to switch	Gépelés közben kétszer SZÓKÖZ a váltáshoz
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Mentés exportálása
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Hibás
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Hibába ütköztem
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Belső
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
@@ -1375,14 +1375,14 @@ Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Billentyűzet és bevitel
+Keyboard attached.\nRestarting in landscape in %d s.	Billentyűzet csatlakoztatva.\nÚjraindítás fekvő módban %d mp múlva.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Zár, ha a képernyő kikapcsol\n(a feloldáshoz tartsd lenyomva a BOOT gombot)
+Map and GPS	Térkép és GPS
+Map tiles	Térképcsempék
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1394,19 +1394,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Perc
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Soha
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Nincs visszaállítható mentés.
+No backups yet. Use Export Backup above to create one.	Még nincs mentés. Készíts egyet a fenti „Mentés exportálása” gombbal.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Normál\nNagy szöveg\nÓriási szöveg
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1418,54 +1418,54 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Telefonos app kapcsolat
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
+Radio and messaging	Rádió és üzenetek
 Reboot Now	Újraindítás most
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Received %s	%s fogadva
+Receiving %s	%s fogadása
+Region not saved: use a-z, 0-9 and -	A régió nincs mentve: csak a-z, 0-9 és -
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Hiba bejelentése
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Használat ideje
+Running it for:	Használat ideje:
+SD card	SD-kártya
+SD unavailable - insert a FAT32 card and retry	Az SD nem elérhető - helyezz be FAT32 kártyát, és próbáld újra
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Jelezd, hogy ez a build működik-e a lapodon, hogy a stabil kiadás bizonyítékok alapján készüljön, ne azért, mert senki sem panaszkodott. A hibajelentés QR-kódként nyílik meg: olvasd be, és add be a telefonodról a saját GitHub-fiókoddal.
+Screen timeout	Képernyő kikapcsolása
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Küldés
+Send a test report	Tesztjelentés küldése
+Send another test report	Újabb tesztjelentés küldése
+Sending %s	%s küldése
+Sending your report...	Jelentés küldése…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	USB-fájlok leállítása
+Storage and SD	Tárhely és SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Váltáshoz koppints a billentyűzet EN gombjára
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Jelzi a tesztmátrixnak, hány eszköz futtatja ezt a buildet, így egy jelentés nélküli lap megkülönböztethető attól, amit senki sem birtokol. Csak a lapot és a verziót küldi, mást nem.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Tesztjelentés: %s
+Thank you. Your report is on wadamesh.com/beta	Köszönjük. A jelentésed itt van: wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Csak ennyi hagyja el az eszközt. Se név, se névjegyek, se pozíció.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Csak azt jelöld be, amit tényleg használtál:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1473,30 +1473,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Kapcsold be a Wi-Fit a jelentés küldéséhez
 Type 4 numbers or letters	Type 4 numbers or letters
 USB Files	USB-fájlok
-USB Files: low memory	USB Files: low memory
+USB Files: low memory	USB-fájlok: kevés a memória
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	%s feltöltése leállt
+Used	Használt
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Várakozás a számítógépre
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Amíg ez a képernyő nyitva van, a kísérőalkalmazás nem használhatja az USB-t.
+Works	Működik
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	egy hét vagy több
+about a day	nagyjából egy nap
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	a feloldáshoz tartsd lenyomva a BOOT gombot
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	perc
 new	new
 node	node
 nodes	nodes
