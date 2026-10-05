@@ -1126,9 +1126,17 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Старији протокол тастатуре
+Device	Уређај
+Keyboard:	Тастатура:
+newer keyboard	новија тастатура
+older keyboard	старија тастатура
+older keyboard (set manually)	старија тастатура (ручно подешено)
+keyboard not detected yet	тастатура још није препозната
+Older keyboard protocol is now in Settings > Device.	Старији протокол тастатуре је сада у Подешавања > Уређај.
+Diagnostics are on the Device page.	Дијагностика је на страници Уређај.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	укључите ако тастатура куца погрешна слова; искључује закључавање модификатора
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot

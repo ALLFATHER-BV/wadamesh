@@ -1121,6 +1121,14 @@ Signal (stale)	Signál (zastaralý)
 nothing heard yet	zatím nic zachyceno
 Detecting the keyboard protocol	Zjišťování protokolu klávesnice
 Older keyboard protocol	Starší protokol klávesnice
+Device	Zařízení
+Keyboard:	Klávesnice:
+newer keyboard	novější klávesnice
+older keyboard	starší klávesnice
+older keyboard (set manually)	starší klávesnice (nastaveno ručně)
+keyboard not detected yet	klávesnice zatím nerozpoznána
+Older keyboard protocol is now in Settings > Device.	Starší protokol klávesnice je nyní v Nastavení > Zařízení.
+Diagnostics are on the Device page.	Diagnostika je na stránce Zařízení.
 Using the older keyboard protocol	Používá se starší protokol klávesnice
 turn on if your keyboard types the wrong letters; disables modifier latching	zapněte, pokud klávesnice píše nesprávná písmena; vypne blokování modifikátorů
 Formatted OK - card did not remount, reinsert it	Naformátováno OK - karta se znovu nepřipojila, vložte ji znovu

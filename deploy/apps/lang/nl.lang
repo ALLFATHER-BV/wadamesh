@@ -1123,9 +1123,17 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Ouder toetsenbordprotocol
+Device	Apparaat
+Keyboard:	Toetsenbord:
+newer keyboard	nieuwer toetsenbord
+older keyboard	ouder toetsenbord
+older keyboard (set manually)	ouder toetsenbord (handmatig ingesteld)
+keyboard not detected yet	toetsenbord nog niet herkend
+Older keyboard protocol is now in Settings > Device.	Ouder toetsenbordprotocol staat nu onder Instellingen > Apparaat.
+Diagnostics are on the Device page.	Diagnostiek staat op de pagina Apparaat.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	zet aan als het toetsenbord verkeerde letters typt; schakelt het vastzetten van modificatietoetsen uit
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot

@@ -117,6 +117,16 @@ static void processLegacyKey(uint8_t key) {
 static bool s_force_legacy = false;
 void tdeckKeyboardForceLegacy(bool on) { s_force_legacy = on; }
 
+// s_mode is written on core 0 (the poll task); a one-byte read from the UI thread
+// is atomic, and a stale answer only lags the Settings line by one poll.
+uint8_t tdeckKeyboardDetectedMode() {
+  switch (s_mode) {
+    case KeyboardMode::Raw:    return TDECK_KB_RAW;
+    case KeyboardMode::Legacy: return TDECK_KB_LEGACY;
+    default:                   return TDECK_KB_PROBING;
+  }
+}
+
 void tdeckKeyboardBegin() {
   s_mode = KeyboardMode::Probe;
   s_raw_state = TDeckKeyboardState{};

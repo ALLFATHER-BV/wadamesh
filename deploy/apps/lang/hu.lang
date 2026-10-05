@@ -1143,9 +1143,17 @@ This board cannot run this app.	This board cannot run this app.
 Signal (stale)	Jel (elavult)
 nothing heard yet	Még semmi hír.
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Régebbi billentyűzet-protokoll
+Device	Eszköz
+Keyboard:	Billentyűzet:
+newer keyboard	újabb billentyűzet
+older keyboard	régebbi billentyűzet
+older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
+keyboard not detected yet	a billentyűzet még nincs felismerve
+Older keyboard protocol is now in Settings > Device.	A régebbi billentyűzet-protokoll most a Beállítások > Eszköz oldalon van.
+Diagnostics are on the Device page.	A diagnosztika az Eszköz oldalon található.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	kapcsold be, ha a billentyűzet rossz betűket ír; kikapcsolja a módosítóbillentyűk rögzítését
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
