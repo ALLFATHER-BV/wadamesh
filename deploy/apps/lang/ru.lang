@@ -951,7 +951,7 @@ Your own apps	Ваши приложения
 Zero-hop	Без ретрансляции
 Zero-hop advert sent	Zero-hop advert отправлен
 Zoom: +/- buttons	Масштаб: кнопки +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	неоднозначно (совпало несколько регионов)
 client connected	клиент подключён
 command	команда
 contacts (%d):	контакты (%d):
@@ -996,9 +996,9 @@ tap to exit full screen	нажмите для выхода из полноэкр
 zoom	масштаб
 zoom %d	масштаб %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	усилитель ~17 дБ для тихих/удалённых мест; выключайте в шумных.
-Scope	
-another region	
-my region	
+Scope	Охват
+another region	другой регион
+my region	мой регион
 Save FAIL x%u	
 Save migrating	
 Saved %s	

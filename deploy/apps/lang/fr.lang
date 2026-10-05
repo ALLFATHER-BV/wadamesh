@@ -950,7 +950,7 @@ Your own apps	Vos propres applis
 Zero-hop	Zéro saut
 Zero-hop advert sent	Annonce zero-hop envoyée
 Zoom: +/- buttons	Zoom : boutons +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	ambigu (plusieurs régions correspondent)
 client connected	client connecté
 command	commande
 contacts (%d):	contacts (%d) :
@@ -995,9 +995,9 @@ tap to exit full screen	toucher pour quitter le plein écran
 zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	ampli ~17 dB pour zones calmes/isolées ; désactiver en zone bruyante.
-Scope	
-another region	
-my region	
+Scope	Portée
+another region	une autre région
+my region	ma région
 Save FAIL x%u	
 Save migrating	
 Saved %s	
