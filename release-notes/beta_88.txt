@@ -1,0 +1,17 @@
+# beta_88 - user-facing notes. One note per non-blank, non-# line.
+# Order: things that stopped a device working, then things people reported, then new.
+
+If you have a T-Display P4 that would not boot on beta_86 or beta_87, this is the build that fixes it. Older P4 units carry different Wi-Fi co-processor firmware, and the image we shipped could not talk to it, which left the screen dark and the board restarting every ten seconds. The display, touch and LoRa now come up regardless, and there is a separate download for those units that restores Wi-Fi as well.
+A message sent to a channel could go out on the public channel instead. If a channel went missing while you had it open, the web interface fell back to the first channel on the device rather than refusing, and sent there with nothing on screen to say so. It now refuses, the way the on-device composer already did. Reported by TippyLion28.
+Deleting a chat's history no longer makes the chat itself disappear from Chats. The confirmation always promised the chat would stay; now it does, and Delete chat remains the way to remove it. By jcyrio.
+The T-LoRa Pager no longer loses about half an hour a day. The clock was running off the processor's own timer and drifting, while the accurate clock chip next to it went unread. It is now read back every hour. Diagnosed from the source by jcyrio.
+On the ThinkNode M9 the icons along the bottom have stopped flashing. They now carry a count and appear only when they mean something, instead of blinking over whatever is on screen. The one for newly discovered nodes used to blink forever, because it counted every node ever heard rather than the ones you had not looked at.
+At 100 percent battery the leading 1 was hidden behind the signal bars on the ThinkNode M9 and the Heltec V4-R8. There is room for it now, at every text size, and it no longer jumps back when you plug in a charger. Reported by buko84 and jd1227.
+The status-bar clock no longer sits on top of the Bluetooth icon.
+Map tiles cache again on a T-Display P4 with no SD card. The cache was pointed at a filesystem that was never mounted, so every tile quietly failed.
+The Secondary keyboards page no longer tells T-LoRa Pager, T-Deck Pro and T-Deck Max owners to tap a key their keyboard does not have. It names double-tap SPACE, which is what actually switches layout there, and turning a layout on now says so. By jcyrio.
+New: a battery saver switch on every touch board.
+New: Condense Nav. In landscape the main navigation moves to a rail on the right edge and the Home launchers shrink to icons, which gives the content the full width. Off by default.
+New: keyboard navigation on the T-LoRa Pager, with remappable tab keys, the same as the T-Deck has. Clicking the wheel on a slider now adjusts it with the wheel.
+New on the Attaky Mesh Deck: an Orientation setting so it can run in portrait, File Transfer to internal storage, and Backup and Restore buttons on the File Transfer page in your browser.
+Thirteen languages gained translations for the new settings. If your device is not in English it will fetch them on its next language check.
