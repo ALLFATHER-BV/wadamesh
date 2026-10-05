@@ -28065,6 +28065,15 @@ static bool s_file_transfer_map_upload = false;
 static bool s_file_transfer_replace_existing = false;
 static bool s_file_transfer_map_dirty = false;
 static constexpr const char* kFileTransferTemp = "/transfer/.upload.part";
+// Backup generated for a browser download; deleted once sent or abandoned.
+static constexpr const char* kFileTransferBackupTemp = "/transfer/.backup.part";
+static constexpr uint32_t kFileTransferRestoreMaxBytes = 4u * 1024u * 1024u;
+static bool s_file_transfer_restore_upload = false;
+static bool s_file_transfer_backup_download = false;
+// Settings backup helpers, defined with the Backups settings page further down.
+static void backupMakeFilename(char* out, size_t cap);
+static bool backupImportAndReboot(fs::FS* fsp, const char* path,
+                                  void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
 static constexpr uint32_t kMapTileMaxBytes = 256u * 1024u;
 static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
@@ -28147,12 +28156,21 @@ static void fileTransferResetUpload(bool remove_temp) {
   s_file_transfer_final[0] = '\0';
   s_file_transfer_map_upload = false;
   s_file_transfer_replace_existing = false;
+  s_file_transfer_restore_upload = false;
 }
 
 static void fileTransferResetRead(bool clear_queued_data = true) {
   if (s_file_transfer_read_file) {
     s_file_transfer_read_file.close();
     markSdIo();
+  }
+  if (s_file_transfer_backup_download) {
+    s_file_transfer_backup_download = false;
+    fs::FS& storage = fileTransferStorage();
+    if (fileTransferStorageMounted() && storage.exists(kFileTransferBackupTemp)) {
+      if (!storage.remove(kFileTransferBackupTemp)) fileTransferStorageIoFailed();
+      markSdIo();
+    }
   }
   if (s_file_transfer_list_dir) s_file_transfer_list_dir.close();
   s_file_transfer_downloading = false;
@@ -28325,6 +28343,109 @@ static void fileTransferBeginMap(const char* command) {
                           true);
 }
 
+// Restore: the browser uploads a settings backup (.json) through the normal
+// chunk path into the temporary file; fileTransferEnd() then applies it exactly
+// as Settings -> Backups -> Import does, and the device reboots.
+static void fileTransferRestoreBegin(const char* command) {
+  unsigned long declared = 0;
+  char extra = 0;
+  if (!command || sscanf(command, "RESTORE %lu %c", &declared, &extra) != 1 ||
+      declared == 0 || declared > kFileTransferRestoreMaxBytes) {
+    fileTransferFail("invalid backup size");
+    return;
+  }
+  if (!fileTransferPrepareUpload()) return;
+  // The temp file is the destination: prepare just removed it, so the
+  // existing-file check in fileTransferStartUpload never trips.
+  fileTransferStartUpload(static_cast<uint32_t>(declared), "settings backup",
+                          kFileTransferTemp, FileTransferExistingMode::Replace, false);
+  if (s_file_transfer_uploading) s_file_transfer_restore_upload = true;
+}
+
+static void fileTransferRestoreImported(int nch, int nco) {
+  // The uploaded copy carries the private key; do not leave it behind.
+  fs::FS& storage = fileTransferStorage();
+  if (storage.exists(kFileTransferTemp)) storage.remove(kFileTransferTemp);
+  markSdIo();
+  char reply[48];
+  snprintf(reply, sizeof reply, "RESTORED %d %d", nco, nch);
+  fileTransferReply(reply);   // sent by the network task during the reboot notice
+}
+
+static void fileTransferRestoreApply(fs::FS& storage) {
+  fileTransferResetUpload(false);
+  File probe = storage.open(kFileTransferTemp, FILE_READ);
+  int first = -1;
+  while (probe && probe.available()) {
+    first = probe.read();
+    if (first != ' ' && first != '\t' && first != '\r' && first != '\n') break;
+  }
+  if (probe) probe.close();
+  markSdIo();
+  if (first != '{') {
+    fileTransferFail("not a settings backup (.json)");
+    return;
+  }
+  snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Restoring settings backup");
+  // Reboots on success; fileTransferFail() removes the temp file otherwise.
+  if (!backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported))
+    fileTransferFail("backup could not be imported (bad/unreadable JSON)");
+}
+
+// Backup: write a settings backup exactly as Settings -> Backups -> Export does,
+// to a temporary file, then stream it to the browser through the download path.
+static void fileTransferBackupBegin() {
+  if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
+    fileTransferReply("ERR transfer in progress");
+    return;
+  }
+  if (!g_lv.task || !fileTransferStorageReady()) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR SD card unavailable");
+    return;
+  }
+  fileTransferResetRead();
+  fs::FS& storage = fileTransferStorage();
+  if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR cannot create transfer directory");
+    return;
+  }
+  File out = storage.open(kFileTransferBackupTemp, FILE_WRITE);
+  markSdIo();
+  if (!out) {
+    fileTransferStorageIoFailed();
+    fileTransferReply("ERR cannot create backup file");
+    return;
+  }
+  s_file_transfer_backup_download = true;   // from here on, fileTransferResetRead() removes it
+  { WdtHeavyGuard _wg;
+    { FileBufWriter bw(out);
+      the_mesh.uiExportBackup(bw, g_lv.task->getNodeLat(), g_lv.task->getNodeLon());
+      bw.flushBuf(); }
+    out.close(); }
+  markSdIo();
+
+  s_file_transfer_read_file = storage.open(kFileTransferBackupTemp, FILE_READ);
+  const uint64_t size = s_file_transfer_read_file ? s_file_transfer_read_file.size() : 0;
+  if (size == 0 || size > kFileTransferMaxBytes) {
+    fileTransferStorageIoFailed();
+    fileTransferResetRead();
+    fileTransferReply("ERR backup could not be written");
+    return;
+  }
+  char name[48];
+  backupMakeFilename(name, sizeof name);
+  s_file_transfer_downloading = true;
+  s_file_transfer_download_size = static_cast<uint32_t>(size);
+  s_file_transfer_download_offset = 0;
+  s_file_transfer_result[0] = '\0';
+  snprintf(s_file_transfer_name, sizeof s_file_transfer_name, "%s", name);
+  char reply[WebFileTransfer::MAX_REPLY_BYTES];
+  snprintf(reply, sizeof reply, "FILE %lu %s", static_cast<unsigned long>(size), name);
+  fileTransferReply(reply);
+}
+
 static void fileTransferChunk(const uint8_t* frame, size_t len) {
   if (!s_file_transfer_uploading || !s_file_transfer_file) {
     fileTransferFail("no upload in progress");
@@ -28373,6 +28494,10 @@ static void fileTransferEnd(const char* command) {
   s_file_transfer_file.close();
   markSdIo();
   fs::FS& storage = fileTransferStorage();
+  if (s_file_transfer_restore_upload) {
+    fileTransferRestoreApply(storage);
+    return;
+  }
   if (s_file_transfer_map_upload) {
     File tile = storage.open(kFileTransferTemp, FILE_READ);
     uint8_t signature[8] = {0};
@@ -28672,6 +28797,8 @@ static void webFileTransferTick() {
     else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
     else if (strncmp(command, "DELETE ", 7) == 0) fileTransferDelete(command + 7);
     else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
+    else if (strcmp(command, "BACKUP") == 0) fileTransferBackupBegin();
+    else if (strncmp(command, "RESTORE ", 8) == 0) fileTransferRestoreBegin(command);
     else if (strcmp(command, "CANCEL") == 0) {
       fileTransferResetUpload(true);
       fileTransferResetRead();
@@ -28770,6 +28897,7 @@ static void openFileTransferPage() {
     if (g_lv.task) g_lv.task->showAlert(TR("Could not clear previous upload"), 2000);
     return;
   }
+  if (storage.exists(kFileTransferBackupTemp)) storage.remove(kFileTransferBackupTemp);
   markSdIo();
   if (g_lv.task && !g_lv.task->isTcpEnabled()) {
     g_lv.task->enableTcp();
@@ -44910,14 +45038,12 @@ static void backupPickerClose() {
 static void backupPickerCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) backupPickerClose();
 }
-// Apply the file stashed in s_backup_chosen, then reboot.
-static void doBackupImportChosen() {
-  if (!g_lv.task || !s_backup_chosen[0]) return;
-  fs::FS* fsp = nullptr;
-  const char* path = s_backup_chosen;
-  if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
-  else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
-  if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
+// Import a backup file and, on success, show the counts and reboot (never
+// returns). On failure returns false with the "Importing…" overlay removed.
+// Shared by the on-device picker and the File Transfer page's Restore button.
+static bool backupImportAndReboot(fs::FS* fsp, const char* path,
+                                  void (*on_imported)(int nch, int nco)) {
+  if (!g_lv.task || !fsp || !path) return false;
   // "Importing…" overlay, painted before the blocking parse + apply.
   lv_obj_t* ov = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(ov);
@@ -44944,10 +45070,10 @@ static void doBackupImportChosen() {
   if (!ok) {
     wdtHeavyEnd();
     lv_obj_del(ov);
-    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
-    return;
+    return false;
   }
   g_lv.task->persistHistoryNow();   // nests under the guard above (ref-counted)
+  if (on_imported) on_imported(nch, nco);
   // Surface the result BEFORE the reboot. A silent restart that came back reading
   // "0 contacts" looked to users like the import "did nothing" — now the counts
   // are visible, and if they read 0 the problem is the file/JSON, not the apply.
@@ -44960,6 +45086,18 @@ static void doBackupImportChosen() {
   touchPrefsSetClockFloor(rtc_clock.getFloor());
   touchPrefsFlush();
   ESP.restart();
+  return true;
+}
+// Apply the file stashed in s_backup_chosen, then reboot.
+static void doBackupImportChosen() {
+  if (!g_lv.task || !s_backup_chosen[0]) return;
+  fs::FS* fsp = nullptr;
+  const char* path = s_backup_chosen;
+  if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
+  else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
+  if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
+  if (!backupImportAndReboot(fsp, path, nullptr))
+    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
 }
 static void confirmBackupImport(const char* stored) {
   if (!stored) return;
