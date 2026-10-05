@@ -951,7 +951,7 @@ Your own apps	Οι δικές σας εφαρμογές
 Zero-hop	Χωρίς άλμα
 Zero-hop advert sent	Στάλθηκε zero-hop advert
 Zoom: +/- buttons	Ζουμ: κουμπιά +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	ασαφές (ταιριάζουν πολλές περιοχές)
 client connected	ο πελάτης συνδέθηκε
 command	εντολή
 contacts (%d):	επαφές (%d):
@@ -996,9 +996,9 @@ tap to exit full screen	πατήστε για έξοδο από πλήρη οθ�
 zoom	ζουμ
 zoom %d	ζουμ %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	ενισχυτής ~17 dB για ήσυχες/απομακρυσμένες περιοχές· κλείστε σε θορυβώδεις.
-Scope	
-another region	
-my region	
+Scope	Εμβέλεια
+another region	άλλη περιοχή
+my region	η περιοχή μου
 Save FAIL x%u	
 Save migrating	
 Saved %s	
