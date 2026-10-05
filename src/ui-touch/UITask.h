@@ -131,6 +131,11 @@ public:
     uint8_t mesh_contact_key6[6];
     /** Channel slot index for group sends, or -1 if unknown. */
     int16_t mesh_channel_slot;
+    /** DM only: the user wiped this chat with "Delete history", so the row stays in the
+     *  inbox with no messages behind it. Without this an empty DM is indistinguishable
+     *  from a contact that was never chatted with, and the inbox hides (and the contact
+     *  refresh reclaims) those. "Delete chat" (removeThread) is how the row goes away. */
+    bool keep_when_empty;
     char name[MAX_THREAD_NAME + 1];
   };
 
@@ -349,7 +354,8 @@ public:
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
   int  getThreadCount(bool channel_mode, int out_indexes[], int max_out) const;
-  /** Inbox list: channels (any used) + DMs that have at least one stored message, sorted by recency. */
+  /** Inbox list: channels (any used) + DMs that have at least one stored message or were
+   *  emptied with "Delete history" (keep_when_empty), sorted by recency. */
   int  getCombinedInboxCount(int out_indexes[], int max_out) const;
   bool threadHasMessageHistory(int thread_idx) const;
   bool getThreadInfo(int idx, bool& channel, uint16_t& unread, uint32_t& ts, char* name, size_t name_len) const;

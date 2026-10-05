@@ -347,6 +347,9 @@ struct __attribute__((packed)) UiHistoryThread {
   uint8_t mesh_contact_key6[6];
   int16_t mesh_channel_slot;
   char name[UITask::MAX_THREAD_NAME + 1];
+  // Appended (see the APPEND note above k_ui_history_version): records written before this
+  // field read back 0 via thread_rec_size, and an older build skips the extra byte.
+  uint8_t keep_when_empty;
 };
 
 // On-disk width of UiHistoryMsg::sender, FROZEN at what v6 blobs were written with.
@@ -58707,6 +58710,7 @@ bool UITask::loadThreadsFromStorage() {
     memcpy(_ui_threads[i].mesh_contact_pub,  t.mesh_contact_pub,  sizeof(t.mesh_contact_pub));
     memcpy(_ui_threads[i].mesh_contact_key6, t.mesh_contact_key6, sizeof(t.mesh_contact_key6));
     _ui_threads[i].mesh_channel_slot = t.mesh_channel_slot;
+    _ui_threads[i].keep_when_empty   = t.keep_when_empty != 0;
     strncpy(_ui_threads[i].name, t.name, MAX_THREAD_NAME);
     _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
   }
@@ -59105,6 +59109,7 @@ bool UITask::loadLegacyHistoryFromStorage() {
     memcpy(_ui_threads[i].mesh_contact_pub,  t.mesh_contact_pub,  sizeof(t.mesh_contact_pub));
     memcpy(_ui_threads[i].mesh_contact_key6, t.mesh_contact_key6, sizeof(t.mesh_contact_key6));
     _ui_threads[i].mesh_channel_slot = t.mesh_channel_slot;
+    _ui_threads[i].keep_when_empty   = t.keep_when_empty != 0;
     strncpy(_ui_threads[i].name, t.name, MAX_THREAD_NAME);
     _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
   }
@@ -59255,6 +59260,7 @@ bool UITask::saveThreadsToStorage() {
     memcpy(t.mesh_contact_pub,  _ui_threads[i].mesh_contact_pub,  sizeof(t.mesh_contact_pub));
     memcpy(t.mesh_contact_key6, _ui_threads[i].mesh_contact_key6, sizeof(t.mesh_contact_key6));
     t.mesh_channel_slot  = _ui_threads[i].mesh_channel_slot;
+    t.keep_when_empty    = _ui_threads[i].keep_when_empty ? 1u : 0u;
     strncpy(t.name, _ui_threads[i].name, MAX_THREAD_NAME);
     t.name[MAX_THREAD_NAME] = '\0';
     if (f.write(reinterpret_cast<const uint8_t*>(&t), sizeof(t)) != sizeof(t)) {
@@ -60065,6 +60071,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
     _ui_threads[i].mesh_channel_slot = -1;
     _ui_threads[i].unread            = 0;
     _ui_threads[i].has_mention       = false;
+    _ui_threads[i].keep_when_empty   = false;
     _ui_threads[i].last_ts           = millis();
     strncpy(_ui_threads[i].name, name, MAX_THREAD_NAME);
     _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
@@ -60131,6 +60138,10 @@ void UITask::refreshThreadsFromMesh() {
   // fewer). DMs with actual history stay; new DM threads are created on
   // demand when openMeshContactDm() runs or a message arrives.
   //
+  // A DM the user emptied with "Delete history" (keep_when_empty) also stays:
+  // the confirm promised "the chat itself stays", and this pass runs every
+  // 4 s, so reclaiming it here would undo that promise moments later.
+  //
   // EXCEPTION: never wipe the currently-active thread. The user might have
   // it open and be typing into it — wiping mid-compose means the next Send
   // tap sees `_ui_threads[_active_thread_idx].name` empty, appendMessage's
@@ -60139,7 +60150,8 @@ void UITask::refreshThreadsFromMesh() {
   // doesn't track messages" bug.
   for (int t = 0; t < MAX_UI_THREADS; ++t) {
     if (t == _active_thread_idx) continue;
-    if (_ui_threads[t].used && !_ui_threads[t].channel && !threadHasMessageHistory(t)) {
+    if (_ui_threads[t].used && !_ui_threads[t].channel &&
+        !_ui_threads[t].keep_when_empty && !threadHasMessageHistory(t)) {
       _ui_threads[t].used = false;
       _ui_threads[t].name[0] = '\0';
       _ui_threads[t].mesh_contact_idx = -1;
@@ -61913,7 +61925,8 @@ int UITask::getUnreadTotal() const {
     // but stored no readable message — e.g. from a peer whose advert we
     // haven't received yet, so the body can't be decrypted — would
     // otherwise show a phantom unread badge with nothing to open.
-    if (!_ui_threads[i].channel && !threadHasMessageHistory(i)) continue;
+    if (!_ui_threads[i].channel && !_ui_threads[i].keep_when_empty &&
+        !threadHasMessageHistory(i)) continue;
     total += _ui_threads[i].unread;
   }
   s_last_ms = now;
@@ -62026,7 +62039,10 @@ int UITask::getCombinedInboxCount(int out_indexes[], int max_out) const {
   int n = 0;
   for (int i = 0; i < MAX_UI_THREADS; ++i) {
     if (!_ui_threads[i].used) continue;
-    if (!_ui_threads[i].channel && !threadHasMessageHistory(i)) continue;
+    // Channels always; DMs when they hold a message, or when the user emptied
+    // one with "Delete history" and the row was promised to stay.
+    if (!_ui_threads[i].channel && !_ui_threads[i].keep_when_empty &&
+        !threadHasMessageHistory(i)) continue;
     scratch[n++] = i;
   }
   for (int a = 0; a < n; ++a) {
@@ -62100,6 +62116,11 @@ int UITask::clearThreadHistory(int thread_idx) {
   }
   _ui_threads[thread_idx].unread      = 0;
   _ui_threads[thread_idx].has_mention = false;
+  // The inbox lists a DM only while it has a stored message, and the contact
+  // refresh reclaims a DM slot with none, so an emptied DM used to vanish from
+  // Chats within seconds, against the confirm's "the chat itself stays". Pin
+  // it. Channels are listed regardless, so they need no pin.
+  if (!_ui_threads[thread_idx].channel) _ui_threads[thread_idx].keep_when_empty = true;
   _thread_msgs[thread_idx] = 0;   // emptied, and no other thread was touched
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
