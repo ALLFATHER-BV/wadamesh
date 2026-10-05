@@ -1126,9 +1126,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Стар протокол на клавиатурата
+Device	Устройство
+Radio:	Радио:
+Keyboard:	Клавиатура:
+newer keyboard	по-нова клавиатура
+older keyboard	по-стара клавиатура
+older keyboard (set manually)	по-стара клавиатура (ръчно)
+keyboard not detected yet	клавиатурата още не е разпозната
+Older keyboard protocol is now in Settings > Device.	Старият протокол на клавиатурата е в Настройки > Устройство.
+Diagnostics are on the Device page.	Диагностиката е на страницата Устройство.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	включете, ако клавиатурата пише грешни букви; изключва задържането на модификатори
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot

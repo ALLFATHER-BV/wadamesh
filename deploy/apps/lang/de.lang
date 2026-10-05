@@ -1122,9 +1122,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Älteres Tastaturprotokoll
+Device	Gerät
+Radio:	Funkmodul:
+Keyboard:	Tastatur:
+newer keyboard	neuere Tastatur
+older keyboard	ältere Tastatur
+older keyboard (set manually)	ältere Tastatur (manuell gesetzt)
+keyboard not detected yet	Tastatur noch nicht erkannt
+Older keyboard protocol is now in Settings > Device.	Älteres Tastaturprotokoll ist jetzt unter Einstellungen > Gerät.
+Diagnostics are on the Device page.	Diagnose ist auf der Seite Gerät.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	einschalten, wenn die Tastatur falsche Buchstaben tippt; deaktiviert das Einrasten von Umschalttasten
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
