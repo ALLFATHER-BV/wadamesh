@@ -17304,8 +17304,10 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_t* close_x = addCloseXBadge(card, confirmCancelEvt);   // X behaves like Cancel
-  if (actions_only_nav) lv_obj_add_flag(close_x, NAV_SKIP_FLAG);
+  // X behaves like Cancel. An actions-only dialog leaves it out entirely: Cancel and
+  // the Back key already dismiss it, and on a keypad board the X only added a focus
+  // stop ahead of the real choices (#603).
+  if (!actions_only_nav) addCloseXBadge(card, confirmCancelEvt);
 
   // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
   // physically cannot reach them; scrolls vertically when the card hit the screen cap.
@@ -45955,7 +45957,10 @@ static void confirmBackupImport(const char* stored) {
   if (!stored) return;
   strncpy(s_backup_chosen, stored, sizeof(s_backup_chosen) - 1);
   s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
-  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen);
+  // Actions only, focus on Import: on the Pager the wheel then just loops Import <->
+  // Cancel, instead of starting on the X and stopping on the message text (#603).
+  showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen,
+              /*actions_only_nav=*/true, /*focus_confirm=*/true);
 }
 static void backupChosenCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
