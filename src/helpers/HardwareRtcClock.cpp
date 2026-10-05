@@ -258,6 +258,48 @@ bool HardwareRtcClock::begin(TwoWire& wire, Chip chip) {
   return true;
 }
 
+// Pull the software clock back to the chip, at most once an hour.
+//
+// #583: a Pager left powered loses ~30 min/day. getCurrentTime() deliberately
+// never touches I2C (see the header), so nothing was ever correcting the ESP32
+// clock's drift while an accurate crystal sat on the bus unread. This is the
+// cheapest correction that keeps that rule intact: one validated read an hour.
+//
+// Only runs when a chip was ADOPTED at boot. If the boot read was refused (no
+// ACK, stopped oscillator, implausible date) the chip is not a trustworthy
+// source and must not be allowed to drag a good software clock backwards.
+// readHardware() re-applies every one of those checks on each read, so a chip
+// that fails later is ignored rather than believed.
+//
+// An external sync (NTP, GPS, companion) goes through setCurrentTime(), which
+// writes through to the chip, so the two agree straight afterwards and this
+// cannot fight it.
+void HardwareRtcClock::resyncFromChip() {
+  if (_status != Status::Ok || !_present) return;
+
+  const uint32_t now_ms = millis();
+  // millis() wraps at ~49 days. Comparing as signed makes the wrap a no-op
+  // instead of parking the next resync 49 days out.
+  if (_next_resync_ms && (int32_t)(now_ms - _next_resync_ms) < 0) return;
+  _next_resync_ms = now_ms + kResyncIntervalMs;
+
+  uint32_t hw = 0;
+  Status why = Status::NotProbed;
+  if (!readHardware(hw, why)) return;   // transient bus trouble: try again next hour
+
+  const uint32_t sw = _sw.getCurrentTime();
+  const int32_t  delta = (int32_t)(hw - sw);
+  const int32_t  mag = delta < 0 ? -delta : delta;
+  if (mag < kResyncMinDeltaS) return;   // agreement within a couple of seconds: leave it alone
+
+  // Correct the software clock ONLY. Deliberately not setCurrentTime(): that
+  // would write the chip's own value back to the chip, and a read-back failure
+  // would then clear _write_ok and make a healthy retention path look broken.
+  _sw.setCurrentTime(hw);
+  Serial.printf("[rtc] resynced from %s: software clock was %+ld s off\n",
+                chipName(), (long)-delta);
+}
+
 void HardwareRtcClock::setCurrentTime(uint32_t time) {
   _sw.setCurrentTime(time);            // system clock first: the UI reads that
   if (!_present) return;

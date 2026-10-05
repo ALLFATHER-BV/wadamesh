@@ -22995,6 +22995,17 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
       termLogAppendC(TERM_C_ERR, nullptr, "channel not found");
       return;
     }
+    // The slot resolving to SOME channel is not enough: after a channel add or
+    // remove the indices shift, so a stale slot resolves to a different, valid
+    // channel and this check waved it through. Every caller passes the channel
+    // the user actually chose as `disp`, so compare. Getting this wrong sends a
+    // private message on another channel's key (#589), which is a disclosure,
+    // not a glitch -- so it is enforced here too, at the one point every sender
+    // passes through, and not only in the callers.
+    if (disp && disp[0] && strncmp(cd.name, disp, sizeof(cd.name)) != 0) {
+      termLogAppendC(TERM_C_ERR, nullptr, "channel changed under us - not sent");
+      return;
+    }
     if (!the_mesh.sendGroupMessage(ts, cd.channel, sender, body, (int)strlen(body))) {
       termLogAppendC(TERM_C_ERR, nullptr, "send failed");
       return;
@@ -23569,7 +23580,20 @@ static void webSendToThread(int tidx, const char* text) {
       ChannelDetails cd;
       if (the_mesh.getChannel(s, cd) && cd.name[0] && strcmp(cd.name, name) == 0) { slot = (int16_t)s; break; }
     }
-    if (slot < 0) slot = g_lv.task->threadMeshChannelSlot(tidx);   // fall back to cached if name didn't resolve
+    // NO fallback to the thread's cached slot. That fallback defeated the whole
+    // point of resolving by name: when the name does NOT resolve, the channel is
+    // gone or broken (#588), and the cached slot then points at some OTHER still
+    // valid channel -- in practice slot 0, the public one. termDoSend only
+    // checked that the slot resolved to A channel, so the send went through and
+    // a message meant for a private channel went out in the clear with nothing
+    // on screen to say so (#589). Refuse instead: the touch composer already
+    // refuses this case with "Channel not found", and the web UI must not be
+    // the laxer path.
+    if (slot < 0) {
+      termLogAppendC(TERM_C_ERR, nullptr, "channel not found - not sent");
+      webPushMessages(tidx);
+      return;
+    }
     termDoSend(true, nullptr, slot, name, text);
   } else {
     uint8_t pub[32]; if (g_lv.task->getThreadContactPub(tidx, pub)) termDoSend(false, pub, -1, name, text);
@@ -61036,10 +61060,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   }
   else {
     if (g_fs_ok) {
-      s_tile_fs        = &FFat;
+      // LittleFS, not FFat. g_fs_ok is the result of main.cpp's
+      // LittleFS.begin(true, "/lfs", 10, "storage") -- the 'storage' partition
+      // was converted from FAT to LittleFS and this line was not updated with
+      // it, so the tile cache was handed an FFat object that nothing had
+      // mounted. On a P4 with no card that is every map tile failing to cache,
+      // with "File system is not mounted" as the only clue.
+      s_tile_fs        = &LittleFS;
       s_tile_root[0]   = '\0';
       s_tiles_fs_ready = true;
-      printf("[TILE] T-Display P4: no SD card -> caching Wi-Fi tiles on FFat /tiles\n");
+      printf("[TILE] T-Display P4: no SD card -> caching Wi-Fi tiles on internal LittleFS /tiles\n");
     } else {
       s_tile_fs = nullptr;
       printf("[TILE] T-Display P4: NO tile backend (no SD, FFat down)\n");

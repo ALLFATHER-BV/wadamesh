@@ -86,7 +86,15 @@ public:
   // bootstrap). ClockFloorRTC has already range-checked the value.
   void setCurrentTime(uint32_t time) override;
 
-  void tick() override { _sw.tick(); }
+  // The software clock free-runs between boots, and on some boards it runs
+  // SLOW: jcyrio measured ~30 min lost per day on a T-LoRa Pager that stayed
+  // powered the whole time (#583), which is the ~2% you get from the ESP32's
+  // internal RC oscillator across light sleep. Meanwhile an accurate crystal is
+  // sitting on the bus being ignored, because the shape note above (correctly)
+  // keeps I2C out of getCurrentTime(), which runs on every message, UI tick and
+  // advert. Once an hour is not that hot path. Re-read the chip here and pull
+  // the software clock back to it.
+  void tick() override { _sw.tick(); resyncFromChip(); }
 
   bool    present()   const { return _present; }         // a real, identified chip answered
   Status  status()    const { return _status; }          // why the boot read was/was not adopted
@@ -102,6 +110,14 @@ public:
   bool readHardware(uint32_t& out_epoch, Status& why);
 
 private:
+  // Rate-limited correction of the software clock from the chip. No-op unless a
+  // chip was adopted at boot. See tick().
+  void     resyncFromChip();
+  // Hourly is far more often than a crystal needs, and far less often than the
+  // drift that prompted it (~30 min/day = ~75 s per hour, well over the floor).
+  static constexpr uint32_t kResyncIntervalMs = 60UL * 60UL * 1000UL;
+  static constexpr int32_t  kResyncMinDeltaS  = 2;
+
   bool     writeHardware(uint32_t epoch);
   uint8_t  timeBase() const;   // first time register: 0x02 (8563) / 0x04 (85063) / 0x00 (DS3231)
   uint8_t  i2cAddr()  const;   // 0x51 for both PCF parts, 0x68 for the DS3231
@@ -117,4 +133,5 @@ private:
   Status   _status = Status::NotProbed;
   bool     _present  = false;
   bool     _write_ok = false;
+  uint32_t _next_resync_ms = 0;   // millis() of the next chip re-read (see tick)
 };
