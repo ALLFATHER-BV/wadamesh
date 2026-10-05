@@ -39856,7 +39856,8 @@ static void openMessageInfoPopup(int msg_idx) {
   lv_obj_set_style_radius(bodywrap, 2, LV_PART_SCROLLBAR);
 
   lv_obj_t* lbl = lv_label_create(bodywrap);
-  lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+  lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);    // Clip the label instead of wrapping.
+                                                      // Wrapping mangles the recolor commands in the repeater list. See https://lvgl.io/docs/open/widgets/label#long-modes
   lv_label_set_recolor(lbl, true);
   lv_obj_set_width(lbl, card_w - 20 - 8);             // leave room for the scrollbar
   lv_label_set_text(lbl, body);
