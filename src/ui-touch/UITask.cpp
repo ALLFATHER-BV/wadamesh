@@ -4224,6 +4224,9 @@ enum HomeNavSlot : uint8_t {
 };
 static lv_obj_t* s_home_nav_root = nullptr;
 static lv_obj_t* s_home_nav_right[HOME_NAV_COUNT] = { nullptr };
+// Where LEFT from the launcher column lands: the unread line, or the chart on the
+// Pager, whose Home has no unread line.
+static lv_obj_t* s_home_nav_left = nullptr;
 static bool s_home_nav_split = false;
 
 #if CAP_KEYPAD_NAV
@@ -4695,7 +4698,7 @@ static bool navHomeMove(lv_obj_t* current, int dir) {
   if (!navHomeContains(current)) return false;
   const int slot = navHomeRightIndex(current);
   if (dir == NAV_LEFT) {
-    navHomeFocus(g_lv.home_unread);
+    navHomeFocus(s_home_nav_left);
     return true;
   }
   if (slot >= 0) {
@@ -30044,8 +30047,9 @@ static void makeHome(lv_obj_t* tab) {
   const int BTNW_LABEL = pager_size >= 2 ? 136 : pager_size == 1 ? 120 : 100;
   const int home_line_h = lv_font_get_line_height(&g_font_14);
   const int home_state_y  = pager_size ? 2 : 4;
-  const int home_unread_y = pager_size ? home_state_y + home_line_h + 2 : 22;
-  const int home_stats_y  = pager_size ? home_unread_y + home_line_h + 2 : 40;
+  // No unread row on the Pager (the Chats tab badge carries it): the memory line
+  // takes its place and the chart moves up behind it.
+  const int home_stats_y  = pager_size ? home_state_y + home_line_h + 2 : 22;
 #else
   const int BTNW_LABEL = SC(100);
   const int home_state_y  = SC(4);
@@ -30086,7 +30090,10 @@ static void makeHome(lv_obj_t* tab) {
 
   // Unread line — its own tappable row (mail icon + live count) that jumps to
   // the Chats inbox. Kept separate from the memory line below so only the unread
-  // text is the touch target.
+  // text is the touch target. Not on the Pager: its short panel gives the row to
+  // the chart, and the Chats tab badge already shows the count.
+  g_lv.home_unread = nullptr;
+#if !defined(TLORA_PAGER)
   g_lv.home_unread = lv_label_create(tab);
   lv_label_set_text(g_lv.home_unread, "");
   lv_obj_set_style_text_color(g_lv.home_unread, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -30096,6 +30103,7 @@ static void makeHome(lv_obj_t* tab) {
   lv_obj_add_flag(g_lv.home_unread, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(g_lv.home_unread, 8);
   lv_obj_add_event_cb(g_lv.home_unread, homeUnreadClickedCb, LV_EVENT_CLICKED, nullptr);
+#endif
 
   g_lv.home_stats = lv_label_create(tab);
   lv_label_set_text(g_lv.home_stats, "");
@@ -30170,7 +30178,7 @@ static void makeHome(lv_obj_t* tab) {
   // (env label at SC(58), env chart at SC(92)); relayoutHomeCharts() then
   // re-flows the TX/RX legend + chart + advert button to the measured bottom.
 #if defined(TLORA_PAGER)
-  const int chart_y = pager_size ? home_stats_y + home_line_h + 4 : 60;
+  const int chart_y = home_stats_y + home_line_h + 4;   // right under the memory line, every UI size
 #elif defined(HAS_EXPANSION_KIT)
   // With the env widget present, push the TX/RX chart down to clear the env
   // label (SC(58)) + env chart (SC(92)). With it hidden, sit at the normal
@@ -30181,11 +30189,15 @@ static void makeHome(lv_obj_t* tab) {
   const int chart_y = SC(60);
 #endif
 #if defined(TLORA_PAGER)
-  const int chart_head_h = pager_size ? lv_font_get_line_height(&g_font_12) + 2 : 16;
+  // No "TX n / RX n" legend on the Pager: the chart starts right under the memory
+  // line, and its tap-for-details popup still has the counts.
+  const int chart_head_h = 0;
 #else
   const int chart_head_h = 16;
 #endif
   const int chart_body_y = chart_y + chart_head_h;
+  s_home_chart_legend = nullptr;
+#if !defined(TLORA_PAGER)
   s_home_chart_legend = lv_label_create(tab);
   lv_label_set_text(s_home_chart_legend, "TX 0  /  RX 0");
   lv_obj_set_style_text_color(s_home_chart_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -30197,6 +30209,7 @@ static void makeHome(lv_obj_t* tab) {
 #endif
   lv_obj_set_ext_click_area(s_home_chart_legend, 8);
   lv_obj_add_event_cb(s_home_chart_legend, homeChartClickedCb, LV_EVENT_CLICKED, nullptr);
+#endif
 
 #if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_RAK_TAP_V2) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(ATTAKY_MESH_SERIES) || defined(HAS_TDISPLAY_P4)
   // Landscape boards keep the chart clear of the right-hand button strip.
@@ -30223,7 +30236,9 @@ static void makeHome(lv_obj_t* tab) {
   // Landscape: button sits in the right column, so the chart runs to the
   // bottom (no reserved button row). Portrait: reserve the button row below.
   int chart_h = home_avail - chart_body_y - 4 - (home_land ? 0 : (8 + 36));
-  if (chart_h > 96) chart_h = 96;
+#if !defined(TLORA_PAGER)
+  if (chart_h > 96) chart_h = 96;   // the Pager instead fills down to the bottom edge
+#endif
   if (chart_h < 28) chart_h = 28;
 #if CAP_LARGE_SCREEN
 #if defined(HAS_TDISPLAY_P4)
@@ -30344,6 +30359,7 @@ static void makeHome(lv_obj_t* tab) {
     // box is preferred.
     lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -2, 2);
   }
+  s_home_nav_left = g_lv.home_unread ? g_lv.home_unread : s_home_chart;
 
 #if CAP_LARGE_SCREEN
   // Commander info panel — fills the space below the chart on the big screen. Two columns:
