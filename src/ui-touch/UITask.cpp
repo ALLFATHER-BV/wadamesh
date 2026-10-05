@@ -6939,6 +6939,7 @@ static int       s_setup_region_sel  = -1;     // selected preset index, -1 = ke
 static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region pick can jump focus straight to it
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
+static bool      s_setup_ble_want  = true;     // step 3's Bluetooth switch; applied on Finish (#416)
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
 static void setupShowStep(int step);      // fwd: the M9 Back key steps the wizard, same as its on-screen Back
 static void setupRerunCb(lv_event_t* e);  // fwd: "Run setup again" button callback
@@ -54055,6 +54056,20 @@ static void setupFinishCb(lv_event_t* e) {
     }
   }
 #endif
+#if defined(ESP32)
+  // Step 3's Bluetooth switch. Only a change is applied, so a rerun that leaves
+  // it alone doesn't touch a Bluetooth the user set up.
+  if (g_lv.task && g_lv.task->hasBleCapability() &&
+      s_setup_ble_want != bleRequestedOrEnabled()) {
+    if (!s_setup_ble_want) {
+      g_lv.task->disableBle();
+    } else if (!g_lv.task->enableBle()) {
+      setupWizardClose();
+      g_lv.task->showAlert(bleEnableFailureText(), 2600);
+      return;
+    }
+  }
+#endif
   // Region was applied live when the user advanced past the region step
   // (setRadioParams -> applyRadioFromPrefs). Close the wizard; the Wi-Fi apply
   // request reconnects live; Pager temporarily releases BLE to preserve order.
@@ -54222,12 +54237,33 @@ static void setupShowStep(int step) {
     s_setup_region_next_btn = setupBtn(TR("Next"), setupRegionNextCb, true, sw - 12 - 120, btn_y, 120);
   } else {
     int y = setupHeader(TR("Wi-Fi & Bluetooth"), nullptr, TR("Step 3 of 3"));
+#if defined(ESP32)
+    // #416: Bluetooth is what the phone app finds the device by, so show it here
+    // rather than leave it in the control center, where a fresh install looked
+    // undiscoverable.
+    if (g_lv.task && g_lv.task->hasBleCapability()) {
+      lv_obj_t* bsw = lv_switch_create(s_setup_root);
+      lv_obj_align(bsw, LV_ALIGN_TOP_RIGHT, -12, y + 6);
+      if (s_setup_ble_want) lv_obj_add_state(bsw, LV_STATE_CHECKED);
+      lv_obj_add_event_cb(bsw, [](lv_event_t* e) {
+        s_setup_ble_want = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      }, LV_EVENT_VALUE_CHANGED, nullptr);
+      lv_obj_update_layout(bsw);
+      lv_obj_t* bl = lv_label_create(s_setup_root);
+      lv_label_set_text(bl, TR("Bluetooth"));
+      lv_label_set_long_mode(bl, LV_LABEL_LONG_WRAP);
+      lv_obj_set_width(bl, sw - 24 - lv_obj_get_width(bsw) - 8);
+      lv_obj_set_style_text_font(bl, &g_font_14, LV_PART_MAIN);
+      lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_align_to(bl, bsw, LV_ALIGN_OUT_LEFT_MID, -8, 0);
+      lv_obj_set_x(bl, 12);
+      y += 6 + lv_obj_get_height(bsw) + 4;
+    }
+#endif
     lv_obj_t* m = lv_label_create(s_setup_root);
     lv_label_set_text(m,
-        TR("This device can run Wi-Fi and Bluetooth at once, as a standalone radio and a "
-        "phone companion (MeshCore app) together.\n\n"
-        "Running both at the same time uses more RAM, so turn on only what you need.\n\n"
-        "Set them up anytime in Settings."));
+        TR("Keep Bluetooth on to pair the MeshCore app on your phone. "
+        "Wi-Fi can be set up anytime in Settings."));
     lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(m, sw - 24);
     lv_obj_set_style_text_font(m, &g_font_12, LV_PART_MAIN);
@@ -54261,16 +54297,10 @@ static void setupWizardOpen() {
 // Called once at the end of UITask::begin: show the wizard on a fresh flash.
 static void setupWizardMaybeOpen() {
   if (touchPrefsGetSetupDone()) return;
-  // First-boot setup is Wi-Fi-only: force Bluetooth OFF and persist the choice so
-  // it stays off after setup too — the user opts BLE in later via the control
-  // center. BLE co-inits at boot from the default-on pref; tear it down here,
-  // before the UI is interactive, so the user only ever sees Wi-Fi during setup.
-  // (Already-set-up devices return above, so their BLE state is left untouched.)
-#if defined(ESP32)
-  wifiConfigSetBleEnabled(false);
-  if (g_lv.task && g_lv.task->hasBleCapability() && g_lv.task->isBleEnabled())
-    g_lv.task->disableBle();
-#endif
+  // Bluetooth stays as it booted (on by default), like stock MeshCore: a fresh
+  // install that forced it off was invisible to the phone app (#416). Step 3's
+  // switch starts on; Skip leaves it on.
+  s_setup_ble_want = true;
   setupWizardOpen();
 }
 
@@ -54278,6 +54308,9 @@ static void setupWizardMaybeOpen() {
 // UI. Finishing reboots (to apply region/Wi-Fi); Skip just closes again.
 static void setupRerunCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+#if defined(ESP32)
+  s_setup_ble_want = bleRequestedOrEnabled();   // a rerun shows Bluetooth as it is
+#endif
   setupWizardOpen();
 }
 
