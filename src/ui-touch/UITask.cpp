@@ -861,6 +861,122 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
   }
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);   // still wide: 12 px beats clipping a bigger font
 }
+
+// ---- Button captions that fit any language (#418) ---------------------------------
+// A translation that fits most panels can still overflow a button on the narrowest
+// (the Heltec V4 with its kit) or at a large UI size, and asking translators to
+// shorten every string for the smallest screen only makes it worse everywhere else.
+// So the layout adapts instead: every button styled by styleButton() checks its
+// caption before it draws and, only when the text is wider than the button, steps
+// the font down 16 -> 14 -> 12, then wraps it onto two centred lines if the button
+// has the height, else ends it in "...". A caption that fits is never touched.
+//
+// Scope: buttons whose only visible label child is the caption. Icon + caption
+// pairs and anything with a deliberate scrolling label are left to their builders.
+// No spare object flag (USER_1..4 are all nav markers), so the state lives elsewhere:
+// a wrapped / dotted caption is recognised by the exact width step 2 gives it, and
+// queued fits sit in a small list.
+static lv_obj_t* s_fit_pending[12] = { nullptr };
+static bool uiFitPendingHas(lv_obj_t* b) {
+  for (lv_obj_t* p : s_fit_pending) if (p == b) return true;
+  return false;
+}
+static bool uiFitPendingAdd(lv_obj_t* b) {
+  for (lv_obj_t*& p : s_fit_pending) if (!p) { p = b; return true; }
+  return false;                        // full: the next draw asks again
+}
+static void uiFitPendingDrop(lv_obj_t* b) {
+  for (lv_obj_t*& p : s_fit_pending) if (p == b) p = nullptr;
+}
+
+static lv_obj_t* uiButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* cap = nullptr;
+  const uint32_t n = lv_obj_get_child_cnt(btn);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* c = lv_obj_get_child(btn, i);
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (!lv_obj_check_type(c, &lv_label_class)) continue;
+    if (cap) return nullptr;            // icon + caption: not ours to rearrange
+    cap = c;
+  }
+  if (!cap) return nullptr;
+  const lv_label_long_mode_t lm = lv_label_get_long_mode(cap);
+  if (lm == LV_LABEL_LONG_SCROLL || lm == LV_LABEL_LONG_SCROLL_CIRCULAR) return nullptr;
+  const char* t = lv_label_get_text(cap);
+  return (t && t[0]) ? cap : nullptr;
+}
+
+static lv_coord_t uiCaptionTextW(lv_obj_t* lbl, const lv_font_t* f) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN), 0, LV_COORD_MAX,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  return sz.x;
+}
+
+// Whether the caption still needs work: it overflows and either a smaller font is
+// left to try or it has not been wrapped / dotted yet.
+static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  if (avail_w <= 6) return false;
+  const lv_font_t* f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  if (uiCaptionTextW(lbl, f) <= avail_w) return false;
+  if (lv_font_get_line_height(f) > lv_font_get_line_height(&g_font_12)) return true;
+  return lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w;   // not wrapped / dotted yet
+}
+
+static void uiFitButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* lbl = uiButtonCaption(btn);
+  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  const lv_coord_t avail_h = lv_obj_get_content_height(btn);
+  // 1. The largest baked font, no bigger than the current one, that fits on one line.
+  const lv_font_t* cur = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  const lv_coord_t cur_h = lv_font_get_line_height(cur);
+  const lv_font_t* ladder[3] = { &g_font_16, &g_font_14, &g_font_12 };
+  const lv_font_t* use = nullptr;
+  for (const lv_font_t* f : ladder) {
+    if (lv_font_get_line_height(f) > cur_h) continue;
+    use = f;                                   // smallest-so-far; the last one is 12 px
+    if (uiCaptionTextW(lbl, f) <= avail_w) break;
+  }
+  if (use && use != cur) lv_obj_set_style_text_font(lbl, use, LV_PART_MAIN);
+  const lv_font_t* f = use ? use : cur;
+  if (uiCaptionTextW(lbl, f) <= avail_w) return;
+  // 2. Still too wide at 12 px: two centred lines when the button is tall enough,
+  //    otherwise one line ending in "..." rather than text spilling past the edge.
+  lv_point_t wrapped;
+  lv_txt_get_size(&wrapped, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN),
+                  lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN), avail_w,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  lv_obj_set_width(lbl, avail_w);
+  lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  if (wrapped.y <= avail_h) {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+  } else {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(lbl, lv_font_get_line_height(f));
+  }
+}
+
+static void uiFitButtonAsync(void* p) {
+  lv_obj_t* btn = static_cast<lv_obj_t*>(p);
+  uiFitPendingDrop(btn);
+  if (!btn || !lv_obj_is_valid(btn)) return;
+  uiFitButtonCaption(btn);
+}
+
+// Runs as the button starts to draw, i.e. once its size and caption are final.
+// Restyling mid-render is not allowed, so it only measures here and queues the fit
+// for right after the frame; a caption that fits costs one text measurement.
+static void uiFitButtonDrawCb(lv_event_t* e) {
+  lv_obj_t* btn = lv_event_get_target(e);
+  if (uiFitPendingHas(btn)) return;
+  lv_obj_t* lbl = uiButtonCaption(btn);
+  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
+  if (uiFitPendingAdd(btn)) lv_async_call(uiFitButtonAsync, btn);
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
@@ -3701,6 +3817,10 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 4, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+  // Captions that overflow shrink, then wrap (#418). Remove first: some buttons are
+  // restyled, and the callback must only be attached once.
+  lv_obj_remove_event_cb(obj, uiFitButtonDrawCb);
+  lv_obj_add_event_cb(obj, uiFitButtonDrawCb, LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
 }
 
 // "X" close affordance for popup cards. A bare 16-px glyph with an
@@ -11938,7 +12058,7 @@ static void openAdvertPage() {
   lv_obj_clear_flag(s_advert_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_advert_root, advertDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  s_apppage_title = "Send advert";
+  s_apppage_title = TR("Send advert");
   s_apppage_close = closeAdvertPage;
   statusBarSetTall(true);
   updateGlobalStatusBar();
@@ -15892,7 +16012,7 @@ static void buildDeviceSettings(int sec) {
     y += SC(28);
 
     lv_obj_t* min_label = lv_label_create(body);
-    lv_label_set_text(min_label, "30 sec");
+    lv_label_set_text(min_label, TR("30 sec"));
     lv_obj_set_style_text_font(min_label, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(min_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_pos(min_label, 2, y);
@@ -17467,7 +17587,7 @@ static void bleKbdForgetDo() {
 static void bleKbdForgetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   if (!BleKbd::paired(nullptr)) return;
-  showConfirm(TR("Forget this keyboard? You will need to pair it again."), "Forget", bleKbdForgetDo);
+  showConfirm(TR("Forget this keyboard? You will need to pair it again."), TR("Forget"), bleKbdForgetDo);
 }
 
 // ---- pairing screen ----
@@ -22043,10 +22163,10 @@ static void openAddChannelSheet() {
   };
   // Short labels. The first two reuse the (already translated) titles of the pages
   // they open; the last two are new strings.
-  mk("Create private channel", addChannelCreatePrivateCb);
-  mk("Join private channel", addChannelJoinPrivateCb);
-  mk("Join Public channel", addChannelJoinPublicCb);
-  mk("Join # channel", addChannelJoinHashtagCb);
+  mk(TR("Create private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join private channel"), addChannelJoinPrivateCb);
+  mk(TR("Join Public channel"), addChannelJoinPublicCb);
+  mk(TR("Join # channel"), addChannelJoinHashtagCb);
 }
 
 static void chatsAddBtnCb(lv_event_t* e) {
@@ -28082,10 +28202,10 @@ static void spectrumDrawTrace() {
   if (s_spec_peak_lbl) {
     char pb[40];
 #if defined(HAS_TDECK_PRO)
-    snprintf(pb, sizeof pb, "Peak %d dBm @ %.1f MHz", pk,
+    snprintf(pb, sizeof pb, TR("Peak %d dBm @ %.1f MHz"), pk,
              (double)(s_spec_start + (float)pki * s_spec_step));
 #else
-    snprintf(pb, sizeof pb, "peak %d @ %.1f", pk, (double)(s_spec_start + (float)pki * s_spec_step));
+    snprintf(pb, sizeof pb, TR("peak %d @ %.1f"), pk, (double)(s_spec_start + (float)pki * s_spec_step));
 #endif
     lv_label_set_text(s_spec_peak_lbl, pb);
   }
@@ -28970,12 +29090,12 @@ static void webFileTransferTick() {
 static void fileTransferRefresh() {
   if (!s_file_transfer_status) return;
   if (s_file_transfer_uploading) {
-    lv_label_set_text_fmt(s_file_transfer_status, "Receiving %s\n%lu / %lu bytes",
+    lv_label_set_text_fmt(s_file_transfer_status, TR("Receiving %s\n%lu / %lu bytes"),
                           s_file_transfer_name,
                           static_cast<unsigned long>(s_file_transfer_received),
                           static_cast<unsigned long>(s_file_transfer_expected));
   } else if (s_file_transfer_downloading) {
-    lv_label_set_text_fmt(s_file_transfer_status, "Sending %s\n%lu / %lu bytes",
+    lv_label_set_text_fmt(s_file_transfer_status, TR("Sending %s\n%lu / %lu bytes"),
                           s_file_transfer_name,
                           static_cast<unsigned long>(s_file_transfer_download_offset),
                           static_cast<unsigned long>(s_file_transfer_download_size));
@@ -29075,7 +29195,7 @@ static void openFileTransferPage() {
   lv_obj_set_flex_align(s_file_transfer_root, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(s_file_transfer_root, 10, LV_PART_MAIN);
-  appPageBegin("File Transfer", &closeFileTransferPage);
+  appPageBegin(TR("File Transfer"), &closeFileTransferPage);
 
   const lv_coord_t width = sw - 28;
   lv_obj_t* intro = lv_label_create(s_file_transfer_root);
@@ -29742,7 +29862,7 @@ static void openSpectrumPage() {
   // Live peak readout: a dedicated line on Pro, right-aligned on the info row elsewhere.
   s_spec_peak_lbl = lv_label_create(s_spec_root);
 #if defined(HAS_TDECK_PRO)
-  lv_label_set_text(s_spec_peak_lbl, "Peak -- dBm");
+  lv_label_set_text(s_spec_peak_lbl, TR("Peak -- dBm"));
 #else
   lv_label_set_text(s_spec_peak_lbl, TR("peak --"));
 #endif
@@ -47705,7 +47825,7 @@ static void p4KbRotateOffer() {
   s_p4kb_rot_left = kP4KbRotateSecs;
   char m[96];
   snprintf(m, sizeof m, TR("Keyboard attached.\nRestarting in landscape in %d s."), s_p4kb_rot_left);
-  showConfirm(m, "Reboot Now", p4KbRotateNow, false, true);
+  showConfirm(m, TR("Reboot Now"), p4KbRotateNow, false, true);
   s_p4kb_rot_modal = s_confirm_modal;
   s_p4kb_rot_timer = lv_timer_create(p4KbRotateTick, 1000, nullptr);
   if (!s_p4kb_rot_timer) { confirmDismiss(); s_p4kb_rot_modal = nullptr; }   // no timer, no countdown to promise
@@ -49476,9 +49596,9 @@ static void openControlCenter() {
              CAT_SOUND, nullptr, CC_NAV_DND);
   }
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
-  ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
+  ccToggle(row, LV_SYMBOL_REFRESH, TR("Timer"), s_cc_screenshot_delay_s != 0,
            ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText(), CC_NAV_TIMER);
-  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
+  ccToggle(row, LV_SYMBOL_IMAGE, TR("Screenshot"), false, ccScreenshotCb, tw, th,
            -1, nullptr, CC_NAV_SCREENSHOT);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
@@ -50914,7 +51034,7 @@ static void openUsbFilesPage() {
   lv_obj_set_flex_align(s_usbfiles_root, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(s_usbfiles_root, 10, LV_PART_MAIN);
-  appPageBegin("USB Files", &closeUsbFilesPage);
+  appPageBegin(TR("USB Files"), &closeUsbFilesPage);
 
   const lv_coord_t width = sw - 28;
   auto text = [&](const char* t, const lv_font_t* font, uint32_t color) {
@@ -55247,7 +55367,7 @@ static void openRegionsModal() {
   // put the page origin a whole row UNDER the bar and the top control was clipped
   // by it. statusBarCurH() is the height the bar actually has once tall, so the
   // content clears it on every board and this stays identical elsewhere.
-  s_apppage_title = "Known regions";
+  s_apppage_title = TR("Known regions");
   s_apppage_close = regionsModalClose;
   statusBarSetTall(true);
   const lv_coord_t top = statusBarCurH();
@@ -55333,7 +55453,7 @@ static void openBlockedUsersModal() {
   lv_obj_set_style_bg_opa(s_blocked_modal, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_blocked_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-  s_apppage_title = "Blocked users";
+  s_apppage_title = TR("Blocked users");
   s_apppage_close = blockedModalClose;
   statusBarSetTall(true);
   updateGlobalStatusBar();
@@ -63708,7 +63828,7 @@ static void maxSleepBannerShow(bool show) {
     // U+1F90D (white heart) from the baked emoji image font: it renders light,
     // so it survives the 1-bit threshold on this black strip (the black and red
     // hearts do not). The UTF-8 bytes are spelled out to keep this line ASCII.
-    lv_label_set_text(l, "Asleep:Tap Screen or \xF0\x9F\xA4\x8D to Wake");
+    lv_label_set_text(l, TR("Asleep: tap screen or \xF0\x9F\xA4\x8D to wake"));
     lv_obj_center(l);
   }
   if (show) { lv_obj_clear_flag(s_max_sleep_banner, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_max_sleep_banner); }

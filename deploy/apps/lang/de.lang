@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Tastaturnav.: WASDZ an
 Keyboard nav: off	Tastaturnav.: aus
 Keyboard navigation	Tastaturnavigation
 Keys	Tasten
-Known regions	Known regions
+Known regions	Bekannte Regionen
 LOS → %s	Sichtlinie → %s
 Landscape (desktop)	Querformat (Desktop)
 Landscape set - applies when remote mode starts.	Querformat gesetzt - gilt beim Start des Fernmodus.
@@ -1203,9 +1203,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Vergessen
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Diese Tastatur vergessen? Sie muss danach neu gekoppelt werden.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1292,3 +1292,80 @@ No known Windows malware found.	No known Windows malware found.
 This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
 SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
 and %d more	and %d more
+30 sec	30 s
+Timer	Timer
+Screenshot	Bildschirmfoto
+Join Public channel	Öffentlichem Kanal beitreten
+Join # channel	#-Kanal beitreten
+Peak -- dBm	Spitze -- dBm
+Peak %d dBm @ %.1f MHz	Spitze %d dBm @ %.1f MHz
+peak %d @ %.1f	Spitze %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Schlafmodus: Bildschirm oder 🤍 tippen zum Aufwecken
+Receiving %s\n%lu / %lu bytes	Empfange %s\n%lu / %lu Bytes
+Sending %s\n%lu / %lu bytes	Sende %s\n%lu / %lu Bytes
+Reboot Now	Jetzt neu starten
+File Transfer	Dateiübertragung
+USB Files	USB-Dateien
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Verbinde dieses Gerät per USB-Kabel mit dem Computer.\n2. Öffne diese Adresse in Chrome oder Edge:
+3. Click Connect and choose this device.	3. Klicke auf Verbinden und wähle dieses Gerät.
+A day	Ein Tag
+A week	Eine Woche
+Add, download or delete files on this device from a computer.	Dateien auf diesem Gerät vom Computer aus hinzufügen, herunterladen oder löschen.
+Anything worth saying (optional)	Sonstige Anmerkungen (optional)
+Append timestamp	Zeitstempel anhängen
+Connected to the computer	Mit dem Computer verbunden
+Could not send the report. Try again later.	Bericht konnte nicht gesendet werden. Später erneut versuchen.
+Count this device	Dieses Gerät mitzählen
+Device id	Geräte-ID
+Double-tap SPACE while typing to switch	Zum Umschalten beim Tippen zweimal LEERTASTE drücken
+Emoji	Emoji
+Export Backup	Backup exportieren
+Has a problem	Hat ein Problem
+I hit a problem	Ich hatte ein Problem
+Internal	Intern
+Keyboard and input	Tastatur und Eingabe
+Keyboard attached.\nRestarting in landscape in %d s.	Tastatur angeschlossen.\nNeustart im Querformat in %d s.
+Locks when screen off\n(hold the BOOT button to unlock)	Sperrt bei ausgeschaltetem Bildschirm\n(zum Entsperren BOOT-Taste halten)
+Map and GPS	Karte und GPS
+Map tiles	Kartenkacheln
+Minutes	Minuten
+Never	Nie
+No backups available to restore.	Keine Backups zum Wiederherstellen vorhanden.
+No backups yet. Use Export Backup above to create one.	Noch keine Backups. Mit „Backup exportieren“ oben eines erstellen.
+Normal\nLarge text\nHuge text	Normal\nGroße Schrift\nSehr große Schrift
+Phone-app link	Verbindung zur Handy-App
+Radio and messaging	Funk und Nachrichten
+Received %s	%s empfangen
+Receiving %s	Empfange %s
+Region not saved: use a-z, 0-9 and -	Region nicht gespeichert: nur a-z, 0-9 und -
+Report a bug	Fehler melden
+Running it for	Im Einsatz seit
+Running it for:	Im Einsatz seit:
+SD card	SD-Karte
+SD unavailable - insert a FAT32 card and retry	SD nicht verfügbar – FAT32-Karte einlegen und erneut versuchen
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Sag, ob dieser Build auf deinem Board funktioniert, damit eine stabile Version aufgrund von Belegen freigegeben wird und nicht, weil sich niemand beschwert hat. Ein Fehlerbericht öffnet sich als QR-Code: scanne ihn und reiche ihn am Handy unter deinem eigenen GitHub-Konto ein.
+Screen timeout	Bildschirm-Timeout
+Send	Senden
+Send a test report	Testbericht senden
+Send another test report	Weiteren Testbericht senden
+Sending %s	Sende %s
+Sending your report...	Bericht wird gesendet…
+Stop USB Files	USB-Dateien beenden
+Storage and SD	Speicher und SD
+Tap the EN key on the keyboard to switch	Zum Umschalten die EN-Taste auf der Tastatur tippen
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Teilt der Testmatrix mit, wie viele Geräte diesen Build nutzen, damit sich ein Board ohne Berichte von einem Board unterscheiden lässt, das niemand besitzt. Sendet nur Board und Version, sonst nichts.
+Test report: %s	Testbericht: %s
+Thank you. Your report is on wadamesh.com/beta	Danke. Dein Bericht steht auf wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Das ist alles, was das Gerät verlässt. Kein Name, keine Kontakte, keine Position.
+Tick only what you actually used:	Nur ankreuzen, was du wirklich genutzt hast:
+Turn Wi-Fi on to send a report	WLAN einschalten, um einen Bericht zu senden
+USB Files: low memory	USB-Dateien: wenig Speicher
+Upload of %s stopped	Upload von %s abgebrochen
+Used	Genutzt
+Waiting for the computer	Warte auf den Computer
+While this screen is open, the companion app cannot use USB.	Solange diese Seite offen ist, kann die Begleit-App USB nicht nutzen.
+Works	Funktioniert
+a week or more	eine Woche oder länger
+about a day	etwa einen Tag
+hold the BOOT button to unlock	zum Entsperren BOOT-Taste halten
+minutes	Minuten

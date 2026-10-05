@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Навігація клавіатурою: WASDZ увім
 Keyboard nav: off	Навігація клавіатурою: вимк.
 Keyboard navigation	Навігація клавіатурою
 Keys	
-Known regions	Known regions
+Known regions	Відомі регіони
 LOS → %s	Пряма видимість → %s
 Landscape (desktop)	Альбомна (десктоп)
 Landscape set - applies when remote mode starts.	Альбомну вибрано - застосується під час запуску віддаленого режиму.
@@ -1207,9 +1207,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Забути
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Забути цю клавіатуру? Її доведеться знову спарувати.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1296,3 +1296,80 @@ No known Windows malware found.	No known Windows malware found.
 This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
 SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
 and %d more	and %d more
+30 sec	30 с
+Timer	Таймер
+Screenshot	Знімок екрана
+Join Public channel	Приєднатися до публічного каналу
+Join # channel	Приєднатися до каналу #
+Peak -- dBm	Пік -- dBm
+Peak %d dBm @ %.1f MHz	Пік %d dBm @ %.1f MHz
+peak %d @ %.1f	пік %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Сон: торкніться екрана або 🤍, щоб розбудити
+Receiving %s\n%lu / %lu bytes	Отримання %s\n%lu / %lu байт
+Sending %s\n%lu / %lu bytes	Надсилання %s\n%lu / %lu байт
+Reboot Now	Перезавантажити зараз
+File Transfer	Передавання файлів
+USB Files	Файли USB
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Під'єднайте цей пристрій до комп'ютера кабелем USB.\n2. Відкрийте цю адресу в Chrome або Edge:
+3. Click Connect and choose this device.	3. Натисніть «Під'єднати» й виберіть цей пристрій.
+A day	День
+A week	Тиждень
+Add, download or delete files on this device from a computer.	Додавайте, завантажуйте та видаляйте файли на цьому пристрої з комп'ютера.
+Anything worth saying (optional)	Щось іще (необов'язково)
+Append timestamp	Додати позначку часу
+Connected to the computer	Під'єднано до комп'ютера
+Could not send the report. Try again later.	Не вдалося надіслати звіт. Спробуйте пізніше.
+Count this device	Враховувати цей пристрій
+Device id	ID пристрою
+Double-tap SPACE while typing to switch	Щоб перемкнути, двічі натисніть ПРОБІЛ під час набору
+Emoji	Емодзі
+Export Backup	Експорт резервної копії
+Has a problem	Є проблема
+I hit a problem	У мене виникла проблема
+Internal	Внутрішня
+Keyboard and input	Клавіатура та введення
+Keyboard attached.\nRestarting in landscape in %d s.	Клавіатуру під'єднано.\nПерезапуск в альбомному режимі через %d с.
+Locks when screen off\n(hold the BOOT button to unlock)	Блокується, коли екран вимкнено\n(щоб розблокувати, утримуйте кнопку BOOT)
+Map and GPS	Мапа та GPS
+Map tiles	Тайли мапи
+Minutes	Хвилини
+Never	Ніколи
+No backups available to restore.	Немає резервних копій для відновлення.
+No backups yet. Use Export Backup above to create one.	Резервних копій ще немає. Створіть її кнопкою «Експорт резервної копії» вище.
+Normal\nLarge text\nHuge text	Звичайний\nВеликий текст\nДуже великий текст
+Phone-app link	Зв'язок із застосунком на телефоні
+Radio and messaging	Радіо та повідомлення
+Received %s	%s отримано
+Receiving %s	Отримання %s
+Region not saved: use a-z, 0-9 and -	Регіон не збережено: використовуйте a-z, 0-9 і -
+Report a bug	Повідомити про помилку
+Running it for	Користуюся вже
+Running it for:	Користуюся вже:
+SD card	SD-картка
+SD unavailable - insert a FAT32 card and retry	SD недоступна — вставте картку FAT32 і повторіть
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Повідомте, чи працює ця збірка на вашій платі, щоб стабільний випуск виходив на підставі даних, а не тому, що ніхто не скаржився. Звіт про помилку відкривається як QR-код: відскануйте його й надішліть із телефона під своїм обліковим записом GitHub.
+Screen timeout	Тайм-аут екрана
+Send	Надіслати
+Send a test report	Надіслати тестовий звіт
+Send another test report	Надіслати ще один тестовий звіт
+Sending %s	Надсилання %s
+Sending your report...	Надсилання звіту…
+Stop USB Files	Зупинити файли USB
+Storage and SD	Сховище та SD
+Tap the EN key on the keyboard to switch	Щоб перемкнути, натисніть клавішу EN на клавіатурі
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Повідомляє тестовій матриці, скільки пристроїв працює на цій збірці, щоб плату без звітів можна було відрізнити від плати, якої ні в кого немає. Надсилає лише плату й версію, більше нічого.
+Test report: %s	Тестовий звіт: %s
+Thank you. Your report is on wadamesh.com/beta	Дякуємо. Ваш звіт на wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Це все, що залишає пристрій. Ні імені, ні контактів, ні місцезнаходження.
+Tick only what you actually used:	Позначте лише те, чим справді користувалися:
+Turn Wi-Fi on to send a report	Увімкніть Wi-Fi, щоб надіслати звіт
+USB Files: low memory	Файли USB: мало пам'яті
+Upload of %s stopped	Завантаження %s зупинено
+Used	Використовувалося
+Waiting for the computer	Очікування комп'ютера
+While this screen is open, the companion app cannot use USB.	Поки цей екран відкрито, застосунок-компаньйон не може використовувати USB.
+Works	Працює
+a week or more	тиждень або більше
+about a day	приблизно день
+hold the BOOT button to unlock	щоб розблокувати, утримуйте кнопку BOOT
+minutes	хвилини

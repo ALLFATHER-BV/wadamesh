@@ -421,7 +421,7 @@ Keyboard nav: WASDZ on	Клавиатурна навиг.: WASDZ вкл.
 Keyboard nav: off	Клавиатурна навиг.: изкл.
 Keyboard navigation	Навигация с клавиатура
 Keys	
-Known regions	Known regions
+Known regions	Известни региони
 LOS → %s	Пряка видимост → %s
 Landscape (desktop)	Пейзаж (десктоп)
 Landscape set - applies when remote mode starts.	Пейзажът е зададен - прилага се при стартиране на отдалечения режим.
@@ -1207,9 +1207,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Забрави
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Да се забрави ли тази клавиатура? Ще трябва да я сдвоите отново.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1296,3 +1296,80 @@ No known Windows malware found.	No known Windows malware found.
 This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.	This firmware can find these but not remove them. Update wadamesh, or format the card: in Files, hold the SD card row.
 SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.	SD Scan only removes files it recognises. If the card may be infected, the safest fix is to copy off what you need and format it completely: in Files, hold the SD card row.
 and %d more	and %d more
+30 sec	30 сек
+Timer	Таймер
+Screenshot	Екранна снимка
+Join Public channel	Присъедини се към публичния канал
+Join # channel	Присъедини се към # канал
+Peak -- dBm	Пик -- dBm
+Peak %d dBm @ %.1f MHz	Пик %d dBm @ %.1f MHz
+peak %d @ %.1f	пик %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Заспал: докосни екрана или 🤍 за събуждане
+Receiving %s\n%lu / %lu bytes	Получаване на %s\n%lu / %lu байта
+Sending %s\n%lu / %lu bytes	Изпращане на %s\n%lu / %lu байта
+Reboot Now	Рестартирай сега
+File Transfer	Прехвърляне на файлове
+USB Files	USB файлове
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Свържете това устройство към компютъра с USB кабел.\n2. Отворете този адрес в Chrome или Edge:
+3. Click Connect and choose this device.	3. Натиснете „Свързване“ и изберете това устройство.
+A day	Един ден
+A week	Една седмица
+Add, download or delete files on this device from a computer.	Добавяйте, изтегляйте или изтривайте файлове на това устройство от компютър.
+Anything worth saying (optional)	Нещо друго за казване (по избор)
+Append timestamp	Добавяне на времеви печат
+Connected to the computer	Свързано с компютъра
+Could not send the report. Try again later.	Отчетът не можа да бъде изпратен. Опитайте по-късно.
+Count this device	Отчитане на това устройство
+Device id	ID на устройството
+Double-tap SPACE while typing to switch	Докоснете два пъти ИНТЕРВАЛ при писане за превключване
+Emoji	Емоджи
+Export Backup	Експорт на резервно копие
+Has a problem	Има проблем
+I hit a problem	Имах проблем
+Internal	Вътрешна
+Keyboard and input	Клавиатура и въвеждане
+Keyboard attached.\nRestarting in landscape in %d s.	Клавиатурата е свързана.\nРестарт в хоризонтален режим след %d с.
+Locks when screen off\n(hold the BOOT button to unlock)	Заключва се при изключен екран\n(задръжте бутона BOOT за отключване)
+Map and GPS	Карта и GPS
+Map tiles	Плочки на картата
+Minutes	Минути
+Never	Никога
+No backups available to restore.	Няма резервни копия за възстановяване.
+No backups yet. Use Export Backup above to create one.	Още няма резервни копия. Създайте с „Експорт на резервно копие“ по-горе.
+Normal\nLarge text\nHuge text	Нормален\nГолям текст\nМного голям текст
+Phone-app link	Връзка с приложението на телефона
+Radio and messaging	Радио и съобщения
+Received %s	%s е получен
+Receiving %s	Получаване на %s
+Region not saved: use a-z, 0-9 and -	Регионът не е запазен: използвайте a-z, 0-9 и -
+Report a bug	Докладване на грешка
+Running it for	Използвам го от
+Running it for:	Използвам го от:
+SD card	SD карта
+SD unavailable - insert a FAT32 card and retry	SD не е налична - поставете FAT32 карта и опитайте пак
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Кажете дали тази версия работи на вашата платка, за да се пуска стабилна версия по доказателства, а не защото никой не се е оплакал. Докладът за грешка се отваря като QR код: сканирайте го и го подайте от телефона си със своя акаунт в GitHub.
+Screen timeout	Изключване на екрана
+Send	Изпрати
+Send a test report	Изпращане на тестов отчет
+Send another test report	Изпращане на още един тестов отчет
+Sending %s	Изпращане на %s
+Sending your report...	Отчетът се изпраща…
+Stop USB Files	Спиране на USB файлове
+Storage and SD	Хранилище и SD
+Tap the EN key on the keyboard to switch	Докоснете клавиша EN на клавиатурата за превключване
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Съобщава на тестовата матрица колко устройства използват тази версия, за да се различи платка без отчети от платка, която никой няма. Изпраща само платката и версията, нищо друго.
+Test report: %s	Тестов отчет: %s
+Thank you. Your report is on wadamesh.com/beta	Благодарим. Отчетът ви е на wadamesh.com/beta
+This is everything that leaves the device. No name, no contacts, no position.	Това е всичко, което напуска устройството. Без име, без контакти, без местоположение.
+Tick only what you actually used:	Отбележете само това, което наистина сте използвали:
+Turn Wi-Fi on to send a report	Включете Wi-Fi, за да изпратите отчет
+USB Files: low memory	USB файлове: малко памет
+Upload of %s stopped	Качването на %s е спряно
+Used	Използвано
+Waiting for the computer	Изчакване на компютъра
+While this screen is open, the companion app cannot use USB.	Докато този екран е отворен, придружаващото приложение не може да използва USB.
+Works	Работи
+a week or more	седмица или повече
+about a day	около ден
+hold the BOOT button to unlock	задръжте бутона BOOT за отключване
+minutes	минути
