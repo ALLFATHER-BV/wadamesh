@@ -649,15 +649,24 @@ bool touchPrefsSetTileServer(const char* url) {
 
 static const char* KEY_RGN_SCOPE = "rgn_scope";
 
+// RAM copy of rgn_scope. The chat view names a message's region per bubble (#594),
+// so this is read on every bubble measure and build; an NVS read each time would
+// stall scrolling. touchPrefsSetRegionScope is the only writer and refreshes it.
+static char s_rgn_scope[TOUCH_REGION_SCOPE_MAXLEN];
+static bool s_rgn_scope_cached = false;
+
 int touchPrefsGetRegionScope(char* out, int out_cap) {
   if (!out || out_cap <= 0) return 0;
   out[0] = '\0';
-  if (!s_begun) touchPrefsBegin();
-  String v = prefsGetStr(KEY_RGN_SCOPE, String(""));
-  int n = (int)v.length();
+  if (!s_rgn_scope_cached) {
+    if (!s_begun) touchPrefsBegin();
+    String v = prefsGetStr(KEY_RGN_SCOPE, String(""));
+    snprintf(s_rgn_scope, sizeof s_rgn_scope, "%s", v.c_str());
+    s_rgn_scope_cached = true;
+  }
+  int n = (int)strlen(s_rgn_scope);
   if (n > out_cap - 1) n = out_cap - 1;
-  if (n > TOUCH_REGION_SCOPE_MAXLEN - 1) n = TOUCH_REGION_SCOPE_MAXLEN - 1;
-  memcpy(out, v.c_str(), (size_t)n);
+  memcpy(out, s_rgn_scope, (size_t)n);
   out[n] = '\0';
   return n;
 }
@@ -670,6 +679,7 @@ bool touchPrefsSetRegionScope(const char* name) {
   bool ok = s_prefs.putString(KEY_RGN_SCOPE, name) > 0;
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  s_rgn_scope_cached = false;   // re-read what NVS actually holds on the next get
   return ok;
 }
 
