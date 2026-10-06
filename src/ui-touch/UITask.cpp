@@ -2000,6 +2000,61 @@ void appPageEnd(void (*close_fn)()) {
 void appPageDeleteRootAsync(lv_obj_t* root) {
   if (root) lv_obj_del_async(root);
 }
+
+// ---- Settings sub-pages ---------------------------------------------------------
+// A full-screen page opened FROM a settings page (time-zone list, Wi-Fi scan, backup
+// and accent pickers) leaves the same way as the category page under it: "‹ <title>"
+// in the tall status bar, a tap on the bar closes it, and no header row or Close
+// button of its own. Whoever owned that hook before (the category, or another
+// sub-page) is remembered and handed back on close, so Back steps out one level.
+struct SettingsSubPage { void (*close)(); const char* prev_title; void (*prev_close)(); bool prev_slim; };
+static SettingsSubPage s_subpages[4];
+static uint8_t         s_subpage_n = 0;
+
+// Returns the page root, already below the tall bar; the caller fills it from y = 0.
+static lv_obj_t* settingsSubPageOpen(const char* title, void (*close_fn)()) {
+  if (s_subpage_n < sizeof s_subpages / sizeof s_subpages[0])
+    s_subpages[s_subpage_n++] = { close_fn, s_apppage_title, s_apppage_close, s_apppage_slim };
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  s_apppage_slim  = false;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();   // measured once tall, like Known regions
+  lv_obj_t* root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr) - top);
+  lv_obj_set_pos(root, 0, top);
+  lv_obj_set_style_bg_color(root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);   // modal: presses never reach the page below
+  updateGlobalStatusBar();
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);   // keep "‹ title" tappable
+  return root;
+}
+
+// Call from the page's own close function (whatever closed it: the bar, Back, a pick).
+// A no-op for a page that was not opened through settingsSubPageOpen.
+static void settingsSubPageClose(void (*close_fn)()) {
+  int k = (int)s_subpage_n - 1;
+  while (k >= 0 && s_subpages[k].close != close_fn) --k;
+  if (k < 0) return;
+  const SettingsSubPage gone = s_subpages[k];
+  if (k + 1 < (int)s_subpage_n) {
+    // A sub-page above this one is still open: it now hands back to our predecessor.
+    s_subpages[k + 1].prev_title = gone.prev_title;
+    s_subpages[k + 1].prev_close = gone.prev_close;
+    s_subpages[k + 1].prev_slim  = gone.prev_slim;
+  }
+  for (int i = k; i + 1 < (int)s_subpage_n; ++i) s_subpages[i] = s_subpages[i + 1];
+  --s_subpage_n;
+  if (s_apppage_close != close_fn) return;   // the bar belongs to someone else now
+  s_apppage_title = gone.prev_title;
+  s_apppage_close = gone.prev_close;
+  s_apppage_slim  = gone.prev_slim;
+  statusBarSetTall(gone.prev_title && !gone.prev_slim);   // a category page re-talls it itself
+  updateGlobalStatusBar();
+}
 static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
 static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
 static void batteryTapCb(lv_event_t* e);   // fwd decl (defined near the battery chart) — Settings "Battery" button reuses it
@@ -6376,6 +6431,17 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   // too would race the state machine and double-dispatch tap/swipe events.
   if (!heltecV4CapTouchIsAsyncPolling()) {
     (void)heltecV4CapTouchCheck();
+  }
+  // Stamp s_slider_touch_ms while the finger is down on any slider. Both the press
+  // abort below and the tab / swipe-back handler skip a slider drag on this stamp,
+  // but nothing ever set it, so a sideways drag past the swipe threshold aborted the
+  // press: the slider never got RELEASED (where Screen timeout and the others save)
+  // and the drag could also count as swipe-right = Back on a settings page. LVGL
+  // keeps the pressed object from the previous read, so the stamp is in place well
+  // before the drag reaches the swipe threshold.
+  if (lv_indev_t* sl_act = lv_indev_get_act()) {
+    lv_obj_t* pressed = sl_act->proc.types.pointer.act_obj;
+    if (pressed && lv_obj_check_type(pressed, &lv_slider_class)) s_slider_touch_ms = millis();
   }
   // If the gesture has turned into a swipe, tell LVGL to abandon the press
   // it started on the originally-touched widget. Without this, swiping
@@ -14884,8 +14950,10 @@ static lv_obj_t* s_tz_picker  = nullptr;   // picker overlay (singleton)
 static void tzBtnLabelRefresh() {
   if (s_tz_btn_lbl) lv_label_set_text(s_tz_btn_lbl, touchPrefsTimezoneLabel(touchPrefsGetTimezone()));
 }
-static void tzPickerClose() { if (s_tz_picker) { popupClose(&s_tz_picker); } }
-static void tzPickerCloseCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) tzPickerClose(); }
+static void tzPickerClose() {
+  if (s_tz_picker) { popupClose(&s_tz_picker); }
+  settingsSubPageClose(tzPickerClose);
+}
 static void tzPickerSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -14901,33 +14969,13 @@ static void tzPickerSelectCb(lv_event_t* e) {
 static void openTimezonePicker() {
   tzPickerClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_tz_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_tz_picker);
-  lv_obj_set_size(s_tz_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_tz_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_tz_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_tz_picker, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(s_tz_picker, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* title = lv_label_create(s_tz_picker);
-  lv_label_set_text(title, TR("Time zone"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 8, 8);
-
-  lv_obj_t* close = lv_btn_create(s_tz_picker);
-  lv_obj_set_size(close, SC(30), SC(26));
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(close);
-  lv_obj_add_event_cb(close, tzPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+  // Title + Back ride in the status bar, as on the Clock page this opens from.
+  s_tz_picker = settingsSubPageOpen(TR("Time zone"), tzPickerClose);
 
   lv_obj_t* list = lv_obj_create(s_tz_picker);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - 12, sh - STATUSBAR_H - 44);
-  lv_obj_set_pos(list, 6, 40);
+  lv_obj_set_size(list, sw - 12, lv_obj_get_height(s_tz_picker) - 12);
+  lv_obj_set_pos(list, 6, 6);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -18258,6 +18306,7 @@ static void saveWifiCb(lv_event_t* e) {
 static void wifiScanPopupClose() {
   popupClose(&s_wifi_scan_popup);
   s_wifi_scan_list = nullptr;
+  settingsSubPageClose(wifiScanPopupClose);
 }
 static void wifiScanPopupCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) wifiScanPopupClose();
@@ -18303,11 +18352,25 @@ static void wifiScanFillList() {
 }
 
 // Full-screen scan overlay (covers the bottom bar + sub-tabs) so the SSID list
-// is big and easy to scroll. Sits below the status bar, on lv_layer_top.
+// is big and easy to scroll. From Settings it is a sub-page: "‹ Select network"
+// in the status bar, like the Wi-Fi page under it. The setup wizard hides the
+// status bar, so there it keeps its own title and Close button.
 static void openWifiScanPopup() {
   wifiScanPopupClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  if (!s_setup_root) {
+    s_wifi_scan_popup = settingsSubPageOpen(TR("Select network"), wifiScanPopupClose);
+    s_wifi_scan_list = lv_obj_create(s_wifi_scan_popup);
+    lv_obj_remove_style_all(s_wifi_scan_list);
+    lv_obj_set_size(s_wifi_scan_list, sw - 12, lv_obj_get_height(s_wifi_scan_popup) - 12);
+    lv_obj_set_pos(s_wifi_scan_list, 6, 6);
+    lv_obj_set_flex_flow(s_wifi_scan_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_wifi_scan_list, 6, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_wifi_scan_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_wifi_scan_list, LV_SCROLLBAR_MODE_AUTO);
+    return;
+  }
   s_wifi_scan_popup = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_wifi_scan_popup);
   lv_obj_set_size(s_wifi_scan_popup, sw, sh - STATUSBAR_H);
@@ -18686,7 +18749,11 @@ static lv_obj_t* wifiSheetOpenFullscreen(const char* title) {
   lv_obj_set_style_pad_all(body, 12, LV_PART_MAIN);
   // Clear the tall bar's glass lower row (it overlays the top of this sheet,
   // same as prepSettingsPage's inset on the category pages).
+#if CAP_ROUND_CORNERS
+  lv_obj_set_style_pad_top(body, 8, LV_PART_MAIN);   // no glass row on the round panel's bar
+#else
   lv_obj_set_style_pad_top(body, STATUSBAR_H + 8, LV_PART_MAIN);
+#endif
   // Generous bottom padding so the last field/button can scroll clear of the
   // on-screen keyboard (attachSettingsTaEvents scrolls the focused field into view).
   lv_obj_set_style_pad_bottom(body, SC(64), LV_PART_MAIN);
@@ -39013,10 +39080,16 @@ static void openSettingsCategory(int cat) {
   // a tall title bar). Set the category first so the bar paints the title + goes tall.
   // Most boards start under the solid row and inset the page below the glass row.
   // R8 starts the sheet itself below both rows so no visible content is untappable.
+  // Round-corner panels (P4) have no glass row to clear: their bar is a fixed two rows
+  // that sits wholly above the sheet, so the usual inset only left an empty band over
+  // the first card (the same band #597 removed from the Chats inbox).
   s_settings_open_cat = cat;
   statusBarSetTall(true);
 #if defined(HELTEC_LORA_V4_R8)
   const lv_coord_t settings_top = statusBarCurH();
+  const lv_coord_t settings_pad_top = 8;
+#elif CAP_ROUND_CORNERS
+  const lv_coord_t settings_top = STATUSBAR_H;
   const lv_coord_t settings_pad_top = 8;
 #else
   const lv_coord_t settings_top = STATUSBAR_H;
@@ -45436,9 +45509,7 @@ static void backupScan() {
 }
 static void backupPickerClose() {
   popupClose(&s_backup_picker);
-}
-static void backupPickerCloseCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) backupPickerClose();
+  settingsSubPageClose(backupPickerClose);
 }
 // Import a backup file and, on success, show the counts and reboot (never
 // returns). On failure returns false with the "Importing…" overlay removed.
@@ -45529,33 +45600,13 @@ static void openBackupPicker() {
     return;
   }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_backup_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_backup_picker);
-  lv_obj_set_size(s_backup_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_backup_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_backup_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_backup_picker, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(s_backup_picker, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* title = lv_label_create(s_backup_picker);
-  lv_label_set_text(title, TR("Import settings"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 8, 8);
-
-  lv_obj_t* close = lv_btn_create(s_backup_picker);
-  lv_obj_set_size(close, 30, 26);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(close);
-  lv_obj_add_event_cb(close, backupPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+  // Title + Back ride in the status bar, as on the Backups page this opens from.
+  s_backup_picker = settingsSubPageOpen(TR("Import settings"), backupPickerClose);
 
   lv_obj_t* list = lv_obj_create(s_backup_picker);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - 12, sh - STATUSBAR_H - 42);
-  lv_obj_set_pos(list, 6, 36);
+  lv_obj_set_size(list, sw - 12, lv_obj_get_height(s_backup_picker) - 12);
+  lv_obj_set_pos(list, 6, 6);
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -53234,9 +53285,10 @@ static void updateGlobalStatusBar() {
     // page title, CENTRED in the tall bar and a size up (tapping the bar goes Back). The
     // chevron is tinted with the theme accent (the title text stays default).
 #if CAP_ROUND_CORNERS
-    // Round panel: the title shares row 2 with the battery readout, so it uses that
-    // row's size rather than the tall bar's larger one.
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
+    // Round panel: the title shares row 2 with the battery readout, so it takes the
+    // largest font that fits that row, as the Home name does. A fixed g_font_14 grew
+    // past the 19 px row at the Large / Huge UI sizes and was clipped by the bar.
+    statusBarFitRow2Font(g_statusbar.left_label);
 #else
     lv_obj_set_style_text_font(g_statusbar.left_label,
                                s_statusbar_tall ? &g_font_16 : &g_font_14, LV_PART_MAIN);
@@ -54849,9 +54901,7 @@ static void accentHexCb(lv_event_t* e) {
 static void accentPickerClose() {
   if (s_accent_picker) { popupClose(&s_accent_picker); }
   s_accent_hex_ta = s_accent_preview = nullptr;
-}
-static void accentPickerCloseCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) accentPickerClose();
+  settingsSubPageClose(accentPickerClose);
 }
 static void accentSaveCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -54870,33 +54920,15 @@ static void accentResetCb(lv_event_t* e) {
 static void openAccentPicker() {
   accentPickerClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_accent_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_accent_picker);
-  lv_obj_set_size(s_accent_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_accent_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_accent_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_accent_picker, LV_OPA_COVER, LV_PART_MAIN);
+  // Title + Back ride in the status bar, as on the Display page this opens from.
+  s_accent_picker = settingsSubPageOpen(TR("Accent colour"), accentPickerClose);
+  lv_obj_add_flag(s_accent_picker, LV_OBJ_FLAG_SCROLLABLE);   // the swatches + hex row can outgrow a short panel
   lv_obj_set_flex_flow(s_accent_picker, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(s_accent_picker, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_row(s_accent_picker, 4, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(s_accent_picker, 3, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_accent_picker, 8, LV_PART_MAIN);
   lv_obj_set_scroll_dir(s_accent_picker, LV_DIR_VER);
-
-  lv_obj_t* title = lv_label_create(s_accent_picker);
-  lv_label_set_text(title, TR("Accent colour"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-  lv_obj_t* close = lv_btn_create(s_accent_picker);
-  lv_obj_add_flag(close, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_set_size(close, 30, 26);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 2);
-  styleButton(close);
-  lv_obj_add_event_cb(close, accentPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
 
   // Swatch grid: tap a colour (far friendlier on a touchscreen than a wheel).
   lv_obj_t* grid = lv_obj_create(s_accent_picker);
