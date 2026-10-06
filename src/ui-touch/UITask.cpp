@@ -18531,7 +18531,11 @@ static lv_obj_t* wifiSheetOpenFullscreen(const char* title) {
   lv_obj_set_style_pad_all(body, 12, LV_PART_MAIN);
   // Clear the tall bar's glass lower row (it overlays the top of this sheet,
   // same as prepSettingsPage's inset on the category pages).
+#if CAP_ROUND_CORNERS
+  lv_obj_set_style_pad_top(body, 8, LV_PART_MAIN);   // no glass row on the round panel's bar
+#else
   lv_obj_set_style_pad_top(body, STATUSBAR_H + 8, LV_PART_MAIN);
+#endif
   // Generous bottom padding so the last field/button can scroll clear of the
   // on-screen keyboard (attachSettingsTaEvents scrolls the focused field into view).
   lv_obj_set_style_pad_bottom(body, SC(64), LV_PART_MAIN);
@@ -38793,10 +38797,16 @@ static void openSettingsCategory(int cat) {
   // a tall title bar). Set the category first so the bar paints the title + goes tall.
   // Most boards start under the solid row and inset the page below the glass row.
   // R8 starts the sheet itself below both rows so no visible content is untappable.
+  // Round-corner panels (P4) have no glass row to clear: their bar is a fixed two rows
+  // that sits wholly above the sheet, so the usual inset only left an empty band over
+  // the first card (the same band #597 removed from the Chats inbox).
   s_settings_open_cat = cat;
   statusBarSetTall(true);
 #if defined(HELTEC_LORA_V4_R8)
   const lv_coord_t settings_top = statusBarCurH();
+  const lv_coord_t settings_pad_top = 8;
+#elif CAP_ROUND_CORNERS
+  const lv_coord_t settings_top = STATUSBAR_H;
   const lv_coord_t settings_pad_top = 8;
 #else
   const lv_coord_t settings_top = STATUSBAR_H;
@@ -52919,9 +52929,10 @@ static void updateGlobalStatusBar() {
     // page title, CENTRED in the tall bar and a size up (tapping the bar goes Back). The
     // chevron is tinted with the theme accent (the title text stays default).
 #if CAP_ROUND_CORNERS
-    // Round panel: the title shares row 2 with the battery readout, so it uses that
-    // row's size rather than the tall bar's larger one.
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
+    // Round panel: the title shares row 2 with the battery readout, so it takes the
+    // largest font that fits that row, as the Home name does. A fixed g_font_14 grew
+    // past the 19 px row at the Large / Huge UI sizes and was clipped by the bar.
+    statusBarFitRow2Font(g_statusbar.left_label);
 #else
     lv_obj_set_style_text_font(g_statusbar.left_label,
                                s_statusbar_tall ? &g_font_16 : &g_font_14, LV_PART_MAIN);
