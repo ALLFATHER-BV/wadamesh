@@ -21,8 +21,8 @@
     {
       "id": "tetris",
       "name": "Tetris",
-      "ver": "1.0",
-      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
+      "ver": "1.1",
+      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Press R to toggle portrait mode (90° rotation). Contributed by samuelcoustet."
     },
     {
       "id": "protreck",
