@@ -1846,6 +1846,33 @@ constexpr int SWIPE_SCROLL_STEP  = 90;
 // Runtime (not constexpr) so the UI-scale can grow it to fit bigger status-bar text — set to SC(22)
 // once at boot in begin(), before the UI is built. Stays 22 on the non-scaled boards.
 static lv_coord_t STATUSBAR_H = 22;
+// Compact header + chat chrome, tuned on the T-Deck Pro and shared with the T-Deck, M9,
+// Wio Tracker L2, T-LoRa Pager and T-Display P4: a top pad, a rule and a centred clock on
+// the status bar, a gap between the signal and battery glyphs, a bare "+" and smaller
+// inbox actions, and a smaller composer. (The Pro alone also drops the battery %.)
+#if defined(HAS_TDECK_PRO) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || \
+    defined(HAS_WIO_TRACKER_L2) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
+#define UI_COMPACT_CHROME 1
+#else
+#define UI_COMPACT_CHROME 0
+#endif
+// The header-layout half of it, for the boards on the shared doubled-bar layout: a shorter
+// chat header (back + gear up in the status row) and a one-row inbox header. The Pager
+// already keeps both on one row, and the P4's round-panel bar is a fixed two rows.
+#if UI_COMPACT_CHROME && !CAP_ROUND_CORNERS && !defined(TLORA_PAGER)
+#define UI_COMPACT_CHAT_BAR 1
+#else
+#define UI_COMPACT_CHAT_BAR 0
+#endif
+#if UI_COMPACT_CHROME
+// Space between the signal bars and the battery glyph once the battery-% column is gone.
+static constexpr lv_coord_t kSigBattGap = 4;
+#endif
+#if UI_COMPACT_CHROME
+// Extra space above the header's content. STATUSBAR_H includes it and the bar root
+// carries it as pad_top, so every child aligned in the bar drops by this much.
+static constexpr lv_coord_t kProBarTopPad = 4;
+#endif
 #if CAP_ROUND_CORNERS
 // Two-row status bar for the round-cornered phone panel: row 1 (top) holds the app name +
 // clock, row 2 (bottom) holds the wifi/ble/sd/signal/battery cluster. A top pad clears the
@@ -1859,6 +1886,7 @@ static constexpr lv_coord_t SB_INSET_X = 16;                       // left/right
 static constexpr lv_coord_t SB_ROW1_Y  = SB_TOP_PAD + 2;           // ~10 text top, row 1 (clock)
 static constexpr lv_coord_t SB_ROW2_Y  = SB_TOP_PAD + SB_ROW + 3;  // ~33 text top, row 2 (name + status)
 static void statusBarLayoutTwoRow(int slide);   // defined just after buildGlobalStatusBar
+static void inboxMenuBtnCb(lv_event_t* e);       // P4 portrait inbox drop-down (defined with the two-row layout)
 #endif
 // True while the Reader/Web page is collapsed and showing its URL in the status bar's
 // title zone — updateGlobalStatusBar then hides the clock to make room for the URL.
@@ -1885,6 +1913,7 @@ struct GlobalStatusBar {
   lv_obj_t* inbox_add;      // chat/channel-overview actions: [✓ read | + add | QR]
   lv_obj_t* inbox_mark;
   lv_obj_t* inbox_qr;
+  lv_obj_t* inbox_menu;     // P4 portrait: one icon that drops down the three inbox actions
   lv_obj_t* chat_back;      // "‹" affordance shown while in a chat (tap the bar = close)
   lv_obj_t* fade;           // glass backdrop for the lower row in a chat/overview: top-row solid,
                             //   fading to translucent at the bottom so the chat shows through it
@@ -1899,6 +1928,14 @@ static void updateGlobalStatusBar();   // fwd decl, called from refresh tick
 // taps to go Back — see statusBarTapCb), and the extra room is free for future
 // per-page header content. updateGlobalStatusBar enlarges the back label while tall.
 static bool s_statusbar_tall = false;
+// Opacity the bar's border returns to after the map / lock screen clear it. Only the
+// compact-chrome boards draw one (the header rule); solid, since the Pro's 1-bit e-paper drops a
+// partly transparent line.
+#if UI_COMPACT_CHROME
+static constexpr lv_opa_t kStatusBarBorderOpa = LV_OPA_COVER;
+#else
+static constexpr lv_opa_t kStatusBarBorderOpa = LV_OPA_30;
+#endif
 // Generic "app page" hook so full-screen tool pages (RF Monitor, Spectrum) get the SAME
 // tall status-bar + back-chevron treatment as settings detail pages — NOT a second header
 // bar. When s_apppage_title is set, updateGlobalStatusBar goes tall and paints "‹ <title>"
@@ -1910,9 +1947,25 @@ static void      (*s_apppage_close)() = nullptr;
 // right at the top of its content, which the glass row used to sit over).
 static bool        s_apppage_slim  = false;
 #if CAP_ROUND_CORNERS
-// The round-panel bar is already two rows tall in every state — the tall personalities
-// (settings title, inbox actions, open chat) reuse the two rows rather than doubling it.
-static inline lv_coord_t statusBarCurH() { return STATUSBAR_H; }
+// The round-panel bar is two rows tall — the tall personalities (settings title, inbox
+// actions, open chat) reuse the two rows rather than doubling it. In portrait it drops to
+// ONE row when row 2 would be empty (Home, the Chats overview, the other tabs): the status
+// icons sit on row 1 there and the inbox actions live in a drop-down. See p4SetBarOneRow.
+static bool s_p4_one_row = false;
+static inline lv_coord_t statusBarCurH() {
+  return s_p4_one_row ? (lv_coord_t)(STATUSBAR_H - SB_ROW) : STATUSBAR_H;
+}
+#elif UI_COMPACT_CHAT_BAR
+// Compact-chat-bar boards, in a chat: the back chevron + gear ride up in the status row and the
+// channel name gets a short second row, so the header (and its rule) sits higher
+// than a full doubled bar. Every other tall state keeps the doubled bar.
+static constexpr lv_coord_t kProChatRow2H     = 20;
+static constexpr lv_coord_t kProChatTitleMidY = 8;   // name's centre within row 2; the rest pads it off the rule
+static bool s_statusbar_chat = false;   // set by updateGlobalStatusBar before going tall
+static inline lv_coord_t statusBarCurH() {
+  if (!s_statusbar_tall) return STATUSBAR_H;
+  return s_statusbar_chat ? (lv_coord_t)(STATUSBAR_H + kProChatRow2H) : (lv_coord_t)(STATUSBAR_H * 2);
+}
 #else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
 #endif
@@ -2193,8 +2246,12 @@ void luaHostSetSelectionGlow(lv_obj_t* obj, bool selected) {
 
 // ---- Chat overlay layout ----
 constexpr int CHAT_HDR_H       = 0;    // in-chat header bar removed; thread name shows in the status bar
-#if CAP_LARGE_SCREEN
+#if CAP_ROUND_CORNERS && UI_COMPACT_CHROME
+constexpr int CHAT_COMP_H      = 44;   // P4 compact: a 40-px typing box (was 60) for the smaller font
+#elif CAP_LARGE_SCREEN
 constexpr int CHAT_COMP_H      = 64;   // big screen: ~2× the typing box (60px) + chrome
+#elif UI_COMPACT_CHROME
+constexpr int CHAT_COMP_H      = 28;   // compact chrome: smaller chips + a font size down (24px textbox)
 #else
 constexpr int CHAT_COMP_H      = 34;   // composer row, single line (slimmed 50 → 40 → 34; hugs the 30px textbox)
 #endif
@@ -2206,7 +2263,11 @@ constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped
 // 284-px panel, so it splits into two rows -- QR + emoji right-aligned on top, text +
 // send below. Landscape keeps the single row. Checked live: the keyboard's rotate
 // button flips orientation with the chat open.
+#if UI_COMPACT_CHROME
+static constexpr lv_coord_t CHAT_COMP_BTN_P4 = 36;   // compact: a fifth smaller, with the text a size down
+#else
 static constexpr lv_coord_t CHAT_COMP_BTN_P4 = (56 + 34) / 2;
+#endif
 static inline bool chatComposerTwoRow() {
 #if CAP_ROUND_CORNERS
   return lv_disp_get_hor_res(nullptr) <= lv_disp_get_ver_res(nullptr);
@@ -2218,12 +2279,25 @@ static inline bool chatComposerTwoRow() {
 static inline lv_coord_t chatComposerTopRowH() {
   return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
 }
+// Composer text font: compact-chrome boards run it a size down to match their smaller chips.
+static inline const lv_font_t* chatComposerFont() {
+#if UI_COMPACT_CHROME
+  return &g_font_12;
+#else
+  return &g_font_14;
+#endif
+}
 static inline lv_coord_t chatComposerBaseH() {
   if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
   // font line for Medium/Large without globally scaling the short viewport.
+#if UI_COMPACT_CHROME
+  // Compact: the composer font is a size down and the chrome around it tighter.
+  const lv_coord_t need = lv_font_get_line_height(chatComposerFont()) + 12;
+#else
   const lv_coord_t need = lv_font_get_line_height(&g_font_14) + 18;
+#endif
   return need > CHAT_COMP_H ? need : CHAT_COMP_H;
 #else
   return CHAT_COMP_H;
@@ -2307,6 +2381,8 @@ static inline lv_coord_t chatComposerChipSz() {
   return 56;
 #elif defined(TLORA_PAGER)
   return chatComposerBaseH() - 4;
+#elif UI_COMPACT_CHROME
+  return 24;
 #else
   return 30;
 #endif
@@ -2316,6 +2392,8 @@ static inline lv_coord_t chatComposerSendSz() {
   return CHAT_COMP_BTN_P4;
 #elif defined(TLORA_PAGER)
   return chatComposerChipSz();
+#elif UI_COMPACT_CHROME
+  return 28;
 #else
   return 34;
 #endif
@@ -2363,6 +2441,8 @@ static inline lv_coord_t chatComposerTaW(bool channel_mode) {
 // the full visual height used by channel/blocked sheets.
 #if CAP_ROUND_CORNERS || defined(TLORA_PAGER)
 static inline lv_coord_t chatBarH()      { return STATUSBAR_H; }
+#elif UI_COMPACT_CHAT_BAR
+static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H + kProChatRow2H); }
 #else
 static inline lv_coord_t chatBarH()      { return (lv_coord_t)(STATUSBAR_H * 2); }
 #endif
@@ -5952,6 +6032,7 @@ static void navAddStatusBarActions() {
     s_nav_count++;
   };
   add(g_statusbar.inbox_mark); add(g_statusbar.inbox_add); add(g_statusbar.inbox_qr);
+  add(g_statusbar.inbox_menu);
   add(g_statusbar.chan_gear);
   // On a settings detail / tool page (Monitor, Spectrum) the bar's left_label is the
   // "‹ Title" Back affordance — make it reachable so nav can go Back from a double-topbar page.
@@ -8283,7 +8364,8 @@ static void focusChatComposerOnOpen(LvChatPanel* p) {
 // post-send clear, emoji/quick-reply inserts). Past the cap it scrolls vertically.
 static void chatComposerAutoGrow(LvChatPanel* p) {
   if (!p || !p->composer_ta || !p->composer_row || !p->msgs) return;
-  const lv_coord_t lh = lv_font_get_line_height(&g_font_14);
+  const lv_font_t* cf = chatComposerFont();
+  const lv_coord_t lh = lv_font_get_line_height(cf);
   if (lh <= 0) return;
   const char* txt = lv_textarea_get_text(p->composer_ta);
   // Wrap width = the textarea's content box, less a few px for the cursor so the
@@ -8291,7 +8373,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   lv_coord_t maxw = lv_obj_get_content_width(p->composer_ta) - 4;
   if (maxw < 16) maxw = 16;
   lv_point_t sz;
-  lv_txt_get_size(&sz, (txt && txt[0]) ? txt : " ", &g_font_14, 0, 0, maxw, LV_TEXT_FLAG_NONE);
+  lv_txt_get_size(&sz, (txt && txt[0]) ? txt : " ", cf, 0, 0, maxw, LV_TEXT_FLAG_NONE);
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
@@ -10698,8 +10780,13 @@ static void tabChangedCb(lv_event_t* e) {
     const lv_coord_t hor = lv_disp_get_hor_res(nullptr);
     const lv_coord_t ver = lv_disp_get_ver_res(nullptr);
     if (g_lv.tabview) {
-      lv_obj_set_pos(g_lv.tabview, 0, STATUSBAR_H);
-      lv_obj_set_size(g_lv.tabview, hor, (lv_coord_t)(ver - STATUSBAR_H));
+#if CAP_ROUND_CORNERS
+      const lv_coord_t top = statusBarCurH();   // one row on the P4 portrait tabs
+#else
+      const lv_coord_t top = STATUSBAR_H;
+#endif
+      lv_obj_set_pos(g_lv.tabview, 0, top);
+      lv_obj_set_size(g_lv.tabview, hor, (lv_coord_t)(ver - top));
     }
     if (g_statusbar.root) lv_obj_clear_flag(g_statusbar.root, LV_OBJ_FLAG_HIDDEN);
   }
@@ -30891,7 +30978,8 @@ static void makeChatList(lv_obj_t* tab, LvChatPanel& p, bool channel_mode, bool 
   // glass lower row — and now read through it because the rows are a visible grey.
   // Round-corner panels (P4) skip it: their bar is a fixed two rows that sits wholly
   // above the tab and never overlaps it, so the inset would only leave an empty band.
-#if !defined(TLORA_PAGER) && !CAP_ROUND_CORNERS
+  // Compact-chrome boards skip it too: no glass row (one-row inbox header, or the P4's fixed bar).
+#if !defined(TLORA_PAGER) && !CAP_ROUND_CORNERS && !UI_COMPACT_CHROME
   if (inbox_combined) lv_obj_set_style_pad_top(p.list_cont, STATUSBAR_H, LV_PART_MAIN);
 #endif
   lv_obj_set_style_pad_row(p.list_cont, 1, LV_PART_MAIN);
@@ -37279,7 +37367,7 @@ static void applyMapChrome(bool on) {
   // ---- Status bar (lv_layer_sys, floats above the map) ----
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(g_statusbar.root, on ? LV_OPA_TRANSP : LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(g_statusbar.root, on ? LV_OPA_TRANSP : kStatusBarBorderOpa, LV_PART_MAIN);
     // Night mode inverts the tiles to DARK, so the on-map chrome flips from black
     // (legible over light tiles) to off-white (legible over the dark inverted tiles).
     const lv_color_t fg     = lv_color_hex(!on ? COLOR_TEXT : (light_map_chrome ? 0xF0F0F0 : 0x000000));
@@ -37947,7 +38035,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(qr_btn, openQuickReplyPickerCb, LV_EVENT_CLICKED, &p);
   lv_obj_t* ql = lv_label_create(qr_btn);
   lv_label_set_text(ql, LV_SYMBOL_LIST);
-  lv_obj_set_style_text_font(ql, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(ql, chatComposerFont(), LV_PART_MAIN);
   lv_obj_center(ql);
 #if defined(HAS_TANMATSU)
   styleChipAsFkey(qr_btn, ql, 0, 0xF5A623, chip_sz, true);    // orange △ — quick replies (F2)
@@ -38008,7 +38096,7 @@ static void makeChatDetail(LvChatPanel& p) {
     lv_obj_add_event_cb(p.symbol_btn, openSpecialPickerCb, LV_EVENT_CLICKED, &p);
     lv_obj_t* symbol_label = lv_label_create(p.symbol_btn);
     lv_label_set_text(symbol_label, "#");
-    lv_obj_set_style_text_font(symbol_label, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_font(symbol_label, chatComposerFont(), LV_PART_MAIN);
     lv_obj_center(symbol_label);
   }
 #endif
@@ -38037,9 +38125,10 @@ static void makeChatDetail(LvChatPanel& p) {
   // messages at 127 bytes, shorter than this limit.)
   lv_textarea_set_max_length(p.composer_ta, UITask::MAX_MSG_TEXT);
   lv_obj_set_scrollbar_mode(p.composer_ta, LV_SCROLLBAR_MODE_OFF);
+  // Font before the placeholder: taSetPlaceholder sizes the hint from MAIN's font.
+  lv_obj_set_style_text_font(p.composer_ta, chatComposerFont(), LV_PART_MAIN);
   taSetPlaceholder(p.composer_ta, TR("Type a message..."));
   lv_obj_set_style_text_color(p.composer_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(p.composer_ta, &g_font_14, LV_PART_MAIN);
   // Readable selection highlight: the label draws selected text using its OWN
   // LV_PART_SELECTED text+bg colour, and the theme sets neither — so without
   // this the default pair makes a highlighted word unreadable. Inverse video
@@ -38051,7 +38140,11 @@ static void makeChatDetail(LvChatPanel& p) {
     // Push the text down inside the (roomy) content so it sits centred — 3 px
     // textarea pad + 4 px here = the line at y=7 of the 30 px box. The content keeps
     // its slack, so no exact-fit scroll jitter, and the auto-grow centres every line count.
+#if UI_COMPACT_CHROME
+    lv_obj_set_style_pad_top(comp_lbl, 2, LV_PART_MAIN);   // 24 px box, 12 px font
+#else
     lv_obj_set_style_pad_top(comp_lbl, 4, LV_PART_MAIN);
+#endif
   }
   // Character counter. A message is capped at MAX_MSG_TEXT and the cap is silent:
   // typing simply stops, which reads as a broken keyboard (#350). Rather than
@@ -38090,6 +38183,8 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_size(send, send_sz,
 #if defined(TLORA_PAGER)
                   send_sz
+#elif UI_COMPACT_CHROME
+                  chatComposerChipSz()   // same height as the chips and the text box
 #else
                   30
 #endif
@@ -38100,7 +38195,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(send, sendFromPanelCb, LV_EVENT_CLICKED, &p);
   lv_obj_t* sl = lv_label_create(send);
   lv_label_set_text(sl, LV_SYMBOL_RIGHT);
+#if UI_COMPACT_CHROME
+  lv_obj_set_style_text_font(sl, &g_font_14, LV_PART_MAIN);   // a size down, like the chips
+#else
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
+#endif
   lv_obj_center(sl);
 #if CAP_ROUND_CORNERS
   chatComposerApplyRows(&p);
@@ -45111,7 +45210,7 @@ static void lockscreenHide() {
   // Restore the status bar's normal opaque background + accent border.
   if (g_statusbar.root) {
     lv_obj_set_style_bg_opa(g_statusbar.root, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_opa(g_statusbar.root, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(g_statusbar.root, kStatusBarBorderOpa, LV_PART_MAIN);
   }
 }
 
@@ -52516,6 +52615,27 @@ static int statusPctOverflow() {
 #endif
 }
 
+#if defined(HAS_THINKNODE_M9)
+// M9: Bluetooth sits right next to Wi-Fi (2 px apart), and the SD-activity dot moves out
+// to the left of Bluetooth instead of between the two. Measured from the live glyphs, so
+// it holds at every text preset. `d` is the battery-% slide (0, or the charging close-up).
+static void statusBarM9PlaceBleSd(int d) {
+  if (!g_statusbar.conn_icon || !g_statusbar.ble_icon) return;
+  auto glyphW = [](lv_obj_t* l, const char* g) {
+    return (int)lv_txt_get_width(g, strlen(g), lv_obj_get_style_text_font(l, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+  };
+  const int wifi_x = SBX(73) + statusPctOverflow() - d;              // Wi-Fi's right edge, from the bar's right
+  const int ble_x  = wifi_x + glyphW(g_statusbar.conn_icon, LV_SYMBOL_WIFI) + 2;
+  lv_obj_align(g_statusbar.ble_icon, LV_ALIGN_RIGHT_MID, -ble_x, 0);
+  if (g_statusbar.sd_icon) {
+    // The keyboard glyph (Bluetooth busy with a keyboard) is the wider of the two it shows.
+    const int ble_w = LV_MAX(glyphW(g_statusbar.ble_icon, LV_SYMBOL_BLUETOOTH),
+                             glyphW(g_statusbar.ble_icon, LV_SYMBOL_KEYBOARD));
+    lv_obj_align(g_statusbar.sd_icon, LV_ALIGN_RIGHT_MID, -(ble_x + ble_w + 4), 0);
+  }
+}
+#endif
+
 static void buildGlobalStatusBar() {
   g_statusbar.root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(g_statusbar.root);
@@ -52546,6 +52666,19 @@ static void buildGlobalStatusBar() {
   // No bottom border — the bar blends into the page below it (no hard separation
   // line under the regular OR double-height bar).
   lv_obj_set_style_border_width(g_statusbar.root, 0, LV_PART_MAIN);
+#if UI_COMPACT_CHROME
+  // Compact chrome: a solid full-width rule under the header (it follows the bar to double
+  // height). Full opacity: e-paper is 1-bit, so a partly transparent line drops out.
+  lv_obj_set_style_border_side(g_statusbar.root, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+  #if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_border_color(g_statusbar.root, lv_color_black(), LV_PART_MAIN);
+  #else
+  lv_obj_set_style_border_color(g_statusbar.root, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);   // LCD: theme rule colour
+  #endif
+  lv_obj_set_style_border_width(g_statusbar.root, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(g_statusbar.root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(g_statusbar.root, kProBarTopPad, LV_PART_MAIN);   // see kProBarTopPad
+#endif
 
   // ---- Glass backdrop for the lower row of the double-height bar ----
   // LVGL 8.4 bg gradients can't vary opacity, so fake a vertical solid->translucent
@@ -52560,7 +52693,11 @@ static void buildGlobalStatusBar() {
     g_statusbar.fade = lv_obj_create(g_statusbar.root);
     lv_obj_remove_style_all(g_statusbar.fade);
     lv_obj_set_size(g_statusbar.fade, hor, rowH * 2);
+#if UI_COMPACT_CHROME
+    lv_obj_set_pos(g_statusbar.fade, 0, -kProBarTopPad);   // positions start below the bar's top pad
+#else
     lv_obj_set_pos(g_statusbar.fade, 0, 0);
+#endif
     lv_obj_clear_flag(g_statusbar.fade, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(g_statusbar.fade, LV_OBJ_FLAG_HIDDEN);
     // Solid top row (matches the regular bar fill).
@@ -52606,7 +52743,12 @@ static void buildGlobalStatusBar() {
     // header. Keep all three actions in the first status-bar row, sharing its
     // vertical centreline with the clock and connection/battery indicators.
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
-    const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
+    const lv_coord_t BY = (STATUSBAR_H - kProBarTopPad - BH) / 2;   // inside the padded row
+#elif UI_COMPACT_CHAT_BAR
+    // Smaller actions in the status row's free left end (the clock sits mid-bar), so the
+    // channel-list header is a single row.
+    const lv_coord_t BH = 16, BW = 20, GAP = 3, BX0 = 4;   // ends at x=70, clear of a 24-h clock
+    const lv_coord_t BY = (STATUSBAR_H - kProBarTopPad - BH) / 2;   // inside the padded row
   #elif defined(HELTEC_V4_EXPANSION_IO_PIN)
     // V4 Expansion Kit, original and R8: partition row 2 into larger,
     // non-overlapping cells; the former 30x20 actions were too easy to miss or
@@ -52643,7 +52785,12 @@ static void buildGlobalStatusBar() {
     lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
       lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
+#if UI_COMPACT_CHROME
+      lv_obj_set_style_text_font(ml, &g_font_12, LV_PART_MAIN);   // fits the 16-px status-row button
+#else
+      lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN);
+#endif
+      lv_obj_center(ml); }
     g_statusbar.inbox_add  = mk(1);   // middle — add channel
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK), LV_PART_MAIN);
     lv_obj_set_style_bg_color(g_statusbar.inbox_add, lv_color_hex(COLOR_STATUS_OK_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
@@ -52651,17 +52798,39 @@ static void buildGlobalStatusBar() {
     lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(g_statusbar.inbox_add, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
+#if UI_COMPACT_CHROME
+    lv_obj_set_style_border_width(g_statusbar.inbox_add, 0, LV_PART_MAIN);   // bare "+", no outline
+#endif
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
-      lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN); lv_obj_center(l); }
+#if UI_COMPACT_CHROME
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+#else
+      lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN);
+#endif
+      lv_obj_center(l); }
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
 #if defined(TLORA_PAGER)
       lv_img_set_zoom(qimg, 228);   // baked 18 px glyph -> 16 px, matching uiChromeFont()
+#elif UI_COMPACT_CHROME
+      lv_img_set_zoom(qimg, 171);   // baked 18 px glyph -> 12 px, matching the ✓ and +
 #endif
       lv_obj_set_style_img_recolor(qimg, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_set_style_img_recolor_opa(qimg, LV_OPA_COVER, LV_PART_MAIN); lv_obj_center(qimg); }
+#if CAP_ROUND_CORNERS
+    // Portrait: the three actions fold into one drop-down icon on row 1 (placed by
+    // statusBarLayoutTwoRow), so the Chats header is a single row.
+    g_statusbar.inbox_menu = lv_label_create(g_statusbar.root);
+    lv_label_set_text(g_statusbar.inbox_menu, LV_SYMBOL_BARS);
+    lv_obj_set_style_text_color(g_statusbar.inbox_menu, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_statusbar.inbox_menu, &g_font_14, LV_PART_MAIN);
+    lv_obj_add_flag(g_statusbar.inbox_menu, LV_OBJ_FLAG_CLICKABLE);   // its own tap, not the bar's
+    lv_obj_set_ext_click_area(g_statusbar.inbox_menu, 10);
+    lv_obj_add_event_cb(g_statusbar.inbox_menu, inboxMenuBtnCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_statusbar.inbox_menu, LV_OBJ_FLAG_HIDDEN);
+#endif
   }
 
   // Left zone — dynamic per-tab. Default to "MESHCOMOD"; updateGlobal-
@@ -52691,6 +52860,9 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
   lv_obj_set_style_text_font(g_statusbar.chat_back, uiChromeFont(), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
+#elif UI_COMPACT_CHROME
+  lv_obj_set_style_text_font(g_statusbar.chat_back, &g_font_14, LV_PART_MAIN);   // a size down
+  lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 8, 0);
 #else
   lv_obj_set_style_text_font(g_statusbar.chat_back, &g_font_16, LV_PART_MAIN);
   lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 12, 0);   // breathing room from the edge
@@ -52706,6 +52878,9 @@ static void buildGlobalStatusBar() {
 #if defined(TLORA_PAGER)
   lv_obj_set_style_text_font(g_statusbar.chan_gear, uiChromeFont(), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 30, 0);
+#elif UI_COMPACT_CHROME
+  lv_obj_set_style_text_font(g_statusbar.chan_gear, &g_font_14, LV_PART_MAIN);   // a size down
+  lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 32, 0);
 #else
   lv_obj_set_style_text_font(g_statusbar.chan_gear, &g_font_16, LV_PART_MAIN);
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 44, 0);   // gap after the back chevron
@@ -52867,6 +53042,9 @@ static void buildGlobalStatusBar() {
 #endif
                0);
   lv_obj_add_flag(g_statusbar.sd_icon, LV_OBJ_FLAG_HIDDEN);   // shown only during SD I/O
+#if defined(HAS_THINKNODE_M9)
+  statusBarM9PlaceBleSd(0);   // Bluetooth beside Wi-Fi, the SD dot beyond it
+#endif
 
   // Async mesh-request spinner — a refresh glyph centred in the bar, blinking
   // while a request is in flight (UITask::loop drives it). Centre keeps it clear
@@ -52926,7 +53104,11 @@ static void buildGlobalStatusBar() {
   g_statusbar.dim = lv_obj_create(g_statusbar.root);
   lv_obj_remove_style_all(g_statusbar.dim);
   lv_obj_set_size(g_statusbar.dim, lv_disp_get_hor_res(nullptr), STATUSBAR_H * 2);
+#if UI_COMPACT_CHROME
+  lv_obj_set_pos(g_statusbar.dim, 0, -kProBarTopPad);   // positions start below the bar's top pad
+#else
   lv_obj_set_pos(g_statusbar.dim, 0, 0);
+#endif
   lv_obj_set_style_bg_color(g_statusbar.dim, lv_color_hex(0x000000), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(g_statusbar.dim, LV_OPA_50, LV_PART_MAIN);
   lv_obj_clear_flag(g_statusbar.dim, LV_OBJ_FLAG_SCROLLABLE);
@@ -52961,30 +53143,143 @@ static int statusClusterStart() {
 // Left edge of the whole row-2 status cluster, measured from the bar's right edge.
 static int statusClusterLeftExtent() { return statusClusterStart() + 62 + 14 + SB_INSET_X; }
 
+// Portrait gets the T-Deck Pro style header: icons up on row 1, the clock centred, the
+// channel name / title on row 2, and no battery %. Landscape keeps the original layout.
+static inline bool statusBarRoundIconsTop() {
+  return lv_disp_get_hor_res(nullptr) <= lv_disp_get_ver_res(nullptr);
+}
+
+// Switch the P4 bar between one and two rows, and keep the tab content docked right
+// under it (the same re-dock the R8 does for its tall bar).
+static void p4SetBarOneRow(bool one) {
+  if (one == s_p4_one_row) return;
+  s_p4_one_row = one;
+  const lv_coord_t top = statusBarCurH();
+  if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, top);
+  if (g_lv.tabview) {
+    lv_obj_set_pos(g_lv.tabview, 0, top);
+    lv_obj_set_size(g_lv.tabview, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr) - top);
+  }
+  if (g_lv.dm.list_cont)
+    lv_obj_set_size(g_lv.dm.list_cont, tabContentW(), lv_disp_get_ver_res(nullptr) - top - TABBAR_H);
+}
+
+// ---- P4 portrait inbox menu: ✓ Mark read / + Add channel / QR Share QR ----
+// Each item fires the hidden status-bar button's own CLICKED handler, so the confirm,
+// the add-channel sheet and the QR popup behave exactly as before.
+static lv_obj_t* s_inbox_menu = nullptr;
+static void inboxMenuClose() { if (s_inbox_menu) popupClose(&s_inbox_menu); }
+static void inboxMenuBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;   // a tap on the card
+  inboxMenuClose();
+}
+static void inboxMenuItemCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+  inboxMenuClose();
+  if (target) lv_event_send(target, LV_EVENT_CLICKED, nullptr);
+}
+static void inboxMenuOpen() {
+  inboxMenuClose();
+  s_inbox_menu = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_inbox_menu);
+  lv_obj_set_size(s_inbox_menu, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
+  lv_obj_clear_flag(s_inbox_menu, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_inbox_menu, LV_OBJ_FLAG_CLICKABLE);   // tap outside the card closes it
+  lv_obj_add_event_cb(s_inbox_menu, inboxMenuBackdropCb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* card = lv_obj_create(s_inbox_menu);
+  lv_obj_remove_style_all(card);
+  styleSurface(card, COLOR_PANEL, 10);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(card, 4, LV_PART_MAIN);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_size(card, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_pos(card, SB_INSET_X - 4, statusBarCurH() + 2);   // drops from the icon, under the bar
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  struct Item { const char* glyph; const char* text; lv_obj_t* target; };
+  const Item items[] = {
+    { LV_SYMBOL_OK,   "Mark read",   g_statusbar.inbox_mark },
+    { LV_SYMBOL_PLUS, "Add channel", g_statusbar.inbox_add  },
+    { nullptr,        "Share QR",    g_statusbar.inbox_qr   },
+  };
+  for (const Item& it : items) {
+    lv_obj_t* b = lv_btn_create(card);
+    styleButton(b);
+    lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
+    lv_obj_set_size(b, SC(150), SC(34));
+    lv_obj_add_event_cb(b, inboxMenuItemCb, LV_EVENT_CLICKED, it.target);
+    if (it.glyph) {
+      lv_obj_t* g = lv_label_create(b);
+      lv_label_set_text(g, it.glyph);
+      lv_obj_set_style_text_font(g, &g_font_14, LV_PART_MAIN);
+      lv_obj_align(g, LV_ALIGN_LEFT_MID, 4, 0);
+    } else {
+      lv_obj_t* q = lv_img_create(b);
+      lv_img_set_src(q, &qr_icon_dsc);
+      lv_img_set_zoom(q, 200);
+      lv_obj_set_style_img_recolor(q, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_style_img_recolor_opa(q, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_align(q, LV_ALIGN_LEFT_MID, 2, 0);
+    }
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, TR(it.text));
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 30, 0);
+  }
+  lv_obj_move_foreground(s_inbox_menu);
+  navMarkDirty();
+}
+static void inboxMenuBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_inbox_menu) inboxMenuClose(); else inboxMenuOpen();
+}
 static void statusBarLayoutTwoRow(int slide) {
-  const int ins = SB_INSET_X;
+  const int ins_bar = SB_INSET_X;
+  // Portrait (T-Deck Pro style): the status cluster moves up to row 1, right-anchored,
+  // with no battery % (updateGlobalStatusBar blanks it), so it always closes up on the
+  // battery. The clock centres on row 1 and the title / channel name take row 2.
+  const bool land = statusBarRoundIconsTop();   // ("land" = icons-on-top layout)
+  const lv_coord_t cy = land ? SB_ROW1_Y : SB_ROW2_Y;   // the cluster's row
+  if (land) slide = 1;
+  // Row 1 sits closer to the top corner arcs than row 2, so the cluster comes in a bit.
+  const int ins = land ? SB_INSET_X + 8 : SB_INSET_X;
   // Row 2 — status cluster, right→left, evenly spaced. Battery pinned at the inset;
   // the sub-battery cluster (signal/sd/wifi/ble) sits to its left and slides right by
   // `slide` when the %-column hides while charging. y nudges centre each glyph in the
   // row (montserrat_14 battery sits a touch higher than the 12px glyphs; sig/sd dots
   // drop a few px). The scrolling profile name shares this row on the left (placed by
   // updateGlobalStatusBar).
-  if (g_statusbar.batt_icon) lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_TOP_RIGHT, -(2   + ins),         SB_ROW2_Y - 2);
-  if (g_statusbar.batt_pct)  lv_obj_align(g_statusbar.batt_pct,  LV_ALIGN_TOP_RIGHT, -(26  + ins),         SB_ROW2_Y);
+  if (g_statusbar.batt_icon) lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_TOP_RIGHT, -(2   + ins),         cy - 2);
+  if (g_statusbar.batt_pct)  lv_obj_align(g_statusbar.batt_pct,  LV_ALIGN_TOP_RIGHT, -(26  + ins),         cy);
   const int cl = statusClusterStart();
   // Charging hides the % column; the cluster then closes up to 32 px from the battery
   // (the historical position), whatever width the % column had reserved.
+#if UI_COMPACT_CHROME
+  if (slide) slide = cl - 32 - kSigBattGap;   // keep a small gap before the battery glyph
+#else
   if (slide) slide = cl - 32;
-  if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(cl      + ins - slide), SB_ROW2_Y + 2);
-  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(cl + 22 + ins - slide), SB_ROW2_Y + 4);
-  if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(cl + 38 + ins - slide), SB_ROW2_Y);
-  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(cl + 62 + ins - slide), SB_ROW2_Y);
-  // Row 1 — clock at the right inset (+ keyboard-layout tag to its left when typing).
-  if (g_statusbar.clock)        lv_obj_align(g_statusbar.clock,        LV_ALIGN_TOP_RIGHT, -ins,        SB_ROW1_Y);
-  if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_TOP_RIGHT, -(48 + ins), SB_ROW1_Y);
-  // Row 1 — chat back chevron + channel-settings cog on the left (shown only in a chat).
-  if (g_statusbar.chat_back)  lv_obj_align(g_statusbar.chat_back,  LV_ALIGN_TOP_LEFT, ins,      SB_ROW1_Y);
-  if (g_statusbar.chan_gear)  lv_obj_align(g_statusbar.chan_gear,  LV_ALIGN_TOP_LEFT, ins + 24, SB_ROW1_Y);
+#endif
+  if (g_statusbar.sig_box)   lv_obj_align(g_statusbar.sig_box,   LV_ALIGN_TOP_RIGHT, -(cl      + ins - slide), cy + 2);
+  if (g_statusbar.sd_icon)   lv_obj_align(g_statusbar.sd_icon,   LV_ALIGN_TOP_RIGHT, -(cl + 22 + ins - slide), cy + 4);
+  if (g_statusbar.conn_icon) lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_TOP_RIGHT, -(cl + 38 + ins - slide), cy);
+  if (g_statusbar.ble_icon)  lv_obj_align(g_statusbar.ble_icon,  LV_ALIGN_TOP_RIGHT, -(cl + 62 + ins - slide), cy);
+  // Row 1 — clock at the right inset (+ keyboard-layout tag to its left when typing);
+  // portrait centres it (the clock-placement pass in updateGlobalStatusBar keeps it there).
+  if (g_statusbar.clock) {
+    if (land) lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,        SB_ROW1_Y);
+    else      lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -ins_bar, SB_ROW1_Y);
+  }
+  if (g_statusbar.layout_label) lv_obj_align(g_statusbar.layout_label, LV_ALIGN_TOP_RIGHT, -(48 + ins_bar), SB_ROW1_Y);
+  // Row 1 — chat back chevron + channel-settings cog on the left (shown only in a chat),
+  // or the inbox drop-down icon on the Chats overview (portrait).
+  if (g_statusbar.chat_back)  lv_obj_align(g_statusbar.chat_back,  LV_ALIGN_TOP_LEFT, ins_bar,      SB_ROW1_Y);
+  if (g_statusbar.chan_gear)  lv_obj_align(g_statusbar.chan_gear,  LV_ALIGN_TOP_LEFT, ins_bar + 24, SB_ROW1_Y);
+  if (g_statusbar.inbox_menu) lv_obj_align(g_statusbar.inbox_menu, LV_ALIGN_TOP_LEFT, ins_bar,      SB_ROW1_Y);
 }
 #endif
 
@@ -52993,7 +53288,11 @@ static void statusBarLayoutTwoRow(int slide) {
 // UI sizes g_font_14 is taller than that, and the bar clipped the name's
 // descenders (g, y, p). Give the label the largest font whose whole line fits.
 static void statusBarFitRow2Font(lv_obj_t* l) {
+#if UI_COMPACT_CHROME
+  const lv_coord_t room = STATUSBAR_H - kProBarTopPad - SB_ROW2_Y;   // rows sit below the top pad
+#else
   const lv_coord_t room = STATUSBAR_H - SB_ROW2_Y;
+#endif
   const lv_font_t* const ladder[] = { &g_font_14, &g_font_12, &lv_font_montserrat_14, &lv_font_montserrat_12 };
   const lv_font_t* pick = ladder[3];
   for (const lv_font_t* f : ladder) {
@@ -53101,10 +53400,21 @@ static void updateGlobalStatusBar() {
                               (s_settings_open_cat < 0);
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
-#if defined(TLORA_PAGER)
-    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim);
+#if defined(TLORA_PAGER) || UI_COMPACT_CHAT_BAR
+    // Pager + compact-chat-bar boards: the inbox actions share the status row, so the overview stays one row.
+    const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim)
+  #if UI_COMPACT_CHAT_BAR
+                           || chat_open
+  #endif
+                           ;
 #else
     const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || inbox_overview || chat_open;
+#endif
+#if UI_COMPACT_CHAT_BAR
+    if (chat_open != s_statusbar_chat) {   // height differs between a chat and other tall pages
+      s_statusbar_chat = chat_open;
+      statusBarSetTall(want_tall);
+    } else
 #endif
     if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
     // Glass lower row on double-height bars (settings detail, inbox/chat overview,
@@ -53131,11 +53441,25 @@ static void updateGlobalStatusBar() {
       }
     }
     lv_obj_t* const inbox_btns[3] = { g_statusbar.inbox_add, g_statusbar.inbox_mark, g_statusbar.inbox_qr };
+#if CAP_ROUND_CORNERS
+    // Portrait: one row unless row 2 carries something (a chat's name, a page title);
+    // the inbox actions fold into the row-1 drop-down icon.
+    const bool p4_portrait = statusBarRoundIconsTop();
+    p4SetBarOneRow(p4_portrait && !chat_open && s_settings_open_cat < 0 && !s_apppage_title);
+    const bool show_inbox_btns = inbox_overview && !p4_portrait;
+    if (g_statusbar.inbox_menu) {
+      if (inbox_overview && p4_portrait) lv_obj_clear_flag(g_statusbar.inbox_menu, LV_OBJ_FLAG_HIDDEN);
+      else                               lv_obj_add_flag(g_statusbar.inbox_menu, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (!(inbox_overview && p4_portrait)) inboxMenuClose();
+#else
+    const bool show_inbox_btns = inbox_overview;
+#endif
     if (g_statusbar.inbox_add) {
       for (lv_obj_t* b : inbox_btns) {
         if (!b) continue;
-        if (inbox_overview) lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN);
-        else                lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
+        if (show_inbox_btns) lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN);
+        else                 lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
       }
     }
     // Per-element vertical placement in the tall bar. Default = TOP row (system content,
@@ -53143,18 +53467,33 @@ static void updateGlobalStatusBar() {
     // an open chat's thread name drops to the LOWER row and its cog centres across both.
     // On the round panel the two rows come from each child's BASE align (set by
     // statusBarLayoutTwoRow), not from a per-tick shift — so never translate there.
+#if UI_COMPACT_CHAT_BAR
+    // Centre row-1 content in the first STATUSBAR_H px of whatever height the bar has
+    // (the compact chat bar is shorter than a doubled one).
+    const lv_coord_t up = s_statusbar_tall ? -(lv_coord_t)((statusBarCurH() - STATUSBAR_H) / 2) : 0;
+#else
     const lv_coord_t up = (s_statusbar_tall && !CAP_ROUND_CORNERS) ? -(lv_coord_t)(STATUSBAR_H / 2) : 0;
+#endif
     const uint32_t nch = lv_obj_get_child_cnt(g_statusbar.root);
     for (uint32_t i = 0; i < nch; ++i) {
       lv_obj_t* c = lv_obj_get_child(g_statusbar.root, i);
       if (c == inbox_btns[0] || c == inbox_btns[1] || c == inbox_btns[2]) continue;
+      if (c == g_statusbar.inbox_menu) continue;
       if (c == g_statusbar.fade || c == g_statusbar.dim) continue;   // full-bar backdrops — never shift
       lv_coord_t t = up;   // top row by default
       if (c == g_statusbar.left_label) {
         if (s_settings_open_cat >= 0 || s_apppage_title) t = 0;    // settings/tool back+title: centred
+#if UI_COMPACT_CHAT_BAR
+        else if (chat_open)           t = (lv_coord_t)(STATUSBAR_H + kProChatTitleMidY - (statusBarCurH() + kProBarTopPad) / 2);   // thread name: top of row 2
+#else
         else if (chat_open)           t = -up;  // chat thread name: lower row
+#endif
       } else if (chat_open && (c == g_statusbar.chan_gear || c == g_statusbar.chat_back)) {
+#if UI_COMPACT_CHAT_BAR
+        t = up;                                 // chat back + cog: up in the status row
+#else
         t = 0;                                  // chat back + cog: centred across both rows
+#endif
       } else if (c == g_statusbar.layout_label) {
         // The layout indicator is align_to'd against the CLOCK's final (already
         // translated) coords every tick — shifting it here too double-applied the
@@ -53199,16 +53538,23 @@ static void updateGlobalStatusBar() {
     s_crumb_capped = false;
   }
   if (in_chan_chat) {
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_MID, 0, SB_ROW1_Y);
+    // Landscape: thread name centred on row 1. Portrait: centred on row 2, under the
+    // centred clock (the status cluster has moved up to row 1).
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_MID, 0,
+                 statusBarRoundIconsTop() ? SB_ROW2_Y : SB_ROW1_Y);
   } else if (s_settings_open_cat >= 0 || s_apppage_title) {
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW2_Y);
-    // Sharing row 2 with the status cluster: cap the title short of it (ellipsis).
-    const int crumb_w = lv_obj_get_width(g_statusbar.root) - SB_INSET_X - statusClusterLeftExtent() - 6;
+    // Landscape shares row 2 with the status cluster: cap the title short of it (ellipsis).
+    // Portrait has row 2 to itself, inset from both corners.
+    const int crumb_w = lv_obj_get_width(g_statusbar.root) - SB_INSET_X - 6 -
+                        (statusBarRoundIconsTop() ? SB_INSET_X : statusClusterLeftExtent());
     lv_obj_set_width(g_statusbar.left_label, LV_MAX(40, crumb_w));
     lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
     s_crumb_capped = true;
   } else {
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X, SB_ROW2_Y);
+    // One-row portrait bar: the badge / map credit moves up to row 1.
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, SB_INSET_X,
+                 s_p4_one_row ? SB_ROW1_Y : SB_ROW2_Y);
   }
 #else
   if (in_chan_chat) {
@@ -53347,7 +53693,11 @@ static void updateGlobalStatusBar() {
       lv_label_set_text(g_statusbar.left_label, s_map_style == 1
           ? TR("\xC2\xA9 OpenTopoMap")      // © OpenTopoMap (CC-BY-SA) — full text in Options -> Info
           : TR("\xC2\xA9 OpenStreetMap"));
-    } else if (tab == HOME_TAB_INDEX && touchPrefsGetHideNodeName()) {
+    } else if (tab == HOME_TAB_INDEX && (touchPrefsGetHideNodeName()
+#if CAP_ROUND_CORNERS
+               || statusBarRoundIconsTop()   // P4 portrait: the Home info box already names the node
+#endif
+               )) {
       // Display setting: hide the device name. Clear the left zone — the clock is
       // parked here instead (see the clock-placement block below).
       lv_label_set_text(g_statusbar.left_label, "");
@@ -53532,25 +53882,35 @@ static void updateGlobalStatusBar() {
   // ---- Battery ----
   const uint16_t mv = batteryMvSmoothed();
   const bool charging = batteryIsCharging(mv);
+  // No battery-% text: always on the T-Deck Pro (icon only), else only while charging
+  // (the bolt replaces it). Everything left of the battery slides right to close the gap.
+#if defined(HAS_TDECK_PRO)
+  const bool pct_off = true;
+  (void)charging;
+#elif CAP_ROUND_CORNERS
+  const bool pct_off = charging || statusBarRoundIconsTop();   // P4 portrait: icon only, like the Pro
+#else
+  const bool pct_off = charging;
+#endif
   const int pct = batteryPercentFromMv(mv);
   static int s_last_pct = -9999;
-  static bool s_last_charging = false;
-  if (pct != s_last_pct || charging != s_last_charging) {
+  static bool s_last_pct_off = false;
+  if (pct != s_last_pct || pct_off != s_last_pct_off) {
     char buf[8];
-    if (charging)       buf[0] = '\0';                       // charging -> batteryGlyphForMv shows the bolt; no text
+    if (pct_off)        buf[0] = '\0';                       // charging -> batteryGlyphForMv shows the bolt; no text
     else if (pct < 0)   snprintf(buf, sizeof(buf), "?");
     else                snprintf(buf, sizeof(buf), "%d%%", pct);
     lv_label_set_text(g_statusbar.batt_pct, buf);
-    if (charging != s_last_charging) {
+    if (pct_off != s_last_pct_off) {
       // The % column disappears while charging (bolt only), so slide everything
       // left of the battery rightward to keep it snug against the bolt — else a
       // %-wide gap opens between the signal bars and the lightning glyph.
 #if CAP_ROUND_CORNERS
       // Round panel: re-apply the two-row layout, sliding the row-2 sub-battery cluster
       // right by the hidden %-column width so it stays snug against the bolt.
-      statusBarLayoutTwoRow(charging ? 32 : 0);
+      statusBarLayoutTwoRow(pct_off ? 32 : 0);
 #elif defined(TLORA_PAGER)
-      const int d = charging ? 45 : 0;
+      const int d = pct_off ? 45 - kSigBattGap : 0;   // a small gap before the battery glyph
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -82  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -104 + d, 0);
       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -124 + d, 0);
@@ -53563,7 +53923,7 @@ static void updateGlobalStatusBar() {
       // instant charging toggled. Bases match the SC() builder (now unified with the non-large-screen
       // branch below); the clock is re-placed (SC-scaled) by the clock-placement block just below, and
       // sleep_icon is T-Deck-only so it's omitted here — dnd_icon is NOT T-Deck-only, so it IS included.
-      const int d = charging ? SC(32) : 0;
+      const int d = pct_off ? SC(32) : 0;
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -SC(54)  + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -SC(73)  + d, 0);
       if (g_statusbar.sd_icon)      lv_obj_align(g_statusbar.sd_icon,      LV_ALIGN_RIGHT_MID, -SC(91)  + d, 0);
@@ -53578,7 +53938,11 @@ static void updateGlobalStatusBar() {
       // Wi-Fi and Bluetooth while charging. The clock and the layout label are placed below
       // (clock placement / layout indicator), which also re-run on a charging change.
       const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;   // tuned raw at 100%, like its clock
-      const int d   = charging ? (narrow_bar ? 32 : SBX(32)) : 0;
+      const int d   = pct_off ? (narrow_bar ? 32 : SBX(32))
+#if UI_COMPACT_CHROME
+                              - kSigBattGap   // a small gap before the battery glyph
+#endif
+                            : 0;
       const int ovf = statusPctOverflow();
       if (g_statusbar.sig_box)      lv_obj_align(g_statusbar.sig_box,      LV_ALIGN_RIGHT_MID, -(SBX(54) + ovf) + d, 0);
       if (g_statusbar.conn_icon)    lv_obj_align(g_statusbar.conn_icon,    LV_ALIGN_RIGHT_MID, -(SBX(73) + ovf) + d, 0);
@@ -53588,11 +53952,23 @@ static void updateGlobalStatusBar() {
       if (g_statusbar.ble_icon)     lv_obj_align(g_statusbar.ble_icon,     LV_ALIGN_RIGHT_MID, (narrow_bar ? -111 : -SBX(127)) + d, 0);
       if (g_statusbar.sleep_icon)   lv_obj_align(g_statusbar.sleep_icon,   LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
       if (g_statusbar.dnd_icon)     lv_obj_align(g_statusbar.dnd_icon,     LV_ALIGN_RIGHT_MID, -SBX(144) + d, 0);
+#if defined(HAS_THINKNODE_M9)
+      statusBarM9PlaceBleSd(d);   // re-pin Bluetooth beside Wi-Fi after the slide
+#endif
 #endif
     }
     s_last_pct = pct;
-    s_last_charging = charging;
+    s_last_pct_off = pct_off;
   }
+#if CAP_ROUND_CORNERS
+  {
+    // A rotation moves the cluster between rows even when the % state did not change
+    // (charging in both orientations), so re-run the layout on an orientation flip too.
+    static int s_last_land = -1;
+    const int land = statusBarRoundIconsTop() ? 1 : 0;
+    if (land != s_last_land) { s_last_land = land; statusBarLayoutTwoRow(pct_off ? 32 : 0); }
+  }
+#endif
   static const char* s_last_glyph = nullptr;
   const char* g = batteryGlyphForMv(mv);
   if (g != s_last_glyph) {
@@ -53636,12 +54012,19 @@ static void updateGlobalStatusBar() {
 #endif
 
   // ---- Reader/Web page: hide the clock so the URL fits in the title zone ----
+  // (T-Deck Pro: also hidden on the Map tab, when nothing is open over it.)
   if (g_statusbar.clock) {
     static bool s_clk_hidden = false;
-    if (s_reader_bar_url != s_clk_hidden) {
-      s_clk_hidden = s_reader_bar_url;
-      if (s_reader_bar_url) lv_obj_add_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
-      else                  lv_obj_clear_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
+    bool hide_clk = s_reader_bar_url;
+#if defined(HAS_TDECK_PRO)
+    if (g_lv.tabview && (int)lv_tabview_get_tab_act(g_lv.tabview) == MAP_TAB_INDEX &&
+        !chat_open && s_settings_open_cat < 0 && !s_apppage_title)
+      hide_clk = true;
+#endif
+    if (hide_clk != s_clk_hidden) {
+      s_clk_hidden = hide_clk;
+      if (hide_clk) lv_obj_add_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
+      else          lv_obj_clear_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN);
     }
   }
 
@@ -53674,7 +54057,10 @@ static void updateGlobalStatusBar() {
                                    strlen(lv_label_get_text(g_statusbar.clock)),
                                    lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0,
                                    LV_TEXT_FLAG_NONE));
-    mix(charging); mix(chat_open); mix(touchPrefsGetHideNodeName());
+    mix(pct_off); mix(chat_open); mix(touchPrefsGetHideNodeName());
+#if CAP_ROUND_CORNERS
+    mix(statusBarRoundIconsTop());
+#endif
     for (lv_obj_t* o : sb_icons) mix(visible(o));
     mixText(g_statusbar.ble_icon);   // Bluetooth vs the wider keyboard glyph
     static uint32_t s_clk_sig = 0;
@@ -53684,8 +54070,16 @@ static void updateGlobalStatusBar() {
       // Round P4 two-row bar: centre the clock on ROW 1 for the home / normal screens — row-1
       // centre is free there (the node name lives on row 2). In a chat the row-1 centre is the
       // thread title, so the clock moves to row-1 right instead.
-      if (chat_open) lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -SB_INSET_X, SB_ROW1_Y);
-      else           lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,           SB_ROW1_Y);
+      // Portrait keeps it centred in a chat too: the thread name moves down to row 2 there.
+      if (chat_open && !statusBarRoundIconsTop())
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_RIGHT, -SB_INSET_X, SB_ROW1_Y);
+      else
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_MID,   0,           SB_ROW1_Y);
+#elif UI_COMPACT_CHROME
+      // Compact chrome: the chat chevron/gear, the inbox actions and the Home name all
+      // stay left of mid-bar now, so the clock centres across the whole header. The
+      // safety net below still steps it left of an icon it would otherwise touch.
+      lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
 #else
       if (touchPrefsGetHideNodeName()) {
         lv_obj_align(g_statusbar.clock, LV_ALIGN_CENTER, 0, 0);
@@ -53702,10 +54096,10 @@ static void updateGlobalStatusBar() {
         const bool narrow_bar = lv_disp_get_hor_res(nullptr) < 300;
         const int clk_x =
 #if defined(TLORA_PAGER)
-                          charging ? -165 : -210;
+                          pct_off ? -165 : -210;
 #else
-                          narrow_bar ? (charging ? -94 : -126)
-                                     : (charging ? -(SBX(160) - SBX(32)) : -SBX(160));
+                          narrow_bar ? (pct_off ? -94 : -126)
+                                     : (pct_off ? -(SBX(160) - SBX(32)) : -SBX(160));
 #endif
         lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, clk_x, 0);
       }
@@ -62430,6 +62824,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
 #endif
 #endif
+#if UI_COMPACT_CHROME
+    STATUSBAR_H += kProBarTopPad;   // the bar root carries it as pad_top (buildGlobalStatusBar)
+#endif
     // Allocate the draw buffer in PSRAM so the ~12 KB it costs comes out of
     // the 8 MB external RAM instead of the 320 KB internal DRAM that WiFi
     // DMA buffers also need. Falls back to DRAM if PSRAM allocation fails.
@@ -67094,6 +67491,9 @@ static const PopupEnt k_popup_registry[] = {
 #endif
   { P_OPEN(s_accent_picker),         []{ accentPickerClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_tz_picker),             []{ tzPickerClose(); },              PF_COUNT },
+#if CAP_ROUND_CORNERS
+  { P_OPEN(s_inbox_menu),            []{ inboxMenuClose(); },             PF_COUNT },
+#endif
   { P_OPEN(s_chanscope_modal),       []{ chanScopeClose(); },             PF_COUNT | PF_SWIPE },
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_regions_modal),         []{ regionsModalClose(); },          PF_COUNT },   // was in no registry at all (#449)
