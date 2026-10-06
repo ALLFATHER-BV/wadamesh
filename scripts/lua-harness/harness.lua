@@ -291,6 +291,7 @@ local function build_wada()
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
+                                       map = cfg.caps.sdk_ext or false,
                                        sd_list = cfg.caps.sd_list or false,
                                        sd_clean = cfg.caps.sd_clean or false,
                                        audio = cfg.caps.audio or false,
@@ -444,6 +445,29 @@ local function build_wada()
     wada.sd = { list = sdmock_list }
     if cfg.caps.sd_clean then wada.sd.check = sdmock_check; wada.sd.remove = sdmock_remove end
   end
+  if cfg.caps.sdk_ext then
+    local function mkmap(mx, my, mw, mh)
+      if map_obj then error("only one map view at a time") end
+      local m = { x = mx, y = my, w = mw, h = mh, _zoom = 10, _lat = 0, _lon = 0 }
+      function m:center(lat, lon, z)
+        self._lat = lat; self._lon = lon
+        if z then self._zoom = z end
+        map_centers[#map_centers + 1] = { lat = lat, lon = lon, z = self._zoom }
+      end
+      function m:zoom(z) if z then self._zoom = z else return self._zoom end end
+      function m:marker(lat, lon, col, sz) end
+      function m:line(la1, lo1, la2, lo2, col, w) end
+      function m:clear() end
+      function m:tiles() return cfg.map_tiles or 0 end
+      function m:redraw() end
+      function m:to_screen(lat, lon) return math.floor(mw / 2), math.floor(mh / 2) end
+      function m:to_latlon(x, y) return self._lat + (mh/2-y)*0.001, self._lon + (x-mw/2)*0.001 end
+      function m:close() map_obj = nil end
+      map_obj = m
+      return m
+    end
+    wada.map = { view = mkmap }
+  end
   return wada
 end
 
@@ -473,10 +497,12 @@ local function label_dump()
   return table.concat(out, " | ")
 end
 
+local map_obj, map_centers = nil, {}
 local function reset_world()
   widgets = { canvases = 0, labels = 0, buttons = 0, scroll = false, timer_ms = nil }
   labels, buttons, toasts, drawlog = {}, {}, {}, { text = {}, circles = {}, ops = 0 }
   lists = {}
+  map_obj, map_centers = nil, {}
   clock_ms = 1000
   dm_sent = {}
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
@@ -1368,27 +1394,37 @@ scenarios.trip_tdeck = function()
 end
 
 scenarios.trip_moving = function()
-  -- simulate movement: distance and max speed accumulate
+  -- distance accumulates; home bearing points back south; min altitude tracked;
+  -- avg speed is non-zero
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
     step = step + 1
-    return { lat = 37.75 + step * 0.001, lon = -122.45, sats = 8, alt_m = 100 + step, speed_kmh = 30.0 + step }
+    -- move north (lat+), altitude descends so min keeps updating
+    return { lat = 37.75 + step * 0.001, lon = -122.45,
+             sats = 8, alt_m = 100 - step, speed_kmh = 30.0 + step }
   end
   storekv = {}; wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   buttons[1].fn()   -- start tracking
-  tick(app, 20)     -- 20 GPS fixes, each ~111 m north → ~2.2 km total
+  tick(app, 15)     -- 15 fixes moving north ~111 m each → ~1.5 km
   local dump = label_dump()
-  print("  after 20 ticks:", dump)
+  print("  after 15 ticks:", dump)
+  -- distance > 0
   assert(not dump:find("| 0 m |"), "expected non-zero distance after movement")
-  assert(dump:find("km/h"), "expected max speed displayed")
+  -- avg and max speed both shown as km/h
+  assert(dump:find("km/h"), "expected avg/max speed km/h displayed")
+  -- home bearing: moved north, home is south → "S"
+  assert(dump:find(" S"), "expected southward home bearing (1.1)")
+  -- min altitude: descended from 99 to 85 over 15 steps
+  assert(dump:find("85") or dump:find("min"), "expected min altitude tracked (1.1)")
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
 scenarios.trip_persist = function()
-  -- on_close saves; on_open restores
+  -- on_close saves distance, max speed, elapsed time and min altitude;
+  -- on_open restores all of them
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
@@ -1401,6 +1437,7 @@ scenarios.trip_persist = function()
   buttons[1].fn(); tick(app, 10)   -- run ~1 km
   if app.on_close then guarded(BUDGET, app.on_close) end
   assert(storekv.trip_km_x1000 ~= nil and storekv.trip_km_x1000 > 0, "expected trip_km_x1000 saved")
+  assert(storekv.trip_minalt ~= nil, "expected trip_minalt saved (1.1)")
   -- re-open same store → distance should be restored
   wada = build_wada()
   local app2 = load_app()
@@ -1412,7 +1449,7 @@ scenarios.trip_persist = function()
 end
 
 scenarios.trip_reset = function()
-  -- Reset button clears everything
+  -- Reset clears distance, time, home bearing, min altitude
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
@@ -1422,12 +1459,15 @@ scenarios.trip_reset = function()
   storekv = {}; wada = build_wada()
   local app = load_app()
   guarded(BUDGET, app.on_open, cfg.w, cfg.h)
-  buttons[1].fn(); tick(app, 10)   -- accumulate some distance
+  buttons[1].fn(); tick(app, 10)   -- accumulate distance
   buttons[2].fn(); tick(app, 1)    -- Reset
   local dump = label_dump()
   print("  after reset:", dump)
   assert(dump:find("0:00"), "expected zero time after reset")
   assert(dump:find("| 0 m |") or dump:find("0.00"), "expected zero distance after reset")
+  -- home bearing should be cleared (1.1)
+  assert(dump:find("| -- |") or dump:find("-- |") or dump:find("--"),
+    "expected no home bearing after reset (1.1)")
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
