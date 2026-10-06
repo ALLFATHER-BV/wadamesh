@@ -1,9 +1,12 @@
 # Touch UI font assets
 
-The generated `extras_font_*`, `extras_lat_*`, and `star_font_*` C files use
+The generated `extras_font_*`, `extras_lat_*`, `star_font_*` and `clock_font_*` C files use
 font software from the following projects:
 
 - Montserrat Medium from LVGL v8.4.0
+  - Copyright 2011 The Montserrat Project Authors
+  - https://github.com/JulietaUla/Montserrat
+- Montserrat Light v7.222 (`clock_font_*`: digits and colon only)
   - Copyright 2011 The Montserrat Project Authors
   - https://github.com/JulietaUla/Montserrat
 - Noto Sans 2.015
@@ -37,7 +40,7 @@ scripts/build/gen-touch-fonts.sh --check
 
 The script downloads the pinned source releases into a temporary directory,
 verifies both the archives and extracted font files, invokes the pinned
-converter, and replaces all ten generated touch UI font files together.
+converter, and replaces all twelve generated touch UI font files together.
 
 All four fonts are licensed under the SIL Open Font License, Version 1.1:
 

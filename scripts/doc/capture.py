@@ -53,10 +53,14 @@ while time.time() < deadline:
     if b"WMTOUR START" in line:
         started = True
         print("tour started")
+        deadline = time.time() + 60   # from here on: give up only after 60 s without a frame
         continue
     if b"WMTOUR END" in line:
         print("tour ended")
         break
+    if line.startswith(b"DBG:"):
+        print(line.decode(errors="replace").rstrip())   # debug lines from a capture build
+        continue
     m = hdr_re.search(line)
     if not m:
         continue
@@ -68,6 +72,7 @@ while time.time() < deadline:
         continue
     bmp = os.path.join(outdir, name + ".bmp")
     png = os.path.join(outdir, name + ".png")
+    deadline = time.time() + 60   # the tour is still going
     with open(bmp, "wb") as f:
         f.write(data)
     try:

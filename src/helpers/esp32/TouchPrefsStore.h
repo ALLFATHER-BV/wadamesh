@@ -204,9 +204,14 @@ bool    touchPrefsSetUiScale(uint8_t scale);
 bool    touchPrefsGetKbdNav();
 bool    touchPrefsSetKbdNav(bool on);
 
-/* T-Deck trackball mode: 1 = drive the focus-group D-pad nav (up/down/left/right move the
- * selection, centre click selects — same logic as the Tanmatsu keypad); 0 = the soft mouse
- * cursor. Default 1. Independent of the keyboard ESDFX nav above. Applied live (no reboot). */
+/* T-Deck trackball mode. TB_MODE_SCROLL (the default) scrolls whatever is under the middle
+ * of the screen and can move that way; TB_MODE_CURSOR is the soft mouse cursor (a click taps
+ * where it points); TB_MODE_NAV drives the focus-group D-pad nav (up/down/left/right move the
+ * selection, centre click selects; the same logic as the Tanmatsu keypad). Independent of the
+ * keyboard nav above. Applied live (no reboot). touchPrefsGetTbNav() = the mode is TB_MODE_NAV. */
+enum : uint8_t { TB_MODE_CURSOR = 0, TB_MODE_NAV = 1, TB_MODE_SCROLL = 2 };
+uint8_t touchPrefsGetTbMode();
+bool    touchPrefsSetTbMode(uint8_t mode);
 bool    touchPrefsGetTbNav();
 bool    touchPrefsSetTbNav(bool on);
 /* Opt-in (issue #64): when true, direct/login/admin unicast floods are tagged with the
@@ -558,6 +563,30 @@ bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scrol
 void    touchPrefsSetEdgeScroll(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks (default false; forced on for Pro/Max e-paper)
 void    touchPrefsSetLockOnScreenOff(bool on);
+// Optional unlock PIN: four characters, digits and letters (letters match in either
+// case). Only a salted SHA-256 of it is stored. touchPrefsPinSet(nullptr) removes it.
+static constexpr int TOUCH_PIN_LEN = 4;
+bool    touchPrefsPinIsSet();
+bool    touchPrefsPinCheck(const char* pin);
+bool    touchPrefsPinSet(const char* pin);
+// Wrong PIN tries in a row, kept across reboots so restarting does not reset the wait.
+uint8_t touchPrefsPinFails();
+void    touchPrefsSetPinFails(uint8_t n);
+// Constellation screensaver. Standalone keys like lock_off, not Config fields: no
+// schema bump, no migration. Both default ON -- the screensaver only runs while
+// charging unless the second is turned off, so a device on battery behaves
+// exactly as before.
+bool    touchPrefsGetScreensaver();
+void    touchPrefsSetScreensaver(bool on);
+// How long the screensaver shows on battery before the screen goes dark: 0..60 s
+// (0 = straight to dark), 15 s until chosen. And whether it stays on for as long as
+// external power is connected (default on).
+uint8_t touchPrefsGetScreensaverBatterySecs();
+void    touchPrefsSetScreensaverBatterySecs(uint8_t secs);
+bool    touchPrefsGetScreensaverAlwaysOnPower();
+void    touchPrefsSetScreensaverAlwaysOnPower(bool on);
+bool    touchPrefsGetLockPreviews();           // message text on the lock screen's unread cards (default true)
+void    touchPrefsSetLockPreviews(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
 void    touchPrefsSetGlanceWhenLocked(bool on);
 bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
@@ -572,8 +601,8 @@ constexpr uint8_t TOUCH_CHMUTE_MSG = 0x1;
 constexpr uint8_t TOUCH_CHMUTE_MEN = 0x2;
 uint8_t touchPrefsGetChannelMute(const char* name);
 void    touchPrefsSetChannelMute(const char* name, uint8_t flags);
-bool    touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap);  // chat-list avatar override; false/empty = auto letters
-void    touchPrefsSetChannelEmoji(const char* name, const char* utf8);       // empty/null clears back to auto
+bool    touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap);  // a conversation's avatar emoji (channel or chat); false/empty = its glyph
+bool    touchPrefsSetChannelEmoji(const char* name, const char* utf8);       // empty/null clears back to the glyph; false when the table is full
 
 /** Generic NVS blob (key/value). Used to persist the discovered-nodes list so
  *  it survives a reboot. getBlob returns the byte count copied (0 if absent). */

@@ -1309,3 +1309,202 @@ Snake	Snake
 held by	held by
 © OpenStreetMap	© OpenStreetMap
 © OpenTopoMap	© OpenTopoMap
+# beta_89: new strings, English placeholders until translated (value = key)
+%d nodes heard today	%d nodes heard today
+%lu packets heard	%lu packets heard
+1 node heard today	1 node heard today
+1 packet heard	1 packet heard
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
+3. Click Connect and choose this device.	3. Click Connect and choose this device.
+4 numbers or letters	4 numbers or letters
+A day	A day
+A week	A week
+Add a channel	Add a channel
+Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Advertise	Advertise
+Always on when connected to power	Always on when connected to power
+Anything worth saying (optional)	Anything worth saying (optional)
+App drawer	App drawer
+App icons	App icons
+Append timestamp	Append timestamp
+Apr	Apr
+April	April
+Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
+Aug	Aug
+August	August
+Blocked	Blocked
+Change PIN	Change PIN
+Channel	Channel
+Channels	Channels
+Chat icon reset	Chat icon reset
+Chats	Chats
+Choose a PIN	Choose a PIN
+Clock not set	Clock not set
+Cmdr	Cmdr
+Commander	Commander
+Companion	Companion
+Connected to the computer	Connected to the computer
+Could not send the report. Try again later.	Could not send the report. Try again later.
+Count this device	Count this device
+Current PIN	Current PIN
+Cursor	Cursor
+Dec	Dec
+December	December
+Delete this conversation?	Delete this conversation?
+Device id	Device id
+Direct	Direct
+Direct message	Direct message
+Direct, no repeaters	Direct, no repeaters
+Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Emoji	Emoji
+Enter PIN	Enter PIN
+Enter it again	Enter it again
+Export Backup	Export Backup
+Feb	Feb
+February	February
+Fri	Fri
+Friday	Friday
+Has a problem	Has a problem
+Heard by %u repeaters	Heard by %u repeaters
+Heard by 1 repeater	Heard by 1 repeater
+Hold the trackball to switch	Hold the trackball to switch
+Home button opens	Home button opens
+I hit a problem	I hit a problem
+I understand	I understand
+If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
+Internal	Internal
+It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
+Jan	Jan
+January	January
+Join # channel	Join # channel
+Join Public channel	Join Public channel
+Jul	Jul
+July	July
+Jun	Jun
+June	June
+Keyboard and input	Keyboard and input
+Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Large	Large
+Launcher	Launcher
+Launcher layout	Launcher layout
+Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
+Map and GPS	Map and GPS
+Map tiles	Map tiles
+Mar	Mar
+March	March
+Mark all as read	Mark all as read
+May	May
+Mentions muted	Mentions muted
+Mentions unmuted	Mentions unmuted
+Mesh · 24 h	Mesh · 24 h
+Message %s	Message %s
+Message text on lock screen	Message text on lock screen
+Messages muted	Messages muted
+Messages unmuted	Messages unmuted
+Minutes	Minutes
+Mon	Mon
+Monday	Monday
+Mute mentions	Mute mentions
+Mute messages	Mute messages
+Navigate	Navigate
+Never	Never
+New PIN	New PIN
+No backups available to restore.	No backups available to restore.
+No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No channels yet	No channels yet
+No direct chats yet	No direct chats yet
+Not delivered, tap to resend	Not delivered, tap to resend
+Nov	Nov
+November	November
+Oct	Oct
+October	October
+On	On
+On battery, show it for	On battery, show it for
+PIN changed	PIN changed
+PIN lock	PIN lock
+PIN lock off	PIN lock off
+PIN lock on	PIN lock on
+Phone-app link	Phone-app link
+Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
+Preview screensaver	Preview screensaver
+Radio and messaging	Radio and messaging
+Reboot Now	Reboot Now
+Received %s	Received %s
+Receiving %s	Receiving %s
+Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Repeater	Repeater
+Report a bug	Report a bug
+Reset chat icon	Reset chat icon
+Room	Room
+Routed	Routed
+Running it for	Running it for
+Running it for:	Running it for:
+SD card	SD card
+SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Sat	Sat
+Saturday	Saturday
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
+Screen timeout	Screen timeout
+Screensaver	Screensaver
+Scroll	Scroll
+Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
+Send	Send
+Send a test report	Send a test report
+Send another test report	Send another test report
+Sending %s	Sending %s
+Sending your report...	Sending your report...
+Sensor	Sensor
+Sep	Sep
+September	September
+Share my contact	Share my contact
+Stop USB Files	Stop USB Files
+Storage and SD	Storage and SD
+Sun	Sun
+Sunday	Sunday
+Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Terminal	Terminal
+Test report: %s	Test report: %s
+Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+The PINs did not match	The PINs did not match
+The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
+This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+Thu	Thu
+Thursday	Thursday
+Tick only what you actually used:	Tick only what you actually used:
+Too many chat icons	Too many chat icons
+Too many tries. Wait %u s	Too many tries. Wait %u s
+Trackball	Trackball
+Trackball: scroll	Trackball: scroll
+Transfer	Transfer
+Tue	Tue
+Tuesday	Tuesday
+Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Type 4 numbers or letters	Type 4 numbers or letters
+USB Files	USB Files
+USB Files: low memory	USB Files: low memory
+Unmute mentions	Unmute mentions
+Unmute messages	Unmute messages
+Upload of %s stopped	Upload of %s stopped
+Used	Used
+VNC	VNC
+Waiting for the computer	Waiting for the computer
+Web	Web
+Wed	Wed
+Wednesday	Wednesday
+While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
+Works	Works
+Wrong PIN	Wrong PIN
+You:	You:
+a week or more	a week or more
+about a day	about a day
+heard %s ago	heard %s ago
+hold the BOOT button to unlock	hold the BOOT button to unlock
+hop away	hop away
+hops away	hops away
+minutes	minutes
+new	new
+node	node
+nodes	nodes
+now	now
+routed	routed

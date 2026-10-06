@@ -2969,7 +2969,11 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
   // Add the accepted named advert to the session-local recent-heard cache.
   // A monotonic sequence, not the remote advert timestamp or local RTC, defines
   // order so an unset/adjusted clock cannot make a fresh node look stale.
-  if (path_len <= sizeof(AdvertPath::path) && (path_len == 0 || path)) {
+  // path_len is the packed byte (hop count in the low 6 bits, hash size above),
+  // not a byte count. Comparing it to the buffer size rejected every advert that
+  // came over 2- or 3-byte path hashes (0x41 and up), so those nodes never made
+  // the recently-heard table at all.
+  if (mesh::Packet::isValidPathLen(path_len) && (path_len == 0 || path)) {
     const uint32_t recv_timestamp = getRTCClock()->getCurrentTime();
 #if defined(ESP32)
     portENTER_CRITICAL(&advert_paths_mux);
@@ -3002,7 +3006,7 @@ void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path
     p->type = contact.type;
     p->used = true;
     p->path_len = path_len;
-    if (path_len) memcpy(p->path, path, path_len);
+    if (path_len) mesh::Packet::writePath(p->path, path, path_len);
 #if defined(ESP32)
     portEXIT_CRITICAL(&advert_paths_mux);
 #endif
@@ -3056,6 +3060,30 @@ int MyMesh::getRecentlyHeard(RecentlyHeardName dest[], int max_num) {
   if (max_num > count) max_num = count;
   memcpy(dest, snapshot, (size_t)max_num * sizeof(dest[0]));
   return max_num;
+}
+
+bool MyMesh::getAdvertPath(const uint8_t* pubkey_prefix, int prefix_len, uint8_t& path_len,
+                           uint8_t* path, size_t path_cap) {
+  if (!pubkey_prefix || prefix_len <= 0) return false;
+  if (prefix_len > (int)sizeof(AdvertPath::pubkey_prefix)) prefix_len = sizeof(AdvertPath::pubkey_prefix);
+  bool found = false;
+#if defined(ESP32)
+  portENTER_CRITICAL(&advert_paths_mux);
+#endif
+  for (int i = 0; i < ADVERT_PATH_TABLE_SIZE; i++) {
+    const AdvertPath& p = advert_paths[i];
+    if (!p.used || memcmp(p.pubkey_prefix, pubkey_prefix, (size_t)prefix_len) != 0) continue;
+    const size_t bytes = (size_t)(p.path_len & 63) * (size_t)((p.path_len >> 6) + 1);
+    if (bytes > path_cap || bytes > sizeof(p.path) || (bytes && !path)) break;
+    path_len = p.path_len;
+    if (bytes) memcpy(path, p.path, bytes);
+    found = true;
+    break;
+  }
+#if defined(ESP32)
+  portEXIT_CRITICAL(&advert_paths_mux);
+#endif
+  return found;
 }
 
 void MyMesh::onContactPathUpdated(const ContactInfo &contact) {
@@ -5318,11 +5346,13 @@ void MyMesh::handleCmdFrame(size_t len) {
     portEXIT_CRITICAL(&advert_paths_mux);
 #endif
     if (has_found) {
+      // The packed length goes out as stored (identical to a byte count for
+      // 1-byte hashes); the path itself is hop count x hash size bytes.
       out_frame[0] = RESP_CODE_ADVERT_PATH;
       memcpy(&out_frame[1], &found.recv_timestamp, 4);
       out_frame[5] = found.path_len;
-      memcpy(&out_frame[6], found.path, found.path_len);
-      _serial->writeFrame(out_frame, 6 + found.path_len);
+      const size_t path_bytes = mesh::Packet::writePath(&out_frame[6], found.path, found.path_len);
+      _serial->writeFrame(out_frame, 6 + path_bytes);
     } else {
       writeErrFrame(ERR_CODE_NOT_FOUND);
     }

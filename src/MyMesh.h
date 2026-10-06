@@ -238,6 +238,11 @@ public:
   void enterCLIRescue();
 
   int  getRecentlyHeard(RecentlyHeardName dest[], int max_num);
+  // The route the last advert from this node took to reach us, for the recently
+  // heard only: repeater hashes with the node's own neighbour first and ours
+  // last, `path_len` the packed hop-count/hash-size byte. False when unknown.
+  bool getAdvertPath(const uint8_t* pubkey_prefix, int prefix_len, uint8_t& path_len,
+                     uint8_t* path, size_t path_cap);
   bool uiIsMeshcomodRecipient(const uint8_t* pub_key_prefix_6) const {
     return isMeshcomodRecipient(pub_key_prefix_6);
   }

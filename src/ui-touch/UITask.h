@@ -200,6 +200,8 @@ private:
   mutable uint16_t _thread_msgs[MAX_UI_THREADS] = { 0 };
   mutable bool     _thread_hist_dirty = true;
   void rebuildThreadHistoryFlags() const;
+  /** Time of a thread's newest message in the ring (0 when it has none). */
+  uint32_t newestThreadMessageTs(const char* name, bool channel) const;
   /** Drop this thread's oldest stored messages until it is back within the per-chat cap
    *  (touchPrefsGetHistPerChat; 0 = uncapped). Called after an append. */
   void enforceHistoryCap(int thread_idx);
@@ -427,7 +429,9 @@ public:
    *  thread's name + kind and returns the latest by timestamp. False when the
    *  thread has no messages in the ring. */
   bool getThreadLastMessage(int idx, char* sender, size_t sender_cap,
-                            char* text, size_t text_cap, bool* outgoing) const {
+                            char* text, size_t text_cap, bool* outgoing,
+                            uint8_t* deliv = nullptr, uint8_t* meta = nullptr,
+                            uint8_t* path_len = nullptr) const {
     if (idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used || !_ui_msgs) return false;
     const bool ch  = _ui_threads[idx].channel;
     const char* nm = _ui_threads[idx].name;
@@ -448,6 +452,9 @@ public:
       if (sender && sender_cap) { strncpy(sender, m.sender, sender_cap - 1); sender[sender_cap - 1] = '\0'; }
       if (text && text_cap)     { strncpy(text,   m.text,   text_cap - 1);   text[text_cap - 1] = '\0'; }
       if (outgoing) *outgoing = m.outgoing;
+      if (deliv)    *deliv    = m.deliv_state;
+      if (meta)     *meta     = m.meta_flags;
+      if (path_len) *path_len = m.path_len;
       return true;
     }
     return false;
@@ -562,8 +569,11 @@ public:
   /** Reveal the lock screen (light the panel) without unlocking — for a key /
    *  trackball press while hard-locked. No-op unless manually locked. */
   void lockscreenReveal();
-  /** Release a manual lock: hide the lock screen and turn the panel back on. */
+  /** Release a manual lock: hide the lock screen and turn the panel back on.
+   *  With a PIN set this first asks for it, and unlocks once it matches. */
   void unlockScreen();
+  /** A key on the PIN screen: keeps a lit lock screen from dimming mid-entry. */
+  void notePinActivity();
   /** True while the panel backlight is off (idle-dimmed or manually locked). */
   bool isScreenOff() const { return _screen_off; }
   bool isManualLocked() const { return _manual_lock; }   // hard screen lock engaged

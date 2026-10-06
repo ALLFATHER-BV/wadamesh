@@ -53,27 +53,19 @@
 
 #define LV_USE_LOG 0
 
-#define LV_FONT_MONTSERRAT_12 1
-#define LV_FONT_MONTSERRAT_14 1
-#define LV_FONT_MONTSERRAT_16 1
-/* Larger Montserrat sizes for crisp UI/text-size presets at native resolution. The P4 boards scale
- * text and geometry; V4-R8 uses the same fonts without geometry scaling. Other flash-tighter S3
- * builds don't pay for fonts they never use. (Match board macros because device_caps.h isn't here.) */
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8)
-#define LV_FONT_MONTSERRAT_18 1
-#define LV_FONT_MONTSERRAT_20 1
-#define LV_FONT_MONTSERRAT_24 1
-#endif
-/* T-Deck-only, unrelated to the Large/Huge UI-scale block above: an experiment
- * to shrink the "at a glance" notification's message body from 28px to 20px
- * on this board only (see atGlanceEnsureFont() in UITask.cpp). Easy to revert
- * by dropping this block + the T-Deck branch in atGlanceEnsureFont(). */
-#if defined(HAS_TDECK_GT911)
-#define LV_FONT_MONTSERRAT_20 1
-#endif
-/* 28 px Montserrat for the boot splash title — keeps the rest of the UI on
- * the smaller fonts so the .data cost stays modest. */
-#define LV_FONT_MONTSERRAT_28 1
+/* The UI faces are generated (scripts/build/gen-touch-fonts.sh -> src/ui-touch/ui_font_NN.c)
+ * under LVGL's own names, lv_font_montserrat_NN: the same Montserrat Medium text LVGL ships,
+ * with Lucide line icons on the LV_SYMBOL_* codepoints instead of FontAwesome, so every icon in
+ * the firmware and in LVGL's widgets is drawn in one consistent line style. LVGL's built-in
+ * copies (LV_FONT_MONTSERRAT_NN) stay off, and no env may force them on with -D: they would
+ * collide with the generated ones at link time. Which boards carry the bigger sizes is set
+ * in the generator, on board macros. */
+#define LV_FONT_CUSTOM_DECLARE \
+  LV_FONT_DECLARE(lv_font_montserrat_12) LV_FONT_DECLARE(lv_font_montserrat_14) \
+  LV_FONT_DECLARE(lv_font_montserrat_16) LV_FONT_DECLARE(lv_font_montserrat_18) \
+  LV_FONT_DECLARE(lv_font_montserrat_20) LV_FONT_DECLARE(lv_font_montserrat_24) \
+  LV_FONT_DECLARE(lv_font_montserrat_28)
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
 /* Pixelated UNSCII bitmap font for the boot splash. Matches the retro/
  * pixelated wordmark the bootloader paints, so the splash reads as a
  * direct continuation of the boot sequence rather than a different style

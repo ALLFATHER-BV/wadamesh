@@ -196,9 +196,10 @@
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
-// expose it; the Pager, V4-R8 and ThinkNode M9 add font-only presets because
-// their compact viewports cannot safely take global geometry scaling.
-#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+// expose it; the Pager, V4-R8, ThinkNode M9 and T-Deck add font-only presets
+// because their compact viewports cannot safely take global geometry scaling.
+// (The V4 stays without: its flash has no room for the bigger faces.)
+#if CAP_LARGE_SCREEN || defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)
   #define CAP_UI_SIZE 1
 #else
   #define CAP_UI_SIZE 0
@@ -298,6 +299,15 @@
   #define CAP_ROUND_CORNERS 1
 #else
   #define CAP_ROUND_CORNERS 0
+#endif
+
+// The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
+// cannot show that, and refreshing it to try would wear the panel, so the T-Deck
+// Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.
+#if defined(HAS_TDECK_PRO)
+  #define CAP_SCREENSAVER 0
+#else
+  #define CAP_SCREENSAVER 1
 #endif
 
 // ---- Capabilities aliased to existing device-neutral macros -----------------

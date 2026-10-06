@@ -9,6 +9,8 @@
 
 #include <Preferences.h>
 #include <SPIFFS.h>
+#include "esp_system.h"   // esp_random()
+#include "mbedtls/md.h"   // SHA-256 for the unlock PIN
 #include <stddef.h>   // offsetof
 #include <string.h>   // memcpy
 
@@ -134,7 +136,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.map_show_tilexyz  = 0;      // v50: the "z12  12/2105/1376" tile-path line is developer clutter on the map; opt-in via Map options
   c.map_show_contacts = 1;
   c.app_grid_large    = 0;      // default: compact app grid (T-Deck 4 cols / V4 3 cols)
-#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)
   c.ui_scale          = 0;      // Font-only presets start at the existing typography.
 #else
   c.ui_scale          = 1;      // large-screen boards keep their existing 150% default
@@ -146,7 +148,7 @@ static void cfgSetDefaults(TouchCfg& c) {
 #else
   c.kbd_nav           = 0;      // T-Deck / V4: keyboard navigation OFF by default (opt-in; persists once toggled on)
 #endif
-  c.tb_nav            = 0;      // T-Deck trackball: soft-cursor by default. D-pad UI nav is EXPERIMENTAL (opt-in)
+  c.tb_nav            = 2;      // T-Deck trackball mode: 2 = scroll the screen (default), 0 = soft cursor, 1 = D-pad UI nav (experimental)
   c.scope_direct      = 0;      // OFF: direct/login floods stay unscoped (cross-region safe). Opt-in per issue #64.
 #if defined(HELTEC_LORA_V4_R8)
   c.fem_lna           = 1;      // ON (v49): the V4-R8 is a V4.3.1-generation board with the KCT8103L FEM, whose
@@ -287,6 +289,10 @@ static void cfgLoadOrMigrate() {
 #endif
         // v50: map tile z/x/y overlay line OFF by default (one-time flip; the Map-options toggle persists afterwards).
         if (stored_version < 50) s_cfg.map_show_tilexyz = 0;
+        // v69: the trackball gains a scroll mode and it is the T-Deck's default. Installs on
+        // the old default (the cursor, 0) move to it once; the D-pad choice (1) is kept, and
+        // the cursor stays one tap away in Settings.
+        if (stored_version < 69 && s_cfg.tb_nav == 0) s_cfg.tb_nav = 2;
         if (stored_version < 26) s_cfg.msg_flash = 0;
         if (stored_version < 27) { s_cfg.flood_adv_hrs = 0; s_cfg.local_adv_min = 0; }
         if (stored_version < 28) s_cfg.beta_updates = 0;
@@ -347,6 +353,12 @@ static void cfgLoadOrMigrate() {
         // so without this every M9 in the field would come back from the update
         // rendering Large text nobody asked for.
         if (stored_version < 65) s_cfg.ui_scale = 0;
+#endif
+#if defined(HAS_TDECK_GT911)
+        // And the T-Deck in v70: since v29 the field has held the large-screen
+        // boards' Large default, which this board never applied. Reset it once,
+        // so the update that shows the selector does not enlarge anyone's text.
+        if (stored_version < 70) s_cfg.ui_scale = 0;
 #endif
         if (stored_version < 58) {
           s_cfg.attaky_notify_enabled = 0;
@@ -1188,11 +1200,18 @@ bool touchPrefsSetKbdNav(bool on) {
 }
 bool touchPrefsGetTbNav() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.tb_nav != 0;
+  return s_cfg.tb_nav == TB_MODE_NAV;
 }
 bool touchPrefsSetTbNav(bool on) {
+  return touchPrefsSetTbMode(on ? TB_MODE_NAV : TB_MODE_CURSOR);
+}
+uint8_t touchPrefsGetTbMode() {
   if (!s_begun) touchPrefsBegin();
-  s_cfg.tb_nav = on ? 1 : 0;
+  return s_cfg.tb_nav <= TB_MODE_SCROLL ? s_cfg.tb_nav : (uint8_t)TB_MODE_SCROLL;
+}
+bool touchPrefsSetTbMode(uint8_t mode) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.tb_nav = mode <= TB_MODE_SCROLL ? mode : (uint8_t)TB_MODE_SCROLL;
   return cfgFlush();
 }
 
@@ -1507,12 +1526,19 @@ bool touchPrefsSetNavDirKey(int idx, uint8_t ch) {
   return cfgFlush();
 }
 
+static void prefsPutUChar(const char* key, uint8_t v);   // standalone keys (defined below)
+
+// Since the launcher redesign Home opens on the app grid, unless the user has
+// picked the command centre SINCE then (standalone key "home_cmdr"). The config
+// field below still records the choice, but it held everyone's pre-redesign
+// default of "command centre", so it no longer decides what Home shows.
 bool touchPrefsGetHomeIsDrawer() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.home_is_drawer != 0;
+  return s_prefs.getUChar("home_cmdr", 0) == 0;
 }
 bool touchPrefsSetHomeIsDrawer(bool on) {
   if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("home_cmdr", on ? 0 : 1);
   s_cfg.home_is_drawer = on ? 1 : 0;
   return cfgFlush();
 }
@@ -2262,6 +2288,95 @@ bool touchPrefsGetEdgeScroll()      { if (!s_begun) touchPrefsBegin(); return s_
 void touchPrefsSetEdgeScroll(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_edgesc", on ? 1 : 0); }
 bool touchPrefsGetLockOnScreenOff() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_off", 0) != 0; }
 void touchPrefsSetLockOnScreenOff(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_off", on ? 1 : 0); }
+bool touchPrefsGetScreensaver() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver", 1) != 0; }
+void touchPrefsSetScreensaver(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver", on ? 1 : 0); }
+// ---- Unlock PIN ----------------------------------------------------------------
+// Stored as an 8-byte random salt and SHA-256(salt || PIN), never the PIN itself.
+// Four characters from 0-9 and A-Z, letters folded to upper case. (mbedtls_md, as
+// MqttBridge uses: mbedtls_sha256's name differs between mbedTLS 2.x and 3.x.)
+static const char* KEY_PIN_SALT = "pin_salt";
+static const char* KEY_PIN_HASH = "pin_hash";
+static bool pinNormalise(const char* in, char out[TOUCH_PIN_LEN]) {
+  if (!in) return false;
+  for (int i = 0; i < TOUCH_PIN_LEN; ++i) {
+    char c = in[i];
+    if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+    if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z'))) return false;
+    out[i] = c;
+  }
+  return in[TOUCH_PIN_LEN] == '\0';
+}
+static bool pinDigest(const uint8_t salt[8], const char pin[TOUCH_PIN_LEN], uint8_t out[32]) {
+  const mbedtls_md_info_t* md = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (!md) return false;
+  uint8_t buf[8 + TOUCH_PIN_LEN];
+  memcpy(buf, salt, 8);
+  memcpy(buf + 8, pin, TOUCH_PIN_LEN);
+  return mbedtls_md(md, buf, sizeof buf, out) == 0;
+}
+bool touchPrefsPinIsSet() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.isKey(KEY_PIN_HASH) && s_prefs.isKey(KEY_PIN_SALT);
+}
+bool touchPrefsPinCheck(const char* pin) {
+  if (!s_begun) touchPrefsBegin();
+  char p[TOUCH_PIN_LEN];
+  if (!pinNormalise(pin, p) || !touchPrefsPinIsSet()) return false;
+  uint8_t salt[8], want[32], got[32];
+  if (s_prefs.getBytes(KEY_PIN_SALT, salt, sizeof salt) != sizeof salt) return false;
+  if (s_prefs.getBytes(KEY_PIN_HASH, want, sizeof want) != sizeof want) return false;
+  if (!pinDigest(salt, p, got)) return false;
+  uint8_t diff = 0;
+  for (int i = 0; i < 32; ++i) diff |= (uint8_t)(want[i] ^ got[i]);
+  return diff == 0;
+}
+bool touchPrefsPinSet(const char* pin) {
+  if (!s_begun) touchPrefsBegin();
+  uint8_t salt[8], hash[32];
+  const bool clear = !pin || !pin[0];
+  if (!clear) {
+    char p[TOUCH_PIN_LEN];
+    if (!pinNormalise(pin, p)) return false;
+    const uint32_t r0 = esp_random(), r1 = esp_random();
+    memcpy(salt, &r0, 4);
+    memcpy(salt + 4, &r1, 4);
+    if (!pinDigest(salt, p, hash)) return false;
+  }
+  // The namespace stays open read-only between writes; reopen it for this one, as
+  // prefsPutUChar does (a write on the read-only handle fails without a word).
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok;
+  if (clear) {
+    if (s_prefs.isKey(KEY_PIN_HASH)) s_prefs.remove(KEY_PIN_HASH);
+    if (s_prefs.isKey(KEY_PIN_SALT)) s_prefs.remove(KEY_PIN_SALT);
+    ok = !s_prefs.isKey(KEY_PIN_HASH) && !s_prefs.isKey(KEY_PIN_SALT);
+  } else {
+    ok = s_prefs.putBytes(KEY_PIN_SALT, salt, sizeof salt) == sizeof salt &&
+         s_prefs.putBytes(KEY_PIN_HASH, hash, sizeof hash) == sizeof hash;
+  }
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok && touchPrefsPinIsSet() == !clear;
+}
+
+uint8_t touchPrefsPinFails() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("pin_fail", 0); }
+void touchPrefsSetPinFails(uint8_t n) {
+  if (!s_begun) touchPrefsBegin();
+  if (n == touchPrefsPinFails()) return;   // a match on a clean count writes nothing
+  prefsPutUChar("pin_fail", n);
+}
+
+uint8_t touchPrefsGetScreensaverBatterySecs() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("ssaver_bat", 15);   // absent until chosen: 15 s
+  return v > 60 ? 60 : v;
+}
+void touchPrefsSetScreensaverBatterySecs(uint8_t secs) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_bat", secs > 60 ? 60 : secs); }
+bool touchPrefsGetScreensaverAlwaysOnPower() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver_pwr", 1) != 0; }
+void touchPrefsSetScreensaverAlwaysOnPower(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_pwr", on ? 1 : 0); }
+bool touchPrefsGetLockPreviews() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_prev", 1) != 0; }
+void touchPrefsSetLockPreviews(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_prev", on ? 1 : 0); }
 bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }
 void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
 bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
@@ -2383,14 +2498,15 @@ void touchPrefsSetChannelMute(const char* name, uint8_t flags) {
   s_begun = s_prefs.begin(TOUCH_NS, true);
 }
 
-// ---- Per-channel avatar emoji (chat-list avatar override) ----
+// ---- Per-conversation avatar emoji (the avatar's override) ----
 // Same keyed-blob pattern as the mute table above: 32-byte name + 16-byte UTF-8
-// glyph (16 covers ZWJ sequences). No entry = auto (the two-letter avatar).
-// 24 entries x 48 B = 1152 B, safely under the SdNvsPrefs 2048-byte blob cap.
+// glyph (16 covers ZWJ sequences), keyed by the conversation's name, channel or
+// direct chat. No entry = its generated glyph. 32 entries x 48 B = 1536 B, under
+// the SdNvsPrefs 2048-byte blob cap.
 static const int   CHE_NAME  = TOUCH_CHMUTE_NAME;
 static const int   CHE_GLYPH = 16;
 static const int   CHE_ENTRY = CHE_NAME + CHE_GLYPH;
-static const int   CHE_MAX   = 24;
+static const int   CHE_MAX   = 32;
 static const char* KEY_CHE   = "chemoji";
 static uint8_t*    s_che = (uint8_t*)tpPsAlloc(CHE_MAX * CHE_ENTRY);
 static int         s_che_n = -1;   // -1 = not loaded yet
@@ -2421,17 +2537,17 @@ bool touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap) {
   out[n] = '\0';
   return out[0] != '\0';
 }
-void touchPrefsSetChannelEmoji(const char* name, const char* utf8) {
-  if (!name || !name[0]) return;
+bool touchPrefsSetChannelEmoji(const char* name, const char* utf8) {
+  if (!name || !name[0]) return false;
   cheLoad();
   int i = cheFind(name);
-  if (!utf8 || !utf8[0]) {                       // clear -> back to auto letters
-    if (i < 0) return;
+  if (!utf8 || !utf8[0]) {                       // clear -> back to the glyph
+    if (i < 0) return true;
     for (int j = i; j + 1 < s_che_n; ++j) memcpy(&s_che[j * CHE_ENTRY], &s_che[(j + 1) * CHE_ENTRY], CHE_ENTRY);
     --s_che_n;
   } else {
     if (i < 0) {
-      if (s_che_n >= CHE_MAX) return;            // cap reached
+      if (s_che_n >= CHE_MAX) return false;      // cap reached
       i = s_che_n++;
       memset(&s_che[i * CHE_ENTRY], 0, CHE_ENTRY);
       strncpy((char*)&s_che[i * CHE_ENTRY], name, CHE_NAME - 1);
@@ -2446,6 +2562,7 @@ void touchPrefsSetChannelEmoji(const char* name, const char* utf8) {
     s_prefs.end();
   }
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  return true;
 }
 
 // Remembered repeater admin passwords --------------------------------------
