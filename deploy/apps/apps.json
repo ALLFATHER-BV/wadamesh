@@ -92,6 +92,13 @@
       "ver": "1.0",
       "desc": "Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.",
       "requires": "sdk_ext"
+    },
+    {
+      "id": "mapfetch",
+      "name": "MapFetch",
+      "ver": "1.0",
+      "desc": "Pre-caches offline map tiles for a zone while on Wi-Fi. Swipe up/down for radius (2/5/10/20 km), swipe left/right for max zoom (z12-z15), tap to start. Needs GPS fix and Wi-Fi. Contributed by samuelcoustet.",
+      "requires": "sdk_ext"
     }
   ]
 }
