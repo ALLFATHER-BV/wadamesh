@@ -28,7 +28,7 @@
       "id": "protreck",
       "name": "ProTreck",
       "ver": "1.0",
-      "desc": "Outdoor watch: sunrise/sunset + moon phase (ASTRO), chronometer with laps (CHRONO), countdown timer with alarm (TIMER), altimeter with trend graph (ALTI). Swipe left/right to switch modes. Contributed by samuelcoustet.",
+      "desc": "Outdoor watch with 5 tabs: ASTRO (clock, 3 alarms, sun arc + civil twilight, moon phase disc), CMPAS (compass rose, waypoint bearing/distance), CHRONO, TIMER, ALTI (altitude, déniv+/−, climb rate, trend graph). Status bar with local time + GPS + battery on every tab. Contributed by samuelcoustet.",
       "seed": false
     },
     {
