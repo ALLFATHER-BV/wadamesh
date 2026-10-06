@@ -42662,6 +42662,11 @@ static void refreshChatList(LvChatPanel& p) {
       lv_obj_t* fl = lv_label_create(av);
       lv_label_set_text(fl, av_txt);
       lv_obj_set_style_text_font(fl, &g_font_16, LV_PART_MAIN);
+      // The disc stays kThreadAvatar px while g_font_16 grows with the UI size
+      // (24/28 px at Large/Huge on the P4), so "PU" spilled past the circle. Step
+      // down to the largest font whose letters sit inside it: 3/4 of the diameter
+      // keeps the text box's corners within the circle at any of these heights.
+      uiFitLabelWidth(fl, (lv_coord_t)(kThreadAvatar * 3 / 4));
       lv_obj_set_style_text_color(fl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_center(fl);
     }
