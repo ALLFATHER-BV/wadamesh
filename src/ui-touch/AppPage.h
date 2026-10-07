@@ -25,8 +25,8 @@
 //
 // These exist because the self-contained app modules (SnakeGame, the Lua host) hand-rolled
 // the chrome against a hardcoded `kTopBar = 22`. STATUSBAR_H is a runtime value — SC(22)
-// once the UI scale is above 100%, and SB_TOP_PAD + SB_ROW*2 on the T-Display P4's
-// two-row bar — so on those boards the pages were positioned too high, which put their
+// once the UI scale is above 100%, and SB_TOP_PAD + SB_ROW on the T-Display P4's
+// round-cornered bar — so on those boards the pages were positioned too high, which put their
 // own title and close button UNDERNEATH the real status bar with no reachable exit. Going
 // through here instead means a page can never disagree with the bar about its own height.
 

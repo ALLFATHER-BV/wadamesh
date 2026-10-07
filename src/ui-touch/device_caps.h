@@ -282,9 +282,10 @@
 // Both can opt into the bounded, pre-transport saved-Wi-Fi sync from #383. The
 // T-Display P4's PCF8563 has come back asserting impossible dates, so it gets the
 // same fallback -- on the esp-hosted C6 build only: the sync drives Arduino's real
-// WiFi, which the legacy ESP-AT build must never touch.
+// WiFi, which the legacy ESP-AT build must never touch. The Wio Tracker L2 has
+// no RTC and an ESP32-S3 radio, so it gets the same opt-in.
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || \
-    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
+    defined(HAS_WIO_TRACKER_L2) || (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
   #define CAP_BOOT_TIME_SYNC 1
 #else
   #define CAP_BOOT_TIME_SYNC 0
