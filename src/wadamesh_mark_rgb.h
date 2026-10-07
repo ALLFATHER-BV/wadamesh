@@ -1,7 +1,15 @@
 // WADAMESH mesh mark, anti-aliased RGB565 (154x98, white-on-black) — generated.
+#pragma once
+#include <stdint.h>
 #define WADAMESH_MARK_W 154
 #define WADAMESH_MARK_H 98
-static const uint16_t WADAMESH_MARK_RGB565[] = {
+// ONE copy in the image: the pixels are defined only where WADAMESH_MARK_DEFINE is set
+// (ui-touch/UITask.cpp, which every image compiles; the P4 builds never compile
+// main.cpp), and everyone else sees the declaration. A static array here put a
+// second 30 KB copy into every S3 image through main.cpp's pre-LVGL boot screen.
+extern const uint16_t WADAMESH_MARK_RGB565[WADAMESH_MARK_W * WADAMESH_MARK_H];
+#if defined(WADAMESH_MARK_DEFINE)
+const uint16_t WADAMESH_MARK_RGB565[WADAMESH_MARK_W * WADAMESH_MARK_H] = {
   0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
   0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
   0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
@@ -1261,3 +1269,4 @@ static const uint16_t WADAMESH_MARK_RGB565[] = {
   0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
   0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,0x0000,
 };
+#endif  // WADAMESH_MARK_DEFINE

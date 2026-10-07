@@ -1,0 +1,27 @@
+# beta_90 - colour comes back: the Theme page, MORE COLORS! in three styles, Taste the rainbow. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, the Theme page, the colour options, the chat looks, then smaller changes.
+
+Test build, on top of the beta_89 redesign. The stable build stays beta_85.
+Colour is back. Several of you said the colour was what set wadamesh apart, and the beta_89 redesign took most of it out. This build puts it back as choices on a new Theme page, and turns MORE COLORS! on for everyone in its Regular style. Turn it off there for the calm look of beta_89.
+
+# --- The Theme page ---
+A new Theme page, in Settings under Device. It opens on a preview of the launcher, a chat and the send button in whatever you pick, so you see the result before anything restarts. Under it: Night and Day as two small screens with High contrast, the accent colours on the page with Custom for any other, MORE COLORS! and its style, Taste the rainbow, and the chat looks.
+The mode, the accent and the colours wait for one Apply and restart button on the preview. Scroll past the preview and the button stays in reach in a slim bar under the title, beside six dots in the colours you picked; tap the dots to go back up to the preview. The chat looks apply at once.
+Holding the theme chip in the control panel opens the Theme page. Appearance, High contrast, the accent colour, Colourful chat bubbles and Compact messages moved there from Display.
+
+# --- The colours ---
+MORE COLORS! lifts the whole interface in one of three styles, with the layout unchanged. Regular gives every section its own colour (the launcher, the Settings list, the tab bar), shows the status icons in colour (signal by strength, battery by level, Wi-Fi and Bluetooth tinted) and draws every name and glyph in its own hue.
+Neon is full cyberpunk: a near-black violet ground, electric cyan, hot magenta, laser yellow and acid lime, with lit edges on tiles, buttons and bubbles. Your accent stays yours, pushed to full brightness.
+Pastel is soft: mint, baby blue, lavender, peach and rose on a warm dark ground.
+Taste the rainbow gives every app, Settings page and tab its own place on the colour wheel, in the style you picked, and adds a little motion. The tab marker, the chats count and the keyboard focus ring slowly travel round the wheel, buttons dip when you press them, a new message lands with a flash of its sender's colour, and the lock screen mark, the boot mark and the screensaver's nodes light up in colour. The motion rests while the screen is off, locked or showing the screensaver. Turning it on still says so, now with a burst of coloured dots.
+High contrast keeps its own fixed colours, so the colour switches are greyed out while it is on. The e-paper T-Deck Pro and Max show only the chat looks.
+
+# --- Chats ---
+Chat icons: choose Glyphs (the dot marks) or Initials, the old look of the first two letters of the name in a coloured ball. It applies at once and reaches every icon: the chat list, contacts, the conversation header, the lock screen cards and the new-message card. A chat icon you picked yourself still wins.
+Names are always in colour now. The Colourful bubbles switch colours the bubbles too, your own included, as it did before the redesign. Mentions of you keep their blue bubble.
+In Day mode, names and glyphs on the light lists use a deeper shade of their colour so they read on white, and keep the bright one inside the dark bubbles.
+
+# --- Smaller changes ---
+Every image is 30 KB smaller: the boot logo was stored in it twice. That also leaves the Heltec V4 room for everything in this build, the motion included.
+Text that is new in this build shows in English for now. The translations follow once the wording has settled.

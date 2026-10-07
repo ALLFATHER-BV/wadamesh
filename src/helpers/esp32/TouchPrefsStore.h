@@ -663,6 +663,23 @@ bool     touchPrefsSetLockTextColor(uint32_t rgb);
 bool touchPrefsGetColorfulBubbles();
 bool touchPrefsSetColorfulBubbles(bool on);
 
+/** Settings > Theme (standalone keys, so no schema bump and no migration).
+ *  Chat icons: 0 the glyph marks, 1 initials in a coloured ball (default 0).
+ *  MORE COLORS!: on unless turned off; its style 0 Regular, 1 Neon, 2 Pastel.
+ *  Taste the rainbow: off unless turned on (it implies MORE COLORS!).
+ *  The colour looks apply at the next boot; chat icons apply at once. */
+constexpr uint8_t TOUCH_LOOK_REGULAR = 0;
+constexpr uint8_t TOUCH_LOOK_NEON    = 1;
+constexpr uint8_t TOUCH_LOOK_PASTEL  = 2;
+uint8_t touchPrefsGetChatIcons();
+void    touchPrefsSetChatIcons(uint8_t style);
+bool    touchPrefsGetMoreColors();
+void    touchPrefsSetMoreColors(bool on);
+uint8_t touchPrefsGetColorStyle();
+void    touchPrefsSetColorStyle(uint8_t style);
+bool    touchPrefsGetRainbow();
+void    touchPrefsSetRainbow(bool on);
+
 /** Tanmatsu message-notification LED: flash the envelope-icon LED on a new message and breathe it
  *  softly while there are unread messages. Default ON. Tanmatsu-only (no such LED on T-Deck/V4). */
 #if defined(HAS_TANMATSU)

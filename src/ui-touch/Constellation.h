@@ -55,6 +55,11 @@ struct CstTheme {
   uint32_t ter;              // the N marker
   const lv_font_t* small;    // labels and the status lines
   const lv_font_t* strong;   // the counts in them
+  // Taste the rainbow: every node (its mark, its route, its rings and the packets
+  // it sends you) in its own hue at this saturation and value, 0..100. Zero keeps
+  // them all in the glow.
+  uint8_t node_sat = 0;
+  uint8_t node_val = 0;
 };
 
 void cstShow(lv_obj_t* parent, const CstTheme& theme);  // build; no-op when shown

@@ -641,11 +641,22 @@ static inline uint32_t accentDarken(uint32_t rgb, int pct) {
   return (r<<16)|(g<<8)|b;
 }
 // Clamp a picked accent dark enough that text/icons stay readable on solid fills.
-static inline uint32_t accentClampReadable(uint32_t rgb) {
-  const uint32_t kMaxLuma = s_theme_high_contrast ? 90 : (s_theme_day ? 105 : 140);
+static inline uint32_t accentClampFor(uint32_t rgb, bool day, bool hc) {
+  const uint32_t kMaxLuma = hc ? 90 : (day ? 105 : 140);
   uint32_t L = accentLuma(rgb);
   if (L > kMaxLuma) return accentDarken(rgb, (int)(kMaxLuma * 100 / L));
   return rgb & 0xFFFFFFu;
+}
+static inline uint32_t accentClampReadable(uint32_t rgb) {
+  return accentClampFor(rgb, s_theme_day, s_theme_high_contrast);
+}
+// The lit tone of an accent: brighter on dark grounds (the default teal becomes the
+// mockups' #19D6C2), deeper on light ones, the accent itself in high contrast.
+static uint32_t accentGlowFor(uint32_t accent, bool day, bool hc) {
+  if (hc) return accent;
+  if (day) return accentDarken(accent, 70);
+  auto up = [](uint32_t c) { const uint32_t v = c * 117 / 100; return v > 255 ? 255u : v; };
+  return (up((accent >> 16) & 0xFF) << 16) | (up((accent >> 8) & 0xFF) << 8) | up(accent & 0xFF);
 }
 static uint32_t COLOR_TEXT          = kNightPalette.text;
 static uint32_t COLOR_SUB           = kNightPalette.sub;
@@ -756,6 +767,179 @@ static void applyThemeMode(uint8_t mode) {
 static inline uint32_t themeRole(uint32_t night, uint32_t day) {
   // HC palettes use semantic role colors rather than legacy Night literals.
   return (s_theme_day || s_theme_high_contrast) ? day : night;
+}
+
+// ---- MORE COLORS! and Taste the rainbow (Settings > Theme) -------------------------
+// The calm redesign is the base. MORE COLORS! turns it up in one of three styles:
+// Regular (a colour per section, surfaces leaning towards the accent), Neon (full
+// cyberpunk: violet black, the accent pushed to full brightness, magenta, laser
+// yellow, acid lime, lit edges) and Pastel (soft tints on warm plum). Taste the
+// rainbow gives every app, page and tab its own hue on top. All of it is worked out
+// once at boot over the palette, like the mode and the accent (the Theme page saves
+// and restarts), and the page's preview runs the same maths on a copy. High contrast
+// keeps its fixed colours, and e-paper has one bit, so neither takes any of it.
+struct ThemeTokens {
+  uint32_t bg, panel, control, control_pressed, field, border, raised, hair, track;
+  uint32_t text, sub, tertiary, secondary_action;
+  uint32_t glow, on_glow, sent_bg, recv_bg, mention_bg, info, warn, ok;
+  uint32_t hue[6];   // what you say, the people, places, the radio's tools, the system, the device
+  uint32_t link;     // the Wi-Fi and Bluetooth glyphs
+  uint8_t  tint;     // tile and icon-square fill opacity
+};
+enum : uint8_t { HUE_MSG = 0, HUE_PEOPLE = 1, HUE_PLACE = 2, HUE_RADIO = 3, HUE_SYS = 4, HUE_DEVICE = 5 };
+static bool     s_look_more    = false;   // after the high-contrast and e-paper guards
+static uint8_t  s_look_style   = TOUCH_LOOK_REGULAR;
+static bool     s_look_rainbow = false;
+static uint32_t COLOR_HUE[6]   = { 0x19D6C2, 0x19D6C2, 0x5AA9FF, 0xF2A33A, 0xC3CBCF, 0x4CC38A };
+static uint32_t COLOR_LINK     = 0x8A969C;
+static uint8_t  s_look_tint    = 34;      // ~13 %, the redesign's tile tint
+static bool     s_chat_icons_initials = false;   // Settings > Theme > Chat icons (applies live)
+static uint8_t  s_avatar_gen = 0;                // bumped when the icon style changes: kept avatars redo their look
+static int      s_rb_flash_slot = -1;            // Taste the rainbow: the ring slot of a message that just arrived
+static uint32_t s_rb_flash_at   = 0;             // ...and when (millis), so a stale one never flashes
+static inline bool lookNeon()   { return s_look_more && s_look_style == TOUCH_LOOK_NEON; }
+static inline bool lookPastel() { return s_look_more && s_look_style == TOUCH_LOOK_PASTEL; }
+
+// a over b by t/255, per channel, at full 8-bit precision (lv_color_mix is RGB565).
+static uint32_t rgbMix(uint32_t a, uint32_t b, uint8_t t) {
+  auto ch = [&](int sh) {
+    const uint32_t x = (a >> sh) & 0xFF, y = (b >> sh) & 0xFF;
+    return ((x * (255u - t) + y * t + 127u) / 255u) << sh;
+  };
+  return ch(16) | ch(8) | ch(0);
+}
+// HSV (0..359, 0..100, 0..100) to 0xRRGGBB, the same mapping as lv_color_hsv_to_rgb
+// without its RGB565 rounding.
+static uint32_t hsvRgb(int h, int s, int v) {
+  h = ((h % 360) + 360) % 360;
+  const int c = v * s / 100;   // 0..100
+  const int x = c * (60 - abs(h % 120 - 60)) / 60;
+  const int m = v - c;
+  int r = 0, g = 0, b = 0;
+  if      (h < 60)  { r = c; g = x; }
+  else if (h < 120) { r = x; g = c; }
+  else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; }
+  else if (h < 300) { r = x; b = c; }
+  else              { r = c; b = x; }
+  auto u8 = [](int p) { return (uint32_t)((p * 255 + 50) / 100); };
+  return (u8(r + m) << 16) | (u8(g + m) << 8) | u8(b + m);
+}
+static int rgbHue(uint32_t rgb) {
+  const int r = (rgb >> 16) & 0xFF, g = (rgb >> 8) & 0xFF, b = rgb & 0xFF;
+  const int mx = LV_MAX(r, LV_MAX(g, b)), mn = LV_MIN(r, LV_MIN(g, b)), d = mx - mn;
+  if (d == 0) return 0;
+  int h;
+  if (mx == r)      h = 60 * (g - b) / d;
+  else if (mx == g) h = 60 * (b - r) / d + 120;
+  else              h = 60 * (r - g) / d + 240;
+  return (h + 360) % 360;
+}
+// A name's hue: the same FNV-1a hash the bubble colours have always used, so a
+// person's name, bubble, glyph and initials ball all agree.
+static int nameHue(const char* name) {
+  uint32_t h = 2166136261u;
+  for (const char* p = name; p && *p; ++p) { h ^= (uint8_t)*p; h *= 16777619u; }
+  return (int)(h % 360u);
+}
+// A name's colour in a look: vivid by default, at full blast in Neon, soft in Pastel,
+// a little lighter in Day (the Day bubbles are dark slate). The "For" forms take the
+// look as arguments, so the Theme page's preview can show one that is not applied yet.
+static uint32_t lookNameColorFor(const char* name, bool day, bool more, uint8_t style) {
+  const int h = nameHue(name);
+  if (more && style == TOUCH_LOOK_NEON)   return hsvRgb(h, 100, 100);
+  if (more && style == TOUCH_LOOK_PASTEL) return hsvRgb(h, 34, 100);
+  return day ? hsvRgb(h, 60, 100) : hsvRgb(h, 85, 95);
+}
+static uint32_t lookNameColor(const char* name) {
+  return lookNameColorFor(name, s_theme_day, s_look_more, s_look_style);
+}
+// The same hue as ink on a light surface. Day's name colours are lifted for its dark
+// slate bubbles, which washed them out on its white lists: a glyph, a row's time
+// and a compact-row name read in this deeper one. Night has no light surfaces, so
+// it keeps the name colour itself.
+static uint32_t lookNameInkFor(const char* name, bool day, bool more, uint8_t style) {
+  if (!day) return lookNameColorFor(name, day, more, style);
+  const int h = nameHue(name);
+  if (more && style == TOUCH_LOOK_NEON)   return hsvRgb(h, 100, 70);
+  if (more && style == TOUCH_LOOK_PASTEL) return hsvRgb(h, 48, 68);
+  return hsvRgb(h, 82, 60);
+}
+static uint32_t lookNameInk(const char* name) {
+  return lookNameInkFor(name, s_theme_day, s_look_more, s_look_style);
+}
+// Item i of n around the colour wheel, in the style's strength (Taste the rainbow,
+// which always comes with MORE COLORS!).
+static uint32_t lookRainbowFor(int i, int n, bool day, uint8_t style) {
+  const int h = n > 0 ? i * 360 / n : 0;
+  if (style == TOUCH_LOOK_NEON)   return hsvRgb(h, 100, 100);
+  if (style == TOUCH_LOOK_PASTEL) return hsvRgb(h, 36, 100);
+  return day ? hsvRgb(h, 80, 72) : hsvRgb(h, 72, 96);
+}
+static uint32_t lookRainbow(int i, int n) { return lookRainbowFor(i, n, s_theme_day, s_look_style); }
+
+static void lookAdjust(ThemeTokens& t, bool day, bool more, uint8_t style) {
+  // Calm: the redesign's own section colours.
+  t.hue[HUE_MSG] = t.glow;  t.hue[HUE_PEOPLE] = t.glow;  t.hue[HUE_PLACE] = t.info;
+  t.hue[HUE_RADIO] = t.warn; t.hue[HUE_SYS] = day ? t.sub : 0xC3CBCF; t.hue[HUE_DEVICE] = t.ok;
+  t.link = t.sub;
+  t.tint = 34;
+  if (!more) return;
+  if (style == TOUCH_LOOK_NEON) {
+    // The accent pushed to full brightness, magenta beside it.
+    t.glow = hsvRgb(rgbHue(t.glow), 100, day ? 78 : 100);
+    t.on_glow = accentLuma(t.glow) > 140 ? 0x0A0014u : 0xFFFFFFu;
+    if (!day) {
+      t.bg = 0x04010A; t.panel = 0x0C0616; t.control = 0x160A26; t.control_pressed = 0x241038;
+      t.field = 0x0C0616; t.border = 0x2C1248; t.raised = 0x160A26; t.hair = 0x1A0C2C; t.track = 0x2C1248;
+      t.text = 0xF5F3FF; t.sub = 0xA9A4CF; t.tertiary = 0x706A98; t.secondary_action = 0x241338;
+      t.sent_bg = 0x1A0628; t.recv_bg = 0x0C0616; t.mention_bg = 0x0A1A3D;
+      const uint32_t h[6] = { t.glow, 0xFF2BD6, 0x2D8BFF, 0xFFE600, 0xB6FF00, 0x39FF88 };
+      memcpy(t.hue, h, sizeof h);
+      t.link = t.glow;
+      t.tint = 30;
+    } else {
+      const uint32_t h[6] = { t.glow, 0xD6007A, 0x1D4ED8, 0xB45309, 0x4D7C0F, 0x15803D };
+      memcpy(t.hue, h, sizeof h);
+      t.link = 0x1D4ED8;
+      t.tint = 40;
+    }
+  } else if (style == TOUCH_LOOK_PASTEL) {
+    if (!day) {
+      t.glow = hsvRgb(rgbHue(t.glow), 34, 95);
+      t.on_glow = 0x1A1520;
+      t.bg = 0x0E0B12; t.panel = 0x18141D; t.control = 0x231D2A; t.control_pressed = 0x2E2737;
+      t.field = 0x18141D; t.border = 0x30283A; t.raised = 0x231D2A; t.hair = 0x201A27; t.track = 0x30283A;
+      t.text = 0xF5EFF8; t.sub = 0xB6ACC0; t.tertiary = 0x80768B; t.secondary_action = 0x2E2737;
+      t.sent_bg = rgbMix(0x18141D, t.glow, 60); t.recv_bg = 0x1E1925; t.mention_bg = 0x22263A;
+      const uint32_t h[6] = { t.glow, 0xA8D8FF, 0xCDB4FF, 0xFFC9A0, 0xFFB3C7, 0xB8E6A6 };
+      memcpy(t.hue, h, sizeof h);
+      t.link = 0xA8D8FF;
+      t.tint = 70;
+    } else {
+      const uint32_t h[6] = { t.glow, 0x4E9BE0, 0x8E6CE0, 0xD9773C, 0xD9668C, 0x5AA469 };
+      memcpy(t.hue, h, sizeof h);
+      t.link = 0x4E9BE0;
+      t.tint = 52;
+    }
+  } else {   // Regular
+    if (!day) {
+      t.panel = rgbMix(t.panel, t.glow, 10);   t.control = rgbMix(t.control, t.glow, 12);
+      t.control_pressed = rgbMix(t.control_pressed, t.glow, 16);
+      t.field = rgbMix(t.field, t.glow, 10);   t.border = rgbMix(t.border, t.glow, 22);
+      t.raised = rgbMix(t.raised, t.glow, 12); t.hair = rgbMix(t.hair, t.glow, 12);
+      t.track = rgbMix(t.track, t.glow, 16);   t.tertiary = rgbMix(t.tertiary, t.glow, 30);
+      const uint32_t h[6] = { t.glow, 0x5AA9FF, 0x38BDF8, 0xFFB224, 0xB18CFF, 0x4CC38A };
+      memcpy(t.hue, h, sizeof h);
+      t.link = 0x5AA9FF;
+      t.tint = 62;
+    } else {
+      const uint32_t h[6] = { t.glow, 0x1F66A5, 0x0369A1, 0xA86200, 0x6D4BC4, 0x2E7D4F };
+      memcpy(t.hue, h, sizeof h);
+      t.link = 0x1F66A5;
+      t.tint = 46;
+    }
+  }
 }
 
 // LVGL 8.3 / Montserrat doesn't ship a STAR glyph. We carry a small custom
@@ -3883,9 +4067,12 @@ static void glyphDrawCb(lv_event_t* e) {
     const lv_area_t d = { (lv_coord_t)(p.x - r_off), (lv_coord_t)(p.y - r_off), (lv_coord_t)(p.x + r_off), (lv_coord_t)(p.y + r_off) };
     lv_draw_rect(dc, &rd, &d);
   }
+  // The lit colour is the avatar's own text colour: the glow, or with MORE COLORS!
+  // the name's hue (avatarApply sets it).
+  const lv_color_t lit_col = lv_obj_get_style_text_color(obj, LV_PART_MAIN);
   lv_draw_line_dsc_t ld;
   lv_draw_line_dsc_init(&ld);
-  ld.color = lv_color_hex(COLOR_GLOW);
+  ld.color = lit_col;
   ld.opa = 190;
   ld.width = LV_MAX(1, (sz + 13) / 26);
   ld.round_start = ld.round_end = 1;
@@ -3896,7 +4083,7 @@ static void glyphDrawCb(lv_event_t* e) {
     lv_draw_line(dc, &ld, &p1, &p2);
   }
   if (star && cells[0] != 4) { const lv_point_t p1 = cellPt(4), p2 = cellPt(cells[0]); lv_draw_line(dc, &ld, &p1, &p2); }
-  rd.bg_color = lv_color_hex(COLOR_GLOW);
+  rd.bg_color = lit_col;
   for (int k = 0; k < count; ++k) {
     const lv_point_t p = cellPt(cells[k]);
     const lv_area_t d = { (lv_coord_t)(p.x - r_on), (lv_coord_t)(p.y - r_on), (lv_coord_t)(p.x + r_on - 1), (lv_coord_t)(p.y + r_on - 1) };
@@ -3904,23 +4091,92 @@ static void glyphDrawCb(lv_event_t* e) {
   }
 }
 
+// Settings > Theme > Chat icons: the glyph above, or (Initials) the old look, the
+// first two letters of the name, a leading # skipped, in a ball coloured from the
+// name. One function styles both, so the choice reaches every icon at once; it
+// keeps the object and only redoes its look, so a live switch can re-run it. The
+// shape the caller asked for rides in a widget flag (a ball ignores it). The four
+// user flags are all the nav's; WIDGET_1 is free on a plain object (only a msgbox
+// uses it, on itself).
+#define AVATAR_SQUARE_FLAG LV_OBJ_FLAG_WIDGET_1
+static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool day, bool more,
+                            uint8_t style, uint32_t raised, uint32_t glow) {
+  if (!av) return;
+  lv_obj_clean(av);
+  const lv_coord_t size = lv_obj_get_style_width(av, LV_PART_MAIN);
+  const bool square = lv_obj_has_flag(av, AVATAR_SQUARE_FLAG);
+  if (initials) {
+    lv_obj_set_user_data(av, nullptr);   // no glyph under the letters
+    lv_obj_set_style_radius(av, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+    // Every ball hue falls below the e-paper threshold: a paper-white disc with a
+    // black ring keeps the letters visible after the panel's one-bit reduction.
+    lv_obj_set_style_bg_color(av, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_border_color(av, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_border_width(av, 2, LV_PART_MAIN);
+    const uint32_t ink = 0x000000;
+#else
+    lv_obj_set_style_bg_color(av, lv_color_hex(hsvRgb(nameHue(name), 55, 42)), LV_PART_MAIN);
+    lv_obj_set_style_border_width(av, 0, LV_PART_MAIN);
+    const uint32_t ink = 0xE6EBED;
+#endif
+    char ini[12];
+    int o = 0, glyphs = 0;
+    const char* q = name ? name : "";
+    while (*q == '#' || *q == ' ') ++q;
+    while (*q && glyphs < 2 && o < 8) {
+      const uint8_t c = (uint8_t)*q;
+      const int len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+      for (int k = 0; k < len && *q; ++k) ini[o++] = *q++;
+      ++glyphs;
+    }
+    ini[o] = '\0';
+    for (char* u = ini; *u; ++u) if ((uint8_t)*u < 0x80) *u = (char)toupper((unsigned char)*u);
+    const lv_font_t* f = size >= 36 ? &g_font_16 : size >= 26 ? &g_font_semi_14 : &g_font_semi_12;
+    char txt[16];
+    copyUtf8ReplacingMissingGlyphs(f, txt, sizeof txt, ini[0] ? ini : "?");
+    lv_obj_t* l = lv_label_create(av);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, f, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(ink), LV_PART_MAIN);
+    lv_obj_center(l);
+  } else {
+    lv_obj_set_style_radius(av, square ? (size * 7 + 13) / 26 : LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(av, lv_color_hex(raised), LV_PART_MAIN);
+    lv_obj_set_style_border_width(av, 0, LV_PART_MAIN);
+    // Neon: the tile itself is a lit outline in the glyph's colour.
+    if (more && style == TOUCH_LOOK_NEON) {
+      lv_obj_set_style_border_color(av, lv_color_hex(lookNameInkFor(name, day, more, style)), LV_PART_MAIN);
+      lv_obj_set_style_border_opa(av, 115, LV_PART_MAIN);
+      lv_obj_set_style_border_width(av, 1, LV_PART_MAIN);
+    }
+    lv_obj_set_user_data(av, (void*)(uintptr_t)glyphCode(name));
+  }
+  // The glyph's lit colour (read by glyphDrawCb): the glow, or with MORE COLORS! the
+  // name's own colour, as on its sender line in a chat.
+  lv_obj_set_style_text_color(av, lv_color_hex(more ? lookNameInkFor(name, day, more, style) : glow), LV_PART_MAIN);
+  lv_obj_invalidate(av);
+}
+static void avatarApply(lv_obj_t* av, const char* name) {
+  avatarApplyLook(av, name, s_chat_icons_initials, s_theme_day, s_look_more, s_look_style, COLOR_RAISED, COLOR_GLOW);
+}
+
 static lv_obj_t* makeGlyphAvatar(lv_obj_t* parent, const char* name, GlyphShape shape, lv_coord_t size) {
   lv_obj_t* av = lv_obj_create(parent);
   lv_obj_remove_style_all(av);
   lv_obj_clear_flag(av, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_size(av, size, size);
-  lv_obj_set_style_radius(av, shape == GLYPH_CIRCLE ? LV_RADIUS_CIRCLE : (size * 7 + 13) / 26, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(av, lv_color_hex(COLOR_RAISED), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(av, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_user_data(av, (void*)(uintptr_t)glyphCode(name));
+  if (shape == GLYPH_SQUARE) lv_obj_add_flag(av, AVATAR_SQUARE_FLAG);
   lv_obj_add_event_cb(av, glyphDrawCb, LV_EVENT_DRAW_MAIN_END, nullptr);
+  avatarApply(av, name);
   return av;
 }
 
 // A conversation's own emoji (its sheet's "Chat icon", channel or direct chat) in
-// place of the glyph: the baked colour emoji, centred in the same tile, at its
-// native 16 px in the list's 24-28 px tiles and in proportion on larger ones. No
-// emoji, or one the set does not carry, puts the glyph back.
+// place of the glyph or the initials: the baked colour emoji, centred in the same
+// tile or ball, at its native 16 px in the list's 24-28 px tiles and in proportion
+// on larger ones. No emoji, or one the set does not carry, puts the plain look back.
 static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8) {
   if (!av) return;
   const lv_img_dsc_t* eg = nullptr;
@@ -3928,23 +4184,18 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
     uint32_t off = 0;
     eg = emojiGlyphLookup(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
   }
-  lv_obj_t* im = lv_obj_get_child_cnt(av) ? lv_obj_get_child(av, 0) : nullptr;   // the tile's only child
-  if (eg) {
-    lv_obj_set_user_data(av, nullptr);   // no glyph under it
-    if (!im) {
-      im = lv_img_create(av);
-      lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    }
-    lv_img_set_src(im, eg);
-    const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
-    const lv_coord_t px = LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28));
-    lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
-    lv_img_set_antialias(im, px != 16);
-    lv_obj_center(im);
-  } else {
-    if (im) lv_obj_del(im);
-    lv_obj_set_user_data(av, (void*)(uintptr_t)glyphCode(name));
-  }
+  avatarApply(av, name);
+  if (!eg) return;
+  lv_obj_clean(av);                    // no letters
+  lv_obj_set_user_data(av, nullptr);   // no glyph under it
+  lv_obj_t* im = lv_img_create(av);
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_img_set_src(im, eg);
+  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
+  const lv_coord_t px = LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28));
+  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
+  lv_img_set_antialias(im, px != 16);
+  lv_obj_center(im);
   lv_obj_invalidate(av);
 }
 
@@ -3981,6 +4232,20 @@ static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
 // control fill, no outline, soft corners. Primary is the one action a screen is
 // for: solid glow teal with dark text. Destructive keeps the secondary face with
 // red text; the solid red is kept for the confirmation of a destructive step.
+// Taste the rainbow's press dip: a pressed button or tile pulls its edges in by two
+// pixels and springs back. transform_width/height shrink only the drawn box (no layer,
+// no copy of the children), so it costs a redraw of the button and nothing more.
+static void styleLookPress(lv_obj_t* obj) {
+  if (!s_look_rainbow) return;
+  static const lv_style_prop_t kProps[] = { LV_STYLE_TRANSFORM_WIDTH, LV_STYLE_TRANSFORM_HEIGHT, (lv_style_prop_t)0 };
+  static lv_style_transition_dsc_t s_tr;
+  static bool s_ready = false;
+  if (!s_ready) { lv_style_transition_dsc_init(&s_tr, kProps, lv_anim_path_ease_out, 90, 0, nullptr); s_ready = true; }
+  lv_obj_set_style_transform_width(obj, -2, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_transform_height(obj, -2, LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_style_transition(obj, &s_tr, LV_PART_MAIN);
+}
+
 static void styleButton(lv_obj_t* obj) {
 #if defined(HAS_TDECK_PRO)
   lv_obj_set_style_bg_color(obj, lv_color_white(), LV_PART_MAIN);
@@ -4009,6 +4274,7 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 9, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+  styleLookPress(obj);
 }
 
 static void stylePrimary(lv_obj_t* obj) {
@@ -4019,6 +4285,17 @@ static void stylePrimary(lv_obj_t* obj) {
   lv_obj_set_style_text_color(obj, lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_border_width(obj, 0, LV_PART_MAIN);
   lv_obj_set_style_text_font(obj, &g_font_semi_14, LV_PART_MAIN);
+  // Neon: cyan into magenta with a soft halo; the rainbow: the glow into the
+  // people's hue. Both keep the dark text.
+  if (lookNeon() || s_look_rainbow) {
+    lv_obj_set_style_bg_grad_color(obj, lv_color_hex(COLOR_HUE[HUE_PEOPLE]), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(obj, LV_GRAD_DIR_HOR, LV_PART_MAIN);
+  }
+  if (lookNeon()) {
+    lv_obj_set_style_outline_color(obj, lv_color_hex(COLOR_GLOW), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(obj, 2, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(obj, 70, LV_PART_MAIN);
+  }
 #endif
 }
 
@@ -4115,6 +4392,7 @@ static bool s_remote_landscape = false;   // remote orientation: true=800x480 la
 RTC_NOINIT_ATTR static uint32_t s_rmt_boot_guard;
 
 #if !defined(HAS_TANMATSU)
+#define WADAMESH_MARK_DEFINE        // the one copy of the pixels (main.cpp's boot screen uses it too)
 #include "../wadamesh_mark_rgb.h"   // anti-aliased mesh mark (RGB565), same artwork as the boot splash
 // Physical-panel placeholder shown while remote mode renders the UI off-screen. Drawn
 // on the first loop pass (IP sentinel) then refreshed when the IP appears (Wi-Fi up).
@@ -6781,7 +7059,6 @@ static void chatVirtApplyPendingScroll(LvChatPanel* p);
 static void refreshChatList(LvChatPanel& p);
 static void applyAccent(uint32_t rgb);            // theme accent (Settings -> Accent colour)
 static void openAccentPicker();
-static void openAccentPickerCb(lv_event_t* e);
 static void openChannelScopeModal(int slot, const char* name);  // per-channel region scope
 static void channelGearCb(lv_event_t* e);
 static bool chanScopeIsOpen();   // fwd: the status-bar back chevron closes the channel-settings sheet
@@ -6923,7 +7200,8 @@ enum {
   CAT_CLOCK,         // time zone, UTC offset, sync clock, 12-hour clock
   CAT_BATTERY,       // battery history, calibrate, battery saver
   CAT_SENSORS,       // expansion kit + Show-Sensors-tab toggle (V4-with-kit)
-  CAT_DISPLAY,       // screen timeout, UI size, bubbles, theme, orientation
+  CAT_DISPLAY,       // screen timeout, UI size, orientation, glance
+  CAT_THEME,         // mode, accent, MORE COLORS!, Taste the rainbow, chat looks
   CAT_KEYBOARD,      // secondary layouts + accent popups
   CAT_SOUND,         // notification sound, or Attaky keyboard-indicator blink
   CAT_QUICKREPLIES,  // quick-reply macros
@@ -6961,6 +7239,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Battery",       UI_ICON_BATTERY_CHARGING },
   { "Sensors",       UI_ICON_THERMOMETER },
   { "Display",       UI_ICON_SUN },
+  { "Theme",         UI_ICON_PALETTE },
   { "Keyboard",      UI_ICON_KEYBOARD },
 #if defined(ATTAKY_MESH_SERIES)
   { "Notifications", UI_ICON_BELL },
@@ -6993,6 +7272,7 @@ static void      openSettingsCategory(int cat);  // fwd: the Contacts overflow l
 #if CAP_LUA_SDK_EXT
 static void      buildAppPermsSettings(lv_obj_t* page, lv_coord_t lblw);   // fwd: defined with the perm helpers
 #endif
+static void      buildThemeSettings();           // fwd: defined with the accent picker
 
 // ---- Firmware update check (red badge on the Settings gear + About-tab line) ----
 // Compares our embedded release tag against the latest pre-alpha_N published to
@@ -10841,11 +11121,33 @@ static void railPlaceBadge(lv_obj_t* badge, int tab) {
   lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -(right_gap + 2), c.y1 + 2);
 }
 
+// MORE COLORS!: each tab in its section's colour (Home in the text colour); Taste the
+// rainbow: each its own hue. The calm look keeps grey icons and the glow.
+static uint32_t tabHue(int idx) {
+  if (s_look_rainbow) return lookRainbow(idx * 2, 10);
+  if (idx == CHAT_INBOX_TAB_INDEX) return COLOR_HUE[HUE_MSG];
+  if (idx == CONTACTS_TAB_INDEX)   return COLOR_HUE[HUE_PEOPLE];
+  if (idx == HOME_TAB_INDEX)       return COLOR_TEXT;
+  if (idx == MAP_TAB_INDEX)        return COLOR_HUE[HUE_PLACE];
+  return COLOR_HUE[HUE_SYS];
+}
+static void tabBarLookDrawCb(lv_event_t* e) {
+  lv_obj_draw_part_dsc_t* dsc = lv_event_get_draw_part_dsc(e);
+  if (!dsc || dsc->class_p != &lv_btnmatrix_class || dsc->type != LV_BTNMATRIX_DRAW_PART_BTN || !dsc->label_dsc) return;
+  if (!s_look_more) return;
+  if (!s_nav_condensed && getActiveTab() == MAP_TAB_INDEX) return;   // the map chrome's own black or white
+  lv_obj_t* bm = lv_event_get_target(e);
+  const uint32_t hue = tabHue((int)dsc->id);
+  const bool on = lv_btnmatrix_has_btn_ctrl(bm, dsc->id, LV_BTNMATRIX_CTRL_CHECKED);
+  dsc->label_dsc->color = on ? lv_color_hex(hue) : lv_color_hex(rgbMix(COLOR_BG, hue, 150));
+}
+
 // Slide the thin accent indicator bar under the active tab. Hidden on the
 // immersive map tab (transparent chrome, black icons over the tiles).
 static void updateTabIndicator() {
   if (!s_tab_indicator || !g_lv.tabview) return;
   const int idx = getActiveTab();
+  if (s_look_more) lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(tabHue(idx)), LV_PART_MAIN);
   if (s_nav_condensed) {
     // Rail: a short vertical bar on the rail's inner (left) edge, beside the
     // active cell. The rail stays solid on the map, so it stays visible there.
@@ -15218,18 +15520,6 @@ static void hideNameToggleCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->showAlert(hide ? TR("Device name hidden") : TR("Device name shown"), 1000);
 }
 
-// Colourful chat bubbles toggle. On enable: the "taste the rainbow" easter egg.
-// Bubbles recolour the next time a chat opens (this control lives on Settings).
-static void colorfulBubblesToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-#if defined(ESP32)
-  touchPrefsSetColorfulBubbles(on);
-#endif
-  if (g_lv.task) g_lv.task->showAlert(on ? TR("Taste the rainbow!") : TR("Chat bubbles: plain"),
-                                      on ? 1500 : 900);
-}
-
 // Compact chat toggle (wyvern.red): IRC-style dense rows instead of bubbles. An
 // open chat re-renders immediately so the switch gives instant feedback.
 static void compactChatToggleCb(lv_event_t* e) {
@@ -15881,19 +16171,6 @@ static void gpsFuzzSelectCb(lv_event_t* e) {
                                 : TR("Advertised position displaced"), 1400);
   }
 #endif
-}
-
-static void themeModeSelectCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  themeModeRestart((uint8_t)(uintptr_t)lv_event_get_user_data(e));
-}
-
-static void themeContrastToggleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const bool high_contrast = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  themeModeRestart(high_contrast
-      ? (s_theme_day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
-      : (s_theme_day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT));
 }
 
 #if CAP_TRACKBALL || defined(TLORA_PAGER)
@@ -16729,33 +17006,7 @@ static void buildDeviceSettings(int sec) {
   }
   if (sec == DSEC_DISPLAY) {
 
-  #if !defined(HAS_TDECK_PRO)
-  /* Colourful chat bubbles: colour every bubble + sender name by a hash of the
-     sender's name (same name -> same colour). "Taste the rainbow" on enable. */
-  {
-    int h = settingsRowLabel(body, y, 6, TR("Colourful chat bubbles"), COLOR_SUB, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
-#if defined(ESP32)
-    if (touchPrefsGetColorfulBubbles()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-#endif
-    lv_obj_add_event_cb(sw, colorfulBubblesToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
-#endif
-
-  /* Compact messages (IRC-style): one dense "HH:MM name: text" row per message
-     instead of bubbles — far more history on screen. Opt-in (wyvern.red). */
-  {
-    int h = settingsRowLabel(body, y, 6, TR("Compact messages (IRC style)"), COLOR_SUB, nullptr, 56);
-    lv_obj_t* sw = lv_switch_create(body);
-    lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, y);
-#if defined(ESP32)
-    if (touchPrefsGetCompactChat()) lv_obj_add_state(sw, LV_STATE_CHECKED);
-#endif
-    lv_obj_add_event_cb(sw, compactChatToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
+  // (Colourful bubbles and Compact messages moved to Settings > Theme.)
 
   /* Hide device name: blank the scrolling profile name in the status bar and
      move the clock to the left where it sat. */
@@ -16823,78 +17074,7 @@ static void buildDeviceSettings(int sec) {
   }
 #endif
 
-  #if !defined(HAS_TDECK_PRO)
-    /* Firmware appearance: selecting a different palette saves and restarts so
-     every LVGL object is rebuilt with one coherent set of colours. */
-  {
-    y += settingsRowLabel(body, y, 0, TR("Appearance"), COLOR_SUB, &g_font_12, 0) + 4;
-    const lv_coord_t gap = 4;
-    const lv_coord_t row_w = s_settings_content_w - 2;
-    const lv_coord_t button_w = (row_w - gap) / 2;
-    for (uint8_t day = 0; day <= 1; ++day) {
-      const uint8_t mode = s_theme_high_contrast
-          ? (day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
-          : (day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT);
-      lv_obj_t* button = lv_btn_create(body);
-      lv_obj_set_size(button, button_w, SC(34));
-      lv_obj_set_pos(button, 2 + day * (button_w + gap), y);
-      styleButton(button);
-      if ((day != 0) == s_theme_day) {
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_opa(button, LV_OPA_COVER, LV_PART_MAIN);
-      }
-      lv_obj_set_style_text_color(button,
-          lv_color_hex((day != 0) == s_theme_day ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-      lv_obj_add_event_cb(button, themeModeSelectCb, LV_EVENT_CLICKED,
-                          (void*)(uintptr_t)mode);
-      lv_obj_t* label = lv_label_create(button);
-      char text[32];
-      const char* base = day ? TR("Day") : TR("Night");
-      snprintf(text, sizeof(text), "%s%s", (day != 0) == s_theme_day ? LV_SYMBOL_OK "  " : "", base);
-      lv_label_set_text(label, text);
-      lv_obj_center(label);
-    }
-    y += SC(42);
-
-    int h = settingsRowLabel(body, y, 6, TR("High contrast"), COLOR_SUB, nullptr, 90);
-    lv_obj_t* contrast_sw = lv_switch_create(body);
-    lv_obj_align(contrast_sw, LV_ALIGN_TOP_RIGHT, 0, y);
-    if (s_theme_high_contrast) lv_obj_add_state(contrast_sw, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(contrast_sw, themeContrastToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-    y += LV_MAX(40, h + 12);
-  }
-
-  /* Accent colour: opens a colour-wheel + hex picker. */
-  {
-    y += settingsRowLabel(body, y, 0, TR("Accent colour"), COLOR_SUB, &g_font_12, 0) + 4;
-#if defined(HAS_TDISPLAY_P4)
-    // The P4's larger UI scale grew the button over the fixed-x swatch: narrower,
-    // with the swatch placed a gap past the button's end.
-    const lv_coord_t pick_w   = SC(110);
-    const lv_coord_t swatch_x = 2 + pick_w + SC(12);
-#else
-    const lv_coord_t pick_w   = SC(150);
-    const lv_coord_t swatch_x = 162;
-#endif
-    lv_obj_t* b = lv_btn_create(body);
-    lv_obj_set_size(b, pick_w, SC(32));
-    lv_obj_set_pos(b, 2, y);
-    styleButton(b);
-    lv_obj_add_event_cb(b, openAccentPickerCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* bl = lv_label_create(b);
-    useChainedFont(bl);
-    lv_label_set_text(bl, TR("Pick colour"));
-    lv_obj_center(bl);
-    lv_obj_t* swatch = lv_obj_create(body);
-    lv_obj_remove_style_all(swatch);
-    lv_obj_set_size(swatch, SC(30), SC(30));
-    lv_obj_set_pos(swatch, swatch_x, y + 1);
-    lv_obj_set_style_radius(swatch, 6, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(swatch, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(swatch, LV_OPA_COVER, LV_PART_MAIN);
-    y += SC(40);
-  }
-#endif
+  // (Appearance, High contrast and the accent colour moved to Settings > Theme.)
 
   }
 
@@ -38084,9 +38264,16 @@ static void onMapTabActivated() {
 // overlays the amber when power-save is on, so the map-chrome setter and the per-tick refresh share
 // one writer and never fight over the battery colour.
 static lv_color_t s_batt_base = lv_color_hex(COLOR_SUB);
+// MORE COLORS! colours the battery by its level off the map: green, amber below half,
+// red below a fifth, the glow while charging. 0..100, 1000 = charging, -1 unknown.
+static int  s_batt_lvl = -1;
+static bool s_batt_on_map = false;
 static void applyBattColor() {
   if (!g_statusbar.batt_icon) return;
   lv_color_t c = s_batt_base;
+  if (s_look_more && !s_batt_on_map && s_batt_lvl >= 0)
+    c = lv_color_hex(s_batt_lvl >= 1000 ? COLOR_GLOW : s_batt_lvl >= 50 ? COLOR_HUE[HUE_DEVICE]
+                     : s_batt_lvl >= 20 ? COLOR_HUE[HUE_RADIO] : COLOR_STATUS_DANGER_TEXT);
   if (touchSleep::enabled())
     c = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : 0xFFD60A);
   lv_obj_set_style_text_color(g_statusbar.batt_icon, c, LV_PART_MAIN);
@@ -38130,12 +38317,13 @@ static void applyMapChrome(bool on) {
     const lv_color_t fg_sub = lv_color_hex(!on ? COLOR_SUB  : (light_map_chrome ? 0xC8CCD0 : 0x000000));
     if (g_statusbar.left_label) lv_obj_set_style_text_color(g_statusbar.left_label, fg, LV_PART_MAIN);
     s_batt_base = on ? fg : lv_color_hex(COLOR_SUB);   // theme/map-driven battery colour...
+    s_batt_on_map = on;
     applyBattColor();            // ...with the power-save amber overlaid if enabled
     if (g_statusbar.batt_pct)   lv_obj_set_style_text_color(g_statusbar.batt_pct, fg_sub, LV_PART_MAIN);
     if (g_statusbar.clock)      lv_obj_set_style_text_color(g_statusbar.clock, on ? fg_sub : lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     // The radio glyphs are quiet grey indicators off-map; on-map they join the rest of the
     // chrome in black/off-white, which the light OSM tiles need for legibility.
-    const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_SUB);
+    const lv_color_t fg_radio = on ? fg_sub : lv_color_hex(COLOR_LINK);   // MORE COLORS!: tinted
     if (g_statusbar.conn_icon)   lv_obj_set_style_text_color(g_statusbar.conn_icon,  fg_radio, LV_PART_MAIN);
     if (g_statusbar.ble_icon)    lv_obj_set_style_text_color(g_statusbar.ble_icon,   fg_radio, LV_PART_MAIN);
 #if defined(HAS_TDECK_GT911)
@@ -38379,7 +38567,7 @@ static void refreshMapInfoLabel() {
     snprintf(tail, sizeof(tail), "\xe2\x86\x93 %u downloading",
              (unsigned)tileFetchPendingLoad());
   } else if (s_map_last_missing > 0 && !wifi_up) {
-    snprintf(tail, sizeof(tail), "Wi-Fi off \xe2\x80\x94 gaps");
+    snprintf(tail, sizeof(tail), "Wi-Fi off, gaps");
   } else if (s_map_markers_wanted > s_map_markers_drawn) {
     // More positioned contacts are on screen than we drew dots for. Say so: the old
     // label counted every positioned contact and the map quietly stopped at its cap,
@@ -39551,6 +39739,7 @@ static void settingsCatBuild(int cat) {
     case CAT_BATTERY:      buildDeviceSettings(DSEC_BATTERY); break;
     case CAT_SENSORS:      buildDeviceSettings(DSEC_SENSORS); break;
     case CAT_DISPLAY:      buildDeviceSettings(DSEC_DISPLAY); break;
+    case CAT_THEME:        buildThemeSettings(); break;
     case CAT_KEYBOARD:     buildDeviceSettings(DSEC_KEYBOARD); break;
     case CAT_QUICKREPLIES: buildQuickReplySettings(); break;
     case CAT_SOUND:        buildDeviceSettings(DSEC_SOUND); break;
@@ -39976,12 +40165,12 @@ void settingsApplyHiddenCats() {
 // radio keeps the launcher's amber), the name, where it fits in a word or two the
 // state it is in (your name, the frequency, the network, the language, the
 // charge), and a chevron. Two columns of groups on the wide screens.
-struct SettingsGroupDef { const char* title; int cats[8]; int n; };
+struct SettingsGroupDef { const char* title; int cats[10]; int n; };
 static const SettingsGroupDef kSettingsGroups[] = {
   { "Mesh",        { CAT_PROFILE, CAT_RADIO, CAT_AUTOADD, CAT_QUICKREPLIES }, 4 },
   { "Connections", { CAT_WIFI, CAT_BLUETOOTH, CAT_GPS, CAT_MQTT }, 4 },
-  { "Device",      { CAT_DISPLAY, CAT_LOCK, CAT_SOUND, CAT_KEYBOARD, CAT_LANGUAGE,
-                     CAT_CLOCK, CAT_BATTERY, CAT_SENSORS }, 8 },
+  { "Device",      { CAT_DISPLAY, CAT_THEME, CAT_LOCK, CAT_SOUND, CAT_KEYBOARD, CAT_LANGUAGE,
+                     CAT_CLOCK, CAT_BATTERY, CAT_SENSORS }, 9 },
   { "System",      { CAT_GENERAL, CAT_BACKUPS, CAT_APPPERMS, CAT_ABOUT }, 4 },
 };
 static lv_obj_t* s_settings_cat_val[CAT_COUNT] = { nullptr };   // the state beside a row's name
@@ -39989,13 +40178,20 @@ static lv_obj_t* s_settings_cat_lbl[CAT_COUNT] = { nullptr };   // the row's nam
 static lv_coord_t s_settings_row_avail = 0;                     // room for both on a row
 
 static uint32_t settingsCatHue(int c) {
+  // Taste the rainbow: every page its own place on the wheel, in list order.
+  if (s_look_rainbow) {
+    int k = 0, at = 0;
+    for (const SettingsGroupDef& g : kSettingsGroups)
+      for (int i = 0; i < g.n; ++i) { if (g.cats[i] == c) at = k; ++k; }
+    return lookRainbow(at, k);
+  }
   switch (c) {
-    case CAT_RADIO:                                        return COLOR_STATUS_WARN;
-    case CAT_PROFILE: case CAT_AUTOADD: case CAT_QUICKREPLIES: return COLOR_GLOW;
-    case CAT_WIFI: case CAT_BLUETOOTH: case CAT_GPS: case CAT_MQTT: return COLOR_STATUS_INFO;
+    case CAT_RADIO:                                        return COLOR_HUE[HUE_RADIO];
+    case CAT_PROFILE: case CAT_AUTOADD: case CAT_QUICKREPLIES: return COLOR_HUE[HUE_MSG];
+    case CAT_WIFI: case CAT_BLUETOOTH: case CAT_GPS: case CAT_MQTT: return COLOR_HUE[HUE_PLACE];
     case CAT_GENERAL: case CAT_BACKUPS: case CAT_APPPERMS: case CAT_ABOUT:
-      return themeRole(0xC3CBCF, COLOR_SUB);
-    default:                                               return COLOR_STATUS_OK_TEXT;
+      return s_look_more ? COLOR_HUE[HUE_SYS] : themeRole(0xC3CBCF, COLOR_SUB);
+    default:                                               return COLOR_HUE[HUE_DEVICE];
   }
 }
 
@@ -40036,6 +40232,15 @@ static void settingsCatValue(int c, char* out, size_t cap) {
     case CAT_BLUETOOTH:
       snprintf(out, cap, "%s", bleRequestedOrEnabled() ? TR("On") : TR("Off"));
       break;
+#if !defined(HAS_TDECK_PRO)
+    case CAT_THEME:   // the mode, and the colour look when there is one
+      if (s_theme_high_contrast)  snprintf(out, cap, "%s", TR("High contrast"));
+      else if (s_look_rainbow)    snprintf(out, cap, "%s", TR("Rainbow"));
+      else if (s_look_more)       snprintf(out, cap, "%s", s_look_style == TOUCH_LOOK_NEON ? TR("Neon")
+                                                         : s_look_style == TOUCH_LOOK_PASTEL ? TR("Pastel") : TR("Regular"));
+      else                        snprintf(out, cap, "%s", s_theme_day ? TR("Day") : TR("Night"));
+      break;
+#endif
     case CAT_LANGUAGE: {
       const uint8_t l = i18nGetLang();
       if (l < LANG_COUNT) snprintf(out, cap, "%s", kUiLangNames[l]);
@@ -40165,6 +40370,8 @@ static void makeSettings(lv_obj_t* tab) {
     styleSectionLabel(gl, TR(g.title));
     lv_obj_set_style_pad_left(gl, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_top(gl, 4, LV_PART_MAIN);
+    // MORE COLORS!: the group's name in the colour of its first page.
+    if (s_look_more) lv_obj_set_style_text_color(gl, lv_color_hex(settingsCatHue(g.cats[0])), LV_PART_MAIN);
 
     lv_obj_t* card = lv_obj_create(grp);
     lv_obj_remove_style_all(card);
@@ -40204,7 +40411,12 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_size(tl, tile, tile);
       lv_obj_set_style_radius(tl, SC(8), LV_PART_MAIN);
       lv_obj_set_style_bg_color(tl, lv_color_hex(hue), LV_PART_MAIN);
-      lv_obj_set_style_bg_opa(tl, s_theme_high_contrast ? LV_OPA_TRANSP : (lv_opa_t)36, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(tl, s_theme_high_contrast ? LV_OPA_TRANSP : (lv_opa_t)LV_MAX(36, s_look_tint), LV_PART_MAIN);
+      if (lookNeon()) {
+        lv_obj_set_style_border_color(tl, lv_color_hex(hue), LV_PART_MAIN);
+        lv_obj_set_style_border_width(tl, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(tl, 190, LV_PART_MAIN);
+      }
       lv_obj_align(tl, LV_ALIGN_LEFT_MID, 6, 0);
       lv_obj_t* ic = lv_label_create(tl);
       lv_label_set_text(ic, kSettingsCats[c].icon);
@@ -41262,12 +41474,57 @@ static void chatDetailShowPlaceholder(LvChatPanel& p, const char* msg) {
 // each participant in a group keeps a stable colour. Readability is by
 // construction: the bubble background is a DARK tint (off-white text stays
 // legible) and the sender-name line is a VIVID version of the same hue.
+// Dark tints keep the off-white text readable; Pastel lifts them a little, Neon
+// deepens them under its lit edges. The hue is FNV-1a, shared with the glyphs and the
+// initials balls.
+static uint32_t lookBubbleTintFor(const char* name, bool more, uint8_t style) {
+  const int hue = nameHue(name);
+  if (more && style == TOUCH_LOOK_PASTEL) return hsvRgb(hue, 30, 30);
+  if (more && style == TOUCH_LOOK_NEON)   return hsvRgb(hue, 75, 20);
+  return hsvRgb(hue, 55, 26);
+}
 static void usernameBubbleColors(const char* name, lv_color_t* bubble_bg, lv_color_t* name_col) {
-  uint32_t h = 2166136261u;                        // FNV-1a offset basis
-  for (const char* p = name; p && *p; ++p) { h ^= (uint8_t)(*p); h *= 16777619u; }
-  const uint16_t hue = (uint16_t)(h % 360u);
-  if (bubble_bg) *bubble_bg = lv_color_hsv_to_rgb(hue, 55, 26);  // dark, off-white text readable
-  if (name_col)  *name_col  = lv_color_hsv_to_rgb(hue, 85, 95);  // vivid sender-name line
+  if (bubble_bg) *bubble_bg = lv_color_hex(lookBubbleTintFor(name, s_look_more, s_look_style));
+  if (name_col)  *name_col  = lv_color_hex(lookNameColor(name));   // the vivid sender-name line
+}
+
+// Taste the rainbow's arrival: a message that has just come in pops into its bubble
+// while an edge in the sender's colour fades off it. Draw-only properties (the box
+// transform and the border) on one object for under a second: nothing moves in the
+// list, so the virtual list's offsets and scroll never see it.
+static void rainbowArrivePopExec(void* var, int32_t v) {
+  lv_obj_set_style_transform_width((lv_obj_t*)var, (lv_coord_t)v, LV_PART_MAIN);
+  lv_obj_set_style_transform_height((lv_obj_t*)var, (lv_coord_t)v, LV_PART_MAIN);
+}
+static void rainbowArriveEdgeExec(void* var, int32_t v) {
+  lv_obj_set_style_border_opa((lv_obj_t*)var, (lv_opa_t)v, LV_PART_MAIN);
+}
+static void rainbowArriveEdgeDone(lv_anim_t* a) {
+  // Back to the bubble's own edge: Neon keeps its lit one, the rest have none.
+  lv_obj_t* b = (lv_obj_t*)a->var;
+  lv_obj_set_style_border_width(b, lookNeon() ? 1 : 0, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(b, lookNeon() ? 200 : 0, LV_PART_MAIN);
+}
+static void rainbowArrive(lv_obj_t* bubble, lv_color_t col) {
+  lv_obj_set_style_border_color(bubble, col, LV_PART_MAIN);
+  lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, bubble);
+  lv_anim_set_exec_cb(&a, rainbowArriveEdgeExec);
+  lv_anim_set_values(&a, 255, lookNeon() ? 200 : 0);
+  lv_anim_set_time(&a, 1100);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_in);
+  lv_anim_set_ready_cb(&a, rainbowArriveEdgeDone);
+  lv_anim_start(&a);
+  lv_anim_t p;
+  lv_anim_init(&p);
+  lv_anim_set_var(&p, bubble);
+  lv_anim_set_exec_cb(&p, rainbowArrivePopExec);
+  lv_anim_set_values(&p, -SC(5), 0);
+  lv_anim_set_time(&p, 240);
+  lv_anim_set_path_cb(&p, lv_anim_path_overshoot);
+  lv_anim_start(&p);
 }
 
 static void formatDaySeparator(char* buf, size_t cap, const struct tm* tv) {
@@ -42014,17 +42271,19 @@ static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int
                                  const ChatBubbleDisplay& d, char* line, size_t line_cap) {
   if (!line || line_cap == 0) return;
   line[0] = '\0';
+  // Names are always in their own colour now (the old switch only adds bubbles,
+  // and compact rows have none); high contrast and e-paper stay plain.
 #if defined(HAS_TDECK_PRO)
-  const bool colorful_bubbles = false;
+  const bool colorful_names = false;
 #else
-  const bool colorful_bubbles = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
+  const bool colorful_names = !s_theme_high_contrast;
 #endif
   lv_color_t dark_sender_col = lv_color_hex(COLOR_RECV_BG);
   lv_color_t sender_col = lv_color_hex(COLOR_ACCENT);
   const char* color_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : d.show_sender;
-  if (colorful_bubbles && color_name && color_name[0]) {
+  if (colorful_names && color_name && color_name[0]) {
     usernameBubbleColors(color_name, &dark_sender_col, &sender_col);
-    if (s_theme_day) sender_col = dark_sender_col;
+    if (s_theme_day) sender_col = lv_color_hex(lookNameInk(color_name));   // compact rows sit on Day's light ground
   }
 
   const char* row_name = m.outgoing ? the_mesh.getNodePrefs()->node_name
@@ -42745,23 +43004,28 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
   const lv_coord_t kContentW    = s_chat_virt.content_w;
   const lv_coord_t kBubbleMaxW  = s_chat_virt.bubble_max_w;
+  // Every sender's name is in its own colour. The Colourful bubbles switch (and Taste
+  // the rainbow) also tints the bubbles by sender, your own included, as before the
+  // redesign. A mention of you keeps its blue; high contrast and e-paper stay plain.
 #if defined(HAS_TDECK_PRO)
-  const bool colorful_names = false;
+  const bool colorful_names = false, colorful_bubbles = false;
 #else
-  const bool colorful_names = !s_theme_high_contrast && touchPrefsGetColorfulBubbles();
+  const bool colorful_names = !s_theme_high_contrast;
+  const bool colorful_bubbles = colorful_names && (touchPrefsGetColorfulBubbles() || s_look_rainbow);
 #endif
   const bool mentions_me = (p->channel_mode || s_chat_virt.thread_is_room) &&
                            !m.outgoing && textMentionsMe(d.show_text);
-  // Neutral bubbles: received in the raised tone, your own in deep teal, a mention
-  // in deep blue. A sender's own colour lives on their name only.
   lv_color_t bubble_bg = lv_color_hex(m.outgoing ? COLOR_CHAT_SENT_BG : COLOR_CHAT_RECV_BG);
+  const char* tint_name = m.outgoing ? the_mesh.getNodePrefs()->node_name : d.show_sender;
+  if (colorful_bubbles && tint_name && tint_name[0]) usernameBubbleColors(tint_name, &bubble_bg, nullptr);
   if (mentions_me) bubble_bg = lv_color_hex(COLOR_CHAT_MENTION_BG);
   lv_color_t sender_col = lv_color_hex(COLOR_GLOW);
-  if (colorful_names && d.show_sender && d.show_sender[0]) {
-    lv_color_t ignored;
-    usernameBubbleColors(d.show_sender, &ignored, &sender_col);
-  }
-  if (s_theme_day) sender_col = lv_color_hex(COLOR_CHAT_TEXT);
+  if (colorful_names && d.show_sender && d.show_sender[0]) usernameBubbleColors(d.show_sender, nullptr, &sender_col);
+  else if (s_theme_day) sender_col = lv_color_hex(COLOR_CHAT_TEXT);
+  // Neon draws a bubble as a lit tube: an edge in the sender's colour (magenta for
+  // yours) around the dark fill.
+  const lv_color_t neon_edge = m.outgoing ? lv_color_hex(COLOR_HUE[HUE_PEOPLE])
+                             : (tint_name && tint_name[0]) ? lv_color_hex(lookNameColor(tint_name)) : lv_color_hex(COLOR_GLOW);
 #if defined(HAS_TDECK_PRO)
   bubble_bg = lv_color_white();
   sender_col = lv_color_black();
@@ -42820,6 +43084,13 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_set_style_border_color(bubble, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
     lv_obj_set_style_border_width(bubble, 2, LV_PART_MAIN);
     lv_obj_set_style_border_opa(bubble, LV_OPA_COVER, LV_PART_MAIN);
+  } else if (lookNeon() && !mentions_me) {
+    lv_obj_set_style_border_color(bubble, neon_edge, LV_PART_MAIN);
+    lv_obj_set_style_border_width(bubble, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(bubble, 200, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(bubble, neon_edge, LV_PART_MAIN);
+    lv_obj_set_style_outline_width(bubble, 1, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(bubble, 60, LV_PART_MAIN);
   }
 #endif
   lv_obj_set_style_pad_hor(bubble, kChatBubblePadH, LV_PART_MAIN);
@@ -42915,6 +43186,14 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   if (out_jump_y && s_chat_jump_msg_idx >= 0 && ring_idx == s_chat_jump_msg_idx)
     *out_jump_y = vp_y;
   lv_obj_set_user_data(row, reinterpret_cast<void*>(static_cast<intptr_t>(logical_i)));
+#if !defined(HAS_TDECK_PRO)
+  // Taste the rainbow: the message that has just arrived lands with a flash of its
+  // sender's colour, once (the slot is spent here, so a later rebuild is calm).
+  if (s_rb_flash_slot >= 0 && ring_idx == s_rb_flash_slot && !m.outgoing) {
+    s_rb_flash_slot = -1;
+    if (s_look_rainbow && (uint32_t)(millis() - s_rb_flash_at) < 5000u) rainbowArrive(bubble, neon_edge);
+  }
+#endif
   return row_h;
 }
 
@@ -43575,6 +43854,7 @@ static void refreshChatList(LvChatPanel& p) {
   auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
   mix((uint32_t)count);
   mix(compact_rows ? 0xC0FFEEu : 1u);
+  mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
   mix(p.inbox_combined ? 0xF1u + s_chats_filter : 0u);
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
@@ -43650,9 +43930,18 @@ static void refreshChatList(LvChatPanel& p) {
     // a soft rounded card instead: tinted with the glow while it holds unread
     // messages, so what is new stands out, and lit by a press or the keypad cursor.
     lv_obj_set_style_radius(btn, SC(10), LV_PART_MAIN);
+    // With MORE COLORS! a chat's unread tint, time and count take its own colour (the
+    // same one as its glyph and its senders' names); Neon outlines the row instead.
+    const uint32_t row_hue = s_look_more ? lookNameInk(name) : COLOR_GLOW;
     if (unread > 0 && !s_theme_high_contrast) {
-      lv_obj_set_style_bg_color(btn, lv_color_mix(lv_color_hex(COLOR_GLOW), lv_color_hex(COLOR_BG), 20), LV_PART_MAIN);
-      lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+      if (lookNeon()) {
+        lv_obj_set_style_border_color(btn, lv_color_hex(row_hue), LV_PART_MAIN);
+        lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_opa(btn, 170, LV_PART_MAIN);
+      } else {
+        lv_obj_set_style_bg_color(btn, lv_color_mix(lv_color_hex(row_hue), lv_color_hex(COLOR_BG), s_look_more ? 26 : 20), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
+      }
     }
     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
@@ -43675,7 +43964,7 @@ static void refreshChatList(LvChatPanel& p) {
       lv_label_set_text(tl, tbuf);
       const lv_font_t* tf = unread > 0 ? &g_font_semi_12 : &g_font_12;
       lv_obj_set_style_text_font(tl, tf, LV_PART_MAIN);
-      lv_obj_set_style_text_color(tl, lv_color_hex(unread > 0 ? COLOR_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
+      lv_obj_set_style_text_color(tl, lv_color_hex(unread > 0 ? row_hue : COLOR_TERTIARY), LV_PART_MAIN);
       if (compact_rows) lv_obj_align(tl, LV_ALIGN_RIGHT_MID, -kPadR, 0);
       else              lv_obj_align(tl, LV_ALIGN_TOP_RIGHT, -kPadR,
                                      (lv_coord_t)(name_base - (lv_font_get_line_height(tf) - tf->base_line)));
@@ -43685,6 +43974,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_coord_t pill_w = 0;
     if (unread > 0) {
       lv_obj_t* pill = makeCountPill(btn, unread > 99 ? 100 : unread);
+      if (s_look_more && !s_theme_high_contrast) lv_obj_set_style_bg_color(pill, lv_color_hex(row_hue), LV_PART_MAIN);
       lv_obj_update_layout(pill);
       pill_w = lv_obj_get_width(pill);
       if (compact_rows) lv_obj_align(pill, LV_ALIGN_RIGHT_MID, -(kPadR + time_w + 8), 0);
@@ -45874,6 +46164,7 @@ static void lockMarkDrawCb(lv_event_t* e) {
         const uint32_t s0 = u / 400u * 400u;
         const uint32_t ua = u > s0 + 16u ? u - 16u : s0, ub = u + 16u < s0 + 400u ? u + 16u : s0 + 399u;
         const lv_point_t p1 = along(z, ua), p2 = along(z, ub);
+        if (s_look_rainbow) sd.color = lv_color_hex(lookRainbow((int)u, 1600));   // the light changes hue as it runs
         lv_draw_line(dc, &sd, &p1, &p2);
       }
     }
@@ -45890,6 +46181,7 @@ static void lockMarkDrawCb(lv_event_t* e) {
       const int32_t q = (int32_t)ph * 256 / 1680;
       const lv_coord_t rad = (lv_coord_t)(r0 + r0 * 14 * q / 2560);
       rr.border_opa = (lv_opa_t)(140 * (256 - q) / 256);
+      if (s_look_rainbow) rr.border_color = lv_color_hex(lookRainbow(n, 7));
       const lv_point_t c = px(kMarkNode[n][0] * 16, kMarkNode[n][1] * 16);
       const lv_area_t ra = { (lv_coord_t)(c.x - rad), (lv_coord_t)(c.y - rad), (lv_coord_t)(c.x + rad), (lv_coord_t)(c.y + rad) };
       lv_draw_rect(dc, &rr, &ra);
@@ -45899,6 +46191,7 @@ static void lockMarkDrawCb(lv_event_t* e) {
   for (int n = 0; n < 7; ++n) {
     const lv_point_t c = px(kMarkNode[n][0] * 16, kMarkNode[n][1] * 16);
     const lv_area_t na = { (lv_coord_t)(c.x - r0), (lv_coord_t)(c.y - r0), (lv_coord_t)(c.x + r0 - 1), (lv_coord_t)(c.y + r0 - 1) };
+    if (s_look_rainbow && !k.paper) rd.bg_color = lv_color_hex(lookRainbow(n, 7));   // each node its own hue
     lv_draw_rect(dc, &rd, &na);
   }
 }
@@ -46613,6 +46906,38 @@ static void serviceLockscreen() {
   }
 }
 #endif  // CAP_LOCK_SCREEN
+
+// ---- Taste the rainbow: the hue drift ------------------------------------------------
+// The active tab's marker, the chats count and the keyboard focus ring travel slowly
+// round the colour wheel, one turn in twelve seconds. One light timer recolours those
+// three small things ten times a second, and rests whenever none of them can be seen:
+// the screen off, the lock screen or the screensaver up.
+static lv_timer_t* s_rb_drift_timer = nullptr;
+static uint16_t    s_rb_drift_deg   = 0;
+static void rainbowDriftCb(lv_timer_t*) {
+  if (!s_look_rainbow || !g_lv.task || g_lv.task->isScreenOff() || s_ssaver_on) return;
+#if CAP_LOCK_SCREEN
+  if (s_lock_root) return;
+#endif
+  s_rb_drift_deg = (uint16_t)((s_rb_drift_deg + 3) % 360);
+  const uint32_t c = lookRainbow(s_rb_drift_deg, 360);
+  if (s_tab_indicator && !lv_obj_has_flag(s_tab_indicator, LV_OBJ_FLAG_HIDDEN))
+    lv_obj_set_style_bg_color(s_tab_indicator, lv_color_hex(c), LV_PART_MAIN);
+  if (s_chat_unread_badge && !lv_obj_has_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_set_style_bg_color(s_chat_unread_badge, lv_color_hex(c), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_chat_unread_badge,
+        lv_color_hex(accentLuma(c) > 150 ? 0x00201Cu : 0xFFFFFFu), LV_PART_MAIN);
+  }
+  // The focus ring is one shared style: recolour it and repaint the one object
+  // wearing it (checked, since a page can close under it between two ticks).
+  if (s_nav_styled && s_selection_glow_style_ready && lv_obj_is_valid(s_nav_styled)) {
+    lv_style_set_outline_color(&s_selection_glow_style, lv_color_hex(c));
+    lv_obj_invalidate(s_nav_styled);
+  }
+}
+static void rainbowDriftStart() {
+  if (s_look_rainbow && !s_rb_drift_timer) s_rb_drift_timer = lv_timer_create(rainbowDriftCb, 100, nullptr);
+}
 
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
 // ---- Notification-sound chooser (Settings -> Sound) ------------------------
@@ -51177,7 +51502,7 @@ static void openControlCenter() {
   // Keep one centered sun icon for all modes (#414); Display settings shows
   // the selected Night/Day and High contrast state explicitly.
   ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_mode != TOUCH_THEME_NIGHT,
-           ccThemeCb, tw, th, CAT_DISPLAY, nullptr, CC_NAV_THEME);
+           ccThemeCb, tw, th, CAT_THEME, nullptr, CC_NAV_THEME);
 #endif
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
@@ -53187,6 +53512,7 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
     lv_obj_set_style_border_width(t, 2, LV_PART_MAIN);
     lv_obj_set_style_border_opa(t, LV_OPA_COVER, LV_PART_MAIN);
   }
+  styleLookPress(t);
   lv_obj_add_event_cb(t, appTileCb, LV_EVENT_CLICKED, (void*)(intptr_t)act);
 #if CAP_LUA_APPS
   if (act >= APPACT_LUA_BASE || appHideBitFor(act))
@@ -53208,11 +53534,19 @@ static void addAppTile(lv_obj_t* parent, int x, int y, int w, int h,
   lv_obj_set_size(chip_o, chip, chip);
   lv_obj_align(chip_o, LV_ALIGN_TOP_MID, 0, 4);
   lv_obj_set_style_bg_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(chip_o, s_theme_high_contrast ? LV_OPA_TRANSP : 34, LV_PART_MAIN);   // ~13%
+  // ~13 % in the calm look, stronger with MORE COLORS! (s_look_tint).
+  lv_obj_set_style_bg_opa(chip_o, s_theme_high_contrast ? LV_OPA_TRANSP : s_look_tint, LV_PART_MAIN);
   lv_obj_set_style_radius(chip_o, chip * 28 / 100, LV_PART_MAIN);
   if (s_theme_high_contrast) {
     lv_obj_set_style_border_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
     lv_obj_set_style_border_width(chip_o, 2, LV_PART_MAIN);
+  } else if (lookNeon()) {   // a lit neon edge with a soft halo
+    lv_obj_set_style_border_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
+    lv_obj_set_style_border_width(chip_o, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(chip_o, 200, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(chip_o, lv_color_hex(icon_col), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(chip_o, 2, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(chip_o, 50, LV_PART_MAIN);
   }
 
   if (icon) {
@@ -53565,11 +53899,13 @@ static void openAppDrawer() {
   // are (blue), the radio's own tools (amber), then the system (grey). Each hue is
   // a theme token, so Day and the high-contrast themes recolour the grid with
   // everything else.
-  const uint32_t kMsg = COLOR_GLOW, kPlace = COLOR_STATUS_INFO, kRadio = COLOR_STATUS_WARN;
-  const uint32_t kSys = themeRole(0xC3CBCF, COLOR_SUB);
+  // MORE COLORS! moves these to the look's section hues (people get their own) and
+  // Taste the rainbow gives every tile its own place on the colour wheel (below).
+  const uint32_t kMsg = COLOR_HUE[HUE_MSG], kPlace = COLOR_HUE[HUE_PLACE], kRadio = COLOR_HUE[HUE_RADIO];
+  const uint32_t kSys = COLOR_HUE[HUE_SYS], kPeople = COLOR_HUE[HUE_PEOPLE];
   struct { const char* icon; const char* label; int act; int badge; uint32_t color; } tiles[] = {
     { UI_ICON_MESSAGE_SQUARE,     "Chats",     APPACT_CHATS,    unread,    kMsg },
-    { UI_ICON_USER,               "Contacts",  APPACT_CONTACTS, 0,         kMsg },
+    { UI_ICON_USER,               "Contacts",  APPACT_CONTACTS, 0,         kPeople },
     { UI_ICON_AT_SIGN,            "Mentions",  APPACT_MENTIONS, mentions,  kMsg },
     { UI_ICON_MAP_PIN,            "Map",       APPACT_MAP,      0,         kPlace },
     { UI_ICON_RADIO,              "Advertise", APPACT_ADVERT,   0,         kRadio },
@@ -53676,19 +54012,20 @@ static void openAppDrawer() {
   for (int i = 0; i < n; i++) {
     const int col = i % cols, row = i / cols;
     const int x = pad + col * (tile_w + gap), y = top + row * (tile_h + gap);
+    const uint32_t rb = lookRainbow(i, n);   // Taste the rainbow: this tile's own hue
 #if CAP_LUA_APPS
     const int oi = s_draw_order[i];
     if (oi < 0) {   // installed Lua app (dynamic)
       const LuaInstApp& a = s_lua_inst[-oi - 1];
       addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, luaAppIconGlyph(a.icon), a.name,
-                 APPACT_LUA_BASE + (-oi - 1), 0, 0x15B6A6, big_grid);
+                 APPACT_LUA_BASE + (-oi - 1), 0, s_look_rainbow ? rb : s_look_more ? kMsg : 0x15B6A6, big_grid);
       continue;
     }
     addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[oi].icon, tiles[oi].label,
-               tiles[oi].act, tiles[oi].badge, tiles[oi].color, big_grid);
+               tiles[oi].act, tiles[oi].badge, s_look_rainbow ? rb : tiles[oi].color, big_grid);
 #else
     addAppTile(s_appdrawer_root, x, y, tile_w, tile_h, tiles[i].icon, tiles[i].label,
-               tiles[i].act, tiles[i].badge, tiles[i].color, big_grid);
+               tiles[i].act, tiles[i].badge, s_look_rainbow ? rb : tiles[i].color, big_grid);
 #endif
   }
 #if CAP_KEYPAD_NAV
@@ -53910,11 +54247,20 @@ static void captureScreenToSerial(const char* name) {
 static void docSettle(int frames) { for (int i = 0; i < frames; ++i) { lv_timer_handler(); delay(22); } esp_task_wdt_reset(); }
 #if CAP_SCREENSAVER
 static void ssaverDocCapture();   // in the screensaver bridge, which comes later in the file
+static void ssaverTeardown(bool lit);
 #endif
 static void docAuditTour();       // every other surface, defined at the end of the file
 static void docCaptureTour() {
   delay(400); esp_task_wdt_reset();
   Serial.print("\n<<<WMTOUR START>>>\n"); Serial.flush();
+  // The device can sit idle long enough waiting for the host that the screensaver
+  // (or a dark screen) comes up, and the tour blocks the loop that would end it, so
+  // every shot showed the screensaver. Wake and take it down first.
+  if (g_lv.task) g_lv.task->wakeScreen();
+#if CAP_SCREENSAVER
+  ssaverTeardown(true);
+#endif
+  docSettle(4);
 #if defined(DOC_AUDIT_FOCUS)
   docAuditTour();   // only the focus surfaces (docAuditFocus)
   Serial.print("\n<<<WMTOUR END>>>\n"); Serial.flush();
@@ -54387,7 +54733,7 @@ static void buildGlobalStatusBar() {
   // while the STA is connected, so accent always reads as "this radio is up".
   g_statusbar.conn_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.conn_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_LINK), LV_PART_MAIN);
   // One step up from the 12 px text: the Wi-Fi arcs only fill the lower part of
   // their square, so at 12 px it read smaller than the glyphs beside it.
   lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_14, LV_PART_MAIN);
@@ -54402,7 +54748,7 @@ static void buildGlobalStatusBar() {
   // Bluetooth glyph (left of the SD LED). Unified offset across all boards (see clock above).
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
-  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_LINK), LV_PART_MAIN);
   lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
   // A 15 px line box centres half a pixel lower on the bar than the 16 and
   // 17 px boxes beside it, and the tall Bluetooth rune rounds down another half:
@@ -54719,6 +55065,7 @@ static void chatHeaderApply(bool chat_open) {
   static int s_thread = -2;
   static int s_count = -1;
   static char s_emoji[20] = "";
+  static uint8_t s_gen = 0;
   const int thread = g_lv.task ? g_lv.task->activeThreadIdx() : -1;
   const int count = g_lv.task ? g_lv.task->getMsgCount() : 0;   // any new message: recount
   bool ch = true; uint16_t unread = 0; uint32_t ts = 0;
@@ -54726,13 +55073,15 @@ static void chatHeaderApply(bool chat_open) {
   if (g_lv.task && thread >= 0) g_lv.task->getThreadInfo(thread, ch, unread, ts, name, sizeof name);
   char emoji[20] = "";
   touchPrefsGetChannelEmoji(name, emoji, sizeof emoji);   // its sheet can change it while it is open
-  if (thread != s_thread || count != s_count || strcmp(emoji, s_emoji) != 0) {
+  if (thread != s_thread || count != s_count || strcmp(emoji, s_emoji) != 0 || s_gen != s_avatar_gen) {
+    s_gen = s_avatar_gen;
     s_thread = thread;
     s_count = count;
     snprintf(s_emoji, sizeof s_emoji, "%s", emoji);
+    // A channel's square, a person's circle (a ball in Initials either way).
+    if (ch) lv_obj_add_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
+    else    lv_obj_clear_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
     glyphAvatarSetEmoji(g_statusbar.chat_avatar, name, emoji);
-    const lv_coord_t av = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
-    lv_obj_set_style_radius(g_statusbar.chat_avatar, ch ? (av * 7 + 13) / 26 : LV_RADIUS_CIRCLE, LV_PART_MAIN);
     char sub[48];
     chatHeaderSubtitle(sub, sizeof sub);
     lv_label_set_text(g_statusbar.chat_sub, sub);
@@ -55332,7 +55681,9 @@ static void updateGlobalStatusBar() {
       for (int i = 0; i < 4; i++)
         if (g_statusbar.sig_bars[i])
           lv_obj_set_style_bg_color(g_statusbar.sig_bars[i],
-              lv_color_hex(i < level ? COLOR_GLOW
+              lv_color_hex(i < level ? (!s_look_more ? COLOR_GLOW            // MORE COLORS!: by strength
+                                        : level >= 3 ? COLOR_HUE[HUE_DEVICE]
+                                        : level == 2 ? COLOR_HUE[HUE_RADIO] : COLOR_STATUS_DANGER_TEXT)
                                      : s_theme_high_contrast ? COLOR_SUB : COLOR_SECONDARY_ACTION),
               LV_PART_MAIN);
     }
@@ -55360,6 +55711,8 @@ static void updateGlobalStatusBar() {
     }
     s_last_pct = pct;
     s_last_charging = charging;
+    s_batt_lvl = charging ? 1000 : pct;
+    applyBattColor();
   }
   static const char* s_last_glyph = nullptr;
   const char* g = charging ? UI_ICON_BATTERY_CHARGING : batteryGlyphForMv(mv);   // outline battery with a bolt
@@ -56088,6 +56441,7 @@ static void splashMarkDrawCb(lv_event_t* e) {
       for (int d = 0; d < 3; ++d) {
         const int32_t u = (d * 533 + shift) % 1600;
         const int32_t ua = u > 40 ? u - 40 : 0, ub = u + 40 < 1600 ? u + 40 : 1600;
+        if (s_look_rainbow) ld.color = lv_color_hex(lookRainbow((int)u, 1600));   // Taste the rainbow: hue by place
         const int32_t joint = (ua / 400 + 1) * 400;   // the next vertex after the dash's tail
         const lv_point_t p1 = at(ua);
         if (ub > joint) {
@@ -56115,14 +56469,18 @@ static void splashMarkDrawCb(lv_event_t* e) {
     const int32_t step = s_wmark_step[n];
     const int32_t on = 250 + 110 * step;
     const float f = splashClamp01(((float)t - (float)on) / 280.0f);
+    // Taste the rainbow: each node lights in its own colour, left to right round the wheel.
+    const lv_color_t node_glow = s_look_rainbow ? lv_color_hex(lookRainbow(n, 7)) : glow;
+    const lv_color_t node_rest = s_look_rainbow ? node_glow : teal;
+    rr.border_color = node_glow;
     if (f > 0.0f) {
-      rd.bg_color = glow;
+      rd.bg_color = node_glow;
       rd.bg_opa = opa(55.0f * splashClamp01(f * 2.0f));
       splashDisc(dc, &rd, cx, cy, 11);
     }
     float r = 6.0f;
     if (f > 0.0f && f < 1.0f) r *= 1.0f + 0.45f * sinf(3.14159265f * f);
-    rd.bg_color = lv_color_mix(teal, white, (uint8_t)(255.0f * splashClamp01(f * 2.0f)));
+    rd.bg_color = lv_color_mix(node_rest, white, (uint8_t)(255.0f * splashClamp01(f * 2.0f)));
     rd.bg_opa = opa(255.0f);
     splashDisc(dc, &rd, cx, cy, (lv_coord_t)lroundf(r));
     int32_t since = (int32_t)t - on;
@@ -56828,17 +57186,7 @@ static void applyAccent(uint32_t rgb) {
     COLOR_ACCENT       = accentClampReadable(rgb);
     COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
   }
-  // The lit tone of the accent: brighter on dark grounds (the default teal becomes
-  // the mockups' #19D6C2), deeper on light ones, the accent itself in high contrast.
-  if (s_theme_high_contrast) {
-    COLOR_GLOW = COLOR_ACCENT;
-  } else if (s_theme_day) {
-    COLOR_GLOW = accentDarken(COLOR_ACCENT, 70);
-  } else {
-    const uint32_t r = (COLOR_ACCENT >> 16) & 0xFF, g = (COLOR_ACCENT >> 8) & 0xFF, b = COLOR_ACCENT & 0xFF;
-    auto up = [](uint32_t c) { const uint32_t v = c * 117 / 100; return v > 255 ? 255u : v; };
-    COLOR_GLOW = (up(r) << 16) | (up(g) << 8) | up(b);
-  }
+  COLOR_GLOW = accentGlowFor(COLOR_ACCENT, s_theme_day, s_theme_high_contrast);
   COLOR_ON_GLOW = accentLuma(COLOR_GLOW) > 150 ? 0x00201Cu : 0xFFFFFFu;
   // "Go" buttons (send, save, join, connect, apply) fill with the status-OK tone.
   // The redesign makes them the primary button: the glow with dark text.
@@ -56851,6 +57199,115 @@ static void applyAccent(uint32_t rgb) {
   // Applied UI-wide on the next build: the Theme picker saves then restarts, so
   // every widget adopts the colour at once. (A live re-style only ever caught
   // the always-on tab bar, which is what looked half-applied before.)
+}
+
+// ---- The colour look over the palette (see ThemeTokens near the palettes) ----------
+static void themeTokensFromGlobals(ThemeTokens& t) {
+  t.bg = COLOR_BG; t.panel = COLOR_PANEL; t.control = COLOR_CONTROL; t.control_pressed = COLOR_CONTROL_PRESSED;
+  t.field = COLOR_FIELD; t.border = COLOR_BORDER; t.raised = COLOR_RAISED; t.hair = COLOR_HAIR; t.track = COLOR_TRACK;
+  t.text = COLOR_TEXT; t.sub = COLOR_SUB; t.tertiary = COLOR_TERTIARY; t.secondary_action = COLOR_SECONDARY_ACTION;
+  t.glow = COLOR_GLOW; t.on_glow = COLOR_ON_GLOW; t.sent_bg = COLOR_CHAT_SENT_BG; t.recv_bg = COLOR_CHAT_RECV_BG;
+  t.mention_bg = COLOR_CHAT_MENTION_BG; t.info = COLOR_STATUS_INFO; t.warn = COLOR_STATUS_WARN;
+  t.ok = COLOR_STATUS_OK_TEXT;
+}
+
+// MORE COLORS! (in its style) and Taste the rainbow, at boot after the mode and the
+// accent. Rainbow implies MORE COLORS!.
+static void applyColorLook(bool more, uint8_t style, bool rainbow) {
+#if defined(HAS_TDECK_PRO)
+  more = rainbow = false;
+#endif
+  if (s_theme_high_contrast) more = rainbow = false;
+  if (rainbow) more = true;
+  s_look_more = more;
+  s_look_style = style > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : style;
+  s_look_rainbow = rainbow;
+  ThemeTokens t;
+  themeTokensFromGlobals(t);
+  lookAdjust(t, s_theme_day, more, s_look_style);
+  memcpy(COLOR_HUE, t.hue, sizeof COLOR_HUE);
+  COLOR_LINK = t.link;
+  s_look_tint = t.tint;
+  if (!more) return;
+  COLOR_BG = t.bg; COLOR_PANEL = t.panel; COLOR_CONTROL = t.control; COLOR_CONTROL_PRESSED = t.control_pressed;
+  COLOR_FIELD = t.field; COLOR_BORDER = t.border; COLOR_RAISED = t.raised; COLOR_HAIR = t.hair; COLOR_TRACK = t.track;
+  COLOR_TEXT = t.text; COLOR_SUB = t.sub; COLOR_TERTIARY = t.tertiary; COLOR_SECONDARY_ACTION = t.secondary_action;
+  COLOR_CHART_GRID = t.control; COLOR_CHART_TICK = t.border; COLOR_CHART_BG = t.panel;
+  COLOR_SENT_BG = COLOR_CHAT_SENT_BG = t.sent_bg;
+  COLOR_RECV_BG = COLOR_CHAT_RECV_BG = t.recv_bg;
+  COLOR_MENTION_BG = COLOR_CHAT_MENTION_BG = t.mention_bg;
+  if (!s_theme_day) {
+    COLOR_CHAT_TEXT = t.text;
+    COLOR_CHAT_META = t.sub;
+    COLOR_ON_ACCENT = t.text;
+    COLOR_ON_STATUS_OK = t.on_glow;
+  }
+  if (t.glow != COLOR_GLOW) {   // Neon and Pastel move the lit tone itself
+    COLOR_GLOW = t.glow;
+    COLOR_ACCENT = accentClampReadable(t.glow);
+    COLOR_ACCENT_PRESS = accentDarken(COLOR_ACCENT, 65);
+  }
+  COLOR_ON_GLOW = t.on_glow;
+  COLOR_STATUS_OK = COLOR_GLOW;
+  COLOR_STATUS_OK_PRESSED = COLOR_ACCENT_PRESS;
+  COLOR_ON_STATUS_OK = COLOR_ON_GLOW;
+  themeStylesInvalidate();
+}
+
+// The same maths on a copy, for the Theme page's preview: what mode, accent and
+// look would give, without touching the live colours.
+static void themeTokensFor(uint8_t mode, uint32_t accent, bool more, uint8_t style, ThemeTokens& t) {
+  const bool day = mode == TOUCH_THEME_DAY || mode == TOUCH_THEME_DAY_HIGH_CONTRAST;
+  const bool hc = mode == TOUCH_THEME_DAY_HIGH_CONTRAST || mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST;
+  const TouchPalette& p = mode == TOUCH_THEME_DAY_HIGH_CONTRAST ? kDayHighContrastPalette
+                        : mode == TOUCH_THEME_NIGHT_HIGH_CONTRAST ? kNightHighContrastPalette
+                        : day ? kDayPalette : kNightPalette;
+  t.bg = p.bg; t.panel = p.panel; t.control = p.control; t.control_pressed = p.control_pressed;
+  t.field = p.field; t.border = p.border; t.raised = p.raised; t.hair = p.hair; t.track = p.track;
+  t.text = p.text; t.sub = p.sub; t.tertiary = p.tertiary; t.secondary_action = p.secondary_action;
+  t.info = p.status_info; t.warn = p.status_warn; t.ok = p.status_ok_text;
+  const uint32_t acc = hc ? (day ? 0x000000u : 0xFFFFFFu) : accentClampFor(accent, day, hc);
+  t.glow = accentGlowFor(acc, day, hc);
+  t.on_glow = accentLuma(t.glow) > 150 ? 0x00201Cu : 0xFFFFFFu;
+  t.sent_bg = hc ? 0x003B5Cu : (day ? 0x28556Bu : p.sent_bg);
+  t.recv_bg = hc ? 0x202020u : (day ? 0x3C4852u : p.recv_bg);
+  t.mention_bg = hc ? 0x003F7Fu : (day ? 0x1D5F8Au : p.mention_bg);
+  lookAdjust(t, day, more && !hc, style);
+}
+
+// Everything colour, in boot order: the mode, the accent, then the look.
+static void applyBootTheme() {
+#if defined(HAS_TDECK_PRO)
+  applyThemeMode(TOUCH_THEME_DAY);
+  applyAccent(0x000000u);
+  applyColorLook(false, TOUCH_LOOK_REGULAR, false);
+#elif defined(DOC_CAPTURE) && defined(DOC_LOOK)
+  // Capture builds: a look forced at boot, the saved settings untouched. DOC_LOOK
+  // 0 calm, 1 Regular, 2 Neon, 3 Pastel; DOC_LOOK_RAINBOW, DOC_LOOK_DAY and
+  // DOC_LOOK_INITIALS add those.
+#if defined(DOC_LOOK_DAY)
+  applyThemeMode(TOUCH_THEME_DAY);
+#else
+  applyThemeMode(TOUCH_THEME_NIGHT);
+#endif
+  applyAccent(touchPrefsGetAccentColor());
+#if defined(DOC_LOOK_RAINBOW)
+  applyColorLook(true, DOC_LOOK > 0 ? DOC_LOOK - 1 : 0, true);
+#else
+  applyColorLook(DOC_LOOK != 0, DOC_LOOK > 0 ? DOC_LOOK - 1 : 0, false);
+#endif
+#if defined(DOC_LOOK_INITIALS)
+  s_chat_icons_initials = true;
+#else
+  s_chat_icons_initials = false;
+#endif
+  return;
+#else
+  applyThemeMode(touchPrefsGetThemeMode());
+  applyAccent(touchPrefsGetAccentColor());
+  applyColorLook(touchPrefsGetMoreColors(), touchPrefsGetColorStyle(), touchPrefsGetRainbow());
+#endif
+  s_chat_icons_initials = touchPrefsGetChatIcons() != 0;
 }
 
 // Theme apply callback: runs for every object as it's created (chained after the
@@ -56986,6 +57443,40 @@ static const uint32_t kThemeColors[] = {
   0xD2569E, 0xD0524A, 0xE0823C, 0xC8A030, 0x5B6BD0, 0xA85AB0,
 };
 
+// ---- Settings > Theme: what the page has picked and not yet applied ----------------
+// The mode, the accent and the colour look are read by every widget as it is built,
+// so the page collects them here and one Apply and restart takes them all at once.
+// Declared ahead of the accent picker, whose Custom colour lands in the same place.
+struct ThemeChoice { uint8_t mode; uint32_t accent; bool more; uint8_t style; bool rainbow; };
+static ThemeChoice s_theme_saved = {}, s_theme_pend = {};
+static constexpr int kThemeColorN = (int)(sizeof(kThemeColors) / sizeof(kThemeColors[0]));
+static constexpr int kTpTileN = 6;
+struct ThemePageUi {
+  lv_obj_t* page;                 // the scrolling page (null while the Theme page is closed)
+  lv_obj_t* frame;                // the preview's little screen
+  lv_obj_t* tile[kTpTileN];
+  lv_obj_t* tile_ic[kTpTileN];
+  lv_obj_t* unread;
+  lv_obj_t* av;
+  lv_obj_t* recv; lv_obj_t* recv_name; lv_obj_t* recv_txt;
+  lv_obj_t* sent; lv_obj_t* sent_txt;
+  lv_obj_t* send; lv_obj_t* send_ic;
+  lv_obj_t* mode[2]; lv_obj_t* mode_sky[2]; lv_obj_t* mode_card[2]; lv_obj_t* mode_line[2];
+  lv_obj_t* mode_dot[2]; lv_obj_t* mode_ic[2]; lv_obj_t* mode_lbl[2];
+  lv_obj_t* hc_sw;
+  lv_obj_t* swatch[kThemeColorN]; lv_obj_t* custom; lv_obj_t* custom_dot; lv_obj_t* accent_note;
+  lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
+  lv_obj_t* icons[2]; lv_obj_t* icons_av[2];
+  lv_obj_t* apply; lv_obj_t* apply_lbl;   // Apply and restart, on the preview box
+  lv_obj_t* mini;                         // the bar that keeps it in reach once the box scrolls away
+  lv_obj_t* mini_dot[kTpTileN];
+  lv_obj_t* mini_apply; lv_obj_t* mini_lbl;
+  lv_coord_t frame_h, apply_extra;
+};
+static ThemePageUi s_tp = {};
+static void themePageRepaint();   // the page and its preview after a change (defined with the page)
+static void themeMiniUpdate();    // the Apply bar under the title, shown once the preview scrolls away
+
 static lv_obj_t* s_accent_picker  = nullptr;
 static lv_obj_t* s_accent_hex_ta  = nullptr;
 static lv_obj_t* s_accent_preview = nullptr;
@@ -57037,13 +57528,21 @@ static void accentPickerCloseCb(lv_event_t* e) {
 }
 static void accentSaveCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (s_tp.page) {
+    // From the Theme page's Custom chip: the colour joins the page's other pending
+    // choices, and its Apply and restart takes them all together.
+    s_theme_pend.accent = s_accent_sel;
+    accentPickerClose();
+    themePageRepaint();
+    return;
+  }
   applyAccent(s_accent_sel);
 #if defined(ESP32)
   touchPrefsSetAccentColor(s_accent_sel);
 #endif
   accentPickerClose();
   // The accent is read by every widget as it's built, so restart to recolour the
-  // whole UI in one go (the button says "Save & restart").
+  // whole UI in one go.
   if (g_lv.task) g_lv.task->rebootDevice();   // saves chat history first
 }
 static void accentResetCb(lv_event_t* e) {
@@ -57168,7 +57667,7 @@ static void openAccentPicker() {
     return b;
   };
   lv_obj_t* save = sized_btn(accentSaveCb);
-  lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, TR("Save & restart"));
+  lv_obj_t* sl = lv_label_create(save); lv_label_set_text(sl, s_tp.page ? TR("Use this colour") : TR("Save & restart"));
   lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN); lv_obj_center(sl);
   useChainedFont(sl);
   lv_obj_t* rst = sized_btn(accentResetCb);
@@ -57176,10 +57675,916 @@ static void openAccentPicker() {
   lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN); lv_obj_center(rl);
   useChainedFont(rl);
 
-  accentSetSelection(touchPrefsGetAccentColor(), true);
+  accentSetSelection(s_tp.page ? s_theme_pend.accent : touchPrefsGetAccentColor(), true);
 }
-static void openAccentPickerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) openAccentPicker();
+// ============================================================
+// Settings > Theme
+// ============================================================
+// One page for the look, in place of the Night/Day buttons and the accent row at the
+// bottom of Display: a live preview, the mode, the accent, MORE COLORS! and its style,
+// Taste the rainbow, and the chat looks. The mode, the accent and the colour look wait
+// for Apply and restart (the button appears once one of them differs from what is
+// saved), and the preview draws them from a copy of the palette in the meantime
+// (themeTokensFor). The chat looks apply on the spot.
+static const char* const kTpName = "Kees";   // the sample sender: his icon, name and bubble agree
+static const struct { const char* icon; uint8_t hue; } kTpTiles[kTpTileN] = {
+  { UI_ICON_MESSAGE_SQUARE, HUE_MSG },   { UI_ICON_USER,   HUE_PEOPLE }, { UI_ICON_MAP_PIN,            HUE_PLACE },
+  { UI_ICON_RADIO,          HUE_RADIO }, { UI_ICON_SIGNAL, HUE_RADIO },  { UI_ICON_SLIDERS_HORIZONTAL, HUE_SYS },
+};
+
+static inline bool themeModeIsDay(uint8_t m) { return m == TOUCH_THEME_DAY || m == TOUCH_THEME_DAY_HIGH_CONTRAST; }
+static inline bool themeModeIsHc(uint8_t m)  { return m == TOUCH_THEME_DAY_HIGH_CONTRAST || m == TOUCH_THEME_NIGHT_HIGH_CONTRAST; }
+static inline uint8_t themeModeOf(bool day, bool hc) {
+  return hc ? (day ? TOUCH_THEME_DAY_HIGH_CONTRAST : TOUCH_THEME_NIGHT_HIGH_CONTRAST)
+            : (day ? TOUCH_THEME_DAY : TOUCH_THEME_NIGHT);
+}
+static bool themePendingDiffers() {
+  const ThemeChoice& a = s_theme_pend;
+  const ThemeChoice& b = s_theme_saved;
+  return a.mode != b.mode || a.accent != b.accent || a.more != b.more ||
+         a.style != b.style || a.rainbow != b.rainbow;
+}
+// MORE COLORS! as the pending choice has it: Taste the rainbow brings it along, and
+// high contrast keeps its own fixed colours.
+static bool themePendMore() {
+  return (s_theme_pend.more || s_theme_pend.rainbow) && !themeModeIsHc(s_theme_pend.mode);
+}
+
+// A choice tile (mode, style, chat icons): the picked one ringed in the glow on a faint
+// wash of it, the others on the plain control. One that does nothing in the current
+// setting is dimmed (its callback checks the same condition and ignores the tap).
+static void themeChoiceStyle(lv_obj_t* b, bool on, bool enabled) {
+  if (!b) return;
+  lv_obj_set_style_bg_color(b, lv_color_hex(on ? rgbMix(COLOR_CONTROL, COLOR_GLOW, 46) : COLOR_CONTROL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_hex(on ? COLOR_GLOW : COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(b, on ? 2 : 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_opa(b, enabled ? LV_OPA_COVER : LV_OPA_40, LV_PART_MAIN);
+}
+static void themeSwitchSet(lv_obj_t* sw, bool on, bool enabled) {
+  if (!sw) return;
+  if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+  else    lv_obj_clear_state(sw, LV_STATE_CHECKED);
+  if (enabled) lv_obj_clear_state(sw, LV_STATE_DISABLED);
+  else         lv_obj_add_state(sw, LV_STATE_DISABLED);
+}
+
+#if !defined(HAS_TDECK_PRO)
+// The preview in the pending look: every colour from the copy of the palette.
+static void themePreviewPaint() {
+  if (!s_tp.frame) return;
+  const uint8_t mode = s_theme_pend.mode, style = s_theme_pend.style;
+  const bool day = themeModeIsDay(mode), hc = themeModeIsHc(mode);
+  const bool more = themePendMore();
+  const bool neon = more && style == TOUCH_LOOK_NEON;
+  const bool rainbow = s_theme_pend.rainbow && !hc;
+  ThemeTokens t;
+  themeTokensFor(mode, s_theme_pend.accent, more, style, t);
+
+  lv_obj_set_style_bg_color(s_tp.frame, lv_color_hex(t.bg), LV_PART_MAIN);
+  lv_obj_set_style_border_color(s_tp.frame, lv_color_hex(hc ? t.text : t.border), LV_PART_MAIN);
+
+  int n = 0;
+  for (int i = 0; i < kTpTileN; ++i) if (s_tp.tile[i]) ++n;
+  for (int i = 0; i < kTpTileN; ++i) {
+    lv_obj_t* c = s_tp.tile[i];
+    if (!c) continue;
+    const uint32_t col = hc ? t.text : rainbow ? lookRainbowFor(i, n, day, style) : t.hue[kTpTiles[i].hue];
+    lv_obj_set_style_bg_color(c, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(c, hc ? LV_OPA_TRANSP : t.tint, LV_PART_MAIN);
+    lv_obj_set_style_border_color(c, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_border_width(c, hc ? 2 : neon ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(c, hc ? LV_OPA_COVER : 200, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(c, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(c, neon ? 2 : 0, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(c, 50, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_tp.tile_ic[i], lv_color_hex(col), LV_PART_MAIN);
+  }
+  if (s_tp.unread) lv_obj_set_style_bg_color(s_tp.unread, lv_color_hex(t.glow), LV_PART_MAIN);
+
+  avatarApplyLook(s_tp.av, kTpName, s_chat_icons_initials, day, more, style, t.raised, t.glow);
+
+  // As the chat draws them: names always in colour (high contrast plain), the bubbles
+  // tinted with the switch or the rainbow, Neon's lit edges.
+  const bool names = !hc;
+  const bool tinted = names && (touchPrefsGetColorfulBubbles() || rainbow);
+  NodePrefs* np = the_mesh.getNodePrefs();
+  const char* me = (np && np->node_name[0]) ? np->node_name : "me";
+  const uint32_t chat_text = day ? 0xFFFFFFu : t.text;
+  const uint32_t name_col = names ? lookNameColorFor(kTpName, day, more, style) : (day ? chat_text : t.glow);
+  const uint32_t recv_bg = tinted ? lookBubbleTintFor(kTpName, more, style) : t.recv_bg;
+  const uint32_t sent_bg = tinted ? lookBubbleTintFor(me, more, style) : t.sent_bg;
+  struct { lv_obj_t* b; uint32_t bg; uint32_t edge; } bubbles[2] = {
+    { s_tp.recv, recv_bg, lookNameColorFor(kTpName, day, more, style) },
+    { s_tp.sent, sent_bg, t.hue[HUE_PEOPLE] },
+  };
+  for (auto& bb : bubbles) {
+    if (!bb.b) continue;
+    lv_obj_set_style_bg_color(bb.b, lv_color_hex(bb.bg), LV_PART_MAIN);
+    lv_obj_set_style_border_color(bb.b, lv_color_hex(hc ? t.border : bb.edge), LV_PART_MAIN);
+    lv_obj_set_style_border_width(bb.b, hc ? 2 : neon ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_border_opa(bb.b, hc ? LV_OPA_COVER : 200, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(bb.b, lv_color_hex(bb.edge), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(bb.b, neon ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(bb.b, 60, LV_PART_MAIN);
+  }
+  lv_obj_set_style_text_color(s_tp.recv_name, lv_color_hex(name_col), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_tp.recv_txt, lv_color_hex(chat_text), LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_tp.sent_txt, lv_color_hex(chat_text), LV_PART_MAIN);
+
+  // The send button: the primary button's face (Neon and the rainbow run it into the
+  // people's hue, Neon adds the halo).
+  lv_obj_set_style_bg_color(s_tp.send, lv_color_hex(t.glow), LV_PART_MAIN);
+  lv_obj_set_style_bg_grad_color(s_tp.send, lv_color_hex(t.hue[HUE_PEOPLE]), LV_PART_MAIN);
+  lv_obj_set_style_bg_grad_dir(s_tp.send, (neon || rainbow) ? LV_GRAD_DIR_HOR : LV_GRAD_DIR_NONE, LV_PART_MAIN);
+  lv_obj_set_style_outline_color(s_tp.send, lv_color_hex(t.glow), LV_PART_MAIN);
+  lv_obj_set_style_outline_width(s_tp.send, neon ? 2 : 0, LV_PART_MAIN);
+  lv_obj_set_style_outline_opa(s_tp.send, 70, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_tp.send_ic, lv_color_hex(t.on_glow), LV_PART_MAIN);
+  for (lv_obj_t* const* bl : { &s_tp.apply, &s_tp.mini_apply }) {
+    lv_obj_t* b = *bl;
+    if (!b) continue;
+    lv_obj_set_style_bg_color(b, lv_color_hex(t.glow), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(accentDarken(t.glow, 65)), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_grad_color(b, lv_color_hex(t.hue[HUE_PEOPLE]), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(b, (neon || rainbow) ? LV_GRAD_DIR_HOR : LV_GRAD_DIR_NONE, LV_PART_MAIN);
+  }
+  if (s_tp.apply_lbl) lv_obj_set_style_text_color(s_tp.apply_lbl, lv_color_hex(t.on_glow), LV_PART_MAIN);
+  if (s_tp.mini_lbl)  lv_obj_set_style_text_color(s_tp.mini_lbl, lv_color_hex(t.on_glow), LV_PART_MAIN);
+  // The bar's six dots: the launcher's colours in the picked look.
+  for (int i = 0; i < kTpTileN; ++i) {
+    lv_obj_t* d = s_tp.mini_dot[i];
+    if (!d) continue;
+    const uint32_t col = hc ? t.text : rainbow ? lookRainbowFor(i, kTpTileN, day, style) : t.hue[kTpTiles[i].hue];
+    lv_obj_set_style_bg_color(d, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(d, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(d, neon ? SC(6) : 0, LV_PART_MAIN);
+  }
+}
+
+// The preview: a little screen in the picked look. A corner of the launcher (the
+// section hues, or the rainbow), a sender with his icon, name and bubble, your reply
+// and the send button.
+static void themeApplyCb(lv_event_t* e);   // with the page's other callbacks, below
+static void themePreviewBuild(lv_obj_t* parent, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h) {
+  lv_obj_t* fr = lv_obj_create(parent);
+  lv_obj_remove_style_all(fr);
+  lv_obj_clear_flag(fr, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(fr, w, h);
+  lv_obj_set_pos(fr, x, y);
+  lv_obj_set_style_radius(fr, SC(12), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(fr, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_width(fr, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(fr, LV_OPA_COVER, LV_PART_MAIN);
+  s_tp.frame = fr;
+  s_tp.frame_h = h;
+  auto plain = [](lv_obj_t* parent_obj) {
+    lv_obj_t* o = lv_obj_create(parent_obj);
+    lv_obj_remove_style_all(o);
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    return o;
+  };
+  // The little screen at its own height (inside the 1 px border): the box grows under
+  // it for Apply and restart, and nothing in here moves when it does.
+  lv_obj_t* f = plain(fr);
+  lv_obj_set_size(f, w - 2, h - 2);
+  lv_obj_set_pos(f, 0, 0);
+
+  const lv_coord_t P = SC(7), G = SC(6);
+  const lv_coord_t av = SC(20), pad_h = SC(7), pad_v = SC(3), sb = SC(22);
+  const lv_coord_t sw_ = w - 2;   // the little screen's width (inside the border)
+  // The chat side measured with the real fonts, so a big text size or a long
+  // translation never runs a bubble off the box.
+  const char* t_recv = TR("Ridge at six?");
+  const char* t_sent = TR("On my way");
+  const lv_coord_t w_name = lv_txt_get_width(kTpName, (uint32_t)strlen(kTpName), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
+  const lv_coord_t w_recv = lv_txt_get_width(t_recv, (uint32_t)strlen(t_recv), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+  const lv_coord_t w_sent = lv_txt_get_width(t_sent, (uint32_t)strlen(t_sent), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+  const lv_coord_t chat_full = LV_MAX((lv_coord_t)(av + SC(6) + 2 * pad_h + LV_MAX(w_name, w_recv)),
+                                      (lv_coord_t)(2 * pad_h + w_sent + SC(6) + sb));
+  // The launcher corner: one row of six on the wide boxes; otherwise two rows, with
+  // as many columns (three, two, one) as leave the chat side its whole width.
+  int cols = 3, rows = 2;
+  lv_coord_t ts;
+  if (w >= SC(470)) {
+    cols = kTpTileN; rows = 1;
+    ts = LV_MIN(SC(34), h - 2 * P);
+  } else {
+    ts = LV_MIN(SC(32), (lv_coord_t)((h - 2 * P - G) / 2));
+    while (cols > 1 && P + cols * ts + (cols - 1) * G + SC(12) + chat_full + P > sw_) --cols;
+  }
+  const lv_coord_t ty = (h - (rows * ts + (rows - 1) * G)) / 2;
+  for (int i = 0; i < cols * rows && i < kTpTileN; ++i) {
+    lv_obj_t* c = plain(f);
+    lv_obj_set_size(c, ts, ts);
+    lv_obj_set_pos(c, P + (i % cols) * (ts + G), ty + (i / cols) * (ts + G));
+    lv_obj_set_style_radius(c, ts * 28 / 100, LV_PART_MAIN);
+    lv_obj_t* ic = lv_label_create(c);
+    lv_label_set_text(ic, kTpTiles[i].icon);
+    lv_obj_set_style_text_font(ic, ts >= 30 ? &ui_icons_20 : &ui_icons_16, LV_PART_MAIN);
+    lv_obj_center(ic);
+    s_tp.tile[i] = c;
+    s_tp.tile_ic[i] = ic;
+  }
+  // An unread dot on the chats tile: the glow, as the real count pill.
+  s_tp.unread = plain(f);
+  lv_obj_set_size(s_tp.unread, SC(9), SC(9));
+  lv_obj_set_style_radius(s_tp.unread, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_tp.unread, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_pos(s_tp.unread, P + ts - SC(6), ty - SC(3));
+
+  // The chat side: sized from the measured text, each line one line high and
+  // shortened with "..." when the room runs out.
+  const lv_coord_t x0 = P + cols * ts + (cols - 1) * G + SC(12);
+  const lv_coord_t room = sw_ - x0 - P;
+  s_tp.av = makeGlyphAvatar(f, kTpName, GLYPH_CIRCLE, av);
+  lv_obj_set_pos(s_tp.av, x0, P + SC(2));
+  auto bubble = [&](lv_coord_t inner_w, int lines_h) {
+    lv_obj_t* b = plain(f);
+    lv_obj_set_size(b, inner_w + 2 * pad_h, lines_h + 2 * pad_v);
+    lv_obj_set_style_radius(b, SC(9), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+    return b;
+  };
+  auto line = [&](lv_obj_t* b, const char* txt, const lv_font_t* font, lv_coord_t lw, lv_coord_t y) {
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_label_set_text(l, txt);
+    lv_obj_set_style_text_font(l, font, LV_PART_MAIN);
+    lv_obj_set_size(l, lw, lv_font_get_line_height(font));
+    lv_obj_set_pos(l, pad_h, pad_v + y);
+    return l;
+  };
+  const lv_coord_t lh_name = lv_font_get_line_height(&g_font_semi_12), lh = lv_font_get_line_height(&g_font_12);
+  const lv_coord_t recv_in = LV_MAX((lv_coord_t)SC(24), LV_MIN(LV_MAX(w_name, w_recv), (lv_coord_t)(room - av - SC(6) - 2 * pad_h)));
+  s_tp.recv = bubble(recv_in, lh_name + lh);
+  lv_obj_set_pos(s_tp.recv, x0 + av + SC(6), P);
+  s_tp.recv_name = line(s_tp.recv, kTpName, &g_font_semi_12, recv_in, 0);
+  s_tp.recv_txt  = line(s_tp.recv, t_recv, &g_font_12, recv_in, lh_name);
+
+  s_tp.send = plain(f);
+  lv_obj_set_size(s_tp.send, sb, sb);
+  lv_obj_set_style_radius(s_tp.send, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_tp.send, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_align(s_tp.send, LV_ALIGN_BOTTOM_RIGHT, -P, -P);
+  s_tp.send_ic = lv_label_create(s_tp.send);
+  lv_label_set_text(s_tp.send_ic, UI_ICON_ARROW_UP);
+  lv_obj_set_style_text_font(s_tp.send_ic, &ui_icons_16, LV_PART_MAIN);
+  lv_obj_center(s_tp.send_ic);
+  const lv_coord_t sent_in = LV_MAX((lv_coord_t)SC(24), LV_MIN(w_sent, (lv_coord_t)(room - sb - SC(6) - 2 * pad_h)));
+  s_tp.sent = bubble(sent_in, lh);
+  lv_obj_align(s_tp.sent, LV_ALIGN_BOTTOM_RIGHT, -(P + sb + SC(6)), -P);
+  s_tp.sent_txt = line(s_tp.sent, t_sent, &g_font_12, sent_in, 0);
+
+  // Apply and restart: on the box, under the little screen, while something picked
+  // is not applied yet (themePageRepaint grows the box for it). It wears the picked
+  // look's primary button, like the send button above it.
+  const lv_coord_t bh = SC(28);
+  s_tp.apply_extra = bh + P;
+  s_tp.apply = lv_btn_create(fr);
+  styleButton(s_tp.apply);
+  lv_obj_set_size(s_tp.apply, w - 2 - 2 * P, bh);
+  lv_obj_set_pos(s_tp.apply, P, h - 2);
+  lv_obj_set_style_radius(s_tp.apply, SC(9), LV_PART_MAIN);
+  lv_obj_set_style_border_width(s_tp.apply, 0, LV_PART_MAIN);
+  lv_obj_add_event_cb(s_tp.apply, themeApplyCb, LV_EVENT_CLICKED, nullptr);
+  s_tp.apply_lbl = lv_label_create(s_tp.apply);
+  lv_label_set_text(s_tp.apply_lbl, TR("Apply and restart"));
+  lv_obj_set_style_text_font(s_tp.apply_lbl, &g_font_semi_14, LV_PART_MAIN);
+  lv_obj_center(s_tp.apply_lbl);
+  lv_obj_add_flag(s_tp.apply, LV_OBJ_FLAG_HIDDEN);
+}
+
+// The preview's height: the launcher corner beside the received bubble over your
+// reply, at whatever size the fonts are.
+static lv_coord_t themePreviewHeight() {
+  const lv_coord_t P = SC(7), pv = SC(3);
+  const lv_coord_t recv_h = 2 * pv + lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12);
+  const lv_coord_t sent_h = LV_MAX(SC(22), (lv_coord_t)(2 * pv + lv_font_get_line_height(&g_font_12)));
+  return LV_MAX(SC(70), (lv_coord_t)(P + recv_h + SC(5) + sent_h + P));
+}
+
+// Taste the rainbow's hello: a short burst of coloured dots from the switch. One
+// animation moves them all (its callback walks the box's children) and fades the box;
+// the box deletes itself, asynchronously, when the animation ends.
+static lv_point_t s_tp_burst_at;
+static void themeBurstExec(void* var, int32_t v) {
+  lv_obj_t* box = (lv_obj_t*)var;
+  const uint32_t n = lv_obj_get_child_cnt(box);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* d = lv_obj_get_child(box, i);
+    const int16_t ang = (int16_t)((i * 360u / n + i * 23u) % 360u);
+    const int32_t reach = SC(26) + (int32_t)(i % 3) * SC(12);
+    const int32_t r = reach * v / 1000;
+    const lv_coord_t half = lv_obj_get_style_width(d, LV_PART_MAIN) / 2;
+    lv_obj_set_pos(d, (lv_coord_t)(s_tp_burst_at.x + ((lv_trigo_cos(ang) * r) >> LV_TRIGO_SHIFT) - half),
+                      (lv_coord_t)(s_tp_burst_at.y + ((lv_trigo_sin(ang) * r) >> LV_TRIGO_SHIFT) - half));
+  }
+  lv_obj_set_style_opa(box, v < 600 ? LV_OPA_COVER : (lv_opa_t)(255 - (v - 600) * 255 / 400), LV_PART_MAIN);
+}
+static void themeBurstDone(lv_anim_t* a) { lv_obj_del_async((lv_obj_t*)a->var); }
+static void themeBurst(lv_obj_t* from) {
+  if (!from) return;
+  lv_obj_update_layout(from);
+  lv_area_t c;
+  lv_obj_get_coords(from, &c);
+  s_tp_burst_at.x = (lv_coord_t)((c.x1 + c.x2) / 2);
+  s_tp_burst_at.y = (lv_coord_t)((c.y1 + c.y2) / 2);
+  lv_obj_t* box = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(box);
+  lv_obj_clear_flag(box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(box, NAV_SKIP_FLAG);   // a passing decoration, never a nav target
+  lv_obj_set_size(box, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
+  const int n = 14;
+  for (int i = 0; i < n; ++i) {
+    lv_obj_t* d = lv_obj_create(box);
+    lv_obj_remove_style_all(d);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    const lv_coord_t sz = (i % 2) ? SC(6) : SC(8);
+    lv_obj_set_size(d, sz, sz);
+    lv_obj_set_style_radius(d, (i % 3) ? LV_RADIUS_CIRCLE : 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(d, lv_color_hex(lookRainbowFor(i, n, themeModeIsDay(s_theme_pend.mode), s_theme_pend.style)), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_pos(d, s_tp_burst_at.x - sz / 2, s_tp_burst_at.y - sz / 2);
+  }
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, box);
+  lv_anim_set_exec_cb(&a, themeBurstExec);
+  lv_anim_set_values(&a, 0, 1000);
+  lv_anim_set_time(&a, 700);
+  lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+  lv_anim_set_ready_cb(&a, themeBurstDone);
+  lv_anim_start(&a);
+}
+#endif  // !HAS_TDECK_PRO
+
+static void themePageRepaint() {
+  if (!s_tp.page) return;
+#if !defined(HAS_TDECK_PRO)
+  const uint8_t mode = s_theme_pend.mode;
+  const bool day = themeModeIsDay(mode), hc = themeModeIsHc(mode);
+  const bool more = themePendMore();
+  themePreviewPaint();
+
+  for (int d = 0; d < 2; ++d) {
+    if (!s_tp.mode[d]) continue;
+    ThemeTokens mt;
+    themeTokensFor(themeModeOf(d == 1, hc), s_theme_pend.accent, more, s_theme_pend.style, mt);
+    lv_obj_set_style_bg_color(s_tp.mode_sky[d], lv_color_hex(mt.bg), LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_tp.mode_sky[d], lv_color_hex(hc ? mt.text : mt.border), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_tp.mode_card[d], lv_color_hex(mt.panel), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_tp.mode_line[d], lv_color_hex(mt.sub), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_tp.mode_dot[d], lv_color_hex(mt.glow), LV_PART_MAIN);
+    const bool on = (d == 1) == day;
+    themeChoiceStyle(s_tp.mode[d], on, true);
+    lv_obj_set_style_text_color(s_tp.mode_ic[d], lv_color_hex(on ? COLOR_GLOW : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_tp.mode_lbl[d], lv_color_hex(on ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_tp.mode_lbl[d], on ? &g_font_semi_14 : &g_font_14, LV_PART_MAIN);
+  }
+  themeSwitchSet(s_tp.hc_sw, hc, true);
+
+  bool listed = false;
+  for (int i = 0; i < kThemeColorN; ++i) {
+    lv_obj_t* sw = s_tp.swatch[i];
+    if (!sw) continue;
+    const bool on = kThemeColors[i] == s_theme_pend.accent;
+    listed |= on;
+    lv_obj_set_style_outline_width(sw, on ? 2 : 0, LV_PART_MAIN);
+    lv_obj_set_style_opa(sw, hc ? LV_OPA_40 : LV_OPA_COVER, LV_PART_MAIN);
+  }
+  if (s_tp.custom) {
+    themeChoiceStyle(s_tp.custom, !listed, !hc);
+    lv_obj_set_style_bg_color(s_tp.custom_dot, lv_color_hex(listed ? COLOR_SUB : s_theme_pend.accent), LV_PART_MAIN);
+  }
+  if (s_tp.accent_note) {
+    if (hc) lv_obj_clear_flag(s_tp.accent_note, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(s_tp.accent_note, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  themeSwitchSet(s_tp.more_sw, more, !hc);
+  for (int i = 0; i < 3; ++i) {
+    if (!s_tp.style[i]) continue;
+    themeChoiceStyle(s_tp.style[i], more && s_theme_pend.style == i, more);
+    ThemeTokens st;
+    themeTokensFor(mode, s_theme_pend.accent, true, (uint8_t)i, st);
+    const uint32_t dots[3] = { st.glow, st.hue[HUE_PEOPLE], st.hue[HUE_RADIO] };
+    for (int k = 0; k < 3; ++k) {
+      if (!s_tp.style_dot[i][k]) continue;
+      lv_obj_set_style_bg_color(s_tp.style_dot[i][k], lv_color_hex(dots[k]), LV_PART_MAIN);
+      lv_obj_set_style_shadow_color(s_tp.style_dot[i][k], lv_color_hex(dots[k]), LV_PART_MAIN);
+    }
+  }
+  themeSwitchSet(s_tp.rainbow_sw, s_theme_pend.rainbow && !hc, !hc);
+  if (s_tp.colour_note) {
+    if (hc) lv_obj_clear_flag(s_tp.colour_note, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(s_tp.colour_note, LV_OBJ_FLAG_HIDDEN);
+  }
+#endif
+  for (int i = 0; i < 2; ++i) themeChoiceStyle(s_tp.icons[i], (i == 1) == s_chat_icons_initials, true);
+
+  // Apply and restart, only while something differs from what is saved: the preview
+  // box grows under its little screen to hold it, and once the box has scrolled out
+  // of view the bar under the title carries it (themeMiniUpdate).
+  if (s_tp.apply && s_tp.frame) {
+    const bool show = themePendingDiffers();
+    if (show) lv_obj_clear_flag(s_tp.apply, LV_OBJ_FLAG_HIDDEN);
+    else      lv_obj_add_flag(s_tp.apply, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_height(s_tp.frame, s_tp.frame_h + (show ? s_tp.apply_extra : 0));
+    lv_obj_update_layout(s_tp.page);
+    themeMiniUpdate();
+  }
+}
+
+#if !defined(HAS_TDECK_PRO)
+static void themeModeCardCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const bool day = (uintptr_t)lv_event_get_user_data(e) != 0;
+  s_theme_pend.mode = themeModeOf(day, themeModeIsHc(s_theme_pend.mode));
+  themePageRepaint();
+}
+static void themeHcCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool hc = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_theme_pend.mode = themeModeOf(themeModeIsDay(s_theme_pend.mode), hc);
+  themePageRepaint();
+}
+static void themeSwatchCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || themeModeIsHc(s_theme_pend.mode)) return;
+  s_theme_pend.accent = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+  themePageRepaint();
+}
+static void themeCustomCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || themeModeIsHc(s_theme_pend.mode)) return;
+  openAccentPicker();
+}
+static void themeMoreCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_theme_pend.more = on;
+  if (!on) s_theme_pend.rainbow = false;   // the rainbow rides on MORE COLORS!
+  themePageRepaint();
+}
+static void themeStyleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !themePendMore()) return;
+  s_theme_pend.style = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  themePageRepaint();
+}
+static void themeRainbowCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  const bool on = lv_obj_has_state(sw, LV_STATE_CHECKED);
+  s_theme_pend.rainbow = on;
+  if (on) {
+    s_theme_pend.more = true;
+    if (g_lv.task) g_lv.task->showAlert(TR("Taste the rainbow!"), 1500);
+    themeBurst(sw);
+  }
+  themePageRepaint();
+}
+static void themeBubblesCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetColorfulBubbles(on);
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Bubbles in colour") : TR("Bubbles plain"), 1000);
+  themePageRepaint();
+}
+#endif
+static void themeIconsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const bool initials = (uintptr_t)lv_event_get_user_data(e) != 0;
+  if (initials == s_chat_icons_initials) return;
+  // Live: kept icons (the bar's, an open chat's) redo their look on the next pass,
+  // the lists rebuild their rows now.
+  s_chat_icons_initials = initials;
+  ++s_avatar_gen;
+  touchPrefsSetChatIcons(initials ? 1 : 0);
+  refreshThreadLists();
+  contactsListForceRefresh();
+  themePageRepaint();
+}
+static void themeApplyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !themePendingDiffers()) return;
+#if defined(ESP32)
+  if (s_theme_pend.mode != s_theme_saved.mode && !touchPrefsSetThemeMode(s_theme_pend.mode)) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Theme save failed"), 1600);
+    return;
+  }
+  if (s_theme_pend.accent != s_theme_saved.accent) touchPrefsSetAccentColor(s_theme_pend.accent);
+  touchPrefsSetMoreColors(s_theme_pend.more);
+  touchPrefsSetColorStyle(s_theme_pend.style);
+  touchPrefsSetRainbow(s_theme_pend.rainbow);
+#endif
+  s_theme_saved = s_theme_pend;
+  lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
+  rebootWithNotice(TR("Applying the theme, restarting\xE2\x80\xA6"));
+}
+static void themePageDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_DELETE) s_tp = {};
+}
+
+#if !defined(HAS_TDECK_PRO)
+// Up to the preview box again (the bar's dots).
+static void themeMiniDotsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED && s_tp.page) lv_obj_scroll_to_y(s_tp.page, 0, LV_ANIM_ON);
+}
+// The bar under the title: Apply and restart, beside six dots in the picked look. It
+// sits over the top of the page, opaque, so the rows scroll under it.
+static void themeMiniBuild(lv_obj_t* root, lv_obj_t* page) {
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t bh = SC(28), pv = SC(6);
+  lv_obj_t* bar = lv_obj_create(root);
+  lv_obj_remove_style_all(bar);
+  lv_obj_clear_flag(bar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(bar, sw, bh + 2 * pv + 1);
+  // Where the page's rows come into view: under the tall title bar.
+  lv_obj_set_pos(bar, 0, lv_obj_get_style_pad_top(page, LV_PART_MAIN) - 8);
+  lv_obj_set_style_bg_color(bar, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN);
+  lv_obj_set_style_border_width(bar, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(bar, lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_pad_left(bar, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(bar, 14, LV_PART_MAIN);   // as the cards: clear of the page's scrollbar
+  lv_obj_set_style_pad_ver(bar, pv, LV_PART_MAIN);
+  lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(bar, SC(8), LV_PART_MAIN);
+  lv_obj_t* dots = lv_obj_create(bar);
+  lv_obj_remove_style_all(dots);
+  lv_obj_clear_flag(dots, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(dots, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(dots, LV_SIZE_CONTENT, bh);
+  lv_obj_set_style_pad_hor(dots, SC(6), LV_PART_MAIN);
+  lv_obj_set_style_radius(dots, SC(9), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dots, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(dots, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(dots, lv_color_hex(COLOR_CONTROL_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
+  lv_obj_set_flex_flow(dots, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(dots, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(dots, SC(4), LV_PART_MAIN);
+  lv_obj_add_event_cb(dots, themeMiniDotsCb, LV_EVENT_CLICKED, nullptr);
+  for (int i = 0; i < kTpTileN; ++i) {
+    lv_obj_t* d = lv_obj_create(dots);
+    lv_obj_remove_style_all(d);
+    lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(d, SC(8), SC(8));
+    lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(d, 150, LV_PART_MAIN);
+    s_tp.mini_dot[i] = d;
+  }
+  lv_obj_t* b = lv_btn_create(bar);
+  styleButton(b);
+  lv_obj_set_height(b, bh);
+  lv_obj_set_flex_grow(b, 1);
+  lv_obj_set_style_radius(b, SC(9), LV_PART_MAIN);
+  lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
+  lv_obj_add_event_cb(b, themeApplyCb, LV_EVENT_CLICKED, nullptr);
+  s_tp.mini_lbl = lv_label_create(b);
+  lv_label_set_text(s_tp.mini_lbl, TR("Apply and restart"));
+  lv_obj_set_style_text_font(s_tp.mini_lbl, &g_font_semi_14, LV_PART_MAIN);
+  lv_label_set_long_mode(s_tp.mini_lbl, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_max_width(s_tp.mini_lbl, sw - SC(110), LV_PART_MAIN);
+  lv_obj_center(s_tp.mini_lbl);
+  s_tp.mini_apply = b;
+  s_tp.mini = bar;
+  lv_obj_add_flag(bar, LV_OBJ_FLAG_HIDDEN);
+}
+static void themePageScrollCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_SCROLL) themeMiniUpdate();
+}
+#endif
+// The bar shows while something is picked and the box's own button has scrolled out
+// of view; never both at once.
+static void themeMiniUpdate() {
+#if !defined(HAS_TDECK_PRO)
+  if (!s_tp.mini || !s_tp.apply || !s_tp.page) return;
+  bool show = themePendingDiffers();
+  if (show) {
+    lv_area_t ba, pa;
+    lv_obj_get_coords(s_tp.apply, &ba);
+    lv_obj_get_coords(s_tp.page, &pa);
+    show = ba.y2 < pa.y1 + lv_obj_get_style_pad_top(s_tp.page, LV_PART_MAIN) - 8 + SC(4);
+  }
+  if (show == lv_obj_has_flag(s_tp.mini, LV_OBJ_FLAG_HIDDEN)) {
+    if (show) lv_obj_clear_flag(s_tp.mini, LV_OBJ_FLAG_HIDDEN);
+    else      lv_obj_add_flag(s_tp.mini, LV_OBJ_FLAG_HIDDEN);
+  }
+#endif
+}
+
+// A row with a switch: the name (and a help line under it) on the left, the switch
+// on the right. Returns the switch.
+static lv_obj_t* themeSwitchRow(lv_obj_t* parent, lv_coord_t w, const char* title, const char* help,
+                                bool on, lv_event_cb_t cb) {
+  lv_obj_t* row = lv_obj_create(parent);
+  lv_obj_remove_style_all(row);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(row, w, LV_SIZE_CONTENT);
+  lv_obj_t* sw = lv_switch_create(row);
+  lv_obj_align(sw, LV_ALIGN_TOP_RIGHT, 0, 0);
+  if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, nullptr);
+  const lv_coord_t tw = w - 58;
+  const char* tt = TR(title);
+  lv_obj_t* l = lv_label_create(row);
+  lv_obj_set_width(l, tw);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(l, tt);
+  lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(l, 2, 6);
+  if (help) {
+    lv_point_t sz;
+    lv_txt_get_size(&sz, tt, &g_font_14, 0, 0, tw, LV_TEXT_FLAG_NONE);
+    lv_obj_t* h = lv_label_create(row);
+    lv_obj_set_width(h, tw);
+    lv_label_set_long_mode(h, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(h, TR(help));
+    lv_obj_set_style_text_font(h, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(h, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_pos(h, 2, 6 + sz.y + 2);
+  }
+  return sw;
+}
+
+// A muted line under a section (what a greyed control is waiting for).
+static lv_obj_t* themeNote(lv_obj_t* parent, lv_coord_t w, const char* text) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_obj_set_width(l, w);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(l, TR(text));
+  lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_add_flag(l, LV_OBJ_FLAG_HIDDEN);
+  return l;
+}
+
+// A section card's content as a column: the cards stack their rows with a gap, and a
+// hidden row takes no room.
+static lv_obj_t* themeSection(const char* title) {
+  lv_obj_t* c = createSettingsModal(TR(title), SettingsModalKind::Device);
+  lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(c, SC(10), LV_PART_MAIN);
+  return c;
+}
+
+// A tile in a row of choices (style, chat icons): a picture over a name.
+static lv_obj_t* themeChoiceTile(lv_obj_t* parent, lv_coord_t w, const char* label, lv_event_cb_t cb, uintptr_t ud) {
+  lv_obj_t* b = lv_btn_create(parent);
+  styleButton(b);
+  lv_obj_set_size(b, w, LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_hor(b, SC(4), LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(b, SC(7), LV_PART_MAIN);
+  lv_obj_set_style_pad_row(b, SC(6), LV_PART_MAIN);
+  lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void*)ud);
+  lv_obj_t* pic = lv_obj_create(b);
+  lv_obj_remove_style_all(pic);
+  lv_obj_clear_flag(pic, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(pic, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(pic, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(pic, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(pic, SC(4), LV_PART_MAIN);
+  lv_obj_t* l = lv_label_create(b);
+  lv_label_set_text(l, label);   // translated by the caller
+  lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_max_width(l, w - SC(8), LV_PART_MAIN);
+  return b;
+}
+
+static void buildThemeSettings() {
+  lv_obj_t* page = s_settings_inline_parent;
+  lv_obj_t* root = s_settings_sheet;
+  if (!page || !root) return;
+  s_tp = {};
+  s_tp.page = page;
+  lv_obj_add_event_cb(page, themePageDeleteCb, LV_EVENT_DELETE, nullptr);
+  s_theme_saved.mode    = touchPrefsGetThemeMode();
+  s_theme_saved.accent  = touchPrefsGetAccentColor();
+  s_theme_saved.more    = touchPrefsGetMoreColors();
+  s_theme_saved.style   = touchPrefsGetColorStyle();
+  s_theme_saved.rainbow = touchPrefsGetRainbow();
+  s_theme_pend = s_theme_saved;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t card_w = sw - 22;   // as createSettingsModal's cards
+
+#if !defined(HAS_TDECK_PRO)
+  // The preview, at full size at the top of the page. It scrolls away with the page,
+  // so the rows below have the whole screen; once something is picked and the box
+  // is out of view, a slim bar under the title keeps Apply and restart in reach,
+  // with six dots that show the picked look and lead back up to the box.
+  {
+    lv_obj_t* wrap = lv_obj_create(page);
+    lv_obj_remove_style_all(wrap);
+    lv_obj_clear_flag(wrap, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(wrap, card_w, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_bottom(wrap, SC(12), LV_PART_MAIN);
+    themePreviewBuild(wrap, 0, 0, card_w, themePreviewHeight());
+    themeMiniBuild(root, page);
+    lv_obj_add_event_cb(page, themePageScrollCb, LV_EVENT_SCROLL, nullptr);
+  }
+
+  // Mode: Night and Day as two small screens, high contrast under them.
+  {
+    lv_obj_t* c = themeSection("Mode");
+    const lv_coord_t cw = s_settings_content_w;
+    lv_obj_t* pair = lv_obj_create(c);
+    lv_obj_remove_style_all(pair);
+    lv_obj_clear_flag(pair, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(pair, cw, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(pair, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(pair, SC(8), LV_PART_MAIN);
+    const lv_coord_t mw = (cw - SC(8)) / 2;
+    for (int d = 0; d < 2; ++d) {
+      lv_obj_t* b = lv_btn_create(pair);
+      styleButton(b);
+      lv_obj_set_size(b, mw, LV_SIZE_CONTENT);
+      lv_obj_set_style_pad_all(b, SC(5), LV_PART_MAIN);
+      lv_obj_set_style_pad_row(b, SC(6), LV_PART_MAIN);
+      lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_add_event_cb(b, themeModeCardCb, LV_EVENT_CLICKED, (void*)(uintptr_t)d);
+      const lv_coord_t iw = mw - 2 * SC(5) - 4;
+      lv_obj_t* sky = lv_obj_create(b);
+      lv_obj_remove_style_all(sky);
+      lv_obj_clear_flag(sky, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(sky, iw, SC(30));
+      lv_obj_set_style_radius(sky, SC(6), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(sky, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_width(sky, 1, LV_PART_MAIN);
+      lv_obj_set_style_border_opa(sky, LV_OPA_COVER, LV_PART_MAIN);
+      auto shape = [&](lv_coord_t x, lv_coord_t y, lv_coord_t bw, lv_coord_t bh, lv_coord_t r) {
+        lv_obj_t* o = lv_obj_create(sky);
+        lv_obj_remove_style_all(o);
+        lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(o, bw, bh);
+        lv_obj_set_pos(o, x, y);
+        lv_obj_set_style_radius(o, r, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+        return o;
+      };
+      s_tp.mode_card[d] = shape(SC(5), SC(6), iw * 52 / 100, SC(9), SC(3));
+      s_tp.mode_line[d] = shape(SC(5), SC(19), iw * 32 / 100, SC(4), 2);
+      s_tp.mode_dot[d]  = shape(iw - SC(6) - SC(11) - 2, (SC(30) - SC(11)) / 2 - 1, SC(11), SC(11), LV_RADIUS_CIRCLE);
+      lv_obj_t* lr = lv_obj_create(b);
+      lv_obj_remove_style_all(lr);
+      lv_obj_clear_flag(lr, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(lr, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(lr, LV_FLEX_FLOW_ROW);
+      lv_obj_set_flex_align(lr, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+      lv_obj_set_style_pad_column(lr, SC(5), LV_PART_MAIN);
+      s_tp.mode_ic[d] = lv_label_create(lr);
+      lv_label_set_text(s_tp.mode_ic[d], d ? UI_ICON_SUN : UI_ICON_MOON);
+      lv_obj_set_style_text_font(s_tp.mode_ic[d], &ui_icons_16, LV_PART_MAIN);
+      s_tp.mode_lbl[d] = lv_label_create(lr);
+      lv_label_set_text(s_tp.mode_lbl[d], d ? TR("Day") : TR("Night"));
+      s_tp.mode[d] = b;
+      s_tp.mode_sky[d] = sky;
+    }
+    s_tp.hc_sw = themeSwitchRow(c, cw, "High contrast", "Black and white with heavy outlines, for bright sun or low vision.",
+                                themeModeIsHc(s_theme_pend.mode), themeHcCb);
+  }
+
+  // Accent: the swatches on the page, the chosen one ringed, and Custom for any colour.
+  {
+    lv_obj_t* c = themeSection("Accent colour");
+    const lv_coord_t cw = s_settings_content_w;
+    lv_obj_t* grid = lv_obj_create(c);
+    lv_obj_remove_style_all(grid);
+    lv_obj_clear_flag(grid, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(grid, cw, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    // Even columns across the card: as many 26 px swatches as fit with an 8 px gap,
+    // the leftover shared out between them.
+    const lv_coord_t dot = SC(26);
+    const int per_row = LV_MAX(4, (int)((cw - 4 + SC(8)) / (dot + SC(8))));
+    const lv_coord_t gap = (lv_coord_t)((cw - 4 - per_row * dot) / LV_MAX(1, per_row - 1));
+    lv_obj_set_style_pad_column(grid, gap, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(grid, SC(9), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(grid, 2, LV_PART_MAIN);
+    for (int i = 0; i < kThemeColorN; ++i) {
+      lv_obj_t* sb = lv_obj_create(grid);
+      lv_obj_remove_style_all(sb);
+      lv_obj_clear_flag(sb, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(sb, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_size(sb, dot, dot);
+      lv_obj_set_style_radius(sb, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(sb, lv_color_hex(kThemeColors[i]), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_border_color(sb, lv_color_hex(0x000000), LV_PART_MAIN);
+      lv_obj_set_style_border_opa(sb, 60, LV_PART_MAIN);
+      lv_obj_set_style_border_width(sb, 1, LV_PART_MAIN);
+      lv_obj_set_style_outline_color(sb, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_style_outline_pad(sb, 2, LV_PART_MAIN);
+      lv_obj_set_style_transform_width(sb, -2, LV_PART_MAIN | LV_STATE_PRESSED);
+      lv_obj_set_style_transform_height(sb, -2, LV_PART_MAIN | LV_STATE_PRESSED);
+      lv_obj_add_event_cb(sb, themeSwatchCb, LV_EVENT_CLICKED, (void*)(uintptr_t)kThemeColors[i]);
+      s_tp.swatch[i] = sb;
+    }
+    // Custom: any colour, from the wheel and hex picker.
+    lv_obj_t* cu = lv_btn_create(c);
+    styleButton(cu);
+    lv_obj_set_size(cu, LV_SIZE_CONTENT, SC(32));
+    lv_obj_set_style_pad_hor(cu, SC(10), LV_PART_MAIN);
+    lv_obj_set_flex_flow(cu, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(cu, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(cu, SC(7), LV_PART_MAIN);
+    lv_obj_add_event_cb(cu, themeCustomCb, LV_EVENT_CLICKED, nullptr);
+    s_tp.custom_dot = lv_obj_create(cu);
+    lv_obj_remove_style_all(s_tp.custom_dot);
+    lv_obj_clear_flag(s_tp.custom_dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_tp.custom_dot, SC(14), SC(14));
+    lv_obj_set_style_radius(s_tp.custom_dot, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_tp.custom_dot, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* cl = lv_label_create(cu);
+    lv_label_set_text(cl, TR("Custom"));
+    lv_obj_set_style_text_font(cl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    s_tp.custom = cu;
+    s_tp.accent_note = themeNote(c, cw, "High contrast keeps its own fixed colours.");
+  }
+
+  // Colour: MORE COLORS! with its style right under it, then Taste the rainbow.
+  {
+    lv_obj_t* c = themeSection("Colour");
+    const lv_coord_t cw = s_settings_content_w;
+    s_tp.more_sw = themeSwitchRow(c, cw, "MORE COLORS!",
+                                  "A colour for every section, coloured status icons, names and glyphs in their own hue.",
+                                  themePendMore(), themeMoreCb);
+    lv_obj_t* row = lv_obj_create(c);
+    lv_obj_remove_style_all(row);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row, cw, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, SC(6), LV_PART_MAIN);
+    static const char* const kStyleNames[3] = { "Regular", "Neon", "Pastel" };
+    const lv_coord_t tw = (cw - 2 * SC(6)) / 3;
+    for (int i = 0; i < 3; ++i) {
+      lv_obj_t* b = themeChoiceTile(row, tw, TR(kStyleNames[i]), themeStyleCb, (uintptr_t)i);
+      lv_obj_t* pic = lv_obj_get_child(b, 0);
+      for (int k = 0; k < 3; ++k) {
+        lv_obj_t* d = lv_obj_create(pic);
+        lv_obj_remove_style_all(d);
+        lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_size(d, SC(9), SC(9));
+        lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+        if (i == TOUCH_LOOK_NEON) {   // Neon's dots glow a little, as its tiles do
+          lv_obj_set_style_shadow_width(d, SC(6), LV_PART_MAIN);
+          lv_obj_set_style_shadow_opa(d, 150, LV_PART_MAIN);
+        }
+        s_tp.style_dot[i][k] = d;
+      }
+      s_tp.style[i] = b;
+    }
+    s_tp.rainbow_sw = themeSwitchRow(c, cw, "Taste the rainbow",
+                                     "Every app and page its own colour, with a little motion.",
+                                     s_theme_pend.rainbow, themeRainbowCb);
+    s_tp.colour_note = themeNote(c, cw, "High contrast keeps its own fixed colours.");
+  }
+#endif  // !HAS_TDECK_PRO
+
+  // Chats: the icon style, the bubbles and compact messages. These apply at once.
+  {
+    lv_obj_t* c = themeSection("Chats");
+    const lv_coord_t cw = s_settings_content_w;
+    lv_obj_t* lbl = lv_label_create(c);
+    lv_label_set_text(lbl, TR("Chat icons"));
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_t* row = lv_obj_create(c);
+    lv_obj_remove_style_all(row);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(row, cw, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, SC(8), LV_PART_MAIN);
+    static const char* const kIconNames[2] = { "Glyphs", "Initials" };
+    const lv_coord_t tw = (cw - SC(8)) / 2;
+    static const char* const kSample[3] = { "Kees", "#hiking", "Mira" };
+    for (int i = 0; i < 2; ++i) {
+      lv_obj_t* b = themeChoiceTile(row, tw, TR(kIconNames[i]), themeIconsCb, (uintptr_t)i);
+      lv_obj_t* pic = lv_obj_get_child(b, 0);
+      for (int k = 0; k < 3; ++k) {
+        lv_obj_t* av = makeGlyphAvatar(pic, kSample[k], k == 1 ? GLYPH_SQUARE : GLYPH_CIRCLE, SC(24));
+        avatarApplyLook(av, kSample[k], i == 1, s_theme_day, s_look_more, s_look_style, COLOR_RAISED, COLOR_GLOW);
+      }
+      s_tp.icons[i] = b;
+    }
+#if !defined(HAS_TDECK_PRO)
+    themeSwitchRow(c, cw, "Colourful bubbles", "Names are always in colour; this colours the bubbles too.",
+                   touchPrefsGetColorfulBubbles(), themeBubblesCb);
+#endif
+    themeSwitchRow(c, cw, "Compact messages (IRC style)", nullptr, touchPrefsGetCompactChat(), compactChatToggleCb);
+  }
+
+  themePageRepaint();
 }
 
 // ============================================================
@@ -58408,13 +59813,7 @@ static void buildUiTree() {
   // Load the saved theme accent before any widget is built so the whole tree
   // adopts it. g_lv.tabview/keyboard are still null here, so applyAccent only
   // sets the colour globals (no live re-style needed at boot).
-#if defined(HAS_TDECK_PRO)
-  applyThemeMode(TOUCH_THEME_DAY);
-  applyAccent(0x000000u);
-#else
-  applyThemeMode(touchPrefsGetThemeMode());
-  applyAccent(touchPrefsGetAccentColor());
-#endif
+  applyBootTheme();
 
   lv_obj_t* root = lv_scr_act();
   styleSurface(root, COLOR_BG, 0);
@@ -58515,6 +59914,7 @@ static void buildUiTree() {
     lv_obj_set_style_pad_ver(tab_btns, 0, LV_PART_ITEMS);
     lv_obj_set_style_text_line_space(tab_btns, -2, LV_PART_ITEMS);
   }
+  lv_obj_add_event_cb(tab_btns, tabBarLookDrawCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);   // MORE COLORS! tab hues
   lv_obj_add_event_cb(tab_btns, homeTabClickedCb, LV_EVENT_CLICKED, nullptr);   // Home re-tap toggles the drawer
   lv_obj_add_event_cb(tab_btns, tabLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);   // hold Home: launcher options; Settings: control panel
   lv_obj_add_event_cb(tab_btns, tabBarGestureCb, LV_EVENT_GESTURE, nullptr);    // swipe up from the bar opens the drawer
@@ -64939,13 +66339,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // accent itself), so without this its accent-tinted glyphs — the Wi-Fi/Bluetooth
     // icons — would freeze the compile-time default instead of the user's colour.
     // Idempotent: buildUiTree's own call just re-sets the same globals.
-  #if defined(HAS_TDECK_PRO)
-    applyThemeMode(TOUCH_THEME_DAY);
-    applyAccent(0x000000u);
-  #else
-    applyThemeMode(touchPrefsGetThemeMode());
-    applyAccent(touchPrefsGetAccentColor());
-  #endif
+    applyBootTheme();
+    rainbowDriftStart();   // Taste the rainbow's hue drift (nothing without it)
 
     // Build the always-on top status bar AFTER the display driver is
     // registered — lv_layer_sys() needs an active disp or it returns
@@ -66486,6 +67881,10 @@ static void ssaverStart(uint32_t now, bool preview) {
   th.ter = COLOR_TERTIARY;
   th.small = &g_font_12;
   th.strong = &g_font_semi_12;
+  if (s_look_rainbow) {   // every node in its own hue, in the look's strength (as lookRainbow)
+    th.node_sat = lookNeon() ? 100 : lookPastel() ? 36 : s_theme_day ? 80 : 72;
+    th.node_val = lookNeon() || lookPastel() ? 100 : s_theme_day ? 72 : 96;
+  }
   cstShow(lv_layer_top(), th);   // created last, so it covers the status bar and any sheet
   hideUnder(s_ssaver_under);
   s_ssaver_on = true;
@@ -68270,6 +69669,7 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
                 0 /*ack_hash*/, DELIV_NONE,
                 meta_flags, path_len, snr_q4, rssi,
                 in_path_n ? in_path : nullptr, in_path_n, 0 /*sent_fp*/, in_scope);
+  if (s_look_rainbow) { s_rb_flash_slot = msg_slot; s_rb_flash_at = millis(); }   // its bubble lands with a flash
   // Stamp the bubble with the sender's embedded send-time (stashed by MyMesh::
   // queueMessage) instead of "now" — fixes room-server history replay showing the
   // whole batch at the delivery time. Only override with a real epoch; live DMs
@@ -69067,7 +70467,24 @@ void UITask::loop() {
   // then walk every screen and stream each framebuffer over USB. The 'G' handshake avoids a
   // flash-vs-connect timing race — the host can attach whenever and trigger the tour.
   { static bool s_doc_done = false;
-    if (!s_doc_done && s_splash_root == nullptr) {
+#if defined(DOC_MAP_SHOT) && defined(MULTI_TRANSPORT_COMPANION)
+    // The map shot needs its tiles, and the tour holds the loop that brings Wi-Fi
+    // up, hands the tile cache over once the card mounts and redraws as downloads
+    // land. So open the Map first and let the normal loop load it until nothing in
+    // view is missing or queued (70 s at most, inside capture.py's 90 s wait),
+    // then start the tour, whose map step finds every tile on disk.
+    static uint32_t s_doc_map_t0 = 0;
+    bool doc_ready = false;
+    if (s_splash_root == nullptr) {
+      if (!s_doc_map_t0) { s_doc_map_t0 = millis() ? millis() : 1; navGoToMainTab(MAP_TAB_INDEX); }
+      const uint32_t el = millis() - s_doc_map_t0;
+      doc_ready = (WiFi.status() == WL_CONNECTED && el > 8000 && s_map_last_missing == 0 &&
+                   tileFetchPendingLoad() == 0) || el > 70000;
+    }
+#else
+    const bool doc_ready = true;
+#endif
+    if (!s_doc_done && s_splash_root == nullptr && doc_ready) {
       while (Serial.available()) { if (Serial.read() == 'G') { s_doc_done = true; docCaptureTour(); break; } }
     } }
 #endif
@@ -71204,7 +72621,80 @@ static void docPinTest() {
 }
 #endif
 
+#if defined(DOC_LOOK_AUDIT)
+// The colour looks: the places they show most, in whatever look the build forced
+// (DOC_LOOK), plus the Theme page with a pending change so its preview and the
+// Apply button show.
+static void docLookAudit() {
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+  setHomeDrawer(true); auditShot("look_launcher");
+  navGoToMainTab(CHAT_INBOX_TAB_INDEX); docSettle(6);
+  g_lv.dm.list_sig = 0;
+  refreshChatList(g_lv.dm);
+  auditShot("look_chats");
+  const int chi = auditFindThread(true);
+  if (chi >= 0) {
+    openThreadDetailByIdx(chi, true); auditShot("look_conv", 24);
+    if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+    docSettle(6);
+  }
+  navGoToMainTab(CONTACTS_TAB_INDEX); docSettle(10); auditShot("look_contacts");
+  navGoToMainTab(SETTINGS_TAB_INDEX); docSettle(8);
+  if (s_settings_landing) lv_obj_scroll_to_y(s_settings_landing, 0, LV_ANIM_OFF);
+  auditShot("look_settings");
+  openSettingsCategory(CAT_THEME); docSettle(12);
+  auditShot("look_theme");
+  if (s_tp.page) {
+    // The whole page, a screenful at a time (overlapping a little), down to the end.
+    lv_obj_update_layout(s_tp.page);
+    const lv_coord_t step = LV_MAX((lv_coord_t)40, (lv_coord_t)(lv_obj_get_height(s_tp.page) -
+        lv_obj_get_style_pad_top(s_tp.page, LV_PART_MAIN) - 30));
+    char nm[24];
+    for (int k = 2; k <= 9; ++k) {
+      const bool last = lv_obj_get_scroll_bottom(s_tp.page) <= 0;
+      if (last) break;
+      lv_obj_scroll_by(s_tp.page, 0, -step, LV_ANIM_OFF);
+      snprintf(nm, sizeof nm, "look_theme_%d", k);
+      auditShot(nm);
+    }
+    lv_obj_scroll_to_y(s_tp.page, 0, LV_ANIM_OFF);
+    // A pending change: the preview in Neon (or Pastel, when Neon is live) and the button.
+    s_theme_pend.more = true;
+    s_theme_pend.style = s_look_style == TOUCH_LOOK_NEON ? TOUCH_LOOK_PASTEL : TOUCH_LOOK_NEON;
+    themePageRepaint(); auditShot("look_theme_pending");
+    // Scrolled down with it pending: the box gone, the bar under the title instead.
+    lv_obj_scroll_by(s_tp.page, 0, -SC(170), LV_ANIM_OFF); auditShot("look_theme_pending_scrolled");
+    lv_obj_scroll_to_y(s_tp.page, 0, LV_ANIM_OFF);
+    s_theme_pend.rainbow = true;
+    themePageRepaint(); auditShot("look_theme_pending_rb");
+    lv_obj_scroll_by(s_tp.page, 0, -SC(170), LV_ANIM_OFF); auditShot("look_theme_pending_rb_scrolled");
+    lv_obj_scroll_to_y(s_tp.page, 0, LV_ANIM_OFF);
+    s_theme_pend = s_theme_saved;
+    themePageRepaint();
+  }
+  closeSettingsCategory(); docSettle(6);
+#if defined(DOC_MAP_SHOT) && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // The map for the guide, once its tiles are really there. The tour holds the loop
+  // that re-renders as downloads land (the last guide shot caught it half loaded,
+  // "29 downloading"), so do that here: redraw on each delivery until nothing in
+  // view is missing or queued, for up to a minute (Wi-Fi may still be coming up).
+  navGoToMainTab(MAP_TAB_INDEX); docSettle(10);
+  for (int i = 0; i < 600; ++i) {
+    if (s_tile_fetch_dirty) { s_tile_fetch_dirty = false; renderMapTiles(); renderMapMarkers(); }
+    docSettle(4);
+    if (i > 30 && s_map_last_missing == 0 && tileFetchPendingLoad() == 0) break;
+  }
+  renderMapTiles(); renderMapMarkers(); docSettle(12);
+  auditShot("look_map", 24);
+#endif
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+}
+#endif
 static void docAuditFocus() {
+#if defined(DOC_LOOK_AUDIT)
+  docLookAudit();
+  return;
+#endif
 #if defined(DOC_PIN_TEST) && PIN_PAD == 2
   docPinTest();
   return;

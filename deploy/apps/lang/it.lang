@@ -1491,3 +1491,29 @@ node	node
 nodes	nodes
 now	now
 routed	routed
+# Theme page and colour looks: new strings, English placeholders until translated (value = key)
+A colour for every section, coloured status icons, names and glyphs in their own hue.	A colour for every section, coloured status icons, names and glyphs in their own hue.
+Apply and restart	Apply and restart
+Applying the theme, restarting…	Applying the theme, restarting…
+Bubbles in colour	Bubbles in colour
+Bubbles plain	Bubbles plain
+Chat icons	Chat icons
+Colourful bubbles	Colourful bubbles
+Custom	Custom
+Every app and page its own colour, with a little motion.	Every app and page its own colour, with a little motion.
+Black and white with heavy outlines, for bright sun or low vision.	Black and white with heavy outlines, for bright sun or low vision.
+Glyphs	Glyphs
+High contrast keeps its own fixed colours.	High contrast keeps its own fixed colours.
+Initials	Initials
+MORE COLORS!	MORE COLORS!
+Mode	Mode
+Names are always in colour; this colours the bubbles too.	Names are always in colour; this colours the bubbles too.
+Neon	Neon
+On my way	On my way
+Pastel	Pastel
+Preview	Preview
+Rainbow	Rainbow
+Regular	Regular
+Ridge at six?	Ridge at six?
+Taste the rainbow	Taste the rainbow
+Use this colour	Use this colour

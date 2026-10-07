@@ -2381,6 +2381,18 @@ bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s
 void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
 bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
 void touchPrefsSetGlanceEnabled(bool on)    { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_en", on ? 1 : 0); }
+uint8_t touchPrefsGetChatIcons() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chat_icons", 0) ? 1 : 0; }
+void touchPrefsSetChatIcons(uint8_t style) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chat_icons", style ? 1 : 0); }
+bool touchPrefsGetMoreColors() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("col_more", 1) != 0; }
+void touchPrefsSetMoreColors(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_more", on ? 1 : 0); }
+uint8_t touchPrefsGetColorStyle() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("col_style", TOUCH_LOOK_REGULAR);
+  return v > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : v;
+}
+void touchPrefsSetColorStyle(uint8_t style) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_style", style > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : style); }
+bool touchPrefsGetRainbow() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("col_rb", 0) != 0; }
+void touchPrefsSetRainbow(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_rb", on ? 1 : 0); }
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
@@ -2744,6 +2756,7 @@ static int backupKeys(BkKey* out, int cap) {
     "snd_msg", "snd_men", "snd_dm", "snd_vol", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
+    "chat_icons", "col_more", "col_style", "col_rb",
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');

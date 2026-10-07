@@ -109,6 +109,7 @@ lv_point_t s_link[kMaxNodes][kLinkPts];
 lv_point_t s_diamond[kMaxNodes][5];
 
 Flow       s_flow[kFlows];
+uint32_t   s_flow_col[kFlows];        // each route's light, in its node's colour
 int        s_nflow = 0;
 
 Leg        s_leg[kDots];
@@ -135,6 +136,22 @@ constexpr uint32_t kHudMoveMs = 120000;
 lv_coord_t K(int px) { return (lv_coord_t)((px * s_k + 50) / 100); }
 lv_coord_t K1(int px) { const lv_coord_t v = K(px); return v < 1 ? 1 : v; }
 lv_color_t C(uint32_t rgb) { return lv_color_hex(rgb); }
+
+// A node's colour: the glow, or with node_sat set its own hue, from its key, so a
+// node keeps its colour from one night to the next.
+uint32_t hsv32(int h, int s, int v) {
+  h = ((h % 360) + 360) % 360;
+  const int c = v * s / 100, x = c * (60 - abs(h % 120 - 60)) / 60, m = v - c;
+  int r = 0, g = 0, b = 0;
+  if (h < 60) { r = c; g = x; } else if (h < 120) { r = x; g = c; } else if (h < 180) { g = c; b = x; }
+  else if (h < 240) { g = x; b = c; } else if (h < 300) { r = x; b = c; } else { r = c; b = x; }
+  auto u8 = [](int q) { return (uint32_t)((q * 255 + 50) / 100); };
+  return (u8(r + m) << 16) | (u8(g + m) << 8) | u8(b + m);
+}
+uint32_t nodeCol(int i) {
+  if (!s_th.node_sat || i < 0 || i >= s_n) return s_th.glow;
+  return hsv32((int)(((s_nodes[i].key * 2654435761u) >> 16) % 360u), s_th.node_sat, s_th.node_val);
+}
 
 // A bare object: no theme style, never a target. Input does not reach this
 // screen at all (the indev read swallows it while the screensaver is up), but
@@ -303,6 +320,7 @@ void flowDrawCb(lv_event_t* e) {
   const float shift = fmodf((float)((uint64_t)lv_tick_get() * (uint64_t)K(12) % 1000000000ull) / 1000.0f, period);
   for (int f = 0; f < s_nflow; ++f) {
     const Flow& fl = s_flow[f];
+    ld.color = C(s_flow_col[f]);
     float start = shift;
     for (int s = 0; s + 1 < fl.n; ++s) {
       const float x0 = (float)(a.x1 + fl.p[s].x), y0 = (float)(a.y1 + fl.p[s].y);
@@ -554,12 +572,13 @@ void sweepDrawCb(lv_event_t* e) {
     const float f = d / (float)kTailDeg;                     // 0 at the beam, 1 faded
     const lv_point_t p = { (lv_coord_t)(a.x1 + s_pos[i].x), (lv_coord_t)(a.y1 + s_pos[i].y) };
     const lv_coord_t halo = (lv_coord_t)(K(4) + (float)K(9) * f);
-    rd.bg_color = C(s_th.glow);
+    const lv_color_t nc = C(nodeCol(i));
+    rd.bg_color = nc;
     rd.bg_opa = (lv_opa_t)(110.0f * (1.0f - f));
     const lv_area_t h = { (lv_coord_t)(p.x - halo), (lv_coord_t)(p.y - halo), (lv_coord_t)(p.x + halo), (lv_coord_t)(p.y + halo) };
     lv_draw_rect(dc, &rd, &h);
     const lv_coord_t core = K1(3);
-    rd.bg_color = lv_color_mix(lv_color_white(), C(s_th.glow), 140);
+    rd.bg_color = lv_color_mix(lv_color_white(), nc, 140);
     rd.bg_opa = (lv_opa_t)(255.0f * (1.0f - f));
     const lv_area_t k = { (lv_coord_t)(p.x - core), (lv_coord_t)(p.y - core), (lv_coord_t)(p.x + core), (lv_coord_t)(p.y + core) };
     lv_draw_rect(dc, &rd, &k);
@@ -748,11 +767,12 @@ void pingExec(void* var, int32_t v) {
 
 void hideReady(lv_anim_t* a) { lv_obj_add_flag(static_cast<lv_obj_t*>(a->var), LV_OBJ_FLAG_HIDDEN); }
 
-void pingAt(lv_coord_t x, lv_coord_t y) {
+void pingAt(lv_coord_t x, lv_coord_t y, uint32_t col) {
   if (!s_root) return;
   lv_obj_t* o = s_ping[s_next_ping];
   s_next_ping = (s_next_ping + 1) % kPings;
   lv_anim_del(o, pingExec);
+  lv_obj_set_style_border_color(o, C(col), 0);
   lv_obj_set_user_data(o, (void*)(uintptr_t)(((uint32_t)(uint16_t)x << 16) | (uint16_t)y));
   lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
   lv_anim_t a;
@@ -781,12 +801,14 @@ void dotStart(lv_anim_t* a) { lv_obj_clear_flag(static_cast<lv_obj_t*>(a->var), 
 
 // A packet travelling one leg of its path. Delayed legs stay hidden until they
 // start, so a two-hop arrival reads as one dot handed on by the repeater.
-void launchDot(Pt from, Pt to, uint32_t delay_ms) {
+void launchDot(Pt from, Pt to, uint32_t delay_ms, uint32_t col) {
   if (!s_root) return;
   const int i = s_next_dot;
   s_next_dot = (s_next_dot + 1) % kDots;
   lv_obj_t* o = s_dot[i];
   lv_anim_del(o, dotExec);
+  lv_obj_set_style_bg_color(o, lv_color_mix(lv_color_white(), C(col), 110), 0);
+  lv_obj_set_style_outline_color(o, C(col), 0);
   s_leg[i] = { from.x, from.y, to.x, to.y };
   lv_obj_set_user_data(o, (void*)(intptr_t)i);
   lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
@@ -871,6 +893,7 @@ void drawNodeShape(int i) {
   const CstNode& n = s_nodes[i];
   const Pt p = s_pos[i];
   const lv_opa_t opa = levelOpa(n.level);
+  const uint32_t col = nodeCol(i);
   boxTake({ (lv_coord_t)(p.x - K(5)), (lv_coord_t)(p.y - K(5)), (lv_coord_t)(p.x + K(5)), (lv_coord_t)(p.y + K(5)) });
   if (n.kind == CST_REPEATER) {
     // Repeaters are the infrastructure: a hollow diamond, masked underneath so
@@ -885,7 +908,7 @@ void drawNodeShape(int i) {
     d[2] = { p.x, (lv_coord_t)(p.y + hs) };
     d[3] = { (lv_coord_t)(p.x - hs), p.y };
     d[4] = d[0];
-    line(s_layer, d, 5, s_th.glow, opa, K1(1));
+    line(s_layer, d, 5, col, opa, K1(1));
   } else if (n.kind == CST_ROOM) {
     const lv_coord_t s = n.level >= 3 ? K(7) : K(6);
     lv_obj_t* o = bare(s_layer);
@@ -895,17 +918,17 @@ void drawNodeShape(int i) {
     lv_obj_set_style_bg_color(o, C(s_th.bg), 0);
     lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(o, K1(1), 0);
-    lv_obj_set_style_border_color(o, C(s_th.glow), 0);
+    lv_obj_set_style_border_color(o, C(col), 0);
     lv_obj_set_style_border_opa(o, opa, 0);
   } else {
     const lv_coord_t d = n.level >= 3 ? K(6) : n.level == 2 ? K(5) : K(4);
     // Every node glows, in proportion to how fresh it is: a soft disc behind it.
     // (A shadow blur would be re-run each time the beam passes over it.)
     lv_obj_t* g = disc(s_layer, p.x, p.y, d + K(6));
-    lv_obj_set_style_bg_color(g, C(s_th.glow), 0);
+    lv_obj_set_style_bg_color(g, C(col), 0);
     lv_obj_set_style_bg_opa(g, (lv_opa_t)(opa * 40 / 255), 0);
     lv_obj_t* o = disc(s_layer, p.x, p.y, d);
-    lv_obj_set_style_bg_color(o, C(s_th.glow), 0);
+    lv_obj_set_style_bg_color(o, C(col), 0);
     lv_obj_set_style_bg_opa(o, opa, 0);
   }
 }
@@ -1313,7 +1336,7 @@ void cstSetNodes(const CstNode* nodes, int count) {
     for (int k = 0; k < kLinkPts; ++k)
       s_link[i][k] = { (lv_coord_t)(s_pos[i].x + (int32_t)(to.x - s_pos[i].x) * k / (kLinkPts - 1)),
                        (lv_coord_t)(s_pos[i].y + (int32_t)(to.y - s_pos[i].y) * k / (kLinkPts - 1)) };
-    line(s_layer, s_link[i], kLinkPts, s_th.accent, s_nodes[i].level >= 2 ? 66 : 38, K1(1));
+    line(s_layer, s_link[i], kLinkPts, s_th.node_sat ? nodeCol(i) : s_th.accent, s_nodes[i].level >= 2 ? 66 : 38, K1(1));
   }
   // The routes that carry light: the freshest nodes with a known way in. The
   // caller lists nodes newest first.
@@ -1333,6 +1356,7 @@ void cstSetNodes(const CstNode* nodes, int count) {
     } else {
       continue;
     }
+    s_flow_col[s_nflow] = nodeCol(i);
     ++s_nflow;
   }
   if (s_flow_obj) lv_obj_invalidate(s_flow_obj);
@@ -1403,16 +1427,17 @@ void cstPing(uint32_t key) {
   if (!s_root) return;
   for (int i = 0; i < s_n; ++i) {
     if (s_nodes[i].key != key) continue;
-    pingAt(s_pos[i].x, s_pos[i].y);
+    const uint32_t col = nodeCol(i);
+    pingAt(s_pos[i].x, s_pos[i].y, col);
     // The packet then travels in: through its repeater when we know which one
     // it came through, straight in when it is a direct neighbour.
     const int16_t via = s_nodes[i].via;
     const Pt self = { s_cx, s_cy };
     if (via >= 0 && via < s_n && via != i) {
-      launchDot(s_pos[i], s_pos[via], 0);
-      launchDot(s_pos[via], self, 600);
+      launchDot(s_pos[i], s_pos[via], 0, col);
+      launchDot(s_pos[via], self, 600, col);
     } else if (via == -1) {
-      launchDot(s_pos[i], self, 0);
+      launchDot(s_pos[i], self, 0, col);
     }
     return;
   }
@@ -1421,7 +1446,7 @@ void cstPing(uint32_t key) {
 
 void cstPingSelf() {
   if (!s_root) return;
-  pingAt(s_cx, s_cy);
+  pingAt(s_cx, s_cy, s_th.glow);
 }
 
 void cstPingFar() {
@@ -1432,7 +1457,7 @@ void cstPingFar() {
   seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
   const float a = (float)(seed % 360u) * 0.017453292f;
   pingAt((lv_coord_t)lroundf((float)s_cx + (float)s_R * sinf(a)),
-         (lv_coord_t)lroundf((float)s_cy - (float)s_R * cosf(a)));
+         (lv_coord_t)lroundf((float)s_cy - (float)s_R * cosf(a)), s_th.glow);
 }
 
 void cstTick(uint32_t now_ms) {
