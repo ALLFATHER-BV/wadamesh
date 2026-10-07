@@ -7995,6 +7995,20 @@ static void actListCloseCb(lv_event_t* e) {
   actListClose();
 }
 
+static lv_obj_t* actListMakeClose(lv_obj_t* parent) {
+  lv_obj_t* x = lv_btn_create(parent);
+  lv_obj_remove_style_all(x);
+  lv_obj_set_size(x, SC(32), SC(32));
+  lv_obj_set_ext_click_area(x, 6);
+  lv_obj_add_event_cb(x, actListCloseCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* xl = lv_label_create(x);
+  lv_label_set_text(xl, LV_SYMBOL_CLOSE);
+  lv_obj_set_style_text_font(xl, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(xl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_center(xl);
+  return x;
+}
+
 static void openActionList(const char* title, const ActItem* items, int n) {
   actListClose();
   if (n > (int)(sizeof s_actlist_items / sizeof s_actlist_items[0])) n = (int)(sizeof s_actlist_items / sizeof s_actlist_items[0]);
@@ -8044,17 +8058,9 @@ static void openActionList(const char* title, const ActItem* items, int n) {
     lv_obj_set_style_text_font(t, &g_font_semi_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_align(t, LV_ALIGN_LEFT_MID, 16, 0);
-    lv_obj_t* x = lv_btn_create(hd);
-    lv_obj_remove_style_all(x);
-    lv_obj_set_size(x, SC(32), SC(32));
-    lv_obj_align(x, LV_ALIGN_RIGHT_MID, -6, 0);
-    lv_obj_set_ext_click_area(x, 6);
-    lv_obj_add_event_cb(x, actListCloseCb, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* xl = lv_label_create(x);
-    lv_label_set_text(xl, LV_SYMBOL_CLOSE);
-    lv_obj_set_style_text_font(xl, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(xl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_center(xl);
+#if !defined(HAS_THINKNODE_M9)
+    lv_obj_align(actListMakeClose(hd), LV_ALIGN_RIGHT_MID, -6, 0);
+#endif
   }
   for (int i = 0; i < n; ++i) {
     const ActItem& it = s_actlist_items[i];
@@ -8098,6 +8104,15 @@ static void openActionList(const char* title, const ActItem* items, int n) {
     lv_obj_set_style_text_color(lb, lv_color_hex(col), LV_PART_MAIN);
     lv_obj_align(lb, LV_ALIGN_LEFT_MID, tx, 0);
   }
+#if defined(HAS_THINKNODE_M9)
+  if (head_h) {
+    // M9: the header's X is created after the rows. Keypad focus follows the tree, so the
+    // menu opens on its first action and reaches the X last.
+    lv_obj_t* x = actListMakeClose(card);
+    lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
+    lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -6, (head_h - SC(32)) / 2);
+  }
+#endif
   lv_obj_move_foreground(s_actlist_root);
 }
 
@@ -39131,7 +39146,15 @@ static void openMessageActionMenu(int msg_idx) {
   } else {
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   }
-  addCloseXBadge(card, msgMenuBackdropCb);
+  {
+    lv_obj_t* x = addCloseXBadge(card, msgMenuBackdropCb);
+#if defined(HAS_THINKNODE_M9)
+    // Lift the X into the card padding so the buttons below don't clip its focus cursor.
+    lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -2, -6);
+#else
+    (void)x;
+#endif
+  }
 
   // Two buttons per row, filled in reading order; an odd last button gets its
   // own row (left cell). bi advances per button; the grid math places it.
