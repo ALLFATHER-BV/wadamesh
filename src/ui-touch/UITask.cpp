@@ -2853,6 +2853,7 @@ static lv_obj_t* s_addch_name_ta    = nullptr;
 static lv_obj_t* s_addch_secret_ta  = nullptr;
 static lv_obj_t* s_addch_hashtag_ta = nullptr;
 static lv_obj_t* s_addch_error_l    = nullptr;
+static bool s_addch_open_after_join = false;
 // ---- Contacts → "Add" manual contact modal pointers ----
 static lv_obj_t* s_addct_pub_ta  = nullptr;
 static lv_obj_t* s_addct_name_ta = nullptr;
@@ -12138,6 +12139,7 @@ static void closeSettingsModal() {
   s_addch_secret_ta  = nullptr;
   s_addch_hashtag_ta = nullptr;
   s_addch_error_l    = nullptr;
+  s_addch_open_after_join = false;
   s_addct_pub_ta     = nullptr;
   s_addct_name_ta    = nullptr;
   s_addct_error_l    = nullptr;
@@ -22449,10 +22451,9 @@ static void setAddChannelError(const char* msg) {
   if (s_addch_error_l) lv_label_set_text(s_addch_error_l, msg ? TR(msg) : "");
 }
 
-#if defined(HAS_M9_KEYBOARD)
 static int findChannelThreadByName(const char* name);
 static void openThreadDetailByIdx(int idx, bool channel);
-#endif
+static void openHashtagChat(const char* tag);
 
 // ---- Create-private channel ----
 static void createPrivateChannelSubmitCb(lv_event_t* e) {
@@ -22888,12 +22889,26 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
     g_lv.task->refreshThreadsFromMesh();
     g_lv.dirty_threads = true;
   }
+  const bool open_after_join = s_addch_open_after_join;
   closeSettingsModal();
+  if (open_after_join && g_lv.task) {
+    const int thread_idx = findChannelThreadByName(hashed);
+    if (thread_idx >= 0) {
+      if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
+      if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
+      goToTab(CHAT_INBOX_TAB_INDEX);
+      openThreadDetailByIdx(thread_idx, true);
+      return;
+    }
+  }
   if (g_lv.task) g_lv.task->showAlert(TR("Channel joined"), 1200);
 }
 
-static void openJoinHashtagChannelModal() {
+// Chat links prefill the join form and open the channel after confirmation;
+// the Chats "+" action starts with "#" and returns to the list after joining.
+static void openJoinHashtagChannelModal(const char* prefilled_tag = nullptr) {
   lv_obj_t* body = createSettingsModal(TR("Join hashtag channel"), SettingsModalKind::ChJoinTag);
+  s_addch_open_after_join = prefilled_tag && prefilled_tag[0];
   int y = 0;
 
   lv_obj_t* hint = lv_label_create(body);
@@ -22915,7 +22930,7 @@ static void openJoinHashtagChannelModal() {
   channelFormLayoutTextarea(body, s_addch_hashtag_ta, y);
   lv_textarea_set_one_line(s_addch_hashtag_ta, true);
   taSetPlaceholder(s_addch_hashtag_ta, TR("e.g. mesh"));
-  lv_textarea_set_text(s_addch_hashtag_ta, "#");
+  lv_textarea_set_text(s_addch_hashtag_ta, prefilled_tag ? prefilled_tag : "#");
   lv_textarea_set_max_length(s_addch_hashtag_ta, 31);
   attachSettingsTaEvents(s_addch_hashtag_ta);
   y += 36;
@@ -42806,6 +42821,29 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
   int n = b - a; if (n > cap - 1) n = cap - 1;
   memcpy(out, s + a, n); out[n] = 0; return true;
 }
+// Find a channel-sized #word (including hyphens) without matching URL fragments.
+// Return its half-open byte span, including the leading '#'.
+static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
+  if (!text) return false;
+  for (int i = from; text[i]; ++i) {
+    if (text[i] != '#' || (i > 0 && (isalnum((unsigned char)text[i - 1]) ||
+                                          text[i - 1] == '_' || text[i - 1] == '/' ||
+                                          text[i - 1] == '#'))) continue;
+    int j = i + 1;
+    while (isalnum((unsigned char)text[j]) || text[j] == '-' || text[j] == '_') ++j;
+    if (j == i + 1 || j - i >= 32) continue;
+    *start = i; *end = j;
+    return true;
+  }
+  return false;
+}
+static bool chatFirstHashtag(const char* text, char* out, int cap) {
+  int start, end;
+  if (!chatHashtagSpan(text, 0, &start, &end) || end - start >= cap) return false;
+  memcpy(out, text + start, end - start);
+  out[end - start] = '\0';
+  return true;
+}
 // Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
 // already has a '#' (the recolor parser would choke on it) — caller then shows plain
 // text and the tap still works.
@@ -42823,6 +42861,38 @@ static bool chatRecolorUrls(const char* in, char* out, int cap) {
     } else out[o++] = in[i++];
   }
   out[o] = 0; return true;
+}
+// LVGL treats '#' as recolor markup: escape literal hashes and use link blue
+// as the base color so the leading '#' and channel name share one color.
+static bool chatRecolorHashtags(const char* in, char* out, int cap) {
+  int start, end;
+  if (!chatHashtagSpan(in, 0, &start, &end)) return false;
+  int needed = (int)strlen(in) + 1;
+  for (const char* p = in; *p; ++p)
+    if (*p == '#') needed += 20;
+  if (needed > cap) return false;
+  int used = 0;
+  for (int i = 0; in[i];) {
+    if (i == start) {
+      out[used++] = '#';
+      out[used++] = '#';
+      ++i;
+      while (i < end) out[used++] = in[i++];
+      if (!chatHashtagSpan(in, i, &start, &end)) start = -1;
+    } else {
+      used += snprintf(out + used, cap - used, "#%06X ",
+                       (unsigned)(COLOR_CHAT_TEXT & 0xFFFFFFu));
+      while (in[i] && i != start && in[i] != '#') out[used++] = in[i++];
+      out[used++] = '#';
+      if (in[i] == '#' && i != start) {
+        out[used++] = '#';
+        out[used++] = '#';
+        ++i;
+      }
+    }
+  }
+  out[used] = '\0';
+  return true;
 }
 
 // ---- QR popup: a scannable QR of a URL ----
@@ -42985,6 +43055,16 @@ static void bubbleUrlTapCb(lv_event_t* e) {
   if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
 }
 
+// Read the live message again: a virtualized bubble's ring slot can change.
+static void bubbleHashtagTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  char tag[32];
+  if (chatFirstHashtag(m.text, tag, sizeof tag)) openHashtagChat(tag);
+}
+
 static void bubbleCoordTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -43124,6 +43204,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
   int _ca, _cb; double _clat, _clon;
   const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
+  int _ha, _hb; const bool has_hashtag = chatHashtagSpan(d.san_text, 0, &_ha, &_hb);
 #if !defined(HAS_TDECK_PRO)
   if (has_url) {
     char rc[UITask::MAX_MSG_TEXT + 40];
@@ -43131,6 +43212,13 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   } else if (has_coords) {
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorCoords(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
+  } else if (has_hashtag) {
+    char rc[UITask::MAX_MSG_TEXT + 80];
+    if (chatRecolorHashtags(d.san_text, rc, sizeof rc)) {
+      lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_CHAT_LINK), LV_PART_MAIN);
+      lv_label_set_recolor(tlbl, true);
+      lv_label_set_text(tlbl, rc);
+    }
   }
 #endif
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
@@ -43177,6 +43265,11 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   else if (has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  else if (has_hashtag && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(row, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  // Failed sends keep the pre-virtualization one-tap resend (the compact path
+  // already has it); delivery status on the top meta row spells the affordance out.
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
@@ -43266,6 +43359,13 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  else {
+    char tag[32];
+    if (chatFirstHashtag(m.text, tag, sizeof tag) &&
+        !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+      lv_obj_add_event_cb(row, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
+                          reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  }
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
@@ -53164,6 +53264,38 @@ static void openThreadDetailByIdx(int idx, bool channel) {
 #elif defined(HAS_TANMATSU)
   navMarkDirty();      // keypad nav: rebuild the focus group onto the chat overlay + focus the composer
 #endif
+}
+
+// Open an already configured channel, or offer the prefilled join form.
+// Use the normalized name so a tapped mixed-case tag resolves to its channel.
+static void openHashtagChat(const char* tag) {
+  char name[32];
+  snprintf(name, sizeof name, "%s", tag);
+  for (char* p = name; *p; ++p)
+    if (*p >= 'A' && *p <= 'Z') *p = (char)(*p + 32);
+
+  bool joined = false;
+#ifdef MAX_GROUP_CHANNELS
+  for (int slot = 0; slot < MAX_GROUP_CHANNELS; ++slot) {
+    ChannelDetails channel;
+    if (the_mesh.getChannel(slot, channel) && strcmp(channel.name, name) == 0) {
+      joined = true;
+      break;
+    }
+  }
+#endif
+  if (!joined) {
+    openJoinHashtagChannelModal(name);
+    return;
+  }
+  g_lv.task->refreshThreadsFromMesh();
+  g_lv.dirty_threads = true;
+  const int thread_idx = findChannelThreadByName(name);
+  if (thread_idx < 0) { g_lv.task->showAlert(TR("Channel table is full."), 1400); return; }
+  if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
+  if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
+  goToTab(CHAT_INBOX_TAB_INDEX);
+  openThreadDetailByIdx(thread_idx, true);
 }
 
 static void mentionRowCb(lv_event_t* e) {
