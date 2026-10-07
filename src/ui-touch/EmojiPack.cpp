@@ -17,9 +17,8 @@
 //   blobs        : glyph_count x 768 B RGB565+alpha, same byte order as the
 //                  baked glyphs in emoji_data.c ([lo, hi, alpha], swap=0)
 //
-// Multi-codepoint sequences (ZWJ, regional-indicator flag pairs) put the image
-// on the LEAD codepoint and map every trailing codepoint to the zero-width
-// entry, mirroring the SEQ/FLAGS trick in scripts/build/add-emoji.py.
+// Regional-indicator flag pairs use reserved private-use lookup keys so pairs
+// sharing a lead indicator can still resolve to different images.
 
 namespace
 {
@@ -31,6 +30,12 @@ namespace
     constexpr uint32_t kHeaderSize = 32;
     constexpr uint32_t kIndexEntry = 12;
     constexpr uint32_t kZeroOff = 0xFFFFFFFFu;
+    constexpr uint32_t kFlagKeyBase = 0xF0000u;
+    constexpr uint32_t kRegionalFlagKeyCount = 26u * 26u;
+    constexpr uint32_t kTagFlagKeyCount = 3u;
+    constexpr uint32_t kFlagKeyCount = kRegionalFlagKeyCount + kTagFlagKeyCount;
+    constexpr uint32_t kRegionalIndicatorFirst = 0x1F1E6u;
+    constexpr uint32_t kRegionalIndicatorLast = 0x1F1FFu;
     // A skin-tone-free full Noto set is ~1.24 MB of blobs; the rest is headroom.
     constexpr uint32_t kMaxFile = 2u * 1024u * 1024u;
     constexpr uint32_t kMaxIndex = 8192;
@@ -370,7 +375,7 @@ bool emojiPackPump(size_t budget)
 bool emojiPackLoading() { return s_want != 0; }
 bool emojiPackLoaded() { return s_count.load(std::memory_order_acquire) != 0; }
 
-const lv_img_dsc_t *emojiPackLookup(uint32_t cp)
+static const lv_img_dsc_t *emojiPackLookupKey(uint32_t cp)
 {
     const uint32_t n = s_count.load(std::memory_order_acquire);
     if (!n)
@@ -388,6 +393,47 @@ const lv_img_dsc_t *emojiPackLookup(uint32_t cp)
             lo = mid + 1;
     }
     return nullptr;
+}
+
+const lv_img_dsc_t *emojiPackLookup(uint32_t cp)
+{
+    if (cp >= kFlagKeyBase && cp < kFlagKeyBase + kFlagKeyCount)
+        return nullptr;
+    return emojiPackLookupKey(cp);
+}
+
+uint32_t emojiPackFlagToken(uint32_t lead, uint32_t trail)
+{
+    if (lead < kRegionalIndicatorFirst || lead > kRegionalIndicatorLast ||
+        trail < kRegionalIndicatorFirst || trail > kRegionalIndicatorLast)
+        return 0;
+    return kFlagKeyBase + (lead - kRegionalIndicatorFirst) * 26u +
+           (trail - kRegionalIndicatorFirst);
+}
+
+uint32_t emojiPackTagFlagToken(const char *tag)
+{
+    if (!tag)
+        return 0;
+    if (strcmp(tag, "gbeng") == 0)
+        return kFlagKeyBase + kRegionalFlagKeyCount;
+    if (strcmp(tag, "gbsct") == 0)
+        return kFlagKeyBase + kRegionalFlagKeyCount + 1u;
+    if (strcmp(tag, "gbwls") == 0)
+        return kFlagKeyBase + kRegionalFlagKeyCount + 2u;
+    return 0;
+}
+
+const lv_img_dsc_t *emojiPackSequenceLookup(uint32_t token)
+{
+    if (token < kFlagKeyBase || token >= kFlagKeyBase + kFlagKeyCount)
+        return nullptr;
+    return emojiPackLookupKey(token);
+}
+
+const lv_img_dsc_t *emojiPackFlagLookup(uint32_t lead, uint32_t trail)
+{
+    return emojiPackSequenceLookup(emojiPackFlagToken(lead, trail));
 }
 
 int emojiPackItemCount() { return (int)s_items_n.load(std::memory_order_acquire); }

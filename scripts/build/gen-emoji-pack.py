@@ -10,7 +10,7 @@
 # Manifest lines are "<category> <codepoints> <source>", '#' starts a comment:
 #   faces     1f929        1f929        # single codepoint, noto png stem
 #   activity  1f3f3+fe0f+200d+1f308  1f3f3_200d_1f308   # ZWJ sequence, one image
-#   extra     1f1e9+1f1ea  flag:DE     # regional-indicator pair, flat flag art
+#   flags     1f1e9+1f1ea  flag:DE     # regional-indicator pair, flat flag art
 #
 # Art comes from the same pinned Noto source as the baked glyphs, converted by the
 # same to_rgb565a8(), so pack art sits on the same baseline as the built-ins.
@@ -27,6 +27,11 @@ MAX_FILE = 2 * 1024 * 1024  # must match the caps in src/ui-touch/EmojiPack.cpp
 MAX_INDEX = 8192
 MAX_ITEMS = 4096
 MAX_ITEM_LEN = 32
+RI_FIRST = 0x1F1E6
+RI_LAST = 0x1F1FF
+FLAG_KEY_BASE = 0xF0000
+RI_FLAG_KEY_COUNT = 26 * 26
+TAG_FLAG_KEY_OFFSETS = {"gbeng": 0, "gbsct": 1, "gbwls": 2}
 
 CATS = {
     "faces": 0,
@@ -175,6 +180,30 @@ def unicode_categories():
     return cats
 
 
+def tag_flag_code(codes):
+    if len(codes) < 4 or codes[0] != 0x1F3F4 or codes[-1] != 0xE007F:
+        return None
+    tags = codes[1:-1]
+    if any(c < 0xE0061 or c > 0xE007A for c in tags):
+        return None
+    return "".join(chr(c - 0xE0000) for c in tags)
+
+
+def flag_sequence_key(codes):
+    if len(codes) == 2 and all(RI_FIRST <= c <= RI_LAST for c in codes):
+        return FLAG_KEY_BASE + (codes[0] - RI_FIRST) * 26 + codes[1] - RI_FIRST
+    tag = tag_flag_code(codes)
+    if tag in TAG_FLAG_KEY_OFFSETS:
+        return FLAG_KEY_BASE + RI_FLAG_KEY_COUNT + TAG_FLAG_KEY_OFFSETS[tag]
+    return None
+
+
+def flag_sequence_source(codes):
+    if len(codes) == 2 and all(RI_FIRST <= c <= RI_LAST for c in codes):
+        return "".join(chr(c - RI_FIRST + ord("A")) for c in codes)
+    return None
+
+
 def enumerate_all():
     tree = json.loads(http_text(NOTO_TREE))
     if tree.get("truncated"):
@@ -222,6 +251,12 @@ def enumerate_all():
             continue
         entries.append((0, CATS[cat], codes, stem))
 
+    for codes, cat in cats.items():
+        source = flag_sequence_source(codes)
+        if cat != "flags" or flag_sequence_key(codes) is None or not source:
+            continue
+        entries.append((0, CATS[cat], list(codes), "flag:" + source))
+
     print(
         "upstream {} images -> {} entries (skipped {} skin-tone, {} sequences, "
         "{} baked, {} text symbols, {} uncategorised)".format(
@@ -251,7 +286,19 @@ def prefetch(entries, workers=12):
         return r
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        list(ex.map(one, todo))
+        results = list(ex.map(one, todo))
+    available = []
+    for entry, path in zip(entries, results):
+        if path:
+            available.append(entry)
+        elif entry[3].startswith("flag:"):
+            print(
+                "  skipped unavailable flag art {}".format(entry[3][5:]),
+                file=sys.stderr,
+            )
+        else:
+            die("could not fetch art '{}'".format(entry[3]))
+    return available
 
 
 def build(manifest, entries=None, quiet_dupes=False):
@@ -275,15 +322,18 @@ def build(manifest, entries=None, quiet_dupes=False):
             )
 
         lead = codes[0]
-        if lead in index:
+        key = flag_sequence_key(codes)
+        if key is None:
+            key = lead
+        if key in index:
             # Two entries keyed on the same lead codepoint would silently render
-            # as whichever sorted first — the exact trap the flag pairs invite.
+            # as whichever sorted first.
             die(
-                "{}:{}: U+{:04X} is already the key of another entry".format(
-                    manifest, lineno, lead
+                "{}:{}: key U+{:04X} is already used by another entry".format(
+                    manifest, lineno, key
                 )
             )
-        index[lead] = (len(blobs) * BLOB, cat)
+        index[key] = (len(blobs) * BLOB, cat)
         blobs.append(data)
         if lead in baked and not quiet_dupes:
             print(
@@ -293,6 +343,8 @@ def build(manifest, entries=None, quiet_dupes=False):
             )
 
         for c in codes[1:]:
+            if flag_sequence_key(codes) is not None:
+                continue
             prev = index.get(c)
             if prev and prev[0] != ZERO_OFF:
                 die(
@@ -384,8 +436,7 @@ def main():
     ap.add_argument(
         "--all",
         action="store_true",
-        help="ignore the manifest; take every upstream single-codepoint "
-        "emoji that isn't a skin-tone variant or already baked in",
+        help="take eligible upstream single-codepoint emoji and all country/region flags",
     )
     ap.add_argument(
         "--verify", metavar="PACK", help="dump an existing pack instead of building"
@@ -400,7 +451,7 @@ def main():
     if args.all:
         entries = enumerate_all()
         print("fetching art (cached in data/emoji-cache)...", file=sys.stderr)
-        prefetch(entries)
+        entries = prefetch(entries)
 
     pack, glyphs, idxn, items = build(args.manifest, entries, quiet_dupes=args.all)
     with open(args.out, "wb") as f:
