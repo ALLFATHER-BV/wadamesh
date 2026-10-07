@@ -43238,7 +43238,13 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 
   lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
-                      reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+              reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  if (has_hashtag && !has_url && !has_coords &&
+      !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED)) {
+    lv_obj_add_flag(tlbl, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_event_cb(tlbl, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  }
   // A short tap on a bubble that carries a URL opens the Open-in-web / Create-QR menu
   // (SHORT_CLICKED so it never double-fires with the long-press action menu). Failed
   // outgoing sends keep their tap-to-resend.
@@ -43247,9 +43253,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   else if (has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
-                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  else if (has_hashtag && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
-    lv_obj_add_event_cb(row, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   // Failed sends keep the pre-virtualization one-tap resend (the compact path
   // already has it); delivery status on the top meta row spells the affordance out.
