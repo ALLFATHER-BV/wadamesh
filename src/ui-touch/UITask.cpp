@@ -1101,13 +1101,43 @@ static inline const lv_img_dsc_t* emojiLookupAny(uint32_t cp) {
   if (const lv_img_dsc_t* d = emojiGlyphLookup(cp)) return d;
   return emojiPackLookup(cp);
 }
+static bool emojiIsRegionalIndicator(uint32_t cp) {
+  return cp >= 0x1F1E6 && cp <= 0x1F1FF;
+}
+static const lv_img_dsc_t* emojiPickerFlagGlyph(const char* item) {
+  if (!item) return nullptr;
+  uint32_t off = 0;
+  const uint32_t lead = _lv_txt_encoded_next(item, &off);
+  if (emojiIsRegionalIndicator(lead)) {
+    const uint32_t trail = _lv_txt_encoded_next(item, &off);
+    if (!emojiIsRegionalIndicator(trail)) return nullptr;
+    if (const lv_img_dsc_t* d = emojiPackFlagLookup(lead, trail)) return d;
+    if (lead == 0x1F1F1 && trail == 0x1F1F8) return emojiGlyphLookup(lead);
+    return nullptr;
+  }
+  if (lead == 0x1F3F4) {
+    char tag[8] = {};
+    size_t n = 0;
+    for (;;) {
+      const uint32_t cp = _lv_txt_encoded_next(item, &off);
+      if (cp == 0xE007F) break;
+      if (cp < 0xE0061 || cp > 0xE007A || n + 1 >= sizeof(tag)) return nullptr;
+      tag[n++] = static_cast<char>(cp - 0xE0000);
+    }
+    const uint32_t token = emojiPackTagFlagToken(tag);
+    if (const lv_img_dsc_t* d = emojiPackSequenceLookup(token)) return d;
+    return emojiPackFlagLookup(0x1F1EC, 0x1F1E7);
+  }
+  return nullptr;
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
 // false so LVGL keeps walking the fallback chain for everything else.
 static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_t /*len*/,
                                uint32_t unicode, uint32_t /*unicode_next*/) {
-  const lv_img_dsc_t* d = emojiLookupAny(unicode);
+  const lv_img_dsc_t* d = emojiPackSequenceLookup(unicode);
+  if (!d) d = emojiLookupAny(unicode);
   if (!d) return false;
   lv_memcpy(img_src, d, sizeof(lv_img_dsc_t));
   // The imgfont reuses ONE scratch buffer as the image source for every glyph, so
@@ -3231,6 +3261,132 @@ static bool uiFontHasGlyph(const lv_font_t* font, uint32_t cp) {
   return lv_font_get_glyph_dsc(font, &dsc, cp, 0);
 }
 
+static bool uiReadUtf8Codepoint(const char*& p, const char* end, uint32_t& cp) {
+  if (p >= end) return false;
+  const unsigned char c0 = static_cast<unsigned char>(*p);
+  if (c0 < 0x80u) { cp = c0; ++p; return true; }
+  if ((c0 & 0xE0u) == 0xC0u && end - p >= 2) {
+    const unsigned char c1 = static_cast<unsigned char>(p[1]);
+    if ((c1 & 0xC0u) == 0x80u) {
+      cp = (static_cast<uint32_t>(c0 & 0x1Fu) << 6) | (c1 & 0x3Fu);
+      if (cp >= 0x80u) { p += 2; return true; }
+    }
+  } else if ((c0 & 0xF0u) == 0xE0u && end - p >= 3) {
+    const unsigned char c1 = static_cast<unsigned char>(p[1]);
+    const unsigned char c2 = static_cast<unsigned char>(p[2]);
+    if ((c1 & 0xC0u) == 0x80u && (c2 & 0xC0u) == 0x80u) {
+      cp = (static_cast<uint32_t>(c0 & 0x0Fu) << 12) |
+           (static_cast<uint32_t>(c1 & 0x3Fu) << 6) | (c2 & 0x3Fu);
+      if (cp >= 0x800u && !(cp >= 0xD800u && cp <= 0xDFFFu)) { p += 3; return true; }
+    }
+  } else if ((c0 & 0xF8u) == 0xF0u && end - p >= 4) {
+    const unsigned char c1 = static_cast<unsigned char>(p[1]);
+    const unsigned char c2 = static_cast<unsigned char>(p[2]);
+    const unsigned char c3 = static_cast<unsigned char>(p[3]);
+    if ((c1 & 0xC0u) == 0x80u && (c2 & 0xC0u) == 0x80u && (c3 & 0xC0u) == 0x80u) {
+      cp = (static_cast<uint32_t>(c0 & 0x07u) << 18) |
+           (static_cast<uint32_t>(c1 & 0x3Fu) << 12) |
+           (static_cast<uint32_t>(c2 & 0x3Fu) << 6) | (c3 & 0x3Fu);
+      if (cp >= 0x10000u && cp <= 0x10FFFFu) { p += 4; return true; }
+    }
+  }
+  return false;
+}
+
+static uint32_t uiPackedFlagTokenAt(uint32_t cp, const char* after_cp,
+                                    const char* end, const char*& sequence_end) {
+  if (emojiIsRegionalIndicator(cp)) {
+    const char* look = after_cp;
+    uint32_t trail = 0;
+    if (uiReadUtf8Codepoint(look, end, trail) && emojiIsRegionalIndicator(trail)) {
+      const uint32_t token = emojiPackFlagToken(cp, trail);
+      if (token && emojiPackSequenceLookup(token)) {
+        sequence_end = look;
+        return token;
+      }
+    }
+    return 0;
+  }
+  if (cp != 0x1F3F4u) return 0;
+
+  char tag[8] = {};
+  size_t tag_len = 0;
+  const char* look = after_cp;
+  for (;;) {
+    uint32_t next = 0;
+    if (!uiReadUtf8Codepoint(look, end, next)) return 0;
+    if (next == 0xE007Fu && tag_len > 0) break;
+    if (next < 0xE0061u || next > 0xE007Au || tag_len + 1 >= sizeof(tag)) return 0;
+    tag[tag_len++] = static_cast<char>(next - 0xE0000u);
+  }
+  const uint32_t tag_token = emojiPackTagFlagToken(tag);
+  if (!tag_token) return 0;
+  if (emojiPackSequenceLookup(tag_token)) {
+    sequence_end = look;
+    return tag_token;
+  }
+  const uint32_t gb_token = emojiPackFlagToken(0x1F1ECu, 0x1F1E7u);
+  if (emojiPackSequenceLookup(gb_token)) {
+    sequence_end = look;
+    return gb_token;
+  }
+  return 0;
+}
+
+static size_t uiEncodeUtf8(uint32_t cp, char out[4]) {
+  if (cp < 0x80u) { out[0] = static_cast<char>(cp); return 1; }
+  if (cp < 0x800u) {
+    out[0] = static_cast<char>(0xC0u | (cp >> 6));
+    out[1] = static_cast<char>(0x80u | (cp & 0x3Fu));
+    return 2;
+  }
+  if (cp < 0x10000u) {
+    out[0] = static_cast<char>(0xE0u | (cp >> 12));
+    out[1] = static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
+    out[2] = static_cast<char>(0x80u | (cp & 0x3Fu));
+    return 3;
+  }
+  out[0] = static_cast<char>(0xF0u | (cp >> 18));
+  out[1] = static_cast<char>(0x80u | ((cp >> 12) & 0x3Fu));
+  out[2] = static_cast<char>(0x80u | ((cp >> 6) & 0x3Fu));
+  out[3] = static_cast<char>(0x80u | (cp & 0x3Fu));
+  return 4;
+}
+
+static void composerAppendCodepoint(UITask* task, uint32_t cp) {
+  char encoded[4];
+  const size_t n = uiEncodeUtf8(cp, encoded);
+  for (size_t i = 0; i < n; ++i) task->composerAppendChar(encoded[i]);
+}
+
+static void composerAppendDisplayText(UITask* task, const char* text) {
+  if (!task || !text) return;
+  const char* p = text;
+  const char* end = text + strlen(text);
+  while (p < end) {
+    uint32_t cp = 0;
+    if (!uiReadUtf8Codepoint(p, end, cp)) {
+      task->composerAppendChar(*p++);
+      continue;
+    }
+    if (cp >= 0xF0000u && cp < 0xF0000u + 26u * 26u) {
+      const uint32_t pair = cp - 0xF0000u;
+      composerAppendCodepoint(task, 0x1F1E6u + pair / 26u);
+      composerAppendCodepoint(task, 0x1F1E6u + pair % 26u);
+      continue;
+    }
+    if (cp >= 0xF0000u + 26u * 26u && cp < 0xF0000u + 26u * 26u + 3u) {
+      static const char* const tags[] = { "gbeng", "gbsct", "gbwls" };
+      const char* tag = tags[cp - (0xF0000u + 26u * 26u)];
+      composerAppendCodepoint(task, 0x1F3F4u);
+      while (*tag) composerAppendCodepoint(task, 0xE0061u + (uint32_t)(*tag++ - 'a'));
+      composerAppendCodepoint(task, 0xE007Fu);
+      continue;
+    }
+    composerAppendCodepoint(task, cp);
+  }
+}
+
 /**
  * Copy UTF-8 `in` → `out` (NUL-terminated, capped). Codepoints not in `font` become ASCII '*'.
  * Invalid UTF-8 bytes become '*'.
@@ -3292,6 +3448,20 @@ static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, siz
       out[w++] = '*';
       p = seq_beg + 1;
       continue;
+    }
+
+    if (font) {
+      const char* sequence_end = p;
+      const uint32_t token = uiPackedFlagTokenAt(cp, p, end, sequence_end);
+      if (token) {
+        char encoded[4];
+        const size_t n = uiEncodeUtf8(token, encoded);
+        if (w + n + 1 > out_cap) break;
+        memcpy(out + w, encoded, n);
+        w += n;
+        p = sequence_end;
+        continue;
+      }
     }
 
     if (uiFontHasGlyph(font, cp)) {
@@ -10413,7 +10583,7 @@ static void composerSendFromPanel(LvChatPanel* p) {
   hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
-  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  composerAppendDisplayText(g_lv.task, text);
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
@@ -10435,7 +10605,7 @@ static void sendFromPanelCb(lv_event_t* e) {
   hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
-  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  composerAppendDisplayText(g_lv.task, text);
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
@@ -10626,6 +10796,11 @@ static void emojiAddGroup(uint8_t cat, int first, int count) {
 // notdef box, so it never earns a cell.
 static bool emojiPackItemDrawable(const char* s) {
   if (!s || !s[0]) return false;
+  uint32_t flag_off = 0;
+  const uint32_t lead = _lv_txt_encoded_next(s, &flag_off);
+  const uint32_t trail = _lv_txt_encoded_next(s, &flag_off);
+  if (emojiIsRegionalIndicator(lead) && emojiIsRegionalIndicator(trail))
+    return emojiPickerFlagGlyph(s) != nullptr;
   uint32_t off = 0;
   return emojiLookupAny(_lv_txt_encoded_next(s, &off)) != nullptr;
 }
@@ -10752,7 +10927,19 @@ static void emojiInsertIndex(int idx) {
   // contents (same trap the Wi-Fi scan picker hit). When not bound, insert
   // straight into the real field.
   lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
-  lv_textarea_add_text(dest, g);
+  uint32_t flag_off = 0;
+  const uint32_t flag_lead = _lv_txt_encoded_next(g, &flag_off);
+  const char* sequence_end = g;
+  const uint32_t token = uiPackedFlagTokenAt(flag_lead, g + flag_off,
+                                             g + strlen(g), sequence_end);
+  if (token) {
+    char encoded[5];
+    const size_t n = uiEncodeUtf8(token, encoded);
+    encoded[n] = '\0';
+    lv_textarea_add_text(dest, encoded);
+  } else {
+    lv_textarea_add_text(dest, g);
+  }
   closeEmojiSheet();
 }
 static void emojiPickCb(lv_event_t* e) {
@@ -10844,6 +11031,17 @@ static void emojiFillGrid() {
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, emojiPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    if (s_glyph_is_emoji) {
+      if (const lv_img_dsc_t* flag = emojiPickerFlagGlyph(s_glyph_items[i])) {
+        lv_obj_t* im = lv_img_create(b);
+        lv_img_set_src(im, flag);
+        lv_img_set_antialias(im, false);
+        lv_img_set_pivot(im, flag->header.w / 2, flag->header.h / 2);
+        lv_img_set_zoom(im, 320);
+        lv_obj_center(im);
+        continue;
+      }
+    }
 #if CAP_LARGE_SCREEN && LV_USE_IMGFONT
     // Baked colour-emoji → draw it as a zoomed image (1.7× ≈ 70% bigger than the 16 px
     // font glyph). Special chars (no emoji dsc) fall through to the text label below.
@@ -10935,7 +11133,12 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   s_glyph_count = items ? count : emojiPickerCount();
   // Past this many cells, building them all at once costs visible seconds and
   // hundreds of KB of widget tree, so switch to one category at a time.
-  s_emoji_tabbed = s_glyph_is_emoji && s_emoji_group_n > 1 && s_glyph_count > k_emoji_tab_threshold;
+  bool has_flags_group = false;
+  for (int i = 0; i < s_emoji_group_n; ++i) {
+    if (s_emoji_groups[i].cat == EMOJI_CAT_FLAGS) { has_flags_group = true; break; }
+  }
+  s_emoji_tabbed = s_glyph_is_emoji && s_emoji_group_n > 1 &&
+                   (s_glyph_count > k_emoji_tab_threshold || has_flags_group);
   if (s_emoji_tabbed) {
     if (s_emoji_tab < 0 || s_emoji_tab >= s_emoji_group_n) s_emoji_tab = 0;
     const EmojiGroupView& g = s_emoji_groups[s_emoji_tab];
@@ -10976,17 +11179,6 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 2, 0);
   addCloseXBadge(card, emojiSheetCloseCb);
-
-  // Hint line: how to use the board's primary picker controls.
-  lv_obj_t* hint = lv_label_create(card);
-#if defined(HAS_M9_KEYBOARD)
-  lv_label_set_text(hint, TR("Arrows \xE2\x80\xA2 OK"));
-#else
-  lv_label_set_text(hint, TR("Roll to highlight \xE2\x80\xA2 click to insert"));
-#endif
-  lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
 
   // Scrollable grid of glyph buttons, with a category tab row above it when the
   // set is too big to build in one go.
@@ -49410,7 +49602,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         if (text && text[0]) {
           g_lv.task->setComposerMode(true);
           g_lv.task->composerReset();
-          for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+          composerAppendDisplayText(g_lv.task, text);
           if (g_lv.task->composerSend()) {
             lv_textarea_set_text(p->composer_ta, "");
             refreshChatDetailAsync(*p);
@@ -71366,8 +71558,14 @@ void UITask::loop() {
   if (emojiPackLoading() && emojiPackPump(8 * 1024)) {
     emojiInvalidateMergedList();
     char msg[DIAG_COLS];
-    if (emojiPackLoaded()) snprintf(msg, sizeof msg, "emoji: pack ready, %d added", emojiPackItemCount());
-    else                   snprintf(msg, sizeof msg, "emoji: pack rejected (bad file)");
+    if (emojiPackLoaded()) {
+      snprintf(msg, sizeof msg, "emoji: pack ready, %d added", emojiPackItemCount());
+      g_lv.dm.list_sig = 0;
+      g_lv.dirty_threads = true;
+      g_lv.dirty_timeline = true;
+    } else {
+      snprintf(msg, sizeof msg, "emoji: pack rejected (bad file)");
+    }
     pushDiagLine(msg);
   }
 
