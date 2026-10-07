@@ -1,0 +1,38 @@
+# Manifest for scripts/build/gen-emoji-pack.py — the optional SD-card emoji pack.
+#
+# For the whole upstream set, skip this file entirely:
+#   python3 scripts/build/gen-emoji-pack.py --all
+# which takes every single-codepoint Noto emoji that isn't a skin-tone variant,
+# already baked into the firmware, or a symbol the UI renders as text.
+#
+# This manifest is for hand-picking instead:
+#
+#   <category>  <codepoints>  <source>
+#
+# category    faces gestures hearts symbols objects animals activity special extra
+#             Picker entries are slotted into the matching built-in group;
+#             "extra" lands after every other group.
+# codepoints  '+'-joined hex. Multiple codepoints = one image keyed on the first,
+#             so ZWJ sequences and regional-indicator flag pairs render as a
+#             single glyph. Include the FE0F variation selectors if the emoji
+#             uses them, or the sequence you type won't match.
+# source      A noto-emoji png/128 filename stem (FE0F selectors omitted, that's
+#             how Noto names the files), or "flag:XX" for an ISO-3166 alpha-2
+#             region flag.
+#
+# A codepoint already baked into the firmware is a no-op — the baked art wins —
+# and the generator warns about it. 512 KB hard limit, ~768 bytes per glyph.
+
+faces     1f978       1f978   # disguised face
+gestures  1f90c       1f90c   # pinched fingers
+animals   1f98a       1f98a   # fox
+animals   1f9a5       1f9a5   # sloth
+objects   1f52d       1f52d   # telescope
+objects   1f9ed       1f9ed   # compass
+objects   1f6e0+fe0f  1f6e0   # hammer and wrench
+activity  1f3d5+fe0f  1f3d5   # camping
+activity  1f3d4+fe0f  1f3d4   # snow-capped mountain
+activity  26f7+fe0f   26f7    # skier
+extra     1f6f0+fe0f  1f6f0   # satellite
+extra     1f1e9+1f1ea  flag:DE   # Germany
+extra     1f1eb+1f1f7  flag:FR   # France

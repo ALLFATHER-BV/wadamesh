@@ -183,6 +183,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
+  #include "EmojiPack.h"      // optional SD-card pack that extends the baked set
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
@@ -1094,13 +1095,19 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
   }
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);   // still wide: 12 px beats clipping a bigger font
 }
+// Baked set first, SD pack second — a card can extend the emoji we ship but never
+// shadow them, so pack art can't silently change a glyph the UI already relies on.
+static inline const lv_img_dsc_t* emojiLookupAny(uint32_t cp) {
+  if (const lv_img_dsc_t* d = emojiGlyphLookup(cp)) return d;
+  return emojiPackLookup(cp);
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
 // false so LVGL keeps walking the fallback chain for everything else.
 static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_t /*len*/,
                                uint32_t unicode, uint32_t /*unicode_next*/) {
-  const lv_img_dsc_t* d = emojiGlyphLookup(unicode);
+  const lv_img_dsc_t* d = emojiLookupAny(unicode);
   if (!d) return false;
   lv_memcpy(img_src, d, sizeof(lv_img_dsc_t));
   // The imgfont reuses ONE scratch buffer as the image source for every glyph, so
@@ -4182,7 +4189,7 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
   const lv_img_dsc_t* eg = nullptr;
   if (utf8 && utf8[0]) {
     uint32_t off = 0;
-    eg = emojiGlyphLookup(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
+    eg = emojiLookupAny(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
   }
   avatarApply(av, name);
   if (!eg) return;
@@ -4818,6 +4825,7 @@ static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
 // used by the Tanmatsu F-keys, so it stays gated.)
 static void openQuickReplyPicker(LvChatPanel* p);       // △ quick replies
 static void openActiveChatSettings();                   // ○ channel settings
+static bool emojiSheetIsOpen();                         // swipe guard, defined with the sheet
 #if defined(HAS_TANMATSU)
 static void openEmojiPickerForComposer(lv_obj_t* ta);   // □ emoji picker (Tanmatsu F-key only)
 #endif
@@ -8163,6 +8171,11 @@ static void applySwipeGesture(int8_t swipe_x, int8_t swipe_y) {
   // inside a category and have their own rightward swipe-back further down, so exclude them.
   // (Vertical swipes are a no-op at the end of this function, so this only kills tab swipes.)
   if (s_apppage_title && s_settings_open_cat < 0) return;
+  // The emoji sheet is modal and its category tabs scroll horizontally. This
+  // detector reads the touch hardware directly and ignores LVGL hit-testing, so
+  // without this a tab drag also reached the tab switcher / swipe-back behind the
+  // sheet and backed out of the page underneath.
+  if (emojiSheetIsOpen()) return;
   // A slider was just being dragged — its horizontal drag must NOT be read as a
   // tab/back swipe (e.g. raising the volume slider rightward kept triggering the
   // settings "swipe right = back"). Ignore swipes briefly after any slider touch.
@@ -10450,6 +10463,8 @@ static lv_obj_t*    s_emoji_grid  = nullptr;       // the scrollable button grid
 static int          s_emoji_sel   = -1;            // hardware-highlighted index (-1 = none)
 static int          s_emoji_cols  = 1;             // grid columns (computed at open)
 
+static bool emojiSheetIsOpen() { return s_emoji_sheet != nullptr; }
+
 // Curated insert set, grouped. Kept in sync with what the extras fonts bake
 // (see scripts/build/regen-extras-fonts.sh) — a glyph here that isn't in the
 // font would just render as the font's notdef box, so only ship baked ones.
@@ -10498,6 +10513,35 @@ static const char* const k_emoji_items[] = {
 };
 static constexpr int k_emoji_count = (int)(sizeof(k_emoji_items) / sizeof(k_emoji_items[0]));
 
+// k_emoji_items is already grouped contiguously by the comments above; these are
+// those groups made machine-readable so an SD pack's items can be interleaved
+// into them instead of all landing at the end. The static_assert fires if a glyph
+// is added to the list without extending the matching group.
+enum : int {
+  EMO_N_FACES    = 26, EMO_N_GESTURES = 11, EMO_N_HEARTS   = 7,  EMO_N_SYMBOLS = 27,
+  EMO_N_OBJECTS  = 16, EMO_N_ANIMALS  = 6,  EMO_N_ACTIVITY = 5,  EMO_N_SPECIAL = 24,
+};
+static_assert(EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS + EMO_N_SYMBOLS +
+              EMO_N_OBJECTS + EMO_N_ANIMALS + EMO_N_ACTIVITY + EMO_N_SPECIAL == k_emoji_count,
+              "k_emoji_items category groups drifted — update the EMO_N_* counts");
+struct EmojiSpan { uint8_t cat; uint16_t first; uint16_t count; };
+static const EmojiSpan k_emoji_spans[] = {
+  { EMOJI_CAT_FACES,    0,                                                      EMO_N_FACES    },
+  { EMOJI_CAT_GESTURES, EMO_N_FACES,                                            EMO_N_GESTURES },
+  { EMOJI_CAT_HEARTS,   EMO_N_FACES + EMO_N_GESTURES,                           EMO_N_HEARTS   },
+  { EMOJI_CAT_SYMBOLS,  EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS,            EMO_N_SYMBOLS  },
+  { EMOJI_CAT_OBJECTS,  EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
+                        EMO_N_SYMBOLS,                                          EMO_N_OBJECTS  },
+  { EMOJI_CAT_ANIMALS,  EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
+                        EMO_N_SYMBOLS + EMO_N_OBJECTS,                          EMO_N_ANIMALS  },
+  { EMOJI_CAT_ACTIVITY, EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
+                        EMO_N_SYMBOLS + EMO_N_OBJECTS + EMO_N_ANIMALS,          EMO_N_ACTIVITY },
+  { EMOJI_CAT_SPECIAL,  EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
+                        EMO_N_SYMBOLS + EMO_N_OBJECTS + EMO_N_ANIMALS +
+                        EMO_N_ACTIVITY,                                         EMO_N_SPECIAL  },
+};
+static constexpr int k_emoji_span_count = (int)(sizeof(k_emoji_spans) / sizeof(k_emoji_spans[0]));
+
 // Special characters / symbols not easy to reach on a compact keyboard — their OWN picker,
 // separate from emoji. All render via the g_font_16 chain (montserrat ASCII base + extras_font
 // symbols/accents fallback), so no tofu.
@@ -10521,6 +10565,143 @@ static constexpr int k_special_count = (int)(sizeof(k_special_items) / sizeof(k_
 // or the special-character set when opened from the text-edit menu's "Sym" button.
 static const char* const* s_glyph_items = k_emoji_items;
 static int                 s_glyph_count = k_emoji_count;
+static bool                s_glyph_is_emoji = true;   // false for the special-character set
+
+// Built-ins merged with the SD pack's items, each pack item slotted into its own
+// category group. Built once on first picker open; with no pack the picker keeps
+// pointing straight at k_emoji_items and nothing is allocated.
+static const char** s_emoji_merged       = nullptr;
+static int          s_emoji_merged_count = 0;
+static bool         s_emoji_merge_done   = false;
+
+// Category slices of whatever list the picker is showing. A full pack runs to
+// well over a thousand entries, so the sheet shows one slice at a time behind
+// tabs rather than building every cell at once.
+struct EmojiGroupView { uint8_t cat; uint16_t first; uint16_t count; };
+static EmojiGroupView s_emoji_groups[16];
+static int            s_emoji_group_n = 0;
+static int            s_emoji_tab     = 0;       // active category slice
+static bool           s_emoji_tabbed  = false;
+static lv_obj_t*      s_emoji_tabrow  = nullptr;
+static lv_coord_t     s_emoji_cell_px = 38;
+static constexpr int  k_emoji_tab_threshold = 200;
+
+// Tab order: Unicode's own emoji groups, in their order. Hearts have no tab of
+// their own — they are part of Smileys & Emotion. "Chars" is ours, holding the
+// built-in punctuation/accent set that is not emoji at all.
+static const uint8_t k_emoji_cat_order[] = {
+  EMOJI_CAT_FACES,    EMOJI_CAT_GESTURES, EMOJI_CAT_ANIMALS,
+  EMOJI_CAT_FOOD,     EMOJI_CAT_ACTIVITY, EMOJI_CAT_PLACES,
+  EMOJI_CAT_OBJECTS,  EMOJI_CAT_SYMBOLS,  EMOJI_CAT_FLAGS,
+  EMOJI_CAT_SPECIAL,
+};
+
+// Which tab a category is shown under. Only hearts move.
+static inline uint8_t emojiCatTab(uint8_t cat) {
+  return cat == EMOJI_CAT_HEARTS ? EMOJI_CAT_FACES : cat;
+}
+
+static const char* emojiCatName(uint8_t cat) {
+  switch (cat) {
+    case EMOJI_CAT_FACES:    return "Smileys";
+    case EMOJI_CAT_GESTURES: return "People";
+    case EMOJI_CAT_ANIMALS:  return "Nature";
+    case EMOJI_CAT_FOOD:     return "Food";
+    case EMOJI_CAT_ACTIVITY: return "Activity";
+    case EMOJI_CAT_PLACES:   return "Travel";
+    case EMOJI_CAT_OBJECTS:  return "Objects";
+    case EMOJI_CAT_SYMBOLS:  return "Symbols";
+    case EMOJI_CAT_FLAGS:    return "Flags";
+    case EMOJI_CAT_SPECIAL:  return "Chars";
+    default:                 return "More";
+  }
+}
+
+static void emojiAddGroup(uint8_t cat, int first, int count) {
+  if (count <= 0 || s_emoji_group_n >= (int)(sizeof s_emoji_groups / sizeof s_emoji_groups[0])) return;
+  s_emoji_groups[s_emoji_group_n++] = { cat, (uint16_t)first, (uint16_t)count };
+}
+
+// A pack item whose lead codepoint resolves to no glyph would render as the
+// notdef box, so it never earns a cell.
+static bool emojiPackItemDrawable(const char* s) {
+  if (!s || !s[0]) return false;
+  uint32_t off = 0;
+  return emojiLookupAny(_lv_txt_encoded_next(s, &off)) != nullptr;
+}
+
+static void emojiBuildMergedList() {
+  if (s_emoji_merge_done) return;
+  s_emoji_merge_done = true;
+  s_emoji_group_n = 0;
+
+  const int pn = emojiPackItemCount();
+  int usable = 0;
+  for (int i = 0; i < pn; ++i) if (emojiPackItemDrawable(emojiPackItem(i))) ++usable;
+
+  if (!usable) {                       // no pack: the groups map straight onto k_emoji_items
+    for (int s = 0; s < k_emoji_span_count; ++s)
+      emojiAddGroup(k_emoji_spans[s].cat, k_emoji_spans[s].first, k_emoji_spans[s].count);
+    return;
+  }
+
+  const size_t bytes = (size_t)(k_emoji_count + usable) * sizeof(const char*);
+  const char** out = (const char**)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!out) out = (const char**)heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+  if (!out) {
+    for (int s = 0; s < k_emoji_span_count; ++s)
+      emojiAddGroup(k_emoji_spans[s].cat, k_emoji_spans[s].first, k_emoji_spans[s].count);
+    return;
+  }
+
+  int w = 0;
+  for (uint8_t tab : k_emoji_cat_order) {
+    const int start = w;
+    // A tab can draw on more than one built-in span (Smileys takes both faces
+    // and hearts), so walk them all rather than looking up a single match.
+    for (int s = 0; s < k_emoji_span_count; ++s) {
+      const EmojiSpan& sp = k_emoji_spans[s];
+      if (emojiCatTab(sp.cat) != tab) continue;
+      for (int j = 0; j < (int)sp.count; ++j) out[w++] = k_emoji_items[sp.first + j];
+    }
+    for (int i = 0; i < pn; ++i) {
+      const char* it = emojiPackItem(i);
+      if (emojiCatTab(emojiPackItemCat(i)) == tab && emojiPackItemDrawable(it)) out[w++] = it;
+    }
+    emojiAddGroup(tab, start, w - start);
+  }
+  // Anything the pack tagged with a category not in the tab order (EMOJI_CAT_EXTRA
+  // and any future value) lands after the known groups rather than being dropped.
+  {
+    const int start = w;
+    for (int i = 0; i < pn; ++i) {
+      const uint8_t tab = emojiCatTab(emojiPackItemCat(i));
+      bool known = false;
+      for (uint8_t k : k_emoji_cat_order) if (k == tab) { known = true; break; }
+      const char* it = emojiPackItem(i);
+      if (!known && emojiPackItemDrawable(it)) out[w++] = it;
+    }
+    emojiAddGroup(EMOJI_CAT_EXTRA, start, w - start);
+  }
+  s_emoji_merged       = out;
+  s_emoji_merged_count = w;
+}
+
+static const char* const* emojiPickerItems() {
+  emojiBuildMergedList();
+  return s_emoji_merged ? s_emoji_merged : k_emoji_items;
+}
+static int emojiPickerCount() {
+  emojiBuildMergedList();
+  return s_emoji_merged ? s_emoji_merged_count : k_emoji_count;
+}
+// The pack lands a few seconds into the session, after the list may already have
+// been built without it.
+static void emojiInvalidateMergedList() {
+  if (s_emoji_merged) { free(s_emoji_merged); s_emoji_merged = nullptr; }
+  s_emoji_merged_count = 0;
+  s_emoji_merge_done   = false;
+}
 
 // Pick-mode: when set, the next chosen glyph is handed to this callback instead
 // of being inserted into a textarea (used by the chat-icon chooser). Dismissing
@@ -10534,6 +10715,7 @@ static void closeEmojiSheet() {
   popupClose(&s_emoji_sheet);
   s_emoji_target_ta = nullptr;
   s_emoji_grid = nullptr;
+  s_emoji_tabrow = nullptr;
   s_emoji_sel = -1;
   s_emoji_pick_cb = nullptr;
 #if defined(HAS_M9_KEYBOARD)
@@ -10582,7 +10764,7 @@ static void emojiPickCb(lv_event_t* e) {
 // Defined after openEmojiPicker; forward-declared next to the thread-sheet code.
 static void openEmojiPicker(lv_obj_t* ta, const char* const* items, int count, const char* picker_title);
 static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title) {
-  openEmojiPicker(nullptr, k_emoji_items, k_emoji_count, title);   // resets pick state via closeEmojiSheet()
+  openEmojiPicker(nullptr, nullptr, 0, title);   // resets pick state via closeEmojiSheet()
   s_emoji_pick_cb = cb;                                            // arm AFTER the open (the closer clears it)
 }
 
@@ -10650,13 +10832,116 @@ static bool emojiSelectorClick() {
   return true;   // swallow the click even if nothing selected yet
 }
 
-// Opened from the composer's emoji button. `ta` is the composer textarea.
-static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_items,
-                            int count = k_emoji_count, const char* picker_title = "Insert emoji / symbol") {
+// Fill (or refill) the grid from the current s_glyph_items slice.
+static void emojiFillGrid() {
+  if (!s_emoji_grid) return;
+  lv_obj_clean(s_emoji_grid);
+  lv_obj_scroll_to_y(s_emoji_grid, 0, LV_ANIM_OFF);
+  for (int i = 0; i < s_glyph_count; ++i) {
+    lv_obj_t* b = lv_btn_create(s_emoji_grid);
+    lv_obj_set_size(b, s_emoji_cell_px, s_emoji_cell_px);
+    styleButton(b);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(b, emojiPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+#if CAP_LARGE_SCREEN && LV_USE_IMGFONT
+    // Baked colour-emoji → draw it as a zoomed image (1.7× ≈ 70% bigger than the 16 px
+    // font glyph). Special chars (no emoji dsc) fall through to the text label below.
+    if (s_glyph_is_emoji) {
+      uint32_t goff = 0;
+      const lv_img_dsc_t* ed = emojiLookupAny(_lv_txt_encoded_next(s_glyph_items[i], &goff));
+      if (ed) {
+        lv_obj_t* im = lv_img_create(b);
+        lv_img_set_src(im, ed);
+        lv_img_set_antialias(im, true);
+        if (ed->header.w && ed->header.h)
+          lv_img_set_pivot(im, ed->header.w / 2, ed->header.h / 2);
+        lv_img_set_zoom(im, 435);              // 256 = 1×, 435 ≈ 1.7×
+        lv_obj_center(im);
+        continue;
+      }
+    }
+#endif
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, s_glyph_items[i]);
+    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+  }
+}
+
+static void emojiPaintTabs() {
+  if (!s_emoji_tabrow) return;
+  const uint32_t n = lv_obj_get_child_cnt(s_emoji_tabrow);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* t = lv_obj_get_child(s_emoji_tabrow, i);
+    if (!t) continue;
+    const bool on = ((int)i == s_emoji_tab);
+    lv_obj_set_style_bg_color(t, lv_color_hex(on ? COLOR_ACCENT : COLOR_CONTROL), LV_PART_MAIN);
+  }
+}
+
+static void emojiTabCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int g = (int)(intptr_t)lv_event_get_user_data(e);
+  if (g < 0 || g >= s_emoji_group_n || g == s_emoji_tab) return;
+  s_emoji_tab   = g;
+  s_glyph_items = emojiPickerItems() + s_emoji_groups[g].first;
+  s_glyph_count = s_emoji_groups[g].count;
+  s_emoji_sel   = -1;
+  s_emoji_acc_x = s_emoji_acc_y = 0;
+  emojiPaintTabs();
+  emojiFillGrid();
+}
+
+static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w) {
+  lv_obj_t* row = lv_obj_create(card);
+  lv_obj_remove_style_all(row);
+  lv_obj_set_size(row, w, 24);
+  lv_obj_set_pos(row, 0, 26);
+  lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+  lv_obj_set_style_pad_column(row, 4, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+  lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+  // A vertical drag on the tab strip, or a horizontal one past either end, would
+  // otherwise chain into the card and the page behind the modal.
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_clear_flag(row, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  s_emoji_tabrow = row;
+  for (int i = 0; i < s_emoji_group_n; ++i) {
+    lv_obj_t* t = lv_btn_create(row);
+    lv_obj_set_height(t, 22);
+    lv_obj_set_style_pad_hor(t, 6, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(t, 0, LV_PART_MAIN);
+    styleButton(t);
+    lv_obj_add_event_cb(t, emojiTabCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* l = lv_label_create(t);
+    lv_label_set_text(l, TR(emojiCatName(s_emoji_groups[i].cat)));
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+  }
+  emojiPaintTabs();
+}
+
+// Opened from the composer's emoji button. `ta` is the composer textarea. A null
+// `items` means the emoji set, resolved here so it can pick up the SD pack.
+static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
+                            int count = 0, const char* picker_title = "Insert emoji / symbol") {
   closeEmojiSheet();
   s_emoji_target_ta = ta;
-  s_glyph_items = items;
-  s_glyph_count = count;
+  s_glyph_is_emoji = (items == nullptr);
+  s_glyph_items = items ? items : emojiPickerItems();
+  s_glyph_count = items ? count : emojiPickerCount();
+  // Past this many cells, building them all at once costs visible seconds and
+  // hundreds of KB of widget tree, so switch to one category at a time.
+  s_emoji_tabbed = s_glyph_is_emoji && s_emoji_group_n > 1 && s_glyph_count > k_emoji_tab_threshold;
+  if (s_emoji_tabbed) {
+    if (s_emoji_tab < 0 || s_emoji_tab >= s_emoji_group_n) s_emoji_tab = 0;
+    const EmojiGroupView& g = s_emoji_groups[s_emoji_tab];
+    s_glyph_items += g.first;
+    s_glyph_count  = g.count;
+  }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_emoji_sheet = lv_obj_create(lv_layer_top());
@@ -10703,64 +10988,39 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
   lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
 
-  // Scrollable grid of glyph buttons.
-  const lv_coord_t grid_w = cardw - 16;
+  // Scrollable grid of glyph buttons, with a category tab row above it when the
+  // set is too big to build in one go.
+  const lv_coord_t grid_w  = cardw - 16;
+  const lv_coord_t grid_y  = s_emoji_tabbed ? 52 : 26;
+  if (s_emoji_tabbed) emojiBuildTabRow(card, grid_w);
   lv_obj_t* grid = lv_obj_create(card);
   lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, grid_w, cardh - 16 - 26);
-  lv_obj_set_pos(grid, 0, 26);
+  lv_obj_set_size(grid, grid_w, cardh - 16 - grid_y);
+  lv_obj_set_pos(grid, 0, grid_y);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(grid, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_column(grid, 4, LV_PART_MAIN);
   lv_obj_set_scroll_dir(grid, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(grid, LV_SCROLLBAR_MODE_AUTO);
+  lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLL_CHAIN);
+  lv_obj_clear_flag(grid, LV_OBJ_FLAG_GESTURE_BUBBLE);
   s_emoji_grid = grid;
   // Emoji cells render the baked colour glyph as a ZOOMED image (70% bigger than the 16 px
   // font glyph) and get a bigger cell; special-character cells stay text labels.
 #if CAP_LARGE_SCREEN
-  const bool      big_emoji = (s_glyph_items == k_emoji_items);
-  const lv_coord_t cell_px  = big_emoji ? 48 : 38;
+  s_emoji_cell_px = s_glyph_is_emoji ? 48 : 38;
 #else
-  const lv_coord_t cell_px  = 38;
+  s_emoji_cell_px = 38;
 #endif
   // Column count for the trackball selector's row jumps: floor((w + gap) /
   // (cell + gap)), gap=4. Matches the flex-wrap that LVGL computes.
-  s_emoji_cols = (int)((grid_w + 4) / (cell_px + 4));
+  s_emoji_cols = (int)((grid_w + 4) / (s_emoji_cell_px + 4));
   if (s_emoji_cols < 1) s_emoji_cols = 1;
   s_emoji_sel = -1;   // start un-highlighted; first roll selects index 0
   s_emoji_acc_x = s_emoji_acc_y = 0;
 
-  for (int i = 0; i < s_glyph_count; ++i) {
-    lv_obj_t* b = lv_btn_create(grid);
-    lv_obj_set_size(b, cell_px, cell_px);
-    styleButton(b);
-    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
-    lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(b, emojiPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-#if CAP_LARGE_SCREEN && LV_USE_IMGFONT
-    // Baked colour-emoji → draw it as a zoomed image (1.7× ≈ 70% bigger than the 16 px
-    // font glyph). Special chars (no emoji dsc) fall through to the text label below.
-    if (big_emoji) {
-      uint32_t goff = 0;
-      const lv_img_dsc_t* ed = emojiGlyphLookup(_lv_txt_encoded_next(s_glyph_items[i], &goff));
-      if (ed) {
-        lv_obj_t* im = lv_img_create(b);
-        lv_img_set_src(im, ed);
-        lv_img_set_antialias(im, true);
-        if (ed->header.w && ed->header.h)
-          lv_img_set_pivot(im, ed->header.w / 2, ed->header.h / 2);
-        lv_img_set_zoom(im, 435);              // 256 = 1×, 435 ≈ 1.7×
-        lv_obj_center(im);
-        continue;
-      }
-    }
-#endif
-    lv_obj_t* l = lv_label_create(b);
-    lv_label_set_text(l, s_glyph_items[i]);
-    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_center(l);
-  }
+  emojiFillGrid();
+
 #if defined(HAS_M9_KEYBOARD)
   if (s_glyph_count > 0) {
     s_emoji_sel = 0;
@@ -39023,7 +39283,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // The colour emoji is a fixed ~16-px baked image (it doesn't scale with the font), so it
   // looks tiny in the big □. Hide the label glyph and draw the same emoji as a 2x-zoomed
   // image so it fills the shape.
-  if (const lv_img_dsc_t* sm = emojiGlyphLookup(0x1F60A)) {   // 😊
+  if (const lv_img_dsc_t* sm = emojiLookupAny(0x1F60A)) {   // 😊
     lv_obj_add_flag(el, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* eimg = lv_img_create(p.emoji_btn);
     lv_img_set_src(eimg, sm);
@@ -65947,6 +66207,42 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // largest block, so the worker could never start and tiles, the update
     // check and the app catalog were all silently dead.
     reserveTileFetchStack();
+    // Optional emoji pack. Searched on the SD card and on whatever filesystem the
+    // profile's data lives on (the USB Files page exposes both as separate roots,
+    // so "the right place" is ambiguous), under /emoji/ or the root. Deliberately
+    // NOT /meshcomod: that folder is read-only over USB Files and is wiped by
+    // "erase all data". Only opened here — the read is pumped from the loop so a
+    // full ~850 KB pack doesn't stall boot on a 4 MHz card. Reported through the
+    // Set-tab diag log, since WIRE_DBG is compiled out of release builds and
+    // Serial belongs to the companion protocol.
+    {
+      uiDataFsReady();
+      fs::FS* cands[2] = { nullptr, nullptr };
+      int nc = 0;
+#if CAP_SD || defined(TLORA_PAGER)
+      // Adopt-only: re-running the mount ladder here would SD.end() a volume
+      // DataStore may already hold.
+      if (sdAdoptLiveMount()) cands[nc++] = &SD;
+#endif
+      if (s_ui_data_fs && (nc == 0 || cands[0] != s_ui_data_fs)) cands[nc++] = s_ui_data_fs;
+
+      static const char* const kPackPaths[2] = { "/emoji/emoji.pack", "/emoji.pack" };
+      File ep;
+      for (int i = 0; i < nc && !ep; ++i)
+        for (int p = 0; p < 2 && !ep; ++p) ep = cands[i]->open(kPackPaths[p], FILE_READ);
+
+      char msg[DIAG_COLS];
+      if (!nc) {
+        pushDiagLine("emoji: no storage, baked set only");
+      } else if (!ep) {
+        snprintf(msg, sizeof msg, "emoji: no emoji.pack (%d root/s)", nc);
+        pushDiagLine(msg);
+      } else {
+        snprintf(msg, sizeof msg, "emoji: reading pack, %u KB", (unsigned)(ep.size() / 1024));
+        pushDiagLine(msg);
+        if (!emojiPackBegin(ep)) pushDiagLine("emoji: pack size/PSRAM rejected");
+      }
+    }
     lv_init();
     initTouchFontFallbacks();
     // NB: re-pointing the LVGL theme's font here does NOT work (tried, verified
@@ -71063,6 +71359,17 @@ void UITask::loop() {
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
   rx24Sample(now);   // packets heard per hour, for the lock screen's activity line
+
+  // Budgeted slices of the SD emoji pack. A full set is ~850 KB on a 4 MHz card,
+  // so it arrives a couple of seconds in; emoji render from the baked set until
+  // then. 8 KB is ~16 ms of SPI per tick, small enough not to show as a stutter.
+  if (emojiPackLoading() && emojiPackPump(8 * 1024)) {
+    emojiInvalidateMergedList();
+    char msg[DIAG_COLS];
+    if (emojiPackLoaded()) snprintf(msg, sizeof msg, "emoji: pack ready, %d added", emojiPackItemCount());
+    else                   snprintf(msg, sizeof msg, "emoji: pack rejected (bad file)");
+    pushDiagLine(msg);
+  }
 
 #if CAP_TOUCH
   // The Tanmatsu has NO CHSC6x cap-touch — input comes from the bsp keypad (LVGL KEYPAD indev).
