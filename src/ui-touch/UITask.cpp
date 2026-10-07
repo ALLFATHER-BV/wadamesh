@@ -5221,9 +5221,24 @@ static void m9NavClear() { s_m9_nav_n = 0; }
 static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside them
 #endif
 
+// M9: a chat message row holds its bubble and the info line under it; the cursor
+// goes around the bubble (the row's first child) only. Returns null for anything else.
+static lv_obj_t* navChatBubbleOf(lv_obj_t* o) {
+#if defined(HAS_THINKNODE_M9)
+  lv_obj_t* par = o ? lv_obj_get_parent(o) : nullptr;
+  if (!par || (par != g_lv.ch.msgs && par != g_lv.dm.msgs)) return nullptr;
+  lv_obj_t* b = lv_obj_get_child(o, 0);
+  return (b && !lv_obj_check_type(b, &lv_label_class)) ? b : nullptr;
+#else
+  (void)o;
+  return nullptr;
+#endif
+}
+
 static void navUnstyle(lv_obj_t* o) {
   if (!o || !lv_obj_is_valid(o)) return;
   setNavSelectionGlow(o, false);
+  if (lv_obj_t* b = navChatBubbleOf(o)) setSelectionGlow(b, false, LV_PART_MAIN);
 }
 
 // Keyboard-nav edit mode for text fields: when focus lands on a field it is NOT editable
@@ -5263,7 +5278,8 @@ static void navFocusCb(lv_group_t* g) {
   if (!f || !s_nav_show) return;          // focus-visible: paint only while actively keyboard-navigating
   s_nav_styled = f;
   if (f == nav_was_styled) return;
-  setNavSelectionGlow(f, true);
+  if (lv_obj_t* b = navChatBubbleOf(f)) setSelectionGlow(b, true, LV_PART_MAIN);
+  else setNavSelectionGlow(f, true);
   if (!s_nav_suppress_scroll) {
     lv_obj_t* scroll_target = navStoreRowFor(f);
     lv_obj_scroll_to_view_recursive(scroll_target ? scroll_target : f, LV_ANIM_OFF);
@@ -7159,6 +7175,9 @@ static volatile bool s_map_sd_storage_changed = false;   // defer SD_MMC backend
 static void onMapTabActivated();
 static void clearRouteReplay();        // drop the message-route overlay (defined with the map code)
 static void applyMapChrome(bool on);   // map-tab immersive chrome (transparent bars); defined near makeMapTab
+// M9: true from the map tab opening until its first tile render finishes; the tab bar
+// shows white icons over whatever is behind it until the map is actually drawn.
+static bool s_map_loading = false;
 static void formatAgeBadge(char* buf, size_t cap, uint32_t age_secs);        // defined with the contacts list
 static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, double self_lon,
                                 int32_t c_lat_e6, int32_t c_lon_e6);          // defined with the contacts list
@@ -11350,6 +11369,9 @@ static void tabChangedCb(lv_event_t* e) {
   if (new_t == SENSORS_TAB_INDEX) refreshSensorsTab();
 #endif
   if (new_t == MAP_TAB_INDEX) {
+#if defined(HAS_THINKNODE_M9)
+    s_map_loading = true;
+#endif
     applyMapChrome(true);    // transparent status bar + tab bar so the map shows through
     onMapTabActivated();
   } else {
@@ -36486,6 +36508,10 @@ static void onMapTabActivated() {
   renderMapTiles();
   renderMapMarkers();
   refreshMapInfoLabel();
+  if (s_map_loading) {
+    s_map_loading = false;
+    if (getActiveTab() == MAP_TAB_INDEX) applyMapChrome(true);   // tab bar back to its map colours
+  }
 }
 
 // Idle power-save indicator (iPhone Low-Power-Mode style, every board): instead of a separate moon
@@ -36569,11 +36595,13 @@ static void applyMapChrome(bool on) {
       // map tiles, no grey bar behind them.
       lv_obj_set_style_bg_opa(btns, on ? LV_OPA_TRANSP : LV_OPA_COVER, LV_PART_MAIN);
       // Day map: black icons over light tiles. Night map: off-white over dark tiles.
-      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : (light_map_chrome ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
+      // While the map is still loading, white icons until the tiles are drawn.
+      const bool loading = on && s_map_loading;
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_SUB : loading ? 0xFFFFFF : (light_map_chrome ? 0xE6EAEE : 0x101010)), LV_PART_ITEMS);
       // Off-map: active icon back to the ACCENT colour (not white). On-map: high-
       // contrast icon for the tile brightness. (The accent indicator bar is hidden
       // on the map separately by updateTabIndicator().)
-      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_ACCENT : (light_map_chrome ? 0xFFFFFF : 0x000000)),
+      lv_obj_set_style_text_color(btns, lv_color_hex(!on ? COLOR_ACCENT : (loading || light_map_chrome) ? 0xFFFFFF : 0x000000),
                                   LV_PART_ITEMS | LV_STATE_CHECKED);
     }
   }
@@ -46476,6 +46504,7 @@ static bool bleKbdTabHotkey(int cp) {
   return true;
 }
 
+static uint32_t s_m9_home_last_ms = 0;   // last HOME press, for double-press → Settings
 static bool m9LockedHomeDrawerFrontmost() {
 #if defined(HAS_THINKNODE_M9)
   lv_obj_t* top = lv_layer_top();
@@ -46813,7 +46842,22 @@ static bool m9HandleNavKey(int key) {
         else if (s_cc_root)       closeControlCenter();
         else if (s_confirm_modal) confirmDismiss();
         else                      s_apppage_close();
+        s_m9_home_last_ms = millis();
         s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+      }
+      {
+        // Double-press HOME opens Settings. The controller sends one byte per press and
+        // no key-up, so a hold can't be seen; the first press still acts as a normal HOME.
+        const uint32_t now = millis();
+        const bool dbl = s_m9_home_last_ms && (uint32_t)(now - s_m9_home_last_ms) < 450;
+        s_m9_home_last_ms = dbl ? 0 : now;
+        if (dbl) {
+          s_m9_map_pan = false;
+          for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
+          if (!anyPopupOpen() && getActiveTab() == HOME_TAB_INDEX && s_home_drawer_mode) setHomeDrawer(false);
+          if (!anyPopupOpen()) { navGoToMainTab(SETTINGS_TAB_INDEX); m9NavClear(); }
+          s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+        }
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything

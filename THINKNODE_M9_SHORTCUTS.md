@@ -50,7 +50,7 @@ under a running operation.
 | Key | Press | Hold |
 |---|---|---|
 | **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first) | — |
-| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail) | — |
+| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail). **Double-press** to open Settings | — |
 | **@ (Mentions)** | Open the Mentions screen | — |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
 | **MAP** | Jump to the Map tab — press again *on* the map to toggle pan mode | — |
