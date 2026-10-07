@@ -143,6 +143,7 @@
     <a href="#glance">New messages</a>
     <a href="#control">Control panel</a>
     <a href="#size">Text size &amp; trackball</a>
+    <a href="#theme">Colours &amp; theme</a>
     <div class="grp">Finding nodes</div>
     <a href="#discover">Discover &amp; wardriving</a>
     <div class="grp">With your phone</div>
@@ -170,7 +171,7 @@
         <span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-5 3.6 1.9-5.8L4 8.8h6.1z"/></svg></span>
         <div>
           <b>This guide shows the redesigned interface.</b>
-          <p>Every screen was redesigned in beta_89, a test build, and several features moved. The stable build (beta_85) keeps the previous look until the redesign has been tested and promoted. <a href="#updates">Updates &amp; test builds</a> explains how to switch.</p>
+          <p>Every screen was redesigned in beta_89, a test build, and several features moved; beta_90 brought the colour back, with a choice of looks (<a href="#theme">Colours &amp; theme</a>). The stable build (beta_85) keeps the previous look until the redesign has been tested and promoted. <a href="#updates">Updates &amp; test builds</a> explains how to switch.</p>
         </div>
       </div>
       <div class="callout">
@@ -201,7 +202,7 @@
           <h3>Is my history actually saving?</h3>
           <p><b>Settings &rarr; About &rarr; Chat store</b> is the answer: it names the storage in use, when history last saved successfully, and the exact stage and error a failing save is hitting. Worth a look if messages seem to vanish across a reboot.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png?v=89" alt="Home: the App drawer"></div><div class="cap">Home: the App drawer</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png?v=90" alt="Home: the App drawer"></div><div class="cap">Home: the App drawer</div></div>
       </div>
       <div class="gallery">
         <div class="mini"><img src="docs-img/home_cmdr.png?v=89" alt="The Commander status page"><div class="cap">The Commander</div></div>
@@ -213,7 +214,7 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span> Chats</h2>
       <div class="row">
         <div class="prose">
-          <p>Every conversation in one list, newest first: channels (group chats like <code>#wadamesh</code> or <code>Public</code>) and direct messages. Each row has an avatar drawn from the chat's key, a square for a channel and a circle for a person, with its last message, the time, and a teal count while something in it is unread.</p>
+          <p>Every conversation in one list, newest first: channels (group chats like <code>#wadamesh</code> or <code>Public</code>) and direct messages. Each row has an avatar drawn from the chat's key, a square for a channel and a circle for a person, with its last message, the time, and a count while something in it is unread, in the chat's own colour. Prefer the older look? Pick <b>Initials</b> on the <a href="#theme">Theme page</a> and every avatar becomes the first two letters of the name in a coloured ball.</p>
           <h3>Along the top</h3>
           <ul>
             <li><b>All</b>, <b>Channels</b> and <b>Direct</b> filter the list.</li>
@@ -227,18 +228,18 @@
           </ul>
           <p>Muting messages silences a channel's chatter while an @-mention of you still gets through; mute mentions too and the channel is quiet altogether.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/chat.png?v=89" alt="The Chats list"></div><div class="cap">Chats: channels and direct messages</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/chat.png?v=90" alt="The Chats list"></div><div class="cap">Chats: channels and direct messages</div></div>
       </div>
 
       <div class="subh">In a conversation</div>
       <div class="row">
         <div class="prose">
           <p>The header shows the chat's avatar and name, and under it how the last message reached you: <i>Direct, no repeaters</i>, a number of hops, or for a channel how many different nodes it heard from today. The chevron on the left goes back.</p>
-          <p>Other people's messages sit on the left with the sender's name in their own colour; yours sit on the right. Under each message is how many hops it came over (the dots count them) and the time. Under your own channel posts it reads <b>Heard by N repeaters</b>, counting the repeats of your message as they come back, so you can watch it spread.</p>
+          <p>Other people's messages sit on the left with the sender's name in their own colour; yours sit on the right. Turn on <b>Colourful bubbles</b> on the <a href="#theme">Theme page</a> and the bubbles take a dark tint of each sender's colour too, yours included. Under each message is how many hops it came over (the dots count them) and the time. Under your own channel posts it reads <b>Heard by N repeaters</b>, counting the repeats of your message as they come back, so you can watch it spread.</p>
           <p>A direct message shows <b>Sent</b>, then <b>Delivered</b> once the other side confirms it. One that never arrived says <b>Not delivered, tap to resend</b>. A <b>NEW</b> line marks where your unread messages start.</p>
-          <p>Along the bottom: quick replies, emoji, the message field and the teal send button. Type on the keyboard to reply; hold a message for its menu.</p>
+          <p>Along the bottom: quick replies, emoji, the message field and the send button. Type on the keyboard to reply; hold a message for its menu.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/conversation.png?v=89" alt="A channel conversation"></div><div class="cap">A channel, with hops and the composer</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/conversation.png?v=90" alt="A channel conversation"></div><div class="cap">A channel, with hops and the composer</div></div>
       </div>
       <div class="gallery">
         <div class="mini"><img src="docs-img/chat_actions.png?v=89" alt="The actions for a chat"><div class="cap">Hold a chat: its actions</div></div>
@@ -253,7 +254,7 @@
           <p>Along the top: a filter (everything, or one type of node), the <b>Discovered</b> list behind the radar icon (nodes heard but not yet added), search, sort, and a menu with Add contact, Select to delete, Auto-add settings and Blocked users.</p>
           <p>The Discovered list is passive, built from what the device overhears; to go looking for nodes actively, see <a href="#discover">Discover</a>. Auto-add can pull new nodes in from their adverts, or you can add them by hand.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png?v=89" alt="Contacts list"></div><div class="cap">Contacts</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png?v=90" alt="Contacts list"></div><div class="cap">Contacts</div></div>
       </div>
     </section>
 
@@ -264,7 +265,7 @@
           <p>An OpenStreetMap or OpenTopoMap view with your position and your contacts plotted as markers, plus link lines from you to each node. Tiles are fetched over Wi-Fi through the wadamesh proxy and cached to flash (or microSD), so areas you have viewed work offline. Coloured dots along a route you have walked or driven come from <a href="#discover">wardriving</a>.</p>
           <p>It also has a line-of-sight analyzer: pick a contact and it uses SRTM elevation to show whether terrain blocks the path.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=89" alt="Map"></div><div class="cap">Map</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=90" alt="Map"></div><div class="cap">Map</div></div>
       </div>
       <div class="prose">
         <h3>Bring your own tiles (offline maps)</h3>
@@ -300,7 +301,7 @@
           </ul>
           <p>Tap a row to open its page; the bar at the top then carries a back chevron. Every page is described in <a href="#settings-pages">Settings pages</a> below. <b>Hold the Settings tab</b> to go straight to the <a href="#control">control panel</a> instead.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/settings.png?v=89" alt="Settings home"></div><div class="cap">Settings, grouped</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/settings.png?v=90" alt="Settings home"></div><div class="cap">Settings, grouped</div></div>
       </div>
     </section>
 
@@ -392,6 +393,59 @@
       </div>
       <div class="gallery">
         <div class="mini"><img src="docs-img/trackball_cursor.png?v=89" alt="The trackball switched to Cursor"><div class="cap">Hold again: Cursor</div></div>
+      </div>
+    </section>
+
+    <section class="doc" id="theme">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg></span> Colours &amp; theme</h2>
+      <div class="row">
+        <div class="prose">
+          <p>The look of the whole interface lives on one page: <b>Settings &rarr; Theme</b>, under Device. Holding the theme chip in the <a href="#control">control panel</a> opens it too.</p>
+          <p>It opens on a <b>preview</b>: a corner of the launcher, a chat and the send button, drawn in whatever you have picked, so you see the result before anything restarts. Under it:</p>
+          <ul>
+            <li><b>Mode</b>: Night and Day as two small screens, with <b>High contrast</b> under them.</li>
+            <li><b>Accent colour</b>: the swatches on the page, and <b>Custom</b> for any other colour.</li>
+            <li><b>Colour</b>: <b>MORE COLORS!</b> with its style right under it, and <b>Taste the rainbow</b>.</li>
+            <li><b>Chats</b>: the chat icons, colourful bubbles and compact messages.</li>
+          </ul>
+          <p>The mode, the accent and the colours are used by everything on screen as it is built, so they wait for one <b>Apply and restart</b> button, which appears on the preview once something differs from what you have now. Scroll past the preview and the button stays in reach in a slim bar under the title, beside six dots in the colours you picked; tap the dots to go back up to the preview. The chat looks apply at once.</p>
+        </div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/theme.png?v=90" alt="The Theme page"></div><div class="cap">Settings &rarr; Theme</div></div>
+      </div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/theme_apply.png?v=90" alt="Apply and restart on the preview"><div class="cap">Something picked: Apply and restart</div></div>
+        <div class="mini"><img src="docs-img/theme_bar.png?v=90" alt="The Apply bar under the title"><div class="cap">Scrolled down: the bar keeps it in reach</div></div>
+        <div class="mini"><img src="docs-img/theme_colour.png?v=90" alt="MORE COLORS! and its three styles"><div class="cap">MORE COLORS! and its styles</div></div>
+      </div>
+
+      <div class="subh">MORE COLORS!</div>
+      <div class="prose">
+        <p>One switch that turns the calm redesign up, in the style you pick. The layout stays the same in all three; what changes is how colour is used. It is on by default, in Regular. Turn it off for the calm look.</p>
+        <ul>
+          <li><b>Regular</b> gives every section its own colour (the launcher, the Settings list, the tab bar), shows the status icons in colour (signal by strength, battery by level, Wi-Fi and Bluetooth tinted) and draws every name and glyph in its own hue.</li>
+          <li><b>Neon</b> is full cyberpunk: a near-black violet ground, electric cyan, hot magenta, laser yellow and acid lime, with lit edges on tiles, buttons and bubbles. Your accent stays yours, pushed to full brightness.</li>
+          <li><b>Pastel</b> is soft: mint, baby blue, lavender, peach and rose on a warm dark ground.</li>
+        </ul>
+        <p><b>Taste the rainbow</b> goes one further: every app, Settings page and tab gets its own place on the colour wheel, in the style you picked, and a few things move. The tab marker, the chats count and the keyboard focus ring slowly travel round the wheel, buttons dip when you press them, a new message lands with a flash of its sender's colour, and the lock screen mark, the boot mark and the screensaver's nodes light up in colour. The motion rests while the screen is off, locked or showing the screensaver.</p>
+        <p>High contrast keeps its own fixed colours, so the colour switches are greyed out while it is on. The e-paper T-Deck Pro and Max show only the chat looks.</p>
+      </div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/look_calm.png?v=90" alt="MORE COLORS! off"><div class="cap">MORE COLORS! off</div></div>
+        <div class="mini"><img src="docs-img/look_regular.png?v=90" alt="Regular"><div class="cap">Regular (the default)</div></div>
+        <div class="mini"><img src="docs-img/look_neon.png?v=90" alt="Neon"><div class="cap">Neon</div></div>
+        <div class="mini"><img src="docs-img/look_pastel.png?v=90" alt="Pastel"><div class="cap">Pastel</div></div>
+        <div class="mini"><img src="docs-img/look_rainbow.png?v=90" alt="Taste the rainbow"><div class="cap">Taste the rainbow</div></div>
+        <div class="mini"><img src="docs-img/look_day.png?v=90" alt="Day, Regular"><div class="cap">Day, Regular</div></div>
+      </div>
+
+      <div class="subh">Chat icons and bubbles</div>
+      <div class="prose">
+        <p><b>Chat icons</b> are <b>Glyphs</b>, a mark of dots drawn from the chat's key, or <b>Initials</b>: the first two letters of the name (a leading # skipped) in a ball coloured from the name. The choice reaches every icon at once: the chat list, contacts, the conversation header, the lock screen cards and the new-message card. A chat icon you picked yourself (an emoji) still wins.</p>
+        <p>Every sender's name is in its own colour, and a person's name, glyph and ball always share it. <b>Colourful bubbles</b> tints the bubbles with it too, your own included; mentions of you keep their blue bubble. In Day mode, names and glyphs on the light lists use a deeper shade of their colour so they read on white.</p>
+      </div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/icons_initials.png?v=90" alt="Chats with initials"><div class="cap">Chat icons: Initials</div></div>
+        <div class="mini"><img src="docs-img/look_neon_chat.png?v=90" alt="A conversation in Neon"><div class="cap">Neon: bubbles as lit tubes</div></div>
       </div>
     </section>
 
@@ -629,7 +683,18 @@
             <li><b>Screensaver</b>, how long it shows <b>on battery</b>, and <b>always on when connected to power</b>, with a preview (<a href="#screensaver">Screensaver</a>)</li>
             <li><b>Launcher layout</b>, <b>UI size</b> and <b>Condense Nav</b> (a navigation rail in landscape)</li>
             <li><b>At a glance</b> and <b>at a glance while locked</b> (<a href="#glance">New messages</a>)</li>
-            <li><b>Appearance</b> (night or day), <b>high contrast</b>, and the <b>accent colour</b></li>
+            <li><b>Hide device name</b> and <b>distance in miles</b></li>
+          </ul>
+        </div>
+        <div class="scard">
+          <div class="thumb"><img src="docs-img/theme.png?v=90" alt="Theme settings"></div>
+          <h3>Theme <span class="tag">beta_90</span></h3>
+          <div class="lede">The look of the whole interface (<a href="#theme">Colours &amp; theme</a>).</div>
+          <ul>
+            <li>A <b>preview</b> of what you pick, with <b>Apply and restart</b></li>
+            <li><b>Night</b> or <b>Day</b>, <b>high contrast</b>, and the <b>accent colour</b></li>
+            <li><b>MORE COLORS!</b> in <b>Regular</b>, <b>Neon</b> or <b>Pastel</b>, and <b>Taste the rainbow</b></li>
+            <li><b>Chat icons</b> (glyphs or initials), <b>colourful bubbles</b> and <b>compact messages</b></li>
           </ul>
         </div>
         <div class="scard">
