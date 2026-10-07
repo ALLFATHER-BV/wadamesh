@@ -42844,13 +42844,6 @@ static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   }
   return false;
 }
-static bool chatFirstHashtag(const char* text, char* out, int cap) {
-  int start, end;
-  if (!chatHashtagSpan(text, 0, &start, &end) || end - start >= cap) return false;
-  memcpy(out, text + start, end - start);
-  out[end - start] = '\0';
-  return true;
-}
 // Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
 // already has a '#' (the recolor parser would choke on it) — caller then shows plain
 // text and the tap still works.
@@ -42869,39 +42862,6 @@ static bool chatRecolorUrls(const char* in, char* out, int cap) {
   }
   out[o] = 0; return true;
 }
-// LVGL treats '#' as recolor markup: escape literal hashes and use link blue
-// as the base color so the leading '#' and channel name share one color.
-static bool chatRecolorHashtags(const char* in, char* out, int cap) {
-  int start, end;
-  if (!chatHashtagSpan(in, 0, &start, &end)) return false;
-  int needed = (int)strlen(in) + 1;
-  for (const char* p = in; *p; ++p)
-    if (*p == '#') needed += 20;
-  if (needed > cap) return false;
-  int used = 0;
-  for (int i = 0; in[i];) {
-    if (i == start) {
-      out[used++] = '#';
-      out[used++] = '#';
-      ++i;
-      while (i < end) out[used++] = in[i++];
-      if (!chatHashtagSpan(in, i, &start, &end)) start = -1;
-    } else {
-      used += snprintf(out + used, cap - used, "#%06X ",
-                       (unsigned)(COLOR_CHAT_TEXT & 0xFFFFFFu));
-      while (in[i] && i != start && in[i] != '#') out[used++] = in[i++];
-      out[used++] = '#';
-      if (in[i] == '#' && i != start) {
-        out[used++] = '#';
-        out[used++] = '#';
-        ++i;
-      }
-    }
-  }
-  out[used] = '\0';
-  return true;
-}
-
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -43065,11 +43025,29 @@ static void bubbleUrlTapCb(lv_event_t* e) {
 // Read the live message again: a virtualized bubble's ring slot can change.
 static void bubbleHashtagTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
+  lv_obj_t* label = lv_event_get_target(e);
+  lv_indev_t* indev = lv_indev_get_act();
+  if (!indev) return;
+  lv_point_t point;
+  lv_indev_get_point(indev, &point);
+  lv_area_t area;
+  lv_obj_get_coords(label, &area);
+  point.x -= area.x1;
+  point.y -= area.y1;
+  if (!lv_label_is_char_under_pos(label, &point)) return;
+  const char* text = lv_label_get_text(label);
+  const uint32_t char_idx = lv_label_get_letter_on(label, &point);
+  const int byte_idx = (int)_lv_txt_encoded_get_byte_id(text, char_idx);
+  int start, end;
+  if (!chatHashtagSpan(text, 0, &start, &end) || byte_idx < start || byte_idx >= end) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   UITask::UIMessage m;
   if (!g_lv.task->getMessageByIndex(idx, m)) return;
   char tag[32];
-  if (chatFirstHashtag(m.text, tag, sizeof tag)) openHashtagChat(tag);
+  if (end - start >= (int)sizeof tag) return;
+  memcpy(tag, text + start, end - start);
+  tag[end - start] = '\0';
+  openHashtagChat(tag);
 }
 
 static void bubbleCoordTapCb(lv_event_t* e) {
@@ -43220,12 +43198,10 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorCoords(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
   } else if (has_hashtag) {
-    char rc[UITask::MAX_MSG_TEXT + 80];
-    if (chatRecolorHashtags(d.san_text, rc, sizeof rc)) {
-      lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_CHAT_LINK), LV_PART_MAIN);
-      lv_label_set_recolor(tlbl, true);
-      lv_label_set_text(tlbl, rc);
-    }
+    lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_CHAT_LINK), LV_PART_SELECTED);
+    lv_obj_set_style_bg_color(tlbl, bubble_bg, LV_PART_SELECTED);
+    lv_label_set_text_sel_start(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _ha));
+    lv_label_set_text_sel_end(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _hb));
   }
 #endif
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
@@ -43366,13 +43342,6 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  else {
-    char tag[32];
-    if (chatFirstHashtag(m.text, tag, sizeof tag) &&
-        !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
-      lv_obj_add_event_cb(row, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
-                          reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  }
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
