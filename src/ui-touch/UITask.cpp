@@ -42821,11 +42821,18 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
   int n = b - a; if (n > cap - 1) n = cap - 1;
   memcpy(out, s + a, n); out[n] = 0; return true;
 }
-// Find a channel-sized #word (including hyphens) without matching URL fragments.
+// Find a channel-sized #word (including hyphens) outside @[...] mentions and URL fragments.
 // Return its half-open byte span, including the leading '#'.
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   if (!text) return false;
-  for (int i = from; text[i]; ++i) {
+  for (int i = 0; text[i]; ++i) {
+    if (text[i] == '@' && text[i + 1] == '[') {
+      const char* close = strchr(text + i + 2, ']');
+      if (!close) return false;
+      i = (int)(close - text);
+      continue;
+    }
+    if (i < from) continue;
     if (text[i] != '#' || (i > 0 && (isalnum((unsigned char)text[i - 1]) ||
                                           text[i - 1] == '_' || text[i - 1] == '/' ||
                                           text[i - 1] == '#'))) continue;
