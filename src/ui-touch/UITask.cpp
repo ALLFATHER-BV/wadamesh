@@ -10752,9 +10752,11 @@ static EmojiGroupView s_emoji_groups[16];
 static int            s_emoji_group_n = 0;
 static int            s_emoji_tab     = 0;       // active category slice
 static bool           s_emoji_tabbed  = false;
+static bool           s_emoji_tab_nav = false;
 static lv_obj_t*      s_emoji_tabrow  = nullptr;
 static lv_coord_t     s_emoji_cell_px = 38;
 static constexpr int  k_emoji_tab_threshold = 200;
+static void emojiSelectTab(int tab);
 
 // Tab order: Unicode's own emoji groups, in their order. Hearts have no tab of
 // their own — they are part of Smileys & Emotion. "Chars" is ours, holding the
@@ -10999,6 +11001,24 @@ static void emojiSelectorMove(int rawdx, int rawdy) {
   else if (s_emoji_acc_y <= -kEmojiSelStep) { dr = -1; s_emoji_acc_y = 0; }
   if (dc == 0 && dr == 0) return;    // not enough travel yet
 
+  if (s_emoji_tabbed && s_emoji_tab_nav) {
+    if (dc && s_emoji_group_n > 0) {
+      int tab = (s_emoji_tab + dc + s_emoji_group_n) % s_emoji_group_n;
+      emojiSelectTab(tab);
+    }
+    if (dr > 0) {
+      s_emoji_tab_nav = false;
+      s_emoji_sel = 0;
+      emojiPaintSelection();
+    }
+    return;
+  }
+
+  if (s_emoji_tabbed && dr < 0 && s_emoji_sel >= 0 && s_emoji_sel < s_emoji_cols) {
+    s_emoji_tab_nav = true;
+    return;
+  }
+
   const int cols = s_emoji_cols > 0 ? s_emoji_cols : 1;
   int idx = s_emoji_sel;
   if (dc) idx += dc;                          // horizontal: free move across the flat list
@@ -11015,6 +11035,12 @@ static void emojiSelectorMove(int rawdx, int rawdy) {
 // Returns true if it consumed the click (so it isn't also injected as a tap).
 static bool emojiSelectorClick() {
   if (!s_emoji_sheet) return false;
+  if (s_emoji_tab_nav) {
+    s_emoji_tab_nav = false;
+    s_emoji_sel = 0;
+    emojiPaintSelection();
+    return true;
+  }
   if (s_emoji_sel >= 0) emojiInsertIndex(s_emoji_sel);
   return true;   // swallow the click even if nothing selected yet
 }
@@ -11079,33 +11105,69 @@ static void emojiPaintTabs() {
   }
 }
 
-static void emojiTabCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  const int g = (int)(intptr_t)lv_event_get_user_data(e);
-  if (g < 0 || g >= s_emoji_group_n || g == s_emoji_tab) return;
-  s_emoji_tab   = g;
-  s_glyph_items = emojiPickerItems() + s_emoji_groups[g].first;
-  s_glyph_count = s_emoji_groups[g].count;
-  s_emoji_sel   = -1;
+static void emojiSelectTab(int tab) {
+  if (tab < 0 || tab >= s_emoji_group_n || tab == s_emoji_tab) return;
+  s_emoji_tab = tab;
+  s_glyph_items = emojiPickerItems() + s_emoji_groups[tab].first;
+  s_glyph_count = s_emoji_groups[tab].count;
+  s_emoji_sel = -1;
   s_emoji_acc_x = s_emoji_acc_y = 0;
   emojiPaintTabs();
   emojiFillGrid();
 }
 
+static void emojiTabCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int g = (int)(intptr_t)lv_event_get_user_data(e);
+  if (g < 0 || g >= s_emoji_group_n || g == s_emoji_tab) return;
+  s_emoji_tab_nav = false;
+  emojiSelectTab(g);
+}
+
+static void emojiTabScrollCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_emoji_tabrow) return;
+  const bool left = (intptr_t)lv_event_get_user_data(e) < 0;
+  lv_coord_t step = lv_obj_get_width(s_emoji_tabrow) * 3 / 4;
+  if (step < 24) step = 24;
+  lv_obj_scroll_by_bounded(s_emoji_tabrow, left ? step : -step, 0, LV_ANIM_ON);
+}
+
 static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w) {
   lv_obj_t* row = lv_obj_create(card);
   lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, w, 24);
-  lv_obj_set_pos(row, 0, 26);
+  lv_obj_set_size(row, w - 48, 24);
+  lv_obj_set_pos(row, 24, 26);
   lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
   lv_obj_set_style_pad_column(row, 4, LV_PART_MAIN);
   lv_obj_set_scroll_dir(row, LV_DIR_HOR);
   lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLL_ELASTIC);
   // A vertical drag on the tab strip, or a horizontal one past either end, would
   // otherwise chain into the card and the page behind the modal.
   lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLL_CHAIN);
   lv_obj_clear_flag(row, LV_OBJ_FLAG_GESTURE_BUBBLE);
   s_emoji_tabrow = row;
+
+  lv_obj_t* left = lv_btn_create(card);
+  lv_obj_set_size(left, 22, 24);
+  lv_obj_set_pos(left, 0, 26);
+  styleButton(left);
+  lv_obj_add_event_cb(left, emojiTabScrollCb, LV_EVENT_CLICKED, (void*)(intptr_t)-1);
+  lv_obj_t* left_icon = lv_label_create(left);
+  lv_label_set_text(left_icon, LV_SYMBOL_LEFT);
+  lv_obj_set_style_text_font(left_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_center(left_icon);
+
+  lv_obj_t* right = lv_btn_create(card);
+  lv_obj_set_size(right, 22, 24);
+  lv_obj_set_pos(right, w - 22, 26);
+  styleButton(right);
+  lv_obj_add_event_cb(right, emojiTabScrollCb, LV_EVENT_CLICKED, (void*)(intptr_t)1);
+  lv_obj_t* right_icon = lv_label_create(right);
+  lv_label_set_text(right_icon, LV_SYMBOL_RIGHT);
+  lv_obj_set_style_text_font(right_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_center(right_icon);
+
   for (int i = 0; i < s_emoji_group_n; ++i) {
     lv_obj_t* t = lv_btn_create(row);
     lv_obj_set_height(t, 22);
@@ -11145,6 +11207,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
     s_glyph_items += g.first;
     s_glyph_count  = g.count;
   }
+  s_emoji_tab_nav = false;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_emoji_sheet = lv_obj_create(lv_layer_top());
@@ -11175,10 +11238,13 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
 
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR(picker_title));
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(title, cardw - 56);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_obj_set_pos(title, 2, 0);
-  addCloseXBadge(card, emojiSheetCloseCb);
+  lv_obj_t* close = addCloseXBadge(card, emojiSheetCloseCb);
+  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -2, -4);
 
   // Scrollable grid of glyph buttons, with a category tab row above it when the
   // set is too big to build in one go.
@@ -11190,6 +11256,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   lv_obj_set_size(grid, grid_w, cardh - 16 - grid_y);
   lv_obj_set_pos(grid, 0, grid_y);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_flex_align(grid, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(grid, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_column(grid, 4, LV_PART_MAIN);
   lv_obj_set_scroll_dir(grid, LV_DIR_VER);
