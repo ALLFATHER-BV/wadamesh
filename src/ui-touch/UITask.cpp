@@ -10757,6 +10757,14 @@ static lv_obj_t*      s_emoji_tabrow  = nullptr;
 static lv_coord_t     s_emoji_cell_px = 38;
 static constexpr int  k_emoji_tab_threshold = 200;
 static void emojiSelectTab(int tab);
+static void emojiLoadRecent();
+static constexpr uint8_t EMOJI_CAT_RECENT = 254;
+static constexpr int k_emoji_recent_limit = 18;
+static constexpr int k_emoji_recent_slot_bytes = 33;
+static char s_emoji_recent[k_emoji_recent_limit][k_emoji_recent_slot_bytes] = {};
+static int s_emoji_recent_count = 0;
+static bool s_emoji_recent_loaded = false;
+static bool s_emoji_recent_visible = false;
 
 // Tab order: Unicode's own emoji groups, in their order. Hearts have no tab of
 // their own — they are part of Smileys & Emotion. "Chars" is ours, holding the
@@ -10775,6 +10783,7 @@ static inline uint8_t emojiCatTab(uint8_t cat) {
 
 static const char* emojiCatName(uint8_t cat) {
   switch (cat) {
+    case EMOJI_CAT_RECENT:   return "Recent";
     case EMOJI_CAT_FACES:    return "Smileys";
     case EMOJI_CAT_GESTURES: return "People";
     case EMOJI_CAT_ANIMALS:  return "Nature";
@@ -10807,22 +10816,37 @@ static bool emojiPackItemDrawable(const char* s) {
   return emojiLookupAny(_lv_txt_encoded_next(s, &off)) != nullptr;
 }
 
+static bool emojiRecentItemAvailable(const char* item) {
+  for (int s = 0; s < k_emoji_span_count; ++s) {
+    if (k_emoji_spans[s].cat == EMOJI_CAT_SPECIAL) continue;
+    for (int i = 0; i < (int)k_emoji_spans[s].count; ++i)
+      if (strcmp(item, k_emoji_items[k_emoji_spans[s].first + i]) == 0) return true;
+  }
+  for (int i = 0, n = emojiPackItemCount(); i < n; ++i) {
+    const char* pack_item = emojiPackItem(i);
+    if (pack_item && strcmp(item, pack_item) == 0 && emojiPackItemDrawable(pack_item)) return true;
+  }
+  return false;
+}
+
 static void emojiBuildMergedList() {
   if (s_emoji_merge_done) return;
   s_emoji_merge_done = true;
   s_emoji_group_n = 0;
+  s_emoji_recent_visible = false;
+  emojiLoadRecent();
 
   const int pn = emojiPackItemCount();
   int usable = 0;
   for (int i = 0; i < pn; ++i) if (emojiPackItemDrawable(emojiPackItem(i))) ++usable;
 
-  if (!usable) {                       // no pack: the groups map straight onto k_emoji_items
+  if (!usable && !s_emoji_recent_count) { // no pack or recents: map straight onto k_emoji_items
     for (int s = 0; s < k_emoji_span_count; ++s)
       emojiAddGroup(k_emoji_spans[s].cat, k_emoji_spans[s].first, k_emoji_spans[s].count);
     return;
   }
 
-  const size_t bytes = (size_t)(k_emoji_count + usable) * sizeof(const char*);
+  const size_t bytes = (size_t)(k_emoji_count + usable + s_emoji_recent_count) * sizeof(const char*);
   const char** out = (const char**)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!out) out = (const char**)heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
   if (!out) {
@@ -10832,6 +10856,16 @@ static void emojiBuildMergedList() {
   }
 
   int w = 0;
+  {
+    const int start = w;
+    for (int i = 0; i < s_emoji_recent_count; ++i) {
+      if (emojiRecentItemAvailable(s_emoji_recent[i])) out[w++] = s_emoji_recent[i];
+    }
+    if (w > start) {
+      emojiAddGroup(EMOJI_CAT_RECENT, start, w - start);
+      s_emoji_recent_visible = true;
+    }
+  }
   for (uint8_t tab : k_emoji_cat_order) {
     const int start = w;
     // A tab can draw on more than one built-in span (Smileys takes both faces
@@ -10878,6 +10912,62 @@ static void emojiInvalidateMergedList() {
   if (s_emoji_merged) { free(s_emoji_merged); s_emoji_merged = nullptr; }
   s_emoji_merged_count = 0;
   s_emoji_merge_done   = false;
+  s_emoji_recent_visible = false;
+}
+
+static bool emojiRecentStringValid(const char* item) {
+  if (!item || !item[0]) return false;
+  const char* p = item;
+  const char* end = item + strlen(item);
+  uint32_t cp = 0;
+  while (p < end) if (!uiReadUtf8Codepoint(p, end, cp)) return false;
+  return p == end;
+}
+
+static void emojiLoadRecent() {
+  if (s_emoji_recent_loaded) return;
+  s_emoji_recent_loaded = true;
+  uint8_t blob[1 + k_emoji_recent_limit * k_emoji_recent_slot_bytes] = {};
+  const size_t n = touchPrefsGetBlob("emoji_recent", blob, sizeof(blob));
+  if (n < 1 || blob[0] > k_emoji_recent_limit ||
+      n != 1 + (size_t)blob[0] * k_emoji_recent_slot_bytes) return;
+
+  for (int i = 0; i < blob[0]; ++i) {
+    char item[k_emoji_recent_slot_bytes];
+    memcpy(item, blob + 1 + i * k_emoji_recent_slot_bytes, sizeof(item));
+    if (!memchr(item, '\0', sizeof(item)) || !emojiRecentStringValid(item)) continue;
+    memcpy(s_emoji_recent[s_emoji_recent_count++], item, sizeof(item));
+  }
+}
+
+static void emojiRememberRecent(const char* item) {
+  if (!emojiRecentStringValid(item)) return;
+  const size_t len = strlen(item);
+  if (len >= k_emoji_recent_slot_bytes) return;
+  emojiLoadRecent();
+  if (s_emoji_recent_count > 0 && strcmp(s_emoji_recent[0], item) == 0) return;
+
+  int found = -1;
+  for (int i = 1; i < s_emoji_recent_count; ++i) {
+    if (strcmp(s_emoji_recent[i], item) == 0) { found = i; break; }
+  }
+  if (found >= 0) {
+    for (int i = found; i > 0; --i)
+      memcpy(s_emoji_recent[i], s_emoji_recent[i - 1], k_emoji_recent_slot_bytes);
+  } else {
+    const int last = s_emoji_recent_count < k_emoji_recent_limit ? s_emoji_recent_count++ : k_emoji_recent_limit - 1;
+    for (int i = last; i > 0; --i)
+      memcpy(s_emoji_recent[i], s_emoji_recent[i - 1], k_emoji_recent_slot_bytes);
+  }
+  memset(s_emoji_recent[0], 0, k_emoji_recent_slot_bytes);
+  memcpy(s_emoji_recent[0], item, len);
+
+  uint8_t blob[1 + k_emoji_recent_limit * k_emoji_recent_slot_bytes] = {};
+  blob[0] = (uint8_t)s_emoji_recent_count;
+  for (int i = 0; i < s_emoji_recent_count; ++i)
+    memcpy(blob + 1 + i * k_emoji_recent_slot_bytes, s_emoji_recent[i], k_emoji_recent_slot_bytes);
+  touchPrefsSetBlob("emoji_recent", blob, 1 + s_emoji_recent_count * k_emoji_recent_slot_bytes);
+  emojiInvalidateMergedList();
 }
 
 // Pick-mode: when set, the next chosen glyph is handed to this callback instead
@@ -10942,6 +11032,7 @@ static void emojiInsertIndex(int idx) {
   } else {
     lv_textarea_add_text(dest, g);
   }
+  emojiRememberRecent(g);
   closeEmojiSheet();
 }
 static void emojiPickCb(lv_event_t* e) {
@@ -11200,7 +11291,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
     if (s_emoji_groups[i].cat == EMOJI_CAT_FLAGS) { has_flags_group = true; break; }
   }
   s_emoji_tabbed = s_glyph_is_emoji && s_emoji_group_n > 1 &&
-                   (s_glyph_count > k_emoji_tab_threshold || has_flags_group);
+                   (s_emoji_recent_visible || s_glyph_count > k_emoji_tab_threshold || has_flags_group);
   if (s_emoji_tabbed) {
     if (s_emoji_tab < 0 || s_emoji_tab >= s_emoji_group_n) s_emoji_tab = 0;
     const EmojiGroupView& g = s_emoji_groups[s_emoji_tab];
