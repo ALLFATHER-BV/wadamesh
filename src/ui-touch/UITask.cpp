@@ -1101,11 +1101,21 @@ static inline const lv_img_dsc_t* emojiLookupAny(uint32_t cp) {
   if (const lv_img_dsc_t* d = emojiGlyphLookup(cp)) return d;
   return emojiPackLookup(cp);
 }
+static bool emojiIsZeroAdvanceCodepoint(uint32_t cp) {
+  if (cp == 0x200Du || cp == 0x20E3u ||
+      (cp >= 0xFE00u && cp <= 0xFE0Fu) ||
+      (cp >= 0x1F3FBu && cp <= 0x1F3FFu) ||
+      (cp >= 0xE0020u && cp <= 0xE007Fu)) return true;
+  const lv_img_dsc_t* d = emojiLookupAny(cp);
+  return d && d->header.w <= 2 && d->header.h <= 2;
+}
 static bool emojiIsRegionalIndicator(uint32_t cp) {
   return cp >= 0x1F1E6 && cp <= 0x1F1FF;
 }
-static const lv_img_dsc_t* emojiPickerFlagGlyph(const char* item) {
+static const lv_img_dsc_t* emojiPickerCompositeGlyph(const char* item) {
   if (!item) return nullptr;
+  if (const lv_img_dsc_t* sequence = emojiGlyphSequenceLookup(item)) return sequence;
+  if (const lv_img_dsc_t* sequence = emojiPackSequenceItemLookup(item)) return sequence;
   uint32_t off = 0;
   const uint32_t lead = _lv_txt_encoded_next(item, &off);
   if (emojiIsRegionalIndicator(lead)) {
@@ -1131,11 +1141,27 @@ static const lv_img_dsc_t* emojiPickerFlagGlyph(const char* item) {
   return nullptr;
 }
 #if LV_USE_IMGFONT
+static bool emojiZeroAdvanceFontGetDsc(const lv_font_t* font, lv_font_glyph_dsc_t* dsc,
+                                       uint32_t unicode, uint32_t /*unicode_next*/) {
+  if (!emojiIsZeroAdvanceCodepoint(unicode)) return false;
+  memset(dsc, 0, sizeof(*dsc));
+  dsc->resolved_font = font;
+  return true;
+}
+
+static const uint8_t* emojiZeroAdvanceFontGetBitmap(const lv_font_t* /*font*/, uint32_t /*unicode*/) {
+  static const uint8_t blank = 0;
+  return &blank;
+}
+
+static lv_font_t s_emoji_zero_advance_font[3] = {};
+
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
 // false so LVGL keeps walking the fallback chain for everything else.
 static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_t /*len*/,
                                uint32_t unicode, uint32_t /*unicode_next*/) {
+  if (emojiIsZeroAdvanceCodepoint(unicode)) return false;
   const lv_img_dsc_t* d = emojiPackSequenceLookup(unicode);
   if (!d) d = emojiLookupAny(unicode);
   if (!d) return false;
@@ -1365,8 +1391,13 @@ static void initTouchFontFallbacks() {
   }
 #endif
   for (int i = 0; i < 3; ++i) {
+    s_emoji_zero_advance_font[i].get_glyph_dsc = emojiZeroAdvanceFontGetDsc;
+    s_emoji_zero_advance_font[i].get_glyph_bitmap = emojiZeroAdvanceFontGetBitmap;
+    s_emoji_zero_advance_font[i].line_height = extras[i]->line_height;
+    s_emoji_zero_advance_font[i].base_line = extras[i]->base_line;
+    s_emoji_zero_advance_font[i].fallback = extras[i];
     s_emoji_font[i] = lv_imgfont_create(16, emojiImgfontPathCb);   // 16 px baked glyphs (~15% larger; sit on the text baseline)
-    if (s_emoji_font[i]) { s_emoji_font[i]->fallback = extras[i]; prim[i]->fallback = s_emoji_font[i]; }
+    if (s_emoji_font[i]) { s_emoji_font[i]->fallback = &s_emoji_zero_advance_font[i]; prim[i]->fallback = s_emoji_font[i]; }
     else                 { prim[i]->fallback = extras[i]; }        // OOM: plain chain
   }
 #else
@@ -3291,6 +3322,47 @@ static bool uiReadUtf8Codepoint(const char*& p, const char* end, uint32_t& cp) {
     }
   }
   return false;
+}
+
+static bool uiIsGraphemeExtend(uint32_t cp) {
+  return (cp >= 0x0300u && cp <= 0x036Fu) ||
+         (cp >= 0x1AB0u && cp <= 0x1AFFu) ||
+         (cp >= 0x1DC0u && cp <= 0x1DFFu) ||
+         (cp >= 0x20D0u && cp <= 0x20FFu) ||
+         (cp >= 0xFE00u && cp <= 0xFE0Fu) ||
+         (cp >= 0xFE20u && cp <= 0xFE2Fu) ||
+         (cp >= 0x1F3FBu && cp <= 0x1F3FFu) ||
+         (cp >= 0xE0020u && cp <= 0xE007Fu) ||
+         (cp >= 0xE0100u && cp <= 0xE01EFu);
+}
+
+static size_t uiPreviousGraphemeStartByte(const char* text, size_t end_byte) {
+  if (!text || end_byte == 0) return end_byte;
+  const char* p = text;
+  const char* end = text + end_byte;
+  size_t cluster_start = 0;
+  uint32_t previous = 0;
+  uint32_t regional_run = 0;
+  bool have_previous = false;
+  while (p < end) {
+    const char* current_start = p;
+    uint32_t cp = 0;
+    if (!uiReadUtf8Codepoint(p, end, cp)) {
+      p = current_start + 1;
+      cp = static_cast<unsigned char>(*current_start);
+    }
+    const bool is_regional = emojiIsRegionalIndicator(cp);
+    const bool joined = have_previous &&
+        (uiIsGraphemeExtend(cp) || cp == 0x200Du || previous == 0x200Du ||
+         (is_regional && emojiIsRegionalIndicator(previous) && (regional_run & 1u)));
+    if (!joined) cluster_start = static_cast<size_t>(current_start - text);
+    if (is_regional)
+      regional_run = joined && emojiIsRegionalIndicator(previous) ? regional_run + 1 : 1;
+    else if (!uiIsGraphemeExtend(cp) && cp != 0x200Du) regional_run = 0;
+    previous = cp;
+    have_previous = true;
+  }
+  return cluster_start;
 }
 
 static uint32_t uiPackedFlagTokenAt(uint32_t cp, const char* after_cp,
@@ -6064,6 +6136,8 @@ static void navArrowAction(uint32_t key) {
   }
 }
 
+static void taDeletePreviousGrapheme(lv_obj_t* ta);
+
 static void navPump() {
   if (!s_nav_queue && (bsp_input_get_queue(&s_nav_queue) != ESP_OK || !s_nav_queue)) return;
   // Fire-on-hold: trigger the F1/F4 long-press action the MOMENT the threshold passes while the
@@ -6352,7 +6426,7 @@ static void navPump() {
           // Backspace in an EMPTY field = leave edit mode (matches Enter-on-empty below;
           // consistent with backspace-as-back everywhere else on this board).
           if (!lv_textarea_get_text(ta)[0]) s_nav_ta_editing = false;
-          else                              lv_textarea_del_char(ta);
+          else                              taDeletePreviousGrapheme(ta);
         }
         else if (c == '\r' || c == '\n') {
           // Enter on an EMPTY composer drops back to navigate mode (cursor off) so the letter-nav
@@ -10670,8 +10744,9 @@ static const char* const k_emoji_items[] = {
   // animals
   "\xF0\x9F\x90\xB6","\xF0\x9F\x90\xB1","\xF0\x9F\x90\xB8","\xF0\x9F\x90\xBB",
   "\xF0\x9F\x90\xA7","\xF0\x9F\x90\x9D",
-  // activity / flags  (soccer, football, moai, transgender flag, Lesotho flag)
+  // activity
   "\xE2\x9A\xBD","\xF0\x9F\x8F\x88","\xF0\x9F\x97\xBF",
+  // flags
   "\xF0\x9F\x8F\xB3\xEF\xB8\x8F\xE2\x80\x8D\xE2\x9A\xA7\xEF\xB8\x8F",
   "\xF0\x9F\x87\xB1\xF0\x9F\x87\xB8",
   // special characters / punctuation / currency / math
@@ -10689,10 +10764,11 @@ static constexpr int k_emoji_count = (int)(sizeof(k_emoji_items) / sizeof(k_emoj
 // is added to the list without extending the matching group.
 enum : int {
   EMO_N_FACES    = 26, EMO_N_GESTURES = 11, EMO_N_HEARTS   = 7,  EMO_N_SYMBOLS = 27,
-  EMO_N_OBJECTS  = 16, EMO_N_ANIMALS  = 6,  EMO_N_ACTIVITY = 5,  EMO_N_SPECIAL = 24,
+  EMO_N_OBJECTS  = 16, EMO_N_ANIMALS  = 6,  EMO_N_ACTIVITY = 3,  EMO_N_FLAGS = 2,
+  EMO_N_SPECIAL = 24,
 };
 static_assert(EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS + EMO_N_SYMBOLS +
-              EMO_N_OBJECTS + EMO_N_ANIMALS + EMO_N_ACTIVITY + EMO_N_SPECIAL == k_emoji_count,
+              EMO_N_OBJECTS + EMO_N_ANIMALS + EMO_N_ACTIVITY + EMO_N_FLAGS + EMO_N_SPECIAL == k_emoji_count,
               "k_emoji_items category groups drifted — update the EMO_N_* counts");
 struct EmojiSpan { uint8_t cat; uint16_t first; uint16_t count; };
 static const EmojiSpan k_emoji_spans[] = {
@@ -10706,9 +10782,12 @@ static const EmojiSpan k_emoji_spans[] = {
                         EMO_N_SYMBOLS + EMO_N_OBJECTS,                          EMO_N_ANIMALS  },
   { EMOJI_CAT_ACTIVITY, EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
                         EMO_N_SYMBOLS + EMO_N_OBJECTS + EMO_N_ANIMALS,          EMO_N_ACTIVITY },
+  { EMOJI_CAT_FLAGS,    EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
+                        EMO_N_SYMBOLS + EMO_N_OBJECTS + EMO_N_ANIMALS +
+                        EMO_N_ACTIVITY,                                         EMO_N_FLAGS },
   { EMOJI_CAT_SPECIAL,  EMO_N_FACES + EMO_N_GESTURES + EMO_N_HEARTS +
                         EMO_N_SYMBOLS + EMO_N_OBJECTS + EMO_N_ANIMALS +
-                        EMO_N_ACTIVITY,                                         EMO_N_SPECIAL  },
+                        EMO_N_ACTIVITY + EMO_N_FLAGS,                           EMO_N_SPECIAL  },
 };
 static constexpr int k_emoji_span_count = (int)(sizeof(k_emoji_spans) / sizeof(k_emoji_spans[0]));
 
@@ -10811,7 +10890,7 @@ static bool emojiPackItemDrawable(const char* s) {
   const uint32_t lead = _lv_txt_encoded_next(s, &flag_off);
   const uint32_t trail = _lv_txt_encoded_next(s, &flag_off);
   if (emojiIsRegionalIndicator(lead) && emojiIsRegionalIndicator(trail))
-    return emojiPickerFlagGlyph(s) != nullptr;
+    return emojiPickerCompositeGlyph(s) != nullptr;
   uint32_t off = 0;
   return emojiLookupAny(_lv_txt_encoded_next(s, &off)) != nullptr;
 }
@@ -11149,7 +11228,7 @@ static void emojiFillGrid() {
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, emojiPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     if (s_glyph_is_emoji) {
-      if (const lv_img_dsc_t* flag = emojiPickerFlagGlyph(s_glyph_items[i])) {
+      if (const lv_img_dsc_t* flag = emojiPickerCompositeGlyph(s_glyph_items[i])) {
         lv_obj_t* im = lv_img_create(b);
         lv_img_set_src(im, flag);
         lv_img_set_antialias(im, false);
@@ -12529,6 +12608,17 @@ static void taDeleteRange(lv_obj_t* ta, uint32_t s_cp, uint32_t e_cp) {
   for (uint32_t k = s_cp; k < e_cp; ++k) lv_textarea_del_char(ta);
 }
 
+static void taDeletePreviousGrapheme(lv_obj_t* ta) {
+  if (!ta) return;
+  const char* text = lv_textarea_get_text(ta);
+  const uint32_t cursor_cp = lv_textarea_get_cursor_pos(ta);
+  if (!text || cursor_cp == 0) return;
+  const uint32_t cursor_byte = taCpToByte(text, cursor_cp);
+  const size_t start_byte = uiPreviousGraphemeStartByte(text, cursor_byte);
+  const uint32_t start_cp = taByteToCp(text, (uint32_t)start_byte);
+  taDeleteRange(ta, start_cp, cursor_cp);
+}
+
 // ----- The floating Cut / Copy / Paste / Select-All menu -----
 static lv_obj_t* s_txtmenu    = nullptr;
 static lv_obj_t* s_txtmenu_ta = nullptr;
@@ -12704,9 +12794,12 @@ static void kbBackspaceSelCb(lv_event_t* e) {
   lv_obj_t* ta = lv_keyboard_get_textarea(kb);
   if (!ta) return;
   uint32_t s_cp, e_cp;
-  if (!taHasSelection(ta, &s_cp, &e_cp)) return;   // nothing selected -> default deletes one char
-  taDeleteRange(ta, s_cp, e_cp);
-  taClearSelection(ta);
+  if (taHasSelection(ta, &s_cp, &e_cp)) {
+    taDeleteRange(ta, s_cp, e_cp);
+    taClearSelection(ta);
+  } else {
+    taDeletePreviousGrapheme(ta);
+  }
   accentBoxHide();
   txtMenuHide();
   lv_event_stop_processing(e);
@@ -49705,7 +49798,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
 #endif
-      lv_textarea_del_char(ta);
+      taDeletePreviousGrapheme(ta);
     }
     accentBoxHide();
   } else if (key == ' ') {
@@ -50001,7 +50094,7 @@ static void bleKbdTouchDelete(lv_obj_t* ta, bool forward) {
   } else if (forward) {
     lv_textarea_del_char_forward(ta);
   } else {
-    lv_textarea_del_char(ta);
+    taDeletePreviousGrapheme(ta);
   }
   accentBoxHide();
 }
@@ -72240,7 +72333,7 @@ void UITask::loop() {
         else if (cmdLineEnter()) break;   // terminal / admin CLI: run it, keep the field ready
         else                 lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);  // settings field: confirm
       }
-      else if (key == 0x08 || key == 0x7F) lv_textarea_del_char(akb_ta);
+      else if (key == 0x08 || key == 0x7F) taDeletePreviousGrapheme(akb_ta);
       // '#' summons the on-screen keys for this editing session (hideKb clears it),
       // opening straight on the symbol panel: the module already types letters and
       // digits, so the keys are only for symbols its 5x5 matrix cannot reach.
@@ -72291,7 +72384,7 @@ void UITask::loop() {
     for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i) {
       if (!fta) continue;   // no editable field focused -> drain + drop
       if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
-      else if (wk == 0x08 || wk == 0x7F) lv_textarea_del_char(fta);
+      else if (wk == 0x08 || wk == 0x7F) taDeletePreviousGrapheme(fta);
       else if (wk >= 0x20)               lv_textarea_add_char(fta, (uint32_t)wk);
     }
 #endif

@@ -40,13 +40,17 @@ SINGLE = [
     (0x231A, "231a"),  # watch (sat between car + bulb in the picker, still tofu)
 ]
 # ZWJ sequences baked as ONE combined image, keyed on the lead codepoint, with the
-# trailing visible symbol(s) mapped to the zero-width glyph so the whole UTF-8
-# sequence renders as the single combined emoji. The bare lead cp (a plain waving
-# white flag U+1F3F3) is not offered anywhere in the UI, so reusing it as the key
-# is safe. (noto-emoji drops the FE0F variation selectors from png filenames.)
+# trailing visible symbol(s) mapped to the zero-width glyph. Keep the full codepoint
+# sequence too, so picker cells can resolve the composite image without relying on
+# platform text shaping. (Noto drops FE0F selectors from png filenames.)
 SEQ = [
-    # (key_cp, noto-stem, [extra cps -> zero])
-    (0x1F3F3, "1f3f3_200d_26a7", [0x26A7]),  # transgender flag  ðŸ³ï¸â€âš§ï¸
+    # (key_cp, noto-stem, [extra cps -> zero], full codepoint sequence)
+    (
+        0x1F3F3,
+        "1f3f3_200d_26a7",
+        [0x26A7],
+        [0x1F3F3, 0xFE0F, 0x200D, 0x26A7, 0xFE0F],
+    ),  # transgender flag
 ]
 
 
@@ -65,18 +69,22 @@ FLAGS = [
 # ---- bake the new glyphs ----
 new_defs = []  # (cp, ename, bytes)
 new_entries = []  # (cp, ref)
+sequence_entries = []  # (UTF-8 bytes, composite glyph key)
 for cp, stem in SINGLE:
     fn = fetch(stem)
     if not fn:
         sys.exit("FAILED to fetch U+{:X} ({})".format(cp, stem))
     new_defs.append((cp, "e_{:x}".format(cp), to_rgb565a8(Image.open(fn))))
     new_entries.append((cp, "d_{:x}".format(cp)))
-for key_cp, stem, zeros in SEQ:
+for key_cp, stem, zeros, sequence in SEQ:
     fn = fetch(stem)
     if not fn:
         sys.exit("FAILED to fetch combined {} for U+{:X}".format(stem, key_cp))
     new_defs.append((key_cp, "e_{:x}".format(key_cp), to_rgb565a8(Image.open(fn))))
     new_entries.append((key_cp, "d_{:x}".format(key_cp)))
+    sequence_entries.append(
+        ("".join(chr(cp) for cp in sequence).encode("utf-8"), key_cp)
+    )
     for z in zeros:
         new_entries.append((z, "d_zero"))
 
@@ -93,7 +101,13 @@ src = open(OUTC).read()
 TYPE_MARK = "\ntypedef struct { uint32_t cp;"
 FUNC_MARK = "const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp) {"
 head = src[: src.index(TYPE_MARK)]  # header + includes + all glyph defs
-func = src[src.index(FUNC_MARK) :]  # the binary-search getter (verbatim)
+if "#include <string.h>" not in head:
+    head = head.replace(
+        '#include "emoji_data.h"', '#include "emoji_data.h"\n#include <string.h>', 1
+    )
+func_start = src.index(FUNC_MARK)
+func_end = src.find("\nconst lv_img_dsc_t* emojiGlyphSequenceLookup", func_start)
+func = src[func_start : func_end if func_end >= 0 else len(src)]  # binary-search getter
 
 # Idempotency: on a RE-RUN, `head` still holds the e_/d_ glyph defs spliced in by a
 # PRIOR run (they live before the typedef), so blindly re-appending new_defs would
@@ -140,9 +154,24 @@ out.append("static const EmojiGlyph kGlyphs[] = {")
 for cp, ref in entries:
     out.append("  {{ 0x{:X}u, &{} }},".format(cp, ref))
 out.append("};")
+out.append(
+    "typedef struct { const char* utf8; const lv_img_dsc_t* dsc; } EmojiSequence;"
+)
+out.append("static const EmojiSequence kSequences[] = {")
+for utf8, key_cp in sequence_entries:
+    literal = "".join("\\x{:02X}".format(b) for b in utf8)
+    out.append('  {{ "{}", &d_{:x} }},'.format(literal, key_cp))
+out.append("};")
 out.append("const uint16_t kEmojiGlyphCount = {};".format(count))
 out.append("")
 out.append(func.rstrip("\n"))
+out.append("")
+out.append("const lv_img_dsc_t* emojiGlyphSequenceLookup(const char* utf8) {")
+out.append("  if (!utf8) return 0;")
+out.append("  for (size_t i = 0; i < sizeof(kSequences) / sizeof(kSequences[0]); ++i)")
+out.append("    if (strcmp(utf8, kSequences[i].utf8) == 0) return kSequences[i].dsc;")
+out.append("  return 0;")
+out.append("}")
 out.append("")
 open(OUTC, "w").write("\n".join(out))
 
@@ -151,6 +180,14 @@ h = open(OUTH).read()
 h = re.sub(
     r"// \d+ Noto colour emoji", "// {} Noto colour emoji".format(count), h, count=1
 )
+if "emojiGlyphSequenceLookup" not in h:
+    h = h.replace(
+        "const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp);",
+        "const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp);\n"
+        "// Returns a baked composite image for an exact UTF-8 emoji sequence, or NULL.\n"
+        "const lv_img_dsc_t* emojiGlyphSequenceLookup(const char* utf8);",
+        1,
+    )
 open(OUTH, "w").write(h)
 
 print(
