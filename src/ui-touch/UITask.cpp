@@ -801,6 +801,9 @@ static inline bool bgActive() { return s_bg_kind != 0xFF; }
 #if defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)
 #define CAP_BG_IMAGE  0
 #define CAP_BG_MOVING 1
+#elif defined(HAS_TDECK_PRO)   // e-paper: no backgrounds at all
+#define CAP_BG_IMAGE  0
+#define CAP_BG_MOVING 0
 #else
 #define CAP_BG_IMAGE  CAP_LOCK_SCREEN
 #define CAP_BG_MOVING 1
@@ -25472,6 +25475,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   char pref[TOUCH_LOCK_WALLPAPER_MAXLEN];
   if (s_fm_img_on_sd) snprintf(pref, sizeof pref, "sd:%s", s_fm_img_path);
   else                snprintf(pref, sizeof pref, "%s", s_fm_img_path);
+#if CAP_BG_IMAGE
   if (s_fm_pick_bg) {   // from Settings > Theme > Background: the picture joins the page's choices
     const char* dot = strrchr(s_fm_img_path, '.');
     if (!dot || (strcasecmp(dot, ".jpg") && strcasecmp(dot, ".jpeg"))) {
@@ -25483,6 +25487,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
     closeFullscreenView();   // back to the Theme page
     return;
   }
+#endif
   touchPrefsSetLockWallpaper(pref);
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)   // boards that declare s_lockwall_btn_lbl
   if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
