@@ -23225,6 +23225,19 @@ static lv_obj_t* openFullscreenView(const char* title) {
 // ---- meshcore-cli-style chat commands (to / send / public / list / channels) ----
 // Transmit `text` to a DM contact (is_channel=false) or a channel slot. Reuses
 // the same the_mesh send primitives the Chats composer uses; echoes a TX line.
+// Channel post with the channel's own region scope, if it has one, the same as the
+// chat composer does. The web remote, terminal and Lua apps send through here; they
+// used to skip the scope, so a scoped channel went out on the default one (#614).
+static bool sendGroupMessageScoped(int slot, ChannelDetails& cd, uint32_t ts, const char* sender,
+                                   const char* text) {
+  char chan_rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+  if (slot >= 0) touchPrefsGetChannelScope(slot, chan_rgn, sizeof(chan_rgn));
+  const bool pushed = the_mesh.pushChannelScope(chan_rgn);
+  const bool ok = the_mesh.sendGroupMessage(ts, cd.channel, sender, (char*)text, (int)strlen(text));
+  if (pushed) the_mesh.popChannelScope();
+  return ok;
+}
+
 static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
                        const char* disp, const char* text) {
   static uint32_t s_last_term_tx_ts = 0;
@@ -23256,7 +23269,7 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
       termLogAppendC(TERM_C_ERR, nullptr, "channel changed under us - not sent");
       return;
     }
-    if (!the_mesh.sendGroupMessage(ts, cd.channel, sender, body, (int)strlen(body))) {
+    if (!sendGroupMessageScoped(chan_slot, cd, ts, sender, body)) {
       termLogAppendC(TERM_C_ERR, nullptr, "send failed");
       return;
     }
@@ -65858,7 +65871,7 @@ bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
     if (strcmp(cd.name, chan_name) != 0) continue;
     uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
     const char* sender = the_mesh.getNodePrefs()->node_name;
-    if (!the_mesh.sendGroupMessage(ts, cd.channel, sender, (char*)text, (int)strlen(text))) return false;
+    if (!sendGroupMessageScoped(i, cd, ts, sender, text)) return false;
     if (g_lv.task) g_lv.task->appSentMsgToChannel(cd.name, text, the_mesh.uiLastSentFp());
     return true;
   }
