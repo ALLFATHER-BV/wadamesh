@@ -79,9 +79,10 @@ def source_keys():
     # Two passes: find every function or lambda that calls TR() on one of its own
     # parameters and note which parameter, then pull the literal out of that
     # argument position at every call site.
-    for f in _sources():
-        src = strip_comments(open(f, encoding='utf-8').read())
-        for name, idx in _tr_wrapping_helpers(src):
+    srcs = [strip_comments(open(f, encoding='utf-8').read()) for f in _sources()]
+    helpers = _tr_wrapping_helpers(srcs)
+    for src in srcs:
+        for name, idx in helpers:
             for arg in _call_args_at(src, name, idx):
                 for lit in literal_groups(arg):
                     k = unescape_c(lit)
@@ -239,21 +240,47 @@ _HDR = re.compile(r'(?:auto\s+(?P<lam>[A-Za-z_]\w*)\s*=\s*\[[^\]]*\]\s*'
                   r'(?:const\s*)?(?:->\s*[\w:*&<> ]+\s*)?\{')
 
 
-def _tr_wrapping_helpers(src):
-    """(helper name, argument index) for every helper that TR()s a parameter."""
+def _tr_wrapping_helpers(srcs):
+    """(helper name, argument index) for every helper that TR()s a parameter.
+
+    Transitive: a helper that hands its parameter, untouched, to a translated
+    position of another helper translates it too. The settings kit is built that
+    way (setSwitchRow passes its title and help line to setRowText, which TR()s
+    them), and without this every switch, choice and slider name on the rebuilt
+    pages looked untranslated-by-design and never reached a .lang file."""
+    funcs = []
+    for src in srcs:
+        for m in _HDR.finditer(src):
+            name = m.group('lam') or m.group('fn')
+            if not name or name in ('if', 'for', 'while', 'switch', 'catch', 'TR'):
+                continue
+            params = []
+            for a in _split_args(m.group('args')):
+                names = re.findall(r'[A-Za-z_]\w*', a)
+                params.append(names[-1] if names else '')
+            body = src[m.end() - 1:_balanced(src, m.end() - 1)]
+            calls = set(re.findall(r'\b([A-Za-z_]\w*)\s*\(', body))
+            funcs.append((name, params, body, calls))
     found = set()
-    for m in _HDR.finditer(src):
-        name = m.group('lam') or m.group('fn')
-        if not name or name in ('if', 'for', 'while', 'switch', 'catch', 'TR'):
-            continue
-        params = []
-        for a in _split_args(m.group('args')):
-            names = re.findall(r'[A-Za-z_]\w*', a)
-            params.append(names[-1] if names else '')
-        body = src[m.end() - 1:_balanced(src, m.end() - 1)]
+    for name, params, body, _ in funcs:
         for i, pn in enumerate(params):
             if pn and re.search(r'\bTR\(\s*' + re.escape(pn) + r'\s*\)', body):
                 found.add((name, i))
+    changed = True
+    while changed:
+        changed = False
+        by_name = {}
+        for h, k in found:
+            by_name.setdefault(h, set()).add(k)
+        for name, params, body, calls in funcs:
+            for i, pn in enumerate(params):
+                if not pn or (name, i) in found:
+                    continue
+                for h in calls & by_name.keys():
+                    if any(a.strip() == pn for k in by_name[h] for a in _call_args_at(body, h, k)):
+                        found.add((name, i))
+                        changed = True
+                        break
     return found
 
 

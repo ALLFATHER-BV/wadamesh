@@ -187,13 +187,17 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg></span> Home</h2>
       <div class="row">
         <div class="prose">
-          <p>The Home tab, the house in the middle of the bottom bar, shows one of two views, and you choose which.</p>
+          <p>The Home tab, the house in the middle of the bottom bar, shows your widgets, or the App drawer if you prefer that as your Home.</p>
+          <h3>Widgets</h3>
+          <p>A grid of small cards you arrange yourself: the time with today's sunrise and sunset, unread messages, the nodes heard this hour, the radio and its noise floor, the last signal, GPS, the battery, the links (Wi-Fi, Bluetooth, the phone app), and shortcuts such as Advert, any app from the drawer, or four switches. Most come in a small, a medium and some in a large size. <b>Tap a widget</b> to open what it shows: the clock opens the clock settings, the battery its 24-hour history, the radio Radio &amp; Mesh, a chat that chat. Shortcuts act at once. While a clock widget is on Home, the clock in the status bar steps aside so the time is not shown twice.</p>
+          <p>More to add: one chat pinned to Home, mentions, the strongest node you hear directly, the readings of a sensor node on the mesh (asked for every 30 minutes, or as often as you set), the sun and the moon, airtime against your duty cycle, your position (hidden until you tap it), a note, and on the bigger boards a small live mesh radar and widgets that apps from the Store keep up to date.</p>
+          <h3>Arranging</h3>
+          <p><b>Hold any widget</b>, or an empty part of Home, to arrange. Drag a widget to another place (the others step aside), tap the minus to remove it, tap an empty cell to add one, and tap a widget for its sizes and what it shows. <b>Done</b> saves. With keys, open <b>Settings &rarr; Display &rarr; Home &rarr; Arrange Home</b>: Enter on a widget gives the same choices, and Move shows where it can go. Boards that turn keep a layout for each way up.</p>
+          <p><b>Settings &rarr; Display &rarr; Home</b> also starts you over from a preset: <b>Glance</b> (the default), <b>Commander</b> (the old status page, rebuilt from widgets), <b>Radio</b>, <b>Minimal</b> (a big clock) and, with the V4 Expansion Kit, <b>Sensors</b>.</p>
           <h3>App drawer</h3>
-          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, VNC, Settings, then Files, Store, Cmdr and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too.</p>
-          <h3>Commander</h3>
-          <p>A status page for your node: its Wi-Fi address, unread messages, memory, packets sent and received, a live signal chart, and buttons for Advert, Terminal, Files, Apps and Control. The <b>Cmdr</b> tile in the App drawer opens it as well.</p>
+          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, VNC, Settings, then Files, Store, Home and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too. Tap the Home button again, or the <b>Home</b> tile, to go back to your widgets.</p>
           <h3>Choosing between them</h3>
-          <p><b>Hold the Home tab</b> for the launcher settings: whether the Home button opens the Commander or the App drawer, and whether the app icons are compact or large. The same sheet is under <b>Settings &rarr; Display &rarr; Launcher layout</b>.</p>
+          <p><b>Hold the Home tab</b> for the launcher settings: whether the Home button opens your widgets or the App drawer, and whether the app icons are compact or large. The same sheet is under <b>Settings &rarr; Display &rarr; Launcher layout</b>.</p>
           <h3>The status bar</h3>
           <p>Unread messages on the left, the clock in the middle, signal and battery on the right, with Wi-Fi and Bluetooth small and grey beside them. On the Home tab your node name scrolls along the left. <b>Tap the bar</b> to open the <a href="#control">control panel</a>; inside a chat or on a settings page the bar carries a back chevron instead, and a tap goes back.</p>
           <h3>Building it yourself <span class="tag">Dev</span></h3>
@@ -205,7 +209,8 @@
         <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png?v=90" alt="Home: the App drawer"></div><div class="cap">Home: the App drawer</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/home_cmdr.png?v=89" alt="The Commander status page"><div class="cap">The Commander</div></div>
+        <div class="mini"><img src="docs-img/home_widgets.png?v=91" alt="Home with the Glance widgets"><div class="cap">Home: the Glance widgets</div></div>
+        <div class="mini"><img src="docs-img/home_arrange.png?v=91" alt="Arranging the widgets"><div class="cap">Hold a widget to arrange</div></div>
         <div class="mini"><img src="docs-img/launcher_sheet.png?v=89" alt="Launcher settings sheet"><div class="cap">Hold Home: launcher settings</div></div>
       </div>
     </section>

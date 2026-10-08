@@ -1,0 +1,35 @@
+# beta_91 - Home becomes widgets, a background behind every screen, GPS in the bar. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, Home, backgrounds, GPS and battery, then smaller changes.
+
+Test build, on top of beta_90. The stable build stays beta_85.
+Home looks different: it is made of widgets now. Your old Home is still there as the Commander preset, in Settings > Display > Home.
+
+# --- Home ---
+Home is now widgets you arrange yourself. Hold any widget to arrange Home: drag to move, pick small, wide or large, add from the catalog, remove, and set each widget's options. Each orientation keeps its own layout.
+Start from a preset: Glance (the new default), Commander (the old Home, rebuilt from widgets), Radio, Minimal or Sensors.
+Twenty-four widgets: clock, sun and moon, system, note, unread, chat, mentions, heard, nearest, remote sensor, radio, signal, airtime, GPS, position, battery, sensors (Expansion Kit), links, advert, app, switches and app widgets, plus a mesh radar on the 8 MB boards and a compass on the ThinkNode M9. Tapping a widget opens what it shows.
+Unread, Chat and Mentions have a large size that lists the messages themselves. Mentions now shows the message that names you, not the chat's latest line, and counts messages instead of chats.
+Lua apps can put a widget on Home (wada.widget.set, on boards with the extended SDK). Airtime 1.5 does.
+Keypad boards arrange Home from Settings > Display > Home; the M9 can also hold Enter.
+
+# --- Backgrounds ---
+Settings > Theme > Background: an aurora behind every screen in your accent colour (every colour with Taste the rainbow), still by default or moving in a slow loop; a colour of your own; a picture; or none, the plain black page (the light page by day). It waits for Apply, like the other colour settings.
+A colour or a picture is darkened, or lightened by day, just enough for all text to stay readable. For a picture, open a JPEG in Files and tap Set as background. The Heltec V4 has no picture option: a full-screen picture takes too much of its memory.
+Over a background, cards and Home widgets are glass: the background shows through them. The top bar is smoked glass, dark at night and light by day, and the dark band under the tall bar on settings pages is gone.
+The moving aurora only moves while you are not touching anything, and stays still with the battery saver on.
+
+# --- GPS and battery ---
+A GPS icon in the top bar: a grey crosshair while it searches, a lit pin once it has a position. It hides while GPS is off.
+GPS battery saver, in Settings > GPS > Battery: the GPS rests between position checks (every 2, 5, 15 or 30 minutes) and stays awake while the map, the GPS page or Discover is open. Boards with a GPS power switch turn it off; a u-blox receiver like the T-Deck Plus's is told to stop instead, so switching GPS off on the T-Deck now saves power too.
+The battery saver now works with Bluetooth or Wi-Fi on. It used to wait until both were off, which was almost never; now only a connected phone app or someone watching the web view holds it off. It also rests the GPS and keeps a moving background still.
+
+# --- Smaller changes ---
+The navigation bar can sit at the bottom, the top, the left or the right (Settings > Display > Navigation bar). On the left or right it becomes a rail.
+Every settings page now uses the same cards and rows as the rest of the redesign.
+The app drawer scrolls more smoothly: Home was redrawn underneath it on every frame.
+The screensaver guards better against burn-in: the picture turns slowly (once an hour), drifts a few pixels, and the status moves to another corner every two minutes.
+Text wraps only at spaces now, so a wrapped line no longer starts with a stray space after a comma or full stop.
+Heltec V4-R8: the Store's Apps tab is back. The R8 was being treated like the 2 MB V4, which has its apps built in.
+SDK Test is now marked as needing the extended SDK, so it is no longer built into the Heltec V4, where it could not test anything.
+Text that is new in this build shows in English for now. The translations follow once the wording has settled.
