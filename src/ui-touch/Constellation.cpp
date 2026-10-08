@@ -98,6 +98,21 @@ lv_coord_t s_w = 0, s_h = 0, s_cx = 0, s_cy = 0, s_R = 0;
 int        s_k = 100;           // geometry scale in percent; 100 = a 240 px short side
 bool       s_portrait = false;
 
+// Burn-in. The whole mesh turns slowly about you, a step every five seconds and a
+// turn an hour, and you drift a few pixels on a slow figure of eight, so no dot,
+// ring, route or name keeps the same pixels for long, and north is wherever the
+// turn has got to (the N goes with it). Both follow the time since boot instead of
+// starting over with each show: a screensaver that only ever runs for a few seconds
+// at a time still turns. Your own node pulses rather than holding a solid disc.
+constexpr uint32_t kTurnStepMs = 5000;
+constexpr uint32_t kTurnSteps  = 720;      // half a degree a step
+float      s_rot = 0.0f;                   // how far the mesh is turned, degrees clockwise
+uint32_t   s_turn_step = 0xFFFFFFFFu;      // the step last drawn
+lv_coord_t s_cx0 = 0, s_cy0 = 0;           // the centre before the drift
+lv_obj_t*  s_core = nullptr;               // you: the core, its glow and its ring, all pulsing
+lv_obj_t*  s_core_glow = nullptr;
+lv_obj_t*  s_self_ring = nullptr;
+
 CstNode    s_nodes[kMaxNodes];
 Pt         s_pos[kMaxNodes];
 int        s_n   = 0;
@@ -251,10 +266,24 @@ void layout() {
     s_cy = s_h * 55 / 100;
     s_R  = LV_MIN(s_h * 45 / 100, s_w * 34 / 100);
   }
+  s_R = LV_MAX(K(20), (lv_coord_t)(s_R - K(5)));   // room for the drift (applyTurn) on every side
+  s_cx0 = s_cx;
+  s_cy0 = s_cy;
+}
+
+// The turn and the drift for this moment (see s_rot): the step from the time since
+// boot, the drift a slow figure of eight, out of step with the turn.
+void applyTurn(uint32_t now) {
+  s_turn_step = now / kTurnStepMs;
+  s_rot = (float)(s_turn_step % kTurnSteps) * (360.0f / (float)kTurnSteps);
+  const float t = (float)(now % 1380000u) * (6.2831853f / 1380000.0f);   // across: 23 minutes
+  const float u = (float)(now % 1020000u) * (6.2831853f / 1020000.0f);   // up and down: 17 minutes
+  s_cx = s_cx0 + (lv_coord_t)lroundf((float)K(5) * sinf(t));
+  s_cy = s_cy0 + (lv_coord_t)lroundf((float)K(5) * sinf(u));
 }
 
 Pt place(const CstNode& n) {
-  const float a = (float)n.bearing * 0.017453292f;
+  const float a = ((float)n.bearing + s_rot) * 0.017453292f;   // turned with the mesh
   const float r = (float)(n.dist > 1000 ? 1000 : n.dist) / 1000.0f * (float)s_R;
   return { (lv_coord_t)lroundf((float)s_cx + r * sinf(a)),
            (lv_coord_t)lroundf((float)s_cy - r * cosf(a)) };
@@ -266,18 +295,20 @@ Pt place(const CstNode& n) {
 // scale and not as content. Only the rings that cross the area being redrawn
 // are walked.
 void ringsBuild() {
-  if (s_ring_dot) { lv_mem_free(s_ring_dot); s_ring_dot = nullptr; }
   s_ring_n = 0;
   const float step = (float)K(4);
   int total = 0;
   for (int k = 1; k <= 3; ++k) total += LV_MAX(12, (int)(6.2831853f * ((float)s_R * k / 3.0f) / step));
-  s_ring_dot = static_cast<RingDot*>(lv_mem_alloc(sizeof(RingDot) * (size_t)total));
+  // The count depends only on the radius, fixed for a show: allocated once, and the
+  // dots turned with the mesh at every step (cstHide frees it).
+  if (!s_ring_dot) s_ring_dot = static_cast<RingDot*>(lv_mem_alloc(sizeof(RingDot) * (size_t)total));
   if (!s_ring_dot) return;
+  const float rot = s_rot * 0.017453292f;
   for (int k = 1; k <= 3; ++k) {
     const float r = (float)s_R * (float)k / 3.0f;
     const int n = LV_MAX(12, (int)(6.2831853f * r / step));
     for (int j = 0; j < n && s_ring_n < total; ++j) {
-      const float t = 6.2831853f * (float)j / (float)n;
+      const float t = 6.2831853f * (float)j / (float)n + rot;
       s_ring_dot[s_ring_n++] = { (int16_t)lroundf(r * sinf(t)), (int16_t)lroundf(-r * cosf(t)) };
     }
   }
@@ -567,7 +598,7 @@ void sweepDrawCb(lv_event_t* e) {
   lv_draw_rect_dsc_init(&rd);
   rd.radius = LV_RADIUS_CIRCLE;
   for (int i = 0; i < s_n; ++i) {
-    const float d = behindBeam(beam, (float)s_nodes[i].bearing);
+    const float d = behindBeam(beam, (float)s_nodes[i].bearing + s_rot);   // where the turn has it
     if (d > (float)kTailDeg) continue;
     const float f = d / (float)kTailDeg;                     // 0 at the beam, 1 faded
     const lv_point_t p = { (lv_coord_t)(a.x1 + s_pos[i].x), (lv_coord_t)(a.y1 + s_pos[i].y) };
@@ -679,7 +710,7 @@ void sweepTimerCb(lv_timer_t*) {
   lv_area_t all = { 32767, 32767, -32768, -32768 };
   int flares = 0;
   for (int i = 0; i < s_n; ++i) {
-    if (behindBeam(beam, (float)s_nodes[i].bearing) > (float)kTailDeg + 8.0f) continue;
+    if (behindBeam(beam, (float)s_nodes[i].bearing + s_rot) > (float)kTailDeg + 8.0f) continue;
     const lv_area_t f = { (lv_coord_t)(o.x1 + s_pos[i].x - m), (lv_coord_t)(o.y1 + s_pos[i].y - m),
                           (lv_coord_t)(o.x1 + s_pos[i].x + m), (lv_coord_t)(o.y1 + s_pos[i].y + m) };
     if (flares < 5) lv_obj_invalidate_area(s_sweep, &f);
@@ -752,6 +783,24 @@ void haloExec(void* var, int32_t v) {
   lv_obj_set_size(o, d, d);
   lv_obj_set_pos(o, s_cx - d / 2, s_cy - d / 2);
   lv_obj_set_style_border_opa(o, (lv_opa_t)(140 * (1000 - v) / 1000), 0);
+}
+
+// You, pulsing: the core, its glow and its ring swell and brighten together, then
+// shrink and dim, so the centre never holds one solid disc. Positions are set here
+// too, which keeps them on the drifting centre.
+void corePulseExec(void* var, int32_t v) {
+  lv_obj_t* core = static_cast<lv_obj_t*>(var);
+  const lv_coord_t d = K(5) + (lv_coord_t)((int32_t)(K(9) - K(5)) * v / 1000);
+  lv_obj_set_size(core, d, d);
+  lv_obj_set_pos(core, s_cx - d / 2, s_cy - d / 2);
+  lv_obj_set_style_bg_opa(core, (lv_opa_t)(70 + 185 * v / 1000), 0);
+  if (s_core_glow) {
+    const lv_coord_t g = K(9) + (lv_coord_t)((int32_t)(K(16) - K(9)) * v / 1000);
+    lv_obj_set_size(s_core_glow, g, g);
+    lv_obj_set_pos(s_core_glow, s_cx - g / 2, s_cy - g / 2);
+    lv_obj_set_style_bg_opa(s_core_glow, (lv_opa_t)(20 + 60 * v / 1000), 0);
+  }
+  if (s_self_ring) lv_obj_set_style_border_opa(s_self_ring, (lv_opa_t)(25 + 75 * v / 1000), 0);
 }
 
 void pingExec(void* var, int32_t v) {
@@ -959,6 +1008,20 @@ void drawNodeLabel(int i) {
   lv_obj_set_pos(l, at->x0, at->y0);
 }
 
+// The N: just outside the outer ring where the turn has taken north, or just inside
+// it where outside would leave the screen.
+Box s_north_box = { 0, 0, 0, 0 };
+void northPlace() {
+  if (!s_north) return;
+  const lv_coord_t lh = lv_font_get_line_height(small());
+  const lv_coord_t hw = K(10);
+  lv_point_t p = polarPt(s_cx, s_cy, s_rot, (float)(s_R + K(2) + lh / 2));
+  if (p.x - hw < 0 || p.x + hw > s_w || p.y - lh / 2 < 0 || p.y + lh / 2 > s_h)
+    p = polarPt(s_cx, s_cy, s_rot, (float)(s_R - K(2) - lh / 2));
+  lv_obj_set_pos(s_north, p.x - hw, p.y - lh / 2);
+  s_north_box = { (lv_coord_t)(p.x - hw), (lv_coord_t)(p.y - lh / 2), (lv_coord_t)(p.x + hw), (lv_coord_t)(p.y + lh / 2) };
+}
+
 // What labels must stay clear of: the status text and your own node. Sizes are
 // worked out from the fonts, not read back from the labels, which have not been
 // laid out yet when the nodes are drawn.
@@ -969,10 +1032,7 @@ void reserveHud() {
   const lv_coord_t cw = lv_txt_get_width("00:00", 5, CST_CLOCK_FONT, 0, LV_TEXT_FLAG_NONE);
   const lv_coord_t g = K(4);
   boxTake({ (lv_coord_t)(s_cx - K(14)), (lv_coord_t)(s_cy - K(14)), (lv_coord_t)(s_cx + K(14)), (lv_coord_t)(s_cy + K(14)) });
-  {   // the N above the outer ring
-    const lv_coord_t ny = s_cy - s_R - lh - K(2);
-    boxTake({ (lv_coord_t)(s_cx - K(10)), ny, (lv_coord_t)(s_cx + K(10)), (lv_coord_t)(ny + lh) });
-  }
+  boxTake(s_north_box);   // the N, wherever the turn has it
   const lv_coord_t clock_block = K(14) + ch + K(7) + lh + g;
   if (s_portrait) {
     const bool top = (s_hud & 1) == 0;
@@ -1097,6 +1157,7 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   if (!s_th.glow) s_th.glow = s_th.accent;
   if (!s_th.ter) s_th.ter = s_th.sub;
   layout();
+  applyTurn(lv_tick_get());   // where the turn and the drift are now
 
   s_root = bare(parent);
   lv_obj_set_size(s_root, s_w, s_h);
@@ -1125,15 +1186,12 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   lv_label_set_text(s_north, "N");
   lv_obj_set_width(s_north, K(20));
   lv_obj_set_style_text_align(s_north, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_pos(s_north, s_cx - K(10), s_cy - s_R - lv_font_get_line_height(small()) - K(2));
   lv_obj_add_flag(s_north, LV_OBJ_FLAG_HIDDEN);
+  northPlace();
 
   s_layer = bare(s_static);
   lv_obj_set_size(s_layer, s_w, s_h);
   lv_obj_set_pos(s_layer, 0, 0);
-
-  // You, at the centre: a faint ring, a solid core and a slow breath.
-  ring(s_static, s_cx, s_cy, K(15), 90);
 
   s_static_img = lv_img_create(s_scene);
   lv_obj_clear_flag(s_static_img, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -1146,15 +1204,29 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   lv_obj_set_pos(s_flow_obj, 0, 0);
   lv_obj_add_event_cb(s_flow_obj, flowDrawCb, LV_EVENT_DRAW_MAIN_END, nullptr);
 
+  // You, at the centre: a faint ring, a core with a soft glow, a slow breath going
+  // out from it, and the three of them pulsing (corePulseExec). Live objects rather
+  // than part of the still image, which would hold them on the same pixels.
+  s_self_ring = ring(s_scene, s_cx, s_cy, K(15), 90);
   s_halo = ring(s_scene, s_cx, s_cy, K(8), 140);
-  {   // a soft glow under the core (no shadow blur: the beam redraws it every frame)
-    lv_obj_t* g = disc(s_scene, s_cx, s_cy, K(14));
-    lv_obj_set_style_bg_color(g, C(s_th.glow), 0);
-    lv_obj_set_style_bg_opa(g, 70, 0);
+  s_core_glow = disc(s_scene, s_cx, s_cy, K(14));   // no shadow blur: the beam redraws it every frame
+  lv_obj_set_style_bg_color(s_core_glow, C(s_th.glow), 0);
+  lv_obj_set_style_bg_opa(s_core_glow, 70, 0);
+  s_core = disc(s_scene, s_cx, s_cy, K(8));
+  lv_obj_set_style_bg_color(s_core, C(s_th.glow), 0);
+  lv_obj_set_style_bg_opa(s_core, LV_OPA_COVER, 0);
+  {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, s_core);
+    lv_anim_set_exec_cb(&a, corePulseExec);
+    lv_anim_set_values(&a, 0, 1000);
+    lv_anim_set_time(&a, 2600);
+    lv_anim_set_playback_time(&a, 2600);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
+    lv_anim_start(&a);
   }
-  lv_obj_t* core = disc(s_scene, s_cx, s_cy, K(8));
-  lv_obj_set_style_bg_color(core, C(s_th.glow), 0);
-  lv_obj_set_style_bg_opa(core, LV_OPA_COVER, 0);
   {
     lv_anim_t a;
     lv_anim_init(&a);
@@ -1278,6 +1350,7 @@ void cstHide() {
   if (s_static_buf) { lv_mem_free(s_static_buf); s_static_buf = nullptr; }
   s_root = s_scene = s_static = s_static_img = s_layer = s_flow_obj = s_north = nullptr;
   s_clock = s_date = s_halo = nullptr;
+  s_core = s_core_glow = s_self_ring = nullptr;
   s_unread = s_unread_n = s_unread_w = nullptr;
   s_info = s_info_n = s_info_t = nullptr;
   s_batt = s_batt_chg = s_batt_l = s_batt_i = nullptr;
@@ -1313,15 +1386,11 @@ bool cstHudBands(lv_coord_t* top_end, lv_coord_t* bottom_start, bool* clock_top)
   return true;
 }
 
-void cstSetNodes(const CstNode* nodes, int count) {
-  if (!s_root || !nodes) return;
-  if (count < 0) count = 0;
-  if (count > kMaxNodes) count = kMaxNodes;
-  const uint32_t sig = signature(nodes, count);
-  if (sig == s_sig) return;
-  s_sig = sig;
-  memcpy(s_nodes, nodes, sizeof(CstNode) * (size_t)count);
-  s_n = count;
+namespace {
+// Everything in the still image, from the nodes and the turn as they are now:
+// placed, linked, lit along their routes, named, and drawn once into the image.
+void rebuildScene() {
+  northPlace();
   for (int i = 0; i < s_n; ++i) s_pos[i] = place(s_nodes[i]);
 
   lv_obj_clean(s_layer);
@@ -1363,6 +1432,19 @@ void cstSetNodes(const CstNode* nodes, int count) {
   for (int i = 0; i < s_n; ++i) drawNodeShape(i);
   for (int i = 0; i < s_n; ++i) drawNodeLabel(i);
   staticCache();
+}
+}  // namespace
+
+void cstSetNodes(const CstNode* nodes, int count) {
+  if (!s_root || !nodes) return;
+  if (count < 0) count = 0;
+  if (count > kMaxNodes) count = kMaxNodes;
+  const uint32_t sig = signature(nodes, count);
+  if (sig == s_sig) return;
+  s_sig = sig;
+  memcpy(s_nodes, nodes, sizeof(CstNode) * (size_t)count);
+  s_n = count;
+  rebuildScene();
 }
 
 void cstSetStatus(const CstStatus& s) {
@@ -1462,8 +1544,15 @@ void cstPingFar() {
 
 void cstTick(uint32_t now_ms) {
   if (!s_root) return;
-  // Burn-in: the status moves to another corner every two minutes (a fade out,
-  // a whole move, a fade in); the sweep keeps every part of the mesh changing.
+  // Burn-in: the mesh takes its next step round and drifts (applyTurn), and the
+  // status moves to another corner every two minutes (a fade out, a whole move, a
+  // fade in). The sweep keeps every part of the mesh changing in between.
+  if (now_ms / kTurnStepMs != s_turn_step) {
+    applyTurn(now_ms);
+    ringsBuild();
+    if (s_self_ring) lv_obj_set_pos(s_self_ring, s_cx - K(15) / 2, s_cy - K(15) / 2);
+    rebuildScene();
+  }
   if (!s_hud_ms) { s_hud_ms = now_ms ? now_ms : 1; return; }
   if ((uint32_t)(now_ms - s_hud_ms) >= kHudMoveMs) {
     s_hud_ms = now_ms ? now_ms : 1;

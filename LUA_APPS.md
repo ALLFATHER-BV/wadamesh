@@ -53,6 +53,9 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
   trackball, gps), `version()`, `toast(msg)`, `tr(s)` (the firmware's own
   translation table, so an app is not stuck in English).
 - `wada.timer` — `every(ms)` drives `on_tick` cadence (min 33 ms).
+- `wada.widget` (extended SDK) — `set{title, value, line, bar, spark}` publishes the app's
+  Home widget (at most once a second), `clear()` empties it. The last one is kept after the
+  app closes and written to `<root>/apps/<id>.wgt` at teardown; nothing runs headless.
 
 Sandbox env (no `io`, `os`, `require`, `dofile`, `load` of new chunks;
 whitelisted stdlib: `math`, `string`, `table`, `pairs/ipairs/select/pcall/

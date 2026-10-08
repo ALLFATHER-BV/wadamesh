@@ -9,8 +9,8 @@
     {
       "id": "airtime",
       "name": "Airtime",
-      "ver": "1.4",
-      "desc": "Utilization bars with a % axis, rx/tx split, duty ceiling, budget. Reset button top-right."
+      "ver": "1.5",
+      "desc": "Utilization bars with a % axis, rx/tx split, duty ceiling, budget. Reset button top-right. Keeps a Home widget with the channel load while it runs."
     },
     {
       "id": "snake",
@@ -35,7 +35,8 @@
       "id": "sdktest",
       "name": "SDK Test",
       "ver": "1.7",
-      "desc": "Developer tool. Checks the extended Lua SDK on this board: capabilities, clock, battery, GPS, private file access, audio API, read-only SD listing, crypto against published RFC vectors, channel discovery, and buttons that TRANSMIT test messages."
+      "desc": "Developer tool. Checks the extended Lua SDK on this board: capabilities, clock, battery, GPS, private file access, audio API, read-only SD listing, crypto against published RFC vectors, channel discovery, and buttons that TRANSMIT test messages.",
+      "requires": "sdk_ext"
     },
     {
       "id": "2048",
