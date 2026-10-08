@@ -631,11 +631,6 @@ static uint32_t COLOR_CHAT_LINK = 0x4EA1FF;
 static uint32_t COLOR_CHAT_SENT_BG = kNightPalette.sent_bg;
 static uint32_t COLOR_CHAT_RECV_BG = kNightPalette.recv_bg;
 static uint32_t COLOR_CHAT_MENTION_BG = kNightPalette.mention_bg;
-// Reply-quote mini bubble: a muted ground and a subtle left accent. The
-// background is a darker shade of the surrounding bubble so the quote reads
-// as "contained" without competing with the message body.
-static uint32_t COLOR_REPLY_QUOTE_BG = 0x1A1A1A;
-static uint32_t COLOR_REPLY_QUOTE_BORDER = 0x3A3A3A;
 
 // Perceived luminance 0..255 (keep the accent dark enough for off-white text).
 static inline uint32_t accentLuma(uint32_t rgb) {
@@ -768,9 +763,6 @@ static void applyThemeMode(uint8_t mode) {
                                              : (s_theme_day ? 0x3C4852u : p.recv_bg);
   COLOR_CHAT_MENTION_BG = s_theme_high_contrast ? 0x003F7Fu
                                                  : (s_theme_day ? 0x1D5F8Au : p.mention_bg);
-  COLOR_REPLY_QUOTE_BG     = s_theme_day ? 0xD0D0D0u : 0x1A1A1Au;
-  COLOR_REPLY_QUOTE_BORDER = s_theme_high_contrast ? 0xFFFFFFu
-                           : s_theme_day ? 0x909090u : 0x3A3A3Au;
 }
 
 static inline uint32_t themeRole(uint32_t night, uint32_t day) {
@@ -41592,9 +41584,10 @@ static constexpr lv_coord_t  kChatCompactPadV   = 1;
 static constexpr lv_coord_t  kChatDividerH       = 16;
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w);
+                                          bool thread_is_room, lv_coord_t bubble_max_w,
+                                          int ring_idx);
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
-                                              int logical_i);
+                                              int logical_i, int ring_idx);
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
                                            lv_coord_t vp_y, lv_coord_t* out_jump_y);
 static lv_coord_t chatVirtMsgContentY(int logical_i);
@@ -41610,11 +41603,14 @@ struct ChatBubbleDisplay {
   char san_sender[UITask::MAX_SENDER_NAME + 8];
   char san_text[UITask::MAX_MSG_TEXT + 8];
   // Reply quote: message began with "@[sender]" — the prefix is stripped from
-  // show_text and the original message is rendered as a mini bubble. Only
-  // valid when has_reply is true. Kept small (single line, truncated) to
-  // avoid bloating this stack-allocated struct in deep render call chains.
+  // show_text and the original message is rendered as a two-line mini bubble:
+  // sender name on the first line, quoted text on the second. Only valid when
+  // has_reply is true. Truncated to fit the bubble width.
   bool has_reply = false;
-  char reply_text[84];  // "sender: text" truncated to mini-bubble width
+  char reply_sender[UITask::MAX_SENDER_NAME + 1];
+  char reply_text[84];
+  lv_color_t reply_sender_col = {0};  // quoted sender's name colour
+  lv_color_t reply_bubble_col = {0};  // quoted sender's bubble tint (darkened for mini-bubble)
 };
 
 struct ChatVirtLayout {
@@ -41698,7 +41694,7 @@ static lv_coord_t chatVirtLastBubbleHeight(LvChatPanel* p, int n) {
   if (!p || n <= 0 || !s_chat_msg_idx || !g_lv.task) return 40;
   UITask::UIMessage m;
   if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[n - 1], m)) return 40;
-  return chatMeasureMessageRowHeight(m, p, n - 1);
+  return chatMeasureMessageRowHeight(m, p, n - 1, s_chat_msg_idx[n - 1]);
 }
 
 static void chatVirtUpdateLvScale(LvChatPanel* p, int n, int32_t virt_total) {
@@ -41826,7 +41822,7 @@ static lv_coord_t chatVirtMeasuredHeightAt(LvChatPanel* p, int logical_i) {
     return 40;
   UITask::UIMessage m;
   if (!g_lv.task->getMessageByIndex(s_chat_msg_idx[logical_i], m)) return 40;
-  return chatMeasureMessageRowHeight(m, p, logical_i);
+  return chatMeasureMessageRowHeight(m, p, logical_i, s_chat_msg_idx[logical_i]);
 }
 
 #if TRACE_MESSAGE_SCROLL_ACTIVITY
@@ -41963,16 +41959,27 @@ static void chatVirtEnsureMsgIdx() {
   if (s_chat_msg_idx) s_chat_msg_idx_cap = need;
 }
 
-// Search the current thread's message list (newest-first) for the most recent
-// message from `sender_name`. On success, fills `d.reply_text` with the
-// "sender: text" mini-bubble content and returns true. Self-replies match our
-// own node name against outgoing messages. Returns false if no match is found
-// (the prefix is still stripped by the caller — only the mini bubble is skipped).
-static bool findReplyQuoteText(const char* sender_name, ChatBubbleDisplay& d) {
+// Search the current thread's message list for the most recent message from
+// `sender_name` that is OLDER than the reply at `current_ring_idx`. Messages
+// in s_chat_virt.msg_idx are oldest-first, so "older" means a lower array
+// index. On success, fills d.reply_text with the quoted text and returns true.
+// Self-replies match our own node name against outgoing messages. Returns
+// false if no older match is found — the caller strips the prefix but skips
+// the mini-bubble.
+static bool findReplyQuoteText(const char* sender_name, int current_ring_idx,
+                               ChatBubbleDisplay& d) {
   if (!sender_name || !sender_name[0] || !g_lv.task || !s_chat_virt.msg_idx) return false;
   const char* me = the_mesh.getNodePrefs()->node_name;
 
-  for (int i = s_chat_virt.n - 1; i >= 0; --i) {
+  // s_chat_virt.msg_idx is oldest-first. Find the current message's position,
+  // then search backward for older messages only.
+  int current_pos = -1;
+  for (int i = 0; i < s_chat_virt.n; ++i) {
+    if (s_chat_virt.msg_idx[i] == current_ring_idx) { current_pos = i; break; }
+  }
+  if (current_pos < 0) return false;
+
+  for (int i = current_pos - 1; i >= 0; --i) {
     UITask::UIMessage om;
     if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[i], om)) continue;
     bool match;
@@ -41984,22 +41991,38 @@ static bool findReplyQuoteText(const char* sender_name, ChatBubbleDisplay& d) {
     if (!match) continue;
 
     const char* orig_sender = om.outgoing ? me : om.sender;
-    // Bubble inner width minus padding and the accent bar; quote text uses g_font_12.
-    const lv_coord_t kAccentW = 4;
-    const lv_coord_t quote_max_w = s_chat_virt.bubble_max_w - 2 * kChatBubblePadH - kAccentW - 8;
-    ReplyQuote::formatQuote(orig_sender, om.text, quote_max_w, &g_font_12,
+    // Strip any nested @[sender] prefix from the quoted message.
+    const char* quote_text = om.text;
+    char rq2[UITask::MAX_SENDER_NAME + 1];
+    if (const char* nested = ReplyQuote::parse(quote_text, rq2, sizeof(rq2))) {
+      quote_text = nested;
+    }
+    constexpr lv_coord_t kQuotePad = 6;
+    const lv_coord_t quote_max_w = s_chat_virt.bubble_max_w - 2 * kChatBubblePadH - kQuotePad * 2;
+    ReplyQuote::formatQuote(orig_sender, quote_text, quote_max_w,
+                            &g_font_semi_12, &g_font_12,
+                            d.reply_sender, sizeof(d.reply_sender),
                             d.reply_text, sizeof(d.reply_text));
+    // Theme the mini-bubble with the quoted sender's colours, except in
+    // high-contrast and e-paper where we stay plain.
+#if !defined(HAS_TDECK_PRO)
+    if (!s_theme_high_contrast) {
+      usernameBubbleColors(orig_sender, &d.reply_bubble_col, &d.reply_sender_col);
+    }
+#endif
     return true;
   }
   return false;
 }
 
 static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mode,
-                                    bool thread_is_room, ChatBubbleDisplay& d) {
+                                    bool thread_is_room, int ring_idx,
+                                    ChatBubbleDisplay& d) {
   d.show_sender = m.sender;
   d.show_text   = m.text;
   d.retro_sender[0] = '\0';
   d.has_reply = false;
+  d.reply_sender[0] = '\0';
   if (!m.outgoing &&
       (thread_is_room ||
        (channel_mode &&
@@ -42011,15 +42034,14 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
       d.show_text   = body;
     }
   }
-  // Detect "@[sender]" reply-quote prefix after channel split (the split may
-  // have already changed show_text). Strip the prefix and look up the quoted
-  // message; compact-mode rows skip the mini bubble below but still strip.
+  // Detect and strip the @[sender] reply-quote prefix. The mini bubble only
+  // appears if the quoted message is actually found in the thread.
   {
     char rq_sender[UITask::MAX_SENDER_NAME + 1];
     const char* body = ReplyQuote::parse(d.show_text, rq_sender, sizeof(rq_sender));
     if (body) {
       d.show_text = body;
-      d.has_reply = findReplyQuoteText(rq_sender, d);
+      d.has_reply = findReplyQuoteText(rq_sender, ring_idx, d);
     }
   }
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
@@ -42045,7 +42067,7 @@ static void chatVirtGetThreadName(char* name, size_t len) {
 
 static const char* chatVirtSenderLabel(const UITask::UIMessage& m, bool channel_mode,
                                        ChatBubbleDisplay& d) {
-  chatParseMessageDisplay(m, channel_mode, s_chat_virt.thread_is_room, d);
+  chatParseMessageDisplay(m, channel_mode, s_chat_virt.thread_is_room, -1, d);
   if (d.show_sender && d.show_sender[0]) return d.show_sender;
   if (m.outgoing) return "(me)";
   return "?";
@@ -42307,15 +42329,15 @@ static void chatFootChainDrawCb(lv_event_t* e) {
 }
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
-                                          bool thread_is_room, lv_coord_t bubble_max_w) {
+                                          bool thread_is_room, lv_coord_t bubble_max_w,
+                                          int ring_idx) {
   ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, channel_mode, thread_is_room, d);
+  chatParseMessageDisplay(m, channel_mode, thread_is_room, ring_idx, d);
   const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
   const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
   lv_coord_t inner_y = show_sender ? lv_font_get_line_height(&g_font_semi_12) : 0;
-  // Reply-quote mini bubble: one line of g_font_12 (4px internal padding + 2px gap).
   if (d.has_reply) {
-    inner_y += lv_font_get_line_height(&g_font_12) + 6;
+    inner_y += lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12) + 6;
   }
 
   const lv_font_t* msg_font = chatMessageFont();
@@ -42451,14 +42473,14 @@ static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChat
 }
 
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
-                                              int logical_i) {
+                                              int logical_i, int ring_idx) {
   if (s_chat_virt.compact_chat) {
     ChatBubbleDisplay d{};
-    chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+    chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, ring_idx, d);
     return chatMeasureCompactRowHeight(m, p, logical_i, d);
   }
   return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
-                                 s_chat_virt.bubble_max_w);
+                                 s_chat_virt.bubble_max_w, ring_idx);
 }
 
 // Safe teardown for floating chat widgets — same pattern as popupClose: if the
@@ -42676,7 +42698,7 @@ static bool chatVirtTryAppendLayout(LvChatPanel* p, int n, int divider_i) {
       y += day_sep_h;
     }
     offs[i] = y;
-    y += chatMeasureMessageRowHeight(m, p, i) + row_gap;
+    y += chatMeasureMessageRowHeight(m, p, i, s_chat_msg_idx[i]) + row_gap;
   }
   offs[n] = y;
 
@@ -42764,7 +42786,7 @@ static bool chatVirtRebuildLayout(LvChatPanel* p, int n, int divider_i) {
       y += day_sep_h;
     }
     s_chat_virt.offsets[i] = y;
-    y += chatMeasureMessageRowHeight(m, p, i) + row_gap;
+    y += chatMeasureMessageRowHeight(m, p, i, s_chat_msg_idx[i]) + row_gap;
   }
   s_chat_virt.offsets[n] = y;
   chatVirtUpdateLvScale(p, n, y);
@@ -43063,7 +43085,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   if (!g_lv.task->getMessageByIndex(ring_idx, m)) return 0;
 
   ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, ring_idx, d);
   const lv_coord_t kContentW    = s_chat_virt.content_w;
   const lv_coord_t kBubbleMaxW  = s_chat_virt.bubble_max_w;
   // Every sender's name is in its own colour. The Colourful bubbles switch (and Taste
@@ -43106,9 +43128,28 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   const lv_coord_t sender_lh = lv_font_get_line_height(&g_font_semi_12);
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
-  // Reply-quote mini bubble adds one line of g_font_12 (4px internal padding + 2px gap).
-  const lv_coord_t reply_lh = d.has_reply ? lv_font_get_line_height(&g_font_12) + 6 : 0;
+  // Reply-quote mini bubble adds two lines: sender (g_font_semi_12) + text (g_font_12),
+  // with 4px internal padding + 2px gap below.
+  const lv_coord_t reply_lh = d.has_reply
+      ? lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12) + 6
+      : 0;
   lv_coord_t inner_w = LV_MAX(txt_w_used > 0 ? txt_w_used : 1, LV_MIN(sender_w, kInnerMaxW));
+  // Expand the bubble if either reply quote line is wider than the body.
+  // A short message like "hi" would otherwise squash the quote.
+  if (d.has_reply) {
+    constexpr lv_coord_t kQuotePad = 6;
+    const lv_coord_t pad = kQuotePad * 2;
+    if (d.reply_sender[0]) {
+      const lv_coord_t sw = lv_txt_get_width(d.reply_sender, strlen(d.reply_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
+      const lv_coord_t needed = sw + pad;
+      if (needed > inner_w) inner_w = LV_MIN(needed, kInnerMaxW);
+    }
+    if (d.reply_text[0]) {
+      const lv_coord_t tw = lv_txt_get_width(d.reply_text, strlen(d.reply_text), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+      const lv_coord_t needed = tw + pad;
+      if (needed > inner_w) inner_w = LV_MIN(needed, kInnerMaxW);
+    }
+  }
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
   const lv_coord_t bh = kChatBubblePadV * 2 + reply_lh + (show_sender_line ? sender_lh : 0) + wrapped.y;
 
@@ -43162,39 +43203,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_style_bg_color(bubble, lv_color_hex(COLOR_CONTROL_PRESSED), LV_PART_MAIN | LV_STATE_PRESSED);
 
   int inner_y = 0;
-  if (d.has_reply) {
-    // Mini quote bubble: muted ground, left accent bar, single line of text
-    // truncated with ellipsis. Sits at the top of the reply bubble.
-    const lv_coord_t kAccentW = 4;
-    const lv_coord_t mini_h = lv_font_get_line_height(&g_font_12) + 4;
-    lv_obj_t* quote = lv_obj_create(bubble);
-    lv_obj_remove_style_all(quote);
-    lv_obj_clear_flag(quote, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(quote, inner_w, mini_h);
-    lv_obj_set_pos(quote, 0, 0);
-    lv_obj_set_style_radius(quote, 4, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(quote, lv_color_hex(COLOR_REPLY_QUOTE_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(quote, LV_OPA_COVER, LV_PART_MAIN);
-    // Left accent bar.
-    lv_obj_t* accent = lv_obj_create(quote);
-    lv_obj_remove_style_all(accent);
-    lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(accent, kAccentW, mini_h);
-    lv_obj_set_pos(accent, 0, 0);
-    lv_obj_set_style_bg_color(accent, lv_color_hex(COLOR_REPLY_QUOTE_BORDER), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(accent, 0, LV_PART_MAIN);
-    // Quote text label.
-    lv_obj_t* qlbl = lv_label_create(quote);
-    lv_obj_set_style_text_font(qlbl, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(qlbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_label_set_text(qlbl, d.reply_text);
-    lv_label_set_long_mode(qlbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(qlbl, inner_w - kAccentW - 4);
-    lv_obj_set_pos(qlbl, kAccentW + 2, 2);
-
-    inner_y = mini_h + 2;  // gap below the mini bubble
-  }
   if (show_sender_line) {
     lv_obj_t* slbl = lv_label_create(bubble);
     lv_label_set_text(slbl, d.san_sender);
@@ -43204,6 +43212,42 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     lv_obj_set_size(slbl, LV_MIN(sender_w, inner_w), sender_lh);
     lv_obj_set_pos(slbl, 0, inner_y);
     inner_y += sender_lh;
+  }
+  if (d.has_reply) {
+    // Mini quote bubble tinted with the quoted sender's colours.
+    constexpr lv_coord_t kQuotePad = 6;
+    const lv_coord_t reply_sender_lh = lv_font_get_line_height(&g_font_semi_12);
+    const lv_coord_t text_lh = lv_font_get_line_height(&g_font_12);
+    const lv_coord_t mini_h = reply_sender_lh + text_lh + 4;
+    lv_obj_t* quote = lv_obj_create(bubble);
+    lv_obj_remove_style_all(quote);
+    lv_obj_clear_flag(quote, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(quote, inner_w, mini_h);
+    lv_obj_set_pos(quote, 0, inner_y);
+    lv_obj_set_style_radius(quote, 9, LV_PART_MAIN);
+    // Darken the sender's bubble colour so the mini-bubble reads as
+    // contained — especially when the reply is to the same sender.
+    const lv_color_t quote_bg = lv_color_mix(d.reply_bubble_col, lv_color_black(), 160);
+    lv_obj_set_style_bg_color(quote, quote_bg, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(quote, LV_OPA_COVER, LV_PART_MAIN);
+    if (d.reply_sender[0]) {
+      lv_obj_t* reply_slbl = lv_label_create(quote);
+      lv_obj_set_style_text_font(reply_slbl, &g_font_semi_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(reply_slbl, d.reply_sender_col, LV_PART_MAIN);
+      lv_label_set_text(reply_slbl, d.reply_sender);
+      lv_label_set_long_mode(reply_slbl, LV_LABEL_LONG_DOT);
+      lv_obj_set_width(reply_slbl, inner_w - kQuotePad * 2);
+      lv_obj_set_pos(reply_slbl, kQuotePad, 2);
+    }
+    lv_obj_t* qlbl = lv_label_create(quote);
+    lv_obj_set_style_text_font(qlbl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(qlbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_label_set_text(qlbl, d.reply_text);
+    lv_label_set_long_mode(qlbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(qlbl, inner_w - kQuotePad * 2);
+    lv_obj_set_pos(qlbl, kQuotePad, reply_sender_lh);
+
+    inner_y += mini_h + 2;  // gap below the mini bubble
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
@@ -43301,7 +43345,7 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   if (!g_lv.task->getMessageByIndex(ring_idx, m)) return 0;
 
   ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
+  chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, ring_idx, d);
   const bool mentions_me = (p->channel_mode || s_chat_virt.thread_is_room) &&
                            !m.outgoing && textMentionsMe(d.show_text);
   char line[640];

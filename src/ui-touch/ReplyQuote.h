@@ -6,34 +6,26 @@
 // A message beginning with "@[sender]" is a reply: the sender names the
 // contact whose most recent message in this thread is being answered. The
 // prefix is stripped for display and the original message is shown as a
-// single-line mini bubble at the top of the reply bubble (see UITask.cpp's
-// chatVirtCreateBubble).
+// two-line mini bubble (sender name + quoted text) inside the reply bubble
+// (see UITask.cpp's chatVirtCreateBubble).
 //
 // This file is self-contained text handling — message lookup stays in
 // UITask.cpp, which has the thread's ring buffer and sender list.
 
 #include <stddef.h>
 #include <string.h>
+
+#ifndef LVGL_H
 #include <lvgl.h>
+#endif
 
 namespace ReplyQuote {
 
 constexpr size_t kMaxSender = 31;   // UITask::MAX_SENDER_NAME
-constexpr size_t kMaxText   = 160;  // UITask::MAX_MSG_TEXT
 
 // ---------------------------------------------------------------------------
 // Prefix parsing
 // ---------------------------------------------------------------------------
-
-// Does `text` begin with the "@[name]" reply prefix?
-// Returns true only when a valid closing bracket follows a non-empty name.
-inline bool hasPrefix(const char* text) {
-  if (!text || text[0] != '@' || text[1] != '[') return false;
-  const char* close = strchr(text + 2, ']');
-  if (!close) return false;
-  // Non-empty name and within wire bounds.
-  return (close > text + 2) && (static_cast<size_t>(close - (text + 2)) <= kMaxSender);
-}
 
 // Extract the sender name and body start from a leading "@[name]" prefix.
 // Returns nullptr if `text` does not carry a valid prefix; otherwise fills
@@ -60,7 +52,7 @@ inline const char* parse(const char* text, char* sender_out, size_t sender_cap) 
 }
 
 // ---------------------------------------------------------------------------
-// Ellipsis truncation for the single-line mini bubble
+// Ellipsis truncation for mini-bubble text
 // ---------------------------------------------------------------------------
 
 inline bool utf8Continuation(char c) {
@@ -97,9 +89,11 @@ inline void fitLeadingEllipsis(const char* src, lv_coord_t max_w,
     if (utf8Continuation(src[i])) { ++i; continue; }
     // Build candidate "..." + src[i..] directly into out as a temp.
     size_t need = 3 + (len - i);
-    if (need + 1 > out_len) break;
+    // Skip candidates that can't fit the buffer, but keep looking for
+    // shorter tails that would.
+    if (need + 1 > out_len) { ++i; while (i < len && utf8Continuation(src[i])) ++i; continue; }
     char tmp[96];  // small temp; mini-bubble text is short
-    if (need + 1 > sizeof(tmp)) break;
+    if (need + 1 > sizeof(tmp)) { ++i; while (i < len && utf8Continuation(src[i])) ++i; continue; }
     memcpy(tmp, ell, 3);
     memcpy(tmp + 3, src + i, len - i);
     tmp[3 + (len - i)] = '\0';
@@ -118,19 +112,22 @@ inline void fitLeadingEllipsis(const char* src, lv_coord_t max_w,
 // Quote formatting
 // ---------------------------------------------------------------------------
 
-// Build the single-line mini-bubble text: "sender: original text" truncated
-// to fit `max_text_width` pixels in `font`. `out` is always NUL-terminated.
+// Build the two-line mini-bubble content for a reply quote. The sender name
+// goes on the first line (bold font), the quoted text on the second. Each is
+// independently truncated with leading ellipsis to fit `max_text_width`
+// pixels in its respective font. Both outputs are always NUL-terminated.
 inline void formatQuote(const char* sender, const char* text,
-                        lv_coord_t max_text_width, const lv_font_t* font,
-                        char* out, size_t out_len) {
-  if (!out || out_len == 0) return;
-  out[0] = '\0';
+                        lv_coord_t max_text_width,
+                        const lv_font_t* sender_font,
+                        const lv_font_t* text_font,
+                        char* sender_out, size_t sender_out_len,
+                        char* text_out, size_t text_out_len) {
   if (!sender) sender = "";
   if (!text) text = "";
-
-  char raw[kMaxText + kMaxSender + 4];
-  snprintf(raw, sizeof(raw), "%s: %s", sender, text);
-  fitLeadingEllipsis(raw, max_text_width, font, out, out_len);
+  fitLeadingEllipsis(sender, max_text_width, sender_font,
+                     sender_out, sender_out_len);
+  fitLeadingEllipsis(text, max_text_width, text_font,
+                     text_out, text_out_len);
 }
 
 }  // namespace ReplyQuote
