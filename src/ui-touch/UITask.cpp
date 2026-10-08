@@ -7103,6 +7103,8 @@ static void chatVirtJumpToOldest(LvChatPanel* p);
 static void chatVirtJumpToLatest(LvChatPanel* p);
 static void chatVirtScheduleRender(LvChatPanel* p);
 static void chatVirtApplyPendingScroll(LvChatPanel* p);
+static void chatVirtQueueScroll(LvChatPanel* p, lv_coord_t target);
+static bool chatVirtAwayFromBottom(LvChatPanel* p);
 static void refreshChatList(LvChatPanel& p);
 static void applyAccent(uint32_t rgb);            // theme accent (Settings -> Accent colour)
 static void openAccentPicker();
@@ -8840,6 +8842,11 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
   const lv_coord_t want = chatComposerBaseH() + (lv_coord_t)(lines - 1) * lh;
   if (want == s_comp_h) return;   // height unchanged → nothing to relayout
+  // Read before the bottom inset changes below: if the newest message was in
+  // view, keep it in view. Growing the inset alone left the scroll where it was,
+  // so the taller composer covered the last messages (#617; an @-mention wraps
+  // the text at once, which is where it showed).
+  const bool stick_bottom = p->detail_open && !chatVirtAwayFromBottom(p);
   s_comp_h = want;
   // Keyboard shown (V4) lifts the composer above the keys; otherwise (T-Deck, or
   // V4 with the keyboard down) it sits at the screen bottom.
@@ -8850,6 +8857,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
   lv_obj_set_style_pad_bottom(p->msgs, s_comp_h + 6, LV_PART_MAIN);
+  if (stick_bottom) chatVirtQueueScroll(p, LV_COORD_MAX);
 #if CAP_ROUND_CORNERS
   chatComposerPlaceButtons(p);   // keep the buttons centred on the grown text box
 #endif
@@ -37270,7 +37278,10 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
   styleCard(p.composer_ta);
   lv_obj_set_style_bg_color(p.composer_ta, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
-  lv_obj_set_style_radius(p.composer_ta, LV_RADIUS_CIRCLE, LV_PART_MAIN);   // pill shape
+  // A pill at one line. The radius is fixed at that size, not LV_RADIUS_CIRCLE:
+  // as the box grows, a circle radius would grow with it, and at four lines the
+  // curve cut through the start and end of the first and last lines (#617).
+  lv_obj_set_style_radius(p.composer_ta, (composer_h - 4 - chatComposerTopRowH()) / 2, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(p.composer_ta, SC(12), LV_PART_MAIN);
   // Keep a few px of vertical slack in the textarea CONTENT so it never sits at
   // exactly one line-height (that made the internal scroll oscillate ±1px per
@@ -40437,6 +40448,29 @@ static void chatBuildCompactPlainLine(const UITask::UIMessage& m, LvChatPanel* p
     snprintf(line + off, line_cap - off, "  %s%s", dglyph, reps);
 }
 
+// Colour emoji are 16-px images that sit on the text baseline, so in the small
+// message fonts they stand taller than the line above it (4 px at Montserrat
+// 12). A bubble's padding leaves room for that; a compact row's 1-px pad does
+// not, and its emoji lost their tops (#617). Rows that carry an emoji get the
+// overhang as extra top padding, measured in here and applied when built.
+static lv_coord_t chatCompactEmojiLift(const char* line) {
+#if LV_USE_IMGFONT
+  if (!line) return 0;
+  const lv_font_t* f = chatMessageFont();
+  const lv_coord_t ascent = f->line_height - f->base_line;
+  lv_coord_t tallest = 0;
+  uint32_t i = 0;
+  while (line[i]) {
+    const lv_img_dsc_t* eg = emojiGlyphLookup(_lv_txt_encoded_next(line, &i));
+    if (eg && (lv_coord_t)eg->header.h > tallest) tallest = eg->header.h;
+  }
+  return tallest > ascent ? tallest - ascent : 0;
+#else
+  (void)line;
+  return 0;
+#endif
+}
+
 static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
                                               int logical_i, const ChatBubbleDisplay& d) {
   (void)logical_i;
@@ -40449,7 +40483,7 @@ static lv_coord_t chatMeasureCompactRowHeight(const UITask::UIMessage& m, LvChat
   lv_point_t wrapped;
   lv_txt_get_size(&wrapped, line, chatMessageFont(), 0, 0,
                   inner_w > 0 ? inner_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  return wrapped.y + kChatCompactPadV * 2;
+  return wrapped.y + kChatCompactPadV * 2 + chatCompactEmojiLift(line);
 }
 
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
@@ -41300,6 +41334,7 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   // the separator there. It is measured into the row height below, so the
   // virtualizer's offsets follow it.
   lv_obj_set_style_pad_ver(row, kChatCompactPadV, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(row, kChatCompactPadV + chatCompactEmojiLift(line), LV_PART_MAIN);
   lv_obj_set_style_radius(row, 3, LV_PART_MAIN);
 #if defined(HAS_TDECK_PRO)
   if (epaper_channel) {
