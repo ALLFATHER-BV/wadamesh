@@ -1481,6 +1481,15 @@ bool touchPrefsSetCondenseNav(bool on) {
   s_cfg.condense_nav = on ? 1 : 0;
   return cfgFlush();
 }
+uint8_t touchPrefsGetNavPos() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.condense_nav <= TOUCH_NAV_LEFT ? s_cfg.condense_nav : TOUCH_NAV_BOTTOM;
+}
+bool touchPrefsSetNavPos(uint8_t pos) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.condense_nav = pos <= TOUCH_NAV_LEFT ? pos : TOUCH_NAV_BOTTOM;
+  return cfgFlush();
+}
 uint16_t touchPrefsGetReportedBeta() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.report_done_n;
@@ -2227,6 +2236,14 @@ static void prefsPutUShort(const char* key, uint16_t v) {
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
 }
+// ...and for the 32-bit ones (the background colour).
+static void prefsPutUInt(const char* key, uint32_t v) {
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return; }
+  s_prefs.putUInt(key, v);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+}
 bool touchPrefsGetSoundMessages() {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("snd_msg", 1) != 0;
@@ -2393,6 +2410,50 @@ uint8_t touchPrefsGetColorStyle() {
 void touchPrefsSetColorStyle(uint8_t style) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_style", style > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : style); }
 bool touchPrefsGetRainbow() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("col_rb", 0) != 0; }
 void touchPrefsSetRainbow(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_rb", on ? 1 : 0); }
+static void prefsPutUInt(const char* key, uint32_t v);   // the re-open dance, below with its siblings
+bool touchPrefsGetGpsSaver() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("gps_save", 0) != 0; }
+void touchPrefsSetGpsSaver(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("gps_save", on ? 1 : 0); }
+uint8_t touchPrefsGetGpsSaverEvery() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("gps_every", 1);
+  return v > 3 ? 1 : v;
+}
+void touchPrefsSetGpsSaverEvery(uint8_t idx) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("gps_every", idx > 3 ? 1 : idx); }
+uint8_t touchPrefsGetBackground() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("bg_kind", TOUCH_BG_AURORA);
+  return v > TOUCH_BG_NONE ? TOUCH_BG_AURORA : v;
+}
+void touchPrefsSetBackground(uint8_t kind) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("bg_kind", kind > TOUCH_BG_NONE ? TOUCH_BG_AURORA : kind);
+}
+uint32_t touchPrefsGetBackgroundColor() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.isKey("bg_col") ? s_prefs.getUInt("bg_col", 0xFFFFFFFFu) : 0xFFFFFFFFu;
+}
+void touchPrefsSetBackgroundColor(uint32_t rgb) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bg_col", rgb); }
+int touchPrefsGetBackgroundImage(char* out, int out_cap) {
+  if (!out || out_cap <= 0) return 0;
+  out[0] = '\0';
+  if (!s_begun) touchPrefsBegin();
+  String v = prefsGetStr("bg_img", String(""));
+  int n = (int)v.length();
+  if (n > out_cap - 1) n = out_cap - 1;
+  memcpy(out, v.c_str(), (size_t)n);
+  out[n] = '\0';
+  return n;
+}
+bool touchPrefsSetBackgroundImage(const char* path) {
+  if (!path) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  const bool ok = path[0] ? s_prefs.putString("bg_img", path) > 0 : (s_prefs.remove("bg_img"), true);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
@@ -2756,7 +2817,7 @@ static int backupKeys(BkKey* out, int cap) {
     "snd_msg", "snd_men", "snd_dm", "snd_vol", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
-    "chat_icons", "col_more", "col_style", "col_rb",
+    "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');
@@ -2776,6 +2837,8 @@ static int backupKeys(BkKey* out, int cap) {
     wifiNetKey(i, 'r', k); add(k, 'u');
   }
   add("wnctr", 'u');
+  add("bg_col", 'u');
+  add("bg_img", 't');
   for (int i = 0; i < TOUCH_WIFI_SLOT_COUNT; ++i) {
     wifiSlotKey(i, 'l', k); add(k, 't');
     wifiSlotKey(i, 's', k); add(k, 't');

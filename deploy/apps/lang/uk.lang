@@ -1132,7 +1132,6 @@ turn on if your keyboard types the wrong letters; disables modifier latching	tur
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
-Accent colour	Accent colour
 Loud alerts	Loud alerts
 Loud alerts: off	Loud alerts: off
 Loud alerts: on	Loud alerts: on
@@ -1518,3 +1517,340 @@ Regular	Regular
 Ridge at six?	Ridge at six?
 Taste the rainbow	Taste the rainbow
 Use this colour	Use this colour
+# Settings pages on the new kit: new strings, English placeholders until translated (value = key)
+(empty)	(empty)
+0 adds from any distance, 1 only nodes heard directly, and N up to N-1 hops away.	0 adds from any distance, 1 only nodes heard directly, and N up to N-1 hops away.
+1 byte	1 byte
+2 bytes	2 bytes
+3 bytes	3 bytes
+@ mentions	@ mentions
+A card with the message when one arrives while the screen is dark.	A card with the message when one arrives while the screen is dark.
+A higher-pitched chime, louder on most buzzers.	A higher-pitched chime, louder on most buzzers.
+A little more receive sensitivity for a little more current.	A little more receive sensitivity for a little more current.
+A mention has its own sound and switch, so it can get through when messages are quiet.	A mention has its own sound and switch, so it can get through when messages are quiet.
+A new node replaces the oldest contact. Favourites are never replaced.	A new node replaces the oldest contact. Favourites are never replaced.
+A node you hear an advert from joins Contacts when its type is on here.	A node you hear an advert from joins Contacts when its type is on here.
+A short note on screen when a node is added.	A short note on screen when a node is added.
+Add automatically	Add automatically
+Adverts reach every node in range, unencrypted. GPS > Location privacy can shift the position they carry.	Adverts reach every node in range, unencrypted. GPS > Location privacy can shift the position they carry.
+After a cold start	After a cold start
+After this many failed background saves the chat is saved straight away, which can stutter the screen for a moment. Off keeps retrying in the background.	After this many failed background saves the chat is saved straight away, which can stutter the screen for a moment. Off keeps retrying in the background.
+Allow open networks for it	Allow open networks for it
+Always on: e-paper keeps showing its last frame.	Always on: e-paper keeps showing its last frame.
+Anyone who asks	Anyone who asks
+Applies after a restart.	Applies after a restart.
+Backlight	Backlight
+Bandwidth (kHz)	Bandwidth (kHz)
+Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
+Battery saver	Battery saver
+Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
+Bottom	Bottom
+Brightness	Brightness
+Broker	Broker
+By hand (local time)	By hand (local time)
+Calibrate as full	Calibrate as full
+Chat history	Chat history
+Chat users	Chat users
+Chosen contacts only	Chosen contacts only
+Community preset	Пресет спільноти
+Connected to %s	Connected to %s
+Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
+Custom UTC offset	Custom UTC offset
+Device	Device
+Direct messages	Direct messages
+Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
+Encryption	Encryption
+Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.	Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.
+Experimental. Throttles the processor while the device sits idle.	Experimental. Throttles the processor while the device sits idle.
+Export	Export
+Export backup	Export backup
+Firmware	Firmware
+Firmware %s\nDevelopment build: the update check is off.	Firmware %s\nDevelopment build: the update check is off.
+Flashes on a new message and breathes while any are unread.	Flashes on a new message and breathes while any are unread.
+Forwards other nodes' packets, like a repeater. Costs airtime and battery.	Forwards other nodes' packets, like a repeater. Costs airtime and battery.
+Frequency (MHz)	Frequency (MHz)
+From	From
+Hold the key to copy it.	Hold the key to copy it.
+Huge	Huge
+Huge text	Huge text
+Joins a saved network briefly at boot just to set the clock.	Joins a saved network briefly at boot just to set the clock.
+Jumbo	Jumbo
+Keep per chat	Keep per chat
+Keeps your node's name off the status bar.	Keeps your node's name off the status bar.
+Keyboard layouts	Keyboard layouts
+Large text	Large text
+Layout	Layout
+Letters move the highlight when no text field is focused; they still type in text fields.	Letters move the highlight when no text field is focused; they still type in text fields.
+Lights the keyboard and wakes the screen when a message arrives.	Lights the keyboard and wakes the screen when a message arrives.
+Location sharing	Location sharing
+Locking	Locking
+Look	Look
+Low memory	Low memory
+MQTT bridge saved and on	MQTT bridge saved and on
+MQTT bridge saved, off	MQTT bridge saved, off
+Max	Max
+Max duty cycle	Max duty cycle
+Medium	Medium
+Mesh	Mesh
+Message light	Message light
+Minutes, 1 to 1440.	Minutes, 1 to 1440.
+Mode: BLE off	Mode: BLE off
+Mode: BLE off (Wi-Fi on)	Mode: BLE off (Wi-Fi on)
+Mode: BLE on	Mode: BLE on
+Mode: BLE on (+ Wi-Fi)	Mode: BLE on (+ Wi-Fi)
+More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.	More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.
+Moving the data to the SD card did not finish. Identity and settings are still internal; Copy internal data to SD tries again.	Moving the data to the SD card did not finish. Identity and settings are still internal; Copy internal data to SD tries again.
+Moving the navigation bar, restarting…	Moving the navigation bar, restarting…
+Navigation	Navigation
+Navigation bar	Navigation bar
+New messages	New messages
+No GPS module on this device. You can still set your advert position by hand in Profile.	No GPS module on this device. You can still set your advert position by hand in Profile.
+No backups yet. Use Export backup above to create one.	No backups yet. Use Export backup above to create one.
+No limit	No limit
+No messages yet.\nSay hello!	No messages yet.\nSay hello!
+No network chosen yet.	No network chosen yet.
+No sensors on this device.	No sensors on this device.
+No thread selected.\n\nTap a chat to open it.	No thread selected.\n\nTap a chat to open it.
+Normal	Normal
+Not asked yet	Not asked yet
+Nothing above applies until you save.	Nothing above applies until you save.
+Off reuses meshcore-backup.json, the file name the MeshCore app uses.	Off reuses meshcore-backup.json, the file name the MeshCore app uses.
+Off sends them the shifted position your adverts use (GPS > Location privacy).	Off sends them the shifted position your adverts use (GPS > Location privacy).
+Off shows who wrote and how many, not what.	Off shows who wrote and how many, not what.
+Off silences everything below.	Off silences everything below.
+Off: Enter adds a new line, and Send sends.	Off: Enter adds a new line, and Send sends.
+On the left or right it becomes a rail, and Home shows its buttons as icons.	On the left or right it becomes a rail, and Home shows its buttons as icons.
+Orientation	Orientation
+Other people's private messages to you. Only to a broker you control.	Other people's private messages to you. Only to a broker you control.
+Others see your advertised position shifted by up to this much; your own map keeps the real fix.	Others see your advertised position shifted by up to this much; your own map keeps the real fix.
+PIN	PIN
+Pair the phone app over Wi-Fi instead: join this device to your network, then add it in the app by its IP address (TCP, port 5000), shown on the Wi-Fi page. USB works too.	Pair the phone app over Wi-Fi instead: join this device to your network, then add it in the app by its IP address (TCP, port 5000), shown on the Wi-Fi page. USB works too.
+Pick accented letters as you type. Off is plain typing.	Pick accented letters as you type. Off is plain typing.
+Pick one from the quick-reply button beside the message box in any chat. An empty slot is skipped.	Pick one from the quick-reply button beside the message box in any chat. An empty slot is skipped.
+Picking one applies it straight away.	Picking one applies it straight away.
+Play a sound for	Play a sound for
+Privacy	Privacy
+Publish	Publish
+Push the cursor past a screen edge to scroll what is under it.	Push the cursor past a screen edge to scroll what is under it.
+Quick reply saved	Quick reply saved
+Radio	Radio
+Receiver	Receiver
+Replaces identity, channels and contacts with the backup's, then restarts.	Replaces identity, channels and contacts with the backup's, then restarts.
+Room servers	Room servers
+Routing	Routing
+SD data is unavailable: contacts and channels cannot be saved until the card is back.	SD data is unavailable: contacts and channels cannot be saved until the card is back.
+SD data is unavailable: identity, settings, contacts and channels cannot be saved until the card is back.	SD data is unavailable: identity, settings, contacts and channels cannot be saved until the card is back.
+SF is the spreading factor, CR the coding rate, AF the airtime factor. A field applies when you leave it.	SF is the spreading factor, CR the coding rate, AF the airtime factor. A field applies when you leave it.
+Save in the foreground after	Save in the foreground after
+Saved to the SD card when one is in, otherwise to internal storage.	Saved to the SD card when one is in, otherwise to internal storage.
+Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
+Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.	Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.
+Sends an extra copy of each ACK, so the sender is likelier to hear one.	Sends an extra copy of each ACK, so the sender is likelier to hear one.
+Serial speed	Serial speed
+Set the time	Set the time
+Shows the message text on a locked device too.	Shows the message text on a locked device too.
+Silences the message sounds between these times every day. Messages still arrive.	Silences the message sounds between these times every day. Messages still arrive.
+Small	Small
+Sounds	Sounds
+Status bar & units	Status bar & units
+Store data on the SD card	Store data on the SD card
+Sync time from saved Wi-Fi	Sync time from saved Wi-Fi
+TX dBm	TX dBm
+Tab keys	Tab keys
+Tap a row, then press the key you want for it.	Tap a row, then press the key you want for it.
+Tap the language key (EN) on the on-screen keyboard to cycle through the layouts you turn on.	Tap the language key (EN) on the on-screen keyboard to cycle through the layouts you turn on.
+Tap to switch between off, on and auto.	Tap to switch between off, on and auto.
+Tap with a full battery to call its voltage 100%. Hold to go back to the default.	Tap with a full battery to call its voltage 100%. Hold to go back to the default.
+Test reports	Test reports
+Text colour	Text colour
+Text console	Text console
+Text size	Text size
+Text size saved, restarting to apply it…	Text size saved, restarting to apply it…
+The MQTT bridge is not in this build.	The MQTT bridge is not in this build.
+The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.	The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.
+The arrows and Enter always work. These letters are extra: tap a row, then press a key.	The arrows and Enter always work. These letters are extra: tap a row, then press a key.
+The tab keys, over the navigation bar's icons.	The tab keys, over the navigation bar's icons.
+The touchscreen ignores taps until you unlock.	The touchscreen ignores taps until you unlock.
+This device has no speaker.	This device has no speaker.
+Time on air	Time on air
+Top	Top
+Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Turn on if your keyboard types the wrong letters. It turns off modifier latching.
+Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Вмикайте лише якщо ваш ретранслятор перезаливає тільки один регіон. Інакше залиште вимк. — це може блокувати міжрегіональний вхід/ПП.
+Typing	Typing
+Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Отримувати невипущену тестову прошивку — новіші функції, але менш перевірені. Перевірка та встановлення оновлень йдуть бета-каналом.
+Until	Until
+Up to date (beta_%d)	Up to date (beta_%d)
+Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.	Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.
+Update available: beta_%d\nYou have beta_%d. Install it below.	Update available: beta_%d\nYou have beta_%d. Install it below.
+Used only when the time zone is Custom (UTC offset).	Used only when the time zone is Custom (UTC offset).
+Wallpaper	Wallpaper
+When Contacts is full	When Contacts is full
+Wi-Fi is off.	Wi-Fi is off.
+YYYY-MM-DD HH:MM	YYYY-MM-DD HH:MM
+The speed your GPS module talks at. Applies after a restart.	The speed your GPS module talks at. Applies after a restart.
+# Home widgets: new strings, English placeholders until translated (value = key)
+%d heard	%d heard
+%d m up	%d m up
+%d mentions	%d mentions
+%d new	%d new
+%d nodes	%d nodes
+%d sats, fix	%d sats, fix
+%d sats, no fix	%d sats, no fix
+%d unread	%d unread
+%d.%d%% of %d%%	%d.%d%% of %d%%
+%lu d ago	%lu d ago
+%lu h ago	%lu h ago
+%lu min ago	%lu min ago
+%lu s ago	%lu s ago
+%s · about %s left	%s · about %s left
+%u new	%u new
+1 heard	1 heard
+1 mention	1 mention
+1 node	1 node
+1 unread	1 unread
+Add a widget	Add a widget
+Advert sent across the mesh	Advert sent across the mesh
+Adverts share it exactly	Adverts share it exactly
+Adverts share it to %u km	Adverts share it to %u km
+Adverts share it to %u m	Adverts share it to %u m
+Airtime	Airtime
+App	App
+App removed	App removed
+App widget	App widget
+Arrange Home	Arrange Home
+Ask every 15 min	Ask every 15 min
+Ask every 2 hours	Ask every 2 hours
+Ask every 30 min	Ask every 30 min
+Ask every hour	Ask every hour
+Asking for its readings	Asking for its readings
+Asks every so often for its readings	Asks every so often for its readings
+BT off	BT off
+BT on	BT on
+Busy, try again in a moment	Busy, try again in a moment
+Charging	Charging
+Chat not found	Chat not found
+Choose a chat	Choose a chat
+Choose a node	Choose a node
+Choose a store app	Choose a store app
+Choose an app	Choose an app
+Choose the app	Choose the app
+Choose the chat	Choose the chat
+Choose the node	Choose the node
+Choose the switches	Choose the switches
+Choose up to four	Choose up to four
+Clock	Clock
+Clock in the bar on Home	Clock in the bar on Home
+Compass	Compass
+Daylight left %s	Daylight left %s
+Do not disturb	Do not disturb
+Done	Done
+Drag to move, tap - to remove	Drag to move, tap - to remove
+From apps	From apps
+Glance	Glance
+Heard	Heard
+Hold to choose a node	Hold to choose a node
+Hold to choose an app	Hold to choose an app
+Hold to choose another	Hold to choose another
+Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets.
+Home is full	Home is full
+Home: %s	Home: %s
+Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
+Keyboard light	Keyboard light
+Links	Links
+MQTT on	MQTT on
+MQTT waiting	MQTT waiting
+Mesh radar	Mesh radar
+Minimal	Minimal
+Moon %d%%, waning	Moon %d%%, waning
+Moon %d%%, waxing	Moon %d%%, waxing
+Move	Move
+Move %s	Move %s
+Nearest	Nearest
+Needs open sky	Needs open sky
+No app chosen	No app chosen
+No apps installed	No apps installed
+No chats yet	No chats yet
+No compass reading	No compass reading
+No contacts yet	No contacts yet
+No messages yet	No messages yet
+No new messages	No new messages
+No position yet	No position yet
+No reading yet	No reading yet
+No readings in the reply	No readings in the reply
+No room for it on Home	No room for it on Home
+No room there	No room there
+No sunrise or sunset today	No sunrise or sunset today
+Nobody heard directly yet	Nobody heard directly yet
+None unread	None unread
+Not in your adverts	Not in your adverts
+Note	Note
+Nothing heard lately	Nothing heard lately
+Off leaves the time to a clock widget when Home has one.	Off leaves the time to a clock widget when Home has one.
+On the left or right it becomes a rail.	On the left or right it becomes a rail.
+Open the app once to fill this in	Open the app once to fill this in
+PSRAM	PSRAM
+Pick a place	Pick a place
+Position	Position
+Power and sensors	Power and sensors
+RAM	RAM
+Remote sensor	Remote sensor
+SNR	SNR
+Send across the mesh	Send across the mesh
+Send to nodes in range	Send to nodes in range
+Set one in Profile, or turn on GPS	Set one in Profile, or turn on GPS
+Shortcuts	Shortcuts
+Sig	Sig
+Start over from	Start over from
+Start over from a preset	Start over from a preset
+Sun and moon	Sun and moon
+Sunrise in %s	Sunrise in %s
+Switches	Switches
+Tap to open the map	Tap to open the map
+Tap to show	Tap to show
+Tap to write	Tap to write
+Tap to write a note	Tap to write a note
+That app is not installed any more	That app is not installed any more
+The mesh	The mesh
+The radio	The radio
+The sun has set	The sun has set
+This hour	This hour
+Time and place	Time and place
+Unread	Unread
+Wi-Fi connecting	Wi-Fi connecting
+Widgets	Widgets
+You	You
+across the mesh	across the mesh
+airtime	airtime
+app linked	app linked
+app on Bluetooth	app on Bluetooth
+app on Wi-Fi	app on Wi-Fi
+asking...	asking...
+by hops	by hops
+choose a node	choose a node
+dev build	dev build
+flood	flood
+heading	heading
+heard	heard
+hidden	hidden
+in the last hour	in the last hour
+locator	locator
+mention	mention
+mentions	mentions
+nearby	nearby
+nearest	nearest
+no app	no app
+no fix	no fix
+no position	no position
+no reply yet	no reply yet
+offline	offline
+sats	sats
+sunrise	sunrise
+sunrise tomorrow	sunrise tomorrow
+sunset	sunset
+tap to calibrate	tap to calibrate
+to nodes in range	to nodes in range
+tomorrow, %s	tomorrow, %s
+unread	unread
+up %s	up %s
+Channel busy	Channel busy
+avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%

@@ -535,11 +535,15 @@
 #endif
 
 // Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
-// out/firmware/apps/) so a board that cannot reach the Lua Store still has
-// them in the drawer. A downloaded <data>/apps/<id>.lua always wins, because
-// luaAppLaunchFile() is file-first. Costs ~10 KB of FLASH, no RAM.
+// deploy/apps/) so a board that cannot reach the Lua Store still has them in
+// the drawer. A downloaded <data>/apps/<id>.lua always wins, because
+// luaAppLaunchFile() is file-first. A board with built-in apps gets a Store
+// without its Apps tab (nothing to browse), so this is for the 2 MB V4 only.
+// NOT the V4-R8, although its build defines HELTEC_LORA_V4_TFT: with 8 MB of
+// PSRAM its Store works like any other 8 MB board's, and baking the apps in had
+// taken its Apps tab away (reported 2026-10-08).
 #ifndef CAP_BUILTIN_LUA_APPS
-  #if defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4)
+  #if !defined(HELTEC_LORA_V4_R8) && (defined(HELTEC_LORA_V4_TFT) || defined(HELTEC_LORA_V4))
     #define CAP_BUILTIN_LUA_APPS 1
   #else
     #define CAP_BUILTIN_LUA_APPS 0

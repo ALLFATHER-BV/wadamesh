@@ -51,7 +51,10 @@ def main():
         code = open(src, encoding='utf-8').read()
         if (')' + DELIM + '"') in code:
             sys.exit('%s contains the raw-string delimiter' % aid)
-        entries.append((aid, name, ver, code))
+        # An app that needs the extended SDK cannot run on a board without it, so it
+        # is baked in only where it can (CAP_LUA_SDK_EXT, every board but the 2 MB
+        # Heltec V4, the one with the least flash to give).
+        entries.append((aid, name, ver, code, app.get('requires') == 'sdk_ext'))
 
     if not entries:
         sys.exit('no app sources found under ' + APPS)
@@ -61,22 +64,26 @@ def main():
          '// Seeded built-ins: a downloaded <data>/apps/<id>.lua always wins.',
          '#pragma once', '',
          'struct LuaBuiltinApp { const char* id; const char* name; const char* ver; const char* src; };', '']
-    for aid, name, ver, code in entries:
+    for aid, name, ver, code, ext in entries:
+        if ext: w.append('#if CAP_LUA_SDK_EXT')
         w.append('static const char kLuaSrc_%s[] = R"%s(%s)%s";' % (aid, DELIM, code, DELIM))
+        if ext: w.append('#endif')
     w.append('')
     w.append('static const LuaBuiltinApp kLuaBuiltin[] = {')
-    for aid, name, ver, _ in entries:
+    for aid, name, ver, _, ext in entries:
+        if ext: w.append('#if CAP_LUA_SDK_EXT')
         w.append('  { "%s", "%s", "%s", kLuaSrc_%s },' % (aid, name, ver, aid))
+        if ext: w.append('#endif')
     w.append('};')
     w.append('static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));')
     w.append('')
 
     open(OUT, 'w', encoding='utf-8').write('\n'.join(w))
-    total = sum(len(c) for _, _, _, c in entries)
+    total = sum(len(e[3]) for e in entries)
     print('%s: %d apps, %d bytes of Lua' %
           (os.path.relpath(OUT, ROOT), len(entries), total))
-    for aid, _, ver, code in entries:
-        print('   %-10s v%-4s %6d B' % (aid, ver, len(code)))
+    for aid, _, ver, code, ext in entries:
+        print('   %-10s v%-4s %6d B%s' % (aid, ver, len(code), '  (extended SDK only)' if ext else ''))
 
 
 if __name__ == '__main__':

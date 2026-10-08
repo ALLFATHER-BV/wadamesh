@@ -81,6 +81,19 @@ class WadaNmeaLocationProvider : public LocationProvider {
     }
   }
 
+  // A receiver without an enable line keeps its power when "stopped". A u-blox one (the
+  // T-Deck Plus) is told to stop and restart its GNSS engine instead (UBX-CFG-RST,
+  // controlled GNSS stop / start): it keeps everything it knows, so the next fix is a hot
+  // start, and it draws a fraction of its tracking current meanwhile. Receivers that do
+  // not speak UBX ignore the binary message.
+  void ubxGnss(bool run) {
+    static const uint8_t kStop[]  = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x16, 0x74 };
+    static const uint8_t kStart[] = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x17, 0x76 };
+    if (_pin_en != -1 || !_gps_serial) return;
+    _gps_serial->write(run ? kStart : kStop, sizeof kStop);
+    _gps_serial->flush();
+  }
+
   void noteValidSentence() {
     if (!_probe_serial || _stream_locked) return;
     _stream_locked = true;
@@ -147,6 +160,7 @@ public:
       _probe_deadline_ms = millis() + BAUD_PROBE_START_MS;
       nudgeReceiver();
     }
+    ubxGnss(true);
   }
 
   void reset() override {
@@ -165,6 +179,7 @@ public:
     if (_pin_reset != -1) digitalWrite(_pin_reset, LOW);
     _probe_deadline_ms = 0;
     _stream_locked = false;
+    ubxGnss(false);
     release();
   }
 

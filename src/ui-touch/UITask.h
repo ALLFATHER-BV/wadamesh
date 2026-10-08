@@ -480,6 +480,7 @@ public:
   void toggleBuzzer();
   bool getGPSState();
   void toggleGPS();
+  void setGpsPower(bool on);   // the receiver only (the GPS saver); the GPS switch stays as it is
 #if defined(HAS_EXPANSION_KIT)
   // Heltec V4 Expansion Kit: snapshot of the locally-attached sensor rail
   // (battery, BME280, GXHTV3/SHT4X) plus the GPS/buzzer module presence.

@@ -66,6 +66,13 @@
   LV_FONT_DECLARE(lv_font_montserrat_20) LV_FONT_DECLARE(lv_font_montserrat_24) \
   LV_FONT_DECLARE(lv_font_montserrat_28)
 #define LV_FONT_DEFAULT &lv_font_montserrat_14
+
+// Wrap lines only at spaces (and inside hyphenated, underscored or slashed tokens).
+// LVGL 8 also breaks straight after ",.;:", and then starts the next line with the
+// space that followed, so a wrapped sentence came out with a stray indent
+// ("100%.\n Hold to go back"). Breaking at the space keeps it at the line's end.
+// A word longer than the line still breaks inside itself.
+#define LV_TXT_BREAK_CHARS " -_/"
 /* Pixelated UNSCII bitmap font for the boot splash. Matches the retro/
  * pixelated wordmark the bootloader paints, so the splash reads as a
  * direct continuation of the boot sequence rather than a different style

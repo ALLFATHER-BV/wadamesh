@@ -8,6 +8,7 @@
 // a clean close, never a watchdog reset. All app memory lives in PSRAM.
 #include "device_caps.h"
 #include <stddef.h>
+#include <stdint.h>
 
 #if CAP_LUA_APPS
 // Launch an app from a Lua source buffer (id names the store file + bar title).
@@ -36,6 +37,22 @@ void luaAppMessage(const char* kind, const char* channel, const char* sender, co
 #define LUA_PERM_DM_SEND  4   // send a direct message, or post to a room server, AS the user
 #define LUA_PERM_DM_READ  8   // see incoming direct messages and room posts
 #define LUA_PERM_PROBE    16  // transmit discovery probes (wada.mesh.discover)
+#if CAP_LUA_SDK_EXT
+// A Home widget an app publishes with wada.widget.set{} while it runs. Home shows the
+// last one after the app has closed; it is also kept on the app's storage (<id>.wgt),
+// so it is there after a restart.
+#define LUA_WIDGET_SPARK_MAX 24
+struct LuaWidgetSnap {
+  char     title[24];
+  char     value[16];
+  char     line[48];
+  int16_t  bar;                           // 0..1000, -1 = none
+  uint8_t  spark_n;                       // points in spark, oldest first
+  int16_t  spark[LUA_WIDGET_SPARK_MAX];
+  uint32_t epoch;                         // when it was published (0 = clock not set)
+};
+bool luaWidgetGet(const char* app_id, LuaWidgetSnap* out);   // false: nothing published
+#endif
 #else
 inline bool luaAppIsOpen() { return false; }
 inline void luaAppDismiss() {}
