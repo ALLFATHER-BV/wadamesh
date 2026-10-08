@@ -30311,7 +30311,11 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
 // Contacts — Sort & filter sheet + multi-select delete
 // ============================================================
 static bool      s_ct_select_mode = false;
-static uint8_t   (*s_ct_sel)[6] = (uint8_t(*)[6])psAlloc(128 * 6);   // pub_key prefix of currently-selected (deletable) contacts — PSRAM
+// Room for every contact: Select all used to stop at 128, taken in storage order,
+// so past 128 contacts it selected rows the list was not even showing and the
+// visible ones stayed unticked (#605).
+#define CT_SEL_MAX ((int)MAX_CONTACTS)
+static uint8_t   (*s_ct_sel)[6] = (uint8_t(*)[6])psAlloc((size_t)CT_SEL_MAX * 6);   // pub_key prefix of currently-selected (deletable) contacts — PSRAM
 static int       s_ct_sel_n       = 0;
 static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
 static volatile bool s_ct_contacts_dirty = false;   // a contact was discovered/added (set from the mesh callback); UITask::loop rebuilds the visible Contacts list — issue #73
@@ -30330,17 +30334,17 @@ static const char* contactsFilterShortLabel() {
     default: return "All";
   }
 }
-// Bulk-delete runs chunked across loop ticks (each uiRemoveContact rewrites the
-// contacts file to flash; doing 100+ synchronously froze the UI / tripped the WDT).
+// Bulk-delete runs chunked across loop ticks, so the UI repaints and the watchdog
+// is fed between removals. The contacts file is written once, at the end.
 static bool         s_ctd_active  = false;
 static int          s_ctd_total   = 0, s_ctd_done = 0;
-static ContactInfo* s_ctd_list    = nullptr;   // psAlloc'd snapshot of what to delete
+static uint8_t    (*s_ctd_keys)[PUB_KEY_SIZE] = nullptr;   // full keys to delete; allocated per run
 static lv_obj_t*    s_ctd_overlay = nullptr;   // progress modal
 static lv_obj_t*    s_ctd_bar     = nullptr;
 static lv_obj_t*    s_ctd_lbl     = nullptr;
 
 static bool ctSelHas(const uint8_t* k){ for(int i=0;i<s_ct_sel_n;++i) if(!memcmp(s_ct_sel[i],k,6)) return true; return false; }
-static void ctSelAdd(const uint8_t* k){ if(s_ct_sel_n<128 && !ctSelHas(k)) memcpy(s_ct_sel[s_ct_sel_n++],k,6); }
+static void ctSelAdd(const uint8_t* k){ if(s_ct_sel && s_ct_sel_n<CT_SEL_MAX && !ctSelHas(k)) memcpy(s_ct_sel[s_ct_sel_n++],k,6); }
 static void ctSelDel(const uint8_t* k){ for(int i=0;i<s_ct_sel_n;++i) if(!memcmp(s_ct_sel[i],k,6)){ for(int j=i;j+1<s_ct_sel_n;++j) memcpy(s_ct_sel[j],s_ct_sel[j+1],6); --s_ct_sel_n; return; } }
 
 // Lower-case the active name-search needle into out[]; true if non-empty.
@@ -30457,7 +30461,7 @@ static void ctSelectAllFiltered(){
 #endif
   char needle[24]; ctSearchNeedle(needle, sizeof needle);
   const int cnt = the_mesh.getNumContacts();
-  for(int i=0;i<cnt && s_ct_sel_n<128;++i){
+  for(int i=0;i<cnt && s_ct_sel && s_ct_sel_n<CT_SEL_MAX;++i){
     ContactInfo c;
     if(!the_mesh.getContactByIdx((uint32_t)i,c) || !c.name[0]) continue;
 #if defined(ESP32)
@@ -30467,7 +30471,7 @@ static void ctSelectAllFiltered(){
 #endif
     if(is_fav) continue;                                   // favorites aren't deletable here
     if(!ctPassesFilter(c, is_fav, fav_count, needle)) continue;
-    ctSelAdd(c.id.pub_key);
+    memcpy(s_ct_sel[s_ct_sel_n++], c.id.pub_key, 6);   // each contact once, so skip ctSelAdd's O(n) check
   }
   ctUpdateDelLabel();
   s_ct_list_force = true;
@@ -30526,9 +30530,9 @@ static void ctDeleteProgressOpen(){
 // work keeps the loop responsive (UI repaints, watchdog fed) between flash writes.
 static void ctDeleteServiceTick(){
   if(!s_ctd_active) return;
-  const int BATCH = 4;
+  const int BATCH = 8;   // no flash rewrite per contact now, so a bigger bite
   for(int b=0; b<BATCH && s_ctd_done < s_ctd_total; ++b){
-    if(s_ctd_list) the_mesh.uiRemoveContact(s_ctd_list[s_ctd_done]);   // lookup-by-pubkey: shift-safe
+    if(s_ctd_keys) the_mesh.uiRemoveContactNoSave(s_ctd_keys[s_ctd_done]);   // lookup-by-pubkey: shift-safe
     ++s_ctd_done;
   }
   g_lv.dirty_threads = false;   // don't let the bulk delete trigger per-tick list rebuilds
@@ -30537,24 +30541,32 @@ static void ctDeleteServiceTick(){
   if(s_ctd_done >= s_ctd_total){
     const int total = s_ctd_total;
     s_ctd_active = false;
+    the_mesh.uiPersistContacts();   // one /contacts3 rewrite for the whole run
+    if(s_ctd_keys){ heap_caps_free(s_ctd_keys); s_ctd_keys = nullptr; }
     ctDeleteProgressClose();
     if(g_lv.task){ char msg[32]; snprintf(msg,sizeof msg, TR("Deleted %d"), total); g_lv.task->showAlert(msg, 1200); }
     g_lv.dirty_threads = true;   // one refresh now that we're done
     ctSetSelectMode(false);      // exit select mode + rebuild the (now shorter) list
   }
 }
+static int ctSelKeyCmp(const void* a, const void* b){ return memcmp(a, b, 6); }
 static void ctDoDelete(){
-  if(!g_lv.task) return;
-  if(!s_ctd_list) s_ctd_list = (ContactInfo*)psAlloc(sizeof(ContactInfo)*128);
-  if(!s_ctd_list){ ctSetSelectMode(false); return; }
+  if(!g_lv.task || s_ctd_active || s_ct_sel_n<=0) return;
+  if(s_ctd_keys){ heap_caps_free(s_ctd_keys); s_ctd_keys = nullptr; }
+  s_ctd_keys = (uint8_t(*)[PUB_KEY_SIZE])psAlloc((size_t)s_ct_sel_n * PUB_KEY_SIZE);
+  if(!s_ctd_keys){ g_lv.task->showAlert(TR("Low memory"), 1200); ctSetSelectMode(false); return; }
+  // Sorted, so each contact is a binary search rather than a scan of up to
+  // MAX_CONTACTS selected prefixes.
+  qsort(s_ct_sel, (size_t)s_ct_sel_n, 6, ctSelKeyCmp);
   int n = 0;
   const int cnt = the_mesh.getNumContacts();
-  for(int i=0;i<cnt && n<128;++i){
+  for(int i=0;i<cnt && n<s_ct_sel_n;++i){
     ContactInfo c;
     if(!the_mesh.getContactByIdx((uint32_t)i,c)) continue;
-    if(ctSelHas(c.id.pub_key)) s_ctd_list[n++] = c;   // snapshot first (delete shifts indices)
+    if(bsearch(c.id.pub_key, s_ct_sel, (size_t)s_ct_sel_n, 6, ctSelKeyCmp))
+      memcpy(s_ctd_keys[n++], c.id.pub_key, PUB_KEY_SIZE);   // snapshot first (delete shifts indices)
   }
-  if(n==0){ ctSetSelectMode(false); return; }
+  if(n==0){ heap_caps_free(s_ctd_keys); s_ctd_keys = nullptr; ctSetSelectMode(false); return; }
   s_ctd_total = n; s_ctd_done = 0; s_ctd_active = true;
   ctDeleteProgressOpen();   // the loop tick does the actual deletion + advances the bar
 }
@@ -42473,23 +42485,24 @@ static void refreshContactsList() {
       const double db = contactDistanceKm(s_ct_sort_self_lat, s_ct_sort_self_lon,
                                           eb->gps_lat / 1.0e6, eb->gps_lon / 1.0e6);
       if (da < db) prim = -1; else if (da > db) prim = 1;
-    } else {
-      // Contacts whose last-heard renders as "?" sink to the end in every non-distance
-      // mode — structurally, NOT affected by the asc/desc flip. "?" is NOT just
+    } else if (g_contacts_sort == CONTACTS_SORT_LAST_HEARD ||
+               g_contacts_sort == CONTACTS_SORT_LAST_MSG) {
+      // Contacts whose last-heard renders as "?" sink to the end of the time-based
+      // modes — structurally, NOT affected by the asc/desc flip. "?" is NOT just
       // last_heard==0: formatAgeBadge also shows it for a future/garbage timestamp
       // (RTC unset -> now <= last_heard) or one over 400 days old. Mirror that exact
       // condition using the captured clock so the sort matches what the row displays.
+      // Name (A-Z) is names only: applying this there too split the list (the
+      // favourites included) into a heard block and a "?" block, each A-Z on its
+      // own, which read as not sorted (#605).
       const uint32_t now = s_ct_sort_now;
       const uint32_t a_age = (now > ea->last_heard && ea->last_heard != 0) ? (now - ea->last_heard) : 0;
       const uint32_t b_age = (now > eb->last_heard && eb->last_heard != 0) ? (now - eb->last_heard) : 0;
       const bool a_unknown = (a_age == 0 || a_age > (uint32_t)400 * 24u * 3600u);
       const bool b_unknown = (b_age == 0 || b_age > (uint32_t)400 * 24u * 3600u);
       if (a_unknown != b_unknown) return a_unknown ? 1 : -1;
-      if (g_contacts_sort == CONTACTS_SORT_LAST_HEARD ||
-          g_contacts_sort == CONTACTS_SORT_LAST_MSG) {
-        if (ea->last_heard != eb->last_heard)
-          prim = (ea->last_heard > eb->last_heard) ? -1 : 1;   // newer first (natural)
-      }
+      if (ea->last_heard != eb->last_heard)
+        prim = (ea->last_heard > eb->last_heard) ? -1 : 1;   // newer first (natural)
     }
     if (prim == 0) prim = strcasecmp(ea->name, eb->name);   // A-Z natural order / tiebreak
     if (prim == 0) prim = memcmp(ea->key6, eb->key6, 6);    // stable final tiebreak → deterministic 128-row cut (#73)
