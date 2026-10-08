@@ -44,9 +44,9 @@
 // (labeled "GPS toggle" — bound to toggleGPS()), Enter long-press emits 0xA3
 // (bound: LV_EVENT_LONG_PRESSED on the focused widget / lock-screen unlock).
 // Shift/Sym/Alt never reach the wire — the controller consumes them as layer
-// modifiers. DELIBERATELY UNBOUND: MIC 0x88 (no audio-capture feature exists)
-// and 0x89 (matrix col3/row4, physical key cap unidentified — binding an
-// unknown cap invites accidental triggers).
+// modifiers. MIC 0x88 is bound as an Options key (a chat's menu, or the focused
+// item's hold action). DELIBERATELY UNBOUND: 0x89 (matrix col3/row4, physical
+// key cap unidentified — binding an unknown cap invites accidental triggers).
 #define M9_KEY_GPS_LONG      0x87
 #define M9_KEY_ENTER_LONG    0xA3
 

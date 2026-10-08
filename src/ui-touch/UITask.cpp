@@ -30034,8 +30034,14 @@ static void chatsAddCb(lv_event_t* e) {
 static void chatsMoreCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const ActItem items[] = {
+#if defined(HAS_THINKNODE_M9)
+    // M9: first, so the menu opens on it and the confirm opens on "Mark read" (#609).
+    { LV_SYMBOL_OK,       TR("Mark all as read"),      chatsMarkAllAsk,                 false },
+    { LV_SYMBOL_PLUS,     TR("Add a channel"),         []{ openAddChannelSheet(); },    false },
+#else
     { LV_SYMBOL_PLUS,     TR("Add a channel"),         []{ openAddChannelSheet(); },    false },
     { LV_SYMBOL_OK,       TR("Mark all as read"),      chatsMarkAllAsk,                 false },
+#endif
     { UI_ICON_QR_CODE,    TR("Share my contact"),      []{ openShareMyContactPopup(); }, false },
   };
   openActionList(TR("Chats"), items, (int)(sizeof items / sizeof items[0]));
@@ -36738,6 +36744,19 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_set_pos(b, k_map_canvas_w - 32 - 4, y);
     styleButton(b);
     lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_PART_MAIN);
+#if defined(HAS_THINKNODE_M9)
+    // #609: the keypad cursor was too faint over the tiles. Focused, the button fills
+    // solid accent with a thick white ring, so it can't be lost against the map.
+    for (lv_style_selector_t sel : { (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                     (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED) }) {
+      lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), sel);
+      lv_obj_set_style_bg_opa(b, LV_OPA_COVER, sel);
+      lv_obj_set_style_outline_color(b, lv_color_white(), sel);
+      lv_obj_set_style_outline_width(b, 3, sel);
+      lv_obj_set_style_outline_pad(b, 1, sel);
+      lv_obj_set_style_outline_opa(b, LV_OPA_COVER, sel);
+    }
+#endif
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, sym);
@@ -43959,6 +43978,7 @@ static bool m9IsGlobalShortcutKey(int key) {
     case M9_KEY_MAP:
     case M9_KEY_CTRL:
     case M9_KEY_GPS_LONG:
+    case M9_KEY_MIC:
       return true;
     default:
       return false;
@@ -46504,7 +46524,8 @@ static bool bleKbdTabHotkey(int cp) {
   return true;
 }
 
-static uint32_t s_m9_home_last_ms = 0;   // last HOME press, for double-press → Settings
+static uint32_t s_m9_home_last_ms = 0;        // last HOME press, for double-press → launcher settings
+static bool     s_m9_home_prev_drawer = false; // drawer state before that press
 static bool m9LockedHomeDrawerFrontmost() {
 #if defined(HAS_THINKNODE_M9)
   lv_obj_t* top = lv_layer_top();
@@ -46727,6 +46748,20 @@ static bool m9HandleNavKey(int key) {
         navPushTap(LV_KEY_ENTER);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    case M9_KEY_MIC: {
+      // Options key (#609): in an open chat, its thread menu (same as the header ⋯);
+      // elsewhere, the focused item's hold action (a chat row's menu, etc.). Holding
+      // Enter does the same, but its long-press code can't be relied on.
+      if (s_setup_root || s_apppage_close || anyPopupOpen()) return true;
+      if (navOpenChatPanel()) {
+        s_nav_ta_editing = false;
+        openActiveChatSettings();
+      } else {
+        lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+        if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
+      }
+      s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    }
     case M9_KEY_ENTER_LONG: {
       lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
       if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
@@ -46846,18 +46881,25 @@ static bool m9HandleNavKey(int key) {
         s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
       }
       {
-        // Double-press HOME opens Settings. The controller sends one byte per press and
-        // no key-up, so a hold can't be seen; the first press still acts as a normal HOME.
+        // Double-press HOME opens the launcher settings (what touch boards get by holding
+        // the Home tab). The controller sends one byte per press and no key-up, so a hold
+        // can't be seen; the first press still acts as a normal HOME, and the second puts
+        // the drawer back the way it was before the first.
         const uint32_t now = millis();
         const bool dbl = s_m9_home_last_ms && (uint32_t)(now - s_m9_home_last_ms) < 450;
         s_m9_home_last_ms = dbl ? 0 : now;
         if (dbl) {
           s_m9_map_pan = false;
           for (int i = 0; i < 8 && anyPopupOpen(); i++) { if (!hwKeyDismissTopPopup()) break; }
-          if (!anyPopupOpen() && getActiveTab() == HOME_TAB_INDEX && s_home_drawer_mode) setHomeDrawer(false);
-          if (!anyPopupOpen()) { navGoToMainTab(SETTINGS_TAB_INDEX); m9NavClear(); }
+          if (!anyPopupOpen() && (getActiveTab() == HOME_TAB_INDEX || navGoToMainTab(HOME_TAB_INDEX))) {
+            if (s_home_drawer_mode != s_m9_home_prev_drawer && !m9LockedHomeDrawerFrontmost())
+              setHomeDrawer(s_m9_home_prev_drawer);
+            m9NavClear();
+            openAppGridSheet();
+          }
           s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
         }
+        s_m9_home_prev_drawer = (getActiveTab() == HOME_TAB_INDEX) && s_home_drawer_mode;
       }
       if (getActiveTab() == HOME_TAB_INDEX) {
         const bool was_open = s_home_drawer_mode;          // read BEFORE dismissing anything
@@ -71214,6 +71256,9 @@ void UITask::wakeScreen() {
   if (_manual_lock && s_pin_on) { unlockScreen(); return; }
 #if CAP_SCREENSAVER
   if (s_ssaver_on) {
+    // A preview ignores input for its first moment: the key or tap that asked for it
+    // (its release, a repeat) used to end it after half a second (#609, Tanmatsu).
+    if (s_ssaver_is_preview && (uint32_t)(millis() - s_ssaver_start_ms) < 1200) return;
     // The screensaver is already lit and the CPU at full speed: nothing to power
     // up. Clearing _screen_off is what ends it; loop() tears it down and puts the
     // user's brightness back.
@@ -72805,9 +72850,17 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
 #else
   const bool glance_muted = false;
 #endif
+#if defined(HAS_M9_KEYBOARD)
+  // M9 (#609): the message-flash wake can light the screen before this runs, which
+  // used to skip the glance and leave the app (Commander) showing for the notify
+  // window. A screen lit by a message, not by the user, still gets the glance.
+  const bool lit_by_msg = s_notify_wake_ms && !s_glance_lit_ms && _last_input_ms <= s_notify_wake_ms;
+#else
+  const bool lit_by_msg = false;
+#endif
   if (glance_enabled_ok && !dndActive() && glance_locked_ok && !glance_muted &&
-      (_screen_off || s_glance_lit_ms)) {
-    const bool was_off = _screen_off;
+      (_screen_off || s_glance_lit_ms || lit_by_msg)) {
+    const bool was_off = _screen_off || lit_by_msg;
     // Title carries WHO and HOW FAR, not just where. Reading "3 unread" off a
     // dark screen tells you nothing you can act on; knowing it is a direct
     // message from a named contact one hop away, versus channel chatter from
@@ -72825,7 +72878,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     atGlanceShow(gm, was_off);   // fade in only on the initial reveal of a burst
     // Over the screensaver the panel is lit already: the glance just covers it,
     // and when the glance times out the screensaver is what remains (loop()).
-    if (was_off && !s_ssaver_on) {
+    if (lit_by_msg) {
+#if defined(HAS_M9_KEYBOARD)
+      s_notify_wake_ms = 0;   // the glance's own 5 s window re-dims the screen now
+#endif
+      lv_refr_now(nullptr);
+    } else if (was_off && !s_ssaver_on) {
       lv_refr_now(nullptr);   // paint before the backlight comes on -- no stale-frame flash
       if (_manual_lock) {
         // Locked: light the panel WITHOUT clearing the lock -- wakeScreen()
