@@ -53215,7 +53215,9 @@ static int statusPctOverflow() {
 #endif
 }
 
+static lv_obj_t* s_sb_tint = nullptr;   // the smoked-glass shade over a background, or null
 static void buildGlobalStatusBar() {
+  s_sb_tint = nullptr;   // set again below when there is a background to shade
   g_statusbar.root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(g_statusbar.root);
   // Full screen width (responsive to rotation — 240 portrait / 320 landscape).
@@ -53298,6 +53300,7 @@ static void buildGlobalStatusBar() {
     lv_obj_clear_flag(t, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(t, lv_color_hex(s_theme_day ? 0xFFFFFFu : 0x000000u), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(t, s_theme_day ? 150 : 125, LV_PART_MAIN);
+    s_sb_tint = t;
   }
 
   // Chat/channel-OVERVIEW actions: [✓ mark-read | + add | QR share]. Hidden by
@@ -54240,7 +54243,7 @@ static void updateGlobalStatusBar() {
     for (uint32_t i = 0; i < nch; ++i) {
       lv_obj_t* c = lv_obj_get_child(g_statusbar.root, i);
       if (c == inbox_btns[0] || c == inbox_btns[1] || c == inbox_btns[2]) continue;
-      if (c == g_statusbar.fade || c == g_statusbar.dim) continue;   // full-bar backdrops — never shift
+      if (c == g_statusbar.fade || c == g_statusbar.dim || c == s_sb_tint) continue;   // full-bar backdrops — never shift
       lv_coord_t t = up;   // top row by default
       if (c == g_statusbar.left_label) {
         if (s_settings_open_cat >= 0 || s_apppage_title) t = 0;    // settings/tool back+title: centred
