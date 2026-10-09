@@ -61469,8 +61469,10 @@ static void themeStylesBuild() {
   lv_style_set_text_color(&s_ts.kb_key_pr, on_glow);
   lv_style_set_bg_color(&s_ts.kb_key_chk, off_tone);
   // The stock theme's CHECKED key style carries its light-mode text colour (near
-  // black), and a CHECKED style outranks the plain key colour, so set it here too.
+  // black), and a CHECKED style outranks the plain key colour, so set it here too,
+  // with the letter keys' font.
   lv_style_set_text_color(&s_ts.kb_key_chk, text);
+  lv_style_set_text_font(&s_ts.kb_key_chk, &g_font_14);
 
   // Arcs and spinners.
   lv_style_set_arc_color(&s_ts.arc, border);
