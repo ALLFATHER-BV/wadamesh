@@ -8886,6 +8886,12 @@ static void showKb(LvChatPanel* p, bool reveal) {
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
 static void externalKbdNoteFieldPress(lv_obj_t* ta) {
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module summons the keys with its '#'. A tap must not: a settings
+  // field is often bound already when the page opens (Profile's node name), so the
+  // first tap counted as a "second" one and brought the keys up over the module.
+  if (attakyKeyboardPresent()) { s_osk_press_ta = nullptr; return; }
+#endif
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
   s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
