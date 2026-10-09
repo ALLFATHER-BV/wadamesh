@@ -300,6 +300,7 @@ Enter SSID first	Először adja meg az SSID-t
 Enter a name	Írjon be egy nevet
 Enter a network name	Adjon meg egy hálózatnevet
 Enter a region name	Enter a region name
+Enter a rough location first	Először adjon meg egy hozzávetőleges helyet
 Enter adds a new line	Az Enter új sort ad hozzá
 Enter exactly 32 hex characters.	Pontosan 32 hex karaktert adjon meg.
 Enter key sends message	Az Enter billentyű elküldi az üzenetet
@@ -353,6 +354,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS kikapcsolva
 GPS on	GPS bekapcsolva
 GPS serial baud	GPS soros baud
+GPS sets the position while it has a fix	Amíg van GPS-fix, a pozíciót a GPS adja
 GPS unset	GPS nincs beállítva
 GPS: acquiring...	GPS: begyűjtés...
 GPS: fix	GPS: fix
@@ -504,6 +506,7 @@ Messages	Üzenetek
 Min zoom for this pack	Minimális zoom ehhez a csomaghoz
 Mode: BLE starting / low memory	Mód: BLE indítás / kevés memória
 Model:	Modell
+Move the map to your spot	Mozgassa a térképet a helyére
 Multi ACKs	Multi ACKs
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Ismétlés %s · Vételnövelés %s
 Multi-byte routing (path hash)	Többbájtos útválasztás (útvonal-hash)
@@ -616,6 +619,7 @@ Path reset failed	Útvonal visszaállítása sikertelen
 Paused  —  score %d	Szünet — Pontok %d
 Per-transmit switching on	Adásonkénti váltás bekapcsolva
 Pick colour	Színválasztás
+Pick on the map	Kiválasztás a térképen
 Ping	Ping
 Ping failed	Ping sikertelen
 Pinged (direct) — waiting…	Pingelt (közvetlen) — várakozás…

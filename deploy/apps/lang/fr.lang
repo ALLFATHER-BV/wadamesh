@@ -296,6 +296,7 @@ Enter SSID first	Saisissez d'abord le SSID
 Enter a name	Saisissez un nom
 Enter a network name	Saisir un nom de réseau
 Enter a region name	Enter a region name
+Enter a rough location first	Saisissez d'abord une position approximative
 Enter adds a new line	Entrée ajoute une ligne
 Enter exactly 32 hex characters.	Saisissez exactement 32 caractères hex.
 Enter key sends message	La touche Entrée envoie le message
@@ -348,6 +349,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS désactivé
 GPS on	GPS activé
 GPS serial baud	Débit série GPS
+GPS sets the position while it has a fix	Le GPS définit la position tant qu'il a un fix
 GPS unset	GPS non défini
 GPS: acquiring...	GPS : acquisition...
 GPS: fix	GPS : point
@@ -497,6 +499,7 @@ Messages
 Min zoom for this pack	Zoom min pour ce pack
 Mode: BLE starting / low memory	Mode : BLE démarre / mémoire faible
 Model:	Modèle :
+Move the map to your spot	Déplacez la carte jusqu'à votre position
 Multi ACKs	Multi-ACK
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Répéter %s · RX boost %s
 Multi-byte routing (path hash)	Routage multi-octet (hash de chemin)
@@ -607,6 +610,7 @@ Path reset failed	Échec de réinit. du chemin
 Paused  —  score %d	En pause  —  score %d
 Per-transmit switching on	Bascule par émission activée
 Pick colour	Choisir la couleur
+Pick on the map	Choisir sur la carte
 Ping	Ping
 Ping failed	Échec du ping
 Pinged (direct) — waiting…	Ping (direct) — attente…

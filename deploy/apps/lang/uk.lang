@@ -296,6 +296,7 @@ Enter SSID first	Спочатку введіть SSID
 Enter a name	Введіть ім'я
 Enter a network name	Введіть назву мережі
 Enter a region name	Enter a region name
+Enter a rough location first	Спочатку введіть приблизне місцезнаходження
 Enter adds a new line	Enter додає новий рядок
 Enter exactly 32 hex characters.	Введіть рівно 32 hex-символи.
 Enter key sends message	Клавіша Enter надсилає повідомлення
@@ -348,6 +349,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Зумер %s\n%s
 GPS off	GPS вимк
 GPS on	GPS увімк
 GPS serial baud	Швидкість GPS (бод)
+GPS sets the position while it has a fix	Положення задає GPS, поки є фікс
 GPS unset	GPS не задано
 GPS: acquiring...	GPS: пошук...
 GPS: fix	GPS: фікс
@@ -498,6 +500,7 @@ Messages
 Min zoom for this pack	Мін. зум для цього пакета
 Mode: BLE starting / low memory	Режим: BLE запускається / мало пам'яті
 Model:	Модель:
+Move the map to your spot	Перемістіть карту до свого місця
 Multi ACKs	Множинні ACK
 Multi-ack %s · Repeat %s · RX boost %s	Мульти-ack %s · Повтор %s · RX boost %s
 Multi-byte routing (path hash)	Багатобайтова маршрутизація (хеш шляху)
@@ -608,6 +611,7 @@ Path reset failed	Не вдалося скинути шлях
 Paused  —  score %d	Пауза  —  рахунок %d
 Per-transmit switching on	Перемикання на кожну передачу увімк.
 Pick colour	Вибрати колір
+Pick on the map	Вибрати на карті
 Ping	Пінг
 Ping failed	Помилка ping
 Pinged (direct) — waiting…	Ping (прямий) — очікування…

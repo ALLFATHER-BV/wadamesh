@@ -296,6 +296,7 @@ Enter SSID first	Zuerst SSID eingeben
 Enter a name	Namen eingeben
 Enter a network name	Netzwerknamen eingeben
 Enter a region name	Enter a region name
+Enter a rough location first	Zuerst ungefähren Standort eingeben
 Enter adds a new line	Enter fügt neue Zeile ein
 Enter exactly 32 hex characters.	Genau 32 Hex-Zeichen eingeben.
 Enter key sends message	Enter-Taste sendet Nachricht
@@ -348,6 +349,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Summer %s\n%s
 GPS off	GPS aus
 GPS on	GPS ein
 GPS serial baud	GPS-Baudrate
+GPS sets the position while it has a fix	GPS setzt die Position, solange es einen Fix hat
 GPS unset	GPS nicht gesetzt
 GPS: acquiring...	GPS: suche...
 GPS: fix	GPS: Fix
@@ -497,6 +499,7 @@ Messages	Nachrichten
 Min zoom for this pack	Min. Zoom für dieses Paket
 Mode: BLE starting / low memory	Modus: BLE startet / wenig Speicher
 Model:	Modell:
+Move the map to your spot	Karte auf den eigenen Standort schieben
 Multi ACKs	Multi-ACKs
 Multi-ack %s · Repeat %s · RX boost %s	Multi-Ack %s · Wdh. %s · RX-Boost %s
 Multi-byte routing (path hash)	Multibyte-Routing (Pfad-Hash)
@@ -607,6 +610,7 @@ Path reset failed	Pfad-Reset fehlgeschlagen
 Paused  —  score %d	Pausiert  —  Punkte %d
 Per-transmit switching on	Pro-Sendung-Umschaltung ein
 Pick colour	Farbe wählen
+Pick on the map	Auf der Karte wählen
 Ping	Ping
 Ping failed	Ping fehlgeschlagen
 Pinged (direct) — waiting…	Ping (direkt) — warte…

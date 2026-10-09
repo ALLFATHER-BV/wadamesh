@@ -7156,6 +7156,9 @@ static volatile bool s_map_sd_storage_changed = false;   // defer SD_MMC backend
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
 static void clearRouteReplay();        // drop the message-route overlay (defined with the map code)
+static void mapPickStart();            // Profile > Pick on the map (defined with the map code)
+static void mapPickExit();             // leave that pick mode; safe when it isn't active
+static bool mapPickGpsOwnsPosition();  // GPS on with a fix: it sets the position, not a pick
 static void applyMapChrome(bool on);   // map-tab immersive chrome (transparent bars); defined near makeMapTab
 static void formatAgeBadge(char* buf, size_t cap, uint32_t age_secs);        // defined with the contacts list
 static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, double self_lon,
@@ -11332,6 +11335,7 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
+    mapPickExit();         // and the position-pick crosshair + bar, unsaved
     // Leaving the map used to drop all nine decoded tiles, so every re-open
     // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
     // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
@@ -13944,6 +13948,17 @@ static void buildProfileSettings() {
       snprintf(buf, sizeof(buf), "%.6f", g_lv.task->getNodeLon());
       lv_textarea_set_text(g_set_modal.lon_ta, buf);
     }
+    // With GPS on and a fix, updateGpsLocation() rewrites the position every loop,
+    // so a picked one would not stay: no row then.
+    if (!mapPickGpsOwnsPosition())
+      setActionRow(c, UI_ICON_MAP_PIN, "Pick on the map", nullptr, [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        lv_indev_t* a = lv_indev_get_act();
+        if (a) lv_indev_wait_release(a);
+        // Save a typed lat/lon first (the pair's blur save), so the map starts from it.
+        if (g_set_modal.lat_ta) lv_event_send(g_set_modal.lat_ta, LV_EVENT_DEFOCUSED, nullptr);
+        mapPickStart();   // closes this page with popupClose (deferred delete), so safe from its own tap
+      });
     NodePrefs* pol = the_mesh.getNodePrefs();
     g_set_modal.share_loc_sw = setSwitchRow(c, "Share location in advert",
                                             "Adverts reach every node in range, unencrypted. GPS > Location privacy can shift the position they carry.",
@@ -31568,6 +31583,12 @@ static lv_obj_t* s_map_location_marker = nullptr;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
+// Position-pick mode (Profile > Pick on the map): a fixed crosshair marks the map
+// centre and a Cancel / Save position bar saves it as the advert position.
+// Auto-follow pauses while it's up, else it would drag the centre back to the fix.
+static bool       s_map_pick_active = false;
+static lv_obj_t*  s_map_pick_cross  = nullptr;   // on s_map_canvas, outside the pan layer
+static lv_obj_t*  s_map_pick_bar    = nullptr;   // on s_map_page, so it takes taps + key focus
 #if defined(HAS_M9_KEYBOARD)
 // Map pan mode (M9): the Map key on the Map tab toggles it — arrows then pan
 // via mapNudge, Map/Back exits. Lives here with the map state because
@@ -36330,6 +36351,7 @@ static void mapRecenterCb(lv_event_t* e) {
 // moves meaningfully (or the view was panned away). Called from the map tick.
 static void mapAutoFollowTick() {
   if (!s_map_follow || !g_lv.task) return;
+  if (s_map_pick_active) return;   // the user is placing the centre by hand
 #if defined(HAS_M9_KEYBOARD)
   if (s_m9_map_pan) return;   // Map-key pan mode owns the center; follow resumes when pan exits
 #endif
@@ -36722,6 +36744,155 @@ static void makeMapTab(lv_obj_t* tab) {
 
   // (OSM attribution now lives in the status bar's left zone on the map tab —
   // see updateGlobalStatusBar.)
+}
+
+// ---- Pick the advert position on the map (Settings > Profile > Pick on the map) ----
+// The map centre IS the picked point: pan and zoom work as usual, a crosshair is
+// pinned over the centre, and "Save position" saves the centre as the position.
+static void mapPickExit() {
+  if (!s_map_pick_active) return;
+  s_map_pick_active = false;
+  lv_obj_del_async(s_map_pick_cross);
+  s_map_pick_cross = nullptr;
+#if CAP_KEYPAD_NAV
+  navDetachBeforeTreeMutation();   // a bar button may hold group focus
+#endif
+  // Hidden now so a nav rebuild can't collect it; freed after this event cycle,
+  // as the tap that got us here may be on one of its buttons.
+  lv_obj_add_flag(s_map_pick_bar, LV_OBJ_FLAG_HIDDEN);
+  popupClose(&s_map_pick_bar);   // nulls it
+  navMarkDirty();
+}
+
+static bool mapPickGpsOwnsPosition() {
+  return g_lv.task && g_lv.task->getGPSState() && g_lv.task->getGpsFix();
+}
+
+static void mapPickCancelCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) mapPickExit();
+}
+
+static void mapPickUseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const double lat = s_map_center_lat;
+  double lon = fmod(s_map_center_lon + 180.0, 360.0);   // a pan past the antimeridian leaves it unwrapped
+  lon = (lon < 0.0 ? lon + 360.0 : lon) - 180.0;
+  mapPickExit();
+  if (mapPickGpsOwnsPosition()) {   // a fix arrived while picking
+    g_lv.task->showAlert(TR("GPS sets the position while it has a fix"), 1800);
+    return;
+  }
+  if ((lat == 0.0 && lon == 0.0) || lat < -90.0 || lat > 90.0) return;   // 0,0 means "no position"
+  if (g_lv.task->setPosition(lat, lon)) {
+    g_lv.task->showAlert(TR("Position saved"), 1000);
+    refreshStatusLabels();
+  }
+  renderMapMarkers();   // your own marker moves to where the crosshair was
+  refreshMapInfoLabel();
+}
+
+static void mapPickStart() {
+  if (!g_lv.task || !s_map_canvas || !s_map_page) return;
+  if (mapPickGpsOwnsPosition()) {   // the Profile row was built before the fix arrived
+    g_lv.task->showAlert(TR("GPS sets the position while it has a fix"), 1800);
+    return;
+  }
+  const double prev_lat = s_map_center_lat, prev_lon = s_map_center_lon;
+  const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
+  if (la != 0.0 || lo != 0.0) { s_map_center_lat = la; s_map_center_lon = lo; }
+  // A node without GPS usually has no map view yet either, and that is the node
+  // this is for: start from the first contact with a position, close enough to pan from.
+  for (uint32_t i = 0; s_map_center_lat == 0.0 && s_map_center_lon == 0.0 &&
+                       i < the_mesh.getNumContacts(); ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c) || (c.gps_lat == 0 && c.gps_lon == 0)) continue;
+    s_map_center_lat = (double)c.gps_lat / 1.0e6;
+    s_map_center_lon = (double)c.gps_lon / 1.0e6;
+  }
+  if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {   // nothing to pan from
+    g_lv.task->showAlert(TR("Enter a rough location first"), 1800);
+    return;
+  }
+  if (!navGoToMainTab(MAP_TAB_INDEX)) {   // a popup refused to close: leave the view as it was
+    s_map_center_lat = prev_lat;
+    s_map_center_lon = prev_lon;
+    return;
+  }
+  mapPickExit();   // never stack a second overlay
+
+  // Crosshair centred on canvas pixel (w/2, h/2), the point every tile and marker
+  // projection maps the map centre to. On the canvas but outside the pan layer, so
+  // it stays put while the map slides under it; the canvas is behind the tab page,
+  // so it never takes a touch. Four white arms with a dark edge around a clear
+  // centre, readable on light and dark tiles, inset 1 px so the edge isn't clipped.
+  const int arm = SC(12), side = 2 * arm + 1, gp = 3, len = arm - gp - 1;
+  s_map_pick_cross = lv_obj_create(s_map_canvas);
+  lv_obj_remove_style_all(s_map_pick_cross);
+  lv_obj_clear_flag(s_map_pick_cross, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(s_map_pick_cross, side, side);
+  lv_obj_set_pos(s_map_pick_cross, k_map_canvas_w / 2 - arm, k_map_canvas_h / 2 - arm);
+  const int ax[4] = { 1, arm + gp + 1, arm - 1, arm - 1 };
+  const int ay[4] = { arm - 1, arm - 1, 1, arm + gp + 1 };
+  for (int i = 0; i < 4; ++i) {
+    lv_obj_t* r = lv_obj_create(s_map_pick_cross);
+    lv_obj_remove_style_all(r);
+    lv_obj_clear_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(r, ax[i], ay[i]);
+    lv_obj_set_size(r, i < 2 ? len : 3, i < 2 ? 3 : len);
+    lv_obj_set_style_bg_color(r, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(r, lv_color_hex(0x101418), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(r, 1, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(r, LV_OPA_80, LV_PART_MAIN);
+  }
+
+  // Cancel / Save position, sized like the map's own overlay buttons, above the
+  // zoom slider and its readout (so zooming still works) and above the corner
+  // read-outs, and kept left of the right-edge button column (x as in makeMapTab)
+  // so it never covers those buttons on a short screen.
+  const lv_coord_t pad = SC(4), gap = SC(6), bh = SC(32);
+  const lv_coord_t lane_l = SC(4), lane_r = k_map_canvas_w - 32 - 4 - SC(4);
+  const lv_coord_t bar_w = LV_MIN((lv_coord_t)SC(240), (lv_coord_t)(lane_r - lane_l));
+  lv_obj_update_layout(s_map_page);
+  lv_coord_t above = lv_obj_get_content_height(s_map_page) - SC(6);   // the bar's bottom edge
+  if (s_map_zoom_slider) {
+    lv_coord_t top = lv_obj_get_y(s_map_zoom_slider) - 6 - gap;   // 6: the knob's overhang
+    if (s_map_zoom_val) top -= lv_obj_get_height(s_map_zoom_val) + 6;
+    above = LV_MIN(above, top);
+  }
+  if (s_map_info_lbl && !lv_obj_has_flag(s_map_info_lbl, LV_OBJ_FLAG_HIDDEN))
+    above = LV_MIN(above, (lv_coord_t)(lv_obj_get_y(s_map_info_lbl) - gap));
+  s_map_pick_bar = lv_obj_create(s_map_page);
+  lv_obj_remove_style_all(s_map_pick_bar);
+  styleCard(s_map_pick_bar);
+  const lv_coord_t edge = lv_obj_get_style_border_width(s_map_pick_bar, LV_PART_MAIN);
+  lv_obj_set_size(s_map_pick_bar, bar_w, bh + 2 * (pad + edge));
+  lv_obj_set_style_pad_all(s_map_pick_bar, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(s_map_pick_bar, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_map_pick_bar, LV_FLEX_FLOW_ROW);
+  lv_obj_clear_flag(s_map_pick_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_pos(s_map_pick_bar, lane_l + (lane_r - lane_l - bar_w) / 2,
+                 above - (bh + 2 * (pad + edge)));
+  const lv_coord_t bw = (bar_w - 2 * (pad + edge) - gap) / 2;   // each button's share, for the label fit
+  auto mk_btn = [&](const char* text, lv_event_cb_t cb, bool primary) {
+    lv_obj_t* b = lv_btn_create(s_map_pick_bar);
+    if (primary) stylePrimary(b);
+    else         styleButton(b);
+    lv_obj_set_height(b, bh);
+    lv_obj_set_flex_grow(b, 1);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    uiFitLabelWidth(l, bw - SC(8));   // a longer translation steps the font down, not off the button
+    lv_obj_center(l);
+  };
+  mk_btn(TR("Cancel"),        mapPickCancelCb, false);
+  mk_btn(TR("Save position"), mapPickUseCb,    true);
+  lv_obj_move_foreground(s_map_pick_bar);
+
+  s_map_pick_active = true;
+  navMarkDirty();   // keypad boards: the bar's buttons join the map's focus stops
+  g_lv.task->showAlert(TR("Move the map to your spot"), 1500);
 }
 
 // Refresh the bottom info strip — called from the periodic refresh tick
@@ -43124,7 +43295,7 @@ static void pagerNavGoBack() {
 #if defined(HAS_PAGER_ENCODER)
   if (pagerSliderEditCancel()) return;           // editing a slider: Back undoes the edit, nothing else
 #endif
-  if (anyPopupOpen())                            hwKeyDismissTopPopup();
+  if (anyPopupOpen() || s_map_pick_active)       hwKeyDismissTopPopup();   // pick mode: a flags=0 registry row
   else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
@@ -46439,7 +46610,7 @@ static void bleKbdBack() {
   else if (s_cc_root)                            closeControlCenter();
   // An app page covers the drawer it came from (a registry row), so close the page first.
   else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-  else if (popupRegistryAnyOver() || s_ct_select_mode) {
+  else if (popupRegistryAnyOver() || s_ct_select_mode || s_map_pick_active) {
     const bool sheet_from_cc = s_settings_sheet && s_settings_from_cc;
     hwKeyDismissTopPopup();
     if (sheet_from_cc && !s_settings_sheet) openControlCenter();
@@ -46619,8 +46790,8 @@ static bool m9HandleNavKey(int key) {
       // (the board's only Back). Ladder mirrors pagerNavGoBack(): innermost
       // thing open closes first. An open dropdown LIST must take ESC before the
       // registry, or Back would close the enclosing modal instead of the list.
-      // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
-      // open"), so anyPopupOpen() alone would never let Back leave it.
+      // s_ct_select_mode and s_map_pick_active are flags=0 registry rows (MODES,
+      // not "a popup is open"), so anyPopupOpen() alone would never let Back leave them.
       // Wizard: step BACK through it, exactly what its own on-screen Back
       // button does (setupBackCb). The old "nothing to back out of" comment was
       // wrong — the wizard is a four-step stack (welcome/name/region/Wi-Fi) and
@@ -46661,7 +46832,7 @@ static bool m9HandleNavKey(int key) {
       // app (reported bug). Close the page itself; the drawer is then the
       // next, visible Back target.
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-      else if (popupRegistryAnyOver() || s_ct_select_mode) hwKeyDismissTopPopup();
+      else if (popupRegistryAnyOver() || s_ct_select_mode || s_map_pick_active) hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
       else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
       else if (anyPopupOpen())                       hwKeyDismissTopPopup();
@@ -75202,6 +75373,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_ctd_overlay),           nullptr,                             PF_COUNT },   // bulk-delete progress: block keys only
   { P_OPEN(s_mentions_root),         []{ closeMentionsScreen(); },        PF_COUNT },
   { []{ return s_ct_select_mode; },  []{ ctSetSelectMode(false); },       0 },          // a MODE: Esc leaves it, but it is not "a popup is open"
+  { []{ return s_map_pick_active; }, []{ mapPickExit(); },                0 },          // Map > position pick: Back cancels it, like its Cancel button
   { []{ return s_hw_arrange; },      []{ hwArrangeDone(); },              PF_COUNT | PF_SWIPE },   // Arrange Home: Back is Done; drags must not switch tabs
   { P_OPEN(s_appdrawer_root),        []{ setHomeDrawer(false); },         PF_COUNT | PF_BASE },
 };

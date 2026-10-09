@@ -296,6 +296,7 @@ Enter SSID first	Introdu mai întâi SSID-ul
 Enter a name	Introdu un nume
 Enter a network name	Introdu un nume de reţea
 Enter a region name	Enter a region name
+Enter a rough location first	Introdu mai întâi o locaţie aproximativă
 Enter adds a new line	Enter adaugă un rând nou
 Enter exactly 32 hex characters.	Introdu exact 32 caractere hex.
 Enter key sends message	Tasta Enter trimite mesajul
@@ -348,6 +349,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS oprit
 GPS on	GPS pornit
 GPS serial baud	Baud serial GPS
+GPS sets the position while it has a fix	GPS-ul setează poziţia cât timp are fix
 GPS unset	GPS nesetat
 GPS: acquiring...	GPS: căutare semnal...
 GPS: fix	GPS: fix
@@ -498,6 +500,7 @@ Messages
 Min zoom for this pack	Zoom minim pentru acest pachet
 Mode: BLE starting / low memory	Mod: BLE porneşte / memorie redusă
 Model:	Model:
+Move the map to your spot	Mută harta la locul tău
 Multi ACKs	ACK-uri multiple
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Repetare %s · Boost RX %s
 Multi-byte routing (path hash)	Rutare multi-octet (hash de cale)
@@ -608,6 +611,7 @@ Path reset failed	Resetarea căii a eşuat
 Paused  —  score %d	Pauză  —  scor %d
 Per-transmit switching on	Comutare per transmisie pornită
 Pick colour	Alege culoarea
+Pick on the map	Alege pe hartă
 Ping	Ping
 Ping failed	Ping eşuat
 Pinged (direct) — waiting…	Ping trimis (direct) — se aşteaptă…

@@ -296,6 +296,7 @@ Enter SSID first	Прво унесите SSID
 Enter a name	Унесите име
 Enter a network name	Унесите име мреже
 Enter a region name	Enter a region name
+Enter a rough location first	Прво унесите приближну локацију
 Enter adds a new line	Enter додаје нови ред
 Enter exactly 32 hex characters.	Унесите тачно 32 hex знака.
 Enter key sends message	Тастер Enter шаље поруку
@@ -348,6 +349,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Зујалица %s\n%s
 GPS off	GPS искљ
 GPS on	GPS укљ
 GPS serial baud	GPS серијски baud
+GPS sets the position while it has a fix	GPS поставља позицију док има фикс
 GPS unset	GPS није постављен
 GPS: acquiring...	GPS: тражим...
 GPS: fix	GPS: фикс
@@ -498,6 +500,7 @@ Messages
 Min zoom for this pack	Мин. зум за овај пакет
 Mode: BLE starting / low memory	Режим: BLE стартује / мало меморије
 Model:	Модел:
+Move the map to your spot	Померите мапу до свог места
 Multi ACKs	Више ACK
 Multi-ack %s · Repeat %s · RX boost %s	Мулти-ack %s · Понови %s · RX boost %s
 Multi-byte routing (path hash)	Вишебајтно рутирање (хеш путање)
@@ -608,6 +611,7 @@ Path reset failed	Ресет путање није успео
 Paused  —  score %d	Паузирано  —  резултат %d
 Per-transmit switching on	Пребацивање по предаји укљ.
 Pick colour	Изабери боју
+Pick on the map	Изабери на мапи
 Ping	Пинг
 Ping failed	Ping није успео
 Pinged (direct) — waiting…	Ping (директно) — чекање…
