@@ -10786,7 +10786,10 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_pos(title, 2, 0);
   addCloseXBadge(card, emojiSheetCloseCb);
 
-  // Hint line: how to use the board's primary picker controls.
+  // Hint line: how to use the board's primary picker controls. The T-Deck Pro has no
+  // trackball or arrow keys to drive the selector (picks are by touch), so none there.
+  lv_coord_t grid_y = 26;
+#if !defined(HAS_TDECK_PRO)
   lv_obj_t* hint = lv_label_create(card);
 #if defined(HAS_M9_KEYBOARD)
   lv_label_set_text(hint, TR("Arrows \xE2\x80\xA2 OK"));
@@ -10795,14 +10798,31 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
 #endif
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
+  // Title and hint share the top line when they fit left of the close badge; a narrow
+  // card gives the hint its own line under the title instead.
+  {
+    const char* tt = lv_label_get_text(title);
+    const char* ht = lv_label_get_text(hint);
+    const lv_coord_t title_w = lv_txt_get_width(tt, strlen(tt), &g_font_14, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t hint_w  = lv_txt_get_width(ht, strlen(ht), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+    if (2 + title_w + 8 + hint_w + 24 <= cardw - 16) {
+      lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
+    } else {
+      lv_obj_set_width(hint, cardw - 16 - 2 - 24);
+      lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+      const lv_coord_t hy = lv_font_get_line_height(&g_font_14) + 2;
+      lv_obj_set_pos(hint, 2, hy);
+      grid_y = hy + lv_font_get_line_height(&g_font_12) + 6;
+    }
+  }
+#endif
 
   // Scrollable grid of glyph buttons.
   const lv_coord_t grid_w = cardw - 16;
   lv_obj_t* grid = lv_obj_create(card);
   lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, grid_w, cardh - 16 - 26);
-  lv_obj_set_pos(grid, 0, 26);
+  lv_obj_set_size(grid, grid_w, cardh - 16 - grid_y);
+  lv_obj_set_pos(grid, 0, grid_y);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(grid, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_column(grid, 4, LV_PART_MAIN);
