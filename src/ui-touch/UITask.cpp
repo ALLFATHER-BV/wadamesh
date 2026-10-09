@@ -37123,6 +37123,12 @@ static void makeChatDetail(LvChatPanel& p) {
   // panel's chat content already starts below its whole header (chatContentTop).
 #if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || CAP_ROUND_CORNERS
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
+#elif defined(ATTAKY_MESH_SERIES)
+  // Content starts at the chat header's foot: the 6 px more left a strip of bare
+  // background between the header's shade and the first message (as on the M9, #627).
+  // Set here, before any row is placed: the list is virtualised and does not move
+  // rows it has laid out.
+  lv_obj_set_style_pad_top(p.msgs, chatBarH() - chatContentTop(), LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
 #endif
