@@ -1937,3 +1937,7 @@ newer keyboard	újabb billentyűzet
 older keyboard	régebbi billentyűzet
 older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
 keyboard not detected yet	a billentyűzet még nincs felismerve
+
+# Mesh Deck keyboard module strings
+module attached	modul csatlakoztatva
+not attached	nincs csatlakoztatva

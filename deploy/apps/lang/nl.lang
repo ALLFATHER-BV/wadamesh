@@ -1923,3 +1923,7 @@ newer keyboard	nieuwer toetsenbord
 older keyboard	ouder toetsenbord
 older keyboard (set manually)	ouder toetsenbord (handmatig ingesteld)
 keyboard not detected yet	toetsenbord nog niet herkend
+
+# Mesh Deck keyboard module strings
+module attached	module aangesloten
+not attached	niet aangesloten

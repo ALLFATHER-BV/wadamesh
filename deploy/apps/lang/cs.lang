@@ -1943,3 +1943,7 @@ newer keyboard	novější klávesnice
 older keyboard	starší klávesnice
 older keyboard (set manually)	starší klávesnice (nastaveno ručně)
 keyboard not detected yet	klávesnice zatím nerozpoznána
+
+# Mesh Deck keyboard module strings
+module attached	modul připojen
+not attached	nepřipojeno

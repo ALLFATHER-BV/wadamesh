@@ -1925,3 +1925,7 @@ newer keyboard	tastiera nuova
 older keyboard	tastiera vecchia
 older keyboard (set manually)	tastiera vecchia (impostata a mano)
 keyboard not detected yet	tastiera non ancora rilevata
+
+# Mesh Deck keyboard module strings
+module attached	modulo collegato
+not attached	non collegato

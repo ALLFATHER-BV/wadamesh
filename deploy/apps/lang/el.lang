@@ -1926,3 +1926,7 @@ newer keyboard	νεότερο πληκτρολόγιο
 older keyboard	παλαιότερο πληκτρολόγιο
 older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
 keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα
+
+# Mesh Deck keyboard module strings
+module attached	μονάδα συνδεδεμένη
+not attached	μη συνδεδεμένη

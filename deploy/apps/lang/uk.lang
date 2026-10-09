@@ -1926,3 +1926,7 @@ newer keyboard	новіша клавіатура
 older keyboard	старіша клавіатура
 older keyboard (set manually)	старіша клавіатура (задано вручну)
 keyboard not detected yet	клавіатуру ще не визначено
+
+# Mesh Deck keyboard module strings
+module attached	модуль під'єднано
+not attached	не під'єднано

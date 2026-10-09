@@ -1925,3 +1925,7 @@ newer keyboard	clavier récent
 older keyboard	ancien clavier
 older keyboard (set manually)	ancien clavier (réglé manuellement)
 keyboard not detected yet	clavier pas encore détecté
+
+# Mesh Deck keyboard module strings
+module attached	module branché
+not attached	non branché

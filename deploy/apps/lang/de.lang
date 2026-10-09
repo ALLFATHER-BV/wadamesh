@@ -1923,3 +1923,7 @@ newer keyboard	neuere Tastatur
 older keyboard	ältere Tastatur
 older keyboard (set manually)	ältere Tastatur (manuell gesetzt)
 keyboard not detected yet	Tastatur noch nicht erkannt
+
+# Mesh Deck keyboard module strings
+module attached	Modul angeschlossen
+not attached	nicht angeschlossen

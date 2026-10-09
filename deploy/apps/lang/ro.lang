@@ -1927,3 +1927,7 @@ newer keyboard	tastatură nouă
 older keyboard	tastatură veche
 older keyboard (set manually)	tastatură veche (setată manual)
 keyboard not detected yet	tastatura nu a fost detectată încă
+
+# Mesh Deck keyboard module strings
+module attached	modul atașat
+not attached	neatașat

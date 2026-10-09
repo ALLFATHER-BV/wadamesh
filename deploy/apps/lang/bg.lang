@@ -1926,3 +1926,7 @@ newer keyboard	по-нова клавиатура
 older keyboard	по-стара клавиатура
 older keyboard (set manually)	по-стара клавиатура (ръчно)
 keyboard not detected yet	клавиатурата още не е разпозната
+
+# Mesh Deck keyboard module strings
+module attached	модулът е свързан
+not attached	не е свързан

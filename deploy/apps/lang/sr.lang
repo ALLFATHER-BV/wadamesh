@@ -1926,3 +1926,7 @@ newer keyboard	новија тастатура
 older keyboard	старија тастатура
 older keyboard (set manually)	старија тастатура (ручно подешено)
 keyboard not detected yet	тастатура још није препозната
+
+# Mesh Deck keyboard module strings
+module attached	модул прикључен
+not attached	није прикључен
