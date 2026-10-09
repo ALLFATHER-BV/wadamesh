@@ -40875,6 +40875,7 @@ static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
                                           text[i - 1] == '#'))) continue;
     int j = i + 1;
     while (isalnum((unsigned char)text[j]) || text[j] == '-' || text[j] == '_') ++j;
+    if ((unsigned char)text[j] >= 0x80) { i = j; continue; }
     if (j == i + 1 || j - i >= 32) continue;
     *start = i; *end = j;
     return true;
