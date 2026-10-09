@@ -53972,8 +53972,8 @@ static void chatHeaderApply(bool chat_open) {
   // lines start near the top and the bar ends 2 px under the subtitle, where the
   // message list's content starts (makeChatDetail pads it to the same m9ChatHeadH),
   // so no strip of bare background sits between the header and the first message.
-  // The back arrow and avatar centre on the two lines; the clock, battery and GPS
-  // share the title's line.
+  // The back arrow and avatar centre on the two lines, and so do the clock, battery
+  // and GPS: the whole header is centred vertically.
   {
     const lv_coord_t pad = 3;
     const lv_coord_t head_h = m9ChatHeadH();   // == pad + title_h + sub_h + 2; the list starts here too
@@ -53986,10 +53986,11 @@ static void chatHeaderApply(bool chat_open) {
       const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
       lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, 6, text_mid - lv_font_get_line_height(bf) / 2);
     }
-    // RIGHT_MID-aligned on the grown bar, so shift them from its middle to the title's.
-    // Up there the battery met the panel's rounded corner and was cut off, so the
-    // whole right-hand group steps in from the edge.
-    const lv_coord_t line_dy = (pad + title_h / 2) - head_h / 2;
+    // RIGHT_MID-aligned on the bar, so shift them from its middle onto the two lines'
+    // centre, level with the back arrow and avatar. The panel's rounded corner cut
+    // off the battery near the top, so the whole right-hand group steps in from the
+    // edge.
+    const lv_coord_t line_dy = text_mid - head_h / 2;
     const lv_coord_t corner = SBX(8);
     for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
       if (o) lv_obj_set_style_translate_y(o, line_dy, LV_PART_MAIN);
