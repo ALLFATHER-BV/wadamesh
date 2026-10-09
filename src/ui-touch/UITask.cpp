@@ -2372,8 +2372,22 @@ static inline bool chatComposerTwoRow() {
 static inline lv_coord_t chatComposerTopRowH() {
   return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
 }
+// Portrait P4: the full-width text box would otherwise sit under the bottom corner
+// arcs, so the whole composer rides this far above the screen's bottom edge (the
+// row's bottom padding). Matches the corner safe-area the status bar uses.
+static inline lv_coord_t chatComposerBottomLift() {
+#if CAP_ROUND_CORNERS
+  return chatComposerTwoRow() ? SB_INSET_X : 0;
+#else
+  return 0;
+#endif
+}
+// Composer row height not available to the text box: row padding, the top row, the lift.
+static inline lv_coord_t chatComposerChromeH() {
+  return 4 + chatComposerTopRowH() + chatComposerBottomLift();
+}
 static inline lv_coord_t chatComposerBaseH() {
-  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
+  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH() + chatComposerBottomLift();
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
   // font line for Medium/Large without globally scaling the short viewport.
@@ -8868,7 +8882,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // V4 with the keyboard down) it sits at the screen bottom.
   const bool kb = g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_height(p->composer_row, s_comp_h);
-  lv_obj_set_height(p->composer_ta,  s_comp_h - 4 - chatComposerTopRowH());
+  lv_obj_set_height(p->composer_ta,  s_comp_h - chatComposerChromeH());
   lv_obj_set_y(p->composer_row, kb ? chatCompYKb() : chatCompYOpen());
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
@@ -8896,7 +8910,7 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
   const lv_coord_t b = CHAT_COMP_BTN_P4;
   const lv_coord_t gap = 6;
   const lv_coord_t right = chatComposerSendInset();
-  const lv_coord_t ta_h = s_comp_h - 4 - chatComposerTopRowH();
+  const lv_coord_t ta_h = s_comp_h - chatComposerChromeH();
   const lv_coord_t kMinLift = SB_TOP_PAD - 2;
   lv_coord_t lift = (ta_h - b) / 2;
   if (lift < kMinLift) lift = kMinLift;
@@ -8923,6 +8937,7 @@ static void chatComposerApplyRows(LvChatPanel* p) {
   lv_obj_set_size(p->send_btn, b, b);
   lv_obj_set_style_radius(p->qr_btn, b / 2, LV_PART_MAIN);
   lv_obj_set_style_radius(p->emoji_btn, b / 2, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(p->composer_row, 2 + chatComposerBottomLift(), LV_PART_MAIN);
   // Two-row: the top row's left end is free; the near-limit counter moves there so
   // it doesn't sit on the emoji button.
   if (p->composer_cnt) {
@@ -37261,7 +37276,7 @@ static void makeChatDetail(LvChatPanel& p) {
   p.composer_ta = lv_textarea_create(p.composer_row);
   // M9 conversations: QR | message input | # | emoji | Send. Other boards
   // retain QR | emoji | message input | Send.
-  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4 - chatComposerTopRowH());
+  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - chatComposerChromeH());
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
   styleCard(p.composer_ta);
