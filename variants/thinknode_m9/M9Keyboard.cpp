@@ -86,18 +86,29 @@ void m9KeyboardPoll() {
     kbTryFindBus();
     if (!s_bus) return;
   }
-  // Read the latched key; when one IS pending, drain a couple more reads in
-  // the same poll (bounded) — the controller holds a single slot, so a second
-  // key struck inside the 15 ms window would otherwise be lost.
-  for (int i = 0; i < 3; i++) {
-    uint8_t key = 0;
-    if (!kbReadReg(*s_bus, M9_KB_REG_KEY, &key)) return;
-    if (key == 0x00 || key == 0xFF) return;   // no key / undefined-register reply
-    const uint8_t nh = (uint8_t)((s_head + 1) & 15);
-    if (nh != s_tail) {     // drop if the ring is full
-      s_ring[s_head] = key;
-      s_head = nh;
-    }
+  // One read per poll. The controller latches a single key, so reading again
+  // straight away can only return nothing or that same key, if the controller
+  // has not cleared it yet: the old three-read drain entered keys twice (#625).
+  // The Launcher and Meshtastic M9 ports also take one read per key.
+  uint8_t key = 0;
+  if (!kbReadReg(*s_bus, M9_KB_REG_KEY, &key)) return;
+  if (key == 0x00 || key == 0xFF) return;   // no key / undefined-register reply
+  // A key the controller reports again within kRepeatGuardMs is the same press:
+  // a stale latch read on the next poll, or the matrix bouncing on a slow,
+  // deliberate press (#625: "worse when typing slowly"). Nobody presses one key
+  // twice that fast on purpose. Timed from the last ACCEPTED key, so a run of
+  // bounces cannot stretch the guard.
+  static constexpr uint32_t kRepeatGuardMs = 70;
+  static uint8_t  s_last_key = 0;
+  static uint32_t s_last_key_ms = 0;
+  const uint32_t key_ms = millis();
+  if (key == s_last_key && (uint32_t)(key_ms - s_last_key_ms) < kRepeatGuardMs) return;
+  s_last_key = key;
+  s_last_key_ms = key_ms;
+  const uint8_t nh = (uint8_t)((s_head + 1) & 15);
+  if (nh != s_tail) {     // drop if the ring is full
+    s_ring[s_head] = key;
+    s_head = nh;
   }
 }
 
