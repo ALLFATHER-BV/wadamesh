@@ -2729,8 +2729,22 @@ constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped
 // send below. Landscape keeps the single row. Checked live: the keyboard's rotate
 // button flips orientation with the chat open.
 static constexpr lv_coord_t CHAT_COMP_BTN_P4 = (56 + 34) / 2;
+// The T-Deck Pro uses the same portrait split (no corner arcs to clear), with
+// its 30-px buttons matching its one-line text box.
+#if CAP_ROUND_CORNERS || defined(HAS_TDECK_PRO)
+#define CHAT_COMP_SPLIT 1
+#else
+#define CHAT_COMP_SPLIT 0
+#endif
+static inline lv_coord_t chatComposerBtnSz() {
+#if defined(HAS_TDECK_PRO)
+  return 30;
+#else
+  return CHAT_COMP_BTN_P4;
+#endif
+}
 static inline bool chatComposerTwoRow() {
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   return lv_disp_get_hor_res(nullptr) <= lv_disp_get_ver_res(nullptr);
 #else
   return false;
@@ -2738,7 +2752,7 @@ static inline bool chatComposerTwoRow() {
 }
 // Height the top (QR + emoji) row adds above the text row; 0 when single-row.
 static inline lv_coord_t chatComposerTopRowH() {
-  return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
+  return chatComposerTwoRow() ? (lv_coord_t)(chatComposerBtnSz() + 4) : 0;
 }
 // Portrait P4: the full-width text box would otherwise sit under the bottom corner
 // arcs, so the whole composer rides this far above the screen's bottom edge (the
@@ -2753,6 +2767,16 @@ static inline lv_coord_t chatComposerBottomLift() {
 // Composer row height not available to the text box: row padding, the top row, the lift.
 static inline lv_coord_t chatComposerChromeH() {
   return 4 + chatComposerTopRowH() + chatComposerBottomLift();
+}
+// Lines the text box shows while it is empty. The T-Deck Pro's box starts tall
+// enough for two lines (its keyboard is physical, so the room is free); it
+// still grows to CHAT_COMP_MAX_LINES as the message wraps.
+static inline int chatComposerMinLines() {
+#if defined(HAS_TDECK_PRO)
+  return 2;
+#else
+  return 1;
+#endif
 }
 // Slim composer: on the large screens in landscape (T-Display P4 landscape, Tanmatsu,
 // CrowPanel 5.0 / 10.1) the empty text box is ONE text line tall and grows a line at a
@@ -2771,7 +2795,9 @@ static lv_coord_t chatComposerOneLineTaH();
 static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h);
 static inline lv_coord_t chatComposerBaseH() {
   if (chatComposerSlim()) return chatComposerSlimRowH(chatComposerOneLineTaH());
-  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH() + chatComposerBottomLift();
+  if (chatComposerTwoRow())
+    return CHAT_COMP_H + chatComposerTopRowH() + chatComposerBottomLift()
+         + (lv_coord_t)(chatComposerMinLines() - 1) * lv_font_get_line_height(&g_font_14);
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
   // font line for Medium/Large without globally scaling the short viewport.
@@ -9505,7 +9531,7 @@ constexpr int KB_MIRROR_STRIP_H = 52;
 static void chatComposerAutoGrow(LvChatPanel* p);       // the rotation re-runs it (kbApplyLayoutForRotation)
 static void chatComposerAlignSlim(LvChatPanel* p);      // defined after chatComposerAutoGrow
 #endif
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
 static void chatComposerApplyRows(LvChatPanel* p);      // defined after chatComposerAutoGrow
 static void chatComposerPlaceButtons(LvChatPanel* p);   // ditto
 #endif
@@ -9547,7 +9573,7 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
     }
     if (s_kb_panel->composer_ta)
       lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW(s_kb_panel->channel_mode));
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
     chatComposerApplyRows(s_kb_panel);   // one row <-> two rows as the orientation flips
 #elif CAP_LARGE_SCREEN
     // Slim (landscape) <-> classic (portrait) on a rotatable large panel (CrowPanel 5.0):
@@ -10033,11 +10059,12 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
-  // Text box: one line (slim) or the board's base box, plus a line per extra wrapped line.
+  // Text box: one line (slim) or the board's base box (two lines on the Pro), plus a line per extra wrapped line.
   // Row: the box plus chrome, or (slim) at least as tall as the buttons beside it.
   const bool slim = chatComposerSlim();
   const lv_coord_t base_ta = slim ? chatComposerOneLineTaH() : chatComposerBaseH() - chatComposerChromeH();
-  const lv_coord_t ta_h = base_ta + (lv_coord_t)(lines - 1) * lh;
+  if (lines < chatComposerMinLines()) lines = chatComposerMinLines();
+  const lv_coord_t ta_h = base_ta + (lv_coord_t)(lines - chatComposerMinLines()) * lh;
   const lv_coord_t want = slim ? chatComposerSlimRowH(ta_h) : ta_h + chatComposerChromeH();
   if (want == s_comp_h && ta_h == s_comp_ta_h) return;   // unchanged → nothing to relayout
   // Read before the bottom inset changes below: if the newest message was in
@@ -10060,7 +10087,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
   lv_obj_set_style_pad_bottom(p->msgs, s_comp_h + 6, LV_PART_MAIN);
   if (stick_bottom) chatVirtQueueScroll(p, LV_COORD_MAX);
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   chatComposerPlaceButtons(p);   // keep the buttons centred on the grown text box
 #elif CAP_LARGE_SCREEN
   chatComposerAlignSlim(p);      // a box shorter than the buttons sits centred on them
@@ -10097,7 +10124,7 @@ static void chatComposerAlignSlim(LvChatPanel* p) {
 }
 #endif
 
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
 // Position the composer's controls for the current orientation (see chatComposerTwoRow):
 //   portrait:  [          QR  emoji ]     landscape: [ QR  text ...  emoji send ]
 //              [ text ...      send ]
@@ -10108,11 +10135,19 @@ static void chatComposerAlignSlim(LvChatPanel* p) {
 // pad counts toward it).
 static void chatComposerPlaceButtons(LvChatPanel* p) {
   if (!p || !p->composer_row || !p->composer_ta || !p->qr_btn || !p->emoji_btn || !p->send_btn) return;
-  const lv_coord_t b = CHAT_COMP_BTN_P4;
+  const lv_coord_t b = chatComposerBtnSz();
   const lv_coord_t gap = 6;
   const lv_coord_t right = chatComposerSendInset();
   const lv_coord_t ta_h = s_comp_ta_h;
+#if CAP_ROUND_CORNERS
   const lv_coord_t lift = chatComposerP4Lift(ta_h);   // at least CHAT_COMP_MIN_LIFT_P4
+  const lv_coord_t ta_off = chatComposerP4TaOff(ta_h);
+#else
+  // T-Deck Pro: square corners, so the buttons just centre on the text box; it has
+  // no slim layout, so the box never rides up.
+  const lv_coord_t lift = ta_h > b ? (ta_h - b) / 2 : 0;
+  const lv_coord_t ta_off = 0;
+#endif
   if (chatComposerTwoRow()) {
     lv_obj_align(p->emoji_btn, LV_ALIGN_TOP_RIGHT, -right, 0);
     lv_obj_align(p->qr_btn, LV_ALIGN_TOP_RIGHT, -(right + b + gap), 0);
@@ -10121,7 +10156,7 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
     const lv_coord_t left = chatComposerLeftInset();
     lv_obj_align(p->qr_btn, LV_ALIGN_BOTTOM_LEFT, left, -lift);
     // Slim (landscape): a box shorter than the buttons rides up to sit centred on them.
-    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -chatComposerP4TaOff(ta_h));
+    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -ta_off);
     lv_obj_align(p->emoji_btn, LV_ALIGN_BOTTOM_RIGHT, -(right + b + gap), -lift);
   }
   lv_obj_align(p->send_btn, LV_ALIGN_BOTTOM_RIGHT, -right, -lift);
@@ -10131,7 +10166,7 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
 // text box height, Y and button placement all follow the current orientation.
 static void chatComposerApplyRows(LvChatPanel* p) {
   if (!p || !p->composer_row || !p->composer_ta || !p->qr_btn || !p->emoji_btn || !p->send_btn) return;
-  const lv_coord_t b = CHAT_COMP_BTN_P4;
+  const lv_coord_t b = chatComposerBtnSz();
   lv_obj_set_size(p->qr_btn, b, b);
   lv_obj_set_size(p->emoji_btn, b, b);
   lv_obj_set_size(p->send_btn, b, b);
@@ -40074,7 +40109,11 @@ static void makeChatDetail(LvChatPanel& p) {
   // pressed state still lifts it.
   lv_obj_set_style_bg_color(qr_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(qr_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(qr_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
+#else
   lv_obj_set_style_text_color(qr_btn, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#endif
   lv_obj_add_event_cb(qr_btn, openQuickReplyPickerCb, LV_EVENT_CLICKED, &p);
   navSetTip(qr_btn, TR("Quick replies"));
   lv_obj_t* ql = lv_label_create(qr_btn);
@@ -40105,7 +40144,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
   lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(p.emoji_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
+#else
   lv_obj_set_style_text_color(p.emoji_btn, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#endif
   lv_obj_add_event_cb(p.emoji_btn, openEmojiPickerCb, LV_EVENT_CLICKED, &p);
   lv_obj_t* el = lv_label_create(p.emoji_btn);
 #if defined(HAS_TANMATSU)
@@ -40170,6 +40213,14 @@ static void makeChatDetail(LvChatPanel& p) {
   // as the box grows, a circle radius would grow with it, and at four lines the
   // curve cut through the start and end of the first and last lines (#617).
   lv_obj_set_style_radius(p.composer_ta, s_comp_ta_h / 2, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  // E-paper: a black outline around the text box, whatever its state.
+  for (lv_style_selector_t st : { (lv_style_selector_t)LV_PART_MAIN,
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED),
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY) })
+    styleEpaperControlOutline(p.composer_ta, st);
+#endif
   lv_obj_set_style_pad_hor(p.composer_ta, SC(12), LV_PART_MAIN);
   // Keep a few px of vertical slack in the textarea CONTENT so it never sits at
   // exactly one line-height (that made the internal scroll oscillate ±1px per
@@ -40266,8 +40317,22 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
 #endif
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  // E-paper: the accent fill dithers to noise, so a bare outlined circle with a
+  // black arrow, the same in every state.
+  for (lv_style_selector_t st : { (lv_style_selector_t)LV_PART_MAIN,
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_PRESSED) }) {
+    lv_obj_set_style_bg_color(send, lv_color_white(), st);
+    lv_obj_set_style_bg_opa(send, LV_OPA_COVER, st);
+    lv_obj_set_style_bg_grad_dir(send, LV_GRAD_DIR_NONE, st);
+  }
+  styleEpaperControlOutline(send, LV_PART_MAIN);
+  lv_obj_set_style_outline_width(send, 0, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(send, 0, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN);
+#endif
   lv_obj_center(sl);
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   chatComposerApplyRows(&p);
 #elif CAP_LARGE_SCREEN
   chatComposerAlignSlim(&p);   // centre the one-line box and Send on the chips (slim layout)
@@ -41426,6 +41491,9 @@ static void makeSettings(lv_obj_t* tab) {
     styleGlass(card);
     lv_obj_set_style_pad_all(card, 3, LV_PART_MAIN);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_pad_row(card, 3, LV_PART_MAIN);   // a gap between the outlined rows
+#endif
 
     for (int k = 0; k < g.n; ++k) {
       const int c = g.cats[k];
@@ -41440,6 +41508,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
       lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
       lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+#if defined(HAS_TDECK_PRO)
+      // E-paper: the grey card and the pressed/focus fill fall away in the one-bit
+      // reduction, so each row (Device too) gets the black outline the Pro's buttons use.
+      styleEpaperControlOutline(row, LV_PART_MAIN);
+#endif
       lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
       lv_obj_add_event_cb(row, settingsCatOpenCb, LV_EVENT_CLICKED, (void*)(intptr_t)c);
@@ -41468,7 +41541,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_t* chev = lv_label_create(row);
       lv_label_set_text(chev, LV_SYMBOL_RIGHT);
       lv_obj_set_style_text_font(chev, &g_font_14, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+      lv_obj_set_style_text_color(chev, lv_color_black(), LV_PART_MAIN);
+#else
       lv_obj_set_style_text_color(chev, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
+#endif
       lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -8, 0);
       const lv_coord_t text_x = 6 + tile + 10;
       const lv_coord_t avail = gw - 6 - text_x - 8 - SC(14) - 8;   // the card's pad, the chevron
@@ -41480,7 +41557,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_height(val, lv_font_get_line_height(&g_font_12));   // one line: LONG_DOT wraps without a height
       lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
       lv_obj_set_style_text_font(val, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+      lv_obj_set_style_text_color(val, lv_color_black(), LV_PART_MAIN);   // tertiary grey drops out on e-paper
+#else
       lv_obj_set_style_text_color(val, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
+#endif
       lv_obj_align(val, LV_ALIGN_RIGHT_MID, -(8 + SC(14) + 6), 0);
 
       // A name too long for one line at this text size wraps onto a second line
