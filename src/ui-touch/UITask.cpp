@@ -2552,6 +2552,15 @@ static inline lv_coord_t m9ChatHeadH() {
   return (lv_coord_t)(3 + lv_font_get_line_height(&g_font_semi_14) + lv_font_get_line_height(&g_font_12) + 2);
 }
 #endif
+// The chat header's foot: where a conversation's message list starts its content on
+// the boards whose header floats over the list (makeChatDetail).
+static inline lv_coord_t chatHeadFootY() {
+#if defined(HAS_THINKNODE_M9)
+  return m9ChatHeadH();
+#else
+  return chatBarH();
+#endif
+}
 static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - chatContentTop(); }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
@@ -38158,12 +38167,13 @@ static void makeChatDetail(LvChatPanel& p) {
   // panel's chat content already starts below its whole header (chatContentTop).
 #if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || CAP_ROUND_CORNERS
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
-#elif defined(HAS_THINKNODE_M9)
-  // Content starts at the conversation header's foot (m9ChatHeadH). Set here, before
-  // any row is placed: the list is virtualised and does not move rows it has laid out.
-  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(m9ChatHeadH() - chatContentTop())), LV_PART_MAIN);
 #else
-  lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
+  // Every other board's chat header is a double bar floating over the list's top:
+  // content starts at the header's foot (chatHeadFootY). The old 6 px more left a
+  // strip of bare background between the header's shade and the first message (#627).
+  // Set here, before any row is placed: the list is virtualised and does not move
+  // rows it has laid out.
+  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(chatHeadFootY() - chatContentTop())), LV_PART_MAIN);
 #endif
   // The composer floats over the list's lower edge (transparent row), so reserve a
   // bottom inset == the composer height: the newest bubble rests just above it and
