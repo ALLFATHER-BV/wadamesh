@@ -63,6 +63,30 @@ int main() {
   assert(keyboard.event(0, true, 740) == 'q');
   keyboard.event(0, false, 750);
 
+  // Physical Fn+V = paste chord: V is swallowed, the chord is reported once,
+  // and nothing leaks into the next plain keypress.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 760);
+  assert(keyboard.event(PagerKeyboardState::V_POS, true, 770) == 0);
+  assert(keyboard.consumeAltVChord());
+  assert(!keyboard.consumeAltVChord());
+  keyboard.event(PagerKeyboardState::V_POS, false, 780);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 790);   // used-while-held: no one-shot armed
+  assert(keyboard.event(0, true, 792) == 'q');
+  keyboard.event(0, false, 794);
+  // Tap Fn, then V (one-shot symbol layer) still types '?' -- not a chord.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 795);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 796);
+  assert(keyboard.event(PagerKeyboardState::V_POS, true, 797) == '?');
+  assert(!keyboard.consumeAltVChord());
+  keyboard.event(PagerKeyboardState::V_POS, false, 798);
+  // discardAlt() drops a pending chord too.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 799);
+  keyboard.event(PagerKeyboardState::V_POS, true, 799);
+  keyboard.discardAlt();
+  assert(!keyboard.consumeAltVChord());
+  keyboard.event(PagerKeyboardState::V_POS, false, 799);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 799);
+
   keyboard.event(PagerKeyboardState::ALT_POS, true, 800);
   keyboard.discardAlt();
   keyboard.event(PagerKeyboardState::ALT_POS, false, 810);

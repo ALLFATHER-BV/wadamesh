@@ -147,6 +147,11 @@ void pagerKeyboardToggleCaps() { s_state.toggleCaps(); }
 bool pagerKeyboardConsumeAltBackspaceChord() {
   return s_state.consumeAltBackspaceChord();
 }
+#if !defined(HAS_TDECK_PRO)
+bool pagerKeyboardConsumeAltVChord() {
+  return s_state.consumeAltVChord();
+}
+#endif
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
 bool pagerKeyboardConsumeAltBChord() {
   return s_state.consumeAltBChord();

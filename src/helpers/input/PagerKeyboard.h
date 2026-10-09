@@ -86,6 +86,14 @@ void pagerKeyboardToggleCaps();
  *  reports held for this press, so it can't also fire the plain-Backspace
  *  hold-to-back/hold-to-unlock gestures. Consumes the pending flag on read. */
 bool pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+/** One-shot: true exactly once after physical Alt(Fn)+V is chorded (V pressed
+ *  while Fn is physically held). The V press is consumed rather than emitted
+ *  as the symbol-layer '?'; tap-Fn-then-V and the locked symbol layer still
+ *  type '?'. UITask pastes the in-RAM clipboard into the field being edited.
+ *  Consumes the pending flag on read. */
+bool pagerKeyboardConsumeAltVChord();
+#endif
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
 /** One-shot: true after physical Alt+B is pressed on T-Deck Pro. The B press
  *  is consumed rather than emitted as the symbol-layer exclamation mark. */
