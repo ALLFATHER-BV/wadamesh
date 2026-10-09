@@ -1118,7 +1118,8 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
 // (the Heltec V4 with its kit) or at a large UI size, and asking translators to
 // shorten every string for the smallest screen only makes it worse everywhere else.
 // So the layout adapts instead: every button styled by styleButton() checks its
-// caption before it draws and, only when the text is wider than the button, steps
+// caption when it is styled and whenever it or its caption changes size (a new text
+// or font resizes the label) and, only when the text is wider than the button, steps
 // the font down 16 -> 14 -> 12, then wraps it onto two centred lines if the button
 // has the height, else ends it in "...". A caption that fits is never touched.
 //
@@ -1134,7 +1135,7 @@ static bool uiFitPendingHas(lv_obj_t* b) {
 }
 static bool uiFitPendingAdd(lv_obj_t* b) {
   for (lv_obj_t*& p : s_fit_pending) if (!p) { p = b; return true; }
-  return false;                        // full: the next draw asks again
+  return false;                        // full: queued anyway, just not de-duplicated
 }
 static void uiFitPendingDrop(lv_obj_t* b) {
   for (lv_obj_t*& p : s_fit_pending) if (p == b) p = nullptr;
@@ -1165,14 +1166,21 @@ static lv_coord_t uiCaptionTextW(lv_obj_t* lbl, const lv_font_t* f) {
   return sz.x;
 }
 
-// Whether the caption still needs work: it overflows and either a smaller font is
-// left to try or it has not been wrapped / dotted yet.
+static inline bool uiFontIsSemi(const lv_font_t* f) {
+  return f == &g_font_semi_16 || f == &g_font_semi_14 || f == &g_font_semi_12;
+}
+
+// Whether the caption still needs work: it overflows and either a smaller font of
+// its weight is left to try or it has not been wrapped / dotted yet. The floor is
+// the smallest font of the SAME weight: semibold 12 is taller than regular 12, so
+// measuring a semibold caption against regular 12 never let it count as fitted.
 static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
   const lv_coord_t avail_w = lv_obj_get_content_width(btn);
   if (avail_w <= 6) return false;
   const lv_font_t* f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
   if (uiCaptionTextW(lbl, f) <= avail_w) return false;
-  if (lv_font_get_line_height(f) > lv_font_get_line_height(&g_font_12)) return true;
+  const lv_font_t* floor_f = uiFontIsSemi(f) ? &g_font_semi_12 : &g_font_12;
+  if (lv_font_get_line_height(f) > lv_font_get_line_height(floor_f)) return true;
   return lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w;   // not wrapped / dotted yet
 }
 
@@ -1185,7 +1193,7 @@ static void uiFitButtonCaption(lv_obj_t* btn) {
   const lv_font_t* cur = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
   const lv_coord_t cur_h = lv_font_get_line_height(cur);
   // Primary buttons are semibold; shrink them within that weight.
-  const bool semi = cur == &g_font_semi_16 || cur == &g_font_semi_14 || cur == &g_font_semi_12;
+  const bool semi = uiFontIsSemi(cur);
   const lv_font_t* ladder[3] = { semi ? &g_font_semi_16 : &g_font_16, semi ? &g_font_semi_14 : &g_font_14,
                                  semi ? &g_font_semi_12 : &g_font_12 };
   const lv_font_t* use = nullptr;
@@ -1218,18 +1226,29 @@ static void uiFitButtonAsync(void* p) {
   lv_obj_t* btn = static_cast<lv_obj_t*>(p);
   uiFitPendingDrop(btn);
   if (!btn || !lv_obj_is_valid(btn)) return;
+  lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
   uiFitButtonCaption(btn);
 }
 
-// Runs as the button starts to draw, i.e. once its size and caption are final.
-// Restyling mid-render is not allowed, so it only measures here and queues the fit
-// for right after the frame; a caption that fits costs one text measurement.
-static void uiFitButtonDrawCb(lv_event_t* e) {
-  lv_obj_t* btn = lv_event_get_target(e);
+// Queues one fit for after the current builder or layout pass, which is when the
+// button's size and caption are final. Restyling inside a size event is not safe,
+// so nothing is measured here.
+static void uiFitButtonQueue(lv_obj_t* btn) {
   if (uiFitPendingHas(btn)) return;
-  lv_obj_t* lbl = uiButtonCaption(btn);
-  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
-  if (uiFitPendingAdd(btn)) lv_async_call(uiFitButtonAsync, btn);
+  uiFitPendingAdd(btn);
+  lv_async_call(uiFitButtonAsync, btn);
+}
+
+// The button was resized, or a child of it was: its caption label resizes when its
+// text or font changes. A fit that changes the caption comes back through here once
+// and then finds nothing left to do, so a caption is fitted on changes, not frames.
+static void uiFitButtonChangeCb(lv_event_t* e) {
+  lv_obj_t* btn = lv_event_get_target(e);
+  if (lv_event_get_code(e) == LV_EVENT_CHILD_CHANGED) {
+    lv_obj_t* child = static_cast<lv_obj_t*>(lv_event_get_param(e));
+    if (!child || !lv_obj_check_type(child, &lv_label_class)) return;
+  }
+  uiFitButtonQueue(btn);
 }
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
@@ -4483,8 +4502,10 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
   // Captions that overflow shrink, then wrap (#418). Remove first: some buttons are
   // restyled, and the callback must only be attached once.
-  lv_obj_remove_event_cb(obj, uiFitButtonDrawCb);
-  lv_obj_add_event_cb(obj, uiFitButtonDrawCb, LV_EVENT_DRAW_MAIN_BEGIN, nullptr);
+  while (lv_obj_remove_event_cb(obj, uiFitButtonChangeCb)) {}   // removes one per call
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_SIZE_CHANGED, nullptr);
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_CHILD_CHANGED, nullptr);
+  uiFitButtonQueue(obj);   // the caption is usually added after styling; this runs after
   styleLookPress(obj);
 }
 
