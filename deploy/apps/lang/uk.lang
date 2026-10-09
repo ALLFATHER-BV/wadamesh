@@ -1422,7 +1422,7 @@ Routed	Routed
 Running it for	Користуюся вже
 Running it for:	Користуюся вже:
 SD card	SD-картка
-SD unavailable - insert a FAT32 card and retry	SD недоступна — вставте картку FAT32 і повторіть
+SD unavailable - insert a FAT32 card and retry	SD недоступна - вставте картку FAT32 і повторіть
 Sat	Sat
 Saturday	Saturday
 Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Повідомте, чи працює ця збірка на вашій платі, щоб стабільний випуск виходив на підставі даних, а не тому, що ніхто не скаржився. Звіт про помилку відкривається як QR-код: відскануйте його й надішліть із телефона під своїм обліковим записом GitHub.
@@ -1864,3 +1864,4 @@ Asleep: tap screen or 🤍 to wake	Сон: торкніться екрана а�
 Receiving %s\n%lu / %lu bytes	Отримання %s\n%lu / %lu байт
 Sending %s\n%lu / %lu bytes	Надсилання %s\n%lu / %lu байт
 File Transfer	Передавання файлів
+Hardware	Обладнання
