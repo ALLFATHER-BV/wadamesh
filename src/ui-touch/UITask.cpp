@@ -41278,7 +41278,8 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
               reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   if (has_hashtag && !has_url && !has_coords &&
       !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED)) {
-    lv_obj_add_flag(tlbl, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_flag(bubble, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_add_flag(tlbl, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
     lv_obj_add_event_cb(tlbl, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   }
