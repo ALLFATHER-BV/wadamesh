@@ -14,6 +14,8 @@ python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 # anim_timer use-after-free fix (#428) still needs it. Idempotent; fails on drift.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_anim_uaf.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_anim.c"
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_arabic.py" \
+  --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_txt_ap.c"
 cd "$(dirname "$0")"
 export IDF_TOOLS_PATH="$PWD/esp-idf-tools"
 # VS Code may launch this wrapper from PlatformIO's virtualenv. Pin the

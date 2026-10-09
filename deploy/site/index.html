@@ -472,6 +472,13 @@
               <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
               <esp-web-install-button id="inst-tdp4-lr2021"></esp-web-install-button>
               <a class="dl2" id="dl-tdp4-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-ver"></span></a>
+              <p style="color:var(--mut);font-size:.8rem;margin:12px 0 0"><b>Wi-Fi never works</b> with the image above? Your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT). Use the matching image below instead: it brings Wi-Fi back.</p>
+              <p style="color:var(--mut);font-size:.8rem;margin:6px 0 0">Radio <b>SX1262</b>, factory Wi-Fi chip:</p>
+              <esp-web-install-button id="inst-tdp4-at"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-at-ver"></span></a>
+              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>, factory Wi-Fi chip:</p>
+              <esp-web-install-button id="inst-tdp4-lr2021-at"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-at-ver"></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
             <div class="board" data-search="lilygo t-display p4 tdisplay lcd tft hi8561 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(LCD)</span></h4><p>ESP32-P4 &middot; TFT-LCD touch handheld. Pick the image matching the radio chip.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>Both LCD radio variants are compile-tested and need hardware validation. Bluetooth pairing is unavailable; use Wi-Fi or USB for the phone-app link.</span></span>
@@ -481,7 +488,14 @@
               <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
               <esp-web-install-button id="inst-tdp4-lcd-lr2021"></esp-web-install-button>
               <a class="dl2" id="dl-tdp4-lcd-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-ver"></span></a>
-              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New screen variant, not yet hardware-tested &mdash; beta only. Flash with care and report back.</p></div>
+              <p style="color:var(--mut);font-size:.8rem;margin:12px 0 0"><b>Wi-Fi never works</b> with the image above? Your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT). Use the matching image below instead: it brings Wi-Fi back.</p>
+              <p style="color:var(--mut);font-size:.8rem;margin:6px 0 0">Radio <b>SX1262</b>, factory Wi-Fi chip:</p>
+              <esp-web-install-button id="inst-tdp4-lcd-at"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-lcd-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-at-ver"></span></a>
+              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>, factory Wi-Fi chip:</p>
+              <esp-web-install-button id="inst-tdp4-lcd-lr2021-at"></esp-web-install-button>
+              <a class="dl2" id="dl-tdp4-lcd-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-at-ver"></span></a>
+              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New screen variant, not yet hardware-tested, beta only. Flash with care and report back.</p></div>
             <div class="board" data-search="lilygo t-lora pager tlora esp32-s3 qwerty rotary encoder lr1121 sx1262"><h4>LilyGo T-LoRa Pager</h4><p>ESP32-S3 QWERTY + rotary encoder.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>New community port (thanks @codemonkeybr). The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. Pick the build that matches your radio chip.</span></span>
               <p style="color:var(--mut);font-size:.8rem;margin:0">Radio <b>LR1121</b>:</p>
@@ -829,11 +843,16 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     [
       ['tdp4-lr2021', 'tdisplay-p4-lr2021', 'T-Display P4 (AMOLED, LR2021)'],
       ['tdp4-lcd', 'tdisplay-p4-lcd', 'T-Display P4 (LCD, SX1262)'],
-      ['tdp4-lcd-lr2021', 'tdisplay-p4-lcd-lr2021', 'T-Display P4 (LCD, LR2021)']
+      ['tdp4-lcd-lr2021', 'tdisplay-p4-lcd-lr2021', 'T-Display P4 (LCD, LR2021)'],
+      // Units whose C6 Wi-Fi chip still runs LilyGo's factory ESP-AT firmware (#612).
+      ['tdp4-at', 'tdisplay-p4-at', 'T-Display P4 (AMOLED, SX1262, factory Wi-Fi chip)'],
+      ['tdp4-lr2021-at', 'tdisplay-p4-lr2021-at', 'T-Display P4 (AMOLED, LR2021, factory Wi-Fi chip)'],
+      ['tdp4-lcd-at', 'tdisplay-p4-lcd-at', 'T-Display P4 (LCD, SX1262, factory Wi-Fi chip)'],
+      ['tdp4-lcd-lr2021-at', 'tdisplay-p4-lcd-lr2021-at', 'T-Display P4 (LCD, LR2021, factory Wi-Fi chip)']
     ].forEach(([id, board, label]) => {
       const bin = 'https://firmware.wadamesh.com/releases/BETA/' + tag + '/wadamesh-' + board + '-merged.bin';
       const btn = document.getElementById('inst-' + id);
-      if (btn){ const m = { name:'wadamesh ' + tag + ' \u2014 ' + label, version:tag, new_install_prompt_erase:true,
+      if (btn){ const m = { name:'wadamesh ' + tag + ' \u00b7 ' + label, version:tag, new_install_prompt_erase:true,
         builds:[{ chipFamily:'ESP32-P4', parts:[{ path:bin, offset:0 }] }] };
         btn.setAttribute('manifest', URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'}))); }
       const dl = document.getElementById('dl-' + id);
