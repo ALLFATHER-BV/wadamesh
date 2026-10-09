@@ -97,8 +97,9 @@ appears at the right edge. Press **Right** to select it, then **OK** to jump to
 the newest message.
 
 Channels, direct messages, and room conversations place **#** and emoji to the
-right of the message input. Press Right to move from the input to **#**, and
-Right again to move to emoji. Press **OK** on either button to open its picker.
+left of the message input. With the caret at the start of the input, press Left
+to move to emoji, and Left again to move to **#**; Right walks back to the
+input. Press **OK** on either button to open its picker.
 
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.
