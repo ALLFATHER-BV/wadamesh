@@ -75,7 +75,9 @@ struct Candidate {
   char    ssid[33];
   char    pwd[65];
   int32_t rssi;
-  uint32_t rank;   // saved-network recency counter; breaks RSSI ties
+  uint32_t rank;     // saved-network recency counter; breaks RSSI ties
+  int32_t channel;   // from the scan; 0 = unknown, search every channel
+  uint8_t bssid[6];  // from the scan; meaningful only when channel != 0
 };
 
 // The explicitly active secured credential is the cheapest and most likely
@@ -87,16 +89,19 @@ bool getActiveCandidate(Candidate& out) {
   if (!out.ssid[0] || !out.pwd[0]) return false;
   out.rssi = INT32_MIN;
   out.rank = 0;
+  out.channel = 0;
   return true;
 }
 
 // Try one candidate. Returns true once the association is up; never waits past
-// either its own attempt budget or the caller's overall deadline.
-bool associate(const Candidate& c, uint32_t deadline_ms) {
+// either its own attempt budget or the caller's overall deadline. A candidate the
+// scan located is joined on its channel and BSSID, skipping the all-channel search.
+bool associate(const Candidate& c, uint32_t budget_ms, uint32_t deadline_ms) {
   WiFi.disconnect(false, true);   // clear a supplicant wedged by the previous attempt
-  WiFi.begin(c.ssid, c.pwd[0] ? c.pwd : nullptr);
+  if (c.channel > 0) WiFi.begin(c.ssid, c.pwd[0] ? c.pwd : nullptr, c.channel, c.bssid);
+  else               WiFi.begin(c.ssid, c.pwd[0] ? c.pwd : nullptr);
 
-  const uint32_t attempt_end = millis() + kBootTimeSyncAssocMs;
+  const uint32_t attempt_end = millis() + budget_ms;
   for (;;) {
     if (WiFi.status() == WL_CONNECTED) return true;
     const uint32_t now = millis();
@@ -110,9 +115,10 @@ bool associate(const Candidate& c, uint32_t deadline_ms) {
 // results; writes nothing back. In particular it never calls
 // touchPrefsConnectWifiNet(), wifiConfigSetSsid()/SetRadioEnabled(), or any
 // rank-bumping save API — a time-only attempt must leave the user's Wi-Fi
-// configuration byte-identical.
-int collectSavedCandidates(Candidate* out, int max_out, uint32_t deadline_ms,
-                           const Candidate* already_tried) {
+// configuration byte-identical. The active network is NOT left out when its
+// first attempt failed: that attempt is usually just a cold radio running out of
+// time, and the second one goes straight to the channel the scan found it on.
+int collectSavedCandidates(Candidate* out, int max_out, uint32_t deadline_ms) {
   const bool allow_open = touchPrefsGetBootWifiTimeOpen();
   int n = 0;
 
@@ -155,13 +161,15 @@ int collectSavedCandidates(Candidate* out, int max_out, uint32_t deadline_ms,
       if (best < 0 || WiFi.RSSI(s) > WiFi.RSSI(best)) best = s;
     }
     if (best < 0) continue;                       // saved, but not on the air here
-    if (already_tried && strcmp(net.ssid, already_tried->ssid) == 0 &&
-        strcmp(net.pwd, already_tried->pwd) == 0) continue;
 
     strlcpy(out[n].pwd, net.pwd, sizeof out[n].pwd);
     strlcpy(out[n].ssid, net.ssid, sizeof out[n].ssid);
     out[n].rssi = WiFi.RSSI(best);
     out[n].rank = net.rank;
+    out[n].channel = WiFi.channel(best);
+    const uint8_t* bssid = WiFi.BSSID(best);
+    if (bssid) memcpy(out[n].bssid, bssid, sizeof out[n].bssid);
+    else       out[n].channel = 0;              // no BSSID: let begin() search
     n++;
   }
   WiFi.scanDelete();
@@ -222,19 +230,18 @@ BootTimeSyncResult bootTimeSyncRun(bool clock_is_current, uint32_t& out_epoch) {
   bool associated = false;
   if (have_active) {
     Serial.printf("[boot-time] trying active network '%s'\n", active.ssid);
-    associated = associate(active, deadline_ms);
+    associated = associate(active, kBootTimeSyncFirstAssocMs, deadline_ms);
   }
 
   if (!associated && (int32_t)(millis() - deadline_ms) < 0) {
     Candidate cands[TOUCH_WIFI_NET_COUNT];
     const int count = collectSavedCandidates(
-        cands, (int)(sizeof cands / sizeof cands[0]), deadline_ms,
-        have_active ? &active : nullptr);
+        cands, (int)(sizeof cands / sizeof cands[0]), deadline_ms);
     had_candidate = had_candidate || count > 0;
     for (int i = 0; i < count; ++i) {
       if ((int32_t)(millis() - deadline_ms) >= 0) break;
       Serial.printf("[boot-time] trying saved network '%s'\n", cands[i].ssid);
-      if (associate(cands[i], deadline_ms)) { associated = true; break; }
+      if (associate(cands[i], kBootTimeSyncAssocMs, deadline_ms)) { associated = true; break; }
     }
   }
   if (!associated) {
