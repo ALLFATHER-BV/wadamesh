@@ -2514,6 +2514,15 @@ static inline lv_coord_t chatContentTop(){ return chatBarH(); }
 #else
 static inline lv_coord_t chatContentTop(){ return STATUSBAR_H; }
 #endif
+#if defined(HAS_THINKNODE_M9)
+// The M9 conversation header (#627): the title and subtitle from 3 px down, 2 px under
+// them. chatHeaderApply sizes the bar to this, and makeChatDetail starts the message
+// list's content at the same line, so nothing but the header sits above the first
+// message. Fonts only; the M9's UI sizes grow the fonts, not the geometry.
+static inline lv_coord_t m9ChatHeadH() {
+  return (lv_coord_t)(3 + lv_font_get_line_height(&g_font_semi_14) + lv_font_get_line_height(&g_font_12) + 2);
+}
+#endif
 static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - chatContentTop(); }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
@@ -37111,6 +37120,10 @@ static void makeChatDetail(LvChatPanel& p) {
   // so retaining that old row-sized inset only wastes message space.
 #if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8)
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
+#elif defined(HAS_THINKNODE_M9)
+  // Content starts at the conversation header's foot (m9ChatHeadH). Set here, before
+  // any row is placed: the list is virtualised and does not move rows it has laid out.
+  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(m9ChatHeadH() - chatContentTop())), LV_PART_MAIN);
 #else
   lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
 #endif
@@ -53839,6 +53852,9 @@ static void uiFitTrailingDots(const char* src, const lv_font_t* f, lv_coord_t ma
   memcpy(out + keep, "...", 4);
 }
 
+#if defined(HAS_THINKNODE_M9)
+static void statusBarPackRight();   // below; puts the GPS glyph back in its row (#627)
+#endif
 static void chatHeaderApply(bool chat_open) {
   if (!g_statusbar.chat_avatar) return;
   lv_obj_t* radios[] = { g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.sd_icon,
@@ -53858,6 +53874,16 @@ static void chatHeaderApply(bool chat_open) {
       lv_obj_set_height(g_statusbar.left_label, LV_SIZE_CONTENT);   // the title's one-line box (below)
       for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_y(o, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+#if defined(HAS_THINKNODE_M9)
+      // The M9 header resized the bar and moved the right-hand glyphs (below): put them back.
+      lv_obj_set_height(g_statusbar.root, statusBarCurH());
+      for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
+        if (o) lv_obj_set_style_translate_x(o, 0, LV_PART_MAIN);
+      if (g_statusbar.gps_icon) {
+        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+        statusBarPackRight();
+      }
+#endif
       return;
     }
   }
@@ -53937,6 +53963,59 @@ static void chatHeaderApply(bool chat_open) {
   lv_obj_set_style_translate_y(g_statusbar.chat_head, 0, LV_PART_MAIN);
   lv_obj_set_size(g_statusbar.chat_head, x_text - x_av + LV_MAX((lv_coord_t)40, text_w), bar_h);
   lv_obj_align(g_statusbar.chat_head, LV_ALIGN_LEFT_MID, x_av, 0);
+
+#if defined(HAS_THINKNODE_M9)
+  // #627: on the M9 the two text lines sat centred in a bar that is no taller at the
+  // bigger UI sizes (its presets grow the fonts, not the geometry), so the subtitle
+  // ("3 nodes heard today") was cut at the bottom, the back arrow and avatar sat low,
+  // the clock and battery sat mid-bar while the GPS glyph kept the top row. Here the
+  // lines start near the top and the bar ends 2 px under the subtitle, where the
+  // message list's content starts (makeChatDetail pads it to the same m9ChatHeadH),
+  // so no strip of bare background sits between the header and the first message.
+  // The back arrow and avatar centre on the two lines; the clock, battery and GPS
+  // share the title's line.
+  {
+    const lv_coord_t pad = 3;
+    const lv_coord_t head_h = m9ChatHeadH();   // == pad + title_h + sub_h + 2; the list starts here too
+    if (lv_obj_get_height(g_statusbar.root) != head_h) lv_obj_set_height(g_statusbar.root, head_h);
+    lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, x_text, pad);
+    lv_obj_align(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x_text, pad + title_h);
+    const lv_coord_t text_mid = pad + (title_h + sub_h) / 2;
+    lv_obj_align(g_statusbar.chat_avatar, LV_ALIGN_TOP_LEFT, x_av, text_mid - av_sz / 2);
+    if (g_statusbar.chat_back) {
+      const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
+      lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, 6, text_mid - lv_font_get_line_height(bf) / 2);
+    }
+    // RIGHT_MID-aligned on the grown bar, so shift them from its middle to the title's.
+    // Up there the battery met the panel's rounded corner and was cut off, so the
+    // whole right-hand group steps in from the edge.
+    const lv_coord_t line_dy = (pad + title_h / 2) - head_h / 2;
+    const lv_coord_t corner = SBX(8);
+    for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
+      if (o) lv_obj_set_style_translate_y(o, line_dy, LV_PART_MAIN);
+    for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
+      if (o) lv_obj_set_style_translate_x(o, -corner, LV_PART_MAIN);
+    lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + corner), 0);
+    lv_coord_t gps_w = 0;
+    if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
+      const char* gt = lv_label_get_text(g_statusbar.gps_icon);
+      gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+      lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6) + corner), 0);
+      lv_obj_set_style_translate_y(g_statusbar.gps_icon, line_dy, LV_PART_MAIN);
+    }
+    // The title stays short of the clock (and the GPS glyph left of it).
+    {
+      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (gps_w ? gps_w + SBX(6) : 0));
+      lv_obj_set_width(g_statusbar.left_label, tw);
+      lv_obj_set_width(g_statusbar.chat_sub, tw);
+      char ttl[sizeof(s_chat_title) + 4];
+      uiFitTrailingDots(s_chat_title, &g_font_semi_14, tw, ttl, sizeof ttl);
+      if (strcmp(lv_label_get_text(g_statusbar.left_label), ttl) != 0) lv_label_set_text(g_statusbar.left_label, ttl);
+    }
+    lv_obj_set_height(g_statusbar.chat_head, head_h);
+    lv_obj_align(g_statusbar.chat_head, LV_ALIGN_TOP_LEFT, x_av, 0);
+  }
+#endif
 }
 
 // The right-hand indicators, packed leftwards from the battery with one gap between
