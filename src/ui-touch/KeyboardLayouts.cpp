@@ -177,6 +177,15 @@ static const char* const kb_ar_lower[] = {
     "ئ","ء","ؤ","ر","ى","ة","و","ز","ظ","ذ","د","\n",
     LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
 };
+/* Shift: what the letter rows cannot hold (#582). Tashkeel and tatweel, the hamza
+ * forms with the lam-alef pairs and Arabic punctuation, then the third letter row again
+ * so typing goes on without switching back. */
+static const char* const kb_ar_upper[] = {
+    "\u064B","\u064C","\u064D","\u064E","\u064F","\u0650","\u0651","\u0652","\u0640","\u061B","\u060C","\n",
+    "\u0623","\u0625","\u0622","\u0644\u0623","\u0644\u0625","\u0644\u0622","\u061F","!","\u00AB","\u00BB",".","\n",
+    "ئ","ء","ؤ","ر","ى","ة","و","ز","ظ","ذ","د","\n",
+    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+};
 static const lv_btnmatrix_ctrl_t kb_ar_lower_ctrl[] = {
     0,0,0,0,0,0,0,0,0,0,0,
     0,0,0,0,0,0,0,0,0,0,0,
@@ -603,7 +612,7 @@ static const OsKeyboardLayout k_os_layouts[] = {
       kb_el_upper, kb_el_upper_ctrl },
     { KeyboardLayoutId::AR, "AR",
       kb_ar_lower, kb_ar_lower_ctrl,
-      kb_ar_lower, kb_ar_lower_ctrl },   // unicameral: same map for both
+      kb_ar_upper, kb_ar_lower_ctrl },   // Shift: tashkeel, hamza forms, punctuation
     { KeyboardLayoutId::FR, "FR",
       kb_fr_lower, kb_fr_lower_ctrl,
       kb_fr_upper, kb_fr_upper_ctrl },
@@ -801,8 +810,20 @@ static const char* hw_ar_lower[26] = {
     "ع", "ر", "ص", "ء", "غ", "ئ"
 };
 static const char* hw_ar_digits[10] = {
-    nullptr, "ج", "د", "ذ", "ز", "ط", "ظ", "و", nullptr, nullptr
+    nullptr, "ج", "د", "ذ", "ز", "ط", "ظ", "و", "ك", nullptr
 };
+/* Shift: the standard Arabic (101) shift layer, so أ إ آ, the lam-alef pairs, the
+ * tashkeel and Arabic punctuation are reachable (#582). Shadda lives on ` there, a key
+ * these keyboards do not have, so it takes Shift+Z (~ on the 101). The fonts have no
+ * curly quotes, so U and M give a plain apostrophe. ك (on ; there) rides digit 8. */
+static const char* hw_ar_upper[26] = {
+    "\u0650", "\u0644\u0622", "}", "]", "\u064F", "[", "\u0644\u0623", "\u0623", "\u00F7", "\u0640",
+    "\u060C", "/", "'", "\u0622", "\u00D7", "\u061B", "\u064E", "\u064C", "\u064D", "\u0644\u0625",
+    "'", "{", "\u064B", "\u0652", "\u0625", "\u0651"
+};
+/* No shifted digits: the symbol fallback in keyboardLayoutMapHwKey() reads this table
+ * for ! @ # $ % ..., and sharing hw_ar_digits made those type ج د ذ ز (#582). */
+static const char* hw_ar_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
 /* French AZERTY mapping for the T-Deck's US-QWERTY physical keyboard.
  * We only remap the alpha keys so punctuation/digits remain predictable on the
@@ -1014,7 +1035,7 @@ static const HwPhoneticMap k_hw_maps[KEYBOARD_LAYOUT_COUNT] = {
     /* UK */ { hw_uk_lower,  hw_uk_upper,  hw_uk_digits,   hw_uk_digits_shift },
     /* SR */ { hw_sr_lower,  hw_sr_upper,  hw_sr_digits,   hw_sr_digits_shift },
     /* EL */ { hw_el_lower,  hw_el_upper,  hw_el_digits,   hw_el_digits_shift },
-    /* AR */ { hw_ar_lower,  hw_ar_lower,  hw_ar_digits,   hw_ar_digits },  // unicameral
+    /* AR */ { hw_ar_lower,  hw_ar_upper,  hw_ar_digits,   hw_ar_digits_shift },
     /* FR */ { hw_fr_lower,  hw_fr_upper,  hw_fr_digits,   hw_fr_digits_shift },
     /* NL */ { hw_nl_lower,  hw_nl_upper,  hw_nl_digits,   hw_nl_digits_shift },
     /* DE */ { hw_de_lower,  hw_de_upper,  hw_de_digits,   hw_de_digits_shift },
@@ -1036,6 +1057,8 @@ const char* keyboardLayoutMapHwKey(KeyboardLayoutId id, int key, bool shifted) {
         int d = key - '0';
         return shifted ? m.digits_shift[d] : m.digits[d];
     }
+    /* Arabic writes its own question mark (Shift+/ on the Arabic 101 layout). */
+    if (id == KeyboardLayoutId::AR && key == '?') return "\u061F";
     /* A keyboard that sends the shifted symbol ('!' for Shift+1, etc.) instead
      * of the digit+shift flag: map the US-QWERTY top-row symbol to its digit
      * index and reuse the layout's shifted-digit glyph. */

@@ -69,7 +69,16 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   rm -f "$LOG"
 fi
 [ -f "$BIN" ] || { echo "!! no Tanmatsu binary at $BIN — build first (drop --skip-build)"; exit 1; }
-echo "==> binary present: $(wc -c <"$BIN") bytes"
+# The launcher's AppFS bootloader maps only the first 50 x 64 KB of an app while it checks and
+# starts it (appfsBlMmap in badgeteam/appfs). A bigger binary never starts: blue splash, then
+# black, on every Tanmatsu. beta_91 and the first beta_92 build were over it.
+SIZE="$(wc -c <"$BIN" | tr -d ' ')"
+LIMIT=$((50 * 65536))
+if [ "$SIZE" -gt "$LIMIT" ]; then
+  echo "!! $SIZE bytes is over the launcher's $LIMIT-byte load limit (50 x 64 KB): it would never start. Not publishing."
+  exit 1
+fi
+echo "==> binary present: $SIZE bytes ($((LIMIT - SIZE)) under the launcher's 50-page load limit)"
 
 # ---- 2. sync the fork to upstream main ---------------------------------
 [ -d "$FORK_DIR/.git" ] || { echo "!! fork clone missing at $FORK_DIR — clone $GHUSER/app-repository there first"; exit 1; }
@@ -115,7 +124,7 @@ GIT_COMMITTER_NAME="Kaj Schittecat" GIT_COMMITTER_EMAIL="kaj@schittecat.com" \
 git -C "$FORK_DIR" push -fq -u origin "$BR"
 if gh pr create --repo "$UPSTREAM" --base main --head "$GHUSER:$BR" \
      --title "Update WadaMesh to $VERSION" \
-     --body "Updates WadaMesh ($SLUG) to v$VERSION (revision $REVISION) — new Tanmatsu build." 2>/dev/null; then
+     --body "Updates WadaMesh ($SLUG) to v$VERSION (revision $REVISION), a new Tanmatsu build." 2>/dev/null; then
   echo "==> opened PR for $VERSION"
 else
   echo "==> PR already open for $BR (force-push updated it)"

@@ -3049,6 +3049,66 @@ static void discoveredFlushIfDue(unsigned long now) {
 // Synchronous flush for the deliberate reboot / power-off / download-mode paths
 // (mirrors the chat-history flush) so a manual reboot never drops recent finds.
 static void discoveredFlushNow() { if (s_disc_dirty) saveDiscovered(); }
+// A path-length byte is packed: the hop count in its low 6 bits, the path hash size
+// above (MeshCore's 2- and 3-byte path hashes). Never read the raw byte as hops: a
+// node one hop away over 2-byte hashes is 0x41, which showed as "65 hops", fell to
+// the hop filter and was never "direct" (#621). OUT_PATH_UNKNOWN (0xFF) gives 63,
+// so it still counts as far and never as direct.
+static inline uint8_t pathHops(uint8_t path_len) { return (uint8_t)(path_len & 0x3F); }
+
+// Arabic typed on the device sits in its text field as presentation forms: LVGL shapes
+// a label's text in place (U+FE80.., the lam-alef ligatures U+FEF5..), and that is what
+// lv_textarea_get_text() returns. Sent or saved like that, other clients get characters
+// they cannot search or compare, and a #channel name hashes to another key than the same
+// name typed on a phone (#582). Map them back to the standard letters; everything else is
+// copied as it is. `out` always ends in a NUL and is cut on a whole character.
+static size_t arabicUnshape(const char* in, char* out, size_t cap) {
+  // U+FE80..U+FEF4 hold each letter's forms in order: the letter, and how many forms.
+  static const struct { uint16_t base; uint8_t n; } kForms[] = {
+    {0x0621,1},{0x0622,2},{0x0623,2},{0x0624,2},{0x0625,2},{0x0626,4},{0x0627,2},{0x0628,4},
+    {0x0629,2},{0x062A,4},{0x062B,4},{0x062C,4},{0x062D,4},{0x062E,4},{0x062F,2},{0x0630,2},
+    {0x0631,2},{0x0632,2},{0x0633,4},{0x0634,4},{0x0635,4},{0x0636,4},{0x0637,4},{0x0638,4},
+    {0x0639,4},{0x063A,4},{0x0641,4},{0x0642,4},{0x0643,4},{0x0644,4},{0x0645,4},{0x0646,4},
+    {0x0647,4},{0x0648,2},{0x0649,2},{0x064A,4},
+  };
+  // The Persian letters LVGL shapes into Presentation Forms-A.
+  static const struct { uint16_t first; uint8_t n; uint16_t base; } kFormsA[] = {
+    {0xFB56,4,0x067E},{0xFB7A,4,0x0686},{0xFB8A,2,0x0698},
+    {0xFB8E,4,0x06A9},{0xFB92,4,0x06AF},{0xFBFC,4,0x06CC},
+  };
+  static const uint16_t kLamAlef[4] = { 0x0622, 0x0623, 0x0625, 0x0627 };   // U+FEF5.. in pairs
+  if (!out || !cap) return 0;
+  size_t o = 0;
+  auto put2 = [&](uint32_t cp) {   // every letter here is U+0600..U+07FF: two bytes
+    out[o++] = (char)(0xC0 | (cp >> 6));
+    out[o++] = (char)(0x80 | (cp & 0x3F));
+  };
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(in ? in : "");
+  while (*p) {
+    uint32_t cp = *p;
+    size_t len = 1;
+    if (cp >= 0xF0 && p[1] && p[2] && p[3]) len = 4;
+    else if (cp >= 0xE0 && p[1] && p[2]) { len = 3; cp = ((cp & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F); }
+    else if (cp >= 0xC0 && p[1]) len = 2;
+    uint32_t base = 0, base2 = 0;
+    if (len == 3 && cp >= 0xFE80 && cp <= 0xFEF4) {
+      uint32_t off = cp - 0xFE80;
+      for (const auto& f : kForms) { if (off < f.n) { base = f.base; break; } off -= f.n; }
+    } else if (len == 3 && cp >= 0xFEF5 && cp <= 0xFEFC) {
+      base = 0x0644; base2 = kLamAlef[(cp - 0xFEF5) >> 1];
+    } else if (len == 3 && cp >= 0xFB56 && cp <= 0xFBFF) {
+      for (const auto& f : kFormsA) if (cp >= f.first && cp < (uint32_t)(f.first + f.n)) { base = f.base; break; }
+    }
+    const size_t need = base ? (base2 ? 4 : 2) : len;
+    if (o + need >= cap) break;
+    if (base) { put2(base); if (base2) put2(base2); }
+    else { memcpy(out + o, p, len); o += len; }
+    p += len;
+  }
+  out[o] = '\0';
+  return o;
+}
+
 // Remove discovered entries heard via more hops than the configured limit (the
 // "auto-delete above N hops" setting; 0 = off). Returns true if anything went.
 static bool discoveredSweepHops() {
@@ -3058,7 +3118,7 @@ static bool discoveredSweepHops() {
   if (maxhops == 0) return false;
   bool changed = false;
   for (int i = 0; i < DISCOVERED_MAX; ++i)
-    if (s_discovered[i].used && s_discovered[i].path_len > maxhops) {
+    if (s_discovered[i].used && pathHops(s_discovered[i].path_len) > maxhops) {
       s_discovered[i].used = false;
       changed = true;
     }
@@ -3096,7 +3156,11 @@ static bool g_cap_touch_hw_started = false;
 // build). 24 × 240 × 2 B = 11.5 KB. Flush time is bound by SPI clock
 // (80 MHz), not memcpy speed, so the throughput delta is small —
 // LVGL just calls flush_cb more often.
+#if defined(DOC_CAPTURE) && defined(BENCH_BUF_LINES)
+static constexpr int LV_DRAW_BUF_LINES = BENCH_BUF_LINES;   // perf benchmark builds only
+#else
 static constexpr int LV_DRAW_BUF_LINES = 24;
+#endif
 static lv_color_t* g_draw_buffer = nullptr;
 // Operating clock of the LAST successful SD.begin() on SPI-SD boards (0 = none). Recorded at
 // every mount/remount site (main.cpp boot adoption + the two UITask mounts) because SD.begin's
@@ -4757,7 +4821,7 @@ static void webMirrorTick() {
 #endif
 
 #if defined(DOC_CAPTURE)
-static uint32_t s_dbg_flush_us = 0, s_dbg_flush_px = 0;   // capture builds: display flush cost
+static uint32_t s_dbg_flush_us = 0, s_dbg_flush_px = 0, s_dbg_flush_n = 0;   // capture builds: display flush cost
 #endif
 static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p);
 static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t* color_p) {
@@ -4766,6 +4830,7 @@ static void lvglFlush(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_color_t
   lvglFlushImpl(disp_drv, area, color_p);
   s_dbg_flush_us += micros() - t;
   s_dbg_flush_px += (uint32_t)lv_area_get_size(area);
+  ++s_dbg_flush_n;
 #else
   lvglFlushImpl(disp_drv, area, color_p);
 #endif
@@ -6396,6 +6461,10 @@ static void navAddStatusBarActions() {
   };
   add(g_statusbar.inbox_mark); add(g_statusbar.inbox_add); add(g_statusbar.inbox_qr);
   add(g_statusbar.chan_gear);
+  // The redesign hides the gear behind the conversation header (avatar + title), which
+  // opens the same chat settings. Without it a keypad had no way left to a channel's
+  // region scope or a chat's options (#623).
+  add(g_statusbar.chat_head);
   // On a settings detail / tool page (Monitor, Spectrum) the bar's left_label is the
   // "‹ Title" Back affordance — make it reachable so nav can go Back from a double-topbar page.
   if (s_settings_open_cat >= 0 || s_apppage_title) add(g_statusbar.left_label);
@@ -6455,6 +6524,7 @@ static void navMaybeRebuild() {
   // they could stay unreachable until the next unrelated content change.
   if (g_statusbar.inbox_add && !lv_obj_has_flag(g_statusbar.inbox_add, LV_OBJ_FLAG_HIDDEN)) sig ^= 0x5BD1E995u;
   if (g_statusbar.chan_gear && !lv_obj_has_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN)) sig ^= 0x1B873593u;
+  if (g_statusbar.chat_head && !lv_obj_has_flag(g_statusbar.chat_head, LV_OBJ_FLAG_HIDDEN)) sig ^= 0x2545F491u;
   if (!s_nav_dirty && scr == s_nav_prev_scr && sig == s_nav_prev_sig) return;
   s_nav_dirty = false; s_nav_prev_scr = scr; s_nav_prev_sig = sig;
   lv_obj_t* keep = lv_group_get_focused(s_nav_group);     // preserve focus across a same-page rebuild (toggle/click)
@@ -13275,9 +13345,9 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     // and a count needs its plural or every multi-hop row reads as broken.
     char hop_buf[16];
     if (e_disc.path_len == OUT_PATH_UNKNOWN) snprintf(hop_buf, sizeof(hop_buf), "%s", TR("path unknown"));
-    else if (e_disc.path_len == 0)           snprintf(hop_buf, sizeof(hop_buf), "%s", TR("direct"));
-    else snprintf(hop_buf, sizeof(hop_buf), "%u %s", (unsigned)e_disc.path_len,
-                  e_disc.path_len == 1 ? TR("hop") : TR("hops"));
+    else if (pathHops(e_disc.path_len) == 0) snprintf(hop_buf, sizeof(hop_buf), "%s", TR("direct"));
+    else snprintf(hop_buf, sizeof(hop_buf), "%u %s", (unsigned)pathHops(e_disc.path_len),
+                  pathHops(e_disc.path_len) == 1 ? TR("hop") : TR("hops"));
     snprintf(meta_buf, sizeof(meta_buf), "%s · %s · %s…", type_label, hop_buf, keyhex);
     lv_label_set_text(meta, meta_buf);
     lv_obj_set_style_text_color(meta, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -21318,8 +21388,7 @@ static void createPrivateChannelSubmitCb(lv_event_t* e) {
   kbMirrorSyncToReal();
   if (!s_addch_name_ta || !s_addch_secret_ta) return;
   char name[32];
-  strncpy(name, lv_textarea_get_text(s_addch_name_ta), sizeof(name) - 1);
-  name[sizeof(name) - 1] = '\0';
+  arabicUnshape(lv_textarea_get_text(s_addch_name_ta), name, sizeof(name));   // #582
   // Trim trailing whitespace and default to "Private" if empty.
   for (int i = (int)strlen(name) - 1; i >= 0 && (name[i] == ' ' || name[i] == '\t'); --i) name[i] = '\0';
   if (name[0] == '\0') strncpy(name, "Private", sizeof(name));
@@ -21600,8 +21669,7 @@ static void joinPrivateChannelSubmitCb(lv_event_t* e) {
   if (!s_addch_secret_ta) return;
   char jname[32] = "Joined";   // default if the user leaves Name blank
   if (s_addch_name_ta) {
-    strncpy(jname, lv_textarea_get_text(s_addch_name_ta), sizeof(jname) - 1);
-    jname[sizeof(jname) - 1] = '\0';
+    arabicUnshape(lv_textarea_get_text(s_addch_name_ta), jname, sizeof(jname));   // #582
     for (int i = (int)strlen(jname) - 1; i >= 0 && (jname[i] == ' ' || jname[i] == '\t'); --i) jname[i] = '\0';
     if (jname[0] == '\0') strncpy(jname, "Joined", sizeof(jname));
   }
@@ -21716,7 +21784,10 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
   if (!s_addch_hashtag_ta) return;
   // Normalize: strip leading '#'s, drop whitespace, ASCII-lowercase. Matches
   // Meshcomod-client/apps/web-client/src/main.ts:deriveHashtagChannelSecret.
-  const char* raw = lv_textarea_get_text(s_addch_hashtag_ta);
+  // Standard Arabic letters first: the key is a hash of the name, and a phone types
+  // the letters, not the presentation forms the field holds (#582).
+  char raw[80];
+  arabicUnshape(lv_textarea_get_text(s_addch_hashtag_ta), raw, sizeof(raw));
   char norm[40]; int nn = 0;
   const char* p = raw;
   while (*p == '#') ++p;
@@ -23173,11 +23244,8 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
   static uint8_t  s_term_attempt    = 4;
   const char* sender = the_mesh.getNodePrefs()->node_name;
   if (!sender || !sender[0]) sender = "me";
-  size_t tlen = strlen(text);
-  if (tlen > MAX_TEXT_LEN) tlen = MAX_TEXT_LEN;
   char body[MAX_TEXT_LEN + 1];
-  memcpy(body, text, tlen);
-  body[tlen] = '\0';
+  arabicUnshape(text, body, sizeof(body));   // standard Arabic letters (#582), whole characters
 
   uint32_t ts = the_mesh.getRTCClock()->getCurrentTimeUnique();
   if (ts <= s_last_term_tx_ts) ts = s_last_term_tx_ts + 1;
@@ -23702,7 +23770,7 @@ static void webPushContacts() {
                   i, t, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
                   webSnapContains(fav, nfav, c.id.pub_key) ? 1 : 0,
                   webSnapContains(ign, nign, c.id.pub_key) ? 1 : 0,
-                  (c.out_path_len == 0) ? 1 : 0, (long)c.gps_lat, (long)c.gps_lon,
+                  (pathHops(c.out_path_len) == 0) ? 1 : 0, (long)c.gps_lat, (long)c.gps_lon,
                   (unsigned)c.last_advert_timestamp);
     jsonEsc(p, e, c.name);
     p += snprintf(p, e - p, "\"}");
@@ -26663,6 +26731,9 @@ static void openSignalInfoPopup() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char    kReaderDefaultUrl[] = "wadamesh.com";
 static const char    kReaderHomeUrl[] = "sd:/home.htm";
+// Online with no SD home page: what changed in each build, newest first (#622). The site
+// generates it from release-notes/ (scripts/build/gen-changelog.py) at every deploy.
+static const char    kReaderChangelogUrl[] = "https://wadamesh.com/changelog.html";
 static lv_obj_t*     s_reader_root   = nullptr;
 static lv_obj_t*     s_reader_url_ta = nullptr;
 static lv_obj_t*     s_reader_go     = nullptr;
@@ -27310,6 +27381,41 @@ static char    (*s_disc_row_name)[26] = nullptr;  // PSRAM (see discoverRowsRead
 static int     s_disc_row_n = 0;
 
 static void recolorEscape(char* dst, size_t cap, const char* src);   // defined with the chat helpers
+// Append `text` at body[o] tinted `rgb`, one recolor run per word, and return the new
+// length. LVGL 8 starts every line with the recolor state cleared, so a run that wraps
+// leaves its closing '#' to open a bogus command on the next line, which swallows text,
+// colours and newlines (#602, reported by NewtsLament). A run holding no break character
+// that fits the label can never wrap: the break characters (" -_/" in include/lv_conf.h,
+// plus the LVGL defaults in case a stale config is in force) go between the runs, untinted,
+// and a word wider than the label, or holding a '#', is written plain (escaped).
+static int recolorWords(char* body, int o, int cap, uint32_t rgb, const char* text,
+                        const lv_font_t* font, lv_coord_t max_w) {
+  static const char kBreaks[] = " -_/,.;:";
+  for (const char* p = text; *p;) {
+    if (strchr(kBreaks, *p)) {
+      if (o + 1 >= cap) break;
+      body[o++] = *p++;
+      continue;
+    }
+    const char* w = p;
+    while (*p && !strchr(kBreaks, *p)) ++p;
+    const int wl = (int)(p - w);
+    const bool hash = memchr(w, '#', (size_t)wl) != nullptr;
+    if (!hash && lv_txt_get_width(w, (uint32_t)wl, font, 0, LV_TEXT_FLAG_NONE) <= max_w) {
+      if (o + wl + 9 >= cap) break;                    // "#RRGGBB " + word + "#", whole or not at all
+      o += snprintf(body + o, (size_t)(cap - o), "#%06X %.*s#", (unsigned)(rgb & 0xFFFFFF), wl, w);
+    } else {
+      for (int i = 0; i < wl; ++i) {
+        if (o + 2 >= cap) break;
+        body[o++] = w[i];
+        if (w[i] == '#') body[o++] = '#';
+      }
+    }
+  }
+  if (o >= cap) o = cap - 1;
+  body[o] = '\0';
+  return o;
+}
 
 // Rebuild the feed label from the engine's _discover[] table, strongest-signal first.
 // Discover's per-row snapshots are ~2.3 KB that only matter while the page is
@@ -27363,7 +27469,7 @@ static void discoverBuildFeed() {
     char ago[10];
     if (age < 60) snprintf(ago, sizeof ago, "%us", (unsigned)age);
     else          snprintf(ago, sizeof ago, "%um", (unsigned)(age / 60));
-    const char* direct = (h.path_len == 0) ? "  #53C06B direct#" : "";
+    const char* direct = (pathHops(h.path_len) == 0) ? "  #53C06B direct#" : "";
     // Distance (#239): the DISCOVER_RESP wire format carries no position, but a
     // node we've also heard an advert from has lat/lon on its contact entry —
     // pair that with our own fix. Empty badge = one of the fixes is unknown.
@@ -30266,7 +30372,7 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
     case 2u: if(is_rep)  return false; break;                              // peers
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
-    case 5u: if(c.out_path_len != 0) return false; break;                  // 0-hop / direct neighbors only
+    case 5u: if (pathHops(c.out_path_len) != 0) return false; break;                  // 0-hop / direct neighbors only
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
@@ -34421,7 +34527,7 @@ static void renderMapMarkers() {
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-      if (s_map_direct_only && c.out_path_len != 0) continue;
+      if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
       double mwx, mwy;
       latLonToWorldPx((double)c.gps_lat / 1.0e6, (double)c.gps_lon / 1.0e6,
                       s_map_zoom, &mwx, &mwy);
@@ -34483,7 +34589,7 @@ static void renderMapMarkers() {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-    if (s_map_direct_only && c.out_path_len != 0) continue;
+    if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
 
     const double lat = (double)c.gps_lat / 1.0e6;
     const double lon = (double)c.gps_lon / 1.0e6;
@@ -39225,7 +39331,7 @@ static void openMessageInfoPopup(int msg_idx) {
       blen += snprintf(body + blen, sizeof(body) - blen, "\nRoute");
       int off = 0;
       for (uint8_t h = 0; h < cnt && off + (int)hsz <= m.in_path_n; ++h, off += hsz) {
-        if (blen >= (int)sizeof(body) - 72) break;     // hard guard: never overflow body[]
+        if (blen >= (int)sizeof(body) - 128) break;    // hard guard: never overflow body[]
         // Always lead with the path-hash prefix, then the name when we know it.
         // The hash is what the node is actually keyed by on the wire, so it is
         // the part that stays true when a repeater is named misleadingly or two
@@ -39235,12 +39341,14 @@ static void openMessageInfoPopup(int msg_idx) {
         for (uint8_t b = 0; b < hsz && b < 4; ++b)
           snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", m.in_path[off + b]);
         char nm[33];   // ContactInfo.name is 32B; hold the full name (emoji eat 4B each)
+        blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. ", (unsigned)(h + 1));
         if (the_mesh.uiHopName(&m.in_path[off], hsz, nm, sizeof(nm))) {
-          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. #%06X %s %s#",
-                           (unsigned)(h + 1), (unsigned)nodeSigColorHex(nm), hashstr, nm);
+          char nm_c[33], words[48];
+          copyUtf8ReplacingMissingGlyphs(nullptr, nm_c, sizeof nm_c, nm);
+          snprintf(words, sizeof words, "%s %s", hashstr, nm_c);
+          blen = recolorWords(body, blen, (int)sizeof(body), nodeSigColorHex(nm), words, &g_font_12, card_w - 28);
         } else {
-          blen += snprintf(body + blen, sizeof(body) - blen, "\n %u. #%06X %s#",
-                           (unsigned)(h + 1), (unsigned)nodeSigColorHex(hashstr), hashstr);
+          blen = recolorWords(body, blen, (int)sizeof(body), nodeSigColorHex(hashstr), hashstr, &g_font_12, card_w - 28);
         }
       }
     }
@@ -39270,7 +39378,7 @@ static void openMessageInfoPopup(int msg_idx) {
     // Bounded (<= ECHO_MAX_HOPS) + hard buffer guard + read-only lookup -> no risk.
     uint8_t rhc = the_mesh.uiRepeatHopCount(m.sent_fp);
     for (uint8_t r = 0; r < rhc; r++) {
-      if (blen >= (int)sizeof(body) - 96) break;   // escaped name (<=64B) + markers must fit whole
+      if (blen >= (int)sizeof(body) - 128) break;  // the name's runs + markers must fit whole
       uint8_t hh[4];
       uint8_t hsz = the_mesh.uiRepeatHop(m.sent_fp, r, hh, sizeof(hh));
       if (hsz == 0) continue;
@@ -39278,17 +39386,15 @@ static void openMessageInfoPopup(int msg_idx) {
       for (uint8_t b = 0; b < hsz && b < 4; ++b)
         snprintf(hashstr + b * 2, sizeof(hashstr) - b * 2, "%02X", hh[b]);
       char nm[33];   // ContactInfo.name is 32B; hold the full name (emoji eat 4B each)
+      blen += snprintf(body + blen, sizeof(body) - blen, "\n  ");
       if (the_mesh.uiHopName(hh, hsz, nm, sizeof(nm))) {
-        // #223 class: this name sits inside a '#RRGGBB …#' run — a literal '#' or a
-        // broken UTF-8 tail in it desyncs every colour block after this line.
-        char nm_c[33], nm_esc[66];
+        // #223 class: a broken UTF-8 tail in a name desyncs every colour block after
+        // it; recolorWords() leaves a word with a '#' untinted (and escaped).
+        char nm_c[33];
         copyUtf8ReplacingMissingGlyphs(nullptr, nm_c, sizeof nm_c, nm);
-        recolorEscape(nm_esc, sizeof nm_esc, nm_c);
-        blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
-                         (unsigned)nodeSigColorHex(nm), nm_esc);   // name resolved -> no redundant hash
+        blen = recolorWords(body, blen, (int)sizeof(body), nodeSigColorHex(nm), nm_c, &g_font_12, card_w - 28);   // name resolved -> no redundant hash
       } else
-        blen += snprintf(body + blen, sizeof(body) - blen, "\n  #%06X %s#",
-                         (unsigned)nodeSigColorHex(hashstr), hashstr);
+        blen = recolorWords(body, blen, (int)sizeof(body), nodeSigColorHex(hashstr), hashstr, &g_font_12, card_w - 28);
     }
   }
   if (blen >= (int)sizeof(body)) blen = sizeof(body) - 1;
@@ -43498,14 +43604,15 @@ static bool pagerChatComposerNav(bool up) {
       return false;
   }
   if (!up) {
-    // Send (→, the cluster's right edge) + NEXT: hop to the top-bar items
-    // (the channel-settings gear). DM chats collect no bar items, so settle
-    // on the newest bubble instead of the default wrap-to-top.
-    if (g_statusbar.chan_gear && lv_obj_is_valid(g_statusbar.chan_gear) &&
-        !lv_obj_has_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN)) {
-      s_nav_show = true;
-      lv_group_focus_obj(g_statusbar.chan_gear);
-      return true;
+    // Send (→, the cluster's right edge) + NEXT: hop to the top-bar item that opens
+    // the chat settings: the gear where it shows, else the conversation header.
+    // Without either, settle on the newest bubble instead of the default wrap-to-top.
+    for (lv_obj_t* bar : { g_statusbar.chan_gear, g_statusbar.chat_head }) {
+      if (bar && lv_obj_is_valid(bar) && !lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN)) {
+        s_nav_show = true;
+        lv_group_focus_obj(bar);
+        return true;
+      }
     }
     if (lv_obj_t* b = pagerChatBottomBubble(cp)) { s_nav_show = true; lv_group_focus_obj(b); return true; }
     return false;
@@ -45119,13 +45226,17 @@ static bool s_bg_live = false;   // the hook paints the background: the sky, or 
 #if CAP_BG_IMAGE
 static lv_color_t* s_bg_img = nullptr;   // the picture behind every screen, fitted and dimmed (bgImageLoad)
 static int s_bg_w = 0, s_bg_h = 0;
+static bool s_bg_sky = false;            // s_bg_img is the still sky drawn once (auroraBoot), not a picture
 #endif
 static bool auroraFill(lv_draw_ctx_t* ctx, const lv_draw_rect_dsc_t* dsc, const lv_area_t* coords) {
   lv_area_t clip;
   if (!_lv_area_intersect(&clip, coords, ctx->clip_area)) return true;
 #if CAP_BG_IMAGE
   const lv_color_t* pic = s_bg_img;
-  if (pic && (clip.x2 >= s_bg_w || clip.y2 >= s_bg_h)) return false;   // the screen changed size: plain fill
+  if (pic && (clip.x2 >= s_bg_w || clip.y2 >= s_bg_h)) {   // the screen changed size
+    if (!s_bg_sky) return false;                           // a picture: plain fill
+    pic = nullptr;                                         // the sky: worked out, as without the copy
+  }
 #else
   const lv_color_t* pic = nullptr;
 #endif
@@ -45455,6 +45566,23 @@ static void auroraBoot() {
     if (!s_aur_grid) return;
     memcpy(s_aur_shown, s_aur_grid, (size_t)s_aur_gw * s_aur_gh * 3 * sizeof(uint16_t));
     s_aur_on = true;
+#if CAP_BG_IMAGE
+    // A still sky never changes: drawn once into PSRAM, each frame after copies its
+    // rows, several times cheaper than working every pixel out again (and the very
+    // same pixels). The picture path does the copying; boards with the picture option
+    // have the PSRAM for it.
+#if defined(DOC_CAPTURE) && defined(BENCH_NO_SKY_CACHE)
+    if (false) {   // perf benchmark builds only: the sky worked out every frame
+#else
+    if (s_bg_kind == TOUCH_BG_AURORA && heap_caps_get_total_size(MALLOC_CAP_SPIRAM) >= (4u << 20)) {
+#endif
+      lv_color_t* sky = (lv_color_t*)psAlloc((size_t)s_aur_w * s_aur_h * sizeof(lv_color_t));
+      if (sky) {
+        for (int y = 0; y < s_aur_h; ++y) auroraRow(sky + (size_t)y * s_aur_w, 0, y, s_aur_w);
+        s_bg_img = sky; s_bg_w = s_aur_w; s_bg_h = s_aur_h; s_bg_sky = true;
+      }
+    }
+#endif
   }
   s_bg_live = true;
   s_aur_rect = c->draw_rect;           c->draw_rect = auroraDrawRect;
@@ -55463,7 +55591,7 @@ static bool hwNearest(uint8_t key4[4], int8_t& snr_q4, int8_t& rssi, uint32_t& m
   const int dn = the_mesh.discoverCount();
   for (int i = 0; i < dn; ++i) {
     MyMesh::DiscoverHit h;
-    if (the_mesh.discoverGet((uint8_t)i, h) && h.path_len == 0) consider(h.pubkey, h.our_snr_q4, h.our_rssi, h.last_ms);
+    if (the_mesh.discoverGet((uint8_t)i, h) && pathHops(h.path_len) == 0) consider(h.pubkey, h.our_snr_q4, h.our_rssi, h.last_ms);
   }
   return have;
 }
@@ -57862,7 +57990,7 @@ static void hwRadarNodes() {
       s_hw_radar_geo = true;
     } else {
       n.bearing = (int16_t)((c.id.pub_key[0] | (c.id.pub_key[1] << 8)) % 360);
-      const int hops = c.out_path_len == 0xFF ? 3 : LV_MIN(3, (int)c.out_path_len);
+      const int hops = c.out_path_len == 0xFF ? 3 : LV_MIN(3, (int)pathHops(c.out_path_len));
       n.dist = (int16_t)(300 + hops * 220);
     }
     if (n.dist > 1000) n.dist = 1000;
@@ -59030,16 +59158,20 @@ static void refreshStatusLabels() {
         if (s_reader_ok) {                  // …with a page
           readerRenderBody();
           readerSetAddrExpanded(false);     // collapse the address bar -> fullscreen reading
-        } else if (s_reader_home_missing) { // no optional SD home page: retain the normal URL-entry UX
+        } else if (s_reader_home_missing) { // no optional SD home page
           s_reader_home_missing = false;
           s_reader_hist_n = 0; s_reader_hist_pos = -1;
           s_reader_url[0] = 0;
           if (s_reader_text) s_reader_text[0] = 0;
           s_reader_nlinks = 0;
-          if (s_reader_url_ta) lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl);
-          s_reader_pristine = true;
-          readerRenderBody();
-          readerSetAddrExpanded(true);
+          if (WiFi.status() == WL_CONNECTED) {
+            readerStart(kReaderChangelogUrl);   // online: the changelog (#622)
+          } else {                              // offline: the normal URL-entry UX
+            if (s_reader_url_ta) lv_textarea_set_text(s_reader_url_ta, kReaderDefaultUrl);
+            s_reader_pristine = true;
+            readerRenderBody();
+            readerSetAddrExpanded(true);
+          }
         } else {                            // …with an error — SHOW it (don't sit on "Loading…")
           readerShowMessage(s_reader_msg[0] ? s_reader_msg : "Couldn't load page", 0xE0A0A0);
           readerSetAddrExpanded(true);      // expand so the address bar + retry are reachable
@@ -60356,7 +60488,11 @@ static void accentResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) accentSetSelection(0x15B6A6u, true);
 }
 static void openAccentPicker() {
+  // accentPickerClose() clears s_picker_for_bg, which the Theme page's background
+  // colour sets just before calling this: keep it, or that picker edits the accent.
+  const bool for_bg = s_picker_for_bg;
   accentPickerClose();
+  s_picker_for_bg = for_bg;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_accent_picker = lv_obj_create(lv_layer_top());
@@ -61757,13 +61893,13 @@ static void regionsScanTimerCb(lv_timer_t*) {
     for (int i = 0; i < contact_count; ++i) {
       ContactInfo contact;
       if (the_mesh.getContactByIdx((uint32_t)i, contact) &&
-          contact.type == ADV_TYPE_REPEATER && contact.out_path_len == 0)
+          contact.type == ADV_TYPE_REPEATER && pathHops(contact.out_path_len) == 0)
         add_repeater(contact.id.pub_key);
     }
     const uint8_t count = the_mesh.discoverCount();
     for (uint8_t i = 0; i < count && s_region_scan_count < REGION_SCAN_MAX_REPEATERS; ++i) {
       MyMesh::DiscoverHit hit;
-      if (!the_mesh.discoverGet(i, hit) || hit.node_type != ADV_TYPE_REPEATER || hit.path_len != 0)
+      if (!the_mesh.discoverGet(i, hit) || hit.node_type != ADV_TYPE_REPEATER || pathHops(hit.path_len) != 0)
         continue;
       add_repeater(hit.pubkey);
     }
@@ -63303,7 +63439,7 @@ void UITask::discoveredContact(const ContactInfo& contact, bool is_new, uint8_t 
   // (0 = off). Drop the advert and remove any existing entry for this node.
   {
     const uint8_t maxhops = touchPrefsGetDiscoveredMaxHops();
-    if (maxhops > 0 && path_len > maxhops) {
+    if (maxhops > 0 && pathHops(path_len) > maxhops) {
       for (int i = 0; i < DISCOVERED_MAX; ++i)
         if (s_discovered[i].used &&
             memcmp(s_discovered[i].ci.id.pub_key, contact.id.pub_key, PUB_KEY_SIZE) == 0)
@@ -65743,6 +65879,9 @@ void luaHostRequestSendPerm(const char* app_id, const char* app_name) {
 bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room) {
   if (was_room) *was_room = false;
   if (!to_name || !*to_name || !text || !*text) return false;
+  char unshaped[MAX_TEXT_LEN + 1];   // an app's text field shapes Arabic too (#582)
+  arabicUnshape(text, unshaped, sizeof(unshaped));
+  text = unshaped;
   ContactInfo* by = nullptr;
   const uint32_t n = the_mesh.getNumContacts();
   for (uint32_t i = 0; i < n; ++i) {
@@ -65803,6 +65942,9 @@ void luaHostRequestDmSendPerm(const char* app_id, const char* app_name) {
 
 bool luaHostMeshSendChannel(const char* chan_name, const char* text) {
   if (!chan_name || !*chan_name || !text || !*text) return false;
+  char unshaped[MAX_TEXT_LEN + 1];   // an app's text field shapes Arabic too (#582)
+  arabicUnshape(text, unshaped, sizeof(unshaped));
+  text = unshaped;
   for (int i = 0; i < MAX_GROUP_CHANNELS; i++) {
     ChannelDetails cd;
     if (!the_mesh.getChannel(i, cd) || !cd.name[0]) continue;
@@ -66091,7 +66233,7 @@ int luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t n
   // The reverse link: how well THEY heard US. This is the half a wardriving
   // survey cannot get any other way, and it is why a probe beats listening.
   *their_snr = (float)h.their_snr_q4 / 4.0f;
-  *hops      = h.path_len;
+  *hops      = pathHops(h.path_len);
   const uint32_t now = millis();
   *first_ms_ago = now - h.first_ms;
   *last_ms_ago  = now - h.last_ms;
@@ -68158,11 +68300,10 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   const char* text = (override_text && override_text[0]) ? override_text : _compose_buf;
   if (!text[0]) return false;
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
-  size_t tlen = strlen(text);
-  if (tlen > MAX_TEXT_LEN) tlen = MAX_TEXT_LEN;
+  // Standard Arabic letters, not the field's presentation forms (#582), cut to
+  // MAX_TEXT_LEN on a whole character.
   char truncated[MAX_TEXT_LEN + 1];
-  memcpy(truncated, text, tlen);
-  truncated[tlen] = '\0';
+  arabicUnshape(text, truncated, sizeof(truncated));
 
   if (_active_thread_is_channel) {
     const char* thread_name = _ui_threads[_active_thread_idx].name;
@@ -68955,34 +69096,55 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #else
-#if defined(HAS_RAK_TAP_V2) || defined(HAS_WIO_TRACKER_L2)
-      const int draw_band_w = 320;
-#elif defined(HAS_CROWPANEL_35)
-      const int draw_band_w = 480;
+      // The draw band: what LVGL renders between two flushes. Every band is a whole walk of
+      // the object tree (~5 ms on the T-Deck), so a frame wants few of them: 12800 px
+      // (25.6 KB) is 40 rows of a 320-px screen, 6 bands a frame where a 240x24 band took
+      // 14. Bigger thrashes the S3's 32 KB data cache. That band lives in PSRAM: these
+      // displays are fed by the CPU (Adafruit's FIFO writes, LovyanGFX copying into its own
+      // DMA buffers, the Pager's pushColors), so it needs no DMA-capable RAM, and the
+      // internal RAM it used to take pays for the faster LVGL build (perf_lvgl.py). Measured
+      // on the T-Deck with the frame benchmark (2026-10-09), the same pixels. The V4 keeps
+      // its internal 240x24 band (2 MB of quad PSRAM is too little and too slow), and so does
+      // e-paper, which waits on the panel, not on drawing.
+      bool band_psram = false;
+#if defined(DOC_CAPTURE) && defined(BENCH_BAND_W)
+      const int draw_band_w = BENCH_BAND_W;   // perf benchmark builds only
       g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
+#if defined(BENCH_BUF_PSRAM)
+      band_psram = true;
+#endif
+#elif (defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)) || defined(HAS_THINKNODE_M9) || \
+      defined(ATTAKY_MESH_SERIES) || defined(HAS_RAK_TAP_V2) || defined(HAS_WIO_TRACKER_L2) || \
+      defined(HAS_CROWPANEL_35) || defined(TLORA_PAGER)
+#if defined(HAS_CROWPANEL_35) || defined(TLORA_PAGER)
+      const int draw_band_w = 480;
+#else
+      const int draw_band_w = 320;
+#endif
+      g_draw_buf_px = 12800;
+      band_psram = true;
+#elif defined(HELTEC_LORA_V4_R8)
+      // The R8's async flush byte-swaps each band into a 6144-px internal DMA buffer
+      // (LGFX_SWAP_BUF_PX) and the band has to fit it, so it stays 240x24; in PSRAM all the
+      // same, which gives its internal RAM to the faster LVGL build.
+      const int draw_band_w = 240;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
+      band_psram = true;
 #else
       const int draw_band_w = 240;
 #endif
-      const size_t buf_bytes = sizeof(lv_color_t) * draw_band_w * LV_DRAW_BUF_LINES;
-      // Internal DMA-capable DRAM — this is the hot loop's read source during
-      // SPI flush. The T-Pager is deliberately the exception: ST7796LCDDisplay
-      // uses synchronous pushColors (not DMA), while BLE needs this contiguous
-      // internal block later when a client connects and negotiates security.
-#if defined(TLORA_PAGER)
-      g_draw_buffer = (lv_color_t*)heap_caps_malloc(
-          buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      if (!g_draw_buffer) {
-        g_draw_buffer = (lv_color_t*)heap_caps_malloc(
-            buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+      const size_t buf_bytes = sizeof(lv_color_t) * (size_t)g_draw_buf_px;
+      // Everywhere else internal DMA-capable DRAM, the flush's read source. Either way the
+      // other kind is the fallback.
+      if (band_psram) {
+        g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!g_draw_buffer)
+          g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+      } else {
+        g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+        if (!g_draw_buffer)
+          g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       }
-#else
-      g_draw_buffer = (lv_color_t*)heap_caps_malloc(
-          buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
-      if (!g_draw_buffer) {
-        g_draw_buffer = (lv_color_t*)heap_caps_malloc(
-            buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-      }
-#endif
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
       // Last-ditch under severe DRAM pressure — e.g. a unit whose PSRAM didn't
       // init (some T-Deck clones are QSPI, not the expected OPI), so even SPIRAM
@@ -70146,8 +70308,8 @@ void UITask::setGpsPower(bool on) {
 bool UITask::setNodeName(const char* s) {
   if (!_node_prefs) return false;
   if (!s) s = "";
-  strncpy(_node_prefs->node_name, s, sizeof(_node_prefs->node_name) - 1);
-  _node_prefs->node_name[sizeof(_node_prefs->node_name) - 1] = '\0';
+  // Adverts carry the name: standard Arabic letters, not presentation forms (#582).
+  arabicUnshape(s, _node_prefs->node_name, sizeof(_node_prefs->node_name));
   // Report the real write result — the "Name saved" toast used to show even
   // when the storage write silently failed.
   return the_mesh.savePrefs();
@@ -76050,7 +76212,276 @@ static void docHomeAudit() {
 }
 #endif
 
+#if defined(DOC_PERF_BENCH)
+// Where a frame goes: CPU cycles inside the draw context's calls (rects, glyphs, images,
+// the rest), wrapped around whatever is installed (the sky hooks or LVGL's own), and
+// inside unpacking the compressed SemiBold glyphs. What is left is LVGL walking the
+// object tree, styles and layout.
+static uint64_t s_pf_rect = 0, s_pf_letter = 0, s_pf_img = 0, s_pf_other = 0, s_pf_unpack = 0;
+static void (*s_pf_rect_fn)(lv_draw_ctx_t*, const lv_draw_rect_dsc_t*, const lv_area_t*) = nullptr;
+static void (*s_pf_letter_fn)(lv_draw_ctx_t*, const lv_draw_label_dsc_t*, const lv_point_t*, uint32_t) = nullptr;
+static void (*s_pf_img_fn)(lv_draw_ctx_t*, const lv_draw_img_dsc_t*, const lv_area_t*, const uint8_t*, lv_img_cf_t) = nullptr;
+static void (*s_pf_line_fn)(lv_draw_ctx_t*, const lv_draw_line_dsc_t*, const lv_point_t*, const lv_point_t*) = nullptr;
+static void (*s_pf_arc_fn)(lv_draw_ctx_t*, const lv_draw_arc_dsc_t*, const lv_point_t*, uint16_t, uint16_t, uint16_t) = nullptr;
+static void (*s_pf_blend_fn)(lv_draw_ctx_t*, lv_draw_layer_ctx_t*, const lv_draw_img_dsc_t*) = nullptr;
+static const uint8_t* (*s_pf_glyph_fn)(const lv_font_t*, uint32_t) = nullptr;
+static void pfRect(lv_draw_ctx_t* c, const lv_draw_rect_dsc_t* d, const lv_area_t* a) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_rect_fn(c, d, a); s_pf_rect += ESP.getCycleCount() - t;
+}
+static void pfLetter(lv_draw_ctx_t* c, const lv_draw_label_dsc_t* d, const lv_point_t* p, uint32_t l) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_letter_fn(c, d, p, l); s_pf_letter += ESP.getCycleCount() - t;
+}
+static void pfImg(lv_draw_ctx_t* c, const lv_draw_img_dsc_t* d, const lv_area_t* a, const uint8_t* m, lv_img_cf_t cf) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_img_fn(c, d, a, m, cf); s_pf_img += ESP.getCycleCount() - t;
+}
+static void pfLine(lv_draw_ctx_t* c, const lv_draw_line_dsc_t* d, const lv_point_t* a, const lv_point_t* b) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_line_fn(c, d, a, b); s_pf_other += ESP.getCycleCount() - t;
+}
+static void pfArc(lv_draw_ctx_t* c, const lv_draw_arc_dsc_t* d, const lv_point_t* p, uint16_t r, uint16_t a0, uint16_t a1) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_arc_fn(c, d, p, r, a0, a1); s_pf_other += ESP.getCycleCount() - t;
+}
+static void pfBlend(lv_draw_ctx_t* c, lv_draw_layer_ctx_t* l, const lv_draw_img_dsc_t* d) {
+  const uint32_t t = ESP.getCycleCount(); s_pf_blend_fn(c, l, d); s_pf_other += ESP.getCycleCount() - t;
+}
+static const uint8_t* pfGlyph(const lv_font_t* f, uint32_t letter) {
+  const uint32_t t = ESP.getCycleCount();
+  const uint8_t* r = s_pf_glyph_fn(f, letter);
+  s_pf_unpack += ESP.getCycleCount() - t;
+  return r;
+}
+static void pfInstall() {
+  lv_disp_t* d = lv_disp_get_default();
+  lv_draw_ctx_t* c = d && d->driver ? d->driver->draw_ctx : nullptr;
+  if (!c || s_pf_rect_fn) return;
+  s_pf_rect_fn = c->draw_rect;          c->draw_rect = pfRect;
+  s_pf_letter_fn = c->draw_letter;      c->draw_letter = pfLetter;
+  s_pf_img_fn = c->draw_img_decoded;    c->draw_img_decoded = pfImg;
+  if (c->draw_line)   { s_pf_line_fn = c->draw_line;    c->draw_line = pfLine; }
+  if (c->draw_arc)    { s_pf_arc_fn = c->draw_arc;      c->draw_arc = pfArc; }
+  if (c->layer_blend) { s_pf_blend_fn = c->layer_blend; c->layer_blend = pfBlend; }
+  lv_font_t* semi[3] = { &g_font_semi_12, &g_font_semi_14, &g_font_semi_16 };
+  for (lv_font_t* f : semi) {
+    if (!s_pf_glyph_fn) s_pf_glyph_fn = f->get_glyph_bitmap;
+    if (f->get_glyph_bitmap == s_pf_glyph_fn) f->get_glyph_bitmap = pfGlyph;
+  }
+}
+static void pfReset() { s_pf_rect = s_pf_letter = s_pf_img = s_pf_other = s_pf_unpack = 0; }
+static unsigned pfMs10(uint64_t cyc, int frames) {   // tenths of a ms a frame
+  return (unsigned)(cyc * 10u / ((uint64_t)ESP.getCpuFreqMHz() * 1000u) / (uint64_t)frames);
+}
+// Frame cost of the screens people scroll, measured the same way every run: whole
+// redraws, then scroll frames (12 px a frame, back and forth). Per screen: ms a frame,
+// how much of it went to the display (flush), how many bands a frame took, and the
+// drawing split (ms a frame).
+static void benchReport(const char* what, uint32_t t0, int frames, uint32_t f0, uint32_t n0) {
+  const uint32_t ms = millis() - t0, fl = (s_dbg_flush_us - f0) / 1000u, n = s_dbg_flush_n - n0;
+  Serial.printf("DBG: BENCH %-20s %3u.%u ms/frame  flush %3u.%u  bands %u.%u\n", what,
+                (unsigned)(ms * 10 / frames / 10), (unsigned)(ms * 10 / frames % 10),
+                (unsigned)(fl * 10 / frames / 10), (unsigned)(fl * 10 / frames % 10),
+                (unsigned)(n * 10 / frames / 10), (unsigned)(n * 10 / frames % 10));
+  const unsigned r = pfMs10(s_pf_rect, frames), l = pfMs10(s_pf_letter, frames), u = pfMs10(s_pf_unpack, frames);
+  const unsigned i = pfMs10(s_pf_img, frames), o = pfMs10(s_pf_other, frames);
+  Serial.printf("DBG: BENCH %-20s   rects %u.%u  glyphs %u.%u (unpack %u.%u)  images %u.%u  other %u.%u\n", "",
+                r / 10, r % 10, l / 10, l % 10, u / 10, u % 10, i / 10, i % 10, o / 10, o % 10);
+}
+static void benchFull(const char* what, int frames) {
+  docSettle(4);
+  const uint32_t f0 = s_dbg_flush_us, n0 = s_dbg_flush_n, t0 = millis();
+  pfReset();
+  for (int k = 0; k < frames; ++k) { lv_obj_invalidate(lv_scr_act()); lv_refr_now(nullptr); }
+  benchReport(what, t0, frames, f0, n0);
+}
+static void benchScroll(const char* what, lv_obj_t* o, int frames) {
+  if (!o || !lv_obj_is_valid(o)) { Serial.printf("DBG: BENCH %-20s (not on screen)\n", what); return; }
+  docSettle(4);
+  lv_obj_update_layout(o);
+  if (lv_obj_get_scroll_bottom(o) < 30) lv_obj_scroll_to_y(o, 0, LV_ANIM_OFF);
+  const uint32_t f0 = s_dbg_flush_us, n0 = s_dbg_flush_n, t0 = millis();
+  pfReset();
+  for (int k = 0; k < frames; ++k) {
+    lv_obj_scroll_by(o, 0, (k / 10) % 2 ? 12 : -12, LV_ANIM_OFF);
+    lv_refr_now(nullptr);
+  }
+  benchReport(what, t0, frames, f0, n0);
+  lv_obj_scroll_to_y(o, 0, LV_ANIM_OFF);
+  lv_refr_now(nullptr);
+}
+static void docPerfBench() {
+  Serial.printf("DBG: BENCH heap internal %u free, %u largest; psram %u free\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+  Serial.printf("DBG: BENCH background %d, sky %s, band %u px, memcpy std %d\n", (int)s_bg_kind,
+#if CAP_BG_IMAGE
+                s_bg_img ? "copied" : "drawn",
+#else
+                "drawn",
+#endif
+                (unsigned)g_draw_buf_px, (int)LV_MEMCPY_MEMSET_STD);
+  pfInstall();
+  navGoToMainTab(HOME_TAB_INDEX); setHomeDrawer(false); docSettle(10);
+  benchFull("home redraw", 10);
+  setHomeDrawer(true); docSettle(10);
+  benchScroll("drawer scroll", s_appdrawer_root, 20);
+  setHomeDrawer(false); docSettle(8);
+  navGoToMainTab(CHAT_INBOX_TAB_INDEX); docSettle(10);
+  benchFull("chats redraw", 10);
+  benchScroll("chats scroll", g_lv.dm.list_cont, 20);
+  {
+    const int chi = auditFindThread(true);
+    if (chi >= 0) {
+      openThreadDetailByIdx(chi, true); docSettle(16);
+      LvChatPanel* cp = navOpenChatPanel();
+      benchScroll("conversation scroll", cp ? cp->msgs : nullptr, 20);
+      if (cp) closeChatPanel(cp);
+      docSettle(8);
+    }
+  }
+  navGoToMainTab(CONTACTS_TAB_INDEX); docSettle(12);
+  benchScroll("contacts scroll", g_lv.contacts_list, 20);
+  navGoToMainTab(SETTINGS_TAB_INDEX); docSettle(10);
+  benchScroll("settings tab scroll", s_settings_landing, 20);
+  openSettingsCategory(CAT_THEME); docSettle(14);
+  benchScroll("theme page scroll", s_tp.page, 20);
+  closeSettingsCategory(); docSettle(8);
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8);
+  Serial.printf("DBG: BENCH loop stack low-water %u bytes\n",
+                (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+  Serial.println("DBG: BENCH done");
+}
+#endif
+
+#if defined(DOC_FIX_VERIFY)
+// Capture builds only: print and photograph what the GitHub fixes of 2026-10-09 do on the
+// device (#582 Arabic, #602 info colours, #623 keypad chat settings, background colour).
+static void docVerifyHex(const char* tag, const char* t) {
+  char line[400]; int n = snprintf(line, sizeof line, "DBG: VERIFY %s:", tag);
+  const unsigned char* p = reinterpret_cast<const unsigned char*>(t);
+  while (*p && n < (int)sizeof(line) - 8) {
+    uint32_t cp = *p; int len = 1;
+    if (cp >= 0xF0) { cp = ((cp & 7) << 18) | ((p[1] & 63) << 12) | ((p[2] & 63) << 6) | (p[3] & 63); len = 4; }
+    else if (cp >= 0xE0) { cp = ((cp & 15) << 12) | ((p[1] & 63) << 6) | (p[2] & 63); len = 3; }
+    else if (cp >= 0xC0) { cp = ((cp & 31) << 6) | (p[1] & 63); len = 2; }
+    n += snprintf(line + n, sizeof(line) - n, " %04X", (unsigned)cp);
+    p += len;
+  }
+  Serial.println(line);
+}
+static void docFixVerify() {
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8);
+  // 1. Arabic keys (#582): the Shift layer, kaf, the symbols that used to type letters.
+  {
+    const char keys[] = "hHnNyYbBgGtTkKpP8?!@$xXzZ";
+    for (const char* k = keys; *k; ++k) {
+      const bool sh = (*k >= 'A' && *k <= 'Z');
+      const char* m = keyboardLayoutMapHwKey(KeyboardLayoutId::AR, *k, sh);
+      char tag[12]; snprintf(tag, sizeof tag, "key '%c'", *k);
+      docVerifyHex(tag, m ? m : "(passes through)");
+    }
+  }
+  // 2. Arabic shaping and the way back (#582): type into a field, read it, unshape it.
+  {
+    static const char* const kWords[] = {
+      "الآن",                 // الآن
+      "شيئا",                 // شيئا
+      "رئيس",                 // رئيس
+      "مدرسة بآ", // مدرسة بآ
+      "۰۱۲",                       // ۰۱۲
+    };
+    lv_obj_t* box = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(box, lv_disp_get_hor_res(nullptr) - 20, 200);
+    lv_obj_align(box, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_set_style_bg_color(box, lv_color_hex(0x101418), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_flex_flow(box, LV_FLEX_FLOW_COLUMN);
+    for (const char* w : kWords) {
+      lv_obj_t* ta = lv_textarea_create(box);
+      lv_textarea_set_one_line(ta, true);
+      lv_obj_set_width(ta, lv_pct(100));
+      lv_obj_set_style_text_font(ta, &g_font_16, LV_PART_MAIN);
+      lv_textarea_add_text(ta, w);
+      char un[96];
+      arabicUnshape(lv_textarea_get_text(ta), un, sizeof un);
+      docVerifyHex("typed  ", w);
+      docVerifyHex("field  ", lv_textarea_get_text(ta));
+      docVerifyHex("unshape", un);
+      Serial.printf("DBG: VERIFY round trip %s\n", strcmp(un, w) == 0 ? "OK" : "DIFFERS");
+    }
+    docSettle(6);
+    auditShot("verify_arabic");
+    lv_obj_del(box);
+    docSettle(4);
+  }
+  // 3. Info popup colours (#602): long names wrap, every run stays whole.
+  {
+    char body[700]; int bl = snprintf(body, sizeof body, "Route");
+    const char* names[] = { "A3 NL-GEE-RP02-Kluis-Omni-Repeater", "7F ON3MB TestRepeater Brussels Noord",
+                            "C1 #hash in a name", "E2 AVeryLongRepeaterNameWithoutAnySeparatorsAtAll" };
+    for (int i = 0; i < 4; ++i) {
+      bl += snprintf(body + bl, sizeof(body) - bl, "\n %d. ", i + 1);
+      bl = recolorWords(body, bl, (int)sizeof body, nodeSigColorHex(names[i]), names[i], &g_font_12, 192);
+    }
+    Serial.printf("DBG: VERIFY info body: %s\n", body);
+    lv_obj_t* card = lv_obj_create(lv_layer_top());
+    lv_obj_set_size(card, 212, 200);
+    lv_obj_center(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x101418), LV_PART_MAIN);
+    lv_obj_t* l = lv_label_create(card);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_label_set_recolor(l, true);
+    lv_obj_set_width(l, 192);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_text(l, body);
+    docSettle(6);
+    auditShot("verify_info_colours");
+    lv_obj_del(card);
+    docSettle(4);
+  }
+  // 4. Theme > Background > Colour opens the background picker, not the accent one.
+  {
+    openSettingsCategory(CAT_THEME); docSettle(10);
+    s_picker_for_bg = true;   // what themeBgColorCb does before opening the picker
+    openAccentPicker(); docSettle(8);
+    Serial.printf("DBG: VERIFY bg picker: for_bg=%d\n", (int)s_picker_for_bg);
+    auditShot("verify_bg_picker");
+    accentPickerClose(); docSettle(4);
+    closeSettingsCategory(); docSettle(6);
+  }
+#if CAP_KEYPAD_NAV
+  // 5. Keypad nav reaches the chat settings through the conversation header (#623).
+  {
+    const int chi = auditFindThread(true);
+    if (chi >= 0) {
+      openThreadDetailByIdx(chi, true); docSettle(14);
+      const bool was = s_kbd_nav;
+      s_kbd_nav = true; s_nav_dirty = true;
+      navMaybeRebuild(); docSettle(4);
+      bool found = false;
+      for (int i = 0; i < s_nav_count && i < kNavMax; ++i) if (s_nav_objs[i] == g_statusbar.chat_head) found = true;
+      Serial.printf("DBG: VERIFY keypad nav: chat_head %s (%d stops, head %s)\n", found ? "reachable" : "MISSING",
+                    s_nav_count, g_statusbar.chat_head && !lv_obj_has_flag(g_statusbar.chat_head, LV_OBJ_FLAG_HIDDEN) ? "shown" : "hidden");
+      if (found) { s_nav_show = true; lv_group_focus_obj(g_statusbar.chat_head); docSettle(6); auditShot("verify_chat_head_focus"); }
+      s_kbd_nav = was; s_nav_dirty = true;
+      if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
+      docSettle(8);
+    } else Serial.println("DBG: VERIFY keypad nav: no channel to open");
+  }
+#endif
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+  Serial.println("DBG: VERIFY done");
+}
+#endif
+
 static void docAuditFocus() {
+#if defined(DOC_FIX_VERIFY)
+  docFixVerify();
+  return;
+#endif
+#if defined(DOC_PERF_BENCH)
+  docPerfBench();
+  return;
+#endif
 #if defined(DOC_HOME_AUDIT)
   docHomeAudit();
   return;

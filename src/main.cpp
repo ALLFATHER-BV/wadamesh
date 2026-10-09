@@ -23,6 +23,14 @@
 #include "ui-touch/device_caps.h"            // CAP_BLE_KEYBOARD: keyboard mode keeps the phone link paused from boot
 #endif
 
+#if defined(WADA_LVGL_O2)
+// LVGL compiled at -O2 (scripts/build/perf_lvgl.py) goes 160 bytes deeper into the
+// loop task's stack at its deepest (measured on the T-Deck: 2108 -> 1948 bytes left of
+// the framework's 8 KB). 1 KB more leaves more room than before; the draw band that
+// moved to PSRAM freed ten times that much internal RAM.
+SET_LOOP_TASK_STACK_SIZE(9 * 1024);
+#endif
+
 // Believe it or not, this std C function is busted on some platforms!
 static uint32_t _atoi(const char* sp) {
   uint32_t n = 0;
