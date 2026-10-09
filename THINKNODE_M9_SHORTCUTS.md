@@ -56,7 +56,7 @@ under a running operation.
 | **MAP** | Jump to the Map tab — press again *on* the map to toggle pan mode | — |
 | **BACK** | Close the top layer (see above) | — |
 | **CTRL** | Open the Control Center (quick toggles, incl. the keyboard light: off / on / auto) | — |
-| **MIC** | Options: in an open chat, its menu (same as the header ⋯); elsewhere, the focused item's hold action, e.g. a chat row's menu | — |
+| **Triangle** | The focused item's hold action, e.g. a chat row's menu | — |
 | **OK / Enter** | Activate the focused item; send a message; run a terminal command; newline in the editor | **Long-press the focused item / unlock the lock screen** |
 
 The **MSG**, **HOME**, **@**, **ADV**, **MAP**, and **CTRL** shortcuts remain

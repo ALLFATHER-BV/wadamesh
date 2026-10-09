@@ -103,7 +103,7 @@ keys). The controller resolves shift/symbol layers itself:
 | right                | 0xB7 | sub_map      | 0x84 |
 | d-pad centre / enter | 0x0D | map          | 0x85 |
 | del (backspace)      | 0x08 | hw_back      | 0x86 |
-| mic (triangle)       | 0x88 | ctrl         | 0x90 |
+| triangle             | 0x88 | ctrl         | 0x90 |
 
 Backspace (0x08) and Enter (0x0D) happen to match the values
 `UITask.cpp::handleHwKey()` already special-cases for the T-Deck, so typing,
@@ -161,8 +161,8 @@ focused — see "Deferred" below.
     _fixed_ hardware d-pad/function-key bytes straight to those same primitives
     instead of going through the programmable letter table. UP/DOWN/LEFT/RIGHT
     move focus or pan the tab bar, the d-pad centre/Enter selects, the dedicated
-    HW-back key backs out, and HOME/MAP/MESSAGE jump to those tabs. MIC and CTRL
-    have no action bound yet.
+    HW-back key backs out, and HOME/MAP/MESSAGE jump to those tabs. The triangle
+    key and CTRL were bound later (see below).
 - **Keypad nav corrected for cases the initial patch missed**: the wizard was
   unreachable by d-pad at all (handleHwKey()'s touch-only setup-root swallow ran
   before M9's key handling); Enter on a focused button after leaving a field via
@@ -264,8 +264,8 @@ compile-verified; on-device validation still wanted for the UX items):
 - **New key bindings**: GPS_LONG 0x87 → `toggleGPS()` + alert (matches the CC
   chip; NB if hardware shows the latched slot also emitting the 0x84 tap
   first, the Advert page will open too — needs on-device check); CTRL 0x90 →
-  Control Center. MIC 0x88 and 0x89 deliberately left unbound (documented in
-  M9Keyboard.h).
+  Control Center. 0x89 deliberately left unbound (documented in M9Keyboard.h).
+  The triangle key (0x88) was bound later: the focused item's hold action (#609).
 - **Keyboard backlight wired**: `m9KeyboardSetBacklight()` (controller reg
   0x02) is now driven from the drain-loop tick — off/on/auto via the CC
   "Keyboard" chip, write-on-change only. The old drain comment claiming "no
@@ -1013,10 +1013,11 @@ These are left intentionally unset/unwired rather than guessed:
    `ESP_WAKEUP` (GPIO12, from the keyboard MCU — RTC-capable): edge vs. level,
    polarity, pulse width. Once known, a real graceful Power-off can return via
    ext0/ext1 on GPIO12.
-7. **KEY_LED (GPIO46) unwired; MIC deliberately unbound; CTRL now bound.**
+7. **KEY_LED (GPIO46) unwired; triangle key and CTRL now bound.**
    CTRL (0x90) opens the Control Center (2026-08-19 pass; the controller
    latches a single key so CTRL can never chord). GPS_LONG (0x87) toggles GPS.
-   MIC (0x88) and 0x89 are deliberately unbound — see M9Keyboard.h. KEY_LED
+   The triangle key (0x88) does the focused item's hold action (#609); 0x89 is
+   deliberately unbound — see M9Keyboard.h. KEY_LED
    still has no driver.
 8. **Battery reading — largely addressed (2026-08-19 pass), one hardware
    question left.** Three separate things were tangled here: (a) the

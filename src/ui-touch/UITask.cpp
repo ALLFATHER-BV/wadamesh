@@ -43978,7 +43978,7 @@ static bool m9IsGlobalShortcutKey(int key) {
     case M9_KEY_MAP:
     case M9_KEY_CTRL:
     case M9_KEY_GPS_LONG:
-    case M9_KEY_MIC:
+    case M9_KEY_TRIANGLE:
       return true;
     default:
       return false;
@@ -46748,18 +46748,13 @@ static bool m9HandleNavKey(int key) {
         navPushTap(LV_KEY_ENTER);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
-    case M9_KEY_MIC: {
-      // Options key (#609): in an open chat, its thread menu (same as the header ⋯);
-      // elsewhere, the focused item's hold action (a chat row's menu, etc.). Holding
-      // Enter does the same, but its long-press code can't be relied on.
+    case M9_KEY_TRIANGLE: {
+      // Triangle key (#609): the focused item's hold action (a chat row's menu, etc.).
+      // Holding Enter does the same, but its long-press code can't be relied on. A
+      // chat's own settings are reached through the conversation header (#623).
       if (s_setup_root || s_apppage_close || anyPopupOpen()) return true;
-      if (navOpenChatPanel()) {
-        s_nav_ta_editing = false;
-        openActiveChatSettings();
-      } else {
-        lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-        if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
-      }
+      lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+      if (foc && lv_obj_is_valid(foc)) lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
     }
     case M9_KEY_ENTER_LONG: {

@@ -32,7 +32,7 @@
 #define M9_KEY_RIGHT         0xB7
 #define M9_KEY_ENTER         0x0D   // shared with d-pad centre click — indistinguishable
 #define M9_KEY_DEL            0x08
-#define M9_KEY_MIC           0x88   // triangle/mic glyph key
+#define M9_KEY_TRIANGLE      0x88   // the key printed with a triangle: options / hold action
 #define M9_KEY_LEFT_MESSAGE  0x81
 #define M9_KEY_HOME          0x82
 #define M9_KEY_SUB_MESSAGE   0x83
@@ -44,8 +44,7 @@
 // (labeled "GPS toggle" — bound to toggleGPS()), Enter long-press emits 0xA3
 // (bound: LV_EVENT_LONG_PRESSED on the focused widget / lock-screen unlock).
 // Shift/Sym/Alt never reach the wire — the controller consumes them as layer
-// modifiers. MIC 0x88 is bound as an Options key (a chat's menu, or the focused
-// item's hold action). DELIBERATELY UNBOUND: 0x89 (matrix col3/row4, physical
+// modifiers. The triangle key 0x88 does the focused item's hold action. DELIBERATELY UNBOUND: 0x89 (matrix col3/row4, physical
 // key cap unidentified — binding an unknown cap invites accidental triggers).
 #define M9_KEY_GPS_LONG      0x87
 #define M9_KEY_ENTER_LONG    0xA3
