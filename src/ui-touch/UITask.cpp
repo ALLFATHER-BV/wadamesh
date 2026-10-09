@@ -42337,7 +42337,14 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
   const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
   lv_coord_t inner_y = show_sender ? lv_font_get_line_height(&g_font_semi_12) : 0;
   if (d.has_reply) {
-    inner_y += lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12) + 6;
+    // Calculate the wrapped height of the quoted text so multi-line
+    // quotes are not cropped.
+    const lv_coord_t reply_sender_lh = lv_font_get_line_height(&g_font_semi_12);
+    const lv_coord_t quote_text_w = inner_max_w - 12;  // kQuotePad * 2
+    lv_point_t reply_text_size;
+    lv_txt_get_size(&reply_text_size, d.reply_text, &g_font_12, 0, 0,
+                    quote_text_w > 0 ? quote_text_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    inner_y += reply_sender_lh + reply_text_size.y + 8;
   }
 
   const lv_font_t* msg_font = chatMessageFont();
@@ -43128,11 +43135,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   const lv_coord_t sender_lh = lv_font_get_line_height(&g_font_semi_12);
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
-  // Reply-quote mini bubble adds two lines: sender (g_font_semi_12) + text (g_font_12),
-  // with 4px internal padding + 2px gap below.
-  const lv_coord_t reply_lh = d.has_reply
-      ? lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12) + 6
-      : 0;
   lv_coord_t inner_w = LV_MAX(txt_w_used > 0 ? txt_w_used : 1, LV_MIN(sender_w, kInnerMaxW));
   // Expand the bubble if either reply quote line is wider than the body.
   // A short message like "hi" would otherwise squash the quote.
@@ -43148,6 +43150,22 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
       const lv_coord_t tw = lv_txt_get_width(d.reply_text, strlen(d.reply_text), &g_font_12, 0, LV_TEXT_FLAG_NONE);
       const lv_coord_t needed = tw + pad;
       if (needed > inner_w) inner_w = LV_MIN(needed, kInnerMaxW);
+    }
+  }
+  // Calculate the mini-bubble height using the wrapped height of the
+  // quoted text so multi-line quotes are not cropped. Measure against
+  // kInnerMaxW since the mini-bubble can't be wider than that.
+  lv_coord_t reply_lh = d.has_reply
+      ? lv_font_get_line_height(&g_font_semi_12) + lv_font_get_line_height(&g_font_12) + 8
+      : 0;
+  if (d.has_reply && d.reply_text[0]) {
+    lv_point_t reply_text_size;
+    lv_txt_get_size(&reply_text_size, d.reply_text, &g_font_12, 0, 0,
+                    kInnerMaxW - 12, LV_TEXT_FLAG_NONE);
+    // Replace the single-line estimate with the actual wrapped height
+    // if the text wraps to multiple lines.
+    if (reply_text_size.y > lv_font_get_line_height(&g_font_12)) {
+      reply_lh = lv_font_get_line_height(&g_font_semi_12) + reply_text_size.y + 8;
     }
   }
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
@@ -43217,8 +43235,13 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     // Mini quote bubble tinted with the quoted sender's colours.
     constexpr lv_coord_t kQuotePad = 6;
     const lv_coord_t reply_sender_lh = lv_font_get_line_height(&g_font_semi_12);
-    const lv_coord_t text_lh = lv_font_get_line_height(&g_font_12);
-    const lv_coord_t mini_h = reply_sender_lh + text_lh + 4;
+    const lv_coord_t quote_text_w = inner_w - kQuotePad * 2;
+    // Measure the wrapped height of the quoted text so multi-line
+    // quotes are not cropped.
+    lv_point_t reply_text_size;
+    lv_txt_get_size(&reply_text_size, d.reply_text, &g_font_12, 0, 0,
+                    quote_text_w > 0 ? quote_text_w : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const lv_coord_t mini_h = reply_sender_lh + reply_text_size.y + 4;
     lv_obj_t* quote = lv_obj_create(bubble);
     lv_obj_remove_style_all(quote);
     lv_obj_clear_flag(quote, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
@@ -43230,24 +43253,26 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
     const lv_color_t quote_bg = lv_color_mix(d.reply_bubble_col, lv_color_black(), 160);
     lv_obj_set_style_bg_color(quote, quote_bg, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(quote, LV_OPA_COVER, LV_PART_MAIN);
+    lv_coord_t quote_inner_y = 2;
     if (d.reply_sender[0]) {
       lv_obj_t* reply_slbl = lv_label_create(quote);
       lv_obj_set_style_text_font(reply_slbl, &g_font_semi_12, LV_PART_MAIN);
       lv_obj_set_style_text_color(reply_slbl, d.reply_sender_col, LV_PART_MAIN);
       lv_label_set_text(reply_slbl, d.reply_sender);
       lv_label_set_long_mode(reply_slbl, LV_LABEL_LONG_DOT);
-      lv_obj_set_width(reply_slbl, inner_w - kQuotePad * 2);
-      lv_obj_set_pos(reply_slbl, kQuotePad, 2);
+      lv_obj_set_width(reply_slbl, quote_text_w);
+      lv_obj_set_pos(reply_slbl, kQuotePad, quote_inner_y);
+      quote_inner_y += reply_sender_lh;
     }
     lv_obj_t* qlbl = lv_label_create(quote);
     lv_obj_set_style_text_font(qlbl, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(qlbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_label_set_text(qlbl, d.reply_text);
-    lv_label_set_long_mode(qlbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(qlbl, inner_w - kQuotePad * 2);
-    lv_obj_set_pos(qlbl, kQuotePad, reply_sender_lh);
+    lv_label_set_long_mode(qlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(qlbl, quote_text_w);
+    lv_obj_set_pos(qlbl, kQuotePad, quote_inner_y);
 
-    inner_y += mini_h + 2;  // gap below the mini bubble
+    inner_y += mini_h + 4;  // gap below the mini bubble
   }
 
   lv_obj_t* tlbl = lv_label_create(bubble);
