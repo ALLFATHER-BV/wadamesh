@@ -37234,15 +37234,11 @@ static void makeChatDetail(LvChatPanel& p) {
   const bool has_symbol_chip = chatHasSymbolChip(p.channel_mode);
   const lv_coord_t send_sz = chatComposerSendSz();
   const lv_coord_t comp_ta_w = chatComposerTaW(p.channel_mode);
-  const lv_coord_t comp_ta_x = has_symbol_chip
-      ? chip_sz + chip_gap
-      : 2 * chip_sz + 2 * chip_gap;
-  const lv_coord_t symbol_x = has_symbol_chip
-      ? comp_ta_x + comp_ta_w + chip_gap
-      : 0;
+  const lv_coord_t symbol_x = has_symbol_chip ? chip_sz + chip_gap : 0;
   const lv_coord_t emoji_x = has_symbol_chip
       ? symbol_x + chip_sz + chip_gap
       : chip_sz + chip_gap;
+  const lv_coord_t comp_ta_x = emoji_x + chip_sz + chip_gap;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
   // defined quick-reply presets. Saves typing for stock phrases ("ok",
@@ -37333,7 +37329,7 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
 
   p.composer_ta = lv_textarea_create(p.composer_row);
-  // M9 conversations: QR | message input | # | emoji | Send. Other boards
+  // M9 conversations: QR | # | emoji | message input | Send. Other boards
   // retain QR | emoji | message input | Send.
   lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4 - chatComposerTopRowH());
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
@@ -47040,6 +47036,21 @@ static bool m9ChatMoveMessage(bool down) {
   return true;
 }
 
+// Move d-pad focus to one of the chat composer's controls (# / emoji / text box).
+// If it isn't in the nav group yet, queue it for the next group rebuild.
+static void m9FocusChatControl(lv_obj_t* obj, bool edit) {
+  if (lv_obj_get_group(obj) == s_nav_group) {
+    s_m9_focus_pending = nullptr;
+    lv_group_focus_obj(obj);
+  } else {
+    s_m9_focus_pending = obj;
+    navMarkDirty();
+    navMaybeRebuild();
+  }
+  s_nav_ta_editing = edit;
+  s_nav_show = !edit;
+}
+
 static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   if (!s_kbd_nav) return false;
   // An open dropdown LIST owns the arrows (mirrors Tanmatsu's navPump capture):
@@ -47178,6 +47189,22 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
           return true;
         }
       }
+      // Chat composer (QR | # | emoji | text | Send): LEFT walks text → emoji → #.
+      if (LvChatPanel* chat = navOpenChatPanel();
+          chat && chat->composer_ta && chat->symbol_btn && chat->emoji_btn &&
+          lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn)) {
+        lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+        if (focused == chat->emoji_btn || s_m9_focus_pending == chat->emoji_btn) {
+          m9FocusChatControl(chat->symbol_btn, false);
+          if (g_lv.task) g_lv.task->noteUserInput();
+          return true;
+        }
+        if (ta == chat->composer_ta && lv_textarea_get_cursor_pos(ta) == 0) {
+          m9FocusChatControl(chat->emoji_btn, false);
+          if (g_lv.task) g_lv.task->noteUserInput();
+          return true;
+        }
+      }
       if (ta) {
         // Caret already at the start: fall through to focus-move so arrows
         // always eventually LEAVE the field (a silent boundary no-op read as
@@ -47233,32 +47260,19 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
             navMaybeRebuild();
           }
         } else if (LvChatPanel* chat = navOpenChatPanel();
-                   chat && chat->symbol_btn && lv_obj_is_valid(chat->symbol_btn) &&
-                   (ta == chat->composer_ta || navFocusedTextarea() == chat->composer_ta)) {
-          s_nav_ta_editing = false;
-          if (lv_obj_get_group(chat->symbol_btn) == s_nav_group) {
-            s_m9_focus_pending = nullptr;
-            s_nav_show = true;
-            lv_group_focus_obj(chat->symbol_btn);
-          } else {
-            s_m9_focus_pending = chat->symbol_btn;
-            navMarkDirty();
-            navMaybeRebuild();
-          }
-        } else if (LvChatPanel* chat = navOpenChatPanel();
                    chat && chat->symbol_btn && chat->emoji_btn &&
                    lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn) &&
                    ((s_nav_group && lv_group_get_focused(s_nav_group) == chat->symbol_btn) ||
                     s_m9_focus_pending == chat->symbol_btn)) {
-          if (lv_obj_get_group(chat->emoji_btn) == s_nav_group) {
-            s_m9_focus_pending = nullptr;
-            s_nav_show = true;
-            lv_group_focus_obj(chat->emoji_btn);
-          } else {
-            s_m9_focus_pending = chat->emoji_btn;
-            navMarkDirty();
-            navMaybeRebuild();
-          }
+          m9FocusChatControl(chat->emoji_btn, false);
+        } else if (LvChatPanel* chat = navOpenChatPanel();
+                   chat && chat->emoji_btn && chat->composer_ta &&
+                   lv_obj_is_valid(chat->emoji_btn) && lv_obj_is_valid(chat->composer_ta) &&
+                   ((s_nav_group && lv_group_get_focused(s_nav_group) == chat->emoji_btn) ||
+                    s_m9_focus_pending == chat->emoji_btn)) {
+          m9FocusChatControl(chat->composer_ta, true);
+          if (g_lv.task) g_lv.task->noteUserInput();
+          return true;
         } else if (ta) {
           navMoveDir(NAV_RIGHT);   // caret was already at end — same as LEFT
         }
