@@ -2685,9 +2685,19 @@ static inline bool chatComposerTwoRow() {
 static inline lv_coord_t chatComposerTopRowH() {
   return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
 }
-// Composer row height not available to the text box: row padding and the top row.
+// Portrait P4: the full-width text box would otherwise sit under the bottom corner
+// arcs, so the whole composer rides this far above the screen's bottom edge (the
+// row's bottom padding). Matches the corner safe-area the status bar uses.
+static inline lv_coord_t chatComposerBottomLift() {
+#if CAP_ROUND_CORNERS
+  return chatComposerTwoRow() ? SB_INSET_X : 0;
+#else
+  return 0;
+#endif
+}
+// Composer row height not available to the text box: row padding, the top row, the lift.
 static inline lv_coord_t chatComposerChromeH() {
-  return 4 + chatComposerTopRowH();
+  return 4 + chatComposerTopRowH() + chatComposerBottomLift();
 }
 // Slim composer: on the large screens in landscape (T-Display P4 landscape, Tanmatsu,
 // CrowPanel 5.0 / 10.1) the empty text box is ONE text line tall and grows a line at a
@@ -2706,7 +2716,7 @@ static lv_coord_t chatComposerOneLineTaH();
 static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h);
 static inline lv_coord_t chatComposerBaseH() {
   if (chatComposerSlim()) return chatComposerSlimRowH(chatComposerOneLineTaH());
-  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
+  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH() + chatComposerBottomLift();
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
   // font line for Medium/Large without globally scaling the short viewport.
@@ -10072,6 +10082,7 @@ static void chatComposerApplyRows(LvChatPanel* p) {
   lv_obj_set_size(p->send_btn, b, b);
   lv_obj_set_style_radius(p->qr_btn, b / 2, LV_PART_MAIN);
   lv_obj_set_style_radius(p->emoji_btn, b / 2, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(p->composer_row, 2 + chatComposerBottomLift(), LV_PART_MAIN);
   // Two-row: the top row's left end is free; the near-limit counter moves there so
   // it doesn't sit on the emoji button.
   if (p->composer_cnt) {
