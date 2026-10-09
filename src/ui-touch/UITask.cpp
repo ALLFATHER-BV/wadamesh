@@ -1,5 +1,6 @@
 #include "UITask.h"
 #include "TouchSleep.h"
+#include "ChatHashtag.h"
 
 #include "../MyMesh.h"
 #include "../RegionDiscovery.h"
@@ -40863,26 +40864,7 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
 // Find a channel-sized #word (including hyphens) outside @[...] mentions and URL fragments.
 // Return its half-open byte span, including the leading '#'.
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
-  if (!text) return false;
-  for (int i = 0; text[i]; ++i) {
-    if (text[i] == '@' && text[i + 1] == '[') {
-      const char* close = strchr(text + i + 2, ']');
-      if (!close) return false;
-      i = (int)(close - text);
-      continue;
-    }
-    if (i < from) continue;
-    if (text[i] != '#' || (i > 0 && (isalnum((unsigned char)text[i - 1]) ||
-                                          text[i - 1] == '_' || text[i - 1] == '/' ||
-                                          text[i - 1] == '#'))) continue;
-    int j = i + 1;
-    while (isalnum((unsigned char)text[j]) || text[j] == '-' || text[j] == '_') ++j;
-    if ((unsigned char)text[j] >= 0x80) { i = j; continue; }
-    if (j == i + 1 || j - i >= 32) continue;
-    *start = i; *end = j;
-    return true;
-  }
-  return false;
+  return ChatHashtag::span(text, from, start, end);
 }
 static void chatAppendSpan(lv_obj_t* group, const char* text, int start, int end,
                            lv_color_t color, bool highlighted) {
@@ -41378,8 +41360,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   else if (has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  // Failed sends keep the pre-virtualization one-tap resend (the compact path
-  // already has it); delivery status on the top meta row spells the affordance out.
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
