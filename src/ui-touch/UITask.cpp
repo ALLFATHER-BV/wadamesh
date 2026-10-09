@@ -56929,7 +56929,8 @@ static void sbAlignBottom(lv_obj_t* o, lv_coord_t right, lv_coord_t bottom) {
   lv_obj_align(o, LV_ALIGN_TOP_RIGHT, -right, bottom - b);
 }
 // Pack the right-hand glyphs leftwards from x (px in from the bar's right), every one's
-// ink bottom on one line chosen so the tallest shown is centred below the arc pad.
+// ink bottom on one line chosen so the tallest shown is centred in the one-row bar
+// below the arc pad. The taller chat bar keeps that line, so they don't move.
 // Returns that line; x comes back at the left edge of the last glyph placed.
 static lv_coord_t statusBarPackRound(bool links, bool dnd, lv_coord_t& x) {
   struct Slot { lv_obj_t* o; lv_coord_t gap; bool show; };
@@ -56951,7 +56952,7 @@ static lv_coord_t statusBarPackRound(bool links, bool dnd, lv_coord_t& x) {
     sbGlyphInk(sl.o, t, b);
     ink_h = LV_MAX(ink_h, b - t);
   }
-  const lv_coord_t bot = (SB_TOP_PAD + statusBarCurH()) / 2 + ink_h / 2;
+  const lv_coord_t bot = (SB_TOP_PAD + STATUSBAR_H) / 2 + ink_h / 2;
   bool first = true;
   for (const Slot& sl : order) {
     if (!shown(sl)) continue;
@@ -57206,8 +57207,14 @@ static void chatHeaderApply(bool chat_open) {
     sbTranslateY(g_statusbar.chat_back, 0);
     sbAlign(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, x_back, ymid);
   }
-  // Right side: battery, then the clock just left of it, centred on the bar.
-  for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct }) sbTranslateY(o, 0);
+  // Right side: battery, then the clock just left of it, at the same height as on
+  // the one-row bar (its centre line), not centred on the taller chat bar.
+#if CAP_ROUND_CORNERS
+  const lv_coord_t right_up = 0;   // placed absolutely below
+#else
+  const lv_coord_t right_up = -(lv_coord_t)((chatBarH() - STATUSBAR_H) / 2);
+#endif
+  for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct }) sbTranslateY(o, right_up);
 #if CAP_ROUND_CORNERS
   // The one-row bar's layout is re-packed here on the taller header's centre line:
   // battery, then (landscape) signal and Wi-Fi.
