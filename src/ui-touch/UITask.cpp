@@ -60074,6 +60074,10 @@ static void themeStylesBuild() {
   lv_style_set_bg_opa(&s_ts.kb_key_pr, LV_OPA_COVER);
   lv_style_set_text_color(&s_ts.kb_key_pr, on_glow);
   lv_style_set_bg_color(&s_ts.kb_key_chk, off_tone);
+  // Non-letter keys (Shift, Backspace, Enter, 1#, ...) are CHECKED items: label them
+  // like the letter keys, or they fall back to the base theme's dark text.
+  lv_style_set_text_color(&s_ts.kb_key_chk, text);
+  lv_style_set_text_font(&s_ts.kb_key_chk, &g_font_14);
 
   // Arcs and spinners.
   lv_style_set_arc_color(&s_ts.arc, border);
