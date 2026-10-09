@@ -39175,6 +39175,24 @@ static uint32_t nodeSigColorHex(const char* s) {
   return lv_color_to32(nc) & 0xFFFFFFu;
 }
 
+// Name of the region a scoped message verified against (#271), for the Info popup
+// and the bubble meta line (#594): the registered region in its slot, else our own
+// scope when it matched our key. nullptr when nothing names it: unscoped, matched
+// no key we hold, or ambiguous. `home` backs the own-scope case; the bubble path
+// calls this per bubble, which is why touchPrefsGetRegionScope serves it from RAM.
+static const char* msgScopeRegionName(const UITask::UIMessage& m, char* home, size_t home_cap) {
+  if (!(m.meta_flags & UITask::MSG_META_HAS_SCOPE)) return nullptr;
+  const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+  if (rslot == REGION_SLOT_AMBIGUOUS) return nullptr;
+  const char* rname = rslot ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+  if (rname) return rname;
+  if ((m.meta_flags & UITask::MSG_META_SCOPE_HOME) && home && home_cap) {
+    touchPrefsGetRegionScope(home, (int)home_cap);
+    if (home[0]) return home;
+  }
+  return nullptr;
+}
+
 static void openMessageInfoPopup(int msg_idx) {
   if (!g_lv.task) return;
   UITask::UIMessage m;
@@ -39280,10 +39298,9 @@ static void openMessageInfoPopup(int msg_idx) {
       // name it outright. Fall back to the older my-region / another-region
       // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
-      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
-                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
-      if (rslot == REGION_SLOT_AMBIGUOUS) {
+      char home[TOUCH_REGION_SCOPE_MAXLEN];
+      const char* rname = msgScopeRegionName(m, home, sizeof home);
+      if (UITask::metaScopeSlot(m.meta_flags) == REGION_SLOT_AMBIGUOUS) {
         // Several registered regions produced this same 16-bit code. Naming any
         // one of them would be a guess, and a confident wrong region reads worse
         // than an honest "cannot tell". The tag is only 16 bits, so with N keys
@@ -39292,16 +39309,23 @@ static void openMessageInfoPopup(int msg_idx) {
       } else if (rname) {
         snprintf(region, sizeof region, "%s", rname);
       } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
-        char home[24] = {0};
-        touchPrefsGetRegionScope(home, sizeof home);
-        snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
+        snprintf(region, sizeof region, "%s", TR("my region"));
       } else {
         snprintf(region, sizeof region, "%s", TR("another region"));
       }
+      // This body is a recolor label, and region names are "#tag": unescaped, LVGL
+      // read "#de-mitte" as a colour command and swallowed the name, leaving only
+      // "Scope (0000)" (#594).
+      char region_esc[2 * sizeof region];
+      recolorEscape(region_esc, sizeof region_esc, region);
       // Key is "Scope" with no trailing space: TR() strips icon prefixes, NOT
       // trailing whitespace, so "Scope " would never match its .lang row.
-      blen += snprintf(body + blen, sizeof(body) - blen,
-                       "\n%s  %s (%04X)", TR("Scope"), region, (unsigned)m.in_scope);
+      blen += snprintf(body + blen, sizeof(body) - blen, "\n%s  %s", TR("Scope"), region_esc);
+      // The raw code is RAM-only (UiHistoryMsg does not persist it), so after a reboot
+      // it reads back 0, a value calcTransportCode reserves and never emits. Omit it
+      // then rather than print a "0000" that was never on the air.
+      if (m.in_scope)
+        blen += snprintf(body + blen, sizeof(body) - blen, " (%04X)", (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
@@ -40134,7 +40158,7 @@ static void chatBuildBubbleMeta(const UITask::UIMessage& m, bool channel_mode,
   }
 #endif
 
-  snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
+snprintf(out, out_len, "%s%s%s", ts_buf, deliv_glyph, rep_buf);
   if (out_fg) *out_fg = s_theme_day ? COLOR_CHAT_META
                                     : (deliv_glyph[0] ? deliv_fg : COLOR_SUB);
 }
@@ -40165,7 +40189,7 @@ static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out,
   const size_t len = strlen(src);
   for (size_t i = 0; i < len; ++i) {
     if (chatUtf8Continuation(src[i])) continue;
-    char cand[48];
+    char cand[80];
     snprintf(cand, sizeof(cand), "%s%s", ell, src + i);
     if (chatTextWidth(cand) <= max_w) {
       snprintf(out, out_len, "%s", cand);
@@ -40183,7 +40207,7 @@ static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out,
 static constexpr lv_coord_t kChatFootGap = 2;
 
 struct ChatFoot {
-  char     text[64];
+  char     text[96];
   uint32_t fg;
   uint8_t  dots;   // chain length (0 = no chain)
   bool     own;    // your message: lit chain that starts at you
@@ -40198,15 +40222,25 @@ static void chatBuildFoot(const UITask::UIMessage& m, bool channel_mode, ChatFoo
   formatBubbleTs(m.ts, ts, sizeof ts);
   const char* sep = ts[0] ? " \xC2\xB7 " : "";
   if (!m.outgoing) {
+    // Region the message was scoped to, when it resolves to a name (#594), as the
+    // iOS app shows it under each message.
+    char home[TOUCH_REGION_SCOPE_MAXLEN];
+    const char* rname = msgScopeRegionName(m, home, sizeof home);
+    if (rname && rname[0] == '#') ++rname;   // "#de-mitte" reads as "de-mitte"
+    size_t o = 0;
+    if (rname && rname[0]) o = (size_t)snprintf(f.text, sizeof f.text, "%s \xC2\xB7 ", rname);
+    if (o >= sizeof f.text) o = sizeof f.text - 1;
+    char* t = f.text + o;
+    const size_t tn = sizeof f.text - o;
     if ((m.meta_flags & UITask::MSG_META_HAS_RX) && (m.meta_flags & UITask::MSG_META_IS_FLOOD) && m.path_len != 0xFF) {
       const unsigned hops = m.path_len & 0x3F;
       f.dots = (uint8_t)(hops > 6 ? 6 : hops);
-      if (hops == 0) snprintf(f.text, sizeof f.text, "%s%s%s", TR("direct"), sep, ts);
-      else snprintf(f.text, sizeof f.text, "%u %s%s%s", hops, hops == 1 ? TR("hop") : TR("hops"), sep, ts);
+      if (hops == 0) snprintf(t, tn, "%s%s%s", TR("direct"), sep, ts);
+      else snprintf(t, tn, "%u %s%s%s", hops, hops == 1 ? TR("hop") : TR("hops"), sep, ts);
     } else if (m.meta_flags & UITask::MSG_META_HAS_RX) {
-      snprintf(f.text, sizeof f.text, "%s%s%s", TR("routed"), sep, ts);
+      snprintf(t, tn, "%s%s%s", TR("routed"), sep, ts);
     } else {
-      snprintf(f.text, sizeof f.text, "%s", ts);
+      snprintf(t, tn, "%s", ts);
     }
     return;
   }
