@@ -50,6 +50,21 @@ band into a full 1-bit shadow, then coalesces the completed LVGL frame into an
 e-paper update. Every tenth update is full; the intervening updates use the
 panel's partial-refresh mode. The UI is fixed to the light palette.
 
+Greys and accent fills do not survive the 1-bit reduction, so the Pro draws its
+controls in black ink instead:
+
+- Boot: the pre-LVGL screen draws the wadamesh mesh mark (the shared RGB565
+  artwork, inverted to black on white) with the wordmark under it. It is not
+  animated.
+- Settings landing: every row, Device included, has the 2 px black outline
+  (`styleEpaperControlOutline`) with a 3 px gap between rows. The row values and
+  chevrons are black, not tertiary grey.
+- Chat composer: the P4 portrait layout (`CHAT_COMP_SPLIT`). Quick reply and
+  emoji sit on their own row above, with black icons; the text box and Send
+  share the row below. The text box starts two lines tall
+  (`chatComposerMinLines`), grows to four, and is a black-outlined squircle.
+  Send is a white circle with a black outline and a black up arrow.
+
 Map tiles receive a map-specific monochrome pass before LVGL displays them. It
 uses chroma-aware luminance and an 8x8 ordered dither so roads, water, terrain,
 and labels survive the 1-bit conversion without seams between adjacent tiles.
