@@ -7393,6 +7393,11 @@ static void deviceHardwareText(char* out, size_t cap) {
 #if defined(HAS_TDECK_KEYBOARD)
   if (n > 0 && (size_t)n < cap)
     snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"), deviceKeyboardText());
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module comes and goes; the line follows it (refreshed on the change).
+  if (n > 0 && (size_t)n < cap)
+    snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"),
+             attakyKeyboardPresent() ? TR("module attached") : TR("not attached"));
 #endif
 }
 
@@ -74953,6 +74958,7 @@ void UITask::loop() {
     static bool s_akb_seen = false;
     if (attakyKeyboardPresent() != s_akb_seen) {
       s_akb_seen = attakyKeyboardPresent();
+      deviceRefreshLabels();   // the Device page's "Keyboard:" line
       LvChatPanel* const kp = s_kb_panel;
       lv_obj_t* const    kf = s_kb_bind_ta;
       if ((kp || kf) && !s_osk_forced) {
