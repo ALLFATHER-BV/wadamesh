@@ -21,8 +21,8 @@
     {
       "id": "tetris",
       "name": "Tetris",
-      "ver": "1.0",
-      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
+      "ver": "1.1",
+      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Press R to toggle portrait mode (90° rotation). Contributed by samuelcoustet."
     },
     {
       "id": "protreck",
@@ -76,8 +76,8 @@
     {
       "id": "tripodometer",
       "name": "Trip Odometer",
-      "ver": "1.0",
-      "desc": "GPS trip computer: distance, time, speed, altitude. Start/Stop to track, Reset to clear. Saves your trip across restarts. Contributed by samuelcoustet.",
+      "ver": "1.1",
+      "desc": "GPS trip computer: distance, elapsed time, avg/max speed, min/current altitude, return-to-home bearing. Start/Stop to track, Reset to clear. Saves trip across restarts. Contributed by samuelcoustet.",
       "requires": "gps",
       "seed": false
     },

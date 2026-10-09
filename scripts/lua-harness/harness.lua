@@ -108,6 +108,7 @@ end
 
 -- wada.ui.list: rows with optional callbacks, same argument checks as uiList/lsAdd
 local lists = {}
+local map_obj, map_centers = nil, {}
 local function mklist(x, y, w, h)
   checkint(x, "list x"); checkint(y, "list y"); checkint(w, "list w"); checkint(h, "list h")
   assert(w > 0 and h > 0, "list: width and height must be positive")
@@ -291,6 +292,7 @@ local function build_wada()
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
+                                       map = cfg.caps.sdk_ext or false,
                                        sd_list = cfg.caps.sd_list or false,
                                        sd_clean = cfg.caps.sd_clean or false,
                                        audio = cfg.caps.audio or false,
@@ -444,6 +446,29 @@ local function build_wada()
     wada.sd = { list = sdmock_list }
     if cfg.caps.sd_clean then wada.sd.check = sdmock_check; wada.sd.remove = sdmock_remove end
   end
+  if cfg.caps.sdk_ext then
+    local function mkmap(mx, my, mw, mh)
+      if map_obj then error("only one map view at a time") end
+      local m = { x = mx, y = my, w = mw, h = mh, _zoom = 10, _lat = 0, _lon = 0 }
+      function m:center(lat, lon, z)
+        self._lat = lat; self._lon = lon
+        if z then self._zoom = z end
+        map_centers[#map_centers + 1] = { lat = lat, lon = lon, z = self._zoom }
+      end
+      function m:zoom(z) if z then self._zoom = z else return self._zoom end end
+      function m:marker(lat, lon, col, sz) end
+      function m:line(la1, lo1, la2, lo2, col, w) end
+      function m:clear() end
+      function m:tiles() return cfg.map_tiles or 0 end
+      function m:redraw() end
+      function m:to_screen(lat, lon) return math.floor(mw / 2), math.floor(mh / 2) end
+      function m:to_latlon(x, y) return self._lat + (mh/2-y)*0.001, self._lon + (x-mw/2)*0.001 end
+      function m:close() map_obj = nil end
+      map_obj = m
+      return m
+    end
+    wada.map = { view = mkmap }
+  end
   return wada
 end
 
@@ -477,6 +502,7 @@ local function reset_world()
   widgets = { canvases = 0, labels = 0, buttons = 0, scroll = false, timer_ms = nil }
   labels, buttons, toasts, drawlog = {}, {}, {}, { text = {}, circles = {}, ops = 0 }
   lists = {}
+  map_obj, map_centers = nil, {}
   clock_ms = 1000
   dm_sent = {}
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
@@ -1368,27 +1394,37 @@ scenarios.trip_tdeck = function()
 end
 
 scenarios.trip_moving = function()
-  -- simulate movement: distance and max speed accumulate
+  -- distance accumulates; home bearing points back south; min altitude tracked;
+  -- avg speed is non-zero
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
     step = step + 1
-    return { lat = 37.75 + step * 0.001, lon = -122.45, sats = 8, alt_m = 100 + step, speed_kmh = 30.0 + step }
+    -- move north (lat+), altitude descends so min keeps updating
+    return { lat = 37.75 + step * 0.001, lon = -122.45,
+             sats = 8, alt_m = 100 - step, speed_kmh = 30.0 + step }
   end
   storekv = {}; wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   buttons[1].fn()   -- start tracking
-  tick(app, 20)     -- 20 GPS fixes, each ~111 m north → ~2.2 km total
+  tick(app, 15)     -- 15 fixes moving north ~111 m each → ~1.5 km
   local dump = label_dump()
-  print("  after 20 ticks:", dump)
+  print("  after 15 ticks:", dump)
+  -- distance > 0
   assert(not dump:find("| 0 m |"), "expected non-zero distance after movement")
-  assert(dump:find("km/h"), "expected max speed displayed")
+  -- avg and max speed both shown as km/h
+  assert(dump:find("km/h"), "expected avg/max speed km/h displayed")
+  -- home bearing: moved north, home is south → "S"
+  assert(dump:find(" S"), "expected southward home bearing (1.1)")
+  -- min altitude: descended from 99 to 85 over 15 steps
+  assert(dump:find("85") or dump:find("min"), "expected min altitude tracked (1.1)")
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
 scenarios.trip_persist = function()
-  -- on_close saves; on_open restores
+  -- on_close saves distance, max speed, elapsed time and min altitude;
+  -- on_open restores all of them
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
@@ -1401,6 +1437,7 @@ scenarios.trip_persist = function()
   buttons[1].fn(); tick(app, 10)   -- run ~1 km
   if app.on_close then guarded(BUDGET, app.on_close) end
   assert(storekv.trip_km_x1000 ~= nil and storekv.trip_km_x1000 > 0, "expected trip_km_x1000 saved")
+  assert(storekv.trip_minalt ~= nil, "expected trip_minalt saved (1.1)")
   -- re-open same store → distance should be restored
   wada = build_wada()
   local app2 = load_app()
@@ -1412,7 +1449,7 @@ scenarios.trip_persist = function()
 end
 
 scenarios.trip_reset = function()
-  -- Reset button clears everything
+  -- Reset clears distance, time, home bearing, min altitude
   cfg = { w = 240, h = 276, caps = { touch = true, keyboard = false, sdk_ext = true } }
   local step = 0
   cfg.gps = function()
@@ -1422,12 +1459,15 @@ scenarios.trip_reset = function()
   storekv = {}; wada = build_wada()
   local app = load_app()
   guarded(BUDGET, app.on_open, cfg.w, cfg.h)
-  buttons[1].fn(); tick(app, 10)   -- accumulate some distance
+  buttons[1].fn(); tick(app, 10)   -- accumulate distance
   buttons[2].fn(); tick(app, 1)    -- Reset
   local dump = label_dump()
   print("  after reset:", dump)
   assert(dump:find("0:00"), "expected zero time after reset")
   assert(dump:find("| 0 m |") or dump:find("0.00"), "expected zero distance after reset")
+  -- home bearing should be cleared (1.1)
+  assert(dump:find("| -- |") or dump:find("-- |") or dump:find("--"),
+    "expected no home bearing after reset (1.1)")
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
@@ -2097,6 +2137,106 @@ scenarios.protreck_cost = function()
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
+-- ---- MapFetch scenarios -----------------------------------------------------
+
+local function mapfetch_open(w, h, gps_lat, gps_lon, map_tiles)
+  cfg = {
+    w = w, h = h,
+    caps = { sdk_ext = true, keyboard = true, touch = true },
+    map_tiles = map_tiles or 0,
+  }
+  if gps_lat then cfg.gps = function() return { lat = gps_lat, lon = gps_lon, lat_e6 = 0, lon_e6 = 0 } end end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, w, h))
+  return app
+end
+
+scenarios.mapfetch_tdeck = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)   -- T-Deck, GPS Paris
+  assert(widgets.labels >= 2, "need top+bottom labels")
+  assert(map_obj ~= nil, "map view must be created")
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("5km") then found = true end end
+  assert(found, "setup label should show default 5km radius")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_no_map = function()
+  cfg = { w = 320, h = 240, caps = { sdk_ext = false, keyboard = false, touch = true } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  guarded(BUDGET, app.on_open, 320, 240)
+  assert(map_obj == nil, "no map view on non-ext board")
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("No map") or l.text:find("not available") then found = true end end
+  assert(found, "should show 'no map support' label when caps.map is false")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_no_gps = function()
+  local app = mapfetch_open(320, 240, nil, nil)  -- no GPS
+  send(app, { type = "down", x = 160, y = 120 })
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("GPS") or l.text:find("fix") then found = true end end
+  assert(found, "should warn about missing GPS when starting")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_swipe = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)
+  local lbl_before = labels[1] and labels[1].text or ""
+  swipe(app, "up")   -- increase radius
+  local lbl_after = labels[1] and labels[1].text or ""
+  assert(lbl_before ~= lbl_after, "swipe up should change radius display")
+  swipe(app, "down") -- decrease radius back
+  swipe(app, "left") -- increase max zoom
+  swipe(app, "right")-- decrease max zoom back
+  assert(map_obj ~= nil, "map view still present after swipes")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_logic = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522, 1)  -- map_tiles=1 (all cached)
+  send(app, { type = "down", x = 160, y = 120 })            -- start download
+  local prev = #map_centers
+  for _ = 1, 5 do tick(app, 1, 3000) end
+  assert(#map_centers > prev, "map:center should be called as tiles are visited")
+  for _, c in ipairs(map_centers) do
+    assert(type(c.lat) == "number" and type(c.lon) == "number", "tile center must be numeric")
+    assert(c.z >= 10 and c.z <= 15, "zoom must be in expected range")
+  end
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_done = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522, 1)
+  swipe(app, "down")  -- radius: 5km → 2km
+  swipe(app, "right") -- zoom: z14 → z13
+  send(app, { type = "down", x = 160, y = 120 })  -- start
+  local done = false
+  for _ = 1, 200 do
+    tick(app, 1, 3000)
+    for _, l in ipairs(labels) do if l.text:find("Done") then done = true end end
+    if done then break end
+  end
+  assert(done, "app should reach Done state after all tiles visited")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+  assert(not cfg.awake, "keep_awake must be off after done")
+end
+
+scenarios.mapfetch_cost = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)
+  send(app, { type = "down", x = 160, y = 120 })
+  local ops0 = drawlog.ops
+  tick(app, 1, 3000)
+  local cost = drawlog.ops - ops0
+  assert(cost < 500, string.format("on_tick draw ops %d >= 500", cost))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- ---- MapFetch scenarios end --------------------------------------------------
+
 -- True (and says so) when this app has no scenarios of its own. Returning a
 -- truthy value makes the dispatch below pick an EMPTY list rather than running
 -- someone else's tests against it.
@@ -2120,6 +2260,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
+  or APP_PATH:find("/mapfetch/", 1, true)
+  and { "mapfetch_tdeck", "mapfetch_no_map", "mapfetch_no_gps", "mapfetch_swipe", "mapfetch_logic", "mapfetch_done", "mapfetch_cost" }
   -- The compass list below is gpscompass's own, NOT a default. An app with no
   -- branch used to fall through to it and "fail" on tests written for a
   -- different app -- six of the store apps do, so a full run came back red and
