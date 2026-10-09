@@ -5416,8 +5416,28 @@ static void navSliderNudge(lv_obj_t* s, int dir) {
   lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
 }
 
+// System Information and Memory detail are read-only: their only focus target is
+// the X in the fixed header, a sibling of the scroll body. Up/Down (and the
+// Pager's wheel) scroll that body instead of looking for another focus stop,
+// which does not exist, so the text was unreachable on keypad boards (#596).
+// Returns true when the press was consumed: the body scrolled, or an info page
+// is open and already at that edge (focus stays on the X).
+static void navScrollBy(lv_obj_t* p, bool up);
+static bool navInfoModalScroll(bool up) {
+  if (!g_set_modal.root || !g_set_modal.body || !lv_obj_is_valid(g_set_modal.body)) return false;
+  if (g_set_modal.kind != SettingsModalKind::SystemInfo &&
+      g_set_modal.kind != SettingsModalKind::MemoryInfo) return false;
+  const lv_coord_t room = up ? lv_obj_get_scroll_top(g_set_modal.body)
+                             : lv_obj_get_scroll_bottom(g_set_modal.body);
+  if (room > 0) navScrollBy(g_set_modal.body, up);
+  s_nav_show = true;
+  if (g_lv.task) g_lv.task->noteUserInput();
+  return true;
+}
+
 static void navMoveDir(int dir) {
   if (!s_nav_group) return;
+  if ((dir == NAV_UP || dir == NAV_DOWN) && navInfoModalScroll(dir == NAV_UP)) return;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
   if (n <= 0) return;
   lv_obj_t* cur = lv_group_get_focused(s_nav_group);
@@ -7330,28 +7350,48 @@ static const char* deviceKeyboardText() {
 }
 #endif
 
-// The Device card's second line: the board, plus any variant it can tell apart.
+// The LoRa radio this build drives, from its RADIO_CLASS ("CustomSX1262" -> "SX1262").
+// Several boards ship with a choice of radio (the T-LoRa Pager in SX1262 and LR1121
+// builds), so this is the variant that matters most after the model. nullptr when
+// the build names no radio class.
+#define WADA_STR2(x) #x
+#define WADA_STR(x)  WADA_STR2(x)
+static const char* deviceRadioName() {
+#if defined(RADIO_CLASS)
+  const char* n = WADA_STR(RADIO_CLASS);
+  if (!strncmp(n, "Custom", 6) && n[6]) n += 6;
+  return n;
+#else
+  return nullptr;
+#endif
+}
+
+// The Device card's second line: the board, plus the variant it can tell apart:
+// the keyboard on the T-Deck, otherwise the radio.
 static void deviceSummary(char* out, size_t cap) {
 #if defined(HAS_TDECK_KEYBOARD)
   snprintf(out, cap, "%s \xC2\xB7 %s", board.getManufacturerName(), deviceKeyboardText());
 #else
-  snprintf(out, cap, "%s", board.getManufacturerName());
+  const char* radio = deviceRadioName();
+  if (radio) snprintf(out, cap, "%s \xC2\xB7 %s", board.getManufacturerName(), radio);
+  else       snprintf(out, cap, "%s", board.getManufacturerName());
 #endif
 }
 
 // The Device page's hardware block: model, then what was detected at boot.
 static void deviceHardwareText(char* out, size_t cap) {
   int n = snprintf(out, cap, "%s  %s", TR("Model:"), board.getManufacturerName());
+  const char* radio = deviceRadioName();
+  if (radio && n > 0 && (size_t)n < cap)
+    n += snprintf(out + n, cap - n, "\n%s  %s", TR("Radio:"), radio);
 #if defined(HAS_TDECK_KEYBOARD)
   if (n > 0 && (size_t)n < cap)
     snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"), deviceKeyboardText());
-#else
-  (void)n;
 #endif
 }
 
 static void deviceRefreshLabels() {
-  char buf[96];
+  char buf[160];
   settingsLandingRefresh();
   if (s_device_hw_lbl && lv_obj_is_valid(s_device_hw_lbl)) {
     deviceHardwareText(buf, sizeof buf);
@@ -12382,19 +12422,28 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
   lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 8, 0);
 
+  // The read-only info pages (System Information, Memory detail) close with a
+  // compact X: the whole page is text to scroll through, and "Close" read as one
+  // more item in it.
+  const bool info_page = (kind == SettingsModalKind::SystemInfo ||
+                          kind == SettingsModalKind::MemoryInfo);
   lv_obj_t* close_btn = lv_btn_create(header);
-  lv_obj_set_size(close_btn, SC(58), SC(32));
+  lv_obj_set_size(close_btn, info_page ? SC(32) : SC(58), SC(32));
   lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -6, 0);
   styleButton(close_btn);
   lv_obj_add_event_cb(close_btn, settingsCloseCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* close_lbl = lv_label_create(close_btn);
   useChainedFont(close_lbl);
+  if (info_page) {
+    lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+  } else {
 #if defined(HAS_TANMATSU)
   { char _cb[40]; snprintf(_cb, sizeof _cb, LV_SYMBOL_CLOSE "  %s", TR("Close")); lv_label_set_text(close_lbl, _cb);
     lv_obj_set_style_text_color(close_lbl, lv_color_hex(0xE05544), LV_PART_MAIN); }   // red ✕
 #else
   lv_label_set_text(close_lbl, TR("Close"));
 #endif
+  }
   lv_obj_center(close_lbl);
 
   lv_obj_t* body = lv_obj_create(root);
@@ -38373,9 +38422,9 @@ static void settingsLandingRefresh() {
     lv_obj_t* v = s_settings_cat_val[c];
     lv_obj_t* l = s_settings_cat_lbl[c];
     if (!v || !l) continue;
-    char val[48];
+    char val[96];
     settingsCatValue(c, val, sizeof val);
-    char san[64];
+    char san[112];
     copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof san, val);
     if (strcmp(lv_label_get_text(v), san) != 0) lv_label_set_text(v, san);
     // The name as written, not the label's text: a LONG_DOT label stores its
@@ -43822,12 +43871,12 @@ static void updatePagerEncoder(unsigned long now) {
     // edge bubble of a still-loading history scrolls the list instead of
     // stepping focus out (pagerEncoderChatEdgeScroll).
     for (; delta > 0; delta--) {
-      if (!pagerEncoderScrollOversizedFocused(false) &&
+      if (!navInfoModalScroll(false) && !pagerEncoderScrollOversizedFocused(false) &&
           !pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false))
         navPushTap(LV_KEY_NEXT);
     }
     for (; delta < 0; delta++) {
-      if (!pagerEncoderScrollOversizedFocused(true) &&
+      if (!navInfoModalScroll(true) && !pagerEncoderScrollOversizedFocused(true) &&
           !pagerChatComposerNav(true) && !pagerEncoderChatEdgeScroll(true))
         navPushTap(LV_KEY_PREV);
     }
@@ -46965,15 +47014,8 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   // focus target is Close. Up/Down must operate the sibling scroll body
   // directly; generic spatial navigation would otherwise bounce between the
   // passive content wrapper and Close instead of scrolling back through text.
-  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) &&
-      g_set_modal.root && g_set_modal.body &&
-      (g_set_modal.kind == SettingsModalKind::SystemInfo ||
-       g_set_modal.kind == SettingsModalKind::MemoryInfo)) {
-    navScrollBy(g_set_modal.body, key == M9_KEY_UP);
-    s_nav_show = true;
-    if (g_lv.task) g_lv.task->noteUserInput();
+  if ((key == M9_KEY_UP || key == M9_KEY_DOWN) && navInfoModalScroll(key == M9_KEY_UP))
     return true;
-  }
   // Map pan mode (toggled by the Map key on the Map tab): arrows pan the map
   // instead of moving focus. Self-clears if the user somehow left the tab or
   // a popup got stacked over the map (CTRL's Control Center opens without
