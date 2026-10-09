@@ -40881,6 +40881,50 @@ static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   }
   return false;
 }
+static void chatAppendSpan(lv_obj_t* group, const char* text, int start, int end,
+                           lv_color_t color, bool highlighted) {
+  if (end <= start) return;
+  char part[UITask::MAX_MSG_TEXT + 1];
+  const int len = end - start;
+  memcpy(part, text + start, len);
+  part[len] = '\0';
+  lv_span_t* span = lv_spangroup_new_span(group);
+  lv_span_set_text(span, part);
+  if (highlighted) lv_style_set_text_color(&span->style, lv_color_hex(COLOR_CHAT_LINK));
+  else             lv_style_set_text_color(&span->style, color);
+}
+static lv_obj_t* chatCreateHashtagSpans(lv_obj_t* parent, lv_obj_t* hit_label,
+                                        const char* text, const lv_font_t* font,
+                                        lv_color_t color, lv_coord_t width) {
+  int first_start, first_end;
+  if (!chatHashtagSpan(text, 0, &first_start, &first_end) ||
+      !chatHashtagSpan(text, first_end, &first_start, &first_end))
+    return nullptr;
+  lv_obj_t* group = lv_spangroup_create(parent);
+  lv_obj_remove_style_all(group);
+  lv_obj_set_style_text_font(group, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(group, color, LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(group,
+      lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_obj_set_style_text_line_space(group,
+      lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_spangroup_set_align(group, LV_TEXT_ALIGN_LEFT);
+  lv_spangroup_set_overflow(group, LV_SPAN_OVERFLOW_CLIP);
+  lv_spangroup_set_mode(group, LV_SPAN_MODE_BREAK);
+  int cursor = 0, start, end;
+  while (chatHashtagSpan(text, cursor, &start, &end)) {
+    chatAppendSpan(group, text, cursor, start, color, false);
+    chatAppendSpan(group, text, start, end, color, true);
+    cursor = end;
+  }
+  const int text_len = (int)strlen(text);
+  chatAppendSpan(group, text, cursor, text_len, color, false);
+  lv_obj_set_width(group, width);
+  lv_obj_set_pos(group, lv_obj_get_x(hit_label), lv_obj_get_y(hit_label));
+  lv_obj_set_user_data(group, hit_label);
+  lv_spangroup_refr_mode(group);
+  return group;
+}
 // Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
 // already has a '#' (the recolor parser would choke on it) — caller then shows plain
 // text and the tap still works.
@@ -41062,7 +41106,9 @@ static void bubbleUrlTapCb(lv_event_t* e) {
 // Read the live message again: a virtualized bubble's ring slot can change.
 static void bubbleHashtagTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
-  lv_obj_t* label = lv_event_get_target(e);
+  lv_obj_t* target = lv_event_get_target(e);
+  lv_obj_t* label = reinterpret_cast<lv_obj_t*>(lv_obj_get_user_data(target));
+  if (!label) label = target;
   lv_indev_t* indev = lv_indev_get_act();
   if (!indev) return;
   lv_point_t point;
@@ -41076,7 +41122,11 @@ static void bubbleHashtagTapCb(lv_event_t* e) {
   const uint32_t char_idx = lv_label_get_letter_on(label, &point);
   const int byte_idx = (int)_lv_txt_encoded_get_byte_id(text, char_idx);
   int start, end;
-  if (!chatHashtagSpan(text, 0, &start, &end) || byte_idx < start || byte_idx >= end) return;
+  bool on_hashtag = false;
+  for (int from = 0; chatHashtagSpan(text, from, &start, &end); from = end) {
+    if (byte_idx >= start && byte_idx < end) { on_hashtag = true; break; }
+  }
+  if (!on_hashtag) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
   UITask::UIMessage m;
   if (!g_lv.task->getMessageByIndex(idx, m)) return;
@@ -41234,16 +41284,26 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   } else if (has_coords) {
     char rc[UITask::MAX_MSG_TEXT + 40];
     if (chatRecolorCoords(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
-  } else if (has_hashtag) {
+  }
+#endif
+  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(tlbl, txt_w_used);
+  lv_obj_set_pos(tlbl, 0, inner_y);
+  lv_obj_t* hashtag_spans = nullptr;
+#if !defined(HAS_TDECK_PRO)
+  if (has_hashtag && !has_url && !has_coords) {
+    hashtag_spans = chatCreateHashtagSpans(bubble, tlbl, d.san_text, msg_font,
+                                            lv_color_hex(COLOR_CHAT_TEXT), txt_w_used);
+  }
+  if (hashtag_spans) {
+    lv_obj_set_style_text_opa(tlbl, LV_OPA_0, LV_PART_MAIN);
+  } else if (has_hashtag && !has_url && !has_coords) {
     lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_CHAT_LINK), LV_PART_SELECTED);
     lv_obj_set_style_bg_color(tlbl, bubble_bg, LV_PART_SELECTED);
     lv_label_set_text_sel_start(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _ha));
     lv_label_set_text_sel_end(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _hb));
   }
 #endif
-  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(tlbl, txt_w_used);
-  lv_obj_set_pos(tlbl, 0, inner_y);
 
   // The foot, under the bubble: the chain, then the text; right-aligned for yours.
   {
@@ -41279,8 +41339,9 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   if (has_hashtag && !has_url && !has_coords &&
       !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED)) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_add_flag(tlbl, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
-    lv_obj_add_event_cb(tlbl, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
+    lv_obj_t* hit_target = hashtag_spans ? hashtag_spans : tlbl;
+    lv_obj_add_flag(hit_target, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
+    lv_obj_add_event_cb(hit_target, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   }
   // A short tap on a bubble that carries a URL opens the Open-in-web / Create-QR menu
