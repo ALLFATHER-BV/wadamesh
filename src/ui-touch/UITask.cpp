@@ -7238,7 +7238,9 @@ static lv_obj_t* getActiveTabPage() {
 // old nested sub-tabview. Stage 1 maps the categories onto the existing inline
 // builders; Stage 2 will split the "Device" catch-all further.
 enum {
-  CAT_PROFILE = 0,   // identity / name / advert location / QR / export-import
+  CAT_DEVICE = 0,    // model + detected hardware + overrides, then firmware / update /
+                     // system info / diagnostics (was "About", at the bottom; #596)
+  CAT_PROFILE,       // identity / name / advert location / QR / export-import
   CAT_RADIO,         // radio params + experimental
   CAT_AUTOADD,       // auto-add contacts (own page; also linked from the Contacts tab)
   CAT_WIFI,          // Wi-Fi config + saved slots
@@ -7258,7 +7260,6 @@ enum {
   CAT_LANGUAGE,      // UI language picker
   CAT_MQTT,          // MQTT bridge — broker host/port/credentials
   CAT_APPPERMS,      // what each Lua app is allowed to do, and taking it back
-  CAT_ABOUT,         // firmware / update / system info / diagnostics
   CAT_COUNT
 };
 struct SettingsCatDef { const char* label; const char* icon; };
@@ -7276,6 +7277,7 @@ enum {
 #endif
 
 static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
+  { "Device",        UI_ICON_INFO },
   { "Profile",       UI_ICON_USER },
   { "Radio & Mesh",  UI_ICON_RADIO_TOWER },
   { "Auto-add",      UI_ICON_USER_PLUS },
@@ -7300,7 +7302,6 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Language",      UI_ICON_LANGUAGES },
   { "MQTT bridge",   UI_ICON_SHARE_2 },
   { "App permissions", UI_ICON_SHIELD_CHECK },
-  { "About",         UI_ICON_INFO },
 };
 // Which slice of the (formerly monolithic) Device settings a builder emits. One
 // detail page per section; buildDeviceSettings(sec) emits only that section's
@@ -7312,6 +7313,51 @@ enum { DSEC_DISPLAY = 0, DSEC_KEYBOARD, DSEC_SOUND, DSEC_LOCK,
 static lv_obj_t* s_settings_landing  = nullptr;  // the category landing container
 static lv_obj_t* s_settings_cat_card[CAT_COUNT] = { nullptr };   // one card per category (for live hide/show)
 static void settingsLandingRefresh();   // the states on the landing's rows (defined with makeSettings)
+// Settings > Device (#596): the detected-hardware line on the Device page. It and the
+// Device row's state on the landing are refreshed when an override changes, so a
+// user fixing a wrong variant sees the fix land in place.
+static lv_obj_t* s_device_hw_lbl       = nullptr;
+
+#if defined(HAS_TDECK_KEYBOARD)
+// Which T-Deck keyboard is in use, and whether that was detected or set by hand.
+static const char* deviceKeyboardText() {
+  if (touchPrefsGetKbForceLegacy()) return TR("older keyboard (set manually)");
+  switch (tdeckKeyboardDetectedMode()) {
+    case TDECK_KB_RAW:    return TR("newer keyboard");
+    case TDECK_KB_LEGACY: return TR("older keyboard");
+    default:              return TR("keyboard not detected yet");
+  }
+}
+#endif
+
+// The Device card's second line: the board, plus any variant it can tell apart.
+static void deviceSummary(char* out, size_t cap) {
+#if defined(HAS_TDECK_KEYBOARD)
+  snprintf(out, cap, "%s \xC2\xB7 %s", board.getManufacturerName(), deviceKeyboardText());
+#else
+  snprintf(out, cap, "%s", board.getManufacturerName());
+#endif
+}
+
+// The Device page's hardware block: model, then what was detected at boot.
+static void deviceHardwareText(char* out, size_t cap) {
+  int n = snprintf(out, cap, "%s  %s", TR("Model:"), board.getManufacturerName());
+#if defined(HAS_TDECK_KEYBOARD)
+  if (n > 0 && (size_t)n < cap)
+    snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"), deviceKeyboardText());
+#else
+  (void)n;
+#endif
+}
+
+static void deviceRefreshLabels() {
+  char buf[96];
+  settingsLandingRefresh();
+  if (s_device_hw_lbl && lv_obj_is_valid(s_device_hw_lbl)) {
+    deviceHardwareText(buf, sizeof buf);
+    lv_label_set_text(s_device_hw_lbl, buf);
+  }
+}
 // s_settings_sheet / s_settings_open_cat / s_settings_from_cc are declared ABOVE the nav
 // functions (navMaybeRebuild needs them to collect the settings detail sheet for trackball nav).
 static void      closeSettingsCategory();        // fwd: tab-change + key-dismiss close the sheet
@@ -15246,6 +15292,7 @@ static void kbForceLegacyToggleCb(lv_event_t* e) {
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   touchPrefsSetKbForceLegacy(on);
   tdeckKeyboardForceLegacy(on);   // applies now; no reboot needed to get typing back
+  deviceRefreshLabels();
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Using the older keyboard protocol")
                                          : TR("Detecting the keyboard protocol"), 1600);
 }
@@ -17074,13 +17121,7 @@ static void buildKeyboardPage() {
                  msgFlashToggleCb);
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
-    setSwitchRow(c, "Older keyboard protocol", "Turn on if your keyboard types the wrong letters. It turns off modifier latching.",
-#if defined(ESP32)
-                 touchPrefsGetKbForceLegacy(),
-#else
-                 false,
-#endif
-                 kbForceLegacyToggleCb);
+    setNote(c, "Older keyboard protocol is now in Settings > Device.");
 #endif
   }
 #if defined(HAS_TANMATSU)
@@ -37886,8 +37927,29 @@ static void reportPingToggleCb(lv_event_t* e) {
   touchPrefsSetReportPing(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
-// ---- Settings > About ------------------------------------------------------------------
+// ---- Settings > Device (About merged in, #596) -----------------------------------------
 static void buildAboutSettings() {
+  // #596: what this unit is, and the hardware the firmware could not be sure of, ahead
+  // of the firmware/update block that used to be the About page.
+  {
+    lv_obj_t* c = setCard("Hardware");
+    s_device_hw_lbl = lv_label_create(c);   // re-texted by deviceRefreshLabels
+    lv_obj_set_width(s_device_hw_lbl, s_settings_content_w);
+    lv_label_set_long_mode(s_device_hw_lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(s_device_hw_lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_device_hw_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_pad_left(s_device_hw_lbl, 2, LV_PART_MAIN);
+    deviceRefreshLabels();
+#if defined(HAS_TDECK_KEYBOARD) && defined(ESP32)
+    // Older keyboard controllers do not speak the raw protocol that modifier latching
+    // needs, and the detection cannot be certain while nobody is typing. When it guesses
+    // wrong the keyboard types the wrong letters, so this switch exists to be reachable
+    // BY TOUCH and end it (#341, #351). Lived on the Keyboard page until #596 gathered
+    // the hardware overrides here.
+    setSwitchRow(c, "Older keyboard protocol", "Turn on if your keyboard types the wrong letters. It turns off modifier latching.",
+                 touchPrefsGetKbForceLegacy(), kbForceLegacyToggleCb);
+#endif
+  }
   // The firmware: what this is, whether there is a newer one, and getting it.
   {
     lv_obj_t* c = setCard("Firmware");
@@ -38005,7 +38067,7 @@ static void settingsCatBuild(int cat) {
       buildAppPermsSettings();
 #endif
       break;
-    case CAT_ABOUT:        buildAboutSettings(); break;
+    case CAT_DEVICE:       buildAboutSettings(); break;
   }
   s_settings_inline_parent = nullptr;
 }
@@ -38030,7 +38092,8 @@ static void closeSettingsCategory() {
     }
   }
   hideKb();
-  if (s_settings_open_cat == CAT_ABOUT) {   // null the live-label ptrs (freed with the sheet)
+  if (s_settings_open_cat == CAT_DEVICE) {   // null the live-label ptrs (freed with the sheet)
+    s_device_hw_lbl = nullptr;
     s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
     s_sdfw_status_lbl = nullptr;
@@ -38201,11 +38264,14 @@ void settingsApplyHiddenCats() {
 // charge), and a chevron. Two columns of groups on the wide screens.
 struct SettingsGroupDef { const char* title; int cats[10]; int n; };
 static const SettingsGroupDef kSettingsGroups[] = {
+  // Device leads on its own, untitled (#596): its state names the hardware, so a
+  // wrongly-set variant is visible before anyone opens a page.
+  { "",            { CAT_DEVICE }, 1 },
   { "Mesh",        { CAT_PROFILE, CAT_RADIO, CAT_AUTOADD, CAT_QUICKREPLIES }, 4 },
   { "Connections", { CAT_WIFI, CAT_BLUETOOTH, CAT_GPS, CAT_MQTT }, 4 },
   { "Device",      { CAT_DISPLAY, CAT_THEME, CAT_LOCK, CAT_SOUND, CAT_KEYBOARD, CAT_LANGUAGE,
                      CAT_CLOCK, CAT_BATTERY, CAT_SENSORS }, 9 },
-  { "System",      { CAT_GENERAL, CAT_BACKUPS, CAT_APPPERMS, CAT_ABOUT }, 4 },
+  { "System",      { CAT_GENERAL, CAT_BACKUPS, CAT_APPPERMS }, 3 },
 };
 static lv_obj_t* s_settings_cat_val[CAT_COUNT] = { nullptr };   // the state beside a row's name
 static lv_obj_t* s_settings_cat_lbl[CAT_COUNT] = { nullptr };   // the row's name, which gives way to it
@@ -38223,7 +38289,7 @@ static uint32_t settingsCatHue(int c) {
     case CAT_RADIO:                                        return COLOR_HUE[HUE_RADIO];
     case CAT_PROFILE: case CAT_AUTOADD: case CAT_QUICKREPLIES: return COLOR_HUE[HUE_MSG];
     case CAT_WIFI: case CAT_BLUETOOTH: case CAT_GPS: case CAT_MQTT: return COLOR_HUE[HUE_PLACE];
-    case CAT_GENERAL: case CAT_BACKUPS: case CAT_APPPERMS: case CAT_ABOUT:
+    case CAT_GENERAL: case CAT_BACKUPS: case CAT_APPPERMS: case CAT_DEVICE:
       return s_look_more ? COLOR_HUE[HUE_SYS] : themeRole(0xC3CBCF, COLOR_SUB);
     default:                                               return COLOR_HUE[HUE_DEVICE];
   }
@@ -38252,6 +38318,9 @@ static bool settingsCatOnBoard(int c) {
 static void settingsCatValue(int c, char* out, size_t cap) {
   out[0] = '\0';
   switch (c) {
+    case CAT_DEVICE:
+      deviceSummary(out, cap);
+      break;
     case CAT_PROFILE:
       if (NodePrefs* np = the_mesh.getNodePrefs()) snprintf(out, cap, "%s", np->node_name);
       break;
@@ -38402,12 +38471,16 @@ static void makeSettings(lv_obj_t* tab) {
     lv_obj_set_flex_flow(grp, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(grp, 4, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(grp, 6, LV_PART_MAIN);
-    lv_obj_t* gl = lv_label_create(grp);
-    styleSectionLabel(gl, TR(g.title));
-    lv_obj_set_style_pad_left(gl, 6, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(gl, 4, LV_PART_MAIN);
-    // MORE COLORS!: the group's name in the colour of its first page.
-    if (s_look_more) lv_obj_set_style_text_color(gl, lv_color_hex(settingsCatHue(g.cats[0])), LV_PART_MAIN);
+    if (g.title[0]) {
+      lv_obj_t* gl = lv_label_create(grp);
+      styleSectionLabel(gl, TR(g.title));
+      lv_obj_set_style_pad_left(gl, 6, LV_PART_MAIN);
+      lv_obj_set_style_pad_top(gl, 4, LV_PART_MAIN);
+      // MORE COLORS!: the group's name in the colour of its first page.
+      if (s_look_more) lv_obj_set_style_text_color(gl, lv_color_hex(settingsCatHue(g.cats[0])), LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_pad_top(grp, 4, LV_PART_MAIN);
+    }
 
     lv_obj_t* card = lv_obj_create(grp);
     lv_obj_remove_style_all(card);
@@ -38496,12 +38569,12 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_align(lbl, LV_ALIGN_LEFT_MID, text_x, 0);
 
-      if (c == CAT_ABOUT) {   // update-available dot rides on the About row
+      if (c == CAT_DEVICE) {   // update-available dot rides on the Device row
         s_update_subtab_badge = lv_obj_create(row);
         lv_obj_remove_style_all(s_update_subtab_badge);
         // Pure decoration: a bare lv_obj is CLICKABLE by default, and keypad-nav's
-        // leaf rule then harvests the dot INSTEAD of the About button it sits on
-        // (the button became "a container with a clickable child"), making About
+        // leaf rule then harvests the dot INSTEAD of the Device button it sits on
+        // (the button became "a container with a clickable child"), making Device
         // unreachable by keyboard whenever the update badge shows.
         lv_obj_clear_flag(s_update_subtab_badge, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_set_size(s_update_subtab_badge, 8, 8);
@@ -38509,14 +38582,15 @@ static void makeSettings(lv_obj_t* tab) {
         lv_obj_set_style_bg_color(s_update_subtab_badge,   // red, as the update "!" on the bar's Settings icon
           lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : 0xE2403A), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(s_update_subtab_badge, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_align(s_update_subtab_badge, LV_ALIGN_RIGHT_MID, -(8 + SC(14) + 6), 0);
+        // On the icon tile's corner: the row's right side carries the hardware name.
+        lv_obj_align(s_update_subtab_badge, LV_ALIGN_LEFT_MID, 6 + tile - 5, -tile / 2 + 1);
         lv_obj_add_flag(s_update_subtab_badge, LV_OBJ_FLAG_HIDDEN);
       }
     }
   }
 
   settingsLandingRefresh();
-  versionCheckUpdateUi();   // reflect any completed check in the gear/About badges
+  versionCheckUpdateUi();   // reflect any completed check in the gear/Device badges
 #if CAP_LUA_APPS
   settingsApplyHiddenCats();
 #endif
