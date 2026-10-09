@@ -5881,8 +5881,9 @@ static lv_obj_t* navOpenDropdown() {
   return nullptr;
 }
 
+[[maybe_unused]] static bool navActivateBubbleLink(lv_obj_t* row);
 #if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD) || \
-    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
+    CAP_TRACKBALL || defined(HAS_TDECK_PRO) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
 // long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
 // container, so identify one by its parent. Returns true if it handled the Enter. Shared by
@@ -5893,6 +5894,7 @@ static bool navEnterBubble() {
   lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
   LvChatPanel* cp = navOpenChatPanel();
   if (cp && cp->msgs && foc && lv_obj_is_valid(foc) && lv_obj_get_parent(foc) == cp->msgs) {
+    if (navActivateBubbleLink(foc)) return true;   // a link / coords / #channel in the message wins over the menu
     lv_event_send(foc, LV_EVENT_LONG_PRESSED, nullptr);
     return true;
   }
@@ -41147,6 +41149,28 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
 }
 
+// Keyboard select on a bubble: open its first URL menu, map coordinate or #channel.
+[[maybe_unused]] static bool navActivateBubbleLink(lv_obj_t* row) {
+  if (!row || !g_lv.task) return false;
+  const intptr_t logical_i = reinterpret_cast<intptr_t>(lv_obj_get_user_data(row));
+  if (logical_i < 0 || logical_i >= s_chat_virt.n || !s_chat_virt.msg_idx) return false;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[logical_i], m)) return false;
+  char url[240];
+  if (chatFirstUrl(m.text, url, sizeof url)) { openUrlMenu(url); return true; }
+  double lat = 0.0, lon = 0.0;
+  if (chatFirstCoord(m.text, &lat, &lon)) { openMapAtCoords(lat, lon); return true; }
+  int s, e;
+  char tag[32];
+  if (chatHashtagSpan(m.text, 0, &s, &e) && e - s < (int)sizeof tag) {
+    memcpy(tag, m.text + s, e - s);
+    tag[e - s] = '\0';
+    openHashtagChat(tag);
+    return true;
+  }
+  return false;
+}
+
 static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_idx,
                                        lv_coord_t vp_y, lv_coord_t* out_jump_y) {
   if (!p || !g_lv.task) return 0;
@@ -47623,7 +47647,10 @@ if (g_lv.task && g_lv.task->isManualLock()) {
           case 1: navMoveDir(NAV_DOWN);  break;
           case 2: navMoveDir(NAV_LEFT);  break;
           case 3: navMoveDir(NAV_RIGHT); break;
-          case 4: if (navOnTabBar()) navSwitchTab(+1); else navPushTap(LV_KEY_ENTER); break;   // select
+          case 4:   // select
+            if (navOnTabBar()) navSwitchTab(+1);
+            else if (!navEnterBubble()) { navMarkEntered(lv_group_get_focused(s_nav_group)); navPushTap(LV_KEY_ENTER); }
+            break;
           case 5:                                                                              // back: popup → chat → ESC
             if (anyPopupOpen())                            hwKeyDismissTopPopup();
             else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);                 // close an open chat/channel first
