@@ -74943,6 +74943,20 @@ void UITask::loop() {
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   attakyNotificationTick(now);
   {
+    // The keyboard module attached or removed while a field is open: show that field
+    // again, so the on-screen keys go down for the module or come back without it
+    // (kbMirrorActive decides). Not over keys the '#' summoned for this field.
+    static bool s_akb_seen = false;
+    if (attakyKeyboardPresent() != s_akb_seen) {
+      s_akb_seen = attakyKeyboardPresent();
+      LvChatPanel* const kp = s_kb_panel;
+      lv_obj_t* const    kf = s_kb_bind_ta;
+      if ((kp || kf) && !s_osk_forced) {
+        hideKb();
+        if (kp && kp->composer_ta && lv_obj_is_valid(kp->composer_ta)) showKb(kp);
+        else if (kf && lv_obj_is_valid(kf))                             kbMirrorBind(kf);
+      }
+    }
     lv_obj_t* akb_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
     attakyKeyboardPoll(akb_ta != nullptr);
     for (int kbi = 0; akb_ta && kbi < 16; ++kbi) {
