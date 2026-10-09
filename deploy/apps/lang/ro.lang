@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Menţiuni
 @ mention sound	Sunet menţiune @
+A background has to be a JPEG	Fundalul trebuie să fie un JPEG
 AF	AF
 AUTOMATIC ADVERTS	ADVERTURI AUTOMATE
 About	Despre
@@ -32,6 +33,23 @@ About the map	Despre hartă
 Accent popups	Popupuri cu accente
 Accent popups: off	Popupuri accente: oprite
 Accent popups: on	Popupuri accente: pornite
+Background	Fundal
+Background colour	Culoarea fundalului
+Background set, it shows after a restart	Fundal setat, apare după o repornire
+Check position every	Verifică poziţia la fiecare
+Choose an image	Alege o imagine
+Choose the colour	Alege culoarea
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimental. Încetineşte procesorul cât timp ecranul este stins (Bluetooth şi Wi-Fi funcţionează în continuare), lasă GPS-ul să se odihnească între verificările de poziţie şi opreşte un fundal în mişcare.
+GPS: resting, next check in %lum%02lus	GPS: în repaus, următoarea verificare în %lum%02lus
+Image	Imagine
+Moving aurora	Auroră în mişcare
+None	Niciunul
+Open a JPEG, then tap 'Set as background'	Deschide un JPEG, apoi atinge 'Setează ca fundal'
+Save battery	Economiseşte bateria
+Set as background	Setează ca fundal
+Still aurora	Auroră statică
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS-ul se odihneşte între verificările de poziţie şi se trezeşte singur. Rămâne activ cât timp harta, această pagină sau Discover sunt deschise. Economisirea bateriei îl porneşte şi ea.
+remote view open	vizualizare la distanţă deschisă
 Accent colour	Culoare de accent
 Appearance	Aspect
 Condense Nav (restart to apply)	Navigare compactă (repornire pentru aplicare)

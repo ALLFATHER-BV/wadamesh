@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Mentions
 @ mention sound	Son des mentions @
+A background has to be a JPEG	Un fond d'écran doit être un JPEG
 AF	AF
 AUTOMATIC ADVERTS	ADVERTS AUTOMATIQUES
 About	À propos
@@ -32,6 +33,23 @@ About the map	À propos de la carte
 Accent popups	Fenêtres d'accents
 Accent popups: off	Fenêtres d'accents : désactivé
 Accent popups: on	Fenêtres d'accents : activé
+Background	Fond d'écran
+Background colour	Couleur du fond
+Background set, it shows after a restart	Fond d'écran défini, il apparaît après un redémarrage
+Check position every	Vérifier la position toutes les
+Choose an image	Choisir une image
+Choose the colour	Choisir la couleur
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Expérimental. Ralentit le processeur quand l'écran est éteint (Bluetooth et Wi-Fi continuent de fonctionner), laisse le GPS se reposer entre deux vérifications de position et fige un fond animé.
+GPS: resting, next check in %lum%02lus	GPS : en repos, prochaine vérification dans %lum%02lus
+Image	Image
+Moving aurora	Aurore animée
+None	Aucun
+Open a JPEG, then tap 'Set as background'	Ouvrez un JPEG, puis touchez « Définir comme fond d'écran »
+Save battery	Économiser la batterie
+Set as background	Définir comme fond d'écran
+Still aurora	Aurore fixe
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Le GPS se repose entre deux vérifications de position et se réveille tout seul. Il reste actif tant que la carte, cette page ou Discover est ouverte. L'économie de batterie l'active aussi.
+remote view open	vue à distance ouverte
 Accent colour	Couleur d'accent
 Appearance	Apparence
 Condense Nav (restart to apply)	Navigation compacte (redémarrer pour appliquer)

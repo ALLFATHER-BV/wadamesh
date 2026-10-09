@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Αναφορές
 @ mention sound	Ήχος αναφορών @
+A background has to be a JPEG	Το φόντο πρέπει να είναι JPEG
 AF	AF
 AUTOMATIC ADVERTS	ΑΥΤΟΜΑΤΑ ADVERTS
 About	Σχετικά
@@ -32,6 +33,23 @@ About the map	Σχετικά με τον χάρτη
 Accent popups	Αναδυόμενα τόνων
 Accent popups: off	Αναδυόμενα τόνων: όχι
 Accent popups: on	Αναδυόμενα τόνων: ναι
+Background	Φόντο
+Background colour	Χρώμα φόντου
+Background set, it shows after a restart	Το φόντο ορίστηκε, εμφανίζεται μετά από επανεκκίνηση
+Check position every	Έλεγχος θέσης κάθε
+Choose an image	Επιλέξτε εικόνα
+Choose the colour	Επιλέξτε το χρώμα
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Πειραματικό. Επιβραδύνει τον επεξεργαστή όσο η οθόνη είναι σβηστή (Bluetooth και Wi-Fi συνεχίζουν να λειτουργούν), αφήνει το GPS να ξεκουράζεται ανάμεσα στους ελέγχους θέσης και ακινητοποιεί ένα κινούμενο φόντο.
+GPS: resting, next check in %lum%02lus	GPS: σε ανάπαυση, επόμενος έλεγχος σε %lum%02lus
+Image	Εικόνα
+Moving aurora	Κινούμενο σέλας
+None	Κανένα
+Open a JPEG, then tap 'Set as background'	Ανοίξτε ένα JPEG και πατήστε «Ορισμός ως φόντο»
+Save battery	Εξοικονόμηση μπαταρίας
+Set as background	Ορισμός ως φόντο
+Still aurora	Ακίνητο σέλας
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Το GPS ξεκουράζεται ανάμεσα στους ελέγχους θέσης και ξυπνά μόνο του. Μένει ενεργό όσο είναι ανοιχτός ο χάρτης, αυτή η σελίδα ή το Discover. Η εξοικονόμηση μπαταρίας το ενεργοποιεί επίσης.
+remote view open	ανοιχτή απομακρυσμένη προβολή
 Accent colour	Χρώμα έμφασης
 Appearance	Εμφάνιση
 Condense Nav (restart to apply)	Συμπαγής πλοήγηση (επανεκκίνηση για εφαρμογή)

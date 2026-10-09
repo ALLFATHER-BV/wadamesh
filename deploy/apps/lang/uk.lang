@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Згадки
 @ mention sound	Звук @-згадок
+A background has to be a JPEG	Фон має бути у форматі JPEG
 AF	AF
 AUTOMATIC ADVERTS	АВТОМАТИЧНІ АДВЕРТИ
 About	Про програму
@@ -32,6 +33,23 @@ About the map	Про карту
 Accent popups	Підказки акцентів
 Accent popups: off	Підказки акцентів: вимк
 Accent popups: on	Підказки акцентів: увімк
+Background	Фон
+Background colour	Колір фону
+Background set, it shows after a restart	Фон встановлено, з'явиться після перезавантаження
+Check position every	Перевіряти позицію кожні
+Choose an image	Обрати зображення
+Choose the colour	Обрати колір
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Експериментально. Сповільнює процесор при вимкненому екрані (Bluetooth і Wi-Fi далі працюють), дає GPS відпочивати між перевірками позиції та зупиняє рухомий фон.
+GPS: resting, next check in %lum%02lus	GPS: відпочиває, наступна перевірка через %lum%02lus
+Image	Зображення
+Moving aurora	Рухоме сяйво
+None	Немає
+Open a JPEG, then tap 'Set as background'	Відкрийте JPEG, потім торкніться «Встановити як фон»
+Save battery	Економити заряд
+Set as background	Встановити як фон
+Still aurora	Нерухоме сяйво
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS відпочиває між перевірками позиції та прокидається сам. Він лишається активним, поки відкрито карту, цю сторінку або Discover. Економія заряду теж вмикає це.
+remote view open	відкрито віддалений перегляд
 Accent colour	Акцентний колір
 Appearance	Вигляд
 Condense Nav (restart to apply)	Компактна навігація (перезапуск для застосування)
