@@ -53863,6 +53863,9 @@ static void uiFitTrailingDots(const char* src, const lv_font_t* f, lv_coord_t ma
   memcpy(out + keep, "...", 4);
 }
 
+#if !CAP_ROUND_CORNERS
+static void statusBarPackRight();   // below; puts the GPS glyph back in its row on leaving a chat
+#endif
 static void chatHeaderApply(bool chat_open) {
   if (!g_statusbar.chat_avatar) return;
 #if CAP_ROUND_CORNERS
@@ -53910,6 +53913,10 @@ static void chatHeaderApply(bool chat_open) {
 #else
       for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_y(o, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+      if (g_statusbar.gps_icon) {   // back to its packed slot in the row (below)
+        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+        statusBarPackRight();
+      }
 #endif
       return;
     }
@@ -53989,7 +53996,20 @@ static void chatHeaderApply(bool chat_open) {
 #endif
   const char* clk = lv_label_get_text(g_statusbar.clock);
   const lv_coord_t clk_w = lv_txt_get_width(clk, strlen(clk), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10);
+  lv_coord_t gps_room = 0;
+#if !CAP_ROUND_CORNERS
+  // The GPS glyph joins the clock and battery: just left of the clock, on their line.
+  // Left in its packed slot it sat past the radio glyphs a chat hides (they only go
+  // transparent, so they keep their room), apart from the clock.
+  if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
+    const char* gt = lv_label_get_text(g_statusbar.gps_icon);
+    const lv_coord_t gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6)), ymid);
+    lv_obj_set_style_translate_y(g_statusbar.gps_icon, right_up, LV_PART_MAIN);
+    gps_room = gps_w + SBX(6);
+  }
+#endif
+  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room;
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
