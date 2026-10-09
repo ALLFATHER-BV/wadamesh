@@ -1498,7 +1498,7 @@ void setup() {
    * normal boot path a few lines down reads the persisted Wi-Fi/BLE intent
    * flags, which this never touches, and proceeds exactly as it always did.
    *
-   * Opt-in, power-on-reset only, and bounded (~12 s worst case); it returns
+   * Opt-in, power-on-reset only, and bounded (~16 s worst case); it returns
    * Skipped without spending anything when the board already knows the time,
    * which is every boot on a T-Pager or an M9 whose RTC is healthy. */
   {
