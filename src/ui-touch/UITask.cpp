@@ -4221,6 +4221,18 @@ static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool 
     ini[o] = '\0';
     for (char* u = ini; *u; ++u) if ((uint8_t)*u < 0x80) *u = (char)toupper((unsigned char)*u);
     const lv_font_t* f = size >= 36 ? &g_font_16 : size >= 26 ? &g_font_semi_14 : &g_font_semi_12;
+    // g_font_* grow with the UI size while the disc may not, so "PU" can spill past
+    // it at Large / Huge. Step down until the letters sit inside: 3/4 of the
+    // diameter keeps the text box's corners within the circle.
+    {
+      const lv_font_t* steps[3] = { &g_font_16, &g_font_semi_14, &g_font_semi_12 };
+      const int from = f == &g_font_16 ? 0 : f == &g_font_semi_14 ? 1 : 2;
+      for (int i = from; i < 3; ++i) {
+        f = steps[i];
+        if (lv_txt_get_width(ini[0] ? ini : "?", (uint32_t)strlen(ini[0] ? ini : "?"), f, 0, LV_TEXT_FLAG_NONE)
+            <= size * 3 / 4) break;
+      }
+    }
     char txt[16];
     copyUtf8ReplacingMissingGlyphs(f, txt, sizeof txt, ini[0] ? ini : "?");
     lv_obj_t* l = lv_label_create(av);
