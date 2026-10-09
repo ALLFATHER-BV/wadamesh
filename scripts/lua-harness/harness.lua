@@ -108,6 +108,7 @@ end
 
 -- wada.ui.list: rows with optional callbacks, same argument checks as uiList/lsAdd
 local lists = {}
+local map_obj, map_centers = nil, {}
 local function mklist(x, y, w, h)
   checkint(x, "list x"); checkint(y, "list y"); checkint(w, "list w"); checkint(h, "list h")
   assert(w > 0 and h > 0, "list: width and height must be positive")
@@ -1961,7 +1962,8 @@ scenarios.protreck_tdeck = function()
   assert(widgets.canvases == 1, "expected 1 canvas")
   assert(widgets.timer_ms == 500, "tick rate must be 500 ms, got " .. tostring(widgets.timer_ms))
   tick(app, 5)
-  -- swipe through all 4 tabs
+  -- swipe through all 5 tabs (ASTRO→CMPAS→CHRONO→TIMER→ALTI→ASTRO)
+  swipe(app, "left"); tick(app, 2)   -- CMPAS
   swipe(app, "left"); tick(app, 2)   -- CHRONO
   swipe(app, "left"); tick(app, 2)   -- TIMER
   swipe(app, "left"); tick(app, 2)   -- ALTI
@@ -1978,9 +1980,11 @@ scenarios.protreck_v4 = function()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   tick(app, 3)
+  swipe(app, "left"); tick(app, 2)   -- CMPAS
   swipe(app, "left"); tick(app, 2)   -- CHRONO
+  swipe(app, "right"); tick(app, 2)  -- back CMPAS
   swipe(app, "right"); tick(app, 2)  -- back ASTRO
-  swipe(app, "right"); tick(app, 2)  -- wrap to ALTI
+  swipe(app, "right"); tick(app, 2)  -- wrap to ALTI (tab 5)
   if app.on_close then guarded(BUDGET, app.on_close) end
   print("  v4: OK")
 end
@@ -1993,7 +1997,8 @@ scenarios.protreck_no_gps = function()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   tick(app, 5)
-  -- must render without crash even when GPS is absent
+  -- must render without crash even when GPS is absent on all tabs
+  swipe(app, "left"); tick(app, 2)   -- CMPAS (no heading)
   swipe(app, "left"); tick(app, 2)   -- CHRONO
   swipe(app, "left"); tick(app, 2)   -- TIMER
   swipe(app, "left"); tick(app, 2)   -- ALTI
@@ -2008,8 +2013,8 @@ scenarios.protreck_chrono = function()
   wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
-  -- switch to CHRONO tab
-  swipe(app, "left"); tick(app, 1)
+  -- switch to CHRONO tab (tab 3: skip CMPAS first)
+  swipe(app, "left"); swipe(app, "left"); tick(app, 1)
   -- start chrono
   local ops0 = drawlog.ops
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
@@ -2033,8 +2038,8 @@ scenarios.protreck_timer = function()
   wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
-  -- switch to TIMER
-  swipe(app, "left"); swipe(app, "left"); tick(app, 1)
+  -- switch to TIMER (tab 4)
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); tick(app, 1)
   -- cycle preset a few times
   swipe(app, "up"); swipe(app, "up"); tick(app, 1)
   -- start timer
@@ -2061,8 +2066,8 @@ scenarios.protreck_alti = function()
   wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
-  -- switch to ALTI
-  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); tick(app, 1)
+  -- switch to ALTI (tab 5)
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); tick(app, 1)
   tick(app, 20)   -- accumulate samples
   assert(storekv.alti_max ~= nil, "alti_max must be saved to store after GPS samples")
   assert(type(storekv.alti_max) == "number", "alti_max must be a number")
@@ -2080,8 +2085,8 @@ scenarios.protreck_cost = function()
   wada = build_wada()
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
-  -- switch to ALTI (heaviest draw: graph over 60 samples)
-  swipe(app, "left"); swipe(app, "left"); swipe(app, "left")
+  -- switch to ALTI (heaviest draw: graph over 60 samples) - tab 5
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); swipe(app, "left")
   local worst = 0
   for i = 1, 80 do
     local n = 0
@@ -2096,6 +2101,215 @@ scenarios.protreck_cost = function()
   assert(worst < BUDGET / 4, "tick too expensive: " .. worst)
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
+
+scenarios.protreck_alarm = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return nil end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 2)
+
+  -- short press: cycle alarm slot A1 → A2
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })  -- same clock → dur=0 → cycle
+  tick(app, 1)
+  assert(pt_has_text("A2"), "A2 must be highlighted after first tap (cycle to slot 2)")
+
+  -- swipe up: +15 min on A2 (default 08:00 → 08:15)
+  swipe(app, "up"); tick(app, 1)
+  assert(storekv.al2h == 8 and storekv.al2m == 15,
+    string.format("A2 must be 08:15 after swipe-up, got %s:%s", tostring(storekv.al2h), tostring(storekv.al2m)))
+
+  -- swipe down: −15 min on A2 (08:15 → 08:00)
+  swipe(app, "down"); tick(app, 1)
+  assert(storekv.al2h == 8 and storekv.al2m == 0, "A2 must be 08:00 after swipe-down")
+
+  -- long press (hold ≥500ms): toggle A2 on/off
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  clock_ms = clock_ms + 600   -- simulate 600ms hold
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
+  tick(app, 1)
+  assert(storekv.al2on == 1, "A2 must be ON after long-press toggle")
+
+  -- long press again: toggle A2 off
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  clock_ms = clock_ms + 600
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
+  tick(app, 1)
+  assert(storekv.al2on == 0, "A2 must be OFF after second long-press toggle")
+
+  print("  alarm: 3-slot cycle + long-press toggle + swipe ±15min OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_compass = function()
+  local hdg_val = 135.0
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true, compass = true } }
+  cfg.gps = function() return { lat = 45.0, lon = 9.0, sats = 7, alt_m = 200, speed_kmh = 4, course = 135 } end
+  cfg.compass = function() return { hdg = hdg_val } end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 2)
+
+  -- switch to CMPAS (tab 2)
+  swipe(app, "left"); tick(app, 2)
+  assert(drawlog.ops > 10, "CMPAS tab must perform draw ops")
+
+  -- heading readout must appear (135 → text "135")
+  local found_hdg = false
+  for i = #drawlog.text, math.max(1, #drawlog.text-20), -1 do
+    if drawlog.text[i] == "135" then found_hdg = true; break end
+  end
+  assert(found_hdg, "heading value '135' must appear in draw text")
+
+  -- tap: set waypoint from current GPS position
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 1)
+  assert(storekv.wpt_lat ~= nil and storekv.wpt_lat ~= "",
+    "tap on CMPAS must save waypoint to store")
+  assert(math.abs(tonumber(storekv.wpt_lat) - 45.0) < 0.01, "saved waypoint lat must match GPS")
+
+  -- bearing line must now appear (wpt_lat is set)
+  tick(app, 2)
+  -- tap again: clear waypoint
+  guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  tick(app, 1)
+  assert(storekv.wpt_lat == "" or storekv.wpt_lat == nil, "second tap must clear waypoint")
+
+  print("  compass: rose draw + heading readout + waypoint set/clear OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_deniv = function()
+  local alt_seq = { 100, 102, 105, 103, 101, 104, 108, 106, 104, 110 }
+  local step    = 0
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function()
+    step = step + 1
+    if step > #alt_seq then return nil end  -- stop providing GPS after the sequence
+    return { lat = 46.0, lon = 7.0, sats = 9, alt_m = alt_seq[step], speed_kmh = 2, course = 0 }
+  end
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  -- switch to ALTI
+  swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); swipe(app, "left")
+  tick(app, #alt_seq + 2)
+  -- déniv+ should be positive (we climbed overall: 100→110)
+  -- we can check that alti_max was saved and min/max differ
+  assert(storekv.alti_max ~= nil and tonumber(storekv.alti_max) >= 108,
+    "alti_max should be at least 108, got " .. tostring(storekv.alti_max))
+  -- reset clears state
+  swipe(app, "down"); tick(app, 2)
+  assert(tonumber(storekv.alti_min) >= 99990, "alti_min must be reset to ~99999")
+  print("  deniv: sampling + reset OK  max=" .. tostring(storekv.alti_max))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- ---- MapFetch scenarios -----------------------------------------------------
+
+local function mapfetch_open(w, h, gps_lat, gps_lon, map_tiles)
+  cfg = {
+    w = w, h = h,
+    caps = { sdk_ext = true, keyboard = true, touch = true },
+    map_tiles = map_tiles or 0,
+  }
+  if gps_lat then cfg.gps = function() return { lat = gps_lat, lon = gps_lon, lat_e6 = 0, lon_e6 = 0 } end end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, w, h))
+  return app
+end
+
+scenarios.mapfetch_tdeck = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)   -- T-Deck, GPS Paris
+  assert(widgets.labels >= 2, "need top+bottom labels")
+  assert(map_obj ~= nil, "map view must be created")
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("5km") then found = true end end
+  assert(found, "setup label should show default 5km radius")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_no_map = function()
+  cfg = { w = 320, h = 240, caps = { sdk_ext = false, keyboard = false, touch = true } }
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  guarded(BUDGET, app.on_open, 320, 240)
+  assert(map_obj == nil, "no map view on non-ext board")
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("No map") or l.text:find("not available") then found = true end end
+  assert(found, "should show 'no map support' label when caps.map is false")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_no_gps = function()
+  local app = mapfetch_open(320, 240, nil, nil)  -- no GPS
+  send(app, { type = "down", x = 160, y = 120 })
+  local found = false
+  for _, l in ipairs(labels) do if l.text:find("GPS") or l.text:find("fix") then found = true end end
+  assert(found, "should warn about missing GPS when starting")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_swipe = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)
+  local lbl_before = labels[1] and labels[1].text or ""
+  swipe(app, "up")   -- increase radius
+  local lbl_after = labels[1] and labels[1].text or ""
+  assert(lbl_before ~= lbl_after, "swipe up should change radius display")
+  swipe(app, "down") -- decrease radius back
+  swipe(app, "left") -- increase max zoom
+  swipe(app, "right")-- decrease max zoom back
+  assert(map_obj ~= nil, "map view still present after swipes")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_logic = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522, 1)  -- map_tiles=1 (all cached)
+  send(app, { type = "down", x = 160, y = 120 })            -- start download
+  local prev = #map_centers
+  for _ = 1, 5 do tick(app, 1, 3000) end
+  assert(#map_centers > prev, "map:center should be called as tiles are visited")
+  for _, c in ipairs(map_centers) do
+    assert(type(c.lat) == "number" and type(c.lon) == "number", "tile center must be numeric")
+    assert(c.z >= 10 and c.z <= 15, "zoom must be in expected range")
+  end
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.mapfetch_done = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522, 1)
+  swipe(app, "down")  -- radius: 5km → 2km
+  swipe(app, "right") -- zoom: z14 → z13
+  send(app, { type = "down", x = 160, y = 120 })  -- start
+  local done = false
+  for _ = 1, 200 do
+    tick(app, 1, 3000)
+    for _, l in ipairs(labels) do if l.text:find("Done") then done = true end end
+    if done then break end
+  end
+  assert(done, "app should reach Done state after all tiles visited")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+  assert(not cfg.awake, "keep_awake must be off after done")
+end
+
+scenarios.mapfetch_cost = function()
+  local app = mapfetch_open(320, 240, 48.8566, 2.3522)
+  send(app, { type = "down", x = 160, y = 120 })
+  local ops0 = drawlog.ops
+  tick(app, 1, 3000)
+  local cost = drawlog.ops - ops0
+  assert(cost < 500, string.format("on_tick draw ops %d >= 500", cost))
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- ---- MapFetch scenarios end --------------------------------------------------
 
 -- True (and says so) when this app has no scenarios of its own. Returning a
 -- truthy value makes the dispatch below pick an EMPTY list rather than running
@@ -2117,9 +2331,11 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   or APP_PATH:find("/tripodometer/", 1, true)
   and { "trip_v4", "trip_tdeck", "trip_moving", "trip_persist", "trip_reset", "trip_cost" }
   or APP_PATH:find("/protreck/", 1, true)
-  and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_cost" }
+  and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_alarm", "protreck_compass", "protreck_deniv", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
+  or APP_PATH:find("/mapfetch/", 1, true)
+  and { "mapfetch_tdeck", "mapfetch_no_map", "mapfetch_no_gps", "mapfetch_swipe", "mapfetch_logic", "mapfetch_done", "mapfetch_cost" }
   -- The compass list below is gpscompass's own, NOT a default. An app with no
   -- branch used to fall through to it and "fail" on tests written for a
   -- different app -- six of the store apps do, so a full run came back red and
