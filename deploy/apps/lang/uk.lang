@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Компактну навігацію з
 Day	День
 High contrast	Висока контрастність
 High contrast - restarting to apply it…	Висока контрастність - перезавантаження для застосування…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Залиште Bluetooth увімкненим, щоб під'єднати застосунок MeshCore на телефоні. Wi-Fi можна налаштувати будь-коли в Налаштуваннях.
 Keyboard nav: on	Навігація клавіатурою: увімк.
 Landscape only	Лише в альбомній орієнтації
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Літери переміщують виділення, коли не активне текстове поле. Enter вибирає; утримуйте Backspace, щоб повернутися.
@@ -1126,9 +1127,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Старий протокол клавіатури
+Device	Пристрій
+Radio:	Радіомодуль:
+Keyboard:	Клавіатура:
+newer keyboard	новіша клавіатура
+older keyboard	старіша клавіатура
+older keyboard (set manually)	старіша клавіатура (задано вручну)
+keyboard not detected yet	клавіатуру ще не визначено
+Older keyboard protocol is now in Settings > Device.	Старий протокол клавіатури тепер у Налаштування > Пристрій.
+Diagnostics are on the Device page.	Діагностика на сторінці «Пристрій».
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	увімкніть, якщо клавіатура друкує не ті літери; вимикає фіксацію модифікаторів
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1556,7 +1566,6 @@ Community preset	Пресет спільноти
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption

@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Navigare compactă salvată — reporne�
 Day	Zi
 High contrast	Contrast ridicat
 High contrast - restarting to apply it…	Contrast ridicat - repornire pentru aplicare…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lasă Bluetooth pornit pentru a asocia aplicația MeshCore de pe telefon. Wi-Fi se poate configura oricând din Setări.
 Keyboard nav: on	Navigare tastatură: pornită
 Landscape only	Doar în modul peisaj
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Literele mută selecția când niciun câmp de text nu este activ. Enter selectează; ține apăsat Backspace pentru înapoi.
@@ -1127,9 +1128,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Protocol vechi de tastatură
+Device	Dispozitiv
+Radio:	Radio:
+Keyboard:	Tastatură:
+newer keyboard	tastatură nouă
+older keyboard	tastatură veche
+older keyboard (set manually)	tastatură veche (setată manual)
+keyboard not detected yet	tastatura nu a fost detectată încă
+Older keyboard protocol is now in Settings > Device.	Protocolul vechi de tastatură este acum în Setări > Dispozitiv.
+Diagnostics are on the Device page.	Diagnosticele sunt pe pagina Dispozitiv.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	activează dacă tastatura scrie litere greșite; dezactivează blocarea tastelor modificatoare
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1557,7 +1567,6 @@ Community preset	Presetare comunitară
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption

@@ -37,6 +37,7 @@ Appearance	Vzhled
 Condense Nav (restart to apply)	Kompaktní navigace (pro použití restartujte)
 Condense Nav saved — restart to apply	Kompaktní navigace uložena — pro použití restartujte
 Day	Den
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Nechte Bluetooth zapnutý, abyste mohli spárovat aplikaci MeshCore v telefonu. Wi-Fi lze nastavit kdykoli v Nastavení.
 Keyboard nav: on	Navigace klávesnicí: zapnuta
 Landscape only	Pouze na šířku
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Písmena posouvají zvýraznění, když není aktivní textové pole. Enter vybírá; podržením Backspace se vrátíte zpět.
@@ -1121,6 +1122,15 @@ Signal (stale)	Signál (zastaralý)
 nothing heard yet	zatím nic zachyceno
 Detecting the keyboard protocol	Zjišťování protokolu klávesnice
 Older keyboard protocol	Starší protokol klávesnice
+Device	Zařízení
+Radio:	Rádio:
+Keyboard:	Klávesnice:
+newer keyboard	novější klávesnice
+older keyboard	starší klávesnice
+older keyboard (set manually)	starší klávesnice (nastaveno ručně)
+keyboard not detected yet	klávesnice zatím nerozpoznána
+Older keyboard protocol is now in Settings > Device.	Starší protokol klávesnice je nyní v Nastavení > Zařízení.
+Diagnostics are on the Device page.	Diagnostika je na stránce Zařízení.
 Using the older keyboard protocol	Používá se starší protokol klávesnice
 turn on if your keyboard types the wrong letters; disables modifier latching	zapněte, pokud klávesnice píše nesprávná písmena; vypne blokování modifikátorů
 Formatted OK - card did not remount, reinsert it	Naformátováno OK - karta se znovu nepřipojila, vložte ji znovu
@@ -1573,7 +1583,6 @@ Community preset	Komunitní předvolba
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption
