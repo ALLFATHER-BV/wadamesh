@@ -41131,6 +41131,111 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
 }
 
+static lv_obj_t* s_chat_hashtag_picker = nullptr;
+static char s_chat_hashtag_choices[UITask::MAX_MSG_TEXT / 2 + 1][32];
+static int s_chat_hashtag_choice_count = 0;
+
+static void closeChatHashtagPicker() {
+  if (s_chat_hashtag_picker) popupClose(&s_chat_hashtag_picker);
+}
+
+static void chatHashtagPickerBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  closeChatHashtagPicker();
+}
+
+static void chatHashtagPickerChoiceCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int choice = (int)(intptr_t)lv_event_get_user_data(e);
+  if (choice < 0 || choice >= s_chat_hashtag_choice_count) return;
+  char tag[sizeof s_chat_hashtag_choices[0]];
+  snprintf(tag, sizeof tag, "%s", s_chat_hashtag_choices[choice]);
+  closeChatHashtagPicker();
+  openHashtagChat(tag);
+}
+
+static void openChatHashtagPicker(const char* text) {
+  closeChatHashtagPicker();
+  s_chat_hashtag_choice_count = 0;
+  int start, end;
+  for (int from = 0;
+       s_chat_hashtag_choice_count < (int)(sizeof s_chat_hashtag_choices / sizeof s_chat_hashtag_choices[0]) &&
+       chatHashtagSpan(text, from, &start, &end);
+       from = end) {
+    const int length = end - start;
+    if (length >= (int)sizeof s_chat_hashtag_choices[0]) continue;
+    char* choice = s_chat_hashtag_choices[s_chat_hashtag_choice_count++];
+    memcpy(choice, text + start, length);
+    choice[length] = '\0';
+  }
+  if (s_chat_hashtag_choice_count < 2) {
+    if (s_chat_hashtag_choice_count == 1)
+      openHashtagChat(s_chat_hashtag_choices[0]);
+    return;
+  }
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t row_h = SC(40), header_h = SC(42);
+  const lv_coord_t max_h = sh - STATUSBAR_H - SC(20);
+  lv_coord_t card_w = sw - SC(24);
+  if (card_w > PSC(300)) card_w = PSC(300);
+  const lv_coord_t wanted_h = header_h + row_h * s_chat_hashtag_choice_count;
+  const lv_coord_t card_h = wanted_h < max_h ? wanted_h : max_h;
+
+  s_chat_hashtag_picker = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_chat_hashtag_picker);
+  lv_obj_set_size(s_chat_hashtag_picker, sw, sh);
+  lv_obj_set_style_bg_color(s_chat_hashtag_picker, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_chat_hashtag_picker, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_add_flag(s_chat_hashtag_picker, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(s_chat_hashtag_picker, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_chat_hashtag_picker, chatHashtagPickerBackdropCb, LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* card = lv_obj_create(s_chat_hashtag_picker);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Select a hashtag channel"));
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(title, card_w - SC(62));
+  lv_obj_set_style_text_font(title, &g_font_semi_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, SC(14), (header_h - lv_font_get_line_height(&g_font_semi_16)) / 2);
+  addCloseXBadge(card, [](lv_event_t*) { closeChatHashtagPicker(); });
+
+  lv_obj_t* list = lv_obj_create(card);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, card_w, card_h - header_h);
+  lv_obj_set_pos(list, 0, header_h);
+  lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+  lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+  for (int i = 0; i < s_chat_hashtag_choice_count; ++i) {
+    lv_obj_t* row = lv_btn_create(list);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, card_w, row_h);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_add_event_cb(row, chatHashtagPickerChoiceCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* label = lv_label_create(row);
+    lv_label_set_text(label, s_chat_hashtag_choices[i]);
+    lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(label, LV_ALIGN_LEFT_MID, SC(14), 0);
+  }
+  lv_obj_move_foreground(s_chat_hashtag_picker);
+}
+
 // Keyboard select on a bubble: open its first URL menu, map coordinate or #channel.
 [[maybe_unused]] static bool navActivateBubbleLink(lv_obj_t* row) {
   if (!row || !g_lv.task) return false;
@@ -41144,10 +41249,14 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   if (chatFirstCoord(m.text, &lat, &lon)) { openMapAtCoords(lat, lon); return true; }
   int s, e;
   char tag[32];
-  if (chatHashtagSpan(m.text, 0, &s, &e) && e - s < (int)sizeof tag) {
-    memcpy(tag, m.text + s, e - s);
-    tag[e - s] = '\0';
-    openHashtagChat(tag);
+  if (chatHashtagSpan(m.text, 0, &s, &e)) {
+    const bool multiple = chatHashtagSpan(m.text, e, &s, &e);
+    if (multiple) openChatHashtagPicker(m.text);
+    else if (e - s < (int)sizeof tag) {
+      memcpy(tag, m.text + s, e - s);
+      tag[e - s] = '\0';
+      openHashtagChat(tag);
+    }
     return true;
   }
   return false;
@@ -75283,6 +75392,7 @@ static constexpr uint8_t PF_SWIPE = 2;
 static constexpr uint8_t PF_BASE  = 4;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
+  { P_OPEN(s_chat_hashtag_picker),  []{ closeChatHashtagPicker(); },      PF_COUNT },   // keyboard navigation: choose a hashtag from the bubble
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet
   { P_OPEN(s_hw_pick_root),          []{ hwPickClose(); },                PF_COUNT },   // a Home widget's choices
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
