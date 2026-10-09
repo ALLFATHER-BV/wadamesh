@@ -43953,8 +43953,16 @@ static int tabForKey(int key) {
 #if defined(TLORA_PAGER)
   // Pager mnemonic keys are only a bottom-bar shortcut at the top level. In
   // an open chat, settings detail, app page, or popup they remain inert so a
-  // letter cannot unexpectedly abandon the inner screen.
-  if (!navOnMainPage()) return -1;
+  // letter cannot unexpectedly abandon the inner screen. The app drawer is the
+  // exception: it is Home's own view, drawn as a top-layer overlay, so while it
+  // is the frontmost thing it counts as the bare Home tab. Leaving Home closes
+  // it (tabChangedCb). Before, the hotkeys shown on the bar did nothing from the
+  // drawer (#618).
+  lv_obj_t* top = lv_layer_top();
+  const bool drawer_is_home = s_appdrawer_root && getActiveTab() == HOME_TAB_INDEX &&
+      navTopHasVisibleChild(top) && navTopFrontmostChild(top) == s_appdrawer_root &&
+      !(s_settings_sheet && lv_obj_is_valid(s_settings_sheet)) && !navOpenChatPanel();
+  if (!drawer_is_home && !navOnMainPage()) return -1;
   // Programmable like the T-Deck's tab hotkeys (#591), defaulting to M/C/H/A/S
   // (Settings > Keyboard). Always active, as the Pager's mnemonics always were.
   return navTabForHotkey(key);
