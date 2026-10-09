@@ -52747,6 +52747,21 @@ static void statusBarTapCb(lv_event_t* e) {
     else if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
     return;
   }
+#if defined(HELTEC_LORA_V4_R8)
+  // #598: on the Chats overview the R8's lower bar row holds only the ✓ / + / QR
+  // actions. A finger landing just beside one (cap-touch reads a few pixels off
+  // near the panel edge, where a mouse on the web mirror is exact) fell through to
+  // the toggle below and opened the control center instead. Ignore that miss; the
+  // top row still opens the control center as before.
+  if (g_statusbar.inbox_qr && !lv_obj_has_flag(g_statusbar.inbox_qr, LV_OBJ_FLAG_HIDDEN)) {
+    lv_indev_t* in = lv_indev_get_act();
+    if (in) {
+      lv_point_t pt;
+      lv_indev_get_point(in, &pt);
+      if (pt.y >= STATUSBAR_H) return;
+    }
+  }
+#endif
   if (s_cc_root) closeControlCenter(); else openControlCenter();
 }
 
@@ -53198,9 +53213,11 @@ static void buildGlobalStatusBar() {
     // vertical centreline with the clock and connection/battery indicators.
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
     const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
-  #elif defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
-    // Original V4 Expansion Kit: partition row 2 into larger, non-overlapping
-    // cells; the former 30x20 actions were too easy to miss or hit beside.
+  #elif defined(HELTEC_V4_EXPANSION_IO_PIN)
+    // V4 Expansion Kit, original and R8: partition row 2 into larger,
+    // non-overlapping cells; the former 30x20 actions were too easy to miss or
+    // hit beside. On the R8 a miss near the top edge landed on the bar itself
+    // and opened the control center instead of the QR share (#598).
     const lv_coord_t BH = 22, BW = 42, GAP = 8, BX0 = 4;
     const lv_coord_t BY = STATUSBAR_H;
 #else
@@ -53221,7 +53238,7 @@ static void buildGlobalStatusBar() {
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
         lv_obj_set_style_border_opa(b,
           s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
-    #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+    #if defined(HELTEC_V4_EXPANSION_IO_PIN)
       // Three pixels each side still leave two pixels between adjacent hits.
       lv_obj_set_ext_click_area(b, 3);
     #endif
