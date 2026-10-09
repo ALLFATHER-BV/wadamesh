@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Η συμπαγής πλοήγηση α�
 Day	Ημέρα
 High contrast	Υψηλή αντίθεση
 High contrast - restarting to apply it…	Υψηλή αντίθεση - επανεκκίνηση για εφαρμογή…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Αφήστε το Bluetooth ενεργό για να συνδέσετε την εφαρμογή MeshCore στο τηλέφωνό σας. Το Wi-Fi ρυθμίζεται οποτεδήποτε από τις Ρυθμίσεις.
 Keyboard nav: on	Πλοήγηση πληκτρ.: ανοιχτό
 Landscape only	Μόνο σε οριζόντιο προσανατολισμό
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Τα γράμματα μετακινούν την επισήμανση όταν δεν είναι ενεργό πεδίο κειμένου. Το Enter επιλέγει· κρατήστε το Backspace για επιστροφή.
@@ -421,7 +422,7 @@ Keyboard nav: WASDZ on	Πλοήγηση πληκτρ.: WASDZ ενεργό
 Keyboard nav: off	Πλοήγηση πληκτρ.: κλειστό
 Keyboard navigation	Πλοήγηση με πληκτρολόγιο
 Keys	
-Known regions	Known regions
+Known regions	Γνωστές περιοχές
 LOS → %s	Οπτική επαφή → %s
 Landscape (desktop)	Οριζόντια (desktop)
 Landscape set - applies when remote mode starts.	Ορίστηκε οριζόντια - ισχύει όταν ξεκινήσει η απομακρυσμένη λειτουργία.
@@ -951,7 +952,7 @@ Your own apps	Οι δικές σας εφαρμογές
 Zero-hop	Χωρίς άλμα
 Zero-hop advert sent	Στάλθηκε zero-hop advert
 Zoom: +/- buttons	Ζουμ: κουμπιά +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	ασαφές (ταιριάζουν πολλές περιοχές)
 client connected	ο πελάτης συνδέθηκε
 command	εντολή
 contacts (%d):	επαφές (%d):
@@ -996,9 +997,9 @@ tap to exit full screen	πατήστε για έξοδο από πλήρη οθ�
 zoom	ζουμ
 zoom %d	ζουμ %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	ενισχυτής ~17 dB για ήσυχες/απομακρυσμένες περιοχές· κλείστε σε θορυβώδεις.
-Scope	
-another region	
-my region	
+Scope	Εμβέλεια
+another region	άλλη περιοχή
+my region	η περιοχή μου
 Save FAIL x%u	
 Save migrating	
 Saved %s	
@@ -1126,9 +1127,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Παλαιότερο πρωτόκολλο πληκτρολογίου
+Device	Συσκευή
+Radio:	Πομποδέκτης:
+Keyboard:	Πληκτρολόγιο:
+newer keyboard	νεότερο πληκτρολόγιο
+older keyboard	παλαιότερο πληκτρολόγιο
+older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
+keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα
+Older keyboard protocol is now in Settings > Device.	Το παλαιότερο πρωτόκολλο πληκτρολογίου είναι τώρα στις Ρυθμίσεις > Συσκευή.
+Diagnostics are on the Device page.	Τα διαγνωστικά είναι στη σελίδα Συσκευή.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	ενεργοποιήστε αν το πληκτρολόγιο γράφει λάθος γράμματα· απενεργοποιεί το κλείδωμα πλήκτρων τροποποίησης
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1197,9 +1207,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Διαγραφή
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Να διαγραφεί αυτό το πληκτρολόγιο; Θα χρειαστεί νέα σύζευξη.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1291,19 +1301,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Συνδέστε αυτή τη συσκευή στον υπολογιστή με καλώδιο USB.\n2. Ανοίξτε αυτή τη διεύθυνση σε Chrome ή Edge:
+3. Click Connect and choose this device.	3. Πατήστε Σύνδεση και επιλέξτε αυτή τη συσκευή.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	Μία μέρα
+A week	Μία εβδομάδα
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Προσθέστε, κατεβάστε ή διαγράψτε αρχεία σε αυτή τη συσκευή από υπολογιστή.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Κάτι άλλο να αναφέρετε (προαιρετικό)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Προσθήκη χρονοσφραγίδας
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1321,54 +1331,54 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Συνδεδεμένο με τον υπολογιστή
+Could not send the report. Try again later.	Η αναφορά δεν στάλθηκε. Δοκιμάστε αργότερα.
+Count this device	Καταμέτρηση αυτής της συσκευής
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID συσκευής
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Double-tap SPACE while typing to switch	Πατήστε δύο φορές ΔΙΑΣΤΗΜΑ ενώ γράφετε για εναλλαγή
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Εξαγωγή αντιγράφου
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Έχει πρόβλημα
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Αντιμετώπισα πρόβλημα
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Εσωτερική
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Συμμετοχή σε κανάλι #
+Join Public channel	Συμμετοχή στο δημόσιο κανάλι
 Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Πληκτρολόγιο και εισαγωγή
+Keyboard attached.\nRestarting in landscape in %d s.	Συνδέθηκε πληκτρολόγιο.\nΕπανεκκίνηση σε οριζόντια προβολή σε %d δ.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Κλειδώνει όταν σβήνει η οθόνη\n(κρατήστε το κουμπί BOOT για ξεκλείδωμα)
+Map and GPS	Χάρτης και GPS
+Map tiles	Πλακίδια χάρτη
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1381,19 +1391,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Λεπτά
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Ποτέ
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Δεν υπάρχουν αντίγραφα για επαναφορά.
+No backups yet. Use Export Backup above to create one.	Δεν υπάρχουν ακόμα αντίγραφα. Δημιουργήστε ένα με την «Εξαγωγή αντιγράφου» παραπάνω.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Κανονικό\nΜεγάλο κείμενο\nΠολύ μεγάλο κείμενο
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1405,56 +1415,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Σύνδεση με την εφαρμογή κινητού
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Radio and messaging	Ασύρματο και μηνύματα
+Reboot Now	Επανεκκίνηση τώρα
+Received %s	Ελήφθη το %s
+Receiving %s	Λήψη %s
+Region not saved: use a-z, 0-9 and -	Η περιοχή δεν αποθηκεύτηκε: χρησιμοποιήστε a-z, 0-9 και -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Αναφορά σφάλματος
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Το χρησιμοποιώ για
+Running it for:	Το χρησιμοποιώ για:
+SD card	Κάρτα SD
+SD unavailable - insert a FAT32 card and retry	Η SD δεν είναι διαθέσιμη - βάλτε κάρτα FAT32 και ξαναδοκιμάστε
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Πείτε αν αυτή η έκδοση λειτουργεί στην πλακέτα σας, ώστε μια σταθερή έκδοση να προωθείται με βάση στοιχεία και όχι επειδή κανείς δεν παραπονέθηκε. Η αναφορά σφάλματος ανοίγει ως QR: σαρώστε το και υποβάλετέ την από το κινητό σας, με τον δικό σας λογαριασμό GitHub.
+Screen timeout	Σβήσιμο οθόνης
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Αποστολή
+Send a test report	Αποστολή αναφοράς δοκιμής
+Send another test report	Αποστολή άλλης αναφοράς δοκιμής
+Sending %s	Αποστολή %s
+Sending your report...	Αποστολή της αναφοράς…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Διακοπή αρχείων USB
+Storage and SD	Αποθήκευση και SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Πατήστε το πλήκτρο EN στο πληκτρολόγιο για εναλλαγή
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Λέει στον πίνακα δοκιμών πόσες συσκευές τρέχουν αυτή την έκδοση, ώστε μια πλακέτα χωρίς αναφορές να ξεχωρίζει από μια που δεν έχει κανείς. Στέλνει μόνο την πλακέτα και την έκδοση, τίποτε άλλο.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Αναφορά δοκιμής: %s
+Thank you. Your report is on wadamesh.com/beta	Ευχαριστούμε. Η αναφορά σας είναι στο wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Αυτά είναι όλα όσα φεύγουν από τη συσκευή. Χωρίς όνομα, επαφές ή θέση.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Επιλέξτε μόνο ό,τι χρησιμοποιήσατε πραγματικά:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1462,30 +1472,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Ενεργοποιήστε το Wi-Fi για να στείλετε αναφορά
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
-USB Files: low memory	USB Files: low memory
+USB Files	Αρχεία USB
+USB Files: low memory	Αρχεία USB: λίγη μνήμη
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Η μεταφόρτωση του %s σταμάτησε
+Used	Χρησιμοποιήθηκε
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Αναμονή για τον υπολογιστή
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Όσο είναι ανοιχτή αυτή η οθόνη, η συνοδευτική εφαρμογή δεν μπορεί να χρησιμοποιήσει το USB.
+Works	Λειτουργεί
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	μία εβδομάδα ή περισσότερο
+about a day	περίπου μία μέρα
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	κρατήστε το κουμπί BOOT για ξεκλείδωμα
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	λεπτά
 new	new
 node	node
 nodes	nodes
@@ -1556,7 +1566,6 @@ Community preset	Προεπιλογή κοινότητας
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption
@@ -1854,3 +1863,14 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 δευτ.
+Timer	Χρονόμετρο
+Screenshot	Στιγμιότυπο οθόνης
+Peak -- dBm	Κορυφή -- dBm
+Peak %d dBm @ %.1f MHz	Κορυφή %d dBm @ %.1f MHz
+peak %d @ %.1f	κορυφή %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Σε αναστολή: πατήστε την οθόνη ή 🤍 για αφύπνιση
+Receiving %s\n%lu / %lu bytes	Λήψη %s\n%lu / %lu byte
+Sending %s\n%lu / %lu bytes	Αποστολή %s\n%lu / %lu byte
+File Transfer	Μεταφορά αρχείων
+Hardware	Υλικό

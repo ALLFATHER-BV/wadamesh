@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Navigare compactă salvată — reporne�
 Day	Zi
 High contrast	Contrast ridicat
 High contrast - restarting to apply it…	Contrast ridicat - repornire pentru aplicare…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lasă Bluetooth pornit pentru a asocia aplicația MeshCore de pe telefon. Wi-Fi se poate configura oricând din Setări.
 Keyboard nav: on	Navigare tastatură: pornită
 Landscape only	Doar în modul peisaj
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Literele mută selecția când niciun câmp de text nu este activ. Enter selectează; ține apăsat Backspace pentru înapoi.
@@ -421,7 +422,7 @@ Keyboard nav: WASDZ on	Navigare tastatură: WASDZ pornit
 Keyboard nav: off	Navigare tastatură: oprită
 Keyboard navigation	Navigare cu tastatura
 Keys	
-Known regions	Known regions
+Known regions	Regiuni cunoscute
 LOS → %s	Linie vizuală → %s
 Landscape (desktop)	Peisaj (desktop)
 Landscape set - applies when remote mode starts.	Peisaj setat - se aplică la pornirea modului la distanţă.
@@ -951,7 +952,7 @@ Your own apps	Aplicaţiile tale
 Zero-hop	Fără salt
 Zero-hop advert sent	Advert zero-hop trimis
 Zoom: +/- buttons	Zoom: butoane +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	ambiguu (se potrivesc mai multe regiuni)
 client connected	client conectat
 command	comandă
 contacts (%d):	contacte (%d):
@@ -997,9 +998,9 @@ zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificator ~17 dB pentru zone liniştite/izolate; opreşte-l în locuri zgomotoase.
 © OpenStreetMap	
-Scope	
-another region	
-my region	
+Scope	Domeniu
+another region	altă regiune
+my region	regiunea mea
 Save FAIL x%u	
 Save migrating	
 Saved %s	
@@ -1127,9 +1128,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Protocol vechi de tastatură
+Device	Dispozitiv
+Radio:	Radio:
+Keyboard:	Tastatură:
+newer keyboard	tastatură nouă
+older keyboard	tastatură veche
+older keyboard (set manually)	tastatură veche (setată manual)
+keyboard not detected yet	tastatura nu a fost detectată încă
+Older keyboard protocol is now in Settings > Device.	Protocolul vechi de tastatură este acum în Setări > Dispozitiv.
+Diagnostics are on the Device page.	Diagnosticele sunt pe pagina Dispozitiv.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	activează dacă tastatura scrie litere greșite; dezactivează blocarea tastelor modificatoare
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1198,9 +1208,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Uită
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Uiţi această tastatură? Va trebui asociată din nou.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1292,19 +1302,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Conectează acest dispozitiv la calculator cu un cablu USB.\n2. Deschide această adresă în Chrome sau Edge:
+3. Click Connect and choose this device.	3. Apasă Conectare şi alege acest dispozitiv.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	O zi
+A week	O săptămână
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Adaugă, descarcă sau şterge fişiere de pe acest dispozitiv de pe un calculator.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Altceva de spus (opţional)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Adaugă marcaj de timp
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1322,54 +1332,54 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Conectat la calculator
+Could not send the report. Try again later.	Raportul nu a putut fi trimis. Încearcă mai târziu.
+Count this device	Numără acest dispozitiv
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID dispozitiv
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Double-tap SPACE while typing to switch	Atinge de două ori SPAŢIU în timp ce scrii pentru a comuta
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Exportă backup
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Are o problemă
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Am avut o problemă
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Intern
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Intră într-un canal #
+Join Public channel	Intră în canalul public
 Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Tastatură şi introducere
+Keyboard attached.\nRestarting in landscape in %d s.	Tastatură conectată.\nRepornire în peisaj în %d s.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Se blochează cu ecranul stins\n(ţine apăsat butonul BOOT pentru deblocare)
+Map and GPS	Hartă şi GPS
+Map tiles	Plăci de hartă
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1382,19 +1392,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Minute
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Niciodată
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Niciun backup de restaurat.
+No backups yet. Use Export Backup above to create one.	Încă niciun backup. Foloseşte „Exportă backup” de mai sus pentru a crea unul.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Normal\nText mare\nText foarte mare
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1406,56 +1416,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Legătura cu aplicaţia de telefon
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Radio and messaging	Radio şi mesagerie
+Reboot Now	Reporneşte acum
+Received %s	%s primit
+Receiving %s	Se primeşte %s
+Region not saved: use a-z, 0-9 and -	Regiune nesalvată: foloseşte a-z, 0-9 şi -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Raportează o eroare
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Folosit de
+Running it for:	Folosit de:
+SD card	Card SD
+SD unavailable - insert a FAT32 card and retry	SD indisponibil - introdu un card FAT32 şi reîncearcă
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Spune dacă această versiune merge pe placa ta, ca o versiune stabilă să fie promovată pe baza dovezilor, nu pentru că nu s-a plâns nimeni. Un raport de eroare se deschide ca cod QR: scanează-l şi trimite-l de pe telefon, din propriul cont GitHub.
+Screen timeout	Stingere ecran
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Trimite
+Send a test report	Trimite un raport de test
+Send another test report	Trimite încă un raport de test
+Sending %s	Se trimite %s
+Sending your report...	Se trimite raportul…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Opreşte Fişiere USB
+Storage and SD	Stocare şi SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Atinge tasta EN de pe tastatură pentru a comuta
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Spune matricei de test câte dispozitive rulează această versiune, ca o placă fără rapoarte să poată fi deosebită de una pe care n-o are nimeni. Trimite doar placa şi versiunea, nimic altceva.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Raport de test: %s
+Thank you. Your report is on wadamesh.com/beta	Mulţumim. Raportul tău este pe wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Asta este tot ce părăseşte dispozitivul. Fără nume, fără contacte, fără poziţie.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Bifează doar ce ai folosit cu adevărat:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1463,30 +1473,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Porneşte Wi-Fi pentru a trimite un raport
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
-USB Files: low memory	USB Files: low memory
+USB Files	Fişiere USB
+USB Files: low memory	Fişiere USB: memorie insuficientă
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Încărcarea %s a fost oprită
+Used	Folosit
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Se aşteaptă calculatorul
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Cât timp acest ecran e deschis, aplicaţia însoţitoare nu poate folosi USB.
+Works	Funcţionează
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	o săptămână sau mai mult
+about a day	cam o zi
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	ţine apăsat butonul BOOT pentru deblocare
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	minute
 new	new
 node	node
 nodes	nodes
@@ -1557,7 +1567,6 @@ Community preset	Presetare comunitară
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption
@@ -1855,3 +1864,14 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Temporizator
+Screenshot	Captură de ecran
+Peak -- dBm	Vârf -- dBm
+Peak %d dBm @ %.1f MHz	Vârf %d dBm @ %.1f MHz
+peak %d @ %.1f	vârf %d @ %.1f
+Asleep: tap screen or 🤍 to wake	În repaus: atinge ecranul sau 🤍 pentru trezire
+Receiving %s\n%lu / %lu bytes	Se primeşte %s\n%lu / %lu octeţi
+Sending %s\n%lu / %lu bytes	Se trimite %s\n%lu / %lu octeţi
+File Transfer	Transfer de fişiere
+Hardware	Hardware

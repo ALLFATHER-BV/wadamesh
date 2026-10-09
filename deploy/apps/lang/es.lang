@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Navegación compacta guardada — reinic
 Day	Día
 High contrast	Alto contraste
 High contrast - restarting to apply it…	Alto contraste - reiniciando para aplicarlo…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Deja el Bluetooth activado para emparejar la app MeshCore de tu teléfono. El Wi-Fi se puede configurar en cualquier momento en Ajustes.
 Keyboard nav: on	Nav. teclado: activ.
 Landscape only	Solo en horizontal
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Las letras mueven el resaltado cuando no hay un campo de texto activo. Intro selecciona; mantén Retroceso para volver.
@@ -421,7 +422,7 @@ Keyboard nav: WASDZ on	Nav. teclado: WASDZ act.
 Keyboard nav: off	Nav. teclado: desact.
 Keyboard navigation	Navegación por teclado
 Keys	
-Known regions	Known regions
+Known regions	Regiones conocidas
 LOS → %s	Línea de vista → %s
 Landscape (desktop)	Horizontal (escritorio)
 Landscape set - applies when remote mode starts.	Horizontal fijado - se aplica al iniciar el modo remoto.
@@ -951,7 +952,7 @@ Your own apps	Tus propias apps
 Zero-hop	Cero saltos
 Zero-hop advert sent	Anuncio zero-hop enviado
 Zoom: +/- buttons	Zoom: botones +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	ambiguo (coinciden varias regiones)
 client connected	cliente conectado
 command	comando
 contacts (%d):	contactos (%d):
@@ -996,9 +997,9 @@ tap to exit full screen	toca para salir de pantalla completa
 zoom	zoom
 zoom %d	zoom %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	amplificador ~17 dB para zonas tranquilas/remotas; apaga en zonas ruidosas.
-Scope	
-another region	
-my region	
+Scope	Alcance
+another region	otra región
+my region	mi región
 Save FAIL x%u	
 Save migrating	
 Saved %s	
@@ -1126,9 +1127,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Protocolo de teclado antiguo
+Device	Dispositivo
+Radio:	Radio:
+Keyboard:	Teclado:
+newer keyboard	teclado nuevo
+older keyboard	teclado antiguo
+older keyboard (set manually)	teclado antiguo (ajustado a mano)
+keyboard not detected yet	teclado aún no detectado
+Older keyboard protocol is now in Settings > Device.	El protocolo de teclado antiguo está ahora en Ajustes > Dispositivo.
+Diagnostics are on the Device page.	El diagnóstico está en la página Dispositivo.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	actívalo si el teclado escribe letras equivocadas; desactiva el bloqueo de modificadores
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1197,9 +1207,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Olvidar
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	¿Olvidar este teclado? Tendrás que emparejarlo de nuevo.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1291,19 +1301,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Conecta este dispositivo al ordenador con un cable USB.\n2. Abre esta dirección en Chrome o Edge:
+3. Click Connect and choose this device.	3. Pulsa Conectar y elige este dispositivo.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	Un día
+A week	Una semana
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Añade, descarga o borra archivos de este dispositivo desde un ordenador.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Algo más que comentar (opcional)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Añadir marca de tiempo
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1321,54 +1331,54 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Conectado al ordenador
+Could not send the report. Try again later.	No se pudo enviar el informe. Inténtalo más tarde.
+Count this device	Contar este dispositivo
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID del dispositivo
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
+Double-tap SPACE while typing to switch	Pulsa dos veces ESPACIO al escribir para cambiar
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Exportar copia
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Tiene un problema
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Tuve un problema
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Interno
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Unirse a canal #
+Join Public channel	Unirse al canal público
 Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Teclado y entrada
+Keyboard attached.\nRestarting in landscape in %d s.	Teclado conectado.\nReiniciando en horizontal en %d s.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Se bloquea con la pantalla apagada\n(mantén el botón BOOT para desbloquear)
+Map and GPS	Mapa y GPS
+Map tiles	Teselas del mapa
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1381,19 +1391,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Minutos
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Nunca
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	No hay copias para restaurar.
+No backups yet. Use Export Backup above to create one.	Aún no hay copias. Usa «Exportar copia» arriba para crear una.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Normal\nTexto grande\nTexto enorme
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1405,56 +1415,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Enlace con la app del móvil
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Radio and messaging	Radio y mensajería
+Reboot Now	Reiniciar ahora
+Received %s	%s recibido
+Receiving %s	Recibiendo %s
+Region not saved: use a-z, 0-9 and -	Región no guardada: usa a-z, 0-9 y -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Informar de un error
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Usándolo desde hace
+Running it for:	Usándolo desde hace:
+SD card	Tarjeta SD
+SD unavailable - insert a FAT32 card and retry	SD no disponible: inserta una tarjeta FAT32 y reintenta
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Indica si esta versión funciona en tu placa, para que una versión estable se publique con pruebas y no porque nadie se haya quejado. Un informe de error se abre como QR: escanéalo y envíalo desde tu móvil con tu propia cuenta de GitHub.
+Screen timeout	Apagado de pantalla
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Enviar
+Send a test report	Enviar un informe de prueba
+Send another test report	Enviar otro informe de prueba
+Sending %s	Enviando %s
+Sending your report...	Enviando tu informe…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Detener Archivos USB
+Storage and SD	Almacenamiento y SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Pulsa la tecla EN del teclado para cambiar
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Indica a la matriz de pruebas cuántos dispositivos usan esta versión, para distinguir una placa sin informes de una que nadie tiene. Solo envía la placa y la versión, nada más.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Informe de prueba: %s
+Thank you. Your report is on wadamesh.com/beta	Gracias. Tu informe está en wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Esto es todo lo que sale del dispositivo. Sin nombre, sin contactos, sin posición.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Marca solo lo que hayas usado de verdad:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1462,30 +1472,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Activa el Wi-Fi para enviar un informe
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
-USB Files: low memory	USB Files: low memory
+USB Files	Archivos USB
+USB Files: low memory	Archivos USB: poca memoria
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Subida de %s detenida
+Used	Usado
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Esperando al ordenador
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Mientras esta pantalla esté abierta, la app complementaria no puede usar el USB.
+Works	Funciona
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	una semana o más
+about a day	aproximadamente un día
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	mantén el botón BOOT para desbloquear
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	minutos
 new	new
 node	node
 nodes	nodes
@@ -1556,7 +1566,6 @@ Community preset	Preajuste comunitario
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption
@@ -1854,3 +1863,14 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 s
+Timer	Temporizador
+Screenshot	Captura de pantalla
+Peak -- dBm	Pico -- dBm
+Peak %d dBm @ %.1f MHz	Pico %d dBm @ %.1f MHz
+peak %d @ %.1f	pico %d @ %.1f
+Asleep: tap screen or 🤍 to wake	En reposo: toca la pantalla o 🤍 para despertar
+Receiving %s\n%lu / %lu bytes	Recibiendo %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Enviando %s\n%lu / %lu bytes
+File Transfer	Transferencia de archivos
+Hardware	Hardware

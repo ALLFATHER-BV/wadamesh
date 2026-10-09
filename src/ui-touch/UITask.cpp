@@ -12751,7 +12751,7 @@ static void openAdvertPage() {
   lv_obj_clear_flag(s_advert_root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_event_cb(s_advert_root, advertDismissCb, LV_EVENT_CLICKED, nullptr);
 
-  s_apppage_title = "Send advert";
+  s_apppage_title = TR("Send advert");
   s_apppage_close = closeAdvertPage;
   statusBarSetTall(true);
   updateGlobalStatusBar();
@@ -16298,7 +16298,7 @@ static void buildDisplayPage() {
     const uint8_t timeout_index = touchPrefsScreenTimeoutIndex(g_lv.task ? g_lv.task->getScreenTimeoutSecs() : 30);
     g_set_modal.screen_to_slider = setSliderRow(c, "Screen timeout", "", 0, TOUCH_SCREEN_TIMEOUT_COUNT - 1,
                                                 timeout_index, screenTimeoutSliderChangedCb,
-                                                screenTimeoutSliderReleasedCb, "30 sec", TR("Never"),
+                                                screenTimeoutSliderReleasedCb, TR("30 sec"), TR("Never"),
                                                 &g_set_modal.screen_to_value);
     screenTimeoutLabelRefresh(timeout_index);
 #if defined(HAS_TANMATSU)
@@ -21970,10 +21970,10 @@ static void openAddChannelSheet() {
   };
   // Short labels. The first two reuse the (already translated) titles of the pages
   // they open; the last two are new strings.
-  mk("Create private channel", addChannelCreatePrivateCb);
-  mk("Join private channel", addChannelJoinPrivateCb);
-  mk("Join Public channel", addChannelJoinPublicCb);
-  mk("Join # channel", addChannelJoinHashtagCb);
+  mk(TR("Create private channel"), addChannelCreatePrivateCb);
+  mk(TR("Join private channel"), addChannelJoinPrivateCb);
+  mk(TR("Join Public channel"), addChannelJoinPublicCb);
+  mk(TR("Join # channel"), addChannelJoinHashtagCb);
 }
 
 static void chatsAddBtnCb(lv_event_t* e) {
@@ -28028,10 +28028,10 @@ static void spectrumDrawTrace() {
   if (s_spec_peak_lbl) {
     char pb[40];
 #if defined(HAS_TDECK_PRO)
-    snprintf(pb, sizeof pb, "Peak %d dBm @ %.1f MHz", pk,
+    snprintf(pb, sizeof pb, TR("Peak %d dBm @ %.1f MHz"), pk,
              (double)(s_spec_start + (float)pki * s_spec_step));
 #else
-    snprintf(pb, sizeof pb, "peak %d @ %.1f", pk, (double)(s_spec_start + (float)pki * s_spec_step));
+    snprintf(pb, sizeof pb, TR("peak %d @ %.1f"), pk, (double)(s_spec_start + (float)pki * s_spec_step));
 #endif
     lv_label_set_text(s_spec_peak_lbl, pb);
   }
@@ -28916,12 +28916,12 @@ static void webFileTransferTick() {
 static void fileTransferRefresh() {
   if (!s_file_transfer_status) return;
   if (s_file_transfer_uploading) {
-    lv_label_set_text_fmt(s_file_transfer_status, "Receiving %s\n%lu / %lu bytes",
+    lv_label_set_text_fmt(s_file_transfer_status, TR("Receiving %s\n%lu / %lu bytes"),
                           s_file_transfer_name,
                           static_cast<unsigned long>(s_file_transfer_received),
                           static_cast<unsigned long>(s_file_transfer_expected));
   } else if (s_file_transfer_downloading) {
-    lv_label_set_text_fmt(s_file_transfer_status, "Sending %s\n%lu / %lu bytes",
+    lv_label_set_text_fmt(s_file_transfer_status, TR("Sending %s\n%lu / %lu bytes"),
                           s_file_transfer_name,
                           static_cast<unsigned long>(s_file_transfer_download_offset),
                           static_cast<unsigned long>(s_file_transfer_download_size));
@@ -29021,7 +29021,7 @@ static void openFileTransferPage() {
   lv_obj_set_flex_align(s_file_transfer_root, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(s_file_transfer_root, 10, LV_PART_MAIN);
-  appPageBegin("File Transfer", &closeFileTransferPage);
+  appPageBegin(TR("File Transfer"), &closeFileTransferPage);
 
   const lv_coord_t width = sw - 28;
   lv_obj_t* intro = lv_label_create(s_file_transfer_root);
@@ -29694,7 +29694,7 @@ static void openSpectrumPage() {
   // Live peak readout: a dedicated line on Pro, right-aligned on the info row elsewhere.
   s_spec_peak_lbl = lv_label_create(s_spec_root);
 #if defined(HAS_TDECK_PRO)
-  lv_label_set_text(s_spec_peak_lbl, "Peak -- dBm");
+  lv_label_set_text(s_spec_peak_lbl, TR("Peak -- dBm"));
 #else
   lv_label_set_text(s_spec_peak_lbl, TR("peak --"));
 #endif
@@ -48276,7 +48276,7 @@ static void p4KbRotateOffer() {
   s_p4kb_rot_left = kP4KbRotateSecs;
   char m[96];
   snprintf(m, sizeof m, TR("Keyboard attached.\nRestarting in landscape in %d s."), s_p4kb_rot_left);
-  showConfirm(m, "Reboot Now", p4KbRotateNow, false, true);
+  showConfirm(m, TR("Reboot Now"), p4KbRotateNow, false, true);
   s_p4kb_rot_modal = s_confirm_modal;
   s_p4kb_rot_timer = lv_timer_create(p4KbRotateTick, 1000, nullptr);
   if (!s_p4kb_rot_timer) { confirmDismiss(); s_p4kb_rot_modal = nullptr; }   // no timer, no countdown to promise
@@ -50062,9 +50062,9 @@ static void openControlCenter() {
              CAT_SOUND, nullptr, CC_NAV_DND);
   }
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
-  ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
+  ccToggle(row, LV_SYMBOL_REFRESH, TR("Timer"), s_cc_screenshot_delay_s != 0,
            ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText(), CC_NAV_TIMER);
-  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
+  ccToggle(row, LV_SYMBOL_IMAGE, TR("Screenshot"), false, ccScreenshotCb, tw, th,
            -1, nullptr, CC_NAV_SCREENSHOT);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
@@ -51517,7 +51517,7 @@ static void openUsbFilesPage() {
   lv_obj_set_flex_align(s_usbfiles_root, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
   lv_obj_set_style_pad_row(s_usbfiles_root, 10, LV_PART_MAIN);
-  appPageBegin("USB Files", &closeUsbFilesPage);
+  appPageBegin(TR("USB Files"), &closeUsbFilesPage);
 
   const lv_coord_t width = sw - 28;
   auto text = [&](const char* t, const lv_font_t* font, uint32_t color) {
@@ -61986,7 +61986,7 @@ static void openRegionsModal() {
   // put the page origin a whole row UNDER the bar and the top control was clipped
   // by it. statusBarCurH() is the height the bar actually has once tall, so the
   // content clears it on every board and this stays identical elsewhere.
-  s_apppage_title = "Known regions";
+  s_apppage_title = TR("Known regions");
   s_apppage_close = regionsModalClose;
   statusBarSetTall(true);
   const lv_coord_t top = statusBarCurH();
@@ -62072,7 +62072,7 @@ static void openBlockedUsersModal() {
   lv_obj_set_style_bg_opa(s_blocked_modal, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(s_blocked_modal, LV_OBJ_FLAG_SCROLLABLE);
 
-  s_apppage_title = "Blocked users";
+  s_apppage_title = TR("Blocked users");
   s_apppage_close = blockedModalClose;
   statusBarSetTall(true);
   updateGlobalStatusBar();
@@ -70521,7 +70521,7 @@ static void maxSleepBannerShow(bool show) {
     // U+1F90D (white heart) from the baked emoji image font: it renders light,
     // so it survives the 1-bit threshold on this black strip (the black and red
     // hearts do not). The UTF-8 bytes are spelled out to keep this line ASCII.
-    lv_label_set_text(l, "Asleep:Tap Screen or \xF0\x9F\xA4\x8D to Wake");
+    lv_label_set_text(l, TR("Asleep: tap screen or \xF0\x9F\xA4\x8D to wake"));
     lv_obj_center(l);
   }
   if (show) { lv_obj_clear_flag(s_max_sleep_banner, LV_OBJ_FLAG_HIDDEN); lv_obj_move_foreground(s_max_sleep_banner); }

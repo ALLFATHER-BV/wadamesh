@@ -39,6 +39,7 @@ Condense Nav saved — restart to apply	Компактна навигација 
 Day	Дан
 High contrast	Висок контраст
 High contrast - restarting to apply it…	Висок контраст - рестартовање ради примене…
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Оставите Bluetooth укључен да бисте упарили апликацију MeshCore на телефону. Wi-Fi можете подесити било када у Подешавањима.
 Keyboard nav: on	Навиг. тастатуром: укљ.
 Landscape only	Само у хоризонталном положају
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Слова померају истицање када ниједно текстуално поље није активно. Enter бира; држите Backspace за назад.
@@ -421,7 +422,7 @@ Keyboard nav: WASDZ on	Навиг. тастатуром: WASDZ укљ.
 Keyboard nav: off	Навиг. тастатуром: искљ.
 Keyboard navigation	Навигација тастатуром
 Keys	
-Known regions	Known regions
+Known regions	Познати региони
 LOS → %s	Оптичка видљивост → %s
 Landscape (desktop)	Положено (десктоп)
 Landscape set - applies when remote mode starts.	Положено подешено - важи кад крене даљински режим.
@@ -951,7 +952,7 @@ Your own apps	Твоје апликације
 Zero-hop	Без скока
 Zero-hop advert sent	Zero-hop advert послат
 Zoom: +/- buttons	Зум: тастери +/-
-ambiguous (several regions matched)	ambiguous (several regions matched)
+ambiguous (several regions matched)	двосмислено (поклапа се више региона)
 client connected	клијент повезан
 command	команда
 contacts (%d):	контакти (%d):
@@ -996,9 +997,9 @@ tap to exit full screen	додирните за излаз из целог ек�
 zoom	зум
 zoom %d	зум %d
 ~17 dB amp for quiet/remote areas; turn off in noisy spots.	појачало ~17 dB за тиха/удаљена места; искључи у бучним.
-Scope	
-another region	
-my region	
+Scope	Опсег
+another region	други регион
+my region	мој регион
 Save FAIL x%u	
 Save migrating	
 Saved %s	
@@ -1126,9 +1127,18 @@ Signal	Signal
 Signal (stale)	Signal (stale)
 nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
-Older keyboard protocol	Older keyboard protocol
+Older keyboard protocol	Старији протокол тастатуре
+Device	Уређај
+Radio:	Радио:
+Keyboard:	Тастатура:
+newer keyboard	новија тастатура
+older keyboard	старија тастатура
+older keyboard (set manually)	старија тастатура (ручно подешено)
+keyboard not detected yet	тастатура још није препозната
+Older keyboard protocol is now in Settings > Device.	Старији протокол тастатуре је сада у Подешавања > Уређај.
+Diagnostics are on the Device page.	Дијагностика је на страници Уређај.
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
+turn on if your keyboard types the wrong letters; disables modifier latching	укључите ако тастатура куца погрешна слова; искључује закључавање модификатора
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1197,9 +1207,9 @@ Disc.	Disc.
 Do Not Disturb is on	Do Not Disturb is on
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
-Forget	Forget
+Forget	Заборави
 Forget keyboard	Forget keyboard
-Forget this keyboard? You will need to pair it again.	Forget this keyboard? You will need to pair it again.
+Forget this keyboard? You will need to pair it again.	Заборавити ову тастатуру? Мораћете поново да је упарите.
 Keyboard connected	Keyboard connected
 Keyboard forgotten	Keyboard forgotten
 Keyboard layout	Keyboard layout
@@ -1291,19 +1301,19 @@ and %d more	and %d more
 %lu packets heard	%lu packets heard
 1 node heard today	1 node heard today
 1 packet heard	1 packet heard
-1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:
-3. Click Connect and choose this device.	3. Click Connect and choose this device.
+1. Connect this device to the computer with a USB cable.\n2. Open this address in Chrome or Edge:	1. Повежите овај уређај са рачунаром USB каблом.\n2. Отворите ову адресу у Chrome-у или Edge-у:
+3. Click Connect and choose this device.	3. Кликните на Повежи и изаберите овај уређај.
 4 numbers or letters	4 numbers or letters
-A day	A day
-A week	A week
+A day	Један дан
+A week	Једна недеља
 Add a channel	Add a channel
-Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
+Add, download or delete files on this device from a computer.	Додајте, преузмите или обришите фајлове на овом уређају са рачунара.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
-Anything worth saying (optional)	Anything worth saying (optional)
+Anything worth saying (optional)	Још нешто (опционо)
 App drawer	App drawer
 App icons	App icons
-Append timestamp	Append timestamp
+Append timestamp	Додај временску ознаку
 Apr	Apr
 April	April
 Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.	Asks for 4 numbers or letters to unlock, and locks whenever the screen goes off. If you forget it, the only way back in is to reset the device, which erases everything on it.
@@ -1321,54 +1331,54 @@ Clock not set	Clock not set
 Cmdr	Cmdr
 Commander	Commander
 Companion	Companion
-Connected to the computer	Connected to the computer
-Could not send the report. Try again later.	Could not send the report. Try again later.
-Count this device	Count this device
+Connected to the computer	Повезано са рачунаром
+Could not send the report. Try again later.	Извештај није послат. Покушајте касније.
+Count this device	Урачунај овај уређај
 Current PIN	Current PIN
 Cursor	Cursor
 Dec	Dec
 December	December
 Delete this conversation?	Delete this conversation?
-Device id	Device id
+Device id	ID уређаја
 Direct	Direct
 Direct message	Direct message
 Direct, no repeaters	Direct, no repeaters
 Discover	Discover
-Double-tap SPACE while typing to switch	Double-tap SPACE while typing to switch
-Emoji	Emoji
+Double-tap SPACE while typing to switch	Двапут додирните РАЗМАК током куцања за промену
+Emoji	Емоџи
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Export Backup
+Export Backup	Извези резервну копију
 Feb	Feb
 February	February
 Fri	Fri
 Friday	Friday
-Has a problem	Has a problem
+Has a problem	Има проблем
 Heard by %u repeaters	Heard by %u repeaters
 Heard by 1 repeater	Heard by 1 repeater
 Hold the trackball to switch	Hold the trackball to switch
 Home button opens	Home button opens
-I hit a problem	I hit a problem
+I hit a problem	Имао сам проблем
 I understand	I understand
 If you forget your PIN, you have to reset the device	If you forget your PIN, you have to reset the device
-Internal	Internal
+Internal	Интерна
 It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.	It is the only way back in, and it erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.
 Jan	Jan
 January	January
-Join # channel	Join # channel
-Join Public channel	Join Public channel
+Join # channel	Придружи се # каналу
+Join Public channel	Придружи се јавном каналу
 Jul	Jul
 July	July
 Jun	Jun
 June	June
-Keyboard and input	Keyboard and input
-Keyboard attached.\nRestarting in landscape in %d s.	Keyboard attached.\nRestarting in landscape in %d s.
+Keyboard and input	Тастатура и унос
+Keyboard attached.\nRestarting in landscape in %d s.	Тастатура је повезана.\nПоновно покретање у пејзажу за %d с.
 Large	Large
 Launcher	Launcher
 Launcher layout	Launcher layout
-Locks when screen off\n(hold the BOOT button to unlock)	Locks when screen off\n(hold the BOOT button to unlock)
-Map and GPS	Map and GPS
-Map tiles	Map tiles
+Locks when screen off\n(hold the BOOT button to unlock)	Закључава се кад је екран искључен\n(држите дугме BOOT за откључавање)
+Map and GPS	Мапа и GPS
+Map tiles	Плочице мапе
 Mar	Mar
 March	March
 Mark all as read	Mark all as read
@@ -1381,19 +1391,19 @@ Message %s	Message %s
 Message text on lock screen	Message text on lock screen
 Messages muted	Messages muted
 Messages unmuted	Messages unmuted
-Minutes	Minutes
+Minutes	Минути
 Mon	Mon
 Monday	Monday
 Mute mentions	Mute mentions
 Mute messages	Mute messages
 Navigate	Navigate
-Never	Never
+Never	Никад
 New PIN	New PIN
-No backups available to restore.	No backups available to restore.
-No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
+No backups available to restore.	Нема резервних копија за враћање.
+No backups yet. Use Export Backup above to create one.	Још нема резервних копија. Направите је дугметом „Извези резервну копију“ изнад.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
+Normal\nLarge text\nHuge text	Нормално\nВелики текст\nОгроман текст
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1405,56 +1415,56 @@ PIN changed	PIN changed
 PIN lock	PIN lock
 PIN lock off	PIN lock off
 PIN lock on	PIN lock on
-Phone-app link	Phone-app link
+Phone-app link	Веза са апликацијом на телефону
 Pick the numbers, or type the PIN	Pick the numbers, or type the PIN
 Preview screensaver	Preview screensaver
-Radio and messaging	Radio and messaging
-Reboot Now	Reboot Now
-Received %s	Received %s
-Receiving %s	Receiving %s
-Region not saved: use a-z, 0-9 and -	Region not saved: use a-z, 0-9 and -
+Radio and messaging	Радио и поруке
+Reboot Now	Рестартуј сада
+Received %s	%s примљен
+Receiving %s	Пријем %s
+Region not saved: use a-z, 0-9 and -	Регион није сачуван: користите a-z, 0-9 и -
 Remote	Remote
 Repeater	Repeater
-Report a bug	Report a bug
+Report a bug	Пријави грешку
 Reset chat icon	Reset chat icon
 Room	Room
 Routed	Routed
-Running it for	Running it for
-Running it for:	Running it for:
-SD card	SD card
-SD unavailable - insert a FAT32 card and retry	SD unavailable - insert a FAT32 card and retry
+Running it for	Користим већ
+Running it for:	Користим већ:
+SD card	SD картица
+SD unavailable - insert a FAT32 card and retry	SD није доступна - убаците FAT32 картицу и покушајте поново
 Sat	Sat
 Saturday	Saturday
-Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.
-Screen timeout	Screen timeout
+Say whether this build works on your board, so a stable release is promoted on evidence rather than on nobody having complained. A bug report opens as a QR: scan it and file it from your phone, under your own GitHub account.	Реците да ли ово издање ради на вашој плочи, да би се стабилна верзија објављивала на основу доказа, а не зато што се нико није жалио. Пријава грешке се отвара као QR код: скенирајте га и пошаљите са телефона преко свог GitHub налога.
+Screen timeout	Гашење екрана
 Screensaver	Screensaver
 Scroll	Scroll
 Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen; Cursor points and clicks; Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Send	Send
-Send a test report	Send a test report
-Send another test report	Send another test report
-Sending %s	Sending %s
-Sending your report...	Sending your report...
+Send	Пошаљи
+Send a test report	Пошаљи тест извештај
+Send another test report	Пошаљи још један тест извештај
+Sending %s	Слање %s
+Sending your report...	Слање извештаја…
 Sensor	Sensor
 Sep	Sep
 September	September
 Share my contact	Share my contact
 Spectrum	Spectrum
-Stop USB Files	Stop USB Files
-Storage and SD	Storage and SD
+Stop USB Files	Заустави USB фајлове
+Storage and SD	Складиште и SD
 Sun	Sun
 Sunday	Sunday
-Tap the EN key on the keyboard to switch	Tap the EN key on the keyboard to switch
-Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.
+Tap the EN key on the keyboard to switch	Додирните тастер EN на тастатури за промену
+Tells the matrix how many devices run this build, so a board with no reports can be told apart from a board nobody owns. Sends the board and the version, nothing else.	Јавља тест матрици колико уређаја користи ово издање, да би се плоча без извештаја разликовала од плоче коју нико нема. Шаље само плочу и верзију, ништа друго.
 Terminal	Terminal
-Test report: %s	Test report: %s
-Thank you. Your report is on wadamesh.com/beta	Thank you. Your report is on wadamesh.com/beta
+Test report: %s	Тест извештај: %s
+Thank you. Your report is on wadamesh.com/beta	Хвала. Ваш извештај је на wadamesh.com/beta
 The PINs did not match	The PINs did not match
 The mesh around you instead of a dark screen. Every ring is a real packet.	The mesh around you instead of a dark screen. Every ring is a real packet.
-This is everything that leaves the device. No name, no contacts, no position.	This is everything that leaves the device. No name, no contacts, no position.
+This is everything that leaves the device. No name, no contacts, no position.	Ово је све што напушта уређај. Без имена, без контаката, без положаја.
 Thu	Thu
 Thursday	Thursday
-Tick only what you actually used:	Tick only what you actually used:
+Tick only what you actually used:	Означите само оно што сте заиста користили:
 Too many chat icons	Too many chat icons
 Too many tries. Wait %u s	Too many tries. Wait %u s
 Trackball	Trackball
@@ -1462,30 +1472,30 @@ Trackball: scroll	Trackball: scroll
 Transfer	Transfer
 Tue	Tue
 Tuesday	Tuesday
-Turn Wi-Fi on to send a report	Turn Wi-Fi on to send a report
+Turn Wi-Fi on to send a report	Укључите Wi-Fi да бисте послали извештај
 Type 4 numbers or letters	Type 4 numbers or letters
-USB Files	USB Files
-USB Files: low memory	USB Files: low memory
+USB Files	USB фајлови
+USB Files: low memory	USB фајлови: мало меморије
 Unmute mentions	Unmute mentions
 Unmute messages	Unmute messages
-Upload of %s stopped	Upload of %s stopped
-Used	Used
+Upload of %s stopped	Отпремање %s је заустављено
+Used	Коришћено
 VNC	VNC
-Waiting for the computer	Waiting for the computer
+Waiting for the computer	Чекање рачунара
 Web	Web
 Wed	Wed
 Wednesday	Wednesday
-While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
-Works	Works
+While this screen is open, the companion app cannot use USB.	Док је овај екран отворен, пратећа апликација не може да користи USB.
+Works	Ради
 Wrong PIN	Wrong PIN
 You:	You:
-a week or more	a week or more
-about a day	about a day
+a week or more	недељу или дуже
+about a day	отприлике дан
 heard %s ago	heard %s ago
-hold the BOOT button to unlock	hold the BOOT button to unlock
+hold the BOOT button to unlock	држите дугме BOOT за откључавање
 hop away	hop away
 hops away	hops away
-minutes	minutes
+minutes	минути
 new	new
 node	node
 nodes	nodes
@@ -1556,7 +1566,6 @@ Community preset	Претподешавање заједнице
 Connected to %s	Connected to %s
 Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.	Contacts are on internal flash: the SD card did not mount at boot. Re-seat the card and restart.
 Custom UTC offset	Custom UTC offset
-Device	Device
 Direct messages	Direct messages
 Double-tap SPACE to cycle through English and the layouts you turn on.	Double-tap SPACE to cycle through English and the layouts you turn on.
 Encryption	Encryption
@@ -1854,3 +1863,14 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+30 sec	30 с
+Timer	Тајмер
+Screenshot	Снимак екрана
+Peak -- dBm	Врх -- dBm
+Peak %d dBm @ %.1f MHz	Врх %d dBm @ %.1f MHz
+peak %d @ %.1f	врх %d @ %.1f
+Asleep: tap screen or 🤍 to wake	Спава: додирни екран или 🤍 за буђење
+Receiving %s\n%lu / %lu bytes	Пријем %s\n%lu / %lu бајтова
+Sending %s\n%lu / %lu bytes	Слање %s\n%lu / %lu бајтова
+File Transfer	Пренос фајлова
+Hardware	Хардвер
