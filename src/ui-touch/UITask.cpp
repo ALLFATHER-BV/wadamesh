@@ -51939,7 +51939,7 @@ static void openHashtagChat(const char* tag) {
   g_lv.task->refreshThreadsFromMesh();
   g_lv.dirty_threads = true;
   const int thread_idx = findChannelThreadByName(name);
-  if (thread_idx < 0) { g_lv.task->showAlert(TR("Channel table is full."), 1400); return; }
+  if (thread_idx < 0) { g_lv.task->showAlert(TR("Channel not found"), 1400); return; }
   if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
   if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
   goToTab(CHAT_INBOX_TAB_INDEX);
