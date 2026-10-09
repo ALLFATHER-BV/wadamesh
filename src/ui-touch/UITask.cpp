@@ -41176,12 +41176,11 @@ static void openChatHashtagPicker(const char* text) {
   }
 
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
-  const lv_coord_t row_h = SC(40), header_h = SC(42);
+  const lv_coord_t header_h = SC(42);
   const lv_coord_t max_h = sh - STATUSBAR_H - SC(20);
   lv_coord_t card_w = sw - SC(24);
   if (card_w > PSC(300)) card_w = PSC(300);
-  const lv_coord_t wanted_h = header_h + row_h * s_chat_hashtag_choice_count;
-  const lv_coord_t card_h = wanted_h < max_h ? wanted_h : max_h;
+  const lv_coord_t card_h = max_h;
 
   s_chat_hashtag_picker = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_chat_hashtag_picker);
@@ -41214,24 +41213,26 @@ static void openChatHashtagPicker(const char* text) {
   lv_obj_remove_style_all(list);
   lv_obj_set_size(list, card_w, card_h - header_h);
   lv_obj_set_pos(list, 0, header_h);
-  lv_obj_set_style_pad_all(list, 0, LV_PART_MAIN);
+  const lv_coord_t pad = PSC(12), gap = PSC(8), button_h = PSC(34);
+  lv_obj_set_style_pad_left(list, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(list, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(list, gap, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(list, gap, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(list, gap, LV_PART_MAIN);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
   lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   for (int i = 0; i < s_chat_hashtag_choice_count; ++i) {
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_remove_style_all(row);
-    lv_obj_set_size(row, card_w, row_h);
-    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
-    lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+    lv_obj_set_size(row, card_w - 2 * pad, button_h);
+    styleButton(row);
     lv_obj_add_event_cb(row, chatHashtagPickerChoiceCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     lv_obj_t* label = lv_label_create(row);
     lv_label_set_text(label, s_chat_hashtag_choices[i]);
     lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(label, LV_ALIGN_LEFT_MID, SC(14), 0);
+    lv_obj_center(label);
   }
   lv_obj_move_foreground(s_chat_hashtag_picker);
 }
