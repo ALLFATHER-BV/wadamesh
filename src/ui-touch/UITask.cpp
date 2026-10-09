@@ -38332,7 +38332,7 @@ static const SettingsGroupDef kSettingsGroups[] = {
 };
 static lv_obj_t* s_settings_cat_val[CAT_COUNT] = { nullptr };   // the state beside a row's name
 static lv_obj_t* s_settings_cat_lbl[CAT_COUNT] = { nullptr };   // the row's name, which gives way to it
-static lv_coord_t s_settings_row_avail = 0;                     // room for both on a row
+static lv_coord_t s_settings_row_avail[CAT_COUNT] = { 0 };      // room for both on a row (rows differ: Device can span both columns)
 
 static uint32_t settingsCatHue(int c) {
   // Taste the rainbow: every page its own place on the wheel, in list order.
@@ -38425,11 +38425,11 @@ static void settingsCatValue(int c, char* out, size_t cap) {
 // portrait panels, the two columns of the wide ones).
 static void settingsLandingRefresh() {
   if (!s_settings_landing || !lv_obj_is_valid(s_settings_landing)) return;
-  const lv_coord_t avail = s_settings_row_avail;
   for (int c = 0; c < CAT_COUNT; ++c) {
     lv_obj_t* v = s_settings_cat_val[c];
     lv_obj_t* l = s_settings_cat_lbl[c];
     if (!v || !l) continue;
+    const lv_coord_t avail = s_settings_row_avail[c];
     char val[96];
     settingsCatValue(c, val, sizeof val);
     char san[112];
@@ -38510,21 +38510,53 @@ static void makeSettings(lv_obj_t* tab) {
   lv_obj_set_style_pad_right(land, 1, LV_PART_SCROLLBAR);
   lv_obj_set_scrollbar_mode(land, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_add_event_cb(land, settingsLandingTrackCb, LV_EVENT_DRAW_POST_BEGIN, nullptr);
-  lv_obj_set_flex_flow(land, LV_FLEX_FLOW_ROW_WRAP);
 
   const lv_coord_t inner_w = hor - 2 * kChatListInset;
   const lv_coord_t group_w = two_cols ? (lv_coord_t)((inner_w - 10) / 2) : inner_w;
+
+  // Wide panels: two real columns, each stacking its groups. The groups used to
+  // wrap two to a row, so a row was as tall as its taller group: Device (one row)
+  // sat beside Mesh (four) with a gap under it, Connections beside the nine-row
+  // Device group, and System alone at the bottom. The untitled group holding the
+  // Device row spans both columns at the top; the rest are built into the left
+  // column and split across the two below, in order.
+  lv_obj_t* col_l = land;
+  lv_obj_t* col_r = nullptr;
+  if (two_cols) {
+    lv_obj_set_flex_flow(land, LV_FLEX_FLOW_COLUMN);
+    lv_obj_t* cols = lv_obj_create(land);
+    lv_obj_remove_style_all(cols);
+    lv_obj_clear_flag(cols, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(cols, inner_w, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(cols, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(cols, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(cols, 10, LV_PART_MAIN);
+    for (lv_obj_t** col : { &col_l, &col_r }) {
+      *col = lv_obj_create(cols);
+      lv_obj_remove_style_all(*col);
+      lv_obj_clear_flag(*col, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(*col, group_w, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(*col, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_style_pad_row(*col, 4, LV_PART_MAIN);
+    }
+  } else {
+    lv_obj_set_flex_flow(land, LV_FLEX_FLOW_ROW_WRAP);
+  }
 
   const lv_coord_t row_h = SC(38), tile = SC(26);
   for (const SettingsGroupDef& g : kSettingsGroups) {
     int shown = 0;
     for (int k = 0; k < g.n; ++k) if (settingsCatOnBoard(g.cats[k])) ++shown;
     if (!shown) continue;
-    // A group: its label, then its card.
-    lv_obj_t* grp = lv_obj_create(land);
+    // A group: its label, then its card. In two columns the untitled Device group
+    // goes full width above them (index 0 of the landing, before the columns).
+    const bool span = col_r && !g.title[0];
+    const lv_coord_t gw = span ? inner_w : group_w;
+    lv_obj_t* grp = lv_obj_create(span ? land : col_l);
+    if (span) lv_obj_move_to_index(grp, 0);
     lv_obj_remove_style_all(grp);
     lv_obj_clear_flag(grp, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_size(grp, group_w, LV_SIZE_CONTENT);
+    lv_obj_set_size(grp, gw, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(grp, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(grp, 4, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(grp, 6, LV_PART_MAIN);
@@ -38598,8 +38630,8 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_style_text_color(chev, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
       lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -8, 0);
       const lv_coord_t text_x = 6 + tile + 10;
-      const lv_coord_t avail = group_w - 6 - text_x - 8 - SC(14) - 8;   // the card's pad, the chevron
-      s_settings_row_avail = avail;
+      const lv_coord_t avail = gw - 6 - text_x - 8 - SC(14) - 8;   // the card's pad, the chevron
+      s_settings_row_avail[c] = avail;
       lv_obj_t* val = lv_label_create(row);
       s_settings_cat_val[c] = val;
       lv_label_set_text(val, "");
@@ -38644,6 +38676,24 @@ static void makeSettings(lv_obj_t* tab) {
         lv_obj_add_flag(s_update_subtab_badge, LV_OBJ_FLAG_HIDDEN);
       }
     }
+  }
+
+  if (col_r) {
+    // Split where the taller column is shortest, keeping the groups in order:
+    // the first k down the left, the rest down the right.
+    lv_obj_update_layout(land);
+    const int n = (int)lv_obj_get_child_cnt(col_l);
+    int32_t total = 0;
+    for (int i = 0; i < n; ++i) total += lv_obj_get_height(lv_obj_get_child(col_l, i));
+    int best_k = n, acc = 0;
+    int32_t best = total;
+    for (int k = 1; k < n; ++k) {
+      acc += lv_obj_get_height(lv_obj_get_child(col_l, k - 1));
+      const int32_t tallest = LV_MAX(acc, total - acc);
+      if (tallest < best) { best = tallest; best_k = k; }
+    }
+    while ((int)lv_obj_get_child_cnt(col_l) > best_k)
+      lv_obj_set_parent(lv_obj_get_child(col_l, best_k), col_r);
   }
 
   settingsLandingRefresh();
