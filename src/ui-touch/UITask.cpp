@@ -6962,6 +6962,17 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   if (!heltecV4CapTouchIsAsyncPolling()) {
     (void)heltecV4CapTouchCheck();
   }
+  // Stamp s_slider_touch_ms while the finger is down on any slider. Both the press
+  // abort below and the tab / swipe-back handler skip a slider drag on this stamp,
+  // but nothing ever set it, so a sideways drag past the swipe threshold aborted the
+  // press: the slider never got RELEASED (where Screen timeout and the others save)
+  // and the drag could also count as swipe-right = Back on a settings page. LVGL
+  // keeps the pressed object from the previous read, so the stamp is in place well
+  // before the drag reaches the swipe threshold.
+  if (lv_indev_t* sl_act = lv_indev_get_act()) {
+    lv_obj_t* pressed = sl_act->proc.types.pointer.act_obj;
+    if (pressed && lv_obj_check_type(pressed, &lv_slider_class)) s_slider_touch_ms = millis();
+  }
   // If the gesture has turned into a swipe, tell LVGL to abandon the press
   // it started on the originally-touched widget. Without this, swiping
   // sideways across a settings row both switches tabs (our applySwipeGesture)
