@@ -25,6 +25,9 @@ constexpr uint8_t kRp2040Reset = 8;
 constexpr uint8_t kRadioStrap = 11;   // input, high = TCXO
 }  // namespace pins
 
+// The expander's open-drain /INT output (active low) reaches the ESP32 on this GPIO.
+constexpr uint8_t kExpanderIntGpio = 42;
+
 struct ExpanderBus {
   virtual bool read(uint8_t reg, uint8_t* data, size_t n) = 0;
   virtual bool write(uint8_t reg, const uint8_t* data, size_t n) = 0;

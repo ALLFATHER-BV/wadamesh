@@ -2,7 +2,8 @@
 #pragma once
 
 // The env sets SX126X_DIO3_TCXO_VOLTAGE=indicatorTcxoVoltage(): the strap picks
-// TCXO or crystal at run time, and CustomSX1262.h expands it inline.
+// TCXO or crystal at run time (a failed start tries the other one), and
+// CustomSX1262.h expands it inline.
 float indicatorTcxoVoltage();
 
 #define RADIOLIB_STATIC_ONLY 1
