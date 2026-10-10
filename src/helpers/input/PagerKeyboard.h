@@ -68,6 +68,11 @@ bool pagerKeyboardBackspaceHeld();
  *  "lock screen" gesture). */
 bool pagerKeyboardSpaceHeld();
 
+/** True while the key behind the last character pushed to the ring is still
+ *  physically down (raw state). The press already pushed its character; this
+ *  only tells a tap from a hold (UITask's Home and Settings shortcuts). */
+bool pagerKeyboardLetterHeld();
+
 /** One-shot: true exactly once after Alt(Fn)+Shift is chorded (Shift pressed
  *  while Alt is held). The driver no longer decides what this chord DOES
  *  (that depends on UI state — is a text field being edited? — which this

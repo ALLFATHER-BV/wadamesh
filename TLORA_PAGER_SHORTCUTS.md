@@ -36,13 +36,21 @@ They do nothing inside an open chat, settings detail, app page, or popup, so a
 letter cannot unexpectedly close the inner screen. They also remain inactive
 while editing a text field, where the keys type normally.
 
+**H** and **S** also work like holding those buttons on a touchscreen:
+
+- **Tap H** on Home switches between the app drawer and your widgets.
+- **Hold H** (about half a second) opens the launcher options.
+- **Hold S** opens the control panel.
+
+A hold opens them over the screen you are on.
+
 ## Rotary encoder
 
 | Gesture | Action | Keyboard equivalent |
 |---|---|---|
 | Turn | Move focus to the next/previous item on screen | none — encoder only |
 | Short click | Select / confirm the focused item | **Enter** |
-| Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first) | **Backspace held ~1 s** |
+| Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first). A ring fills while you hold | **Backspace** (tap) |
 | **Fn (Alt) + turn**, on a main tab | Move between the 5 main tabs (Mail / Contacts / Home / Map / Settings) | **M / C / H / A / S** jumps directly |
 | **Fn (Alt) + turn**, inside a settings page or chat | Scroll the page up/down | none — encoder only |
 | **Fn (Alt) + short click**, with a text field focused | Open the special-character picker | none — encoder only |
@@ -94,9 +102,10 @@ text box → Send**, in that order, in both directions — nothing is skipped.
 Turning past the △ chip (toward the messages) always jumps straight to the
 newest message, regardless of channel or DM.
 
-### Backspace — catching up
+### N: catching up
 
-**Backspace (tap)** jumps to whichever message needs your attention:
+A chat with unread messages opens on the first of them. **N** jumps to
+whichever message needs your attention:
 
 - If there are unread messages, it jumps to the first one — right below the
   **"NEW ----"** divider — and selects it, so you can then turn forward
@@ -104,9 +113,8 @@ newest message, regardless of channel or DM.
 - If nothing is unread, it jumps to the newest message instead (same
   destination, with focus left on the message).
 
-Backspace's override above only applies while you're inside an open chat and
-*not* actively editing the text box — the usual rule from the top of this
-guide; with a field focused, Backspace deletes a character as normal.
+N only does this inside an open chat and while you are not typing in the
+reply box. While you type, it is just the letter n.
 
 ## Keyboard layout
 
@@ -157,9 +165,11 @@ While any text field is focused, including a Wi-Fi or repeater password:
 
 | Key | While editing a text field | Otherwise |
 |---|---|---|
-| **Enter** | Send / submit / newline | Select the focused item — or, if a chat message bubble is focused, opens its action menu (Ack / Mention / Copy / Info / Block) |
-| **Backspace** (tap) | Delete a character | In an open chat: jump to your first unread message, or the newest message if nothing's unread — see [Chat screen](#chat-screen) |
-| **Backspace** (hold ~1 s) | — | Same as the encoder's long-press: **Back** |
+| **Enter** | Send / submit / newline | Select the focused item. On a chat message bubble, opens its action menu (Ack / Mention / Copy / Info / Block) |
+| **Enter** (hold about half a second) | — | What a long press does on a touchscreen: a chat's actions, hiding an app in the drawer, a control-panel switch's settings page |
+| **Backspace** (tap) | Delete a character | **Back**: closes a popup, a page or the chat, otherwise goes Home |
+| **Backspace** (hold ~1 s) | **Back**, leaving the screen the field is on | **Back** |
+| **N** | Types n | In an open chat: jump to your first unread message, or the newest if nothing is unread. See [Chat screen](#chat-screen) |
 | **Backspace** (hold ~1 s) *while the screen is locked* | — | Unlock the screen |
 | **Space** (tap) | Types a space | — |
 | **Space** (double-tap, within 250 ms) | Switches between English and your configured secondary keyboard layout | — |
@@ -254,7 +264,7 @@ that changes keyboard language.
 | Turn encoder | Move focus |
 | Turn, at the loaded edge of a chat | Load more history, keep moving — only exits the list at the true oldest/newest message |
 | Click encoder (or Enter) | Select / confirm |
-| Hold encoder ~1s (or hold Backspace ~1s) | Back |
+| Hold encoder ~1 s, or tap Backspace | Back |
 | Fn + turn (main tab) | Switch tabs |
 | Fn + turn (page/chat) | Scroll |
 | Fn + encoder click (text field focused) | Open special-character picker |
@@ -267,8 +277,12 @@ that changes keyboard language.
 | Fn + Space | Enter accent picker |
 | @ + letters (composer) | Auto-focuses the mention list — no Fn+Space needed |
 | Enter | Select / send / message action menu |
-| Backspace (tap) | Delete / in a chat: jump to first unread message, or newest if none |
-| Backspace (hold 1s) | Back, or unlock if locked |
+| Hold Enter | Long press: a chat's actions, app options, a switch's settings |
+| Backspace (tap) | Delete while typing, otherwise Back |
+| Backspace (hold 1s) | Back, also while typing; or unlock if locked |
+| N (in a chat) | Jump to the first unread message, or the newest if none |
+| H on Home | Switch between the app drawer and widgets |
+| Hold H / hold S | Launcher options / control panel |
 | Space (tap) | Space |
 | Space (double-tap) | Switch keyboard language |
 | Space (hold 1s) | Lock screen |

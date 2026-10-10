@@ -3,77 +3,97 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WADAMESH — a touchscreen for your mesh radio</title>
-<meta name="description" content="Open-source MeshCore touch-UI firmware for the LilyGo T-Deck, Heltec V4 and Tanmatsu. Map, chat, channels, contacts — install from your browser.">
-<link rel="icon" href="wadamesh-badge.svg">
-<meta name="theme-color" content="#ffffff">
+<script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
+<title>WADAMESH: MeshCore firmware with the whole mesh on the radio</title>
+<meta name="description" content="Free, open-source MeshCore firmware with chat, channels, a map and apps on the radio itself, by touch, keyboard or trackball. Runs on 13 boards.">
+<link rel="canonical" href="https://wadamesh.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WADAMESH">
+<meta property="og:url" content="https://wadamesh.com/">
+<meta property="og:title" content="WADAMESH: MeshCore firmware with the whole mesh on the radio">
+<meta property="og:description" content="Chat, channels, contacts, a map and apps on the radio itself, by touch, keyboard or trackball, and a companion radio for the MeshCore app at the same time. Free and open source, on 13 boards.">
+<meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The WADAMESH home screen on a LilyGo T-Deck">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="wadamesh-badge.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#000400">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
 <script>
   if (location.protocol === 'http:') location.replace(location.href.replace(/^http:/, 'https:'));
 </script>
-<script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+<script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
 <style>
-  :root{
-    --bg:#ffffff; --bg2:#f4f6f2; --card:#ffffff; --ink:#15181e; --mut:#5d6770;
-    --line:#e5e8e2; --teal:#15b6a6; --cyan:#19d6c2; --teal-ink:#0e8d80;
-    color-scheme:light;
-  }
+  /* Colours come from theme.css: the device's Night palette by default, its Day palette on
+     request. Cards are the device's glass over the aurora (theme.js). */
   *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
-  body{font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
-    background:var(--bg); color:var(--ink); overflow-x:hidden; -webkit-font-smoothing:antialiased}
-  body::before{content:""; position:fixed; inset:-25% -10% auto -10%; height:70vh; z-index:-1;
-    background:
-      radial-gradient(46vw 38vh at 24% 4%, rgba(25,214,194,.16), transparent 62%),
-      radial-gradient(40vw 34vh at 80% 0%, rgba(21,182,166,.10), transparent 62%);}
-  #vanta-bg{position:fixed; inset:0; z-index:-2;
-    /* let the net breathe at the margins but fade out of the central text column */
-    -webkit-mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.22) 32%,rgba(0,0,0,.22) 68%,#000 100%);
-            mask-image:linear-gradient(to right,#000 0%,rgba(0,0,0,.22) 32%,rgba(0,0,0,.22) 68%,#000 100%);}
+  html{scroll-behavior:smooth; overflow-x:clip}
+  body{font:500 16px/1.6 'Montserrat',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    color:var(--ink); overflow-x:hidden; -webkit-font-smoothing:antialiased}
   a{color:var(--teal-ink); text-decoration:none}
   .mono{font-family:'JetBrains Mono',ui-monospace,monospace}
   .wrap{max-width:1040px; margin:0 auto; padding:0 22px}
 
   header{padding:74px 0 30px; text-align:center}
-  .kicker{display:inline-block; margin-bottom:10px; padding:6px 13px; border:1px solid var(--line);
-    border-radius:100px; color:var(--mut); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
-    font-family:'JetBrains Mono',monospace; background:#fff; transition:border-color .15s, color .15s}
-  .kicker:hover{border-color:var(--teal); color:var(--ink)}
-  .freeline{margin:0 auto 24px; color:var(--mut); font-size:.92rem}
+  .kicker{display:inline-block; margin-bottom:10px; padding:6px 13px; border-radius:100px; color:var(--mut);
+    font-size:.78rem; letter-spacing:.05em; text-transform:uppercase; font-family:'JetBrains Mono',monospace;
+    background:var(--surface); box-shadow:inset 0 0 0 1px var(--line); transition:color .15s, box-shadow .15s}
+  .kicker:hover{color:var(--ink); box-shadow:inset 0 0 0 1px var(--teal)}
+  .freeline{margin:0 auto 24px; color:var(--sky-sub); font-size:.92rem}
+
+  /* quick links: round tiles in the launcher's category colours */
   .fab-rail{position:fixed; top:var(--fab-top,16px); z-index:45; display:flex; flex-direction:column; gap:12px}
   .fab-rail.left{left:16px; align-items:flex-start} .fab-rail.right{right:16px; align-items:flex-end}
   /* the rails are as wide as their longest label: let clicks through everywhere but
      the icons and the visible labels, so the page underneath stays usable */
   .fab-rail{pointer-events:none} .fab .ic, .fab .lb{pointer-events:auto}
-  /* each button: the icon on the edge of the screen, its label toward the middle */
-  .fab{display:flex; align-items:center; gap:9px; cursor:pointer}
+  .fab{display:flex; align-items:center; gap:9px; cursor:pointer; background:none; border:0; padding:0; font:inherit; color:inherit}
+  .fab:focus-visible{outline:none}
   .fab-rail.right .fab{flex-direction:row-reverse}
   .fab .ic{width:44px; height:44px; flex:none; border-radius:50%; display:grid; place-items:center;
-    background:#fff; border:1px solid var(--line); color:#46525c; box-shadow:0 10px 26px -14px rgba(21,24,30,.45);
-    transition:border-color .15s, color .15s, transform .15s, box-shadow .15s}
-  .fab:hover .ic, .fab:focus-visible .ic{border-color:var(--teal); color:var(--teal-ink); transform:translateY(-2px);
-    box-shadow:0 14px 30px -14px rgba(21,182,166,.5)}
+    background:var(--solid); background:color-mix(in srgb, var(--hue, var(--ink2)) 13%, var(--solid));
+    color:var(--hue, var(--ink2)); box-shadow:inset 0 0 0 1px var(--line), var(--shadow);
+    transition:box-shadow .15s, transform .15s}
+  .fab:hover .ic, .fab:focus-visible .ic{transform:translateY(-2px); box-shadow:inset 0 0 0 1px var(--hue, var(--teal)), var(--shadow)}
   .fab .ic svg{width:21px; height:21px}
-  .fab .lb{padding:4px 11px; border-radius:100px; background:rgba(255,255,255,.94); border:1px solid var(--line);
-    color:#3a444d; font-size:.8rem; font-weight:600; white-space:nowrap; box-shadow:0 8px 20px -16px rgba(21,24,30,.45);
-    transition:opacity .15s, color .15s, border-color .15s}
-  .fab:hover .lb, .fab:focus-visible .lb{color:var(--teal-ink); border-color:var(--teal)}
+  .fab .lb{padding:4px 11px; border-radius:100px; background:var(--solid); color:var(--ink2); font-size:.8rem; font-weight:600;
+    white-space:nowrap; box-shadow:inset 0 0 0 1px var(--line), var(--shadow); transition:opacity .15s, color .15s}
+  .fab:hover .lb, .fab:focus-visible .lb{color:var(--ink)}
+  .fab .i-sun{display:none}
+  :root[data-theme="light"] .fab .i-sun{display:block}
+  :root[data-theme="light"] .fab .i-moon{display:none}
   /* narrower screens: a label would sit on the page itself, so it only shows on hover
      of its icon, and while hidden it is no invisible link over the page */
   @media (max-width:1279px){
     .fab .lb{opacity:0; pointer-events:none} .fab:hover .lb, .fab:focus-visible .lb{opacity:1}
   }
+  .fab-wrap{display:contents}
+  @media (max-width:1100px){
+    .fab-wrap{display:flex; justify-content:center; flex-wrap:wrap; gap:10px; padding:16px 16px 0}
+    .fab-rail{display:contents}            /* all the icons share one row */
+    .fab .lb{display:none}
+    .fab .ic{width:40px; height:40px}
+    header{padding-top:30px}
+  }
+  @media (max-width:420px){
+    .fab-wrap{gap:6px; padding:14px 8px 0}
+    .fab .ic{width:34px; height:34px}
+    .fab .ic svg{width:17px; height:17px}
+  }
+
   .brand{display:flex; align-items:center; justify-content:center; gap:clamp(12px,2.6vw,20px); flex-wrap:wrap; position:relative}
-  .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none}
+  .brand .mark{width:clamp(60px,13vw,88px); height:auto; flex:none; color:var(--ink); overflow:visible}
   .brand .word{font-weight:700; font-size:clamp(2rem,7.5vw,3.35rem); letter-spacing:3px; color:var(--ink); line-height:1}
   .brand .word .t{color:var(--teal)}
-  /* byline floats beneath the whole lockup, centred on mark+word combined (mark still centres on the word) */
+  /* byline floats beneath the whole lockup, centred on mark+word combined */
   .byline{position:absolute; top:100%; left:0; width:100%; margin-top:7px; text-align:center;
-    font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--mut); font-weight:600}
-  /* animated mesh mark — repeaters broadcast pings; signal packets ride the trails */
-  .brand .mark{overflow:visible}
+    font-family:'JetBrains Mono',monospace; font-size:clamp(.62rem,1.7vw,.8rem); letter-spacing:.2em; text-transform:uppercase; color:var(--sky-sub); font-weight:600}
+  /* animated mesh mark: repeaters broadcast pings; signal packets ride the trails */
   .wm-flow{display:none}
   .wm-flow path{fill:none; stroke:var(--cyan); stroke-width:5; stroke-linecap:round}
   .wm-ping{fill:none; stroke:var(--cyan); stroke-width:2; opacity:0; transform-box:fill-box; transform-origin:center}
@@ -87,116 +107,185 @@
     .wm-ping.c3{animation-delay:.9s} .wm-ping.c4{animation-delay:1.2s}
     @keyframes wm-ping{0%{transform:scale(1); opacity:.55} 70%,100%{transform:scale(2.4); opacity:0}}
   }
-  .lede{max-width:600px; margin:26px auto 0; color:var(--ink); font-size:clamp(1.1rem,2.5vw,1.5rem); font-weight:600}
-  .sub{max-width:560px; margin:12px auto 0; color:var(--mut); font-size:1rem}
+  .lede{max-width:600px; margin:26px auto 0; color:var(--ink); font-size:clamp(1.1rem,2.5vw,1.5rem); font-weight:700}
+  .sub{max-width:600px; margin:12px auto 0; color:var(--sky-sub); font-size:1rem}
   .sub b{color:var(--ink)}
   .pills{display:flex; flex-wrap:nowrap; gap:8px; justify-content:center; margin:28px auto 0; max-width:100%}
-  @media(max-width:720px){.pills{flex-wrap:wrap}}
-  .pill{position:relative; display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border:1px solid var(--line);
-    border-radius:100px; background:#fff; color:#3a444d; font-size:.86rem; cursor:pointer; transition:border-color .15s, color .15s}
-  .pill:hover,.pill:focus,.pill.open{border-color:var(--teal); color:var(--ink); outline:none}
-  .pill svg{width:15px;height:15px;color:var(--teal)}
-  .pill .pop{position:absolute; top:calc(100% + 11px); left:50%; transform:translateX(-50%) translateY(5px);
-    width:min(272px,80vw); background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 15px;
-    box-shadow:0 18px 44px -18px rgba(21,24,30,.32); text-align:left; font-size:.84rem; line-height:1.5; color:var(--mut);
+  @media(max-width:760px){.pills{flex-wrap:wrap}}
+  .pill{position:relative; display:inline-flex; align-items:center; gap:7px; padding:7px 14px; border-radius:100px;
+    background:var(--surface); box-shadow:inset 0 0 0 1px var(--line); color:var(--ink2); font-size:.86rem; font-weight:600;
+    cursor:pointer; transition:box-shadow .15s, color .15s}
+  .pill:hover,.pill:focus,.pill.open{box-shadow:inset 0 0 0 1px var(--teal); color:var(--ink); outline:none}
+  .pill svg{width:15px; height:15px; color:var(--hue, var(--teal-ink))}
+  .pill .pop{position:absolute; top:calc(100% + 11px); left:50%; transform:translateX(calc(-50% + var(--dx,0px))) translateY(5px);
+    width:min(272px,80vw); background:var(--solid); border-radius:12px; padding:13px 15px;
+    box-shadow:inset 0 0 0 1px var(--line), var(--shadow); text-align:left; font-size:.84rem; font-weight:500; line-height:1.5; color:var(--mut);
     opacity:0; visibility:hidden; transition:opacity .16s ease, transform .16s ease; z-index:20; cursor:default}
   .pill .pop b{display:block; color:var(--ink); margin-bottom:4px; font-size:.92rem}
-  .pill .pop::before{content:""; position:absolute; bottom:100%; left:50%; transform:translateX(-50%);
-    border:7px solid transparent; border-bottom-color:#fff}
-  .pill:hover .pop,.pill:focus .pop,.pill:focus-within .pop,.pill.open .pop{opacity:1; visibility:visible; transform:translateX(-50%) translateY(0)}
-  .cue{margin-top:40px; color:var(--mut); font-size:.85rem; font-family:'JetBrains Mono',monospace; animation:bob 2.2s ease-in-out infinite}
+  .pill .pop::before{content:""; position:absolute; bottom:100%; left:calc(50% - var(--dx,0px)); transform:translateX(-50%);
+    border:7px solid transparent; border-bottom-color:var(--solid)}
+  .pill:hover .pop,.pill:focus .pop,.pill:focus-within .pop,.pill.open .pop{opacity:1; visibility:visible; transform:translateX(calc(-50% + var(--dx,0px))) translateY(0)}
+  .cue{display:inline-block; margin-top:40px; color:var(--sky-sub); font-size:.85rem; font-family:'JetBrains Mono',monospace; animation:bob 2.2s ease-in-out infinite}
+  .cue:hover{color:var(--ink)}
   @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(6px)}}
 
   section{padding:44px 0}
-  .h2{font-size:clamp(1.55rem,4vw,2.15rem); font-weight:750; letter-spacing:-.5px; text-align:center}
-  .p{color:var(--mut); text-align:center; max-width:560px; margin:10px auto 0}
-  /* lift hero + section text off the animated net so it stays readable */
-  .brand .word, .byline, .freeline, .lede, .sub, .cue, .h2, .p{
-    text-shadow: 0 1px 3px #fff, 0 0 14px #fff, 0 0 14px #fff, 0 0 26px #fff, 0 0 26px #fff, 0 0 42px #fff;
+  .h2{font-size:clamp(1.55rem,4vw,2.15rem); font-weight:700; letter-spacing:-.3px; text-align:center; color:var(--ink)}
+  .p{color:var(--sky-sub); text-align:center; max-width:560px; margin:10px auto 0}
+  /* lift text that sits straight on the sky */
+  .brand .word, .byline, .freeline, .lede, .sub, .cue, .h2, .p, .more, .hero-shot figcaption{text-shadow:var(--glow-text)}
+
+  /* release badge under the hero pills */
+  .relbadge{display:inline-flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:center; margin-top:22px;
+    padding:6px 14px; border-radius:100px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--line); color:var(--mut); font-size:.84rem;
+    transition:box-shadow .15s}
+  .relbadge[hidden]{display:none}
+  .relbadge [hidden]{display:none}
+  .relbadge b{color:var(--ink); font-family:'JetBrains Mono',ui-monospace,monospace; font-weight:700}
+  .relbadge .rb-dot{width:7px; height:7px; border-radius:50%; background:var(--ok); flex:none; box-shadow:0 0 8px var(--ok)}
+  .relbadge .rp + .rp::before{content:"\00b7"; margin-right:8px; color:var(--dim)}
+  .relbadge .rb-go{color:var(--teal-ink); font-weight:650}
+  .relbadge:hover{box-shadow:inset 0 0 0 1px var(--teal)}
+  .relbadge:hover .rb-go{text-decoration:underline}
+  @media (max-width:420px){
+    .relbadge{gap:6px; padding:6px 12px; font-size:.76rem}
+    .relbadge .rp + .rp::before{margin-right:6px}
   }
 
+  /* hero: the real interface on a T-Deck-shaped device */
+  .hero-shot{margin:34px auto 0; width:max-content; max-width:100%}
+  .devmock{width:352px; max-width:100%; margin:0 auto; padding:16px 16px 18px; border-radius:28px;
+    background:linear-gradient(160deg,#2a2f36,#15181d 60%); border:1px solid #30353c;
+    box-shadow:0 40px 90px -40px rgba(0,0,0,.9), 0 0 70px -24px rgba(25,214,194,.28), inset 0 1px 0 rgba(255,255,255,.07)}
+  .dm-screen{position:relative; aspect-ratio:4/3; border-radius:9px; overflow:hidden; background:#000; box-shadow:0 0 0 2px #0b0d10}
+  .dm-screen img{position:absolute; inset:0; width:100%; height:100%; display:block; opacity:0; transition:opacity .6s ease}
+  .dm-screen img.on{opacity:1}
+  .dm-ball{width:24px; height:24px; margin:13px auto 11px; border-radius:50%;
+    background:radial-gradient(circle at 35% 32%,#8a929b,#3a4048 55%,#1d2126); box-shadow:0 2px 4px rgba(0,0,0,.5)}
+  .dm-keys{display:grid; grid-template-columns:repeat(10,1fr); gap:5px; padding:0 6px}
+  .dm-keys i{display:block; height:13px; border-radius:4px; background:#2e333a; box-shadow:inset 0 -2px 0 rgba(0,0,0,.35)}
+  .dm-keys i.sp{grid-column:span 6}
+  .hero-shot figcaption{display:flex; align-items:center; justify-content:center; gap:12px; flex-wrap:wrap; margin-top:14px;
+    color:var(--sky-sub); font-size:.86rem}
+  .shotdots{display:inline-flex; gap:4px}
+  .shotdots button{width:19px; height:19px; padding:5px; border:0; border-radius:50%; background:none; cursor:pointer}
+  .shotdots button::before{content:""; display:block; width:9px; height:9px; border-radius:50%; background:var(--dim)}
+  .shotdots button[aria-pressed="true"]::before{background:var(--teal-ink); box-shadow:0 0 8px var(--teal-ink)}
+  .shotdots button:focus-visible{outline:2px solid var(--teal); outline-offset:0}
+  @media (prefers-reduced-motion:reduce){ .dm-screen img{transition:none} }
+
+  /* "On the device itself": real screenshots */
+  .feats{display:grid; gap:18px; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); margin-top:30px}
+  .feat{margin:0; width:100%; max-width:460px; justify-self:center; border-radius:16px; background:var(--surface);
+    overflow:hidden; box-shadow:var(--shadow)}
+  .feat-shot{background:var(--frame); padding:12px}
+  .feat-shot img{display:block; width:100%; height:auto; aspect-ratio:4/3; border-radius:7px}
+  .feat figcaption{padding:15px 17px 17px}
+  .feat h3{font-size:1.02rem; font-weight:700; margin-bottom:4px; color:var(--ink)}
+  .feat p{color:var(--mut); font-size:.9rem; line-height:1.55}
+  .more{display:block; margin:24px auto 0; width:max-content; max-width:100%; font-weight:650}
+  .more:hover{text-decoration:underline}
+
+  /* supported devices overview */
+  .devgrid{display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); margin-top:28px}
+  .devtile{display:flex; flex-direction:column; gap:5px; padding:15px 16px; border-radius:14px; background:var(--surface);
+    color:var(--ink); text-align:left; box-shadow:var(--shadow); transition:box-shadow .15s, transform .15s}
+  .devtile:hover, .devtile:focus-visible{box-shadow:inset 0 0 0 1px var(--teal), var(--shadow); transform:translateY(-2px); outline:none}
+  .devtile .mk{font-size:.72rem; letter-spacing:.06em; text-transform:uppercase; color:var(--mut); font-weight:650}
+  .devtile b{font-size:1rem; font-weight:700}
+  .devtile .spec{color:var(--mut); font-size:.86rem; line-height:1.45}
+  .devtile .st{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:auto; padding-top:5px; font-size:.76rem; font-weight:650}
+  .devtile .lvl{display:inline-flex; align-items:center; gap:5px; padding:2px 9px; border-radius:999px}
+  .devtile .lvl::before{content:""; width:7px; height:7px; border-radius:50%}
+  .devtile .lvl.full{background:var(--ok-bg); color:var(--ok)} .devtile .lvl.full::before{background:var(--ok)}
+  .devtile .lvl.part{background:var(--warn-bg); color:var(--warn)} .devtile .lvl.part::before{background:var(--warn)}
+  .devtile .ch{color:var(--mut); font-weight:600}
+
+  /* install paths */
   .paths{display:grid; gap:18px; grid-template-columns:1fr 1fr; margin-top:34px}
   @media(max-width:680px){.paths{grid-template-columns:1fr}}
-  .path{position:relative; text-align:left; cursor:pointer; border:1px solid var(--line); background:var(--card);
-    border-radius:18px; padding:26px; transition:transform .18s ease, border-color .18s ease, box-shadow .18s ease}
-  .path:hover{transform:translateY(-3px); border-color:var(--teal); box-shadow:0 18px 44px -22px rgba(21,182,166,.55)}
-  .path.sel{border-color:var(--teal); box-shadow:0 0 0 1.5px var(--teal), 0 20px 50px -26px rgba(21,182,166,.6)}
-  .path .ic{width:46px;height:46px;border-radius:12px;display:grid;place-items:center;
-    background:rgba(21,182,166,.12); color:var(--teal); margin-bottom:16px}
-  .path .ic svg{width:24px;height:24px}
-  .path h3{font-size:1.25rem; margin-bottom:6px}
+  .path{position:relative; text-align:left; cursor:pointer; background:var(--surface); border-radius:18px; padding:26px;
+    box-shadow:var(--shadow); transition:transform .18s ease, box-shadow .18s ease}
+  .path:hover{transform:translateY(-3px); box-shadow:inset 0 0 0 1px var(--teal), var(--shadow)}
+  .path.sel{box-shadow:inset 0 0 0 1.5px var(--teal), var(--shadow)}
+  .path .ic{width:46px; height:46px; border-radius:12px; display:grid; place-items:center;
+    background:var(--accent-soft); color:var(--teal-ink); margin-bottom:16px}
+  .path .ic svg{width:24px; height:24px}
+  .path h3{font-size:1.25rem; font-weight:700; margin-bottom:6px; color:var(--ink)}
   .path .tag{position:absolute; top:20px; right:20px; font-size:.68rem; letter-spacing:.06em; text-transform:uppercase;
-    color:#fff; background:var(--teal); padding:4px 10px; border-radius:100px; font-weight:700}
+    color:var(--on-accent); background:var(--accent-fill); padding:4px 10px; border-radius:100px; font-weight:700}
   .path p{color:var(--mut); font-size:.95rem}
-  .path .good{margin-top:14px; color:#46525c; font-size:.86rem}
+  .path .good{margin-top:14px; color:var(--ink2); font-size:.86rem}
   .path .good b{color:var(--ink)}
   .path .pick{margin-top:18px; display:inline-flex; align-items:center; gap:8px; font-weight:650; color:var(--teal-ink)}
-  .path .pick svg{width:16px;height:16px; transition:transform .18s ease}
+  .path .pick svg{width:16px; height:16px; transition:transform .18s ease}
   .path:hover .pick svg{transform:translateX(4px)}
 
   .guide{display:none; margin-top:30px; animation:rise .4s ease both}
   .guide.show{display:block}
   @keyframes rise{from{opacity:0; transform:translateY(14px)}to{opacity:1; transform:none}}
   .guide-head{text-align:center; margin-bottom:6px}
-  .guide-head h3{font-size:1.4rem}
+  .guide-head h3{font-size:1.4rem; font-weight:700; color:var(--ink); text-shadow:var(--glow-text)}
   .back{display:block; margin:0 auto 22px; color:var(--mut); background:none; border:0; cursor:pointer; font-size:.9rem; font-family:'JetBrains Mono',monospace}
   .back:hover{color:var(--ink)}
+  .guide > p{text-shadow:var(--glow-text)}
 
   .steps{display:grid; gap:14px; max-width:760px; margin:0 auto}
-  .step{display:flex; gap:16px; align-items:flex-start; border:1px solid var(--line); background:var(--bg2);
+  .step{display:flex; gap:16px; align-items:flex-start; background:var(--surface); box-shadow:var(--shadow);
     border-radius:14px; padding:18px 20px}
-  .num{flex:none; width:30px;height:30px;border-radius:50%; display:grid;place-items:center; font-weight:700;
-    background:var(--teal); color:#fff; font-family:'JetBrains Mono',monospace}
-  .step h4{font-size:1.02rem; margin-bottom:3px}
+  .num{flex:none; width:30px; height:30px; border-radius:50%; display:grid; place-items:center; font-weight:700;
+    background:var(--accent-fill); color:var(--on-accent); font-family:'JetBrains Mono',monospace}
+  .step h4{font-size:1.02rem; font-weight:700; margin-bottom:3px; color:var(--ink)}
   .step p{color:var(--mut); font-size:.92rem}
-  .step code{background:#fff; border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:.85em; font-family:'JetBrains Mono',monospace}
+  .step code{background:var(--field); box-shadow:inset 0 0 0 1px var(--line); border-radius:6px; padding:1px 6px; font-size:.85em; font-family:'JetBrains Mono',monospace}
 
   .boards{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); max-width:760px; margin:18px auto 0}
   @media(max-width:560px){.boards{grid-template-columns:1fr}}
-  .board{border:1px solid var(--line); background:var(--card); border-radius:14px; padding:18px; display:flex;
-    flex-direction:column; gap:10px; align-items:flex-start; box-shadow:0 8px 26px -22px rgba(21,24,30,.5)}
-  .board h4{font-size:1.02rem}
+  .board{background:var(--surface); border-radius:14px; padding:18px; display:flex;
+    flex-direction:column; gap:10px; align-items:flex-start; box-shadow:var(--shadow)}
+  .board h4{font-size:1.02rem; font-weight:700; color:var(--ink)}
   .board p{color:var(--mut); font-size:.86rem}
-  /* Per-board support-level badge + hover popover (same visual language as the hero pills). */
+  /* per-board support-level badge + hover popover (the hero pills' visual language) */
   .sup{position:relative; display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px;
     font-size:.72rem; font-weight:700; letter-spacing:.2px; cursor:default; width:max-content}
   .sup .dot{width:7px; height:7px; border-radius:50%; flex:none}
-  .sup.full{background:#e7f6ec; color:#1c7c3f; border:1px solid #bfe6cc}
-  .sup.full .dot{background:#27a35a}
-  .sup.part{background:#fdf3e4; color:#9a6410; border:1px solid #f0dcb4}
-  .sup.part .dot{background:#e3a127}
-  .sup .pop{position:absolute; top:calc(100% + 11px); left:0; transform:translateY(5px);
-    width:min(272px,80vw); background:#fff; border:1px solid var(--line); border-radius:12px; padding:13px 15px;
-    box-shadow:0 18px 44px -18px rgba(21,24,30,.32); text-align:left; font-size:.84rem; font-weight:400;
+  .sup.full{background:var(--ok-bg); color:var(--ok); box-shadow:inset 0 0 0 1px var(--ok-line)}
+  .sup.full .dot{background:var(--ok)}
+  .sup.part{background:var(--warn-bg); color:var(--warn); box-shadow:inset 0 0 0 1px var(--warn-line)}
+  .sup.part .dot{background:var(--warn)}
+  .sup .pop{position:absolute; top:calc(100% + 11px); left:0; transform:translateX(var(--dx,0px)) translateY(5px);
+    width:min(272px,80vw); background:var(--solid); border-radius:12px; padding:13px 15px;
+    box-shadow:inset 0 0 0 1px var(--line), var(--shadow); text-align:left; font-size:.84rem; font-weight:500;
     letter-spacing:0; line-height:1.5; color:var(--mut); opacity:0; visibility:hidden;
     transition:opacity .16s ease, transform .16s ease; z-index:20; cursor:default}
   .sup .pop b{display:block; color:var(--ink); margin-bottom:4px; font-size:.92rem}
-  .sup .pop::before{content:""; position:absolute; bottom:100%; left:18px; border:7px solid transparent; border-bottom-color:#fff}
-  .sup:hover .pop,.sup:focus .pop,.sup:focus-within .pop{opacity:1; visibility:visible; transform:translateY(0)}
-  esp-web-install-button{--esp-tools-button-color:var(--teal);--esp-tools-button-text-color:#fff}
-  .dl{display:inline-flex;align-items:center;gap:8px;background:var(--teal);color:#fff;border-radius:9px;
-    padding:9px 15px;font-weight:650;font-size:.9rem}
-  .dl:hover{background:var(--teal-ink)}
-  .dl svg{width:15px;height:15px}
-  .dl2{display:inline-block;margin-top:-2px;text-decoration:none;line-height:1.3}
-  .dl2 .dl2-row{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--teal);font-weight:700;white-space:nowrap}
+  .sup .pop::before{content:""; position:absolute; bottom:100%; left:calc(18px - var(--dx,0px)); border:7px solid transparent; border-bottom-color:var(--solid)}
+  .sup:hover .pop,.sup:focus .pop,.sup:focus-within .pop{opacity:1; visibility:visible; transform:translateX(var(--dx,0px)) translateY(0)}
+  esp-web-install-button{--esp-tools-button-color:var(--accent-fill); --esp-tools-button-text-color:var(--on-accent)}
+  .dl{display:inline-flex; align-items:center; gap:8px; background:var(--accent-fill); color:var(--on-accent); border-radius:9px;
+    padding:9px 15px; font-weight:650; font-size:.9rem}
+  .dl:hover{filter:brightness(1.12)}
+  .dl svg{width:15px; height:15px}
+  .dl2{display:inline-block; margin-top:-2px; text-decoration:none; line-height:1.3}
+  .dl2 .dl2-row{display:inline-flex; align-items:center; gap:6px; font-size:.85rem; color:var(--teal-ink); font-weight:700; white-space:nowrap}
   .dl2:hover .dl2-row{text-decoration:underline}
-  .dl2 svg{width:14px;height:14px;flex:none}
-  .dl2 .dlver{display:block;font-size:.72rem;color:var(--mut);font-weight:600;margin-top:2px;padding-left:20px;letter-spacing:.03em}
+  .dl2 svg{width:14px; height:14px; flex:none}
+  .dl2 .dlver{display:block; font-size:.72rem; color:var(--mut); font-weight:600; margin-top:2px; padding-left:20px; letter-spacing:.03em}
   .dl2 .dlver:empty{display:none}
-  .hint{max-width:760px;margin:18px auto 0;color:var(--mut);font-size:.86rem;text-align:center}
-  /* device selector — grouped by manufacturer, collapsible, searchable */
+  .hint{max-width:760px; margin:18px auto 0; color:var(--mut); font-size:.86rem; text-align:center}
+  /* device selector: grouped by manufacturer, collapsible, searchable */
   .devsel{max-width:840px; margin:20px auto 0}
   .devsearch{position:relative; max-width:460px; margin:0 auto 18px}
   .devsearch>svg{position:absolute; left:15px; top:50%; transform:translateY(-50%); width:17px; height:17px; color:var(--mut); pointer-events:none}
-  .devsearch input{width:100%; box-sizing:border-box; font:inherit; font-size:.95rem; padding:11px 42px; border:1px solid var(--line); border-radius:11px; background:#fff; color:var(--ink)}
+  .devsearch input{width:100%; box-sizing:border-box; font:inherit; font-size:.95rem; padding:11px 42px; border:1px solid var(--line); border-radius:11px; background:var(--field); color:var(--ink)}
+  .devsearch input::placeholder{color:var(--dim)}
   .devsearch input::-webkit-search-cancel-button{display:none}
-  .devsearch input:focus{outline:none; border-color:var(--teal); box-shadow:0 0 0 3px rgba(21,182,166,.15)}
-  .devsearch-x{position:absolute; right:8px; top:50%; transform:translateY(-50%); width:26px; height:26px; border:0; border-radius:50%; background:var(--bg2); color:var(--mut); font-size:1.15rem; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center}
-  .devsearch-x:hover{color:var(--ink); background:var(--line)}
+  .devsearch input:focus{outline:none; border-color:var(--teal); box-shadow:0 0 0 3px var(--accent-soft)}
+  .devsearch-x{position:absolute; right:8px; top:50%; transform:translateY(-50%); width:26px; height:26px; border:0; border-radius:50%; background:var(--control); color:var(--mut); font-size:1.15rem; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center}
+  .devsearch-x:hover{color:var(--ink); background:var(--control-hi)}
   .devsearch-empty{text-align:center; color:var(--mut); font-size:.9rem; margin:12px 0 0}
   .devsearch-empty button{font:inherit; font-size:.9rem; color:var(--teal-ink); background:none; border:0; padding:0; cursor:pointer; text-decoration:underline}
-  .mfr{border:1px solid var(--line); border-radius:14px; background:var(--bg2); margin:0 auto 12px; overflow:hidden}
+  .mfr{border-radius:14px; background:var(--bg2); box-shadow:inset 0 0 0 1px var(--hair); margin:0 auto 12px; overflow:hidden}
   .mfr[hidden]{display:none}
   .mfr>summary{list-style:none; cursor:pointer; user-select:none; display:flex; align-items:center; gap:11px; padding:15px 18px; font-weight:700; font-size:1.05rem; color:var(--ink)}
   .mfr>summary::-webkit-details-marker{display:none}
@@ -208,141 +297,202 @@
   .mfr-boards{max-width:none; margin:0; padding:2px 16px 18px}
   .board[hidden]{display:none}
   /* "install a previous version" picker */
-  .verpick{max-width:760px; margin:16px auto 0; border:1px solid var(--line); border-radius:12px; background:var(--bg2); text-align:left}
-  .verpick summary{cursor:pointer; padding:12px 16px; font-weight:600; font-size:.92rem; color:var(--ink); list-style:none; user-select:none}
+  .verpick{max-width:760px; margin:16px auto 0; border-radius:12px; background:var(--bg2); box-shadow:inset 0 0 0 1px var(--hair); text-align:left}
+  .verpick summary{cursor:pointer; padding:12px 16px; font-weight:650; font-size:.92rem; color:var(--ink); list-style:none; user-select:none}
   .verpick summary::-webkit-details-marker{display:none}
-  .verpick summary::before{content:"\25B8"; color:var(--teal); margin-right:9px; display:inline-block; transition:transform .15s}
+  .verpick summary::before{content:"\25B8"; color:var(--teal-ink); margin-right:9px; display:inline-block; transition:transform .15s}
   .verpick[open] summary::before{transform:rotate(90deg)}
   .verpick-body{padding:2px 16px 16px}
   .verpick-row{display:flex; align-items:center; gap:10px}
   .verpick-row label{font-size:.9rem; color:var(--mut)}
-  #verSel{font:inherit; font-size:.92rem; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:#fff; color:var(--ink); cursor:pointer}
+  #verSel{font:inherit; font-size:.92rem; padding:7px 11px; border:1px solid var(--line); border-radius:8px; background:var(--field); color:var(--ink); cursor:pointer}
   .verpick-note{margin:9px 0 0; font-size:.86rem; color:var(--teal-ink)}
   .rn{margin-top:12px; max-height:280px; overflow:auto; font-size:.88rem; color:var(--mut); line-height:1.55}
   .rn .rn-h{font-size:.92rem; color:var(--ink); font-weight:700; margin:13px 0 5px} .rn .rn-h:first-child{margin-top:0}
   .rn ul{margin:5px 0 0; padding-left:18px} .rn li{margin:3px 0}
-  .rn p{margin:6px 0} .rn code{background:#fff; border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:.86em}
+  .rn p{margin:6px 0} .rn code{background:var(--field); border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:.86em}
   .rn a{color:var(--teal-ink)}
-  .noserial{display:none;color:#b4631a;text-align:center;margin-top:14px}
+  .noserial{display:none; color:var(--warn); text-align:center; margin-top:14px}
   body.no-serial .noserial{display:block}
+  /* the release-channel switch (Stable / Beta): its colours are set by script */
+  .chtoggle{box-shadow:inset 0 0 0 1px var(--line)}
+  /* "what's new" is collapsed by default: a big release fills the page otherwise */
+  .wn{background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--news-line)}
+  .wn > summary{font-weight:650; cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px; padding:2px 0; color:var(--ink)}
+  .wn > summary::-webkit-details-marker{display:none}
+  .wn > summary::marker{content:""}
+  .wn > summary:focus-visible{outline:2px solid var(--teal); outline-offset:3px; border-radius:6px}
+  .wn .wn-caret{display:inline-block; color:var(--teal-ink); transition:transform .15s ease; flex:0 0 auto}
+  .wn[open] .wn-caret{transform:rotate(90deg)}
+  .wn .wn-count{color:var(--mut); font-weight:500}
+
+  /* T-Display P4: two questions pick the one image */
+  .p4q{display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:.82rem; color:var(--mut)}
+  .p4q > span{min-width:42px; font-weight:700; color:var(--ink)}
+  .seg{display:inline-flex; border-radius:9px; overflow:hidden; box-shadow:inset 0 0 0 1px var(--line)}
+  .seg button{font:inherit; font-size:.8rem; font-weight:650; padding:5px 11px; border:0; background:var(--control); color:var(--mut); cursor:pointer}
+  .seg button + button{box-shadow:inset 1px 0 0 var(--line)}
+  .seg button[aria-pressed="true"]{background:var(--accent-fill); color:var(--on-accent)}
+  .seg button:focus-visible{outline:2px solid var(--teal); outline-offset:-2px}
+  .p4help{color:var(--mut); font-size:.78rem; line-height:1.5; margin:0}
+  .p4help b{color:var(--ink2)}
+  .p4v{display:flex; flex-direction:column; gap:8px; align-items:flex-start}
+  .p4v[hidden]{display:none}
+  .p4v .p4lbl{color:var(--mut); font-size:.8rem; margin:2px 0 0}
+
+  /* flashing needs Chrome or Edge on a computer: say so before anyone picks a path */
+  .getpc{display:none; max-width:640px; margin:22px auto 0; padding:14px 18px; border-radius:14px;
+    background:var(--warn-bg); box-shadow:inset 0 0 0 1px var(--warn-line); color:var(--warn-text); font-size:.92rem; line-height:1.55; text-align:left}
+  .getpc b{color:var(--warn-ink)}
+  body.no-serial .getpc{display:block}
+  .getpc .row{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:10px}
+  .getpc code{background:var(--field); box-shadow:inset 0 0 0 1px var(--line); border-radius:7px; padding:4px 9px; font-family:'JetBrains Mono',ui-monospace,monospace;
+    font-size:.86rem; color:var(--ink); user-select:all; overflow-wrap:anywhere}
+  .getpc button{font:inherit; font-size:.86rem; font-weight:650; padding:5px 13px; border:0; border-radius:8px;
+    background:var(--control); color:var(--ink); box-shadow:inset 0 0 0 1px var(--warn-line); cursor:pointer}
+  .getpc .tm{margin-top:9px; font-size:.86rem}
+
+  /* questions */
+  .faq{max-width:760px; margin:26px auto 0; display:grid; gap:10px}
+  .faq details{border-radius:13px; background:var(--surface); box-shadow:var(--shadow)}
+  .faq summary{list-style:none; cursor:pointer; padding:15px 18px; font-weight:650; color:var(--ink); display:flex; align-items:baseline; gap:10px}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::marker{content:""}
+  .faq summary::before{content:"\25B8"; color:var(--teal-ink); transition:transform .15s; flex:none}
+  .faq details[open] summary::before{transform:rotate(90deg)}
+  .faq summary:focus-visible{outline:2px solid var(--teal); outline-offset:2px; border-radius:12px}
+  .faq .a{padding:0 18px 16px 39px; color:var(--mut); font-size:.94rem; line-height:1.6}
+  .faq .a b{color:var(--ink)}
+  .faq .a a:hover{text-decoration:underline}
+
+  /* docs, tools and help: tiles in the launcher's category colours */
+  .rescards{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); max-width:940px; margin:22px auto 0}
+  .rescard{border-radius:14px; background:var(--surface); padding:20px; color:var(--ink);
+    display:flex; flex-direction:column; gap:9px; align-items:flex-start;
+    box-shadow:var(--shadow); transition:transform .16s ease, box-shadow .16s ease}
+  .rescard:hover{transform:translateY(-2px); box-shadow:inset 0 0 0 1px var(--hue, var(--teal)), var(--shadow)}
+  .rescard .ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center; flex:none;
+    background:var(--accent-soft); background:color-mix(in srgb, var(--hue, var(--teal)) 14%, transparent); color:var(--hue, var(--teal-ink))}
+  .rescard .ico svg{width:20px; height:20px}
+  .rescard h4{font-size:1.02rem; font-weight:700; margin:2px 0 0; color:var(--ink)}
+  .rescard p{color:var(--mut); font-size:.88rem; line-height:1.55; margin:0}
+  .rescard .go{margin-top:auto; padding-top:6px; color:var(--teal-ink); font-weight:650; font-size:.88rem}
+  .rescard:hover .go{text-decoration:underline}
 
   /* community videos */
   .vids{display:grid; gap:18px; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); margin-top:34px}
-  .vid{border:1px solid var(--line); border-radius:16px; overflow:hidden; background:var(--card); box-shadow:0 12px 30px -22px rgba(21,24,30,.5)}
+  .vid{border-radius:16px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow)}
   .vid-thumb{position:relative; aspect-ratio:16/9; width:100%; border:0; padding:0; cursor:pointer; display:block; background-size:cover; background-position:center}
-  .vid-thumb::after{content:""; position:absolute; inset:0; background:rgba(21,24,30,.12); transition:background .15s}
-  .vid-thumb:hover::after{background:rgba(21,24,30,0)}
+  .vid-thumb::after{content:""; position:absolute; inset:0; background:rgba(0,0,0,.18); transition:background .15s}
+  .vid-thumb:hover::after{background:rgba(0,0,0,0)}
   .vid-thumb .play{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:62px; height:44px; border-radius:12px;
     background:rgba(229,57,53,.94); display:grid; place-items:center; z-index:1; transition:transform .15s, background .15s}
   .vid-thumb:hover .play{transform:translate(-50%,-50%) scale(1.07); background:#e53935}
   .vid-thumb .play svg{width:24px; height:24px; color:#fff}
   .vid-embed{aspect-ratio:16/9; width:100%; border:0; display:block; background:#000}
-  .vid-cap{padding:13px 15px; font-size:.92rem; color:var(--ink); font-weight:600}
-  .vid-cap span{display:block; color:var(--mut); font-size:.82rem; font-weight:400; margin-top:2px}
+  .vid-cap{padding:13px 15px; font-size:.92rem; color:var(--ink); font-weight:650}
+  .vid-cap span{display:block; color:var(--mut); font-size:.82rem; font-weight:500; margin-top:2px}
 
-  /* toast (docs placeholder etc.) */
+  /* toast */
   .toast{position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(12px); z-index:70;
-    background:var(--ink); color:#fff; padding:11px 20px; border-radius:100px; font-size:.92rem; font-weight:600;
-    box-shadow:0 16px 36px -14px rgba(21,24,30,.55); opacity:0; visibility:hidden; pointer-events:none;
+    background:var(--solid); color:var(--ink); padding:11px 20px; border-radius:100px; font-size:.92rem; font-weight:650;
+    box-shadow:inset 0 0 0 1px var(--line), var(--shadow); opacity:0; visibility:hidden; pointer-events:none;
     transition:opacity .2s ease, transform .2s ease}
   .toast.show{opacity:1; visibility:visible; transform:translateX(-50%) translateY(0)}
 
-  footer{border-top:1px solid var(--line); margin-top:48px; padding:30px 0 56px; text-align:center; color:var(--mut); font-size:.86rem}
+  footer{border-top:1px solid var(--line); margin-top:48px; padding:30px 0 56px; text-align:center; color:var(--mut); font-size:.86rem;
+    background:var(--bar); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px)}
   footer a{color:var(--teal-ink)}
   .legal-links{margin-top:12px}
   .legal-links a{color:var(--mut); cursor:pointer; margin:0 7px}
   .legal-links a:hover{color:var(--teal-ink)}
   .copyline{margin-top:8px; font-size:.82rem; color:var(--mut)}
-  .legal-ov{position:fixed; inset:0; background:rgba(21,24,30,.5); display:none; align-items:center; justify-content:center; z-index:60; padding:20px}
+  .legal-ov{position:fixed; inset:0; background:rgba(0,0,0,.6); display:none; align-items:center; justify-content:center; z-index:60; padding:20px}
   .legal-ov.show{display:flex}
-  .legal-modal{background:#fff; border:1px solid var(--line); border-radius:16px; max-width:640px; width:100%; max-height:84vh; display:flex; flex-direction:column; box-shadow:0 30px 80px -30px rgba(21,24,30,.55); text-align:left}
+  .legal-modal{background:var(--solid); border:1px solid var(--line); border-radius:16px; max-width:640px; width:100%; max-height:84vh; display:flex; flex-direction:column; box-shadow:var(--shadow); text-align:left}
   .legal-modal .mh{display:flex; align-items:center; justify-content:space-between; padding:17px 22px; border-bottom:1px solid var(--line)}
-  .legal-modal .mh h2{font-size:1.2rem}
+  .legal-modal .mh h2{font-size:1.2rem; font-weight:700; color:var(--ink)}
   .legal-modal .x{background:none; border:0; font-size:1.6rem; line-height:1; color:var(--mut); cursor:pointer}
-  .legal-modal .mb{padding:20px 22px; overflow-y:auto; color:#3a444d; font-size:.9rem; line-height:1.6; white-space:pre-wrap}
+  .legal-modal .mb{padding:20px 22px; overflow-y:auto; color:var(--ink2); font-size:.9rem; line-height:1.6; white-space:pre-wrap}
   .cookiebar{position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:55; display:none;
     align-items:center; gap:14px; flex-wrap:wrap; justify-content:center; width:min(700px,calc(100% - 28px));
-    background:#fff; border:1px solid var(--line); border-radius:14px; padding:13px 18px;
-    box-shadow:0 20px 50px -18px rgba(21,24,30,.4); font-size:.86rem; color:#3a444d; text-align:left}
+    background:var(--solid); border:1px solid var(--line); border-radius:14px; padding:13px 18px;
+    box-shadow:var(--shadow); font-size:.86rem; color:var(--ink2); text-align:left}
   .cookiebar.show{display:flex}
   .cookiebar a{color:var(--teal-ink); cursor:pointer}
-  .cookiebar button{background:var(--teal); color:#fff; border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none}
-
-/* Resources section: the four things people were only finding via the small
-   floating buttons on the right, which almost nobody noticed. Same icons, so
-   the rail still reads as a shortcut to these once you have seen them. */
-.rescards{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(215px,1fr));
-  max-width:940px; margin:22px auto 0}
-.rescard{border:1px solid var(--line); background:var(--card); border-radius:14px; padding:20px;
-  display:flex; flex-direction:column; gap:9px; align-items:flex-start;
-  box-shadow:0 8px 26px -22px rgba(21,24,30,.5); transition:transform .16s ease, box-shadow .16s ease}
-.rescard:hover{transform:translateY(-2px); box-shadow:0 16px 34px -22px rgba(21,24,30,.55)}
-.rescard .ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
-  background:rgba(21,182,166,.10); color:var(--teal); flex:none}
-.rescard .ico svg{width:20px; height:20px}
-.rescard h4{font-size:1.02rem; margin:2px 0 0}
-.rescard p{color:var(--mut); font-size:.88rem; line-height:1.55; margin:0}
-.rescard .go{margin-top:auto; padding-top:6px; color:var(--teal); font-weight:650; font-size:.88rem}
-.rescard:hover .go{text-decoration:underline}
-  /* "What's new" is collapsed by default: a big release fills the page otherwise. */
-  .wn > summary{font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:2px 0}
-  .wn > summary::-webkit-details-marker{display:none}      /* Safari/Chrome default triangle */
-  .wn > summary::marker{content:""}                        /* Firefox */
-  .wn > summary:focus-visible{outline:2px solid var(--teal);outline-offset:3px;border-radius:6px}
-  .wn .wn-caret{display:inline-block;color:var(--teal);transition:transform .15s ease;flex:0 0 auto}
-  .wn[open] .wn-caret{transform:rotate(90deg)}
-  .wn .wn-count{color:var(--mut);font-weight:400}
+  .cookiebar button{background:var(--accent-fill); color:var(--on-accent); border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none; font-family:inherit}
+  /* the way in, straight under the intro */
+  .cta-row{margin-top:26px}
+  .cta{display:inline-flex; align-items:center; gap:10px; padding:13px 26px; border-radius:100px;
+    background:var(--accent-fill); color:var(--on-accent); font-weight:700; font-size:1.02rem; text-shadow:none;
+    box-shadow:0 16px 36px -14px rgba(25,214,194,.6); transition:transform .15s, filter .15s}
+  .cta:hover, .cta:focus-visible{transform:translateY(-2px); filter:brightness(1.08); outline:none}
+  .cta:focus-visible{box-shadow:0 0 0 3px var(--bg), 0 0 0 5px var(--teal)}
+  .cta svg{width:19px; height:19px}
+  /* a soft dark scrim behind the hero text, so it reads on the brightest part of the sky */
+  header{position:relative; isolation:isolate}
+  header::before{content:""; position:absolute; z-index:-1; left:50%; top:20px; transform:translateX(-50%);
+    width:min(1080px,150vw); height:min(820px,96%); pointer-events:none;
+    background:radial-gradient(closest-side, rgba(0,0,0,.55), rgba(0,0,0,.32) 55%, rgba(0,0,0,0))}
+  :root[data-theme="light"] header::before{background:radial-gradient(closest-side, rgba(255,255,255,.6), rgba(255,255,255,.3) 55%, rgba(255,255,255,0))}
 </style>
+<link rel="stylesheet" href="theme.css?v=2">
+<script src="theme.js?v=2" defer></script>
 </head>
 <body>
-<div id="vanta-bg"></div>
 
 <!-- floating quick links -->
+<nav class="fab-wrap" aria-label="Quick links">
 <div class="fab-rail left">
-  <a class="fab" href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener" aria-label="Join us on Discord" title="Join us on Discord">
+  <a class="fab" style="--hue:var(--hue-place)" href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener" aria-label="Join us on Discord" title="Join us on Discord">
     <span class="ic"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.6 12.6 0 0 0-.617-1.249.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.369a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.2 14.2 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.927 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .079.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 0 0-.031-.029zM8.02 15.331c-1.182 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg></span>
     <span class="lb">Discord</span>
   </a>
-  <a class="fab" href="#videos" aria-label="Community videos" title="Community videos">
+  <a class="fab" style="--hue:var(--hue-bad)" href="#videos" aria-label="Community videos" title="Community videos">
     <span class="ic"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>
     <span class="lb">Videos</span>
   </a>
 </div>
 <div class="fab-rail right">
-  <a class="fab" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
+  <button type="button" class="fab" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode">
+    <span class="ic"><svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></span>
+    <span class="lb">Light mode</span>
+  </button>
+  <a class="fab" style="--hue:var(--hue-radio)" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener" aria-label="Report a bug on GitHub" title="Report a bug">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg></span>
     <span class="lb">Report a bug</span>
   </a>
-  <a class="fab" id="docsBtn" href="docs.html" aria-label="Documentation" title="Documentation">
+  <a class="fab" style="--hue:var(--hue-msg)" id="docsBtn" href="docs.html" aria-label="Documentation" title="Documentation">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
     <span class="lb">Docs</span>
   </a>
-  <a class="fab" id="sdkBtn" href="sdk.html" aria-label="Lua app SDK" title="Lua app SDK">
+  <a class="fab" style="--hue:var(--hue-sys)" id="sdkBtn" href="sdk.html" aria-label="Lua app SDK" title="Lua app SDK">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
     <span class="lb">Lua SDK</span>
   </a>
-  <a class="fab" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener" aria-label="Map tile downloader" title="Map tile downloader">
+  <a class="fab" style="--hue:var(--hue-place)" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener" aria-label="Map tile downloader" title="Map tile downloader">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg></span>
     <span class="lb">Map tiles</span>
   </a>
-  <a class="fab" href="https://files.wadamesh.com" target="_blank" rel="noopener" aria-label="USB Files: browse your device's storage" title="USB Files">
+  <a class="fab" style="--hue:var(--hue-sys)" href="https://files.wadamesh.com" target="_blank" rel="noopener" aria-label="USB Files: browse your device's storage" title="USB Files">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
     <span class="lb">USB Files</span>
   </a>
-  <a class="fab" href="beta.html" aria-label="Beta test matrix: which boards have been vouched for" title="Beta test matrix">
+  <a class="fab" style="--hue:var(--hue-device)" href="beta.html" aria-label="Beta test matrix: which boards have been vouched for" title="Beta test matrix">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
     <span class="lb">Test matrix</span>
   </a>
 </div>
+</nav>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <header>
   <div class="wrap">
     <a class="kicker" href="https://github.com/ALLFATHER-BV/wadamesh" target="_blank" rel="noopener">open source · GPL-3.0</a>
-    <p class="freeline">Free — as it should be</p>
+    <p class="freeline">Free, as it should be</p>
     <!-- wadamesh brand: mark + wordmark, flex-centered -->
     <div class="brand">
-      <svg class="mark" viewBox="0 0 180 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="wadamesh">
+      <svg class="mark" viewBox="0 0 180 120" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
         <defs>
           <filter id="wmGlow" x="-60%" y="-60%" width="220%" height="220%">
             <feGaussianBlur stdDeviation="1.5" result="b"/>
@@ -350,8 +500,8 @@
           </filter>
         </defs>
         <!-- transport trails -->
-        <path d="M10 60 L50 108 L90 60 L130 108 L170 60" stroke="#15181E" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M10 60 L50 12 L90 60 L130 12 L170 60" stroke="#15181E" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 60 L50 108 L90 60 L130 108 L170 60" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M10 60 L50 12 L90 60 L130 12 L170 60" stroke="currentColor" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
         <!-- signal packets travelling the trails -->
         <g class="wm-flow" filter="url(#wmGlow)">
           <path class="wm-bot" pathLength="100" d="M10 60 L50 108 L90 60 L130 108 L170 60"/>
@@ -370,48 +520,115 @@
         <!-- repeater nodes -->
         <g class="wm-nodes" fill="#15B6A6"><circle cx="10" cy="60" r="7"/><circle cx="90" cy="60" r="7"/><circle cx="170" cy="60" r="7"/><circle cx="50" cy="12" r="7"/><circle cx="130" cy="12" r="7"/><circle cx="50" cy="108" r="7"/><circle cx="130" cy="108" r="7"/></g>
       </svg>
-      <span class="word mono">WADA<span class="t">MESH</span></span>
+      <h1 class="word mono">WADA<span class="t">MESH</span></h1>
       <span class="byline">by meshcomod</span>
     </div>
-    <p class="lede">A real touchscreen UI for your mesh radio.</p>
-    <p class="sub">MeshCore MESHCOMOD firmware for the <b>LilyGo&nbsp;T-Deck</b>, <b>Heltec&nbsp;V4</b> and <b>Tanmatsu</b> — map, chat, channels and contacts on the device itself, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time.</p>
+    <p class="lede">The whole mesh, on the radio itself.</p>
+    <p class="sub">MeshCore firmware with chat, channels, contacts, a map and apps on the device itself, by touch, keyboard or trackball, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time. Runs on <a href="#devices">13 boards</a>, from the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> to the <b>Tanmatsu</b>.</p>
+    <div class="cta-row"><a class="cta" href="#install"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>Install WADAMESH</a></div>
     <div class="pills">
-      <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 7v13M15 4v13"/></svg>Offline map
-        <span class="pop"><b>Offline map</b>A real OpenStreetMap you can pan and zoom on the device. Pre-load tile packs to an SD card for fully offline use, or fetch over Wi-Fi — and see your contacts' GPS positions plotted on it.</span></span>
-      <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat &amp; channels
+      <span class="pill" tabindex="0" style="--hue:var(--hue-place)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 7v13M15 4v13"/></svg>Offline map
+        <span class="pop"><b>Offline map</b>A real OpenStreetMap you can pan and zoom on the device. Pre-load tile packs to an SD card for fully offline use, or fetch over Wi-Fi, and see your contacts' GPS positions plotted on it.</span></span>
+      <span class="pill" tabindex="0" style="--hue:var(--hue-msg)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat &amp; channels
         <span class="pop"><b>Chat &amp; channels</b>Direct messages and group channels with delivery receipts (✓/✓✓), unread badges and jump-to-latest, quick-replies, colour emoji, and an on-screen keyboard with accents.</span></span>
-      <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Contacts
-        <span class="pop"><b>Contacts</b>Add contacts manually or auto-discover them from adverts. Reset paths, run a route trace, read telemetry, and keep favourites — plus an ignore list for the noisy ones.</span></span>
-      <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>15 languages
+      <span class="pill" tabindex="0" style="--hue:var(--hue-msg)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Contacts
+        <span class="pop"><b>Contacts</b>Add contacts manually or auto-discover them from adverts. Reset paths, run a route trace, read telemetry, and keep favourites, plus an ignore list for the noisy ones.</span></span>
+      <span class="pill" tabindex="0" style="--hue:var(--hue-sys)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>15 languages
         <span class="pop"><b>15 languages</b>The whole UI in English, Dutch, German, French, Spanish, Italian, Brazilian Portuguese, Romanian, Hungarian, Czech, Russian, Ukrainian, Bulgarian, Serbian and Greek. Switch any time, with proper Cyrillic and Greek fonts.</span></span>
-      <span class="pill" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>Multi-transport
-        <span class="pop"><b>Multi-transport companion</b>It's a standalone touch device and a full companion radio at the same time — connect the MeshCore phone app or a web client over Bluetooth, Wi-Fi (TCP + WebSocket) or USB, all at once.</span></span>
+      <span class="pill" tabindex="0" style="--hue:var(--hue-device)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49M19.07 4.93a10 10 0 0 1 0 14.14M4.93 19.07a10 10 0 0 1 0-14.14"/></svg>Multi-transport
+        <span class="pop"><b>Multi-transport companion</b>It's a standalone device and a full companion radio at the same time: connect the MeshCore phone app or a web client over Bluetooth, Wi-Fi (TCP + WebSocket) or USB, all at once.</span></span>
     </div>
-    <div class="cue">↓ &nbsp;get it on your device</div>
+    <a class="relbadge" href="changelog.html" data-relbadge hidden>
+      <span class="rb-dot" aria-hidden="true"></span><span class="rp" data-relpart="latest">Stable <b data-rel="latest"></b></span><span class="rp" data-relpart="latest-beta">Test <b data-rel="latest-beta"></b></span><span class="rp rb-go">What's new</span>
+    </a>
+    <figure class="hero-shot">
+      <div class="devmock">
+        <div class="dm-screen" data-slides>
+          <img class="on" src="img/shot-home.png" width="320" height="240" data-cap="Home, arranged with widgets" alt="The WADAMESH Home screen: widgets for a channel, unread messages, sunrise and sunset, the clock and shortcuts, on the aurora">
+          <img data-src="img/shot-drawer.png" width="320" height="240" data-cap="The apps, in the Regular look" alt="The app drawer in the Regular look on the aurora" aria-hidden="true">
+          <img data-src="img/shot-channel.png?v=2" width="320" height="240" data-cap="A channel, with hop counts" alt="A channel conversation showing hop counts and the message composer" aria-hidden="true">
+          <img data-src="img/shot-map.png" width="320" height="240" data-cap="The map, with your contacts" alt="The map: contacts plotted on OpenStreetMap" aria-hidden="true">
+          <img data-src="img/shot-theme.png" width="320" height="240" data-cap="Settings, Theme" alt="The Theme page with its preview, Night and Day" aria-hidden="true">
+        </div>
+        <div class="dm-ball" aria-hidden="true"></div>
+        <div class="dm-keys" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="sp"></i><i></i><i></i></div>
+      </div>
+      <figcaption><span data-slide-cap>Home, arranged with widgets</span><span class="shotdots" role="group" aria-label="Choose a screen"></span></figcaption>
+    </figure>
+    <a class="cue" href="#install">↓ &nbsp;get it on your device</a>
   </div>
 </header>
+
+<section id="features">
+  <div class="wrap">
+    <h2 class="h2">On the device itself</h2>
+    <p class="p">No phone needed. Every picture here is a real screenshot from a T-Deck running WADAMESH.</p>
+    <div class="feats">
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-home.png" width="320" height="240" alt="Home with widgets"></div>
+        <figcaption><h3>Home, arranged by you</h3><p>Widgets for the clock, unread messages, the radio, GPS, the battery and the nodes heard, plus shortcuts to any app. Hold one to rearrange.</p></figcaption></figure>
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-channel.png?v=2" width="320" height="240" alt="A channel conversation"></div>
+        <figcaption><h3>Chats and channels</h3><p>Direct messages and channels with delivery receipts, hop counts, quick replies, colour emoji and a keyboard with accents.</p></figcaption></figure>
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-map.png" width="320" height="240" alt="The map with contacts"></div>
+        <figcaption><h3>A real map</h3><p>OpenStreetMap you pan and zoom on the device, with your contacts' positions on it. Put tiles on an SD card and it works with no Wi-Fi or data.</p></figcaption></figure>
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-theme.png" width="320" height="240" alt="The Theme page"></div>
+        <figcaption><h3>Your colours</h3><p>Night and Day modes, colour looks and backgrounds, all set on the device. Everything here is the Regular look on the aurora.</p></figcaption></figure>
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-screensaver.png" width="320" height="240" alt="The Constellation screensaver"></div>
+        <figcaption><h3>The mesh around you</h3><p>Instead of going dark, the screen can show your node in the middle and the nodes you have heard around it, at their real bearing when positions are known.</p></figcaption></figure>
+      <figure class="feat"><div class="feat-shot"><img loading="lazy" src="img/shot-spectrum.png" width="320" height="240" alt="The Spectrum tool"></div>
+        <figcaption><h3>Radio tools</h3><p>Signal, Discover and a spectrum view are built in. RF Monitor, Airtime and more come from the Store, and anyone can write one in Lua.</p></figcaption></figure>
+    </div>
+    <a class="more" href="docs.html">Every screen in the user guide &rarr;</a>
+  </div>
+</section>
+
+<section id="devices">
+  <div class="wrap">
+    <h2 class="h2">Runs on 13 boards</h2>
+    <p class="p">From keyboard handhelds to touch panels. Pick yours to jump straight to its installer.</p>
+    <div class="devgrid">
+      <a class="devtile" href="#standalone" data-find="t-deck plus"><span class="mk">LilyGo</span><b>T-Deck / Plus</b><span class="spec">Keyboard, trackball and touchscreen handheld.</span><span class="st"><span class="lvl full">Fully supported</span><span class="ch">Stable</span></span></a>
+      <a class="devtile" href="#standalone" data-find="heltec v4 tft"><span class="mk">Heltec</span><b>V4 + TFT</b><span class="spec">ESP32-S3 board with a touch display.</span><span class="st"><span class="lvl full">Fully supported</span><span class="ch">Stable</span></span></a>
+      <a class="devtile" href="#standalone" data-find="attaky"><span class="mk">Attaky</span><b>Attaky Core</b><span class="spec">ESP32-S3 with 16&nbsp;MB flash and 8&nbsp;MB PSRAM.</span><span class="st"><span class="lvl full">Fully supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="pager"><span class="mk">LilyGo</span><b>T-LoRa Pager</b><span class="spec">QWERTY and rotary encoder, LR1121 or SX1262 radio.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="t-display p4"><span class="mk">LilyGo</span><b>T-Display P4</b><span class="spec">ESP32-P4 touch handheld, AMOLED or LCD.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="m9"><span class="mk">Elecrow</span><b>ThinkNode M9</b><span class="spec">QWERTY handheld with an LR1110 radio.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="wismesh"><span class="mk">RAKwireless</span><b>WisMesh Tap V2</b><span class="spec">ESP32-S3 touch node.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="wio"><span class="mk">Seeed Studio</span><b>Wio Tracker L2</b><span class="spec">GPS and microSD, 8&nbsp;MB PSRAM.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="tanmatsu"><span class="mk">Nicolai Electronics</span><b>Tanmatsu</b><span class="spec">ESP32-P4 keyboard handheld.</span><span class="st"><span class="lvl part">Partially supported</span><span class="ch">App store</span></span></a>
+      <a class="devtile" href="#standalone" data-find="t-deck pro"><span class="mk">LilyGo</span><b>T-Deck Pro</b><span class="spec">E-paper keyboard handheld, V1.0 and V1.1.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="t-deck max"><span class="mk">LilyGo</span><b>T-Deck Max</b><span class="spec">E-paper keyboard and touch handheld.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="v4-r8"><span class="mk">Heltec</span><b>V4-R8</b><span class="spec">V4 with 8&nbsp;MB PSRAM and an SD card.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="crowpanel"><span class="mk">Elecrow</span><b>CrowPanel Advance 3.5</b><span class="spec">3.5-inch touch panel with an SX1262 module.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+    </div>
+  </div>
+</section>
 
 <section id="install">
   <div class="wrap">
     <h2 class="h2">Two ways to install</h2>
     <p class="p">Pick the path that fits how you like to use your device. You can switch later.</p>
+    <div class="getpc" role="note">
+      <b>Installing needs Chrome or Edge on a computer.</b> The firmware goes onto the board over a USB cable, and only those browsers let a web page do that. Open this page there:
+      <div class="row"><code>wadamesh.com/#install</code><button type="button" data-copyurl>Copy link</button></div>
+      <div class="tm">On a Tanmatsu, install WADAMESH from its app store instead.</div>
+    </div>
 
     <div class="paths">
-      <article class="path s" data-path="standalone" tabindex="0">
+      <article class="path s" data-path="standalone">
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></div>
         <h3>Standalone</h3>
-        <p>Just WADAMESH — the device boots straight into the touch UI.</p>
+        <p>Just WADAMESH: the device boots straight into it.</p>
         <div class="good">Best if you want the <b>simplest path</b>: flash once, from your browser, and you're done.</div>
-        <span class="pick">Choose standalone <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        <a class="pick" href="#standalone">Choose standalone <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
       </article>
 
-      <article class="path l" data-path="launcher" tabindex="0">
+      <article class="path l" data-path="launcher">
         <span class="tag">T-Deck only</span>
         <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></div>
         <h3>With Launcher</h3>
         <p>Run WADAMESH as one app inside <b>bmorcelli's Launcher</b> on the <b>LilyGo&nbsp;T-Deck</b>.</p>
-        <div class="good">Best if you want to <b>keep multiple firmwares</b> and switch between them from a menu. The <b>Heltec&nbsp;V4</b> installs Standalone only.</div>
-        <span class="pick">Choose Launcher <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span>
+        <div class="good">Best if you want to <b>keep multiple firmwares</b> and switch between them from a menu. Every other board installs Standalone.</div>
+        <a class="pick" href="#launcher">Choose Launcher <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
       </article>
     </div>
 
@@ -420,24 +637,24 @@
       <div class="guide-head"><h3>Standalone install</h3></div>
       <p class="p">Plug the device in over USB and flash it right here. Works in <b>Chrome</b> or <b>Edge</b> on desktop.</p>
       <div class="chtoggle" role="group" aria-label="Release channel" style="display:inline-flex;margin:14px 0 0;border:1px solid var(--line);border-radius:10px;overflow:hidden">
-        <button type="button" data-wm-ch="stable" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;background:#fff;color:var(--mut);cursor:pointer">Stable</button>
-        <button type="button" data-wm-ch="beta" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;border-left:1px solid var(--line);background:#fff;color:var(--mut);cursor:pointer">Beta · testing</button>
+        <button type="button" data-wm-ch="stable" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;background:var(--control);color:var(--mut);cursor:pointer">Stable</button>
+        <button type="button" data-wm-ch="beta" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;border-left:1px solid var(--line);background:var(--control);color:var(--mut);cursor:pointer">Beta · testing</button>
       </div>
       <p style="margin:12px auto 0;max-width:600px;text-align:left;font-size:.88rem;line-height:1.6"><b>Stable</b> is the tested default. Pick it unless you want to help test. <b>Beta &middot; testing</b> gets new features and fixes earlier, before they are proven, so it can be rough. It is for trying things early and reporting bugs.<br>Already running WADAMESH? You do not have to reflash to switch channels: turn on <b>Settings &rarr; About &rarr; "Get test builds (beta)"</b> on the device and it updates to test builds over Wi-Fi. Switch it off to go back to stable.<br>Testing a beta? Report from the device (Settings &rarr; About &rarr; "Send a test report") and it shows up on the <a href="beta.html">test matrix</a>, which is what the next stable is promoted on.</p>
-      <p data-wm-betahint hidden style="margin:8px auto 0;font-size:.84rem;color:#b4631a;max-width:560px">Beta builds are newer and less tested — for trying things early and reporting bugs. On a T-Deck under Launcher you download the .bin and side-load it.</p>
-      <details class="wn" data-whatsnew hidden style="margin:18px auto 0;max-width:560px;background:rgba(21,182,166,.07);border:1px solid rgba(21,182,166,.28);border-radius:12px;padding:13px 16px;text-align:left">
-        <summary><span class="wn-caret" aria-hidden="true">&#9656;</span><span>See what&rsquo;s new in <span data-wn-tag style="color:var(--teal)">the latest build</span><span data-wn-count class="wn-count"></span></span></summary>
+      <p data-wm-betahint hidden style="margin:8px auto 0;font-size:.84rem;color:var(--warn);max-width:560px">Beta builds are newer and less tested: for trying things early and reporting bugs. On a T-Deck under Launcher you download the .bin and side-load it.</p>
+      <details class="wn" data-whatsnew hidden style="margin:18px auto 0;max-width:560px;border-radius:12px;padding:13px 16px;text-align:left">
+        <summary><span class="wn-caret" aria-hidden="true">&#9656;</span><span>See what&rsquo;s new in <span data-wn-tag style="color:var(--teal-ink)">the latest build</span><span data-wn-count class="wn-count"></span></span></summary>
         <ul data-wn-notes style="margin:9px 0 0;padding-left:18px;font-size:.9rem;color:var(--mut);line-height:1.55"></ul>
       </details>
       <div class="steps" style="margin-top:22px">
-        <div class="step"><div class="num">1</div><div><h4>Connect over USB</h4><p>Plug your T-Deck or Heltec V4 into your computer with a data cable.</p></div></div>
+        <div class="step"><div class="num">1</div><div><h4>Connect over USB</h4><p>Plug your board into your computer with a USB data cable. Many cables only charge.</p></div></div>
         <div class="step"><div class="num">2</div><div><h4>Pick your board &amp; install</h4><p>Hit <b>Install</b> below, choose the serial port, and let it flash. It does a clean full install.</p></div></div>
         <div class="step"><div class="num">3</div><div><h4>You're on the mesh</h4><p>The device reboots into WADAMESH. Set your name + region in the first-run wizard.</p></div></div>
       </div>
       <div class="devsel" id="devsel">
         <div class="devsearch">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-3.6-3.6"/></svg>
-          <input type="search" id="devSearch" autocomplete="off" placeholder="Search by device or maker — T-Deck, Heltec, P4…" aria-label="Search devices">
+          <input type="search" id="devSearch" autocomplete="off" placeholder="Search by device or maker: T-Deck, Heltec, P4…" aria-label="Search devices">
           <button type="button" id="devClearX" class="devsearch-x" data-devclear hidden aria-label="Clear search">&times;</button>
         </div>
         <p class="devsearch-empty" data-devempty hidden>No devices match “<span data-devq></span>”. <button type="button" data-devclear>Clear search</button></p>
@@ -446,7 +663,7 @@
           <summary><span class="mfr-name">LilyGo</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
             <div class="board" data-search="lilygo t-deck tdeck plus esp32-s3 keyboard handheld"><h4>LilyGo T-Deck / Plus</h4><p>ESP32-S3 keyboard handheld.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release.</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here, tested on every release.</span></span>
               <esp-web-install-button id="inst-tdeck" manifest="https://firmware.wadamesh.com/latest/manifest-tdeck.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdeck" download href="https://firmware.wadamesh.com/latest/wadamesh-tdeck-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
             <div class="board" data-search="lilygo t-deck pro v1.0 v1 0 tdeck pro esp32-s3 e-paper epaper eink keyboard touch handheld gps sd experimental"><h4>LilyGo T-Deck Pro V1.0 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>Early PCB &middot; e-paper &middot; no frontlight. Check the board revision before flashing.</p>
@@ -464,37 +681,41 @@
               <esp-web-install-button id="inst-tdeck-max" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdeck-max.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="tdeck-max" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdeck-max-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Experimental and beta only. Please flash with care and report what works and what does not.</p></div>
-            <div class="board" data-search="lilygo t-display p4 tdisplay amoled rm69a10 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(AMOLED)</span></h4><p>ESP32-P4 &middot; AMOLED touch handheld. Pick the image matching the radio chip.</p>
+            <div class="board" data-search="lilygo t-display p4 tdisplay amoled rm69a10 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(AMOLED)</span></h4><p>ESP32-P4 &middot; AMOLED touch handheld. Two quick questions pick the right image.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The AMOLED + SX1262 model is hardware-tested. LR2021 support is compile-tested and needs device validation. Bluetooth pairing is unavailable; use Wi-Fi or USB for the phone-app link.</span></span>
-              <p style="color:var(--mut);font-size:.8rem;margin:0">Radio <b>SX1262</b>:</p>
-              <esp-web-install-button id="inst-tdp4" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdisplay-p4.json"></esp-web-install-button>
-              <a class="dl2" data-dl-board="tdisplay-p4" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdisplay-p4-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
-              <esp-web-install-button id="inst-tdp4-lr2021"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-ver"></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:12px 0 0"><b>Wi-Fi never works</b> with the image above? Your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT). Use the matching image below instead: it brings Wi-Fi back.</p>
-              <p style="color:var(--mut);font-size:.8rem;margin:6px 0 0">Radio <b>SX1262</b>, factory Wi-Fi chip:</p>
-              <esp-web-install-button id="inst-tdp4-at"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-at-ver"></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>, factory Wi-Fi chip:</p>
-              <esp-web-install-button id="inst-tdp4-lr2021-at"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-at-ver"></span></a>
+              <div class="p4q"><span>Radio</span><div class="seg" role="group" aria-label="Radio chip"><button type="button" data-p4-radio="sx1262" aria-pressed="true">SX1262</button><button type="button" data-p4-radio="lr2021" aria-pressed="false">LR2021</button></div></div>
+              <div class="p4q"><span>Wi-Fi</span><div class="seg" role="group" aria-label="Wi-Fi after installing"><button type="button" data-p4-wifi="hosted" aria-pressed="true">Works</button><button type="button" data-p4-wifi="at" aria-pressed="false">Never connects</button></div></div>
+              <p class="p4help">The radio is the option you picked when you ordered. Not sure about Wi-Fi? Start with <b>Works</b>. If Wi-Fi then never connects, your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT): pick <b>Never connects</b> and install that image, it brings Wi-Fi back.</p>
+              <div class="p4v" data-radio="sx1262" data-wifi="hosted"><p class="p4lbl">SX1262 radio</p>
+                <esp-web-install-button id="inst-tdp4" manifest="https://firmware.wadamesh.com/latest-beta/manifest-tdisplay-p4.json"></esp-web-install-button>
+                <a class="dl2" data-dl-board="tdisplay-p4" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-tdisplay-p4-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
+              <div class="p4v" data-radio="lr2021" data-wifi="hosted" hidden><p class="p4lbl">LR2021 radio</p>
+                <esp-web-install-button id="inst-tdp4-lr2021"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-ver"></span></a></div>
+              <div class="p4v" data-radio="sx1262" data-wifi="at" hidden><p class="p4lbl">SX1262 radio, factory Wi-Fi chip</p>
+                <esp-web-install-button id="inst-tdp4-at"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-at-ver"></span></a></div>
+              <div class="p4v" data-radio="lr2021" data-wifi="at" hidden><p class="p4lbl">LR2021 radio, factory Wi-Fi chip</p>
+                <esp-web-install-button id="inst-tdp4-lr2021-at"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lr2021-at-ver"></span></a></div>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board: beta channel only until the next stable.</p></div>
-            <div class="board" data-search="lilygo t-display p4 tdisplay lcd tft hi8561 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(LCD)</span></h4><p>ESP32-P4 &middot; TFT-LCD touch handheld. Pick the image matching the radio chip.</p>
+            <div class="board" data-search="lilygo t-display p4 tdisplay lcd tft hi8561 esp32-p4 sx1262 lr2021 touch handheld"><h4>LilyGo T-Display P4 <span style="font-weight:600;color:var(--mut)">(LCD)</span></h4><p>ESP32-P4 &middot; TFT-LCD touch handheld. Two quick questions pick the right image.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>Both LCD radio variants are compile-tested and need hardware validation. Bluetooth pairing is unavailable; use Wi-Fi or USB for the phone-app link.</span></span>
-              <p style="color:var(--mut);font-size:.8rem;margin:0">Radio <b>SX1262</b>:</p>
-              <esp-web-install-button id="inst-tdp4-lcd"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lcd" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-ver"></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>:</p>
-              <esp-web-install-button id="inst-tdp4-lcd-lr2021"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lcd-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-ver"></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:12px 0 0"><b>Wi-Fi never works</b> with the image above? Your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT). Use the matching image below instead: it brings Wi-Fi back.</p>
-              <p style="color:var(--mut);font-size:.8rem;margin:6px 0 0">Radio <b>SX1262</b>, factory Wi-Fi chip:</p>
-              <esp-web-install-button id="inst-tdp4-lcd-at"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lcd-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-at-ver"></span></a>
-              <p style="color:var(--mut);font-size:.8rem;margin:8px 0 0">Radio <b>LR2021</b>, factory Wi-Fi chip:</p>
-              <esp-web-install-button id="inst-tdp4-lcd-lr2021-at"></esp-web-install-button>
-              <a class="dl2" id="dl-tdp4-lcd-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-at-ver"></span></a>
+              <div class="p4q"><span>Radio</span><div class="seg" role="group" aria-label="Radio chip"><button type="button" data-p4-radio="sx1262" aria-pressed="true">SX1262</button><button type="button" data-p4-radio="lr2021" aria-pressed="false">LR2021</button></div></div>
+              <div class="p4q"><span>Wi-Fi</span><div class="seg" role="group" aria-label="Wi-Fi after installing"><button type="button" data-p4-wifi="hosted" aria-pressed="true">Works</button><button type="button" data-p4-wifi="at" aria-pressed="false">Never connects</button></div></div>
+              <p class="p4help">The radio is the option you picked when you ordered. Not sure about Wi-Fi? Start with <b>Works</b>. If Wi-Fi then never connects, your unit's Wi-Fi chip still runs LilyGo's factory firmware (ESP-AT): pick <b>Never connects</b> and install that image, it brings Wi-Fi back.</p>
+              <div class="p4v" data-radio="sx1262" data-wifi="hosted"><p class="p4lbl">SX1262 radio</p>
+                <esp-web-install-button id="inst-tdp4-lcd"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lcd" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-ver"></span></a></div>
+              <div class="p4v" data-radio="lr2021" data-wifi="hosted" hidden><p class="p4lbl">LR2021 radio</p>
+                <esp-web-install-button id="inst-tdp4-lcd-lr2021"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lcd-lr2021" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-ver"></span></a></div>
+              <div class="p4v" data-radio="sx1262" data-wifi="at" hidden><p class="p4lbl">SX1262 radio, factory Wi-Fi chip</p>
+                <esp-web-install-button id="inst-tdp4-lcd-at"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lcd-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-at-ver"></span></a></div>
+              <div class="p4v" data-radio="lr2021" data-wifi="at" hidden><p class="p4lbl">LR2021 radio, factory Wi-Fi chip</p>
+                <esp-web-install-button id="inst-tdp4-lcd-lr2021-at"></esp-web-install-button>
+                <a class="dl2" id="dl-tdp4-lcd-lr2021-at" download><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" id="dl-tdp4-lcd-lr2021-at-ver"></span></a></div>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New screen variant, not yet hardware-tested, beta only. Flash with care and report back.</p></div>
             <div class="board" data-search="lilygo t-lora pager tlora esp32-s3 qwerty rotary encoder lr1121 sx1262"><h4>LilyGo T-LoRa Pager</h4><p>ESP32-S3 QWERTY + rotary encoder.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>New community port (thanks @codemonkeybr). The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. Pick the build that matches your radio chip.</span></span>
@@ -512,14 +733,14 @@
           <summary><span class="mfr-name">Heltec</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
             <div class="board" data-search="heltec v4 tft esp32-s3 chsc6x touch"><h4>Heltec V4 + TFT</h4><p>ESP32-S3 with CHSC6x touch.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release.</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here, tested on every release.</span></span>
               <esp-web-install-button id="inst-heltec" manifest="https://firmware.wadamesh.com/latest/manifest-heltec-v4-tft.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="heltec-v4-tft" download href="https://firmware.wadamesh.com/latest/wadamesh-heltec-v4-tft-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a></div>
             <div class="board" data-search="heltec v4-r8 v4 r8 esp32-s3 psram sd card experimental"><h4>Heltec V4-R8 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>ESP32-S3 &middot; 8&nbsp;MB PSRAM &middot; SD card.</p>
-              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. This revision is still being hardware-verified — flash with care and report back.</span></span>
+              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link. This revision is still being hardware-verified, so flash with care and report back.</span></span>
               <esp-web-install-button id="inst-v4r8" manifest="https://firmware.wadamesh.com/latest-beta/manifest-heltec-v4-r8-tft.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="heltec-v4-r8-tft" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-heltec-v4-r8-tft-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
-              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board, not yet hardware-tested &mdash; beta only. Please flash with care and report back.</p></div>
+              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">New board, not yet hardware-tested, beta only. Please flash with care and report back.</p></div>
           </div>
         </details>
 
@@ -555,7 +776,7 @@
           <div class="boards mfr-boards">
             <div class="board" data-search="nicolai electronics tanmatsu esp32-p4 keyboard handheld app store"><h4>Tanmatsu</h4><p>ESP32-P4 keyboard handheld.</p>
               <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Partially supported</b>The core works: LoRa mesh communication, chat, contacts, channels and the phone-app link over Wi-Fi/USB. Some features are still settling on this board (Bluetooth pairing has known gaps).</span></span>
-              <p style="color:var(--mut);font-size:.84rem;margin:0;line-height:1.5">Already have one? No USB flashing needed — install WADAMESH straight from the <b>Tanmatsu app store</b> on the device.</p>
+              <p style="color:var(--mut);font-size:.84rem;margin:0;line-height:1.5">Already have one? No USB flashing needed: install WADAMESH straight from the <b>Tanmatsu app store</b> on the device.</p>
               <a class="dl" href="https://shop.nicolaielectronics.nl/" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>Get a Tanmatsu</a></div>
           </div>
         </details>
@@ -564,7 +785,7 @@
           <summary><span class="mfr-name">Attaky</span><span class="mfr-count"></span><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg></summary>
           <div class="boards mfr-boards">
             <div class="board" data-search="attaky core esp32-s3 psram experimental"><h4>Attaky Core</h4><p>ESP32-S3 &middot; 16&nbsp;MB &middot; 8&nbsp;MB PSRAM.</p>
-              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here — tested on every release. Contributed by the community (PR #158).</span></span>
+              <span class="sup full" tabindex="0"><span class="dot"></span>Fully supported<span class="pop"><b>Fully supported</b>Everything wadamesh offers works here, tested on every release. Contributed by the community (PR #158).</span></span>
               <esp-web-install-button id="inst-attaky" manifest="https://firmware.wadamesh.com/latest-beta/manifest-attaky.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="attaky" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-attaky-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta channel only until the next stable.</p></div>
@@ -589,31 +810,48 @@
           <div id="verNotes" class="rn"></div>
         </div>
       </details>
-      <div class="noserial">Your browser can't flash here — use <b>Chrome</b> or <b>Edge</b> on a desktop.</div>
+      <div class="noserial">Your browser can't flash here: use <b>Chrome</b> or <b>Edge</b> on a computer.</div>
       <p class="hint">T-Deck not detected? Hold the trackball while tapping reset to force download mode.</p>
     </div>
 
     <div class="guide l" id="g-launcher">
       <button class="back" data-back>← choose a different path</button>
       <div class="guide-head"><h3>Install with bmorcelli's Launcher</h3></div>
-      <p class="p"><a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">Launcher</a> is a multi-app boot menu for ESP32 devices — keep it, and run WADAMESH as one of your apps.</p>
-      <p class="p" style="margin-top:10px"><b>This path is for the LilyGo&nbsp;T-Deck only.</b> On the Heltec&nbsp;V4, install <a href="#standalone" onclick="choose('standalone');return false">Standalone</a> instead.</p>
+      <p class="p"><a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">Launcher</a> is a multi-app boot menu for ESP32 devices: keep it, and run WADAMESH as one of your apps.</p>
+      <p class="p" style="margin-top:10px"><b>This path is for the LilyGo&nbsp;T-Deck only.</b> On any other board, install <a href="#standalone" onclick="choose('standalone');return false">Standalone</a> instead.</p>
       <div class="chtoggle" role="group" aria-label="Release channel" style="display:inline-flex;margin:14px 0 0;border:1px solid var(--line);border-radius:10px;overflow:hidden">
-        <button type="button" data-wm-ch="stable" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;background:#fff;color:var(--mut);cursor:pointer">Stable</button>
-        <button type="button" data-wm-ch="beta" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;border-left:1px solid var(--line);background:#fff;color:var(--mut);cursor:pointer">Beta · testing</button>
+        <button type="button" data-wm-ch="stable" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;background:var(--control);color:var(--mut);cursor:pointer">Stable</button>
+        <button type="button" data-wm-ch="beta" style="font:inherit;font-size:.85rem;font-weight:600;padding:7px 16px;border:0;border-left:1px solid var(--line);background:var(--control);color:var(--mut);cursor:pointer">Beta · testing</button>
       </div>
       <p style="margin:8px auto 0;max-width:560px;font-size:.84rem;color:var(--mut)"><b>Stable</b> is the tested default; <b>Beta</b> gets new builds earlier. The download below follows this choice.</p>
       <div class="steps" style="margin-top:22px">
-        <div class="step"><div class="num">1</div><div><h4>Install Launcher first</h4><p>Flash bmorcelli's Launcher to your device, following its own installer — <a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">bmorcelli.github.io/Launcher</a>.</p></div></div>
+        <div class="step"><div class="num">1</div><div><h4>Install Launcher first</h4><p>Flash bmorcelli's Launcher to your device, following its own installer at <a href="https://bmorcelli.github.io/Launcher/" target="_blank" rel="noopener">bmorcelli.github.io/Launcher</a>.</p></div></div>
         <div class="step"><div class="num">2</div><div><h4>Add the WADAMESH app</h4><p>Grab the WADAMESH <b>app image</b> for your board below, then install it from Launcher (via its web UI / OTA, or copy the <code>.bin</code> to your SD card).</p></div></div>
         <div class="step"><div class="num">3</div><div><h4>Launch WADAMESH</h4><p>Pick WADAMESH from the Launcher menu. Settings persist to SD, so they survive Launcher's slim partition.</p></div></div>
       </div>
       <div class="boards" style="grid-template-columns:1fr; max-width:380px">
         <div class="board"><h4>LilyGo T-Deck / Plus</h4><p>app image (no bootloader)</p>
           <a class="dl" id="dl-tdeck" download href="https://firmware.wadamesh.com/latest/wadamesh-tdeck.bin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</a>
-          <p style="margin:11px 0 0;font-size:.84rem;color:var(--mut);line-height:1.5">You're downloading version <b data-wn-tag style="color:var(--teal)">…</b><span data-wm-chlabel></span>.<br>The file saves as <code data-dl-fname style="font-size:.82em">wadamesh-tdeck.bin</code> — rename it if you keep several.</p></div>
+          <p style="margin:11px 0 0;font-size:.84rem;color:var(--mut);line-height:1.5">You're downloading version <b data-wn-tag style="color:var(--teal-ink)">…</b><span data-wm-chlabel></span>.<br>The file saves as <code data-dl-fname style="font-size:.82em">wadamesh-tdeck.bin</code>; rename it if you keep several.</p></div>
       </div>
-      <p class="hint">New to Launcher? It's the easiest way to try WADAMESH without giving up your other firmware — and you can fully switch to Standalone any time.</p>
+      <p class="hint">New to Launcher? It's the easiest way to try WADAMESH without giving up your other firmware, and you can fully switch to Standalone any time.</p>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2 class="h2">Questions</h2>
+    <div class="faq">
+      <details><summary>Is it really free?</summary><div class="a">Yes. WADAMESH is open source under GPL-3.0: no licence key and nothing locked. The code is on <a href="https://github.com/ALLFATHER-BV/wadamesh" target="_blank" rel="noopener">GitHub</a>.</div></details>
+      <details><summary>Does it work with the MeshCore app?</summary><div class="a">Yes. The device can be the radio for the official MeshCore app on your phone (iOS and Android) over Bluetooth, Wi-Fi or USB, while you keep using it on its own. On the T-Display P4, Bluetooth pairing isn't available yet and on the Tanmatsu it has known gaps, so use Wi-Fi or USB there.</div></details>
+      <details><summary>Will I keep my identity, contacts and channels?</summary><div class="a">Updating from the device keeps everything. A fresh install from this page can erase what is on the board, so make a backup first: <b>Settings &rarr; Backups &rarr; Export backup</b> saves your whole setup, including your node's identity, to the SD card when one is in. Without a card it stays on the board, so copy it off first with <a href="https://files.wadamesh.com" target="_blank" rel="noopener">USB Files</a>. <b>Restore</b> on the same page brings it back.</div></details>
+      <details><summary>How do I update later?</summary><div class="a">From the device. When a new build is out, <b>Settings &rarr; About</b> shows it and <b>Install update</b> flashes it over Wi-Fi, no computer needed. A T-Deck under Launcher updates through Launcher, and the Tanmatsu through its app store.</div></details>
+      <details><summary>Stable or Beta?</summary><div class="a"><b>Stable</b> is the tested build and the default. <b>Beta</b> gets new features and fixes first and can be rough: it is for trying things early and reporting bugs. Switch any time on the device with <b>Settings &rarr; About &rarr; Get test builds (beta)</b>.</div></details>
+      <details><summary>Why can't I install from my phone?</summary><div class="a">The firmware goes onto the board over a USB cable, and only Chrome and Edge on a computer let a web page do that. Open wadamesh.com on a computer. A Tanmatsu installs WADAMESH from its own app store.</div></details>
+      <details><summary>My board isn't detected</summary><div class="a">Try another cable first: many USB cables only charge. Close anything else using the port, such as a serial monitor or another tab, then put the board in download mode. On a T-Deck, hold the trackball while you tap reset.</div></details>
+      <details><summary>Can I go back to the original firmware?</summary><div class="a">Yes, nothing is locked. Flash stock MeshCore the same way from the official <a href="https://flasher.meshcore.io/" target="_blank" rel="noopener">MeshCore web flasher</a>, or your board maker's own firmware.</div></details>
+      <details><summary>Where do I get help?</summary><div class="a">Ask on <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a>, read the <a href="docs.html">user guide</a>, or <a href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">open an issue</a> with your board and what you did.</div></details>
     </div>
   </div>
 </section>
@@ -621,52 +859,52 @@
 <section id="resources">
   <div class="wrap">
     <h2 class="h2">Docs, tools and help</h2>
-    <p class="p">Everything past the install. These are also the small buttons on the right of the screen.</p>
+    <p class="p">Everything past the install. The round buttons at the edge of the page lead here too.</p>
     <div class="rescards">
 
-      <a class="rescard" href="docs.html">
+      <a class="rescard" style="--hue:var(--hue-msg)" href="docs.html">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v5h5"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg></span>
         <h4>User guide</h4>
         <p>Every screen explained, from first boot and adding contacts through channels, room servers, the map and the settings that matter.</p>
         <span class="go">Read the guide</span>
       </a>
 
-      <a class="rescard" href="sdk.html">
+      <a class="rescard" style="--hue:var(--hue-sys)" href="sdk.html">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg></span>
         <h4>Lua app SDK</h4>
         <p>Write your own apps. They install from the Store on the device and sit next to the built-ins. One file, no toolchain, no firmware build.</p>
         <span class="go">Build an app</span>
       </a>
 
-      <a class="rescard" href="tanmatsu.html">
+      <a class="rescard" style="--hue:var(--hue-device)" href="tanmatsu.html">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg></span>
         <h4>Tanmatsu sideload</h4>
         <p>Building wadamesh yourself and running it on a Tanmatsu, where it installs as an app under the launcher rather than as standalone firmware.</p>
         <span class="go">Read the guide</span>
       </a>
 
-      <a class="rescard" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener">
+      <a class="rescard" style="--hue:var(--hue-place)" href="https://t413.com/p/projects/MapTileDl/" target="_blank" rel="noopener">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3z"/><path d="M9 3v15"/><path d="M15 6v15"/></svg></span>
         <h4>Offline map tiles</h4>
         <p>Download the area you care about to the SD card so the map works with no Wi-Fi and no data, which is the point of carrying a mesh radio.</p>
         <span class="go">Get map tiles</span>
       </a>
 
-      <a class="rescard" href="https://files.wadamesh.com" target="_blank" rel="noopener">
+      <a class="rescard" style="--hue:var(--hue-sys)" href="https://files.wadamesh.com" target="_blank" rel="noopener">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></span>
         <h4>USB Files</h4>
         <p>Your device's SD card and internal storage in the browser, over the USB cable: upload map tiles, download backups and screenshots, clear out old files. Open USB Files on the device, then connect from Chrome or Edge.</p>
         <span class="go">Open USB Files</span>
       </a>
 
-      <a class="rescard" href="beta.html">
+      <a class="rescard" style="--hue:var(--hue-device)" href="beta.html">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
         <h4>Beta test matrix</h4>
         <p>Which boards have been vouched for on the current test build, and what is still holding up the next stable release. Running a beta? Report from the device in two taps and your board joins the table.</p>
         <span class="go">See the matrix</span>
       </a>
 
-      <a class="rescard" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">
+      <a class="rescard" style="--hue:var(--hue-bad)" href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">
         <span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="8" height="14" x="8" y="6" rx="4"/><path d="m19 7-3 2"/><path d="m5 7 3 2"/><path d="m19 19-3-2"/><path d="m5 19 3-2"/><path d="M20 13h-4"/><path d="M4 13h4"/><path d="m10 4 1 2"/><path d="m14 4-1 2"/></svg></span>
         <h4>Bugs and requests</h4>
         <p>Report anything broken or ask for a feature on GitHub. Reports with a board name and what you did get fixed fastest, and plenty already have.</p>
@@ -703,7 +941,7 @@
 </div>
 
 <div class="cookiebar" id="cookiebar">
-  <span>This site uses only <b>essential cookies</b> (via Cloudflare) to stay secure and online — no tracking, no analytics. <a data-legal="cookies">Cookie&nbsp;Policy</a></span>
+  <span>This site uses only <b>essential cookies</b> (via Cloudflare) to stay secure and online: no tracking, no analytics. <a data-legal="cookies">Cookie&nbsp;Policy</a></span>
   <button id="cookieok">Got it</button>
 </div>
 
@@ -727,6 +965,9 @@
     document.getElementById('install').scrollIntoView({behavior:'smooth'});
     history.replaceState(null,'','#install');
   }));
+  // the "Choose ..." links are real links for keyboards and screen readers; the card's
+  // own click handler does the choosing, so the link only must not jump
+  document.querySelectorAll('.path .pick').forEach(a => a.addEventListener('click', e => e.preventDefault()));
   if (location.hash === '#standalone' || location.hash === '#launcher') choose(location.hash.slice(1));
 
   // feature-pill popovers: hover handled by CSS; tap-toggle for touch
@@ -741,39 +982,39 @@
   // ---- legal (Privacy / Cookies / Terms) + essential-cookie notice ----
   const LEGAL = {
     privacy: { t:'Privacy Policy', c:
-`Effective: June 13, 2026
+`Effective: October 9, 2026
 
 This Privacy Policy describes how ALLFATHER BV ("we", "us") processes personal data when you use the wadamesh website and Web Flasher at wadamesh.com (the "Site"). We act as the data controller under the GDPR.
 
-Company & Contact — ALLFATHER BV — KBO/Company No. BE 0791.469.718, Bijvoordestraat 3, 3370 Boutersem, Belgium. Contact: hey@allfather.io.
+Company & Contact: ALLFATHER BV, KBO/Company No. BE 0791.469.718, Bijvoordestraat 3, 3370 Boutersem, Belgium. Contact: hey@allfather.io.
 
-What We Collect — The Site runs primarily in your browser. The Web Flasher fetches firmware over HTTPS from our servers (firmware.wadamesh.com) and flashes it to your device via Web Serial — the flashing happens directly between your browser and your hardware. We do not collect account data or personal identifiers. Our servers and CDN/security provider (Cloudflare) may process technical and log data such as your IP address and timestamps for security and operation, on the basis of legitimate interests (Art. 6(1)(f)). The Site also loads web fonts from Google Fonts and a script library (esp-web-tools) from a public CDN; to deliver those resources your IP address is transmitted to those providers. The firmware's map feature fetches tiles via our proxy from OpenStreetMap.
+What We Collect: The Site runs primarily in your browser. The Web Flasher fetches firmware over HTTPS from our servers (firmware.wadamesh.com) and flashes it to your device via Web Serial; the flashing happens directly between your browser and your hardware. We do not collect account data or personal identifiers. Our servers and CDN/security provider (Cloudflare) may process technical and log data such as your IP address and timestamps for security and operation, on the basis of legitimate interests (Art. 6(1)(f)). The Site also loads web fonts from Google Fonts; to deliver them, your IP address is transmitted to Google. The firmware's map feature fetches tiles via our proxy from OpenStreetMap.
 
-Purposes & Legal Bases — Providing the Site (downloads, flashing, information): necessary to offer the service. Security and integrity: legitimate interests (Art. 6(1)(f)). Legal obligations: compliance with law (Art. 6(1)(c)).
+Purposes & Legal Bases: Providing the Site (downloads, flashing, information): necessary to offer the service. Security and integrity: legitimate interests (Art. 6(1)(f)). Legal obligations: compliance with law (Art. 6(1)(c)).
 
-Your Rights — Under the GDPR you have rights to access, rectify, erase, restrict, object to processing, and data portability. Exercise them by emailing hey@allfather.io. You can lodge a complaint with the Belgian Data Protection Authority (GBA): gegevensbeschermingsautoriteit.be.
+Your Rights: Under the GDPR you have rights to access, rectify, erase, restrict, object to processing, and data portability. Exercise them by emailing hey@allfather.io. You can lodge a complaint with the Belgian Data Protection Authority (GBA): gegevensbeschermingsautoriteit.be.
 
-Changes — We may update this Policy and will post a new effective date where appropriate.` },
+Changes: We may update this Policy and will post a new effective date where appropriate.` },
     cookies: { t:'Cookie Policy', c:
 `Effective: June 13, 2026
 
 This Cookie Policy explains how the wadamesh website and Web Flasher, operated by ALLFATHER BV, use cookies and similar technologies.
 
-We use no tracking, analytics, or advertising cookies. Our CDN and security provider (Cloudflare) may set strictly-necessary cookies to keep the Site secure and available; these do not profile you or track you across other sites. We store your acceptance of the cookie notice in your browser's local storage so we don't ask again. That's it — no profiling.` },
+We use no tracking, analytics, or advertising cookies. Our CDN and security provider (Cloudflare) may set strictly-necessary cookies to keep the Site secure and available; these do not profile you or track you across other sites. We store your acceptance of the cookie notice in your browser's local storage so we don't ask again. That's it: no profiling.` },
     terms: { t:'Terms of Service', c:
 `These Terms of Service ("Terms") govern your access to and use of the wadamesh website and Web Flasher (the "Tools"), operated by ALLFATHER BV ("we", "us"). By using the Tools, you agree to these Terms.
 
-1. Company — ALLFATHER BV — KBO/Company No. BE 0791.469.718, Bijvoordestraat 3, 3370 Boutersem, Belgium. Contact: hey@allfather.io.
+1. Company: ALLFATHER BV, KBO/Company No. BE 0791.469.718, Bijvoordestraat 3, 3370 Boutersem, Belgium. Contact: hey@allfather.io.
 
-2. Use — The Web Flasher flashes wadamesh firmware onto the supported devices listed on this page via Web Serial. You must have the right to operate your device. wadamesh is open-source firmware licensed under GPL-3.0; the firmware itself is provided without warranty (see its LICENSE).
+2. Use: The Web Flasher flashes wadamesh firmware onto the supported devices listed on this page via Web Serial. You must have the right to operate your device. wadamesh is open-source firmware licensed under GPL-3.0; the firmware itself is provided without warranty (see its LICENSE).
 
-3. Disclaimer & Liability — The Tools are provided "as is" and "as available" without warranties of any kind. Flashing firmware may overwrite device data and settings. Use at your own risk. To the fullest extent permitted by law, we exclude implied warranties and limit liability to direct losses only. Nothing limits liability for intentional misconduct, gross negligence, death or personal injury caused by negligence, or other liability that cannot be excluded under applicable law.
+3. Disclaimer & Liability: The Tools are provided "as is" and "as available" without warranties of any kind. Flashing firmware may overwrite device data and settings. Use at your own risk. To the fullest extent permitted by law, we exclude implied warranties and limit liability to direct losses only. Nothing limits liability for intentional misconduct, gross negligence, death or personal injury caused by negligence, or other liability that cannot be excluded under applicable law.
 
-4. Privacy — Our Privacy Policy explains how we process personal data and your rights.
+4. Privacy: Our Privacy Policy explains how we process personal data and your rights.
 
-5. Changes — We may update these Terms for legal, technical, or operational reasons. Continued use after changes signifies acceptance.
+5. Changes: We may update these Terms for legal, technical, or operational reasons. Continued use after changes signifies acceptance.
 
-6. Governing Law — Belgian law governs these Terms. Disputes are subject to the courts of Leuven, Belgium, unless local mandatory law provides otherwise.` },
+6. Governing Law: Belgian law governs these Terms. Disputes are subject to the courts of Leuven, Belgium, unless local mandatory law provides otherwise.` },
   };
   const lov = document.getElementById('legalOv');
   function openLegal(k){ const d = LEGAL[k]; if(!d) return; document.getElementById('legalTitle').textContent = d.t; document.getElementById('legalBody').textContent = d.c; lov.classList.add('show'); }
@@ -826,7 +1067,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     if (dl) dl.href = 'https://firmware.wadamesh.com/' + WM.feed + '/wadamesh-tdeck.bin';
     document.querySelectorAll('[data-wm-chlabel]').forEach(e => e.textContent = ch === 'beta' ? ' · beta (testing)' : ' · stable');
     document.querySelectorAll('[data-wm-ch]').forEach(b => { const on = b.getAttribute('data-wm-ch') === ch;
-      b.style.background = on ? 'var(--teal)' : '#fff'; b.style.color = on ? '#fff' : 'var(--mut)'; });
+      b.style.background = on ? 'var(--accent-fill)' : 'var(--control)'; b.style.color = on ? 'var(--on-accent)' : 'var(--mut)'; });
     document.querySelectorAll('[data-wm-betahint]').forEach(e => e.hidden = ch !== 'beta');
     const vs = document.getElementById('verSel');
     if (vs && vs.options.length) { vs.selectedIndex = 0; vs.dispatchEvent(new Event('change')); }
@@ -867,7 +1108,7 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     });
   };
   ['latest','latest-beta'].forEach(feed => fetch('https://firmware.wadamesh.com/' + feed + '/version.json', {cache:'no-store'})
-    .then(r => r.ok ? r.json() : null).then(v => { if (v && v.tag) { WM_VER[feed] = v.tag; wmUpdateDownloads(); if (feed === 'latest-beta' && window.wmWireP4ArchiveVariants) wmWireP4ArchiveVariants(v.tag); } }).catch(()=>{}));
+    .then(r => r.ok ? r.json() : null).then(v => { if (v && v.tag) { WM_VER[feed] = v.tag; wmUpdateDownloads(); wmRelBadge(); if (feed === 'latest-beta' && window.wmWireP4ArchiveVariants) wmWireP4ArchiveVariants(v.tag); } }).catch(()=>{}));
   document.querySelectorAll('[data-wm-ch]').forEach(b => b.addEventListener('click', () => wmSetChannel(b.getAttribute('data-wm-ch'))));
   wmSetChannel('stable');
 
@@ -973,31 +1214,98 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
       rels.forEach(r=>{ notes[r.tag_name]=r.body||''; });
       const tags = rels.map(r=>r.tag_name).sort((a,b)=>num(b)-num(a)).slice(0,4);
       if (!tags.length){ if(wrap) wrap.hidden = true; return; }
-      sel.innerHTML = tags.map((t,i)=>'<option value="'+t+'">'+t+(i===0?' — latest':'')+'</option>').join('');
+      sel.innerHTML = tags.map((t,i)=>'<option value="'+t+'">'+t+(i===0?' (latest)':'')+'</option>').join('');
       showNotes(tags[0]);
       sel.addEventListener('change', apply);
     }).catch(()=>{ if(wrap) wrap.hidden = true; });
   })();
 
+  // ---- hero release badge: Stable and Test tags, links to the changelog ----
+  function wmRelBadge(){
+    const b = document.querySelector('[data-relbadge]'); if (!b) return;
+    b.querySelectorAll('[data-relpart]').forEach(p => {
+      const v = WM_VER[p.getAttribute('data-relpart')];
+      p.hidden = !v; const t = p.querySelector('b'); if (t) t.textContent = v || '';
+    });
+    b.hidden = !WM_VER['latest'];
+  }
+
+  // ---- hero screens: a slow crossfade through real screenshots ----
+  (function(){
+    const box = document.querySelector('[data-slides]'); if (!box) return;
+    const imgs = Array.from(box.querySelectorAll('img'));
+    const cap = document.querySelector('[data-slide-cap]'), dotsEl = document.querySelector('.shotdots');
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let i = 0, timer = null;
+    const load = im => { if (im.dataset.src){ im.src = im.dataset.src; im.removeAttribute('data-src'); } };
+    const dots = imgs.map((im, n) => { const d = document.createElement('button'); d.type = 'button';
+      d.setAttribute('aria-label', 'Show ' + (im.dataset.cap || 'screen ' + (n + 1)));
+      d.addEventListener('click', () => { show(n); restart(); }); dotsEl.appendChild(d); return d; });
+    function show(n){
+      i = n; load(imgs[n]);
+      imgs.forEach((im, k) => { const on = k === n; im.classList.toggle('on', on); im.setAttribute('aria-hidden', on ? 'false' : 'true');
+        dots[k].setAttribute('aria-pressed', on ? 'true' : 'false'); });
+      if (cap) cap.textContent = imgs[n].dataset.cap || '';
+      load(imgs[(n + 1) % imgs.length]);                        // fetch the next one ahead of time
+    }
+    function restart(){ clearInterval(timer); if (!still && !document.hidden) timer = setInterval(() => show((i + 1) % imgs.length), 4200); }
+    const fig = box.closest('figure');
+    fig.addEventListener('mouseenter', () => clearInterval(timer));
+    fig.addEventListener('mouseleave', restart);
+    document.addEventListener('visibilitychange', restart);
+    show(0);
+    if (document.readyState === 'complete') restart(); else window.addEventListener('load', restart);
+  })();
+
+  // ---- supported devices: a tile opens the installer filtered to that board ----
+  document.querySelectorAll('.devtile[data-find]').forEach(t => t.addEventListener('click', e => {
+    e.preventDefault();
+    choose('standalone');
+    const input = document.getElementById('devSearch');
+    if (input){ input.value = t.getAttribute('data-find'); input.dispatchEvent(new Event('input')); }
+    const hit = Array.from(document.querySelectorAll('#devsel .board')).find(b => !b.hidden);
+    if (hit) setTimeout(() => hit.scrollIntoView({ behavior:'smooth', block:'start' }), 80);
+  }));
+
+  // ---- T-Display P4: radio chip + Wi-Fi answer show exactly one image ----
+  document.querySelectorAll('#devsel .board').forEach(card => {
+    const radios = card.querySelectorAll('[data-p4-radio]'), wifis = card.querySelectorAll('[data-p4-wifi]');
+    if (!radios.length) return;
+    let r = 'sx1262', w = 'hosted';
+    const sync = () => {
+      radios.forEach(b => b.setAttribute('aria-pressed', b.getAttribute('data-p4-radio') === r ? 'true' : 'false'));
+      wifis.forEach(b => b.setAttribute('aria-pressed', b.getAttribute('data-p4-wifi') === w ? 'true' : 'false'));
+      card.querySelectorAll('.p4v').forEach(v => { v.hidden = !(v.dataset.radio === r && v.dataset.wifi === w); });
+    };
+    radios.forEach(b => b.addEventListener('click', () => { r = b.getAttribute('data-p4-radio'); sync(); }));
+    wifis.forEach(b => b.addEventListener('click', () => { w = b.getAttribute('data-p4-wifi'); sync(); }));
+    sync();
+  });
+
+  // ---- "open this page on a computer": copy the link ----
+  document.querySelectorAll('[data-copyurl]').forEach(b => b.addEventListener('click', () => {
+    const code = b.parentElement.querySelector('code');
+    const pick = () => { const rg = document.createRange(); rg.selectNodeContents(code); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(rg); };
+    const done = () => { b.textContent = 'Copied'; setTimeout(() => { b.textContent = 'Copy link'; }, 1800); };
+    try { navigator.clipboard.writeText('https://wadamesh.com/#install').then(done, pick); } catch (_) { pick(); }
+  }));
+
+  // ---- popovers stay on screen: shift each one sideways by just enough ----
+  function wmClampPop(p){
+    p.style.setProperty('--dx', '0px');
+    const r = p.getBoundingClientRect(); if (!r.width) return;
+    const vw = document.documentElement.clientWidth, pad = 12;
+    let dx = 0;
+    if (r.right > vw - pad) dx = (vw - pad) - r.right;
+    if (r.left + dx < pad) dx = pad - r.left;
+    p.style.setProperty('--dx', Math.round(dx) + 'px');
+  }
+  const wmClampAll = () => document.querySelectorAll('.pill .pop, .sup .pop').forEach(wmClampPop);
+  document.querySelectorAll('.pill, .sup').forEach(a => ['pointerenter', 'focusin', 'click'].forEach(ev =>
+    a.addEventListener(ev, () => { const p = a.querySelector('.pop'); if (p) wmClampPop(p); })));
+  window.addEventListener('resize', wmClampAll);
+  wmClampAll();
 </script>
 
-<!-- animated mesh backdrop — Vanta NET (3D dot-and-line network) in wadamesh teal on white.
-     Needs three.js r121 (Vanta breaks on newer three). Skipped under reduced-motion / no-WebGL. -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r121/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/vanta@latest/dist/vanta.net.min.js"></script>
-<script>
-  if (!matchMedia('(prefers-reduced-motion: reduce)').matches && window.VANTA && VANTA.NET) {
-    try {
-      VANTA.NET({
-        el: "#vanta-bg",
-        mouseControls: true, touchControls: true, gyroControls: false,
-        minHeight: 200.0, minWidth: 200.0, scale: 1.0, scaleMobile: 1.0,
-        color: 0x15b6a6,           // wadamesh teal — the net (dots + lines)
-        backgroundColor: 0xffffff, // matches the page so only the net shows
-        points: 12.0, maxDistance: 22.0, spacing: 18.0, showDots: true
-      });
-    } catch (e) { /* no WebGL → plain white + the CSS glow remain */ }
-  }
-</script>
 </body>
 </html>

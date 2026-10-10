@@ -414,6 +414,8 @@ static uint32_t s_last_cmd_txt_body_crc = 0;
 static uint32_t s_last_cmd_txt_ack = 0;
 static uint32_t s_last_cmd_txt_est_timeout = 0;
 static uint32_t s_last_cmd_txt_seen_ms = 0;
+static uint8_t s_last_cmd_txt_attempt = 0;
+static bool s_last_cmd_txt_flood = false;   // how that frame went out, echoed to a duplicate
 
 enum MeshcomodPendingAction {
   MESHCOMOD_PENDING_NONE = 0,
@@ -3939,9 +3941,12 @@ uint32_t MyMesh::calcFloodTimeoutMillisFor(uint32_t pkt_airtime_millis) const {
   return SEND_TIMEOUT_BASE_MILLIS + (FLOOD_SEND_TIMEOUT_FACTOR * pkt_airtime_millis);
 }
 uint32_t MyMesh::calcDirectTimeoutMillisFor(uint32_t pkt_airtime_millis, uint8_t path_len) const {
+  // path_len is packed: the hash size sits in the top two bits, the hop count in the rest.
+  // Read raw, 12 hops of 2-byte hashes counted as 76 and the app waited six times too long.
+  const uint8_t hops = path_len & 0x3F;
   return SEND_TIMEOUT_BASE_MILLIS +
          ((pkt_airtime_millis * DIRECT_SEND_PERHOP_FACTOR + DIRECT_SEND_PERHOP_EXTRA_MILLIS) *
-          (path_len + 1));
+          (hops + 1));
 }
 
 void MyMesh::onSendTimeout() {}
@@ -4352,18 +4357,24 @@ void MyMesh::handleCmdFrame(size_t len) {
         uint32_t body_crc = 0;
         mesh::Utils::sha256((uint8_t*)&body_crc, 4, (const uint8_t*)text, tlen);
         uint32_t now_ms = millis();
+        // The same frame again (same attempt number) is a transport duplicate: answer it
+        // locally and do not transmit. An app RETRY keeps the timestamp and text but bumps
+        // the attempt (MeshCore-One does), and must go out: matching without the attempt
+        // swallowed a whole retry ladder, flood fallback included, while the app was told
+        // the message had been flooded (#636).
         if (msg_timestamp != 0 &&
             msg_timestamp == s_last_cmd_txt_ts &&
+            attempt == s_last_cmd_txt_attempt &&
             memcmp(pub_key_prefix, s_last_cmd_txt_pub6, sizeof(s_last_cmd_txt_pub6)) == 0 &&
             body_crc == s_last_cmd_txt_body_crc &&
             (uint32_t)(now_ms - s_last_cmd_txt_seen_ms) < 30000UL) {
-          // Transport/client retry of same command frame: ack locally but avoid re-transmitting stale packet.
           skip_radio_send = true;
           expected_ack = s_last_cmd_txt_ack;
           est_timeout = s_last_cmd_txt_est_timeout;
-          result = MSG_SEND_SENT_FLOOD;
+          result = s_last_cmd_txt_flood ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
         } else {
           s_last_cmd_txt_ts = msg_timestamp;
+          s_last_cmd_txt_attempt = attempt;
           memcpy(s_last_cmd_txt_pub6, pub_key_prefix, sizeof(s_last_cmd_txt_pub6));
           s_last_cmd_txt_body_crc = body_crc;
           s_last_cmd_txt_seen_ms = now_ms;
@@ -4411,6 +4422,7 @@ void MyMesh::handleCmdFrame(size_t len) {
         if (txt_type == TXT_TYPE_PLAIN && !skip_radio_send) {
           s_last_cmd_txt_ack = expected_ack;
           s_last_cmd_txt_est_timeout = est_timeout;
+          s_last_cmd_txt_flood = (result == MSG_SEND_SENT_FLOOD);
         }
         if (expected_ack) {
           uiRegisterExpectedAck(expected_ack, recipient->id.pub_key);
@@ -4600,6 +4612,7 @@ void MyMesh::handleCmdFrame(size_t len) {
     ContactInfo *recipient = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
     if (recipient) {
       recipient->out_path_len = -1;
+      s_last_cmd_txt_ts = 0;   // the send that follows a path reset always goes out (flood)
       // recipient->lastmod = ??   shouldn't be needed, app already has this version of contact
       dirty_contacts_expiry = futureMillis(LAZY_CONTACTS_WRITE_DELAY);
       writeOKFrame();

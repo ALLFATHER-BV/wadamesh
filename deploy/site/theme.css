@@ -1,0 +1,80 @@
+/* WADAMESH site theme, shared by every page.
+   Night (the default) and Day are the device's own palettes (kNightPalette / kDayPalette in
+   UITask.cpp). Behind every page runs the device's aurora, drawn by theme.js on #wm-sky. Cards
+   are the device's glass: a translucent panel, frosted lighter at the top, no lit edge.
+   Load this after a page's own <style>: its tokens replace the page's. */
+:root{
+  color-scheme:dark;
+  --bg:#000400;                       /* night black, one step off black under the sky */
+  --bg2:rgba(255,255,255,.045);       /* wells: code, steps, groups */
+  --card:rgba(11,14,16,.74);          /* panel 0B0E10, translucent over the sky */
+  --card-top:rgba(255,255,255,.07);   /* the glass frost */
+  --solid:#0B0E10;                    /* popups, menus, sheets: solid on the device too */
+  --ink:#E6EBED; --ink2:#D2D9DD; --mut:#B0BAC0; --dim:#8C979D;
+  --sky-sub:#D2D9DD;                  /* secondary text straight on the sky */
+  --line:#1C2428; --hair:#12171A;
+  --control:#161D21; --control-hi:#222C31; --field:#0B0E10;
+  --teal:#15B6A6; --cyan:#19D6C2; --teal-ink:#19D6C2;
+  --accent-fill:#15B6A6; --on-accent:#00120F;
+  --accent-soft:rgba(25,214,194,.13); --accent-surface:#07211E;
+  --bar:rgba(0,0,0,.5);               /* the smoked-glass top bar */
+  --frame:#16191D; --frame-edge:#2A3036;
+  --ok:#4CC38A; --ok-bg:rgba(47,158,106,.18); --ok-line:rgba(76,195,138,.36);
+  --warn:#F2A33A; --warn-bg:rgba(242,163,58,.13); --warn-line:rgba(242,163,58,.38);
+  --warn-ink:#F6C27A; --warn-text:#E3C9A3;
+  --bad:#F06A6E; --bad-bg:rgba(217,72,77,.15);
+  --info:#5AA9FF;
+  /* the launcher's category colours */
+  --hue-msg:#19D6C2; --hue-place:#5AA9FF; --hue-radio:#F2A33A; --hue-sys:#C3CBCF; --hue-device:#4CC38A; --hue-bad:#F06A6E;
+  --news-bg:rgba(21,182,166,.11); --news-line:rgba(25,214,194,.32); --news-title:#7FE8DC; --news-text:#B9DCD7;
+  --shadow:0 22px 50px -26px rgba(0,0,0,.85);
+  --glow-text:0 0 2px rgba(0,0,0,.9), 0 1px 3px rgba(0,0,0,.8), 0 0 18px rgba(0,0,0,.7), 0 0 36px rgba(0,0,0,.5);
+  --surface:linear-gradient(180deg,var(--card-top),rgba(255,255,255,0) 46%),var(--card);
+}
+:root[data-theme="light"]{
+  color-scheme:light;
+  --bg:#F1F4F6;
+  --bg2:rgba(255,255,255,.6);
+  --card:rgba(255,255,255,.74);
+  --card-top:rgba(255,255,255,.6);
+  --solid:#FFFFFF;
+  --ink:#172026; --ink2:#34414B; --mut:#52606C; --dim:#6B7A84;
+  --sky-sub:#52606C;
+  --line:#D2DAE0; --hair:#DCE3E8;
+  --control:#E5EAEE; --control-hi:#D4DCE2; --field:#F8FAFB;
+  --teal:#15B6A6; --cyan:#0A7F74; --teal-ink:#0A7F74;
+  --accent-fill:#0A7F74; --on-accent:#FFFFFF;
+  --accent-soft:rgba(10,127,116,.10); --accent-surface:#D9EEEC;
+  --bar:rgba(255,255,255,.62);
+  --frame:#16191D; --frame-edge:#D2DAE0;
+  --ok:#276738; --ok-bg:#DCEFE2; --ok-line:#B3D8BE;
+  --warn:#806000; --warn-bg:#F7EDCF; --warn-line:#E6D193;
+  --warn-ink:#5E4600; --warn-text:#6B5216;
+  --bad:#A52B26; --bad-bg:#F7DEDC;
+  --info:#1F66A5;
+  --hue-msg:#0A7F74; --hue-place:#1F66A5; --hue-radio:#9A6410; --hue-sys:#52606C; --hue-device:#276738; --hue-bad:#A52B26;
+  --news-bg:#E2F2F0; --news-line:#B9DDD8; --news-title:#0B5F56; --news-text:#2F5752;
+  --shadow:0 18px 44px -26px rgba(21,32,38,.35);
+  --glow-text:0 1px 2px rgba(255,255,255,.75), 0 0 14px rgba(255,255,255,.75), 0 0 28px rgba(255,255,255,.6);
+}
+
+html{background:var(--bg)}
+body{background:transparent; color:var(--ink);
+  font-family:'Montserrat',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; font-weight:500}
+b,strong{font-weight:650}
+::selection{background:rgba(25,214,194,.32)}
+
+/* the aurora (theme.js) */
+#wm-sky{position:fixed; inset:0; width:100%; height:100%; z-index:-1; pointer-events:none; display:block}
+/* reading pages: the same sky at half strength, so long text stays easy on the eye */
+:root[data-sky="soft"] #wm-sky{opacity:.5}
+
+/* the Night / Day switch */
+.wm-theme{display:inline-grid; place-items:center; width:36px; height:36px; padding:0; border:0; border-radius:50%;
+  background:var(--control); color:var(--ink2); cursor:pointer; box-shadow:inset 0 0 0 1px var(--line);
+  transition:color .15s, box-shadow .15s}
+.wm-theme:hover, .wm-theme:focus-visible{color:var(--teal-ink); box-shadow:inset 0 0 0 1px var(--teal); outline:none}
+.wm-theme svg{width:18px; height:18px}
+.wm-theme .i-sun{display:none}
+:root[data-theme="light"] .wm-theme .i-sun{display:block}
+:root[data-theme="light"] .wm-theme .i-moon{display:none}

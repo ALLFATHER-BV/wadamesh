@@ -33,8 +33,11 @@ ESP32RTCClock fallback_clock;
 // (issue #383). ClockFloorRTC's monotonic/replay behaviour is unchanged.
 HardwareRtcClock     hw_rtc(fallback_clock);
 ClockFloorRTC        rtc_clock(hw_rtc);
-MicroNMEALocationProvider gps(Serial1, &rtc_clock);
+// u-blox MIA-M10Q on Serial1; PagerGps rests it in standby and switches its rail.
+PagerGps gps(Serial1, &rtc_clock, PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE);
 EnvironmentSensorManager sensors(gps);
+
+void tloraPagerGpsPowerDown() { gps.powerDown(); }
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;

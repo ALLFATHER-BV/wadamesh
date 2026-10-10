@@ -22,7 +22,8 @@
       "id": "tetris",
       "name": "Tetris",
       "ver": "1.0",
-      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
+      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet.",
+      "seed": false
     },
     {
       "id": "protreck",
@@ -42,7 +43,8 @@
       "id": "2048",
       "name": "2048",
       "ver": "1.2",
-      "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87."
+      "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87.",
+      "seed": false
     },
     {
       "id": "wardrive",
@@ -85,7 +87,8 @@
       "id": "breakout",
       "name": "Breakout",
       "ver": "1.0",
-      "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet."
+      "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet.",
+      "seed": false
     },
     {
       "id": "ping",

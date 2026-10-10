@@ -1307,6 +1307,60 @@ int timerHandleStop(lua_State* L) {
 static const uint32_t kMeshSendMinGapMs = 5000;   // per app
 static const size_t   kMeshSendMaxLen   = 180;    // one LoRa text payload
 
+// Anti-spam (#606). The gap above still lets one app post to a public channel twelve
+// times a minute, all day, and restarting the app or switching apps resets it. So on top
+// of it: budgets shared by EVERY app and kept for the whole boot, and a duplicate check.
+// A channel post floods the whole mesh: three in a row, then one a minute. A direct
+// message travels one route: six in a row, then one every ten seconds. The same text to
+// the same channel twice within ten minutes is refused outright. Hitting a budget returns
+// false, "rate limited", seconds_to_wait.
+struct MeshSendBudget {
+  uint8_t  burst;
+  uint32_t refill_ms;
+  uint8_t  tokens;
+  uint32_t last_ms;   // 0: never used (full)
+  void refill(uint32_t now) {
+    if (!last_ms) { tokens = burst; last_ms = now ? now : 1; return; }
+    const uint32_t earned = (now - last_ms) / refill_ms;
+    if (!earned) return;
+    tokens = (uint8_t)((tokens + earned >= burst) ? burst : tokens + earned);
+    last_ms = (tokens >= burst) ? now : last_ms + earned * refill_ms;   // no banking past a full burst
+  }
+  uint32_t waitS(uint32_t now) {   // seconds until the next send may go (0: now)
+    refill(now);
+    if (tokens) return 0;
+    return (refill_ms - (now - last_ms) + 999) / 1000;
+  }
+  void spend() { if (tokens) tokens--; }
+};
+static MeshSendBudget s_mesh_chan_budget = { 3, 60000, 0, 0 };
+static MeshSendBudget s_mesh_dm_budget   = { 6, 10000, 0, 0 };
+
+static const uint32_t kMeshDupWindowMs = 10UL * 60UL * 1000UL;
+static uint32_t s_mesh_dup_hash[8];
+static uint32_t s_mesh_dup_ms[8];
+static uint8_t  s_mesh_dup_next = 0;
+static uint32_t meshDupHash(const char* chan, const char* text) {
+  uint32_t h = 2166136261u;   // FNV-1a over the channel (case folded), a separator, the text
+  for (const char* c = chan; *c; ++c) {
+    const char ch = (*c >= 'A' && *c <= 'Z') ? (char)(*c + 32) : *c;
+    h = (h ^ (uint8_t)ch) * 16777619u;
+  }
+  h = (h ^ 0xFFu) * 16777619u;
+  for (const char* c = text; *c; ++c) h = (h ^ (uint8_t)*c) * 16777619u;
+  return h;
+}
+static bool meshDupSeen(uint32_t h, uint32_t now) {
+  for (int i = 0; i < 8; ++i)
+    if (s_mesh_dup_ms[i] && s_mesh_dup_hash[i] == h && (uint32_t)(now - s_mesh_dup_ms[i]) < kMeshDupWindowMs) return true;
+  return false;
+}
+static void meshDupRemember(uint32_t h, uint32_t now) {
+  s_mesh_dup_hash[s_mesh_dup_next] = h;
+  s_mesh_dup_ms[s_mesh_dup_next] = now ? now : 1;
+  s_mesh_dup_next = (uint8_t)((s_mesh_dup_next + 1) & 7);
+}
+
 int meshSend(lua_State* L) {
   const char* chan = luaL_checkstring(L, 1);
   size_t len = 0;
@@ -1326,8 +1380,17 @@ int meshSend(lua_State* L) {
   if (s_h->mesh_last_send_ms && (uint32_t)(now - s_h->mesh_last_send_ms) < kMeshSendMinGapMs) {
     lua_pushboolean(L, 0); lua_pushstring(L, "too fast"); return 2;
   }
+  const uint32_t dup = meshDupHash(chan, text);
+  if (meshDupSeen(dup, now)) { lua_pushboolean(L, 0); lua_pushstring(L, "duplicate"); return 2; }
+  if (const uint32_t wait_s = s_mesh_chan_budget.waitS(now)) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "rate limited"); lua_pushinteger(L, (lua_Integer)wait_s); return 3;
+  }
   const bool ok = luaHostMeshSendChannel(chan, text);
-  if (ok) s_h->mesh_last_send_ms = now;   // only a real transmission starts the clock
+  if (ok) {   // only a real transmission starts the clock and spends the budget
+    s_h->mesh_last_send_ms = now;
+    s_mesh_chan_budget.spend();
+    meshDupRemember(dup, now);
+  }
   lua_pushboolean(L, ok);
   if (!ok) { lua_pushstring(L, "no such channel"); return 2; }
   // Second return: the fingerprint of what just went out, for wada.mesh.repeats().
@@ -1374,9 +1437,12 @@ int meshSendDm(lua_State* L) {
   if (s_h->mesh_last_send_ms && (uint32_t)(now - s_h->mesh_last_send_ms) < kMeshSendMinGapMs) {
     lua_pushboolean(L, 0); lua_pushstring(L, "too fast"); return 2;
   }
+  if (const uint32_t wait_s = s_mesh_dm_budget.waitS(now)) {
+    lua_pushboolean(L, 0); lua_pushstring(L, "rate limited"); lua_pushinteger(L, (lua_Integer)wait_s); return 3;
+  }
   bool was_room = false;
   const bool ok = luaHostMeshSendDM(to, text, &was_room);
-  if (ok) s_h->mesh_last_send_ms = now;
+  if (ok) { s_h->mesh_last_send_ms = now; s_mesh_dm_budget.spend(); }
   lua_pushboolean(L, ok);
   lua_pushstring(L, ok ? (was_room ? "room" : "sent") : "no such contact");
   return 2;

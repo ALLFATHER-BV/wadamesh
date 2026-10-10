@@ -355,6 +355,9 @@ public:
   void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
+  // A direct chat's contact key (first 6 bytes), for its nickname; nullptr for a channel
+  // or a chat not tied to a known contact.
+  const uint8_t* threadContactKey6(int idx) const;
   int  getThreadCount(bool channel_mode, int out_indexes[], int max_out) const;
   /** Inbox list: channels (any used) + DMs that have at least one stored message or were
    *  emptied with "Delete history" (keep_when_empty), sorted by recency. */

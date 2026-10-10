@@ -83,5 +83,31 @@ int main() {
   keyboard.markAltUsed();                       // physical Alt+encoder equivalent
   keyboard.event(PagerKeyboardState::ALT_POS, false, 1010);
   assert(keyboard.event(0, true, 1020) == 'q');
+  keyboard.event(0, false, 1030);
+  assert(!keyboard.letterHeld());
+
+  // Tap or hold (the Home and Settings shortcuts): the letter's key stays held
+  // until its own release, whatever else is released meanwhile.
+  const uint8_t s_key = PagerKeyboardState::COLS + 1;
+  assert(keyboard.event(s_key, true, 1100) == 's');
+  assert(keyboard.letterHeld());
+  keyboard.event(0, false, 1110);
+  assert(keyboard.letterHeld());
+  keyboard.event(s_key, false, 1500);
+  assert(!keyboard.letterHeld());
+  // A later letter takes over: the earlier key's release no longer counts.
+  assert(keyboard.event(s_key, true, 1600) == 's');
+  assert(keyboard.event(0, true, 1610) == 'q');
+  keyboard.event(s_key, false, 1620);
+  assert(keyboard.letterHeld());
+  keyboard.event(0, false, 1630);
+  assert(!keyboard.letterHeld());
+  // Space and Backspace keep their own hold state and are not letters.
+  assert(keyboard.event(PagerKeyboardState::SPACE_POS, true, 1700) == ' ');
+  assert(!keyboard.letterHeld());
+  keyboard.event(PagerKeyboardState::SPACE_POS, false, 1710);
+  assert(keyboard.event(PagerKeyboardState::BACKSPACE_POS, true, 1720) == '\b');
+  assert(!keyboard.letterHeld());
+  keyboard.event(PagerKeyboardState::BACKSPACE_POS, false, 1730);
   return 0;
 }

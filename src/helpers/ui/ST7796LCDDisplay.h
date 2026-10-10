@@ -29,6 +29,7 @@ class ST7796LCDDisplay : public DisplayDriver {
   AW9364LedDriver _backlight;
   bool _isOn;
   uint16_t _color;
+  uint32_t _wake_ms = 0;      // last SLPOUT: the panel needs 120 ms before the next SLPIN
   uint8_t  _brightness_pct;   // exact requested pct, cached for getBrightness() (the 0-100 -> 0-16 -> 0-100
                               // round trip through the AW9364's discrete steps is lossy)
 
@@ -47,6 +48,11 @@ public:
   bool isOn() override { return _isOn; }
   void turnOn() override;
   void turnOff() override;
+  // Panel sleep for screen-off (the UI's backlight-off): DISPOFF + SLPIN stop the
+  // panel's oscillator, booster and liquid-crystal drive, which otherwise keep
+  // refreshing the same image behind the dark backlight (power, and burn-in).
+  // Frame memory is kept, so waking is SLPOUT + DISPON with no redraw.
+  void panelSleep(bool sleep);
   void clear() override;
   void startFrame(ColorVal bkg = UIColor::window_bkg) override;
   void setTextSize(int sz) override;

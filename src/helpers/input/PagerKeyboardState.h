@@ -117,7 +117,10 @@ class PagerKeyboardState {
       }
       return 0;
     }
-    if (!pressed) return 0;
+    if (!pressed) {
+      if (code == letter_code_) letter_held_ = false;
+      return 0;
+    }
 
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     if (code == ALT_B_POS && alt_key_held_) {
@@ -134,9 +137,14 @@ class PagerKeyboardState {
     char key = symbol_layer ? symbols[row][col] : base[row][col];
     if (key == '\0') return 0;
     if ((caps_ || shift_held_) && !symbol_layer && key >= 'a' && key <= 'z') key -= 32;
+    letter_code_ = code;
+    letter_held_ = true;
     return (uint8_t)key;
   }
 
+  // The key behind the last character returned is still down, so the UI can tell a
+  // tap from a hold (the Home and Settings shortcuts).
+  bool letterHeld() const { return letter_held_; }
   bool altHeld() const { return alt_.held(); }
   void markAltUsed() { alt_.markHeldUsed(); }
   void discardAlt() {
@@ -183,6 +191,8 @@ class PagerKeyboardState {
   bool alt_backspace_chord_pending_ = false;
   bool backspace_held_ = false;
   bool space_held_ = false;
+  uint8_t letter_code_ = 0xFF;
+  bool letter_held_ = false;
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
   bool alt_key_held_ = false;
   bool alt_b_chord_pending_ = false;

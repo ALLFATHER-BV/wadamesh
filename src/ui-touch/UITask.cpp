@@ -1076,6 +1076,17 @@ static lv_font_t g_font_badge;
 // inheriting a larger font from its parent keeps that size. Anything already
 // chained, or using a deliberately different font, is left alone — so this is
 // safe to call after any lv_label_create.
+#if defined(TLORA_PAGER)
+// The Pager's map chrome stays a fixed 14 px at every UI size (the map credit, the
+// "set your location" hint), but the bare Montserrat face has no (c), dash or arrow:
+// they drew as empty boxes. The same face with the extras font behind it.
+static const lv_font_t* pagerMapFont() {
+  static lv_font_t f;
+  static bool ready = false;
+  if (!ready) { f = lv_font_montserrat_14; f.fallback = &extras_14; ready = true; }
+  return &f;
+}
+#endif
 static void useChainedFont(lv_obj_t* label) {
   if (!label) return;
   const lv_font_t* f = lv_obj_get_style_text_font(label, LV_PART_MAIN);
@@ -2305,10 +2316,21 @@ static void initSelectionGlowStyle(lv_style_t* style, uint32_t color) {
   lv_style_set_outline_opa(style, LV_OPA_COVER);
   lv_style_set_outline_color(style, lv_color_hex(color));
 }
+// The keyboard cursor's colour: amber, which stands apart from every accent and hue
+// the themes use (teal by default) and from the aurora behind them; deep orange by
+// day, where yellow washes out on the light ground. Taste the rainbow leaves it alone:
+// the one colour that always means "you are here".
+static uint32_t focusRingColor() { return s_theme_day ? 0xD97706u : 0xFFC21Au; }
+static bool colorsNear(uint32_t a, uint32_t b) {   // 0xRRGGBB or 0xAARRGGBB
+  const int dr = (int)((a >> 16) & 0xFF) - (int)((b >> 16) & 0xFF);
+  const int dg = (int)((a >> 8) & 0xFF) - (int)((b >> 8) & 0xFF);
+  const int db = (int)(a & 0xFF) - (int)(b & 0xFF);
+  return (dr < 0 ? -dr : dr) + (dg < 0 ? -dg : dg) + (db < 0 ? -db : db) < 150;
+}
 static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t selector) {
   if (!obj) return;
   if (!s_selection_glow_style_ready) {
-    initSelectionGlowStyle(&s_selection_glow_style, COLOR_ACCENT);
+    initSelectionGlowStyle(&s_selection_glow_style, focusRingColor());
     initSelectionGlowStyle(&s_selection_glow_contrast_style,
                            s_theme_day ? 0x000000 : 0xFFFFFF);
     s_selection_glow_style_ready = true;
@@ -2322,15 +2344,14 @@ static void setSelectionGlow(lv_obj_t* obj, bool selected, lv_style_selector_t s
   lv_obj_remove_style(obj, &s_selection_glow_style, cursor_selector);
   lv_obj_remove_style(obj, &s_selection_glow_contrast_style, cursor_selector);
   if (selected) {
-    // An accent outline vanishes on an accent fill, and not only a solid one:
-    // the Map's side buttons are accent at 70% over the tiles, and their cursor
-    // could barely be told from its neighbours (#576). Anything mostly accent
-    // takes the contrast outline instead.
-    const bool on_accent = lv_obj_get_style_bg_opa(obj, cursor_part) >= LV_OPA_50 &&
-        lv_color_to32(lv_obj_get_style_bg_color(obj, cursor_part)) ==
-        lv_color_to32(lv_color_hex(COLOR_ACCENT));
-    lv_obj_add_style(obj, on_accent ? &s_selection_glow_contrast_style
-                                    : &s_selection_glow_style, cursor_selector);
+    // An outline vanishes on a fill of its own colour, and not only a solid one:
+    // the Map's side buttons sit at 70% over the tiles (#576). Anything mostly
+    // amber (an amber accent, an amber tile that is on) takes the contrast
+    // outline instead.
+    const bool on_ring_colour = lv_obj_get_style_bg_opa(obj, cursor_part) >= LV_OPA_50 &&
+        colorsNear(lv_color_to32(lv_obj_get_style_bg_color(obj, cursor_part)), focusRingColor());
+    lv_obj_add_style(obj, on_ring_colour ? &s_selection_glow_contrast_style
+                                         : &s_selection_glow_style, cursor_selector);
   }
 }
 
@@ -3227,6 +3248,149 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
 
+// ---- Contact nicknames ---------------------------------------------------------
+// A name of the user's own for a contact (Contact options > Nickname), drawn wherever
+// the UI shows that contact: Contacts, Chats, the chat header, the map, notifications.
+// Display only: the advertised name stays the contact's identity (thread lookups,
+// sends, the phone app, Lua apps) and nothing here goes over the air. One read fills
+// the RAM table; every change bumps s_nick_gen so cached lists draw again.
+static uint8_t* s_nick_tab = nullptr;   // TOUCH_NICK_MAX records, PSRAM where there is any
+static int      s_nick_n   = -1;        // -1: not read yet
+static uint8_t  s_nick_gen = 0;
+static void nickLoad() {
+  if (s_nick_n >= 0) return;
+  s_nick_n = 0;
+#if defined(ESP32)
+  if (!s_nick_tab) {
+    const size_t sz = (size_t)TOUCH_NICK_MAX * TOUCH_NICK_REC_BYTES;
+    s_nick_tab = (uint8_t*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_nick_tab) s_nick_tab = (uint8_t*)malloc(sz);
+    if (!s_nick_tab) return;
+  }
+  s_nick_n = touchPrefsCopyNicknames(s_nick_tab);
+  for (int i = 0; i < s_nick_n; ++i)   // a damaged record still ends in a NUL
+    s_nick_tab[i * TOUCH_NICK_REC_BYTES + TOUCH_NICK_REC_BYTES - 1] = 0;
+#endif
+}
+// The nickname for a 6-byte key prefix, or nullptr.
+static const char* nickFor(const uint8_t* key6) {
+#if defined(ESP32)
+  if (!key6) return nullptr;
+  nickLoad();
+  for (int i = 0; i < s_nick_n; ++i) {
+    const uint8_t* r = &s_nick_tab[i * TOUCH_NICK_REC_BYTES];
+    if (memcmp(r, key6, TOUCH_FAVORITE_KEY_BYTES) == 0 && r[TOUCH_FAVORITE_KEY_BYTES])
+      return (const char*)(r + TOUCH_FAVORITE_KEY_BYTES);
+  }
+#else
+  (void)key6;
+#endif
+  return nullptr;
+}
+// What to call a contact: its nickname, or the name it advertises.
+static const char* contactShownName(const uint8_t* key6, const char* advertised) {
+  const char* n = nickFor(key6);
+  return n ? n : (advertised ? advertised : "");
+}
+// The same for a chat thread: a direct chat shows its contact's nickname.
+static const char* threadShownName(int idx, const char* stored) {
+  return contactShownName(g_lv.task ? g_lv.task->threadContactKey6(idx) : nullptr, stored);
+}
+// Set ("" clears) a nickname. Typed Arabic is stored as standard letters, as a node
+// name is (#582), and surrounding blanks are dropped.
+// By name, for places that only carry a name: a channel or room post's sender, a
+// notification's chat. Only a name exactly one contact advertises maps, so two nodes
+// both called "Base" never trade nicknames. The pairs are rebuilt when a nickname or
+// the contact count changes, and every 30 s (names arrive with adverts); with no
+// nicknames set none of this runs.
+struct NickByName { char name[32]; char nick[32]; };
+static NickByName* s_nbn     = nullptr;   // up to TOUCH_NICK_MAX pairs
+static int         s_nbn_n   = 0;
+static uint8_t     s_nbn_gen = 0;
+static int         s_nbn_cnt = -1;        // contact count it was built for
+static uint32_t    s_nbn_ms  = 0;
+static void nickByNameBuild() {
+#if defined(ESP32)
+  s_nbn_n = 0;
+  if (s_nick_n <= 0) return;
+  if (!s_nbn) {
+    const size_t sz = sizeof(NickByName) * TOUCH_NICK_MAX;
+    s_nbn = (NickByName*)heap_caps_malloc(sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_nbn) s_nbn = (NickByName*)malloc(sz);
+    if (!s_nbn) return;
+  }
+  for (int i = 0; i < s_nick_n && s_nbn_n < TOUCH_NICK_MAX; ++i) {   // the name behind each nickname
+    const uint8_t* r = &s_nick_tab[i * TOUCH_NICK_REC_BYTES];
+    ContactInfo* c = the_mesh.lookupContactByPubKey(r, TOUCH_FAVORITE_KEY_BYTES);
+    if (!c || !c->name[0]) continue;
+    NickByName& e = s_nbn[s_nbn_n++];
+    snprintf(e.name, sizeof e.name, "%s", c->name);
+    snprintf(e.nick, sizeof e.nick, "%s", (const char*)(r + TOUCH_FAVORITE_KEY_BYTES));
+  }
+  if (!s_nbn_n) return;
+  uint8_t seen[TOUCH_NICK_MAX] = {0};   // how many contacts advertise each name (capped at 2)
+  const int nc = the_mesh.getNumContacts();
+  ContactInfo c;
+  for (int k = 0; k < nc; ++k) {
+    if (!the_mesh.getContactByIdx((uint32_t)k, c) || !c.name[0]) continue;
+    for (int j = 0; j < s_nbn_n; ++j)
+      if (seen[j] < 2 && strcmp(c.name, s_nbn[j].name) == 0) ++seen[j];
+  }
+  int w = 0;
+  for (int j = 0; j < s_nbn_n; ++j) if (seen[j] == 1) s_nbn[w++] = s_nbn[j];
+  s_nbn_n = w;
+#endif
+}
+static const char* nickForName(const char* name) {
+#if defined(ESP32)
+  if (!name || !name[0]) return nullptr;
+  nickLoad();
+  if (s_nick_n <= 0) return nullptr;
+  const uint32_t now = millis();
+  const int cnt = the_mesh.getNumContacts();
+  if (!s_nbn_ms || s_nbn_gen != s_nick_gen || s_nbn_cnt != cnt || (uint32_t)(now - s_nbn_ms) > 30000u) {
+    s_nbn_gen = s_nick_gen;
+    s_nbn_cnt = cnt;
+    s_nbn_ms  = now ? now : 1;
+    nickByNameBuild();
+  }
+  for (int j = 0; j < s_nbn_n; ++j)
+    if (strcmp(name, s_nbn[j].name) == 0) return s_nbn[j].nick;
+#else
+  (void)name;
+#endif
+  return nullptr;
+}
+static const char* senderShownName(const char* name) {
+  const char* n = nickForName(name);
+  return n ? n : name;
+}
+// Swap a direct chat's stored name, in a buffer that is only drawn from here on, for
+// its contact's nickname.
+static void threadNameForDisplay(int idx, char* name, size_t cap) {
+  if (const char* nk = nickFor(g_lv.task ? g_lv.task->threadContactKey6(idx) : nullptr))
+    snprintf(name, cap, "%s", nk);
+}
+static bool nickSet(const uint8_t* key6, const char* nick) {
+#if defined(ESP32)
+  char clean[TOUCH_NICK_NAME_BYTES * 2];
+  arabicUnshape(nick ? nick : "", clean, sizeof clean);
+  char* b = clean;
+  while (*b == ' ') ++b;
+  size_t n = strlen(b);
+  while (n && b[n - 1] == ' ') b[--n] = 0;
+  const bool ok = touchPrefsSetNickname(key6, b);
+  s_nick_n = -1;   // read again on next use
+  ++s_nick_gen;
+  g_lv.dirty_threads = true;
+  g_lv.dirty_contacts = true;
+  return ok;
+#else
+  (void)key6; (void)nick;
+  return false;
+#endif
+}
+
 // Screen coordinates of tab cell i, measured from where the bar actually drew
 // it (button_areas are relative to the bar's outer top-left). Used for the
 // Condense Nav rail, where the cells stack vertically. False if not laid out.
@@ -3884,7 +4048,7 @@ static lv_obj_t* s_cc_root      = nullptr;
 static lv_obj_t* s_cc_gps_label = nullptr;
 enum CcNavSlot : uint8_t {
   CC_NAV_WIFI, CC_NAV_BT, CC_NAV_GPS, CC_NAV_THEME, CC_NAV_KEYBOARD,
-  CC_NAV_SOUND, CC_NAV_DND, CC_NAV_TIMER, CC_NAV_SCREENSHOT, CC_NAV_COUNT
+  CC_NAV_SOUND, CC_NAV_DND, CC_NAV_TIMER, CC_NAV_SCREENSHOT, CC_NAV_SAVER, CC_NAV_COUNT
 };
 #if defined(HAS_THINKNODE_M9)
 static lv_obj_t* s_m9_cc_nav[CC_NAV_COUNT] = { nullptr };
@@ -4285,6 +4449,24 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
   lv_img_set_antialias(im, px != 16);
   lv_obj_center(im);
   lv_obj_invalidate(av);
+}
+// A contact's chat icon when none was picked: the first emoji in its name that has a
+// glyph (#640). Copies that character into out; false when the name has none.
+static bool nameFirstEmoji(const char* name, char* out, size_t cap) {
+  if (!name || !out || cap < 5) return false;
+  uint32_t i = 0;
+  while (name[i]) {
+    const uint32_t at = i;
+    const uint32_t cp = _lv_txt_encoded_next(name, &i);
+    if (cp == 0 || i == at) break;
+    if (cp < 0x2000 || !emojiGlyphLookup(cp)) continue;
+    const size_t n = (size_t)(i - at);
+    if (n >= cap) return false;
+    memcpy(out, name + at, n);
+    out[n] = 0;
+    return true;
+  }
+  return false;
 }
 
 // A count pill in the redesign's language: the glow teal with dark Bold figures,
@@ -4960,6 +5142,159 @@ static lv_obj_t* s_nav_store_first      = nullptr;
 static lv_obj_t* s_nav_store_top_row    = nullptr;
 
 
+// ---- Tooltips -----------------------------------------------------------------
+// A control that is only an icon says what it is: a small card beside it with its
+// name and, where it helps, a line on what it does. It shows when the keyboard
+// cursor rests on the control (the keypad block below), and on touch when the
+// control is held, as on a phone: holding to read a name never also taps it.
+// Controls opt in with navSetTip(); the entry goes with its control. The card sits
+// on the system layer, never a focus stop or a popup. Not on e-paper, where a card
+// that comes and goes costs two refreshes.
+struct NavTip {
+  lv_obj_t*   obj;
+  const char* title;
+  const char* hint;       // a line for both inputs ("Restarts to switch")
+  const char* key_hint;   // a line for the keyboard only ("Hold Enter: settings")
+  bool        own_hold;   // holding it already does something: no generic touch card
+};
+static NavTip      s_nav_tips[64];
+static lv_obj_t*   s_nav_tip_box   = nullptr;
+static lv_obj_t*   s_nav_tip_title = nullptr;
+static lv_obj_t*   s_nav_tip_hint  = nullptr;
+static lv_obj_t*   s_nav_tip_for   = nullptr;   // the control the card is (about to be) about
+static lv_timer_t* s_nav_tip_timer = nullptr;   // keyboard: shows the card after the cursor rests
+static lv_timer_t* s_nav_tip_touch_timer = nullptr;   // touch: hides it after the finger lifts
+static lv_indev_t* s_nav_tip_indev = nullptr;
+static uint32_t    s_nav_tip_lift_ms = 0;
+static bool        s_nav_tip_touch = false;   // the card on screen is a finger's (held), not the cursor's
+
+static const NavTip* navTipFind(lv_obj_t* obj) {
+  if (!obj) return nullptr;
+  for (const NavTip& t : s_nav_tips) if (t.obj == obj) return &t;
+  return nullptr;
+}
+static void navTipHide() {
+  s_nav_tip_for = nullptr;
+  s_nav_tip_touch = false;
+  if (s_nav_tip_timer) lv_timer_pause(s_nav_tip_timer);
+  if (s_nav_tip_touch_timer) lv_timer_pause(s_nav_tip_touch_timer);
+  if (s_nav_tip_box && !lv_obj_has_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN)) lv_obj_add_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN);
+}
+// Build (once) and place the card for control f. A finger covers what is below it,
+// so touch prefers above; the keyboard goes below a control in the top half.
+static void navTipShow(lv_obj_t* f, const char* title, const char* line2, bool prefer_above) {
+#if defined(HAS_TDECK_PRO)
+  (void)f; (void)title; (void)line2; (void)prefer_above;
+#else
+  if (!f || !title || !lv_obj_is_valid(f)) return;
+  if (!s_nav_tip_box) {
+    s_nav_tip_box = lv_obj_create(lv_layer_sys());
+    lv_obj_remove_style_all(s_nav_tip_box);
+    lv_obj_clear_flag(s_nav_tip_box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_nav_tip_box, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_color(s_nav_tip_box, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_nav_tip_box, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_nav_tip_box, 8, LV_PART_MAIN);
+    // The keyboard cursor's colour along its edge ties the card to what it describes.
+    lv_obj_set_style_border_color(s_nav_tip_box, lv_color_hex(focusRingColor()), LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_nav_tip_box, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(s_nav_tip_box, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(s_nav_tip_box, 4, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_nav_tip_box, 0, LV_PART_MAIN);
+    lv_obj_set_flex_flow(s_nav_tip_box, LV_FLEX_FLOW_COLUMN);
+    s_nav_tip_title = lv_label_create(s_nav_tip_box);
+    lv_obj_set_style_text_font(s_nav_tip_title, &g_font_semi_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_nav_tip_title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    s_nav_tip_hint = lv_label_create(s_nav_tip_box);
+    lv_obj_set_style_text_font(s_nav_tip_hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_nav_tip_hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  }
+  lv_label_set_text(s_nav_tip_title, title);
+  if (line2 && line2[0]) {
+    lv_label_set_text(s_nav_tip_hint, line2);
+    lv_obj_clear_flag(s_nav_tip_hint, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_nav_tip_hint, LV_OBJ_FLAG_HIDDEN);
+  }
+  lv_obj_clear_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(s_nav_tip_box);
+  lv_obj_update_layout(s_nav_tip_box);
+  const lv_coord_t bw = lv_obj_get_width(s_nav_tip_box), bh = lv_obj_get_height(s_nav_tip_box);
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  lv_area_t a;
+  lv_obj_get_coords(f, &a);
+  lv_coord_t x, y;
+  if ((a.x2 - a.x1) < 60 && (a.x1 < 48 || a.x2 > sw - 48)) {
+    // A narrow control along an edge (the map's button column): beside it, so the
+    // card covers none of its neighbours above and below.
+    x = (a.x1 < 48) ? a.x2 + 6 : a.x1 - bw - 6;
+    y = (a.y1 + a.y2) / 2 - bh / 2;
+  } else {
+    x = (a.x1 + a.x2) / 2 - bw / 2;
+    const bool above = prefer_above ? (a.y1 - bh - 6 >= STATUSBAR_H) : ((a.y1 + a.y2) / 2 >= sh / 2);
+    y = above ? a.y1 - bh - 6 : a.y2 + 6;
+  }
+  if (x > sw - bw - 4) x = sw - bw - 4;
+  if (x < 4) x = 4;
+  if (y > sh - bh - 2) y = sh - bh - 2;
+  if (y < STATUSBAR_H) y = STATUSBAR_H;
+  lv_obj_set_pos(s_nav_tip_box, x, y);
+  s_nav_tip_for = f;
+#endif
+}
+// Touch: keep the card while the finger is down, then 1.5 s more to read it.
+static void navTipTouchWatchCb(lv_timer_t* t) {
+  if (!s_nav_tip_for || !lv_obj_is_valid(s_nav_tip_for) || !s_nav_tip_indev) { navTipHide(); return; }
+  if (s_nav_tip_indev->proc.state == LV_INDEV_STATE_PRESSED) { s_nav_tip_lift_ms = 0; return; }
+  const uint32_t now = lv_tick_get();
+  if (!s_nav_tip_lift_ms) { s_nav_tip_lift_ms = now ? now : 1; return; }
+  if (lv_tick_elaps(s_nav_tip_lift_ms) >= 1500) { lv_timer_pause(t); navTipHide(); }
+}
+static void navTipTouchShow(lv_obj_t* o, lv_indev_t* in, const char* line2) {
+  const NavTip* tip = navTipFind(o);
+  if (!tip || !in) return;
+  navTipShow(o, tip->title, line2, true);
+  s_nav_tip_touch = true;
+  s_nav_tip_indev = in;
+  s_nav_tip_lift_ms = 0;
+  if (!s_nav_tip_touch_timer) s_nav_tip_touch_timer = lv_timer_create(navTipTouchWatchCb, 100, nullptr);
+  lv_timer_reset(s_nav_tip_touch_timer);
+  lv_timer_resume(s_nav_tip_touch_timer);
+}
+// A finger held on a control with a tip: the card, and no tap when it lifts.
+static void navTipLongPressCb(lv_event_t* e) {
+#if defined(HAS_TDECK_PRO)
+  (void)e; return;   // no cards on e-paper: a long press stays a plain press
+#endif
+  lv_indev_t* in = lv_indev_get_act();
+  if (!in || lv_indev_get_type(in) != LV_INDEV_TYPE_POINTER) return;   // keys show it on focus
+  lv_obj_t* o = lv_event_get_target(e);
+  const NavTip* tip = navTipFind(o);
+  if (!tip || tip->own_hold) return;
+  lv_indev_wait_release(in);
+  navTipTouchShow(o, in, tip->hint);
+}
+static void navTipDeletedCb(lv_event_t* e) {
+  lv_obj_t* o = lv_event_get_target(e);
+  if (o == s_nav_tip_for) navTipHide();
+  for (NavTip& t : s_nav_tips) if (t.obj == o) t = NavTip{ nullptr, nullptr, nullptr, nullptr, false };
+}
+// Strings must outlive the control: literals or TR() results. A slider is always
+// own_hold (holding it is how a finger drags it).
+static void navSetTip(lv_obj_t* obj, const char* title, const char* hint = nullptr,
+                      const char* key_hint = nullptr, bool own_hold = false) {
+  if (!obj || !title) return;
+  NavTip* slot = nullptr;
+  for (NavTip& t : s_nav_tips) if (t.obj == obj) { slot = &t; break; }
+  if (!slot) {
+    for (NavTip& t : s_nav_tips) if (!t.obj) { slot = &t; break; }
+    if (!slot) return;   // full: this control goes without a card
+    lv_obj_add_event_cb(obj, navTipDeletedCb, LV_EVENT_DELETE, nullptr);
+    lv_obj_add_event_cb(obj, navTipLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
+  }
+  *slot = NavTip{ obj, title, hint, key_hint, own_hold || lv_obj_check_type(obj, &lv_slider_class) };
+}
+
 #if CAP_KEYPAD_NAV
 // ===========================================================================
 // Keypad / D-pad focus navigation
@@ -4999,6 +5334,9 @@ struct NavKeyTr { uint32_t key; bool pressed; };
 static NavKeyTr s_nav_fifo[64];
 static uint8_t  s_nav_fifo_head = 0, s_nav_fifo_tail = 0;
 static uint32_t s_nav_last_key  = 0;
+static bool     s_nav_last_pressed = false;   // the last transition handed to LVGL
+static uint32_t s_nav_hold_key  = 0;          // a key held down on purpose (the Pager's Enter): reads pressed until its release
+static lv_indev_t* s_nav_indev  = nullptr;    // the keypad indev this FIFO feeds
 
 static inline void navFifoPush(uint32_t key, bool pressed) {
   uint8_t nxt = (uint8_t)((s_nav_fifo_head + 1) % 64);
@@ -5232,6 +5570,37 @@ static void navUnstyle(lv_obj_t* o) {
 // on a field trapped every letter key as a typed character — you couldn't move away.
 static bool s_nav_ta_editing = false;
 
+// The keyboard side of the tooltips: the card shows once the cursor has rested on a
+// control a moment, so turning through a list never flashes cards. Its second line
+// joins the shared hint and the keyboard one.
+static constexpr uint32_t kNavTipDelayMs = 450;
+static void navTipShowCb(lv_timer_t* t) {
+  lv_timer_pause(t);
+  lv_obj_t* f = s_nav_tip_for;
+  const NavTip* tip = navTipFind(f);
+  if (!tip || !lv_obj_is_valid(f) || !lv_obj_is_visible(f) || f != s_nav_styled) return;
+  if (g_lv.task && (g_lv.task->isScreenOff() || g_lv.task->isManualLock())) return;
+  static char line2[96];
+  line2[0] = '\0';
+  if (tip->hint && tip->hint[0]) snprintf(line2, sizeof line2, "%s", tip->hint);
+  if (tip->key_hint && tip->key_hint[0])
+    snprintf(line2 + strlen(line2), sizeof line2 - strlen(line2), "%s%s", line2[0] ? ". " : "", tip->key_hint);
+  navTipShow(f, tip->title, line2, false);
+}
+// The cursor moved: the old card goes; a control with a tip gets one after a rest.
+static void navTipFocusMoved(lv_obj_t* f) {
+  // With the cursor hidden (touch in use) a focus change is not the keyboard moving:
+  // a held finger's card stays until the finger lifts.
+  if (!f && s_nav_tip_touch) return;
+  navTipHide();
+  if (!f || !navTipFind(f)) return;
+  s_nav_tip_for = f;
+  if (!s_nav_tip_timer) s_nav_tip_timer = lv_timer_create(navTipShowCb, kNavTipDelayMs, nullptr);
+  lv_timer_set_period(s_nav_tip_timer, kNavTipDelayMs);
+  lv_timer_reset(s_nav_tip_timer);
+  lv_timer_resume(s_nav_tip_timer);
+}
+
 static void navFocusCb(lv_group_t* g) {
   lv_obj_t* f = lv_group_get_focused(g);
   // Edit mode — decided only on a GENUINE move to a different field. The chat composer
@@ -5258,6 +5627,7 @@ static void navFocusCb(lv_group_t* g) {
     s_nav_focus_prev = f;
   }
   lv_obj_t* nav_was_styled = s_nav_styled;
+  if (f != nav_was_styled || !s_nav_show) navTipFocusMoved((f && s_nav_show) ? f : nullptr);
   if (s_nav_styled && s_nav_styled != f) navUnstyle(s_nav_styled);
   s_nav_styled = nullptr;                  // old highlight (if any) is now restored; nothing styled yet
   if (!f || !s_nav_show) return;          // focus-visible: paint only while actively keyboard-navigating
@@ -5277,6 +5647,7 @@ static void navFocusCb(lv_group_t* g) {
 static void navHideFocus() {
   if (s_nav_styled) { navUnstyle(s_nav_styled); s_nav_styled = nullptr; }
   s_nav_show = false;
+  navTipHide();
 }
 
 // ---- Keyboard-nav tab hotkeys (programmable; default E/R/T/U/I) ----
@@ -6292,9 +6663,14 @@ static void tanmatsuKeypadRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
     data->key   = tr.key;
     data->state = tr.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
     s_nav_last_key = tr.key;
+    s_nav_last_pressed = tr.pressed;
   } else {
     data->key   = s_nav_last_key;
-    data->state = LV_INDEV_STATE_RELEASED;
+    // A key held on purpose stays down between its transitions, so LVGL can see a
+    // long press. Any other key reads released: a lost release must never leave a
+    // key stuck down.
+    data->state = (s_nav_hold_key && s_nav_last_key == s_nav_hold_key && s_nav_last_pressed)
+                  ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
   }
   data->continue_reading = (s_nav_fifo_tail != s_nav_fifo_head);
 }
@@ -6410,12 +6786,32 @@ static bool navTopHasVisibleChild(lv_obj_t* top) {
   return false;
 }
 
+static lv_obj_t* appDrawerRoot();   // the app drawer's root, or null (defined with the drawer)
+
+// The app drawer is Home itself, not a popup over it: the launcher grid is the
+// default Home (Display > Home), and the drawer only covers the tab content, with
+// the tab bar still showing. It lives on the top layer, though, so without this
+// every Home screen read as "a popup is open" and the Pager's M/C/A/S hotkeys and
+// Alt+wheel did nothing there. Anything else showing on the top layer (a tool, an
+// app or a popup opened over the drawer) still counts.
+static bool navTopOnlyHomeDrawer(lv_obj_t* top) {
+  lv_obj_t* drawer = appDrawerRoot();
+  if (!drawer || getActiveTab() != HOME_TAB_INDEX) return false;
+  const uint32_t n = lv_obj_get_child_cnt(top);
+  for (uint32_t i = 0; i < n; i++) {
+    lv_obj_t* c = lv_obj_get_child(top, i);
+    if (c && c != drawer && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(c, NAV_SKIP_FLAG)) return false;
+  }
+  return true;
+}
+
 // True only at the top level — no modal/popup on lv_layer_top(), no settings detail
 // sheet, no open chat/channel. Scopes the pager's Alt+encoder gesture (updatePagerEncoder):
 // tab-switching only makes sense here; inside a nested scrollable screen the same
 // gesture instead free-scrolls the page.
 static bool navOnMainPage() {
-  if (navTopHasVisibleChild(lv_layer_top())) return false;
+  lv_obj_t* top = lv_layer_top();
+  if (navTopHasVisibleChild(top) && !navTopOnlyHomeDrawer(top)) return false;
   if (s_settings_sheet && lv_obj_is_valid(s_settings_sheet)) return false;
   if (navOpenChatPanel()) return false;
   return true;
@@ -6469,8 +6865,81 @@ static void navAddStatusBarActions() {
   if (s_settings_open_cat >= 0 || s_apppage_title) add(g_statusbar.left_label);
 }
 
+#if defined(TLORA_PAGER)
+// Where focus was on each main tab when it was left, so coming back lands there instead
+// of on the tab's first widget. Kept the way the #45/#467 page restore keeps it: a chat
+// row by its thread id, then the slot when the page has the same shape, then the object.
+// Home's app drawer and Home's widgets are different pages, so each keeps its own kind.
+struct NavTabMem { lv_obj_t* obj; int idx, n, thread; bool drawer; };
+static NavTabMem s_nav_tab_mem[5] = { { nullptr, -1, 0, -1, false }, { nullptr, -1, 0, -1, false },
+                                      { nullptr, -1, 0, -1, false }, { nullptr, -1, 0, -1, false },
+                                      { nullptr, -1, 0, -1, false } };
+static void navTabMemSave(int t, lv_obj_t* keep, bool drawer) {
+  if (t < 0 || t >= 5 || !keep) return;
+  NavTabMem& m = s_nav_tab_mem[t];
+  m.obj = keep; m.idx = -1; m.thread = -1; m.drawer = drawer;
+  m.n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  for (int i = 0; i < m.n; ++i) if (s_nav_objs[i] == keep) { m.idx = i; break; }
+  if (lv_obj_is_valid(keep) && lv_obj_has_flag(keep, NAV_THREAD_ROW_FLAG)) {
+    const intptr_t encoded = reinterpret_cast<intptr_t>(lv_obj_get_user_data(keep));
+    if (encoded > 0) m.thread = static_cast<int>(encoded - 1);
+  }
+}
+static lv_obj_t* navTabMemFind(int t, bool drawer) {
+  if (t < 0 || t >= 5) return nullptr;
+  const NavTabMem& m = s_nav_tab_mem[t];
+  if (m.idx < 0 || m.drawer != drawer) return nullptr;
+  const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  if (m.thread >= 0) {
+    for (int i = 0; i < n; ++i) {
+      lv_obj_t* o = s_nav_objs[i];
+      if (o && lv_obj_is_valid(o) && lv_obj_has_flag(o, NAV_THREAD_ROW_FLAG) &&
+          reinterpret_cast<intptr_t>(lv_obj_get_user_data(o)) - 1 == m.thread) return o;
+    }
+  }
+  if (m.n == n && m.idx < n && s_nav_objs[m.idx] && lv_obj_is_valid(s_nav_objs[m.idx])) return s_nav_objs[m.idx];
+  if (m.obj && lv_obj_is_valid(m.obj))
+    for (int i = 0; i < n; ++i) if (s_nav_objs[i] == m.obj) return m.obj;
+  return nullptr;   // the page changed shape: the tab's own first focus instead
+}
+static lv_obj_t* navFirstCollectedUnder(lv_obj_t* anc) {
+  if (!anc || !lv_obj_is_valid(anc)) return nullptr;
+  const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
+  for (int i = 0; i < n; ++i)
+    for (lv_obj_t* p = s_nav_objs[i] ? lv_obj_get_parent(s_nav_objs[i]) : nullptr; p; p = lv_obj_get_parent(p))
+      if (p == anc) return s_nav_objs[i];
+  return nullptr;
+}
+// Arriving on main tab t (not back from one of its own overlays): its remembered focus,
+// or for Contacts the first contact rather than the filter chip five stops above it.
+static bool pagerTabArrivalFocus(int t, bool drawer) {
+  if (t < 0) return false;
+  lv_obj_t* o = navTabMemFind(t, drawer);
+  if (!o && t == CONTACTS_TAB_INDEX) o = navFirstCollectedUnder(g_lv.contacts_list);
+  if (!o) return false;
+  lv_group_focus_obj(o);
+  lv_obj_t* row = navStoreRowFor(o);
+  lv_obj_scroll_to_view_recursive(row ? row : o, LV_ANIM_OFF);
+  return true;
+}
+static lv_obj_t* pagerChatFirstNewRow(LvChatPanel* cp);   // with the chat virtualization, far below
+// The main tab the last rebuild collected (-1: an overlay, a chat, a sheet), and whether
+// that was the app drawer as Home.
+static int  s_nav_last_main_tab = -1;
+static bool s_nav_last_drawer   = false;
+// Called as a tab change starts, while the focus group still holds the tab being left:
+// tabChangedCb's closeSettingsModal() empties the group before any rebuild sees it.
+static void navTabMemLeaving() {
+  if (s_nav_last_main_tab >= 0 && s_nav_group)
+    navTabMemSave(s_nav_last_main_tab, lv_group_get_focused(s_nav_group), s_nav_last_drawer);
+}
+#endif
+
 static void navMaybeRebuild() {
   if (!s_nav_group) return;
+  if (s_nav_tip_box && !lv_obj_has_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN) && g_lv.task &&
+      (g_lv.task->isScreenOff() || g_lv.task->isManualLock()))
+    navTipHide();   // a tooltip card never outlives the screen it described
   navSyncCursor();   // keep the text cursor showing only in edit mode (reliable "ready to type" cue)
   if (navOpenDropdown()) return;   // an open dropdown owns the group — rebuilding would close it
   // Issue #45: when an overlay (settings sheet, modal) or a chat closes, the element that had focus
@@ -6527,6 +6996,18 @@ static void navMaybeRebuild() {
   if (!s_nav_dirty && scr == s_nav_prev_scr && sig == s_nav_prev_sig) return;
   s_nav_dirty = false; s_nav_prev_scr = scr; s_nav_prev_sig = sig;
   lv_obj_t* keep = lv_group_get_focused(s_nav_group);     // preserve focus across a same-page rebuild (toggle/click)
+#if defined(TLORA_PAGER)
+  // Which main tab's own screen this is: its page, or the app drawer as Home.
+  const bool drawer_home = useTop && root && root == appDrawerRoot() && getActiveTab() == HOME_TAB_INDEX;
+  const int  main_tab    = on_page ? getActiveTab() : drawer_home ? HOME_TAB_INDEX : -1;
+  // Leaving a main tab for an overlay, a chat or a sheet: the group still holds the tab
+  // (a tab change itself is noted earlier, in navTabMemLeaving).
+  if (s_nav_last_main_tab >= 0 && s_nav_last_main_tab != main_tab && keep)
+    navTabMemSave(s_nav_last_main_tab, keep, s_nav_last_drawer);
+  const int tab_arrived = (main_tab >= 0 && main_tab != s_nav_last_main_tab) ? main_tab : -1;
+  s_nav_last_main_tab = main_tab;
+  s_nav_last_drawer   = drawer_home;
+#endif
   if (!on_page && s_nav_prev_on_page) {   // #45: leaving the page → remember where we were
     s_nav_page_focus = keep;
     s_nav_page_focus_idx = -1;
@@ -6609,6 +7090,11 @@ static void navMaybeRebuild() {
     // The M9 pending-focus block above already placed focus deliberately. Without
     // this arm the chain would fall through to the just-opened-chat branch and
     // move it, which is the whole thing that block exists to prevent.
+#if defined(TLORA_PAGER)
+  } else if (tab_arrived >= 0 && !collected_focus_hint && pagerTabArrivalFocus(tab_arrived, drawer_home)) {
+    focus_set = true;
+    s_nav_focus_first_thread = false;   // a remembered chat row beats the first one
+#endif
   } else if (s_nav_focus_first_thread && on_page &&
              getActiveTab() == CHAT_INBOX_TAB_INDEX) {
     s_nav_focus_first_thread = false;
@@ -6625,10 +7111,21 @@ static void navMaybeRebuild() {
     lv_group_focus_obj(collected_focus_hint);
     focus_set = true;
   } else if (chat && chat != s_nav_prev_chat && chat->composer_ta && lv_obj_is_valid(chat->composer_ta)) {
-    lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
-    s_nav_ta_editing = true;
-    navSyncCursor();                         // hardware input is ready immediately
-    focus_set = true;
+#if defined(TLORA_PAGER)
+    // A chat with unread messages opens on the first of them (it is scrolled there
+    // already), so reading them is plain wheel turns. Nothing unread: the composer.
+    if (lv_obj_t* first_new = pagerChatFirstNewRow(chat)) {
+      lv_group_focus_obj(first_new);
+      s_nav_show = true;
+      focus_set = true;
+    } else
+#endif
+    {
+      lv_group_focus_obj(chat->composer_ta);   // chat just opened → focus the composer
+      s_nav_ta_editing = true;
+      navSyncCursor();                         // hardware input is ready immediately
+      focus_set = true;
+    }
   } else if (on_page && !s_nav_prev_on_page &&
              (s_nav_page_focus || s_nav_page_focus_idx >= 0 || s_nav_page_thread_idx >= 0)) {
     // #45: just returned to the page from an overlay/chat — restore the item we left from so the
@@ -6903,6 +7400,7 @@ static inline void navMarkDirty() {}
 
 static unsigned long s_slider_touch_ms = 0;   // last time a slider (volume, etc.) was dragged
 static bool s_wake_swallow = false;           // swallow the whole touch that wakes the screen (issue #4)
+static bool s_touch_hid_focus = false;        // this touch already dropped the keyboard focus highlight
 static bool s_lock_on_screen_off = false;     // cached pref; forced on for Pro/Max so e-paper shows a lock indicator
 // Constellation screensaver showing. While it is, _screen_off is TRUE: every input
 // path already treats the first event on a "dark" screen as a wake, consumes it and
@@ -7008,6 +7506,7 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     pro_live_press_delivered = false;
 #endif
     s_wake_swallow = false;   // finger lifted -> the next touch acts normally
+    s_touch_hid_focus = false;
   }
   if (raw_press
 #if CAP_TRACKBALL
@@ -7067,7 +7566,10 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
       return;
     }
 #if CAP_TRACKBALL || BLE_KBD_OWNS_NAV
-    navHideFocus();   // a real finger press = pointer input; drop the keyboard-nav focus highlight
+    // A real finger = pointer input: drop the keyboard-nav focus highlight, once per
+    // touch. On every poll of the same finger it also took down the card that finger's
+    // long press had just raised (the tooltip flashed and vanished on the T-Deck).
+    if (!s_touch_hid_focus) { navHideFocus(); s_touch_hid_focus = true; }
 #endif
     data->state = LV_INDEV_STATE_PRESSED;
     if (g_lv.task) g_lv.task->noteUserInput();
@@ -10427,7 +10929,7 @@ static void threadSelectCb(lv_event_t* e) {
   bool ch; uint16_t unread; uint32_t ts; char name[UITask::MAX_THREAD_NAME + 1];
   if (g_lv.task->getThreadInfo(ctx->idx, ch, unread, ts, name, sizeof(name))) {
     char san[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), threadShownName(ctx->idx, name));
     setChatStatusTitle(san);   // thread name → status bar (no in-chat header bar)
   }
   p.detail_open = true;
@@ -11263,6 +11765,9 @@ static void updateTabIndicator() {
 
 static void tabChangedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+#if defined(TLORA_PAGER)
+  navTabMemLeaving();   // first: closeSettingsModal below empties the focus group
+#endif
   scheduleHeavyRefresh(170);
   closeSettingsModal();
   closeSettingsCategory();   // a category detail sheet floats on layer_top — drop it on tab change
@@ -11313,7 +11818,10 @@ static void tabChangedCb(lv_event_t* e) {
   //     delete so the map's blocking first tile render can't paint under it.
   if (new_t != prev_t) s_tab_changed = true;   // the Home toggle reads this to tell a switch from a same-tap
   if (new_t == HOME_TAB_INDEX && prev_t != HOME_TAB_INDEX) {
-    if (s_home_drawer_mode || s_home_is_drawer) openAppDrawer();  // returned to Home in drawer mode (or drawer-as-home pref) -> restore it (NO toggle here)
+    // Returned to Home in drawer mode (or drawer-as-home pref) -> restore it (NO toggle
+    // here). The mode follows, or the next Home press "opened" the open drawer and
+    // only the second one reached the widgets.
+    if (s_home_drawer_mode || s_home_is_drawer) { s_home_drawer_mode = true; openAppDrawer(); }
   } else if (new_t != HOME_TAB_INDEX && prev_t == HOME_TAB_INDEX) {
     closeAppDrawerSync();                        // leaving Home -> hide (mode kept); sync so the map can't paint under it
     if (s_hw_arrange) hwArrangeDone();           // ...and Arrange is done (saved)
@@ -11369,11 +11877,24 @@ static void tabChangedCb(lv_event_t* e) {
   if (g_lv.task) g_lv.task->onLvTabChanged(new_t);
 }
 
+// How a tab switch moves. The map's first paint blocks for ~2.5 s, so it never
+// slides (see goToTab). The Pager never slides at all: it has no touch to swipe
+// with, and at its frame rate the 400 ms slide was four or five uneven frames
+// before the tab could be used.
+static lv_anim_enable_t tabSwitchAnim(int idx) {
+#if defined(TLORA_PAGER)
+  (void)idx;
+  return LV_ANIM_OFF;
+#else
+  return idx == MAP_TAB_INDEX ? LV_ANIM_OFF : LV_ANIM_ON;
+#endif
+}
+
 static void homeTileCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   uintptr_t idx = reinterpret_cast<uintptr_t>(lv_event_get_user_data(e));
   // goToTab is defined below; can call it here because this runs at runtime
-  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx), LV_ANIM_ON);
+  if (g_lv.tabview) lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx), tabSwitchAnim((int)idx));
   scheduleHeavyRefresh(170);
   s_lv_tab_prev = static_cast<int>(idx);
   if (g_lv.task) g_lv.task->onLvTabChanged(static_cast<int>(idx));
@@ -13314,7 +13835,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     lv_obj_t* nm = lv_label_create(card);
     useChainedFont(nm);
     char nm_buf[40];
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_buf, sizeof(nm_buf), e_disc.ci.name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_buf, sizeof(nm_buf), contactShownName(e_disc.ci.id.pub_key, e_disc.ci.name));
     lv_label_set_text(nm, nm_buf[0] ? nm_buf : "(unnamed)");
     lv_obj_set_style_text_color(nm, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
@@ -15307,7 +15828,7 @@ static void sleepIdleToggleCb(lv_event_t* e) {
 #endif
   touchSleep::setEnabled(on);
   updateGlobalStatusBar();
-  if (g_lv.task) g_lv.task->showAlert(on ? TR("Idle sleep enabled") : TR("Idle sleep disabled"), 1200);
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Battery saver on") : TR("Battery saver off"), 1200);
 }
 
 // Hard-lock (not just dim) when the screen idles off, so the touchscreen is
@@ -16090,19 +16611,33 @@ static void openExpansionCardCb(lv_event_t* e) {
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
 static lv_obj_t* s_lockwall_btn_lbl = nullptr;   // Device-modal button caption (current wallpaper)
+static lv_obj_t* s_lockwall_default_row = nullptr;   // "Default wallpaper", while a picture of your own is set
 static const uint32_t kLockColors[] = {
   0xE6F2FF, 0xFFFFFF, 0x5BC0FF, 0x5BE5A0, 0xFFC857, 0xFF6B6B, 0xB39DFF, 0x9AA7B4
 };
 // Human-readable name from a stored pref path ("sd:/lock/x.jpg" -> "SD: x.jpg").
 static void lockwallDisplayName(const char* path, char* out, int cap) {
   if (!out || cap <= 0) return;
-  if (!path || !path[0]) { snprintf(out, cap, "(default)"); return; }
+  if (!path || !path[0] || !strcmp(path, touchPrefsDefaultLockWallpaper())) { snprintf(out, cap, "%s", TR("(default)")); return; }
   const bool sd = !strncmp(path, "sd:", 3);
   const char* p = sd ? path + 3 : path;
   const char* base = strrchr(p, '/'); base = base ? base + 1 : p;
   snprintf(out, cap, "%s%s", sd ? "SD: " : "", base);
 }
 static void openLockWallPickerCb(lv_event_t* e);   // defined with the picker, below
+static void lockwallDefaultCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (!touchPrefsResetLockWallpaper()) return;
+  if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {
+    char disp[64];
+    lockwallDisplayName(touchPrefsDefaultLockWallpaper(), disp, sizeof disp);
+    lv_label_set_text(s_lockwall_btn_lbl, disp);
+  }
+  if (s_lockwall_default_row && lv_obj_is_valid(s_lockwall_default_row))
+    lv_obj_add_flag(s_lockwall_default_row, LV_OBJ_FLAG_HIDDEN);
+  s_lockwall_default_row = nullptr;
+  if (g_lv.task) g_lv.task->showAlert(TR("Default wallpaper"), 1100);
+}
 static void lockColorChosenCb(lv_event_t* e);
 #endif  // HAS_TDECK_GT911 || HAS_TDECK_PRO || HAS_THINKNODE_M9
 #if CAP_SOUND_FILES   // custom WAV notification sounds -- T-Deck/pager (SD or SPIFFS)
@@ -16471,7 +17006,11 @@ static void buildGpsPage() {
     int picked = 0;
     for (int i = 0; i < kGpsBaudCount; i++) if (kGpsBaudOpts[i] == cur) { picked = i; break; }
     const char* bauds[] = { "9600", "19200", "38400", "57600", "115200" };
-#if defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)
+#if CAP_GPS_BAUD_AUTO
+    setChoiceRow(c, "Serial speed", "Found automatically: when the GPS does not answer at this speed, the device "
+                 "tries the others and keeps the one that works. This is where it starts.",
+                 bauds, kGpsBaudCount, picked, gpsBaudPickCb);
+#elif defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)
     setChoiceRow(c, "Serial speed", "The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.",
                  bauds, kGpsBaudCount, picked, gpsBaudPickCb);
 #else
@@ -16899,6 +17438,9 @@ static void buildLockPage() {
     lockwallDisplayName(cur, disp, sizeof disp);
     lv_obj_t* r = setActionRow(c, LV_SYMBOL_IMAGE, "Wallpaper", disp, openLockWallPickerCb);
     s_lockwall_btn_lbl = (lv_obj_t*)lv_obj_get_user_data(r);
+    // The way back from a picture of your own (#626).
+    s_lockwall_default_row = strcmp(cur, touchPrefsDefaultLockWallpaper()) != 0
+        ? setActionRow(c, LV_SYMBOL_REFRESH, "Default wallpaper", nullptr, lockwallDefaultCb) : nullptr;
 #if !defined(HAS_TDECK_PRO)
     setSwatchRow(c, "Text colour", kLockColors, (int)(sizeof(kLockColors) / sizeof(kLockColors[0])),
                  touchPrefsGetLockTextColor(), lockColorPickCb);
@@ -19203,11 +19745,10 @@ static void goToTab(int idx) {
   // handler. With the 200-400 ms slide still running, the lv_refr_now that
   // pushes the "Loading map…" hint can land while the map page is still
   // off-screen — the hint never reaches the panel and the board reads as
-  // frozen on the previous tab. Skip the slide for the map only; every other
-  // tab keeps it. (Swipe-driven switches call lv_tabview_set_act inside LVGL
-  // and are unaffected.)
-  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx),
-                     idx == MAP_TAB_INDEX ? LV_ANIM_OFF : LV_ANIM_ON);
+  // frozen on the previous tab. Skip the slide for the map; every other tab
+  // keeps it, except on the Pager (tabSwitchAnim). (Swipe-driven switches call
+  // lv_tabview_set_act inside LVGL and are unaffected.)
+  lv_tabview_set_act(g_lv.tabview, static_cast<uint32_t>(idx), tabSwitchAnim(idx));
   // lv_tabview_set_act() does NOT emit LV_EVENT_VALUE_CHANGED, so the full
   // tab-change handler (tabChangedCb → onMapTabActivated, status bar, chat
   // overlay cleanup, onLvTabChanged, heavy refresh) was skipped for swipe-driven
@@ -19424,7 +19965,7 @@ static void actionSheetPingCb(lv_event_t* e) {
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     copyUtf8ReplacingMissingGlyphs(&g_font_14, s_ui_ping_target_name,
                                     sizeof(s_ui_ping_target_name),
-                                    c.name[0] ? c.name : "repeater");
+                                    c.name[0] ? contactShownName(c.id.pub_key, c.name) : "repeater");
     s_ui_ping_deadline_ms = millis() + UI_PING_TIMEOUT_MS;
     g_lv.task->showAlert(r == MSG_SEND_SENT_DIRECT
                          ? TR("Pinged (direct) — waiting…")
@@ -19495,7 +20036,7 @@ static void actionSheetTelemetryCb(lv_event_t* e) {
   // Open the telemetry window on its history; it does NOT auto-request. The user
   // taps the Request button (refresh glyph, left of the gear) to poll.
   memcpy(s_telem_node, c.id.pub_key, 6);
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, s_telem_name, sizeof s_telem_name, c.name[0] ? c.name : "node");
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, s_telem_name, sizeof s_telem_name, c.name[0] ? contactShownName(c.id.pub_key, c.name) : "node");
   s_telem_reading[0] = '\0';
   s_telem_manual_pending = false;
   openTelemetryWindow(s_telem_node, s_telem_name, TELEM_HISTORY);
@@ -19893,7 +20434,7 @@ static void openAdminConsole(const ContactInfo& c) {
   closeAdminConsole();
   memcpy(s_admin_pub32, c.id.pub_key, 32);
   copyUtf8ReplacingMissingGlyphs(&g_font_14, s_admin_name, sizeof(s_admin_name),
-                                  c.name[0] ? c.name : "repeater");
+                                  c.name[0] ? contactShownName(c.id.pub_key, c.name) : "repeater");
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -20149,7 +20690,7 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   // unrenderable codepoint for '*'. This Join title skipped it and drew tofu (▯) for a name's
   // leading unsupported codepoint, while the contacts list/details showed '*' (GH #116).
   char safe_name[24];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, safe_name, sizeof(safe_name), c.name);
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, safe_name, sizeof(safe_name), contactShownName(c.id.pub_key, c.name));
   char hdr_buf[40];
   snprintf(hdr_buf, sizeof(hdr_buf), "%s %.20s", is_room ? "Join:" : "Login:", safe_name);
   lv_obj_t* title = lv_label_create(card);
@@ -20953,7 +21494,7 @@ static void openLosModal(uint32_t mesh_idx) {
   addCloseXBadge(card, losModalCloseCb);
 
   char nm[36];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), c.name);
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), contactShownName(c.id.pub_key, c.name));
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text_fmt(title, TR(LV_SYMBOL_GPS "  LOS \xe2\x86\x92 %s"), nm[0] ? nm : "?");
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
@@ -21025,6 +21566,14 @@ static void actionSheetLosCb(lv_event_t* e) {
 #endif  // ESP32 && MULTI_TRANSPORT_COMPANION
 
 static void actionSheetShowOnMapCb(lv_event_t* e);   // defined with the map code (uses map statics)
+static void openNicknameEditor(const ContactInfo& c);
+static void actionSheetNicknameCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  ContactInfo c;
+  if (!the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c)) return;
+  closeActionSheet();
+  openNicknameEditor(c);
+}
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map = false) {
   s_action_sheet_mesh_idx = mesh_idx;
   s_action_sheet_is_repeater = is_repeater;
@@ -21080,10 +21629,15 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // both this contact and our node have a GPS fix.
   bool has_los = false;
   bool is_room = false;
+  const char* nick = nullptr;   // the user's name for this contact; the title shows it, with the real one under it
   {
     ContactInfo _tc;
-    if (the_mesh.getContactByIdx(mesh_idx, _tc)) is_room = (_tc.type == ADV_TYPE_ROOM);
+    if (the_mesh.getContactByIdx(mesh_idx, _tc)) {
+      is_room = (_tc.type == ADV_TYPE_ROOM);
+      nick = nickFor(_tc.id.pub_key);
+    }
   }
+  const int sub_h = nick ? (int)lv_font_get_line_height(&g_font_12) + 2 : 0;
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
     ContactInfo _lc;
@@ -21104,7 +21658,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // block + share contact (7), + trace/admin for repeaters (2), + Join for
   // rooms (1), + line-of-sight (1), + Show on map (1 when contact has GPS and
   // !from_map).
-  const int grid_items = (from_map ? 5 : 7) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
+  const int grid_items = (from_map ? 5 : 8) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   // P4 portrait: the 2-column grid cut most labels off with "..." on the narrow
   // panel, so every action gets its own full-width row. The card grows to fit and
   // the body scrolls past the screen height like any tall sheet. Landscape and the
@@ -21116,7 +21670,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #endif
   const int grid_rows  = one_col ? grid_items : (grid_items + 1) / 2;   // ceil
   const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
-  int card_h = 2 * padding + title_h + body_content_h;
+  const int head_h = title_h + sub_h;   // title, plus the advertised name under a nickname
+  int card_h = 2 * padding + head_h + body_content_h;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
   // overflows — so a tall sheet (repeater, big UI scale) always fits on-screen and every button stays
   // reachable (keyboard nav focus-scrolls it into view). Replaces the old shrink-to-fit-the-rows hack.
@@ -21137,7 +21692,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 
   lv_obj_t* title = lv_label_create(card);
   char nm[40];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), name ? name : "");
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), nick ? nick : (name ? name : ""));
   lv_label_set_text_fmt(title, "%s%s",
                         is_repeater ? TOUCH_SYM_ANTENNA "  " :
                         is_room     ? LV_SYMBOL_LOOP    "  " : TOUCH_SYM_PERSON "  ",
@@ -21149,15 +21704,26 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // the contact name when it's long.
   lv_obj_set_width(title, card_w - 2 * padding - 32);
   lv_obj_set_pos(title, 0, 0);
+  if (nick) {   // the name it advertises, so a nickname never hides who this is
+    lv_obj_t* real = lv_label_create(card);
+    char rn[48];
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, rn, sizeof(rn), name ? name : "");
+    lv_label_set_text(real, rn);
+    lv_obj_set_style_text_color(real, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(real, &g_font_12, LV_PART_MAIN);
+    lv_label_set_long_mode(real, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(real, card_w - 2 * padding - 32);
+    lv_obj_set_pos(real, 0, title_h - 4);
+  }
 
   // Scrollable button body below the fixed title/X. The absolute-positioned grid buttons go in here;
   // when they overflow it scrolls (touch + keyboard focus-scroll), while the title/X stay pinned.
   lv_obj_t* body = lv_obj_create(card);
   lv_obj_remove_style_all(body);
-  lv_obj_set_pos(body, 0, title_h);
-  lv_obj_set_size(body, card_w - 2 * padding, card_h - 2 * padding - title_h);
+  lv_obj_set_pos(body, 0, head_h);
+  lv_obj_set_size(body, card_w - 2 * padding, card_h - 2 * padding - head_h);
   lv_obj_set_style_pad_all(body, 0, LV_PART_MAIN);
-  if (body_content_h > card_h - 2 * padding - title_h)
+  if (body_content_h > card_h - 2 * padding - head_h)
     lv_obj_set_scroll_dir(body, LV_DIR_VER);
   else
     lv_obj_clear_flag(body, LV_OBJ_FLAG_SCROLLABLE);
@@ -21262,6 +21828,8 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #else
   mk_btn(TOUCH_SYM_STAR "  Favorite", actionSheetFavoriteCb, 0);
 #endif
+  // A name of your own for this contact (shown in Contacts, Chats and the map).
+  if (!from_map) mk_btn(TR(LV_SYMBOL_EDIT "  Nickname"), actionSheetNicknameCb, 0);
   // Share position with this contact (#266) — label flips on the current grant.
   // Hidden on the map-marker sheet, which stays compact.
 #if defined(ESP32)
@@ -22989,6 +23557,7 @@ static lv_obj_t* s_fm_actions    = nullptr;  // per-entry action sheet
 static lv_obj_t* s_fm_prompt     = nullptr;  // text-input modal (rename / new folder)
 static lv_obj_t* s_fm_prompt_ta  = nullptr;
 static void    (*s_fm_prompt_cb)(const char*) = nullptr;
+static bool      s_fm_prompt_allow_empty = false;   // OK with no text delivers "" (a nickname clear)
 static char      s_fm_sel_name[64] = {0};    // entry the action sheet targets
 static bool      s_fm_sel_isdir  = false;
 static int       s_fm_paste_pending = 0;     // deferred copy/move (runs after notice paints)
@@ -23718,7 +24287,9 @@ static void webPushMessages(int tidx) {
     if (!first) *p++ = ','; first = false;
     int reps = (m.outgoing && m.sent_fp) ? (int)the_mesh.uiRepeatsForFp(m.sent_fp) : 0;
     p += snprintf(p, e - p, "{\"o\":%d,\"ts\":%u,\"ds\":%u,\"pl\":%d,\"sn\":%d,\"rs\":%d,\"rp\":%d,\"s\":\"",
-                  m.outgoing ? 1 : 0, (unsigned)m.ts, m.deliv_state, (int)m.path_len, (int)(m.snr_q4 / 4), (int)m.rssi, reps);
+                  m.outgoing ? 1 : 0, (unsigned)m.ts, m.deliv_state,
+                  (m.path_len == 0xFF) ? 255 : (int)pathHops(m.path_len),   // packed byte: hops, not 76 (#636)
+                  (int)(m.snr_q4 / 4), (int)m.rssi, reps);
     jsonEsc(p, e, m.sender);
     p += snprintf(p, e - p, "\",\"x\":\"");
     jsonEsc(p, e, m.text);
@@ -23923,7 +24494,7 @@ static void webPushContactInfo(int cidx) {
                 "{\"t\":\"ci\",\"i\":%d,\"rp\":%d,\"rm\":%d,\"fav\":%d,\"ign\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"k\":\"",
                 cidx, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
                 touchPrefsIsFavorite(c.id.pub_key) ? 1 : 0, touchPrefsIsIgnored(c.id.pub_key) ? 1 : 0,
-                (c.out_path_len == OUT_PATH_UNKNOWN) ? -1 : (int)c.out_path_len,
+                (c.out_path_len == OUT_PATH_UNKNOWN) ? -1 : (int)pathHops(c.out_path_len),
                 (unsigned)c.last_advert_timestamp, (long)c.gps_lat, (long)c.gps_lon);
   for (int b = 0; b < 6; ++b) p += snprintf(p, e - p, "%02x", c.id.pub_key[b]);   // short pubkey id
   p += snprintf(p, e - p, "\",\"n\":\"");
@@ -23958,7 +24529,8 @@ static void webPushDiscovered() {
     if (!first) *p++ = ','; first = false;
     p += snprintf(p, e - p, "{\"i\":%d,\"rp\":%d,\"rm\":%d,\"pl\":%d,\"adv\":%u,\"la\":%ld,\"lo\":%ld,\"n\":\"",
                   i, (c.type == ADV_TYPE_REPEATER) ? 1 : 0, (c.type == ADV_TYPE_ROOM) ? 1 : 0,
-                  (int)s_discovered[i].path_len, (unsigned)s_discovered[i].last_advert_ts,
+                  (s_discovered[i].path_len == OUT_PATH_UNKNOWN) ? -1 : (int)pathHops(s_discovered[i].path_len),
+                  (unsigned)s_discovered[i].last_advert_ts,
                   (long)c.gps_lat, (long)c.gps_lon);
     jsonEsc(p, e, c.name[0] ? c.name : "(unnamed)");
     p += snprintf(p, e - p, "\"}");
@@ -24915,6 +25487,7 @@ static void fmPromptClose() {
     popupClose(&s_fm_prompt);
     s_fm_prompt_ta = nullptr;
   }
+  s_fm_prompt_allow_empty = false;
 #if CAP_LUA_APPS
   if (!s_fm_prompt_ok) luaHostTextPromptCancel();
 #endif
@@ -24927,10 +25500,12 @@ static void fmPromptOkCb(lv_event_t* e) {
   const char* t = lv_textarea_get_text(s_fm_prompt_ta);
   snprintf(buf, sizeof buf, "%s", t ? t : "");
   void (*cb)(const char*) = s_fm_prompt_cb;
-  s_fm_prompt_ok = (cb && buf[0]);      // empty text is a cancel, not a delivery
+  // Empty text is a cancel, not a delivery, unless the caller asked for it.
+  const bool deliver = cb && (buf[0] || s_fm_prompt_allow_empty);
+  s_fm_prompt_ok = deliver;
   fmPromptClose();
   s_fm_prompt_ok = false;
-  if (cb && buf[0]) cb(buf);
+  if (deliver) cb(buf);
 }
 static void fmPromptCancelCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -24996,6 +25571,42 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   useChainedFont(lo);
 
   if (g_lv.keyboard) kbMirrorBind(s_fm_prompt_ta);
+}
+
+// ----- contact nickname editor (Contact options > Nickname) -----
+static uint8_t s_nick_edit_key[6];
+static bool    s_nick_edit_live = false;
+static void nickEditApply(const char* text) {
+  if (!s_nick_edit_live) return;
+  s_nick_edit_live = false;
+  const bool clear = !text || !text[0];
+  const bool ok = nickSet(s_nick_edit_key, text);
+  if (g_lv.dm.detail_open && g_lv.task) {   // its chat is open: the title follows at once
+    const int t = g_lv.task->activeThreadIdx();
+    bool ch = false; uint16_t un = 0; uint32_t ts = 0;
+    char nm[UITask::MAX_THREAD_NAME + 1];
+    if (t >= 0 && g_lv.task->getThreadInfo(t, ch, un, ts, nm, sizeof nm) && !ch) {
+      char san[UITask::MAX_THREAD_NAME + 8];
+      copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof san, threadShownName(t, nm));
+      setChatStatusTitle(san);
+    }
+  }
+  if (g_lv.task)
+    g_lv.task->showAlert(!ok ? TR("Nickname not saved") : clear ? TR("Nickname removed") : TR("Nickname saved"),
+                         ok ? 1200 : 1800);
+}
+static void openNicknameEditor(const ContactInfo& c) {
+  memcpy(s_nick_edit_key, c.id.pub_key, sizeof s_nick_edit_key);
+  const char* cur = nickFor(c.id.pub_key);
+  fmTextPrompt(TR("Nickname"), cur ? cur : "", nickEditApply);
+  s_nick_edit_live = true;
+  s_fm_prompt_allow_empty = true;   // clear the text and press OK: back to the advertised name
+  if (s_fm_prompt_ta) {
+    lv_textarea_set_max_length(s_fm_prompt_ta, 31);   // the store keeps 31 bytes (a contact name's size)
+    char san[40];
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, san, sizeof san, c.name);
+    taSetPlaceholder(s_fm_prompt_ta, san);   // what an empty nickname shows
+  }
 }
 
 // ----- operations (act on s_fm_sel_name in the current dir) -----
@@ -26717,8 +27328,10 @@ static void openSignalInfoPopup() {
 static const char    kReaderDefaultUrl[] = "wadamesh.com";
 static const char    kReaderHomeUrl[] = "sd:/home.htm";
 // Online with no SD home page: what changed in each build, newest first (#622). The site
-// generates it from release-notes/ (scripts/build/gen-changelog.py) at every deploy.
-static const char    kReaderChangelogUrl[] = "https://wadamesh.com/changelog.html";
+// generates it from release-notes/ (scripts/build/gen-changelog.py) at every deploy. Plain
+// HTTP: the TLS handshake needs internal RAM the T-Deck Pro does not have to spare, so the
+// https page never opened there (#638). The site serves it over http without a redirect.
+static const char    kReaderChangelogUrl[] = "http://wadamesh.com/changelog.html";
 static lv_obj_t*     s_reader_root   = nullptr;
 static lv_obj_t*     s_reader_url_ta = nullptr;
 static lv_obj_t*     s_reader_go     = nullptr;
@@ -26925,7 +27538,8 @@ static void readerFetchTaskFn(void*) {
     else snprintf(result_msg, sizeof result_msg, "SD file not found");
   }
   else if (code > 0) { snprintf(result_msg, sizeof result_msg, "HTTP %d", code); }
-  else               { snprintf(result_msg, sizeof result_msg, "Couldn't load (offline, bad URL, or TLS failed)"); }
+  else if (https)    { snprintf(result_msg, sizeof result_msg, "Couldn't load (offline, bad URL, or no memory for https: try http://)"); }
+  else               { snprintf(result_msg, sizeof result_msg, "Couldn't load (offline or bad URL)"); }
   if (raw) heap_caps_free(raw);
   if (generation == s_reader_generation) {
     s_reader_ok = result_ok;
@@ -29910,6 +30524,9 @@ static void statusBarUnreadCb(lv_event_t* e) {
 // lives below openControlCenter (it links to the tool openers defined there);
 // the home's Apps button and the back-key handler reach it through these.
 static lv_obj_t* s_appdrawer_root = nullptr;
+#if CAP_KEYPAD_NAV
+static lv_obj_t* appDrawerRoot() { return s_appdrawer_root; }   // for navOnMainPage, far above
+#endif
 // Badge counts baked into the drawer grid when it was last built, so the
 // refresh tick can tell whether they still match reality (see #393).
 static uint32_t  s_appdrawer_badge_sig = 0;
@@ -30081,8 +30698,8 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     s_chats_chip[i] = c;
   }
   if (!one_row) chatsHeaderSpacer(top);
-  chatsIconBtn(top, LV_SYMBOL_PLUS, chatsAddCb);
-  chatsIconBtn(top, UI_ICON_ELLIPSIS, chatsMoreCb);
+  navSetTip(chatsIconBtn(top, LV_SYMBOL_PLUS, chatsAddCb), TR("Add a channel"));
+  navSetTip(chatsIconBtn(top, UI_ICON_ELLIPSIS, chatsMoreCb), TR("More"));
   chatsChipsSync();
   return h;
 }
@@ -30361,10 +30978,15 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
-    char nl[40]; int nn=(int)strlen(c.name); if(nn>(int)sizeof(nl)-1) nn=(int)sizeof(nl)-1;
-    for(int j=0;j<nn;++j){ char ch=c.name[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); nl[j]=ch; }
-    nl[nn]='\0';
-    if(!strstr(nl,needle)) return false;
+    // Either name finds the contact: the nickname it shows, or the name it advertises.
+    auto has = [needle](const char* name){
+      if(!name) return false;
+      char nl[40]; int nn=(int)strlen(name); if(nn>(int)sizeof(nl)-1) nn=(int)sizeof(nl)-1;
+      for(int j=0;j<nn;++j){ char ch=name[j]; if(ch>='A'&&ch<='Z') ch=(char)(ch-'A'+'a'); nl[j]=ch; }
+      nl[nn]='\0';
+      return strstr(nl,needle) != nullptr;
+    };
+    if(!has(c.name) && !has(nickFor(c.id.pub_key))) return false;
   }
   return true;
 }
@@ -30825,6 +31447,7 @@ static void makeContactsTab(lv_obj_t* tab) {
   }
   {   // Discovered: heard nodes not in the contacts yet, with their count
     lv_obj_t* b = chatsIconBtn(row, UI_ICON_RADAR, contactsOverflowFoundCb);
+    navSetTip(b, TR("Discovered nodes"));
     lv_obj_add_flag(b, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     s_ct_disc_badge = lv_label_create(b);   // updated by the loop: text + shown while > 0
     lv_obj_set_size(s_ct_disc_badge, LV_SIZE_CONTENT, 14);   // 8 px figures, 3 px above: centred
@@ -30844,6 +31467,7 @@ static void makeContactsTab(lv_obj_t* tab) {
   }
   {   // Search, with a dot while a search is narrowing the list
     lv_obj_t* b = chatsIconBtn(row, UI_ICON_SEARCH, openContactsSearchSheetCb);
+    navSetTip(b, TR("Search contacts"));
     g_lv.contacts_search_indicator = lv_obj_create(b);
     lv_obj_remove_style_all(g_lv.contacts_search_indicator);
     lv_obj_clear_flag(g_lv.contacts_search_indicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
@@ -30854,8 +31478,8 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_bg_opa(g_lv.contacts_search_indicator, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_add_flag(g_lv.contacts_search_indicator, LV_OBJ_FLAG_HIDDEN);
   }
-  chatsIconBtn(row, UI_ICON_ARROW_DOWN_WIDE_NARROW, openContactsSortSheetCb);
-  chatsIconBtn(row, UI_ICON_ELLIPSIS, contactsMoreCb);
+  navSetTip(chatsIconBtn(row, UI_ICON_ARROW_DOWN_WIDE_NARROW, openContactsSortSheetCb), TR("Sort"));
+  navSetTip(chatsIconBtn(row, UI_ICON_ELLIPSIS, contactsMoreCb), TR("More"));
 
   g_lv.contacts_list = lv_list_create(tab);
   lv_obj_set_size(g_lv.contacts_list, tabContentW(), tabContentH() - hdr_h);
@@ -35613,7 +36237,7 @@ static void openMapPicker(const int* idxs, int n) {
                          (c.type == ADV_TYPE_ROOM)     ? LV_SYMBOL_LOOP   :
                                                           LV_SYMBOL_ENVELOPE;
       char nm[24];
-      copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), c.name);
+      copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), contactShownName(c.id.pub_key, c.name));
       snprintf(row_label, sizeof(row_label), "%s  %s",
                icon, nm[0] ? nm : "(unnamed)");
     }
@@ -35742,7 +36366,7 @@ static void mapContactsRowCb(lv_event_t* e) {
   refreshMapInfoLabel();
   if (g_lv.task) {
     char nm[24];
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), c.name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), contactShownName(c.id.pub_key, c.name));
     char msg[40];
     snprintf(msg, sizeof(msg), TR("Centered on %s"), nm[0] ? nm : "contact");
     g_lv.task->showAlert(msg, 1200);
@@ -35823,7 +36447,7 @@ static void mapContactsFillList() {
     e.midx = (int)i;
     e.type = c.type;
     e.lat_e6 = c.gps_lat; e.lon_e6 = c.gps_lon;
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, e.name, sizeof(e.name), c.name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, e.name, sizeof(e.name), contactShownName(c.id.pub_key, c.name));
     e.dist_km = (self_lat == 0.0 && self_lon == 0.0) ? -1.0
                 : contactDistanceKm(self_lat, self_lon,
                                     (double)c.gps_lat / 1.0e6, (double)c.gps_lon / 1.0e6);
@@ -36533,7 +37157,7 @@ static void makeMapTab(lv_obj_t* tab) {
 #if defined(TLORA_PAGER)
   // Diagnostic/map chrome stays compact at every Pager UI-size preset so the
   // overlays do not hide the map itself.
-  const lv_font_t* map_info_font = &lv_font_montserrat_14;
+  const lv_font_t* map_info_font = pagerMapFont();
   const lv_font_t* map_control_font = &lv_font_montserrat_20;
 #else
   const lv_font_t* map_info_font = &g_font_12;
@@ -36670,7 +37294,7 @@ static void makeMapTab(lv_obj_t* tab) {
   };
   // Options gear sits at the TOP of the right-edge column; zoom/recenter below,
   // then a "contacts on map" picker (list of GPS-bearing contacts → recenter).
-  make_overlay_btn(LV_SYMBOL_SETTINGS, 4,         mapOpenOptionsCb);   // gear (fixed top)
+  navSetTip(make_overlay_btn(LV_SYMBOL_SETTINGS, 4, mapOpenOptionsCb), TR("Map options"));   // gear (fixed top)
   // Zoom controls — the "+/-" slider toggle OR a +/- button pair, chosen by
   // s_map_zoom_buttons. All created here; mapZoomControlsApply() (below) positions
   // + shows the right set and shifts recenter/contacts/follow down accordingly.
@@ -36679,9 +37303,15 @@ static void makeMapTab(lv_obj_t* tab) {
   s_map_btn_zoomout    = make_overlay_btn("-",   4 + 32*2,  mapZoomOutCb);
   s_map_btn_recenter   = make_overlay_btn(LV_SYMBOL_GPS,  4 + 32*2, mapRecenterCb);
   s_map_btn_contacts   = make_overlay_btn(LV_SYMBOL_LIST, 4 + 32*3, mapOpenContactsCb);
+  navSetTip(s_map_btn_zoomtoggle, TR("Zoom"), TR("Shows the zoom slider"));
+  navSetTip(s_map_btn_zoomin,     TR("Zoom in"));
+  navSetTip(s_map_btn_zoomout,    TR("Zoom out"));
+  navSetTip(s_map_btn_recenter,   TR("Back to my position"));
+  navSetTip(s_map_btn_contacts,   TR("Contacts on the map"));
   // Auto-follow toggle: recenters on self whenever the GPS coords change. Lit
   // (accent) while active via the CHECKED state.
   s_map_follow_btn = make_overlay_btn(LV_SYMBOL_REFRESH, 4 + 32*4, mapFollowToggleCb);
+  navSetTip(s_map_follow_btn, TR("Follow me"), TR("Keeps the map on your position"));
   lv_obj_set_style_bg_color(s_map_follow_btn, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_CHECKED);
   lv_obj_set_style_bg_opa(s_map_follow_btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_CHECKED);
   if (s_map_follow) lv_obj_add_state(s_map_follow_btn, LV_STATE_CHECKED);
@@ -37163,6 +37793,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_bg_opa(qr_btn, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_text_color(qr_btn, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_add_event_cb(qr_btn, openQuickReplyPickerCb, LV_EVENT_CLICKED, &p);
+  navSetTip(qr_btn, TR("Quick replies"));
   lv_obj_t* ql = lv_label_create(qr_btn);
   lv_label_set_text(ql, UI_ICON_MESSAGE_SQUARE_TEXT);
   lv_obj_set_style_text_font(ql, &g_font_16, LV_PART_MAIN);
@@ -37180,6 +37811,7 @@ static void makeChatDetail(LvChatPanel& p) {
 
   // Emoji / special-character picker button (smiley). Opens the insert grid.
   p.emoji_btn = lv_btn_create(p.composer_row);
+  navSetTip(p.emoji_btn, TR("Emoji"));
   lv_obj_set_size(p.emoji_btn, chip_sz, chip_sz);
   lv_obj_align(p.emoji_btn, LV_ALIGN_BOTTOM_LEFT, emoji_x, 0);
   styleButton(p.emoji_btn);
@@ -40001,7 +40633,10 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
       d.show_text   = body;
     }
   }
-  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender), d.show_sender);
+  // The label is the sender's nickname when it has one; show_sender (its colour, its
+  // identity) stays the name it advertises.
+  copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender),
+                                 m.outgoing ? d.show_sender : senderShownName(d.show_sender));
   copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text), d.show_text);
 }
 
@@ -40708,6 +41343,8 @@ static bool chatVirtRebuildLayout(LvChatPanel* p, int n, int divider_i) {
     g_lv.task->getThreadInfo(g_lv.task->activeThreadIdx(), ch_, un_, ts_,
                              s_chat_virt.compact_thread_name,
                              sizeof(s_chat_virt.compact_thread_name));
+    if (const char* nk = ch_ ? nullptr : nickFor(g_lv.task->threadContactKey6(g_lv.task->activeThreadIdx())))
+      snprintf(s_chat_virt.compact_thread_name, sizeof(s_chat_virt.compact_thread_name), "%s", nk);
   }
 
   const lv_coord_t row_gap = s_chat_virt.compact_chat ? kChatCompactRowGap : kChatRowGap;
@@ -41802,7 +42439,7 @@ static void chatComposerPlaceholderSync(LvChatPanel& p) {
   char name[UITask::MAX_THREAD_NAME + 1] = "";
   if (thread < 0 || !g_lv.task->getThreadInfo(thread, ch, unread, ts, name, sizeof name) || !name[0]) return;
   char ph[UITask::MAX_THREAD_NAME + 24];
-  snprintf(ph, sizeof ph, TR("Message %s"), name);
+  snprintf(ph, sizeof ph, TR("Message %s"), threadShownName(thread, name));
   const char* cur = lv_textarea_get_placeholder_text(p.composer_ta);
   if (!cur || strcmp(cur, ph) != 0) taSetPlaceholder(p.composer_ta, ph);
 }
@@ -41892,6 +42529,7 @@ static void refreshChatList(LvChatPanel& p) {
   mix((uint32_t)count);
   mix(compact_rows ? 0xC0FFEEu : 1u);
   mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
+  mix(s_nick_gen);     // so does a contact's new nickname
   mix(p.inbox_combined ? 0xF1u + s_chats_filter : 0u);
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
@@ -41931,8 +42569,10 @@ static void refreshChatList(LvChatPanel& p) {
     if (p.inbox_combined && ((s_chats_filter == 1 && !ch) || (s_chats_filter == 2 && ch))) continue;
     ++shown;
 
+    // What the row shows: a direct chat's nickname. `name` stays the thread's key.
+    const char* vis_name = threadShownName(idxs[i], name);
     char san_name[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, san_name, sizeof(san_name), name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, san_name, sizeof(san_name), vis_name);
 
     // ---- One row, as in the redesign ----
     // Glyph avatar (rounded square for a channel, circle for a person), the name in
@@ -41969,7 +42609,7 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_radius(btn, SC(10), LV_PART_MAIN);
     // With MORE COLORS! a chat's unread tint, time and count take its own colour (the
     // same one as its glyph and its senders' names); Neon outlines the row instead.
-    const uint32_t row_hue = s_look_more ? lookNameInk(name) : COLOR_GLOW;
+    const uint32_t row_hue = s_look_more ? lookNameInk(vis_name) : COLOR_GLOW;
     if (unread > 0 && !s_theme_high_contrast) {
       if (lookNeon()) {
         lv_obj_set_style_border_color(btn, lv_color_hex(row_hue), LV_PART_MAIN);
@@ -41983,12 +42623,13 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_set_style_bg_color(btn, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
 
-    lv_obj_t* av = makeGlyphAvatar(btn, name, ch ? GLYPH_SQUARE : GLYPH_CIRCLE, kAv);
+    lv_obj_t* av = makeGlyphAvatar(btn, vis_name, ch ? GLYPH_SQUARE : GLYPH_CIRCLE, kAv);
     lv_obj_add_flag(av, LV_OBJ_FLAG_IGNORE_LAYOUT);
     lv_obj_align(av, LV_ALIGN_LEFT_MID, kPadL, 0);
     {
       char eb[20];
-      if (touchPrefsGetChannelEmoji(name, eb, sizeof eb)) glyphAvatarSetEmoji(av, name, eb);
+      if (touchPrefsGetChannelEmoji(name, eb, sizeof eb) || (!ch && nameFirstEmoji(vis_name, eb, sizeof eb)))
+        glyphAvatarSetEmoji(av, vis_name, eb);
     }
 
     // Time, top right: lit while there is something unread.
@@ -42283,8 +42924,8 @@ static bool ctRefreshRowsInPlace() {
     // whole reason the advert path used to force a full teardown+rebuild (#73).
     // Doing it here keeps that guarantee for a fraction of the cost (#463).
     if (nm) {
-      char san[40];
-      copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, san, sizeof(san), c->name);
+      char san[40];   // the nickname when there is one, as the full build draws it
+      copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, san, sizeof(san), contactShownName(s_contacts_ctx[k].key6, c->name));
       if (strcmp(lv_label_get_text(nm), san) != 0) {
         if (s_ct_name_w > 0) {   // one line, as wide as the name up to the room the row has
           const lv_coord_t w = lv_txt_get_width(san, strlen(san), &g_font_semi_14, 0, LV_TEXT_FLAG_NONE);
@@ -42308,6 +42949,7 @@ static void refreshContactsList() {
   static char    s_last_search[24] = {0};
   static unsigned long s_last_age_refresh_ms = 0;
   static bool    s_last_use_miles = false;
+  static uint8_t s_last_nick_gen = 0;
   const int     curr_count  = the_mesh.getNumContacts();
   const uint8_t curr_filter = g_lv.contacts_filter;
   const unsigned long now_ms = millis();
@@ -42324,6 +42966,7 @@ static void refreshContactsList() {
   if (curr_count == s_last_count && curr_filter == s_last_filter &&
       g_contacts_sort == s_last_sort && !search_changed &&
       curr_use_miles == s_last_use_miles && !s_ct_list_force &&
+      s_nick_gen == s_last_nick_gen &&
       lv_obj_get_child_cnt(g_lv.contacts_list) > 0) {
     if (!age_refresh_due) return;
     // Only the age labels are stale — update them in place instead of the ~1.3s
@@ -42332,6 +42975,7 @@ static void refreshContactsList() {
     if (ctRefreshRowsInPlace()) { s_last_age_refresh_ms = now_ms; return; }
   }
   s_ct_list_force = false;
+  s_last_nick_gen = s_nick_gen;
   s_last_count  = curr_count;
   s_last_filter = curr_filter;
   s_last_sort   = g_contacts_sort;
@@ -42442,7 +43086,7 @@ static void refreshContactsList() {
     e.out_path_len = c.out_path_len;
     e.last_heard = c.last_advert_timestamp;
     memcpy(e.key6, c.id.pub_key, 6);
-    strncpy(e.name, c.name, sizeof(e.name) - 1);
+    strncpy(e.name, contactShownName(c.id.pub_key, c.name), sizeof(e.name) - 1);   // nickname first; sorts by it too
     e.name[sizeof(e.name) - 1] = '\0';
   }
 
@@ -43138,6 +43782,53 @@ static void pagerNavGoBack() {
 // 1000 ms state machine as the encoder's click handling below; a short tap
 // still deletes a character as normal (PagerKeyboard ring-pushes '\b' on
 // press, unchanged).
+#if defined(TLORA_PAGER)
+// A Backspace tap with no field being edited already went Back (handleHwKey), so the
+// hold below must not go Back a second time for the same press. Cleared on release.
+static bool s_bksp_press_used = false;
+
+// A Back that waits for a 1 s hold (the wheel held, or Backspace held inside a text
+// field) shows how far along it is, so a hold reads as deliberate instead of as keys
+// the device ignored. Shown from 150 ms on, so a tap never flashes it.
+static lv_obj_t* s_hold_ring = nullptr;
+static int s_hold_pct_wheel = -1, s_hold_pct_bksp = -1;   // -1 = not holding
+static int pagerHoldPct(uint32_t held_ms, uint32_t total_ms) {
+  return held_ms < 150 ? -1 : (int)LV_MIN(100u, held_ms * 100u / total_ms);
+}
+static void pagerHoldRingShow() {
+  const int pct = LV_MAX(s_hold_pct_wheel, s_hold_pct_bksp);
+  if (pct < 0) {
+    if (s_hold_ring && !lv_obj_has_flag(s_hold_ring, LV_OBJ_FLAG_HIDDEN)) lv_obj_add_flag(s_hold_ring, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (!s_hold_ring) {
+    s_hold_ring = lv_arc_create(lv_layer_sys());   // above every page and popup, never a nav stop
+    lv_obj_set_size(s_hold_ring, 44, 44);
+    lv_obj_center(s_hold_ring);
+    lv_obj_clear_flag(s_hold_ring, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_style(s_hold_ring, nullptr, LV_PART_KNOB);
+    lv_arc_set_rotation(s_hold_ring, 270);
+    lv_arc_set_bg_angles(s_hold_ring, 0, 360);
+    lv_arc_set_range(s_hold_ring, 0, 100);
+    lv_obj_set_style_radius(s_hold_ring, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_hold_ring, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_hold_ring, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_hold_ring, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_hold_ring, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(s_hold_ring, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(s_hold_ring, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(s_hold_ring, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(s_hold_ring, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+    lv_obj_t* l = lv_label_create(s_hold_ring);
+    lv_label_set_text(l, LV_SYMBOL_LEFT);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_center(l);
+  }
+  if (lv_arc_get_value(s_hold_ring) != pct) lv_arc_set_value(s_hold_ring, (int16_t)pct);
+  if (lv_obj_has_flag(s_hold_ring, LV_OBJ_FLAG_HIDDEN)) lv_obj_clear_flag(s_hold_ring, LV_OBJ_FLAG_HIDDEN);
+}
+#endif
+
 static void updatePagerBackspaceHold(unsigned long now) {
   if (g_lv.task && g_lv.task->isScreenOff()) return;
   const bool held = pagerKeyboardBackspaceHeld();
@@ -43145,15 +43836,25 @@ static void updatePagerBackspaceHold(unsigned long now) {
   static bool     s_was_held    = false;
   static uint32_t s_press_start = 0;
   static bool     s_long_fired  = false;
+#if defined(TLORA_PAGER)
+  const bool used = s_bksp_press_used;
+#else
+  const bool used = false;
+#endif
 
   if (held && !s_was_held) {
     s_press_start = now;
     s_long_fired  = false;
-  } else if (held && !s_long_fired && (now - s_press_start) >= kLongPressMs) {
+  } else if (held && !s_long_fired && !used && (now - s_press_start) >= kLongPressMs) {
     pagerNavGoBack();
     if (g_lv.task) g_lv.task->noteUserInput();
     s_long_fired = true;
   }
+#if defined(TLORA_PAGER)
+  if (!held) s_bksp_press_used = false;
+  s_hold_pct_bksp = (held && !s_long_fired && !used) ? pagerHoldPct(now - s_press_start, kLongPressMs) : -1;
+  pagerHoldRingShow();
+#endif
   s_was_held = held;
 }
 
@@ -43342,6 +44043,84 @@ static void updatePagerBackspaceUnlockHold(unsigned long now) {
   }
   s_was_held = held;
 }
+
+#if defined(TLORA_PAGER)
+// The Home and Settings shortcuts work like those menu-bar buttons under a finger:
+// a tap goes to the tab (Home on Home switches between the app drawer and the
+// widgets), a hold opens what holding the button opens (Home: the launcher
+// options, Settings: the control panel) and stays on the tab you are on.
+// The hold time is the touch long press itself. A tap is only known at the
+// release, so the shortcut waits here; a next key settles it as a tap first.
+static int      s_pager_tabhold_tab = -1;   // the tab whose shortcut is down, or -1
+static uint32_t s_pager_tabhold_t0  = 0;
+
+static void pagerTabHoldArm(int tab) {
+  s_pager_tabhold_tab = tab;
+  s_pager_tabhold_t0  = millis();
+}
+static void pagerTabHoldTap() {
+  const int tab = s_pager_tabhold_tab;
+  s_pager_tabhold_tab = -1;
+  if (tab == HOME_TAB_INDEX && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(!s_home_drawer_mode);
+  else if (tab >= 0 && tab != getActiveTab())                    goToTab(tab);
+  if (g_lv.task) g_lv.task->noteUserInput();
+}
+// Enter is a real key press into the focus group, held until the key comes up, so
+// LVGL itself turns a hold into LV_EVENT_LONG_PRESSED at the touch long-press time.
+// Everything that only had a touch long-press (a chat row's actions, hiding a drawer
+// app, a control-panel switch's settings page, file actions, a widget's Arrange) is
+// a held Enter now. A tap is the same click as before.
+static bool      s_pager_enter_down = false;
+static uint32_t  s_pager_enter_t0   = 0;
+static lv_obj_t* s_pager_enter_obj  = nullptr;   // what had focus when it went down
+static void pagerEnterPress() {
+  s_pager_enter_down = true;
+  s_pager_enter_t0   = millis();
+  s_pager_enter_obj  = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  s_nav_hold_key     = LV_KEY_ENTER;
+  navFifoPush(LV_KEY_ENTER, true);
+}
+static void pagerEnterRelease() {
+  if (!s_pager_enter_down) return;
+  s_pager_enter_down = false;
+  s_nav_hold_key     = 0;
+  // A keypad releases onto whatever has focus by then, a finger onto what it pressed.
+  // When the long press opened something (a menu, a sheet), focus is inside it, and
+  // LVGL's release would click its first entry: drop that release and give the pressed
+  // object its own, as under a finger. A long-press handler that asked LVGL to wait for
+  // the release gets none at all; one that swallows the click after a long press (the
+  // app drawer's tiles) needs to see it, or it eats the next real click instead.
+  lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  if ((uint32_t)(millis() - s_pager_enter_t0) >= LV_INDEV_DEF_LONG_PRESS_TIME &&
+      foc != s_pager_enter_obj && s_nav_indev) {
+    const bool handler_waits = s_nav_indev->proc.wait_until_release;
+    lv_indev_wait_release(s_nav_indev);
+    if (!handler_waits && s_pager_enter_obj && lv_obj_is_valid(s_pager_enter_obj)) {
+      lv_event_send(s_pager_enter_obj, LV_EVENT_RELEASED, nullptr);
+      if (lv_obj_is_valid(s_pager_enter_obj)) lv_event_send(s_pager_enter_obj, LV_EVENT_CLICKED, nullptr);
+    }
+  }
+  navFifoPush(LV_KEY_ENTER, false);
+}
+
+static void updatePagerTabHold(uint32_t now) {
+  if (s_pager_enter_down && (!pagerKeyboardLetterHeld() || !g_lv.task || g_lv.task->isScreenOff() ||
+                             g_lv.task->isManualLock() || s_remote_mode))
+    pagerEnterRelease();
+  if (s_pager_tabhold_tab < 0) return;
+  if (!g_lv.task || g_lv.task->isScreenOff() || g_lv.task->isManualLock() || s_remote_mode) {
+    s_pager_tabhold_tab = -1;   // the screen went away mid-press: neither a tap nor a hold
+    return;
+  }
+  if (!pagerKeyboardLetterHeld()) { pagerTabHoldTap(); return; }
+  if (now - s_pager_tabhold_t0 < LV_INDEV_DEF_LONG_PRESS_TIME) return;
+  const int tab = s_pager_tabhold_tab;
+  s_pager_tabhold_tab = -1;
+  if (tab == HOME_TAB_INDEX) openAppGridSheet();
+  else                       openControlCenter();
+  g_lv.task->noteUserInput();
+}
+#endif
 
 // Keyboard backlight: off/on/auto (s_kb_bl_mode, shared with every CAP_KEYBOARD
 // board) applied to the physical LEDC PWM pin (Pager GPIO46, Pro GPIO42).
@@ -43611,6 +44390,9 @@ static bool pagerSliderEditClick() {
 }
 
 static void updatePagerEncoder(unsigned long now) {
+#if defined(TLORA_PAGER)
+  s_hold_pct_wheel = -1;   // set again at the bottom while the knob is held towards Back
+#endif
   int delta = pagerEncoderReadDelta();
   const bool held = pagerEncoderClickHeld();
   static bool s_remote_encoder_was_held = false;
@@ -43795,6 +44577,9 @@ static void updatePagerEncoder(unsigned long now) {
     else if (!navEnterBubble())     navPushTap(LV_KEY_ENTER);
   }
   if (!held && s_was_held) s_press_consumed = false;
+#if defined(TLORA_PAGER)
+  if (held && !s_press_consumed && !s_long_fired) s_hold_pct_wheel = pagerHoldPct(now - s_press_start, kLongPressMs);
+#endif
   s_was_held = held;
 }
 #endif
@@ -44370,11 +45155,13 @@ static void lockCardCreate(lv_obj_t* parent, int idx) {
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
 
   const lv_coord_t av = h - 6;
-  lv_obj_t* avo = makeGlyphAvatar(card, nm, ch ? GLYPH_SQUARE : GLYPH_CIRCLE, av);
+  const char* vis = threadShownName(idx, nm);   // a direct chat's nickname; nm stays its key
+  lv_obj_t* avo = makeGlyphAvatar(card, vis, ch ? GLYPH_SQUARE : GLYPH_CIRCLE, av);
   lv_obj_align(avo, LV_ALIGN_LEFT_MID, 3, 0);
   {
     char eb[20];
-    if (touchPrefsGetChannelEmoji(nm, eb, sizeof eb)) glyphAvatarSetEmoji(avo, nm, eb);
+    if (touchPrefsGetChannelEmoji(nm, eb, sizeof eb) || (!ch && nameFirstEmoji(vis, eb, sizeof eb)))
+      glyphAvatarSetEmoji(avo, vis, eb);
   }
 
   char cnt[8];
@@ -44394,7 +45181,7 @@ static void lockCardCreate(lv_obj_t* parent, int idx) {
     if (g_lv.task->getThreadLastMessage(idx, sender, sizeof sender, text, sizeof text, &out)) {
       char raw[112];
       if (out)                    snprintf(raw, sizeof raw, "%s %s", TR("You:"), text);
-      else if (ch && sender[0])   snprintf(raw, sizeof raw, "%s: %s", sender, text);
+      else if (ch && sender[0])   snprintf(raw, sizeof raw, "%s: %s", senderShownName(sender), text);
       else                        snprintf(raw, sizeof raw, "%s", text);
       for (char* q = raw; *q; ++q) if (*q == '\n' || *q == '\r') *q = ' ';
       copyUtf8ReplacingMissingGlyphs(&g_font_12, pv, sizeof pv, raw);
@@ -44402,7 +45189,7 @@ static void lockCardCreate(lv_obj_t* parent, int idx) {
   }
 
   char san[UITask::MAX_THREAD_NAME + 8];
-  copyUtf8ReplacingMissingGlyphs(&g_font_semi_12, san, sizeof san, nm);
+  copyUtf8ReplacingMissingGlyphs(&g_font_semi_12, san, sizeof san, vis);
   const lv_coord_t x = 3 + av + SC(7);
   const lv_coord_t room = s_lock_card_w - x - (SC(10) + cw + SC(8));
   const lv_coord_t nfull = lv_txt_get_width(san, strlen(san), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
@@ -44967,12 +45754,7 @@ static void rainbowDriftCb(lv_timer_t*) {
     lv_obj_set_style_text_color(s_chat_unread_badge,
         lv_color_hex(accentLuma(c) > 150 ? 0x00201Cu : 0xFFFFFFu), LV_PART_MAIN);
   }
-  // The focus ring is one shared style: recolour it and repaint the one object
-  // wearing it (checked, since a page can close under it between two ticks).
-  if (s_nav_styled && s_selection_glow_style_ready && lv_obj_is_valid(s_nav_styled)) {
-    lv_style_set_outline_color(&s_selection_glow_style, lv_color_hex(c));
-    lv_obj_invalidate(s_nav_styled);
-  }
+  // (The keyboard cursor keeps its amber: see focusRingColor.)
 }
 static void rainbowDriftStart() {
   if (s_look_rainbow && !s_rb_drift_timer) s_rb_drift_timer = lv_timer_create(rainbowDriftCb, 100, nullptr);
@@ -47102,11 +47884,57 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
 }
 #endif
 
+#if defined(TLORA_PAGER)
+// Jump an open chat to its first NEW message (the one right below the "NEW ----"
+// unread divider) and focus it, so the new messages read in order with plain wheel
+// turns from there; with no divider (nothing unread), to the NEWEST message. At the
+// true newest message the next wheel detent leaves the list for the composer. The
+// divider jump reuses the scroll recipe refreshChatDetail's open-to-divider path
+// uses; both cases use the pending-focus re-aim, so the recreated row for the target
+// message ends up focused after the virtualization render.
+// The materialized row of an open chat's first NEW message (just below the divider),
+// or null: nothing unread, or that row is not on screen.
+static lv_obj_t* pagerChatFirstNewRow(LvChatPanel* cp) {
+  if (!cp || !cp->msgs || s_chat_virt.panel != cp || s_chat_virt.divider_i < 0) return nullptr;
+  const uint32_t n = lv_obj_get_child_cnt(cp->msgs);
+  for (uint32_t c = 0; c < n; c++) {
+    lv_obj_t* row = lv_obj_get_child(cp->msgs, c);
+    if (row && lv_obj_has_flag(row, LV_OBJ_FLAG_CLICKABLE) &&
+        reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)) == (intptr_t)s_chat_virt.divider_i)
+      return row;
+  }
+  return nullptr;
+}
+static bool pagerChatJumpToNew() {
+  LvChatPanel* cp = navOpenChatPanel();
+  if (!cp || !cp->msgs || s_chat_virt.panel != cp || s_chat_virt.n <= 0) return false;
+  if (s_chat_virt.divider_i >= 0 && s_chat_virt.divider_y >= 0) {
+    const int32_t virt = (s_chat_virt.divider_y > 8) ? (s_chat_virt.divider_y - 8) : 0;
+    chatVirtResetInputForMsgs(cp);
+    chatVirtCancelRenderTimer();
+    s_chat_virt.last_i0 = -1;   // force the reflow, same as chatVirtJumpToLatest
+    s_chat_virt.last_i1 = -1;
+    chatVirtQueueScroll(cp, chatVirtVirtToLv(virt));
+    chatUpdateJumpButtons(cp);
+    s_pager_chat_focus_i = s_chat_virt.divider_i;   // land focus on the first NEW message
+  } else {
+    chatVirtJumpToLatest(cp);                       // nothing unread -> newest message
+    s_pager_chat_focus_i = s_chat_virt.n - 1;
+  }
+  s_pager_chat_focus_ms = millis();
+  return true;
+}
+#endif
+
 // Route a physical-keyboard character into the textarea currently being edited
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
   if (!g_lv.keyboard) return;
+#if defined(TLORA_PAGER)
+  if (s_pager_tabhold_tab >= 0) pagerTabHoldTap();   // a next key settles a waiting Home/Settings shortcut as a tap, in order
+  if (s_pager_enter_down) pagerEnterRelease();       // and lets a held Enter go first
+#endif
   if (s_pin_root) {   // the PIN screen takes every key, locked or not
 #if defined(HAS_M9_KEYBOARD)
     switch (key) {   // the d-pad walks the number pad
@@ -47321,47 +48149,38 @@ if (g_lv.task && g_lv.task->isManualLock()) {
 #if defined(HAS_PAGER_ENCODER)
       if (pagerSliderEditClick()) { if (g_lv.task) g_lv.task->noteUserInput(); return; }
 #endif
-      if (!navEnterBubble()) navPushTap(LV_KEY_ENTER);
+      if (!navEnterBubble()) pagerEnterPress();   // held: LVGL's own long press (released in updatePagerTabHold)
       if (g_lv.task) g_lv.task->noteUserInput();
       return;
     }
-    // Backspace tap in a chat = jump to the first NEW message (the one right
-    // below the "NEW ----" unread divider) and focus it, so the user reads the
-    // new messages chronologically with plain encoder turns from there; with
-    // no divider (nothing unread) it jumps to the NEWEST message instead.
-    // The former solo-Alt shortcut now latches the symbol layer; at the true
-    // newest message, the next encoder detent leaves the list for the composer.
-    // The divider jump reuses the exact scroll recipe refreshChatDetail's open-to-divider
-    // path uses; both cases use the pending-focus re-aim so the recreated row
-    // for the target message ends up focused after the virtualization render.
-    // Outside a chat, Backspace keeps its normal no-op / hold-to-back
-    // behavior below.
-    if (key == 0x08) {
-      LvChatPanel* cp = navOpenChatPanel();
-      if (cp && cp->msgs && s_chat_virt.panel == cp && s_chat_virt.n > 0) {
-        if (s_chat_virt.divider_i >= 0 && s_chat_virt.divider_y >= 0) {
-          const int32_t virt = (s_chat_virt.divider_y > 8) ? (s_chat_virt.divider_y - 8) : 0;
-          chatVirtResetInputForMsgs(cp);
-          chatVirtCancelRenderTimer();
-          s_chat_virt.last_i0 = -1;   // force the reflow, same as chatVirtJumpToLatest
-          s_chat_virt.last_i1 = -1;
-          chatVirtQueueScroll(cp, chatVirtVirtToLv(virt));
-          chatUpdateJumpButtons(cp);
-          s_pager_chat_focus_i = s_chat_virt.divider_i;   // land focus on the first NEW message
-        } else {
-          chatVirtJumpToLatest(cp);                       // nothing unread -> newest message
-          s_pager_chat_focus_i = s_chat_virt.n - 1;
-        }
-        s_pager_chat_focus_ms = millis();
-        if (g_lv.task) g_lv.task->noteUserInput();
-        return;
-      }
+    // N in a chat (the highlight on the messages, not typing) = jump to the first
+    // NEW message, or the newest when nothing is unread (pagerChatJumpToNew). It
+    // was the Backspace tap, which is Back now. A user who bound N to a tab or
+    // navigation key in Settings > Keyboard keeps that.
+    if ((key == 'n' || key == 'N') && navKeyUsedBy('n', -1) < 0 && pagerChatJumpToNew()) {
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
+    // Backspace tap with no field being edited = Back, at once: every Back used to
+    // cost a 1 s hold. The hold stays for leaving from inside a text field, where a
+    // tap deletes. Not during first-boot setup, which has no step to go back to.
+    if (key == 0x08 && !s_setup_root) {
+      s_bksp_press_used = true;   // the hold must not go Back again for this press
+      pagerNavGoBack();
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
     }
     // Bottom-bar mnemonic shortcuts: active only on a bare main tab (the
     // navOnMainPage gate lives in tabForKey). Do this before Map panning so S
     // can leave Map for Settings. If the requested tab is already active, let
     // the key continue: A on Map remains the west-pan control.
     const int pager_tab = tabForKey(key);
+    // Home and Settings: a tap or a hold, settled in updatePagerTabHold().
+    if (pager_tab == HOME_TAB_INDEX || pager_tab == SETTINGS_TAB_INDEX) {
+      pagerTabHoldArm(pager_tab);
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
     if (pager_tab >= 0 && pager_tab != getActiveTab()) {
       goToTab(pager_tab);
       if (g_lv.task) g_lv.task->noteUserInput();
@@ -48499,7 +49318,7 @@ static void attakyNavPump() {
 #endif
 
 static void refreshLiveDiag(unsigned long now) {
-  if (!s_live_diag_label) return;
+  if (!k_show_live_diag_overlay || !s_live_diag_label) return;   // hidden in every shipped build: nothing to keep current
   if (now < s_live_diag_next_ms) return;
   s_live_diag_next_ms = now + 250;
   uint16_t _rawx = 0, _rawy = 0;
@@ -49082,9 +49901,19 @@ static void powerRebootCb(lv_event_t* e) {
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
 #if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4)
+static void powerOffNow();
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closePowerMenu();
+#if defined(TLORA_PAGER)
+  // No touch: the wheel clicks its way here (hold S, click the power button, click),
+  // so one stray click must not switch the Pager off. Ask first, Cancel focused.
+  showConfirm(TR("Power off?"), TR("Power off"), powerOffNow, true);
+#else
+  powerOffNow();
+#endif
+}
+static void powerOffNow() {
 #if defined(ESP32)
   WdtHeavyGuard idle_wdt_guard;
   LoopWdtGuard loop_wdt_guard;
@@ -49126,6 +49955,19 @@ static void powerOffCb(lv_event_t* e) {
     tileBackendSwapFinish();
     Serial.println("[POWER] SD stayed busy; rail left powered");
   }
+  // The rest of what deep sleep would leave running. The radio sleeps (only a press wakes
+  // the Pager from here) with its select held HIGH, since a falling edge there wakes it
+  // again; the GPS rail goes down; the panel sleeps behind its dark backlight; the
+  // keyboard light goes out.
+  radio_driver.powerOff();
+  gpio_hold_en((gpio_num_t)P_LORA_NSS);   // released in TLoraPagerBoard::begin()
+  gpio_deep_sleep_hold_en();
+  tloraPagerGpsPowerDown();
+#if defined(HAS_PAGER_KEYBOARD)
+  pagerKeyboardSetBacklight(0);
+#endif
+  display.panelSleep(true);
+  display.turnOff();
 #endif
 #if defined(HELTEC_LORA_V4_R8)
   // Park everything before sleeping — without this the SX1262 stayed in RX
@@ -49334,17 +50176,121 @@ static void ccDndCb(lv_event_t* e) {
   openControlCenter();     // rebuild so the chip's icon + highlight flip
 }
 
+// The battery saver's chip: boards with a battery, and whose panel was laid out for a
+// tenth chip (the Tanmatsu, T-Display P4 and M9 grids are fixed; those keep it in
+// Settings > Battery).
+#if CAP_BATTERY && !defined(HAS_THINKNODE_M9) && !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
+#define CC_HAS_SAVER 1
+#else
+#define CC_HAS_SAVER 0
+#endif
+#if CC_HAS_SAVER
+// Battery saver quick-toggle: the same switch as Settings > Battery (a slower processor
+// while the screen is off, the GPS resting between checks, a still background).
+static void ccSaverCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const bool now_on = !touchSleep::enabled();
+#if defined(ESP32)
+  touchPrefsSetSleepIdle(now_on);
+#endif
+  touchSleep::setEnabled(now_on);
+  updateGlobalStatusBar();   // the battery glyph tints while it is on
+  if (g_lv.task) g_lv.task->showAlert(now_on ? TR("Battery saver on") : TR("Battery saver off"), 800);
+  openControlCenter();       // rebuild so the tile fills or empties
+}
+#endif
+
+// What a panel chip is, for the keyboard tooltip (the chips themselves are icons).
+static const char* ccTipTitle(int slot, const char* label) {
+  switch (slot) {
+    case CC_NAV_WIFI:       return TR("Wi-Fi");
+    case CC_NAV_BT:         return TR("Bluetooth");
+    case CC_NAV_GPS:        return TR("GPS");
+    case CC_NAV_THEME:      return TR("Day or night");
+    case CC_NAV_KEYBOARD:   return TR("Keyboard light");
+    case CC_NAV_SOUND:      return TR("Notification sound");
+    case CC_NAV_DND:        return TR("Do Not Disturb");
+    case CC_NAV_TIMER:      return TR("Screenshot timer");
+    case CC_NAV_SCREENSHOT: return TR("Screenshot");
+    case CC_NAV_SAVER:      return TR("Battery saver");
+    default:                return label;
+  }
+}
+// The line under a chip's name: that switching the theme restarts, which a tile
+// does not show; and, for the keyboard where a held Enter is a long press (the
+// Pager, the M9), that it opens the feature's settings page.
+static const char* ccTipHint(int slot) {
+  if (slot == CC_NAV_SAVER) return TR("Saves power while the screen is off");
+  return slot == CC_NAV_THEME ? TR("Restarts to switch") : nullptr;
+}
+static const char* ccTipKeyHint(bool has_settings) {
+#if defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
+  return has_settings ? TR("Hold Enter: settings") : nullptr;
+#else
+  (void)has_settings;
+  return nullptr;
+#endif
+}
+// Holding a panel tile. Keys (the Pager's held Enter, the M9): its settings page at
+// once, the name being on the cursor's card already. Touch: first the card, saying
+// that holding on opens the settings; a finger still on the tile 0.7 s later opens
+// them, and lifting before that does nothing at all (no toggle either).
+static lv_obj_t*   s_cc_hold_obj   = nullptr;
+static int         s_cc_hold_cat   = -1;
+static uint32_t    s_cc_hold_t0    = 0;
+static lv_timer_t* s_cc_hold_timer = nullptr;
+static void ccHoldTimerCb(lv_timer_t* t) {
+  lv_obj_t* b = s_cc_hold_obj;
+  lv_indev_t* in = s_nav_tip_indev;
+  bool still = b && lv_obj_is_valid(b) && in && in->proc.state == LV_INDEV_STATE_PRESSED;
+  if (still) {
+    lv_point_t pt; lv_indev_get_point(in, &pt);
+    lv_area_t a;   lv_obj_get_coords(b, &a);
+    still = _lv_area_is_point_on(&a, &pt, 0);   // slid off the tile: not a hold any more
+  }
+  if (!still) { lv_timer_pause(t); s_cc_hold_obj = nullptr; return; }
+  if (lv_tick_elaps(s_cc_hold_t0) < 700) return;
+  lv_timer_pause(t);
+  const int cat = s_cc_hold_cat;
+  s_cc_hold_obj = nullptr;
+  navTipHide();
+  closeControlCenter();
+  openSettingsCategory(cat);
+  s_settings_from_cc = true;   // Back from here reopens the panel, not Home
+}
+static void ccTileHoldCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+  lv_indev_t* in = lv_indev_get_act();
+#if defined(HAS_TDECK_PRO)
+  const bool card = false;   // no cards on e-paper: the long press opens the settings as before
+#else
+  const bool card = in && lv_indev_get_type(in) == LV_INDEV_TYPE_POINTER;
+#endif
+  if (!card) { ccLongNavCb(e); return; }
+  lv_indev_wait_release(in);   // lifting never toggles it now
+  s_cc_hold_obj = lv_event_get_target(e);
+  s_cc_hold_cat = (int)(intptr_t)lv_event_get_user_data(e);
+  s_cc_hold_t0  = lv_tick_get();
+  const NavTip* tip = navTipFind(s_cc_hold_obj);
+  static char line2[96];
+  snprintf(line2, sizeof line2, "%s%s%s", (tip && tip->hint) ? tip->hint : "",
+           (tip && tip->hint) ? ". " : "", TR("Keep holding: settings"));
+  navTipTouchShow(s_cc_hold_obj, in, line2);
+  if (!s_cc_hold_timer) s_cc_hold_timer = lv_timer_create(ccHoldTimerCb, 50, nullptr);
+  lv_timer_reset(s_cc_hold_timer);
+  lv_timer_resume(s_cc_hold_timer);
+}
+
 static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
                      bool active, lv_event_cb_t cb, int width = 66, int height = 54,
                      int long_cat = -1, const char* sub_text = nullptr,
                      int m9_nav_slot = -1) {
-  (void)label;   // icon-only round chips now — the standalone caption under each icon was dropped by request
-  // A true circle needs a SQUARE footprint (LV_RADIUS_CIRCLE on a non-square gives a stadium/pill),
-  // so the visible button is d x d. But a bare d-wide circle is much narrower than its intended
-  // "width" slot, so the flex row would greedily pack too many per line (e.g. 7 tiny circles across
-  // the T-Deck instead of 4). Fix: give the flex row a full width x height TRANSPARENT CELL as the
-  // item, and centre the circle inside it. Now the row packs the intended count per line (4 on the
-  // T-Deck -> two rows of 4) and SPACE_EVENLY distributes those cells across the dropdown's width.
+  // A rounded-square tile in the launcher's language, coloured by its Settings group
+  // (blue for the connections, green for the device, grey for the rest): tinted with
+  // the icon in that colour when off, filled with it when on. Icons only (the captions
+  // were dropped by request); keyboard users get the name from the cursor's tooltip.
+  // The flex row packs a full width x height transparent cell per chip, so it lays out
+  // the intended count per line, and the tile sits square in the middle of it.
   const int d = LV_MIN(width, height);
   lv_obj_t* cell = lv_obj_create(parent);
   lv_obj_remove_style_all(cell);
@@ -49352,47 +50298,61 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
   lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(cell, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
   lv_obj_t* b = lv_btn_create(cell);
+  lv_obj_remove_style_all(b);
   lv_obj_set_size(b, d, d);
   lv_obj_center(b);
+  lv_obj_clear_flag(b, LV_OBJ_FLAG_SCROLLABLE);
 #if defined(HAS_THINKNODE_M9)
   if (m9_nav_slot >= 0 && m9_nav_slot < CC_NAV_COUNT) s_m9_cc_nav[m9_nav_slot] = b;
-#else
-  (void)m9_nav_slot;
 #endif
-  styleButton(b);
-  lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-  lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
-  // Kill the default theme's press "grow" (+3px each side): the circle sits flush inside its
-  // cell, so growing it on press just overflowed and got clipped — the "cuts off, looks weird"
-  // effect. Press feedback stays via styleButton's brighter pressed fill.
-  lv_obj_set_style_transform_width(b, 0, LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_transform_height(b, 0, LV_PART_MAIN | LV_STATE_PRESSED);
-  // Follow the theme accent: solid when on, faint when off (was a fixed green when on).
-  lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
+  const uint32_t hue = long_cat >= 0 ? settingsCatHue(long_cat)
+                     : (s_look_more ? COLOR_HUE[HUE_SYS] : themeRole(0xC3CBCF, COLOR_SUB));
+  lv_obj_set_style_radius(b, d * 28 / 100, LV_PART_MAIN);
+  uint32_t icon_col;
+  if (s_theme_high_contrast) {
+    // High contrast: an outlined square when off, solid text colour when on.
+    lv_obj_set_style_border_color(b, lv_color_hex(active ? COLOR_TEXT : COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_border_width(b, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
+    icon_col = active ? COLOR_BG : COLOR_TEXT;
+  } else {
+    lv_obj_set_style_bg_color(b, lv_color_hex(hue), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : s_look_tint, LV_PART_MAIN);
+    icon_col = active ? (accentLuma(hue) > 150 ? 0x00201Cu : 0xFFFFFFu) : hue;
+    if (lookNeon()) {   // the launcher's lit neon edge
+      lv_obj_set_style_border_color(b, lv_color_hex(hue), LV_PART_MAIN);
+      lv_obj_set_style_border_width(b, 1, LV_PART_MAIN);
+      lv_obj_set_style_border_opa(b, 200, LV_PART_MAIN);
+      lv_obj_set_style_outline_color(b, lv_color_hex(hue), LV_PART_MAIN);
+      lv_obj_set_style_outline_width(b, 2, LV_PART_MAIN);
+      lv_obj_set_style_outline_opa(b, 50, LV_PART_MAIN);
+    }
+  }
+  styleLookPress(b);
   lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
-  if (long_cat >= 0)   // long-press jumps to this feature's full settings page
-    lv_obj_add_event_cb(b, ccLongNavCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)long_cat);
+  if (long_cat >= 0)   // holding it opens this feature's full settings page (ccTileHoldCb)
+    lv_obj_add_event_cb(b, ccTileHoldCb, LV_EVENT_LONG_PRESSED, (void*)(intptr_t)long_cat);
+  const bool lucide = isUiIconGlyph(sym);
   lv_obj_t* ic = lv_label_create(b);
   lv_label_set_text(ic, sym);
-  lv_obj_set_style_text_color(ic,
-      lv_color_hex(active ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_color(ic, lv_color_hex(icon_col), LV_PART_MAIN);
   if (sub_text && sub_text[0]) {
-    // Glyph + a small caption word stacked inside the circle (the keyboard chip keeps its
-    // off/on/auto mode visible under the keyboard icon). Shrink the glyph a touch to make room.
-    lv_obj_set_style_text_font(ic, &g_font_14, LV_PART_MAIN);
-    lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, d <= 42 ? 2 : 6);
+    // Icon and a small word stacked in the tile (the keyboard light's off/on/auto,
+    // the timer's delay): the square has room the old circle's bottom did not.
+    lv_obj_set_style_text_font(ic, lucide ? &ui_icons_16 : &g_font_14, LV_PART_MAIN);
+    lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, d <= 40 ? 3 : 7);
     lv_obj_t* st = lv_label_create(b);
     lv_label_set_text(st, sub_text);
     lv_obj_set_style_text_font(st, &g_font_12, LV_PART_MAIN);
-    lv_obj_set_style_text_color(st,
-      lv_color_hex(active ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(st, LV_ALIGN_BOTTOM_MID, 0, d <= 42 ? -1 : -5);
+    lv_obj_set_style_text_color(st, lv_color_hex(icon_col), LV_PART_MAIN);
+    lv_obj_align(st, LV_ALIGN_BOTTOM_MID, 0, d <= 40 ? -1 : -5);
   } else {
-    // Just the icon, centred.
-    lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_font(ic, lucide ? (d >= 40 ? &ui_icons_20 : &ui_icons_16) : &g_font_16, LV_PART_MAIN);
     lv_obj_center(ic);
   }
+  navSetTip(b, ccTipTitle(m9_nav_slot, label), ccTipHint(m9_nav_slot), ccTipKeyHint(long_cat >= 0),
+            long_cat >= 0 /* ccTileHoldCb shows the card itself */);
 }
 
 // ---- Display backlight brightness (PWM on PIN_TFT_LEDA_CTL, active-high) ----
@@ -49625,6 +50585,9 @@ static void ccVolumeReleaseCb(lv_event_t* e) {
 #endif
 
 static void openControlCenter() {
+#if defined(TLORA_PAGER)
+  const bool cc_fresh = (s_cc_root == nullptr);   // not a rebuild after a chip was toggled
+#endif
   closeControlCenter();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -49648,6 +50611,8 @@ static void openControlCenter() {
   const bool portrait = (sw < sh);
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 40 > 560) ? 560 : (sw - 40);   // way wider on the 800-px panel
+#elif defined(TLORA_PAGER)
+  const int card_w = (sw - 24 > 420) ? 420 : (sw - 24);   // the 480-px-wide screen: room for five tiles a row
 #else
   const int card_w = (sw - 12 > 300) ? 300 : (sw - 12);
 #endif
@@ -49716,7 +50681,7 @@ static void openControlCenter() {
 #endif
   lv_obj_t* clk = lv_label_create(card);
   lv_label_set_text(clk, clock_s);
-  lv_obj_set_style_text_font(clk, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(clk, &g_font_semi_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(clk,
       lv_color_hex(clock_current ? COLOR_TEXT : COLOR_STATUS_WARN), LV_PART_MAIN);
   lv_obj_align(clk, LV_ALIGN_TOP_LEFT, 0, 0);
@@ -49732,7 +50697,7 @@ static void openControlCenter() {
   const int pct = batteryPercentFromMv(mv);
   char batt_s[28];
   if (batteryIsCharging(mv))
-    snprintf(batt_s, sizeof batt_s, LV_SYMBOL_CHARGE " Charging  %u.%02uV",
+    snprintf(batt_s, sizeof batt_s, "%s  %u.%02uV", TR("Charging"),
              (unsigned)(mv / 1000), (unsigned)((mv % 1000) / 10));
   else
     snprintf(batt_s, sizeof batt_s, "%d%%  %u.%02uV",
@@ -49742,35 +50707,61 @@ static void openControlCenter() {
   if (WiFi.status() == WL_CONNECTED)
     snprintf(winfo, sizeof winfo, "%s", WiFi.localIP().toString().c_str());
 #endif
-  // Power icon — just the white glyph in the top-right corner (no button chrome,
-  // iPhone-style). Opens the power off / reboot menu. Battery nudged left (-30)
-  // so it clears the glyph.
+  // Power: a small tile in the top-right corner, tinted red like the action it leads
+  // to (the power off / reboot menu). The battery sits to its left.
   {
     lv_obj_t* pb = lv_btn_create(card);
-    lv_obj_remove_style_all(pb);                     // strip bg + border — icon only
-    lv_obj_set_size(pb, 28, 24);
-    lv_obj_align(pb, LV_ALIGN_TOP_RIGHT, 2, -1);
+    lv_obj_remove_style_all(pb);
+    lv_obj_set_size(pb, 28, 28);
+    lv_obj_align(pb, LV_ALIGN_TOP_RIGHT, 2, -3);
     lv_obj_add_flag(pb, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(pb, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_radius(pb, 8, LV_PART_MAIN);
+    if (s_theme_high_contrast) {
+      lv_obj_set_style_border_color(pb, lv_color_hex(COLOR_STATUS_DANGER), LV_PART_MAIN);
+      lv_obj_set_style_border_width(pb, 2, LV_PART_MAIN);
+    } else {
+      lv_obj_set_style_bg_color(pb, lv_color_hex(COLOR_STATUS_DANGER), LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(pb, s_look_tint, LV_PART_MAIN);
+    }
+    styleLookPress(pb);
     lv_obj_add_event_cb(pb, ccPowerCb, LV_EVENT_CLICKED, nullptr);
     lv_obj_t* pl = lv_label_create(pb);
-    lv_label_set_text(pl, LV_SYMBOL_POWER);
-    lv_obj_set_style_text_font(pl, &g_font_16, LV_PART_MAIN);
-    lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_text(pl, UI_ICON_POWER);
+    lv_obj_set_style_text_font(pl, &ui_icons_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(pl, lv_color_hex(COLOR_STATUS_DANGER), LV_PART_MAIN);
     lv_obj_center(pl);
+    navSetTip(pb, TR("Power"), TR("Power off or reboot"));
   }
 
-  // Battery: landscape puts it top-right beside the clock; portrait stacks it on
-  // its own line under the date (no room beside the clock at 240 px wide).
-  lv_obj_t* bi = lv_label_create(card);
+  // Battery: its icon and the charge. Landscape puts it top-right beside the clock;
+  // portrait stacks it on its own line under the date (no room at 240 px wide).
+  lv_obj_t* brow = lv_obj_create(card);
+  lv_obj_remove_style_all(brow);
+  lv_obj_set_size(brow, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_clear_flag(brow, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(brow, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(brow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(brow, 4, LV_PART_MAIN);
+  {
+    const bool chg = batteryIsCharging(mv);
+    lv_obj_t* bic = lv_label_create(brow);
+    lv_label_set_text(bic, chg ? UI_ICON_BATTERY_CHARGING : pct >= 70 ? UI_ICON_BATTERY_FULL
+                         : pct >= 30 ? UI_ICON_BATTERY_MEDIUM : UI_ICON_BATTERY_LOW);
+    lv_obj_set_style_text_font(bic, &ui_icons_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(bic, lv_color_hex(s_theme_high_contrast ? COLOR_TEXT
+        : (!chg && pct >= 0 && pct < 15) ? COLOR_STATUS_DANGER : COLOR_HUE[HUE_DEVICE]), LV_PART_MAIN);
+  }
+  lv_obj_t* bi = lv_label_create(brow);
   lv_label_set_text(bi, batt_s);
   lv_obj_set_style_text_font(bi, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(bi, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   int row_y = 42;   // first content row under the date / battery
   if (portrait) {
-    lv_obj_align(bi, LV_ALIGN_TOP_LEFT, 0, 40);   // battery under the date
+    lv_obj_align(brow, LV_ALIGN_TOP_LEFT, 0, 38);   // battery under the date
     row_y = 58;
   } else {
-    lv_obj_align(bi, LV_ALIGN_TOP_RIGHT, -30, 2);
+    lv_obj_align(brow, LV_ALIGN_TOP_RIGHT, -36, 1);
   }
   // Brightness slider takes the first row (just under the date / battery) and the
   // GPS line follows it, so the slider sits ABOVE the GPS line. Boards without a
@@ -49876,10 +50867,10 @@ static void openControlCenter() {
   //      doesn't cost a separate label row). bl_y is computed above so it sits
   //      directly under the date/battery, just above the GPS line.
   lv_obj_t* bl_ic = lv_label_create(card);
-  lv_label_set_text(bl_ic, LV_SYMBOL_SETTINGS);   // small left anchor for the slider
-  lv_obj_set_style_text_font(bl_ic, &g_font_12, LV_PART_MAIN);
+  lv_label_set_text(bl_ic, UI_ICON_SUN);   // brightness, the sun of every phone's panel
+  lv_obj_set_style_text_font(bl_ic, &ui_icons_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(bl_ic, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_align(bl_ic, LV_ALIGN_TOP_LEFT, 0, bl_y - 2);
+  lv_obj_align(bl_ic, LV_ALIGN_TOP_LEFT, 0, bl_y - 5);
   lv_obj_t* bl = lv_slider_create(card);
   lv_obj_set_size(bl, card_w - 20 - 22, 6);        // thin 6-px bar, room for the glyph on the left
   lv_obj_align(bl, LV_ALIGN_TOP_RIGHT, 0, bl_y);
@@ -49890,6 +50881,17 @@ static void openControlCenter() {
   lv_obj_set_style_pad_all(bl, 4, LV_PART_KNOB);   // smaller knob to match the thin bar
   lv_obj_add_event_cb(bl, ccBrightnessCb,        LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(bl, ccBrightnessReleaseCb, LV_EVENT_RELEASED,      nullptr);
+#if defined(TLORA_PAGER)
+  navSetTip(bl, TR("Brightness"), nullptr, TR("Enter, then turn the wheel"));
+#else
+  navSetTip(bl, TR("Brightness"));
+#endif
+#if defined(TLORA_PAGER)
+  // Opened afresh (hold S, the bar), focus starts here, not on the power button built
+  // before it: clicking straight through the panel must not land on Power off. A
+  // rebuild after a chip keeps focus on that chip.
+  if (cc_fresh) s_nav_focus_hint = bl;
+#endif
 #endif
 
 #if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
@@ -49955,7 +50957,11 @@ static void openControlCenter() {
   // Bottom-anchored but lifted clear of the 1-line sysinfo (~16 px) plus a gap.
   lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);
 #endif
-#if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_GT911)
+  // Cells exactly a fifth of the row: packed from the left, a short last row keeps the
+  // columns of the row above (spacing it on its own threw the grid off).
+  lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
+#elif defined(HAS_THINKNODE_M9)
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_SPACE_EVENLY);
 #else
   lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -49970,10 +50976,12 @@ static void openControlCenter() {
   tw = (card_w - 20 - 20) / 3;   // 3 chips per row (Wi-Fi/BT/GPS/Theme/Keys/Sound → 2×3 grid)
   if (tw > 175) tw = 175;
   th = 80;
-#elif defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+#elif defined(TLORA_PAGER)
+  tw = (card_w - 20) / 5; th = 48;   // a five-column grid of 48-px tiles: five, then four under them
+#elif defined(HAS_THINKNODE_M9)
   tw = 56; th = 34;
 #elif defined(HAS_TDECK_GT911)
-  tw = 58; th = 36;
+  tw = (card_w - 20) / 5; th = 36;   // five a row with the saver: two rows of a five-column grid
 #else
   // Count only the chips this board/session will actually add below (which chips
   // appear varies per board: V4 has no Keyboard chip; only HAS_UI_SOUND boards get
@@ -49992,6 +51000,9 @@ static void openControlCenter() {
   chip_count++;
 #endif
   chip_count++;   // Do Not Disturb (all boards)
+#if CC_HAS_SAVER
+  chip_count++;   // Battery saver
+#endif
   if (portrait && chip_count >= 5) {
     // Portrait screens (e.g. the V4) have vertical room below the GPS line, so lay 5+ chips
     // out as TWO rows instead of one cramped row. The row is bottom-anchored and grows
@@ -50015,40 +51026,40 @@ static void openControlCenter() {
 #endif
   // Each chip: tap = toggle, long-press = jump to that feature's settings page
   // (GPS -> Radio & Mesh, where the location-sharing settings live).
-  ccToggle(row, LV_SYMBOL_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th,
+  ccToggle(row, UI_ICON_WIFI, TR("Wi-Fi"), wifi_on, ccWifiCb, tw, th,
            CAT_WIFI, nullptr, CC_NAV_WIFI);
   if (!g_lv.task || g_lv.task->hasBleCapability())
-    ccToggle(row, LV_SYMBOL_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th,
+    ccToggle(row, UI_ICON_BLUETOOTH, TR("BT"), ble_on, ccBleCb, tw, th,
              CAT_BLUETOOTH, nullptr, CC_NAV_BT);
 #if !CAP_GPS
-  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), false, ccGpsNoneCb, tw, th,
+  ccToggle(row, UI_ICON_SATELLITE, TR("GPS"), false, ccGpsNoneCb, tw, th,
            -1, nullptr, CC_NAV_GPS);   // no onboard GPS — info-only, untoggable
 #else
   // Long-press opens the GPS settings PAGE. CAT_RADIO here was a leftover from before the
   // settings reorg gave GPS its own category (the GPS block used to live under radio/device).
-  ccToggle(row, LV_SYMBOL_GPS, TR("GPS"), gps_on, ccGpsCb, tw, th,
+  ccToggle(row, UI_ICON_SATELLITE, TR("GPS"), gps_on, ccGpsCb, tw, th,
            CAT_GPS, nullptr, CC_NAV_GPS);
 #endif
 #if !defined(HAS_TDECK_PRO)
   // Keep one centered sun icon for all modes (#414); Display settings shows
   // the selected Night/Day and High contrast state explicitly.
-  ccToggle(row, TOUCH_SYM_SUN, TR("Theme"), s_theme_mode != TOUCH_THEME_NIGHT,
+  ccToggle(row, UI_ICON_SUN, TR("Theme"), s_theme_mode != TOUCH_THEME_NIGHT,
            ccThemeCb, tw, th, CAT_THEME, nullptr, CC_NAV_THEME);
 #endif
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
   const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
-  ccToggle(row, LV_SYMBOL_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0,
+  ccToggle(row, UI_ICON_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0,
            ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode, CC_NAV_KEYBOARD);
 #endif
 #if defined(HAS_TDECK_GT911)
-  ccToggle(row, TOUCH_SYM_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
+  ccToggle(row, UI_ICON_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
 #endif
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Sound on/off — the notification-tone mute (T-Deck I2S speaker / Heltec V4 piezo / Tanmatsu ES8156).
   const bool sound_on = g_lv.task && !g_lv.task->isBuzzerQuiet();
-  ccToggle(row, LV_SYMBOL_AUDIO, TR("Sound"), sound_on, ccSoundCb, tw, th,
+  ccToggle(row, sound_on ? UI_ICON_BELL : UI_ICON_BELL_OFF, TR("Sound"), sound_on, ccSoundCb, tw, th,
            CAT_SOUND, nullptr, CC_NAV_SOUND);
 #endif
   // Do Not Disturb (the scheduled-silence feature) — the crescent moon everyone knows as DND,
@@ -50058,13 +51069,17 @@ static void openControlCenter() {
   // All boards; the time window lives in Settings > Sound.
   {
     const bool dnd_on = touchPrefsGetDndEnabled();
-    ccToggle(row, TOUCH_SYM_MOON, TR("DND"), dnd_on, ccDndCb, tw, th,
+    ccToggle(row, UI_ICON_MOON, TR("DND"), dnd_on, ccDndCb, tw, th,
              CAT_SOUND, nullptr, CC_NAV_DND);
   }
+#if CC_HAS_SAVER
+  ccToggle(row, UI_ICON_BATTERY, TR("Saver"), touchSleep::enabled(), ccSaverCb, tw, th,
+           CAT_BATTERY, nullptr, CC_NAV_SAVER);
+#endif
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
-  ccToggle(row, LV_SYMBOL_REFRESH, "Timer", s_cc_screenshot_delay_s != 0,
+  ccToggle(row, UI_ICON_TIMER, "Timer", s_cc_screenshot_delay_s != 0,
            ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText(), CC_NAV_TIMER);
-  ccToggle(row, LV_SYMBOL_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
+  ccToggle(row, UI_ICON_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
            -1, nullptr, CC_NAV_SCREENSHOT);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
@@ -51656,7 +52671,10 @@ static void closeAppDrawerSync() {
   s_nav_drawer_corner = nullptr;
   s_nav_drawer_gear = nullptr;
 #endif
-  if (s_appdrawer_root) { popupClose(&s_appdrawer_root); }
+  // popupClose() deletes on the next LVGL cycle (the scroll UAF guard), so hide the
+  // drawer now: until then it still drew, and still counted as a popup open on the
+  // top layer, so a Pager shortcut pressed in the same moment (S, then M) was dropped.
+  if (s_appdrawer_root) { lv_obj_add_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN); popupClose(&s_appdrawer_root); }
   appDrawerCoverContent(false);
 }
 
@@ -51751,7 +52769,7 @@ static void openThreadDetailByIdx(int idx, bool channel) {
   bool ch; uint16_t unread; uint32_t ts; char name[UITask::MAX_THREAD_NAME + 1];
   if (g_lv.task->getThreadInfo(idx, ch, unread, ts, name, sizeof(name))) {
     char san[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), threadShownName(idx, name));
     setChatStatusTitle(san);
   }
   p.detail_open = true;
@@ -52869,6 +53887,12 @@ static void docCaptureTour() {
 #endif
   openSpectrumPage(); docSettle(14); captureScreenToSerial("app_spectrum");  closeSpectrumPage(); docSettle(6);
   openRemotePage();   docSettle(14); captureScreenToSerial("app_remote");    closeRemotePage();   docSettle(6);
+#if CAP_LUA_APPS
+  // A Store app for the guide's Apps section, when it is installed on the device.
+  if (luaAppLaunchFile("monitor", "RF Monitor", nullptr, 0)) {
+    docSettle(30); captureScreenToSerial("app_rfmonitor"); luaAppDismiss(); docSettle(8);
+  }
+#endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
   // On-device web browser (8 MB boards only) + the chat-link menu + the QR popup.
   // The reader renders from the UI-update poll (which doesn't run while this tour
@@ -53165,6 +54189,7 @@ static void buildGlobalStatusBar() {
     };
     g_statusbar.inbox_mark = mk(0);   // leftmost — mark all read
     lv_obj_add_event_cb(g_statusbar.inbox_mark, chatsMarkAllReadBtnCb, LV_EVENT_CLICKED, nullptr);
+    navSetTip(g_statusbar.inbox_mark, TR("Mark all read"));
     { lv_obj_t* ml = lv_label_create(g_statusbar.inbox_mark); lv_label_set_text(ml, LV_SYMBOL_OK);
       lv_obj_set_style_text_color(ml, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
       lv_obj_set_style_text_font(ml, uiChromeFont(), LV_PART_MAIN); lv_obj_center(ml); }
@@ -53175,11 +54200,13 @@ static void buildGlobalStatusBar() {
     lv_obj_set_style_bg_opa(g_statusbar.inbox_add, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
     lv_obj_set_style_text_color(g_statusbar.inbox_add, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
     lv_obj_add_event_cb(g_statusbar.inbox_add, chatsAddBtnCb, LV_EVENT_CLICKED, nullptr);
+    navSetTip(g_statusbar.inbox_add, TR("Add a channel"));
     { lv_obj_t* l = lv_label_create(g_statusbar.inbox_add); lv_label_set_text(l, LV_SYMBOL_PLUS);
       lv_obj_set_style_text_color(l, lv_color_hex(COLOR_ON_STATUS_OK), LV_PART_MAIN);
       lv_obj_set_style_text_font(l, uiChromeFont(), LV_PART_MAIN); lv_obj_center(l); }
     g_statusbar.inbox_qr   = mk(2);   // rightmost — share QR
     lv_obj_add_event_cb(g_statusbar.inbox_qr, shareMyContactBtnCb, LV_EVENT_CLICKED, nullptr);
+    navSetTip(g_statusbar.inbox_qr, TR("Share my contact"));
     { lv_obj_t* qimg = lv_img_create(g_statusbar.inbox_qr); lv_img_set_src(qimg, &qr_icon_dsc);
 #if defined(TLORA_PAGER)
       lv_img_set_zoom(qimg, 228);   // baked 18 px glyph -> 16 px, matching uiChromeFont()
@@ -53226,6 +54253,7 @@ static void buildGlobalStatusBar() {
   // Clickable child intercepts the tap, so it doesn't trigger the bar's close-tap.
   g_statusbar.chan_gear = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.chan_gear, LV_SYMBOL_SETTINGS);
+  navSetTip(g_statusbar.chan_gear, TR("Chat settings"));
   lv_obj_set_style_text_color(g_statusbar.chan_gear, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 #if defined(TLORA_PAGER)
   lv_obj_set_style_text_font(g_statusbar.chan_gear, uiChromeFont(), LV_PART_MAIN);
@@ -53255,6 +54283,7 @@ static void buildGlobalStatusBar() {
   // Conversation header (redesign): avatar, title and a subtitle across the tall
   // bar while a chat is open; tapping them opens the chat's settings.
   g_statusbar.chat_head = lv_obj_create(g_statusbar.root);
+  navSetTip(g_statusbar.chat_head, TR("Chat settings"));
   lv_obj_remove_style_all(g_statusbar.chat_head);
   lv_obj_clear_flag(g_statusbar.chat_head, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(g_statusbar.chat_head, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
@@ -53682,6 +54711,7 @@ static void chatHeaderApply(bool chat_open) {
   static int s_count = -1;
   static char s_emoji[20] = "";
   static uint8_t s_gen = 0;
+  static uint8_t s_ngen = 0;
   const int thread = g_lv.task ? g_lv.task->activeThreadIdx() : -1;
   const int count = g_lv.task ? g_lv.task->getMsgCount() : 0;   // any new message: recount
   bool ch = true; uint16_t unread = 0; uint32_t ts = 0;
@@ -53689,15 +54719,18 @@ static void chatHeaderApply(bool chat_open) {
   if (g_lv.task && thread >= 0) g_lv.task->getThreadInfo(thread, ch, unread, ts, name, sizeof name);
   char emoji[20] = "";
   touchPrefsGetChannelEmoji(name, emoji, sizeof emoji);   // its sheet can change it while it is open
-  if (thread != s_thread || count != s_count || strcmp(emoji, s_emoji) != 0 || s_gen != s_avatar_gen) {
+  if (!emoji[0] && !ch && thread >= 0) nameFirstEmoji(threadShownName(thread, name), emoji, sizeof emoji);
+  if (thread != s_thread || count != s_count || strcmp(emoji, s_emoji) != 0 || s_gen != s_avatar_gen ||
+      s_ngen != s_nick_gen) {
     s_gen = s_avatar_gen;
+    s_ngen = s_nick_gen;
     s_thread = thread;
     s_count = count;
     snprintf(s_emoji, sizeof s_emoji, "%s", emoji);
     // A channel's square, a person's circle (a ball in Initials either way).
     if (ch) lv_obj_add_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
     else    lv_obj_clear_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
-    glyphAvatarSetEmoji(g_statusbar.chat_avatar, name, emoji);
+    glyphAvatarSetEmoji(g_statusbar.chat_avatar, threadShownName(thread, name), emoji);
     char sub[48];
     chatHeaderSubtitle(sub, sizeof sub);
     lv_label_set_text(g_statusbar.chat_sub, sub);
@@ -53784,6 +54817,44 @@ static void statusBarPackRight() {
     x += lv_obj_get_width(o);
     first = false;
   }
+}
+
+// Set a label's text only when it actually changed. lv_label_set_text always
+// invalidates + re-lays-out the label (it does NOT compare), so calling it every
+// 250 ms refresh tick with byte-identical text needlessly redraws ~8 labels 4x/s.
+// Comparing against the label's CURRENT text also makes this safe across home/tab
+// rebuilds (no module-static "last value" that can outlive the widget).
+static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt) {
+  if (lbl && strcmp(lv_label_get_text(lbl), txt) != 0) lv_label_set_text(lbl, txt);
+}
+// The same for the bar's other per-tick setters: every LVGL style setter repaints its
+// object (and most re-lay it out) even when the value is unchanged, and clearing HIDDEN
+// repaints an object that is already visible, so the bar redrew 4 times a second on every
+// screen with nothing changing. Each of these compares the live value first.
+static inline void sbShow(lv_obj_t* o, bool show) {
+  if (!o || show != lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+  if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+static inline void sbTranslateY(lv_obj_t* o, lv_coord_t v) {
+  if (o && lv_obj_get_style_translate_y(o, LV_PART_MAIN) != v) lv_obj_set_style_translate_y(o, v, LV_PART_MAIN);
+}
+static inline void sbTextColor(lv_obj_t* o, lv_color_t c) {
+  if (o && lv_obj_get_style_text_color(o, LV_PART_MAIN).full != c.full) lv_obj_set_style_text_color(o, c, LV_PART_MAIN);
+}
+static inline void sbFont(lv_obj_t* o, const lv_font_t* f, lv_style_selector_t sel) {
+  if (o && lv_obj_get_style_text_font(o, sel) != f) lv_obj_set_style_text_font(o, f, sel);
+}
+static inline void sbAlign(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) {
+  if (o && (lv_obj_get_style_align(o, LV_PART_MAIN) != a || lv_obj_get_style_x(o, LV_PART_MAIN) != x ||
+            lv_obj_get_style_y(o, LV_PART_MAIN) != y))
+    lv_obj_align(o, a, x, y);
+}
+static inline void sbWidth(lv_obj_t* o, lv_coord_t w) {
+  if (o && lv_obj_get_style_width(o, LV_PART_MAIN) != w) lv_obj_set_width(o, w);
+}
+static inline void sbLongMode(lv_obj_t* l, lv_label_long_mode_t m) {
+  if (l && lv_label_get_long_mode(l) != m) lv_label_set_long_mode(l, m);
 }
 
 static void updateGlobalStatusBar() {
@@ -53928,10 +54999,10 @@ static void updateGlobalStatusBar() {
       for (lv_obj_t* b : inbox_btns) {
         if (!b) continue;
 #if defined(TLORA_PAGER)
-        if (inbox_overview) lv_obj_clear_flag(b, LV_OBJ_FLAG_HIDDEN);
-        else
+        sbShow(b, inbox_overview);
+#else
+        sbShow(b, false);
 #endif
-                            lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
       }
     }
     // Per-element vertical placement in the tall bar. Default = TOP row (system content,
@@ -53957,7 +55028,7 @@ static void updateGlobalStatusBar() {
         // top-row offset and clipped its top half out of the bar in a chat.
         t = 0;
       }
-      lv_obj_set_style_translate_y(c, t, LV_PART_MAIN);
+      sbTranslateY(c, t);
     }
   }
 
@@ -53970,13 +55041,11 @@ static void updateGlobalStatusBar() {
   if (g_statusbar.chat_back) {
     // Re-apply the accent each tick so the chevron tracks the live theme colour (it was
     // set once at boot to the default accent and never updated on an accent change).
-    lv_obj_set_style_text_color(g_statusbar.chat_back, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-    if (in_chan_chat) lv_obj_clear_flag(g_statusbar.chat_back, LV_OBJ_FLAG_HIDDEN);
-    else              lv_obj_add_flag(g_statusbar.chat_back, LV_OBJ_FLAG_HIDDEN);
+    sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_ACCENT));
+    sbShow(g_statusbar.chat_back, in_chan_chat);
   }
   if (g_statusbar.chan_gear) {
-    if (in_chan_chat) lv_obj_clear_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN);
-    else              lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN);
+    sbShow(g_statusbar.chan_gear, in_chan_chat);
   }
   // In a chat the thread name (+ unread prefix) is CENTRED on the lower row (the back +
   // cog sit at the far left); otherwise it's left-aligned per the usual layout.
@@ -54011,17 +55080,17 @@ static void updateGlobalStatusBar() {
 #if defined(TLORA_PAGER)
     // Back + gear occupy the first 48 px; cap the title before the clock so
     // the entire open-chat header shares the overview/status baseline.
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 54, 0);
-    lv_obj_set_width(g_statusbar.left_label, 140);
-    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+    sbAlign(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 54, 0);
+    sbWidth(g_statusbar.left_label, 140);
+    sbLongMode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
 #else
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
+    sbAlign(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
 #endif
   } else {
-    lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+    sbAlign(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
 #if defined(TLORA_PAGER)
-    lv_obj_set_width(g_statusbar.left_label, 200);
-    lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
+    sbWidth(g_statusbar.left_label, 200);
+    sbLongMode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
 #endif
   }
 #endif
@@ -54054,15 +55123,16 @@ static void updateGlobalStatusBar() {
 
   // ---- Left zone ----
   bool unread_badge = false;   // set true only by the branches that render the ✉ count
-  // Recolor markup is used ONLY by the settings-back branch below (to tint the chevron
-  // with the theme accent). Default it OFF so any other state — e.g. a chat title that
-  // contains '#' — is never mis-parsed as a colour code.
-  if (g_statusbar.left_label) lv_label_set_recolor(g_statusbar.left_label, false);
   // A full-screen tool page (RF Monitor / Spectrum / Send advert) wins the title + Back chevron,
   // even when opened from inside a settings detail — matches statusBarTapCb routing (apppage first).
   const char* app_page_title = s_apppage_title ? s_apppage_title
                              : (s_settings_open_cat >= 0) ? TR(kSettingsCats[s_settings_open_cat].label)
                              : nullptr;
+  // Recolor markup is used ONLY by the settings-back branch below (to tint the chevron
+  // with the theme accent); every other state has it OFF, so a chat title that contains
+  // '#' is never mis-parsed as a colour code. Set once: switching it off and on again
+  // every tick re-laid-out the title and redrew the bar 4 times a second.
+  if (g_statusbar.left_label) lv_label_set_recolor(g_statusbar.left_label, app_page_title && !s_reader_bar_url);
   if (app_page_title && s_reader_bar_url) {
     // Web app, reading: show the loaded URL small so a long address fits, on a solid
     // bar. No recolor markup (a '#' fragment in the URL would corrupt the parser) and
@@ -54070,11 +55140,10 @@ static void updateGlobalStatusBar() {
     const char* disp = app_page_title;
     if      (!strncmp(disp, "https://", 8)) disp += 8;
     else if (!strncmp(disp, "http://",  7)) disp += 7;
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_12, LV_PART_MAIN);
-    lv_label_set_recolor(g_statusbar.left_label, false);
+    sbFont(g_statusbar.left_label, &g_font_12, LV_PART_MAIN);
     char sbuf[96];
     snprintf(sbuf, sizeof sbuf, "%s  %s", LV_SYMBOL_LEFT, disp);   // ‹ + address; tap the bar = back
-    lv_label_set_text(g_statusbar.left_label, sbuf);
+    setLabelIfChanged(g_statusbar.left_label, sbuf);
   } else
   if (app_page_title) {
     // A settings detail sheet OR a tool page is open: the bar carries its Back chevron +
@@ -54083,12 +55152,11 @@ static void updateGlobalStatusBar() {
 #if CAP_ROUND_CORNERS
     // Round panel: the title shares row 2 with the battery readout, so it uses that
     // row's size rather than the tall bar's larger one.
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
+    sbFont(g_statusbar.left_label, &g_font_14, LV_PART_MAIN);
 #else
-    lv_obj_set_style_text_font(g_statusbar.left_label,
+    sbFont(g_statusbar.left_label,
                                s_statusbar_tall ? &g_font_16 : &g_font_14, LV_PART_MAIN);
 #endif
-    lv_label_set_recolor(g_statusbar.left_label, true);
     char ttl[48];
 #if !CAP_ROUND_CORNERS && !defined(TLORA_PAGER)
     {
@@ -54114,13 +55182,13 @@ static void updateGlobalStatusBar() {
     char sbuf[72];
     snprintf(sbuf, sizeof sbuf, "#%06X %s#  %s", (unsigned)(COLOR_ACCENT & 0xFFFFFF),
              LV_SYMBOL_LEFT, ttl);
-    if (strcmp(lv_label_get_text(g_statusbar.left_label), sbuf) != 0) lv_label_set_text(g_statusbar.left_label, sbuf);
+    if (strcmp(lv_label_get_text(g_statusbar.left_label), sbuf) != 0) setLabelIfChanged(g_statusbar.left_label, sbuf);
   } else
   if (inbox_overview) {
     // Chat/channel overview: the action buttons own the left side, and per-thread
     // unread state is already shown in the list — so keep the left zone blank (no
     // global ✉ badge competing with the buttons).
-    lv_label_set_text(g_statusbar.left_label, "");
+    setLabelIfChanged(g_statusbar.left_label, "");
   } else
   if (s_chat_title[0]) {
     // An open conversation surfaces its thread name here (the in-chat header bar
@@ -54128,28 +55196,28 @@ static void updateGlobalStatusBar() {
     // you still see mail waiting in OTHER threads while reading this one. Smaller
     // font so the name + badge fit.
 #if defined(TLORA_PAGER) || CAP_ROUND_CORNERS
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_12, LV_PART_MAIN);
+    sbFont(g_statusbar.left_label, &g_font_12, LV_PART_MAIN);
     int total_unread = g_lv.task->getUnreadTotal();
     if (total_unread > 0) {
       char buf[64], ub[8];
       if (total_unread > 99) snprintf(ub, sizeof ub, "99+"); else snprintf(ub, sizeof ub, "%d", total_unread);
       snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE " %s  %s", ub, s_chat_title);
-      lv_label_set_text(g_statusbar.left_label, buf);
+      setLabelIfChanged(g_statusbar.left_label, buf);
       unread_badge = true;
     } else {
-      lv_label_set_text(g_statusbar.left_label, s_chat_title);
+      setLabelIfChanged(g_statusbar.left_label, s_chat_title);
     }
 #else
     // The conversation header (chatHeaderApply, later this tick) owns this: the
     // title alone, in SemiBold, shortened to the room beside the clock.
-    lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_semi_14, LV_PART_MAIN);
+    sbFont(g_statusbar.left_label, &g_font_semi_14, LV_PART_MAIN);
 #endif
   } else
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   if (s_fullscreen_view && s_fullscreen_title[0]) {
     // A fullscreen tool view (Terminal / Files) borrows the left zone for its
     // title, so it can drop its own header row and use the full height.
-    lv_label_set_text(g_statusbar.left_label, s_fullscreen_title);
+    setLabelIfChanged(g_statusbar.left_label, s_fullscreen_title);
   } else
 #endif
   {
@@ -54159,9 +55227,9 @@ static void updateGlobalStatusBar() {
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
     const bool home_name = tab == HOME_TAB_INDEX && !touchPrefsGetHideNodeName();
-    lv_obj_set_style_text_font(g_statusbar.left_label,
+    sbFont(g_statusbar.left_label,
 #if defined(TLORA_PAGER)
-                               tab == MAP_TAB_INDEX ? &lv_font_montserrat_14 : &g_font_14,
+                               tab == MAP_TAB_INDEX ? pagerMapFont() : &g_font_14,
 #else
                                tab == MAP_TAB_INDEX ? &g_font_12 : home_name ? &g_font_semi_12 : &g_font_14,
 #endif
@@ -54192,13 +55260,13 @@ static void updateGlobalStatusBar() {
         lv_obj_get_coords(g_statusbar.clock, &ca);
         const lv_coord_t room = ca.x1 - lv_obj_get_x(g_statusbar.root) - 6 - SC(6);
         if (lv_txt_get_width(credit, strlen(credit), &g_font_12, 0, LV_TEXT_FLAG_NONE) > room)
-          lv_obj_set_style_text_font(g_statusbar.left_label, &lv_font_montserrat_12, LV_PART_MAIN);
+          sbFont(g_statusbar.left_label, &lv_font_montserrat_12, LV_PART_MAIN);
       }
 #endif
-      lv_label_set_text(g_statusbar.left_label, credit);
+      setLabelIfChanged(g_statusbar.left_label, credit);
     } else if (tab == HOME_TAB_INDEX && !home_name) {
       // Display setting: hide the device name. The left zone stays empty.
-      lv_label_set_text(g_statusbar.left_label, "");
+      setLabelIfChanged(g_statusbar.left_label, "");
       s_left_home_name[0] = '\0';   // force the window re-config if the name returns
       s_left_home_cfg = false;
     } else if (tab == HOME_TAB_INDEX) {
@@ -54216,7 +55284,7 @@ static void updateGlobalStatusBar() {
                         LV_SIZE_CONTENT);
         lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
         lv_obj_set_style_anim_speed(g_statusbar.left_label, 14, LV_PART_MAIN);  // slow, readable marquee
-        lv_label_set_text(g_statusbar.left_label, nm);
+        setLabelIfChanged(g_statusbar.left_label, nm);
       }
       s_left_home_cfg = true;
     } else {
@@ -54225,13 +55293,13 @@ static void updateGlobalStatusBar() {
         char buf[24];
         if (total_unread > 99) snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE "  99+");
         else                   snprintf(buf, sizeof(buf), LV_SYMBOL_ENVELOPE "  %d", total_unread);
-        lv_label_set_text(g_statusbar.left_label, buf);
+        setLabelIfChanged(g_statusbar.left_label, buf);
         unread_badge = true;
       } else {
         // No unread → blank the left zone entirely. Operator complaint was
         // the envelope was always lit even with an empty inbox, which read
         // as "you have mail" 24/7.
-        lv_label_set_text(g_statusbar.left_label, "");
+        setLabelIfChanged(g_statusbar.left_label, "");
       }
     }
   }
@@ -54251,23 +55319,23 @@ static void updateGlobalStatusBar() {
   // Wi-Fi and Bluetooth are independent glyphs now (Wi-Fi right of Bluetooth),
   // each shown only when that radio is up.
   if (wifi_up) {
-    lv_label_set_text(g_statusbar.conn_icon, LV_SYMBOL_WIFI);
-    lv_obj_clear_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
+    setLabelIfChanged(g_statusbar.conn_icon, LV_SYMBOL_WIFI);
+    sbShow(g_statusbar.conn_icon, true);
   } else {
-    lv_obj_add_flag(g_statusbar.conn_icon, LV_OBJ_FLAG_HIDDEN);
+    sbShow(g_statusbar.conn_icon, false);
   }
   if (g_statusbar.ble_icon) {
     if (ble_up) {
 #if CAP_BLE_KEYBOARD
       // Bluetooth is busy with a keyboard: say so instead of showing the radio.
       const bool kbd = BleKbd::state() == BleKbd::State::Connected;
-      lv_label_set_text(g_statusbar.ble_icon, kbd ? LV_SYMBOL_KEYBOARD : LV_SYMBOL_BLUETOOTH);
+      setLabelIfChanged(g_statusbar.ble_icon, kbd ? LV_SYMBOL_KEYBOARD : LV_SYMBOL_BLUETOOTH);
 #else
-      lv_label_set_text(g_statusbar.ble_icon, LV_SYMBOL_BLUETOOTH);
+      setLabelIfChanged(g_statusbar.ble_icon, LV_SYMBOL_BLUETOOTH);
 #endif
-      lv_obj_clear_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
+      sbShow(g_statusbar.ble_icon, true);
     } else {
-      lv_obj_add_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
+      sbShow(g_statusbar.ble_icon, false);
     }
   }
 #endif
@@ -54585,15 +55653,15 @@ static void updateGlobalStatusBar() {
   if (g_statusbar.layout_label) {
     if (keyboardLayoutsAnySecondary() && s_chat_title[0]) {
       const char* name = keyboardLayoutName(keyboardLayoutsGetCurrent());
-      lv_label_set_text(g_statusbar.layout_label, name);
+      setLabelIfChanged(g_statusbar.layout_label, name);
       // Park it just left of the clock on EVERY board, so it tracks wherever the
       // clock lands (12/24-hour width, the charging slide, centred hide-name
       // mode, SC() scaling). The old fixed -182 build offset overlapped the wide
       // 12-hour clock on the T-Deck bar ("7:45 PM" reaches past -182).
       lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
-      lv_obj_clear_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
+      sbShow(g_statusbar.layout_label, true);
     } else {
-      lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
+      sbShow(g_statusbar.layout_label, false);
     }
   }
 #if !defined(TLORA_PAGER) && !CAP_ROUND_CORNERS
@@ -54601,14 +55669,6 @@ static void updateGlobalStatusBar() {
 #endif
 }
 
-// Set a label's text only when it actually changed. lv_label_set_text always
-// invalidates + re-lays-out the label (it does NOT compare), so calling it every
-// 250 ms refresh tick with byte-identical text needlessly redraws ~8 labels 4x/s.
-// Comparing against the label's CURRENT text also makes this safe across home/tab
-// rebuilds (no module-static "last value" that can outlive the widget).
-static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt) {
-  if (lbl && strcmp(lv_label_get_text(lbl), txt) != 0) lv_label_set_text(lbl, txt);
-}
 
 static void toggleControlCenter();   // the control centre (defined below)
 // =====================================================================
@@ -56441,12 +57501,13 @@ static void hwUnreadUpdate(int i) {
       char* who = d->lst_who[n];
       char* said = d->lst_txt[n];
       if (!g_lv.task->getThreadInfo(idx[k], c, tun, ts, who, sizeof d->lst_who[n]) || !tun) continue;
+      threadNameForDisplay(idx[k], who, sizeof d->lst_who[n]);
       char sender[UITask::MAX_SENDER_NAME + 1], text[UITask::MAX_MSG_TEXT + 1];
       bool out = false;
       said[0] = 0;
       if (g_lv.task->getThreadLastMessage(idx[k], sender, sizeof sender, text, sizeof text, &out)) {
         if (out) snprintf(said, sizeof d->lst_txt[n], "%s: %s", TR("You"), text);
-        else if (c && sender[0]) snprintf(said, sizeof d->lst_txt[n], "%s: %s", sender, text);
+        else if (c && sender[0]) snprintf(said, sizeof d->lst_txt[n], "%s: %s", senderShownName(sender), text);
         else snprintf(said, sizeof d->lst_txt[n], "%s", text);
       }
       rows[n++] = { who, said };
@@ -57253,6 +58314,7 @@ static void hwChatUpdate(int i) {
   }
   bool ch; uint16_t un; uint32_t ts; char nm[UITask::MAX_THREAD_NAME + 1];
   g_lv.task->getThreadInfo(t, ch, un, ts, nm, sizeof nm);
+  threadNameForDisplay(t, nm, sizeof nm);
   char a[24], tag[24] = "", det[400] = "";
   if (w.size == HWS_S) {
     snprintf(a, sizeof a, "%u", (unsigned)un);
@@ -57272,7 +58334,7 @@ static void hwChatUpdate(int i) {
     for (int k = got - 1; k >= 0; --k) {
       UITask::UIMessage m;
       if (!g_lv.task->getMessageByIndex(idx[k], m)) continue;
-      snprintf(d->lst_who[n], sizeof d->lst_who[n], "%s", m.outgoing ? TR("You") : (ch ? m.sender : ""));
+      snprintf(d->lst_who[n], sizeof d->lst_who[n], "%s", m.outgoing ? TR("You") : (ch ? senderShownName(m.sender) : ""));
       snprintf(d->lst_txt[n], sizeof d->lst_txt[n], "%s", m.text);
       rows[n] = { d->lst_who[n], d->lst_txt[n] };
       ++n;
@@ -57286,7 +58348,7 @@ static void hwChatUpdate(int i) {
     UITask::UIMessage m;
     if (g_lv.task->getMessageByIndex(idx[0], m)) {
       if (m.outgoing) snprintf(det, sizeof det, "%s: %s", TR("You"), m.text);
-      else if (ch && m.sender[0]) snprintf(det, sizeof det, "%s: %s", m.sender, m.text);
+      else if (ch && m.sender[0]) snprintf(det, sizeof det, "%s: %s", senderShownName(m.sender), m.text);
       else snprintf(det, sizeof det, "%s", m.text);
     }
   } else snprintf(det, sizeof det, "%s", TR("No messages yet"));
@@ -57365,11 +58427,12 @@ static void hwMentionsUpdate(int i) {
     bool c; uint16_t un; uint32_t ts;
     char chat[UITask::MAX_THREAD_NAME + 1] = "";
     g_lv.task->getThreadInfo(hit[k].thread, c, un, ts, chat, sizeof chat);
+    threadNameForDisplay(hit[k].thread, chat, sizeof chat);
     if (!k) snprintf(where, sizeof where, "%s", chat);
     UITask::UIMessage m;
     d->lst_who[k][0] = d->lst_txt[k][0] = 0;
     if (g_lv.task->getMessageByIndex(hit[k].slot, m)) {
-      snprintf(d->lst_who[k], sizeof d->lst_who[k], "%s", m.sender);
+      snprintf(d->lst_who[k], sizeof d->lst_who[k], "%s", senderShownName(m.sender));
       if (one_chat) snprintf(d->lst_txt[k], sizeof d->lst_txt[k], "%s", m.text);
       else snprintf(d->lst_txt[k], sizeof d->lst_txt[k], "%s: %s", chat, m.text);
     }
@@ -57399,7 +58462,7 @@ static int hwFindContact(const uint8_t* key, int klen, ContactInfo* out) {
 }
 static bool hwNodeName(const uint8_t* key, int klen, char* out, size_t cap) {
   ContactInfo c;
-  if (hwFindContact(key, klen, &c) >= 0 && c.name[0]) { snprintf(out, cap, "%s", c.name); return true; }
+  if (hwFindContact(key, klen, &c) >= 0 && c.name[0]) { snprintf(out, cap, "%s", contactShownName(c.id.pub_key, c.name)); return true; }
   if (s_discovered)
     for (int k = 0; k < DISCOVERED_MAX; ++k)
       if (s_discovered[k].used && !memcmp(s_discovered[k].ci.id.pub_key, key, klen) && s_discovered[k].ci.name[0]) {
@@ -58422,7 +59485,10 @@ static int s_hw_chat_n = 0;
 static void hwChatRow(int k, char* label, size_t cap, const char** icon, int* val) {
   bool ch; uint16_t un; uint32_t ts;
   *val = s_hw_chat_list[k];
-  if (g_lv.task && g_lv.task->getThreadInfo(s_hw_chat_list[k], ch, un, ts, label, cap)) *icon = ch ? UI_ICON_HASH : UI_ICON_USER;
+  if (g_lv.task && g_lv.task->getThreadInfo(s_hw_chat_list[k], ch, un, ts, label, cap)) {
+    *icon = ch ? UI_ICON_HASH : UI_ICON_USER;
+    threadNameForDisplay(s_hw_chat_list[k], label, cap);
+  }
 }
 static bool hwChatPicked(int t) {
   bool ch; uint16_t un; uint32_t ts; char nm[UITask::MAX_THREAD_NAME + 1];
@@ -58479,7 +59545,7 @@ static void hwNodeRow(int k, char* label, size_t cap, const char** icon, int* va
   ContactInfo c;
   *val = s_hw_node_list[k];
   if (!the_mesh.getContactByIdx((uint32_t)s_hw_node_list[k], c)) return;
-  snprintf(label, cap, "%s", c.name[0] ? c.name : "?");
+  snprintf(label, cap, "%s", c.name[0] ? contactShownName(c.id.pub_key, c.name) : "?");
   *icon = c.type == ADV_TYPE_SENSOR ? UI_ICON_THERMOMETER : c.type == ADV_TYPE_REPEATER ? UI_ICON_RADIO_TOWER
         : c.type == ADV_TYPE_ROOM ? UI_ICON_USERS : UI_ICON_USER;
 }
@@ -58675,7 +59741,7 @@ static void hwFaceName(const HwRec& r, char* out, size_t cap) {
   } else if (r.kind == HWK_CHAT && g_lv.task) {
     const int t = hwChatThread(r);
     bool ch; uint16_t un; uint32_t ts;
-    if (t >= 0) g_lv.task->getThreadInfo(t, ch, un, ts, out, cap);
+    if (t >= 0 && g_lv.task->getThreadInfo(t, ch, un, ts, out, cap)) threadNameForDisplay(t, out, cap);
   } else if (r.kind == HWK_REMOTE && (r.x[0] | r.x[1] | r.x[2])) {
     hwNodeName(r.x, 6, out, cap);
   }
@@ -63445,7 +64511,7 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
 
   char nm[24];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm),
-                                 contact.name[0] ? contact.name : "node");
+                                 contact.name[0] ? contactShownName(contact.id.pub_key, contact.name) : "node");
   char msg[120];
   if (parsed) {
     if (uptime_s >= 3600) {
@@ -64087,7 +65153,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
   (void)for_home;
   char nm[24];
   copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm),
-                                 contact.name[0] ? contact.name : "node");
+                                 contact.name[0] ? contactShownName(contact.id.pub_key, contact.name) : "node");
   if (!data || len == 0) {
     char msg[64];
     snprintf(msg, sizeof(msg), "%s: empty telemetry", nm);
@@ -64258,7 +65324,7 @@ void UITask::onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
   if (s_skew_warn_ms && (uint32_t)(nowms - s_skew_warn_ms) < 60000u) return;
   s_skew_warn_ms = nowms;
   char nm[28];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof nm, contact.name);
+  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof nm, contactShownName(contact.id.pub_key, contact.name));
   char msg[128];
   if (mag < 7200)
     snprintf(msg, sizeof msg, TR("Device clock differs from \"%s\" by %lu min%s"),
@@ -64301,7 +65367,7 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
     roomReloginClear();
     if (success) {
       char msg[80];
-      snprintf(msg, sizeof msg, TR("Reconnected to %.40s"), contact.name);
+      snprintf(msg, sizeof msg, TR("Reconnected to %.40s"), contactShownName(contact.id.pub_key, contact.name));
       showAlert(msg, 1400);
       return;
     }
@@ -64340,7 +65406,7 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
       const int idx = s_room_join_idx;
       s_room_join_idx = -1;
       char msg[80];
-      snprintf(msg, sizeof(msg), TR("Joined %.40s"), contact.name);
+      snprintf(msg, sizeof(msg), TR("Joined %.40s"), contactShownName(contact.id.pub_key, contact.name));
       showAlert(msg, 1400);
       openMeshContactDm((uint32_t)idx);
     } else {
@@ -69375,7 +70441,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.indev_drv.type    = LV_INDEV_TYPE_KEYPAD;
     g_lv.indev_drv.read_cb = tanmatsuKeypadRead;   // device-neutral: just drains navFifo
     g_lv.indev_drv.disp    = lv_disp_get_default();
-    if (lv_indev_t* kp = lv_indev_drv_register(&g_lv.indev_drv)) lv_indev_set_group(kp, s_nav_group);
+    if (lv_indev_t* kp = lv_indev_drv_register(&g_lv.indev_drv)) { lv_indev_set_group(kp, s_nav_group); s_nav_indev = kp; }
     else pushDiagLine("LVGL keypad indev failed");
 #if defined(HAS_TANMATSU)
     bsp_input_get_queue(&s_nav_queue);
@@ -69625,6 +70691,14 @@ void UITask::markAllThreadsRead() {
     }
   }
   if (any) markThreadsDirty(200);   // persist soon (survives a manual reboot)
+}
+
+const uint8_t* UITask::threadContactKey6(int idx) const {
+  if (!_ui_threads || idx < 0 || idx >= MAX_UI_THREADS) return nullptr;
+  const UIThread& t = _ui_threads[idx];
+  if (!t.used || t.channel) return nullptr;
+  static const uint8_t kZero[6] = {0};
+  return memcmp(t.mesh_contact_key6, kZero, sizeof kZero) ? t.mesh_contact_key6 : nullptr;
 }
 
 bool UITask::threadHasMention(int idx) const {
@@ -69891,7 +70965,7 @@ void UITask::openMeshContactDm(uint32_t mesh_contact_index) {
   }
   {
     char san[UITask::MAX_THREAD_NAME + 8];
-    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), c.name);
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), contactShownName(c.id.pub_key, c.name));
     setChatStatusTitle(san);   // contact name → status bar (no in-chat header bar)
   }
   g_lv.dm.detail_open = true;
@@ -70246,6 +71320,8 @@ int UITask::getGpsAltitude() {
   return (int)(lp->getAltitude() / 1000);   // provider reports millimetres
 }
 
+
+
 // ---- GPS saver ----------------------------------------------------------------------------
 // Awake, the receiver keeps going until it has held a fix for half a minute (the position
 // settles) or the sky has had three minutes; then it rests for the chosen interval and
@@ -70271,7 +71347,12 @@ static void gpsSaverTick(uint32_t now) {
     s_gps_fix_since = 0;
     s_gps_wake_at = 0;
   }
-  if (!on) return;
+  if (!on) {
+#if defined(TLORA_PAGER)
+    tloraPagerGpsPowerDown();   // switched off: the module's rail too, not just its standby
+#endif
+    return;
+  }
   const bool saver = touchPrefsGetGpsSaver() || touchSleep::enabled();
   if (!saver || gpsWantedLive()) {   // plain GPS: awake whenever it is switched on
     if (!s_gps_hw_on) { g_lv.task->setGpsPower(true); s_gps_hw_on = true; s_gps_phase_at = now; s_gps_fix_since = 0; }
@@ -70494,6 +71575,19 @@ static void touchPanelSleep(bool slp) {
     touchPanelCmd(0x29);   // DISPON — the pre-sleep image reappears
   }
 }
+#elif defined(TLORA_PAGER)
+// ---- ST7796 panel sleep (power, anti burn-in) ------------------------------
+// Backlight-off alone left the panel refreshing the same image behind the dark
+// AW9364 (a few mA, and the burn-in the ST7789 boards fixed the same way). The
+// driver sends DISPOFF + SLPIN through TFT_eSPI, which takes the shared SPI bus
+// lock the radio and SD card also use; the panel keeps its frame memory, so the
+// image is simply back on wake.
+static void touchPanelSleep(bool slp) {
+  static bool s_asleep = false;
+  if (slp == s_asleep) return;
+  s_asleep = slp;
+  display.panelSleep(slp);
+}
 #else
 static inline void touchPanelSleep(bool) {}
 #endif
@@ -70535,11 +71629,8 @@ static inline void touchScreenBacklight(bool on) {
 #if defined(TLORA_PAGER)
   // Also has TFT_BL defined (=-1, disabling TFT_eSPI's own backlight pin
   // support), which would otherwise fall into the #elif defined(TFT_BL) branch
-  // below and digitalWrite a "-1" pin -- must come first. touchPanelSleep()
-  // has no ST7796-specific implementation (falls to the no-op default below,
-  // same as Tanmatsu), so screen-sleep here is backlight-off only, not a real
-  // panel sleep command -- a known, low-severity gap, not a regression (this
-  // board never had panel-sleep to begin with).
+  // below and digitalWrite a "-1" pin -- must come first. Screen-off is the
+  // backlight off AND the ST7796 asleep (touchPanelSleep above).
   if (on) { touchPanelSleep(false); display.setBrightness(s_brightness_pct); }
   else    { display.setBrightness(0); touchPanelSleep(true); }
 #elif defined(HAS_TDECK_PRO)
@@ -70854,7 +71945,7 @@ static int ssaverBuildNodes(CstNode* out, bool& north_up) {
       if (n.dist > 1000) n.dist = 1000;
     }
     // A few names, for the freshest nodes; the drawing drops any that would collide.
-    if (k < 5 && n.level >= 2) ssaverCopyName(n.label, sizeof n.label, c.name);
+    if (k < 5 && n.level >= 2) ssaverCopyName(n.label, sizeof n.label, contactShownName(c.id.pub_key, c.name));
   }
   // Pass 2: the log scale, now that the farthest node is known. Nothing sits on
   // top of you, and the farthest node you can place lands on the outer ring.
@@ -72351,10 +73442,12 @@ static void atGlanceShow(const GlanceMsg& m, bool fade_in) {
   lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(head, SC(10), LV_PART_MAIN);
   const char* thread = m.thread ? m.thread : "";
-  lv_obj_t* av = makeGlyphAvatar(head, thread, m.channel ? GLYPH_SQUARE : GLYPH_CIRCLE, SC(32));
+  const char* vis = m.channel ? thread : senderShownName(thread);   // a direct chat: the contact's nickname
+  lv_obj_t* av = makeGlyphAvatar(head, vis, m.channel ? GLYPH_SQUARE : GLYPH_CIRCLE, SC(32));
   {
     char eb[20];
-    if (touchPrefsGetChannelEmoji(thread, eb, sizeof eb)) glyphAvatarSetEmoji(av, thread, eb);
+    if (touchPrefsGetChannelEmoji(thread, eb, sizeof eb) || (!m.channel && nameFirstEmoji(vis, eb, sizeof eb)))
+      glyphAvatarSetEmoji(av, vis, eb);
   }
   lv_obj_t* who = lv_obj_create(head);
   lv_obj_remove_style_all(who);
@@ -72364,7 +73457,7 @@ static void atGlanceShow(const GlanceMsg& m, bool fade_in) {
   lv_obj_set_flex_flow(who, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(who, SC(1), LV_PART_MAIN);
   char nm[UITask::MAX_THREAD_NAME + 8];
-  copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, nm, sizeof nm, thread);
+  copyUtf8ReplacingMissingGlyphs(&g_font_semi_14, nm, sizeof nm, vis);
   lv_obj_t* nl = lv_label_create(who);
   lv_label_set_text(nl, nm);
   lv_label_set_long_mode(nl, LV_LABEL_LONG_DOT);
@@ -72407,7 +73500,7 @@ static void atGlanceShow(const GlanceMsg& m, bool fade_in) {
     const lv_coord_t who_w = lv_obj_get_width(who);
     const lv_coord_t meta_h = LV_MAX(lv_font_get_line_height(&g_font_12), lv_font_get_line_height(&g_font_semi_12));
     char sn[UITask::MAX_SENDER_NAME + 8] = "";
-    if (has_sender) copyUtf8ReplacingMissingGlyphs(&g_font_semi_12, sn, sizeof sn, m.sender);
+    if (has_sender) copyUtf8ReplacingMissingGlyphs(&g_font_semi_12, sn, sizeof sn, senderShownName(m.sender));
     char r[32] = "";
     if (has_route) snprintf(r, sizeof r, has_sender ? " \xC2\xB7 %s" : "%s", m.route);
     const lv_coord_t sn_w = has_sender ? lv_txt_get_width(sn, strlen(sn), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE) : 0;
@@ -74418,6 +75511,9 @@ void UITask::loop() {
   // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
   if (g_lv.task && g_lv.task->isManualLock()) pagerKeyboardDiscardAlt();
+#if defined(TLORA_PAGER)
+  updatePagerTabHold(now);   // a Home/Settings shortcut: released = tap, held = the long press
+#endif
   // Remote Mode keeps the placeholder lit and reserves all keys for its local
   // escape path, so normal lock/backlight state machines stay paused there.
   if (!s_remote_mode) {
@@ -74913,7 +76009,15 @@ void UITask::loop() {
     lv_obj_invalidate(lv_scr_act());
 #endif
   uiCp("ui:lvgl");
+#if defined(TLORA_PAGER)
+  const uint32_t lv_next_ms = lv_timer_handler();
+  // The loop runs flat out, and the keyboard no longer parks it on an I2C read every
+  // pass (pagerKeyboardPoll reads only when the chip's INT line asks): when LVGL has
+  // nothing due for a couple of ms, give the core 1 ms back instead of spinning.
+  if (lv_next_ms >= 2) vTaskDelay(1);
+#else
   lv_timer_handler();
+#endif
 #if defined(HAS_TDECK_PRO)
   display.serviceRefresh();   // one coalesced e-paper update after all LVGL bands
 #endif
@@ -75295,6 +76399,9 @@ static int auditFindThread(bool channel) {
     bool ch; uint16_t unread; uint32_t ts; char nm[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(i, ch, unread, ts, nm, sizeof nm)) continue;
     if (ch != channel || ts == 0) continue;
+#if defined(DOC_CHANNEL_PUBLIC)
+    if (channel && !strcasecmp(nm, "Public")) return i;   // the website shot: Public, not the newest channel
+#endif
     if (best < 0 || ts > best_ts) { best = i; best_ts = ts; }
   }
   return best;
@@ -76362,9 +77469,281 @@ static void docFixVerify() {
 }
 #endif
 
+#if defined(DOC_CC_AUDIT)
+// The control panel and the keyboard cursor, for the 2026-10-10 design pass: the panel
+// as it opens, the cursor walking its controls, then the cursor on a Settings row, a
+// contact, the map's buttons and a drawer tile. The tour holds the UI loop, so the
+// focus group is rebuilt by hand after every step.
+static void docCcNav(int settle = 24) {
+  s_nav_dirty = true; navMaybeRebuild(); docSettle(settle);
+}
+#if defined(DOC_CC_TOUCH)
+// A finger the tour can place: a pointer input reporting a scripted point and
+// state, so the touch side of the tooltips runs on a board without a touchscreen.
+static bool       s_vt_pressed = false;
+static lv_point_t s_vt_pt      = { 0, 0 };
+static lv_indev_t* s_vt_indev  = nullptr;
+static void vtRead(lv_indev_drv_t*, lv_indev_data_t* d) {
+  d->point = s_vt_pt;
+  d->state = s_vt_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+static void vtEnsure() {
+  if (s_vt_indev) return;
+  static lv_indev_drv_t drv;
+  lv_indev_drv_init(&drv);
+  drv.type = LV_INDEV_TYPE_POINTER;
+  drv.read_cb = vtRead;
+  s_vt_indev = lv_indev_drv_register(&drv);
+}
+static lv_obj_t* vtTipObj(const char* title) {
+  for (const NavTip& t : s_nav_tips) if (t.obj && t.title && !strcmp(t.title, title)) return t.obj;
+  return nullptr;
+}
+static void vtPress(lv_obj_t* o) {
+  lv_area_t a; lv_obj_get_coords(o, &a);
+  s_vt_pt.x = (a.x1 + a.x2) / 2; s_vt_pt.y = (a.y1 + a.y2) / 2;
+  s_vt_pressed = true;
+}
+// Hold for real milliseconds: a frame of the tour can take far longer than its 22 ms
+// while the panel redraws, so counting frames over-holds.
+static uint32_t vtHoldMs(uint32_t ms) {
+  const uint32_t t0 = millis();
+  while (millis() - t0 < ms) { lv_timer_handler(); delay(10); }
+  return millis() - t0;
+}
+static bool vtCardShows(const char* title) {
+  return s_nav_tip_box && !lv_obj_has_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN) && s_nav_tip_title &&
+         !strcmp(lv_label_get_text(s_nav_tip_title), title);
+}
+static void docCcTouchTour() {
+  int pass = 0, total = 0;
+  auto check = [&](bool ok, const char* what) {
+    pass += ok; total++; Serial.printf("DBG: TOUCH %s: %s\n", what, ok ? "PASS" : "FAIL");
+  };
+  vtEnsure();
+  navHideFocus();   // no keyboard cards in the way: these are the finger's
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8);
+  openControlCenter(); docSettle(20);
+  navHideFocus();
+  lv_obj_t* power = vtTipObj(TR("Power"));
+  lv_obj_t* wifi  = vtTipObj(TR("Wi-Fi"));
+  lv_obj_t* bt    = vtTipObj(TR("Bluetooth"));
+  Serial.printf("DBG: TOUCH objects power=%p wifi=%p bt=%p\n", (void*)power, (void*)wifi, (void*)bt);
+  if (power) {
+    vtPress(power); docSettle(40);
+    check(vtCardShows(TR("Power")), "holding Power shows its card");
+    captureScreenToSerial("touch_hold_power");
+    s_vt_pressed = false; docSettle(12);
+    check(!s_power_menu, "lifting after the hold does not open the power menu");
+    docSettle(90);
+    check(!s_nav_tip_box || lv_obj_has_flag(s_nav_tip_box, LV_OBJ_FLAG_HIDDEN), "the card goes 1.5 s after lifting");
+    vtPress(power); docSettle(4); s_vt_pressed = false; docSettle(16);
+    check(s_power_menu != nullptr, "a quick tap on Power still opens the menu");
+    closePowerMenu(); docSettle(8);
+    openControlCenter(); docSettle(20); navHideFocus();
+    wifi = vtTipObj(TR("Wi-Fi")); bt = vtTipObj(TR("Bluetooth"));
+  }
+  if (wifi) {
+    const bool was = wifiConfigGetRadioEnabled();
+    vtPress(wifi);
+    const uint32_t held = vtHoldMs(650);
+    check(vtCardShows(TR("Wi-Fi")), "holding a tile shows its card");
+    s_vt_pressed = false; docSettle(16);
+    Serial.printf("DBG: TOUCH held %lu ms: wifi %d->%d, panel %d, settings page %d\n", (unsigned long)held, (int)was,
+                  (int)wifiConfigGetRadioEnabled(), s_cc_root ? 1 : 0, s_settings_open_cat);
+    check(wifiConfigGetRadioEnabled() == was && s_cc_root && s_settings_open_cat < 0,
+          "lifting after 0.65 s neither toggles it nor opens its settings");
+    docSettle(80);
+    bt = vtTipObj(TR("Bluetooth"));
+  }
+  if (bt) {
+    vtPress(bt);
+    vtHoldMs(1500);
+    s_vt_pressed = false; docSettle(16);
+    check(s_settings_open_cat == CAT_BLUETOOTH && !s_cc_root, "keeping a finger on a tile opens its settings");
+    captureScreenToSerial("touch_hold_settings");
+    closeSettingsCategory(); docSettle(10);
+  }
+  navGoToMainTab(MAP_TAB_INDEX); docSettle(30);
+  if (lv_obj_t* gear = vtTipObj(TR("Map options"))) {
+    vtPress(gear); docSettle(40);
+    check(vtCardShows(TR("Map options")), "holding the map gear shows its card");
+    captureScreenToSerial("touch_hold_map");
+    s_vt_pressed = false; docSettle(12);
+    check(!s_map_opts_root, "lifting does not open the map options");
+  }
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8);
+  Serial.printf("DBG: TOUCH done %d/%d\n", pass, total);
+}
+#endif
+static void docCcAudit() {
+  char nm[32];
+  s_nav_show = true;   // the cursor visible, as when keys drive the UI
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8); docCcNav();
+  openControlCenter(); docCcNav(40);
+  auditShot("cc_open", 30);
+  for (int i = 0; i < 11; ++i) {
+    navPushTap(LV_KEY_NEXT); docSettle(4); docCcNav(36);
+    snprintf(nm, sizeof nm, "cc_focus_%02d", i);
+    auditShot(nm, 10);
+  }
+  closeControlCenter(); docSettle(8);
+  navGoToMainTab(SETTINGS_TAB_INDEX); docSettle(10); docCcNav();
+  navPushTap(LV_KEY_NEXT); docSettle(4); docCcNav(36); auditShot("focus_settings", 10);
+  navGoToMainTab(CONTACTS_TAB_INDEX); docSettle(16); docCcNav();
+  navPushTap(LV_KEY_NEXT); docSettle(4); docCcNav(36); auditShot("focus_contacts", 10);
+  navGoToMainTab(MAP_TAB_INDEX); docSettle(30); docCcNav(36); auditShot("focus_map", 20);
+  navPushTap(LV_KEY_NEXT); docSettle(4); docCcNav(36); auditShot("focus_map_2", 10);
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(10); docCcNav();
+  navPushTap(LV_KEY_NEXT); docSettle(4); docCcNav(36); auditShot("focus_drawer", 10);
+#if defined(DOC_CC_TOUCH)
+  docCcTouchTour();
+#endif
+}
+#endif
+
+#if defined(DOC_NICK_AUDIT)
+// Contact nicknames (2026-10-10): one contact gets a nickname, the places it shows are
+// shot and checked, then it is cleared through the editor's empty OK and whatever the
+// contact had before is put back, so the device keeps nothing from the tour.
+static int docNickThreadFor(const uint8_t* key6) {
+  for (int t = 0; t < UITask::MAX_UI_THREADS; ++t) {
+    bool ch = false; uint16_t un = 0; uint32_t ts = 0; char nm[UITask::MAX_THREAD_NAME + 1];
+    if (!g_lv.task->getThreadInfo(t, ch, un, ts, nm, sizeof nm) || ch) continue;
+    const uint8_t* k = g_lv.task->threadContactKey6(t);
+    if (k && memcmp(k, key6, 6) == 0) return t;
+  }
+  return -1;
+}
+static void docNickAudit() {
+  static const char kNick[] = "Grandma Mesh";
+  ContactInfo c;
+  int idx = -1, with_chat = -1;
+  const int nc = the_mesh.getNumContacts();
+  for (int i = 0; i < nc && with_chat < 0; ++i) {
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !c.name[0] || c.type != ADV_TYPE_CHAT) continue;
+    if (idx < 0) idx = i;
+    if (docNickThreadFor(c.id.pub_key) >= 0) with_chat = i;   // one with a chat shows the most
+  }
+  if (with_chat >= 0) idx = with_chat;
+  if (idx < 0 || !the_mesh.getContactByIdx((uint32_t)idx, c)) { Serial.println("DBG: NICK no contact"); return; }
+  Serial.printf("DBG: NICK contact '%s', has a direct chat: %d\n", c.name, docNickThreadFor(c.id.pub_key) >= 0);
+  char before[32] = "";
+  if (const char* had = nickFor(c.id.pub_key)) snprintf(before, sizeof before, "%s", had);
+  int pass = 0, total = 0;
+  auto check = [&](bool ok, const char* what) {
+    ++total; if (ok) ++pass;
+    Serial.printf("DBG: NICK %s %s\n", ok ? "PASS" : "FAIL", what);
+  };
+  check(nickSet(c.id.pub_key, "  Grandma Mesh  "), "set");
+  const char* now_nick = nickFor(c.id.pub_key);
+  check(now_nick && strcmp(now_nick, kNick) == 0, "trimmed and kept");
+  check(strcmp(contactShownName(c.id.pub_key, c.name), kNick) == 0, "shown name");
+  check(strcmp(c.name, kNick) != 0, "the contact's own name untouched");
+  {
+    static uint8_t buf[TOUCH_NICK_MAX * TOUCH_NICK_REC_BYTES];
+    const int n = touchPrefsCopyNicknames(buf);
+    bool found = false;
+    for (int i = 0; i < n; ++i)
+      if (!memcmp(&buf[i * TOUCH_NICK_REC_BYTES], c.id.pub_key, 6) &&
+          !strcmp((const char*)&buf[i * TOUCH_NICK_REC_BYTES + 6], kNick)) found = true;
+    check(found, "saved to storage");
+  }
+  const char* by_name = senderShownName(c.name);
+  Serial.printf("DBG: NICK by-name maps to '%s'\n", by_name ? by_name : "");
+  navGoToMainTab(CONTACTS_TAB_INDEX); docSettle(10);
+  snprintf(g_lv.contacts_search, sizeof g_lv.contacts_search, "%s", "grandma");   // search finds a nickname
+  refreshContactsList(); docSettle(20);
+  {
+    bool row = false;
+    for (int k = 0; k < s_contacts_rows_built; ++k) {
+      lv_obj_t* nl = s_contacts_ctx[k].name_lbl;
+      if (nl && lv_obj_is_valid(nl) && strcmp(lv_label_get_text(nl), kNick) == 0) row = true;
+    }
+    check(row, "Contacts row, found by searching its nickname");
+  }
+  auditShot("nick_contacts", 10);
+  g_lv.contacts_search[0] = 0;
+  refreshContactsList(); docSettle(10);
+  openContactActionSheet((uint32_t)idx, c.type == ADV_TYPE_REPEATER, c.name); docSettle(12);
+  auditShot("nick_options", 10);
+  closeActionSheet(); docSettle(8);
+  const int t = docNickThreadFor(c.id.pub_key);
+  navGoToMainTab(CHAT_INBOX_TAB_INDEX); docSettle(10);
+  refreshThreadLists(); docSettle(20);
+  auditShot("nick_chats", 10);
+  if (t >= 0) {
+    openThreadDetailByIdx(t, false); docSettle(30);
+    check(strcmp(s_chat_title, kNick) == 0, "chat title");
+    auditShot("nick_chat", 10);
+    closeChatPanel(&g_lv.dm); docSettle(10);
+  }
+  openNicknameEditor(c); docSettle(12);
+  auditShot("nick_editor", 10);
+  if (s_fm_prompt_ta) {   // clear the text and press OK: back to the advertised name
+    lv_textarea_set_text(s_fm_prompt_ta, "");
+    lv_obj_t* card = s_fm_prompt ? lv_obj_get_child(s_fm_prompt, 0) : nullptr;
+    lv_obj_t* ok = card ? lv_obj_get_child(card, lv_obj_get_child_cnt(card) - 1) : nullptr;
+    if (ok) lv_event_send(ok, LV_EVENT_CLICKED, nullptr);
+    docSettle(10);
+  }
+  check(nickFor(c.id.pub_key) == nullptr, "cleared by an empty OK");
+  check(strcmp(contactShownName(c.id.pub_key, c.name), c.name) == 0, "advertised name back");
+  navGoToMainTab(CONTACTS_TAB_INDEX); docSettle(10);
+  refreshContactsList(); docSettle(20);
+  {
+    bool row = false;
+    for (int k = 0; k < s_contacts_rows_built; ++k) {
+      lv_obj_t* nl = s_contacts_ctx[k].name_lbl;
+      if (nl && lv_obj_is_valid(nl) && strcmp(lv_label_get_text(nl), kNick) == 0) row = true;
+    }
+    check(!row, "Contacts row back to the advertised name");
+  }
+  if (before[0]) nickSet(c.id.pub_key, before);   // what it had before the tour
+  // #640: a contact's chat icon from the first emoji in its name.
+  {
+    char eb[20];
+    check(nameFirstEmoji("Base \xF0\x9F\x98\x80 camp", eb, sizeof eb) && !strcmp(eb, "\xF0\x9F\x98\x80"),
+          "first emoji found in a name");
+    check(!nameFirstEmoji("Plain name", eb, sizeof eb), "no emoji, no icon");
+    check(!nameFirstEmoji("\xC2\xA9 corp", eb, sizeof eb), "a (c) sign is not an icon");
+  }
+#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
+  // #626: the way back from a wallpaper of your own.
+  {
+    char was[TOUCH_LOCK_WALLPAPER_MAXLEN];
+    touchPrefsGetLockWallpaper(was, sizeof was);
+    touchPrefsSetLockWallpaper("/lock/tour-test.jpg");
+    navGoToMainTab(SETTINGS_TAB_INDEX); docSettle(10);
+    openSettingsCategory(CAT_LOCK); docSettle(24);
+    const bool shown = s_lockwall_default_row && lv_obj_is_valid(s_lockwall_default_row);
+    check(shown, "Default wallpaper row with a picture of your own");
+    auditShot("wall_default_row", 10);
+    if (shown) { lv_event_send(s_lockwall_default_row, LV_EVENT_CLICKED, nullptr); docSettle(10); }
+    char now_w[TOUCH_LOCK_WALLPAPER_MAXLEN];
+    touchPrefsGetLockWallpaper(now_w, sizeof now_w);
+    check(!strcmp(now_w, touchPrefsDefaultLockWallpaper()), "wallpaper back to the default");
+    check(s_lockwall_btn_lbl && strcmp(lv_label_get_text(s_lockwall_btn_lbl), TR("(default)")) == 0, "row reads (default)");
+    closeSettingsCategory(); docSettle(8);
+    if (strcmp(was, touchPrefsDefaultLockWallpaper()) != 0) touchPrefsSetLockWallpaper(was);   // as it was
+  }
+#endif
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(8);
+  Serial.printf("DBG: NICK done %d/%d\n", pass, total);
+}
+#endif
+
 static void docAuditFocus() {
 #if defined(DOC_FIX_VERIFY)
   docFixVerify();
+  return;
+#endif
+#if defined(DOC_NICK_AUDIT)
+  docNickAudit();
+  return;
+#endif
+#if defined(DOC_CC_AUDIT)
+  docCcAudit();
   return;
 #endif
 #if defined(DOC_PERF_BENCH)
@@ -76446,7 +77825,7 @@ static void docAuditFocus() {
   s_update_available = upd_was;
   versionCheckUpdateUi();
   navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
-#if CAP_LOCK_SCREEN
+#if CAP_LOCK_SCREEN && (defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9))   // the wallpaper picker's boards
   // The lock screen over a chosen wallpaper: the first JPEG the picker finds that
   // is not the built-in placeholder. The setting is put back afterwards.
   {

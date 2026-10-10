@@ -1,0 +1,32 @@
+# beta_93 - contact nicknames, a new control panel, tooltips, and a Pager round: shortcuts, speed and battery. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new things, the Pager, fixes, the Heltec V4.
+
+Test build, on top of beta_92. The stable build stays beta_85.
+
+# --- New ---
+Contacts can have a nickname: Contact options > Nickname. It shows wherever that contact appears (Contacts, Chats, the chat header, sender names in channels and rooms, the lock screen, notifications, Home widgets and the map), and Contact options keeps the name it advertises under it. Nicknames stay on the device: the mesh, the phone app and Lua apps keep the real name. Clear the text and press OK to go back; Contacts search finds either name.
+The control panel is redrawn in the launcher's style: square tiles coloured by their Settings group, filled while on, and a new Battery saver tile.
+Icon buttons say what they are. With a keyboard, the selected button shows a small card after a moment; on touch, hold a button to see it, and lifting never taps it. On a control panel tile, keep holding to open its settings.
+The keyboard cursor is amber now, so the selected control stands out on every background.
+A contact's chat without an icon of its own uses the first emoji in its name (#640, an idea from jesshampshire).
+Lock screen > Default wallpaper takes you back from a picture of your own (#626, asked for by neoemit).
+
+# --- T-LoRa Pager ---
+Shortcuts: M, C, A and S work from Home again; hold H for the launcher options and S for the control panel; H on the app drawer switches to the widgets. Backspace goes back when nothing is being typed, N jumps to the first new message in a chat, and holding Enter is a long press.
+Each tab remembers where you were, Contacts opens on the first contact, a chat opens on its first unread message, and Power off asks first.
+Faster: the screen draws quicker, tabs switch at once, and the keyboard is only read when a key is waiting, so the Pager does far less while idle.
+Battery: the GPS rests in standby between position checks and is switched off completely when GPS is off; the display panel sleeps with the screen off; the speaker amplifier only runs while a sound plays; and Power off now also puts the radio to sleep and switches off the GPS, the panel and the keyboard light.
+Map labels on the Pager show their copyright sign and arrows again instead of boxes.
+
+# --- Fixes ---
+Direct messages sent from the phone app retry properly (#636, guidokok traced it). The app's retries keep the time and count up an attempt number, and wadamesh took them for a resent copy: nothing went out, flood fallback included, while the app was told the message had been flooded. The direct-send timeout also read a packed path byte as 76 hops instead of 12, and the web remote shows real hop counts now.
+The changelog opens on the T-Deck Pro (#638, reported by jesshampshire): it loads over plain http now, since the Pro has no memory to spare for the secure handshake.
+Lua apps get a sending budget against spam (#606, reported by TransientOddity). All apps share it and restarting an app does not refill it: channel posts three in a row, then one a minute; direct messages six, then one every ten seconds; the same text to the same channel twice within ten minutes is refused.
+The GPS speed setting says what it does on the T-LoRa Pager, T-Deck Pro and Max and T-Display P4: the device finds the speed itself, and the setting is only where it starts (#613, reported by D-Melhede).
+ThinkNode M9: clean builds work with RadioLib 7.8.1 (#633, by oumike).
+Translations for the background and battery settings from beta_90 and beta_91 (#632, by jcyrio), plus this build's new texts, in all 14 languages.
+
+# --- Heltec V4 ---
+To make room, the Heltec V4 keeps Snake as its only built-in game: Tetris, 2048 and Breakout are no longer built in (they stay in the Store on every other board). The built-in apps are also stored without their comments, which changes nothing when they run. Together that frees 27 KB.
+The Heltec V4 keeps the translations it had in beta_92: this build's new texts show in English there until there is room for them.

@@ -1,14 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-sky="soft">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WADAMESH Documentation</title>
-<meta name="description" content="User guide for the WADAMESH touch firmware: Home, Chats, Contacts, Map and Settings, the lock screen and PIN, the screensaver, new-message cards and the built-in apps. Real device screenshots.">
-<link rel="icon" href="wadamesh-badge.svg">
+<script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
+<meta name="theme-color" content="#000400">
+<title>WADAMESH user guide</title>
+<meta name="description" content="User guide for WADAMESH: Home, Chats, Contacts, Map and Settings, the lock screen and PIN, the screensaver, new-message cards and the built-in apps. Real device screenshots.">
+<link rel="canonical" href="https://wadamesh.com/docs.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WADAMESH">
+<meta property="og:url" content="https://wadamesh.com/docs.html">
+<meta property="og:title" content="WADAMESH user guide">
+<meta property="og:description" content="User guide for WADAMESH: Home, Chats, Contacts, Map and Settings, the lock screen and PIN, the screensaver, new-message cards and the built-in apps. Real device screenshots.">
+<meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The WADAMESH home screen on a LilyGo T-Deck">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="wadamesh-badge.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#ffffff; --bg2:#f4f6f2; --ink:#15181e; --mut:#5d6770;
@@ -21,37 +36,37 @@
   a{color:var(--teal-ink); text-decoration:none}
 
   .top{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px; padding:12px 22px;
-    background:rgba(255,255,255,.88); backdrop-filter:saturate(1.2) blur(8px); border-bottom:1px solid var(--line)}
+    background:var(--bar); -webkit-backdrop-filter:saturate(1.2) blur(10px); backdrop-filter:saturate(1.2) blur(10px); border-bottom:1px solid var(--line)}
   .top .word{font-weight:700; letter-spacing:2px; font-size:1.05rem; color:var(--ink)}
   .top .word .t{color:var(--teal)}
   .top .tag{font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); border:1px solid var(--line); border-radius:100px; padding:4px 9px}
   .top .sp{flex:1}
-  .top .home{display:inline-flex; align-items:center; gap:7px; white-space:nowrap; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:#fff; transition:background .15s,color .15s,border-color .15s}
-  .top .home:hover{color:var(--teal-ink); background:var(--bg2); border-color:#bfe6e0}
+  .top .home{display:inline-flex; align-items:center; gap:7px; white-space:nowrap; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:var(--control); transition:background .15s,color .15s,border-color .15s}
+  .top .home:hover{color:var(--teal-ink); background:var(--bg2); border-color:var(--teal)}
   .top .home svg{width:16px;height:16px}
 
   .shell{max-width:1200px; margin:0 auto; display:grid; grid-template-columns:220px 1fr; gap:34px; padding:0 22px}
   nav.toc{position:sticky; top:64px; align-self:start; height:calc(100vh - 64px); overflow:auto; padding:26px 0 40px}
   nav.toc .grp{font-family:'JetBrains Mono',monospace; font-size:.68rem; letter-spacing:.13em; text-transform:uppercase; color:var(--mut); margin:20px 0 7px}
   nav.toc .grp:first-child{margin-top:0}
-  nav.toc a{display:block; padding:6px 12px; border-radius:9px; color:#46525c; font-size:.92rem; border-left:2px solid transparent}
+  nav.toc a{display:block; padding:6px 12px; border-radius:9px; color:var(--ink2); font-size:.92rem; border-left:2px solid transparent}
   nav.toc a:hover{background:var(--bg2); color:var(--ink)}
-  nav.toc a.on{color:var(--teal-ink); background:rgba(21,182,166,.09); border-left-color:var(--teal); font-weight:600}
+  nav.toc a.on{color:var(--teal-ink); background:var(--accent-soft); border-left-color:var(--teal); font-weight:600}
 
   main{padding:30px 0 90px; min-width:0}
   .hero h1{font-size:clamp(1.9rem,4.4vw,2.6rem); letter-spacing:-.5px; font-weight:750}
   .hero p{color:var(--mut); max-width:64ch; margin-top:10px; font-size:1.05rem}
   .hero .meta{display:flex; gap:8px; flex-wrap:wrap; margin-top:16px}
-  .chip{display:inline-flex; align-items:center; gap:6px; font-size:.8rem; color:#3a444d; border:1px solid var(--line); border-radius:100px; padding:5px 11px; background:#fff}
+  .chip{display:inline-flex; align-items:center; gap:6px; font-size:.8rem; color:var(--ink2); border:1px solid var(--line); border-radius:100px; padding:5px 11px; background:var(--control)}
   .chip svg{width:14px;height:14px;color:var(--teal)}
 
   section.doc{padding:36px 0; border-top:1px solid var(--line); scroll-margin-top:74px}
   .doc h2{font-size:1.5rem; font-weight:730; letter-spacing:-.3px; display:flex; align-items:center; gap:10px}
-  .doc h2 .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex:none; background:rgba(21,182,166,.12);color:var(--teal)}
+  .doc h2 .ico{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;flex:none; background:var(--accent-soft);color:var(--teal-ink)}
   .doc h2 .ico svg{width:18px;height:18px}
   .row{display:grid; grid-template-columns:minmax(0,1fr) 372px; gap:34px; align-items:start; margin-top:16px}
   @media(max-width:980px){.row{grid-template-columns:1fr}}
-  .prose{color:#3c454d; min-width:0}
+  .prose{color:var(--ink2); min-width:0}
   .prose p{margin:0 0 12px}
   .prose h3{font-size:1.02rem; margin:18px 0 6px; color:var(--ink)}
   .prose ul, .prose ol{margin:4px 0 12px; padding-left:18px}
@@ -67,7 +82,7 @@
   .cap{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.68rem; color:var(--mut); margin-top:10px; letter-spacing:.04em}
 
   /* T-Deck frame: the real screenshot + a generated QWERTY keyboard (added in JS) */
-  .device{width:344px; max-width:100%; margin:0 auto; background:#16191d; border-radius:16px; padding:12px 12px 9px; border:1px solid #e9ece7; box-shadow:0 24px 60px -30px rgba(21,24,30,.5)}
+  .device{width:344px; max-width:100%; margin:0 auto; background:var(--frame); border-radius:16px; padding:12px 12px 9px; border:1px solid var(--frame-edge); box-shadow:0 24px 60px -30px rgba(21,24,30,.5)}
   .device img.screen{display:block; width:320px; max-width:100%; height:auto; aspect-ratio:4/3; border-radius:8px}
   .kbd{margin:9px auto 2px; display:flex; flex-direction:column; gap:4px; width:312px; max-width:100%}
   .kr{display:flex; gap:4px; justify-content:center}
@@ -75,11 +90,11 @@
   .key.wide{max-width:140px; flex:4}
 
   .gallery{display:grid; grid-template-columns:repeat(auto-fill,minmax(232px,1fr)); gap:20px; margin-top:18px}
-  .mini{background:#16191d; border-radius:12px; padding:7px; border:1px solid #e9ece7}
+  .mini{background:var(--frame); border-radius:12px; padding:7px; border:1px solid var(--frame-edge)}
   .mini img{display:block; width:100%; height:auto; border-radius:6px}
   .mini .cap{margin-top:6px}
   .webgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(178px,1fr)); gap:18px; margin-top:22px}
-  figure.phone{margin:0; background:#16191d; border-radius:20px; padding:8px; border:1px solid #e9ece7; box-shadow:0 18px 44px -26px rgba(21,24,30,.5)}
+  figure.phone{margin:0; background:var(--frame); border-radius:20px; padding:8px; border:1px solid var(--frame-edge); box-shadow:0 18px 44px -26px rgba(21,24,30,.5)}
   figure.phone img{display:block; width:100%; height:auto; border-radius:13px}
   figure.phone figcaption{text-align:center; font-family:'JetBrains Mono',monospace; font-size:.66rem; color:var(--mut); margin-top:8px; letter-spacing:.04em}
   .subh{font-size:1.06rem; font-weight:700; color:var(--ink); margin:30px 0 2px}
@@ -87,27 +102,27 @@
   /* Settings-page detail cards: real screenshot + what the page does + its controls */
   .sgrp{font-family:'JetBrains Mono',monospace; font-size:.7rem; letter-spacing:.14em; text-transform:uppercase; color:var(--mut); margin:30px 0 0; padding-top:4px}
   .scards{display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:20px; margin-top:13px}
-  .scard{border:1px solid var(--line); border-radius:14px; background:#fff; padding:13px; display:flex; flex-direction:column}
-  .scard .thumb{background:#16191d; border-radius:9px; padding:6px}
+  .scard{border:1px solid var(--line); border-radius:14px; background:var(--surface); padding:13px; display:flex; flex-direction:column}
+  .scard .thumb{background:var(--frame); border-radius:9px; padding:6px}
   .scard .thumb img{display:block; width:100%; height:auto; border-radius:5px}
   .scard h3{font-size:1.04rem; margin:12px 0 2px; color:var(--ink); display:flex; align-items:center; gap:8px; flex-wrap:wrap}
-  .scard h3 .tag{font-family:'JetBrains Mono',monospace; font-size:.58rem; letter-spacing:.05em; text-transform:uppercase; color:var(--teal-ink); background:rgba(21,182,166,.1); border-radius:5px; padding:2px 6px; font-weight:600}
+  .scard h3 .tag{font-family:'JetBrains Mono',monospace; font-size:.58rem; letter-spacing:.05em; text-transform:uppercase; color:var(--teal-ink); background:var(--accent-soft); border-radius:5px; padding:2px 6px; font-weight:600}
   .scard .lede{color:var(--mut); font-size:.9rem; margin:2px 0 9px}
   .scard ul{margin:0; padding-left:17px}
-  .scard li{margin:4px 0; font-size:.89rem; color:#3c454d; line-height:1.5}
+  .scard li{margin:4px 0; font-size:.89rem; color:var(--ink2); line-height:1.5}
   .scard li b{color:var(--ink); font-weight:600}
 
   /* Caution callout (amber) */
-  .callout{display:flex; gap:11px; margin-top:18px; padding:13px 15px; border-radius:11px; background:#fff7ed; border:1px solid #f6dcb8}
-  .callout .cico{flex:none; width:20px; height:20px; color:#c2740b; margin-top:1px}
+  .callout{display:flex; gap:11px; margin-top:18px; padding:13px 15px; border-radius:11px; background:var(--warn-bg); border:1px solid var(--warn-line)}
+  .callout .cico{flex:none; width:20px; height:20px; color:var(--warn); margin-top:1px}
   .callout .cico svg{width:20px; height:20px}
-  .callout b{display:block; color:#7c4a03; margin-bottom:3px; font-size:.94rem}
-  .callout p{margin:0; color:#7a5320; font-size:.9rem; line-height:1.55}
+  .callout b{display:block; color:var(--warn-ink); margin-bottom:3px; font-size:.94rem}
+  .callout p{margin:0; color:var(--warn-text); font-size:.9rem; line-height:1.55}
   /* Teal callout for news rather than caution */
-  .callout.news{background:#effaf8; border-color:#bfe6e0}
+  .callout.news{background:var(--news-bg); border-color:var(--news-line)}
   .callout.news .cico{color:var(--teal-ink)}
-  .callout.news b{color:#0b5f56}
-  .callout.news p{color:#2f5752}
+  .callout.news b{color:var(--news-title)}
+  .callout.news p{color:var(--news-text)}
 
   footer{border-top:1px solid var(--line); padding:26px 22px; text-align:center; color:var(--mut); font-size:.85rem}
   @media(max-width:980px){
@@ -117,6 +132,8 @@
     .shot{position:static; margin:0 auto 6px}
   }
 </style>
+<link rel="stylesheet" href="theme.css?v=2">
+<script src="theme.js?v=2" defer></script>
 </head>
 <body>
 
@@ -124,6 +141,7 @@
   <a class="word" href="index.html">WADA<span class="t">MESH</span></a>
   <span class="tag">Docs</span>
   <span class="sp"></span>
+  <button type="button" class="wm-theme" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
   <a class="home" href="index.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg> Back to site</a>
 </div>
 
@@ -170,8 +188,8 @@
       <div class="callout news">
         <span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8L12 14.6l-5 3.6 1.9-5.8L4 8.8h6.1z"/></svg></span>
         <div>
-          <b>This guide shows the redesigned interface.</b>
-          <p>Every screen was redesigned in beta_89, a test build, and several features moved; beta_90 brought the colour back, with a choice of looks (<a href="#theme">Colours &amp; theme</a>). The stable build (beta_85) keeps the previous look until the redesign has been tested and promoted. <a href="#updates">Updates &amp; test builds</a> explains how to switch.</p>
+          <b>This guide shows the current interface.</b>
+          <p>Every screen was redesigned in beta_89, a test build, and several features moved; beta_90 brought the colour back with a choice of looks, and beta_91 put the aurora behind every screen (<a href="#theme">Colours &amp; theme</a>). The pictures show the defaults: the Regular look on the aurora. The stable build (beta_85) keeps the previous look until the redesign has been tested and promoted. <a href="#updates">Updates &amp; test builds</a> explains how to switch.</p>
         </div>
       </div>
       <div class="callout">
@@ -195,9 +213,9 @@
           <p><b>Hold any widget</b>, or an empty part of Home, to arrange. Drag a widget to another place (the others step aside), tap the minus to remove it, tap an empty cell to add one, and tap a widget for its sizes and what it shows. <b>Done</b> saves. With keys, open <b>Settings &rarr; Display &rarr; Home &rarr; Arrange Home</b>: Enter on a widget gives the same choices, and Move shows where it can go. Boards that turn keep a layout for each way up.</p>
           <p><b>Settings &rarr; Display &rarr; Home</b> also starts you over from a preset: <b>Glance</b> (the default), <b>Commander</b> (the old status page, rebuilt from widgets), <b>Radio</b>, <b>Minimal</b> (a big clock) and, with the V4 Expansion Kit, <b>Sensors</b>.</p>
           <h3>App drawer</h3>
-          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, VNC, Settings, then Files, Store, Home and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too. Tap the Home button again, or the <b>Home</b> tile, to go back to your widgets.</p>
+          <p>A tile for everything on the device, in rows by kind: talking to people (Chats, Contacts, Mentions, Map), the radio tools in amber (Advertise, Signal, Discover, Spectrum), and the system (Terminal, Remote, VNC, Settings, then Files, Store, Home and Power further down). Unread messages show as a count on the Chats tile, and apps you install from the Store get a tile here too. Tap the Home button again (<b>H</b> on the T-LoRa Pager), or the <b>Home</b> tile, to go back to your widgets.</p>
           <h3>Choosing between them</h3>
-          <p><b>Hold the Home tab</b> for the launcher settings: whether the Home button opens your widgets or the App drawer, and whether the app icons are compact or large. The same sheet is under <b>Settings &rarr; Display &rarr; Launcher layout</b>.</p>
+          <p><b>Hold the Home tab</b> for the launcher settings: whether the Home button opens your widgets or the App drawer, and whether the app icons are compact or large. The same sheet is under <b>Settings &rarr; Display &rarr; Launcher layout</b>. On the T-LoRa Pager, hold its Home key, <b>H</b>.</p>
           <h3>The status bar</h3>
           <p>Unread messages on the left, the clock in the middle, signal and battery on the right, with Wi-Fi and Bluetooth small and grey beside them. On the Home tab your node name scrolls along the left. <b>Tap the bar</b> to open the <a href="#control">control panel</a>; inside a chat or on a settings page the bar carries a back chevron instead, and a tap goes back.</p>
           <h3>Building it yourself <span class="tag">Dev</span></h3>
@@ -206,12 +224,12 @@
           <h3>Is my history actually saving?</h3>
           <p><b>Settings &rarr; About &rarr; Chat store</b> is the answer: it names the storage in use, when history last saved successfully, and the exact stage and error a failing save is hitting. Worth a look if messages seem to vanish across a reboot.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png?v=90" alt="Home: the App drawer"></div><div class="cap">Home: the App drawer</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/home.png?v=92" alt="Home: the App drawer"></div><div class="cap">Home: the App drawer</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/home_widgets.png?v=91" alt="Home with the Glance widgets"><div class="cap">Home: the Glance widgets</div></div>
-        <div class="mini"><img src="docs-img/home_arrange.png?v=91" alt="Arranging the widgets"><div class="cap">Hold a widget to arrange</div></div>
-        <div class="mini"><img src="docs-img/launcher_sheet.png?v=89" alt="Launcher settings sheet"><div class="cap">Hold Home: launcher settings</div></div>
+        <div class="mini"><img src="docs-img/home_widgets.png?v=92" alt="Home with the Glance widgets"><div class="cap">Home: the Glance widgets</div></div>
+        <div class="mini"><img src="docs-img/home_arrange.png?v=92" alt="Arranging the widgets"><div class="cap">Hold a widget to arrange</div></div>
+        <div class="mini"><img src="docs-img/launcher_sheet.png?v=92" alt="Launcher settings sheet"><div class="cap">Hold Home: launcher settings</div></div>
       </div>
     </section>
 
@@ -233,7 +251,7 @@
           </ul>
           <p>Muting messages silences a channel's chatter while an @-mention of you still gets through; mute mentions too and the channel is quiet altogether.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/chat.png?v=90" alt="The Chats list"></div><div class="cap">Chats: channels and direct messages</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/chat.png?v=92" alt="The Chats list"></div><div class="cap">Chats: channels and direct messages</div></div>
       </div>
 
       <div class="subh">In a conversation</div>
@@ -244,10 +262,10 @@
           <p>A direct message shows <b>Sent</b>, then <b>Delivered</b> once the other side confirms it. One that never arrived says <b>Not delivered, tap to resend</b>. A <b>NEW</b> line marks where your unread messages start.</p>
           <p>Along the bottom: quick replies, emoji, the message field and the send button. Type on the keyboard to reply; hold a message for its menu.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/conversation.png?v=90" alt="A channel conversation"></div><div class="cap">A channel, with hops and the composer</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/conversation.png?v=92" alt="A channel conversation"></div><div class="cap">A channel, with hops and the composer</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/chat_actions.png?v=89" alt="The actions for a chat"><div class="cap">Hold a chat: its actions</div></div>
+        <div class="mini"><img src="docs-img/chat_actions.png?v=92" alt="The actions for a chat"><div class="cap">Hold a chat: its actions</div></div>
       </div>
     </section>
 
@@ -255,11 +273,11 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span> Contacts</h2>
       <div class="row">
         <div class="prose">
-          <p>Everyone your node knows: name, type, how recently you heard them, and how far away they are when both of you have a position. Tap a contact to message it or open its details: signal history, a route trace, telemetry, and share and favourite options.</p>
+          <p>Everyone your node knows: name, type, how recently you heard them, and how far away they are when both of you have a position. Tap a contact to message it or open its details: signal history, a route trace, telemetry, and share and favourite options. <b>Nickname</b> gives a contact a name of your own: it shows in Contacts, Chats and on the map, while its options keep the name it advertises, and the nickname never leaves your device.</p>
           <p>Along the top: a filter (everything, or one type of node), the <b>Discovered</b> list behind the radar icon (nodes heard but not yet added), search, sort, and a menu with Add contact, Select to delete, Auto-add settings and Blocked users.</p>
           <p>The Discovered list is passive, built from what the device overhears; to go looking for nodes actively, see <a href="#discover">Discover</a>. Auto-add can pull new nodes in from their adverts, or you can add them by hand.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png?v=90" alt="Contacts list"></div><div class="cap">Contacts</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png?v=92" alt="Contacts list"></div><div class="cap">Contacts</div></div>
       </div>
     </section>
 
@@ -270,7 +288,7 @@
           <p>An OpenStreetMap or OpenTopoMap view with your position and your contacts plotted as markers, plus link lines from you to each node. Tiles are fetched over Wi-Fi through the wadamesh proxy and cached to flash (or microSD), so areas you have viewed work offline. Coloured dots along a route you have walked or driven come from <a href="#discover">wardriving</a>.</p>
           <p>It also has a line-of-sight analyzer: pick a contact and it uses SRTM elevation to show whether terrain blocks the path.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=90" alt="Map"></div><div class="cap">Map</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/map.png?v=92" alt="Map"></div><div class="cap">Map</div></div>
       </div>
       <div class="prose">
         <h3>Bring your own tiles (offline maps)</h3>
@@ -304,9 +322,9 @@
             <li><b>Device</b>: Display, Lock screen, Sound, Keyboard, Language, Clock &amp; time, Battery, and Sensors on boards that have them.</li>
             <li><b>System</b>: General, Backups, App permissions, About.</li>
           </ul>
-          <p>Tap a row to open its page; the bar at the top then carries a back chevron. Every page is described in <a href="#settings-pages">Settings pages</a> below. <b>Hold the Settings tab</b> to go straight to the <a href="#control">control panel</a> instead.</p>
+          <p>Tap a row to open its page; the bar at the top then carries a back chevron. Every page is described in <a href="#settings-pages">Settings pages</a> below. <b>Hold the Settings tab</b> to go straight to the <a href="#control">control panel</a> instead. On the T-LoRa Pager, hold its Settings key, <b>S</b>.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/settings.png?v=90" alt="Settings home"></div><div class="cap">Settings, grouped</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/settings.png?v=92" alt="Settings home"></div><div class="cap">Settings, grouped</div></div>
       </div>
     </section>
 
@@ -328,11 +346,11 @@
           </ul>
           <p>The Heltec V4, Heltec V4-R8, Attaky and CrowPanel have no lock screen, so no PIN either.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/lock.png?v=89" alt="The lock screen"></div><div class="cap">The lock screen</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/lock.png?v=92" alt="The lock screen"></div><div class="cap">The lock screen</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/lock_pin_warning.png?v=89" alt="The warning before a PIN is set"><div class="cap">Turning the PIN on: the warning</div></div>
-        <div class="mini"><img src="docs-img/lock_pin.png?v=89" alt="Choosing a PIN"><div class="cap">Choosing a PIN</div></div>
+        <div class="mini"><img src="docs-img/lock_pin_warning.png?v=92" alt="The warning before a PIN is set"><div class="cap">Turning the PIN on: the warning</div></div>
+        <div class="mini"><img src="docs-img/lock_pin.png?v=92" alt="Choosing a PIN"><div class="cap">Choosing a PIN</div></div>
       </div>
     </section>
 
@@ -349,7 +367,7 @@
           </ul>
           <p>Any key or touch brings the device back. The screensaver does not run while the device is locked; the lock screen takes over then. The T-Deck Pro and Max, with their e-paper screens, have none.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/screensaver.png?v=89" alt="The Constellation screensaver"></div><div class="cap">Constellation</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/screensaver.png?v=92" alt="The Constellation screensaver"></div><div class="cap">Constellation</div></div>
       </div>
     </section>
 
@@ -366,11 +384,11 @@
           </ul>
           <p><b>Settings &rarr; Display &rarr; At a glance</b> turns it on or off; it is on unless you change it. <b>At a glance while locked</b> lets it show on a locked device too. That one is off unless you turn it on, because it makes your messages readable to whoever is holding the device. Do Not Disturb and muted channels keep it quiet.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/glance_dark.png?v=89" alt="A new message on a dark screen"></div><div class="cap">On a dark screen</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/glance_dark.png?v=92" alt="A new message on a dark screen"></div><div class="cap">On a dark screen</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/glance_lock.png?v=89" alt="A new message over the lock screen"><div class="cap">Over the lock screen</div></div>
-        <div class="mini"><img src="docs-img/glance_screensaver.png?v=89" alt="A new message over the screensaver"><div class="cap">Over the screensaver</div></div>
+        <div class="mini"><img src="docs-img/glance_lock.png?v=92" alt="A new message over the lock screen"><div class="cap">Over the lock screen</div></div>
+        <div class="mini"><img src="docs-img/glance_screensaver.png?v=92" alt="A new message over the screensaver"><div class="cap">Over the screensaver</div></div>
       </div>
     </section>
 
@@ -381,7 +399,7 @@
           <p>The quick switches, over whatever you are doing: Wi-Fi, Bluetooth, GPS, the day or night theme, the keyboard backlight (off, on or automatic), Lock, sound, Do Not Disturb, and a screenshot button with an optional timer, plus screen brightness, and volume on the boards with a speaker. Which switches appear depends on what the board has.</p>
           <p>Open it by <b>tapping the status bar</b>, or by <b>holding the Settings tab</b>. Tap the bar again, or anywhere outside the panel, to close it. Hold a switch to jump to its settings page.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/control_center.png?v=89" alt="The control panel"></div><div class="cap">The control panel</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/control_center.png?v=92" alt="The control panel"></div><div class="cap">The control panel</div></div>
       </div>
     </section>
 
@@ -394,10 +412,10 @@
           <h3>The T-Deck trackball</h3>
           <p>The trackball works in one of two ways. In <b>Scroll</b>, the default, rolling it moves the screen: lists, pages and conversations. In <b>Cursor</b> it moves a pointer that clicks what it is over. <b>Hold the trackball still for about half a second</b> to switch between them; a card in the middle of the screen shows which one you are in. <b>Settings &rarr; Keyboard &rarr; Trackball</b> sets it too, and also offers <b>Navigate</b> (experimental), which moves a highlight from item to item.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/trackball_scroll.png?v=89" alt="The trackball switched to Scroll"></div><div class="cap">Hold the trackball: Scroll</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/trackball_scroll.png?v=92" alt="The trackball switched to Scroll"></div><div class="cap">Hold the trackball: Scroll</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/trackball_cursor.png?v=89" alt="The trackball switched to Cursor"><div class="cap">Hold again: Cursor</div></div>
+        <div class="mini"><img src="docs-img/trackball_cursor.png?v=92" alt="The trackball switched to Cursor"><div class="cap">Hold again: Cursor</div></div>
       </div>
     </section>
 
@@ -412,15 +430,16 @@
             <li><b>Accent colour</b>: the swatches on the page, and <b>Custom</b> for any other colour.</li>
             <li><b>Colour</b>: <b>MORE COLORS!</b> with its style right under it, and <b>Taste the rainbow</b>.</li>
             <li><b>Chats</b>: the chat icons, colourful bubbles and compact messages.</li>
+            <li><b>Background</b>: the aurora, still or moving, a colour, a picture or none (<a href="#background">Background</a>).</li>
           </ul>
-          <p>The mode, the accent and the colours are used by everything on screen as it is built, so they wait for one <b>Apply and restart</b> button, which appears on the preview once something differs from what you have now. Scroll past the preview and the button stays in reach in a slim bar under the title, beside six dots in the colours you picked; tap the dots to go back up to the preview. The chat looks apply at once.</p>
+          <p>The mode, the accent, the colours and the background are used by everything on screen as it is built, so they wait for one <b>Apply and restart</b> button, which appears on the preview once something differs from what you have now. Scroll past the preview and the button stays in reach in a slim bar under the title, beside six dots in the colours you picked; tap the dots to go back up to the preview. The chat looks apply at once.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/theme.png?v=90" alt="The Theme page"></div><div class="cap">Settings &rarr; Theme</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/theme.png?v=92" alt="The Theme page"></div><div class="cap">Settings &rarr; Theme</div></div>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/theme_apply.png?v=90" alt="Apply and restart on the preview"><div class="cap">Something picked: Apply and restart</div></div>
-        <div class="mini"><img src="docs-img/theme_bar.png?v=90" alt="The Apply bar under the title"><div class="cap">Scrolled down: the bar keeps it in reach</div></div>
-        <div class="mini"><img src="docs-img/theme_colour.png?v=90" alt="MORE COLORS! and its three styles"><div class="cap">MORE COLORS! and its styles</div></div>
+        <div class="mini"><img src="docs-img/theme_apply.png?v=92" alt="Apply and restart on the preview"><div class="cap">Something picked: Apply and restart</div></div>
+        <div class="mini"><img src="docs-img/theme_bar.png?v=92" alt="The Apply bar under the title"><div class="cap">Scrolled down: the bar keeps it in reach</div></div>
+        <div class="mini"><img src="docs-img/theme_colour.png?v=92" alt="MORE COLORS! and its three styles"><div class="cap">MORE COLORS! and its styles</div></div>
       </div>
 
       <div class="subh">MORE COLORS!</div>
@@ -431,16 +450,36 @@
           <li><b>Neon</b> is full cyberpunk: a near-black violet ground, electric cyan, hot magenta, laser yellow and acid lime, with lit edges on tiles, buttons and bubbles. Your accent stays yours, pushed to full brightness.</li>
           <li><b>Pastel</b> is soft: mint, baby blue, lavender, peach and rose on a warm dark ground.</li>
         </ul>
-        <p><b>Taste the rainbow</b> goes one further: every app, Settings page and tab gets its own place on the colour wheel, in the style you picked, and a few things move. The tab marker, the chats count and the keyboard focus ring slowly travel round the wheel, buttons dip when you press them, a new message lands with a flash of its sender's colour, and the lock screen mark, the boot mark and the screensaver's nodes light up in colour. The motion rests while the screen is off, locked or showing the screensaver.</p>
+        <p><b>Taste the rainbow</b> goes one further: every app, Settings page and tab gets its own place on the colour wheel, in the style you picked, and a few things move. The tab marker and the chats count slowly travel round the wheel, buttons dip when you press them, a new message lands with a flash of its sender's colour, and the lock screen mark, the boot mark and the screensaver's nodes light up in colour. The motion rests while the screen is off, locked or showing the screensaver.</p>
         <p>High contrast keeps its own fixed colours, so the colour switches are greyed out while it is on. The e-paper T-Deck Pro and Max show only the chat looks.</p>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/look_calm.png?v=90" alt="MORE COLORS! off"><div class="cap">MORE COLORS! off</div></div>
-        <div class="mini"><img src="docs-img/look_regular.png?v=90" alt="Regular"><div class="cap">Regular (the default)</div></div>
-        <div class="mini"><img src="docs-img/look_neon.png?v=90" alt="Neon"><div class="cap">Neon</div></div>
-        <div class="mini"><img src="docs-img/look_pastel.png?v=90" alt="Pastel"><div class="cap">Pastel</div></div>
-        <div class="mini"><img src="docs-img/look_rainbow.png?v=90" alt="Taste the rainbow"><div class="cap">Taste the rainbow</div></div>
-        <div class="mini"><img src="docs-img/look_day.png?v=90" alt="Day, Regular"><div class="cap">Day, Regular</div></div>
+        <div class="mini"><img src="docs-img/look_calm.png?v=92" alt="MORE COLORS! off"><div class="cap">MORE COLORS! off</div></div>
+        <div class="mini"><img src="docs-img/look_regular.png?v=92" alt="Regular"><div class="cap">Regular (the default)</div></div>
+        <div class="mini"><img src="docs-img/look_neon.png?v=92" alt="Neon"><div class="cap">Neon</div></div>
+        <div class="mini"><img src="docs-img/look_pastel.png?v=92" alt="Pastel"><div class="cap">Pastel</div></div>
+        <div class="mini"><img src="docs-img/look_rainbow.png?v=92" alt="Taste the rainbow"><div class="cap">Taste the rainbow</div></div>
+        <div class="mini"><img src="docs-img/look_day.png?v=92" alt="Day, Regular"><div class="cap">Day, Regular</div></div>
+      </div>
+
+      <div class="subh" id="background">Background</div>
+      <div class="prose">
+        <p>Behind every screen sits the <b>aurora</b>: soft light in your accent colour and its two neighbours, a curtain hanging from the top with a glow in the lower corner, or the whole colour wheel with Taste the rainbow. Cards over it turn to glass so the light shows through; popups, menus and the keyboard stay solid. It is the default.</p>
+        <ul>
+          <li><b>Aurora</b>: one still sky, drawn once.</li>
+          <li><b>Moving aurora</b>: the same sky drifting in a slow, seamless loop. It rests while you use the device and while the screen is off, locked or showing the screensaver.</li>
+          <li><b>Colour</b>: one plain colour, your accent unless you pick another, kept dark enough by night and light enough by day for text to read.</li>
+          <li><b>Picture</b>: a JPEG from the file viewer (<b>Set as background</b>), cut to fill the screen and dimmed by night. Not on the Heltec V4 and V4-R8, the CrowPanel or the Attaky.</li>
+          <li><b>None</b>: the plain theme, black by night and light grey by day.</li>
+        </ul>
+        <p>The background waits for <b>Apply and restart</b> like the colours. High contrast has no background, and the e-paper T-Deck Pro and Max show none.</p>
+      </div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/theme_background.png?v=92" alt="The Background choices on the Theme page"><div class="cap">Settings &rarr; Theme: Background</div></div>
+        <div class="mini"><img src="docs-img/bg_aurora.png?v=92" alt="The aurora behind the launcher"><div class="cap">Aurora (the default)</div></div>
+        <div class="mini"><img src="docs-img/bg_colour.png?v=92" alt="A plain colour behind the launcher"><div class="cap">Colour</div></div>
+        <div class="mini"><img src="docs-img/bg_picture.png?v=92" alt="A picture behind the launcher"><div class="cap">Picture</div></div>
+        <div class="mini"><img src="docs-img/bg_none.png?v=92" alt="No background"><div class="cap">None</div></div>
       </div>
 
       <div class="subh">Chat icons and bubbles</div>
@@ -449,8 +488,8 @@
         <p>Every sender's name is in its own colour, and a person's name, glyph and ball always share it. <b>Colourful bubbles</b> tints the bubbles with it too, your own included; mentions of you keep their blue bubble. In Day mode, names and glyphs on the light lists use a deeper shade of their colour so they read on white.</p>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/icons_initials.png?v=90" alt="Chats with initials"><div class="cap">Chat icons: Initials</div></div>
-        <div class="mini"><img src="docs-img/look_neon_chat.png?v=90" alt="A conversation in Neon"><div class="cap">Neon: bubbles as lit tubes</div></div>
+        <div class="mini"><img src="docs-img/icons_initials.png?v=92" alt="Chats with initials"><div class="cap">Chat icons: Initials</div></div>
+        <div class="mini"><img src="docs-img/look_neon_chat.png?v=92" alt="A conversation in Neon"><div class="cap">Neon: bubbles as lit tubes</div></div>
       </div>
     </section>
 
@@ -507,7 +546,7 @@
             </div>
           </div>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/set_bluetooth.png?v=89" alt="Bluetooth page"></div><div class="cap">Bluetooth: pairing code</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/set_bluetooth.png?v=92" alt="Bluetooth page"></div><div class="cap">Bluetooth: pairing code</div></div>
       </div>
     </section>
 
@@ -526,7 +565,7 @@
           <h3>Turning it on</h3>
           <p>Connect the device to Wi-Fi first, then open <b>Home &rarr; Remote</b>. The screen shows the address to type into your browser (like <code>http://192.168.1.42</code>) and a switch for each mode. Only one streaming mode runs at a time, and the phone and the device must be on the same Wi-Fi network.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_remote.png?v=89" alt="Remote access screen on the device"></div><div class="cap">Remote: turn it on, then open the address</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_remote.png?v=92" alt="Remote access screen on the device"></div><div class="cap">Remote: turn it on, then open the address</div></div>
       </div>
 
       <div class="subh">The remote app in a browser</div>
@@ -554,14 +593,14 @@
           </ul>
           <p>Reading the web on the device takes more memory than the smallest board carries. The Web app is on every board except the Heltec&nbsp;V4, whose 2&nbsp;MB cannot complete the secure handshake; you can still bounce any link to your phone (below).</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_web.png?v=89" alt="The on-device Web app"></div><div class="cap">Web: open an address, read it as text</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/app_web.png?v=92" alt="The on-device Web app"></div><div class="cap">Web: open an address, read it as text</div></div>
       </div>
 
       <div class="subh">Links in chat</div>
       <div class="prose" style="max-width:70ch"><p>A link that arrives in a message is tappable. Tap it for a small menu: <b>Open in web</b> loads the page in the on-device browser, and <b>Create QR</b> puts a scannable QR code on screen so you can open the link on your phone. Create QR works on <em>every</em> board, including the Heltec&nbsp;V4, so even where the browser is not available, a link is one tap from your phone.</p></div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/app_web_links.png?v=89" alt="Tapping a link in chat opens a menu"><div class="cap">Tap a link: Open in web, or Create QR</div></div>
-        <div class="mini"><img src="docs-img/app_web_qr.png?v=89" alt="A QR code for a link from chat"><div class="cap">Create QR: scan to open on your phone</div></div>
+        <div class="mini"><img src="docs-img/app_web_links.png?v=92" alt="Tapping a link in chat opens a menu"><div class="cap">Tap a link: Open in web, or Create QR</div></div>
+        <div class="mini"><img src="docs-img/app_web_qr.png?v=92" alt="A QR code for a link from chat"><div class="cap">Create QR: scan to open on your phone</div></div>
       </div>
     </section>
 
@@ -579,7 +618,7 @@
           <p>Flip <b>Settings &rarr; About &rarr; "Get test builds (beta)"</b> on. From then on, both the update check and <b>Install update</b> follow the test channel, so the device offers the newest test build over Wi-Fi. Turn the switch back off to return to stable. You can switch either way at any time.</p>
           <p>Prefer to start on a test build from scratch? Pick <b>Beta &middot; testing</b> when you flash from <a href="https://flasher.wadamesh.com" target="_blank" rel="noopener">flasher.wadamesh.com</a>.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/set_about.png?v=89" alt="About page"></div><div class="cap">The About page</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/set_about.png?v=92" alt="About page"></div><div class="cap">The About page</div></div>
       </div>
     </section>
 
@@ -590,7 +629,7 @@
       <div class="sgrp">Mesh</div>
       <div class="scards">
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_profile.png?v=89" alt="Profile settings"></div>
+          <div class="thumb"><img src="docs-img/set_profile.png?v=92" alt="Profile settings"></div>
           <h3>Profile</h3>
           <div class="lede">Who you are on the mesh.</div>
           <ul>
@@ -600,7 +639,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_radio___mesh.png?v=89" alt="Radio and Mesh settings"></div>
+          <div class="thumb"><img src="docs-img/set_radio___mesh.png?v=92" alt="Radio and Mesh settings"></div>
           <h3>Radio &amp; Mesh</h3>
           <div class="lede">Every LoRa and mesh parameter, in Radio, Mesh and Signal sections.</div>
           <ul>
@@ -611,7 +650,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_auto_add.png?v=89" alt="Auto-add settings"></div>
+          <div class="thumb"><img src="docs-img/set_auto_add.png?v=92" alt="Auto-add settings"></div>
           <h3>Auto-add</h3>
           <div class="lede">Which nodes join Contacts automatically from their adverts.</div>
           <ul>
@@ -622,7 +661,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_quick_replies.png?v=89" alt="Quick replies settings"></div>
+          <div class="thumb"><img src="docs-img/set_quick_replies.png?v=92" alt="Quick replies settings"></div>
           <h3>Quick replies</h3>
           <div class="lede">One-tap canned messages.</div>
           <ul>
@@ -635,7 +674,7 @@
       <div class="sgrp">Connections</div>
       <div class="scards">
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_wi_fi.png?v=89" alt="Wi-Fi settings"></div>
+          <div class="thumb"><img src="docs-img/set_wi_fi.png?v=92" alt="Wi-Fi settings"></div>
           <h3>Wi-Fi</h3>
           <div class="lede">For map tiles, clock sync and update checks.</div>
           <ul>
@@ -646,7 +685,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_bluetooth.png?v=89" alt="Bluetooth settings"></div>
+          <div class="thumb"><img src="docs-img/set_bluetooth.png?v=92" alt="Bluetooth settings"></div>
           <h3>Bluetooth</h3>
           <div class="lede">Pair with the MeshCore phone app, or a Bluetooth keyboard.</div>
           <ul>
@@ -656,7 +695,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_gps.png?v=89" alt="GPS settings"></div>
+          <div class="thumb"><img src="docs-img/set_gps.png?v=92" alt="GPS settings"></div>
           <h3>GPS</h3>
           <div class="lede">The GPS receiver.</div>
           <ul>
@@ -666,7 +705,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_mqtt_bridge.png?v=89" alt="MQTT bridge settings"></div>
+          <div class="thumb"><img src="docs-img/set_mqtt_bridge.png?v=92" alt="MQTT bridge settings"></div>
           <h3>MQTT bridge <span class="tag">experimental</span></h3>
           <div class="lede">Forward received messages to your own MQTT broker.</div>
           <ul>
@@ -680,7 +719,7 @@
       <div class="sgrp">Device</div>
       <div class="scards">
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_display.png?v=89" alt="Display settings"></div>
+          <div class="thumb"><img src="docs-img/set_display.png?v=92" alt="Display settings"></div>
           <h3>Display</h3>
           <div class="lede">How the screen looks and when it sleeps.</div>
           <ul>
@@ -692,7 +731,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/theme.png?v=90" alt="Theme settings"></div>
+          <div class="thumb"><img src="docs-img/theme.png?v=92" alt="Theme settings"></div>
           <h3>Theme <span class="tag">beta_90</span></h3>
           <div class="lede">The look of the whole interface (<a href="#theme">Colours &amp; theme</a>).</div>
           <ul>
@@ -700,10 +739,11 @@
             <li><b>Night</b> or <b>Day</b>, <b>high contrast</b>, and the <b>accent colour</b></li>
             <li><b>MORE COLORS!</b> in <b>Regular</b>, <b>Neon</b> or <b>Pastel</b>, and <b>Taste the rainbow</b></li>
             <li><b>Chat icons</b> (glyphs or initials), <b>colourful bubbles</b> and <b>compact messages</b></li>
+            <li><b>Background</b>: the aurora (still or moving), a colour, a picture or none</li>
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_lock_screen.png?v=89" alt="Lock screen settings"></div>
+          <div class="thumb"><img src="docs-img/set_lock_screen.png?v=92" alt="Lock screen settings"></div>
           <h3>Lock screen</h3>
           <div class="lede">The lock screen and the PIN (<a href="#lock">Lock screen &amp; PIN</a>).</div>
           <ul>
@@ -714,7 +754,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_sound.png?v=89" alt="Sound settings"></div>
+          <div class="thumb"><img src="docs-img/set_sound.png?v=92" alt="Sound settings"></div>
           <h3>Sound</h3>
           <div class="lede">Notification audio.</div>
           <ul>
@@ -724,7 +764,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_keyboard.png?v=89" alt="Keyboard settings"></div>
+          <div class="thumb"><img src="docs-img/set_keyboard.png?v=92" alt="Keyboard settings"></div>
           <h3>Keyboard</h3>
           <div class="lede">Typing and getting around.</div>
           <ul>
@@ -736,7 +776,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_language.png?v=89" alt="Language settings"></div>
+          <div class="thumb"><img src="docs-img/set_language.png?v=92" alt="Language settings"></div>
           <h3>Language</h3>
           <div class="lede">Fifteen UI languages.</div>
           <ul>
@@ -744,7 +784,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_clock___time.png?v=89" alt="Clock and time settings"></div>
+          <div class="thumb"><img src="docs-img/set_clock___time.png?v=92" alt="Clock and time settings"></div>
           <h3>Clock &amp; time</h3>
           <div class="lede">Keep the clock right.</div>
           <ul>
@@ -754,7 +794,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_battery.png?v=89" alt="Battery settings"></div>
+          <div class="thumb"><img src="docs-img/set_battery.png?v=92" alt="Battery settings"></div>
           <h3>Battery</h3>
           <div class="lede">Power readouts and tuning.</div>
           <ul>
@@ -768,7 +808,7 @@
       <div class="sgrp">System</div>
       <div class="scards">
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_general.png?v=89" alt="General settings"></div>
+          <div class="thumb"><img src="docs-img/set_general.png?v=92" alt="General settings"></div>
           <h3>General</h3>
           <div class="lede">Device housekeeping.</div>
           <ul>
@@ -779,7 +819,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_backups.png?v=89" alt="Backups settings"></div>
+          <div class="thumb"><img src="docs-img/set_backups.png?v=92" alt="Backups settings"></div>
           <h3>Backups</h3>
           <div class="lede">Save and restore your whole setup.</div>
           <ul>
@@ -789,7 +829,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_app_permissions.png?v=89" alt="App permissions settings"></div>
+          <div class="thumb"><img src="docs-img/set_app_permissions.png?v=92" alt="App permissions settings"></div>
           <h3>App permissions</h3>
           <div class="lede">What the apps you installed may do.</div>
           <ul>
@@ -798,7 +838,7 @@
           </ul>
         </div>
         <div class="scard">
-          <div class="thumb"><img src="docs-img/set_about.png?v=89" alt="About settings"></div>
+          <div class="thumb"><img src="docs-img/set_about.png?v=92" alt="About settings"></div>
           <h3>About</h3>
           <div class="lede">Version, updates and diagnostics.</div>
           <ul>
@@ -822,8 +862,8 @@
         <p><b>Every submission is reviewed and safety-checked before it is added.</b> An app runs on other people's radios, so each one is read for anything touching the node identity, keys or channel secrets, for flash-write patterns that can stall the device, and for anything that would block the interface or the mesh. If something needs changing we say what and why, and we would rather help you land it than turn it away.</p>
       </div>
       <div class="gallery">
-        <div class="mini"><img src="docs-img/app_spectrum.png?v=89" alt="Spectrum analyzer"><div class="cap">Spectrum analyzer</div></div>
-        <div class="mini"><img src="docs-img/app_rfmonitor.png" alt="RF Monitor"><div class="cap">RF Monitor (from the Store)</div></div>
+        <div class="mini"><img src="docs-img/app_spectrum.png?v=92" alt="Spectrum analyzer"><div class="cap">Spectrum analyzer</div></div>
+        <div class="mini"><img src="docs-img/app_rfmonitor.png?v=92" alt="RF Monitor"><div class="cap">RF Monitor (from the Store)</div></div>
       </div>
     </section>
 

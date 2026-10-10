@@ -23,6 +23,7 @@
 #endif
 #include "helpers/sensors/EnvironmentSensorManager.h"
 #include "helpers/sensors/MicroNMEALocationProvider.h"
+#include "PagerGps.h"
 
 extern TLoraPagerBoard board;
 extern WRAPPER_CLASS radio_driver;
@@ -38,4 +39,5 @@ extern EnvironmentSensorManager sensors;
 
 bool radio_init();
 SPIClass* tloraPagerSharedSPI();
+void tloraPagerGpsPowerDown();   // GPS rail off (switched off, power-off); begin() restores it
 mesh::LocalIdentity radio_new_identity();
