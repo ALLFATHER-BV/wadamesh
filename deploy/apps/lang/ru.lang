@@ -404,7 +404,6 @@ Invalid max hops	Неверное макс. число хопов
 Invalid radio values	Неверные значения радио
 Join	Присоединиться
 Join a hashtag channel	Присоединиться к хэштег-каналу
-Select a hashtag channel	Выберите хэштег-канал
 Select a link or location	Выберите ссылку или местоположение
 Join a private channel	Присоединиться к приватному каналу
 Join hashtag channel	Войти в канал хэштега
@@ -1313,7 +1312,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Канал
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1474,7 +1473,7 @@ Upload of %s stopped	Upload of %s stopped
 Used	Used
 VNC	VNC
 Waiting for the computer	Waiting for the computer
-Web	Web
+Web	Веб
 Wed	Wed
 Wednesday	Wednesday
 While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.

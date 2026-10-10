@@ -404,7 +404,6 @@ Invalid max hops	Μη έγκυρα μέγ. άλματα
 Invalid radio values	Μη έγκυρες τιμές ράδιο
 Join	Συμμετοχή
 Join a hashtag channel	Είσοδος σε κανάλι hashtag
-Select a hashtag channel	Επιλέξτε κανάλι hashtag
 Select a link or location	Επιλέξτε σύνδεσμο ή τοποθεσία
 Join a private channel	Είσοδος σε ιδιωτικό κανάλι
 Join hashtag channel	Συμμετοχή σε κανάλι hashtag
@@ -1313,7 +1312,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Κανάλι
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1474,7 +1473,7 @@ Upload of %s stopped	Upload of %s stopped
 Used	Used
 VNC	VNC
 Waiting for the computer	Waiting for the computer
-Web	Web
+Web	Ιστός
 Wed	Wed
 Wednesday	Wednesday
 While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.

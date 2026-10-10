@@ -409,7 +409,6 @@ Invalid max hops	Érvénytelen maximális ugrásszám
 Invalid radio values	Érvénytelen rádióértékek
 Join	Csatlakozás
 Join a hashtag channel	Belépés # csatornához
-Select a hashtag channel	Válassz hashtagcsatornát
 Select a link or location	Válassz hivatkozást vagy helyet
 Join a private channel	Belépés priváthoz
 Join hashtag channel	Csatlakozz # csatornához
@@ -1329,7 +1328,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Csatorna
 Channels	Channels
 Chat icon reset	Chat icon reset
 Chats	Chats
