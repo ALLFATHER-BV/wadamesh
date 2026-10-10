@@ -29,6 +29,10 @@ platformio.local.ini
 /data/
 scripts/build/wifi_secrets.h
 
+# Built SD-card emoji pack (gen-emoji-pack.py output) — an asset, rebuild it
+/emoji.pack
+scripts/build/__pycache__/
+
 # Local working notes + agent config (contain ops/infra details — never publish)
 CLAUDE.md
 .claude/
