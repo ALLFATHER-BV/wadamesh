@@ -12538,6 +12538,19 @@ static const char* pasteTextFor(lv_obj_t* ta, const char* clip, char* buf, size_
   return PasteHexKey::extract(clip, want, buf, cap);
 }
 
+// Paste the clipboard into `ta` at the cursor, replacing any highlighted
+// range. Shared by the edit menu's Paste cell and the Pager's Fn+Enter chord.
+// Returns false when the clipboard is empty (nothing was changed).
+static bool txtPasteInto(lv_obj_t* ta) {
+  if (!ta || !s_clipboard[0]) return false;
+  uint32_t s_cp = 0, e_cp = 0;
+  if (taHasSelection(ta, &s_cp, &e_cp)) taDeleteRange(ta, s_cp, e_cp);
+  char key[65];
+  lv_textarea_add_text(ta, pasteTextFor(ta, s_clipboard, key, sizeof key));
+  taClearSelection(ta);
+  return true;
+}
+
 static void txtMenuCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
@@ -12578,11 +12591,7 @@ static void txtMenuCellCb(lv_event_t* e) {
       else     lv_textarea_set_text(ta, "");
     }
   } else if (act == TXT_PASTE) {
-    if (s_clipboard[0]) {
-      if (sel) taDeleteRange(ta, s_cp, e_cp);
-      char key[65];
-      lv_textarea_add_text(ta, pasteTextFor(ta, s_clipboard, key, sizeof key));
-    }
+    txtPasteInto(ta);
   }
   taClearSelection(ta);
   txtMenuHide();
@@ -43900,6 +43909,29 @@ static void updateProAltBChord() {
   s_kb_bl_mode = (s_kb_bl_mode == 1) ? 0 : 1;
   touchPrefsSetKbBacklight(s_kb_bl_mode);
   if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
+#if !defined(HAS_TDECK_PRO)
+// Physical Fn(Alt)+Enter: paste the in-RAM clipboard into the field being edited.
+// The Pager has no touchscreen, so the long-press Cut/Copy/Paste menu
+// (txtMenuShow) is unreachable there and the clipboard -- filled by a
+// message bubble's Copy action -- had no consumer. Same "actually editing"
+// test as the Alt+Shift Caps chord above; a deliberate no-op otherwise (the
+// Enter press is already swallowed by the driver, so nothing leaks through).
+// Fn+Enter rather than Fn+<letter>: Fn is the Pager's only symbol key, and
+// Enter is the one key with no symbol on it, so the chord costs nothing.
+static void updatePagerAltEnterChord() {
+  if (!pagerKeyboardConsumeAltEnterChord()) return;
+  lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
+  if (!ta || !lv_obj_is_valid(ta)) return;
+  txtMenuHide();
+  accentBoxHide();   // a pasted word must not leave a stale accent popup for the last typed letter
+  const bool ok = txtPasteInto(ta);
+  if (g_lv.task) {
+    g_lv.task->showAlert(ok ? TR("Pasted") : TR("Clipboard empty"), ok ? 900 : 1500);
+    g_lv.task->noteUserInput();
+  }
 }
 #endif
 static void updatePagerAltBackspaceChord() {
@@ -75534,6 +75566,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+    pagerKeyboardConsumeAltEnterChord();
+#endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
 #endif
@@ -75559,6 +75594,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+    pagerKeyboardConsumeAltEnterChord();
+#endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
 #endif
@@ -75597,6 +75635,9 @@ void UITask::loop() {
     }
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
+  #if !defined(HAS_TDECK_PRO)
+    updatePagerAltEnterChord();
+  #endif
   #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     updateProAltBChord();
   #endif
