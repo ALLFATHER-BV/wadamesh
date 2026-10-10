@@ -29,12 +29,18 @@ namespace ChatHashtag
     inline bool isHexColor(const char *text, int start, int end)
     {
         const int length = end - start;
-        if (length != 3 && length != 4 && length != 6 && length != 8)
+        if (length != 6 && length != 8)
             return false;
+        bool colorLike = false;
         for (int offset = start; offset < end; ++offset)
+        {
             if (!isxdigit((unsigned char)text[offset]))
                 return false;
-        return true;
+            if (isdigit((unsigned char)text[offset]) ||
+                (text[offset] >= 'A' && text[offset] <= 'F'))
+                colorLike = true;
+        }
+        return colorLike;
     }
 
     inline bool span(const char *text, int from, int *start, int *end)
@@ -81,6 +87,7 @@ namespace ChatHashtag
             }
             if (finish == offset + 1 || finish - offset >= 32 ||
                 isdigit((unsigned char)text[offset + 1]) ||
+                text[offset + 1] == '_' || text[offset + 1] == '-' ||
                 isHexColor(text, offset + 1, finish))
                 continue;
             *start = offset;
