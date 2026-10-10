@@ -7,8 +7,7 @@
 #include "ui-touch/Utf8Text.h"
 #include "ui-touch/ChatHashtag.h"
 
-int main()
-{
+int main() {
   int start, end;
   const char tags[] = "Try #caf\xC3\xA8 and #cr\xC3\xA8me-br\xC3\xBBl\xC3\xA9"
                       "e!";
