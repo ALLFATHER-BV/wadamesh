@@ -11948,7 +11948,7 @@ static const char* pasteTextFor(lv_obj_t* ta, const char* clip, char* buf, size_
 }
 
 // Paste the clipboard into `ta` at the cursor, replacing any highlighted
-// range. Shared by the edit menu's Paste cell and the Pager's Fn+V chord.
+// range. Shared by the edit menu's Paste cell and the Pager's Fn+Enter chord.
 // Returns false when the clipboard is empty (nothing was changed).
 static bool txtPasteInto(lv_obj_t* ta) {
   if (!ta || !s_clipboard[0]) return false;
@@ -43105,15 +43105,16 @@ static void updateProAltBChord() {
 }
 #endif
 #if !defined(HAS_TDECK_PRO)
-// Physical Fn(Alt)+V: paste the in-RAM clipboard into the field being edited.
+// Physical Fn(Alt)+Enter: paste the in-RAM clipboard into the field being edited.
 // The Pager has no touchscreen, so the long-press Cut/Copy/Paste menu
 // (txtMenuShow) is unreachable there and the clipboard -- filled by a
 // message bubble's Copy action -- had no consumer. Same "actually editing"
 // test as the Alt+Shift Caps chord above; a deliberate no-op otherwise (the
-// V press is already swallowed by the driver, so nothing leaks through).
-// Only a HELD Fn chords: tap-Fn-then-V still types '?'.
-static void updatePagerAltVChord() {
-  if (!pagerKeyboardConsumeAltVChord()) return;
+// Enter press is already swallowed by the driver, so nothing leaks through).
+// Fn+Enter rather than Fn+<letter>: Fn is the Pager's only symbol key, and
+// Enter is the one key with no symbol on it, so the chord costs nothing.
+static void updatePagerAltEnterChord() {
+  if (!pagerKeyboardConsumeAltEnterChord()) return;
   lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
   lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
   if (!ta || !lv_obj_is_valid(ta)) return;
@@ -74308,7 +74309,7 @@ void UITask::loop() {
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
 #if !defined(HAS_TDECK_PRO)
-    pagerKeyboardConsumeAltVChord();
+    pagerKeyboardConsumeAltEnterChord();
 #endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
@@ -74336,7 +74337,7 @@ void UITask::loop() {
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
 #if !defined(HAS_TDECK_PRO)
-    pagerKeyboardConsumeAltVChord();
+    pagerKeyboardConsumeAltEnterChord();
 #endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
@@ -74377,7 +74378,7 @@ void UITask::loop() {
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
   #if !defined(HAS_TDECK_PRO)
-    updatePagerAltVChord();
+    updatePagerAltEnterChord();
   #endif
   #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     updateProAltBChord();

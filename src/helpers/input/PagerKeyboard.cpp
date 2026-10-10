@@ -148,8 +148,8 @@ bool pagerKeyboardConsumeAltBackspaceChord() {
   return s_state.consumeAltBackspaceChord();
 }
 #if !defined(HAS_TDECK_PRO)
-bool pagerKeyboardConsumeAltVChord() {
-  return s_state.consumeAltVChord();
+bool pagerKeyboardConsumeAltEnterChord() {
+  return s_state.consumeAltEnterChord();
 }
 #endif
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)

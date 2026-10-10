@@ -165,7 +165,7 @@ While any text field is focused, including a Wi-Fi or repeater password:
 | **Space** (double-tap, within 250 ms) | Switches between English and your configured secondary keyboard layout | — |
 | **Space** (hold ~1 s) | — | Locks the screen (shows a "Locking…" progress bar; tapping any key cancels) |
 | **Fn (Alt)** (tap / double-tap) | Next key uses symbols / lock symbols until tapped again | Same |
-| **Fn (Alt) held + V** | **Paste** the clipboard at the cursor (replaces a highlighted range). The clipboard is filled by **Copy** in a message bubble's action menu. Only a *held* Fn pastes — tap Fn then V still types `?` | — |
+| **Fn (Alt) held + Enter** | **Paste** the clipboard at the cursor (replaces a highlighted range). The clipboard is filled by **Copy** in a message bubble's action menu. Fn must be held, not tapped | — |
 
 The **BOOT** button (top of the device) instantly wakes the screen from
 idle-dim. It does *not* unlock a screen you've manually locked with the
@@ -265,7 +265,7 @@ that changes keyboard language.
 | Fn + Shift (editing a field) | Toggle Caps Lock |
 | Fn + Shift (not editing a field) | Nothing |
 | Fn + Backspace (anywhere) | Jump to Home |
-| Fn held + V (editing a field) | Paste the clipboard (tap-Fn-then-V still types `?`) |
+| Fn held + Enter (editing a field) | Paste the clipboard |
 | Fn + Space | Enter accent picker |
 | @ + letters (composer) | Auto-focuses the mention list — no Fn+Space needed |
 | Enter | Select / send / message action menu |

@@ -24,7 +24,7 @@ class PagerKeyboardState {
   static constexpr uint8_t SHIFT_POS = 2 * COLS + 8;
   static constexpr uint8_t BACKSPACE_POS = 2 * COLS + 9;
   static constexpr uint8_t SPACE_POS = 3 * COLS;
-  static constexpr uint8_t V_POS = 2 * COLS + 4;   // physical Alt(Fn)+V = paste chord
+  static constexpr uint8_t ENTER_POS = 1 * COLS + 9;   // physical Alt(Fn)+Enter = paste chord
 #endif
 
   uint8_t event(uint8_t code, bool pressed, uint32_t now_ms) {
@@ -128,13 +128,13 @@ class PagerKeyboardState {
     }
 #endif
 #if !defined(HAS_TDECK_PRO)
-    // Physical Alt(Fn)+V: paste chord, resolved by matrix position before the
-    // symbol map (same shape as the Pro's Alt+B). Only a HELD Fn chords; the
-    // one-shot (tap Fn, then V) and locked (double-tap Fn) symbol layers still
-    // type '?' from this key, so the question mark is not lost.
-    if (code == V_POS && alt_.held()) {
+    // Physical Alt(Fn)+Enter: paste chord, resolved by matrix position before
+    // the symbol map (same shape as the Pro's Alt+B). Enter has no symbol on
+    // this layout, so the chord takes nothing away from typing: Fn is the
+    // Pager's only symbol key, which is why Fn+<letter> was not an option.
+    if (code == ENTER_POS && alt_.held()) {
       alt_.markHeldUsed();
-      alt_v_chord_pending_ = true;
+      alt_enter_chord_pending_ = true;
       return 0;
     }
 #endif
@@ -159,7 +159,7 @@ class PagerKeyboardState {
     alt_b_chord_pending_ = false;
   #endif
   #if !defined(HAS_TDECK_PRO)
-    alt_v_chord_pending_ = false;
+    alt_enter_chord_pending_ = false;
   #endif
   }
   bool backspaceHeld() const { return backspace_held_; }
@@ -183,9 +183,9 @@ class PagerKeyboardState {
   }
 #endif
 #if !defined(HAS_TDECK_PRO)
-  bool consumeAltVChord() {
-    const bool pending = alt_v_chord_pending_;
-    alt_v_chord_pending_ = false;
+  bool consumeAltEnterChord() {
+    const bool pending = alt_enter_chord_pending_;
+    alt_enter_chord_pending_ = false;
     return pending;
   }
 #endif
@@ -210,7 +210,7 @@ class PagerKeyboardState {
   bool alt_b_chord_pending_ = false;
 #endif
 #if !defined(HAS_TDECK_PRO)
-  bool alt_v_chord_pending_ = false;
+  bool alt_enter_chord_pending_ = false;
 #endif
 #if defined(HAS_TDECK_MAX)
   bool shift_l_held_ = false;

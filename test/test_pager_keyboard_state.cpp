@@ -63,28 +63,36 @@ int main() {
   assert(keyboard.event(0, true, 740) == 'q');
   keyboard.event(0, false, 750);
 
-  // Physical Fn+V = paste chord: V is swallowed, the chord is reported once,
-  // and nothing leaks into the next plain keypress.
+  // Physical Fn+Enter = paste chord: Enter is swallowed, the chord is reported
+  // once, and nothing leaks into the next plain keypress.
   keyboard.event(PagerKeyboardState::ALT_POS, true, 760);
-  assert(keyboard.event(PagerKeyboardState::V_POS, true, 770) == 0);
-  assert(keyboard.consumeAltVChord());
-  assert(!keyboard.consumeAltVChord());
-  keyboard.event(PagerKeyboardState::V_POS, false, 780);
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 770) == 0);
+  assert(keyboard.consumeAltEnterChord());
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 780);
   keyboard.event(PagerKeyboardState::ALT_POS, false, 790);   // used-while-held: no one-shot armed
   assert(keyboard.event(0, true, 792) == 'q');
   keyboard.event(0, false, 794);
-  // Tap Fn, then V (one-shot symbol layer) still types '?' -- not a chord.
-  keyboard.event(PagerKeyboardState::ALT_POS, true, 795);
-  keyboard.event(PagerKeyboardState::ALT_POS, false, 796);
-  assert(keyboard.event(PagerKeyboardState::V_POS, true, 797) == '?');
-  assert(!keyboard.consumeAltVChord());
-  keyboard.event(PagerKeyboardState::V_POS, false, 798);
+  // A plain Enter still types '\r', and tap-Fn-then-Enter (one-shot symbol
+  // layer) is not a chord: Enter has no symbol, so it types nothing, as before.
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 795) == '\r');
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 796);
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 797);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 797);
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 798) == 0);
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 798);
+  // Fn held + V still types '?': the chord moved off the letter keys.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 799);
+  assert(keyboard.event(2 * PagerKeyboardState::COLS + 4, true, 799) == '?');
+  keyboard.event(2 * PagerKeyboardState::COLS + 4, false, 799);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 799);
   // discardAlt() drops a pending chord too.
   keyboard.event(PagerKeyboardState::ALT_POS, true, 799);
-  keyboard.event(PagerKeyboardState::V_POS, true, 799);
+  keyboard.event(PagerKeyboardState::ENTER_POS, true, 799);
   keyboard.discardAlt();
-  assert(!keyboard.consumeAltVChord());
-  keyboard.event(PagerKeyboardState::V_POS, false, 799);
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 799);
   keyboard.event(PagerKeyboardState::ALT_POS, false, 799);
 
   keyboard.event(PagerKeyboardState::ALT_POS, true, 800);
