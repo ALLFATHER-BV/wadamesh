@@ -312,6 +312,7 @@ Enter SSID first	Nejprve zadejte SSID
 Enter a name	Zadejte jméno
 Enter a network name	Zadejte název sítě
 Enter a region name	Zadejte název regionu
+Enter a rough location first	Nejprve zadejte přibližnou polohu
 Enter adds a new line	Enter přidá nový řádek
 Enter exactly 32 hex characters.	Zadejte přesně 32 hex znaků.
 Enter key sends message	Enter odešle zprávu
@@ -364,6 +365,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Bzučák %s\n%s
 GPS off	GPS vypnuto
 GPS on	GPS zapnuto
 GPS serial baud	Rychlost sériového portu GPS
+GPS sets the position while it has a fix	Polohu nastavuje GPS, dokud má fix
 GPS unset	GPS nenastaveno
 GPS: acquiring...	GPS: získávání…
 GPS: fix	GPS: fix
@@ -513,6 +515,7 @@ Messages	Zprávy
 Min zoom for this pack	Min. přiblížení pro tento balíček
 Mode: BLE starting / low memory	Režim: BLE se spouští / málo paměti
 Model:	Model:
+Move the map to your spot	Posuňte mapu na své místo
 Multi ACKs	Více ACK
 Multi-ack %s · Repeat %s · RX boost %s	Více ACK %s · Opakování %s · RX boost %s
 Multi-byte routing (path hash)	Směrování více bajtů (hash cesty)
@@ -623,6 +626,7 @@ Path reset failed	Reset cesty selhal
 Paused  —  score %d	Pozastaveno  —  skóre %d
 Per-transmit switching on	Přepínání při každém vysílání zapnuto
 Pick colour	Vybrat barvu
+Pick on the map	Vybrat na mapě
 Ping	Ping
 Ping failed	Ping selhal
 Pinged (direct) — waiting…	Pingnuto (přímo) — čekání…
