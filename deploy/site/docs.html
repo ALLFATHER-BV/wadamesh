@@ -160,7 +160,8 @@
     <a href="#screensaver">Screensaver</a>
     <a href="#glance">New messages</a>
     <a href="#control">Control panel</a>
-    <a href="#size">Text size &amp; trackball</a>
+    <a href="#size">Text size, trackball &amp; tooltips</a>
+    <a href="#pager">T-LoRa Pager</a>
     <a href="#theme">Colours &amp; theme</a>
     <div class="grp">Finding nodes</div>
     <a href="#discover">Discover &amp; wardriving</a>
@@ -247,7 +248,7 @@
           <h3>On each row</h3>
           <ul>
             <li><b>Tap</b> to open the conversation.</li>
-            <li><b>Hold</b> for everything else about that chat: mark as read, region &amp; scope, mute messages, mute mentions, share the channel's secret, blocked users, a chat icon (any emoji you like), delete history, and remove the channel or delete the chat. A room adds Log in again; a direct chat adds Reset path.</li>
+            <li><b>Hold</b> for everything else about that chat: mark as read, region &amp; scope, mute messages, mute mentions, share the channel's secret, blocked users, a chat icon (any emoji you like; a contact's chat without one uses the first emoji in its name), delete history, and remove the channel or delete the chat. A room adds Log in again; a direct chat adds Reset path.</li>
           </ul>
           <p>Muting messages silences a channel's chatter while an @-mention of you still gets through; mute mentions too and the channel is quiet altogether.</p>
         </div>
@@ -273,11 +274,15 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span> Contacts</h2>
       <div class="row">
         <div class="prose">
-          <p>Everyone your node knows: name, type, how recently you heard them, and how far away they are when both of you have a position. Tap a contact to message it or open its details: signal history, a route trace, telemetry, and share and favourite options. <b>Nickname</b> gives a contact a name of your own: it shows in Contacts, Chats and on the map, while its options keep the name it advertises, and the nickname never leaves your device.</p>
+          <p>Everyone your node knows: name, type, how recently you heard them, and how far away they are when both of you have a position. Tap a contact to message it or open its details: signal history, a route trace, telemetry, and share and favourite options.</p>
+          <p><b>Nicknames.</b> Contact options &rarr; <b>Nickname</b> gives a contact a name of your own. It shows wherever that contact appears: Contacts, Chats, the chat header, sender names in channels and rooms, the lock screen, notifications, Home widgets and the map. Contact options keeps the name it advertises under the nickname, and searching Contacts finds either one. A nickname never leaves your device: the mesh, the phone app and Lua apps keep the real name. To go back, clear the text and press OK.</p>
           <p>Along the top: a filter (everything, or one type of node), the <b>Discovered</b> list behind the radar icon (nodes heard but not yet added), search, sort, and a menu with Add contact, Select to delete, Auto-add settings and Blocked users.</p>
           <p>The Discovered list is passive, built from what the device overhears; to go looking for nodes actively, see <a href="#discover">Discover</a>. Auto-add can pull new nodes in from their adverts, or you can add them by hand.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/contacts.png?v=92" alt="Contacts list"></div><div class="cap">Contacts</div></div>
+      </div>
+      <div class="gallery">
+        <div class="mini"><img src="docs-img/contact_nickname.png?v=93" alt="Contact options with a nickname"><div class="cap">A nickname, with the name it advertises under it</div></div>
       </div>
     </section>
 
@@ -334,7 +339,7 @@
         <div class="prose">
           <p>The lock screen keeps the device from reacting to a pocket or a stray tap. It shows the wadamesh mark, a large clock and the date, a line of the mesh activity over the last 24 hours with how many packets were heard, up to two unread conversations, and along the bottom how to unlock and the battery. A wallpaper you chose shows dimmed behind it. The whole view moves a few pixels every minute so nothing burns into the screen.</p>
           <p>How you unlock depends on the board, and the bottom line says it: on the T-Deck you hold the trackball.</p>
-          <p><b>Settings &rarr; Lock screen</b> has the wallpaper and the clock colour, <b>Lock when screen off</b>, <b>Message text on lock screen</b> (turn it off and the unread cards show who wrote, not what), and the PIN.</p>
+          <p><b>Settings &rarr; Lock screen</b> has the wallpaper (with <b>Default wallpaper</b> to go back from a picture of your own) and the clock colour, <b>Lock when screen off</b>, <b>Message text on lock screen</b> (turn it off and the unread cards show who wrote, not what), and the PIN.</p>
           <h3>PIN lock</h3>
           <p>Turn on <b>PIN lock</b> and the device asks for a 4 character PIN to unlock: numbers, letters or a mix, and letters are not case sensitive. It locks at boot and every time the screen goes off.</p>
           <p>Before you choose one, it shows a warning that you have to accept: <b>a forgotten PIN cannot be recovered</b>. The only way back in is to reset the device, which erases everything on it: contacts, channels, messages and settings. Nobody can unlock it for you.</p>
@@ -396,26 +401,45 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></span> Control panel</h2>
       <div class="row">
         <div class="prose">
-          <p>The quick switches, over whatever you are doing: Wi-Fi, Bluetooth, GPS, the day or night theme, the keyboard backlight (off, on or automatic), Lock, sound, Do Not Disturb, and a screenshot button with an optional timer, plus screen brightness, and volume on the boards with a speaker. Which switches appear depends on what the board has.</p>
-          <p>Open it by <b>tapping the status bar</b>, or by <b>holding the Settings tab</b>. Tap the bar again, or anywhere outside the panel, to close it. Hold a switch to jump to its settings page.</p>
+          <p>The quick switches, over whatever you are doing, as tiles in the launcher's style: Wi-Fi, Bluetooth, GPS, the day or night theme, the keyboard backlight (off, on or automatic), Lock, sound, Do Not Disturb and, on most boards with a battery, the <b>Battery saver</b>, plus screen brightness, and volume on the boards with a speaker. A tile takes the colour of its Settings group and fills while it is on. The ThinkNode M9 and T-LoRa Pager add a screenshot button with an optional timer. Which tiles appear depends on what the board has.</p>
+          <p>Open it by <b>tapping the status bar</b>, or by <b>holding the Settings tab</b>. Tap the bar again, or anywhere outside the panel, to close it. <b>Hold a tile</b> and a card says what it is; keep holding and its settings page opens. With keys, the selected tile shows the same card, and holding Enter on the T-LoRa Pager, or OK on the ThinkNode M9, opens its settings.</p>
         </div>
-        <div class="shot"><div class="device"><img class="screen" src="docs-img/control_center.png?v=92" alt="The control panel"></div><div class="cap">The control panel</div></div>
+        <div class="shot"><div class="device"><img class="screen" src="docs-img/control_center.png?v=93" alt="The control panel"></div><div class="cap">The control panel</div></div>
       </div>
     </section>
 
     <section class="doc" id="size">
-      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg></span> Text size &amp; trackball</h2>
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg></span> Text size, trackball &amp; tooltips</h2>
       <div class="row">
         <div class="prose">
           <h3>Text size</h3>
           <p>Where the board has room for the bigger fonts, <b>Settings &rarr; Display &rarr; UI size</b> makes the text larger. On the T-Deck, ThinkNode M9 and Heltec V4-R8 the choices are Normal, Large text and Huge text; the T-LoRa Pager and the large-screen boards have their own steps. It applies after a restart, and every screen is laid out for the bigger sizes rather than simply scaled up. The Heltec V4 has no room for the extra fonts.</p>
           <h3>The T-Deck trackball</h3>
           <p>The trackball works in one of two ways. In <b>Scroll</b>, the default, rolling it moves the screen: lists, pages and conversations. In <b>Cursor</b> it moves a pointer that clicks what it is over. <b>Hold the trackball still for about half a second</b> to switch between them; a card in the middle of the screen shows which one you are in. <b>Settings &rarr; Keyboard &rarr; Trackball</b> sets it too, and also offers <b>Navigate</b> (experimental), which moves a highlight from item to item.</p>
+          <h3>Tooltips and the cursor</h3>
+          <p>When you get around with keys (the trackball's Navigate mode, a Bluetooth keyboard, or a board without a touchscreen), the selected control has an <b>amber</b> outline, so it stands out on any background. Icon buttons say what they are: rest on one for a moment and a small card names it, sometimes with a line on what it does. On touch, <b>hold</b> an icon button to see the same card; lifting your finger then never taps it.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/trackball_scroll.png?v=92" alt="The trackball switched to Scroll"></div><div class="cap">Hold the trackball: Scroll</div></div>
       </div>
       <div class="gallery">
         <div class="mini"><img src="docs-img/trackball_cursor.png?v=92" alt="The trackball switched to Cursor"><div class="cap">Hold again: Cursor</div></div>
+        <div class="mini"><img src="docs-img/keyboard_tooltip.png?v=93" alt="A tooltip on the selected button"><div class="cap">The amber cursor and a tooltip</div></div>
+      </div>
+    </section>
+
+    <section class="doc" id="pager">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span> T-LoRa Pager</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>The T-LoRa Pager has no touchscreen: the keyboard and the wheel drive everything. Turn the wheel to move the amber cursor, click to select. The full key list is in <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/TLORA_PAGER_SHORTCUTS.md">TLORA_PAGER_SHORTCUTS.md</a>; these are the ones you use most:</p>
+        <ul>
+          <li><b>M, C, H, A, S</b> jump to Chats, Contacts, Home, Map and Settings from the top of any of those five screens; in a text field they just type. <b>Hold H</b> for the launcher options, <b>hold S</b> for the control panel, and <b>H</b> on Home switches between the app drawer and your widgets.</li>
+          <li><b>Backspace</b> goes back when nothing is being typed. Holding the wheel does the same, with a ring that fills while you hold.</li>
+          <li><b>Enter</b> selects, and <b>holding Enter</b> is a long press: a chat's actions, an app's options, a control panel tile's settings.</li>
+          <li><b>N</b> in a chat jumps to the first new message, or to the newest one when nothing is unread.</li>
+          <li><b>Fn + turn</b> moves between the tabs, or scrolls a page.</li>
+        </ul>
+        <p>Each tab remembers where you were. Contacts opens on the first contact, a chat opens on its first unread message, and <b>Power off</b> asks first, so one stray click never switches the Pager off.</p>
+        <p><b>Battery.</b> The GPS rests in standby between position checks and is switched off completely when GPS is off, the display panel sleeps with the screen off, and the speaker amplifier only runs while a sound plays. Power off puts the radio to sleep and switches off the GPS, the panel and the keyboard light; press BOOT to wake it.</p>
       </div>
     </section>
 
@@ -484,7 +508,7 @@
 
       <div class="subh">Chat icons and bubbles</div>
       <div class="prose">
-        <p><b>Chat icons</b> are <b>Glyphs</b>, a mark of dots drawn from the chat's key, or <b>Initials</b>: the first two letters of the name (a leading # skipped) in a ball coloured from the name. The choice reaches every icon at once: the chat list, contacts, the conversation header, the lock screen cards and the new-message card. A chat icon you picked yourself (an emoji) still wins.</p>
+        <p><b>Chat icons</b> are <b>Glyphs</b>, a mark of dots drawn from the chat's key, or <b>Initials</b>: the first two letters of the name (a leading # skipped) in a ball coloured from the name. The choice reaches every icon at once: the chat list, contacts, the conversation header, the lock screen cards and the new-message card. A chat icon you picked yourself (an emoji) still wins, and a contact whose name has an emoji in it shows that emoji until you pick another.</p>
         <p>Every sender's name is in its own colour, and a person's name, glyph and ball always share it. <b>Colourful bubbles</b> tints the bubbles with it too, your own included; mentions of you keep their blue bubble. In Day mode, names and glyphs on the light lists use a deeper shade of their colour so they read on white.</p>
       </div>
       <div class="gallery">
@@ -700,7 +724,8 @@
           <div class="lede">The GPS receiver.</div>
           <ul>
             <li>On or off with a live <b>fix status</b> (acquiring, 2D or 3D, age)</li>
-            <li><b>Serial baud</b> rate (applies after a reboot)</li>
+            <li><b>Serial speed</b> (applies after a restart). The T-LoRa Pager, T-Deck Pro and Max and T-Display P4 find it themselves, and the setting is where they start</li>
+            <li><b>Save battery</b>: the GPS rests between position checks (every 2, 5, 15 or 30 minutes) and stays awake while the map, the GPS page or Discover is open</li>
             <li>Reads "no GPS module" on devices without one</li>
           </ul>
         </div>
@@ -747,7 +772,7 @@
           <h3>Lock screen</h3>
           <div class="lede">The lock screen and the PIN (<a href="#lock">Lock screen &amp; PIN</a>).</div>
           <ul>
-            <li><b>Wallpaper</b> and <b>lock text colour</b></li>
+            <li><b>Wallpaper</b>, <b>Default wallpaper</b> to go back, and <b>lock text colour</b></li>
             <li><b>Lock when screen off</b></li>
             <li><b>PIN lock</b> and <b>Change PIN</b></li>
             <li><b>Message text on lock screen</b></li>
@@ -800,7 +825,7 @@
           <ul>
             <li><b>Battery and power history</b> chart</li>
             <li><b>Calibrate</b>: tap to set 100% at the current voltage</li>
-            <li><b>Battery saver</b> slows the processor down while the device is idle</li>
+            <li><b>Battery saver</b>, also a tile in the control panel: slows the processor while the screen is off, lets the GPS rest between position checks and keeps a moving background still</li>
           </ul>
         </div>
       </div>
@@ -857,7 +882,7 @@
       <div class="prose" style="max-width:64ch">
         <p>Tools from the home launcher. <b>Spectrum</b> sweeps the band so you can spot interference or find a clear frequency, <b>Signal</b> shows the live receive signal, and <b>Advertise</b> announces you to the mesh, by hand or on a timer. <b>RF Monitor</b> is a repeater-style view of recent packets and radio stats, from the Store.</p>
         <h3>Writing your own</h3>
-        <p>The Apps drawer is open. Snake, RF Monitor and Airtime are ordinary Lua apps downloaded from the Store over Wi-Fi, and anyone can submit one. They are not built into the firmware and they get no privileges yours would not have.</p>
+        <p>The Apps drawer is open. Snake, RF Monitor and Airtime are ordinary Lua apps downloaded from the Store over Wi-Fi, and anyone can submit one; they get no privileges yours would not have. The Heltec V4 cannot use the Store's app list, so those three come built into its firmware instead. An app that transmits needs your permission first and shares one sending budget with every other app, so no app can flood the mesh (the numbers are in the <a href="sdk.html">SDK guide</a>).</p>
         <p>An app is a single Lua file plus a one-line manifest, talking to the firmware through the <code>wada.*</code> API. Submit it as a pull request to <a href="https://github.com/ALLFATHER-BV/wadamesh">the repository</a>, or open an issue with the file attached if you would rather not use git. The full procedure (file layout, versioning, and what the review looks for) is in <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/deploy/apps/README.md">deploy/apps/README.md</a>.</p>
         <p><b>Every submission is reviewed and safety-checked before it is added.</b> An app runs on other people's radios, so each one is read for anything touching the node identity, keys or channel secrets, for flash-write patterns that can stall the device, and for anything that would block the interface or the mesh. If something needs changing we say what and why, and we would rather help you land it than turn it away.</p>
       </div>

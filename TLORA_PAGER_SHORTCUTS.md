@@ -1,19 +1,19 @@
 # T-LoRa Pager: Keyboard & Rotary Encoder Guide
 
-The LilyGo T-LoRa Pager has **no touchscreen and no trackball** — every
+The LilyGo T-LoRa Pager has **no touchscreen and no trackball**: every
 screen, every setting, and every chat is driven entirely by the physical
 QWERTY keyboard and the rotary encoder knob. If you're coming from the
 T-Deck or Heltec V4 (touch-first), this is the one board where learning a
 handful of gestures up front pays off immediately. This guide covers both
-radio variants (LR1121 and SX1262) — the UI and input handling are identical
+radio variants (LR1121 and SX1262); the UI and input handling are identical
 on both.
 
 ## The two inputs
 
-- **Keyboard** — a physical QWERTY matrix with a Space bar, Backspace, Enter,
+- **Keyboard**: a physical QWERTY matrix with a Space bar, Backspace, Enter,
   a Shift key, and an orange **Fn/Alt** key (bottom-left). No dedicated Esc,
-  arrow keys, or number row — those are covered by combos below.
-- **Rotary encoder** — turn to move the on-screen focus highlight; click
+  arrow keys, or number row; those are covered by combos below.
+- **Rotary encoder**: turn to move the on-screen focus highlight; click
   (press the knob) to select. It's your only pointing device, so almost
   every screen is navigable with turn + click alone.
 
@@ -44,20 +44,32 @@ while editing a text field, where the keys type normally.
 
 A hold opens them over the screen you are on.
 
+Each tab remembers where you were: coming back puts the cursor on the item
+you left. Contacts opens on the first contact, and a chat with unread
+messages opens on the first of them (see [N](#n-catching-up)).
+
+Icon buttons say what they are: rest the cursor on one for a moment and a
+small card names it, sometimes with a line on what it does or, on a
+control-panel tile, "Hold Enter: settings".
+
+**Power off** (control panel, power button) asks first, with Cancel
+selected, so one stray click never switches the Pager off. Press **BOOT** to
+wake it again.
+
 ## Rotary encoder
 
 | Gesture | Action | Keyboard equivalent |
 |---|---|---|
-| Turn | Move focus to the next/previous item on screen | none — encoder only |
+| Turn | Move focus to the next/previous item on screen | none (encoder only) |
 | Short click | Select / confirm the focused item | **Enter** |
 | Hold ~1 s, then release | **Back**: closes a popup → closes an open chat → goes Home → Esc (whichever applies first). A ring fills while you hold | **Backspace** (tap) |
 | **Fn (Alt) + turn**, on a main tab | Move between the 5 main tabs (Mail / Contacts / Home / Map / Settings) | **M / C / H / A / S** jumps directly |
-| **Fn (Alt) + turn**, inside a settings page or chat | Scroll the page up/down | none — encoder only |
-| **Fn (Alt) + short click**, with a text field focused | Open the special-character picker | none — encoder only |
-| Turn, with a dropdown open | Scroll through the dropdown's options | none — encoder only |
-| Turn, with the accent picker open | Cycle through the accent variants (see below) | none — encoder only (Fn+Space to enter is shared) |
-| Turn, with the @-mention list open | Cycle through matching contacts (see below) | none — encoder only |
-| Turn, at the oldest/newest **loaded** message in an open chat | Loads more history in that direction and keeps going — see [Chat screen](#chat-screen) | none — encoder only |
+| **Fn (Alt) + turn**, inside a settings page or chat | Scroll the page up/down | none (encoder only) |
+| **Fn (Alt) + short click**, with a text field focused | Open the special-character picker | none (encoder only) |
+| Turn, with a dropdown open | Scroll through the dropdown's options | none (encoder only) |
+| Turn, with the accent picker open | Cycle through the accent variants (see below) | none (encoder only; Fn+Space to enter is shared) |
+| Turn, with the @-mention list open | Cycle through matching contacts (see below) | none (encoder only) |
+| Turn, at the oldest/newest **loaded** message in an open chat | Loads more history in that direction and keeps going (see [Chat screen](#chat-screen)) | none (encoder only) |
 
 Since there's no touch to tap the bottom bar, use its visible **M / C / H / A /
 S** shortcuts to jump directly or **Fn+turn** to move through the tabs in
@@ -66,7 +78,7 @@ order.
 ## Chat screen
 
 An open chat has no touch-only jump-to-oldest/jump-to-latest buttons on this
-board — everything is reachable by turning and clicking, and the encoder
+board: everything is reachable by turning and clicking, and the encoder
 behaves a bit differently here than anywhere else in the app.
 
 ### Turning through messages
@@ -75,16 +87,16 @@ Message history is loaded lazily: only the messages currently near the
 viewport actually exist as on-screen items, and older/newer ones are pulled in
 as you approach them. Turning the encoder normally moves the focus highlight
 one message at a time, and **at the edge of what's currently loaded, it keeps
-going** — the turn instead scrolls the list to pull in the next batch of
+going**: the turn instead scrolls the list to pull in the next batch of
 history, then continues moving the highlight onto it. You'll only ever land
 outside the message list (see below) once you've genuinely reached the very
-oldest or very newest message in the whole conversation — never mid-history.
+oldest or very newest message in the whole conversation, never mid-history.
 
 ### Leaving the message list
 
 Turning **past the oldest loaded message** (top edge), once there's truly
 nothing more to load, wraps around to whatever the last focusable item on the
-screen is — the channel-settings gear in an open **channel**, or the Send
+screen is: the channel-settings gear in an open **channel**, or the Send
 button in a **DM** (a DM has no gear to reach). This is plain focus wrap, the
 same as reaching the end of any other list in the app; there's no chat-specific
 handling for this edge.
@@ -98,7 +110,7 @@ newest message instead.
 ### The reply row
 
 Below the messages, turning steps through: **quick-reply (△) → emoji →
-text box → Send**, in that order, in both directions — nothing is skipped.
+text box → Send**, in that order, in both directions; nothing is skipped.
 Turning past the △ chip (toward the messages) always jumps straight to the
 newest message, regardless of channel or DM.
 
@@ -107,8 +119,8 @@ newest message, regardless of channel or DM.
 A chat with unread messages opens on the first of them. **N** jumps to
 whichever message needs your attention:
 
-- If there are unread messages, it jumps to the first one — right below the
-  **"NEW ----"** divider — and selects it, so you can then turn forward
+- If there are unread messages, it jumps to the first one, right below the
+  **"NEW ----"** divider, and selects it, so you can then turn forward
   through your unread messages in order, oldest-of-the-unread first.
 - If nothing is unread, it jumps to the newest message instead (same
   destination, with focus left on the message).
@@ -150,14 +162,14 @@ While any text field is focused, including a Wi-Fi or repeater password:
 ### Shift and Caps Lock
 
 - **Hold Shift + a letter**: that letter (or letters, for as long as you
-  hold Shift) types uppercase — released, typing goes back to lowercase.
+  hold Shift) types uppercase; released, typing goes back to lowercase.
   Real momentary Shift, just like a normal keyboard.
 - **Hold Fn (Alt), then press Shift**: while you're editing a text field,
-  toggles **Caps Lock** on/off — stays uppercase until you repeat the chord.
+  toggles **Caps Lock** on/off; it stays uppercase until you repeat the chord.
   Anywhere else (not editing a field), the chord does nothing.
 - Shift alone, tapped with nothing else, does nothing (as expected).
 - **Hold Fn (Alt), then press Backspace**: jumps straight to the **Home**
-  screen — works everywhere, including while you're actively editing a field
+  screen; it works everywhere, including while you're actively editing a field
   (unlike Alt+Shift above, this one isn't context-dependent). Doesn't delete
   a character or trigger the plain-Backspace gestures below.
 
@@ -166,19 +178,19 @@ While any text field is focused, including a Wi-Fi or repeater password:
 | Key | While editing a text field | Otherwise |
 |---|---|---|
 | **Enter** | Send / submit / newline | Select the focused item. On a chat message bubble, opens its action menu (Ack / Mention / Copy / Info / Block) |
-| **Enter** (hold about half a second) | — | What a long press does on a touchscreen: a chat's actions, hiding an app in the drawer, a control-panel switch's settings page |
+| **Enter** (hold about half a second) | Nothing | What a long press does on a touchscreen: a chat's actions, hiding an app in the drawer, a control-panel switch's settings page |
 | **Backspace** (tap) | Delete a character | **Back**: closes a popup, a page or the chat, otherwise goes Home |
 | **Backspace** (hold ~1 s) | **Back**, leaving the screen the field is on | **Back** |
 | **N** | Types n | In an open chat: jump to your first unread message, or the newest if nothing is unread. See [Chat screen](#chat-screen) |
-| **Backspace** (hold ~1 s) *while the screen is locked* | — | Unlock the screen |
-| **Space** (tap) | Types a space | — |
-| **Space** (double-tap, within 250 ms) | Switches between English and your configured secondary keyboard layout | — |
-| **Space** (hold ~1 s) | — | Locks the screen (shows a "Locking…" progress bar; tapping any key cancels) |
+| **Backspace** (hold ~1 s) *while the screen is locked* | Nothing | Unlock the screen |
+| **Space** (tap) | Types a space | Nothing |
+| **Space** (double-tap, within 250 ms) | Switches between English and your configured secondary keyboard layout | Nothing |
+| **Space** (hold ~1 s) | Nothing | Locks the screen (shows a "Locking…" progress bar; tapping any key cancels) |
 | **Fn (Alt)** (tap / double-tap) | Next key uses symbols / lock symbols until tapped again | Same |
 
 The **BOOT** button (top of the device) instantly wakes the screen from
 idle-dim. It does *not* unlock a screen you've manually locked with the
-Space-hold gesture above — for that, hold Backspace.
+Space-hold gesture above; for that, hold Backspace.
 
 ## Accented characters
 
@@ -186,30 +198,30 @@ Typing a letter that has accent variants (all vowels, plus `n c s y t z l r`,
 both cases) pops up a small row of alternatives above the field. To pick one
 without touch:
 
-1. **Fn (Alt) + Space** — jumps focus into the popup.
-2. **Turn the encoder** — cycles through the variants.
-3. **Enter** — confirms your choice and replaces the letter you just typed.
-4. **Backspace** — dismisses the popup and keeps the plain letter.
+1. **Fn (Alt) + Space**: jumps focus into the popup.
+2. **Turn the encoder**: cycles through the variants.
+3. **Enter**: confirms your choice and replaces the letter you just typed.
+4. **Backspace**: dismisses the popup and keeps the plain letter.
 
 ## @-mentions
 
 Typing `@` followed by a few letters of a contact's name pops up a matching
 list in a channel/group chat. Unlike the accent picker above, this one grabs
-the encoder **immediately** — no Fn+Space needed, since it only appears once
+the encoder **immediately**, no Fn+Space needed, since it only appears once
 you've deliberately started typing a mention:
 
-1. **Turn the encoder** — cycles through the matching contacts.
-2. **Enter / encoder click** — confirms the highlighted one, replacing
+1. **Turn the encoder**: cycles through the matching contacts.
+2. **Enter / encoder click**: confirms the highlighted one, replacing
    `@partial` with `@FullName ` in your message.
-3. **Backspace** — dismisses the list without touching what you typed.
+3. **Backspace**: dismisses the list without touching what you typed.
 
 ## Sliders
 
 Any focused slider (Control Center brightness, a Settings slider, the Map
-zoom bar) can't be dragged without touch — instead:
+zoom bar) can't be dragged without touch. Instead:
 
-- **Q** — decrease
-- **E** — increase
+- **Q**: decrease
+- **E**: increase
 
 Each press moves it proportionally (about 20 presses end-to-end) and
 persists the new value immediately, the same as releasing a drag.
@@ -218,10 +230,10 @@ persists the new value immediately, the same as releasing a drag.
 
 While the **Map** tab is active:
 
-- **W** — pan north
-- **A** — pan west
-- **X** — pan south
-- **D** — pan east
+- **W**: pan north
+- **A**: pan west
+- **X**: pan south
+- **D**: pan east
 
 `X` replaces the usual `S` position because **S** is the visible Settings
 shortcut. Pressing **A** on another main screen opens Map; once Map is already
@@ -235,9 +247,9 @@ needed.
 **Settings → Keyboard → Keyboard backlight** cycles through three modes
 (tap to advance):
 
-- **Off** — always dark
-- **On** — always lit
-- **Auto** (default) — lights up on any keypress and follows the configured
+- **Off**: always dark
+- **On**: always lit
+- **Auto** (default): lights up on any keypress and follows the configured
   **Screen timeout**; `0 = never` keeps it lit until the screen is turned off
 
 Unlike the T-Deck, this is a plain on/off strip under the keys, not a
@@ -262,7 +274,7 @@ that changes keyboard language.
 |---|---|
 | M / C / H / A / S (top-level main screens only) | Open Mail / Contacts / Home / Map / Settings |
 | Turn encoder | Move focus |
-| Turn, at the loaded edge of a chat | Load more history, keep moving — only exits the list at the true oldest/newest message |
+| Turn, at the loaded edge of a chat | Load more history, keep moving; only exits the list at the true oldest/newest message |
 | Click encoder (or Enter) | Select / confirm |
 | Hold encoder ~1 s, or tap Backspace | Back |
 | Fn + turn (main tab) | Switch tabs |
@@ -275,7 +287,7 @@ that changes keyboard language.
 | Fn + Shift (not editing a field) | Nothing |
 | Fn + Backspace (anywhere) | Jump to Home |
 | Fn + Space | Enter accent picker |
-| @ + letters (composer) | Auto-focuses the mention list — no Fn+Space needed |
+| @ + letters (composer) | Auto-focuses the mention list, no Fn+Space needed |
 | Enter | Select / send / message action menu |
 | Hold Enter | Long press: a chat's actions, app options, a switch's settings |
 | Backspace (tap) | Delete while typing, otherwise Back |
