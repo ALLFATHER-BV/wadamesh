@@ -44,9 +44,13 @@
 #include <stdint.h>
 
 // Per-attempt and whole-operation budgets. Boot cost is capped at the total
-// regardless of how many candidates are in range.
-static constexpr uint32_t kBootTimeSyncAssocMs = 4000;    // one association attempt
-static constexpr uint32_t kBootTimeSyncTotalMs = 12000;   // scan + every attempt + SNTP
+// regardless of how many candidates are in range. The first attempt brings the
+// radio up from cold and searches every channel for the AP, so it gets longer
+// than the later ones, which the scan has already pointed at a channel and BSSID
+// (#620: a T-Deck that joins in ~7 s by hand never made it inside 4 s).
+static constexpr uint32_t kBootTimeSyncFirstAssocMs = 8000;   // the cold first attempt
+static constexpr uint32_t kBootTimeSyncAssocMs      = 4000;   // each attempt after the scan
+static constexpr uint32_t kBootTimeSyncTotalMs      = 16000;  // scan + every attempt + SNTP
 
 enum class BootTimeSyncResult : uint8_t {
   Skipped,        // soft reboot, disabled, clock already current, or Wi-Fi already on

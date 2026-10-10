@@ -4455,7 +4455,21 @@ void MyMesh::handleCmdFrame(size_t len) {
       // "#unknown" thread (#260). An app whose channel list is out of step with
       // the device's slots must get an error, not a broadcast nobody can attribute.
       bool success = getChannel(channel_idx, channel) && channelSlotConfigured(channel);
-      if (success && sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i)) {
+      if (success) {
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+        // The channel's own region scope, as the on-device composer, web remote,
+        // terminal and Lua sends use (#614); without it the post went out on the
+        // default scope.
+        char chan_rgn[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+        touchPrefsGetChannelScope(channel_idx, chan_rgn, sizeof(chan_rgn));
+        const bool pushed = pushChannelScope(chan_rgn);
+#endif
+        success = sendGroupMessage(msg_timestamp, channel.channel, _prefs.node_name, text, len - i);
+#if defined(ESP32) && defined(HAS_TOUCH_UI)
+        if (pushed) popChannelScope();
+#endif
+      }
+      if (success) {
         writeOKFrame();
         // Mirror the app-sent channel message into the on-device touch UI — the channel-send path
         // otherwise never shows companion-originated channel sends on screen (the DM path does, via

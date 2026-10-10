@@ -50,13 +50,13 @@ under a running operation.
 | Key | Press | Hold |
 |---|---|---|
 | **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first) | — |
-| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail) | — |
+| **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail). **Double-press** to open the launcher settings (what Home opens, icon size) | — |
 | **@ (Mentions)** | Open the Mentions screen | — |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
 | **MAP** | Jump to the Map tab — press again *on* the map to toggle pan mode | — |
 | **BACK** | Close the top layer (see above) | — |
 | **CTRL** | Open the Control Center (quick toggles, incl. the keyboard light: off / on / auto) | — |
-| **MIC** | Nothing yet — deliberately reserved | — |
+| **Triangle** | The focused item's hold action, e.g. a chat row's menu | — |
 | **OK / Enter** | Activate the focused item; send a message; run a terminal command; newline in the editor | **Long-press the focused item / unlock the lock screen** |
 
 The **MSG**, **HOME**, **@**, **ADV**, **MAP**, and **CTRL** shortcuts remain
@@ -97,8 +97,9 @@ appears at the right edge. Press **Right** to select it, then **OK** to jump to
 the newest message.
 
 Channels, direct messages, and room conversations place **#** and emoji to the
-right of the message input. Press Right to move from the input to **#**, and
-Right again to move to emoji. Press **OK** on either button to open its picker.
+left of the message input. With the caret at the start of the input, press Left
+to move to emoji, and Left again to move to **#**; Right walks back to the
+input. Press **OK** on either button to open its picker.
 
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.

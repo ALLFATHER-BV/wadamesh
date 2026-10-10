@@ -98,7 +98,9 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   mode manually and retry, and please report it.
 - **Seeed Wio Tracker L2**: pre-release touch target under active bring-up. Builds are for
   development and hardware validation only; no public release artifact is
-  promised until the port is verified.
+  promised until the port is verified. It has no battery-backed clock, so the
+  same optional saved-Wi-Fi cold-boot time sync offered on T-Deck is available
+  in Clock settings.
 - **CrowPanel Advance 3.5**: `crowpanel_35_companion_radio_touch` is a
   16 MB flash / 8 MB OPI PSRAM build for the ILI9488/GT911 panel and an SX1262
   in the expansion slot. It starts upright in 480x320 landscape; Display
