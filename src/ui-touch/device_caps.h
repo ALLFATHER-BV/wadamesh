@@ -49,6 +49,17 @@
   #define CAP_LOCK_SCREEN  0   // no user button to unlock with
   #define CAP_BATTERY      0   // no battery voltage sensing
 
+#elif defined(HAS_SENSECAP_INDICATOR)    // ===== Seeed SenseCAP Indicator D1L (ESP32-S3) =====
+  #define CAP_TOUCH        1
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 1   // 480x480
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   1
+  #define CAP_GPS          0
+  #define CAP_OTA          0   // one factory app slot, no in-place update
+  #define CAP_LOCK_SCREEN  0
+  #define CAP_BATTERY      0   // no battery fitted
+
 #elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    0
