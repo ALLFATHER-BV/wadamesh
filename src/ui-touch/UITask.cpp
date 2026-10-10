@@ -21781,16 +21781,11 @@ static void openJoinPrivateChannelModal() {
 }
 
 // ---- Join hashtag channel ----
-static void joinHashtagChannelSubmitCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  kbMirrorSyncToReal();
-  if (!s_addch_hashtag_ta) return;
-  // Normalize: strip leading '#'s, drop whitespace, ASCII-lowercase. Matches
-  // Meshcomod-client/apps/web-client/src/main.ts:deriveHashtagChannelSecret.
-  // Standard Arabic letters first: the key is a hash of the name, and a phone types
-  // the letters, not the presentation forms the field holds (#582).
+static bool deriveHashtagChannelKey(const char* input, char* hashed, size_t hashed_cap,
+                                    uint8_t secret[16]) {
+  if (!input || !hashed || hashed_cap < 2 || !secret) return false;
   char raw[80];
-  arabicUnshape(lv_textarea_get_text(s_addch_hashtag_ta), raw, sizeof(raw));
+  arabicUnshape(input, raw, sizeof(raw));
   char norm[40]; int nn = 0;
   const char* p = raw;
   while (*p == '#') ++p;
@@ -21802,13 +21797,21 @@ static void joinHashtagChannelSubmitCb(lv_event_t* e) {
   }
   norm[nn] = '\0';
   if (nn == 0) strncpy(norm, "public", sizeof(norm));
-  char hashed[42] = "#";
-  strncat(hashed, norm, sizeof(hashed) - 2);
+  const int written = snprintf(hashed, hashed_cap, "#%s", norm);
+  if (written < 0 || (size_t)written >= hashed_cap) return false;
+  mesh::Utils::sha256(secret, 16, reinterpret_cast<const uint8_t*>(hashed), written);
+  return true;
+}
 
+static void joinHashtagChannelSubmitCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  kbMirrorSyncToReal();
+  if (!s_addch_hashtag_ta) return;
+  // Shared with chat-link resolution so joining and opening derive identical keys.
+  char hashed[42];
   uint8_t secret[16];
-  mesh::Utils::sha256(secret, sizeof(secret),
-                      reinterpret_cast<const uint8_t*>(hashed),
-                      (int)strlen(hashed));
+  if (!deriveHashtagChannelKey(lv_textarea_get_text(s_addch_hashtag_ta),
+                               hashed, sizeof(hashed), secret)) return;
 
   const int slot = the_mesh.findFirstEmptyChannelSlot();
   if (slot < 0) { setAddChannelError(TR("Channel table is full.")); return; }
@@ -38718,25 +38721,6 @@ static bool chatFirstCoord(const char* s, double* lat, double* lon) {
   return chatCoordSpan(s, 0, &a, &b, lat, lon);
 }
 
-static bool chatRecolorCoords(const char* in, char* out, int cap) {
-  if (!in || strchr(in, '#')) return false;
-  int a, b;
-  double lat, lon;
-  if (!chatCoordSpan(in, 0, &a, &b, &lat, &lon)) return false;
-  int o = 0, i = 0;
-  while (in[i] && o < cap - 12) {
-    if (i == a) {
-      o += snprintf(out + o, cap - o, "#%06X ",
-                    (unsigned)(COLOR_CHAT_LINK & 0xFFFFFFu));
-      while (i < b && o < cap - 2) out[o++] = in[i++];
-      if (o < cap - 1) out[o++] = '#';
-      if (!chatCoordSpan(in, i, &a, &b, &lat, &lon)) a = -1;
-    } else out[o++] = in[i++];
-  }
-  out[o] = 0;
-  return true;
-}
-
 static lv_obj_t* s_msg_menu_root = nullptr;
 static lv_obj_t* s_msg_info_root = nullptr;
 static lv_obj_t* s_msg_info_body = nullptr;
@@ -40878,56 +40862,9 @@ static void chatAppendSpan(lv_obj_t* group, const char* text, int start, int end
   if (highlighted) lv_style_set_text_color(&span->style, lv_color_hex(COLOR_CHAT_LINK));
   else             lv_style_set_text_color(&span->style, color);
 }
-static lv_obj_t* chatCreateHashtagSpans(lv_obj_t* parent, lv_obj_t* hit_label,
-                                        const char* text, const lv_font_t* font,
-                                        lv_color_t color, lv_coord_t width) {
-  int first_start, first_end;
-  if (!chatHashtagSpan(text, 0, &first_start, &first_end) ||
-      !chatHashtagSpan(text, first_end, &first_start, &first_end))
-    return nullptr;
-  lv_obj_t* group = lv_spangroup_create(parent);
-  lv_obj_remove_style_all(group);
-  lv_obj_set_style_text_font(group, font, LV_PART_MAIN);
-  lv_obj_set_style_text_color(group, color, LV_PART_MAIN);
-  lv_obj_set_style_text_letter_space(group,
-      lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_obj_set_style_text_line_space(group,
-      lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_spangroup_set_align(group, LV_TEXT_ALIGN_LEFT);
-  lv_spangroup_set_overflow(group, LV_SPAN_OVERFLOW_CLIP);
-  lv_spangroup_set_mode(group, LV_SPAN_MODE_BREAK);
-  int cursor = 0, start, end;
-  while (chatHashtagSpan(text, cursor, &start, &end)) {
-    chatAppendSpan(group, text, cursor, start, color, false);
-    chatAppendSpan(group, text, start, end, color, true);
-    cursor = end;
-  }
-  const int text_len = (int)strlen(text);
-  chatAppendSpan(group, text, cursor, text_len, color, false);
-  lv_obj_set_width(group, width);
-  lv_obj_set_pos(group, lv_obj_get_x(hit_label), lv_obj_get_y(hit_label));
-  lv_obj_set_user_data(group, hit_label);
-  lv_spangroup_refr_mode(group);
-  return group;
-}
 // Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
 // already has a '#' (the recolor parser would choke on it) — caller then shows plain
 // text and the tap still works.
-static bool chatRecolorUrls(const char* in, char* out, int cap) {
-  if (!in || strchr(in, '#')) return false;
-  int a, b; if (!chatUrlSpan(in, 0, &a, &b)) return false;
-  int o = 0, i = 0;
-  while (in[i] && o < cap - 12) {
-    if (i == a) {
-      o += snprintf(out + o, cap - o, "#%06X ",
-                    (unsigned)(COLOR_CHAT_LINK & 0xFFFFFFu));
-      while (i < b && o < cap - 2) out[o++] = in[i++];
-      if (o < cap - 1) out[o++] = '#';
-      if (!chatUrlSpan(in, i, &a, &b)) a = -1;
-    } else out[o++] = in[i++];
-  }
-  out[o] = 0; return true;
-}
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -41077,51 +41014,6 @@ static void openUrlMenu(const char* url) {
 #endif
   mk(TR(LV_SYMBOL_IMAGE "  Create QR"), urlMenuQrCb);
 }
-// Short tap on a chat bubble that contains a URL -> the action menu (re-extract the URL
-// from the live message; the ring may have rotated since the bubble was built).
-static void bubbleUrlTapCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
-  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
-  UITask::UIMessage m;
-  if (!g_lv.task->getMessageByIndex(idx, m)) return;
-  char url[240];
-  if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
-}
-
-// Read the live message again: a virtualized bubble's ring slot can change.
-static void bubbleHashtagTapCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
-  lv_obj_t* target = lv_event_get_target(e);
-  lv_obj_t* label = reinterpret_cast<lv_obj_t*>(lv_obj_get_user_data(target));
-  if (!label) label = target;
-  lv_indev_t* indev = lv_indev_get_act();
-  if (!indev) return;
-  lv_point_t point;
-  lv_indev_get_point(indev, &point);
-  lv_area_t area;
-  lv_obj_get_coords(label, &area);
-  point.x -= area.x1;
-  point.y -= area.y1;
-  if (!lv_label_is_char_under_pos(label, &point)) return;
-  const char* text = lv_label_get_text(label);
-  const uint32_t char_idx = lv_label_get_letter_on(label, &point);
-  const int byte_idx = (int)_lv_txt_encoded_get_byte_id(text, char_idx);
-  int start, end;
-  bool on_hashtag = false;
-  for (int from = 0; chatHashtagSpan(text, from, &start, &end); from = end) {
-    if (byte_idx >= start && byte_idx < end) { on_hashtag = true; break; }
-  }
-  if (!on_hashtag) return;
-  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
-  UITask::UIMessage m;
-  if (!g_lv.task->getMessageByIndex(idx, m)) return;
-  char tag[32];
-  if (end - start >= (int)sizeof tag) return;
-  memcpy(tag, text + start, end - start);
-  tag[end - start] = '\0';
-  openHashtagChat(tag);
-}
-
 static void bubbleCoordTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -41131,47 +41023,166 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
 }
 
-static lv_obj_t* s_chat_hashtag_picker = nullptr;
-static char s_chat_hashtag_choices[UITask::MAX_MSG_TEXT / 2 + 1][32];
-static int s_chat_hashtag_choice_count = 0;
+enum ChatLinkKind : uint8_t { CHAT_LINK_URL, CHAT_LINK_HASHTAG, CHAT_LINK_COORD };
+struct ChatLinkChoice {
+  ChatLinkKind kind;
+  int start;
+  int end;
+  double lat;
+  double lon;
+};
 
-static void closeChatHashtagPicker() {
-  if (s_chat_hashtag_picker) popupClose(&s_chat_hashtag_picker);
+static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next) {
+  if (!text || !next) return false;
+  int url_start = 0, url_end = 0;
+  int tag_start = 0, tag_end = 0;
+  int coord_start = 0, coord_end = 0;
+  double lat = 0.0, lon = 0.0;
+  const bool has_url = chatUrlSpan(text, from, &url_start, &url_end);
+  const bool has_tag = chatHashtagSpan(text, from, &tag_start, &tag_end);
+  const bool has_coord = chatCoordSpan(text, from, &coord_start, &coord_end, &lat, &lon);
+  if (!has_url && !has_tag && !has_coord) return false;
+
+  next->start = INT_MAX;
+  if (has_url && url_start < next->start)
+    *next = { CHAT_LINK_URL, url_start, url_end, 0.0, 0.0 };
+  if (has_tag && tag_start < next->start)
+    *next = { CHAT_LINK_HASHTAG, tag_start, tag_end, 0.0, 0.0 };
+  if (has_coord && coord_start < next->start)
+    *next = { CHAT_LINK_COORD, coord_start, coord_end, lat, lon };
+  return next->start != INT_MAX && next->end > from;
 }
 
-static void chatHashtagPickerBackdropCb(lv_event_t* e) {
+static lv_obj_t* chatCreateLinkSpans(lv_obj_t* parent, lv_obj_t* hit_label,
+                                     const char* text, const lv_font_t* font,
+                                     lv_color_t color, lv_coord_t width) {
+  ChatLinkChoice choice{};
+  int from = 0;
+  if (!nextChatLinkChoice(text, from, &choice)) return nullptr;
+  lv_obj_t* group = lv_spangroup_create(parent);
+  lv_obj_remove_style_all(group);
+  lv_obj_set_style_text_font(group, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(group, color, LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(group,
+      lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_obj_set_style_text_line_space(group,
+      lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_spangroup_set_align(group, LV_TEXT_ALIGN_LEFT);
+  lv_spangroup_set_overflow(group, LV_SPAN_OVERFLOW_CLIP);
+  lv_spangroup_set_mode(group, LV_SPAN_MODE_BREAK);
+  int cursor = 0;
+  do {
+    chatAppendSpan(group, text, cursor, choice.start, color, false);
+    chatAppendSpan(group, text, choice.start, choice.end, color, true);
+    cursor = choice.end;
+    from = cursor;
+  } while (nextChatLinkChoice(text, from, &choice));
+  chatAppendSpan(group, text, cursor, (int)strlen(text), color, false);
+  lv_obj_set_width(group, width);
+  lv_obj_set_pos(group, lv_obj_get_x(hit_label), lv_obj_get_y(hit_label));
+  lv_obj_set_user_data(group, hit_label);
+  lv_spangroup_refr_mode(group);
+  return group;
+}
+
+static constexpr int CHAT_LINK_CHOICE_MAX = UITask::MAX_MSG_TEXT / 2 + 1;
+static lv_obj_t* s_chat_link_picker = nullptr;
+static char s_chat_link_picker_text[UITask::MAX_MSG_TEXT + 1];
+static ChatLinkChoice s_chat_link_choices[CHAT_LINK_CHOICE_MAX];
+static int s_chat_link_choice_count = 0;
+
+static void closeChatLinkPicker() {
+  if (s_chat_link_picker) popupClose(&s_chat_link_picker);
+}
+
+static void chatLinkPickerBackdropCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
       lv_event_get_target(e) != lv_event_get_current_target(e)) return;
-  closeChatHashtagPicker();
+  closeChatLinkPicker();
 }
 
-static void chatHashtagPickerChoiceCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  const int choice = (int)(intptr_t)lv_event_get_user_data(e);
-  if (choice < 0 || choice >= s_chat_hashtag_choice_count) return;
-  char tag[sizeof s_chat_hashtag_choices[0]];
-  snprintf(tag, sizeof tag, "%s", s_chat_hashtag_choices[choice]);
-  closeChatHashtagPicker();
-  openHashtagChat(tag);
-}
-
-static void openChatHashtagPicker(const char* text) {
-  closeChatHashtagPicker();
-  s_chat_hashtag_choice_count = 0;
-  int start, end;
-  for (int from = 0;
-       s_chat_hashtag_choice_count < (int)(sizeof s_chat_hashtag_choices / sizeof s_chat_hashtag_choices[0]) &&
-       chatHashtagSpan(text, from, &start, &end);
-       from = end) {
-    const int length = end - start;
-    if (length >= (int)sizeof s_chat_hashtag_choices[0]) continue;
-    char* choice = s_chat_hashtag_choices[s_chat_hashtag_choice_count++];
-    memcpy(choice, text + start, length);
-    choice[length] = '\0';
+static void activateChatLinkChoice(int index) {
+  if (index < 0 || index >= s_chat_link_choice_count) return;
+  const ChatLinkChoice choice = s_chat_link_choices[index];
+  char value[UITask::MAX_MSG_TEXT + 1];
+  const int len = choice.end - choice.start;
+  if (len <= 0 || len >= (int)sizeof value) return;
+  memcpy(value, s_chat_link_picker_text + choice.start, len);
+  value[len] = '\0';
+  closeChatLinkPicker();
+  switch (choice.kind) {
+    case CHAT_LINK_URL: openUrlMenu(value); break;
+    case CHAT_LINK_HASHTAG: openHashtagChat(value); break;
+    case CHAT_LINK_COORD: openMapAtCoords(choice.lat, choice.lon); break;
   }
-  if (s_chat_hashtag_choice_count < 2) {
-    if (s_chat_hashtag_choice_count == 1)
-      openHashtagChat(s_chat_hashtag_choices[0]);
+}
+
+static void chatLinkPickerChoiceCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED)
+    activateChatLinkChoice((int)(intptr_t)lv_event_get_user_data(e));
+}
+
+static void bubbleUrlTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
+  const int idx = (int)(intptr_t)lv_event_get_user_data(e);
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  char url[240];
+  if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
+}
+
+static int collectChatLinkChoices(const char* text) {
+  s_chat_link_choice_count = 0;
+  int from = 0;
+  while (s_chat_link_choice_count < CHAT_LINK_CHOICE_MAX) {
+    ChatLinkChoice next{};
+    if (!nextChatLinkChoice(text, from, &next)) break;
+    s_chat_link_choices[s_chat_link_choice_count++] = next;
+    from = next.end;
+  }
+  return s_chat_link_choice_count;
+}
+
+static void bubbleChatLinkTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
+  lv_obj_t* target = lv_event_get_target(e);
+  lv_obj_t* label = reinterpret_cast<lv_obj_t*>(lv_obj_get_user_data(target));
+  if (!label) return;
+  lv_indev_t* indev = lv_indev_get_act();
+  if (!indev) return;
+  lv_point_t point;
+  lv_indev_get_point(indev, &point);
+  lv_area_t area;
+  lv_obj_get_coords(label, &area);
+  point.x -= area.x1;
+  point.y -= area.y1;
+  if (!lv_label_is_char_under_pos(label, &point)) return;
+  const char* label_text = lv_label_get_text(label);
+  const uint32_t char_idx = lv_label_get_letter_on(label, &point);
+  const int byte_idx = (int)_lv_txt_encoded_get_byte_id(label_text, char_idx);
+  const int count = collectChatLinkChoices(label_text);
+  for (int i = 0; i < count; ++i) {
+    const ChatLinkChoice choice = s_chat_link_choices[i];
+    if (byte_idx < choice.start || byte_idx >= choice.end) continue;
+    if (choice.kind == CHAT_LINK_COORD) {
+      openMapAtCoords(choice.lat, choice.lon);
+      return;
+    }
+    char value[UITask::MAX_MSG_TEXT + 1];
+    const int len = choice.end - choice.start;
+    memcpy(value, label_text + choice.start, len);
+    value[len] = '\0';
+    if (choice.kind == CHAT_LINK_URL) openUrlMenu(value);
+    else openHashtagChat(value);
+    return;
+  }
+}
+
+static void openChatLinkPicker(const char* text) {
+  closeChatLinkPicker();
+  snprintf(s_chat_link_picker_text, sizeof s_chat_link_picker_text, "%s", text ? text : "");
+  if (collectChatLinkChoices(s_chat_link_picker_text) < 2) {
+    if (s_chat_link_choice_count == 1) activateChatLinkChoice(0);
     return;
   }
 
@@ -41182,16 +41193,16 @@ static void openChatHashtagPicker(const char* text) {
   if (card_w > PSC(300)) card_w = PSC(300);
   const lv_coord_t card_h = max_h;
 
-  s_chat_hashtag_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_chat_hashtag_picker);
-  lv_obj_set_size(s_chat_hashtag_picker, sw, sh);
-  lv_obj_set_style_bg_color(s_chat_hashtag_picker, lv_color_black(), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_chat_hashtag_picker, LV_OPA_60, LV_PART_MAIN);
-  lv_obj_add_flag(s_chat_hashtag_picker, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_clear_flag(s_chat_hashtag_picker, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_event_cb(s_chat_hashtag_picker, chatHashtagPickerBackdropCb, LV_EVENT_CLICKED, nullptr);
+  s_chat_link_picker = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_chat_link_picker);
+  lv_obj_set_size(s_chat_link_picker, sw, sh);
+  lv_obj_set_style_bg_color(s_chat_link_picker, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_chat_link_picker, LV_OPA_60, LV_PART_MAIN);
+  lv_obj_add_flag(s_chat_link_picker, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(s_chat_link_picker, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_chat_link_picker, chatLinkPickerBackdropCb, LV_EVENT_CLICKED, nullptr);
 
-  lv_obj_t* card = lv_obj_create(s_chat_hashtag_picker);
+  lv_obj_t* card = lv_obj_create(s_chat_link_picker);
   lv_obj_remove_style_all(card);
   lv_obj_set_size(card, card_w, card_h);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
@@ -41201,13 +41212,13 @@ static void openChatHashtagPicker(const char* text) {
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
   lv_obj_t* title = lv_label_create(card);
-  lv_label_set_text(title, TR("Select a hashtag channel"));
+  lv_label_set_text(title, TR("Select a link or location"));
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
   lv_obj_set_width(title, card_w - SC(62));
   lv_obj_set_style_text_font(title, &g_font_semi_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_align(title, LV_ALIGN_TOP_LEFT, SC(14), (header_h - lv_font_get_line_height(&g_font_semi_16)) / 2);
-  addCloseXBadge(card, [](lv_event_t*) { closeChatHashtagPicker(); });
+  addCloseXBadge(card, [](lv_event_t*) { closeChatLinkPicker(); });
 
   lv_obj_t* list = lv_obj_create(card);
   lv_obj_remove_style_all(list);
@@ -41222,45 +41233,36 @@ static void openChatHashtagPicker(const char* text) {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
   lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
-  for (int i = 0; i < s_chat_hashtag_choice_count; ++i) {
+  for (int i = 0; i < s_chat_link_choice_count; ++i) {
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, card_w - 2 * pad, button_h);
     styleButton(row);
-    lv_obj_add_event_cb(row, chatHashtagPickerChoiceCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_add_event_cb(row, chatLinkPickerChoiceCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     lv_obj_t* label = lv_label_create(row);
-    lv_label_set_text(label, s_chat_hashtag_choices[i]);
+    const ChatLinkChoice& choice = s_chat_link_choices[i];
+    char item[UITask::MAX_MSG_TEXT + 1];
+    const int len = choice.end - choice.start;
+    memcpy(item, s_chat_link_picker_text + choice.start, len);
+    item[len] = '\0';
+    lv_label_set_text(label, item);
     lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(label);
   }
-  lv_obj_move_foreground(s_chat_hashtag_picker);
+  lv_obj_move_foreground(s_chat_link_picker);
 }
 
-// Keyboard select on a bubble: open its first URL menu, map coordinate or #channel.
+// Keyboard select on a bubble: open its single link, or let the user pick when there are several.
 [[maybe_unused]] static bool navActivateBubbleLink(lv_obj_t* row) {
   if (!row || !g_lv.task) return false;
   const intptr_t logical_i = reinterpret_cast<intptr_t>(lv_obj_get_user_data(row));
   if (logical_i < 0 || logical_i >= s_chat_virt.n || !s_chat_virt.msg_idx) return false;
   UITask::UIMessage m;
   if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[logical_i], m)) return false;
-  char url[240];
-  if (chatFirstUrl(m.text, url, sizeof url)) { openUrlMenu(url); return true; }
-  double lat = 0.0, lon = 0.0;
-  if (chatFirstCoord(m.text, &lat, &lon)) { openMapAtCoords(lat, lon); return true; }
-  int s, e;
-  char tag[32];
-  if (chatHashtagSpan(m.text, 0, &s, &e)) {
-    const bool multiple = chatHashtagSpan(m.text, e, &s, &e);
-    if (multiple) openChatHashtagPicker(m.text);
-    else if (e - s < (int)sizeof tag) {
-      memcpy(tag, m.text + s, e - s);
-      tag[e - s] = '\0';
-      openHashtagChat(tag);
-    }
-    return true;
-  }
-  return false;
+  if (!collectChatLinkChoices(m.text)) return false;
+  openChatLinkPicker(m.text);
+  return true;
 }
 
 static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_idx,
@@ -41388,37 +41390,24 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 #endif
                               LV_PART_MAIN);
   lv_label_set_text(tlbl, d.san_text);
-  // Clickable URLs: tint any link blue (recolor tags are zero-width, so wrapping/height
-  // still measure from the plain d.san_text and stay correct).
+  // Detect every actionable span before layout; the text overlay supplies per-span
+  // highlights while the plain label underneath remains the hit-test coordinate map.
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
   int _ca, _cb; double _clat, _clon;
   const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
   int _ha, _hb; const bool has_hashtag = chatHashtagSpan(d.san_text, 0, &_ha, &_hb);
-#if !defined(HAS_TDECK_PRO)
-  if (has_url) {
-    char rc[UITask::MAX_MSG_TEXT + 40];
-    if (chatRecolorUrls(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
-  } else if (has_coords) {
-    char rc[UITask::MAX_MSG_TEXT + 40];
-    if (chatRecolorCoords(d.san_text, rc, sizeof rc)) { lv_label_set_recolor(tlbl, true); lv_label_set_text(tlbl, rc); }
-  }
-#endif
   if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(tlbl, txt_w_used);
   lv_obj_set_pos(tlbl, 0, inner_y);
-  lv_obj_t* hashtag_spans = nullptr;
+  const bool failed_send = m.outgoing && m.deliv_state == UITask::DELIV_FAILED;
+  lv_obj_t* link_spans = nullptr;
 #if !defined(HAS_TDECK_PRO)
-  if (has_hashtag && !has_url && !has_coords) {
-    hashtag_spans = chatCreateHashtagSpans(bubble, tlbl, d.san_text, msg_font,
-                                            lv_color_hex(COLOR_CHAT_TEXT), txt_w_used);
+  if ((has_url || has_coords || has_hashtag) && !failed_send) {
+    link_spans = chatCreateLinkSpans(bubble, tlbl, d.san_text, msg_font,
+                                     lv_color_hex(COLOR_CHAT_TEXT), txt_w_used);
   }
-  if (hashtag_spans) {
+  if (link_spans) {
     lv_obj_set_style_text_opa(tlbl, LV_OPA_0, LV_PART_MAIN);
-  } else if (has_hashtag && !has_url && !has_coords) {
-    lv_obj_set_style_text_color(tlbl, lv_color_hex(COLOR_CHAT_LINK), LV_PART_SELECTED);
-    lv_obj_set_style_bg_color(tlbl, bubble_bg, LV_PART_SELECTED);
-    lv_label_set_text_sel_start(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _ha));
-    lv_label_set_text_sel_end(tlbl, _lv_txt_encoded_get_char_id(d.san_text, _hb));
   }
 #endif
 
@@ -41453,24 +41442,23 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 
   lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
               reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  if (has_hashtag && !has_url && !has_coords &&
-      !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED)) {
+#if !defined(HAS_TDECK_PRO)
+  if (link_spans) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_t* hit_target = hashtag_spans ? hashtag_spans : tlbl;
-    lv_obj_add_flag(hit_target, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
-    lv_obj_add_event_cb(hit_target, bubbleHashtagTapCb, LV_EVENT_SHORT_CLICKED,
+    lv_obj_add_flag(link_spans, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
+    lv_obj_add_event_cb(link_spans, bubbleChatLinkTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   }
-  // A short tap on a bubble that carries a URL opens the Open-in-web / Create-QR menu
-  // (SHORT_CLICKED so it never double-fires with the long-press action menu). Failed
-  // outgoing sends keep their tap-to-resend.
-  if (has_url && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+#else
+  // E-paper keeps its plain-text rendering and broad URL/coordinate tap fallback.
+  if (has_url && !failed_send)
     lv_obj_add_event_cb(row, bubbleUrlTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  else if (has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+  else if (has_coords && !failed_send)
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
-  if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
+#endif
+  if (failed_send)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
 
@@ -52024,31 +52012,34 @@ static void openThreadDetailByIdx(int idx, bool channel) {
 #endif
 }
 
-// Open an already configured channel, or offer the prefilled join form.
-// Use the normalized name so a tapped mixed-case tag resolves to its channel.
+// Open a configured hashtag channel by its derived secret, or offer the join form.
 static void openHashtagChat(const char* tag) {
-  char name[32];
-  snprintf(name, sizeof name, "%s", tag);
-  for (char* p = name; *p; ++p)
-    if (*p >= 'A' && *p <= 'Z') *p = (char)(*p + 32);
-
+  char hashed[42];
+  uint8_t secret[16];
+  if (!deriveHashtagChannelKey(tag, hashed, sizeof(hashed), secret)) {
+    openJoinHashtagChannelModal(tag);
+    return;
+  }
   bool joined = false;
+  char channel_name[UITask::MAX_THREAD_NAME + 1] = "";
 #ifdef MAX_GROUP_CHANNELS
   for (int slot = 0; slot < MAX_GROUP_CHANNELS; ++slot) {
     ChannelDetails channel;
-    if (the_mesh.getChannel(slot, channel) && strcmp(channel.name, name) == 0) {
+    if (the_mesh.getChannel(slot, channel) &&
+      memcmp(channel.channel.secret, secret, sizeof(secret)) == 0) {
       joined = true;
+      snprintf(channel_name, sizeof(channel_name), "%s", channel.name);
       break;
     }
   }
 #endif
   if (!joined) {
-    openJoinHashtagChannelModal(name);
+    openJoinHashtagChannelModal(hashed);
     return;
   }
   g_lv.task->refreshThreadsFromMesh();
   g_lv.dirty_threads = true;
-  const int thread_idx = findChannelThreadByName(name);
+  const int thread_idx = findChannelThreadByName(channel_name);
   if (thread_idx < 0) { g_lv.task->showAlert(TR("Channel not found"), 1400); return; }
   if (g_lv.dm.detail_open) closeChatPanel(&g_lv.dm);
   if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
@@ -75393,7 +75384,7 @@ static constexpr uint8_t PF_SWIPE = 2;
 static constexpr uint8_t PF_BASE  = 4;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
-  { P_OPEN(s_chat_hashtag_picker),  []{ closeChatHashtagPicker(); },      PF_COUNT },   // keyboard navigation: choose a hashtag from the bubble
+  { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet
   { P_OPEN(s_hw_pick_root),          []{ hwPickClose(); },                PF_COUNT },   // a Home widget's choices
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
