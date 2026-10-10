@@ -52409,7 +52409,7 @@ static void powerRebootCb(lv_event_t* e) {
 // finds the hardware switch — and that is what the T-Display P4 did: no wake
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
-#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4)
+#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
 static void powerOffNow();
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -52578,7 +52578,11 @@ static void openPowerMenu() {
 
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
+#if defined(HAS_SENSECAP_INDICATOR)
+  const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 3 * p_step + 8;   // Power-off row hidden: 3 rows
+#else
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#endif
 #elif defined(HAS_RAK_TAP_V2)
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
@@ -52634,11 +52638,12 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
+#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4) || defined(HAS_SENSECAP_INDICATOR)
   // No "Power off" here: nothing on this board can wake it from deep sleep.
   // (The P4's BOOT button is GPIO35, not one of its LP GPIOs, so it cannot.)
   // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the L2's
   // wake button is behind an I2C expander, which cannot wake the ESP32-S3; the
+  // Indicator's user button is GPIO38, not an RTC GPIO, so it cannot wake it; the
   // T-Display P4 and Tanmatsu have no user button either. Offering a software
   // power-off that cannot be undone reads as a freeze (#310, #406). Remaining
   // rows shift up one slot.
