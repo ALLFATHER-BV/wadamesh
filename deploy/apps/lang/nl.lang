@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Vermeldingen
 @ mention sound	Geluid bij @-vermelding
+A background has to be a JPEG	Een achtergrond moet een JPEG zijn
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATISCHE ADVERTS
 About	Over
@@ -32,6 +33,23 @@ About the map	Over de kaart
 Accent popups	Accent-popups
 Accent popups: off	Accent-popups: uit
 Accent popups: on	Accent-popups: aan
+Background	Achtergrond
+Background colour	Achtergrondkleur
+Background set, it shows after a restart	Achtergrond ingesteld, zichtbaar na een herstart
+Check position every	Positie controleren elke
+Choose an image	Kies een afbeelding
+Choose the colour	Kies de kleur
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimenteel. Vertraagt de processor terwijl het scherm uit is (Bluetooth en Wi-Fi blijven werken), laat de GPS rusten tussen positiecontroles en houdt een bewegende achtergrond stil.
+GPS: resting, next check in %lum%02lus	GPS: rust, volgende controle over %lum%02lus
+Image	Afbeelding
+Moving aurora	Bewegende aurora
+None	Geen
+Open a JPEG, then tap 'Set as background'	Open een JPEG, tik dan op 'Instellen als achtergrond'
+Save battery	Batterij sparen
+Set as background	Instellen als achtergrond
+Still aurora	Stille aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	De GPS rust tussen positiecontroles en wordt vanzelf wakker. Hij blijft actief zolang de kaart, deze pagina of Discover open is. De batterijbesparing zet dit ook aan.
+remote view open	weergave op afstand open
 Accent colour	Accentkleur
 Appearance	Weergave
 Condense Nav (restart to apply)	Compacte navigatie (herstart om toe te passen)

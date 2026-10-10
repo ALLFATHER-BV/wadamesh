@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminál
 @  Mentions	@  Zmínky
 @ mention sound	Zvuk při @ zmínce
+A background has to be a JPEG	Pozadí musí být JPEG
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATICKÉ ADVERTY
 About	O aplikaci
@@ -32,6 +33,23 @@ About the map	O mapě
 Accent popups	Vyskakovací okna akcentu
 Accent popups: off	Vyskakovací okna akcentu: vypnuto
 Accent popups: on	Vyskakovací okna akcentu: zapnuto
+Background	Pozadí
+Background colour	Barva pozadí
+Background set, it shows after a restart	Pozadí nastaveno, zobrazí se po restartu
+Check position every	Kontrolovat polohu každých
+Choose an image	Vybrat obrázek
+Choose the colour	Vybrat barvu
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimentální. Zpomalí procesor při vypnuté obrazovce (Bluetooth a Wi-Fi fungují dál), nechá GPS odpočívat mezi kontrolami polohy a zastaví pohyblivé pozadí.
+GPS: resting, next check in %lum%02lus	GPS: odpočívá, další kontrola za %lum%02lus
+Image	Obrázek
+Moving aurora	Pohyblivá aurora
+None	Žádné
+Open a JPEG, then tap 'Set as background'	Otevřete JPEG a klepněte na „Nastavit jako pozadí“
+Save battery	Šetřit baterii
+Set as background	Nastavit jako pozadí
+Still aurora	Klidná aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS mezi kontrolami polohy odpočívá a probouzí se samo. Zůstává vzhůru, dokud je otevřená mapa, tato stránka nebo Discover. Spořič baterie to zapne také.
+remote view open	vzdálené zobrazení otevřeno
 Accent colour	Barva akcentu
 Appearance	Vzhled
 Condense Nav (restart to apply)	Kompaktní navigace (pro použití restartujte)

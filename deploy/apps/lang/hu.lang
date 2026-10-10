@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminál
 @  Mentions	@  Említések
 @ mention sound	@ említés hangja
+A background has to be a JPEG	A háttérkép csak JPEG lehet
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATIKUS ADVERTEK
 About	Névjegy
@@ -32,6 +33,23 @@ About the map	A térképről
 Accent popups	Ékezetes felugró ablakok
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
+Background	Háttér
+Background colour	Háttérszín
+Background set, it shows after a restart	Háttér beállítva, újraindítás után jelenik meg
+Check position every	Pozíció ellenőrzése minden
+Choose an image	Kép választása
+Choose the colour	Szín választása
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Kísérleti. Kikapcsolt kijelzőnél lassítja a processzort (a Bluetooth és a Wi-Fi tovább működik), pihenteti a GPS-t a pozícióellenőrzések között, és megállítja a mozgó hátteret.
+GPS: resting, next check in %lum%02lus	GPS: pihen, következő ellenőrzés %lum%02lus múlva
+Image	Kép
+Moving aurora	Mozgó aurora
+None	Nincs
+Open a JPEG, then tap 'Set as background'	Nyisson meg egy JPEG fájlt, majd koppintson a 'Beállítás háttérképként' lehetőségre
+Save battery	Akkumulátor kímélése
+Set as background	Beállítás háttérképként
+Still aurora	Álló aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	A GPS pihen a pozícióellenőrzések között, és magától felébred. Ébren marad, amíg a térkép, ez az oldal vagy a Felfedezés nyitva van. Az akkumulátorkímélő is bekapcsolja.
+remote view open	távoli nézet nyitva
 Accent colour	Kiemelőszín
 Appearance	Megjelenés
 Condense Nav (restart to apply)	Tömör navigáció (újraindítás az alkalmazáshoz)

@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Erwähnungen
 @ mention sound	Ton bei @-Erwähnung
+A background has to be a JPEG	Ein Hintergrund muss ein JPEG sein
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATISCHE ADVERTS
 About	Über
@@ -32,6 +33,23 @@ About the map	Über die Karte
 Accent popups	Akzent-Popups
 Accent popups: off	Akzent-Popups: aus
 Accent popups: on	Akzent-Popups: ein
+Background	Hintergrund
+Background colour	Hintergrundfarbe
+Background set, it shows after a restart	Hintergrund gesetzt, er erscheint nach einem Neustart
+Check position every	Position prüfen alle
+Choose an image	Bild wählen
+Choose the colour	Farbe wählen
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimentell. Drosselt den Prozessor bei ausgeschaltetem Bildschirm (Bluetooth und WLAN laufen weiter), lässt das GPS zwischen Positionsprüfungen ruhen und hält einen bewegten Hintergrund still.
+GPS: resting, next check in %lum%02lus	GPS: ruht, nächste Prüfung in %lum%02lus
+Image	Bild
+Moving aurora	Bewegte Aurora
+None	Keiner
+Open a JPEG, then tap 'Set as background'	Öffne ein JPEG, dann auf 'Als Hintergrund festlegen' tippen
+Save battery	Akku schonen
+Set as background	Als Hintergrund festlegen
+Still aurora	Ruhige Aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Das GPS ruht zwischen Positionsprüfungen und wacht von selbst auf. Es bleibt wach, solange die Karte, diese Seite oder Discover geöffnet ist. Der Energiesparmodus schaltet dies ebenfalls ein.
+remote view open	Remote-Ansicht offen
 Accent colour	Akzentfarbe
 Appearance	Erscheinungsbild
 Condense Nav (restart to apply)	Kompakte Navigation (Neustart nötig)

@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Помињања
 @ mention sound	Звук за @ помињање
+A background has to be a JPEG	Позадина мора бити JPEG
 AF	AF
 AUTOMATIC ADVERTS	АУТОМАТСКИ АДВЕРТИ
 About	О програму
@@ -32,6 +33,23 @@ About the map	О мапи
 Accent popups	Искачући акценти
 Accent popups: off	Искачући акценти: искљ
 Accent popups: on	Искачући акценти: укљ
+Background	Позадина
+Background colour	Боја позадине
+Background set, it shows after a restart	Позадина постављена, приказује се након рестарта
+Check position every	Провери позицију сваких
+Choose an image	Изабери слику
+Choose the colour	Изабери боју
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Експериментално. Успорава процесор док је екран угашен (Bluetooth и Wi-Fi настављају да раде), пушта GPS да се одмара између провера позиције и зауставља покретну позадину.
+GPS: resting, next check in %lum%02lus	GPS: одмара, следећа провера за %lum%02lus
+Image	Слика
+Moving aurora	Покретна аурора
+None	Ништа
+Open a JPEG, then tap 'Set as background'	Отворите JPEG, па додирните 'Постави као позадину'
+Save battery	Штеди батерију
+Set as background	Постави као позадину
+Still aurora	Мирна аурора
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS се одмара између провера позиције и буди се сам. Остаје будан док су мапа, ова страница или Discover отворени. Уштеда батерије такође ово укључује.
+remote view open	отворен удаљени приказ
 Accent colour	Акцентна боја
 Appearance	Изглед
 Condense Nav (restart to apply)	Компактна навигација (рестарт за примену)
