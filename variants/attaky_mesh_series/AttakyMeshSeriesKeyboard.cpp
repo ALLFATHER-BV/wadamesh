@@ -101,6 +101,39 @@ static void ensureInit() {
   }
 }
 
+static bool awAck(uint8_t addr) {
+  Wire.beginTransmission(addr);
+  return Wire.endTransmission() == 0;
+}
+
+// The keyboard module can be attached or removed while the device runs, and the
+// one probe at the first poll could also miss it (still powering up, or the shared
+// bus busy past the lock's timeout), which kept the on-screen keys popping up over
+// an attached keyboard for the rest of the session. So each half is looked for
+// again once a second: one that answers is set up, one that misses twice in a row
+// is gone (a single missed transfer on the shared bus does not drop it).
+static void reprobe() {
+  static uint32_t s_next_ms = 0;
+  static uint8_t  s_miss[2] = { 0, 0 };
+  const uint32_t now = millis();
+  if ((int32_t)(now - s_next_ms) < 0) return;
+  s_next_ms = now + 1000;
+  for (int h = 0; h < 2; h++) {
+    if (!attakyI2cLock(5)) continue;   // busy: next second
+    if (!s_present[h]) {
+      if (awAck(KB_ADDR[h])) s_present[h] = initHalf(KB_ADDR[h]);
+      s_miss[h] = 0;
+    } else if (awAck(KB_ADDR[h])) {
+      s_miss[h] = 0;
+    } else if (++s_miss[h] >= 2) {
+      s_present[h] = false;
+      s_miss[h] = 0;
+      for (int r = 0; r < 5; r++) s_prev[h][r] = 0xFF;   // no stale "held" keys on return
+    }
+    attakyI2cUnlock();
+  }
+}
+
 static void scanHalf(uint8_t addr, uint8_t cols[5]) {
   for (uint8_t row = 0; row < 5; row++) {
     awWrite(addr, AW_REG_OUT_P1, p1Value(ROW_DRIVE[row]));
@@ -112,6 +145,7 @@ static void scanHalf(uint8_t addr, uint8_t cols[5]) {
 
 void attakyKeyboardPoll(bool active) {
   ensureInit();
+  reprobe();
 
   if (!active) {
     for (int h = 0; h < 2; h++)
