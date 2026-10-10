@@ -88,7 +88,16 @@ driver, variants/tdisplay_p4/P4Audio.cpp)
     Espressif's public es8311.c/es8311_reg.h; P4Audio.cpp additionally
     re-bases the esp-bsp init flow onto Arduino Wire.
 
-LovyanGFX (RAK WisMesh Tap V2 display backend)
+ST7701S panel init list (SenseCAP Indicator display driver,
+variants/sensecap_indicator/IndicatorDisplay.cpp)
+    Copyright (c) Meshtastic
+    GPL-3.0 License — https://github.com/meshtastic/device-ui
+    The panel's second init command list (MADCTL vertical flip, SDIR
+    horizontal flip) is taken from Meshtastic device-ui's
+    include/graphics/LGFX/LGFX_INDICATOR.h (Panel_Indicator::getInitCommands).
+    The rest of the driver is original code on LovyanGFX's Panel_ST7701.
+
+LovyanGFX (display backend: RAK WisMesh Tap V2, SenseCAP Indicator and others)
     Copyright (c) lovyan03 — FreeBSD License — https://github.com/lovyan03/LovyanGFX
 
 Camillia-MT (CrowPanel Advance 3.5 software-SPI microSD backend)

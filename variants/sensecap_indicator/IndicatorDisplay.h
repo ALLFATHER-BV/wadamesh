@@ -3,10 +3,23 @@
 
 #include <helpers/ui/DisplayDriver.h>
 
-// 480x480 ST7701S RGB panel.
+#define LGFX_USE_V1
+#include <LovyanGFX.hpp>
+#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
+#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+
+// ST7701S with the Indicator's scan direction: LovyanGFX's stock ST7701 list,
+// then a second list that flips both axes.
+class IndicatorPanel : public lgfx::Panel_ST7701 {
+protected:
+  const uint8_t* getInitCommands(uint8_t listno) const override;
+};
+
+// 480x480 ST7701S RGB panel. The 3-wire SPI that configures it shares GPIO41/48
+// with the radio; its CS and RESET sit on the TCA9535.
 class IndicatorDisplay : public DisplayDriver {
 public:
-  IndicatorDisplay() : DisplayDriver(480, 480) {}
+  IndicatorDisplay();
   bool begin();
 
   bool isOn() override { return _isOn; }
@@ -29,5 +42,11 @@ public:
   void setBrightness(uint8_t brightness);
 
 private:
+  IndicatorPanel _panel;
+  lgfx::Bus_RGB _bus;
+  lgfx::Light_PWM _light;
+  lgfx::LGFX_Device _lcd;
+  bool _panelOk = false;   // begin() brought the panel up; until then the backlight stays off
   bool _isOn = false;
+  uint16_t _color = 0xFFFF;
 };
