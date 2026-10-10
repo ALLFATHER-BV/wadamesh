@@ -71,6 +71,9 @@ namespace ChatHashtag
                     break;
                 finish += (int)sequence;
             }
+            while (finish > offset + 1 &&
+                   (text[finish - 1] == '-' || text[finish - 1] == '_'))
+                --finish;
             if ((unsigned char)text[finish] >= 0x80)
             {
                 offset = finish;

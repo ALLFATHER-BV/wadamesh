@@ -28,6 +28,18 @@ int main()
   assert(!ChatHashtag::span("#1", 0, &start, &end));
   assert(!ChatHashtag::span("#1channel", 0, &start, &end));
   assert(ChatHashtag::span("#channel1", 0, &start, &end));
+  const std::string trailing_hyphen = "#mesh-";
+  assert(ChatHashtag::span(trailing_hyphen.c_str(), 0, &start, &end));
+  assert(trailing_hyphen.substr(start, end - start) == "#mesh");
+  const std::string trailing_underscore = "#mesh_";
+  assert(ChatHashtag::span(trailing_underscore.c_str(), 0, &start, &end));
+  assert(trailing_underscore.substr(start, end - start) == "#mesh");
+  const std::string hyphenated = "#mesh-channel";
+  assert(ChatHashtag::span(hyphenated.c_str(), 0, &start, &end));
+  assert(hyphenated.substr(start, end - start) == "#mesh-channel");
+  const std::string underscored = "#mesh_channel";
+  assert(ChatHashtag::span(underscored.c_str(), 0, &start, &end));
+  assert(underscored.substr(start, end - start) == "#mesh_channel");
   assert(!ChatHashtag::span("#FFF", 0, &start, &end));
   assert(!ChatHashtag::span("#FFFF", 0, &start, &end));
   assert(!ChatHashtag::span("#FFFFFF", 0, &start, &end));
@@ -46,20 +58,20 @@ int main()
   assert(strlen(full) == 15);
   assert(Utf8Text::valid(full, strlen(full)));
 
-  std::string broken(full, 14);  // Wardrive's former name:sub(1, 14)
+  std::string broken(full, 14); // Wardrive's former name:sub(1, 14)
   assert(!Utf8Text::valid(broken.data(), broken.size()));
 
   std::string scratch;
-  const char* clean = Utf8Text::sanitize(broken.data(), broken.size(), scratch);
+  const char *clean = Utf8Text::sanitize(broken.data(), broken.size(), scratch);
   assert(scratch == "Ouderkerk\xE2\x98\x80?");
   assert(Utf8Text::valid(clean, scratch.size()));
 
   scratch = "allocated";
-  const char* unchanged = Utf8Text::sanitize(full, strlen(full), scratch);
+  const char *unchanged = Utf8Text::sanitize(full, strlen(full), scratch);
   assert(unchanged == full);
   assert(scratch.empty());
 
-  const char overlong[] = { (char)0xC0, (char)0xAF };
+  const char overlong[] = {(char)0xC0, (char)0xAF};
   assert(!Utf8Text::valid(overlong, sizeof overlong));
   Utf8Text::sanitize(overlong, sizeof overlong, scratch);
   assert(scratch == "?");
