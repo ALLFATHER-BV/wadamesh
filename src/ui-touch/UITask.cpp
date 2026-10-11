@@ -5625,10 +5625,10 @@ static void m9NavClear() { s_m9_nav_n = 0; }
 static bool m9NavPop();   // body needs goToTab + s_m9_map_pan; defined beside them
 #endif
 
-// M9: a chat message row holds its bubble and the info line under it; the cursor
-// goes around the bubble (the row's first child) only. Returns null for anything else.
+// Keypad boards: a chat message row holds its bubble and the info line under it; the
+// cursor goes around the bubble (the row's first child) only. Returns null for anything else.
 static lv_obj_t* navChatBubbleOf(lv_obj_t* o) {
-#if defined(HAS_THINKNODE_M9)
+#if CAP_KEYPAD_NAV
   lv_obj_t* par = o ? lv_obj_get_parent(o) : nullptr;
   if (!par || (par != g_lv.ch.msgs && par != g_lv.dm.msgs)) return nullptr;
   lv_obj_t* b = lv_obj_get_child(o, 0);
@@ -8648,7 +8648,7 @@ static void openActionList(const char* title, const ActItem* items, int n) {
     lv_obj_set_style_text_font(t, &g_font_semi_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_align(t, LV_ALIGN_LEFT_MID, 16, 0);
-#if !defined(HAS_THINKNODE_M9)
+#if !CAP_KEYPAD_NAV
     lv_obj_align(actListMakeClose(hd), LV_ALIGN_RIGHT_MID, -6, 0);
 #endif
   }
@@ -8694,9 +8694,9 @@ static void openActionList(const char* title, const ActItem* items, int n) {
     lv_obj_set_style_text_color(lb, lv_color_hex(col), LV_PART_MAIN);
     lv_obj_align(lb, LV_ALIGN_LEFT_MID, tx, 0);
   }
-#if defined(HAS_THINKNODE_M9)
+#if CAP_KEYPAD_NAV
   if (head_h) {
-    // M9: the header's X is created after the rows. Keypad focus follows the tree, so the
+    // Keypad boards: the header's X is created after the rows. Keypad focus follows the tree, so the
     // menu opens on its first action and reaches the X last.
     lv_obj_t* x = actListMakeClose(card);
     lv_obj_add_flag(x, LV_OBJ_FLAG_IGNORE_LAYOUT);
@@ -17995,10 +17995,14 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  // X behaves like Cancel. An actions-only dialog leaves it out entirely: Cancel and
-  // the Back key already dismiss it, and on a keypad board the X only added a focus
-  // stop ahead of the real choices (#603).
+  // X behaves like Cancel. On a keypad board an actions-only dialog leaves it out:
+  // Cancel and the Back key already dismiss it, and the X only added a stop ahead of
+  // the real choices (#603). Touch-only boards keep it as a tap target.
+#if CAP_KEYPAD_NAV
   if (!actions_only_nav) addCloseXBadge(card, confirmCancelEvt);
+#else
+  addCloseXBadge(card, confirmCancelEvt);
+#endif
 
   // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
   // physically cannot reach them; scrolls vertically when the card hit the screen cap.
@@ -31100,7 +31104,10 @@ static bool      s_ct_select_mode = false;
 // so past 128 contacts it selected rows the list was not even showing and the
 // visible ones stayed unticked (#605).
 #define CT_SEL_MAX ((int)MAX_CONTACTS)
-static uint8_t   (*s_ct_sel)[6] = (uint8_t(*)[6])psAlloc((size_t)CT_SEL_MAX * 6);   // pub_key prefix of currently-selected (deletable) contacts — PSRAM
+// pub_key prefixes of the selected (deletable) contacts. Allocated when select mode
+// opens and freed when it closes: at MAX_CONTACTS it is ~12 KB, which the 2 MB
+// boards should not carry from boot for a mode most sessions never open.
+static uint8_t   (*s_ct_sel)[6] = nullptr;
 static int       s_ct_sel_n       = 0;
 static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
 static volatile bool s_ct_contacts_dirty = false;   // a contact was discovered/added (set from the mesh callback); UITask::loop rebuilds the visible Contacts list — issue #73
@@ -31206,7 +31213,13 @@ static void contactRowTapCb(lv_event_t* e){
   openContactActionSheet(ctx->mesh_idx, ctx->is_repeater, c.name);
 }
 
+static void ctSelFree(){ if(s_ct_sel){ heap_caps_free(s_ct_sel); s_ct_sel = nullptr; } }
 static void ctSetSelectMode(bool on){
+  if(on && !s_ct_sel){
+    s_ct_sel = (uint8_t(*)[6])psAlloc((size_t)CT_SEL_MAX * 6);
+    if(!s_ct_sel){ if(g_lv.task) g_lv.task->showAlert(TR("Low memory"), 1200); on = false; }
+  }
+  if(!on) ctSelFree();
   s_ct_select_mode = on;
   s_ct_sel_n = 0;
   if(s_ct_normal_bar){ if(on) lv_obj_add_flag(s_ct_normal_bar,LV_OBJ_FLAG_HIDDEN); else lv_obj_clear_flag(s_ct_normal_bar,LV_OBJ_FLAG_HIDDEN); }
@@ -31235,6 +31248,7 @@ static void ctExitSelectMode() {
   // way back into Contacts, so the clean rebuild happens where it is visible.
   s_ct_select_mode = false;
   s_ct_sel_n = 0;
+  ctSelFree();
   if (s_ct_normal_bar) lv_obj_clear_flag(s_ct_normal_bar, LV_OBJ_FLAG_HIDDEN);
   if (s_ct_select_bar) lv_obj_add_flag(s_ct_select_bar, LV_OBJ_FLAG_HIDDEN);
   ctUpdateDelLabel();
@@ -31339,6 +31353,7 @@ static void ctDeleteServiceTick(){
     if(g_lv.task){ char msg[32]; snprintf(msg,sizeof msg, TR("Deleted %d"), total); g_lv.task->showAlert(msg, 1200); }
     g_lv.dirty_threads = true;   // one refresh now that we're done
     ctSetSelectMode(false);      // exit select mode + rebuild the (now shorter) list
+    if(g_lv.task) g_lv.task->onThreadsChanged();   // nudge web clients to refetch
   }
 }
 static int ctSelKeyCmp(const void* a, const void* b){ return memcmp(a, b, 6); }
@@ -31573,7 +31588,7 @@ static void makeContactsTab(lv_obj_t* tab) {
   g_lv.contacts_search_indicator = nullptr;
   for (int i = 0; i < 4; ++i) s_contacts_seg_btns[i] = nullptr;
   s_contacts_overflow_root = nullptr;
-  s_ct_select_mode = false; s_ct_sel_n = 0;
+  s_ct_select_mode = false; s_ct_sel_n = 0; ctSelFree();
   s_ct_sort_sheet = nullptr; s_ct_select_bar = nullptr; s_ct_normal_bar = nullptr; s_ct_del_btn = nullptr;
   s_ct_disc_badge = nullptr; s_ct_filter_btn_lbl = nullptr;
 
@@ -37515,15 +37530,12 @@ static void makeMapTab(lv_obj_t* tab) {
     lv_obj_set_style_bg_opa(b, LV_OPA_70, LV_PART_MAIN);
 #if defined(HAS_THINKNODE_M9)
     // #609: the keypad cursor was too faint over the tiles. Focused, the button fills
-    // solid accent with a thick white ring, so it can't be lost against the map.
+    // solid accent so it can't be lost against the map. Fill only: the shared keypad
+    // cursor draws the outline, and a local one here would outrank it.
     for (lv_style_selector_t sel : { (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
                                      (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED) }) {
       lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), sel);
       lv_obj_set_style_bg_opa(b, LV_OPA_COVER, sel);
-      lv_obj_set_style_outline_color(b, lv_color_white(), sel);
-      lv_obj_set_style_outline_width(b, 3, sel);
-      lv_obj_set_style_outline_pad(b, 1, sel);
-      lv_obj_set_style_outline_opa(b, LV_OPA_COVER, sel);
     }
 #endif
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
@@ -40121,7 +40133,7 @@ static void openMessageActionMenu(int msg_idx) {
   }
   {
     lv_obj_t* x = addCloseXBadge(card, msgMenuBackdropCb);
-#if defined(HAS_THINKNODE_M9)
+#if CAP_KEYPAD_NAV
     // Lift the X into the card padding so the buttons below don't clip its focus cursor.
     lv_obj_align(x, LV_ALIGN_TOP_RIGHT, -2, -6);
 #else
@@ -55331,7 +55343,9 @@ static void chatHeaderApply(bool chat_open) {
   {
     const lv_coord_t pad = 3;
     const lv_coord_t head_h = m9ChatHeadH();   // == pad + title_h + sub_h + 2; the list starts here too
-    if (lv_obj_get_height(g_statusbar.root) != head_h) lv_obj_set_height(g_statusbar.root, head_h);
+    // The style height, not lv_obj_get_height: coordinates stay stale until the next
+    // layout, so a set earlier this tick would not show there yet.
+    if (lv_obj_get_style_height(g_statusbar.root, LV_PART_MAIN) != head_h) lv_obj_set_height(g_statusbar.root, head_h);
     lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, x_text, pad);
     lv_obj_align(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x_text, pad + title_h);
     const lv_coord_t text_mid = pad + (title_h + sub_h) / 2;

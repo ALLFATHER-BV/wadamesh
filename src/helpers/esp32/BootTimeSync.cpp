@@ -136,7 +136,9 @@ int collectSavedCandidates(Candidate* out, int max_out, uint32_t deadline_ms) {
   // One asynchronous scan, purely to decide WHICH saved networks are actually
   // in range and what authentication they advertise. Polling it against the
   // operation deadline keeps scanning inside the same global bound as
-  // association and SNTP.
+  // association and SNTP. A first attempt still mid-handshake makes the scan
+  // fail with ESP_ERR_WIFI_STATE, so drop it first.
+  WiFi.disconnect(false, true);
   int found = WiFi.scanNetworks(true, false);
   while (found == WIFI_SCAN_RUNNING && (int32_t)(millis() - deadline_ms) < 0) {
     delay(50);

@@ -13,7 +13,7 @@ this page is the five-minute tour that makes the board feel native.
   chat message's context menu, the SD row's hold-to-format) and unlocks the
   lock screen.
 - **Function row**: dedicated keys for Chats, Home, Mentions, Advert, Map,
-  Back, Mic and Ctrl (see the table below).
+  Back, Ctrl and Triangle (see the table below).
 - **QWERTY keyboard**: the keyboard controller resolves Shift/symbol layers
   itself, so keys always deliver their final character. It latches one key at
   a time, which is why there are no chords on this board; long-press carries
