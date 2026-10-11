@@ -62,6 +62,12 @@ int main() {
   assert(!ChatHashtag::span("#FF0000", 0, &start, &end));
   assert(!ChatHashtag::span("#FFFFFFFF", 0, &start, &end));
   assert(!ChatHashtag::span("#abcDef", 0, &start, &end));
+  assert(ChatHashtag::span("#Abcdef", 0, &start, &end));
+  assert(ChatHashtag::span("#A1bcde", 0, &start, &end));
+  assert(!ChatHashtag::span("#AbCdef", 0, &start, &end));
+  assert(ChatHashtag::span("#abcdeG", 0, &start, &end));
+  assert(ChatHashtag::span("#66decz", 0, &start, &end));
+  assert(std::string("#66decz").substr(start, end - start) == "#66decz");
   assert(!ChatHashtag::span("#ff0000", 0, &start, &end));
   assert(!ChatHashtag::span("#abcdef12", 0, &start, &end));
   assert(ChatHashtag::span("#mesh12", 0, &start, &end));

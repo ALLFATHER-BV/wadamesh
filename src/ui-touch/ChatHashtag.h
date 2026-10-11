@@ -32,15 +32,18 @@ namespace ChatHashtag
         if (length != 6 && length != 8)
             return false;
         bool colorLike = false;
+        bool titleCaseHex = text[start] >= 'A' && text[start] <= 'F';
         for (int offset = start; offset < end; ++offset)
         {
             if (!isxdigit((unsigned char)text[offset]))
                 return false;
+            if (offset > start && text[offset] >= 'A' && text[offset] <= 'F')
+                titleCaseHex = false;
             if (isdigit((unsigned char)text[offset]) ||
                 (text[offset] >= 'A' && text[offset] <= 'F'))
                 colorLike = true;
         }
-        return colorLike;
+        return colorLike && !titleCaseHex;
     }
 
     inline bool span(const char *text, int from, int *start, int *end)
@@ -85,8 +88,23 @@ namespace ChatHashtag
                 offset = finish;
                 continue;
             }
+            bool hasNonHexLetter = false;
+            for (int index = offset + 1; index < finish; ++index)
+            {
+                const char character = text[index];
+                if (((character >= 'a' && character <= 'z') ||
+                     (character >= 'A' && character <= 'Z')) &&
+                    !((character >= 'a' && character <= 'f') ||
+                      (character >= 'A' && character <= 'F')))
+                {
+                    hasNonHexLetter = true;
+                    break;
+                }
+            }
+            const bool startsWithDigit = isdigit((unsigned char)text[offset + 1]);
+            const bool malformedSixDigitHex = finish - offset == 7 && hasNonHexLetter;
             if (finish == offset + 1 || finish - offset >= 32 ||
-                isdigit((unsigned char)text[offset + 1]) ||
+                (startsWithDigit && !malformedSixDigitHex) ||
                 text[offset + 1] == '_' || text[offset + 1] == '-' ||
                 isHexColor(text, offset + 1, finish))
                 continue;
