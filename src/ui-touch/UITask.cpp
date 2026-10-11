@@ -41725,6 +41725,48 @@ static bool chatTextHasRtl(const char* text) {
   return false;
 }
 
+static void chatDrawRtlLinkText(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
+  lv_obj_t* label = lv_event_get_target(e);
+  lv_obj_t* hit_label = reinterpret_cast<lv_obj_t*>(lv_obj_get_user_data(label));
+  if (!hit_label) return;
+
+  const char* text = lv_label_get_text(hit_label);
+  const lv_font_t* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
+  if (!text || !font) return;
+
+  lv_area_t content;
+  lv_obj_get_content_coords(label, &content);
+  lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
+  lv_draw_label_dsc_t draw_dsc;
+  lv_draw_label_dsc_init(&draw_dsc);
+  draw_dsc.font = font;
+  draw_dsc.color = lv_color_hex(COLOR_CHAT_LINK);
+
+  ChatLinkChoice choice{};
+  for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end) {
+    const uint32_t first_char = _lv_txt_encoded_get_char_id(text, choice.start);
+    const uint32_t end_char = _lv_txt_encoded_get_char_id(text, choice.end);
+
+    for (uint32_t char_id = first_char; char_id < end_char; ++char_id) {
+      lv_point_t pos;
+      lv_label_get_letter_pos(hit_label, char_id, &pos);
+      uint32_t byte_id = _lv_txt_encoded_get_byte_id(text, char_id);
+      const uint32_t letter = _lv_txt_encoded_next(text, &byte_id);
+      const uint32_t next_letter = _lv_txt_encoded_next(&text[byte_id], nullptr);
+      const lv_coord_t glyph_w = LV_MAX(1, lv_font_get_glyph_width(font, letter, next_letter));
+      char letter_text[5] = {};
+      const size_t letter_bytes = byte_id - _lv_txt_encoded_get_byte_id(text, char_id);
+      const uint32_t letter_byte_id = _lv_txt_encoded_get_byte_id(text, char_id);
+      memcpy(letter_text, text + letter_byte_id, letter_bytes);
+      const bool letter_rtl = _lv_bidi_detect_base_dir(letter_text) == LV_BASE_DIR_RTL;
+      pos.x = static_cast<lv_coord_t>(content.x1 + pos.x - (letter_rtl ? glyph_w : 0));
+      pos.y = static_cast<lv_coord_t>(content.y1 + pos.y);
+      lv_draw_letter(draw_ctx, &draw_dsc, &pos, letter);
+    }
+  }
+}
+
 static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
                                      const char* text, const lv_font_t* font,
                                      lv_color_t color, lv_coord_t width,
@@ -41765,6 +41807,8 @@ static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
   if (recolored) lv_mem_free(recolored);
   lv_obj_set_pos(label, x, y);
   lv_obj_set_user_data(label, hit_label);
+  if (has_rtl)
+    lv_obj_add_event_cb(label, chatDrawRtlLinkText, LV_EVENT_DRAW_MAIN_END, nullptr);
   return label;
 }
 
