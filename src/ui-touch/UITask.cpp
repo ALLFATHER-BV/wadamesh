@@ -40864,21 +40864,25 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   return ChatHashtag::span(text, from, start, end);
 }
-static void chatAppendSpan(lv_obj_t* group, const char* text, int start, int end,
-                           lv_color_t color, bool highlighted) {
+static void chatAppendRecolor(char* output, size_t& offset, const char* text,
+                              int start, int end, bool highlighted, lv_color_t normal_color) {
   if (end <= start) return;
-  char part[UITask::MAX_MSG_TEXT + 1];
-  const int len = end - start;
-  memcpy(part, text + start, len);
-  part[len] = '\0';
-  lv_span_t* span = lv_spangroup_new_span(group);
-  lv_span_set_text(span, part);
-  if (highlighted) lv_style_set_text_color(&span->style, lv_color_hex(COLOR_CHAT_LINK));
-  else             lv_style_set_text_color(&span->style, color);
+  bool color_open = false;
+  for (int index = start; index < end; ++index) {
+    if (text[index] == '#') {
+      if (color_open) output[offset++] = '#';
+      color_open = false;
+      output[offset++] = '#';
+    } else if (!highlighted && !color_open) {
+      offset += snprintf(output + offset, 9, "#%06X ",
+                         (unsigned)(lv_color_to32(normal_color) & 0xFFFFFFu));
+      color_open = true;
+    }
+    output[offset++] = text[index];
+  }
+  if (color_open) output[offset++] = '#';
+  output[offset] = '\0';
 }
-// Copy `in` -> `out`, wrapping each URL in a blue recolor tag. Bails (false) if `in`
-// already has a '#' (the recolor parser would choke on it) — caller then shows plain
-// text and the tap still works.
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -41066,37 +41070,65 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
   return next->start != INT_MAX && next->end > from;
 }
 
-static lv_obj_t* chatCreateLinkSpans(lv_obj_t* parent, lv_obj_t* hit_label,
+static bool chatTextHasRtl(const char* text) {
+#if LV_USE_BIDI
+  uint32_t offset = 0;
+  while (text[offset]) {
+    const uint32_t start = offset;
+    _lv_txt_encoded_next(text, &offset);
+    char letter[5] = {};
+    const size_t length = offset - start;
+    if (length == 0 || length >= sizeof(letter)) return true;
+    memcpy(letter, text + start, length);
+    if (_lv_bidi_detect_base_dir(letter) == LV_BASE_DIR_RTL) return true;
+  }
+#else
+  (void)text;
+#endif
+  return false;
+}
+
+static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
                                      const char* text, const lv_font_t* font,
                                      lv_color_t color, lv_coord_t width,
                                      lv_coord_t x, lv_coord_t y) {
   ChatLinkChoice choice{};
-  int from = 0;
-  if (!nextChatLinkChoice(text, from, &choice)) return nullptr;
-  lv_obj_t* group = lv_spangroup_create(parent);
-  lv_obj_remove_style_all(group);
-  lv_obj_set_style_text_font(group, font, LV_PART_MAIN);
-  lv_obj_set_style_text_color(group, color, LV_PART_MAIN);
-  lv_obj_set_style_text_letter_space(group,
+  size_t link_count = 0;
+  for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end)
+    ++link_count;
+  if (!link_count) return nullptr;
+  const bool has_rtl = chatTextHasRtl(text);
+  char* recolored = nullptr;
+  if (!has_rtl) {
+    recolored = static_cast<char*>(lv_mem_alloc(11 * strlen(text) + 9 * link_count + 1));
+    if (!recolored) return nullptr;
+    size_t offset = 0;
+    int cursor = 0;
+    for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end) {
+      chatAppendRecolor(recolored, offset, text, cursor, choice.start, false, color);
+      chatAppendRecolor(recolored, offset, text, choice.start, choice.end, true, color);
+      cursor = choice.end;
+    }
+    chatAppendRecolor(recolored, offset, text, cursor, (int)strlen(text), false, color);
+  }
+  lv_obj_t* label = lv_label_create(parent);
+  lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
+  lv_obj_set_style_text_color(label, has_rtl ? color : lv_color_hex(COLOR_CHAT_LINK), LV_PART_MAIN);
+  lv_obj_set_style_text_letter_space(label,
       lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_obj_set_style_text_line_space(group,
+  lv_obj_set_style_text_line_space(label,
       lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_spangroup_set_align(group, LV_TEXT_ALIGN_LEFT);
-  lv_spangroup_set_overflow(group, LV_SPAN_OVERFLOW_CLIP);
-  lv_spangroup_set_mode(group, LV_SPAN_MODE_BREAK);
-  int cursor = 0;
-  do {
-    chatAppendSpan(group, text, cursor, choice.start, color, false);
-    chatAppendSpan(group, text, choice.start, choice.end, color, true);
-    cursor = choice.end;
-    from = cursor;
-  } while (nextChatLinkChoice(text, from, &choice));
-  chatAppendSpan(group, text, cursor, (int)strlen(text), color, false);
-  lv_obj_set_width(group, width);
-  lv_obj_set_pos(group, x, y);
-  lv_obj_set_user_data(group, hit_label);
-  lv_spangroup_refr_mode(group);
-  return group;
+  lv_obj_set_style_text_align(label,
+      lv_obj_get_style_text_align(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_obj_set_style_base_dir(label, lv_obj_get_style_base_dir(hit_label, LV_PART_MAIN), LV_PART_MAIN);
+  lv_label_set_long_mode(label, lv_label_get_long_mode(hit_label));
+  lv_obj_set_width(label, width);
+  lv_label_set_recolor(label, !has_rtl);
+  lv_label_set_text(label, has_rtl ? text : recolored);
+  if (recolored) lv_mem_free(recolored);
+  lv_obj_set_pos(label, x, y);
+  lv_obj_set_user_data(label, hit_label);
+  return label;
 }
 
 static constexpr int CHAT_LINK_CHOICE_MAX = 16;
@@ -41427,13 +41459,13 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_set_width(tlbl, txt_w_used);
   lv_obj_set_pos(tlbl, 0, inner_y);
   const bool failed_send = m.outgoing && m.deliv_state == UITask::DELIV_FAILED;
-  lv_obj_t* link_spans = nullptr;
+  lv_obj_t* link_label = nullptr;
 #if !defined(HAS_TDECK_PRO)
   if ((has_url || has_coords || has_hashtag) && !failed_send) {
-    link_spans = chatCreateLinkSpans(bubble, tlbl, d.san_text, msg_font,
+    link_label = chatCreateLinkLabel(bubble, tlbl, d.san_text, msg_font,
                                      lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, 0, inner_y);
   }
-  if (link_spans) {
+  if (link_label) {
     lv_obj_set_style_text_opa(tlbl, LV_OPA_0, LV_PART_MAIN);
   }
 #endif
@@ -41470,10 +41502,10 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
               reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
 #if !defined(HAS_TDECK_PRO)
-  if (link_spans) {
+  if (link_label) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_add_flag(link_spans, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
-    lv_obj_add_event_cb(link_spans, bubbleChatLinkTapCb, LV_EVENT_SHORT_CLICKED,
+    lv_obj_add_flag(link_label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE | NAV_SKIP_FLAG);
+    lv_obj_add_event_cb(link_label, bubbleChatLinkTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   }
 #else
