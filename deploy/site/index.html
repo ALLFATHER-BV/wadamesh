@@ -599,6 +599,7 @@
       <a class="devtile" href="#standalone" data-find="t-deck max"><span class="mk">LilyGo</span><b>T-Deck Max</b><span class="spec">E-paper keyboard and touch handheld.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
       <a class="devtile" href="#standalone" data-find="v4-r8"><span class="mk">Heltec</span><b>V4-R8</b><span class="spec">V4 with 8&nbsp;MB PSRAM and an SD card.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
       <a class="devtile" href="#standalone" data-find="crowpanel"><span class="mk">Elecrow</span><b>CrowPanel Advance 3.5</b><span class="spec">3.5-inch touch panel with an SX1262 module.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="crowpanel"><span class="mk">Elecrow</span><b>CrowPanel Advance 5.0</b><span class="spec">5-inch 800&times;480 touch panel with an SX1262 module.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
     </div>
   </div>
 </section>
@@ -757,6 +758,11 @@
               <esp-web-install-button id="inst-crowpanel-35" manifest="https://firmware.wadamesh.com/latest-beta/manifest-crowpanel-35.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="crowpanel-35" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-crowpanel-35-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta only. Attach the SX1262 before booting; flash with care and report what works.</p></div>
+            <div class="board" data-search="elecrow crowpanel advance 5.0 5 inch esp32-s3 st7262 rgb gt911 sx1262 touchscreen lora"><h4>CrowPanel Advance 5.0 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>5&quot; 800&times;480 touch display; requires an SX1262 module in the wireless slot and the function DIP switch set to the wireless module.</p>
+              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Hardware validation pending</b>This build is for the Advance 5.0 (V1.1 and later) with an SX1262 in the wireless slot, not other CrowPanel models. Display, touch, backlight and radio follow the hardware reference; behaviour on a physical unit has not been verified. The DIP switch hands the radio's pins to the microSD slot otherwise, so there is no SD card; there is also no GPS and no battery monitoring. Landscape is the default, with portrait available in Display settings.</span></span>
+              <esp-web-install-button id="inst-crowpanel-50" manifest="https://firmware.wadamesh.com/latest-beta/manifest-crowpanel-50.json"></esp-web-install-button>
+              <a class="dl2" data-dl-board="crowpanel-50" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-crowpanel-50-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
+              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta only. Set the DIP switch and attach the SX1262 before booting; flash with care and report what works.</p></div>
           </div>
         </details>
 

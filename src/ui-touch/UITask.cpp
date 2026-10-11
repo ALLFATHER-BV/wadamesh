@@ -196,6 +196,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include <WioTrackerL2Io.h>
   #elif defined(HAS_CROWPANEL_35)
     #include <CrowPanel35Display.h>
+  #elif defined(HAS_CROWPANEL_50)
+    #include <CrowPanel50Display.h>
   #elif defined(HAS_RAK_TAP_V2)
     #include <LGFXDisplay.h>                 // LovyanGFX FSPI on RAK Tap V2
   #elif defined(HAS_TDISPLAY_P4)
@@ -264,6 +266,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern WioTrackerL2Display display;
   #elif defined(HAS_CROWPANEL_35)
     extern CrowPanel35Display display;
+  #elif defined(HAS_CROWPANEL_50)
+    extern CrowPanel50Display display;
   #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
@@ -5102,7 +5106,7 @@ static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_col
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
   else                                  display.setDisplayRotation(0);
 #elif defined(ATTAKY_MESH_SERIES)
   else                                  display.setDisplayRotation(DISPLAY_ROTATION);
@@ -9029,7 +9033,7 @@ static void kbShowRotateArrows(bool show) {
 // control. The arrows are not created on these boards; every other reference to
 // the two pointers is null-guarded, so leaving them null is enough to remove
 // the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -16263,7 +16267,7 @@ static void rotateScreenCycleCb(lv_event_t* e) {
 #if defined(ESP32)
   // Simple toggle: portrait <-> the board's upright landscape orientation.
   const uint8_t cur  = touchPrefsGetUiRotation();
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
   const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_270
                                                  : (uint8_t)LV_DISP_ROT_NONE;
 #else
@@ -17472,7 +17476,7 @@ static void buildLockPage() {
                  });
 #endif
   }
-#if !defined(HAS_CROWPANEL_35)   // no unlock control there, so no lock to put a PIN on
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there, so no lock to put a PIN on
   {
     // PIN lock: off until switched on here. On asks for a new PIN twice; off and Change
     // ask for the current one first. The switch follows the PIN, not the tap.
@@ -31574,7 +31578,7 @@ static volatile uint16_t s_tiles_free_kb = 0xFFFF;
 static fs::LittleFSFS s_tiles_fs;
 static bool           s_tiles_fs_ready = false;
 #if WADA_WEB_FILE_TRANSFER_INTERNAL
-// File Transfer's storage on the Attaky (declared with the transfer app above).
+// File Transfer's storage on the Attaky and CrowPanel 5.0 (declared with the transfer app above).
 static fs::FS& internalTransferFs()      { return s_tiles_fs; }
 static bool    internalTransferFsReady() { return s_tiles_fs_ready; }
 static size_t  internalTransferFsUsed()  { return s_tiles_fs.usedBytes(); }
@@ -32882,6 +32886,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "wio-tracker-l2"
 #elif defined(HAS_CROWPANEL_35)
 #define WADA_BOARD_ID "crowpanel-35"
+#elif defined(HAS_CROWPANEL_50)
+#define WADA_BOARD_ID "crowpanel-50"
 #elif defined(HELTEC_LORA_V4_TFT)
 #define WADA_BOARD_ID "heltec-v4-tft"
 #else
@@ -50527,7 +50533,7 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 63;
 static void applyBrightness(uint8_t pct) {
@@ -56223,7 +56229,7 @@ static lv_obj_t* hwIcon(lv_obj_t* parent, const char* glyph, uint32_t col, bool 
 static const lv_font_t* hwFitFont(const char* txt, int w, int h) {
   const lv_font_t* faces[] = {
     &lv_font_montserrat_28,
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
     &lv_font_montserrat_24, &lv_font_montserrat_20,
 #endif
     &g_font_semi_16, &g_font_semi_14, &g_font_12,
@@ -64258,7 +64264,7 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
@@ -69932,7 +69938,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
   s_lock_on_screen_off = touchPrefsGetLockOnScreenOff();
 #endif
-#if !defined(HAS_CROWPANEL_35)   // no unlock control there, so no lock to put a PIN on
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there, so no lock to put a PIN on
   s_pin_on = touchPrefsPinIsSet();
   pinRestoreFails();
 #endif
@@ -70078,6 +70084,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
       g_draw_buf_px = 12800;
       band_psram = true;
+#elif defined(HAS_CROWPANEL_50)
+      // 20 full rows of the 800-px panel in internal RAM, as Camillia-MT runs it: the
+      // RGB panel already scans its framebuffer out of PSRAM continuously, and a PSRAM
+      // band on top of that starves the LCD_CAM DMA and tears the picture.
+      const int draw_band_w = 800;
+      g_draw_buf_px = draw_band_w * 20;
 #elif defined(HELTEC_LORA_V4_R8)
       // The R8's async flush byte-swaps each band into a 6144-px internal DMA buffer
       // (LGFX_SWAP_BUF_PX) and the band has to fit it, so it stays 240x24; in PSRAM all the
@@ -70306,6 +70318,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #elif defined(HAS_CROWPANEL_35)
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 480 : 320);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 320 : 480);
+#elif defined(HAS_CROWPANEL_50)
+    g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 800 : 480);
+    g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 480 : 800);
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -70378,7 +70393,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
-#if defined(HAS_CROWPANEL_35) || defined(ATTAKY_MESH_SERIES)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
       // The logo reads the legacy NVS copy before main.cpp moves prefs to SPIFFS. On
@@ -71706,8 +71721,8 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
-  // The display owns its backlight (I2C on Wio, PWM on CrowPanel).
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+  // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5).
   if (on) applyBrightness(s_brightness_pct);
   else    display.setBrightness(0);
 #elif defined(HAS_TDISPLAY_P4)
@@ -72189,7 +72204,7 @@ void UITask::wakeScreen() {
 }
 
 void UITask::lockScreen() {
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
   // No physical unlock button: imported lock preferences must still allow touch wake.
   sleepScreen();
   return;
@@ -74405,7 +74420,7 @@ void UITask::loop() {
     static bool s_con_input_up = false;
     if (!s_con_input_up) {
       if (heltecV4CapTouchBegin()) {
-#if !defined(HAS_CROWPANEL_35)
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
         heltecV4CapTouchStartBackgroundPoll(8);
 #endif
         s_con_input_up = true;
@@ -75077,7 +75092,7 @@ void UITask::loop() {
       // thing with or without it.
       ssaverStart(now, false);
       _screen_off = true;
-#if !defined(HAS_CROWPANEL_35)   // no unlock control there; its lockScreen() only sleeps too
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there; its lockScreen() only sleeps too
       _manual_lock = s_lock_on_screen_off || s_pin_on;
 #endif
     } else
@@ -75258,9 +75273,10 @@ void UITask::loop() {
     }
     if (g_lv.touch_inited) {
       pushDiagLine("touch init ok");
-    #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
+    #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
       // GT911 (LovyanGFX) and the TCA9535/ADS1115 (Wire) share I2C0 on
-      // Wio's GPIO47/48; the CrowPanel's GT911 shares I2C0 on GPIO15/16.
+      // Wio's GPIO47/48; the CrowPanels' GT911 shares I2C0 on GPIO15/16 (with
+      // the 5.0's backlight controller).
       // Keep every transaction on loopTask so polling cannot interrupt Wire.
       pushDiagLine("touch inline (shared I2C)");
     #elif defined(HAS_TDECK_PRO)

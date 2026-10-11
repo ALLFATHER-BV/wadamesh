@@ -874,7 +874,7 @@ void setup() {
 #endif
       if (r == 1)      display.setDisplayRotation(1);
       else if (r == 3) display.setDisplayRotation(3);
-#if defined(HAS_CROWPANEL_35)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
       else             display.setDisplayRotation(0);  // restore saved portrait
 #endif
     }
