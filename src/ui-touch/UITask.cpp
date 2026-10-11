@@ -6253,8 +6253,7 @@ static lv_obj_t* navOpenDropdown() {
   return nullptr;
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD) || \
-    CAP_TRACKBALL || defined(HAS_TDECK_PRO) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
+#if CAP_KEYPAD_NAV
 // Enter on a focused chat bubble = the same per-message action menu the T-Deck opens on a
 // long-press (Copy / Info / …). Bubbles are the focusable leaves inside the chat's msgs
 // container, so identify one by its parent. Returns true if it handled the Enter. Shared by
@@ -42192,7 +42191,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 
   lv_obj_add_event_cb(row, bubbleLongPressMenuCb, LV_EVENT_LONG_PRESSED,
-              reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+                      reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
 #if !defined(HAS_TDECK_PRO)
   if (link_label) {
     lv_obj_add_flag(bubble, LV_OBJ_FLAG_EVENT_BUBBLE);
