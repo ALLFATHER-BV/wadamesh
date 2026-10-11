@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: el
-# ver: 23
+# ver: 24
 # name: Ελληνικά
 # base: el
  (device behind)	 (συσκευή πίσω)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Αναφορές
 @ mention sound	Ήχος αναφορών @
+A background has to be a JPEG	Το φόντο πρέπει να είναι JPEG
 AF	AF
 AUTOMATIC ADVERTS	ΑΥΤΟΜΑΤΑ ADVERTS
 About	Σχετικά
@@ -32,6 +33,23 @@ About the map	Σχετικά με τον χάρτη
 Accent popups	Αναδυόμενα τόνων
 Accent popups: off	Αναδυόμενα τόνων: όχι
 Accent popups: on	Αναδυόμενα τόνων: ναι
+Background	Φόντο
+Background colour	Χρώμα φόντου
+Background set, it shows after a restart	Το φόντο ορίστηκε, εμφανίζεται μετά από επανεκκίνηση
+Check position every	Έλεγχος θέσης κάθε
+Choose an image	Επιλέξτε εικόνα
+Choose the colour	Επιλέξτε το χρώμα
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Πειραματικό. Επιβραδύνει τον επεξεργαστή όσο η οθόνη είναι σβηστή (Bluetooth και Wi-Fi συνεχίζουν να λειτουργούν), αφήνει το GPS να ξεκουράζεται ανάμεσα στους ελέγχους θέσης και ακινητοποιεί ένα κινούμενο φόντο.
+GPS: resting, next check in %lum%02lus	GPS: σε ανάπαυση, επόμενος έλεγχος σε %lum%02lus
+Image	Εικόνα
+Moving aurora	Κινούμενο σέλας
+None	Κανένα
+Open a JPEG, then tap 'Set as background'	Ανοίξτε ένα JPEG και πατήστε «Ορισμός ως φόντο»
+Save battery	Εξοικονόμηση μπαταρίας
+Set as background	Ορισμός ως φόντο
+Still aurora	Ακίνητο σέλας
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Το GPS ξεκουράζεται ανάμεσα στους ελέγχους θέσης και ξυπνά μόνο του. Μένει ενεργό όσο είναι ανοιχτός ο χάρτης, αυτή η σελίδα ή το Discover. Η εξοικονόμηση μπαταρίας το ενεργοποιεί επίσης.
+remote view open	ανοιχτή απομακρυσμένη προβολή
 Accent colour	Χρώμα έμφασης
 Appearance	Εμφάνιση
 Condense Nav (restart to apply)	Συμπαγής πλοήγηση (επανεκκίνηση για εφαρμογή)
@@ -1297,7 +1315,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Προσθήκη καναλιού
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1439,7 +1457,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Κοινοποίηση της επαφής μου
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1543,10 +1561,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Εξοικονόμηση ενέργειας
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Φωτεινότητα
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1728,7 +1746,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Φόρτιση
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1756,7 +1774,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Φωτισμός πληκτρολογίου
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1855,3 +1873,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(προεπιλογή)
+Back to my position	Πίσω στη θέση μου
+Battery saver off	Εξοικονόμηση ενέργειας ανενεργή
+Battery saver on	Εξοικονόμηση ενέργειας ενεργή
+Chat settings	Ρυθμίσεις συνομιλίας
+Contacts on the map	Επαφές στον χάρτη
+Day or night	Ημέρα ή νύχτα
+Default wallpaper	Προεπιλεγμένη ταπετσαρία
+Discovered nodes	Κόμβοι που βρέθηκαν
+Enter, then turn the wheel	Enter, μετά γυρίστε τον τροχό
+Follow me	Ακολούθησέ με
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Βρίσκεται αυτόματα: αν το GPS δεν απαντά σε αυτή την ταχύτητα, η συσκευή δοκιμάζει τις άλλες και κρατά αυτή που λειτουργεί. Από εδώ ξεκινά.
+Hold Enter: settings	Κρατήστε Enter: ρυθμίσεις
+Keep holding: settings	Συνεχίστε να κρατάτε: ρυθμίσεις
+Keeps the map on your position	Κρατά τον χάρτη στη θέση σας
+Mark all read	Όλα ως αναγνωσμένα
+More	Περισσότερα
+Nickname	Ψευδώνυμο
+Nickname not saved	Το ψευδώνυμο δεν αποθηκεύτηκε
+Nickname removed	Το ψευδώνυμο αφαιρέθηκε
+Nickname saved	Το ψευδώνυμο αποθηκεύτηκε
+Notification sound	Ήχος ειδοποίησης
+Power off or reboot	Απενεργοποίηση ή επανεκκίνηση
+Power off?	Απενεργοποίηση;
+Restarts to switch	Επανεκκινεί για αλλαγή
+Saver	Εξοικονόμηση
+Saves power while the screen is off	Εξοικονομεί ενέργεια όσο η οθόνη είναι σβηστή
+Screenshot	Στιγμιότυπο οθόνης
+Screenshot timer	Στιγμιότυπο με χρονόμετρο
+Shows the zoom slider	Εμφανίζει τον ρυθμιστή ζουμ
+Zoom	Ζουμ
+Zoom in	Μεγέθυνση
+Zoom out	Σμίκρυνση

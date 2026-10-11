@@ -25,18 +25,31 @@ Import("env")
 import os
 
 MARKER = "wadamesh-lr1110-oldfw-patch"
-OLD = """  state = this->driveDiosInSleepMode(true);
-  RADIOLIB_ASSERT(state);"""
-NEW = """  state = this->driveDiosInSleepMode(true);
-  // wadamesh-lr1110-oldfw-patch: LR1110 transceiver FW older than 0x0308
-  // doesn't implement DriveDiosInSleepMode (0x012A) and answers CMD_PERR,
-  // which would abort init (-706) on an otherwise healthy radio. The command
-  // only stops DIO glitches in sleep mode - safe to skip on old firmware.
-  if(state == RADIOLIB_ERR_SPI_CMD_INVALID) {
-    RADIOLIB_DEBUG_BASIC_PRINTLN("DriveDiosInSleepMode unsupported (old LR11x0 FW), skipping");
-    state = RADIOLIB_ERR_NONE;
-  }
-  RADIOLIB_ASSERT(state);"""
+
+
+def _shape(ind):
+    """The call and its assert at indent `ind`, unpatched and patched."""
+    old = (ind + "state = this->driveDiosInSleepMode(true);\n"
+           + ind + "RADIOLIB_ASSERT(state);")
+    new = "\n".join([
+        ind + "state = this->driveDiosInSleepMode(true);",
+        ind + "// wadamesh-lr1110-oldfw-patch: LR1110 transceiver FW older than 0x0308",
+        ind + "// doesn't implement DriveDiosInSleepMode (0x012A) and answers CMD_PERR,",
+        ind + "// which would abort init (-706) on an otherwise healthy radio. The command",
+        ind + "// only stops DIO glitches in sleep mode - safe to skip on old firmware.",
+        ind + "if(state == RADIOLIB_ERR_SPI_CMD_INVALID) {",
+        ind + "  RADIOLIB_DEBUG_BASIC_PRINTLN(\"DriveDiosInSleepMode unsupported (old LR11x0 FW), skipping\");",
+        ind + "  state = RADIOLIB_ERR_NONE;",
+        ind + "}",
+        ind + "RADIOLIB_ASSERT(state);",
+    ])
+    return old, new
+
+
+# RadioLib 7.6/7.7 call it unconditionally (2-space indent). 7.8.1 wraps it in its own
+# skip for LR1110 firmware below 0x0306 (4-space indent), which still leaves 0x0306 and
+# 0x0307 sending a command they answer with CMD_PERR, so the patch still applies there.
+SHAPES = [_shape("  "), _shape("    ")]
 
 path = os.path.join(env.subst("$PROJECT_LIBDEPS_DIR"), env.subst("$PIOENV"),
                     "RadioLib", "src", "modules", "LR11x0", "LR11x0.cpp")
@@ -50,14 +63,15 @@ def apply_patch():
     if MARKER in src:
         print("[patch_radiolib_lr11x0] already patched")
         return None
-    if OLD not in src:
+    shape = next(((o, n) for o, n in SHAPES if o in src), None)
+    if shape is None:
         # lib_deps uses a caret range (^7.6.0), so a `pio pkg update` can pull
         # a RadioLib whose config() no longer matches the expected shape.
         return ("LR11x0::config() doesn't match the expected shape (RadioLib "
                 "version drift?) - port the old-FW patch by hand, or pin "
                 "lib_deps back to a known-good version")
     with open(path, "w") as f:
-        f.write(src.replace(OLD, NEW, 1))
+        f.write(src.replace(shape[0], shape[1], 1))
     print("[patch_radiolib_lr11x0] patched LR11x0::config() for old-FW tolerance")
     return None
 

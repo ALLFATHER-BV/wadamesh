@@ -310,6 +310,17 @@
   #define CAP_SCREENSAVER 1
 #endif
 
+// The GPS serial speed is found, not just set: these boards build their location
+// provider with the UART probe (WadaNmeaLocationProvider), which tries the other
+// speeds when the receiver does not answer and saves the one that works. The
+// Settings choice is only where it starts (#613: the P4 "reverted" to 9600 because
+// that is the speed its receiver talks).
+#if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HAS_TDISPLAY_P4)
+  #define CAP_GPS_BAUD_AUTO 1
+#else
+  #define CAP_GPS_BAUD_AUTO 0
+#endif
+
 // ---- Capabilities aliased to existing device-neutral macros -----------------
 //  (behaviour-identical; lets new code use CAP_* while old sites migrate lazily)
 #if defined(HAS_TDECK_TRACKBALL)

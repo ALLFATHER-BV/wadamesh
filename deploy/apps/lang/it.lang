@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: it
-# ver: 23
+# ver: 24
 # name: Italiano
 # base: it
  (device behind)	 (dispositivo indietro)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Menzioni
 @ mention sound	Suono menzioni @
+A background has to be a JPEG	Lo sfondo deve essere un JPEG
 AF	AF
 AUTOMATIC ADVERTS	ADVERT AUTOMATICI
 About	Informazioni
@@ -32,6 +33,23 @@ About the map	Informazioni sulla mappa
 Accent popups	Popup accenti
 Accent popups: off	Popup accenti: disattivi
 Accent popups: on	Popup accenti: attivi
+Background	Sfondo
+Background colour	Colore dello sfondo
+Background set, it shows after a restart	Sfondo impostato, appare dopo un riavvio
+Check position every	Controlla la posizione ogni
+Choose an image	Scegli un'immagine
+Choose the colour	Scegli il colore
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Sperimentale. Rallenta il processore a schermo spento (Bluetooth e Wi-Fi continuano a funzionare), lascia riposare il GPS tra un controllo di posizione e l'altro e ferma uno sfondo in movimento.
+GPS: resting, next check in %lum%02lus	GPS: a riposo, prossimo controllo tra %lum%02lus
+Image	Immagine
+Moving aurora	Aurora in movimento
+None	Nessuno
+Open a JPEG, then tap 'Set as background'	Apri un JPEG, poi tocca 'Imposta come sfondo'
+Save battery	Risparmia batteria
+Set as background	Imposta come sfondo
+Still aurora	Aurora fissa
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Il GPS riposa tra un controllo di posizione e l'altro e si risveglia da solo. Resta attivo finché la mappa, questa pagina o Discover sono aperti. Anche il risparmio batteria lo attiva.
+remote view open	vista remota aperta
 Accent colour	Colore accento
 Appearance	Aspetto
 Condense Nav (restart to apply)	Navigazione compatta (riavvia per applicare)
@@ -1296,7 +1314,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Aggiungi un canale
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1438,7 +1456,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Condividi il mio contatto
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1542,10 +1560,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Risparmio energetico
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Luminosità
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1727,7 +1745,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	In carica
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1755,7 +1773,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Luce tastiera
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1854,3 +1872,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(predefinito)
+Back to my position	Torna alla mia posizione
+Battery saver off	Risparmio energetico disattivato
+Battery saver on	Risparmio energetico attivato
+Chat settings	Impostazioni chat
+Contacts on the map	Contatti sulla mappa
+Day or night	Giorno o notte
+Default wallpaper	Sfondo predefinito
+Discovered nodes	Nodi scoperti
+Enter, then turn the wheel	Invio, poi ruota la rotella
+Follow me	Seguimi
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Trovata automaticamente: se il GPS non risponde a questa velocità, il dispositivo prova le altre e tiene quella che funziona. Si parte da qui.
+Hold Enter: settings	Tieni premuto Invio: impostazioni
+Keep holding: settings	Continua a tenere: impostazioni
+Keeps the map on your position	Tiene la mappa sulla tua posizione
+Mark all read	Segna tutto come letto
+More	Altro
+Nickname	Soprannome
+Nickname not saved	Soprannome non salvato
+Nickname removed	Soprannome rimosso
+Nickname saved	Soprannome salvato
+Notification sound	Suono di notifica
+Power off or reboot	Spegni o riavvia
+Power off?	Spegnere?
+Restarts to switch	Si riavvia per cambiare
+Saver	Risparmio
+Saves power while the screen is off	Risparmia energia a schermo spento
+Screenshot	Screenshot
+Screenshot timer	Screenshot a tempo
+Shows the zoom slider	Mostra il cursore dello zoom
+Zoom	Zoom
+Zoom in	Ingrandisci
+Zoom out	Riduci

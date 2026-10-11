@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 23
+# ver: 24
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminál
 @  Mentions	@  Említések
 @ mention sound	@ említés hangja
+A background has to be a JPEG	A háttérkép csak JPEG lehet
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATIKUS ADVERTEK
 About	Névjegy
@@ -32,6 +33,23 @@ About the map	A térképről
 Accent popups	Ékezetes felugró ablakok
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
+Background	Háttér
+Background colour	Háttérszín
+Background set, it shows after a restart	Háttér beállítva, újraindítás után jelenik meg
+Check position every	Pozíció ellenőrzése minden
+Choose an image	Kép választása
+Choose the colour	Szín választása
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Kísérleti. Kikapcsolt kijelzőnél lassítja a processzort (a Bluetooth és a Wi-Fi tovább működik), pihenteti a GPS-t a pozícióellenőrzések között, és megállítja a mozgó hátteret.
+GPS: resting, next check in %lum%02lus	GPS: pihen, következő ellenőrzés %lum%02lus múlva
+Image	Kép
+Moving aurora	Mozgó aurora
+None	Nincs
+Open a JPEG, then tap 'Set as background'	Nyisson meg egy JPEG fájlt, majd koppintson a 'Beállítás háttérképként' lehetőségre
+Save battery	Akkumulátor kímélése
+Set as background	Beállítás háttérképként
+Still aurora	Álló aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	A GPS pihen a pozícióellenőrzések között, és magától felébred. Ébren marad, amíg a térkép, ez az oldal vagy a Felfedezés nyitva van. Az akkumulátorkímélő is bekapcsolja.
+remote view open	távoli nézet nyitva
 Accent colour	Kiemelőszín
 Appearance	Megjelenés
 Condense Nav (restart to apply)	Tömör navigáció (újraindítás az alkalmazáshoz)
@@ -1313,7 +1331,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Csatorna hozzáadása
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1451,7 +1469,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Névjegyem megosztása
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
 Sun	Sun
@@ -1554,10 +1572,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Energiatakarékos mód
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Fényerő
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1739,7 +1757,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Töltés
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1767,7 +1785,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Billentyűzet-világítás
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1866,3 +1884,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(alapértelmezett)
+Back to my position	Vissza a pozíciómhoz
+Battery saver off	Energiatakarékos mód ki
+Battery saver on	Energiatakarékos mód be
+Chat settings	Csevegés beállításai
+Contacts on the map	Névjegyek a térképen
+Day or night	Nappal vagy éjszaka
+Default wallpaper	Alapértelmezett háttérkép
+Discovered nodes	Felfedezett csomópontok
+Enter, then turn the wheel	Enter, majd forgasd a tárcsát
+Follow me	Kövess
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Automatikusan megtalálja: ha a GPS ezen a sebességen nem válaszol, az eszköz kipróbálja a többit, és azt tartja meg, amelyik működik. Innen indul.
+Hold Enter: settings	Enter nyomva tartása: beállítások
+Keep holding: settings	Tartsd nyomva: beállítások
+Keeps the map on your position	A térképet a pozíciódon tartja
+Mark all read	Mind olvasott
+More	Továbbiak
+Nickname	Becenév
+Nickname not saved	A becenév nincs mentve
+Nickname removed	Becenév eltávolítva
+Nickname saved	Becenév mentve
+Notification sound	Értesítési hang
+Power off or reboot	Kikapcsolás vagy újraindítás
+Power off?	Kikapcsolod?
+Restarts to switch	Újraindul a váltáshoz
+Saver	Takarékos
+Saves power while the screen is off	Energiát takarít meg, amíg a kijelző ki van kapcsolva
+Screenshot	Képernyőkép
+Screenshot timer	Képernyőkép időzítő
+Shows the zoom slider	Megjeleníti a nagyítás csúszkát
+Zoom	Nagyítás
+Zoom in	Közelítés
+Zoom out	Távolítás

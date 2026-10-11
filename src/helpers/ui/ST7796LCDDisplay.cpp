@@ -81,6 +81,23 @@ void ST7796LCDDisplay::turnOff() {
   }
 }
 
+void ST7796LCDDisplay::panelSleep(bool sleep) {
+  if (!_isOn) return;   // never brought up (or turned off): nothing to put to sleep
+  if (sleep) {
+    // ST7796 datasheet: no SLPIN within 120 ms of an SLPOUT.
+    const uint32_t since = millis() - _wake_ms;
+    if (_wake_ms && since < 120) delay(120 - since);
+    display.writecommand(TFT_DISPOFF);
+    display.writecommand(ST7796_SLPIN);
+    delay(5);   // the bus stays quiet 5 ms after SLPIN
+  } else {
+    display.writecommand(ST7796_SLPOUT);
+    _wake_ms = millis();
+    delay(6);   // supply and clocks settle at least 5 ms before the next command
+    display.writecommand(TFT_DISPON);
+  }
+}
+
 void ST7796LCDDisplay::clear() { display.fillScreen(TFT_BLACK); }
 
 void ST7796LCDDisplay::startFrame(ColorVal bkg) { (void)bkg; display.fillScreen(TFT_BLACK); }

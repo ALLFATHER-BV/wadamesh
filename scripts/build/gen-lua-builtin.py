@@ -26,6 +26,74 @@ APPS = os.path.join(ROOT, 'deploy/apps')      # canonical; what deploy-apps.sh p
 OUT = os.path.join(ROOT, 'src/ui-touch/lua_builtin.h')
 DELIM = 'WADALUA'          # raw-string delimiter: keeps Lua source verbatim
 
+_LONG_OPEN = re.compile(r'\[(=*)\[')
+
+
+def strip_lua(code):
+    """Drop comments and indentation from a Lua chunk before it is baked in.
+
+    The baked copy is flash on the boards with the least of it, and the Store's
+    copy keeps every comment, so only the image loses them. Every newline stays,
+    so a line number in an app's error message still points at the Store source.
+    Strings and long strings are copied as they are; a comment turns into the
+    whitespace the Lua lexer would have seen. The result compiles to the same
+    bytecode, line info included (checked when this was written).
+    """
+    out = []
+    i, n = 0, len(code)
+    line_start = True
+    while i < n:
+        c = code[i]
+        if c == '\n':
+            while out and out[-1] in (' ', '\t'):
+                out.pop()                           # trailing blanks
+            out.append('\n')
+            i += 1
+            line_start = True
+            continue
+        if line_start and c in ' \t':
+            i += 1                                  # indentation
+            continue
+        line_start = False
+        if code.startswith('--', i):
+            m = _LONG_OPEN.match(code, i + 2)
+            if m:                                   # --[[ long comment ]]
+                close = ']' + m.group(1) + ']'
+                j = code.find(close, m.end())
+                if j < 0:
+                    raise ValueError('unterminated long comment')
+                nl = code.count('\n', i, j)
+                if nl:
+                    while out and out[-1] in (' ', '\t'):
+                        out.pop()
+                out.append('\n' * nl if nl else ' ')
+                line_start = nl > 0
+                i = j + len(close)
+                continue
+            j = code.find('\n', i)                  # -- line comment
+            i = n if j < 0 else j
+            continue
+        if c in '"\'':                              # short string, escapes included
+            j = i + 1
+            while j < n and code[j] != c:
+                j += 2 if code[j] == '\\' else 1
+            out.append(code[i:j + 1])
+            i = j + 1
+            continue
+        if c == '[':
+            m = _LONG_OPEN.match(code, i)
+            if m:                                   # [[ long string ]]
+                close = ']' + m.group(1) + ']'
+                j = code.find(close, m.end())
+                if j < 0:
+                    raise ValueError('unterminated long string')
+                out.append(code[i:j + len(close)])
+                i = j + len(close)
+                continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
+
 
 def main():
     cat_path = os.path.join(APPS, 'apps.json')
@@ -48,7 +116,7 @@ def main():
         if not os.path.exists(src):
             print('  skip %s: no %s' % (aid, os.path.relpath(src, ROOT)))
             continue
-        code = open(src, encoding='utf-8').read()
+        code = strip_lua(open(src, encoding='utf-8').read())
         if (')' + DELIM + '"') in code:
             sys.exit('%s contains the raw-string delimiter' % aid)
         # An app that needs the extended SDK cannot run on a board without it, so it

@@ -21,6 +21,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 LANGDIR = os.path.join(ROOT, 'deploy/apps/lang')
 OUT = os.path.join(ROOT, 'src/ui-touch/i18n_builtin.h')
 
+# The baked table can be pinned to a frozen copy of the .lang files instead of the live
+# ones. beta_93 (2026-10-10): the new translations pushed the 2 MB Heltec V4 5.6 KB over
+# its flash, so the V4 keeps exactly the table it shipped with in beta_92 (the beta_92
+# .lang files, copied to scripts/build/lang-pin-beta92/) and shows English for strings
+# added since; every other board downloads the live files from the Store. Set to None
+# to bake the live files again once the table has room (a trim of keys no source uses
+# any more is the pending decision).
+PIN_DIR = os.path.join(ROOT, 'scripts/build/lang-pin-beta92')
+
 # Index order must match the UiLang enum in i18n.h.
 CODES = ["en", "hu", "nl", "de", "fr", "es", "it",
          "ru", "uk", "bg", "sr", "el", "pt-br", "ro", "cs"]
@@ -65,8 +74,9 @@ def read_lang(path):
 
 def main():
     langs = {}
+    src_dir = PIN_DIR or LANGDIR
     for code in CODES[1:]:                      # English is the key itself
-        p = os.path.join(LANGDIR, code + '.lang')
+        p = os.path.join(src_dir, code + '.lang')
         if os.path.exists(p):
             langs[code] = read_lang(p)
 

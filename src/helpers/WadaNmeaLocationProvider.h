@@ -48,9 +48,13 @@ class WadaNmeaLocationProvider : public LocationProvider {
   uint32_t _active_baud = 0;
   uint32_t _probe_deadline_ms = 0;
   bool _stream_locked = false;
+  bool _ubx_standby = false;      // rest in software standby (setUbxStandby)
+  uint8_t _wake_tries = 0;
+  uint32_t _wake_check_ms = 0;    // when begin() looks for the stream again (0: not waiting)
   static const unsigned long TIME_SYNC_INTERVAL = 1800000;  // re-sync every 30 minutes
   static const unsigned long BAUD_PROBE_START_MS = 9000;
   static const unsigned long BAUD_PROBE_INTERVAL_MS = 5000;
+  static const unsigned long WAKE_CHECK_MS = 1500;
 
   void nudgeReceiver() {
     if (!_probe_serial) return;
@@ -89,8 +93,19 @@ class WadaNmeaLocationProvider : public LocationProvider {
   void ubxGnss(bool run) {
     static const uint8_t kStop[]  = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x16, 0x74 };
     static const uint8_t kStart[] = { 0xB5, 0x62, 0x06, 0x04, 0x04, 0x00, 0x00, 0x00, 0x09, 0x00, 0x17, 0x76 };
+    // Software standby (UBX-RXM-PMREQ: backup, no time limit, woken by UART RX): the core
+    // powers down and only the RTC and backup RAM stay up, tens of µA instead of the
+    // milliamps a stopped engine still draws, and the receiver still wakes into a hot start.
+    // Any byte we send wakes it; begin()'s nudge does.
+    static const uint8_t kStandby[] = { 0xB5, 0x62, 0x02, 0x41, 0x10, 0x00,
+                                        0x00, 0x00, 0x00, 0x00,     // version, reserved
+                                        0x00, 0x00, 0x00, 0x00,     // duration: until woken
+                                        0x02, 0x00, 0x00, 0x00,     // flags: backup
+                                        0x08, 0x00, 0x00, 0x00,     // wakeupSources: uartrx
+                                        0x5D, 0x4B };
     if (_pin_en != -1 || !_gps_serial) return;
-    _gps_serial->write(run ? kStart : kStop, sizeof kStop);
+    if (!run && _ubx_standby) _gps_serial->write(kStandby, sizeof kStandby);
+    else                      _gps_serial->write(run ? kStart : kStop, sizeof kStop);
     _gps_serial->flush();
   }
 
@@ -138,6 +153,10 @@ public:
     _probe_default_baud = default_baud;
   }
 
+  // u-blox receivers without an enable line: rest in software standby rather than with the
+  // GNSS engine stopped (see ubxGnss). Opt-in per board, once its module is known to wake.
+  void setUbxStandby(bool on) { _ubx_standby = on; }
+
   void claim() {
     _claims++;
     if (_peripher_power) _peripher_power->claim();
@@ -151,6 +170,9 @@ public:
 
   void begin() override {
     claim();
+    // What waited in the UART while the receiver rested is old news, and it would read as
+    // the stream being back before the receiver has woken.
+    if (_ubx_standby) while (_gps_serial->available()) _gps_serial->read();
     if (_pin_en != -1) digitalWrite(_pin_en, GPS_EN_ACTIVE);
     if (_pin_reset != -1) digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
     if (_probe_serial) {
@@ -161,6 +183,10 @@ public:
       nudgeReceiver();
     }
     ubxGnss(true);
+    // A receiver in standby spends the first bytes waking up, so the start may be lost;
+    // loop() repeats the nudge and the start until the stream is back.
+    _wake_tries = 0;
+    _wake_check_ms = _ubx_standby ? millis() + WAKE_CHECK_MS : 0;
   }
 
   void reset() override {
@@ -179,6 +205,7 @@ public:
     if (_pin_reset != -1) digitalWrite(_pin_reset, LOW);
     _probe_deadline_ms = 0;
     _stream_locked = false;
+    _wake_check_ms = 0;
     ubxGnss(false);
     release();
   }
@@ -231,6 +258,19 @@ public:
   }
 
   void loop() override {
+    if (_wake_check_ms) {
+      if (_gps_serial->available()) {
+        _wake_check_ms = 0;   // the stream is back
+      } else if ((int32_t)(millis() - _wake_check_ms) >= 0) {
+        if (++_wake_tries > 5) {
+          _wake_check_ms = 0;   // give up quietly; the baud probe and the UI carry on as before
+        } else {
+          nudgeReceiver();
+          ubxGnss(true);
+          _wake_check_ms = millis() + WAKE_CHECK_MS;
+        }
+      }
+    }
     while (_gps_serial->available()) {
       char c = _gps_serial->read();
 #ifdef GPS_NMEA_DEBUG

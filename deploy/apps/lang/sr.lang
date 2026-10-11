@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: sr
-# ver: 23
+# ver: 24
 # name: Српски
 # base: sr
  (device behind)	 (уређај касни)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Помињања
 @ mention sound	Звук за @ помињање
+A background has to be a JPEG	Позадина мора бити JPEG
 AF	AF
 AUTOMATIC ADVERTS	АУТОМАТСКИ АДВЕРТИ
 About	О програму
@@ -32,6 +33,23 @@ About the map	О мапи
 Accent popups	Искачући акценти
 Accent popups: off	Искачући акценти: искљ
 Accent popups: on	Искачући акценти: укљ
+Background	Позадина
+Background colour	Боја позадине
+Background set, it shows after a restart	Позадина постављена, приказује се након рестарта
+Check position every	Провери позицију сваких
+Choose an image	Изабери слику
+Choose the colour	Изабери боју
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Експериментално. Успорава процесор док је екран угашен (Bluetooth и Wi-Fi настављају да раде), пушта GPS да се одмара између провера позиције и зауставља покретну позадину.
+GPS: resting, next check in %lum%02lus	GPS: одмара, следећа провера за %lum%02lus
+Image	Слика
+Moving aurora	Покретна аурора
+None	Ништа
+Open a JPEG, then tap 'Set as background'	Отворите JPEG, па додирните 'Постави као позадину'
+Save battery	Штеди батерију
+Set as background	Постави као позадину
+Still aurora	Мирна аурора
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS се одмара између провера позиције и буди се сам. Остаје будан док су мапа, ова страница или Discover отворени. Уштеда батерије такође ово укључује.
+remote view open	отворен удаљени приказ
 Accent colour	Акцентна боја
 Appearance	Изглед
 Condense Nav (restart to apply)	Компактна навигација (рестарт за примену)
@@ -1297,7 +1315,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Додај канал
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1439,7 +1457,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Подели мој контакт
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1543,10 +1561,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Штедња батерије
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Осветљеност
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1728,7 +1746,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Пуњење
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1756,7 +1774,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Осветљење тастатуре
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1855,3 +1873,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(подразумевано)
+Back to my position	Назад на моју позицију
+Battery saver off	Штедња батерије искључена
+Battery saver on	Штедња батерије укључена
+Chat settings	Подешавања ћаскања
+Contacts on the map	Контакти на мапи
+Day or night	Дан или ноћ
+Default wallpaper	Подразумевана позадина
+Discovered nodes	Откривени чворови
+Enter, then turn the wheel	Enter, па окрените точкић
+Follow me	Прати ме
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Проналази се аутоматски: ако GPS не одговара на овој брзини, уређај проба остале и задржава ону која ради. Одавде почиње.
+Hold Enter: settings	Држите Enter: подешавања
+Keep holding: settings	Наставите да држите: подешавања
+Keeps the map on your position	Држи мапу на вашој позицији
+Mark all read	Све прочитано
+More	Још
+Nickname	Надимак
+Nickname not saved	Надимак није сачуван
+Nickname removed	Надимак уклоњен
+Nickname saved	Надимак сачуван
+Notification sound	Звук обавештења
+Power off or reboot	Искључи или рестартуј
+Power off?	Искључити?
+Restarts to switch	Рестартује се ради промене
+Saver	Штедња
+Saves power while the screen is off	Штеди енергију док је екран искључен
+Screenshot	Снимак екрана
+Screenshot timer	Снимак са тајмером
+Shows the zoom slider	Приказује клизач зума
+Zoom	Зум
+Zoom in	Увећај
+Zoom out	Умањи

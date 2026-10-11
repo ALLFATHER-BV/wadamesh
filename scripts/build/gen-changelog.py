@@ -55,16 +55,33 @@ def main():
         parts.extend("<li>%s</li>" % html.escape(n) for n in notes)
         parts.append("</ul></section>")
     page = """<!doctype html>
-<html lang="en">
+<html lang="en" data-sky="soft">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
+<meta name="theme-color" content="#000400">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
 <title>WADAMESH Changelog</title>
 <meta name="description" content="What changed in every WADAMESH build, newest first.">
-<link rel="icon" href="wadamesh-badge.svg">
+<link rel="canonical" href="https://wadamesh.com/changelog.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WADAMESH">
+<meta property="og:url" content="https://wadamesh.com/changelog.html">
+<meta property="og:title" content="WADAMESH changelog">
+<meta property="og:description" content="What changed in every WADAMESH build, newest first.">
+<meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The WADAMESH home screen on a LilyGo T-Deck">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="wadamesh-badge.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
-  :root{--bg:#ffffff;--bg2:#f4f6f2;--ink:#15181e;--mut:#5d6770;--line:#e5e8e2;--teal:#15b6a6;--teal-ink:#0e8d80;color-scheme:light}
-  @media (prefers-color-scheme:dark){:root{--bg:#111416;--bg2:#181c1f;--ink:#e8ecee;--mut:#9aa4ab;--line:#262b2f;--teal-ink:#3fd0c0;color-scheme:dark}}
+  :root{--bg:#ffffff;--bg2:#f4f6f2;--ink:#15181e;--mut:#5d6770;--line:#e5e8e2;--teal:#15b6a6;--teal-ink:#0b7a6f;color-scheme:light}
   body{margin:0;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;background:var(--bg);color:var(--ink)}
   main{max-width:46rem;margin:0 auto;padding:28px 18px 60px}
   a{color:var(--teal-ink)}
@@ -76,10 +93,14 @@ def main():
   p.t{margin:4px 0 0;font-weight:600}
   ul{margin:10px 0 0;padding-left:1.2rem}
   li{margin:0 0 8px}
+  .wm-theme{position:fixed; top:14px; right:14px; z-index:5}
 </style>
+<link rel="stylesheet" href="theme.css?v=2">
+<script src="theme.js?v=2" defer></script>
 </head>
 <body>
 <main>
+<button type="button" class="wm-theme" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
 <h1>WADA<span class="t">MESH</span> changelog</h1>
 <p class="lede">What changed in every build, newest first. Install any of them at <a href="https://wadamesh.com/">wadamesh.com</a>.</p>
 %s

@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: ru
-# ver: 23
+# ver: 24
 # name: Русский
 # base: ru
  (device behind)	 (устройство отстаёт)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Упоминания
 @ mention sound	Звук @-упоминаний
+A background has to be a JPEG	Фон должен быть в формате JPEG
 AF	AF
 AUTOMATIC ADVERTS	АВТОМАТИЧЕСКИЕ АДВЕРТЫ
 About	О программе
@@ -32,6 +33,23 @@ About the map	О карте
 Accent popups	Подсказки акцентов
 Accent popups: off	Подсказки акцентов: выкл
 Accent popups: on	Подсказки акцентов: вкл
+Background	Фон
+Background colour	Цвет фона
+Background set, it shows after a restart	Фон задан, появится после перезагрузки
+Check position every	Проверять позицию каждые
+Choose an image	Выбрать изображение
+Choose the colour	Выбрать цвет
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Экспериментально. Замедляет процессор при выключенном экране (Bluetooth и Wi-Fi продолжают работать), даёт GPS отдыхать между проверками позиции и останавливает движущийся фон.
+GPS: resting, next check in %lum%02lus	GPS: отдыхает, следующая проверка через %lum%02lus
+Image	Изображение
+Moving aurora	Движущееся сияние
+None	Нет
+Open a JPEG, then tap 'Set as background'	Откройте JPEG, затем нажмите «Задать как фон»
+Save battery	Экономить заряд
+Set as background	Задать как фон
+Still aurora	Неподвижное сияние
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS отдыхает между проверками позиции и просыпается сам. Он остаётся активным, пока открыты карта, эта страница или Discover. Экономия заряда тоже включает это.
+remote view open	открыт удалённый просмотр
 Accent colour	Акцентный цвет
 Appearance	Оформление
 Condense Nav (restart to apply)	Компактная навигация (перезапуск для применения)
@@ -1297,7 +1315,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Добавить канал
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1439,7 +1457,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Поделиться контактом
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1543,10 +1561,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Экономия энергии
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Яркость
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1728,7 +1746,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Зарядка
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1756,7 +1774,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Подсветка клавиатуры
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1855,3 +1873,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(по умолчанию)
+Back to my position	К моему местоположению
+Battery saver off	Экономия энергии выключена
+Battery saver on	Экономия энергии включена
+Chat settings	Настройки чата
+Contacts on the map	Контакты на карте
+Day or night	День или ночь
+Default wallpaper	Обои по умолчанию
+Discovered nodes	Найденные узлы
+Enter, then turn the wheel	Enter, затем поверните колесо
+Follow me	Следовать за мной
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Определяется автоматически: если GPS не отвечает на этой скорости, устройство пробует остальные и оставляет ту, что работает. Отсюда оно начинает.
+Hold Enter: settings	Удерживайте Enter: настройки
+Keep holding: settings	Держите дальше: настройки
+Keeps the map on your position	Держит карту на вашем местоположении
+Mark all read	Прочитать все
+More	Ещё
+Nickname	Псевдоним
+Nickname not saved	Псевдоним не сохранён
+Nickname removed	Псевдоним удалён
+Nickname saved	Псевдоним сохранён
+Notification sound	Звук уведомления
+Power off or reboot	Выключить или перезагрузить
+Power off?	Выключить?
+Restarts to switch	Перезапуск для переключения
+Saver	Экономия
+Saves power while the screen is off	Экономит энергию при выключенном экране
+Screenshot	Снимок экрана
+Screenshot timer	Снимок по таймеру
+Shows the zoom slider	Показывает ползунок масштаба
+Zoom	Масштаб
+Zoom in	Приблизить
+Zoom out	Отдалить

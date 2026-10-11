@@ -85,15 +85,41 @@ void pagerKeyboardBegin() {
              s_kb.matrix(PagerKeyboardState::ROWS, PagerKeyboardState::COLS);
   if (!s_inited) return;
   s_kb.flush();
-  pinMode(KB_INT, INPUT_PULLUP);   // TCA8418 INT is open-drain active-low; not ISR-driven here (see .h)
+  pinMode(KB_INT, INPUT_PULLUP);   // TCA8418 INT is open-drain active-low; polled as a level, no ISR (see pagerKeyboardPoll)
   s_kb.enableInterrupts();
 }
 
+#if defined(TLORA_PAGER)
+// The Pager reads the chip only when its INT line says a key event is waiting. Every
+// read is an I2C transaction of about 0.45 ms at 100 kHz, and the UI loop polls on
+// every iteration (about 470 a second), so reading unconditionally took a fifth of the
+// idle CPU. INT is open drain and stays low until INT_STAT is cleared, so a level
+// check never misses an event; a slow safety read covers a line that misbehaves, and a
+// line stuck low with nothing to read sends us back to reading every time.
+static constexpr uint32_t kSafetyReadMs = 50;
+static uint32_t s_last_read_ms = 0;
+static uint8_t  s_int_idle_reads = 0;   // INT low but nothing queued, in a row
+static bool     s_int_usable = true;
+#endif
+
 void pagerKeyboardPoll() {
   if (!s_inited) return;
+#if defined(TLORA_PAGER)
+  const uint32_t now_ms = millis();
+  const bool int_low = s_int_usable && digitalRead(KB_INT) == LOW;
+  if (s_int_usable && !int_low && (uint32_t)(now_ms - s_last_read_ms) < kSafetyReadMs) return;
+  s_last_read_ms = now_ms;
+  // Clear the status before draining: an event that lands while we drain sets it
+  // again, so none is ever left queued with the line released.
+  if (int_low) s_kb.writeRegister(TCA8418_REG_INT_STAT, 0x1F);
+  bool any = false;
+#endif
   while (s_kb.available()) {
     const uint8_t raw = s_kb.getEvent();
     if (raw == 0) break;
+#if defined(TLORA_PAGER)
+    any = true;
+#endif
     // TCA8418 KEY_EVENT_A bit 7: 1 = press, 0 = release (TI datasheet SCPS215E
     // register description, verified directly — the Adafruit library's own
     // header comment states this backwards; don't trust it).
@@ -103,6 +129,12 @@ void pagerKeyboardPoll() {
     const uint8_t key = s_state.event(code, pressed, millis());
     if (key) ringPush(key);
   }
+#if defined(TLORA_PAGER)
+  if (int_low) {
+    if (any) s_int_idle_reads = 0;
+    else if (++s_int_idle_reads >= 20) s_int_usable = false;
+  }
+#endif
 }
 
 int pagerKeyboardReadKey() {
@@ -137,6 +169,8 @@ void pagerKeyboardDiscardAlt() {
 bool pagerKeyboardBackspaceHeld() { return s_state.backspaceHeld(); }
 
 bool pagerKeyboardSpaceHeld() { return s_state.spaceHeld(); }
+
+bool pagerKeyboardLetterHeld() { return s_state.letterHeld(); }
 
 bool pagerKeyboardConsumeAltShiftChord() {
   return s_state.consumeAltShiftChord();

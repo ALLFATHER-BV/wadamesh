@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: bg
-# ver: 23
+# ver: 24
 # name: Български
 # base: bg
  (device behind)	 (устройството изостава)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Споменавания
 @ mention sound	Звук при @ споменаване
+A background has to be a JPEG	Фонът трябва да е JPEG
 AF	AF
 AUTOMATIC ADVERTS	АВТОМАТИЧНИ АДВЕРТИ
 About	Относно
@@ -32,6 +33,23 @@ About the map	Относно картата
 Accent popups	Изскачащи акценти
 Accent popups: off	Изскачащи акценти: изкл
 Accent popups: on	Изскачащи акценти: вкл
+Background	Фон
+Background colour	Цвят на фона
+Background set, it shows after a restart	Фонът е зададен, показва се след рестарт
+Check position every	Проверка на позицията на всеки
+Choose an image	Изберете изображение
+Choose the colour	Изберете цвета
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Експериментално. Забавя процесора при изключен екран (Bluetooth и Wi-Fi продължават да работят), оставя GPS да почива между проверките на позицията и спира движещ се фон.
+GPS: resting, next check in %lum%02lus	GPS: почива, следваща проверка след %lum%02lus
+Image	Изображение
+Moving aurora	Движещо се сияние
+None	Няма
+Open a JPEG, then tap 'Set as background'	Отворете JPEG, после докоснете 'Задай като фон'
+Save battery	Пестене на батерия
+Set as background	Задай като фон
+Still aurora	Неподвижно сияние
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS почива между проверките на позицията и се събужда сам. Остава буден, докато картата, тази страница или Discover са отворени. Пестенето на батерия също го включва.
+remote view open	отворен отдалечен изглед
 Accent colour	Акцентен цвят
 Appearance	Изглед
 Condense Nav (restart to apply)	Компактна навигация (рестарт за прилагане)
@@ -1297,7 +1315,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Добави канал
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1439,7 +1457,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Сподели моя контакт
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1543,10 +1561,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Пестене на батерия
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Яркост
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1728,7 +1746,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Зарежда се
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1756,7 +1774,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Подсветка на клавиатурата
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1855,3 +1873,36 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(по подразбиране)
+Back to my position	Към моето местоположение
+Battery saver off	Пестенето на батерия е изключено
+Battery saver on	Пестенето на батерия е включено
+Chat settings	Настройки на чата
+Contacts on the map	Контакти на картата
+Day or night	Ден или нощ
+Default wallpaper	Тапет по подразбиране
+Discovered nodes	Открити възли
+Enter, then turn the wheel	Enter, после завъртете колелото
+Follow me	Следвай ме
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Открива се автоматично: ако GPS не отговаря на тази скорост, устройството пробва другите и запазва тази, която работи. Оттук започва.
+Hold Enter: settings	Задръжте Enter: настройки
+Keep holding: settings	Продължете да държите: настройки
+Keeps the map on your position	Държи картата върху позицията ви
+Mark all read	Всички като прочетени
+More	Още
+Nickname	Псевдоним
+Nickname not saved	Псевдонимът не е запазен
+Nickname removed	Псевдонимът е премахнат
+Nickname saved	Псевдонимът е запазен
+Notification sound	Звук за известия
+Power off or reboot	Изключване или рестарт
+Power off?	Изключване?
+Restarts to switch	Рестартира за смяна
+Saver	Пестене
+Saves power while the screen is off	Пести енергия, докато екранът е изключен
+Screenshot	Екранна снимка
+Screenshot timer	Снимка с таймер
+Shows the zoom slider	Показва плъзгача за мащаб
+Zoom	Мащаб
+Zoom in	Приближи
+Zoom out	Отдалечи
