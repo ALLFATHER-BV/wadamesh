@@ -10543,11 +10543,13 @@ static void threadSheetResetPathCb(lv_event_t* e) {
 // conversation's avatar via the emoji sheet in pick mode; long-press puts the
 // generated glyph back.
 static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title);   // defined with the emoji sheet below
+static void contactsListMarkStale();   // defined with the Contacts list
 static void threadSheetIconPicked(const char* g) {
   char nm[UITask::MAX_THREAD_NAME + 1] = "";
   if (!channelLongSheetName(nm, sizeof nm)) return;
   const bool ok = touchPrefsSetChannelEmoji(nm, g);
   g_lv.dirty_threads = true;                       // chat list re-renders the avatar
+  contactsListMarkStale();                         // and so does Contacts (#646)
   if (g_lv.task) g_lv.task->showAlert(ok ? TR("Chat icon set") : TR("Too many chat icons"), ok ? 1200 : 2500);
 }
 static void threadSheetIconDo() {
@@ -10561,6 +10563,7 @@ static void threadSheetIconResetDo() {
   if (!channelLongSheetName(nm, sizeof nm)) return;
   touchPrefsSetChannelEmoji(nm, "");
   g_lv.dirty_threads = true;
+  contactsListMarkStale();
   if (g_lv.task) g_lv.task->showAlert(TR("Chat icon reset"), 1400);
 }
 static void threadSheetIconResetCb(lv_event_t* e) {
@@ -30931,6 +30934,8 @@ static int       s_ct_sel_n       = 0;
 static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
 static volatile bool s_ct_contacts_dirty = false;   // a contact was discovered/added (set from the mesh callback); UITask::loop rebuilds the visible Contacts list — issue #73
 static void contactsListForceRefresh() { s_ct_list_force = true; refreshContactsList(); }
+// The next Contacts refresh rebuilds the rows, e.g. after a chat icon changes (#646).
+static void contactsListMarkStale() { s_ct_list_force = true; }
 static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
 static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
@@ -43228,6 +43233,15 @@ static void refreshContactsList() {
 
     lv_obj_t* av = makeGlyphAvatar(rb, e.name, e.type == ADV_TYPE_CHAT ? GLYPH_CIRCLE : GLYPH_SQUARE, kAv);
     lv_obj_align(av, LV_ALIGN_LEFT_MID, av_x, 0);
+    {
+      // Same icon as the contact's chat (#646): the one picked for the chat, which is
+      // keyed on the advertised name, else the first emoji in the shown name (#640).
+      char eb[20];
+      ContactInfo ci;
+      const bool picked = the_mesh.getContactByIdx(static_cast<uint32_t>(e.mesh_idx), ci) &&
+                          touchPrefsGetChannelEmoji(ci.name, eb, sizeof eb);
+      if (picked || nameFirstEmoji(e.name, eb, sizeof eb)) glyphAvatarSetEmoji(av, e.name, eb);
+    }
 
     // Name, one line; a star after it for a favourite.
     char san[40];
