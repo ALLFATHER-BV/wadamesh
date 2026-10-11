@@ -41501,25 +41501,6 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   return ChatHashtag::span(text, from, start, end);
 }
-static void chatAppendRecolor(char* output, size_t& offset, const char* text,
-                              int start, int end, bool highlighted, lv_color_t normal_color) {
-  if (end <= start) return;
-  bool color_open = false;
-  for (int index = start; index < end; ++index) {
-    if (text[index] == '#') {
-      if (color_open) output[offset++] = '#';
-      color_open = false;
-      output[offset++] = '#';
-    } else if (!highlighted && !color_open) {
-      offset += snprintf(output + offset, 9, "#%06X ",
-                         (unsigned)(lv_color_to32(normal_color) & 0xFFFFFFu));
-      color_open = true;
-    }
-    output[offset++] = text[index];
-  }
-  if (color_open) output[offset++] = '#';
-  output[offset] = '\0';
-}
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -41707,63 +41688,119 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
   return next->start != INT_MAX && next->end > from;
 }
 
-static bool chatTextHasRtl(const char* text) {
-#if LV_USE_BIDI
-  uint32_t offset = 0;
-  while (text[offset]) {
-    const uint32_t start = offset;
-    _lv_txt_encoded_next(text, &offset);
-    char letter[5] = {};
-    const size_t length = offset - start;
-    if (length == 0 || length >= sizeof(letter)) return true;
-    memcpy(letter, text + start, length);
-    if (_lv_bidi_detect_base_dir(letter) == LV_BASE_DIR_RTL) return true;
-  }
-#else
-  (void)text;
-#endif
-  return false;
-}
+struct ChatLinkGlyph {
+  lv_point_t pos;
+  uint32_t letter;
+};
 
-static void chatDrawRtlLinkText(lv_event_t* e) {
+struct ChatLinkDrawCache {
+  ChatLinkGlyph* glyphs;
+  size_t count;
+  const char* text;
+  const lv_font_t* font;
+  lv_coord_t width;
+  lv_coord_t letter_space;
+  lv_coord_t line_space;
+  lv_text_align_t align;
+  lv_base_dir_t base_dir;
+};
+
+static void chatDrawLinkText(lv_event_t* e) {
+  auto* cache = static_cast<ChatLinkDrawCache*>(lv_event_get_user_data(e));
+  if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+    lv_mem_free(cache->glyphs);
+    lv_mem_free(cache);
+    return;
+  }
   if (lv_event_get_code(e) != LV_EVENT_DRAW_MAIN_END) return;
   lv_obj_t* label = lv_event_get_target(e);
   lv_obj_t* hit_label = reinterpret_cast<lv_obj_t*>(lv_obj_get_user_data(label));
-  if (!hit_label) return;
-
   const char* text = lv_label_get_text(hit_label);
-  const lv_font_t* font = lv_obj_get_style_text_font(label, LV_PART_MAIN);
-  if (!text || !font) return;
+  const lv_font_t* font = lv_obj_get_style_text_font(hit_label, LV_PART_MAIN);
+  const lv_coord_t width = lv_obj_get_content_width(hit_label);
+  const lv_coord_t letter_space = lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN);
+  const lv_coord_t line_space = lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN);
+  const lv_text_align_t align = lv_obj_get_style_text_align(hit_label, LV_PART_MAIN);
+  const lv_base_dir_t base_dir = lv_obj_get_style_base_dir(hit_label, LV_PART_MAIN);
+  if (cache->text != text || cache->font != font || cache->width != width ||
+      cache->letter_space != letter_space || cache->line_space != line_space ||
+      cache->align != align || cache->base_dir != base_dir) {
+    cache->count = 0;
+    lv_mem_free(cache->glyphs);
+    cache->glyphs = nullptr;
+    ChatLinkChoice choice{};
+    size_t capacity = 0;
+    for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end)
+      capacity += _lv_txt_encoded_get_char_id(text, choice.end) -
+                  _lv_txt_encoded_get_char_id(text, choice.start);
+    if (capacity) cache->glyphs = static_cast<ChatLinkGlyph*>(lv_mem_alloc(capacity * sizeof(ChatLinkGlyph)));
+    if (capacity && !cache->glyphs) return;
+    cache->text = text;
+    cache->font = font;
+    cache->width = width;
+    cache->letter_space = letter_space;
+    cache->line_space = line_space;
+    cache->align = align;
+    cache->base_dir = base_dir;
+    uint32_t line_start = 0;
+    uint32_t line_end = _lv_txt_get_next_line(text, font, letter_space, width, nullptr, LV_TEXT_FLAG_NONE);
+    lv_coord_t line_y = 0;
+    const lv_text_align_t resolved_align = lv_obj_calculate_style_text_align(hit_label, LV_PART_MAIN, text);
+    for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end) {
+      const uint32_t first_char = _lv_txt_encoded_get_char_id(text, choice.start);
+      const uint32_t end_char = _lv_txt_encoded_get_char_id(text, choice.end);
+      uint32_t byte_id = choice.start;
+      for (uint32_t char_id = first_char; char_id < end_char; ++char_id) {
+        const uint32_t letter_byte = byte_id;
+        uint32_t letter = _lv_txt_encoded_next(text, &byte_id);
+        while (letter_byte >= line_end && text[line_end]) {
+          line_start = line_end;
+          line_end += _lv_txt_get_next_line(text + line_start, font, letter_space, width, nullptr, LV_TEXT_FLAG_NONE);
+          line_y += lv_font_get_line_height(font) + line_space;
+        }
+        lv_coord_t glyph_x;
+#if LV_USE_BIDI
+        char* visual_text = nullptr;
+        const lv_base_dir_t resolved_dir = base_dir == LV_BASE_DIR_AUTO ? _lv_bidi_detect_base_dir(text) : base_dir;
+        const uint32_t logical_pos = _lv_txt_encoded_get_char_id(text + line_start, letter_byte - line_start);
+        const uint32_t visual_pos = _lv_bidi_get_visual_pos(text + line_start, &visual_text,
+            line_end - line_start, resolved_dir, logical_pos, nullptr);
+        uint32_t visual_byte = _lv_txt_encoded_get_byte_id(visual_text, visual_pos);
+        glyph_x = lv_txt_get_width(visual_text, visual_byte, font, letter_space, LV_TEXT_FLAG_NONE);
+        if (visual_pos) glyph_x += letter_space;
+        letter = _lv_txt_encoded_next(visual_text, &visual_byte);
+        lv_mem_buf_release(visual_text);
+      #else
+        glyph_x = lv_txt_get_width(text + line_start, letter_byte - line_start,
+                font, letter_space, LV_TEXT_FLAG_NONE);
+        if (letter_byte != line_start) glyph_x += letter_space;
+#endif
+        const lv_coord_t line_width = lv_txt_get_width(text + line_start, line_end - line_start,
+                         font, letter_space, LV_TEXT_FLAG_NONE);
+        if (resolved_align == LV_TEXT_ALIGN_CENTER) glyph_x += (width - line_width) / 2;
+        else if (resolved_align == LV_TEXT_ALIGN_RIGHT) glyph_x += width - line_width;
+        ChatLinkGlyph& glyph = cache->glyphs[cache->count++];
+        glyph.pos = { glyph_x, line_y };
+        glyph.letter = letter;
+      }
+    }
+  }
 
   lv_area_t content;
-  lv_obj_get_content_coords(label, &content);
+  lv_obj_get_content_coords(hit_label, &content);
   lv_draw_ctx_t* draw_ctx = lv_event_get_draw_ctx(e);
   lv_draw_label_dsc_t draw_dsc;
   lv_draw_label_dsc_init(&draw_dsc);
   draw_dsc.font = font;
   draw_dsc.color = lv_color_hex(COLOR_CHAT_LINK);
-
-  ChatLinkChoice choice{};
-  for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end) {
-    const uint32_t first_char = _lv_txt_encoded_get_char_id(text, choice.start);
-    const uint32_t end_char = _lv_txt_encoded_get_char_id(text, choice.end);
-
-    for (uint32_t char_id = first_char; char_id < end_char; ++char_id) {
-      lv_point_t pos;
-      lv_label_get_letter_pos(hit_label, char_id, &pos);
-      uint32_t byte_id = _lv_txt_encoded_get_byte_id(text, char_id);
-      const uint32_t letter = _lv_txt_encoded_next(text, &byte_id);
-      const uint32_t next_letter = _lv_txt_encoded_next(&text[byte_id], nullptr);
-      const lv_coord_t glyph_w = LV_MAX(1, lv_font_get_glyph_width(font, letter, next_letter));
-      char letter_text[5] = {};
-      const size_t letter_bytes = byte_id - _lv_txt_encoded_get_byte_id(text, char_id);
-      const uint32_t letter_byte_id = _lv_txt_encoded_get_byte_id(text, char_id);
-      memcpy(letter_text, text + letter_byte_id, letter_bytes);
-      const bool letter_rtl = _lv_bidi_detect_base_dir(letter_text) == LV_BASE_DIR_RTL;
-      pos.x = static_cast<lv_coord_t>(content.x1 + pos.x - (letter_rtl ? glyph_w : 0));
-      pos.y = static_cast<lv_coord_t>(content.y1 + pos.y);
-      lv_draw_letter(draw_ctx, &draw_dsc, &pos, letter);
-    }
+  draw_dsc.opa = lv_obj_get_style_text_opa(hit_label, LV_PART_MAIN);
+  const lv_coord_t line_height = lv_font_get_line_height(font);
+  for (size_t index = 0; index < cache->count; ++index) {
+    const ChatLinkGlyph& glyph = cache->glyphs[index];
+    lv_point_t pos = { static_cast<lv_coord_t>(content.x1 + glyph.pos.x),
+                       static_cast<lv_coord_t>(content.y1 + glyph.pos.y) };
+    if (pos.y > draw_ctx->clip_area->y2 || pos.y + line_height < draw_ctx->clip_area->y1) continue;
+    lv_draw_letter(draw_ctx, &draw_dsc, &pos, glyph.letter);
   }
 }
 
@@ -41772,43 +41809,20 @@ static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
                                      lv_color_t color, lv_coord_t width,
                                      lv_coord_t x, lv_coord_t y) {
   ChatLinkChoice choice{};
-  size_t link_count = 0;
-  for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end)
-    ++link_count;
-  if (!link_count) return nullptr;
-  const bool has_rtl = chatTextHasRtl(text);
-  char* recolored = nullptr;
-  if (!has_rtl) {
-    recolored = static_cast<char*>(lv_mem_alloc(11 * strlen(text) + 9 * link_count + 1));
-    if (!recolored) return nullptr;
-    size_t offset = 0;
-    int cursor = 0;
-    for (int from = 0; nextChatLinkChoice(text, from, &choice); from = choice.end) {
-      chatAppendRecolor(recolored, offset, text, cursor, choice.start, false, color);
-      chatAppendRecolor(recolored, offset, text, choice.start, choice.end, true, color);
-      cursor = choice.end;
-    }
-    chatAppendRecolor(recolored, offset, text, cursor, (int)strlen(text), false, color);
-  }
-  lv_obj_t* label = lv_label_create(parent);
+  if (!nextChatLinkChoice(text, 0, &choice)) return nullptr;
+  auto* cache = static_cast<ChatLinkDrawCache*>(lv_mem_alloc(sizeof(ChatLinkDrawCache)));
+  if (!cache) return nullptr;
+  memset(cache, 0, sizeof(*cache));
+  lv_obj_t* label = lv_obj_create(parent);
+  lv_obj_remove_style_all(label);
+  lv_obj_clear_flag(label, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
-  lv_obj_set_style_text_color(label, has_rtl ? color : lv_color_hex(COLOR_CHAT_LINK), LV_PART_MAIN);
-  lv_obj_set_style_text_letter_space(label,
-      lv_obj_get_style_text_letter_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_obj_set_style_text_line_space(label,
-      lv_obj_get_style_text_line_space(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_obj_set_style_text_align(label,
-      lv_obj_get_style_text_align(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_obj_set_style_base_dir(label, lv_obj_get_style_base_dir(hit_label, LV_PART_MAIN), LV_PART_MAIN);
-  lv_label_set_long_mode(label, lv_label_get_long_mode(hit_label));
-  lv_obj_set_width(label, width);
-  lv_label_set_recolor(label, !has_rtl);
-  lv_label_set_text(label, has_rtl ? text : recolored);
-  if (recolored) lv_mem_free(recolored);
+  lv_obj_set_style_text_color(label, color, LV_PART_MAIN);
+  lv_obj_update_layout(hit_label);
+  lv_obj_set_size(label, width, lv_obj_get_height(hit_label));
   lv_obj_set_pos(label, x, y);
   lv_obj_set_user_data(label, hit_label);
-  if (has_rtl)
-    lv_obj_add_event_cb(label, chatDrawRtlLinkText, LV_EVENT_DRAW_MAIN_END, nullptr);
+  lv_obj_add_event_cb(label, chatDrawLinkText, LV_EVENT_ALL, cache);
   return label;
 }
 
@@ -42130,8 +42144,8 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 #endif
                               LV_PART_MAIN);
   lv_label_set_text(tlbl, d.san_text);
-  // Detect every actionable span before layout; the text overlay supplies per-span
-  // highlights while the plain label underneath remains the hit-test coordinate map.
+  // Detect every actionable span before layout; the overlay draws only link glyphs
+  // while the plain label supplies normal text and the hit-test coordinate map.
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
   int _ca, _cb; double _clat, _clon;
   const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
@@ -42145,9 +42159,6 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   if ((has_url || has_coords || has_hashtag) && !failed_send) {
     link_label = chatCreateLinkLabel(bubble, tlbl, d.san_text, msg_font,
                                      lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, 0, inner_y);
-  }
-  if (link_label) {
-    lv_obj_set_style_text_opa(tlbl, LV_OPA_0, LV_PART_MAIN);
   }
 #endif
 
