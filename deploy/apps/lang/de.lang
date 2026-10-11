@@ -422,6 +422,7 @@ Invalid max hops	Ungültige max. Hops
 Invalid radio values	Ungültige Funkwerte
 Join	Beitreten
 Join a hashtag channel	Hashtag-Kanal beitreten
+Select a link or location	Link oder Standort auswählen
 Join a private channel	Privatem Kanal beitreten
 Join hashtag channel	Hashtag-Kanal beitreten
 Join network	Netzwerk beitreten
@@ -1325,7 +1326,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Kanal
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset

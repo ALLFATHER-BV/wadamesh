@@ -422,6 +422,7 @@ Invalid max hops	Máx. saltos inválido
 Invalid radio values	Valores de rádio inválidos
 Join	Entrar
 Join a hashtag channel	Entrar em um canal de hashtag
+Select a link or location	Selecione um link ou local
 Join a private channel	Entrar em um canal privado
 Join hashtag channel	Entrar em canal de hashtag
 Join network	Entrar na rede
@@ -1328,7 +1329,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Canal
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset

@@ -422,6 +422,7 @@ Invalid max hops	Ongeldige max hops
 Invalid radio values	Ongeldige radiowaarden
 Join	Deelnemen
 Join a hashtag channel	Deelnemen aan hashtagkanaal
+Select a link or location	Kies een link of locatie
 Join a private channel	Deelnemen aan privékanaal
 Join hashtag channel	Deelnemen aan hashtagkanaal
 Join network	Verbinden met netwerk
@@ -1326,7 +1327,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Kanaal
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset

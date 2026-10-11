@@ -420,6 +420,7 @@ Invalid max hops	Neplatný max. počet skoků
 Invalid radio values	Neplatné hodnoty rádia
 Join	Připojit se
 Join a hashtag channel	Připojit se ke kanálu hashtagu
+Select a link or location	Vyberte odkaz nebo polohu
 Join a private channel	Připojit se k soukromému kanálu
 Join hashtag channel	Připojit se ke kanálu hashtagu
 Join network	Připojit se k síti
@@ -1352,7 +1353,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Kanál
 Channels	Channels
 Chat icon reset	Chat icon reset
 Chats	Chats
