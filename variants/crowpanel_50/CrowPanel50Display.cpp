@@ -11,10 +11,24 @@ namespace {
 constexpr int kPanelW = 800, kPanelH = 480;
 constexpr int kTouchSda = 15, kTouchScl = 16, kTouchInt = 1;
 
-// 14 MHz rather than Elecrow's 21: the panel scans out of the same PSRAM that
-// LVGL, WiFi and the radio stacks use, and the lower clock leaves them the
-// bandwidth that otherwise shows up as the picture drifting or tearing.
-constexpr uint32_t kPclkHz = 14000000;
+// Pixel clock. Elecrow's factory code runs 21 MHz; Meshtastic and Camillia-MT
+// run 14 MHz to leave PSRAM bandwidth for LVGL, WiFi and the radio. 12 MHz is
+// too slow: the panel drops into its own colour-cycling self-test, which only a
+// power cycle clears. The panel timings can be overridden with -D for bring-up
+// on other panel revisions.
+#ifndef CROWPANEL50_PCLK_HZ
+#define CROWPANEL50_PCLK_HZ 14000000
+#endif
+// Clock edge (LovyanGFX's pclk_idle_high sets the edge the data changes on).
+// Elecrow's 1 is right: with 0 the data changes as the panel samples it, so
+// single-pixel detail goes dark and gradients pick up stray lines.
+#ifndef CROWPANEL50_PCLK_IDLE_HIGH
+#define CROWPANEL50_PCLK_IDLE_HIGH 1
+#endif
+#ifndef CROWPANEL50_HPORCH
+#define CROWPANEL50_HPORCH 8
+#endif
+constexpr uint32_t kPclkHz = CROWPANEL50_PCLK_HZ;
 
 // V1.1+ board MCU: single-byte commands at 0x30. 0 brightest .. 244 dimmest,
 // 245 backlight off, 250 wakes the touch panel (V1.2/V1.3 values).
@@ -169,14 +183,14 @@ CrowPanel50Display::CrowPanel50Display() : DisplayDriver(kPanelW, kPanelH) {
     cfg.pin_pclk = GPIO_NUM_39;
     cfg.freq_write = kPclkHz;
     cfg.hsync_polarity = 0;
-    cfg.hsync_front_porch = 8;
+    cfg.hsync_front_porch = CROWPANEL50_HPORCH;
     cfg.hsync_pulse_width = 4;
-    cfg.hsync_back_porch = 8;
+    cfg.hsync_back_porch = CROWPANEL50_HPORCH;
     cfg.vsync_polarity = 0;
     cfg.vsync_front_porch = 8;
     cfg.vsync_pulse_width = 4;
     cfg.vsync_back_porch = 8;
-    cfg.pclk_idle_high = 1;
+    cfg.pclk_idle_high = CROWPANEL50_PCLK_IDLE_HIGH;
     _bus.config(cfg);
   }
   _panel.setBus(&_bus);
@@ -230,9 +244,30 @@ bool CrowPanel50Display::begin() {
     return false;
   }
   _ctl.setBacklight(_brightness);
+#ifdef CROWPANEL50_TESTPATTERN
+  // Bring-up aid: colour ramps straight to the panel, no LVGL. Clean, even steps mean
+  // the bus is fine; stray lines or flecks mean data bits are mis-sampled.
+  {
+    const int w = _lcd.width(), bh = _lcd.height() / 6;
+    for (int x = 0; x < w; ++x) {
+      const uint32_t r5 = x * 32 / w, g6 = x * 64 / w;
+      _lcd.fillRect(x, 0 * bh, 1, bh, (uint16_t)(r5 << 11));
+      _lcd.fillRect(x, 1 * bh, 1, bh, (uint16_t)(g6 << 5));
+      _lcd.fillRect(x, 2 * bh, 1, bh, (uint16_t)r5);
+      _lcd.fillRect(x, 3 * bh, 1, bh, (uint16_t)((r5 << 11) | (g6 << 5) | r5));
+      _lcd.fillRect(x, 4 * bh, 1, bh, (uint16_t)((x & 1) ? 0xFFFF : 0x0000));
+      const uint8_t r = 0x2D + (0xF4 - 0x2D) * x / w, g = 0xD4 + (0x72 - 0xD4) * x / w,
+                    b = 0xBF + (0xB6 - 0xBF) * x / w;
+      _lcd.fillRect(x, 5 * bh, 1, _lcd.height() - 5 * bh, _lcd.color565(r, g, b));
+    }
+    Serial.println("[crowpanel-50] test pattern (15 s)");
+    delay(15000);
+  }
+#endif
   _isOn = true;
-  Serial.printf("[crowpanel-50] display %dx%d, touch %s\n", width(), height(),
-                _lcd.touch() ? "up" : "not found");
+  Serial.printf("[crowpanel-50] display %dx%d, pclk %lu Hz edge %d hporch %d, touch %s\n",
+                width(), height(), (unsigned long)kPclkHz, CROWPANEL50_PCLK_IDLE_HIGH,
+                CROWPANEL50_HPORCH, _lcd.touch() ? "up" : "not found");
   return true;
 }
 
@@ -285,10 +320,46 @@ void CrowPanel50Display::setBrightness(uint8_t value) {
   _ctl.setBacklight(value);
 }
 
+// Reads the GT911 through Wire rather than LovyanGFX: Wire takes a lock, so the
+// background touch task can share the bus with the backlight controller, and
+// LovyanGFX drops a pending report whenever reads are more than 128 ms apart.
+// Between reports the GT911 holds its last state, so that is what is returned.
 bool CrowPanel50Display::getTouchPoint(uint16_t& x, uint16_t& y) {
-  int32_t tx = 0, ty = 0;
-  if (!_lcd.getTouch(&tx, &ty)) return false;
-  x = (uint16_t)tx;
-  y = (uint16_t)ty;
+  if (!_touchAddr) return false;
+  uint8_t buf[9] = {0};
+  Wire.beginTransmission(_touchAddr);
+  Wire.write(0x81);
+  Wire.write(0x4E);
+  // A STOP, not a repeated start: Wire tracks a repeated start in shared fields
+  // that are not task-safe, and loopTask's RTC reads use one.
+  bool ok = Wire.endTransmission() == 0 &&
+            Wire.requestFrom(_touchAddr, (uint8_t)sizeof(buf)) == sizeof(buf);
+  if (ok) {
+    for (auto& b : buf) b = Wire.read();
+  }
+  if (ok && (buf[0] & 0x80)) {
+    const uint8_t points = buf[0] & 0x0F;
+    if (points > 0 && points <= 5) {
+      lgfx::touch_point_t tp;
+      tp.id = buf[1];
+      tp.x = (int16_t)(buf[2] | (buf[3] << 8));
+      tp.y = (int16_t)(buf[4] | (buf[5] << 8));
+      tp.size = (uint16_t)(buf[6] | (buf[7] << 8));
+      _lcd.convertRawXY(&tp, 1);
+      _touchX = (uint16_t)std::max<int>(0, tp.x);
+      _touchY = (uint16_t)std::max<int>(0, tp.y);
+      _touchDown = true;
+    } else {
+      _touchDown = false;
+    }
+    Wire.beginTransmission(_touchAddr);
+    Wire.write(0x81);
+    Wire.write(0x4E);
+    Wire.write(0x00);
+    Wire.endTransmission();
+  }
+  if (!_touchDown) return false;
+  x = _touchX;
+  y = _touchY;
   return true;
 }

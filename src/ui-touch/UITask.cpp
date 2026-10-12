@@ -2467,9 +2467,16 @@ static inline lv_coord_t modalAvailH() { return lv_disp_get_ver_res(nullptr) - S
 // kbApplyLayoutForRotation), full CHAT_KB_H in portrait.
 static inline bool       chatLandscape() { return lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr); }
 static inline lv_coord_t chatScreenW()   { return lv_disp_get_hor_res(nullptr); }
+// CrowPanel 5.0: all three composer buttons are the text box's height (CHAT_COMP_H
+// less the row's 2-px vertical pads), with the 20-px app icons.
+#if defined(HAS_CROWPANEL_50)
+static constexpr lv_coord_t CHAT_COMP_BTN_CROW50 = CHAT_COMP_H - 4;
+#endif
 static inline lv_coord_t chatComposerChipSz() {
 #if CAP_ROUND_CORNERS
   return CHAT_COMP_BTN_P4;
+#elif defined(HAS_CROWPANEL_50)
+  return CHAT_COMP_BTN_CROW50;
 #elif CAP_LARGE_SCREEN
   return 56;
 #elif defined(TLORA_PAGER)
@@ -2481,7 +2488,7 @@ static inline lv_coord_t chatComposerChipSz() {
 static inline lv_coord_t chatComposerSendSz() {
 #if CAP_ROUND_CORNERS
   return CHAT_COMP_BTN_P4;
-#elif defined(TLORA_PAGER)
+#elif defined(TLORA_PAGER) || defined(HAS_CROWPANEL_50)
   return chatComposerChipSz();
 #else
   return 34;
@@ -12679,6 +12686,27 @@ static void composerEditLongPressCb(lv_event_t* e) {
   if (act) lv_indev_wait_release(act);   // swallow the trailing CLICKED
   taReapplyStickySel(ta);   // the press just cleared the highlight — restore it under the menu
   txtMenuShow(ta);
+}
+
+// LVGL's base handler adds/clears LV_STATE_PRESSED on the whole keyboard at
+// every key press/release, and because its key styles carry a PRESSED selector
+// that invalidates the entire keyboard twice per keystroke. The btnmatrix
+// already invalidates just the key it presses and releases, so set the state
+// here, ahead of the base handler and with invalidation off; LVGL's own
+// add/clear then finds nothing to change. On an 800x480 panel this is the
+// difference between redrawing one key and ~200k pixels per keystroke.
+static void kbPressStatePreCb(lv_event_t* e) {
+  lv_obj_t* kb = lv_event_get_current_target(e);
+  if (lv_event_get_target(e) != kb) return;
+  const lv_event_code_t code = lv_event_get_code(e);
+  const bool press = (code == LV_EVENT_PRESSED);
+  if (!press && code != LV_EVENT_RELEASED && code != LV_EVENT_PRESS_LOST) return;
+  if (lv_obj_has_state(kb, LV_STATE_PRESSED) == press) return;
+  lv_disp_t* d = lv_obj_get_disp(kb);
+  lv_disp_enable_invalidation(d, false);
+  if (press) lv_obj_add_state(kb, LV_STATE_PRESSED);
+  else       lv_obj_clear_state(kb, LV_STATE_PRESSED);
+  lv_disp_enable_invalidation(d, true);
 }
 
 // On-screen keyboard (V4): backspace with an active selection deletes the whole
@@ -37802,7 +37830,11 @@ static void makeChatDetail(LvChatPanel& p) {
   navSetTip(qr_btn, TR("Quick replies"));
   lv_obj_t* ql = lv_label_create(qr_btn);
   lv_label_set_text(ql, UI_ICON_MESSAGE_SQUARE_TEXT);
+#if defined(HAS_CROWPANEL_50)
+  lv_obj_set_style_text_font(ql, &ui_icons_20, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(ql, &g_font_16, LV_PART_MAIN);
+#endif
   lv_obj_center(ql);
 #if defined(HAS_TANMATSU)
   styleChipAsFkey(qr_btn, ql, 0, 0xF5A623, chip_sz, true);    // orange △ — quick replies (F2)
@@ -37832,7 +37864,11 @@ static void makeChatDetail(LvChatPanel& p) {
 #else
   lv_label_set_text(el, UI_ICON_SMILE);
 #endif
+#if defined(HAS_CROWPANEL_50)
+  lv_obj_set_style_text_font(el, &ui_icons_20, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(el, &g_font_16, LV_PART_MAIN);
+#endif
   lv_obj_center(el);
 #if defined(HAS_TANMATSU)
   styleChipAsFkey(p.emoji_btn, el, 1, 0xFFD400, chip_sz, false); // yellow □ — emoji picker (F3); keep the colour glyph
@@ -37961,7 +37997,7 @@ static void makeChatDetail(LvChatPanel& p) {
 
   lv_obj_t* send = lv_btn_create(p.composer_row);
   p.send_btn = send;
-#if defined(TLORA_PAGER) || CAP_ROUND_CORNERS
+#if defined(TLORA_PAGER) || CAP_ROUND_CORNERS || defined(HAS_CROWPANEL_50)
   lv_obj_set_size(send, send_sz, send_sz);
 #else
   lv_obj_set_size(send, 30, 30);   // a circle; the slot is send_sz wide
@@ -37972,7 +38008,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_add_event_cb(send, sendFromPanelCb, LV_EVENT_CLICKED, &p);
   lv_obj_t* sl = lv_label_create(send);
   lv_label_set_text(sl, UI_ICON_ARROW_UP);
+#if defined(HAS_CROWPANEL_50)
+  lv_obj_set_style_text_font(sl, &ui_icons_20, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
+#endif
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_center(sl);
 #if CAP_ROUND_CORNERS
@@ -54687,6 +54727,49 @@ static void uiFitTrailingDots(const char* src, const lv_font_t* f, lv_coord_t ma
   memcpy(out + keep, "...", 4);
 }
 
+// Set a label's text only when it actually changed. lv_label_set_text always
+// invalidates + re-lays-out the label (it does NOT compare), so calling it every
+// 250 ms refresh tick with byte-identical text needlessly redraws ~8 labels 4x/s.
+// Comparing against the label's CURRENT text also makes this safe across home/tab
+// rebuilds (no module-static "last value" that can outlive the widget).
+static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt) {
+  if (lbl && strcmp(lv_label_get_text(lbl), txt) != 0) lv_label_set_text(lbl, txt);
+}
+// The same for the bar's other per-tick setters: every LVGL style setter repaints its
+// object (and most re-lay it out) even when the value is unchanged, and clearing HIDDEN
+// repaints an object that is already visible, so the bar redrew 4 times a second on every
+// screen with nothing changing. Each of these compares the live value first.
+static inline void sbShow(lv_obj_t* o, bool show) {
+  if (!o || show != lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
+  if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+static inline void sbTranslateY(lv_obj_t* o, lv_coord_t v) {
+  if (o && lv_obj_get_style_translate_y(o, LV_PART_MAIN) != v) lv_obj_set_style_translate_y(o, v, LV_PART_MAIN);
+}
+static inline void sbTextColor(lv_obj_t* o, lv_color_t c) {
+  if (o && lv_obj_get_style_text_color(o, LV_PART_MAIN).full != c.full) lv_obj_set_style_text_color(o, c, LV_PART_MAIN);
+}
+static inline void sbFont(lv_obj_t* o, const lv_font_t* f, lv_style_selector_t sel) {
+  if (o && lv_obj_get_style_text_font(o, sel) != f) lv_obj_set_style_text_font(o, f, sel);
+}
+static inline void sbAlign(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) {
+  if (o && (lv_obj_get_style_align(o, LV_PART_MAIN) != a || lv_obj_get_style_x(o, LV_PART_MAIN) != x ||
+            lv_obj_get_style_y(o, LV_PART_MAIN) != y))
+    lv_obj_align(o, a, x, y);
+}
+static inline void sbWidth(lv_obj_t* o, lv_coord_t w) {
+  if (o && lv_obj_get_style_width(o, LV_PART_MAIN) != w) lv_obj_set_width(o, w);
+}
+static inline void sbLongMode(lv_obj_t* l, lv_label_long_mode_t m) {
+  if (l && lv_label_get_long_mode(l) != m) lv_label_set_long_mode(l, m);
+}
+
+static inline void sbSize(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
+  if (o && (lv_obj_get_style_width(o, LV_PART_MAIN) != w || lv_obj_get_style_height(o, LV_PART_MAIN) != h))
+    lv_obj_set_size(o, w, h);
+}
+
 static void chatHeaderApply(bool chat_open) {
   if (!g_statusbar.chat_avatar) return;
   lv_obj_t* radios[] = { g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.sd_icon,
@@ -54710,7 +54793,9 @@ static void chatHeaderApply(bool chat_open) {
     }
   }
   if (!chat_open) return;
-  if (g_statusbar.chan_gear) lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_HIDDEN);
+  // Every setter below is change-guarded: this runs every 250 ms tick, and LVGL
+  // repaints an object on any style/size/position write, even an unchanged one.
+  sbShow(g_statusbar.chan_gear, false);
 
   // Avatar and subtitle follow the open thread.
   static int s_thread = -2;
@@ -54751,18 +54836,17 @@ static void chatHeaderApply(bool chat_open) {
   const lv_coord_t bar_h = statusBarCurH();
   const lv_coord_t av_sz = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
   const lv_coord_t x_av = SC(24), x_text = x_av + av_sz + 8;
-  lv_obj_set_style_translate_y(g_statusbar.chat_avatar, 0, LV_PART_MAIN);
-  lv_obj_align(g_statusbar.chat_avatar, LV_ALIGN_LEFT_MID, x_av, 0);
+  sbTranslateY(g_statusbar.chat_avatar, 0);
+  sbAlign(g_statusbar.chat_avatar, LV_ALIGN_LEFT_MID, x_av, 0);
   if (g_statusbar.chat_back) {
-    lv_obj_set_style_text_color(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
+    sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT));
+    sbAlign(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
   }
   // Right side: battery, then the clock just left of it, centred on the bar.
-  for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
-    if (o) lv_obj_set_style_translate_y(o, 0, LV_PART_MAIN);
+  for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct }) sbTranslateY(o, 0);
   const char* pct = g_statusbar.batt_pct ? lv_label_get_text(g_statusbar.batt_pct) : "";
   const lv_coord_t pct_w = (pct && pct[0]) ? lv_txt_get_width(pct, strlen(pct), &g_font_12, 0, LV_TEXT_FLAG_NONE) + SBX(22) : SBX(20);
-  lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -(pct_w + 8), 0);
+  sbAlign(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -(pct_w + 8), 0);
   const char* clk = lv_label_get_text(g_statusbar.clock);
   const lv_coord_t clk_w = lv_txt_get_width(clk, strlen(clk), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
   const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10);
@@ -54771,8 +54855,8 @@ static void chatHeaderApply(bool chat_open) {
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
   const lv_coord_t title_h = lv_font_get_line_height(&g_font_semi_14);
   const lv_coord_t sub_h = lv_font_get_line_height(&g_font_12);
-  lv_obj_set_style_translate_y(g_statusbar.left_label, 0, LV_PART_MAIN);
-  lv_obj_set_size(g_statusbar.left_label, LV_MAX((lv_coord_t)40, text_w), title_h);
+  sbTranslateY(g_statusbar.left_label, 0);
+  sbSize(g_statusbar.left_label, LV_MAX((lv_coord_t)40, text_w), title_h);
   if (lv_label_get_long_mode(g_statusbar.left_label) != LV_LABEL_LONG_CLIP)
     lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_CLIP);
   {
@@ -54781,14 +54865,14 @@ static void chatHeaderApply(bool chat_open) {
     if (strcmp(lv_label_get_text(g_statusbar.left_label), ttl) != 0) lv_label_set_text(g_statusbar.left_label, ttl);
   }
   const lv_coord_t top = (bar_h - title_h - sub_h) / 2;
-  lv_obj_align(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, x_text, top);
-  lv_obj_set_style_translate_y(g_statusbar.chat_sub, 0, LV_PART_MAIN);
-  lv_obj_set_size(g_statusbar.chat_sub, LV_MAX((lv_coord_t)40, text_w), sub_h);
-  lv_obj_align(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x_text, top + title_h);
+  sbAlign(g_statusbar.left_label, LV_ALIGN_TOP_LEFT, x_text, top);
+  sbTranslateY(g_statusbar.chat_sub, 0);
+  sbSize(g_statusbar.chat_sub, LV_MAX((lv_coord_t)40, text_w), sub_h);
+  sbAlign(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x_text, top + title_h);
   // The hit area for chat settings: avatar and both lines.
-  lv_obj_set_style_translate_y(g_statusbar.chat_head, 0, LV_PART_MAIN);
-  lv_obj_set_size(g_statusbar.chat_head, x_text - x_av + LV_MAX((lv_coord_t)40, text_w), bar_h);
-  lv_obj_align(g_statusbar.chat_head, LV_ALIGN_LEFT_MID, x_av, 0);
+  sbTranslateY(g_statusbar.chat_head, 0);
+  sbSize(g_statusbar.chat_head, x_text - x_av + LV_MAX((lv_coord_t)40, text_w), bar_h);
+  sbAlign(g_statusbar.chat_head, LV_ALIGN_LEFT_MID, x_av, 0);
 }
 
 // The right-hand indicators, packed leftwards from the battery with one gap between
@@ -54823,44 +54907,6 @@ static void statusBarPackRight() {
     x += lv_obj_get_width(o);
     first = false;
   }
-}
-
-// Set a label's text only when it actually changed. lv_label_set_text always
-// invalidates + re-lays-out the label (it does NOT compare), so calling it every
-// 250 ms refresh tick with byte-identical text needlessly redraws ~8 labels 4x/s.
-// Comparing against the label's CURRENT text also makes this safe across home/tab
-// rebuilds (no module-static "last value" that can outlive the widget).
-static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt) {
-  if (lbl && strcmp(lv_label_get_text(lbl), txt) != 0) lv_label_set_text(lbl, txt);
-}
-// The same for the bar's other per-tick setters: every LVGL style setter repaints its
-// object (and most re-lay it out) even when the value is unchanged, and clearing HIDDEN
-// repaints an object that is already visible, so the bar redrew 4 times a second on every
-// screen with nothing changing. Each of these compares the live value first.
-static inline void sbShow(lv_obj_t* o, bool show) {
-  if (!o || show != lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return;
-  if (show) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
-  else      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-}
-static inline void sbTranslateY(lv_obj_t* o, lv_coord_t v) {
-  if (o && lv_obj_get_style_translate_y(o, LV_PART_MAIN) != v) lv_obj_set_style_translate_y(o, v, LV_PART_MAIN);
-}
-static inline void sbTextColor(lv_obj_t* o, lv_color_t c) {
-  if (o && lv_obj_get_style_text_color(o, LV_PART_MAIN).full != c.full) lv_obj_set_style_text_color(o, c, LV_PART_MAIN);
-}
-static inline void sbFont(lv_obj_t* o, const lv_font_t* f, lv_style_selector_t sel) {
-  if (o && lv_obj_get_style_text_font(o, sel) != f) lv_obj_set_style_text_font(o, f, sel);
-}
-static inline void sbAlign(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) {
-  if (o && (lv_obj_get_style_align(o, LV_PART_MAIN) != a || lv_obj_get_style_x(o, LV_PART_MAIN) != x ||
-            lv_obj_get_style_y(o, LV_PART_MAIN) != y))
-    lv_obj_align(o, a, x, y);
-}
-static inline void sbWidth(lv_obj_t* o, lv_coord_t w) {
-  if (o && lv_obj_get_style_width(o, LV_PART_MAIN) != w) lv_obj_set_width(o, w);
-}
-static inline void sbLongMode(lv_obj_t* l, lv_label_long_mode_t m) {
-  if (l && lv_label_get_long_mode(l) != m) lv_label_set_long_mode(l, m);
 }
 
 static void updateGlobalStatusBar() {
@@ -54963,6 +55009,14 @@ static void updateGlobalStatusBar() {
   // nowhere instead of going back (#308).
   const bool chat_open      = (s_chat_title[0] != '\0') && !s_apppage_title &&
                               (s_settings_open_cat < 0);
+#if !defined(TLORA_PAGER) && !CAP_ROUND_CORNERS
+  // An open chat's header (chatHeaderApply, at the end) places the title, back, cog,
+  // clock and battery itself. Leave them alone here: setting them one way and the
+  // header the other repainted the whole bar every tick.
+  const bool chat_hdr = chat_open && g_statusbar.chat_avatar;
+#else
+  const bool chat_hdr = false;
+#endif
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
   {
 #if defined(TLORA_PAGER)
@@ -55022,6 +55076,10 @@ static void updateGlobalStatusBar() {
       lv_obj_t* c = lv_obj_get_child(g_statusbar.root, i);
       if (c == inbox_btns[0] || c == inbox_btns[1] || c == inbox_btns[2]) continue;
       if (c == g_statusbar.fade || c == g_statusbar.dim) continue;   // full-bar backdrops — never shift
+      if (chat_hdr && (c == g_statusbar.left_label || c == g_statusbar.chat_back || c == g_statusbar.chan_gear ||
+                       c == g_statusbar.clock || c == g_statusbar.batt_icon || c == g_statusbar.batt_pct ||
+                       c == g_statusbar.chat_avatar || c == g_statusbar.chat_sub || c == g_statusbar.chat_head))
+        continue;
       lv_coord_t t = up;   // top row by default
       if (c == g_statusbar.left_label) {
         if (s_settings_open_cat >= 0 || s_apppage_title) t = 0;    // settings/tool back+title: centred
@@ -55047,11 +55105,11 @@ static void updateGlobalStatusBar() {
   if (g_statusbar.chat_back) {
     // Re-apply the accent each tick so the chevron tracks the live theme colour (it was
     // set once at boot to the default accent and never updated on an accent change).
-    sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_ACCENT));
+    if (!chat_hdr) sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_ACCENT));
     sbShow(g_statusbar.chat_back, in_chan_chat);
   }
   if (g_statusbar.chan_gear) {
-    sbShow(g_statusbar.chan_gear, in_chan_chat);
+    sbShow(g_statusbar.chan_gear, in_chan_chat && !chat_hdr);
   }
   // In a chat the thread name (+ unread prefix) is CENTRED on the lower row (the back +
   // cog sit at the far left); otherwise it's left-aligned per the usual layout.
@@ -55090,7 +55148,7 @@ static void updateGlobalStatusBar() {
     sbWidth(g_statusbar.left_label, 140);
     sbLongMode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
 #else
-    sbAlign(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
+    if (!chat_hdr) sbAlign(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
 #endif
   } else {
     sbAlign(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
@@ -64207,6 +64265,8 @@ static void buildUiTree() {
   // first, then re-add the default after it. The interceptor runs first and can
   // stop_processing to replace the default single-char delete when text is selected.
   lv_obj_remove_event_cb(g_lv.keyboard, lv_keyboard_def_event_cb);
+  lv_obj_add_event_cb(g_lv.keyboard, kbPressStatePreCb,
+                      (lv_event_code_t)(LV_EVENT_ALL | LV_EVENT_PREPROCESS), nullptr);
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
   lv_obj_add_event_cb(g_lv.keyboard, kbV4SpecialPageCb,       LV_EVENT_VALUE_CHANGED, nullptr);
 #endif
@@ -74416,11 +74476,11 @@ void UITask::loop() {
     // and the keyboard was never even begun. That is why keys did nothing.
     //
     // The background task scans touch and (on the T-Deck) the keyboard.
-    // CrowPanel keeps LovyanGFX and Wire transactions on this thread.
+    // The CrowPanel 3.5 keeps LovyanGFX and Wire transactions on this thread.
     static bool s_con_input_up = false;
     if (!s_con_input_up) {
       if (heltecV4CapTouchBegin()) {
-#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
+#if !defined(HAS_CROWPANEL_35)
         heltecV4CapTouchStartBackgroundPoll(8);
 #endif
         s_con_input_up = true;
@@ -75273,11 +75333,12 @@ void UITask::loop() {
     }
     if (g_lv.touch_inited) {
       pushDiagLine("touch init ok");
-    #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+    #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35)
       // GT911 (LovyanGFX) and the TCA9535/ADS1115 (Wire) share I2C0 on
-      // Wio's GPIO47/48; the CrowPanels' GT911 shares I2C0 on GPIO15/16 (with
-      // the 5.0's backlight controller).
+      // Wio's GPIO47/48; the CrowPanel 3.5's GT911 shares I2C0 on GPIO15/16.
       // Keep every transaction on loopTask so polling cannot interrupt Wire.
+      // (The CrowPanel 5.0 reads its GT911 through Wire, whose lock makes the
+      // background poll below safe: an 800x480 redraw starves inline polling.)
       pushDiagLine("touch inline (shared I2C)");
     #elif defined(HAS_TDECK_PRO)
       // The e-paper BUSY callback keeps this inline driver polling while the

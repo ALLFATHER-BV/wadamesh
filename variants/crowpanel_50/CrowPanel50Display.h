@@ -76,6 +76,8 @@ private:
   lgfx::LGFX_Device _lcd;
   CrowPanel50BoardCtl _ctl;
   uint8_t _touchAddr = 0;
+  bool _touchDown = false;
+  uint16_t _touchX = 0, _touchY = 0;
   uint8_t _brightness = 255;
   bool _isOn = false;
   uint16_t _color = 0xffff;
