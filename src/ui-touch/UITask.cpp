@@ -4469,6 +4469,22 @@ static bool nameFirstEmoji(const char* name, char* out, size_t cap) {
   return false;
 }
 
+// E-paper badges: a filled pill thresholds to solid black on the Pro, and its small
+// anti-aliased white figures mostly fall under the one-bit cut, so the count reads as
+// a black blob. Paper white with a black ring and black figures survives the reduction.
+static void styleBadgeEpaper(lv_obj_t* box, lv_obj_t* text) {
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(box, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(box, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_border_width(box, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(text, lv_color_black(), LV_PART_MAIN);
+#else
+  (void)box; (void)text;
+#endif
+}
+
 // A count pill in the redesign's language: the glow with Bold figures in its ink
 // (dark on Night's bright glow, white on Day's deep one), "!" for a pending update.
 // Shared by the launcher tiles and the tab bar.
@@ -4495,6 +4511,7 @@ static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
   lv_obj_set_style_text_color(bt,
       (s_theme_high_contrast || update) ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_text_font(bt, &g_font_badge, LV_PART_MAIN);
+  styleBadgeEpaper(bdg, bt);
   lv_obj_center(bt);
   return bdg;
 }
@@ -31463,6 +31480,10 @@ static void makeContactsTab(lv_obj_t* tab) {
     lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_badge, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
+    styleBadgeEpaper(s_ct_disc_badge, s_ct_disc_badge);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_pad_top(s_ct_disc_badge, 2, LV_PART_MAIN);   // the 1 px ring counts toward it
+#endif
     lv_obj_align(s_ct_disc_badge, LV_ALIGN_TOP_RIGHT, 6, -1);
     lv_obj_add_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
   }
@@ -64142,6 +64163,10 @@ static void buildUiTree() {
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_top(s_chat_unread_badge, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(s_chat_unread_badge, 0, LV_PART_MAIN);
+  styleBadgeEpaper(s_chat_unread_badge, s_chat_unread_badge);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_pad_top(s_chat_unread_badge, 3, LV_PART_MAIN);   // the 1 px ring counts toward it
+#endif
   // Bottom anchors one lower than the old 15 px pill's, so its top stays put.
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
 #if defined(TLORA_PAGER)
