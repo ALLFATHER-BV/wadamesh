@@ -133,6 +133,10 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
     14 MHz pixel clock (Elecrow's demo uses 21 MHz); the slower clock leaves
     PSRAM bandwidth for WiFi and LVGL so the picture does not drift or tear.
     LVGL's draw band stays in internal RAM for the same reason.
+  - Flash writes (saving chats and settings) take the bus that the panel's DMA
+    shares with PSRAM, which made the picture jump sideways. The firmware stops
+    the LCD clock for each flash write or erase, so the screen briefly freezes
+    or flickers instead.
   - Backlight and touch reset sit behind an I2C controller on GPIO15/16 that
     changed between revisions: a PCA9557 at 0x18 on V1.0, a board MCU at 0x30
     from V1.1. The driver detects which one answers, resets the GT911 through

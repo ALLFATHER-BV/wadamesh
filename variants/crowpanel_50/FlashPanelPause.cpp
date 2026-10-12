@@ -4,7 +4,8 @@
 // IDF 5 fixes (bounce buffers, flash auto-suspend) aren't in this Arduino core,
 // so the LCD's clock source is switched off for the length of each flash
 // operation: the panel holds its image for those few ms and nothing underruns.
-// Experimental and untested: build with
+// On hardware the sideways jump becomes a brief freeze or flicker. The
+// crowpanel_50 env enables it with
 //   -DCROWPANEL50_FLASH_PAUSE -Wl,--wrap=esp_flash_write -Wl,--wrap=esp_flash_erase_region
 #ifdef CROWPANEL50_FLASH_PAUSE
 #include <Arduino.h>
