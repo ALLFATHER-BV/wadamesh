@@ -4469,8 +4469,9 @@ static bool nameFirstEmoji(const char* name, char* out, size_t cap) {
   return false;
 }
 
-// A count pill in the redesign's language: the glow teal with dark Bold figures,
-// "!" for a pending update. Shared by the launcher tiles and the tab bar.
+// A count pill in the redesign's language: the glow with Bold figures in its ink
+// (dark on Night's bright glow, white on Day's deep one), "!" for a pending update.
+// Shared by the launcher tiles and the tab bar.
 static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
   lv_obj_t* bdg = lv_obj_create(parent);
   lv_obj_remove_style_all(bdg);
@@ -4492,7 +4493,7 @@ static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
   else           snprintf(bn, sizeof bn, count > 99 ? "99+" : "%d", count);
   lv_label_set_text(bt, bn);
   lv_obj_set_style_text_color(bt,
-      (s_theme_high_contrast || update) ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      (s_theme_high_contrast || update) ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_text_font(bt, &g_font_badge, LV_PART_MAIN);
   lv_obj_center(bt);
   return bdg;
@@ -31458,7 +31459,7 @@ static void makeContactsTab(lv_obj_t* tab) {
       lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : COLOR_GLOW), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge,
-      s_theme_high_contrast ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      s_theme_high_contrast ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_badge, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
@@ -42652,7 +42653,11 @@ static void refreshChatList(LvChatPanel& p) {
     lv_coord_t pill_w = 0;
     if (unread > 0) {
       lv_obj_t* pill = makeCountPill(btn, unread > 99 ? 100 : unread);
-      if (s_look_more && !s_theme_high_contrast) lv_obj_set_style_bg_color(pill, lv_color_hex(row_hue), LV_PART_MAIN);
+      if (s_look_more && !s_theme_high_contrast) {
+        lv_obj_set_style_bg_color(pill, lv_color_hex(row_hue), LV_PART_MAIN);
+        lv_obj_set_style_text_color(lv_obj_get_child(pill, 0),
+            lv_color_hex(accentLuma(row_hue) > 150 ? 0x00201Cu : 0xFFFFFFu), LV_PART_MAIN);
+      }
       lv_obj_update_layout(pill);
       pill_w = lv_obj_get_width(pill);
       if (compact_rows) lv_obj_align(pill, LV_ALIGN_RIGHT_MID, -(kPadR + time_w + 8), 0);
@@ -64131,7 +64136,7 @@ static void buildUiTree() {
       lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : COLOR_GLOW), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge,
-      s_theme_high_contrast ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      s_theme_high_contrast ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_chat_unread_badge, &g_font_badge, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_chat_unread_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
