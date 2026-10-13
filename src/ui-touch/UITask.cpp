@@ -42143,6 +42143,7 @@ static void chatLinkPickerChoiceCb(lv_event_t* e) {
     activateChatLinkChoice((int)(intptr_t)lv_event_get_user_data(e));
 }
 
+#if defined(HAS_TDECK_PRO)
 static void bubbleUrlTapCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED || !g_lv.task) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -42151,6 +42152,7 @@ static void bubbleUrlTapCb(lv_event_t* e) {
   char url[240];
   if (chatFirstUrl(m.text, url, sizeof url)) openUrlMenu(url);
 }
+#endif
 
 static int collectChatLinkChoices(const char* text, ChatLinkKind kind) {
   s_chat_link_choice_count = 0;
