@@ -58007,6 +58007,11 @@ static void hwLinksTap(int, lv_event_t*) { openSettingsCategory(CAT_WIFI); }
 static void hwAdvertBuild(int i) {
   HwInst& w = hwI(i);
   lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_GLOW), LV_PART_MAIN);
+  // A solid button, whatever the box was styled as: on glass (the aurora default) the
+  // box is a translucent gradient into the panel colour, and its dark ON_GLOW text
+  // vanished on it (#637).
+  lv_obj_set_style_bg_grad_dir(w.box, LV_GRAD_DIR_NONE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(w.box, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_border_opa(w.box, LV_OPA_TRANSP, LV_PART_MAIN);
   const bool flood = hwR(i).opt == 1;
