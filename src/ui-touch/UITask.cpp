@@ -59529,7 +59529,7 @@ static const HwKindDef k_hw_kinds[] = {
   { HWK_NEAREST,  HWG_MESH,  HWSM,  HWS_M, "Nearest",       UI_ICON_RADIO_TOWER, nullptr,        hwNearestBuild,  hwNearestUpdate,  hwNearestTap,  nullptr },
   { HWK_REMOTE,   HWG_MESH,  HWSM,  HWS_M, "Remote sensor", UI_ICON_THERMOMETER, nullptr,        hwRemoteBuild,   hwRemoteUpdate,   hwRemoteTap,   hwRemoteOptions },
 #if defined(HW_HAVE_RADAR)
-  { HWK_RADAR,    HWG_MESH,  HWSZ(HWS_L), HWS_L, "Mesh radar", UI_ICON_RADAR,    nullptr,        hwRadarBuild,    hwRadarUpdate,    hwRadarTap,    nullptr },
+  { HWK_RADAR,    HWG_MESH,  HWSZ(HWS_M) | HWSZ(HWS_L), HWS_L, "Mesh radar", UI_ICON_RADAR,    nullptr,        hwRadarBuild,    hwRadarUpdate,    hwRadarTap,    nullptr },
 #endif
   { HWK_RADIO,    HWG_RADIO, HWSM,  HWS_M, "Radio",         UI_ICON_ANTENNA,     nullptr,        hwRadioBuild,    hwRadioUpdate,    hwRadioTap,    nullptr },
   { HWK_SIGNAL,   HWG_RADIO, HWSM,  HWS_M, "Signal",        UI_ICON_SIGNAL,      nullptr,        hwSignalBuild,   hwSignalUpdate,   hwSignalTap,   nullptr },
@@ -59993,7 +59993,14 @@ static void hwCatalogPick(int k) {
     opt = used[0] ? 1 : 0;
   }
   const int at = hwAdd(kind, opt, nullptr);
-  if (at < 0 && g_lv.task) g_lv.task->showAlert(TR("No room for it on Home"), 1500);
+  if (at < 0 && g_lv.task) {
+    // The default layout fills every cell, so most failed adds are a full Home: say
+    // how to make room rather than only that there is none.
+    int fc = 0, fr = 0;
+    const bool full = !hwFirstFree(s_hw, -1, HWS_S, fc, fr);
+    g_lv.task->showAlert(full ? TR("Home is full: hold a widget to remove one")
+                              : TR("No room for it on Home"), full ? 2500 : 1500);
+  }
   s_hw_focus_after = at;
   hwQueueRebuild();
 }
