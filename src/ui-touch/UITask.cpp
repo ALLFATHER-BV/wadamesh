@@ -41821,11 +41821,14 @@ static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
 static constexpr int CHAT_LINK_CHOICE_MAX = 16;
 static lv_obj_t* s_chat_link_picker = nullptr;
 static char s_chat_link_picker_text[UITask::MAX_MSG_TEXT + 1];
-static ChatLinkChoice s_chat_link_choices[CHAT_LINK_CHOICE_MAX];
+static ChatLinkChoice* s_chat_link_choices = nullptr;
 static int s_chat_link_choice_count = 0;
 
 static void closeChatLinkPicker() {
   if (s_chat_link_picker) popupClose(&s_chat_link_picker);
+  lv_mem_free(s_chat_link_choices);
+  s_chat_link_choices = nullptr;
+  s_chat_link_choice_count = 0;
 }
 
 static void chatLinkPickerBackdropCb(lv_event_t* e) {
@@ -41867,7 +41870,20 @@ static void bubbleUrlTapCb(lv_event_t* e) {
 static int collectChatLinkChoices(const char* text, ChatLinkKind kind) {
   s_chat_link_choice_count = 0;
   int from = 0;
-  while (s_chat_link_choice_count < CHAT_LINK_CHOICE_MAX) {
+  int count = 0;
+  while (count < CHAT_LINK_CHOICE_MAX) {
+    ChatLinkChoice next{};
+    if (!nextChatLinkChoice(text, from, &next)) break;
+    if (next.kind == kind) ++count;
+    from = next.end;
+  }
+
+  if (count == 0) return 0;
+  s_chat_link_choices = static_cast<ChatLinkChoice*>(lv_mem_alloc(count * sizeof(*s_chat_link_choices)));
+  if (!s_chat_link_choices) return 0;
+
+  from = 0;
+  while (s_chat_link_choice_count < count) {
     ChatLinkChoice next{};
     if (!nextChatLinkChoice(text, from, &next)) break;
     if (next.kind == kind) s_chat_link_choices[s_chat_link_choice_count++] = next;
