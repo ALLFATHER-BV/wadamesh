@@ -17904,11 +17904,6 @@ static void buildGeneralPage() {
                "Turning it on or off restarts.", SET_TONE_WARN);
   }
 #endif
-  {
-    lv_obj_t* c = setCard("Device");
-    setActionRow(c, LV_SYMBOL_REFRESH, "Run setup again", nullptr, setupRerunCb);
-    setButton(c, UI_ICON_POWER, "Reboot device", rebootCb, nullptr, SET_DANGER);
-  }
 }
 
 // ---- Settings > Battery ------------------------------------------------------------
@@ -18147,8 +18142,10 @@ static void buildKeyboardPage() {
 #endif
                  msgFlashToggleCb);
 #endif
-#if defined(HAS_TDECK_KEYBOARD)
-    setNote(c, "Older keyboard protocol is now in Settings > Device.");
+#if defined(HAS_TDECK_KEYBOARD) && defined(ESP32)
+    // Also on the Device page; here because this is where a garbling keyboard is looked into.
+    setSwitchRow(c, "Older keyboard protocol", "Turn on if your keyboard types the wrong letters. It turns off modifier latching.",
+                 touchPrefsGetKbForceLegacy(), kbForceLegacyToggleCb);
 #endif
   }
 #if defined(HAS_TANMATSU)
@@ -40224,8 +40221,8 @@ static void buildAboutSettings() {
     // Older keyboard controllers do not speak the raw protocol that modifier latching
     // needs, and the detection cannot be certain while nobody is typing. When it guesses
     // wrong the keyboard types the wrong letters, so this switch exists to be reachable
-    // BY TOUCH and end it (#341, #351). Lived on the Keyboard page until #596 gathered
-    // the hardware overrides here.
+    // BY TOUCH and end it (#341, #351). Here with the other hardware overrides (#596),
+    // and on the Keyboard page too.
     setSwitchRow(c, "Older keyboard protocol", "Turn on if your keyboard types the wrong letters. It turns off modifier latching.",
                  touchPrefsGetKbForceLegacy(), kbForceLegacyToggleCb);
 #endif
@@ -40314,6 +40311,11 @@ static void buildAboutSettings() {
       if (p > 0 && block[p - 1] == '\n') block[--p] = '\0';
       lv_label_set_text(g_lv.diag_label, p > 0 ? block : "");
     }
+  }
+  {
+    lv_obj_t* c = setCard("");
+    setActionRow(c, LV_SYMBOL_REFRESH, "Run setup again", nullptr, setupRerunCb);
+    setButton(c, UI_ICON_POWER, "Reboot device", rebootCb, nullptr, SET_DANGER);
   }
   versionCheckUpdateUi();
 }
@@ -40549,7 +40551,7 @@ static const SettingsGroupDef kSettingsGroups[] = {
   { "",            { CAT_DEVICE }, 1 },
   { "Mesh",        { CAT_PROFILE, CAT_RADIO, CAT_AUTOADD, CAT_QUICKREPLIES }, 4 },
   { "Connections", { CAT_WIFI, CAT_BLUETOOTH, CAT_GPS, CAT_MQTT }, 4 },
-  { "Device",      { CAT_DISPLAY, CAT_THEME, CAT_LOCK, CAT_SOUND, CAT_KEYBOARD, CAT_LANGUAGE,
+  { "Hardware",    { CAT_DISPLAY, CAT_THEME, CAT_LOCK, CAT_SOUND, CAT_KEYBOARD, CAT_LANGUAGE,
                      CAT_CLOCK, CAT_BATTERY, CAT_SENSORS }, 9 },
   { "System",      { CAT_GENERAL, CAT_BACKUPS, CAT_APPPERMS }, 3 },
 };
