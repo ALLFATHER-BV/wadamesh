@@ -20794,8 +20794,8 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   styleCard(s_admin_pw_ta);
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
-  lv_textarea_set_max_length(s_admin_pw_ta, 15);
-  taSetPlaceholder(s_admin_pw_ta, "");
+  lv_textarea_set_max_length(s_admin_pw_ta, 15);   // MeshCore's own limit: sendLogin() sends 15, servers keep 15
+  taSetPlaceholder(s_admin_pw_ta, TR("Up to 15 characters"));
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
