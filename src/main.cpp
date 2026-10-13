@@ -885,9 +885,21 @@ void setup() {
     // This cannot depend on the mode preference: file-backed prefs are reloaded
     // only after storage mounts, well after this first frame is committed.
     display.startFrame((ColorVal)0xFFFF);
+    // The mesh mark, still: the white-on-black artwork inverted a row at a time,
+    // centred where the LVGL splash draws its mark, the word under it.
+    {
+      const int mx = (display.width()  - WADAMESH_MARK_W) / 2;
+      const int my = (display.height() - WADAMESH_MARK_H) / 2;
+      uint16_t row[WADAMESH_MARK_W];
+      for (int y = 0; y < WADAMESH_MARK_H; ++y) {
+        const uint16_t* src = &WADAMESH_MARK_RGB565[(size_t)y * WADAMESH_MARK_W];
+        for (int x = 0; x < WADAMESH_MARK_W; ++x) row[x] = (uint16_t)~src[x];
+        display.writePixelsRGB565(mx, my + y, WADAMESH_MARK_W, 1, row);
+      }
+    }
     display.setColor((ColorVal)0x0000);
     display.setTextSize(2);
-    display.drawTextCentered(display.width() / 2, display.height() / 2 - 8, "WADAMESH");
+    display.drawTextCentered(display.width() / 2, display.height() / 2 + 71 - 8, "WADAMESH");
     display.endFrame();
 #else
     // Paint the WADAMESH mesh mark the instant the panel is up, so the logo is on
