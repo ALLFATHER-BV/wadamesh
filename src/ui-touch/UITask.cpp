@@ -3250,6 +3250,22 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
 
+// Temperature unit (asked for on Discord): degrees C unless "Temperature in Fahrenheit"
+// is on (Settings > Display > Status bar & units). Only what is shown converts: stored
+// readings, logs, telemetry sent out and the Lua SDK stay in degrees C. Saved as a
+// one-byte blob ("temp_f"), so no settings-schema bump.
+static int8_t s_temp_f = -1;   // -1: not read yet
+static bool tempF() {
+#if defined(ESP32)
+  if (s_temp_f < 0) { uint8_t v = 0; s_temp_f = (touchPrefsGetBlob("temp_f", &v, 1) == 1 && v) ? 1 : 0; }
+  return s_temp_f == 1;
+#else
+  return false;
+#endif
+}
+static double tempDisp(double c) { return tempF() ? c * 9.0 / 5.0 + 32.0 : c; }
+static const char* tempUnit() { return tempF() ? "F" : "C"; }
+
 // ---- Contact nicknames ---------------------------------------------------------
 // A name of the user's own for a contact (Contact options > Nickname), drawn wherever
 // the UI shows that contact: Contacts, Chats, the chat header, the map, notifications.
@@ -3980,13 +3996,13 @@ static void buildLocalEnvDetailText(const UITask::LocalEnvSnapshot& snap, char* 
   if (snap.have_batt) p = localEnvAppendLine(out, cap, p, "  %.2fV", (double)snap.batt_v);
 
   p = localEnvAppendLine(out, cap, p, "\nBME280 (ch2): %s", localEnvModuleState(have_bme, snap.query_ok));
-  if (snap.have_bme_temp)     p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.bme_temp_c);
+  if (snap.have_bme_temp)     p = localEnvAppendLine(out, cap, p, "\n  Temp %.1f%s", tempDisp(snap.bme_temp_c), tempUnit());
   if (snap.have_bme_hum)      p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.bme_hum_pct);
   if (snap.have_bme_pressure) p = localEnvAppendLine(out, cap, p, "\n  Press %.0fhPa", (double)snap.bme_pressure_hpa);
   if (snap.have_bme_alt)      p = localEnvAppendLine(out, cap, p, "\n  Alt  %dm", (int)snap.bme_alt_m);
 
   p = localEnvAppendLine(out, cap, p, "\nGXHTV3/SHT4X (ch3): %s", localEnvModuleState(have_gx, snap.query_ok));
-  if (snap.have_gxhtv3_temp) p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.gxhtv3_temp_c);
+  if (snap.have_gxhtv3_temp) p = localEnvAppendLine(out, cap, p, "\n  Temp %.1f%s", tempDisp(snap.gxhtv3_temp_c), tempUnit());
   if (snap.have_gxhtv3_hum)  p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.gxhtv3_hum_pct);
 
   p = localEnvAppendLine(out, cap, p, "\nGPS module: %s", snap.gps_present ? "available" : "not detected");
@@ -15794,6 +15810,16 @@ static void sdRestoreFromInternalCb(lv_event_t* e) {
 #endif
 #endif
 
+static void tempFToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool f = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_temp_f = f ? 1 : 0;
+#if defined(ESP32)
+  const uint8_t v = f ? 1 : 0;
+  touchPrefsSetBlob("temp_f", &v, 1);
+#endif
+  if (g_lv.task) g_lv.task->showAlert(f ? "\xC2\xB0""F" : "\xC2\xB0""C", 900);
+}
 static void useMilesToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool miles = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -16998,6 +17024,7 @@ static void buildDisplayPage() {
 #if defined(ESP32)
     setSwitchRow(c, "Hide device name", "Keeps your node's name off the status bar.", touchPrefsGetHideNodeName(), hideNameToggleCb);
     setSwitchRow(c, "Distance in miles", nullptr, touchPrefsGetUseMiles(), useMilesToggleCb);
+    setSwitchRow(c, "Temperature in Fahrenheit", nullptr, tempF(), tempFToggleCb);
 #endif
   }
 }
@@ -58166,7 +58193,7 @@ static void hwSensorsUpdate(int i) {
   const bool hh = s.have_bme_hum || s.have_gxhtv3_hum;
   const float hum = s.have_bme_hum ? s.bme_hum_pct : s.gxhtv3_hum_pct;
   char t[16] = "--", hu[16] = "", pr[20] = "", al[24] = "", line[64];
-  if (ht) snprintf(t, sizeof t, "%.1f\xC2\xB0", (double)tc);
+  if (ht) snprintf(t, sizeof t, "%.1f\xC2\xB0", tempDisp(tc));
   if (hh) snprintf(hu, sizeof hu, "%d%%", (int)lroundf(hum));
   if (s.have_bme_pressure) snprintf(pr, sizeof pr, "%d hPa", (int)lroundf(s.bme_pressure_hpa));
   if (s.have_bme_alt) snprintf(al, sizeof al, TR("%d m up"), (int)s.bme_alt_m);
@@ -58888,13 +58915,13 @@ static void hwRemoteUpdate(int i) {
   if (have) hwFmtAgo(tag, sizeof tag, (millis() - r->got_ms) / 1000u);
   else snprintf(tag, sizeof tag, "%s", r && r->pending ? TR("asking...") : TR("no reply yet"));
   int p = 0;
-  if (have && r->t10 != INT16_MIN) p += snprintf(det + p, sizeof det - p, "%.1f\xC2\xB0", r->t10 / 10.0);
+  if (have && r->t10 != INT16_MIN) p += snprintf(det + p, sizeof det - p, "%.1f\xC2\xB0", tempDisp(r->t10 / 10.0));
   if (have && r->hum >= 0) p += snprintf(det + p, sizeof det - p, "%s%d%%", p ? " \xC2\xB7 " : "", (int)r->hum);
   if (have && r->press > 0) p += snprintf(det + p, sizeof det - p, "%s%d hPa", p ? " \xC2\xB7 " : "", (int)r->press);
   if (have && r->mv) p += snprintf(det + p, sizeof det - p, "%s%u.%02u V", p ? " \xC2\xB7 " : "", r->mv / 1000u, (r->mv % 1000u) / 10u);
   if (!p && have) snprintf(det, sizeof det, "%s", TR("No readings in the reply"));
   if (hwI(i).size == HWS_S) {
-    if (have && r->t10 != INT16_MIN) snprintf(a, sizeof a, "%.1f\xC2\xB0", r->t10 / 10.0);
+    if (have && r->t10 != INT16_MIN) snprintf(a, sizeof a, "%.1f\xC2\xB0", tempDisp(r->t10 / 10.0));
     else if (have && r->mv) snprintf(a, sizeof a, "%u.%02u V", r->mv / 1000u, (r->mv % 1000u) / 10u);
     else snprintf(a, sizeof a, "--");
     hwStatSet(i, a, nm, have ? COLOR_TEXT : COLOR_SUB);
@@ -63853,9 +63880,9 @@ static void refreshSensorsTab() {
       snprintf(atmo, sizeof atmo, "No sensor detected");
     } else {
       if (snap.have_bme_temp)
-        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.bme_temp_c);
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0%s\n", tempDisp(snap.bme_temp_c), tempUnit());
       else if (snap.have_gxhtv3_temp)
-        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.gxhtv3_temp_c);
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0%s\n", tempDisp(snap.gxhtv3_temp_c), tempUnit());
       if (snap.have_bme_hum)
         p += snprintf(atmo + p, sizeof atmo - p, "Humidity: %.0f%%RH\n", (double)snap.bme_hum_pct);
       else if (snap.have_gxhtv3_hum)
@@ -65246,13 +65273,13 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_chart_series_t* hs = s_telem_show_hum  ? lv_chart_add_series(chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y) : nullptr;  // humidity cyan
     for (int i = 0; i < n; ++i) {
       if (bs) { lv_coord_t v = (lv_coord_t)mvs[i]; if (v > 4700) v = 4700; lv_chart_set_next_value(chart, bs, mvs[i] > 0 ? v : LV_CHART_POINT_NONE); }
-      if (ts)   lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)(t10s[i] / 10) : LV_CHART_POINT_NONE);
+      if (ts)   lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)lround(tempDisp(t10s[i] / 10.0)) : LV_CHART_POINT_NONE);
       if (hs)   lv_chart_set_next_value(chart, hs, hums[i] >= 0     ? (lv_coord_t)hums[i] : LV_CHART_POINT_NONE);
     }
     // legend (only the visible series)
     char leg[112]; leg[0] = '\0';
     if (s_telem_show_batt) strcat(leg, "#4F9DF7 \xe2\x97\x8f# V   ");
-    if (s_telem_show_temp) strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0""C   ");
+    if (s_telem_show_temp) { strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0"); strcat(leg, tempUnit()); strcat(leg, "   "); }
     if (s_telem_show_hum)  strcat(leg, "#35C9C9 \xe2\x97\x8f# %RH");
     if (!leg[0]) strcpy(leg, "#808080 (nothing shown \xe2\x80\x94 enable a series in settings)#");
     normalizeLightSurfaceRecolor(leg);
@@ -65504,7 +65531,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
       case LPP_TEMPERATURE: {
         float t = 0; if (!rd.readTemperature(t)) goto done;
         tl_t10 = (int)lroundf(t * 10.0f);
-        if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%s%.1f\xc2\xb0\x43", sep, (double)t);
+        if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%s%.1f\xc2\xb0%s", sep, tempDisp(t), tempUnit());
         any = true; break;
       }
       case LPP_RELATIVE_HUMIDITY: {
@@ -71501,7 +71528,7 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     p += snprintf(buf + p, cap - (size_t)p, "%sBME280 ", p > 0 ? "\n" : "");
     bool first = true;
     if (snap.have_bme_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.bme_temp_c);
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0%s", tempDisp(snap.bme_temp_c), tempUnit());
       first = false;
     }
     if (snap.have_bme_hum && p < (int)cap) {
@@ -71520,7 +71547,7 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     p += snprintf(buf + p, cap - (size_t)p, "%sGXHTV3 ", p > 0 ? "\n" : "");
     bool first = true;
     if (snap.have_gxhtv3_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.gxhtv3_temp_c);
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0%s", tempDisp(snap.gxhtv3_temp_c), tempUnit());
       first = false;
     }
     if (snap.have_gxhtv3_hum && p < (int)cap) {
