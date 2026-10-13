@@ -61608,7 +61608,7 @@ static void sdFallbackNotice() {
 }
 static void setupWizardMaybeOpen() {
 #if defined(ESP32)
-  if (g_sd_fallback_boot) { sdFallbackNotice(); return; }
+  if (g_sd_fallback_boot) return;   // not a new device: sdFallbackNotice() runs once Home is built
 #endif
   if (touchPrefsGetSetupDone()) return;
   // First-boot setup is Wi-Fi-only: force Bluetooth OFF and persist the choice so
@@ -71364,7 +71364,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // the first-boot wizard, and only when Home is the active tab).
     if (s_home_is_drawer && !s_setup_root && getActiveTab() == HOME_TAB_INDEX) setHomeDrawer(true);
 #if defined(ESP32)
-    if (!s_setup_root) crashReportMaybePrompt();   // a panic coredump is waiting -> proactively offer to send it
+    // After the drawer: it lives on the top layer too, and opened after the notice it
+    // covered it (the app drawer is the default Home).
+    if (g_sd_fallback_boot) sdFallbackNotice();
+    else if (!s_setup_root) crashReportMaybePrompt();   // a panic coredump is waiting -> proactively offer to send it
 #endif
   }
   g_lv.dirty_threads      = true;
