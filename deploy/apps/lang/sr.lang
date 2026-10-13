@@ -1987,3 +1987,13 @@ Showing the first %d tracks	Приказано првих %d песама
 Sound is off: Settings > Sound	Звук је искључен: Подешавања > Звук
 Stopped	Заустављено
 This device cannot play music.	Овај уређај не може да пушта музику.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Хардвер
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Оставите Bluetooth укључен да бисте упарили апликацију MeshCore на телефону. Wi-Fi можете подесити било када у Подешавањима.
+Radio:	Радио:
+Keyboard:	Тастатура:
+newer keyboard	новија тастатура
+older keyboard	старија тастатура
+older keyboard (set manually)	старија тастатура (ручно подешено)
+keyboard not detected yet	тастатура још није препозната

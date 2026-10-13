@@ -1987,3 +1987,13 @@ Showing the first %d tracks	Показано перші %d треків
 Sound is off: Settings > Sound	Звук вимкнено: Налаштування > Звук
 Stopped	Зупинено
 This device cannot play music.	Цей пристрій не може відтворювати музику.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Обладнання
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Залиште Bluetooth увімкненим, щоб під'єднати застосунок MeshCore на телефоні. Wi-Fi можна налаштувати будь-коли в Налаштуваннях.
+Radio:	Радіомодуль:
+Keyboard:	Клавіатура:
+newer keyboard	новіша клавіатура
+older keyboard	старіша клавіатура
+older keyboard (set manually)	старіша клавіатура (задано вручну)
+keyboard not detected yet	клавіатуру ще не визначено

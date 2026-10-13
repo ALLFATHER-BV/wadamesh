@@ -1986,3 +1986,13 @@ Showing the first %d tracks	Mostro i primi %d brani
 Sound is off: Settings > Sound	Il suono è spento: Impostazioni > Suono
 Stopped	Fermo
 This device cannot play music.	Questo dispositivo non può riprodurre musica.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lascia attivo il Bluetooth per associare l'app MeshCore sul telefono. Il Wi-Fi si può configurare in qualsiasi momento in Impostazioni.
+Radio:	Radio:
+Keyboard:	Tastiera:
+newer keyboard	tastiera nuova
+older keyboard	tastiera vecchia
+older keyboard (set manually)	tastiera vecchia (impostata a mano)
+keyboard not detected yet	tastiera non ancora rilevata
