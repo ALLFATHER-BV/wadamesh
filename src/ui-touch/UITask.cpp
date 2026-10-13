@@ -58299,35 +58299,46 @@ static void hwLinksTap(int, lv_event_t*) { openSettingsCategory(CAT_WIFI); }
 // to the nodes in range (zero hop, the default) or across the mesh (flood).
 static void hwAdvertBuild(int i) {
   HwInst& w = hwI(i);
-  lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_GLOW), LV_PART_MAIN);
-  // A solid button, whatever the box was styled as: on glass (the aurora default) the
-  // box is a translucent gradient into the panel colour, and its dark ON_GLOW text
-  // vanished on it (#637).
-  lv_obj_set_style_bg_grad_dir(w.box, LV_GRAD_DIR_NONE, LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(w.box, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
-  lv_obj_set_style_border_opa(w.box, LV_OPA_TRANSP, LV_PART_MAIN);
+  // Laid out like the App shortcut tiles ("Apps", "Discover"): a tinted chip in the app
+  // drawer's colour for Advertise, the name under it in the same 12 px font. The old
+  // accent-filled box became a see-through gradient on glass that hid its text (#637).
+  lv_obj_set_style_pad_hor(w.box, SC(2), LV_PART_MAIN);
+  w.pw += 2 * (SC(6) - SC(2));
+  uint32_t col = appTileColor(HUE_RADIO);
+  if (s_theme_high_contrast) col = COLOR_TEXT;
+  if (kHwEpaper) col = 0x000000u;
   const bool flood = hwR(i).opt == 1;
-  const bool big = w.ph >= hwLh(&ui_icons_20) + hwLh(&g_font_semi_14) + hwLh(&g_font_12);
-  w.l[0] = hwIcon(w.box, UI_ICON_RADIO, COLOR_ON_GLOW, big);
-  if (!kHwEpaper) lv_obj_set_style_text_color(w.l[0], lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
-  w.l[1] = hwLine(w.box, &g_font_semi_14, COLOR_ON_GLOW, w.pw);
-  w.l[2] = hwLine(w.box, &g_font_12, COLOR_ON_GLOW, w.pw);
-  lv_obj_set_style_text_opa(w.l[2], LV_OPA_80, LV_PART_MAIN);
-  const char* name = w.size == HWS_S ? TR("Advert") : TR("Send advert");
-  if (lv_txt_get_width(name, strlen(name), &g_font_semi_14, 0, LV_TEXT_FLAG_NONE) > w.pw)
-    lv_obj_set_style_text_font(w.l[1], &g_font_semi_12, LV_PART_MAIN);
-  lv_label_set_text(w.l[1], name);
-  lv_label_set_text(w.l[2], w.size == HWS_S ? (flood ? TR("flood") : TR("nearby"))
-                                            : (flood ? TR("across the mesh") : TR("to nodes in range")));
-  const int ih = hwLh(big ? &ui_icons_20 : &ui_icons_16), th = hwLh(&g_font_semi_14), ch = hwLh(&g_font_12);
-  const bool cap = w.ph >= ih + th + ch;
-  if (!cap) lv_obj_add_flag(w.l[2], LV_OBJ_FLAG_HIDDEN);
-  const int y0 = LV_MAX(0, (w.ph - ih - th - (cap ? ch : 0)) / 2);
-  for (int k = 1; k <= 2; ++k) lv_obj_set_style_text_align(w.l[k], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-  lv_obj_align(w.l[0], LV_ALIGN_TOP_MID, 0, y0);
-  lv_obj_set_pos(w.l[1], 0, y0 + ih);
-  lv_obj_set_pos(w.l[2], 0, y0 + ih + th);
+  const int lab_h = hwLh(&g_font_12);
+  int chip = LV_MIN(w.ph - lab_h - SC(4), w.pw - SC(8));
+  if (chip > SC(40)) chip = SC(40);
+  if (chip < SC(20)) chip = SC(20);
+  const bool cap = w.ph >= chip + 2 * lab_h + SC(6);   // room for "flood" / "nearby" under the name
+  lv_obj_t* c = lv_obj_create(w.box);
+  lv_obj_remove_style_all(c);
+  lv_obj_clear_flag(c, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(c, chip, chip);
+  lv_obj_set_style_bg_color(c, lv_color_hex(col), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(c, s_theme_high_contrast ? LV_OPA_TRANSP : s_look_tint, LV_PART_MAIN);
+  lv_obj_set_style_radius(c, chip * 28 / 100, LV_PART_MAIN);
+  if (s_theme_high_contrast) { lv_obj_set_style_border_color(c, lv_color_hex(col), LV_PART_MAIN); lv_obj_set_style_border_width(c, 2, LV_PART_MAIN); }
+  const int y0 = LV_MAX(0, (w.ph - chip - lab_h - SC(4) - (cap ? lab_h : 0)) / 2);
+  lv_obj_align(c, LV_ALIGN_TOP_MID, 0, y0);
+  w.l[0] = lv_label_create(c);
+  lv_label_set_text(w.l[0], UI_ICON_RADIO);
+  lv_obj_set_style_text_font(w.l[0], chip >= 30 ? &ui_icons_20 : &ui_icons_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(w.l[0], lv_color_hex(col), LV_PART_MAIN);
+  lv_obj_center(w.l[0]);
+  w.l[1] = hwLine(w.box, &g_font_12, COLOR_TEXT, w.pw + 2 * SC(2));
+  lv_obj_set_style_text_align(w.l[1], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_text(w.l[1], w.size == HWS_S ? TR("Advert") : TR("Send advert"));
+  lv_obj_set_pos(w.l[1], -SC(2), y0 + chip + SC(4));
+  if (cap) {
+    w.l[2] = hwLine(w.box, &g_font_12, COLOR_SUB, w.pw + 2 * SC(2));
+    lv_obj_set_style_text_align(w.l[2], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_text(w.l[2], w.size == HWS_S ? (flood ? TR("flood") : TR("nearby"))
+                                              : (flood ? TR("across the mesh") : TR("to nodes in range")));
+    lv_obj_set_pos(w.l[2], -SC(2), y0 + chip + SC(4) + lab_h);
+  }
 }
 static void hwRingAnim(void* o, int32_t v) {
   lv_obj_set_style_outline_width((lv_obj_t*)o, (lv_coord_t)(v * SC(10) / 255), LV_PART_MAIN);

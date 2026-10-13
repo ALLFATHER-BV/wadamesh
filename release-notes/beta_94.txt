@@ -19,7 +19,7 @@ The web app gets Reply on a channel message (#650 by oumike, asked for in #642 b
 
 # --- Fixes ---
 Tapping the radar widget opens the radar screensaver until you touch the screen, instead of flickering it (reported on Discord). The radar also fits a two-cell space now, and when Home is full, adding a widget tells you to hold one to remove it.
-The Advert widget is readable again on the default background (#637, reported by Flyflinger).
+The Advert widget is readable again: it now looks like the app tiles, with its icon in a tinted square and the name under it (#637, reported by Flyflinger).
 A text symbol chosen as a chat icon (a star, a heart) shows as the icon instead of being ignored (#647, reported by Jess-39).
 Day mode: the numbers on unread badges are readable (#658 by oumike).
 The keyboard's control keys have readable labels (#656 by oumike).
