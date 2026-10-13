@@ -1916,3 +1916,13 @@ Temperature in Fahrenheit	Температура у Фаренхајтима
 Up to 15 characters	До 15 знакова
 Favorites only	Само омиљени
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Хардвер
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Оставите Bluetooth укључен да бисте упарили апликацију MeshCore на телефону. Wi-Fi можете подесити било када у Подешавањима.
+Radio:	Радио:
+Keyboard:	Тастатура:
+newer keyboard	новија тастатура
+older keyboard	старија тастатура
+older keyboard (set manually)	старија тастатура (ручно подешено)
+keyboard not detected yet	тастатура још није препозната

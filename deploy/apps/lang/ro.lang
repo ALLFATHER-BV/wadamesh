@@ -1917,3 +1917,13 @@ Temperature in Fahrenheit	Temperatură în Fahrenheit
 Up to 15 characters	Maximum 15 caractere
 Favorites only	Doar favorite
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lasă Bluetooth pornit pentru a asocia aplicația MeshCore de pe telefon. Wi-Fi se poate configura oricând din Setări.
+Radio:	Radio:
+Keyboard:	Tastatură:
+newer keyboard	tastatură nouă
+older keyboard	tastatură veche
+older keyboard (set manually)	tastatură veche (setată manual)
+keyboard not detected yet	tastatura nu a fost detectată încă

@@ -1916,3 +1916,13 @@ Temperature in Fahrenheit	Θερμοκρασία σε Φαρενάιτ
 Up to 15 characters	Έως 15 χαρακτήρες
 Favorites only	Μόνο αγαπημένα
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Υλικό
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Αφήστε το Bluetooth ενεργό για να συνδέσετε την εφαρμογή MeshCore στο τηλέφωνό σας. Το Wi-Fi ρυθμίζεται οποτεδήποτε από τις Ρυθμίσεις.
+Radio:	Πομποδέκτης:
+Keyboard:	Πληκτρολόγιο:
+newer keyboard	νεότερο πληκτρολόγιο
+older keyboard	παλαιότερο πληκτρολόγιο
+older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
+keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα

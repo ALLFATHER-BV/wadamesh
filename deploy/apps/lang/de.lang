@@ -1913,3 +1913,13 @@ Temperature in Fahrenheit	Temperatur in Fahrenheit
 Up to 15 characters	Bis zu 15 Zeichen
 Favorites only	Nur Favoriten
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lass Bluetooth an, um die MeshCore-App auf deinem Handy zu koppeln. WLAN kannst du jederzeit in den Einstellungen einrichten.
+Radio:	Funkmodul:
+Keyboard:	Tastatur:
+newer keyboard	neuere Tastatur
+older keyboard	ältere Tastatur
+older keyboard (set manually)	ältere Tastatur (manuell gesetzt)
+keyboard not detected yet	Tastatur noch nicht erkannt
