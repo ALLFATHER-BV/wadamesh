@@ -4439,7 +4439,28 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
     eg = emojiGlyphLookup(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
   }
   avatarApply(av, name);
-  if (!eg) return;
+  if (!eg) {
+    // A text symbol from the picker's last rows (a star, a heart, a currency sign):
+    // no colour glyph, so it is drawn as text in the colour the initials had (#647).
+    // Before this the pick was saved and announced but the plain avatar stayed.
+    if (!utf8 || !utf8[0] || (uint8_t)utf8[0] < 0x80) return;
+    lv_obj_t* first = lv_obj_get_child(av, 0);
+    const lv_color_t ink = first ? lv_obj_get_style_text_color(first, LV_PART_MAIN)
+                                 : lv_color_hex(COLOR_TEXT);
+    lv_obj_clean(av);
+    lv_obj_set_user_data(av, nullptr);
+    uint32_t end = 0;
+    _lv_txt_encoded_next(utf8, &end);   // the one character, as the emoji path uses
+    char one[8] = {};
+    memcpy(one, utf8, end < sizeof one ? end : sizeof one - 1);
+    lv_obj_t* l = lv_label_create(av);
+    lv_label_set_text(l, one);
+    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, ink, LV_PART_MAIN);
+    lv_obj_center(l);
+    lv_obj_invalidate(av);
+    return;
+  }
   lv_obj_clean(av);                    // no letters
   lv_obj_set_user_data(av, nullptr);   // no glyph under it
   lv_obj_t* im = lv_img_create(av);
