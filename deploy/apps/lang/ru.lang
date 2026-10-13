@@ -57,7 +57,6 @@ Condense Nav saved — restart to apply	Компактная навигация 
 Day	День
 High contrast	Высокая контрастность
 High contrast - restarting to apply it…	Высокая контрастность - перезагрузка для применения…
-Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Оставьте Bluetooth включённым, чтобы подключить приложение MeshCore на телефоне. Wi-Fi можно настроить в любой момент в Настройках.
 Keyboard nav: on	Навигация клавиатурой: вкл.
 Landscape only	Только в альбомной ориентации
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Буквы перемещают выделение, когда не активно текстовое поле. Enter выбирает; удерживайте Backspace, чтобы вернуться.
@@ -1156,14 +1155,6 @@ nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Старый протокол клавиатуры
 Device	Устройство
-Radio:	Радиомодуль:
-Keyboard:	Клавиатура:
-newer keyboard	новая клавиатура
-older keyboard	старая клавиатура
-older keyboard (set manually)	старая клавиатура (задано вручную)
-keyboard not detected yet	клавиатура ещё не определена
-Older keyboard protocol is now in Settings > Device.	Старый протокол клавиатуры теперь в Настройки > Устройство.
-Diagnostics are on the Device page.	Диагностика на странице «Устройство».
 Using the older keyboard protocol	Using the older keyboard protocol
 turn on if your keyboard types the wrong letters; disables modifier latching	включите, если клавиатура печатает не те буквы; отключает фиксацию модификаторов
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
@@ -2371,4 +2362,3 @@ Asleep: tap screen or 🤍 to wake	Сон: коснитесь экрана ил�
 Receiving %s\n%lu / %lu bytes	Приём %s\n%lu / %lu байт
 Sending %s\n%lu / %lu bytes	Отправка %s\n%lu / %lu байт
 File Transfer	Передача файлов
-Hardware	Оборудование
