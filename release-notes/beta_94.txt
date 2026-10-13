@@ -1,0 +1,30 @@
+# beta_94 - newer ThinkNode M9s work, the radar and Advert widgets fixed, map favourites, Fahrenheit, and a round of community PRs. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, the M9 fix, new things, fixes, the Heltec V4.
+
+Test build, on top of beta_93. The stable build stays beta_85.
+
+# --- ThinkNode M9 ---
+Newer ThinkNode M9s (the Meshtastic edition) work: their keyboard controller answers at a different address, so on beta_93 and earlier no key did anything and the first setup screen could not be passed. Both addresses are found now (#662 by Bfindlay, reported in #644 by thejiraguy and on Discord).
+The GPS on those newer M9s gets a fix: their GPS is switched on the other way round, which the firmware now picks from the keyboard's address (#661 and #663 by Thatindianbruh, measured on two units).
+
+# --- New ---
+Map options > Favorites only shows just your favourite contacts on the map, link lines included, and is remembered.
+Settings > Display > Temperature in Fahrenheit shows temperatures in °F everywhere they appear: sensors, Home widgets and telemetry. What is stored and sent stays in °C.
+The contact list shows each contact's chat icon, the one you picked or the first emoji in its name (#649 by oumike, asked for in #646 by Jess-39).
+T-Deck Pro and Max get the Normal, Large and Huge text sizes the T-Deck has (#645 by oumike, asked for in #639 by Jess-39).
+Pick your advert position on the map instead of typing coordinates (#635 by Confituurke).
+T-LoRa Pager: hold Fn and press Enter to paste the clipboard (#624 by jcyrio).
+The web app gets Reply on a channel message (#650 by oumike, asked for in #642 by Danie10).
+
+# --- Fixes ---
+Tapping the radar widget opens the radar screensaver until you touch the screen, instead of flickering it (reported on Discord). The radar also fits a two-cell space now, and when Home is full, adding a widget tells you to hold one to remove it.
+The Advert widget is readable again on the default background (#637, reported by Flyflinger).
+A text symbol chosen as a chat icon (a star, a heart) shows as the icon instead of being ignored (#647, reported by Jess-39).
+Day mode: the numbers on unread badges are readable (#658 by oumike).
+The keyboard's control keys have readable labels (#656 by oumike).
+The login password field says it takes up to 15 characters: MeshCore logins carry no more than that, on the phone app too.
+Translations: wording fixes in Dutch, German and Hungarian (by jcyrio), and this build's new texts in all 14 languages.
+
+# --- Heltec V4 ---
+The Heltec V4 keeps the translations it had in beta_92: this build's new texts show in English there until there is room for them.
