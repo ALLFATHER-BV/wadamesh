@@ -28031,6 +28031,176 @@ static void discoverLogSighting(int32_t lat_e6, int32_t lon_e6, const MyMesh::Di
 #endif
 }
 
+// ---- Track recording (Map options > Record track) -------------------------------------------
+// Asked for on Discord: record where you go, in a standard format other mapping software opens,
+// with the distance and climb. It runs from the UI loop like the GPS saver, so it keeps going
+// with the screen off; GPS stays awake while it records (gpsWantedLive). Each track is one GPX
+// file on the card, /meshcomod/tracks/<date-time>.gpx, written so that it is complete after
+// every point: the closing tags are rewritten behind each new point, and a flat battery
+// mid-walk still leaves a file that opens. The map draws the points of this session's track.
+#if (CAP_SD || defined(TLORA_PAGER)) && CAP_GPS
+#define CAP_TRACKS 1
+static void latLonToWorldPx(double lat, double lon, uint8_t zoom, double* world_x, double* world_y);   // defined with the map tiles, further down
+struct TrkPt { int32_t lat_e6, lon_e6; };
+static const int k_trk_max = 1500;                         // map overlay ring (PSRAM, 12 KB)
+static TrkPt*   s_trk = nullptr;
+static int      s_trk_n = 0;                               // points this session (ring slot = n % max)
+static bool     s_trk_on = false;
+static char     s_trk_path[48] = "";
+static uint32_t s_trk_check_ms = 0, s_trk_point_ms = 0, s_trk_start_ms = 0, s_trk_points = 0;
+static int32_t  s_trk_lat = 0, s_trk_lon = 0;              // last written point
+static double   s_trk_dist_m = 0, s_trk_gain_m = 0;
+static int      s_trk_alt_ref = INT_MIN;                   // climb counted past a 3 m step
+static uint8_t  s_trk_fails = 0;
+static const char kTrkTail[] = "</trkseg></trk></gpx>\n";
+static bool trackRecording() { return s_trk_on; }
+static void trkIsoTime(char* out, size_t cap, uint32_t epoch) {
+  time_t t = (time_t)epoch;
+  struct tm tm_utc;
+  gmtime_r(&t, &tm_utc);
+  strftime(out, cap, "%Y-%m-%dT%H:%M:%SZ", &tm_utc);
+}
+static bool trkWritePoint(int32_t lat_e6, int32_t lon_e6, int alt_m, bool have_alt, uint32_t epoch) {
+  markSdIo();
+  File f = SD.open(s_trk_path, "r+");
+  if (!f) { sdNoteIoFailure(); return false; }
+  const size_t tail = sizeof(kTrkTail) - 1;
+  const size_t sz = f.size();
+  if (sz < tail || !f.seek(sz - tail)) { f.close(); return false; }
+  char ele[24] = "", tim[40] = "";
+  if (have_alt) snprintf(ele, sizeof ele, "<ele>%d</ele>", alt_m);
+  if (epoch > 1700000000u) { char iso[24]; trkIsoTime(iso, sizeof iso, epoch); snprintf(tim, sizeof tim, "<time>%s</time>", iso); }
+  char line[160];
+  const int n = snprintf(line, sizeof line, "<trkpt lat=\"%.6f\" lon=\"%.6f\">%s%s</trkpt>\n%s",
+                         lat_e6 / 1e6, lon_e6 / 1e6, ele, tim, kTrkTail);
+  const bool ok = n > 0 && f.write((const uint8_t*)line, (size_t)n) == (size_t)n;
+  f.close();
+  return ok;
+}
+static void trackStop(bool announce) {
+  if (!s_trk_on) return;
+  s_trk_on = false;
+  if (announce && g_lv.task) {
+    char msg[72];
+    snprintf(msg, sizeof msg, TR("Track saved: %.2f km, %u points"), s_trk_dist_m / 1000.0, (unsigned)s_trk_points);
+    g_lv.task->showAlert(msg, 2500);
+  }
+}
+static bool trackStart() {
+  if (s_trk_on) return true;
+  if (SD.cardType() == CARD_NONE) { if (g_lv.task) g_lv.task->showAlert(TR("Recording needs an SD card"), 2000); return false; }
+  if (!s_trk) s_trk = (TrkPt*)psAlloc(sizeof(TrkPt) * k_trk_max);
+  if (!s_trk) return false;
+  markSdIo();
+  SD.mkdir("/meshcomod");
+  SD.mkdir("/meshcomod/tracks");
+  const uint32_t epoch = (uint32_t)rtc_clock.getCurrentTime();
+  if (epoch > 1700000000u) {
+    time_t t = (time_t)epoch;
+    struct tm tm_utc;
+    gmtime_r(&t, &tm_utc);
+    strftime(s_trk_path, sizeof s_trk_path, "/meshcomod/tracks/%Y%m%d-%H%M%S.gpx", &tm_utc);
+  } else {
+    snprintf(s_trk_path, sizeof s_trk_path, "/meshcomod/tracks/track-%lu.gpx", (unsigned long)millis());
+  }
+  File f = SD.open(s_trk_path, FILE_WRITE);
+  if (!f) { sdNoteIoFailure(); if (g_lv.task) g_lv.task->showAlert(TR("Could not write to the SD card"), 2000); return false; }
+  const char* name = strrchr(s_trk_path, '/') + 1;
+  f.printf("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+           "<gpx version=\"1.1\" creator=\"wadamesh\" xmlns=\"http://www.topografix.com/GPX/1/1\">\n"
+           "<trk><name>%.*s</name><trkseg>\n%s", (int)(strlen(name) - 4), name, kTrkTail);
+  f.close();
+  s_trk_on = true;
+  s_trk_n = 0;
+  s_trk_points = 0;
+  s_trk_dist_m = s_trk_gain_m = 0;
+  s_trk_alt_ref = INT_MIN;
+  s_trk_lat = s_trk_lon = 0;
+  s_trk_fails = 0;
+  s_trk_start_ms = s_trk_point_ms = millis();
+  if (g_lv.task) g_lv.task->showAlert(TR("Recording track"), 1500);
+  return true;
+}
+// From the UI loop, screen on or off: a point once we have moved 10 m (GPS jitter stays out of
+// the distance), or every five minutes when we have moved at least 3 m.
+static void trackTick(uint32_t now) {
+  if (!s_trk_on || now - s_trk_check_ms < 2000) return;
+  s_trk_check_ms = now;
+  UITask* task = g_lv.task;
+  if (!task || !task->getGpsFix()) return;
+  const double lat = task->getNodeLat(), lon = task->getNodeLon();
+  if (lat == 0.0 && lon == 0.0) return;
+  const int32_t lat_e6 = (int32_t)lround(lat * 1e6), lon_e6 = (int32_t)lround(lon * 1e6);
+  double d = 0;
+  if (s_trk_points) d = contactDistanceKm(s_trk_lat / 1e6, s_trk_lon / 1e6, lat, lon) * 1000.0;
+  const bool due = !s_trk_points || d >= 10.0 || (d >= 3.0 && now - s_trk_point_ms >= 300000u);
+  if (!due) return;
+  const int alt = task->getGpsAltitude();
+  const bool have_alt = alt != 0;
+  if (!trkWritePoint(lat_e6, lon_e6, alt, have_alt, (uint32_t)rtc_clock.getCurrentTime())) {
+    if (++s_trk_fails >= 3) {   // a card that keeps refusing: stop rather than drain the battery
+      trackStop(false);
+      task->showAlert(TR("Track stopped: the SD card is not writable"), 3000);
+    }
+    return;
+  }
+  s_trk_fails = 0;
+  if (s_trk_points) s_trk_dist_m += d;
+  if (have_alt) {
+    if (s_trk_alt_ref == INT_MIN) s_trk_alt_ref = alt;
+    else if (alt - s_trk_alt_ref >= 3) { s_trk_gain_m += alt - s_trk_alt_ref; s_trk_alt_ref = alt; }
+    else if (s_trk_alt_ref - alt >= 3) s_trk_alt_ref = alt;
+  }
+  s_trk_lat = lat_e6;
+  s_trk_lon = lon_e6;
+  s_trk_point_ms = now;
+  s_trk_points++;
+  s_trk[s_trk_n % k_trk_max] = { lat_e6, lon_e6 };
+  s_trk_n++;
+}
+// The map's status corner while recording: a red dot, the distance and the climb.
+static bool trackStatus(char* out, size_t cap) {
+  if (!s_trk_on) return false;
+  snprintf(out, cap, "#E0473A \xe2\x97\x8f# %.2f km  +%d m", s_trk_dist_m / 1000.0, (int)s_trk_gain_m);
+  return true;
+}
+// This session's track as one line on the map pan layer (points off the view are skipped,
+// and a long track is thinned to what one lv_line can hold).
+static lv_obj_t*  s_trk_line = nullptr;
+static lv_point_t s_trk_line_pts[256];
+static void trackFreeMapObj() {
+  if (s_trk_line) { lv_obj_del(s_trk_line); s_trk_line = nullptr; }
+}
+static void trackDrawOnMap(lv_obj_t* parent, double cwx, double cwy, uint8_t zoom, int cw, int ch) {
+  trackFreeMapObj();
+  const int total = s_trk_n < k_trk_max ? s_trk_n : k_trk_max;
+  if (!s_trk || total < 2) return;
+  const int first = s_trk_n > k_trk_max ? s_trk_n % k_trk_max : 0;
+  const int step = total / 256 + 1;
+  int n = 0;
+  for (int k = 0; k < total && n < 256; k += step) {
+    const TrkPt& p = s_trk[(first + k) % k_trk_max];
+    double mwx, mwy;
+    latLonToWorldPx(p.lat_e6 / 1e6, p.lon_e6 / 1e6, zoom, &mwx, &mwy);
+    int sx = (int)(mwx - cwx + cw / 2), sy = (int)(mwy - cwy + ch / 2);
+    if (sx < -2000) sx = -2000; if (sx > 2000) sx = 2000;
+    if (sy < -2000) sy = -2000; if (sy > 2000) sy = 2000;
+    s_trk_line_pts[n++] = { (lv_coord_t)sx, (lv_coord_t)sy };
+  }
+  if (n < 2) return;
+  s_trk_line = lv_line_create(parent);
+  lv_line_set_points(s_trk_line, s_trk_line_pts, (uint16_t)n);
+  lv_obj_set_style_line_color(s_trk_line, lv_color_hex(0xE0473A), LV_PART_MAIN);
+  lv_obj_set_style_line_width(s_trk_line, 3, LV_PART_MAIN);
+  lv_obj_set_style_line_rounded(s_trk_line, true, LV_PART_MAIN);
+  lv_obj_clear_flag(s_trk_line, LV_OBJ_FLAG_CLICKABLE);
+}
+#else
+#define CAP_TRACKS 0
+static bool trackRecording() { return false; }
+static void trackTick(uint32_t) {}
+#endif
+
 // Defined later (contacts detail section); used here for the Discover rows (#239).
 static void formatDistanceBadge(char* out, size_t out_cap,
                                 double self_lat, double self_lon,
@@ -35284,6 +35454,9 @@ static void freeMapMarkers() {
   }
   s_route_obj_n = 0;
   discoverFreeMapObjs();
+#if CAP_TRACKS
+  trackFreeMapObj();
+#endif
 }
 
 static void openMarkerPopupForContact(int mesh_idx);
@@ -35487,6 +35660,9 @@ static void renderMapMarkers() {
 
   // Discover wardriving coverage dots (my logged signal samples), under the route overlay.
   if (s_disc_track_n > 0) discoverDrawCoverage(parent, cwx, cwy);
+#if CAP_TRACKS
+  trackDrawOnMap(parent, cwx, cwy, s_map_zoom, k_map_canvas_w, k_map_canvas_h);   // Record track
+#endif
 
   // Route-replay overlay — drawn last so the path + nodes sit above tiles,
   // link lines and contact markers.
@@ -35915,6 +36091,20 @@ static void mapOptDirectOnlyCb(lv_event_t* e) {
   s_map_direct_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   renderMapMarkers();
 }
+#if CAP_TRACKS
+// Map options > Record track. A start that cannot write (no card) puts the switch back.
+static void mapOptTrackCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  if (lv_obj_has_state(sw, LV_STATE_CHECKED)) {
+    if (!trackStart()) lv_obj_clear_state(sw, LV_STATE_CHECKED);
+  } else {
+    trackStop(true);
+  }
+  refreshMapInfoLabel();
+  renderMapMarkers();
+}
+#endif
 static void mapOptFavOnlyCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   s_map_fav_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -36274,6 +36464,9 @@ static void openMapOptions() {
       { "Show contacts",       s_map_show_contacts, mapOptContactsCb   },
       { "Direct (0-hop) only", s_map_direct_only,   mapOptDirectOnlyCb },
       { "Favorites only",      s_map_fav_only,      mapOptFavOnlyCb    },
+#if CAP_TRACKS
+      { "Record track",        trackRecording(),    mapOptTrackCb      },
+#endif
       { "Tile debug overlay",  s_map_tile_debug,    mapOptTileDebugCb  },
     };
     for (auto& r : rows) {
@@ -37469,6 +37662,7 @@ static void makeMapTab(lv_obj_t* tab) {
   lv_label_set_text(s_map_info_lbl, "—");
   lv_obj_align(s_map_info_lbl, LV_ALIGN_BOTTOM_LEFT, 2, -2);
   s_map_count_lbl = lv_label_create(tab);  // marker / status count (bottom-right)
+  lv_label_set_recolor(s_map_count_lbl, true);   // the recording dot (trackStatus)
   useChainedFont(s_map_count_lbl);
   style_corner(s_map_count_lbl);
   lv_label_set_text(s_map_count_lbl, "");
@@ -37751,7 +37945,7 @@ static void refreshMapInfoLabel() {
   //   • tiles queued/downloading  -> "downloading N"
   //   • gaps but Wi-Fi is down     -> "Wi-Fi off"
   // Otherwise show the usual marker count.
-  char tail[28];
+  char tail[48];
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool wifi_up = (WiFi.status() == WL_CONNECTED);
   if (tileFetchPendingLoad() > 0) {
@@ -37772,6 +37966,9 @@ static void refreshMapInfoLabel() {
     snprintf(tail, sizeof(tail), TR("%d of %d on map"), s_map_markers_drawn, with_gps);
   else
     snprintf(tail, sizeof(tail), TR("%d on map"), with_gps);
+#endif
+#if CAP_TRACKS
+  trackStatus(tail, sizeof(tail));   // recording: distance and climb take the corner
 #endif
   // Coords → bottom-left corner; count/status → bottom-right corner.
   char buf[40];
@@ -71792,6 +71989,7 @@ static const uint8_t kGpsEveryMin[4] = { 2, 5, 15, 30 };
 static uint32_t s_gps_phase_at  = 0;   // millis() the current waking or rest began
 static uint32_t s_gps_fix_since = 0;   // millis() of the first fresh fix in this waking (0: none)
 static bool gpsWantedLive() {
+  if (trackRecording()) return true;   // a track needs every position, screen on or off
   if (g_lv.task && !g_lv.task->isScreenOff() && getActiveTab() == MAP_TAB_INDEX) return true;
   if (g_set_modal.gps_status) return true;   // the GPS page is open
   return s_discover_root != nullptr;         // Discover logs positions as it scans
@@ -75193,6 +75391,7 @@ void UITask::loop() {
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
   gpsSaverTick((uint32_t)now);   // the GPS saver: rest the receiver between position checks
+  trackTick((uint32_t)now);      // Map options > Record track: a GPX point as we move
   updateGpsLocation(now);
   uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
   ++s_live_diag_loops;
