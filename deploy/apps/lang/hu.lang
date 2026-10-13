@@ -36,7 +36,7 @@ Accent popups: on	Accent popups: bekapcsolva
 Background	Háttér
 Background colour	Háttérszín
 Background set, it shows after a restart	Háttér beállítva, újraindítás után jelenik meg
-Check position every	Pozíció ellenőrzése minden
+Check position every	Pozícióellenőrzés gyakorisága
 Choose an image	Kép választása
 Choose the colour	Szín választása
 Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Kísérleti. Kikapcsolt kijelzőnél lassítja a processzort (a Bluetooth és a Wi-Fi tovább működik), pihenteti a GPS-t a pozícióellenőrzések között, és megállítja a mozgó hátteret.
