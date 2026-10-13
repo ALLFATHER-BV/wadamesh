@@ -1935,3 +1935,15 @@ Favorites only	Jen oblíbené
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
 The Bluetooth chip is not responding.	Čip Bluetooth neodpovídá.
 Bluetooth could not start. Restart the device and try again.	Bluetooth se nepodařilo spustit. Restartujte zařízení a zkuste to znovu.
+Record track	Nahrávat trasu
+Recording track	Nahrává se trasa
+Recording needs an SD card	Nahrávání vyžaduje SD kartu
+Could not write to the SD card	Na SD kartu nelze zapisovat
+Try the card again	Zkusit kartu znovu
+Next page	Další stránka
+Previous page	Předchozí stránka
+Back to the start	Zpět na začátek
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.

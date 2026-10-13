@@ -19,6 +19,10 @@ The web app gets Reply on a channel message (#650 by oumike, asked for in #642 b
 New in the Store: MECP, for emergency messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and a hundred more), add the number of people and your position, and post it to a channel; MECP messages you receive are shown in plain words. Asked for on Discord; MECP and its code table are by xiang-dev-1.
 For app makers: a Store app can ship its own files, such as sounds, by listing them in its manifest. They are installed into the app's own folder, which is also the way to play sounds on the T-Display P4.
 
+Record your route: Map options > Record track saves where you go as a GPX file on the SD card (/meshcomod/tracks), the standard format other mapping software opens, with elevation and time. It keeps recording with the screen off, the map shows the route as a red line, and the corner shows the distance and climb while it records (asked for on Discord).
+The Reader is now a library: big text and markdown files on the SD card page through (16 KB at a time, with Next and Previous page), and Files opens web pages and long texts on the card in the Reader. A new desktop tool, scripts/sdpack.py, turns EPUB books and text files into pages on the card with a library home page (asked for on Discord).
+A failed SD card no longer costs your node its key: the device keeps a copy of the key in its own memory. A device that keeps its data on the card and starts without it now says so and offers to try the card again, instead of opening first-time setup (reported on Discord).
+
 # --- Fixes ---
 Tapping the radar widget opens the radar screensaver until you touch the screen, instead of flickering it (reported on Discord). The radar also fits a two-cell space now, and when Home is full, adding a widget tells you to hold one to remove it.
 The Advert widget is readable again: it now looks like the app tiles, with its icon in a tinted square and the name under it (#637, reported by Flyflinger).
