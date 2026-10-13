@@ -9,6 +9,8 @@
   #define PIN_KB_ADDR 0x6c
 #endif
 
+static constexpr uint8_t M9_KB_V11_ADDR = 0x6d;
+
 // Controller register map — from Elecrow's keyboard-controller firmware
 // (ThinkNode-M9-KB-platformio, src/main.cpp). The keyboard is a separate
 // ESP32-S2 running a matrix scanner as an I2C SLAVE with addressed registers:
@@ -25,23 +27,28 @@ static volatile uint8_t s_ring[16];
 static volatile uint8_t s_head = 0;
 static volatile uint8_t s_tail = 0;
 static bool             s_inited = false;
+static void           (*s_found_cb)(uint8_t) = nullptr;
+static bool             s_found_cb_done = false;
 static TwoWire*         s_bus = nullptr;      // set once the controller answers
+static uint8_t          s_address = PIN_KB_ADDR;
 static uint32_t         s_last_probe_ms = 0;
 
-static bool kbReadReg(TwoWire& w, uint8_t reg, uint8_t* out) {
-  w.beginTransmission((uint8_t)PIN_KB_ADDR);
+static bool kbReadReg(TwoWire& w, uint8_t address, uint8_t reg, uint8_t* out) {
+  w.beginTransmission(address);
   w.write(reg);
   if (w.endTransmission() != 0) return false;         // NACK / bus error
-  if (w.requestFrom((int)PIN_KB_ADDR, 1) != 1) return false;
+  if (w.requestFrom((int)address, 1) != 1) return false;
   *out = (uint8_t)w.read();
   return true;
 }
 
-static bool kbProbe(TwoWire& w, const char* name) {
+static bool kbProbe(TwoWire& w, const char* name, uint8_t address) {
   uint8_t hw = 0, fw = 0;
-  if (!kbReadReg(w, M9_KB_REG_HW_VER, &hw)) return false;
-  kbReadReg(w, M9_KB_REG_FW_VER, &fw);   // best-effort, for the log only
-  Serial.printf("M9 keyboard: controller on %s (hw=0x%02X fw=0x%02X)\n", name, hw, fw);
+  if (!kbReadReg(w, address, M9_KB_REG_HW_VER, &hw)) return false;
+  kbReadReg(w, address, M9_KB_REG_FW_VER, &fw);   // best-effort, for the log only
+  s_bus = &w;
+  s_address = address;
+  Serial.printf("M9 keyboard: controller on %s addr=0x%02X (hw=0x%02X fw=0x%02X)\n", name, address, hw, fw);
   return true;
 }
 
@@ -49,9 +56,19 @@ static bool kbProbe(TwoWire& w, const char* name) {
 // shared sensor bus (Wire, 7/6) is probed as a fallback so a wrong pin
 // reading shows up in the boot log instead of as a dead keyboard.
 static void kbTryFindBus() {
-  if (kbProbe(Wire1, "Wire1 (20/21)"))     s_bus = &Wire1;
-  else if (kbProbe(Wire, "Wire (7/6)"))    s_bus = &Wire;
+  // V1.0 uses 0x6c; V1.1 uses 0x6d (Meshtastic's M9 variant.cpp).
+  // Keep the existing address/bus preference, then try the newer controller.
+  const uint8_t addresses[] = {PIN_KB_ADDR, M9_KB_V11_ADDR};
+  for (uint8_t address : addresses) {
+    if (kbProbe(Wire1, "Wire1 (20/21)", address) ||
+        kbProbe(Wire, "Wire (7/6)", address)) break;
+  }
+  if (s_bus && s_found_cb && !s_found_cb_done) { s_found_cb_done = true; s_found_cb(s_address); }
 }
+
+uint8_t m9KeyboardAddr() { return s_bus ? s_address : 0; }
+
+void m9KeyboardSetFoundCallback(void (*cb)(uint8_t addr)) { s_found_cb = cb; s_found_cb_done = false; }
 
 void m9KeyboardBegin() {
   Wire1.begin(PIN_KB_SDA, PIN_KB_SCL);
@@ -91,7 +108,7 @@ void m9KeyboardPoll() {
   // key struck inside the 15 ms window would otherwise be lost.
   for (int i = 0; i < 3; i++) {
     uint8_t key = 0;
-    if (!kbReadReg(*s_bus, M9_KB_REG_KEY, &key)) return;
+    if (!kbReadReg(*s_bus, s_address, M9_KB_REG_KEY, &key)) return;
     if (key == 0x00 || key == 0xFF) return;   // no key / undefined-register reply
     const uint8_t nh = (uint8_t)((s_head + 1) & 15);
     if (nh != s_tail) {     // drop if the ring is full
@@ -110,7 +127,7 @@ int m9KeyboardReadKey() {
 
 bool m9KeyboardSetBacklight(uint8_t duty) {
   if (!s_inited || !s_bus) return false;   // controller not found yet (see the probe note above)
-  s_bus->beginTransmission((uint8_t)PIN_KB_ADDR);
+  s_bus->beginTransmission(s_address);
   s_bus->write(M9_KB_REG_BACKLIGHT);
   s_bus->write(duty);
   return s_bus->endTransmission() == 0;    // NACK/bus error -> the duty was NOT taken

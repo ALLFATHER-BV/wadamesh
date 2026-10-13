@@ -35,6 +35,12 @@ class WadaNmeaLocationProvider : public LocationProvider {
   Stream* _gps_serial;
   RefCountedDigitalPin* _peripher_power;
   int8_t _claims = 0;
+  // Runtime enable level (defaults to the compile-time GPS_EN_ACTIVE). Boards whose
+  // GPS enable polarity differs between hardware revisions override it via setEnActive().
+  bool _en_active = (GPS_EN_ACTIVE);
+  // Optional board hook run at the end of the power-up sequence in begin(), after the enable and reset pins are set
+  // (e.g. a wake pulse some GPS modules need). Null on boards that don't set one.
+  void (*_post_enable)() = nullptr;
   int _pin_reset;
   int _pin_en;
   unsigned long next_check = 0;
@@ -139,7 +145,7 @@ public:
     }
     if (_pin_en != -1) {
       pinMode(_pin_en, OUTPUT);
-      digitalWrite(_pin_en, !GPS_EN_ACTIVE);
+      digitalWrite(_pin_en, !_en_active);
     }
   }
 
@@ -157,6 +163,16 @@ public:
   // GNSS engine stopped (see ubxGnss). Opt-in per board, once its module is known to wake.
   void setUbxStandby(bool on) { _ubx_standby = on; }
 
+  // Override the enable pin's active level at runtime (e.g. once the hardware
+  // revision is known). Re-drives the pin so an already-running GPS stays on and an
+  // idle one stays off under the new polarity.
+  void setEnActive(bool active_high) {
+    _en_active = active_high;
+    if (_pin_en != -1) digitalWrite(_pin_en, _claims > 0 ? _en_active : !_en_active);
+  }
+
+  void setPostEnableHook(void (*hook)()) { _post_enable = hook; }
+
   void claim() {
     _claims++;
     if (_peripher_power) _peripher_power->claim();
@@ -173,8 +189,9 @@ public:
     // What waited in the UART while the receiver rested is old news, and it would read as
     // the stream being back before the receiver has woken.
     if (_ubx_standby) while (_gps_serial->available()) _gps_serial->read();
-    if (_pin_en != -1) digitalWrite(_pin_en, GPS_EN_ACTIVE);
+    if (_pin_en != -1) digitalWrite(_pin_en, _en_active);
     if (_pin_reset != -1) digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
+    if (_pin_en != -1 && _post_enable) _post_enable();
     if (_probe_serial) {
       _active_baud = touchPrefsGetGpsBaud(_probe_default_baud);
       _probe_cursor = 0;
@@ -198,7 +215,7 @@ public:
   }
 
   void stop() override {
-    if (_pin_en != -1) digitalWrite(_pin_en, !GPS_EN_ACTIVE);
+    if (_pin_en != -1) digitalWrite(_pin_en, !_en_active);
     // LOW, not GPS_RESET_ACTIVE — the zero-current park level for both reset
     // circuits (see the constructor comment; on the M9 "asserted" = GPIO HIGH
     // through R46 into Q16's base = a constant drain while the GPS is off).
@@ -213,7 +230,7 @@ public:
   bool isEnabled() override {
     // Read the enable pin directly if present: the GPS can be switched outside
     // of here.
-    if (_pin_en != -1) return digitalRead(_pin_en) == GPS_EN_ACTIVE;
+    if (_pin_en != -1) return digitalRead(_pin_en) == (int)_en_active;
     return true;  // no enable pin, so it must be active
   }
 

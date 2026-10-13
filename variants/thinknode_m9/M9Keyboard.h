@@ -3,7 +3,8 @@
 // ThinkNode M9 keyboard controller. Unlike the T-Deck — where the keyboard
 // shares an I2C bus with the touch controller and must be polled from a
 // dedicated core-0 task — the M9 keyboard lives on its OWN bus (Wire1,
-// SDA=20 / SCL=21, addr 0x6c) with no touch controller present at all. So
+// SDA=20 / SCL=21, addr 0x6c on V1.0 or 0x6d on V1.1), with a fallback
+// probe on Wire (7/6). There is no touch controller present, so
 // this can be polled directly from the UI thread; no cross-core ring buffer
 // is strictly required, but one is kept anyway for interface parity with
 // TDeckKeyboard and so a future move to a dedicated poll task is a no-op.
@@ -69,5 +70,13 @@ int m9KeyboardReadKey();
  *  caches "last written" can retry instead of latching a duty the
  *  controller never took. */
 bool m9KeyboardSetBacklight(uint8_t duty);
+
+/** I2C address the keyboard controller answered at (0x6C or 0x6D), or 0 while it
+ *  has not been found yet. The address identifies the board hardware revision. */
+uint8_t m9KeyboardAddr();
+
+/** Register a callback invoked once, with the address, as soon as the controller is
+ *  found (immediately from m9KeyboardBegin, or later from the poll re-probe). */
+void m9KeyboardSetFoundCallback(void (*cb)(uint8_t addr));
 
 #endif
