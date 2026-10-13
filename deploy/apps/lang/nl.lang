@@ -47,7 +47,7 @@ None	Geen
 Open a JPEG, then tap 'Set as background'	Open een JPEG, tik dan op 'Instellen als achtergrond'
 Save battery	Batterij sparen
 Set as background	Instellen als achtergrond
-Still aurora	Stille aurora
+Still aurora	Stilstaande aurora
 The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	De GPS rust tussen positiecontroles en wordt vanzelf wakker. Hij blijft actief zolang de kaart, deze pagina of Discover open is. De batterijbesparing zet dit ook aan.
 remote view open	weergave op afstand open
 Accent colour	Accentkleur
@@ -187,6 +187,7 @@ Clear battery history?	Batterijgeschiedenis wissen?
 Clear history	Geschiedenis wissen
 Clear telemetry history for this node?	Telemetriegeschiedenis van deze node wissen?
 Client repeat	Client herhaling
+Clipboard empty	Klembord leeg
 Clock & time	Klok & tijd
 Clock synced	Klok gesynchroniseerd
 Clock: 12-hour	Klok: 12-uurs
@@ -314,6 +315,7 @@ Enter SSID first	Voer eerst SSID in
 Enter a name	Voer een naam in
 Enter a network name	Voer een netwerknaam in
 Enter a region name	Enter a region name
+Enter a rough location first	Voer eerst een ruwe locatie in
 Enter adds a new line	Enter voegt een nieuwe regel toe
 Enter exactly 32 hex characters.	Voer precies 32 hex-tekens in.
 Enter key sends message	Enter verstuurt bericht
@@ -366,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Zoemer %s\n%s
 GPS off	GPS uit
 GPS on	GPS aan
 GPS serial baud	GPS seriële baud
+GPS sets the position while it has a fix	GPS bepaalt de positie zolang het een fix heeft
 GPS unset	GPS niet ingesteld
 GPS: acquiring...	GPS: zoeken...
 GPS: fix	GPS: fix
@@ -515,6 +518,7 @@ Messages	Berichten
 Min zoom for this pack	Min zoom voor dit pakket
 Mode: BLE starting / low memory	Modus: BLE start / weinig geheugen
 Model:	Model:
+Move the map to your spot	Schuif de kaart naar je plek
 Multi ACKs	Multi-ACK's
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Herhalen %s · RX-boost %s
 Multi-byte routing (path hash)	Multi-byte routing (pad-hash)
@@ -625,6 +629,7 @@ Path reset failed	Pad resetten mislukt
 Paused  —  score %d	Gepauzeerd  —  score %d
 Per-transmit switching on	Per-zending schakelen aan
 Pick colour	Kies kleur
+Pick on the map	Kiezen op de kaart
 Ping	Ping
 Ping failed	Ping mislukt
 Pinged (direct) — waiting…	Ping (direct) — wachten…
@@ -1902,3 +1907,9 @@ Shows the zoom slider	Toont de zoomschuif
 Zoom	Zoom
 Zoom in	Inzoomen
 Zoom out	Uitzoomen
+
+# beta_94 strings
+Temperature in Fahrenheit	Temperatuur in Fahrenheit
+Up to 15 characters	Maximaal 15 tekens
+Favorites only	Alleen favorieten
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one

@@ -36,7 +36,7 @@ Accent popups: on	Accent popups: bekapcsolva
 Background	Háttér
 Background colour	Háttérszín
 Background set, it shows after a restart	Háttér beállítva, újraindítás után jelenik meg
-Check position every	Pozíció ellenőrzése minden
+Check position every	Pozícióellenőrzés gyakorisága
 Choose an image	Kép választása
 Choose the colour	Szín választása
 Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Kísérleti. Kikapcsolt kijelzőnél lassítja a processzort (a Bluetooth és a Wi-Fi tovább működik), pihenteti a GPS-t a pozícióellenőrzések között, és megállítja a mozgó hátteret.
@@ -189,6 +189,7 @@ Clear battery history?	Törli az akkumulátorelőzményeket?
 Clear history	Előzmények törlése
 Clear telemetry history for this node?	Törli a telemetriai előzményeket ehhez a csomóponthoz?
 Client repeat	Kliens repeat
+Clipboard empty	A vágólap üres
 Clock & time	Idő és dátum
 Clock synced	Óra szinkronizálva
 Clock: 12-hour	Óra: 12 órás
@@ -318,6 +319,7 @@ Enter SSID first	Először adja meg az SSID-t
 Enter a name	Írjon be egy nevet
 Enter a network name	Adjon meg egy hálózatnevet
 Enter a region name	Enter a region name
+Enter a rough location first	Először adjon meg egy hozzávetőleges helyet
 Enter adds a new line	Az Enter új sort ad hozzá
 Enter exactly 32 hex characters.	Pontosan 32 hex karaktert adjon meg.
 Enter key sends message	Az Enter billentyű elküldi az üzenetet
@@ -371,6 +373,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS kikapcsolva
 GPS on	GPS bekapcsolva
 GPS serial baud	GPS soros baud
+GPS sets the position while it has a fix	Amíg van GPS-fix, a pozíciót a GPS adja
 GPS unset	GPS nincs beállítva
 GPS: acquiring...	GPS: begyűjtés...
 GPS: fix	GPS: fix
@@ -522,6 +525,7 @@ Messages	Üzenetek
 Min zoom for this pack	Minimális zoom ehhez a csomaghoz
 Mode: BLE starting / low memory	Mód: BLE indítás / kevés memória
 Model:	Modell
+Move the map to your spot	Mozgassa a térképet a helyére
 Multi ACKs	Multi ACKs
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Ismétlés %s · Vételnövelés %s
 Multi-byte routing (path hash)	Többbájtos útválasztás (útvonal-hash)
@@ -634,6 +638,7 @@ Path reset failed	Útvonal visszaállítása sikertelen
 Paused  —  score %d	Szünet — Pontok %d
 Per-transmit switching on	Adásonkénti váltás bekapcsolva
 Pick colour	Színválasztás
+Pick on the map	Kiválasztás a térképen
 Ping	Ping
 Ping failed	Ping sikertelen
 Pinged (direct) — waiting…	Pingelt (közvetlen) — várakozás…
@@ -1916,3 +1921,9 @@ Shows the zoom slider	Megjeleníti a nagyítás csúszkát
 Zoom	Nagyítás
 Zoom in	Közelítés
 Zoom out	Távolítás
+
+# beta_94 strings
+Temperature in Fahrenheit	Hőmérséklet Fahrenheitben
+Up to 15 characters	Legfeljebb 15 karakter
+Favorites only	Csak kedvencek
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one

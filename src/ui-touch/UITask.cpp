@@ -1165,7 +1165,8 @@ static inline lv_coord_t SC(int px) { return (lv_coord_t)((px * s_ui_fscale + 50
 // Scale the ladder by how much the text actually grew. At Normal this returns
 // exactly SC(px), so nothing moves for anyone who has not chosen a bigger size.
 static inline lv_coord_t SBX(int px) {
-#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_TDECK_GT911) || \
+    defined(HAS_TDECK_PRO) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
   const int base = 12;
   const int grown = (int)lv_font_get_line_height(&g_font_12);   // 12 / 16 / 18 px
   if (grown > base) return (lv_coord_t)((px * grown + base / 2) / base);
@@ -1247,12 +1248,13 @@ static void initTouchFontFallbacks() {
       break;
   }
   g_font_tab = lv_font_montserrat_16;
-#elif (defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)) && \
+#elif (defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)) && \
       !(defined(DOC_CAPTURE) && (defined(DOC_VIRT_FONTSET) || defined(DOC_VIRT_FSCALE)))
   // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
-  // controls retain their established dimensions and remain scrollable. The M9
-  // and the T-Deck have the same panel as the V4-R8 and take the same numbers
-  // deliberately: two tables for one screen size is two things to keep in step.
+  // controls retain their established dimensions and remain scrollable. The M9,
+  // the T-Deck and the T-Deck Pro / Max have the same panel size as the V4-R8 and
+  // take the same numbers deliberately: two tables for one screen size is two
+  // things to keep in step (#639).
   // (Capture builds that render another board's size take their own branch below.)
   s_ui_fscale = 100;
   switch (touchPrefsGetUiScale()) {
@@ -3259,6 +3261,22 @@ static uint16_t* s_scale_buf = nullptr;                             // upscale s
 // ---- Global UI state instance ----
 LvUiState g_lv = {};
 
+// Temperature unit (asked for on Discord): degrees C unless "Temperature in Fahrenheit"
+// is on (Settings > Display > Status bar & units). Only what is shown converts: stored
+// readings, logs, telemetry sent out and the Lua SDK stay in degrees C. Saved as a
+// one-byte blob ("temp_f"), so no settings-schema bump.
+static int8_t s_temp_f = -1;   // -1: not read yet
+static bool tempF() {
+#if defined(ESP32)
+  if (s_temp_f < 0) { uint8_t v = 0; s_temp_f = (touchPrefsGetBlob("temp_f", &v, 1) == 1 && v) ? 1 : 0; }
+  return s_temp_f == 1;
+#else
+  return false;
+#endif
+}
+static double tempDisp(double c) { return tempF() ? c * 9.0 / 5.0 + 32.0 : c; }
+static const char* tempUnit() { return tempF() ? "F" : "C"; }
+
 // ---- Contact nicknames ---------------------------------------------------------
 // A name of the user's own for a contact (Contact options > Nickname), drawn wherever
 // the UI shows that contact: Contacts, Chats, the chat header, the map, notifications.
@@ -3989,13 +4007,13 @@ static void buildLocalEnvDetailText(const UITask::LocalEnvSnapshot& snap, char* 
   if (snap.have_batt) p = localEnvAppendLine(out, cap, p, "  %.2fV", (double)snap.batt_v);
 
   p = localEnvAppendLine(out, cap, p, "\nBME280 (ch2): %s", localEnvModuleState(have_bme, snap.query_ok));
-  if (snap.have_bme_temp)     p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.bme_temp_c);
+  if (snap.have_bme_temp)     p = localEnvAppendLine(out, cap, p, "\n  Temp %.1f%s", tempDisp(snap.bme_temp_c), tempUnit());
   if (snap.have_bme_hum)      p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.bme_hum_pct);
   if (snap.have_bme_pressure) p = localEnvAppendLine(out, cap, p, "\n  Press %.0fhPa", (double)snap.bme_pressure_hpa);
   if (snap.have_bme_alt)      p = localEnvAppendLine(out, cap, p, "\n  Alt  %dm", (int)snap.bme_alt_m);
 
   p = localEnvAppendLine(out, cap, p, "\nGXHTV3/SHT4X (ch3): %s", localEnvModuleState(have_gx, snap.query_ok));
-  if (snap.have_gxhtv3_temp) p = localEnvAppendLine(out, cap, p, "\n  Temp %.1fC", (double)snap.gxhtv3_temp_c);
+  if (snap.have_gxhtv3_temp) p = localEnvAppendLine(out, cap, p, "\n  Temp %.1f%s", tempDisp(snap.gxhtv3_temp_c), tempUnit());
   if (snap.have_gxhtv3_hum)  p = localEnvAppendLine(out, cap, p, "\n  Hum  %.0f%%RH", (double)snap.gxhtv3_hum_pct);
 
   p = localEnvAppendLine(out, cap, p, "\nGPS module: %s", snap.gps_present ? "available" : "not detected");
@@ -4448,7 +4466,28 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
     eg = emojiGlyphLookup(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
   }
   avatarApply(av, name);
-  if (!eg) return;
+  if (!eg) {
+    // A text symbol from the picker's last rows (a star, a heart, a currency sign):
+    // no colour glyph, so it is drawn as text in the colour the initials had (#647).
+    // Before this the pick was saved and announced but the plain avatar stayed.
+    if (!utf8 || !utf8[0] || (uint8_t)utf8[0] < 0x80) return;
+    lv_obj_t* first = lv_obj_get_child(av, 0);
+    const lv_color_t ink = first ? lv_obj_get_style_text_color(first, LV_PART_MAIN)
+                                 : lv_color_hex(COLOR_TEXT);
+    lv_obj_clean(av);
+    lv_obj_set_user_data(av, nullptr);
+    uint32_t end = 0;
+    _lv_txt_encoded_next(utf8, &end);   // the one character, as the emoji path uses
+    char one[8] = {};
+    memcpy(one, utf8, end < sizeof one ? end : sizeof one - 1);
+    lv_obj_t* l = lv_label_create(av);
+    lv_label_set_text(l, one);
+    lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, ink, LV_PART_MAIN);
+    lv_obj_center(l);
+    lv_obj_invalidate(av);
+    return;
+  }
   lv_obj_clean(av);                    // no letters
   lv_obj_set_user_data(av, nullptr);   // no glyph under it
   lv_obj_t* im = lv_img_create(av);
@@ -4480,8 +4519,25 @@ static bool nameFirstEmoji(const char* name, char* out, size_t cap) {
   return false;
 }
 
-// A count pill in the redesign's language: the glow teal with dark Bold figures,
-// "!" for a pending update. Shared by the launcher tiles and the tab bar.
+// E-paper badges: a filled pill thresholds to solid black on the Pro, and its small
+// anti-aliased white figures mostly fall under the one-bit cut, so the count reads as
+// a black blob. Paper white with a black ring and black figures survives the reduction.
+static void styleBadgeEpaper(lv_obj_t* box, lv_obj_t* text) {
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(box, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(box, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_border_width(box, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_opa(box, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_text_color(text, lv_color_black(), LV_PART_MAIN);
+#else
+  (void)box; (void)text;
+#endif
+}
+
+// A count pill in the redesign's language: the glow with Bold figures in its ink
+// (dark on Night's bright glow, white on Day's deep one), "!" for a pending update.
+// Shared by the launcher tiles and the tab bar.
 static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
   lv_obj_t* bdg = lv_obj_create(parent);
   lv_obj_remove_style_all(bdg);
@@ -4503,8 +4559,9 @@ static lv_obj_t* makeCountPill(lv_obj_t* parent, int count) {
   else           snprintf(bn, sizeof bn, count > 99 ? "99+" : "%d", count);
   lv_label_set_text(bt, bn);
   lv_obj_set_style_text_color(bt,
-      (s_theme_high_contrast || update) ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      (s_theme_high_contrast || update) ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_text_font(bt, &g_font_badge, LV_PART_MAIN);
+  styleBadgeEpaper(bdg, bt);
   lv_obj_center(bt);
   return bdg;
 }
@@ -7669,6 +7726,9 @@ static volatile bool s_map_sd_storage_changed = false;   // defer SD_MMC backend
 // rebuilds the tile grid. Defined alongside the map state below.
 static void onMapTabActivated();
 static void clearRouteReplay();        // drop the message-route overlay (defined with the map code)
+static void mapPickStart();            // Profile > Pick on the map (defined with the map code)
+static void mapPickExit();             // leave that pick mode; safe when it isn't active
+static bool mapPickGpsOwnsPosition();  // GPS on with a fix: it sets the position, not a pick
 static void applyMapChrome(bool on);   // map-tab immersive chrome (transparent bars); defined near makeMapTab
 static void formatAgeBadge(char* buf, size_t cap, uint32_t age_secs);        // defined with the contacts list
 static void formatDistanceBadge(char* out, size_t out_cap, double self_lat, double self_lon,
@@ -10554,11 +10614,13 @@ static void threadSheetResetPathCb(lv_event_t* e) {
 // conversation's avatar via the emoji sheet in pick mode; long-press puts the
 // generated glyph back.
 static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title);   // defined with the emoji sheet below
+static void contactsListMarkStale();   // defined with the Contacts list
 static void threadSheetIconPicked(const char* g) {
   char nm[UITask::MAX_THREAD_NAME + 1] = "";
   if (!channelLongSheetName(nm, sizeof nm)) return;
   const bool ok = touchPrefsSetChannelEmoji(nm, g);
   g_lv.dirty_threads = true;                       // chat list re-renders the avatar
+  contactsListMarkStale();                         // and so does Contacts (#646)
   if (g_lv.task) g_lv.task->showAlert(ok ? TR("Chat icon set") : TR("Too many chat icons"), ok ? 1200 : 2500);
 }
 static void threadSheetIconDo() {
@@ -10572,6 +10634,7 @@ static void threadSheetIconResetDo() {
   if (!channelLongSheetName(nm, sizeof nm)) return;
   touchPrefsSetChannelEmoji(nm, "");
   g_lv.dirty_threads = true;
+  contactsListMarkStale();
   if (g_lv.task) g_lv.task->showAlert(TR("Chat icon reset"), 1400);
 }
 static void threadSheetIconResetCb(lv_event_t* e) {
@@ -11851,6 +11914,7 @@ static void tabChangedCb(lv_event_t* e) {
   } else {
     if (prev_t == MAP_TAB_INDEX) applyMapChrome(false);   // restore opaque chrome
     clearRouteReplay();    // drop any route-replay overlay when leaving the map
+    mapPickExit();         // and the position-pick crosshair + bar, unsaved
     // Leaving the map used to drop all nine decoded tiles, so every re-open
     // paid the full read + JPEG decode again — measured at ~2.5 s of blocked
     // UI on the M9 ([STALL] ui:lvgl), on EVERY visit, not just the first.
@@ -12549,6 +12613,19 @@ static const char* pasteTextFor(lv_obj_t* ta, const char* clip, char* buf, size_
   return PasteHexKey::extract(clip, want, buf, cap);
 }
 
+// Paste the clipboard into `ta` at the cursor, replacing any highlighted
+// range. Shared by the edit menu's Paste cell and the Pager's Fn+Enter chord.
+// Returns false when the clipboard is empty (nothing was changed).
+static bool txtPasteInto(lv_obj_t* ta) {
+  if (!ta || !s_clipboard[0]) return false;
+  uint32_t s_cp = 0, e_cp = 0;
+  if (taHasSelection(ta, &s_cp, &e_cp)) taDeleteRange(ta, s_cp, e_cp);
+  char key[65];
+  lv_textarea_add_text(ta, pasteTextFor(ta, s_clipboard, key, sizeof key));
+  taClearSelection(ta);
+  return true;
+}
+
 static void txtMenuCellCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
@@ -12589,11 +12666,7 @@ static void txtMenuCellCb(lv_event_t* e) {
       else     lv_textarea_set_text(ta, "");
     }
   } else if (act == TXT_PASTE) {
-    if (s_clipboard[0]) {
-      if (sel) taDeleteRange(ta, s_cp, e_cp);
-      char key[65];
-      lv_textarea_add_text(ta, pasteTextFor(ta, s_clipboard, key, sizeof key));
-    }
+    txtPasteInto(ta);
   }
   taClearSelection(ta);
   txtMenuHide();
@@ -14497,6 +14570,17 @@ static void buildProfileSettings() {
       snprintf(buf, sizeof(buf), "%.6f", g_lv.task->getNodeLon());
       lv_textarea_set_text(g_set_modal.lon_ta, buf);
     }
+    // With GPS on and a fix, updateGpsLocation() rewrites the position every loop,
+    // so a picked one would not stay: no row then.
+    if (!mapPickGpsOwnsPosition())
+      setActionRow(c, UI_ICON_MAP_PIN, "Pick on the map", nullptr, [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        lv_indev_t* a = lv_indev_get_act();
+        if (a) lv_indev_wait_release(a);
+        // Save a typed lat/lon first (the pair's blur save), so the map starts from it.
+        if (g_set_modal.lat_ta) lv_event_send(g_set_modal.lat_ta, LV_EVENT_DEFOCUSED, nullptr);
+        mapPickStart();   // closes this page with popupClose (deferred delete), so safe from its own tap
+      });
     NodePrefs* pol = the_mesh.getNodePrefs();
     g_set_modal.share_loc_sw = setSwitchRow(c, "Share location in advert",
                                             "Adverts reach every node in range, unencrypted. GPS > Location privacy can shift the position they carry.",
@@ -15758,6 +15842,16 @@ static void sdRestoreFromInternalCb(lv_event_t* e) {
 #endif
 #endif
 
+static void tempFToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool f = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  s_temp_f = f ? 1 : 0;
+#if defined(ESP32)
+  const uint8_t v = f ? 1 : 0;
+  touchPrefsSetBlob("temp_f", &v, 1);
+#endif
+  if (g_lv.task) g_lv.task->showAlert(f ? "\xC2\xB0""F" : "\xC2\xB0""C", 900);
+}
 static void useMilesToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool miles = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -16881,7 +16975,7 @@ static void buildDisplayPage() {
 #if CAP_UI_SIZE
 #if defined(TLORA_PAGER)
     const char* sizes[] = { TR("Small"), TR("Medium"), TR("Large"), TR("Jumbo") };
-#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)
+#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)
     const char* sizes[] = { TR("Normal"), TR("Large text"), TR("Huge text") };
 #else
     const char* sizes[] = { TR("Normal"), TR("Large"), TR("Huge") };
@@ -16962,6 +17056,7 @@ static void buildDisplayPage() {
 #if defined(ESP32)
     setSwitchRow(c, "Hide device name", "Keeps your node's name off the status bar.", touchPrefsGetHideNodeName(), hideNameToggleCb);
     setSwitchRow(c, "Distance in miles", nullptr, touchPrefsGetUseMiles(), useMilesToggleCb);
+    setSwitchRow(c, "Temperature in Fahrenheit", nullptr, tempF(), tempFToggleCb);
 #endif
   }
 }
@@ -20758,8 +20853,8 @@ static void openAdminLoginPrompt(const ContactInfo& c) {
   styleCard(s_admin_pw_ta);
   lv_textarea_set_one_line(s_admin_pw_ta, true);
   lv_textarea_set_password_mode(s_admin_pw_ta, true);
-  lv_textarea_set_max_length(s_admin_pw_ta, 15);
-  taSetPlaceholder(s_admin_pw_ta, "");
+  lv_textarea_set_max_length(s_admin_pw_ta, 15);   // MeshCore's own limit: sendLogin() sends 15, servers keep 15
+  taSetPlaceholder(s_admin_pw_ta, TR("Up to 15 characters"));
   lv_obj_set_style_text_color(s_admin_pw_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_admin_pw_ta, &g_font_14, LV_PART_MAIN);
   attachSettingsTaEvents(s_admin_pw_ta);
@@ -30963,6 +31058,8 @@ static int       s_ct_sel_n       = 0;
 static bool      s_ct_list_force  = false;   // force refreshContactsList past its no-change cache
 static volatile bool s_ct_contacts_dirty = false;   // a contact was discovered/added (set from the mesh callback); UITask::loop rebuilds the visible Contacts list — issue #73
 static void contactsListForceRefresh() { s_ct_list_force = true; refreshContactsList(); }
+// The next Contacts refresh rebuilds the rows, e.g. after a chat icon changes (#646).
+static void contactsListMarkStale() { s_ct_list_force = true; }
 static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
 static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
@@ -31490,10 +31587,14 @@ static void makeContactsTab(lv_obj_t* tab) {
       lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : COLOR_GLOW), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ct_disc_badge, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_ct_disc_badge,
-      s_theme_high_contrast ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      s_theme_high_contrast ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
     lv_obj_set_style_text_font(s_ct_disc_badge, &g_font_badge, LV_PART_MAIN);
     lv_obj_set_style_text_align(s_ct_disc_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(s_ct_disc_badge, 3, LV_PART_MAIN);
+    styleBadgeEpaper(s_ct_disc_badge, s_ct_disc_badge);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_pad_top(s_ct_disc_badge, 2, LV_PART_MAIN);   // the 1 px ring counts toward it
+#endif
     lv_obj_align(s_ct_disc_badge, LV_ALIGN_TOP_RIGHT, 6, -1);
     lv_obj_add_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
   }
@@ -32224,6 +32325,12 @@ static lv_obj_t* s_map_location_marker = nullptr;
 static bool     s_map_view_inited = false;  // first map open did the recenter+zoom-snap; after that, remember the user's view (issue #5)
 static bool       s_map_follow     = false; // auto-follow: recenter on self whenever the GPS coords change
 static lv_obj_t*  s_map_follow_btn = nullptr;
+// Position-pick mode (Profile > Pick on the map): a fixed crosshair marks the map
+// centre and a Cancel / Save position bar saves it as the advert position.
+// Auto-follow pauses while it's up, else it would drag the centre back to the fix.
+static bool       s_map_pick_active = false;
+static lv_obj_t*  s_map_pick_cross  = nullptr;   // on s_map_canvas, outside the pan layer
+static lv_obj_t*  s_map_pick_bar    = nullptr;   // on s_map_page, so it takes taps + key focus
 #if defined(HAS_M9_KEYBOARD)
 // Map pan mode (M9): the Map key on the Map tab toggles it — arrows then pan
 // via mapNudge, Map/Back exits. Lives here with the map state because
@@ -35009,6 +35116,7 @@ static bool s_map_show_tilexyz   = false;
 static bool s_map_show_contacts  = true;
 static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
+static bool s_map_fav_only       = false;  // when true, only favourite contacts appear (saved as "map_fav")
 
 // Apply the coords/tile-line visibility flags to the two corner labels. Safe to
 // call before the labels exist (null-guarded); invoked at map build + on toggle.
@@ -35134,6 +35242,23 @@ static void renderMapMarkers() {
   freeMapMarkers();
   if (!s_map_canvas) return;
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) return;
+  // The map's contact filters. "Favorites only" reads the favourites list once per
+  // render and compares in memory: touchPrefsIsFavorite re-reads it on every call.
+#if defined(ESP32)
+  static uint8_t s_mm_fav[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];   // static: off the loop stack
+  const int mm_fav_n = s_map_fav_only ? touchPrefsCopyFavorites(s_mm_fav) : 0;
+#endif
+  auto mapHidesContact = [&](const ContactInfo& c) -> bool {
+    if (s_map_direct_only && pathHops(c.out_path_len) != 0) return true;
+#if defined(ESP32)
+    if (s_map_fav_only) {
+      for (int f = 0; f < mm_fav_n; ++f)
+        if (memcmp(&s_mm_fav[f * TOUCH_FAVORITE_KEY_BYTES], c.id.pub_key, TOUCH_FAVORITE_KEY_BYTES) == 0) return false;
+      return true;
+    }
+#endif
+    return false;
+  };
   // Markers share the pan layer with tiles so live-pan slides everything
   // together with a single set_pos.
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
@@ -35170,7 +35295,7 @@ static void renderMapMarkers() {
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-      if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
+      if (mapHidesContact(c)) continue;
       double mwx, mwy;
       latLonToWorldPx((double)c.gps_lat / 1.0e6, (double)c.gps_lon / 1.0e6,
                       s_map_zoom, &mwx, &mwy);
@@ -35232,7 +35357,7 @@ static void renderMapMarkers() {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-    if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
+    if (mapHidesContact(c)) continue;
 
     const double lat = (double)c.gps_lat / 1.0e6;
     const double lon = (double)c.gps_lon / 1.0e6;
@@ -35731,6 +35856,15 @@ static void mapOptDirectOnlyCb(lv_event_t* e) {
   s_map_direct_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   renderMapMarkers();
 }
+static void mapOptFavOnlyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_fav_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  const uint8_t v = s_map_fav_only ? 1 : 0;
+  touchPrefsSetBlob("map_fav", &v, 1);
+#endif
+  renderMapMarkers();
+}
 
 static void mapZoomControlsApply();   // fwd (defined near the map build) — reposition zoom controls
 // Map zoom-control style toggle (map options popup): ON = +/- buttons, OFF = slider.
@@ -36080,6 +36214,7 @@ static void openMapOptions() {
       { "Show tile z/x/y",     s_map_show_tilexyz,  mapOptTileXYZCb    },
       { "Show contacts",       s_map_show_contacts, mapOptContactsCb   },
       { "Direct (0-hop) only", s_map_direct_only,   mapOptDirectOnlyCb },
+      { "Favorites only",      s_map_fav_only,      mapOptFavOnlyCb    },
       { "Tile debug overlay",  s_map_tile_debug,    mapOptTileDebugCb  },
     };
     for (auto& r : rows) {
@@ -36988,6 +37123,7 @@ static void mapRecenterCb(lv_event_t* e) {
 // moves meaningfully (or the view was panned away). Called from the map tick.
 static void mapAutoFollowTick() {
   if (!s_map_follow || !g_lv.task) return;
+  if (s_map_pick_active) return;   // the user is placing the centre by hand
 #if defined(HAS_M9_KEYBOARD)
   if (s_m9_map_pan) return;   // Map-key pan mode owns the center; follow resumes when pan exits
 #endif
@@ -37386,6 +37522,155 @@ static void makeMapTab(lv_obj_t* tab) {
 
   // (OSM attribution now lives in the status bar's left zone on the map tab —
   // see updateGlobalStatusBar.)
+}
+
+// ---- Pick the advert position on the map (Settings > Profile > Pick on the map) ----
+// The map centre IS the picked point: pan and zoom work as usual, a crosshair is
+// pinned over the centre, and "Save position" saves the centre as the position.
+static void mapPickExit() {
+  if (!s_map_pick_active) return;
+  s_map_pick_active = false;
+  lv_obj_del_async(s_map_pick_cross);
+  s_map_pick_cross = nullptr;
+#if CAP_KEYPAD_NAV
+  navDetachBeforeTreeMutation();   // a bar button may hold group focus
+#endif
+  // Hidden now so a nav rebuild can't collect it; freed after this event cycle,
+  // as the tap that got us here may be on one of its buttons.
+  lv_obj_add_flag(s_map_pick_bar, LV_OBJ_FLAG_HIDDEN);
+  popupClose(&s_map_pick_bar);   // nulls it
+  navMarkDirty();
+}
+
+static bool mapPickGpsOwnsPosition() {
+  return g_lv.task && g_lv.task->getGPSState() && g_lv.task->getGpsFix();
+}
+
+static void mapPickCancelCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) mapPickExit();
+}
+
+static void mapPickUseCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
+  const double lat = s_map_center_lat;
+  double lon = fmod(s_map_center_lon + 180.0, 360.0);   // a pan past the antimeridian leaves it unwrapped
+  lon = (lon < 0.0 ? lon + 360.0 : lon) - 180.0;
+  mapPickExit();
+  if (mapPickGpsOwnsPosition()) {   // a fix arrived while picking
+    g_lv.task->showAlert(TR("GPS sets the position while it has a fix"), 1800);
+    return;
+  }
+  if ((lat == 0.0 && lon == 0.0) || lat < -90.0 || lat > 90.0) return;   // 0,0 means "no position"
+  if (g_lv.task->setPosition(lat, lon)) {
+    g_lv.task->showAlert(TR("Position saved"), 1000);
+    refreshStatusLabels();
+  }
+  renderMapMarkers();   // your own marker moves to where the crosshair was
+  refreshMapInfoLabel();
+}
+
+static void mapPickStart() {
+  if (!g_lv.task || !s_map_canvas || !s_map_page) return;
+  if (mapPickGpsOwnsPosition()) {   // the Profile row was built before the fix arrived
+    g_lv.task->showAlert(TR("GPS sets the position while it has a fix"), 1800);
+    return;
+  }
+  const double prev_lat = s_map_center_lat, prev_lon = s_map_center_lon;
+  const double la = g_lv.task->getNodeLat(), lo = g_lv.task->getNodeLon();
+  if (la != 0.0 || lo != 0.0) { s_map_center_lat = la; s_map_center_lon = lo; }
+  // A node without GPS usually has no map view yet either, and that is the node
+  // this is for: start from the first contact with a position, close enough to pan from.
+  for (uint32_t i = 0; s_map_center_lat == 0.0 && s_map_center_lon == 0.0 &&
+                       i < the_mesh.getNumContacts(); ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c) || (c.gps_lat == 0 && c.gps_lon == 0)) continue;
+    s_map_center_lat = (double)c.gps_lat / 1.0e6;
+    s_map_center_lon = (double)c.gps_lon / 1.0e6;
+  }
+  if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {   // nothing to pan from
+    g_lv.task->showAlert(TR("Enter a rough location first"), 1800);
+    return;
+  }
+  if (!navGoToMainTab(MAP_TAB_INDEX)) {   // a popup refused to close: leave the view as it was
+    s_map_center_lat = prev_lat;
+    s_map_center_lon = prev_lon;
+    return;
+  }
+  mapPickExit();   // never stack a second overlay
+
+  // Crosshair centred on canvas pixel (w/2, h/2), the point every tile and marker
+  // projection maps the map centre to. On the canvas but outside the pan layer, so
+  // it stays put while the map slides under it; the canvas is behind the tab page,
+  // so it never takes a touch. Four white arms with a dark edge around a clear
+  // centre, readable on light and dark tiles, inset 1 px so the edge isn't clipped.
+  const int arm = SC(12), side = 2 * arm + 1, gp = 3, len = arm - gp - 1;
+  s_map_pick_cross = lv_obj_create(s_map_canvas);
+  lv_obj_remove_style_all(s_map_pick_cross);
+  lv_obj_clear_flag(s_map_pick_cross, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_size(s_map_pick_cross, side, side);
+  lv_obj_set_pos(s_map_pick_cross, k_map_canvas_w / 2 - arm, k_map_canvas_h / 2 - arm);
+  const int ax[4] = { 1, arm + gp + 1, arm - 1, arm - 1 };
+  const int ay[4] = { arm - 1, arm - 1, 1, arm + gp + 1 };
+  for (int i = 0; i < 4; ++i) {
+    lv_obj_t* r = lv_obj_create(s_map_pick_cross);
+    lv_obj_remove_style_all(r);
+    lv_obj_clear_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_pos(r, ax[i], ay[i]);
+    lv_obj_set_size(r, i < 2 ? len : 3, i < 2 ? 3 : len);
+    lv_obj_set_style_bg_color(r, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_outline_color(r, lv_color_hex(0x101418), LV_PART_MAIN);
+    lv_obj_set_style_outline_width(r, 1, LV_PART_MAIN);
+    lv_obj_set_style_outline_opa(r, LV_OPA_80, LV_PART_MAIN);
+  }
+
+  // Cancel / Save position, sized like the map's own overlay buttons, above the
+  // zoom slider and its readout (so zooming still works) and above the corner
+  // read-outs, and kept left of the right-edge button column (x as in makeMapTab)
+  // so it never covers those buttons on a short screen.
+  const lv_coord_t pad = SC(4), gap = SC(6), bh = SC(32);
+  const lv_coord_t lane_l = SC(4), lane_r = k_map_canvas_w - 32 - 4 - SC(4);
+  const lv_coord_t bar_w = LV_MIN((lv_coord_t)SC(240), (lv_coord_t)(lane_r - lane_l));
+  lv_obj_update_layout(s_map_page);
+  lv_coord_t above = lv_obj_get_content_height(s_map_page) - SC(6);   // the bar's bottom edge
+  if (s_map_zoom_slider) {
+    lv_coord_t top = lv_obj_get_y(s_map_zoom_slider) - 6 - gap;   // 6: the knob's overhang
+    if (s_map_zoom_val) top -= lv_obj_get_height(s_map_zoom_val) + 6;
+    above = LV_MIN(above, top);
+  }
+  if (s_map_info_lbl && !lv_obj_has_flag(s_map_info_lbl, LV_OBJ_FLAG_HIDDEN))
+    above = LV_MIN(above, (lv_coord_t)(lv_obj_get_y(s_map_info_lbl) - gap));
+  s_map_pick_bar = lv_obj_create(s_map_page);
+  lv_obj_remove_style_all(s_map_pick_bar);
+  styleCard(s_map_pick_bar);
+  const lv_coord_t edge = lv_obj_get_style_border_width(s_map_pick_bar, LV_PART_MAIN);
+  lv_obj_set_size(s_map_pick_bar, bar_w, bh + 2 * (pad + edge));
+  lv_obj_set_style_pad_all(s_map_pick_bar, pad, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(s_map_pick_bar, gap, LV_PART_MAIN);
+  lv_obj_set_flex_flow(s_map_pick_bar, LV_FLEX_FLOW_ROW);
+  lv_obj_clear_flag(s_map_pick_bar, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_pos(s_map_pick_bar, lane_l + (lane_r - lane_l - bar_w) / 2,
+                 above - (bh + 2 * (pad + edge)));
+  const lv_coord_t bw = (bar_w - 2 * (pad + edge) - gap) / 2;   // each button's share, for the label fit
+  auto mk_btn = [&](const char* text, lv_event_cb_t cb, bool primary) {
+    lv_obj_t* b = lv_btn_create(s_map_pick_bar);
+    if (primary) stylePrimary(b);
+    else         styleButton(b);
+    lv_obj_set_height(b, bh);
+    lv_obj_set_flex_grow(b, 1);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, text);
+    uiFitLabelWidth(l, bw - SC(8));   // a longer translation steps the font down, not off the button
+    lv_obj_center(l);
+  };
+  mk_btn(TR("Cancel"),        mapPickCancelCb, false);
+  mk_btn(TR("Save position"), mapPickUseCb,    true);
+  lv_obj_move_foreground(s_map_pick_bar);
+
+  s_map_pick_active = true;
+  navMarkDirty();   // keypad boards: the bar's buttons join the map's focus stops
+  g_lv.task->showAlert(TR("Move the map to your spot"), 1500);
 }
 
 // Refresh the bottom info strip — called from the periodic refresh tick
@@ -42698,7 +42983,11 @@ static void refreshChatList(LvChatPanel& p) {
     lv_coord_t pill_w = 0;
     if (unread > 0) {
       lv_obj_t* pill = makeCountPill(btn, unread > 99 ? 100 : unread);
-      if (s_look_more && !s_theme_high_contrast) lv_obj_set_style_bg_color(pill, lv_color_hex(row_hue), LV_PART_MAIN);
+      if (s_look_more && !s_theme_high_contrast) {
+        lv_obj_set_style_bg_color(pill, lv_color_hex(row_hue), LV_PART_MAIN);
+        lv_obj_set_style_text_color(lv_obj_get_child(pill, 0),
+            lv_color_hex(accentLuma(row_hue) > 150 ? 0x00201Cu : 0xFFFFFFu), LV_PART_MAIN);
+      }
       lv_obj_update_layout(pill);
       pill_w = lv_obj_get_width(pill);
       if (compact_rows) lv_obj_align(pill, LV_ALIGN_RIGHT_MID, -(kPadR + time_w + 8), 0);
@@ -43274,6 +43563,15 @@ static void refreshContactsList() {
 
     lv_obj_t* av = makeGlyphAvatar(rb, e.name, e.type == ADV_TYPE_CHAT ? GLYPH_CIRCLE : GLYPH_SQUARE, kAv);
     lv_obj_align(av, LV_ALIGN_LEFT_MID, av_x, 0);
+    {
+      // Same icon as the contact's chat (#646): the one picked for the chat, which is
+      // keyed on the advertised name, else the first emoji in the shown name (#640).
+      char eb[20];
+      ContactInfo ci;
+      const bool picked = the_mesh.getContactByIdx(static_cast<uint32_t>(e.mesh_idx), ci) &&
+                          touchPrefsGetChannelEmoji(ci.name, eb, sizeof eb);
+      if (picked || nameFirstEmoji(e.name, eb, sizeof eb)) glyphAvatarSetEmoji(av, e.name, eb);
+    }
 
     // Name, one line; a star after it for a favourite.
     char san[40];
@@ -43814,7 +44112,7 @@ static void pagerNavGoBack() {
 #if defined(HAS_PAGER_ENCODER)
   if (pagerSliderEditCancel()) return;           // editing a slider: Back undoes the edit, nothing else
 #endif
-  if (anyPopupOpen())                            hwKeyDismissTopPopup();
+  if (anyPopupOpen() || s_map_pick_active)       hwKeyDismissTopPopup();   // pick mode: a flags=0 registry row
   else if (s_apppage_close)                      s_apppage_close();
   else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
   else if (getActiveTab() != HOME_TAB_INDEX)     navGoToMainTab(HOME_TAB_INDEX);
@@ -43946,6 +44244,29 @@ static void updateProAltBChord() {
   s_kb_bl_mode = (s_kb_bl_mode == 1) ? 0 : 1;
   touchPrefsSetKbBacklight(s_kb_bl_mode);
   if (g_lv.task) g_lv.task->noteUserInput();
+}
+#endif
+#if !defined(HAS_TDECK_PRO)
+// Physical Fn(Alt)+Enter: paste the in-RAM clipboard into the field being edited.
+// The Pager has no touchscreen, so the long-press Cut/Copy/Paste menu
+// (txtMenuShow) is unreachable there and the clipboard -- filled by a
+// message bubble's Copy action -- had no consumer. Same "actually editing"
+// test as the Alt+Shift Caps chord above; a deliberate no-op otherwise (the
+// Enter press is already swallowed by the driver, so nothing leaks through).
+// Fn+Enter rather than Fn+<letter>: Fn is the Pager's only symbol key, and
+// Enter is the one key with no symbol on it, so the chord costs nothing.
+static void updatePagerAltEnterChord() {
+  if (!pagerKeyboardConsumeAltEnterChord()) return;
+  lv_obj_t* ta_focused = lv_keyboard_get_textarea(g_lv.keyboard);
+  lv_obj_t* ta = (ta_focused && s_nav_group && lv_group_get_focused(s_nav_group) == ta_focused) ? ta_focused : nullptr;
+  if (!ta || !lv_obj_is_valid(ta)) return;
+  txtMenuHide();
+  accentBoxHide();   // a pasted word must not leave a stale accent popup for the last typed letter
+  const bool ok = txtPasteInto(ta);
+  if (g_lv.task) {
+    g_lv.task->showAlert(ok ? TR("Pasted") : TR("Clipboard empty"), ok ? 900 : 1500);
+    g_lv.task->noteUserInput();
+  }
 }
 #endif
 static void updatePagerAltBackspaceChord() {
@@ -47267,7 +47588,7 @@ static void bleKbdBack() {
   else if (s_cc_root)                            closeControlCenter();
   // An app page covers the drawer it came from (a registry row), so close the page first.
   else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-  else if (popupRegistryAnyOver() || s_ct_select_mode) {
+  else if (popupRegistryAnyOver() || s_ct_select_mode || s_map_pick_active) {
     const bool sheet_from_cc = s_settings_sheet && s_settings_from_cc;
     hwKeyDismissTopPopup();
     if (sheet_from_cc && !s_settings_sheet) openControlCenter();
@@ -47447,8 +47768,8 @@ static bool m9HandleNavKey(int key) {
       // (the board's only Back). Ladder mirrors pagerNavGoBack(): innermost
       // thing open closes first. An open dropdown LIST must take ESC before the
       // registry, or Back would close the enclosing modal instead of the list.
-      // s_ct_select_mode is a flags=0 registry row (a MODE, not "a popup is
-      // open"), so anyPopupOpen() alone would never let Back leave it.
+      // s_ct_select_mode and s_map_pick_active are flags=0 registry rows (MODES,
+      // not "a popup is open"), so anyPopupOpen() alone would never let Back leave them.
       // Wizard: step BACK through it, exactly what its own on-screen Back
       // button does (setupBackCb). The old "nothing to back out of" comment was
       // wrong — the wizard is a four-step stack (welcome/name/region/Wi-Fi) and
@@ -47489,7 +47810,7 @@ static bool m9HandleNavKey(int key) {
       // app (reported bug). Close the page itself; the drawer is then the
       // next, visible Back target.
       else if (s_apppage_close && !s_confirm_modal)  s_apppage_close();
-      else if (popupRegistryAnyOver() || s_ct_select_mode) hwKeyDismissTopPopup();
+      else if (popupRegistryAnyOver() || s_ct_select_mode || s_map_pick_active) hwKeyDismissTopPopup();
       else if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
       else if (m9LockedHomeDrawerFrontmost())        { /* configured Home root */ }
       else if (anyPopupOpen())                       hwKeyDismissTopPopup();
@@ -57936,7 +58257,7 @@ static void hwSensorsUpdate(int i) {
   const bool hh = s.have_bme_hum || s.have_gxhtv3_hum;
   const float hum = s.have_bme_hum ? s.bme_hum_pct : s.gxhtv3_hum_pct;
   char t[16] = "--", hu[16] = "", pr[20] = "", al[24] = "", line[64];
-  if (ht) snprintf(t, sizeof t, "%.1f\xC2\xB0", (double)tc);
+  if (ht) snprintf(t, sizeof t, "%.1f\xC2\xB0", tempDisp(tc));
   if (hh) snprintf(hu, sizeof hu, "%d%%", (int)lroundf(hum));
   if (s.have_bme_pressure) snprintf(pr, sizeof pr, "%d hPa", (int)lroundf(s.bme_pressure_hpa));
   if (s.have_bme_alt) snprintf(al, sizeof al, TR("%d m up"), (int)s.bme_alt_m);
@@ -58043,6 +58364,11 @@ static void hwLinksTap(int, lv_event_t*) { openSettingsCategory(CAT_WIFI); }
 static void hwAdvertBuild(int i) {
   HwInst& w = hwI(i);
   lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_GLOW), LV_PART_MAIN);
+  // A solid button, whatever the box was styled as: on glass (the aurora default) the
+  // box is a translucent gradient into the panel colour, and its dark ON_GLOW text
+  // vanished on it (#637).
+  lv_obj_set_style_bg_grad_dir(w.box, LV_GRAD_DIR_NONE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(w.box, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_bg_color(w.box, lv_color_hex(COLOR_ACCENT_PRESS), LV_PART_MAIN | LV_STATE_PRESSED);
   lv_obj_set_style_border_opa(w.box, LV_OPA_TRANSP, LV_PART_MAIN);
   const bool flood = hwR(i).opt == 1;
@@ -58653,13 +58979,13 @@ static void hwRemoteUpdate(int i) {
   if (have) hwFmtAgo(tag, sizeof tag, (millis() - r->got_ms) / 1000u);
   else snprintf(tag, sizeof tag, "%s", r && r->pending ? TR("asking...") : TR("no reply yet"));
   int p = 0;
-  if (have && r->t10 != INT16_MIN) p += snprintf(det + p, sizeof det - p, "%.1f\xC2\xB0", r->t10 / 10.0);
+  if (have && r->t10 != INT16_MIN) p += snprintf(det + p, sizeof det - p, "%.1f\xC2\xB0", tempDisp(r->t10 / 10.0));
   if (have && r->hum >= 0) p += snprintf(det + p, sizeof det - p, "%s%d%%", p ? " \xC2\xB7 " : "", (int)r->hum);
   if (have && r->press > 0) p += snprintf(det + p, sizeof det - p, "%s%d hPa", p ? " \xC2\xB7 " : "", (int)r->press);
   if (have && r->mv) p += snprintf(det + p, sizeof det - p, "%s%u.%02u V", p ? " \xC2\xB7 " : "", r->mv / 1000u, (r->mv % 1000u) / 10u);
   if (!p && have) snprintf(det, sizeof det, "%s", TR("No readings in the reply"));
   if (hwI(i).size == HWS_S) {
-    if (have && r->t10 != INT16_MIN) snprintf(a, sizeof a, "%.1f\xC2\xB0", r->t10 / 10.0);
+    if (have && r->t10 != INT16_MIN) snprintf(a, sizeof a, "%.1f\xC2\xB0", tempDisp(r->t10 / 10.0));
     else if (have && r->mv) snprintf(a, sizeof a, "%u.%02u V", r->mv / 1000u, (r->mv % 1000u) / 10u);
     else snprintf(a, sizeof a, "--");
     hwStatSet(i, a, nm, have ? COLOR_TEXT : COLOR_SUB);
@@ -59073,7 +59399,7 @@ static void hwRadarDrawCb(lv_event_t* e) {
   lv_draw_rect(dc, &rd, &me);
 }
 static void hwRadarTimerCb(lv_timer_t*);
-static void ssaverStart(uint32_t now, bool preview);   // the screensaver, further down
+static void ssaverRequestPreview();   // the screensaver, further down
 static void hwRadarBuild(int i) {
   HwInst& w = hwI(i);
   const int side = LV_MIN(w.pw, w.ph);
@@ -59098,7 +59424,10 @@ static void hwRadarUpdate(int i) {
   setLabelIfChanged(w.l[1], s_hw_radar_geo ? "" : TR("by hops"));
   setLabelIfChanged(w.l[2], n);
 }
-static void hwRadarTap(int, lv_event_t*) { ssaverStart(millis(), true); }
+// Through the same request as Settings' preview: loop() starts it AND marks the
+// screen off, so a touch ends it. Started here directly, _screen_off stayed false
+// and loop() tore it down again on its next pass (the tap only flickered it).
+static void hwRadarTap(int, lv_event_t*) { ssaverRequestPreview(); }
 #endif
 
 // ---- Compass (ThinkNode M9) -----------------------------------------------------------------
@@ -59291,7 +59620,7 @@ static const HwKindDef k_hw_kinds[] = {
   { HWK_NEAREST,  HWG_MESH,  HWSM,  HWS_M, "Nearest",       UI_ICON_RADIO_TOWER, nullptr,        hwNearestBuild,  hwNearestUpdate,  hwNearestTap,  nullptr },
   { HWK_REMOTE,   HWG_MESH,  HWSM,  HWS_M, "Remote sensor", UI_ICON_THERMOMETER, nullptr,        hwRemoteBuild,   hwRemoteUpdate,   hwRemoteTap,   hwRemoteOptions },
 #if defined(HW_HAVE_RADAR)
-  { HWK_RADAR,    HWG_MESH,  HWSZ(HWS_L), HWS_L, "Mesh radar", UI_ICON_RADAR,    nullptr,        hwRadarBuild,    hwRadarUpdate,    hwRadarTap,    nullptr },
+  { HWK_RADAR,    HWG_MESH,  HWSZ(HWS_M) | HWSZ(HWS_L), HWS_L, "Mesh radar", UI_ICON_RADAR,    nullptr,        hwRadarBuild,    hwRadarUpdate,    hwRadarTap,    nullptr },
 #endif
   { HWK_RADIO,    HWG_RADIO, HWSM,  HWS_M, "Radio",         UI_ICON_ANTENNA,     nullptr,        hwRadioBuild,    hwRadioUpdate,    hwRadioTap,    nullptr },
   { HWK_SIGNAL,   HWG_RADIO, HWSM,  HWS_M, "Signal",        UI_ICON_SIGNAL,      nullptr,        hwSignalBuild,   hwSignalUpdate,   hwSignalTap,   nullptr },
@@ -59755,7 +60084,14 @@ static void hwCatalogPick(int k) {
     opt = used[0] ? 1 : 0;
   }
   const int at = hwAdd(kind, opt, nullptr);
-  if (at < 0 && g_lv.task) g_lv.task->showAlert(TR("No room for it on Home"), 1500);
+  if (at < 0 && g_lv.task) {
+    // The default layout fills every cell, so most failed adds are a full Home: say
+    // how to make room rather than only that there is none.
+    int fc = 0, fr = 0;
+    const bool full = !hwFirstFree(s_hw, -1, HWS_S, fc, fr);
+    g_lv.task->showAlert(full ? TR("Home is full: hold a widget to remove one")
+                              : TR("No room for it on Home"), full ? 2500 : 1500);
+  }
   s_hw_focus_after = at;
   hwQueueRebuild();
 }
@@ -61107,6 +61443,9 @@ static void themeStylesBuild() {
   lv_style_set_bg_opa(&s_ts.kb_key_pr, LV_OPA_COVER);
   lv_style_set_text_color(&s_ts.kb_key_pr, on_glow);
   lv_style_set_bg_color(&s_ts.kb_key_chk, off_tone);
+  // The stock theme's CHECKED key style carries its light-mode text colour (near
+  // black), and a CHECKED style outranks the plain key colour, so set it here too.
+  lv_style_set_text_color(&s_ts.kb_key_chk, text);
 
   // Arcs and spinners.
   lv_style_set_arc_color(&s_ts.arc, border);
@@ -63605,9 +63944,9 @@ static void refreshSensorsTab() {
       snprintf(atmo, sizeof atmo, "No sensor detected");
     } else {
       if (snap.have_bme_temp)
-        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.bme_temp_c);
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0%s\n", tempDisp(snap.bme_temp_c), tempUnit());
       else if (snap.have_gxhtv3_temp)
-        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0""C\n", (double)snap.gxhtv3_temp_c);
+        p += snprintf(atmo + p, sizeof atmo - p, "Temp: %.1f\xC2\xB0%s\n", tempDisp(snap.gxhtv3_temp_c), tempUnit());
       if (snap.have_bme_hum)
         p += snprintf(atmo + p, sizeof atmo - p, "Humidity: %.0f%%RH\n", (double)snap.bme_hum_pct);
       else if (snap.have_gxhtv3_hum)
@@ -64195,12 +64534,16 @@ static void buildUiTree() {
       lv_color_hex(s_theme_high_contrast ? COLOR_STATUS_DANGER : COLOR_GLOW), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(s_chat_unread_badge, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_chat_unread_badge,
-      s_theme_high_contrast ? lv_color_white() : lv_color_hex(0x00201C), LV_PART_MAIN);
+      s_theme_high_contrast ? lv_color_white() : lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
   lv_obj_set_style_text_font(s_chat_unread_badge, &g_font_badge, LV_PART_MAIN);
   lv_obj_set_style_text_align(s_chat_unread_badge, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(s_chat_unread_badge, 3, LV_PART_MAIN);
   lv_obj_set_style_pad_top(s_chat_unread_badge, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_bottom(s_chat_unread_badge, 0, LV_PART_MAIN);
+  styleBadgeEpaper(s_chat_unread_badge, s_chat_unread_badge);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_pad_top(s_chat_unread_badge, 3, LV_PART_MAIN);   // the 1 px ring counts toward it
+#endif
   // Bottom anchors one lower than the old 15 px pill's, so its top stays put.
   lv_obj_align(s_chat_unread_badge, LV_ALIGN_BOTTOM_LEFT,
 #if defined(TLORA_PAGER)
@@ -64996,13 +65339,13 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
     lv_chart_series_t* hs = s_telem_show_hum  ? lv_chart_add_series(chart, lv_color_hex(0x35C9C9), LV_CHART_AXIS_SECONDARY_Y) : nullptr;  // humidity cyan
     for (int i = 0; i < n; ++i) {
       if (bs) { lv_coord_t v = (lv_coord_t)mvs[i]; if (v > 4700) v = 4700; lv_chart_set_next_value(chart, bs, mvs[i] > 0 ? v : LV_CHART_POINT_NONE); }
-      if (ts)   lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)(t10s[i] / 10) : LV_CHART_POINT_NONE);
+      if (ts)   lv_chart_set_next_value(chart, ts, t10s[i] > -3000 ? (lv_coord_t)lround(tempDisp(t10s[i] / 10.0)) : LV_CHART_POINT_NONE);
       if (hs)   lv_chart_set_next_value(chart, hs, hums[i] >= 0     ? (lv_coord_t)hums[i] : LV_CHART_POINT_NONE);
     }
     // legend (only the visible series)
     char leg[112]; leg[0] = '\0';
     if (s_telem_show_batt) strcat(leg, "#4F9DF7 \xe2\x97\x8f# V   ");
-    if (s_telem_show_temp) strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0""C   ");
+    if (s_telem_show_temp) { strcat(leg, "#F5A623 \xe2\x97\x8f# \xc2\xb0"); strcat(leg, tempUnit()); strcat(leg, "   "); }
     if (s_telem_show_hum)  strcat(leg, "#35C9C9 \xe2\x97\x8f# %RH");
     if (!leg[0]) strcpy(leg, "#808080 (nothing shown \xe2\x80\x94 enable a series in settings)#");
     normalizeLightSurfaceRecolor(leg);
@@ -65254,7 +65597,7 @@ void UITask::onTelemetryReply(const ContactInfo& contact, const uint8_t* data, s
       case LPP_TEMPERATURE: {
         float t = 0; if (!rd.readTemperature(t)) goto done;
         tl_t10 = (int)lroundf(t * 10.0f);
-        if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%s%.1f\xc2\xb0\x43", sep, (double)t);
+        if (bodyRoom()) p += snprintf(body + p, bodyRoom(), "%s%.1f\xc2\xb0%s", sep, tempDisp(t), tempUnit());
         any = true; break;
       }
       case LPP_RELATIVE_HUMIDITY: {
@@ -69653,6 +69996,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
   s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
+  { uint8_t v = 0; s_map_fav_only = touchPrefsGetBlob("map_fav", &v, 1) == 1 && v; }   // map options: Favorites only
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
@@ -70086,7 +70430,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
     // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
     // needs two extra pixels to avoid clipping regular one-row status text.
     const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
@@ -71259,7 +71603,7 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     p += snprintf(buf + p, cap - (size_t)p, "%sBME280 ", p > 0 ? "\n" : "");
     bool first = true;
     if (snap.have_bme_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.bme_temp_c);
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0%s", tempDisp(snap.bme_temp_c), tempUnit());
       first = false;
     }
     if (snap.have_bme_hum && p < (int)cap) {
@@ -71278,7 +71622,7 @@ bool UITask::getLocalEnvSummary(char* buf, size_t cap) const {
     p += snprintf(buf + p, cap - (size_t)p, "%sGXHTV3 ", p > 0 ? "\n" : "");
     bool first = true;
     if (snap.have_gxhtv3_temp && p < (int)cap) {
-      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0\x43", (double)snap.gxhtv3_temp_c);
+      p += snprintf(buf + p, cap - (size_t)p, "%.1f\xc2\xb0%s", tempDisp(snap.gxhtv3_temp_c), tempUnit());
       first = false;
     }
     if (snap.have_gxhtv3_hum && p < (int)cap) {
@@ -72121,6 +72465,7 @@ static void ssaverPoll(uint32_t now) {
 static UnderHidden s_ssaver_under;
 
 static void ssaverStart(uint32_t now, bool preview) {
+  if (s_ssaver_on) return;   // a second start would save the dimmed 40% as the user's brightness
   CstTheme th;
   th.bg = COLOR_BG;
   th.accent = COLOR_ACCENT;
@@ -75611,6 +75956,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+    pagerKeyboardConsumeAltEnterChord();
+#endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
 #endif
@@ -75636,6 +75984,9 @@ void UITask::loop() {
     pagerKeyboardDiscardAlt();
     pagerKeyboardConsumeAltShiftChord();
     pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+    pagerKeyboardConsumeAltEnterChord();
+#endif
 #if defined(HAS_TDECK_MAX)
     pagerKeyboardConsumeBothShiftChord();
 #endif
@@ -75674,6 +76025,9 @@ void UITask::loop() {
     }
     updatePagerAltShiftChord();
     updatePagerAltBackspaceChord();
+  #if !defined(HAS_TDECK_PRO)
+    updatePagerAltEnterChord();
+  #endif
   #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     updateProAltBChord();
   #endif
@@ -76383,6 +76737,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_ctd_overlay),           nullptr,                             PF_COUNT },   // bulk-delete progress: block keys only
   { P_OPEN(s_mentions_root),         []{ closeMentionsScreen(); },        PF_COUNT },
   { []{ return s_ct_select_mode; },  []{ ctSetSelectMode(false); },       0 },          // a MODE: Esc leaves it, but it is not "a popup is open"
+  { []{ return s_map_pick_active; }, []{ mapPickExit(); },                0 },          // Map > position pick: Back cancels it, like its Cancel button
   { []{ return s_hw_arrange; },      []{ hwArrangeDone(); },              PF_COUNT | PF_SWIPE },   // Arrange Home: Back is Done; drags must not switch tabs
   { P_OPEN(s_appdrawer_root),        []{ setHomeDrawer(false); },         PF_COUNT | PF_BASE },
 };

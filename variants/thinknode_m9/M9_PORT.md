@@ -54,7 +54,7 @@ this table as schematic-verified, not Meshtastic-derived, going forward.)
 | Peripheral power rail        | 18              | P-MOS, **active-LOW** (LCD/GPS/sensors)                                                                                                                                                                                                                       |
 | microSD                      | 48 (CS)         | Shared LoRa SPI bus (Arduino SD, same as T-Deck) — CS is GPIO48, schematic net `SPICLK_N`. NOT one of the GPIO33-37 octal-PSRAM lines; SPICLK_N/GPIO48 (and SPICLK_P/GPIO47) are only reserved on the R8V/R16V 1.8V-differential-clock variants — this board is a plain R8 (see Hardware summary), which uses the ordinary single-ended SPICLK instead, so GPIO48 is genuinely free. The earlier "CS=36 is octal-PSRAM-reserved" claim conflated physical package pin 36 with GPIO36 — they are not the same pin. Confirmed working on hardware. |
 | Peripheral I2C SDA/SCL       | 7 / 6           | RTC PCF8563 0x51, IMU 0x6b, compass 0x7c. The RTC is driven by `src/helpers/HardwareRtcClock.*`, NOT by the core's `AutoDiscoverRTCClock` probe (issue #383): that path read the calendar registers without ever consulting the chip's VL bit, so after a hard shutdown the stale contents came back as real wall time and the clock looked frozen at the moment the slider was pulled. The adapter refuses an integrity-lost read, clears a latched STOP bit, and reads back every write                                                                                                                                                                                                                              |
-| Keyboard I2C SDA/SCL         | 20 / 21         | controller @ 0x6c, **own bus** (Wire1)                                                                                                                                                                                                                        |
+| Keyboard I2C SDA/SCL         | 20 / 21         | **own bus** (Wire1); see [driver reference](M9Keyboard.h) for revision addresses and fallback probing |
 | Battery ADC                  | 13              | **ADC2**_CH2 (S3: ADC1=GPIO1-10, ADC2=GPIO11-20 — earlier "ADC1_CH2" label was wrong; ADC2 is Wi-Fi-arbitrated, see getBattMilliVolts's per-sample filter), **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
 | GPS RX/TX                    | 2 / 3           | CC1167Q, UART1                                                                                                                                                                                                                                                |
 | GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired, **both active-LOW** (confirmed on schematic: same P-MOS circuit as the peripheral power rail for EN; GPS_RST1 -> R46 -> NPN Q16 base, GPIO HIGH turns Q16 on and pulls the module's reset line to GND, so HIGH asserts reset / LOW releases it — inverted vs. the library defaults, both now overridden in platformio.ini). ON_OFF + 1PPS unused |
@@ -83,6 +83,13 @@ This turn's corrections vs. the earlier (incorrect) attempt:
   asserts reset). Both `PIN_GPS_EN_ACTIVE` and `PIN_GPS_RESET_ACTIVE` are now
   overridden in `platformio.ini`. Fixed a total loss of GPS fix (module was
   held disabled/in-reset on every boot).
+  **Hardware revisions:** that polarity is for the original board (keyboard
+  controller at 0x6C). Newer units (keyboard at 0x6D, e.g. the Meshtastic SKU
+  LMM15409D2) have GPS EN **active-HIGH**; with it driven LOW they never get a
+  fix. `target.cpp` selects the level at runtime from the keyboard address
+  (`WadaNmeaLocationProvider::setEnActive()`), the same split Meshtastic's
+  `ELECROW-ThinkNode-M9` variant makes (`m9Version > 1 ? HIGH : LOW`). The
+  0x6C path keeps the compile-time default and is untested on a 0x6C unit.
 - microSD CS is **GPIO48**, not "deferred pending SDMMC pins" — this board
   never needed SD_MMC at all; the original SPI-CS approach was correct, the
   pin number was just wrong (see the pin table above and "Bonus schematic
@@ -1164,9 +1171,11 @@ These are left intentionally unset/unwired rather than guessed:
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)
 
+For current controller addresses and bus detection, see [the driver reference](M9Keyboard.h).
+
 "No keys do anything" root cause: the keyboard is a separate ESP32-S2 running
 Elecrow's matrix-scanner firmware (ThinkNode-M9-KB-platformio, provided by Kaj
-2026-07-06) as an I2C slave @0x6C with addressed registers: 0x00 HW ver (0x03),
+2026-07-06) as an I2C slave with addressed registers: 0x00 HW ver (0x03),
 0x01 KEY VALUE (0x00 = none, single latched slot), 0x02 backlight duty, 0xFE FW
 ver (0x10). A key read must WRITE the register address (0x01) first, then read
 one byte. The contributed patch's "one raw byte per read" protocol read the

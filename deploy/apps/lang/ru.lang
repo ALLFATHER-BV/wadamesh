@@ -187,6 +187,7 @@ Clear battery history?	Очистить историю батареи?
 Clear history	Очистить историю
 Clear telemetry history for this node?	Очистить историю телеметрии этого узла?
 Client repeat	Повтор клиента
+Clipboard empty	Буфер обмена пуст
 Clock & time	
 Clock synced	Часы синхронизированы
 Clock: 12-hour	Часы: 12-часовые
@@ -314,6 +315,7 @@ Enter SSID first	Сначала введите SSID
 Enter a name	Введите имя
 Enter a network name	Введите имя сети
 Enter a region name	Enter a region name
+Enter a rough location first	Сначала введите примерное местоположение
 Enter adds a new line	Enter добавляет строку
 Enter exactly 32 hex characters.	Введите ровно 32 hex-символа.
 Enter key sends message	Клавиша Enter отправляет сообщение
@@ -366,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Зуммер %s\n%s
 GPS off	GPS выкл
 GPS on	GPS вкл
 GPS serial baud	Скорость GPS (бод)
+GPS sets the position while it has a fix	Положение задаёт GPS, пока есть фикс
 GPS unset	GPS не задан
 GPS: acquiring...	GPS: поиск...
 GPS: fix	GPS: есть
@@ -516,6 +519,7 @@ Messages
 Min zoom for this pack	Мин. зум для этого пакета
 Mode: BLE starting / low memory	Режим: BLE запускается / мало памяти
 Model:	Модель:
+Move the map to your spot	Переместите карту к своему месту
 Multi ACKs	Множественные ACK
 Multi-ack %s · Repeat %s · RX boost %s	Мульти-ack %s · Повтор %s · RX boost %s
 Multi-byte routing (path hash)	Многобайтовая маршрутизация (хеш пути)
@@ -626,6 +630,7 @@ Path reset failed	Не удалось сбросить путь
 Paused  —  score %d	Пауза  —  счёт %d
 Per-transmit switching on	Переключение на каждую передачу вкл.
 Pick colour	Выбрать цвет
+Pick on the map	Выбрать на карте
 Ping	Пинг
 Ping failed	Сбой ping
 Pinged (direct) — waiting…	Ping (прямой) — ожидание…
@@ -1905,3 +1910,9 @@ Shows the zoom slider	Показывает ползунок масштаба
 Zoom	Масштаб
 Zoom in	Приблизить
 Zoom out	Отдалить
+
+# beta_94 strings
+Temperature in Fahrenheit	Температура по Фаренгейту
+Up to 15 characters	До 15 символов
+Favorites only	Только избранные
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
