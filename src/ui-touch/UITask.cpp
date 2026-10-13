@@ -41989,6 +41989,8 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
     memcpy(item, s_chat_link_picker_text + choice.start, len);
     item[len] = '\0';
     lv_label_set_text(label, item);
+    lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(label, card_w - 2 - 2 * pad - 16);
     lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(label);
