@@ -39733,25 +39733,18 @@ static void openMessageActionMenu(int msg_idx) {
     styleButton(b);
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
-    const int icon_left = 6, icon_width = 16, text_left = icon_left + icon_width + 4;
-    lv_obj_t* glyph = lv_label_create(b);
-    lv_label_set_text(glyph, icon);
-    lv_obj_set_style_text_font(glyph, &g_font_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(glyph, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_set_width(glyph, icon_width);
-    lv_obj_set_style_text_align(glyph, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(glyph, LV_ALIGN_LEFT_MID, icon_left, 0);
     const size_t icon_length = strlen(icon);
-    if (strncmp(text, icon, icon_length) == 0) {
-      text += icon_length;
-      while (*text == ' ') ++text;
+    char button_text[128];
+    if (strncmp(text, icon, icon_length) != 0) {
+      snprintf(button_text, sizeof(button_text), "%s  %s", icon, text);
+      text = button_text;
     }
     lv_obj_t* lbl = lv_label_create(b);
     lv_label_set_text(lbl, text);
     lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-    uiFitLabelWidth(lbl, bw - text_left - 6);
-    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, text_left, 0);
+    uiFitLabelWidth(lbl, bw - 8);
+    lv_obj_center(lbl);
     ++bi;
     return b;
   };
