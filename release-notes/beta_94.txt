@@ -16,6 +16,8 @@ T-Deck Pro and Max get the Normal, Large and Huge text sizes the T-Deck has (#64
 Pick your advert position on the map instead of typing coordinates (#635 by Confituurke).
 T-LoRa Pager: hold Fn and press Enter to paste the clipboard (#624 by jcyrio).
 The web app gets Reply on a channel message (#650 by oumike, asked for in #642 by Danie10).
+New in the Store: MECP, for emergency messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and a hundred more), add the number of people and your position, and post it to a channel; MECP messages you receive are shown in plain words. Asked for on Discord; MECP and its code table are by xiang-dev-1.
+For app makers: a Store app can ship its own files, such as sounds, by listing them in its manifest. They are installed into the app's own folder, which is also the way to play sounds on the T-Display P4.
 
 # --- Fixes ---
 Tapping the radar widget opens the radar screensaver until you touch the screen, instead of flickering it (reported on Discord). The radar also fits a two-cell space now, and when Home is full, adding a widget tells you to hold one to remove it.
@@ -23,8 +25,10 @@ The Advert widget is readable again: it now looks like the app tiles, with its i
 A text symbol chosen as a chat icon (a star, a heart) shows as the icon instead of being ignored (#647, reported by Jess-39).
 Day mode: the numbers on unread badges are readable (#658 by oumike).
 The keyboard's control keys have readable labels (#656 by oumike).
+T-Display P4: Bluetooth can be switched on again when it was off at start-up. Since beta_88 that failed every time, with a "not enough memory" message that was wrong; the message now also says what really went wrong (#612).
+T-Deck Pro and Max: control panel tiles stay visible when their service is off; the e-paper turned them white on white (#659, reported by oumike).
 The login password field says it takes up to 15 characters: MeshCore logins carry no more than that, on the phone app too.
 Translations: wording fixes in Dutch, German and Hungarian (by jcyrio), and this build's new texts in all 14 languages.
 
 # --- Heltec V4 ---
-The Heltec V4 keeps the translations it had in beta_92: this build's new texts show in English there until there is room for them.
+The Heltec V4 has all the translations again, beta_93's and this build's included: its built-in table now keeps only the texts the firmware can actually show, which makes it 15 KB smaller than the older table it carried in beta_93.
