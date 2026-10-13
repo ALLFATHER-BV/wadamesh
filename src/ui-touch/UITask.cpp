@@ -61497,7 +61497,22 @@ static void setupWizardOpen() {
 }
 
 // Called once at the end of UITask::begin: show the wizard on a fresh flash.
+bool g_sd_fallback_boot = false;   // set in main.cpp: the chosen SD card did not mount
+extern bool g_identity_restored_from_copy;   // DataStore.cpp: the key came from its NVS copy
+// A device that keeps its data on the SD card booted without it (a dead card, a loose one).
+// The first-boot setup would otherwise open, since its "done" mark is on the card, and the
+// user would read the empty device as a reset. Say what happened instead.
+static void sdFallbackRetryCb() { ESP.restart(); }
+static void sdFallbackNotice() {
+  showConfirm(g_identity_restored_from_copy
+      ? TR("The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.")
+      : TR("The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings."),
+      TR("Try the card again"), sdFallbackRetryCb);
+}
 static void setupWizardMaybeOpen() {
+#if defined(ESP32)
+  if (g_sd_fallback_boot) { sdFallbackNotice(); return; }
+#endif
   if (touchPrefsGetSetupDone()) return;
   // First-boot setup is Wi-Fi-only: force Bluetooth OFF and persist the choice so
   // it stays off after setup too — the user opts BLE in later via the control

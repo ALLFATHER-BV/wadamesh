@@ -13,6 +13,10 @@ public:
   virtual bool getChannelForSave(uint8_t channel_idx, ChannelDetails& ch) =0;
 };
 
+// True when this boot found no identity file and took the key from the NVS copy
+// (DataStore::loadMainIdentity): the storage the device expected was not there.
+extern bool g_identity_restored_from_copy;
+
 class DataStore {
   FILESYSTEM* _fs;
   FILESYSTEM* _fsExtra;
