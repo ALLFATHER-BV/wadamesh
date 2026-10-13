@@ -24,6 +24,8 @@ extra_flags() {
   case "$1" in
     # Its subject is a board variant header, not shared src/.
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
+    # Builds the real M9 keyboard driver against simulated I2C buses.
+    test_m9_keyboard_probe) echo "-I test/m9_keyboard_probe_fakes" ;;
     *) echo "" ;;
   esac
 }
