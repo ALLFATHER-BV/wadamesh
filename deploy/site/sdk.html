@@ -479,7 +479,7 @@ end</code></pre>
     <section class="doc" id="audio">
       <h2>wada.audio <span class="chip">audio</span></h2>
       <div class="row"><div class="prose">
-        <p>Asynchronous audio playback from the current app's private storage. A plain name such as <code>track.wav</code> resolves inside the same app folder as <a href="#fs">wada.fs</a>, whether that folder lives on internal flash, SD, or SD_MMC. Check <code>wada.sys.caps().audio</code> and <code>audio_wav</code> before using it.</p>
+        <p>Asynchronous audio playback from the current app's private storage. An app can ship its sounds with it: list them under <code>files</code> in its <a href="#format">manifest</a> and the Store puts them in that folder. That is also the way to get sound onto the T-Display P4, which has no <code>sd:</code> paths. A plain name such as <code>track.wav</code> resolves inside the same app folder as <a href="#fs">wada.fs</a>, whether that folder lives on internal flash, SD, or SD_MMC. Check <code>wada.sys.caps().audio</code> and <code>audio_wav</code> before using it.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
           <tr><td>wada.audio.play(name)</td><td>Starts or replaces playback and returns <code>true</code>, or <code>nil, error</code>. Plain names use app-private storage. On boards with <code>caps().audio_sd</code>, <code>sd:/Music/track.wav</code> reads directly from the physical card.</td></tr>
@@ -615,6 +615,7 @@ end</code></pre>
           <tr><td>ver</td><td><code>major.minor</code>, matching the version directory. Compared against the catalog to offer an update.</td></tr>
           <tr><td>desc</td><td>One sentence, read in the Store before installing.</td></tr>
           <tr><td>icon</td><td>Optional. Picks the drawer tile's glyph by name; an app cannot ship artwork, and an unknown name falls back to the generic app symbol. One of: <code>gps</code> / <code>compass</code> / <code>map</code>, <code>radio</code>, <code>signal</code>, <code>chart</code>, <code>list</code>, <code>message</code>, <code>person</code>, <code>group</code>, <code>bell</code>, <code>star</code>, <code>search</code>, <code>settings</code>, <code>battery</code>, <code>game</code>.</td></tr>
+          <tr><td>files</td><td>Optional, Store installs only. Files the app ships beside its code, as one comma-separated string: <code>"files":"beep.wav,track.mp3"</code>. Put them in the version directory next to the code; installing (and every update) downloads each into the app's own folder, where <a href="#fs">wada.fs</a> reads them and <code>wada.audio.play("beep.wav")</code> plays them. Up to 8 files of 4&nbsp;MB each; names use letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, at most 32 characters. A file that fails to download fails the install.</td></tr>
         </table>
         <p>Earlier versions of this page showed <code>version</code>, <code>min_api</code>, <code>description</code> and <code>boards</code>. The device has never parsed those: its manifest reader takes quoted strings only, and the keys above are the ones it looks for. Use <code>ver</code> and <code>desc</code>.</p>
       </div></div>

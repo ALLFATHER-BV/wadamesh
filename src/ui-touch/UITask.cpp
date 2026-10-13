@@ -32560,6 +32560,89 @@ static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
                   s_luacat_buf, kLuaCatBufMax);
 }
 
+// An app's own files (sounds, data), listed in its manifest as one quoted string:
+// "files":"beep.wav,track.mp3". Each lands in /apps/<id>.d/, the folder wada.fs and
+// wada.audio.play("beep.wav") already read, so an app can ship what it plays; on the
+// T-Display P4, whose Lua SD API is off, that was the only way to get a sound there.
+static constexpr int    kAppFilesMax     = 8;
+static constexpr size_t kAppFileMaxBytes = 4u * 1024u * 1024u;
+static bool appFileNameOk(const char* n, size_t len) {   // as LuaAppHost's audioSafeName
+  if (len == 0 || len > 32 || n[0] == '.') return false;
+  for (size_t i = 0; i < len; ++i) {
+    const char c = n[i];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+          c == '.' || c == '_' || c == '-')) return false;
+  }
+  return true;
+}
+// Stream url into path, up to max_bytes. A file can be far larger than the code buffers,
+// so it goes through a 4 KB internal (DMA-capable) buffer: SD writes from PSRAM come back
+// short. The server must send a length; a short or failed read deletes the partial file.
+static bool luaStoreHttpToFile(WiFiClient& client, HTTPClient& http, const char* url,
+                               fs::FS* fs, const char* path, size_t max_bytes) {
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) return false;
+  const int code = http.GET();
+  const int want = (code >= 200 && code <= 299) ? http.getSize() : -1;
+  if (want <= 0 || (size_t)want > max_bytes) { http.end(); return false; }
+  File f = fs->open(path, "w");
+  uint8_t* chunk = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!f || !chunk) { if (f) f.close(); if (chunk) heap_caps_free(chunk); http.end(); return false; }
+  auto* st = http.getStreamPtr();
+  size_t total = 0;
+  bool ok = true;
+  const unsigned long t0 = millis();
+  unsigned long last_progress = t0;
+  while (total < (size_t)want && (millis() - t0) < 180000) {
+    const int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (millis() - last_progress > 6000) break;
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    const int rd = st->read(chunk, min((size_t)avail, (size_t)4096));
+    if (rd <= 0) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+    if (f.write(chunk, rd) != (size_t)rd) { ok = false; break; }
+    total += rd;
+    last_progress = millis();
+  }
+  f.close();
+  heap_caps_free(chunk);
+  http.end();
+  if (!ok || total != (size_t)want) { fs->remove(path); return false; }
+  return true;
+}
+static bool luaStoreFetchAppFiles(WiFiClient& client, HTTPClient& http, fs::FS* fs,
+                                  const char* id, const char* ver, const char* list) {
+  char rel[64], dir[96];
+  snprintf(rel, sizeof rel, "/apps/%s.d", id);
+  luaHostAppPath(dir, sizeof dir, rel);
+  fs->mkdir(dir);
+  int n = 0;
+  for (const char* p = list; *p && n < kAppFilesMax; ) {
+    while (*p == ',' || *p == ' ') ++p;
+    const char* e = p;
+    while (*e && *e != ',') ++e;
+    size_t len = (size_t)(e - p);
+    while (len && p[len - 1] == ' ') --len;
+    if (len) {
+      if (!appFileNameOk(p, len)) return false;
+      char name[33], url[160], path[160];
+      memcpy(name, p, len);
+      name[len] = 0;
+      snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/%s/%s/%s", id, ver, name);
+      snprintf(path, sizeof path, "%s/%s", dir, name);
+      if (!luaStoreHttpToFile(client, http, url, fs, path, kAppFileMaxBytes)) return false;
+      ++n;
+    }
+    p = e;
+  }
+  return true;
+}
+
 // Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
 static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
                                    const char* id, const char* ver) {
@@ -32584,8 +32667,11 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
     if (!f) { heap_caps_free(buf); return false; }
     size_t wr = f.write((const uint8_t*)buf, n);
     f.close();
+    char files[192] = "";
+    if (e == 1) luaJsonField(buf, "files", files, sizeof files);   // the manifest
     heap_caps_free(buf);
     if (wr != (size_t)n) return false;
+    if (files[0] && !luaStoreFetchAppFiles(client, http, fs, id, ver, files)) return false;
   }
   return true;
 }
