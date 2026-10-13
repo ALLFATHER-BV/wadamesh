@@ -27,6 +27,8 @@ static volatile uint8_t s_ring[16];
 static volatile uint8_t s_head = 0;
 static volatile uint8_t s_tail = 0;
 static bool             s_inited = false;
+static void           (*s_found_cb)(uint8_t) = nullptr;
+static bool             s_found_cb_done = false;
 static TwoWire*         s_bus = nullptr;      // set once the controller answers
 static uint8_t          s_address = PIN_KB_ADDR;
 static uint32_t         s_last_probe_ms = 0;
@@ -59,9 +61,14 @@ static void kbTryFindBus() {
   const uint8_t addresses[] = {PIN_KB_ADDR, M9_KB_V11_ADDR};
   for (uint8_t address : addresses) {
     if (kbProbe(Wire1, "Wire1 (20/21)", address) ||
-        kbProbe(Wire, "Wire (7/6)", address)) return;
+        kbProbe(Wire, "Wire (7/6)", address)) break;
   }
+  if (s_bus && s_found_cb && !s_found_cb_done) { s_found_cb_done = true; s_found_cb(s_address); }
 }
+
+uint8_t m9KeyboardAddr() { return s_bus ? s_address : 0; }
+
+void m9KeyboardSetFoundCallback(void (*cb)(uint8_t addr)) { s_found_cb = cb; s_found_cb_done = false; }
 
 void m9KeyboardBegin() {
   Wire1.begin(PIN_KB_SDA, PIN_KB_SCL);

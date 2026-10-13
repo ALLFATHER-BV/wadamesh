@@ -71,4 +71,12 @@ int m9KeyboardReadKey();
  *  controller never took. */
 bool m9KeyboardSetBacklight(uint8_t duty);
 
+/** I2C address the keyboard controller answered at (0x6C or 0x6D), or 0 while it
+ *  has not been found yet. The address identifies the board hardware revision. */
+uint8_t m9KeyboardAddr();
+
+/** Register a callback invoked once, with the address, as soon as the controller is
+ *  found (immediately from m9KeyboardBegin, or later from the poll re-probe). */
+void m9KeyboardSetFoundCallback(void (*cb)(uint8_t addr));
+
 #endif

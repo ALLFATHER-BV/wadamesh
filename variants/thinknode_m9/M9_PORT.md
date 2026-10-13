@@ -83,6 +83,13 @@ This turn's corrections vs. the earlier (incorrect) attempt:
   asserts reset). Both `PIN_GPS_EN_ACTIVE` and `PIN_GPS_RESET_ACTIVE` are now
   overridden in `platformio.ini`. Fixed a total loss of GPS fix (module was
   held disabled/in-reset on every boot).
+  **Hardware revisions:** that polarity is for the original board (keyboard
+  controller at 0x6C). Newer units (keyboard at 0x6D, e.g. the Meshtastic SKU
+  LMM15409D2) have GPS EN **active-HIGH**; with it driven LOW they never get a
+  fix. `target.cpp` selects the level at runtime from the keyboard address
+  (`WadaNmeaLocationProvider::setEnActive()`), the same split Meshtastic's
+  `ELECROW-ThinkNode-M9` variant makes (`m9Version > 1 ? HIGH : LOW`). The
+  0x6C path keeps the compile-time default and is untested on a 0x6C unit.
 - microSD CS is **GPIO48**, not "deferred pending SDMMC pins" — this board
   never needed SD_MMC at all; the original SPI-CS approach was correct, the
   pin number was just wrong (see the pin table above and "Bonus schematic

@@ -56,6 +56,35 @@ DISPLAY_CLASS display(&board.periph_power);
 #define LORA_CR 5
 #endif
 
+#if defined(HAS_M9_KEYBOARD)
+// The keyboard controller's I2C address identifies the board hardware revision:
+// units whose keyboard answers at 0x6D carry the newer GPS wiring, whose enable pin
+// is active HIGH (same split Meshtastic and Elecrow's firmware make), followed by a
+// short wake pulse on GPIO10. 0x6C boards keep the compile-time default
+// (PIN_GPS_EN_ACTIVE, LOW) and no pulse.
+// Elecrow's own firmware pulses GPIO10 (the module's ON_OFF/wake line) after
+// driving EN active on these units: 50 ms, HIGH for 5 ms, then 50 ms settle.
+static void m9GpsWakePulse() {
+  pinMode(10, OUTPUT);
+  delay(50);
+  digitalWrite(10, HIGH);
+  delay(5);
+  digitalWrite(10, LOW);
+  delay(50);
+}
+
+static void m9OnKeyboardFound(uint8_t addr) {
+  if (addr == 0x6D) {
+    gps.setEnActive(true);
+    gps.setPostEnableHook(m9GpsWakePulse);
+    if (gps.isEnabled()) m9GpsWakePulse();   // GPS was already powered before the keyboard was found
+    Serial.println("M9 GPS: enable pin active HIGH (keyboard at 0x6D)");
+  } else {
+    Serial.printf("M9 GPS: enable pin active level unchanged (keyboard at 0x%02X)\n", addr);
+  }
+}
+#endif
+
 bool radio_init() {
   fallback_clock.begin();
   // peripheral I2C bus (7/6) — RTC PCF8563 @ 0x51, brought up by
@@ -65,6 +94,7 @@ bool radio_init() {
   if (hw_rtc.adopted()) rtc_clock.noteHardwareTime();
 
 #if defined(HAS_M9_KEYBOARD)
+  m9KeyboardSetFoundCallback(m9OnKeyboardFound);
   m9KeyboardBegin(); // own bus, Wire1 (20/21) — no contention with Wire
 #endif
 #if defined(HAS_M9_COMPASS)
