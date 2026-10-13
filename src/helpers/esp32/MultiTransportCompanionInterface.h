@@ -19,6 +19,11 @@
 
 // Implements BaseSerialInterface for simultaneous USB + TCP companion connections.
 // One shared protocol handler; responses go to originating client, optionally broadcast to all.
+// Why enableBle()'s last cold start did not happen (none when it did, or when the stack
+// was already up). Read by the UI to say what actually went wrong.
+enum : uint8_t { BLE_FAIL_NONE = 0, BLE_FAIL_NO_PARAMS, BLE_FAIL_HEAP, BLE_FAIL_RADIO };
+uint8_t bleLastFailReason();
+
 class MultiTransportCompanionInterface : public BaseSerialInterface {
 public:
   MultiTransportCompanionInterface();

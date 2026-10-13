@@ -232,6 +232,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include "../helpers/ClockFloorRTC.h"
     extern ClockFloorRTC rtc_clock;   // the board clock (variants/*/target.cpp); its send-timestamp floor is seeded/persisted from here (#89)
     #if defined(MULTI_TRANSPORT_COMPANION)
+      #include "../helpers/esp32/MultiTransportCompanionInterface.h"   // bleLastFailReason()
       #include <WiFi.h>
       #include <HTTPClient.h>
       #include <WiFiClientSecure.h>   // on-device HTTPS for the Reader (text browser); setInsecure(), no cert store
@@ -11989,6 +11990,12 @@ static bool bleEnableWaitingForWifi() {
 static const char* bleEnableFailureText() {
   if (bleEnableWaitingForWifi())
     return TR("Bluetooth will start after Wi-Fi connects or times out.");
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // Only a refusal by the memory guard is about memory (#612: on the P4 every failure
+  // said so, while the real cause was a start that never had its parameters).
+  if (bleLastFailReason() == BLE_FAIL_RADIO) return TR("The Bluetooth chip is not responding.");
+  if (bleLastFailReason() == BLE_FAIL_NO_PARAMS) return TR("Bluetooth could not start. Restart the device and try again.");
+#endif
   return TR("Not enough free memory for Bluetooth. Turn Wi-Fi off first.");
 }
 

@@ -417,10 +417,13 @@ static void wadameshSetup() {
   // for it, and on a unit whose C6 speaks ESP-AT it started a transport that
   // can never come up for a radio the user had switched off. Honour the stored
   // intent the way beginBle() below already did.
+  // The name and PIN are stored whether or not BLE starts now: enableBle() needs them for
+  // a later start from the toggles, and without them every toggle failed at once and was
+  // reported as a memory shortage (#612). Storing them does not touch the C6.
+  char* nm = the_mesh.getNodePrefs()->node_name;
+  serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
   if (wifiConfigGetBleEnabled()) {
     if (hostedInitBLE()) {
-      char* nm = the_mesh.getNodePrefs()->node_name;
-      serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
       serial_interface.beginBle("wadamesh-", nm, the_mesh.getBLEPin());
     } else {
       printf("[BOOT] hostedInitBLE FAILED\n");
