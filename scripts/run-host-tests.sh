@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 CXX="${CXX:-g++}"
 STD="-std=c++17"
 OUT="${TMPDIR:-/tmp}/wada-host-tests"
@@ -24,6 +24,7 @@ extra_flags() {
   case "$1" in
     # Its subject is a board variant header, not shared src/.
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
+    test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     *) echo "" ;;
   esac
 }
