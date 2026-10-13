@@ -35,9 +35,31 @@ def _stale(out, sources):
     return not os.path.exists(out) or os.path.getmtime(out) < max(os.path.getmtime(f) for f in sources)
 
 
-if _stale(HDR, glob.glob(os.path.join(ROOT, "deploy", "apps", "lang", "*.lang"))):
-    print("i18n: a .lang changed, regenerating i18n_builtin.h")
+# Since beta_94 the table holds only the keys some source can look up (lang_reach.py),
+# so a source change can add a key too: a new TR("...") would otherwise show English on
+# the V4 until the next .lang edit. The generator only rewrites the header when its
+# content changes, so i18n.cpp does not recompile for every source edit.
+i18n_src = glob.glob(os.path.join(ROOT, "deploy", "apps", "lang", "*.lang"))
+for pat in ("src/**/*.cpp", "src/**/*.h", "src/**/*.c"):
+    i18n_src += [f for f in glob.glob(os.path.join(ROOT, pat), recursive=True)
+                 if not f.endswith("i18n_builtin.h")]
+i18n_src += glob.glob(os.path.join(ROOT, "deploy", "apps", "*", "*", "*.lua"))
+i18n_src += [os.path.join(HERE, "lang_reach.py"), GEN]
+if _stale(HDR, i18n_src):
+    print("i18n: sources changed, checking i18n_builtin.h")
     subprocess.run([sys.executable, GEN], cwd=ROOT, check=True)
+
+# The Heltec V4 compiles the table in: after linking, fail the build if any translated
+# key the compiler emitted was trimmed from it (the scan's guard; see lang_reach.py).
+try:
+    Import("env")   # noqa: F821 (PlatformIO SConscript only; the IDF build runs this standalone)
+    if env.subst("$PIOENV") == "heltec_v4_tft_companion_radio_usb_tcp_touch":   # noqa: F821
+        def _i18n_guard(target, source, env):
+            r = subprocess.run([sys.executable, GEN, "--check-objects", env.subst("$BUILD_DIR")], cwd=ROOT)
+            return r.returncode
+        env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf", _i18n_guard)   # noqa: F821
+except NameError:
+    pass
 
 lua_src = glob.glob(os.path.join(ROOT, "deploy", "apps", "*", "*", "*.lua"))
 lua_src += [os.path.join(ROOT, "deploy", "apps", "apps.json")]
