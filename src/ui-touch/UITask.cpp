@@ -59009,7 +59009,7 @@ static void hwRadarDrawCb(lv_event_t* e) {
   lv_draw_rect(dc, &rd, &me);
 }
 static void hwRadarTimerCb(lv_timer_t*);
-static void ssaverStart(uint32_t now, bool preview);   // the screensaver, further down
+static void ssaverRequestPreview();   // the screensaver, further down
 static void hwRadarBuild(int i) {
   HwInst& w = hwI(i);
   const int side = LV_MIN(w.pw, w.ph);
@@ -59034,7 +59034,10 @@ static void hwRadarUpdate(int i) {
   setLabelIfChanged(w.l[1], s_hw_radar_geo ? "" : TR("by hops"));
   setLabelIfChanged(w.l[2], n);
 }
-static void hwRadarTap(int, lv_event_t*) { ssaverStart(millis(), true); }
+// Through the same request as Settings' preview: loop() starts it AND marks the
+// screen off, so a touch ends it. Started here directly, _screen_off stayed false
+// and loop() tore it down again on its next pass (the tap only flickered it).
+static void hwRadarTap(int, lv_event_t*) { ssaverRequestPreview(); }
 #endif
 
 // ---- Compass (ThinkNode M9) -----------------------------------------------------------------
@@ -72046,6 +72049,7 @@ static void ssaverPoll(uint32_t now) {
 static UnderHidden s_ssaver_under;
 
 static void ssaverStart(uint32_t now, bool preview) {
+  if (s_ssaver_on) return;   // a second start would save the dimmed 40% as the user's brightness
   CstTheme th;
   th.bg = COLOR_BG;
   th.accent = COLOR_ACCENT;
