@@ -158,9 +158,9 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   Tanmatsu. Serial uses the board's CH340 USB-to-UART bridge. Tested on a physical
   unit: a steady picture with smooth gradients, responsive typing with key
   highlighting, the chat header and composer, and sending and receiving messages
-  over the radio (flash writes show as a brief freeze or flicker). Long flash
-  erases (OTA updates, a first-boot format, a factory reset) are not yet
-  verified with the LCD clock pause. Select it in
+  over the radio (flash writes show as a brief freeze or flicker), and a fresh
+  full install and an on-device update, whose long flash erases the panel
+  recovers from. Select it in
   the upload helper with `scripts/build-upload-monitor.sh --crowpanel-50`.
 
 ## Requested boards
