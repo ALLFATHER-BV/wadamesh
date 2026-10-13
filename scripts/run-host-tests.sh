@@ -13,7 +13,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT" || exit 1
 CXX="${CXX:-g++}"
 STD="-std=c++17"
 OUT="${TMPDIR:-/tmp}/wada-host-tests"
