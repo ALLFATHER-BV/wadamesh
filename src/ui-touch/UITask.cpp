@@ -1161,7 +1161,8 @@ static inline lv_coord_t SC(int px) { return (lv_coord_t)((px * s_ui_fscale + 50
 // Scale the ladder by how much the text actually grew. At Normal this returns
 // exactly SC(px), so nothing moves for anyone who has not chosen a bigger size.
 static inline lv_coord_t SBX(int px) {
-#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_TDECK_GT911) || \
+    defined(HAS_TDECK_PRO) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
   const int base = 12;
   const int grown = (int)lv_font_get_line_height(&g_font_12);   // 12 / 16 / 18 px
   if (grown > base) return (lv_coord_t)((px * grown + base / 2) / base);
@@ -1243,12 +1244,13 @@ static void initTouchFontFallbacks() {
       break;
   }
   g_font_tab = lv_font_montserrat_16;
-#elif (defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)) && \
+#elif (defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)) && \
       !(defined(DOC_CAPTURE) && (defined(DOC_VIRT_FONTSET) || defined(DOC_VIRT_FSCALE)))
   // Accessible semantic text without scaling 240x320 geometry. Rows, cards and
-  // controls retain their established dimensions and remain scrollable. The M9
-  // and the T-Deck have the same panel as the V4-R8 and take the same numbers
-  // deliberately: two tables for one screen size is two things to keep in step.
+  // controls retain their established dimensions and remain scrollable. The M9,
+  // the T-Deck and the T-Deck Pro / Max have the same panel size as the V4-R8 and
+  // take the same numbers deliberately: two tables for one screen size is two
+  // things to keep in step (#639).
   // (Capture builds that render another board's size take their own branch below.)
   s_ui_fscale = 100;
   switch (touchPrefsGetUiScale()) {
@@ -16870,7 +16872,7 @@ static void buildDisplayPage() {
 #if CAP_UI_SIZE
 #if defined(TLORA_PAGER)
     const char* sizes[] = { TR("Small"), TR("Medium"), TR("Large"), TR("Jumbo") };
-#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911)
+#elif defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)
     const char* sizes[] = { TR("Normal"), TR("Large text"), TR("Huge text") };
 #else
     const char* sizes[] = { TR("Normal"), TR("Large"), TR("Huge") };
@@ -70104,7 +70106,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW * 2;   // top safe-area + two rows (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
     // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
     // needs two extra pixels to avoid clipping regular one-row status text.
     const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;

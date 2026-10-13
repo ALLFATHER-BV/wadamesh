@@ -1,4 +1,4 @@
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
 
 /*******************************************************************************
  * Size: 20 px
@@ -3013,4 +3013,4 @@ lv_font_t lv_font_montserrat_20 = {
 #endif /*#if WADA_UI_FONT_20_BODY*/
 
 
-#endif /* defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE) */
+#endif /* defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE) */
