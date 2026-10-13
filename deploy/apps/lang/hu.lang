@@ -1927,3 +1927,17 @@ Temperature in Fahrenheit	Hőmérséklet Fahrenheitben
 Up to 15 characters	Legfeljebb 15 karakter
 Favorites only	Csak kedvencek
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardver
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Hagyd bekapcsolva a Bluetooth-t, hogy párosíthasd a telefonodon a MeshCore alkalmazást. A Wi-Fi bármikor beállítható a Beállításokban.
+Radio:	Rádió:
+Keyboard:	Billentyűzet:
+newer keyboard	újabb billentyűzet
+older keyboard	régebbi billentyűzet
+older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
+keyboard not detected yet	a billentyűzet még nincs felismerve
+
+# Mesh Deck keyboard module strings
+module attached	modul csatlakoztatva
+not attached	nincs csatlakoztatva

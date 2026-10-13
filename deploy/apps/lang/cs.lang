@@ -1933,3 +1933,17 @@ Temperature in Fahrenheit	Teplota ve Fahrenheitech
 Up to 15 characters	Nejvýše 15 znaků
 Favorites only	Jen oblíbené
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Nechte Bluetooth zapnutý, abyste mohli spárovat aplikaci MeshCore v telefonu. Wi-Fi lze nastavit kdykoli v Nastavení.
+Radio:	Rádio:
+Keyboard:	Klávesnice:
+newer keyboard	novější klávesnice
+older keyboard	starší klávesnice
+older keyboard (set manually)	starší klávesnice (nastaveno ručně)
+keyboard not detected yet	klávesnice zatím nerozpoznána
+
+# Mesh Deck keyboard module strings
+module attached	modul připojen
+not attached	nepřipojeno

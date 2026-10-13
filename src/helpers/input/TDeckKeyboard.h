@@ -23,6 +23,11 @@ void tdeckKeyboardBegin();
  *  controller the probe gets wrong; call before/at begin and on the setting. */
 void tdeckKeyboardForceLegacy(bool on);
 
+/** What the protocol probe settled on, for Settings > Device (#596). Probing lasts
+ *  until keys are pressed, so "still probing" is a normal answer at boot. */
+enum : uint8_t { TDECK_KB_PROBING = 0, TDECK_KB_RAW = 1, TDECK_KB_LEGACY = 2 };
+uint8_t tdeckKeyboardDetectedMode();
+
 /** Read one key over I2C and push it into the ring. CORE-0 ONLY (touch task). */
 void tdeckKeyboardPoll();
 

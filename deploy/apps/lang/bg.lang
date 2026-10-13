@@ -1916,3 +1916,17 @@ Temperature in Fahrenheit	Температура във Фаренхайт
 Up to 15 characters	До 15 знака
 Favorites only	Само любими
 Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Хардуер
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Оставете Bluetooth включен, за да сдвоите приложението MeshCore на телефона си. Wi-Fi може да се настрои по всяко време в Настройки.
+Radio:	Радио:
+Keyboard:	Клавиатура:
+newer keyboard	по-нова клавиатура
+older keyboard	по-стара клавиатура
+older keyboard (set manually)	по-стара клавиатура (ръчно)
+keyboard not detected yet	клавиатурата още не е разпозната
+
+# Mesh Deck keyboard module strings
+module attached	модулът е свързан
+not attached	не е свързан
