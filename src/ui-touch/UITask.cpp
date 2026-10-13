@@ -8514,7 +8514,8 @@ static int       s_setup_region_sel  = -1;     // selected preset index, -1 = ke
 static lv_obj_t* s_setup_region_next_btn = nullptr;  // so a keypad-nav region pick can jump focus straight to it
 static lv_obj_t* s_setup_ssid_ta   = nullptr;  // (legacy) Wi-Fi fields — the wizard's Wi-Fi step is now an info screen
 static lv_obj_t* s_setup_pwd_ta    = nullptr;
-static bool      s_setup_ble_want  = true;     // step 3's Bluetooth switch; applied on Finish (#416)
+static bool      s_setup_ble_want  = true;     // step 3's Bluetooth switch (#416)
+static bool      s_setup_ble_touched = false;  // the user flipped it; only then does Finish apply it
 static void setupWizardOpen();            // fwd: re-trigger the flow (Device settings button)
 static void setupShowStep(int step);      // fwd: the M9 Back key steps the wizard, same as its on-screen Back
 static void setupRerunCb(lv_event_t* e);  // fwd: "Run setup again" button callback
@@ -56921,18 +56922,17 @@ static void buildGlobalStatusBar() {
   lv_obj_add_flag(g_statusbar.dim, LV_OBJ_FLAG_HIDDEN);
 
 #if CAP_ROUND_CORNERS
-  // No battery % or Bluetooth glyph on this panel (see statusBarLayoutOneRow).
+  // No battery % on this panel (see statusBarLayoutOneRow).
   if (g_statusbar.batt_pct) lv_obj_add_flag(g_statusbar.batt_pct, LV_OBJ_FLAG_HIDDEN);
-  if (g_statusbar.ble_icon) lv_obj_add_flag(g_statusbar.ble_icon, LV_OBJ_FLAG_HIDDEN);
   statusBarLayoutOneRow();
 #endif
 }
 
 #if CAP_ROUND_CORNERS
 // One-row status-bar layout for the round-cornered phone panel. Right to left from the
-// corner inset: battery, signal bars (+ the SD light riding on them), Wi-Fi, GPS, the
-// DND moon, then the clock. The device has Bluetooth hardware but wadamesh does not drive
-// it there, so no Bluetooth glyph; the battery shows no %. The profile name / page
+// corner inset: battery, signal bars (+ the SD light riding on them), Wi-Fi, Bluetooth
+// (while it is on; never on the legacy ESP-AT build, which has none), GPS, the DND moon,
+// then the clock. The battery shows no %. The profile name / page
 // title (left_label) sits on the same line at the left, placed by updateGlobalStatusBar.
 static bool s_crumb_capped = false;   // round panel: breadcrumb width capped short of the clock
 static lv_coord_t s_sb_right_w = 0;   // px from the bar's right edge to the clock's left edge
@@ -56988,6 +56988,7 @@ static lv_coord_t statusBarPackRound(bool links, bool dnd, lv_coord_t& x) {
     { g_statusbar.batt_icon, 0,      true },
     { g_statusbar.sig_box,   SBX(8), links },
     { g_statusbar.conn_icon, SBX(7), links },
+    { g_statusbar.ble_icon,  SBX(7), links },
     { g_statusbar.gps_icon,  SBX(6), links },
     { g_statusbar.dnd_icon,  SBX(7), dnd },
   };
@@ -57149,7 +57150,7 @@ static void chatHeaderApply(bool chat_open) {
 #if CAP_ROUND_CORNERS
   // Round P4 panel: inset from the corner arcs and centred below the top-arc pad.
   // Portrait drops the connectivity glyphs so the header fits one line; landscape has
-  // the room to keep Wi-Fi / signal beside the battery (never Bluetooth or a %).
+  // the room to keep Wi-Fi, Bluetooth and signal beside the battery (never a %).
   const bool keep_links = chatLandscape();
   const lv_coord_t inset = SB_INSET_X, ymid = SB_TOP_PAD / 2;
 #else
@@ -57884,9 +57885,7 @@ static void updateGlobalStatusBar() {
   } else {
     sbShow(g_statusbar.conn_icon, false);
   }
-  // The P4 has Bluetooth hardware, but wadamesh does not support it there: its glyph
-  // stays hidden (from buildGlobalStatusBar on).
-  if (g_statusbar.ble_icon && !CAP_ROUND_CORNERS) {
+  if (g_statusbar.ble_icon) {
     if (ble_up) {
 #if CAP_BLE_KEYBOARD
       // Bluetooth is busy with a keyboard: say so instead of showing the radio.
@@ -58218,8 +58217,9 @@ static void updateGlobalStatusBar() {
     // is laid out by chatHeaderApply instead.
     static uint32_t s_row_sig = 0;
     uint32_t h = 2166136261u;
-    for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.conn_icon, g_statusbar.dnd_icon,
-                         g_statusbar.sig_box, g_statusbar.clock }) {
+    for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.conn_icon, g_statusbar.ble_icon,
+                         g_statusbar.gps_icon, g_statusbar.dnd_icon, g_statusbar.sig_box,
+                         g_statusbar.clock }) {
       h ^= (o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) ? 1u : 0u; h *= 16777619u;
       const char* t = (o && lv_obj_check_type(o, &lv_label_class)) ? lv_label_get_text(o) : "";
       for (const char* q = t; q && *q; ++q) { h ^= (uint8_t)*q; h *= 16777619u; }
@@ -63267,9 +63267,10 @@ static void setupFinishCb(lv_event_t* e) {
   }
 #endif
 #if defined(ESP32)
-  // Step 3's Bluetooth switch. Only a change is applied, so a rerun that leaves
-  // it alone doesn't touch a Bluetooth the user set up.
-  if (g_lv.task && g_lv.task->hasBleCapability() &&
+  // Step 3's Bluetooth switch. Only a change the user made is applied: a switch
+  // left alone never starts or stops Bluetooth, so a radio that could not start at
+  // boot (the P4's C6, the heap guard) does not raise a failure nobody asked for.
+  if (g_lv.task && g_lv.task->hasBleCapability() && s_setup_ble_touched &&
       s_setup_ble_want != bleRequestedOrEnabled()) {
     if (!s_setup_ble_want) {
       g_lv.task->disableBle();
@@ -63452,11 +63453,14 @@ static void setupShowStep(int step) {
     // rather than leave it in the control center, where a fresh install looked
     // undiscoverable.
     if (g_lv.task && g_lv.task->hasBleCapability()) {
+      // Bluetooth as it is now (it may have finished starting since setup opened).
+      if (!s_setup_ble_touched) s_setup_ble_want = bleRequestedOrEnabled();
       lv_obj_t* bsw = lv_switch_create(s_setup_root);
       lv_obj_align(bsw, LV_ALIGN_TOP_RIGHT, -12, y + 6);
       if (s_setup_ble_want) lv_obj_add_state(bsw, LV_STATE_CHECKED);
       lv_obj_add_event_cb(bsw, [](lv_event_t* e) {
         s_setup_ble_want = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+        s_setup_ble_touched = true;
       }, LV_EVENT_VALUE_CHANGED, nullptr);
       lv_obj_update_layout(bsw);
       lv_obj_t* bl = lv_label_create(s_setup_root);
@@ -63524,8 +63528,8 @@ static void setupWizardMaybeOpen() {
   if (touchPrefsGetSetupDone()) return;
   // Bluetooth stays as it booted (on by default), like stock MeshCore: a fresh
   // install that forced it off was invisible to the phone app (#416). Step 3's
-  // switch starts on; Skip leaves it on.
-  s_setup_ble_want = true;
+  // switch shows it as it is; Skip leaves it so.
+  s_setup_ble_touched = false;
   setupWizardOpen();
 }
 
@@ -63534,7 +63538,7 @@ static void setupWizardMaybeOpen() {
 static void setupRerunCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(ESP32)
-  s_setup_ble_want = bleRequestedOrEnabled();   // a rerun shows Bluetooth as it is
+  s_setup_ble_touched = false;   // a rerun shows Bluetooth as it is
 #endif
   setupWizardOpen();
 }
