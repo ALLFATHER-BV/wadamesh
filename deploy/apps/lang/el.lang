@@ -57,7 +57,6 @@ Condense Nav saved — restart to apply	Η συμπαγής πλοήγηση α�
 Day	Ημέρα
 High contrast	Υψηλή αντίθεση
 High contrast - restarting to apply it…	Υψηλή αντίθεση - επανεκκίνηση για εφαρμογή…
-Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Αφήστε το Bluetooth ενεργό για να συνδέσετε την εφαρμογή MeshCore στο τηλέφωνό σας. Το Wi-Fi ρυθμίζεται οποτεδήποτε από τις Ρυθμίσεις.
 Keyboard nav: on	Πλοήγηση πληκτρ.: ανοιχτό
 Landscape only	Μόνο σε οριζόντιο προσανατολισμό
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Τα γράμματα μετακινούν την επισήμανση όταν δεν είναι ενεργό πεδίο κειμένου. Το Enter επιλέγει· κρατήστε το Backspace για επιστροφή.
@@ -1152,14 +1151,6 @@ nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Παλαιότερο πρωτόκολλο πληκτρολογίου
 Device	Συσκευή
-Radio:	Πομποδέκτης:
-Keyboard:	Πληκτρολόγιο:
-newer keyboard	νεότερο πληκτρολόγιο
-older keyboard	παλαιότερο πληκτρολόγιο
-older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
-keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα
-Older keyboard protocol is now in Settings > Device.	Το παλαιότερο πρωτόκολλο πληκτρολογίου είναι τώρα στις Ρυθμίσεις > Συσκευή.
-Diagnostics are on the Device page.	Τα διαγνωστικά είναι στη σελίδα Συσκευή.
 Using the older keyboard protocol	Using the older keyboard protocol
 turn on if your keyboard types the wrong letters; disables modifier latching	ενεργοποιήστε αν το πληκτρολόγιο γράφει λάθος γράμματα· απενεργοποιεί το κλείδωμα πλήκτρων τροποποίησης
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
@@ -2178,4 +2169,3 @@ Asleep: tap screen or 🤍 to wake	Σε αναστολή: πατήστε την 
 Receiving %s\n%lu / %lu bytes	Λήψη %s\n%lu / %lu byte
 Sending %s\n%lu / %lu bytes	Αποστολή %s\n%lu / %lu byte
 File Transfer	Μεταφορά αρχείων
-Hardware	Υλικό

@@ -57,7 +57,6 @@ Condense Nav saved — restart to apply	Navigazione compatta salvata — riavvia
 Day	Giorno
 High contrast	Contrasto elevato
 High contrast - restarting to apply it…	Contrasto elevato - riavvio per applicarlo…
-Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lascia attivo il Bluetooth per associare l'app MeshCore sul telefono. Il Wi-Fi si può configurare in qualsiasi momento in Impostazioni.
 Keyboard nav: on	Nav. tastiera: on
 Landscape only	Solo in orizzontale
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Le lettere spostano l'evidenziazione quando nessun campo di testo è attivo. Invio seleziona; tieni premuto Backspace per tornare indietro.
@@ -1151,14 +1150,6 @@ nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Vecchio protocollo tastiera
 Device	Dispositivo
-Radio:	Radio:
-Keyboard:	Tastiera:
-newer keyboard	tastiera nuova
-older keyboard	tastiera vecchia
-older keyboard (set manually)	tastiera vecchia (impostata a mano)
-keyboard not detected yet	tastiera non ancora rilevata
-Older keyboard protocol is now in Settings > Device.	Il vecchio protocollo tastiera ora è in Impostazioni > Dispositivo.
-Diagnostics are on the Device page.	La diagnostica è nella pagina Dispositivo.
 Using the older keyboard protocol	Using the older keyboard protocol
 turn on if your keyboard types the wrong letters; disables modifier latching	attivalo se la tastiera scrive lettere sbagliate; disattiva il blocco dei tasti modificatori
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
@@ -2177,4 +2168,3 @@ Asleep: tap screen or 🤍 to wake	In sospensione: tocca lo schermo o 🤍 per r
 Receiving %s\n%lu / %lu bytes	Ricezione di %s\n%lu / %lu byte
 Sending %s\n%lu / %lu bytes	Invio di %s\n%lu / %lu byte
 File Transfer	Trasferimento file
-Hardware	Hardware
