@@ -3,8 +3,8 @@
 // ThinkNode M9 keyboard controller. Unlike the T-Deck — where the keyboard
 // shares an I2C bus with the touch controller and must be polled from a
 // dedicated core-0 task — the M9 keyboard lives on its OWN bus (Wire1,
-// SDA=20 / SCL=21, addr 0x6c) with no touch controller present at all. So
-// this can be polled directly from the UI thread; no cross-core ring buffer
+// SDA=20 / SCL=21, addr 0x6c, or 0x6d on newer units) with no touch controller
+// present at all. So this can be polled directly from the UI thread; no cross-core ring buffer
 // is strictly required, but one is kept anyway for interface parity with
 // TDeckKeyboard and so a future move to a dedicated poll task is a no-op.
 //

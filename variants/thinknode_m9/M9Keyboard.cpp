@@ -28,21 +28,33 @@ static bool             s_inited = false;
 static TwoWire*         s_bus = nullptr;      // set once the controller answers
 static uint32_t         s_last_probe_ms = 0;
 
+// The controller answers at 0x6C on the original ThinkNode-M9 and at 0x6D on the
+// newer revision (e.g. the Meshtastic SKU LMM15409D2). Keep the address a runtime
+// value and probe both; PIN_KB_ADDR stays the first candidate.
+static uint8_t s_addr = (uint8_t)PIN_KB_ADDR;
+
 static bool kbReadReg(TwoWire& w, uint8_t reg, uint8_t* out) {
-  w.beginTransmission((uint8_t)PIN_KB_ADDR);
+  w.beginTransmission(s_addr);
   w.write(reg);
   if (w.endTransmission() != 0) return false;         // NACK / bus error
-  if (w.requestFrom((int)PIN_KB_ADDR, 1) != 1) return false;
+  if (w.requestFrom((int)s_addr, 1) != 1) return false;
   *out = (uint8_t)w.read();
   return true;
 }
 
 static bool kbProbe(TwoWire& w, const char* name) {
-  uint8_t hw = 0, fw = 0;
-  if (!kbReadReg(w, M9_KB_REG_HW_VER, &hw)) return false;
-  kbReadReg(w, M9_KB_REG_FW_VER, &fw);   // best-effort, for the log only
-  Serial.printf("M9 keyboard: controller on %s (hw=0x%02X fw=0x%02X)\n", name, hw, fw);
-  return true;
+  static const uint8_t kCandidates[] = { (uint8_t)PIN_KB_ADDR, 0x6D, 0x6C };
+  for (uint8_t i = 0; i < sizeof(kCandidates); i++) {
+    s_addr = kCandidates[i];
+    uint8_t hw = 0, fw = 0;
+    if (!kbReadReg(w, M9_KB_REG_HW_VER, &hw)) continue;
+    kbReadReg(w, M9_KB_REG_FW_VER, &fw);   // best-effort, for the log only
+    Serial.printf("M9 keyboard: controller on %s addr 0x%02X (hw=0x%02X fw=0x%02X)\n",
+                  name, s_addr, hw, fw);
+    return true;
+  }
+  s_addr = (uint8_t)PIN_KB_ADDR;
+  return false;
 }
 
 // The schematic reading puts the keyboard on its own bus (host 20/21); the
@@ -110,7 +122,7 @@ int m9KeyboardReadKey() {
 
 bool m9KeyboardSetBacklight(uint8_t duty) {
   if (!s_inited || !s_bus) return false;   // controller not found yet (see the probe note above)
-  s_bus->beginTransmission((uint8_t)PIN_KB_ADDR);
+  s_bus->beginTransmission(s_addr);
   s_bus->write(M9_KB_REG_BACKLIGHT);
   s_bus->write(duty);
   return s_bus->endTransmission() == 0;    // NACK/bus error -> the duty was NOT taken
