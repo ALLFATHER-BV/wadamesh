@@ -55161,6 +55161,7 @@ static void chatHeaderApply(bool chat_open) {
   sbAlign(g_statusbar.chat_avatar, LV_ALIGN_LEFT_MID, x_av, 0);
   if (g_statusbar.chat_back) {
     sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT));
+    sbTranslateY(g_statusbar.chat_back, 0);
     sbAlign(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
   }
   // Right side: battery, then the clock just left of it, centred on the bar.

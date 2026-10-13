@@ -15,7 +15,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | Tanmatsu | ESP32-P4 + ESP32-C6, SX1262 | 4" 800x480, 69-key keyboard (no touch) | Tanmatsu app store on the device (runs under the badge.team launcher, not web-flashable) | Store tracks the test channel | Fully supported; LoRa + Wi-Fi + Bluetooth simultaneously, standalone and companion in one |
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
 | Elecrow CrowPanel Advance 3.5 | ESP32-S3, external SX1262 | 3.5" ILI9488 480x320 touch (GT911) | Web flasher (beta) | Beta, hardware validation pending | Requires an SX1262 module in the LoRa expansion slot; not for other CrowPanel models |
-| Elecrow CrowPanel Advance 5.0 | ESP32-S3, external SX1262 | 5" ST7262 RGB 800x480 touch (GT911) | Web flasher (beta) | Beta, hardware validation pending | V1.1+ boards; SX1262 in the wireless slot with the function DIP switch on the wireless module; no SD, GPS or battery gauge |
+| Elecrow CrowPanel Advance 5.0 | ESP32-S3, external SX1262 | 5" ST7262 RGB 800x480 touch (GT911) | Web flasher (beta) | Beta, hardware-tested (display, touch, radio) | V1.1+ boards; SX1262 in the wireless slot with the function DIP switch on the wireless module; no SD, GPS or battery gauge |
 | RAK WisMesh Tap V2 (RAK3312) | ESP32-S3, SX1262 | Touch display (LovyanGFX, 30+ fps) | Web flasher | Beta (new in beta_38) | Early community port by Ethac.chen (#136); core mesh, chat and map working |
 | LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" IPS LCD, 480x222 (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Beta (new in beta_45) | Fully supported; keyboard-first navigation, microSD, map tile packs |
 | Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Beta (new in beta_45) | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
@@ -155,8 +155,12 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
     screen wakes by touch.
   It starts in native 800x480 landscape; Display settings can switch to
   480x800 portrait. It uses the large-screen layouts and UI-size presets of the
-  Tanmatsu. Serial uses the board's CH340 USB-to-UART bridge. Display, touch,
-  backlight and radio still need validation on a physical unit. Select it in
+  Tanmatsu. Serial uses the board's CH340 USB-to-UART bridge. Tested on a physical
+  unit: a steady picture with smooth gradients, responsive typing with key
+  highlighting, the chat header and composer, and sending and receiving messages
+  over the radio (flash writes show as a brief freeze or flicker). Long flash
+  erases (OTA updates, a first-boot format, a factory reset) are not yet
+  verified with the LCD clock pause. Select it in
   the upload helper with `scripts/build-upload-monitor.sh --crowpanel-50`.
 
 ## Requested boards
