@@ -57,7 +57,6 @@ Condense Nav saved — restart to apply	Navegación compacta guardada — reinic
 Day	Día
 High contrast	Alto contraste
 High contrast - restarting to apply it…	Alto contraste - reiniciando para aplicarlo…
-Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Deja el Bluetooth activado para emparejar la app MeshCore de tu teléfono. El Wi-Fi se puede configurar en cualquier momento en Ajustes.
 Keyboard nav: on	Nav. teclado: activ.
 Landscape only	Solo en horizontal
 Letters move the highlight when no text field is focused. Enter selects; hold Backspace to go back.	Las letras mueven el resaltado cuando no hay un campo de texto activo. Intro selecciona; mantén Retroceso para volver.
@@ -1152,14 +1151,6 @@ nothing heard yet	nothing heard yet
 Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Protocolo de teclado antiguo
 Device	Dispositivo
-Radio:	Radio:
-Keyboard:	Teclado:
-newer keyboard	teclado nuevo
-older keyboard	teclado antiguo
-older keyboard (set manually)	teclado antiguo (ajustado a mano)
-keyboard not detected yet	teclado aún no detectado
-Older keyboard protocol is now in Settings > Device.	El protocolo de teclado antiguo está ahora en Ajustes > Dispositivo.
-Diagnostics are on the Device page.	El diagnóstico está en la página Dispositivo.
 Using the older keyboard protocol	Using the older keyboard protocol
 turn on if your keyboard types the wrong letters; disables modifier latching	actívalo si el teclado escribe letras equivocadas; desactiva el bloqueo de modificadores
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
@@ -1934,4 +1925,3 @@ Asleep: tap screen or 🤍 to wake	En reposo: toca la pantalla o 🤍 para despe
 Receiving %s\n%lu / %lu bytes	Recibiendo %s\n%lu / %lu bytes
 Sending %s\n%lu / %lu bytes	Enviando %s\n%lu / %lu bytes
 File Transfer	Transferencia de archivos
-Hardware	Hardware
