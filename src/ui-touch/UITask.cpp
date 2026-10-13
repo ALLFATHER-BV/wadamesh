@@ -2395,6 +2395,10 @@ static inline bool chatComposerTwoRow() {
 static inline lv_coord_t chatComposerTopRowH() {
   return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
 }
+// Composer row height not available to the text box: row padding and the top row.
+static inline lv_coord_t chatComposerChromeH() {
+  return 4 + chatComposerTopRowH();
+}
 static inline lv_coord_t chatComposerBaseH() {
   if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
 #if defined(TLORA_PAGER)
@@ -9457,7 +9461,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // V4 with the keyboard down) it sits at the screen bottom.
   const bool kb = g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_height(p->composer_row, s_comp_h);
-  lv_obj_set_height(p->composer_ta,  s_comp_h - 4 - chatComposerTopRowH());
+  lv_obj_set_height(p->composer_ta,  s_comp_h - chatComposerChromeH());
   lv_obj_set_y(p->composer_row, kb ? chatCompYKb() : chatCompYOpen());
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
@@ -9486,7 +9490,7 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
   const lv_coord_t b = CHAT_COMP_BTN_P4;
   const lv_coord_t gap = 6;
   const lv_coord_t right = chatComposerSendInset();
-  const lv_coord_t ta_h = s_comp_h - 4 - chatComposerTopRowH();
+  const lv_coord_t ta_h = s_comp_h - chatComposerChromeH();
   const lv_coord_t kMinLift = SB_TOP_PAD - 2;
   lv_coord_t lift = (ta_h - b) / 2;
   if (lift < kMinLift) lift = kMinLift;
@@ -38273,7 +38277,7 @@ static void makeChatDetail(LvChatPanel& p) {
   p.composer_ta = lv_textarea_create(p.composer_row);
   // M9 conversations: QR | # | emoji | message input | Send. Other boards
   // retain QR | emoji | message input | Send.
-  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - 4 - chatComposerTopRowH());
+  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - chatComposerChromeH());
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
   styleCard(p.composer_ta);
@@ -38281,7 +38285,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // A pill at one line. The radius is fixed at that size, not LV_RADIUS_CIRCLE:
   // as the box grows, a circle radius would grow with it, and at four lines the
   // curve cut through the start and end of the first and last lines (#617).
-  lv_obj_set_style_radius(p.composer_ta, (composer_h - 4 - chatComposerTopRowH()) / 2, LV_PART_MAIN);
+  lv_obj_set_style_radius(p.composer_ta, (composer_h - chatComposerChromeH()) / 2, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(p.composer_ta, SC(12), LV_PART_MAIN);
   // Keep a few px of vertical slack in the textarea CONTENT so it never sits at
   // exactly one line-height (that made the internal scroll oscillate ±1px per
