@@ -26513,11 +26513,46 @@ static void fmOpenImage(const char* name) {
 }
 
 // ----- row interaction -----
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+static void openReaderPage(const char* initial_url);   // the Reader, further down
+// A document on the card opens in the Reader: HTML always (its links work there, so a
+// folder of pages is browsable offline), and plain text or markdown too big for the
+// editor (it pages through a book of any size). Small text files keep the editor.
+static bool fmOpenInReader(const char* name) {
+  bool on_card = false;
+#if CAP_SD || defined(TLORA_PAGER)
+  on_card = s_fm_fs == &SD;
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+  on_card = s_fm_fs == &SD_MMC;
+#endif
+  if (!on_card) return false;
+  const size_t len = strlen(name);
+  auto ends = [&](const char* ext) { const size_t e = strlen(ext); return len > e && strcasecmp(name + len - e, ext) == 0; };
+  const bool html = ends(".htm") || ends(".html");
+  const bool text = ends(".txt") || ends(".md");
+  if (!html && !text) return false;
+  char path[200];
+  fmFullPath(name, path, sizeof path);
+  if (text) {
+    File f = s_fm_fs->open(path, "r");
+    const size_t sz = f ? f.size() : 0;
+    if (f) f.close();
+    if (sz <= FM_EDIT_MAX) return false;   // small: the editor, as before
+  }
+  char url[210];
+  snprintf(url, sizeof url, "sd:%s", path);
+  openReaderPage(url);
+  return true;
+}
+#else
+static bool fmOpenInReader(const char*) { return false; }
+#endif
 static void fmRowClickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   FmRowData* rd = (FmRowData*)lv_obj_get_user_data(lv_event_get_target(e));
   if (!rd) return;
   if (rd->isdir)                fmEnterDir(rd->name);
+  else if (fmOpenInReader(rd->name)) {}                  // HTML, and big text, read in the Reader
 #if CAP_SOUND_FILES
   else if (fmIsAudio(rd->name)) fmOpenAudio(rd->name);   // .wav -> notification-sound chooser
 #endif
@@ -27523,8 +27558,18 @@ class ReaderBufferStream final : public Stream {
 
 enum class ReaderLocalResult : uint8_t { Ok, NoStorage, NotFound, ReadFailed };
 
+// A plain-text or markdown file on the card: read as a window of the file instead of a
+// whole page, so a book of any size pages through ("Next page" links carry ?o=offset).
+static const size_t kReaderTxtWindow = 16 * 1024;
+static bool readerIsTextPath(const char* url) {
+  const char* q = strchr(url, '?');
+  const size_t n = q ? (size_t)(q - url) : strlen(url);
+  auto ends = [&](const char* ext) { const size_t e = strlen(ext); return n >= e && strncasecmp(url + n - e, ext, e) == 0; };
+  return ends(".txt") || ends(".md");
+}
 static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t capacity,
-                                         size_t* total, uint32_t generation) {
+                                         size_t* total, uint32_t generation,
+                                         size_t* file_size = nullptr, size_t* window_at = nullptr) {
   fs::FS* storage = nullptr;
   bool storage_claimed = false;
   auto releaseStorage = [&]() {
@@ -27550,7 +27595,12 @@ static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t c
   char path[300];
   snprintf(path, sizeof path, "%s", url + 3);
   char* query = strchr(path, '?');
-  if (query) *query = 0;
+  size_t offset = 0;
+  if (query) {
+    const char* o = strstr(query + 1, "o=");
+    if (o) offset = (size_t)strtoul(o + 2, nullptr, 10);
+    *query = 0;
+  }
   if (path[0] != '/') { releaseStorage(); return ReaderLocalResult::NotFound; }
 
   markSdIo();
@@ -27561,6 +27611,14 @@ static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t c
     return ReaderLocalResult::NotFound;
   }
 
+  if (window_at) {   // a text window: start at the offset, read one window
+    const size_t fs = file.size();
+    if (file_size) *file_size = fs;
+    if (offset > fs) offset = fs;
+    if (offset && !file.seek(offset)) { file.close(); releaseStorage(); return ReaderLocalResult::ReadFailed; }
+    *window_at = offset;
+    if (capacity > kReaderTxtWindow) capacity = kReaderTxtWindow;
+  }
   bool read_failed = false;
   while (*total < capacity && file.available()) {
     const size_t request = ((capacity - *total) < 4096) ? (capacity - *total) : 4096;
@@ -27587,6 +27645,8 @@ static void readerFetchTaskFn(void*) {
   char result_msg[sizeof s_reader_msg] = "";
   const bool local = readerCiPrefix(url, strlen(url), "sd:/");
   const bool https = readerCiPrefix(url, strlen(url), "https://");
+  const bool text_mode = local && readerIsTextPath(url);
+  size_t txt_size = 0, txt_at = 0;
   // Big contiguous PSRAM is scarce on the 2 MB V4 (a chat's message ring fragments it),
   // so fall back to smaller buffers — a typical text page still fits in 48 KB.
   size_t rawcap = kReaderRawCap;
@@ -27598,7 +27658,8 @@ static void readerFetchTaskFn(void*) {
   ReaderLocalResult local_result = ReaderLocalResult::NoStorage;
   if (raw) {
     if (local) {
-      local_result = readerReadLocal(url, raw, rawcap - 1, &total, generation);
+      local_result = readerReadLocal(url, raw, rawcap - 1, &total, generation,
+                                     text_mode ? &txt_size : nullptr, text_mode ? &txt_at : nullptr);
       source_ok = local_result == ReaderLocalResult::Ok;
     } else {
       HTTPClient httpc;
@@ -27623,7 +27684,43 @@ static void readerFetchTaskFn(void*) {
   else if (source_ok) {
     if (!s_reader_text)  s_reader_text  = (char*)heap_caps_malloc(kReaderTextCap, MALLOC_CAP_SPIRAM);
     if (!s_reader_links) s_reader_links = (ReaderLink*)heap_caps_malloc(sizeof(ReaderLink) * kReaderMaxLinks, MALLOC_CAP_SPIRAM);
-    if (s_reader_text) { size_t parsed_links = 0;
+    if (s_reader_text && text_mode) {
+      // One window of the text, cut back to its last line (or a whole UTF-8 character) unless
+      // it is the end of the file, then links to the previous and next windows.
+      size_t n = total;
+      const bool eof = txt_at + total >= txt_size;
+      if (!eof) {
+        size_t cut = n;
+        while (cut > n / 2 && raw[cut - 1] != '\n') --cut;
+        if (cut > n / 2) n = cut;
+        else { while (n && ((uint8_t)raw[n - 1] & 0xC0) == 0x80) --n; if (n && (uint8_t)raw[n - 1] >= 0xC0) --n; }
+      }
+      char base[300];
+      snprintf(base, sizeof base, "%s", url);
+      if (char* q = strchr(base, '?')) *q = 0;
+      size_t o = (size_t)snprintf(s_reader_text, kReaderTextCap, "%u%%\n\n",
+                                  txt_size ? (unsigned)((txt_at * 100) / txt_size) : 0u);
+      const size_t room = kReaderTextCap - o - 64;
+      if (n > room) n = room;
+      memcpy(s_reader_text + o, raw, n);
+      o += n;
+      s_reader_text[o] = 0;
+      int nl = 0;
+      auto addLink = [&](const char* label, size_t at) {
+        if (!s_reader_links || nl >= kReaderMaxLinks) return;
+        o += (size_t)snprintf(s_reader_text + o, kReaderTextCap - o, "\n\n");
+        ReaderLink& L = s_reader_links[nl++];
+        L.start = (uint32_t)o;
+        o += (size_t)snprintf(s_reader_text + o, kReaderTextCap - o, "%s", label);
+        L.end = (uint32_t)o;
+        snprintf(L.href, sizeof L.href, "%s?o=%u", base, (unsigned)at);
+      };
+      if (!eof) addLink(TR("Next page"), txt_at + n);
+      if (txt_at) addLink(TR("Previous page"), txt_at > kReaderTxtWindow ? txt_at - kReaderTxtWindow : 0);
+      if (txt_at) addLink(TR("Back to the start"), 0);
+      s_reader_nlinks = nl;
+      snprintf(result_msg, sizeof result_msg, "%s", url); result_ok = true;
+    } else if (s_reader_text) { size_t parsed_links = 0;
       size_t tl = ReaderContent::htmlToText((const char*)raw, total, s_reader_text, kReaderTextCap,
                                             url, s_reader_links, kReaderMaxLinks, &parsed_links);
       s_reader_nlinks = (int)parsed_links;
