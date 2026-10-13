@@ -34975,6 +34975,7 @@ static bool s_map_show_tilexyz   = false;
 static bool s_map_show_contacts  = true;
 static bool s_map_tile_debug     = false;  // developer: tile-pipeline diagnostic overlay on the zoom line (off by default)
 static bool s_map_direct_only    = false;  // when true, only 0-hop (directly-heard) contacts appear
+static bool s_map_fav_only       = false;  // when true, only favourite contacts appear (saved as "map_fav")
 
 // Apply the coords/tile-line visibility flags to the two corner labels. Safe to
 // call before the labels exist (null-guarded); invoked at map build + on toggle.
@@ -35100,6 +35101,23 @@ static void renderMapMarkers() {
   freeMapMarkers();
   if (!s_map_canvas) return;
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) return;
+  // The map's contact filters. "Favorites only" reads the favourites list once per
+  // render and compares in memory: touchPrefsIsFavorite re-reads it on every call.
+#if defined(ESP32)
+  static uint8_t s_mm_fav[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];   // static: off the loop stack
+  const int mm_fav_n = s_map_fav_only ? touchPrefsCopyFavorites(s_mm_fav) : 0;
+#endif
+  auto mapHidesContact = [&](const ContactInfo& c) -> bool {
+    if (s_map_direct_only && pathHops(c.out_path_len) != 0) return true;
+#if defined(ESP32)
+    if (s_map_fav_only) {
+      for (int f = 0; f < mm_fav_n; ++f)
+        if (memcmp(&s_mm_fav[f * TOUCH_FAVORITE_KEY_BYTES], c.id.pub_key, TOUCH_FAVORITE_KEY_BYTES) == 0) return false;
+      return true;
+    }
+#endif
+    return false;
+  };
   // Markers share the pan layer with tiles so live-pan slides everything
   // together with a single set_pos.
   lv_obj_t* parent = s_map_pan_layer ? s_map_pan_layer : s_map_canvas;
@@ -35136,7 +35154,7 @@ static void renderMapMarkers() {
       ContactInfo c;
       if (!the_mesh.getContactByIdx(i, c)) continue;
       if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-      if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
+      if (mapHidesContact(c)) continue;
       double mwx, mwy;
       latLonToWorldPx((double)c.gps_lat / 1.0e6, (double)c.gps_lon / 1.0e6,
                       s_map_zoom, &mwx, &mwy);
@@ -35198,7 +35216,7 @@ static void renderMapMarkers() {
     ContactInfo c;
     if (!the_mesh.getContactByIdx(i, c)) continue;
     if (c.gps_lat == 0 && c.gps_lon == 0) continue;
-    if (s_map_direct_only && pathHops(c.out_path_len) != 0) continue;
+    if (mapHidesContact(c)) continue;
 
     const double lat = (double)c.gps_lat / 1.0e6;
     const double lon = (double)c.gps_lon / 1.0e6;
@@ -35697,6 +35715,15 @@ static void mapOptDirectOnlyCb(lv_event_t* e) {
   s_map_direct_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   renderMapMarkers();
 }
+static void mapOptFavOnlyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_fav_only = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+#if defined(ESP32)
+  const uint8_t v = s_map_fav_only ? 1 : 0;
+  touchPrefsSetBlob("map_fav", &v, 1);
+#endif
+  renderMapMarkers();
+}
 
 static void mapZoomControlsApply();   // fwd (defined near the map build) — reposition zoom controls
 // Map zoom-control style toggle (map options popup): ON = +/- buttons, OFF = slider.
@@ -36046,6 +36073,7 @@ static void openMapOptions() {
       { "Show tile z/x/y",     s_map_show_tilexyz,  mapOptTileXYZCb    },
       { "Show contacts",       s_map_show_contacts, mapOptContactsCb   },
       { "Direct (0-hop) only", s_map_direct_only,   mapOptDirectOnlyCb },
+      { "Favorites only",      s_map_fav_only,      mapOptFavOnlyCb    },
       { "Tile debug overlay",  s_map_tile_debug,    mapOptTileDebugCb  },
     };
     for (auto& r : rows) {
@@ -69590,6 +69618,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_show_tilexyz  = touchPrefsGetMapShowTileXYZ();
   s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
+  { uint8_t v = 0; s_map_fav_only = touchPrefsGetBlob("map_fav", &v, 1) == 1 && v; }   // map options: Favorites only
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
