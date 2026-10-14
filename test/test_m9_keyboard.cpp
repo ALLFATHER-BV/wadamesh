@@ -31,12 +31,32 @@ static void checkController(uint8_t address, bool sensorBus) {
   keyboard.device = address;
   m9KeyboardBegin();
   assert(Wire1.sda == 20 && Wire1.scl == 21);
+  // One read per poll (#625: repeat reads in one poll made keys type twice), so each
+  // queued key arrives on its own poll.
   keyboard.keys = {M9_KEY_DOWN, M9_KEY_ENTER, 'a'};
   m9KeyboardPoll();
   assert(m9KeyboardReadKey() == M9_KEY_DOWN);
+  assert(m9KeyboardReadKey() == 0);
+  testMillis += 20;
+  m9KeyboardPoll();
   assert(m9KeyboardReadKey() == M9_KEY_ENTER);
+  testMillis += 20;
+  m9KeyboardPoll();
   assert(m9KeyboardReadKey() == 'a');
   assert(m9KeyboardReadKey() == 0);
+  // The same key again within 70 ms of the last accepted one is the same press (a stale
+  // read or a bounce); after that it is a new press.
+  keyboard.keys = {'b', 'b'};
+  testMillis += 20;
+  m9KeyboardPoll();
+  assert(m9KeyboardReadKey() == 'b');
+  testMillis += 20;
+  m9KeyboardPoll();
+  assert(m9KeyboardReadKey() == 0);
+  keyboard.keys = {'b'};
+  testMillis += 100;
+  m9KeyboardPoll();
+  assert(m9KeyboardReadKey() == 'b');
   assert(m9KeyboardSetBacklight(127));
   assert(keyboard.backlight == 127);
   keyboard.readFails = true;
