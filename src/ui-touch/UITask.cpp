@@ -57857,7 +57857,8 @@ static void hwCardBuild(int i, const char* icon, uint32_t icon_col, uint8_t fig_
   w.l[3] = hwLine(w.box, &g_font_12, COLOR_SUB, w.pw);  // detail
   lv_obj_set_pos(w.l[3], 0, th);
   if (fig_type == 0xFF) return;
-  if (fig_type == HWF_HBAR) {   // a thin bar along the bottom
+  if (fig_type == HWF_HBAR) {   // a thin bar along the bottom, only under the text, never on it
+    if (th + dh + SC(5) > w.ph) return;
     w.fig = hwFigNew(w.box, hwF(i), fig_type, w.pw, SC(5));
     lv_obj_set_pos(w.fig, 0, w.ph - SC(5));
     return;
@@ -58304,12 +58305,7 @@ static void hwFmtBw(char* buf, size_t cap, float bw) {
 }
 static void hwRadioBuild(int i) {
   if (hwI(i).size == HWS_S) hwStatBuild(i, nullptr, 0);
-  else hwCardBuild(i, UI_ICON_ANTENNA, COLOR_HUE[HUE_RADIO], HWF_HBAR, true);
-  HwInst& w = hwI(i);
-  if (w.fig) {   // the airtime bar: a thin line along the bottom
-    lv_obj_set_height(w.fig, SC(5));
-    lv_obj_set_y(w.fig, w.ph - SC(5));
-  }
+  else hwCardBuild(i, UI_ICON_ANTENNA, COLOR_HUE[HUE_RADIO], 0xFF, true);   // no airtime bar: it read as a stray line
 }
 static void hwRadioUpdate(int i) {
   const NodePrefs* p = the_mesh.getNodePrefs();
