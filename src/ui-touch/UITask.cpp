@@ -1140,22 +1140,20 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
 // the font down 16 -> 14 -> 12, then wraps it onto two centred lines if the button
 // has the height, else ends it in "...". A caption that fits is never touched.
 //
-// Scope: buttons whose only visible label child is the caption. Icon + caption
-// pairs and anything with a deliberate scrolling label are left to their builders.
-// No spare object flag (USER_1..4 are all nav markers), so the state lives elsewhere:
-// a wrapped / dotted caption is recognised by the exact width step 2 gives it, and
-// queued fits sit in a small list.
-static lv_obj_t* s_fit_pending[12] = { nullptr };
-static bool uiFitPendingHas(lv_obj_t* b) {
-  for (lv_obj_t* p : s_fit_pending) if (p == b) return true;
-  return false;
-}
-static bool uiFitPendingAdd(lv_obj_t* b) {
-  for (lv_obj_t*& p : s_fit_pending) if (!p) { p = b; return true; }
-  return false;                        // full: queued anyway, just not de-duplicated
-}
-static void uiFitPendingDrop(lv_obj_t* b) {
-  for (lv_obj_t*& p : s_fit_pending) if (p == b) p = nullptr;
+// Scope: buttons whose only visible label child is a centred caption. Icon + caption
+// pairs, anything with a deliberate scrolling label, and left-aligned rows (Backups,
+// the map's contact picker), whose builders already dot their own text, are left as
+// they were. No spare object flag (USER_1..4 are all nav markers), so a finished
+// caption is recognised by the state step 2 leaves: the button's exact width, and
+// either wrapped at content height or dotted because two lines would not fit.
+
+static bool uiCaptionCentred(lv_obj_t* btn, lv_obj_t* lbl) {
+  const lv_align_t a = (lv_align_t)lv_obj_get_style_align(lbl, LV_PART_MAIN);
+  if (a == LV_ALIGN_CENTER) return true;
+  if (a != LV_ALIGN_DEFAULT) return false;
+  if (lv_obj_get_style_layout(btn, LV_PART_MAIN) == LV_LAYOUT_FLEX)
+    return lv_obj_get_style_flex_main_place(btn, LV_PART_MAIN) == LV_FLEX_ALIGN_CENTER;
+  return lv_obj_get_style_text_align(lbl, LV_PART_MAIN) == LV_TEXT_ALIGN_CENTER;
 }
 
 static lv_obj_t* uiButtonCaption(lv_obj_t* btn) {
@@ -1171,6 +1169,7 @@ static lv_obj_t* uiButtonCaption(lv_obj_t* btn) {
   if (!cap) return nullptr;
   const lv_label_long_mode_t lm = lv_label_get_long_mode(cap);
   if (lm == LV_LABEL_LONG_SCROLL || lm == LV_LABEL_LONG_SCROLL_CIRCULAR) return nullptr;
+  if (!uiCaptionCentred(btn, cap)) return nullptr;
   const char* t = lv_label_get_text(cap);
   return (t && t[0]) ? cap : nullptr;
 }
@@ -1183,14 +1182,25 @@ static lv_coord_t uiCaptionTextW(lv_obj_t* lbl, const lv_font_t* f) {
   return sz.x;
 }
 
+// The caption's height when wrapped to max_w.
+static lv_coord_t uiCaptionWrappedH(lv_obj_t* lbl, const lv_font_t* f, lv_coord_t max_w) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN),
+                  lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN), max_w,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  return sz.y;
+}
+
 static inline bool uiFontIsSemi(const lv_font_t* f) {
   return f == &g_font_semi_16 || f == &g_font_semi_14 || f == &g_font_semi_12;
 }
 
 // Whether the caption still needs work: it overflows and either a smaller font of
-// its weight is left to try or it has not been wrapped / dotted yet. The floor is
-// the smallest font of the SAME weight: semibold 12 is taller than regular 12, so
-// measuring a semibold caption against regular 12 never let it count as fitted.
+// its weight is left to try or it is not yet wrapped / dotted the way step 2 would.
+// The floor is the smallest font of the SAME weight: semibold 12 is taller than
+// regular 12, so measuring a semibold caption against regular 12 never let it count
+// as fitted.
 static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
   const lv_coord_t avail_w = lv_obj_get_content_width(btn);
   if (avail_w <= 6) return false;
@@ -1198,7 +1208,16 @@ static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
   if (uiCaptionTextW(lbl, f) <= avail_w) return false;
   const lv_font_t* floor_f = uiFontIsSemi(f) ? &g_font_semi_12 : &g_font_12;
   if (lv_font_get_line_height(f) > lv_font_get_line_height(floor_f)) return true;
-  return lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w;   // not wrapped / dotted yet
+  if (lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w) return true;
+  const bool two_fit = uiCaptionWrappedH(lbl, f, avail_w) <= lv_obj_get_content_height(btn);
+  const bool content_h = lv_obj_get_style_height(lbl, LV_PART_MAIN) == LV_SIZE_CONTENT;
+  switch (lv_label_get_long_mode(lbl)) {
+    // A builder's one-line box would show only the first wrapped line, with no dots.
+    case LV_LABEL_LONG_WRAP: return !two_fit || !content_h;
+    // A builder's own dots, when two lines would have fit.
+    case LV_LABEL_LONG_DOT:  return two_fit || content_h;
+    default:                 return true;
+  }
 }
 
 static void uiFitButtonCaption(lv_obj_t* btn) {
@@ -1224,35 +1243,34 @@ static void uiFitButtonCaption(lv_obj_t* btn) {
   if (uiCaptionTextW(lbl, f) <= avail_w) return;
   // 2. Still too wide at 12 px: two centred lines when the button is tall enough,
   //    otherwise one line ending in "..." rather than text spilling past the edge.
-  lv_point_t wrapped;
-  lv_txt_get_size(&wrapped, lv_label_get_text(lbl), f,
-                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN),
-                  lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN), avail_w,
-                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  //    The height is set either way: a builder may have pinned the caption to one
+  //    line, which would cut a wrapped caption to its first line.
   lv_obj_set_width(lbl, avail_w);
   lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-  if (wrapped.y <= avail_h) {
+  if (uiCaptionWrappedH(lbl, f, avail_w) <= avail_h) {
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(lbl, LV_SIZE_CONTENT);
   } else {
     lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
     lv_obj_set_height(lbl, lv_font_get_line_height(f));
   }
+  if (lv_obj_get_style_layout(btn, LV_PART_MAIN) != LV_LAYOUT_FLEX) lv_obj_center(lbl);
 }
 
 static void uiFitButtonAsync(void* p) {
+  // Queued fits are cancelled when their button is deleted (below), so the pointer
+  // is live here.
   lv_obj_t* btn = static_cast<lv_obj_t*>(p);
-  uiFitPendingDrop(btn);
-  if (!btn || !lv_obj_is_valid(btn)) return;
   lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
   uiFitButtonCaption(btn);
 }
 
 // Queues one fit for after the current builder or layout pass, which is when the
 // button's size and caption are final. Restyling inside a size event is not safe,
-// so nothing is measured here.
+// so nothing is measured here. Any fit already queued for the button is replaced,
+// so a button has at most one, however many events arrive first.
 static void uiFitButtonQueue(lv_obj_t* btn) {
-  if (uiFitPendingHas(btn)) return;
-  uiFitPendingAdd(btn);
+  lv_async_call_cancel(uiFitButtonAsync, btn);
   lv_async_call(uiFitButtonAsync, btn);
 }
 
@@ -1261,7 +1279,12 @@ static void uiFitButtonQueue(lv_obj_t* btn) {
 // and then finds nothing left to do, so a caption is fitted on changes, not frames.
 static void uiFitButtonChangeCb(lv_event_t* e) {
   lv_obj_t* btn = lv_event_get_target(e);
-  if (lv_event_get_code(e) == LV_EVENT_CHILD_CHANGED) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_DELETE) {
+    lv_async_call_cancel(uiFitButtonAsync, btn);
+    return;
+  }
+  if (code == LV_EVENT_CHILD_CHANGED) {
     lv_obj_t* child = static_cast<lv_obj_t*>(lv_event_get_param(e));
     if (!child || !lv_obj_check_type(child, &lv_label_class)) return;
   }
@@ -4771,6 +4794,7 @@ static void styleButton(lv_obj_t* obj) {
   while (lv_obj_remove_event_cb(obj, uiFitButtonChangeCb)) {}   // removes one per call
   lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_SIZE_CHANGED, nullptr);
   lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_CHILD_CHANGED, nullptr);
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_DELETE, nullptr);
   uiFitButtonQueue(obj);   // the caption is usually added after styling; this runs after
   styleLookPress(obj);
 }
