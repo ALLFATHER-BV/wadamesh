@@ -1191,6 +1191,17 @@ public:
     return true;
   }
 
+  /** uiRemoveContact() without the /contacts3 rewrite or the chats-list ping, for
+   *  a bulk delete: rewriting the whole file per contact made deleting hundreds
+   *  take minutes. The caller must finish with uiPersistContacts(); until then a
+   *  reboot brings the removed contacts back. */
+  bool uiRemoveContactNoSave(const uint8_t pub_key[PUB_KEY_SIZE]) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot || !removeContact(*slot)) return false;
+    _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);
+    return true;
+  }
+
   /** Drop a contact that a UI scan installed only so an encrypted reply could be
    *  matched (sendRegionsRequestForUI installs unknown repeaters as ADV_TYPE_NONE).
    *  Those are never written to flash, so this only frees the RAM slot. Refuses
