@@ -14,6 +14,8 @@ Settings > Display > Temperature in Fahrenheit shows temperatures in °F everywh
 The contact list shows each contact's chat icon, the one you picked or the first emoji in its name (#649 by oumike, asked for in #646 by Jess-39).
 T-Deck Pro and Max get the Normal, Large and Huge text sizes the T-Deck has (#645 by oumike, asked for in #639 by Jess-39).
 Pick your advert position on the map instead of typing coordinates (#635 by Confituurke).
+New board: the Elecrow CrowPanel Advance 5.0 (#655 by oumike, #651).
+Hashtags in messages are links: tap #mesh (or select the message with keys) to open that channel or join it, and the message menu gains Map, Web and Channel entries for the coordinates, web addresses and hashtags in it (#580 by TerryTel93).
 T-LoRa Pager: hold Fn and press Enter to paste the clipboard (#624 by jcyrio).
 The web app gets Reply on a channel message (#650 by oumike, asked for in #642 by Danie10).
 New in the Store: MECP, for emergency messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and a hundred more), add the number of people and your position, and post it to a channel; MECP messages you receive are shown in plain words. Asked for on Discord; MECP and its code table are by xiang-dev-1.
@@ -29,6 +31,8 @@ The Advert widget is readable again: it now looks like the app tiles, with its i
 A text symbol chosen as a chat icon (a star, a heart) shows as the icon instead of being ignored (#647, reported by Jess-39).
 Day mode: the numbers on unread badges are readable (#658 by oumike).
 The keyboard's control keys have readable labels (#656 by oumike).
+The Radio widget no longer draws a line through its text.
+A round of fixes by oumike (#628): ThinkNode M9 keys no longer type twice (#625) and its chat header fits its text (#627), A-Z sorts contacts by name and Select all takes every contact that matches (#605), channel region scope applies to every way of sending, phone app included (#614), compact chats fit emoji (#617), the cold-boot time sync over saved Wi-Fi is more reliable (#620), the Pager's backup Import dialog focuses Import (#603), the shade over a background picture stays put in a tall status bar, and the Wio Tracker L2 gets the clock settings and boot time sync.
 T-Display P4: Bluetooth can be switched on again when it was off at start-up. Since beta_88 that failed every time, with a "not enough memory" message that was wrong; the message now also says what really went wrong (#612).
 T-Deck Pro and Max: control panel tiles stay visible when their service is off; the e-paper turned them white on white (#659, reported by oumike).
 The login password field says it takes up to 15 characters: MeshCore logins carry no more than that, on the phone app too.
