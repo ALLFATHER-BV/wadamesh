@@ -18040,13 +18040,16 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
-  // X behaves like Cancel. On a keypad board an actions-only dialog leaves it out:
-  // Cancel and the Back key already dismiss it, and the X only added a stop ahead of
-  // the real choices (#603). Touch-only boards keep it as a tap target.
-#if CAP_KEYPAD_NAV
+  // X behaves like Cancel. A board without touch leaves it out of an actions-only dialog:
+  // Cancel and the Back key already dismiss it, and the X only added a stop ahead of the
+  // real choices (#603). Touch boards keep it as a tap target even with keypad navigation
+  // (CAP_KEYPAD_NAV is also on for the V4, the T-Deck and the touch-only boards that take
+  // a Bluetooth keyboard); there keypad focus just skips it.
+#if !CAP_TOUCH
   if (!actions_only_nav) addCloseXBadge(card, confirmCancelEvt);
 #else
-  addCloseXBadge(card, confirmCancelEvt);
+  lv_obj_t* close_x = addCloseXBadge(card, confirmCancelEvt);
+  if (actions_only_nav) lv_obj_add_flag(close_x, NAV_SKIP_FLAG);
 #endif
 
   // Message area: its own box occupying exactly the space ABOVE the buttons, so the text
@@ -42672,7 +42675,7 @@ static void chatDrawLinkText(lv_event_t* e) {
 
 static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
                                      const char* text, const lv_font_t* font,
-                                     lv_color_t color, lv_coord_t width,
+                                     lv_color_t color, lv_coord_t width, lv_coord_t height,
                                      lv_coord_t x, lv_coord_t y) {
   ChatLinkChoice choice{};
   if (!nextChatLinkChoice(text, 0, &choice)) return nullptr;
@@ -42684,8 +42687,9 @@ static lv_obj_t* chatCreateLinkLabel(lv_obj_t* parent, lv_obj_t* hit_label,
   lv_obj_clear_flag(label, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_set_style_text_font(label, font, LV_PART_MAIN);
   lv_obj_set_style_text_color(label, color, LV_PART_MAIN);
-  lv_obj_update_layout(hit_label);
-  lv_obj_set_size(label, width, lv_obj_get_height(hit_label));
+  // The caller measured the wrapped text: lv_obj_update_layout here laid out the whole
+  // screen for every link bubble as it scrolled in.
+  lv_obj_set_size(label, width, height);
   lv_obj_set_pos(label, x, y);
   lv_obj_set_user_data(label, hit_label);
   lv_obj_add_event_cb(label, chatDrawLinkText, LV_EVENT_ALL, cache);
@@ -43044,7 +43048,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
 #if !defined(HAS_TDECK_PRO)
   if ((has_url || has_coords || has_hashtag) && !failed_send) {
     link_label = chatCreateLinkLabel(bubble, tlbl, d.san_text, msg_font,
-                                     lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, 0, inner_y);
+                                     lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, wrapped.y, 0, inner_y);
   }
 #endif
 
