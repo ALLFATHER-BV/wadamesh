@@ -97,5 +97,12 @@ Camillia-MT (CrowPanel Advance 3.5 software-SPI microSD backend)
     Adapted from src/sd_soft_spi.cpp; integrated with WadaMesh's filesystem
     API and concurrent storage consumers.
 
+Camillia-MT (CrowPanel Advance 5.0 display, backlight and touch bring-up)
+    Copyright (c) 2025-2026 Michael A. Cojocari and contributors
+    GNU General Public License v3.0 or later
+    The RGB panel configuration, revision detection, backlight controller and
+    GT911 reset in variants/crowpanel_50/CrowPanel50Display.cpp are adapted
+    from src/hal/crowpanel_50_display.h and src/hal/hw_crowpanel_50.h.
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.

@@ -61,6 +61,8 @@ static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover 
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 #if defined(HAS_CROWPANEL_35)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
+#elif defined(HAS_CROWPANEL_50)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 800x480 landscape
 #elif defined(ATTAKY_MESH_SERIES)
 static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else

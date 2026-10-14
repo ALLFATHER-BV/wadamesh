@@ -30,6 +30,7 @@ per-board status.
 - LilyGo T-Display P4: built from `tdisplay_p4/` (ESP-IDF); AMOLED + SX1262 by default, with `WADA_P4_LCD=1` for TFT-LCD and `WADA_P4_LR2021=1` for LR2021 (beta)
 - Attaky Mesh Series: env `attaky_mesh_series_companion_radio_touch` (beta)
 - Elecrow CrowPanel Advance 3.5: env `crowpanel_35_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the expansion slot)
+- Elecrow CrowPanel Advance 5.0: env `crowpanel_50_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the wireless slot and the DIP switch set to it)
 
 ## Architecture
 
@@ -100,6 +101,7 @@ automatically:
 pio run -e heltec_v4_tft_companion_radio_usb_tcp_touch   # Heltec V4 TFT
 pio run -e LilyGo_TDeck_companion_radio_touch            # LilyGo T-Deck
 pio run -e crowpanel_35_companion_radio_touch             # CrowPanel Advance 3.5
+pio run -e crowpanel_50_companion_radio_touch             # CrowPanel Advance 5.0
 # or just `pio run` to build the configured default environments
 ```
 

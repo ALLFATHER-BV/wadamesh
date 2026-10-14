@@ -5,13 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
 <title>WADAMESH: MeshCore firmware with the whole mesh on the radio</title>
-<meta name="description" content="Free, open-source MeshCore firmware with chat, channels, a map and apps on the radio itself, by touch, keyboard or trackball. Runs on 13 boards.">
+<meta name="description" content="Free, open-source MeshCore firmware with chat, channels, a map and apps on the radio itself, by touch, keyboard or trackball. Runs on 14 boards.">
 <link rel="canonical" href="https://wadamesh.com/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="WADAMESH">
 <meta property="og:url" content="https://wadamesh.com/">
 <meta property="og:title" content="WADAMESH: MeshCore firmware with the whole mesh on the radio">
-<meta property="og:description" content="Chat, channels, contacts, a map and apps on the radio itself, by touch, keyboard or trackball, and a companion radio for the MeshCore app at the same time. Free and open source, on 13 boards.">
+<meta property="og:description" content="Chat, channels, contacts, a map and apps on the radio itself, by touch, keyboard or trackball, and a companion radio for the MeshCore app at the same time. Free and open source, on 14 boards.">
 <meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -524,7 +524,7 @@
       <span class="byline">by meshcomod</span>
     </div>
     <p class="lede">The whole mesh, on the radio itself.</p>
-    <p class="sub">MeshCore firmware with chat, channels, contacts, a map and apps on the device itself, by touch, keyboard or trackball, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time. Runs on <a href="#devices">13 boards</a>, from the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> to the <b>Tanmatsu</b>.</p>
+    <p class="sub">MeshCore firmware with chat, channels, contacts, a map and apps on the device itself, by touch, keyboard or trackball, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time. Runs on <a href="#devices">14 boards</a>, from the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> to the <b>Tanmatsu</b>.</p>
     <div class="cta-row"><a class="cta" href="#install"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>Install WADAMESH</a></div>
     <div class="pills">
       <span class="pill" tabindex="0" style="--hue:var(--hue-place)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 7v13M15 4v13"/></svg>Offline map
@@ -583,7 +583,7 @@
 
 <section id="devices">
   <div class="wrap">
-    <h2 class="h2">Runs on 13 boards</h2>
+    <h2 class="h2">Runs on 14 boards</h2>
     <p class="p">From keyboard handhelds to touch panels. Pick yours to jump straight to its installer.</p>
     <div class="devgrid">
       <a class="devtile" href="#standalone" data-find="t-deck plus"><span class="mk">LilyGo</span><b>T-Deck / Plus</b><span class="spec">Keyboard, trackball and touchscreen handheld.</span><span class="st"><span class="lvl full">Fully supported</span><span class="ch">Stable</span></span></a>
@@ -599,6 +599,7 @@
       <a class="devtile" href="#standalone" data-find="t-deck max"><span class="mk">LilyGo</span><b>T-Deck Max</b><span class="spec">E-paper keyboard and touch handheld.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
       <a class="devtile" href="#standalone" data-find="v4-r8"><span class="mk">Heltec</span><b>V4-R8</b><span class="spec">V4 with 8&nbsp;MB PSRAM and an SD card.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
       <a class="devtile" href="#standalone" data-find="crowpanel"><span class="mk">Elecrow</span><b>CrowPanel Advance 3.5</b><span class="spec">3.5-inch touch panel with an SX1262 module.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
+      <a class="devtile" href="#standalone" data-find="crowpanel"><span class="mk">Elecrow</span><b>CrowPanel Advance 5.0</b><span class="spec">5-inch 800&times;480 touch panel with an SX1262 module.</span><span class="st"><span class="lvl part">Experimental</span><span class="ch">Beta</span></span></a>
     </div>
   </div>
 </section>
@@ -757,6 +758,11 @@
               <esp-web-install-button id="inst-crowpanel-35" manifest="https://firmware.wadamesh.com/latest-beta/manifest-crowpanel-35.json"></esp-web-install-button>
               <a class="dl2" data-dl-board="crowpanel-35" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-crowpanel-35-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
               <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta only. Attach the SX1262 before booting; flash with care and report what works.</p></div>
+            <div class="board" data-search="elecrow crowpanel advance 5.0 5 inch esp32-s3 st7262 rgb gt911 sx1262 touchscreen lora"><h4>CrowPanel Advance 5.0 <span style="font-weight:600;color:var(--mut)">(experimental)</span></h4><p>5&quot; 800&times;480 touch display; requires an SX1262 module in the wireless slot and the function DIP switch set to the wireless module.</p>
+              <span class="sup part" tabindex="0"><span class="dot"></span>Partially supported<span class="pop"><b>Hardware-tested, beta</b>This build is for the Advance 5.0 (V1.1 and later) with an SX1262 in the wireless slot, not other CrowPanel models. Display, touch, backlight and radio are tested on a physical unit: a steady picture, responsive typing, chat and sending messages. Saving to flash briefly freezes or flickers the screen. The DIP switch hands the radio's pins to the microSD slot otherwise, so there is no SD card; there is also no GPS and no battery monitoring. Landscape is the default, with portrait available in Display settings.</span></span>
+              <esp-web-install-button id="inst-crowpanel-50" manifest="https://firmware.wadamesh.com/latest-beta/manifest-crowpanel-50.json"></esp-web-install-button>
+              <a class="dl2" data-dl-board="crowpanel-50" data-dl-betaonly download href="https://firmware.wadamesh.com/latest-beta/wadamesh-crowpanel-50-merged.bin"><span class="dl2-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M7 11l5 5 5-5M5 21h14"/></svg>Download .bin</span><span class="dlver" data-dl-ver></span></a>
+              <p data-wm-betaonly style="color:var(--mut);font-size:.78rem;margin:6px 0 0">Beta only. Set the DIP switch and attach the SX1262 before booting; flash with care and report what works.</p></div>
           </div>
         </details>
 
