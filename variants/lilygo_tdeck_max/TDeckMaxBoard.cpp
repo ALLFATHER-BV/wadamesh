@@ -49,6 +49,13 @@ void TDeckMaxBoard::begin() {
   const bool gauge_ok = gauge.begin(Wire);
   Serial.printf("[BOOT] T-Deck Max bq27220 %s\n", gauge_ok ? "ok" : "PROBE FAILED");
 
+  // ES8311 codec presence check (address only -- no register writes yet, that
+  // is the sound code's job on first use, same as the pager). Every rail this
+  // chip depends on is already up; a missing ack here means the speaker path
+  // cannot work and is worth knowing from the boot log alone.
+  Wire.beginTransmission(0x18);
+  Serial.printf("[BOOT] T-Deck Max es8311 %s\n", Wire.endTransmission() == 0 ? "ok" : "PROBE FAILED");
+
   if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
     if (esp_sleep_get_ext1_wakeup_status() & (1ULL << P_LORA_DIO_1))
       startup_reason = BD_STARTUP_RX_PACKET;
@@ -91,6 +98,19 @@ void TDeckMaxBoard::gpsPowerOn() {
 
 void TDeckMaxBoard::gpsPowerOff() {
   if (xlWrite(TDMAX_XL_GPS_EN, false)) gps_on_ = false;
+}
+
+void TDeckMaxBoard::setAmpEnabled(bool on) {
+  if (!expander_ready_) { Serial.println("[MAXAUDIO] amp toggle skipped: expander not ready"); return; }
+  // Route the shared speaker to the ES8311 before the amp comes up, so a
+  // modem-audio selection can never blast through the NS4150B.
+  if (on) xlWrite(TDMAX_XL_AUDIO_SEL, false);
+  const bool ok = xlWrite(TDMAX_XL_AMP_EN, on);
+  Serial.printf("[MAXAUDIO] amp %s %s\n", on ? "ON" : "OFF", ok ? "ok" : "WRITE FAILED");
+}
+
+void TDeckMaxBoard::selectEs8311Audio() {
+  xlWrite(TDMAX_XL_AUDIO_SEL, false);
 }
 
 uint16_t TDeckMaxBoard::getBattMilliVolts() {

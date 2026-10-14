@@ -38,7 +38,11 @@ The GPS supply follows the Pro's behaviour: off at boot, on when GPS is enabled,
 
 ## Not in this port
 
-ES8311 audio, the NS4150B speaker amplifier, the A7682E modem, the DRV2605 haptic and the BHI260AP IMU are powered or muxed by the expander but not driven by this build. The Pro's `PIN_PERF_POWERON` radio power-cycle rescue in `main.cpp` compiles out on the Max; a Max equivalent through XL9555 line 1 is a follow-up.
+The A7682E modem, the DRV2605 haptic and the BHI260AP IMU are powered or muxed by the expander but not driven by this build. The Pro's `PIN_PERF_POWERON` radio power-cycle rescue in `main.cpp` compiles out on the Max; a Max equivalent through XL9555 line 1 is a follow-up.
+
+## Audio (ES8311 + NS4150B)
+
+Notification chimes, custom WAV notification sounds and Lua `wada.audio` WAV/MP3 playback run through the ES8311 codec at 0x18 plus the NS4150B amp, mirroring LilyGo's `examples/ES8311/playWAV` bring-up: I2S MCLK 38 / BCLK 39 / LRCK 18 with the shared-speaker mux (XL9555 line 10) held LOW for the ES8311 and the amp enable (XL9555 line 6) bracketed HIGH only around playback via `TDeckMaxBoard::setAmpEnabled()`. Data-pin caveat (GlomarGadaffi/tdeck-max-phone#34, measured with pull-probe + A/B capture): despite the header names `BOARD_ES8311_ASDOUT=40` / `DSDIN=17`, the ESP32 must drive GPIO40 for playback and read GPIO17 — LilyGo's own `playWAV` passes `setPins(MCLK, SCLK, LRCK, ASDOUT, DSDIN)` with the last two args as ESP32-side dout/din. This env therefore uses `PIN_I2S_DOUT=40` / `PIN_I2S_SDIN=17`. The DAC register sequence reuses the pager's shared `Es8311Codec` driver (compiled into this env from `variants/lilygo_tlora_pager/`). Boot logs `[BOOT] T-Deck Max es8311 ok` from a probe-only check; `Settings > Sound` volume and per-slot WAV pickers are enabled via `CAP_SOUND`/`CAP_SOUND_FILES`/`CAP_AUDIO_STREAM`.
 
 ## Validation status
 

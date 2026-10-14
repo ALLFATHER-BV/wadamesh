@@ -427,7 +427,7 @@
 // would have compiled sound out everywhere. Every macro tested here is a -D on the
 // compiler command line, so they are all genuinely visible at this point.
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER) || \
-    defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4)
+    defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
   #define CAP_SOUND 1
 #else
   #define CAP_SOUND 0
@@ -444,7 +444,7 @@
 // "can browse and play WAV files for notifications." Both the T-Deck and the
 // Pager provide that audio path; other boards may expose a filesystem without
 // having compatible notification-sound hardware.
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
   #define CAP_SOUND_FILES 1
 #else
   #define CAP_SOUND_FILES 0
@@ -453,7 +453,7 @@
 // Sustained PCM output for media playback. This is deliberately independent
 // of storage: Lua app files may live on internal flash, SD, or SD_MMC.
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || \
-    defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU)
+    defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU) || defined(HAS_TDECK_MAX)
   #define CAP_AUDIO_STREAM 1
 #else
   #define CAP_AUDIO_STREAM 0

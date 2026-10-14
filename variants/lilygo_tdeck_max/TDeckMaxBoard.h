@@ -97,6 +97,15 @@ public:
   void gpsPowerOff();
   bool gpsPowerIsOn() const { return gps_on_; }
 
+  // Speaker path, mirroring LilyGo's ES8311 examples (examples/ES8311/playWAV):
+  // AUDIO_SEL LOW = ES8311 codec, HIGH = A7682E modem; AMP_EN HIGH enables the
+  // NS4150B speaker amplifier. The amp is parked OFF at idle to save battery;
+  // the sound code brackets every chime/playback with setAmpEnabled(true/false)
+  // exactly like TLoraPagerBoard does, and re-asserts the ES8311 mux before
+  // enabling the amp in case the modem path ever drives it HIGH.
+  void setAmpEnabled(bool on);
+  void selectEs8311Audio();
+
   ExtensionIOXL9555 io_expander;
   GaugeBQ27220 gauge;
 
