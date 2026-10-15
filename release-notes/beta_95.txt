@@ -1,0 +1,36 @@
+# beta_95 - MeshCore 1.18 (meshcomod v1.18.0.1), redesigned Spectrum, RF Monitor and Airtime, a Music app, T-Deck Max sound. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, the core update, new things, fixes, the Heltec V4.
+
+Test build, on top of beta_94. The stable build stays beta_85.
+
+# --- MeshCore 1.18 ---
+wadamesh now runs on MeshCore 1.18, through meshcomod v1.18.0.1. Settings > About shows it under Build.
+The MeshCore app's Command Line works with the device: name, Bluetooth PIN, Wi-Fi, radio settings, airtime and duty cycle, transmit power, receive gain, path hash mode, board and version.
+A contact you give remote CLI permission in the app can run those commands on your device over the mesh; anyone else's command arrives in the chat as a message.
+Channel data, pushed sensor telemetry and raw sends over multi-byte paths now reach the app as they do on MeshCore 1.18.
+A device without a clock source now starts from 1 March 2026 instead of May 2024, and keeps its time through a restart that was not a power cut.
+Boards without a GPS take up to 5 seconds longer to start: MeshCore 1.18 waits longer for a GPS to answer, so slow modules are found.
+
+# --- New ---
+Spectrum is redesigned: tiles for the peak, the noise floor, your channel and how busy it is, a filled trace with a peak hold line and a marker on your channel, and a waterfall that stays dark until there is real signal. Band and Channel switch between the whole band and your channel up close, and Live, 1 min and 10 min set how much history the waterfall shows.
+RF Monitor 1.4: tiles for RSSI, noise, margin and packets per minute, a filled signal chart, and the recently heard packets with their type and signal. Tap a packet, or select it with the keys, for who sent it, its route, its margin above what your spreading factor can still decode, its size and how long it was on the air.
+Airtime 1.6: the channel load as a big figure, tiles for the average, the peak and your own time on the air, a chart with the duty-cycle limit, and the receive and transmit split as a bar.
+New in the Store: Music plays the MP3 and WAV files in a Music folder on the SD card, with shuffle and repeat, and keeps playing through the list with the screen off. It runs on every board with a speaker: the T-Deck, the T-LoRa Pager, the T-Display P4, the Tanmatsu and the T-Deck Max.
+The Store tile shows how many of your installed apps have an update waiting, checked with the firmware update check.
+T-Deck Max: notification sounds, your own sounds and app audio play through its speaker (#665 by Ender436).
+In a conversation, Emoji (and # on the ThinkNode M9) sit next to Send, so on the M9 one press of Right from the end of your message reaches them (#669 by oumike, reported on Discord).
+Store apps on the T-Display P4, the Tanmatsu and the Wio Tracker L2 can now read the SD card and play music from it.
+For app makers: rounded panels, bold and large figures, an event when a track ends that also arrives with the screen off, and a corrected list of the input events apps really receive (SDK guide).
+
+# --- Fixes ---
+The "SD card could not be read" notice no longer appears when the card works; it showed on devices that keep their data on internal storage after an unfinished copy to the card (#667, reported by 900steve).
+The control panel's clock keeps time while the panel is open (#666, reported by 900steve).
+ThinkNode M9: the keyboard light has a brightness setting in Settings > Keyboard, like the T-Deck's (#664, asked for by Buko84).
+The battery widget no longer draws its percentage over a ring too small for it; small cells put the number next to the ring (reported on Discord).
+A Store app that changed a button's text could crash the device; it no longer can.
+RF Monitor named some packet types wrongly, and the Margin tile turned red on a quiet channel; both are fixed.
+Translations: this build's new texts in all 14 languages.
+
+# --- Heltec V4 ---
+The Heltec V4 keeps its built-in translations compressed and unpacks only the language you use, which gives it about 330 KB of room again.

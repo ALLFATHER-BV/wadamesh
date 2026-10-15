@@ -60,15 +60,22 @@ if [ "$MODE" = "beta" ]; then
   # beta_60 shipped with a stale in-tree default and About read "v1.16.0-touch".
   CORE_VER="$(grep -oE 'meshcomod\.git#core-v[0-9.]+' platformio.ini | head -1 | sed 's/.*#core-//')"
   [ -n "$CORE_VER" ] || { echo "ERROR: no core-v* pin found in platformio.ini"; exit 1; }
+  # The meshcomod release that core IS (core-v1.18.0 = meshcomod v1.18.0.1): its own
+  # companion version string, from the pinned core the last build pulled. About shows
+  # "on meshcomod <this>". Falls back to the pin when the core is not fetched yet.
+  MC_HDR=".pio/libdeps/LilyGo_TDeck_companion_radio_touch/MeshCore/examples/companion_radio/MyMesh.h"
+  MESHCOMOD_VER="$(grep -oE '^#define FIRMWARE_VERSION "v[0-9.]+"' "$MC_HDR" 2>/dev/null | grep -oE 'v[0-9.]+' | head -1)"
+  [ -n "$MESHCOMOD_VER" ] || MESHCOMOD_VER="$CORE_VER"
+  sed -i '' -E "s/^#define FIRMWARE_CORE_VERSION \"v[0-9.]+\"/#define FIRMWARE_CORE_VERSION \"${MESHCOMOD_VER}\"/" src/MyMesh.h
   # Hyphens, NOT spaces: PLATFORMIO_BUILD_FLAGS is whitespace-split, so a date
   # like "10 Aug 2026" tears the flag string apart and every -D after it is lost
   # — including the release tag, which is how a build silently ships untagged.
   BUILD_DATE="$(date '+%d-%b-%Y')"
-  echo "firmware data: tag=$TAG core=$CORE_VER date=$BUILD_DATE"
-  export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"' -DFIRMWARE_BUILD_DATE='\"${BUILD_DATE}\"' -DFIRMWARE_CORE_VERSION='\"${CORE_VER}\"'"
+  echo "firmware data: tag=$TAG core=$CORE_VER meshcomod=$MESHCOMOD_VER date=$BUILD_DATE"
+  export PLATFORMIO_BUILD_FLAGS="-DFIRMWARE_RELEASE_TAG='\"${TAG}\"' -DFIRMWARE_VERSION='\"wadamesh ${TAG}\"' -DFIRMWARE_BUILD_DATE='\"${BUILD_DATE}\"' -DFIRMWARE_CORE_VERSION='\"${MESHCOMOD_VER}\"'"
   # Keep the in-tree default (what DEV flashes show) in step with the pinned core,
   # so a bench build never reports a version the firmware no longer is.
-  sed -i '' -E "s/^#define FIRMWARE_VERSION \"v[0-9.]+-touch\"/#define FIRMWARE_VERSION \"${CORE_VER}-touch\"/" src/MyMesh.h
+  sed -i '' -E "s/^#define FIRMWARE_VERSION \"v[0-9.]+-touch\"/#define FIRMWARE_VERSION \"${MESHCOMOD_VER}-touch\"/" src/MyMesh.h
   git diff --quiet src/MyMesh.h || echo "note: refreshed the dev FIRMWARE_VERSION default in src/MyMesh.h -> ${CORE_VER}-touch (commit it)"
   for pair in $ENVS; do
     env="${pair%%:*}"; name="${pair##*:}"
@@ -147,6 +154,11 @@ for f in "$ARCH/$TAG"/*.bin; do
   # pipeline "fail" — reporting every image as untagged even when it is fine.
   n="$(strings "$f" | grep -c "$TAG" || true)"
   [ "${n:-0}" -gt 0 ] || missing="$missing $(basename "$f")"
+  # ... and the meshcomod release About names as the core (test builds set it above).
+  if [ -n "${MESHCOMOD_VER:-}" ]; then
+    n="$(strings "$f" | grep -c "$MESHCOMOD_VER" || true)"
+    [ "${n:-0}" -gt 0 ] || missing="$missing $(basename "$f")(no meshcomod $MESHCOMOD_VER)"
+  fi
 done
 if [ -n "$missing" ]; then
   echo "ERROR: these staged images do not embed $TAG:$missing"

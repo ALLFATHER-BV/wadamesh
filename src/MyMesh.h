@@ -38,7 +38,13 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.17.4-touch"
+#define FIRMWARE_VERSION "v1.18.0.1-touch"
+#endif
+
+// The meshcomod release the pinned core is (scripts/release.sh reads it from the core's
+// own examples/companion_radio/MyMesh.h and refreshes this default; About shows it).
+#ifndef FIRMWARE_CORE_VERSION
+#define FIRMWARE_CORE_VERSION "v1.18.0.1"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)

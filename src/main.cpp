@@ -792,6 +792,7 @@ void setup() {
   delay(200);
 #endif
   Serial.println("[BOOT] setup start");
+  Serial.printf("[BOOT] %s on meshcomod %s\n", FIRMWARE_VERSION, FIRMWARE_CORE_VERSION);
   // The SDK ships CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096: every allocation
   // under 4 KB is forced into internal DRAM even when PSRAM is free. On the V4
   // that is why internal sat at ~99% while 800+ KB of PSRAM went unused. Lower
