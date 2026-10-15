@@ -9491,7 +9491,7 @@ static void composerAutoGrowCb(lv_event_t* e) {
 
 #if CAP_ROUND_CORNERS
 // Position the composer's controls for the current orientation (see chatComposerTwoRow):
-//   portrait:  [          QR  emoji ]     landscape: [ QR emoji  text ...  send ]
+//   portrait:  [          QR  emoji ]     landscape: [ QR  text ...  emoji send ]
 //              [ text ...      send ]
 // Every button on the text box's row is vertically centred on the text box, and re-centred
 // as it grows (chatComposerAutoGrow calls this). Centring lifts them off the screen's
@@ -9514,8 +9514,8 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
   } else {
     const lv_coord_t left = chatComposerLeftInset();
     lv_obj_align(p->qr_btn, LV_ALIGN_BOTTOM_LEFT, left, -lift);
-    lv_obj_align(p->emoji_btn, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -lift);
-    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + 2 * b + 2 * gap, 0);
+    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, 0);
+    lv_obj_align(p->emoji_btn, LV_ALIGN_BOTTOM_RIGHT, -(right + b + gap), -lift);
   }
   lv_obj_align(p->send_btn, LV_ALIGN_BOTTOM_RIGHT, -right, -lift);
 }
@@ -38608,8 +38608,9 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_pad_ver(p.composer_row, 2, LV_PART_MAIN);
 
   // Layout math (row = 240 px, pad_hor = 4 → content area = 232):
-  //   QR(30) + gap(6) + Emoji(30) + gap(6) + TA + gap(6) + Send(34)
-  // The QR + Emoji chips share the left edge; the textarea fills the middle.
+  //   QR(30) + gap(6) + TA + gap(6) + Emoji(30) + gap(6) + Send(34)
+  // QR holds the left edge; Emoji (and the M9's # after it) sit right of the
+  // textarea, aligned off Send so they follow a rotation's new TA width.
   lv_obj_set_style_pad_hor(p.composer_row, 4, LV_PART_MAIN);
 
   // Composer chip size: ~2x on the large screen (Tanmatsu) so the QR/emoji chips
@@ -38620,11 +38621,10 @@ static void makeChatDetail(LvChatPanel& p) {
   const bool has_symbol_chip = chatHasSymbolChip(p.channel_mode);
   const lv_coord_t send_sz = chatComposerSendSz();
   const lv_coord_t comp_ta_w = chatComposerTaW(p.channel_mode);
-  const lv_coord_t symbol_x = has_symbol_chip ? chip_sz + chip_gap : 0;
-  const lv_coord_t emoji_x = has_symbol_chip
-      ? symbol_x + chip_sz + chip_gap
-      : chip_sz + chip_gap;
-  const lv_coord_t comp_ta_x = emoji_x + chip_sz + chip_gap;
+  const lv_coord_t comp_ta_x = chip_sz + chip_gap;
+  // Right-edge offsets: the chips stack leftward from Send's slot, # nearest it.
+  const lv_coord_t symbol_rx = chatComposerSendInset() + send_sz + chip_gap;
+  const lv_coord_t emoji_rx = has_symbol_chip ? symbol_rx + chip_sz + chip_gap : symbol_rx;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
   // defined quick-reply presets. Saves typing for stock phrases ("ok",
@@ -38666,7 +38666,7 @@ static void makeChatDetail(LvChatPanel& p) {
   p.emoji_btn = lv_btn_create(p.composer_row);
   navSetTip(p.emoji_btn, TR("Emoji"));
   lv_obj_set_size(p.emoji_btn, chip_sz, chip_sz);
-  lv_obj_align(p.emoji_btn, LV_ALIGN_BOTTOM_LEFT, emoji_x, 0);
+  lv_obj_align(p.emoji_btn, LV_ALIGN_BOTTOM_RIGHT, -emoji_rx, 0);
   styleButton(p.emoji_btn);
   lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
   lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
@@ -38711,7 +38711,7 @@ static void makeChatDetail(LvChatPanel& p) {
   if (has_symbol_chip) {
     p.symbol_btn = lv_btn_create(p.composer_row);
     lv_obj_set_size(p.symbol_btn, chip_sz, chip_sz);
-    lv_obj_align(p.symbol_btn, LV_ALIGN_BOTTOM_LEFT, symbol_x, 0);
+    lv_obj_align(p.symbol_btn, LV_ALIGN_BOTTOM_RIGHT, -symbol_rx, 0);
     styleButton(p.symbol_btn);
     lv_obj_set_style_radius(p.symbol_btn, chip_sz / 2, LV_PART_MAIN);
     lv_obj_set_style_bg_color(p.symbol_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
@@ -38725,8 +38725,8 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
 
   p.composer_ta = lv_textarea_create(p.composer_row);
-  // M9 conversations: QR | # | emoji | message input | Send. Other boards
-  // retain QR | emoji | message input | Send.
+  // M9 conversations: QR | message input | emoji | # | Send. Other boards
+  // have QR | message input | emoji | Send.
   lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - chatComposerChromeH());
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
@@ -49128,18 +49128,19 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
           return true;
         }
       }
-      // Chat composer (QR | # | emoji | text | Send): LEFT walks text → emoji → #.
+      // Chat composer (QR | text | emoji | # | Send): LEFT walks # → emoji → text.
       if (LvChatPanel* chat = navOpenChatPanel();
           chat && chat->composer_ta && chat->symbol_btn && chat->emoji_btn &&
-          lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn)) {
+          lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn) &&
+          lv_obj_is_valid(chat->composer_ta)) {
         lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-        if (focused == chat->emoji_btn || s_m9_focus_pending == chat->emoji_btn) {
-          m9FocusChatControl(chat->symbol_btn, false);
+        if (focused == chat->symbol_btn || s_m9_focus_pending == chat->symbol_btn) {
+          m9FocusChatControl(chat->emoji_btn, false);
           if (g_lv.task) g_lv.task->noteUserInput();
           return true;
         }
-        if (ta == chat->composer_ta && lv_textarea_get_cursor_pos(ta) == 0) {
-          m9FocusChatControl(chat->emoji_btn, false);
+        if (focused == chat->emoji_btn || s_m9_focus_pending == chat->emoji_btn) {
+          m9FocusChatControl(chat->composer_ta, true);
           if (g_lv.task) g_lv.task->noteUserInput();
           return true;
         }
@@ -49199,19 +49200,16 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
             navMaybeRebuild();
           }
         } else if (LvChatPanel* chat = navOpenChatPanel();
-                   chat && chat->symbol_btn && chat->emoji_btn &&
-                   lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn) &&
-                   ((s_nav_group && lv_group_get_focused(s_nav_group) == chat->symbol_btn) ||
-                    s_m9_focus_pending == chat->symbol_btn)) {
+                   ta && chat && ta == chat->composer_ta && chat->emoji_btn &&
+                   lv_obj_is_valid(chat->emoji_btn)) {
+          // Composer (QR | text | emoji | # | Send): RIGHT walks text → emoji → #.
           m9FocusChatControl(chat->emoji_btn, false);
         } else if (LvChatPanel* chat = navOpenChatPanel();
-                   chat && chat->emoji_btn && chat->composer_ta &&
-                   lv_obj_is_valid(chat->emoji_btn) && lv_obj_is_valid(chat->composer_ta) &&
+                   chat && chat->symbol_btn && chat->emoji_btn &&
+                   lv_obj_is_valid(chat->symbol_btn) && lv_obj_is_valid(chat->emoji_btn) &&
                    ((s_nav_group && lv_group_get_focused(s_nav_group) == chat->emoji_btn) ||
                     s_m9_focus_pending == chat->emoji_btn)) {
-          m9FocusChatControl(chat->composer_ta, true);
-          if (g_lv.task) g_lv.task->noteUserInput();
-          return true;
+          m9FocusChatControl(chat->symbol_btn, false);
         } else if (ta) {
           navMoveDir(NAV_RIGHT);   // caret was already at end — same as LEFT
         }
