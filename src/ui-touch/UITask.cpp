@@ -114,6 +114,25 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
                                       // MyMesh.h -> target.h -> TLoraPagerBoard.h above
   #include <driver/i2s.h>     // pager ES8311 codec (notification tones + WAV playback)
   #include "Es8311Codec.h"    // PIN_I2S_MCLK/BCK/WS/DOUT/SDIN come from platformio.ini build flags
+#elif defined(HAS_TDECK_MAX)
+  #include <driver/i2s.h>     // Max ES8311 codec + NS4150B amp (notification tones + WAV playback)
+  #include "Es8311Codec.h"    // shared with the pager; PIN_I2S_* come from the Max env build flags
+  // LilyGo T-Deck-MAX pinmap fallbacks (platformio.ini is the source of truth).
+  #ifndef PIN_I2S_MCLK
+    #define PIN_I2S_MCLK 38
+  #endif
+  #ifndef PIN_I2S_BCK
+    #define PIN_I2S_BCK  39
+  #endif
+  #ifndef PIN_I2S_WS
+    #define PIN_I2S_WS   18
+  #endif
+  #ifndef PIN_I2S_DOUT
+    #define PIN_I2S_DOUT 40
+  #endif
+  #ifndef PIN_I2S_SDIN
+    #define PIN_I2S_SDIN 17
+  #endif
 #elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
   #include <FFat.h>            // internal FAT partition (Tanmatsu 'locfd' / P4 'storage')
   #include <SD_MMC.h>          // microSD on the P4-class boards' SDMMC slot 0; slot 1 = C6 radio
@@ -1533,7 +1552,7 @@ static inline bool luaAudioStorageBusy() {
 #if CAP_SD || defined(TLORA_PAGER)
 static bool fmSdTryMount();   // storage callers precede the mount implementation
 #endif
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
 static constexpr int kI2sSampleRate = 16000;
 static constexpr i2s_port_t kI2sPort = I2S_NUM_0;
 // The tile fetcher's in-flight counter (defined later in the file). We skip
@@ -1676,7 +1695,87 @@ static void pagerPlayToneRaw(int freq, int ms) {
   }
   i2s_zero_dma_buffer(kI2sPort);
 }
-#endif  // TLORA_PAGER
+#endif  // TLORA_PAGER (tone generator)
+
+#if defined(HAS_TDECK_MAX)
+// T-Deck Max speaker path: ES8311 codec (0x18) + NS4150B amp, both switched
+// through the XL9555 (AMP_EN line 6, audio-mux line 10). Same on-demand-install
+// shape as the pager: I2S clocks (incl. MCLK 38) must already be toggling
+// before the codec's PLL will lock, so codec register writes happen after
+// i2s_set_pin. The codec chip itself stays powered across chimes (its own
+// begin() runs once, lazily, on first use) -- only the I2S driver and the
+// codec's DAC power/format state (start()/suspend()) are cycled per playback,
+// bracketed by the amp's AMP_EN toggle in TDeckMaxBoard (see maxNotifyTaskFn).
+static Es8311Codec s_max_codec;
+static bool        s_max_codec_begun = false;
+
+static bool maxAudioInstallRate(int rate) {
+  if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 16 * 1024) { Serial.println("[MAXAUDIO] no internal heap"); return false; }
+  i2s_config_t cfg = {};
+  cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX);
+  cfg.sample_rate = rate;
+  cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT;
+  cfg.channel_format = I2S_CHANNEL_FMT_ONLY_LEFT;   // mono synth/WAV buffer
+  cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
+  cfg.intr_alloc_flags = 0;
+  cfg.dma_buf_count = 4;
+  cfg.dma_buf_len = 256;
+  cfg.use_apll = false;
+  cfg.tx_desc_auto_clear = true;
+  esp_err_t e = i2s_driver_install(kI2sPort, &cfg, 0, nullptr);
+  if (e != ESP_OK) { Serial.printf("[MAXAUDIO] i2s_driver_install failed %d rate=%d\n", (int)e, rate); return false; }
+  i2s_pin_config_t pins = {};
+  pins.mck_io_num   = PIN_I2S_MCLK;
+  pins.bck_io_num   = PIN_I2S_BCK;
+  pins.ws_io_num    = PIN_I2S_WS;
+  pins.data_out_num = PIN_I2S_DOUT;
+  pins.data_in_num  = I2S_PIN_NO_CHANGE;
+  e = i2s_set_pin(kI2sPort, &pins);
+  if (e != ESP_OK) { Serial.printf("[MAXAUDIO] i2s_set_pin failed %d\n", (int)e); i2s_driver_uninstall(kI2sPort); return false; }
+  if (!s_max_codec_begun) {
+    s_max_codec_begun = s_max_codec.begin(Wire, 0x18);
+    Serial.printf("[MAXAUDIO] codec begin %s\n", s_max_codec_begun ? "ok" : "FAILED");
+    if (!s_max_codec_begun) { i2s_driver_uninstall(kI2sPort); return false; }
+  }
+  if (!s_max_codec.start((uint32_t)rate)) { Serial.printf("[MAXAUDIO] codec start FAILED rate=%d\n", rate); i2s_driver_uninstall(kI2sPort); return false; }
+  Serial.printf("[MAXAUDIO] installed rate=%d mclk=%d bck=%d ws=%d dout=%d\n", rate, (int)PIN_I2S_MCLK, (int)PIN_I2S_BCK, (int)PIN_I2S_WS, (int)PIN_I2S_DOUT);
+  return true;
+}
+static bool maxAudioInstall() { return maxAudioInstallRate(kI2sSampleRate); }
+static void maxAudioUninstall() {
+  s_max_codec.setMute(true);
+  s_max_codec.suspend();
+  i2s_zero_dma_buffer(kI2sPort);
+  i2s_driver_uninstall(kI2sPort);
+}
+
+// Render `freq` Hz for `ms` ms into the already-installed I2S as a 16-bit
+// sine with a short fade-in/out so it doesn't click. Loudness comes from the
+// codec's hardware volume register (set by the caller), not sample scaling.
+static void maxPlayToneRaw(int freq, int ms) {
+  const int total = (kI2sSampleRate * ms) / 1000;
+  const int fade = total / 8 > 0 ? total / 8 : 1;
+  int16_t buf[128];
+  int written_total = 0;
+  double phase = 0.0;
+  const double step = 2.0 * M_PI * (double)freq / (double)kI2sSampleRate;
+  const double amp0 = 22000.0;
+  while (written_total < total) {
+    int n = 0;
+    for (; n < 128 && written_total < total; ++n, ++written_total) {
+      double amp = amp0;
+      if (written_total < fade)            amp *= (double)written_total / fade;
+      else if (written_total > total-fade) amp *= (double)(total - written_total)/fade;
+      buf[n] = (int16_t)(sin(phase) * amp);
+      phase += step;
+      if (phase > 2.0 * M_PI) phase -= 2.0 * M_PI;
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, buf, n * sizeof(int16_t), &bw, pdMS_TO_TICKS(200));
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+}
+#endif  // HAS_TDECK_MAX
 
 // ---- Custom WAV notification playback (T-Deck I2S) -------------------------
 // Stream a small PCM WAV (internal SPIFFS or "sd:"-prefixed SD) straight to the
@@ -1686,7 +1785,7 @@ static void pagerPlayToneRaw(int freq, int ms) {
 static bool wavOpen(const char* prefpath, File& f) {
   if (!prefpath || !prefpath[0]) return false;
   fs::FS* fsp = &SPIFFS; const char* fp = prefpath;
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)   // only the T-Deck/pager sound picker ever writes an "sd:"-prefixed pref
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)   // only the T-Deck/pager/Max sound picker ever writes an "sd:"-prefixed pref
   // No fmSdTryMount() here: this runs on the throwaway notify task, and changing
   // the SD VFS lifecycle from a second task races the loop task's own SD use.
   // If the card
@@ -1887,7 +1986,97 @@ static void pagerPreviewWavFile(const char* prefpath) {
 }
 #endif  // TLORA_PAGER
 
-#endif  // HAS_TDECK_GT911 || TLORA_PAGER
+#if defined(HAS_TDECK_MAX)
+static bool maxPlayWavFile(const char* prefpath, int volPct) {
+  File f; if (!wavOpen(prefpath, f)) return false;
+  uint16_t ch=0; uint32_t rate=0, dlen=0;
+  if (!wavParse(f, &ch, &rate, &dlen)) { f.close(); return false; }
+  const uint32_t frameBytes = (uint32_t)ch * 2u;
+  const uint32_t maxBytes = rate * frameBytes * 6u;   // ~6 s cap, matches the pager path
+  if (dlen > maxBytes) dlen = maxBytes;
+  if (!maxAudioInstallRate((int)rate)) { f.close(); return false; }
+  s_max_codec.setVolumePercent((uint8_t)volPct);
+  s_max_codec.setMute(false);
+  int16_t in[256], out[256];
+  uint32_t remaining = dlen;
+  while (remaining >= frameBytes) {
+    size_t want = sizeof(in);
+    if (want > remaining) want = remaining - (remaining % frameBytes);
+    int got = f.read((uint8_t*)in, want);
+    if (got <= 0) break;
+    int frames = got / (int)frameBytes;
+    for (int i = 0; i < frames; ++i) {
+      // Downmix to mono -- no software gain: the codec's hardware volume
+      // register, already set above, is doing that.
+      out[i] = (ch == 2) ? (int16_t)(((int32_t)in[2*i] + in[2*i+1]) / 2) : in[i];
+    }
+    size_t bw = 0;
+    i2s_write(kI2sPort, out, (size_t)frames * sizeof(int16_t), &bw, pdMS_TO_TICKS(300));
+    remaining -= (uint32_t)got;
+  }
+  i2s_zero_dma_buffer(kI2sPort);
+  maxAudioUninstall();
+  f.close();
+  return true;
+}
+
+// Mirrors pagerNotifyTaskFn, bracketed with the amp's AMP_EN toggle (muted/
+// off at idle to save battery) and the audio-mux select (LOW = ES8311).
+static void maxNotifyTaskFn(void* arg) {
+  (void)arg;
+  const int volPct = s_notify_vol;
+  Serial.printf("[MAXAUDIO] notify task slot=%d vol=%d path='%s'\n", (int)s_notify_slot, volPct, s_notify_path);
+  board.selectEs8311Audio();
+  board.setAmpEnabled(true);
+  delay(50);   // let the NS4150B rail settle before I2S clocks start
+  bool played = (s_notify_path[0] && maxPlayWavFile(s_notify_path, volPct));
+  Serial.printf("[MAXAUDIO] wav %s, falling back to chime\n", played ? "played" : "skipped");
+  if (!played && maxAudioInstall()) {
+    s_max_codec.setVolumePercent((uint8_t)volPct);
+    s_max_codec.setMute(false);
+    if (s_notify_slot == TOUCH_SND_MEN) {        // @-mention: bright 3-note rising arpeggio
+      maxPlayToneRaw(1318, 70);                  // E6
+      maxPlayToneRaw(1760, 70);                  // A6
+      maxPlayToneRaw(2349, 130);                 // D7
+    } else if (s_notify_slot == TOUCH_SND_DM) {  // direct message: distinct rising fifth
+      maxPlayToneRaw(1047, 90);                  // C6
+      maxPlayToneRaw(1568, 120);                 // G6
+    } else {                                     // message: the original two-note chime
+      maxPlayToneRaw(880,  90);                  // A5
+      maxPlayToneRaw(1318, 110);                 // E6
+    }
+    maxAudioUninstall();
+  }
+  Serial.println("[MAXAUDIO] notify task done");
+  board.setAmpEnabled(false);
+  s_notify_playing = false;
+  vTaskDelete(nullptr);
+}
+
+static void maxPlayNotifySlot(int slot) {
+  if (tileFetchPendingLoad() > 0) return;
+  if (s_notify_playing) return;
+  s_notify_slot = slot;
+  s_notify_vol = (int)touchPrefsGetSoundVolume();   // 0..100 -> the codec's hw volume register
+  touchPrefsGetSoundFile(slot, s_notify_path, sizeof s_notify_path);
+  s_notify_playing = true;
+  if (xTaskCreate(maxNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS) {
+    s_notify_playing = false;
+  }
+}
+static void maxPreviewWavFile(const char* prefpath) {
+  if (tileFetchPendingLoad() > 0 || s_notify_playing) return;
+  strncpy(s_notify_path, prefpath, sizeof s_notify_path - 1);
+  s_notify_path[sizeof s_notify_path - 1] = '\0';
+  s_notify_slot = TOUCH_SND_MSG;
+  s_notify_vol  = (int)touchPrefsGetSoundVolume();
+  s_notify_playing = true;
+  if (xTaskCreate(maxNotifyTaskFn, "notify", 8192, nullptr, 3, nullptr) != pdPASS)
+    s_notify_playing = false;
+}
+#endif  // HAS_TDECK_MAX
+
+#endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_TDECK_MAX
 
 // ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9
 //      piezo / T-Display P4 ES8311 codec) ----
@@ -1991,6 +2180,8 @@ static inline void uiPlaySlot(int slot) {
 #endif
 #if defined(HAS_TDECK_GT911)
   tdeckPlayNotifySlot(slot);
+#elif defined(HAS_TDECK_MAX)
+  maxPlayNotifySlot(slot);
 #elif defined(HAS_TDISPLAY_P4)
   p4PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
 #elif defined(TLORA_PAGER)
@@ -2013,6 +2204,8 @@ static inline void uiPreviewWavFile(const char* path) {
 #endif
 #if defined(HAS_TDECK_GT911)
   tdeckPreviewWavFile(path);
+#elif defined(HAS_TDECK_MAX)
+  maxPreviewWavFile(path);
 #elif defined(TLORA_PAGER)
   pagerPreviewWavFile(path);
 #endif
@@ -12252,7 +12445,7 @@ static void toggleMentionSoundCb(lv_event_t* e) {
 #endif
   }
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -17386,7 +17579,7 @@ static void buildSoundPage() {
 #endif
                  toggleLoudAlertsCb);
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
     s_vol_val_lbl = setStepperRow(c, "Volume", nullptr, LV_SYMBOL_MINUS, LV_SYMBOL_PLUS,
                                   volumeStepCb, volumeStepCb, (void*)(intptr_t)-10, (void*)(intptr_t)10);
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
@@ -67446,6 +67639,18 @@ static bool luaAudioSinkBegin(uint32_t source_rate, LuaAudioSinkSession* sink,
   s_pager_codec.setVolumePercent((uint8_t)volume);
   s_pager_codec.setMute(false);
   sink->output_rate = source_rate;
+#elif defined(HAS_TDECK_MAX)
+  if (s_notify_playing) { if (error) *error = "busy"; return false; }
+  board.selectEs8311Audio();
+  board.setAmpEnabled(true);
+  if (!maxAudioInstallRate((int)source_rate)) {
+    board.setAmpEnabled(false);
+    if (error) *error = "audio unavailable";
+    return false;
+  }
+  s_max_codec.setVolumePercent((uint8_t)volume);
+  s_max_codec.setMute(false);
+  sink->output_rate = source_rate;
 #elif defined(HAS_TDISPLAY_P4)
   if (!p4AudioStreamBegin()) {
     if (error) *error = "audio unavailable";
@@ -67475,7 +67680,7 @@ static bool luaAudioSinkBegin(uint32_t source_rate, LuaAudioSinkSession* sink,
 
 static bool luaAudioSinkWrite(LuaAudioSinkSession* sink, const int16_t* samples, size_t frames) {
   if (!sink || !sink->open || !samples || !frames) return false;
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
   size_t written = 0;
   const size_t bytes = frames * sizeof(int16_t);
   return i2s_write(kI2sPort, samples, bytes, &written, pdMS_TO_TICKS(300)) == ESP_OK &&
@@ -67501,6 +67706,9 @@ static void luaAudioSinkEnd(LuaAudioSinkSession* sink) {
   i2s_driver_uninstall(kI2sPort);
 #elif defined(TLORA_PAGER)
   pagerAudioUninstall();
+  board.setAmpEnabled(false);
+#elif defined(HAS_TDECK_MAX)
+  maxAudioUninstall();
   board.setAmpEnabled(false);
 #elif defined(HAS_TDISPLAY_P4)
   p4AudioStreamEnd();
@@ -75666,7 +75874,7 @@ static bool sdRuntimeLifecycleBusy() {
 #if CAP_LUA_AUDIO
   busy = busy || luaAudioStorageBusy();
 #endif
-#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
   busy = busy || s_notify_playing;
 #endif
 #if CAP_SD || defined(TLORA_PAGER)
