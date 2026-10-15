@@ -300,6 +300,28 @@ def src_files(root):
     return sorted(f for f in files if os.path.basename(f) != 'i18n_builtin.h')
 
 
+# The built-in table is baked only for the 2 MB Heltec V4 (CAP_BUILTIN_LANGS), so an
+# app's texts belong in it only if that board can run the app: the version the
+# catalog serves (old versions are gone from the Store), and not an app that needs
+# what the V4 lacks. "sdk_ext" apps need 8 MB of PSRAM; "audio" apps need a speaker.
+# Keeping every version of every app cost the V4 the flash the Music app's 16
+# texts x 14 languages took (2026-10-15). An unknown "requires" is kept, to be safe.
+V4_UNMET = {"sdk_ext", "audio"}
+
+
+def lua_sources_for_table(root):
+    import json
+    cat = json.load(open(os.path.join(root, 'deploy/apps/apps.json'), encoding='utf-8'))['apps']
+    out = []
+    for a in cat:
+        if a.get('requires') in V4_UNMET:
+            continue
+        p = os.path.join(root, 'deploy/apps', a['id'], a['ver'], a['id'] + '.lua')
+        if os.path.exists(p):
+            out.append(open(p, encoding='utf-8').read())
+    return out
+
+
 def reachable_keys(root, allkeys):
     """The subset of allkeys (str) some source or Lua app can look up. Raises
     RuntimeError when an input it depends on is missing, rather than trimming blind."""
@@ -318,11 +340,7 @@ def reachable_keys(root, allkeys):
         for b in expand(g, mval):
             lits.update((b, tr_strip(b), b.lstrip(b' ')))
     lua = set()
-    srcs = re.findall(r'R"WADALUA\((.*?)\)WADALUA"',
-                      open(os.path.join(root, 'src/ui-touch/lua_builtin.h'), encoding='utf-8').read(), re.S)
-    srcs += [open(p, encoding='utf-8').read()
-             for p in glob.glob(os.path.join(root, 'deploy/apps/*/*/*.lua'))]   # side-loadable too
-    for s in srcs:
+    for s in lua_sources_for_table(root):
         lua |= lua_strings(s)[0]
     keep = {k for k in allkeys if k.encode('utf-8') in lits or k in lua}
     if len(keep) < 0.8 * len(allkeys):

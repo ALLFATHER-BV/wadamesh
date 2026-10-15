@@ -1927,3 +1927,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR bei SF%d
+%s ago	vor %s
+1 min	1 Min
+10 min	10 Min
+Acknowledgement	Bestätigung
+Air split	Aufteilung
+Anonymous request	Anonyme Anfrage
+Average	Mittel
+Band	Band
+Busy	Belegt
+Channel data	Kanaldaten
+Channel message	Kanalnachricht
+Decodes to	Dekodiert bis
+Direct with a region code	Direkt mit Regionscode
+Flood with a region code	Flood mit Regionscode
+Floor	Boden
+Hops	Hops
+Live	Live
+Margin	Reserve
+Multipart	Mehrteilig
+Noise	Rauschen
+Packet	Paket
+Path	Pfad
+Peak	Spitze
+Request	Anfrage
+Response	Antwort
+Route	Route
+Size	Größe
+Tap to go back	Tippen für zurück
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	Budget %d s   tx %d   rx %d   Fehler %d   Duty %d%%   SF%d
+budget %d s  tx %d  rx %d	Budget %d s  tx %d  rx %d
+channel busy now	Kanal jetzt belegt
+listening, nothing heard yet	Höre zu, noch nichts empfangen
+no airtime yet	noch keine Sendezeit
+over %d:%02d	über %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Lege MP3- oder WAV-Dateien in den Ordner dieser App.
+Cannot play	Kann nicht abspielen
+Looking for music...	Suche Musik...
+Looking for music... %d	Suche Musik... %d
+Music	Musik
+No music found	Keine Musik gefunden
+No speaker	Kein Lautsprecher
+Playing	Spielt
+Put MP3 or WAV files in a Music folder on the SD card.	Lege MP3- oder WAV-Dateien in einen Ordner Music auf der SD-Karte.
+Repeat all	Alle wiederholen
+Repeat off	Wiederholen aus
+Repeat this track	Titel wiederholen
+Showing the first %d tracks	Die ersten %d Titel werden gezeigt
+Sound is off: Settings > Sound	Ton ist aus: Einstellungen > Ton
+Stopped	Gestoppt
+This device cannot play music.	Dieses Gerät kann keine Musik abspielen.

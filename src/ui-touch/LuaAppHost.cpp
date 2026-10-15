@@ -31,9 +31,13 @@ extern "C" {
 // to keep this TU decoupled from the 47k-line UITask.cpp).
 extern lv_coord_t       luaHostAppBarH();                         // real AppPage bar height
 extern const lv_font_t* luaHostFontForSize(int size_class);       // 12/14/16 -> g_font_*
+extern const lv_font_t* luaHostBoldFontForSize(int size_class);   // the SemiBold face of a size class
 extern void             luaHostToast(const char* msg, int ms);    // showAlert passthrough
 extern bool             luaHostBeep();
 extern void             luaHostSetSelectionGlow(lv_obj_t* obj, bool selected);
+extern uint32_t         luaHostPanelColor();                      // wada.ui.panel defaults (live theme)
+extern uint32_t         luaHostBorderColor();
+extern void             luaHostMarkInert(lv_obj_t* obj);          // never a keyboard focus stop
 extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
@@ -50,9 +54,11 @@ extern void             luaHostAudioStatus(uint32_t owner, char* state, size_t s
                                            char* format, size_t format_cap,
                                            char* error, size_t error_cap);
 #endif
-#if CAP_LUA_SD_LIST
+#if CAP_LUA_SD_READ
 extern fs::FS*          luaHostSdFs(bool* busy);                  // mounted physical SD, or null
 extern bool             luaHostSdReadFailed();                    // failed open was a dead card
+#endif
+#if CAP_LUA_SD_LIST
 extern bool             luaHostSdClearAttributes(const char* path); // drop read-only/hidden/system
 #include "SdThreat.h"   // the SD malware policy wada.sd.check/remove enforce
 #endif
@@ -463,11 +469,22 @@ WidgetUd* checkLabel(lua_State* L) {
   return u;
 }
 
+// A button handle shares the label methods (uiButton). Its text lives in the
+// button's child label: calling lv_label_ functions on the lv_btn itself wrote
+// label fields into a button object and corrupted the heap, the first time an
+// app relabelled a button (Music's play/pause, crash on the T-Display P4).
+lv_obj_t* labelTarget(lv_obj_t* o) {
+  if (!o || lv_obj_check_type(o, &lv_label_class)) return o;
+  lv_obj_t* c = lv_obj_get_child(o, 0);
+  return (c && lv_obj_check_type(c, &lv_label_class)) ? c : nullptr;
+}
+
 int lbSet(lua_State* L) {
   WidgetUd* u = checkLabel(L);
   size_t length = 0;
   const char* text = luaL_checklstring(L, 2, &length);
-  if (u->obj) lv_label_set_text(u->obj, safeUiText(text, length));
+  lv_obj_t* l = labelTarget(u->obj);
+  if (l) lv_label_set_text(l, safeUiText(text, length));
   return 0;
 }
 int lbPos(lua_State* L) {
@@ -485,7 +502,7 @@ int lbWidth(lua_State* L) {   // label:width(px [, "left"|"center"|"right"]) —
   WidgetUd* u = checkLabel(L);
   if (u->obj) {
     lv_obj_set_width(u->obj, (lv_coord_t)luaL_checkinteger(L, 2));
-    lv_label_set_long_mode(u->obj, LV_LABEL_LONG_WRAP);
+    if (lv_obj_check_type(u->obj, &lv_label_class)) lv_label_set_long_mode(u->obj, LV_LABEL_LONG_WRAP);
     // Optional alignment inside that width: the only way an app can centre a
     // line exactly, since it cannot measure glyphs itself.
     const char* al = luaL_optstring(L, 3, nullptr);
@@ -504,7 +521,8 @@ int uiLabel(lua_State* L) {
   const char* text = luaL_checklstring(L, 1, &length);
   const lv_coord_t x = (lv_coord_t)luaL_optinteger(L, 2, 0);
   const lv_coord_t y = (lv_coord_t)luaL_optinteger(L, 3, 0);
-  const lv_font_t* font = luaHostFontForSize((int)luaL_optinteger(L, 4, 14));
+  const int size = (int)luaL_optinteger(L, 4, 14);
+  const lv_font_t* font = lua_toboolean(L, 6) ? luaHostBoldFontForSize(size) : luaHostFontForSize(size);
   const uint32_t color = argColor(L, 5, 0xE6E9ED);
   lv_obj_t* l = lv_label_create(s_h->body);
   lv_label_set_text(l, safeUiText(text, length));
@@ -515,6 +533,58 @@ int uiLabel(lua_State* L) {
   ud->gen = s_ui_gen;
   ud->obj = l;
   luaL_setmetatable(L, "wada.label");
+  return 1;
+}
+
+// ---- wada.ui.panel(x, y, w, h [, color [, radius]]) ---------------------------
+// A rounded, framed surface in the firmware's own card style, for an app to group
+// readings on (stat tiles, a frame around a chart or a list). A canvas cannot do
+// this: it has no transparency, so on the aurora background its corners show as a
+// hard rectangle. Inert: never a focus stop, never takes a tap. Created before the
+// widgets that sit on it, it draws underneath them.
+struct PanelUd { lv_obj_t* obj; uint32_t gen; };
+PanelUd* checkPanel(lua_State* L) {
+  PanelUd* u = (PanelUd*)luaL_checkudata(L, 1, "wada.panel");
+  if (u->gen != s_ui_gen) u->obj = nullptr;
+  return u;
+}
+int pnPos(lua_State* L) {
+  PanelUd* u = checkPanel(L);
+  if (u->obj) lv_obj_set_pos(u->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+int pnSize(lua_State* L) {    // panel:size(w, h): a bar that grows, a meter
+  PanelUd* u = checkPanel(L);
+  if (u->obj) lv_obj_set_size(u->obj, (lv_coord_t)luaL_checkinteger(L, 2), (lv_coord_t)luaL_checkinteger(L, 3));
+  return 0;
+}
+int pnColor(lua_State* L) {   // panel:color(fill [, border])
+  PanelUd* u = checkPanel(L);
+  if (!u->obj) return 0;
+  lv_obj_set_style_bg_color(u->obj, lv_color_hex(argColor(L, 2)), LV_PART_MAIN);
+  if (!lua_isnoneornil(L, 3)) lv_obj_set_style_border_color(u->obj, lv_color_hex(argColor(L, 3)), LV_PART_MAIN);
+  return 0;
+}
+int uiPanel(lua_State* L) {
+  if (!s_h || !s_h->body) return luaL_error(L, "no app body");
+  const lv_coord_t x = (lv_coord_t)luaL_checkinteger(L, 1), y = (lv_coord_t)luaL_checkinteger(L, 2);
+  const lv_coord_t w = (lv_coord_t)luaL_checkinteger(L, 3), h = (lv_coord_t)luaL_checkinteger(L, 4);
+  lv_obj_t* p = lv_obj_create(s_h->body);
+  lv_obj_remove_style_all(p);
+  lv_obj_set_pos(p, x, y);
+  lv_obj_set_size(p, w, h);
+  lv_obj_set_style_bg_color(p, lv_color_hex(argColor(L, 5, luaHostPanelColor())), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(p, lv_color_hex(luaHostBorderColor()), LV_PART_MAIN);
+  lv_obj_set_style_border_width(p, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(p, (lv_coord_t)luaL_optinteger(L, 6, 8), LV_PART_MAIN);
+  lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(p, LV_OBJ_FLAG_CLICKABLE);
+  luaHostMarkInert(p);
+  PanelUd* ud = (PanelUd*)lua_newuserdatauv(L, sizeof(PanelUd), 0);
+  ud->gen = s_ui_gen;
+  ud->obj = p;
+  luaL_setmetatable(L, "wada.panel");
   return 1;
 }
 
@@ -948,12 +1018,12 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_KEYBOARD);     lua_setfield(L, -2, "keyboard");
   lua_pushboolean(L, CAP_TOUCH);        lua_setfield(L, -2, "touch");
   lua_pushboolean(L, CAP_SD);           lua_setfield(L, -2, "sd");
-  lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_list");
+  lua_pushboolean(L, CAP_LUA_SD_READ);  lua_setfield(L, -2, "sd_list");
   lua_pushboolean(L, CAP_LUA_SD_LIST);  lua_setfield(L, -2, "sd_clean");   // wada.sd.check/remove + list paging
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio");
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_wav");
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_mp3");
-  lua_pushboolean(L, CAP_LUA_AUDIO && CAP_LUA_SD_LIST);
+  lua_pushboolean(L, CAP_LUA_AUDIO && CAP_LUA_SD_READ);
   lua_setfield(L, -2, "audio_sd");
   // Feature flags for the calls added after the first extended SDK shipped, so
   // an app can degrade instead of erroring on firmware that predates them.
@@ -968,6 +1038,13 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");    // wada.sys.compass()
   lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "widget");     // wada.widget (a Home widget)
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "panel");      // wada.ui.panel, ui.label bold, size 24
+  lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_events"); // app.on_audio
+#if defined(HAS_TDECK_PRO)
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "epaper");     // T-Deck Pro / Max: redraw sparingly
+#else
+  lua_pushboolean(L, 0);                lua_setfield(L, -2, "epaper");
+#endif
   return 1;
 }
 
@@ -1753,7 +1830,7 @@ int fsList(lua_State* L) {
   return 1;
 }
 
-#if CAP_LUA_SD_LIST
+#if CAP_LUA_SD_READ
 // ---- wada.sd: read-only physical SD directory listing ----------------------
 // Unlike wada.fs, this intentionally accepts paths, but only absolute paths
 // rooted on the card. Reject traversal rather than normalising it into a
@@ -1855,6 +1932,9 @@ int sdList(lua_State* L) {
   return 1;
 }
 
+#endif  // CAP_LUA_SD_READ
+
+#if CAP_LUA_SD_LIST
 // ---- wada.sd.check / wada.sd.remove: Windows malware on the card -----------
 // Written for the ThinkNode M9 SD-card worm (Elecrow advisory, Sept 2026). The
 // policy lives in SdThreat.h and is applied HERE, in firmware: remove() deletes
@@ -1967,7 +2047,7 @@ int audioPlay(lua_State* L) {
   const char* source = "app";
 
   if (requested_len >= 3 && !memcmp(requested, "sd:", 3)) {
-#if CAP_LUA_SD_LIST
+#if CAP_LUA_SD_READ
     const char* card_path = requested + 3;
     const size_t card_len = requested_len - 3;
     if (!sdSafePath(card_path, card_len, path, sizeof path)) return audioError(L, "bad path");
@@ -2400,6 +2480,35 @@ void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float s
   }
 }
 
+#if CAP_LUA_AUDIO
+// ---- app.on_audio: playback state changes, screen on or off -----------------
+// A music player has to start the next track when one ends, and that usually
+// happens with the screen dark, when on_tick and repeating timers are paused on
+// purpose. Polling audio.status() from a tick therefore stalled a playlist at the
+// end of every track until the screen woke. This delivers each change of state
+// (playing, paused, ended, error, stopped) once, whether or not the screen is on.
+// Only apps that declare on_audio get the poll, like on_packet.
+lv_timer_t* s_audio_poll = nullptr;
+char s_audio_last_state[12] = "";
+void audioPollCb(lv_timer_t* t) {
+  (void)t;
+  if (!s_h || !s_h->L) return;
+  char state[12] = "", path[200] = "", source[8] = "", format[8] = "", error[40] = "";
+  luaHostAudioStatus(s_h->generation, state, sizeof state, path, sizeof path,
+                     source, sizeof source, format, sizeof format, error, sizeof error);
+  if (!strcmp(state, s_audio_last_state)) return;
+  snprintf(s_audio_last_state, sizeof s_audio_last_state, "%s", state);
+  if (!pushCallback(s_h, "on_audio")) return;
+  lua_State* L = s_h->L;
+  lua_createtable(L, 0, 3);
+  lua_pushstring(L, state); lua_setfield(L, -2, "state");
+  lua_pushstring(L, path);  lua_setfield(L, -2, "path");
+  if (error[0]) { lua_pushstring(L, error); lua_setfield(L, -2, "error"); }
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+#endif
+
 void packetPollCb(lv_timer_t* t) {
   (void)t;
   if (!s_h || !s_h->L) return;
@@ -2739,11 +2848,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiLabel);  lua_setfield(L, -2, "label");
   lua_pushcfunction(L, uiButton); lua_setfield(L, -2, "button");
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
+  lua_pushcfunction(L, uiPanel);  lua_setfield(L, -2, "panel");
   lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
   lua_pushcfunction(L, uiTextW);     lua_setfield(L, -2, "text_w");
   lua_pushcfunction(L, uiTextLines); lua_setfield(L, -2, "text_lines");
-  lua_createtable(L, 0, 7);                              // wada.ui.colors (theme)
+  lua_createtable(L, 0, 9);                              // wada.ui.colors (theme)
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
   lua_pushinteger(L, 0x7A7F87); lua_setfield(L, -2, "sub");
@@ -2751,6 +2861,8 @@ void openWada(lua_State* L) {
   lua_pushinteger(L, 0x15181B); lua_setfield(L, -2, "panel");   // a raised surface on top of it
   lua_pushinteger(L, 0xD7574E); lua_setfield(L, -2, "bad");
   lua_pushinteger(L, 0x53C06B); lua_setfield(L, -2, "good");
+  lua_pushinteger(L, 0xE8A33D); lua_setfield(L, -2, "warn");
+  lua_pushinteger(L, (lua_Integer)luaHostBorderColor()); lua_setfield(L, -2, "border");
   lua_setfield(L, -2, "colors");
   lua_pushcfunction(L, uiInput); lua_setfield(L, -2, "input");   // modal text entry
   lua_pushcfunction(L, uiList);  lua_setfield(L, -2, "list");    // scrollable selectable rows
@@ -2822,11 +2934,13 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "fs");
 #endif
 
-#if CAP_LUA_SD_LIST
+#if CAP_LUA_SD_READ
   lua_newtable(L);                                       // wada.sd (read-only physical card)
   lua_pushcfunction(L, sdList);   lua_setfield(L, -2, "list");
+#if CAP_LUA_SD_LIST
   lua_pushcfunction(L, sdCheck);  lua_setfield(L, -2, "check");    // SD malware policy
   lua_pushcfunction(L, sdRemove); lua_setfield(L, -2, "remove");   // threats only, see SdThreat.h
+#endif
   lua_setfield(L, -2, "sd");
 #endif
 
@@ -2930,6 +3044,14 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, cvGc);     lua_setfield(L, -2, "__gc");
   lua_pop(L, 1);
 
+  luaL_newmetatable(L, "wada.panel");
+  lua_newtable(L);
+  lua_pushcfunction(L, pnPos);    lua_setfield(L, -2, "pos");
+  lua_pushcfunction(L, pnColor);  lua_setfield(L, -2, "color");
+  lua_pushcfunction(L, pnSize);   lua_setfield(L, -2, "size");
+  lua_setfield(L, -2, "__index");
+  lua_pop(L, 1);
+
   luaL_newmetatable(L, "wada.chart");
   lua_newtable(L);
   lua_pushcfunction(L, chPush);   lua_setfield(L, -2, "push");
@@ -2966,6 +3088,7 @@ void hostTeardown();   // fwd
 // ---------------------------------------------------------------------------
 // 3) lifecycle
 // ---------------------------------------------------------------------------
+lv_obj_t* luaAppBody() { return s_h ? s_h->body : nullptr; }
 bool luaAppIsOpen() { return s_h != nullptr; }
 
 // The app's content area, so UITask can parent a map view into it. External
@@ -3076,6 +3199,9 @@ void hostTeardown() {
   if (h->L && h->prompt_cb != LUA_NOREF) luaL_unref(h->L, LUA_REGISTRYINDEX, h->prompt_cb);
   h->prompt_cb = LUA_NOREF;
   if (s_pkt_poll) { lv_timer_del(s_pkt_poll); s_pkt_poll = nullptr; }
+#if CAP_LUA_AUDIO
+  if (s_audio_poll) { lv_timer_del(s_audio_poll); s_audio_poll = nullptr; }
+#endif
   // Named timers hold both an lv_timer and a registry ref; both go now, while
   // the state is still alive to unref against.
   for (int i = 0; i < Host::kMaxTimers; i++) {
@@ -3243,6 +3369,14 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
     s_pkt_primed  = false;    // the first pass marks the ring instead of replaying it
     s_pkt_poll = lv_timer_create(packetPollCb, 250, nullptr);
   }
+
+#if CAP_LUA_AUDIO
+  if (pushCallback(h, "on_audio")) {
+    lua_pop(h->L, 1);
+    snprintf(s_audio_last_state, sizeof s_audio_last_state, "stopped");
+    s_audio_poll = lv_timer_create(audioPollCb, 250, nullptr);
+  }
+#endif
 
   if (pushCallback(h, "on_open")) {
     lua_pushinteger(h->L, h->body_w);

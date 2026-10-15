@@ -1930,3 +1930,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR на SF%d
+%s ago	пре %s
+1 min	1 мин
+10 min	10 мин
+Acknowledgement	Потврда
+Air split	Расподела
+Anonymous request	Анониман захтев
+Average	Просек
+Band	Опсег
+Busy	Заузето
+Channel data	Подаци канала
+Channel message	Порука канала
+Decodes to	Декодира до
+Direct with a region code	Директно са кодом региона
+Flood with a region code	Flood са кодом региона
+Floor	Под
+Hops	Скокови
+Live	Уживо
+Margin	Резерва
+Multipart	Вишеделно
+Noise	Шум
+Packet	Пакет
+Path	Путања
+Peak	Врх
+Request	Захтев
+Response	Одговор
+Route	Рута
+Size	Величина
+Tap to go back	Додирни за назад
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	буџет %d s   tx %d   rx %d   грешке %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	буџет %d s  tx %d  rx %d
+channel busy now	канал је сада заузет
+listening, nothing heard yet	слушам, још ништа
+no airtime yet	још нема времена емитовања
+over %d:%02d	за %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Додајте MP3 или WAV датотеке у фасциклу ове апликације.
+Cannot play	Не може да се пусти
+Looking for music...	Тражим музику...
+Looking for music... %d	Тражим музику... %d
+Music	Музика
+No music found	Није пронађена музика
+No speaker	Нема звучника
+Playing	Свира
+Put MP3 or WAV files in a Music folder on the SD card.	Ставите MP3 или WAV датотеке у фасциклу Music на SD картици.
+Repeat all	Понављај све
+Repeat off	Понављање искључено
+Repeat this track	Понављај ову песму
+Showing the first %d tracks	Приказано првих %d песама
+Sound is off: Settings > Sound	Звук је искључен: Подешавања > Звук
+Stopped	Заустављено
+This device cannot play music.	Овај уређај не може да пушта музику.

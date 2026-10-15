@@ -253,7 +253,8 @@ return app</code></pre>
         <p>Widgets are created in order, top to bottom, on the app's page. Every constructor returns a handle with methods you can call later.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
-          <tr><td>wada.ui.label(text, x, y, size, color)</td><td>A text line placed at <code>x, y</code>. <code>size</code> is a class, not a pixel height: 12, 14 or 16. <code>color</code> takes a <code>wada.ui.colors</code> value.</td></tr>
+          <tr><td>wada.ui.label(text, x, y, size, color [, bold])</td><td>A text line placed at <code>x, y</code>. <code>size</code> is a class, not a pixel height: 12, 14, 16, or 24 for a big figure (a reading the screen is about). <code>color</code> takes a <code>wada.ui.colors</code> value. <code>bold</code> picks the SemiBold face of that size, the one the firmware uses for figures and titles. Older firmware ignores <code>bold</code> and draws size 24 at 16. <span class="chip">panel</span></td></tr>
+          <tr><td>wada.ui.panel(x, y, w, h [, color [, radius]])</td><td>A rounded, framed surface in the firmware's own card style, to group readings on: stat tiles, a frame around a chart or a list. Create it before the widgets that sit on it and it draws underneath them. Never a focus stop and never takes a tap, so a tap on it reaches <code>on_input</code>. Methods: <code>pos(x, y)</code>, <code>color(fill [, border])</code> and <code>size(w, h)</code>, which makes a bar that grows. A canvas cannot stand in for it: a canvas has no transparency, so on the background picture its corners show as a hard rectangle. Check <code>wada.sys.caps().panel</code>, or simply <code>if wada.ui.panel then</code>. <span class="chip">panel</span></td></tr>
           <tr><td>wada.ui.button(text, x, y, w, h, fn)</td><td>A tappable button at <code>x, y</code> sized <code>w &times; h</code>; <code>fn</code> is called with no arguments.</td></tr>
           <tr><td>wada.ui.text_w(text [, size])</td><td>Rendered width of <code>text</code> in pixels, for the given size class.</td></tr>
           <tr><td>wada.ui.text_lines(text, width [, size])</td><td>How many lines <code>text</code> wraps to inside <code>width</code>. Counts explicit newlines too. <b>Use this when you lay out your own rows.</b> <code>label:width()</code> turns wrapping on, so a line longer than the screen becomes two while a fixed <code>y</code> step still advances by one, and the next row is drawn on top of it. This is the single most common way an app's layout goes wrong; it happened to the SDK Test app's channel list.</td></tr>
@@ -264,7 +265,7 @@ return app</code></pre>
           <tr><td>wada.ui.chart(points)</td><td>A line chart sized to the page. The Airtime and RF Monitor primitive.</td></tr>
           <tr><td>wada.ui.scroll(on)</td><td>Allow the page to scroll when content is taller than the screen.</td></tr>
           <tr><td>wada.ui.text_h(size)</td><td>Line height in pixels for a size class. Use it to lay out a canvas.</td></tr>
-          <tr><td>wada.ui.colors</td><td>Theme table: <code>text</code>, <code>sub</code>, <code>bg</code>, <code>accent</code>, <code>good</code>, <code>bad</code>.</td></tr>
+          <tr><td>wada.ui.colors</td><td>Theme table: <code>text</code>, <code>sub</code>, <code>bg</code>, <code>panel</code>, <code>accent</code>, <code>good</code>, <code>bad</code>, and on newer firmware <code>warn</code> (amber) and <code>border</code> (a panel's frame). Write <code>colors.warn or 0xE8A33D</code> to run on both.</td></tr>
         </table>
         <h3>Label handle</h3>
         <table class="api">
@@ -276,8 +277,8 @@ return app</code></pre>
         <h3>Canvas handle</h3>
         <table class="api">
           <tr><td>cv:fill(c)</td><td>Flood the whole canvas.</td></tr>
-          <tr><td>cv:rect(x, y, w, h, c)</td><td>Filled rectangle.</td></tr>
-          <tr><td>cv:line(x1, y1, x2, y2, c)</td><td>Line.</td></tr>
+          <tr><td>cv:rect(x, y, w, h, c [, filled [, radius]])</td><td>Rectangle: filled unless <code>filled</code> is <code>false</code> (then a 1&nbsp;px outline), with rounded corners when <code>radius</code> is given.</td></tr>
+          <tr><td>cv:line(x1, y1, x2, y2, c [, width])</td><td>Line, 1&nbsp;px unless <code>width</code> says otherwise. RF Monitor and Airtime draw their charts this way: a filled area as rectangles, the trace as 2&nbsp;px lines.</td></tr>
           <tr><td>cv:circle(x, y, r, c)</td><td>Filled circle.</td></tr>
           <tr><td>cv:text(x, y, s, c, size)</td><td>Draw a string.</td></tr>
           <tr><td>cv:pos(x, y)</td><td>Move the canvas itself.</td></tr>
@@ -300,11 +301,12 @@ return app</code></pre>
         <p>Input arrives through <code>on_input(ev)</code>. The event is a table; <code>ev.type</code> tells you which kind it is.</p>
         <table class="api">
           <tr><th>ev.type</th><th>Fields</th></tr>
-          <tr><td>"touch"</td><td><code>ev.x</code>, <code>ev.y</code> in page coordinates.</td></tr>
+          <tr><td>"down"</td><td>A finger went down. <code>ev.x</code>, <code>ev.y</code> in page coordinates.</td></tr>
+          <tr><td>"up"</td><td>It came up again, with the same fields. A tap is a <code>"down"</code> followed by an <code>"up"</code>; a swipe also ends in an <code>"up"</code>, so ignore that one if a <code>"swipe"</code> arrived in between. On boards without touch, the select key arrives as a <code>"down"</code> and <code>"up"</code> pair at the centre of the page.</td></tr>
           <tr><td>"key"</td><td><code>ev.key</code>: a one-character string for printable keys (<code>"w"</code>), or a name for the rest: <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>enter</code>, <code>esc</code>, <code>backspace</code>. <code>ev.code</code> carries the raw value. Boards with a keyboard only; the key that closes the app is never delivered, so an app cannot trap you inside it.</td></tr>
-          <tr><td>"dir"</td><td><code>ev.dir</code>: one of <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>, <code>select</code>. Trackball, D-pad and swipes all arrive here.</td></tr>
+          <tr><td>"swipe"</td><td><code>ev.dir</code>: one of <code>up</code>, <code>down</code>, <code>left</code>, <code>right</code>. Swipes on a touchscreen, the trackball and the D-pad all arrive here.</td></tr>
         </table>
-        <p>Handle <code>"dir"</code> if you want your app to work on every board. A touch-only board sends swipes as directions, and a keyboard board sends its navigation keys the same way, so one branch covers both.</p>
+        <p>Handle <code>"swipe"</code> for movement and <code>"up"</code> for a tap if you want your app to work on every board: a touchscreen, a trackball and a D-pad all reach those two. Keyboard boards send their keys as <code>"key"</code> as well. RF Monitor in the Store moves a highlight with <code>"swipe"</code> and opens a row on a tap or on Enter.</p>
       </div></div>
     </section>
 
@@ -479,10 +481,10 @@ end</code></pre>
     <section class="doc" id="audio">
       <h2>wada.audio <span class="chip">audio</span></h2>
       <div class="row"><div class="prose">
-        <p>Asynchronous audio playback from the current app's private storage. An app can ship its sounds with it: list them under <code>files</code> in its <a href="#format">manifest</a> and the Store puts them in that folder. That is also the way to get sound onto the T-Display P4, which has no <code>sd:</code> paths. A plain name such as <code>track.wav</code> resolves inside the same app folder as <a href="#fs">wada.fs</a>, whether that folder lives on internal flash, SD, or SD_MMC. Check <code>wada.sys.caps().audio</code> and <code>audio_wav</code> before using it.</p>
+        <p>Asynchronous audio playback from the current app's private storage. An app can ship its sounds with it: list them under <code>files</code> in its <a href="#format">manifest</a> and the Store puts them in that folder. A plain name such as <code>track.wav</code> resolves inside the same app folder as <a href="#fs">wada.fs</a>, whether that folder lives on internal flash, SD, or SD_MMC. Check <code>wada.sys.caps().audio</code> and <code>audio_wav</code> before using it.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
-          <tr><td>wada.audio.play(name)</td><td>Starts or replaces playback and returns <code>true</code>, or <code>nil, error</code>. Plain names use app-private storage. On boards with <code>caps().audio_sd</code>, <code>sd:/Music/track.wav</code> reads directly from the physical card.</td></tr>
+          <tr><td>wada.audio.play(name)</td><td>Starts or replaces playback and returns <code>true</code>, or <code>nil, error</code>. Plain names use app-private storage. On boards with <code>caps().audio_sd</code>, <code>sd:/Music/track.wav</code> reads directly from the physical card. That is every board with a speaker and a card slot, the T-Display P4 and the Tanmatsu included from beta_95.</td></tr>
           <tr><td>wada.audio.pause()</td><td>Pauses an active track. Returns whether the command was accepted.</td></tr>
           <tr><td>wada.audio.resume()</td><td>Resumes a paused track. Returns whether the command was accepted.</td></tr>
           <tr><td>wada.audio.stop()</td><td>Stops the active track. Returns whether the command was accepted.</td></tr>
@@ -490,6 +492,11 @@ end</code></pre>
         </table>
         <p>Supported formats are PCM WAV (16-bit mono or stereo at 8&ndash;48&nbsp;kHz) and MPEG Layer III MP3, including CBR, VBR, and ID3-tagged files. Stereo is mixed to mono on the device. Check <code>audio_wav</code> or <code>audio_mp3</code> rather than assuming a format exists on older firmware.</p>
         <p>Playback follows the user's Sound switch and volume, never blocks the Lua callback, and stops automatically when the app closes. A second <code>play()</code> replaces the current track. Playlist ordering belongs to the app, so there are no ambiguous host-side <code>next()</code> or <code>previous()</code> calls.</p>
+        <h3>app.on_audio</h3>
+        <p>Declare <code>on_audio(st)</code> and the firmware calls it once each time playback changes state, with <code>{state, path, error}</code> as in <code>status()</code>. It runs <b>with the screen off too</b>, unlike <code>on_tick</code> and repeating timers, so a player can start the next track when one ends without keeping the display on. This is how the Music app works through a playlist in a pocket. Check <code>caps().audio_events</code>; on older firmware, poll <code>status()</code> from <code>on_tick</code> instead (it only advances while the screen is on there).</p>
+        <pre><code>function app.on_audio(st)
+  if st.state == "ended" then play_next() end
+end</code></pre>
         <p>Plain names follow the same sandbox rules as <code>wada.fs</code>. Explicit <code>sd:</code> paths follow <a href="#sd">wada.sd</a> path validation. Expected errors include <code>bad path</code>, <code>no storage</code>, <code>no sd</code>, <code>not found</code>, <code>busy</code>, <code>muted</code>, and <code>unsupported format</code>.</p>
       </div></div>
     </section>
@@ -497,7 +504,7 @@ end</code></pre>
     <section class="doc" id="sd">
       <h2>wada.sd <span class="chip">sd_list</span></h2>
       <div class="row"><div class="prose">
-        <p>Directory access to the physical SD card. This is separate from <a href="#fs">wada.fs</a>: it can inspect the card's directory tree, but cannot read file contents, write or rename anything. The one thing it can delete is Windows malware, and the firmware, not the app, decides what that is. Check <code>wada.sys.caps().sd_list</code> before using it, and <code>caps().sd_clean</code> before using <code>check</code>, <code>remove</code> or the paging arguments.</p>
+        <p>Directory access to the physical SD card. This is separate from <a href="#fs">wada.fs</a>: it can inspect the card's directory tree, but cannot read file contents, write or rename anything. The one thing it can delete is Windows malware, and the firmware, not the app, decides what that is. Check <code>wada.sys.caps().sd_list</code> before using it, and <code>caps().sd_clean</code> before using <code>check</code>, <code>remove</code> or the paging arguments. On the boards whose card is SD_MMC (T-Display P4, Tanmatsu, Wio Tracker L2) <code>list</code> and its paging are there from beta_95, read-only, and <code>check</code> and <code>remove</code> are not.</p>
         <table class="api">
           <tr><th>Call</th><th>Returns / does</th></tr>
           <tr><td>wada.sd.list([path [, start [, max]]])</td><td>Returns an array of <code>{name, type, size, mtime}</code>, or <code>nil, error</code>. <code>path</code> defaults to <code>/</code>. <code>type</code> is <code>"file"</code> or <code>"dir"</code>; directories report size 0, and <code>mtime</code> is 0 when the filesystem has no timestamp. <code>start</code> (default 1) is the index of the first entry to return and <code>max</code> (1 to 192, default 192) the page size. <span class="chip">sd_clean</span></td></tr>
@@ -524,7 +531,7 @@ end</code></pre>
           <tr><td colspan="2" style="color:var(--mut)">Text entry you open with <code>wada.ui.input()</code> is the firmware's own field, so it comes with the firmware's editing: long-press it for Cut, Copy, Paste, All, Sym (special characters) and Emoji. You do not need to build any of that yourself, and anything copied from a chat pastes straight in.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure, widget}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure, widget, panel, audio_events, epaper}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> (does this board <i>have</i> the sensor rail?) and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
           <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, sats, alt_m, time, speed_kmh, course}</code>, or <code>nil</code> with no fix, which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>alt_m</code> is metres. <code>time</code> is satellite time, absent until the receiver has decoded the date. <code>speed_kmh</code> and <code>course</code> (degrees clockwise from north) appear only on boards whose GPS provider reports them, and <code>course</code> only while actually moving: a stationary receiver has no course, so it is absent rather than 0. Treat those last three as optional.</td></tr>
@@ -614,7 +621,7 @@ end</code></pre>
           <tr><td>name</td><td>Shown on the drawer tile and the Store card.</td></tr>
           <tr><td>ver</td><td><code>major.minor</code>, matching the version directory. Compared against the catalog to offer an update.</td></tr>
           <tr><td>desc</td><td>One sentence, read in the Store before installing.</td></tr>
-          <tr><td>icon</td><td>Optional. Picks the drawer tile's glyph by name; an app cannot ship artwork, and an unknown name falls back to the generic app symbol. One of: <code>gps</code> / <code>compass</code> / <code>map</code>, <code>radio</code>, <code>signal</code>, <code>chart</code>, <code>list</code>, <code>message</code>, <code>person</code>, <code>group</code>, <code>bell</code>, <code>star</code>, <code>search</code>, <code>settings</code>, <code>battery</code>, <code>game</code>.</td></tr>
+          <tr><td>icon</td><td>Optional. Picks the drawer tile's glyph by name; an app cannot ship artwork, and an unknown name falls back to the generic app symbol. One of: <code>gps</code> / <code>compass</code> / <code>map</code>, <code>radio</code>, <code>signal</code>, <code>chart</code>, <code>list</code>, <code>message</code>, <code>person</code>, <code>group</code>, <code>bell</code>, <code>star</code>, <code>search</code>, <code>settings</code>, <code>battery</code>, <code>game</code>, <code>music</code>.</td></tr>
           <tr><td>files</td><td>Optional, Store installs only. Files the app ships beside its code, as one comma-separated string: <code>"files":"beep.wav,track.mp3"</code>. Put them in the version directory next to the code; installing (and every update) downloads each into the app's own folder, where <a href="#fs">wada.fs</a> reads them and <code>wada.audio.play("beep.wav")</code> plays them. Up to 8 files of 4&nbsp;MB each; names use letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, at most 32 characters. A file that fails to download fails the install.</td></tr>
         </table>
         <p>Earlier versions of this page showed <code>version</code>, <code>min_api</code>, <code>description</code> and <code>boards</code>. The device has never parsed those: its manifest reader takes quoted strings only, and the keys above are the ones it looks for. Use <code>ver</code> and <code>desc</code>.</p>

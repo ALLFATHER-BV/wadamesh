@@ -2562,6 +2562,10 @@ static void setNavSelectionGlow(lv_obj_t* obj, bool selected) {
 }
 
 #if CAP_LUA_APPS
+// wada.ui.panel's defaults, from the live theme, and its nav exclusion.
+uint32_t luaHostPanelColor()  { return COLOR_PANEL; }
+uint32_t luaHostBorderColor() { return COLOR_BORDER; }
+void luaHostMarkInert(lv_obj_t* obj) { lv_obj_add_flag(obj, NAV_SKIP_FLAG); }
 void luaHostSetSelectionGlow(lv_obj_t* obj, bool selected) {
   setSelectionGlow(obj, selected, LV_PART_MAIN);
 }
@@ -3439,6 +3443,9 @@ void sdMountDiagAttempt(uint32_t hz, bool begin_ok, bool card_ready) {
   if (card_ready) s_sd_diag.mounted_hz = hz;
 }
 
+// Did the boot actually mount a card? (main.cpp's SD-fallback notice, #667)
+bool sdMountDiagMounted() { return s_sd_diag.checked && s_sd_diag.mounted; }
+
 void sdMountDiagSetMounted(bool mounted, uint32_t hz) {
   s_sd_diag.checked = true;
   s_sd_diag.mounted = mounted;
@@ -4284,6 +4291,8 @@ static void buildExpansionInfoText(char* out, size_t cap) {
 // (which is defined above the control-center code) can update the live GPS line.
 static lv_obj_t* s_cc_root      = nullptr;
 static lv_obj_t* s_cc_gps_label = nullptr;
+static lv_obj_t* s_cc_clock_label = nullptr;   // refreshed by the tick below (#666)
+static lv_obj_t* s_cc_date_label = nullptr;
 enum CcNavSlot : uint8_t {
   CC_NAV_WIFI, CC_NAV_BT, CC_NAV_GPS, CC_NAV_THEME, CC_NAV_KEYBOARD,
   CC_NAV_SOUND, CC_NAV_DND, CC_NAV_TIMER, CC_NAV_SCREENSHOT, CC_NAV_SAVER, CC_NAV_COUNT
@@ -8614,6 +8623,7 @@ static void otaPollTimerCb(lv_timer_t* t) {
     lv_refr_now(NULL);
     if (g_lv.task) g_lv.task->rebootDevice();
   } else {         // error -> show why, leave the button armed to retry, fall back to manual
+    Serial.printf("[OTA] update failed: %s\n", s_ota_msg[0] ? s_ota_msg : "unknown");
     if (s_ota_status_lbl) {
       char b[112];
       snprintf(b, sizeof b, "Update failed: %s\nUse flasher.wadamesh.com instead.",
@@ -8931,9 +8941,15 @@ static void otaInstallLatestCb(lv_event_t* e) {
 }
 
 // Trigger a check once Wi-Fi is up (then every 6 h); apply the result when ready.
+// Store app updates (the drawer's Store badge): the update check also fetches the
+// app catalog and counts installed apps the Store has a newer version of.
+static int s_store_updates = 0;
+static void storeUpdatesKick();
+static void storeUpdatesPoll();
 static void versionCheckService(unsigned long now) {
 #if defined(MULTI_TRANSPORT_COMPANION)
   if (firmwareReleaseN() < 0) return;   // dev build: nothing to compare against
+  storeUpdatesPoll();
   static bool started = false;
   static unsigned long next_ms = 0;
   static uint8_t fail_streak = 0;
@@ -8976,6 +8992,15 @@ static void versionCheckService(unsigned long now) {
       }
     }
     s_update_available = (s_verchk_latest_n > firmwareReleaseN());
+    if (s_verchk_latest_n >= 0) storeUpdatesKick();   // the server answered: ask the Store too
+#if defined(WADA_OTA_SELFTEST)
+    // Bench-only (tdisplay_p4 WADA_OTA_SELFTEST=1): take the update unattended so a
+    // device nobody can tap is still testable end to end over serial.
+    if (s_update_available) {
+      Serial.printf("[OTA-TEST] beta_%d is newer, installing\n", s_verchk_latest_n);
+      otaStartInstall(s_verchk_latest_n);
+    }
+#endif
     if (s_verchk_latest_n < 0) {
       // Fetch failed (DNS/socket/parse): retry with backoff — 1 min for the first
       // few tries, then every 5 min — instead of showing "Couldn't reach the
@@ -17035,7 +17060,14 @@ static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, 
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
-#if defined(HAS_TDECK_KEYBOARD)
+// Keyboards whose backlight takes a level, not just on/off: the T-Deck's C3 keyboard
+// and the ThinkNode M9's controller (duty register 0x02, #664).
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_THINKNODE_M9)
+  #define KB_BL_DIMMABLE 1
+#else
+  #define KB_BL_DIMMABLE 0
+#endif
+#if KB_BL_DIMMABLE
 // Keyboard-backlight brightness (issue #84). The T-Keyboard's C3 firmware takes a
 // 2-byte I2C command [0x01, level 0-255]; the ON level was hardcoded 0xFF (100%).
 // This percent scales that level; the per-loop tick recomputes it and the I2C layer
@@ -17057,7 +17089,9 @@ static void kbBlSetPct(int pct, bool sync_slider) {
   s_tdeck_kb_bl_pct = (uint8_t)pct;
   if (s_kb_bl_mode == 0) s_kb_bl_mode = 1;
   noteKbActivity();                                // auto mode: light up now so the preview shows
+#if defined(HAS_TDECK_KEYBOARD)
   tdeckKeyboardSetBacklight(tdeckKbBlLevel());     // request NOW; the touch-poll task flushes it over I2C within ~8 ms
+#endif                                             // (the M9's loop tick writes the new level on its next pass)
   if (sync_slider && g_set_modal.kbbl_slider)
     lv_slider_set_value(g_set_modal.kbbl_slider, pct, LV_ANIM_OFF);
 }
@@ -17084,7 +17118,9 @@ static void kbBlPresetCb(lv_event_t* e) {          // Off / 25 / 50 / 75 / Max: 
   int pct = (int)(intptr_t)lv_event_get_user_data(e);
   if (pct == 0) {                                  // "Off" switches the MODE off (what the CC chip shows), instead of
     s_kb_bl_mode = 0;                              // inventing a second dark state (brightness 0 with the mode still on)
+#if defined(HAS_TDECK_KEYBOARD)
     tdeckKeyboardSetBacklight(0);                  // that left the CC chip saying "on" over a dark keyboard.
+#endif
     kbBlScheduleSave();                            // brightness pct is left untouched -> re-enabling restores it
     return;
   }
@@ -17874,7 +17910,7 @@ static void buildLockPage() {
 }
 
 // ---- Settings > Keyboard -----------------------------------------------------------
-#if defined(HAS_TDECK_KEYBOARD)
+#if KB_BL_DIMMABLE
 static const int kKbBlPresetPct[5] = { 0, 25, 50, 75, 100 };
 static void kbBlPresetPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -17883,7 +17919,9 @@ static void kbBlPresetPickCb(lv_event_t* e) {
   const int pct = kKbBlPresetPct[i];
   if (pct == 0) {   // "Off" is the backlight MODE (what the control panel chip shows), not brightness 0
     s_kb_bl_mode = 0;
+#if defined(HAS_TDECK_KEYBOARD)
     tdeckKeyboardSetBacklight(0);
+#endif
     kbBlScheduleSave();
   } else {
     kbBlSetPct(pct, true);
@@ -17929,10 +17967,13 @@ static void setNavKeyCards() {
 #endif
 
 static void buildKeyboardPage() {
+#if KB_BL_DIMMABLE
+  // Keyboard backlight (#84, the M9 since #664): a live slider plus one-tap presets.
+  // Hidden on the older T-Deck keyboards, which have no controllable backlight (#382).
 #if defined(HAS_TDECK_KEYBOARD)
-  // Keyboard backlight (#84): a live slider plus one-tap presets. Hidden on the older
-  // keyboards, which have no controllable backlight (#382).
-  if (!touchPrefsGetKbForceLegacy()) {
+  if (!touchPrefsGetKbForceLegacy())
+#endif
+  {
     lv_obj_t* c = setCard("Backlight");
     char v[8];
     snprintf(v, sizeof v, "%d%%", (int)s_tdeck_kb_bl_pct);
@@ -29096,6 +29137,44 @@ static int                s_spec_floor    = -120;       // smoothed noise-floor 
 static int                s_spec_ylo      = -130;       // dynamic trace Y range (dBm), tracks live min/max
 static int                s_spec_yhi      = -80;
 
+#if !defined(HAS_TDECK_PRO)
+// ---- the page's look (Oct 2026): stat tiles, a plot canvas (area trace, peak
+// hold, our-channel marker) and a waterfall canvas. Both canvases are painted
+// pixel by pixel into their own buffers at the size they appear on screen and
+// shown 1:1. The page used to draw a 160-point lv_chart and a zoomed waterfall
+// image, and that LVGL rendering was where its frame time went (see the
+// SPEC_CHUNK note above); a 1:1 canvas is a plain copy to the panel.
+static const int   SPEC_HOLD_DECAY  = 1;          // dB the peak-hold trace falls per sweep
+static const int   SPEC_BUSY_DB     = 8;          // our channel this far above the floor = busy
+static lv_obj_t*   s_spec_plot      = nullptr;
+static lv_color_t* s_spec_plot_buf  = nullptr;
+static lv_color_t* s_spec_area_lut  = nullptr;    // area fill per plot row: bright at the top, fading down
+static lv_obj_t*   s_spec_ramp      = nullptr;    // the waterfall's colour key, beside it
+static lv_color_t* s_spec_ramp_buf  = nullptr;
+static int         s_spec_plot_w = 0, s_spec_plot_h = 0;
+static int         s_spec_wf_w   = 0, s_spec_wf_h   = 0;
+static int         s_spec_wf_rh     = 2;          // screen rows per waterfall line
+static int16_t     s_spec_hold[SPEC_BINS];        // peak hold
+static int16_t     s_spec_acc[SPEC_BINS];         // strongest reading since the last waterfall line
+static uint32_t    s_spec_row_ms    = 0;
+static uint8_t     s_spec_window    = 0;          // waterfall history: 0 live, 1 one minute, 2 ten minutes
+static bool        s_spec_chan_view = false;      // false = the 24 MHz band, true = zoomed on our channel
+static float       s_spec_center    = 0.0f;       // our channel (MHz)
+static float       s_spec_ch_bw     = 0.0625f;    // our channel's bandwidth (MHz)
+static uint64_t    s_spec_busy_bits = 0;          // last 64 sweeps: was our channel busy
+static uint8_t     s_spec_busy_n    = 0;
+static int         s_spec_disp_lo = -130, s_spec_disp_hi = -80;   // plot range, snapped to 5 dB
+static lv_obj_t*   s_spec_tile_val[4] = {};       // Peak / Floor / Channel / Busy
+static lv_obj_t*   s_spec_grid_lbl[3] = {};       // dB beside the plot: top, middle, bottom
+static lv_obj_t*   s_spec_peak_tag  = nullptr;    // peak frequency, floating over the plot
+static lv_obj_t*   s_spec_axis_c    = nullptr;    // our channel's frequency under its marker
+static lv_obj_t*   s_spec_axis_r    = nullptr;
+static lv_obj_t*   s_spec_view_btn  = nullptr;    // Band / Channel
+static lv_obj_t*   s_spec_win_btn   = nullptr;    // Live / 1 min / 10 min
+static int         s_spec_plot_x = 0, s_spec_plot_y = 0;
+static lv_color_t  s_spec_heat_lut[64];
+#endif
+
 // The single source of truth the main loop reads to decide whether to skip
 // the_mesh.loop() (so the mesh stays off the radio while we sweep). Set true on
 // open, cleared in closeSpectrumPage() ONLY AFTER the mesh params are restored.
@@ -29105,21 +29184,44 @@ static bool s_spectrum_active = false;
 // The ramp auto-scales to the LIVE noise floor (s_spec_floor) so the floor always
 // sits at the dark-blue end and any real signal pops — instead of a fixed -130..-50
 // window where a -120 dBm floor and a -118 dBm wiggle both render the same flat blue.
+//
+// The ramp runs near-black -> indigo -> magenta -> orange -> pale yellow. It used to
+// be blue -> cyan -> green -> yellow -> red, which put the floor at saturated blue:
+// a quiet band painted the whole waterfall solid blue. Now quiet is dark and only
+// real energy lights up.
+#if !defined(HAS_TDECK_PRO)
+static void specBuildHeatLut() {
+  static const uint8_t kStops[6][3] = {
+    { 10, 12, 18 }, { 38, 22, 92 }, { 118, 30, 138 }, { 204, 58, 92 }, { 246, 140, 38 }, { 252, 232, 128 } };
+  for (int i = 0; i < 64; i++) {
+    const int t = i * 5 * 256 / 63;            // 0..1280 along the five segments
+    int s = t >> 8;
+    if (s > 4) s = 4;
+    const int f = t - (s << 8);
+    uint8_t c[3];
+    for (int k = 0; k < 3; k++) c[k] = (uint8_t)(kStops[s][k] + (kStops[s + 1][k] - kStops[s][k]) * f / 256);
+    s_spec_heat_lut[i] = lv_color_make(c[0], c[1], c[2]);
+  }
+}
 static lv_color_t specHeat(int dbm) {
-  int lo = s_spec_floor - 3;                 // just below the live floor -> darkest
-  int hi = s_spec_floor + SPEC_WF_HEADROOM;  // ~55 dB of signal headroom above it
+  const int lo = s_spec_floor - 3;                 // just below the live floor -> darkest
+  int hi = s_spec_floor + SPEC_WF_HEADROOM;
   if (hi <= lo) hi = lo + 1;
   if (dbm < lo) dbm = lo;
   if (dbm > hi) dbm = hi;
-  // 0..1023 position along the ramp
-  int t = (int)(((long)(dbm - lo) * 1023) / (hi - lo));
-  uint8_t r, g, b;
-  if (t < 256)         { r = 0;             g = (uint8_t)t;          b = 255; }            // blue  -> cyan
-  else if (t < 512)    { r = 0;             g = 255;                 b = (uint8_t)(511 - t); } // cyan  -> green
-  else if (t < 768)    { r = (uint8_t)(t - 512); g = 255;            b = 0; }              // green -> yellow
-  else                 { r = 255;           g = (uint8_t)(1023 - t); b = 0; }              // yellow-> red
-  return lv_color_make(r, g, b);
+  return s_spec_heat_lut[(dbm - lo) * 63 / (hi - lo)];
 }
+// Strongest bin under screen column x of a W-pixel-wide view: a narrow screen
+// shows several bins per column and must not drop a peak between them.
+static int specColMax(const int16_t* a, int x, int W) {
+  const int b0 = x * SPEC_BINS / W;
+  int b1 = (x + 1) * SPEC_BINS / W;
+  if (b1 <= b0) b1 = b0 + 1;
+  int m = a[b0];
+  for (int i = b0 + 1; i < b1 && i < SPEC_BINS; i++) if (a[i] > m) m = a[i];
+  return m;
+}
+#endif
 
 // Re-estimate the noise floor from the freshest full sweep (the minimum bin is a
 // good cheap floor once RX is genuinely armed on every bin), smoothed so the
@@ -29264,15 +29366,179 @@ static bool spectrumSweepChunk() {
 
 // Scroll the waterfall down one row (memmove the PSRAM buffer) and paint the new
 // top row from the freshest sweep, then invalidate so LVGL re-flushes the canvas.
+#if !defined(HAS_TDECK_PRO)
 static void spectrumPushWaterfall() {
-  if (!s_spec_wf_buf || !s_spec_wf) return;
-  // shift every row down by one (row r <- row r-1); drop the bottom row
-  memmove(&s_spec_wf_buf[SPEC_BINS], &s_spec_wf_buf[0],
-          (size_t)SPEC_BINS * (SPEC_WF_ROWS - 1) * sizeof(lv_color_t));
-  for (int x = 0; x < SPEC_BINS; x++) s_spec_wf_buf[x] = specHeat(s_spec_rssi[x]);
+  if (!s_spec_wf_buf || !s_spec_wf || s_spec_wf_w <= 0) return;
+  // The slow windows keep the strongest reading per bin between lines, so a
+  // packet that came and went between two lines of the 10 min view still shows.
+  for (int i = 0; i < SPEC_BINS; i++) if (s_spec_rssi[i] > s_spec_acc[i]) s_spec_acc[i] = s_spec_rssi[i];
+  static const uint32_t kWindowMs[3] = { 0, 60000, 600000 };
+  const uint32_t now = millis();
+  const int W = s_spec_wf_w, rh = s_spec_wf_rh, lines = s_spec_wf_h / rh;
+  if (s_spec_window && lines > 0 && now - s_spec_row_ms < kWindowMs[s_spec_window] / (uint32_t)lines) return;
+  s_spec_row_ms = now;
+  // shift every line down by one (rh screen rows), drop the bottom one
+  memmove(&s_spec_wf_buf[W * rh], &s_spec_wf_buf[0], (size_t)W * (s_spec_wf_h - rh) * sizeof(lv_color_t));
+  for (int x = 0; x < W; x++) {
+    const lv_color_t c = specHeat(specColMax(s_spec_acc, x, W));
+    for (int r = 0; r < rh; r++) s_spec_wf_buf[r * W + x] = c;
+  }
+  for (int i = 0; i < SPEC_BINS; i++) s_spec_acc[i] = -200;
   lv_obj_invalidate(s_spec_wf);
 }
 
+static int specFreqX(float mhz, int W) {
+  const float span = s_spec_step * (float)SPEC_BINS;
+  if (span <= 0.0f) return -1;
+  return (int)((mhz - s_spec_start) / span * (float)W);
+}
+static int specPlotY(int v) {   // dBm -> plot row, 0 = top
+  const int H = s_spec_plot_h;
+  if (v < s_spec_disp_lo) v = s_spec_disp_lo;
+  if (v > s_spec_disp_hi) v = s_spec_disp_hi;
+  return (H - 1) - (int)((long)(v - s_spec_disp_lo) * (H - 1) / (s_spec_disp_hi - s_spec_disp_lo));
+}
+
+// Paint the plot: panel, dotted dB grid, our channel's band and marker, the live
+// sweep as a filled area with a 2 px edge, and the peak hold as an amber dash.
+static void spectrumDrawPlot() {
+  if (!s_spec_plot_buf || !s_spec_plot || !s_spec_area_lut) return;
+  const int W = s_spec_plot_w, H = s_spec_plot_h;
+  lv_color_t* b = s_spec_plot_buf;
+  const lv_color_t bg    = lv_color_hex(COLOR_PANEL);
+  const lv_color_t chbg  = lv_color_hex(rgbMix(COLOR_PANEL, COLOR_ACCENT, 28));
+  const lv_color_t grid  = lv_color_hex(COLOR_CHART_GRID);
+  const lv_color_t edge  = lv_color_hex(accentGlowFor(COLOR_ACCENT, s_theme_day, s_theme_high_contrast));
+  const lv_color_t hold  = lv_color_hex(0xF5A623);
+  const lv_color_t mark  = lv_color_hex(COLOR_SUB);
+  const int cx = specFreqX(s_spec_center, W);
+  int c0 = specFreqX(s_spec_center - s_spec_ch_bw * 0.5f, W);
+  int c1 = specFreqX(s_spec_center + s_spec_ch_bw * 0.5f, W);
+  if (c1 <= c0) c1 = c0 + 1;
+  for (int x = 0; x < W; x++) {
+    const lv_color_t col = (x >= c0 && x < c1) ? chbg : bg;
+    for (int y = 0; y < H; y++) b[y * W + x] = col;
+  }
+  const int gy[3] = { 0, (H - 1) / 2, H - 1 };
+  for (int g = 0; g < 3; g++)
+    for (int x = 0; x < W; x += 3) b[gy[g] * W + x] = grid;
+  int prev = -1, prev_h = -1;
+  for (int x = 0; x < W; x++) {
+    const int y = specPlotY(specColMax(s_spec_rssi, x, W));
+    for (int r = y + 1; r < H; r++) b[r * W + x] = s_spec_area_lut[r];
+    const int p = prev < 0 ? y : prev;
+    for (int r = (p < y ? p : y); r <= (p < y ? y : p); r++) b[r * W + x] = edge;
+    if (y + 1 < H) b[(y + 1) * W + x] = edge;
+    prev = y;
+    const int hy = specPlotY(specColMax(s_spec_hold, x, W));
+    if ((x & 3) < 2) {
+      const int q = prev_h < 0 ? hy : prev_h;
+      for (int r = (q < hy ? q : hy); r <= (q < hy ? hy : q); r++) b[r * W + x] = hold;
+    }
+    prev_h = hy;
+  }
+  if (cx >= 0 && cx < W)
+    for (int y = 0; y < H; y++) if ((y & 3) < 2) b[y * W + cx] = mark;
+  lv_obj_invalidate(s_spec_plot);
+}
+
+// Expand the range at once when the data outgrows it (never clip a fresh peak,
+// even mid-sweep); `settle` (a completed sweep) also eases it back in by at most
+// SPEC_Y_DECAY dB. The plot shows the range snapped outward to 5 dB.
+static void spectrumTrackRange(bool settle) {
+  int mn = 999, mx = -999;
+  for (int i = 0; i < SPEC_BINS; i++) {
+    if (s_spec_rssi[i] < mn) mn = s_spec_rssi[i];
+    if (s_spec_rssi[i] > mx) mx = s_spec_rssi[i];
+    if (s_spec_hold[i] > mx) mx = s_spec_hold[i];
+  }
+  int lo_t = mn - SPEC_Y_PAD_LO, hi_t = mx + SPEC_Y_PAD_HI;
+  if (hi_t - lo_t < SPEC_Y_MIN_SPAN) {
+    const int grow = SPEC_Y_MIN_SPAN - (hi_t - lo_t);
+    lo_t -= grow / 2;
+    hi_t += grow - grow / 2;
+  }
+  if (lo_t < s_spec_ylo) s_spec_ylo = lo_t;
+  else if (settle) s_spec_ylo = (lo_t - s_spec_ylo > SPEC_Y_DECAY) ? s_spec_ylo + SPEC_Y_DECAY : lo_t;
+  if (hi_t > s_spec_yhi) s_spec_yhi = hi_t;
+  else if (settle) s_spec_yhi = (s_spec_yhi - hi_t > SPEC_Y_DECAY) ? s_spec_yhi - SPEC_Y_DECAY : hi_t;
+  auto fl5 = [](int v) { return v >= 0 ? v / 5 * 5 : -((-v + 4) / 5 * 5); };
+  int lo = fl5(s_spec_ylo), hi = -fl5(-s_spec_yhi);
+  if ((hi - lo) % 10) hi += 5;           // keep the middle grid line on a whole dB
+  if (lo == s_spec_disp_lo && hi == s_spec_disp_hi) return;
+  s_spec_disp_lo = lo;
+  s_spec_disp_hi = hi;
+  const int v[3] = { hi, (hi + lo) / 2, lo };
+  for (int g = 0; g < 3; g++)
+    if (s_spec_grid_lbl[g]) lv_label_set_text_fmt(s_spec_grid_lbl[g], "%d", v[g]);
+}
+
+static void spectrumDrawTraceLive() {
+  spectrumTrackRange(false);
+  spectrumDrawPlot();
+}
+
+static void specSetTile(int i, const char* txt, uint32_t col) {
+  lv_obj_t* l = s_spec_tile_val[i];
+  if (!l) return;
+  if (strcmp(lv_label_get_text(l), txt) != 0) lv_label_set_text(l, txt);
+  lv_obj_set_style_text_color(l, lv_color_hex(col), LV_PART_MAIN);
+}
+
+// A sweep completed: peak hold, range, tiles, the peak tag and the plot.
+static void spectrumDrawTrace() {
+  int pk = -200, pki = 0;
+  for (int i = 0; i < SPEC_BINS; i++) {
+    const int v = s_spec_rssi[i];
+    if (v > pk) { pk = v; pki = i; }
+    const int h = s_spec_hold[i] - SPEC_HOLD_DECAY;
+    s_spec_hold[i] = (int16_t)(v > h ? v : h);
+  }
+  // our channel: the strongest bin inside its bandwidth (at least the nearest bin)
+  int i0 = (int)((s_spec_center - s_spec_ch_bw * 0.5f - s_spec_start) / s_spec_step);
+  int i1 = (int)((s_spec_center + s_spec_ch_bw * 0.5f - s_spec_start) / s_spec_step);
+  if (i0 < 0) i0 = 0;
+  if (i1 >= SPEC_BINS) i1 = SPEC_BINS - 1;
+  if (i1 < i0) i1 = i0;
+  int ch = -200;
+  for (int i = i0; i <= i1; i++) if (s_spec_rssi[i] > ch) ch = s_spec_rssi[i];
+  // Busy = our channel well above the band's typical level. The median, not the
+  // floor: the floor is the quietest bin, and an idle channel sits a few dB over it.
+  int16_t srt[SPEC_BINS];
+  memcpy(srt, s_spec_rssi, sizeof srt);
+  std::nth_element(srt, srt + SPEC_BINS / 2, srt + SPEC_BINS);
+  const int median = srt[SPEC_BINS / 2];
+  s_spec_busy_bits = (s_spec_busy_bits << 1) | (ch > median + SPEC_BUSY_DB ? 1u : 0u);
+  if (s_spec_busy_n < 64) s_spec_busy_n++;
+  const uint64_t mask = s_spec_busy_n >= 64 ? ~0ull : ((1ull << s_spec_busy_n) - 1);
+  const int busy = (int)(__builtin_popcountll(s_spec_busy_bits & mask) * 100 / s_spec_busy_n);
+
+  char t[16];
+  snprintf(t, sizeof t, "%d", pk);               specSetTile(0, t, 0xF5A623);
+  snprintf(t, sizeof t, "%d", s_spec_floor);     specSetTile(1, t, COLOR_TEXT);
+  snprintf(t, sizeof t, "%d", ch);
+  specSetTile(2, t, accentGlowFor(COLOR_ACCENT, s_theme_day, s_theme_high_contrast));
+  snprintf(t, sizeof t, "%d%%", busy);
+  specSetTile(3, t, busy >= 30 ? COLOR_STATUS_DANGER : busy >= 10 ? COLOR_STATUS_WARN : COLOR_STATUS_OK);
+
+  spectrumTrackRange(true);
+  spectrumDrawPlot();
+  if (s_spec_peak_tag) {
+    const float f = s_spec_start + (float)pki * s_spec_step;
+    char fb[16];   // snprintf: LVGL's own printf has no float support
+    snprintf(fb, sizeof fb, s_spec_chan_view ? "%.3f" : "%.2f", (double)f);
+    lv_label_set_text(s_spec_peak_tag, fb);
+    const lv_coord_t tw = lv_txt_get_width(lv_label_get_text(s_spec_peak_tag),
+                                           strlen(lv_label_get_text(s_spec_peak_tag)), &g_font_12, 0, 0);
+    int x = s_spec_plot_x + specFreqX(f, s_spec_plot_w) - tw / 2;
+    if (x < s_spec_plot_x + 2) x = s_spec_plot_x + 2;
+    if (x > s_spec_plot_x + s_spec_plot_w - tw - 2) x = s_spec_plot_x + s_spec_plot_w - tw - 2;
+    int y = s_spec_plot_y + specPlotY(pk) - lv_font_get_line_height(&g_font_12) - 1;
+    if (y < s_spec_plot_y + 1) y = s_spec_plot_y + 1;
+    lv_obj_set_pos(s_spec_peak_tag, x, y);
+  }
+}
+#else
 // Repaint the live power-vs-frequency trace from the freshest sweep. The Y range
 // auto-scales to the live noise floor so the floor sits ~20% up the chart (its real
 // wiggle visible) and signals climb prominently — instead of a flat line crushed
@@ -29344,6 +29610,8 @@ static void spectrumDrawTrace() {
   if (s_spec_scale_hi_lbl) { char sb[12]; snprintf(sb, sizeof sb, "%d", s_spec_floor + SPEC_WF_HEADROOM); lv_label_set_text(s_spec_scale_hi_lbl, sb); }
   if (s_spec_scale_lbl)    { char sb[12]; snprintf(sb, sizeof sb, "%d", s_spec_floor - 3);                lv_label_set_text(s_spec_scale_lbl, sb); }
 }
+
+#endif
 
 static void spectrumTimerCb(lv_timer_t* t) {
   (void)t;
@@ -29417,6 +29685,15 @@ static void closeSpectrumPage() {
   // The canvas no longer references the buffer once its root is queued for
   // deletion; free the PSRAM backing store (allocated in openSpectrumPage).
   if (s_spec_wf_buf) { heap_caps_free(s_spec_wf_buf); s_spec_wf_buf = nullptr; }
+#if !defined(HAS_TDECK_PRO)
+  s_spec_plot = nullptr; s_spec_ramp = nullptr; s_spec_peak_tag = nullptr;
+  s_spec_axis_c = nullptr; s_spec_axis_r = nullptr; s_spec_view_btn = nullptr; s_spec_win_btn = nullptr;
+  for (int i = 0; i < 4; i++) s_spec_tile_val[i] = nullptr;
+  for (int i = 0; i < 3; i++) s_spec_grid_lbl[i] = nullptr;
+  if (s_spec_plot_buf) { heap_caps_free(s_spec_plot_buf); s_spec_plot_buf = nullptr; }
+  if (s_spec_ramp_buf) { heap_caps_free(s_spec_ramp_buf); s_spec_ramp_buf = nullptr; }
+  if (s_spec_area_lut) { heap_caps_free(s_spec_area_lut); s_spec_area_lut = nullptr; }
+#endif
   if (s_apppage_close == closeSpectrumPage) {   // release the tall title bar back to normal
     s_apppage_title = nullptr; s_apppage_close = nullptr;
     statusBarSetTall(false); updateGlobalStatusBar();
@@ -29430,6 +29707,123 @@ static void spectrumDismissCb(lv_event_t* e) {
   lv_indev_t* a = lv_indev_get_act(); if (a) lv_indev_wait_release(a);
   closeSpectrumPage();
 }
+
+#if !defined(HAS_TDECK_PRO)
+static lv_color_t* specAlloc(size_t px) {   // PSRAM first, internal RAM if that is exhausted
+  lv_color_t* p = (lv_color_t*)heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_SPIRAM);
+  if (!p) p = (lv_color_t*)heap_caps_malloc(px * sizeof(lv_color_t), MALLOC_CAP_8BIT);
+  return p;
+}
+static void specStylePanel(lv_obj_t* o, uint32_t bg) {   // an inert framed panel (tile, plot, waterfall)
+  lv_obj_set_style_bg_color(o, lv_color_hex(bg), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_border_color(o, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(o, 1, LV_PART_MAIN);
+  lv_obj_set_style_radius(o, SC(6), LV_PART_MAIN);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(o, NAV_SKIP_FLAG);
+}
+static lv_obj_t* specAxisLabel(int x, int y, uint32_t color) {
+  lv_obj_t* l = lv_label_create(s_spec_root);
+  lv_label_set_text(l, "");
+  lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(color), LV_PART_MAIN);
+  lv_obj_set_pos(l, x, y);
+  return l;
+}
+static lv_obj_t* specChip(lv_obj_t* parent, const char* txt, lv_event_cb_t cb) {
+  lv_obj_t* b = lv_btn_create(parent);
+  styleButton(b);
+  lv_obj_set_size(b, LV_SIZE_CONTENT, lv_font_get_line_height(&g_font_12) + SC(6));
+  lv_obj_set_style_pad_hor(b, SC(9), LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(b, 0, LV_PART_MAIN);
+  lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(b, lv_color_hex(0x0A0C12), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(b, 190, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_hex(0x3A4250), LV_PART_MAIN);
+  lv_obj_set_style_border_width(b, 1, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(b, 0, LV_PART_MAIN);
+  lv_obj_t* l = lv_label_create(b);
+  lv_label_set_text(l, txt);
+  lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(0xE6EBF2), LV_PART_MAIN);   // always on the dark waterfall
+  lv_obj_center(l);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, nullptr);
+  return b;
+}
+static void specChipText(lv_obj_t* b, const char* txt) {
+  lv_obj_t* l = b ? lv_obj_get_child(b, 0) : nullptr;
+  if (l) lv_label_set_text(l, txt);
+}
+
+// Point the sweep at the whole band or at our channel and start over: the bins,
+// the peak hold, the busy history and the waterfall all describe the old span.
+static void spectrumApplySpan() {
+  float span = SPEC_SPAN_MHZ;
+  if (s_spec_chan_view) {               // 16 channel widths: the channel and its neighbours
+    span = s_spec_ch_bw * 16.0f;
+    if (span < 0.5f) span = 0.5f;
+    if (span > 4.0f) span = 4.0f;
+  }
+  float start = s_spec_center - span * 0.5f, stop = s_spec_center + span * 0.5f;
+  if (start < SPEC_FMIN_MHZ) start = SPEC_FMIN_MHZ;
+  if (stop  > SPEC_FMAX_MHZ) stop  = SPEC_FMAX_MHZ;
+  s_spec_start = start;
+  s_spec_step  = (stop - start) / (float)SPEC_BINS;
+  s_spec_pos   = 0;
+  for (int i = 0; i < SPEC_BINS; i++) {
+    s_spec_rssi[i] = SPEC_DBM_MIN; s_spec_hold[i] = SPEC_DBM_MIN; s_spec_acc[i] = -200;
+  }
+  s_spec_busy_bits = 0; s_spec_busy_n = 0;
+  s_spec_ylo = -130; s_spec_yhi = -80;
+  s_spec_disp_lo = s_spec_disp_hi = 0;  // force the dB labels to be rewritten
+  for (int i = 0; i < 4; i++) if (s_spec_tile_val[i]) lv_label_set_text(s_spec_tile_val[i], "--");
+  if (s_spec_peak_tag) lv_label_set_text(s_spec_peak_tag, "");
+  if (s_spec_wf_buf) {
+    for (int i = 0; i < s_spec_wf_w * s_spec_wf_h; i++) s_spec_wf_buf[i] = s_spec_heat_lut[0];
+    if (s_spec_wf) lv_obj_invalidate(s_spec_wf);
+  }
+  // snprintf, not lv_label_set_text_fmt: LVGL's own printf has no float support
+  const char* fmt = s_spec_chan_view ? "%.2f" : "%.1f";
+  char fb[16];
+  if (s_spec_axis_lbl) { snprintf(fb, sizeof fb, fmt, (double)start); lv_label_set_text(s_spec_axis_lbl, fb); }
+  if (s_spec_axis_r)   { snprintf(fb, sizeof fb, fmt, (double)stop);  lv_label_set_text(s_spec_axis_r, fb); }
+  if (s_spec_axis_c) {
+    snprintf(fb, sizeof fb, s_spec_chan_view ? "%.3f" : "%.1f", (double)s_spec_center);
+    lv_label_set_text(s_spec_axis_c, fb);
+    const char* t = lv_label_get_text(s_spec_axis_c);
+    const int tw = lv_txt_get_width(t, strlen(t), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+    // keep clear of the edge labels; the marker line in the plot shows the exact spot
+    const int ew = lv_txt_get_width("000.00", 6, &g_font_12, 0, LV_TEXT_FLAG_NONE) + SC(4);
+    int x = s_spec_plot_x + specFreqX(s_spec_center, s_spec_plot_w) - tw / 2;
+    if (x < s_spec_plot_x + ew) x = s_spec_plot_x + ew;
+    if (x > s_spec_plot_x + s_spec_plot_w - ew - tw) x = s_spec_plot_x + s_spec_plot_w - ew - tw;
+    lv_obj_set_x(s_spec_axis_c, x);
+  }
+  specChipText(s_spec_view_btn, s_spec_chan_view ? TR("Channel") : TR("Band"));
+  spectrumTrackRange(false);
+  spectrumDrawPlot();
+}
+static void spectrumViewCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_spec_chan_view = !s_spec_chan_view;
+  spectrumApplySpan();
+}
+static void spectrumWindowCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  static const char* const kWin[3] = { "Live", "1 min", "10 min" };
+  s_spec_window = (uint8_t)((s_spec_window + 1) % 3);
+  specChipText(s_spec_win_btn, TR(kWin[s_spec_window]));
+  // one time scale per picture: start the waterfall over
+  if (s_spec_wf_buf) {
+    for (int i = 0; i < s_spec_wf_w * s_spec_wf_h; i++) s_spec_wf_buf[i] = s_spec_heat_lut[0];
+    if (s_spec_wf) lv_obj_invalidate(s_spec_wf);
+  }
+  for (int i = 0; i < SPEC_BINS; i++) s_spec_acc[i] = -200;
+  s_spec_row_ms = millis();
+}
+#endif
 
 #if WADA_WEB_FILE_TRANSFER
 // ============================================================================
@@ -30976,6 +31370,7 @@ static void openSpectrumPage() {
   const int body_top = top;
 #endif
 
+#if defined(HAS_TDECK_PRO)
   // ---- readout line: RBW / span. The centre frequency lives on the axis below. ----
   s_spec_info_lbl = lv_label_create(s_spec_root);
   char info[96];
@@ -31185,6 +31580,139 @@ static void openSpectrumPage() {
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, chart_y + chart_h + 6);
 #else
   lv_obj_set_pos(s_spec_axis_lbl, chart_x, wf_y + wf_disp_h + 3);
+#endif
+
+#else
+  s_spec_center = center;
+  s_spec_ch_bw  = (pr && pr->bw > 0) ? pr->bw / 1000.0f : 0.0625f;
+  specBuildHeatLut();
+  const int lh12 = lv_font_get_line_height(&g_font_12);
+  const int lh16 = lv_font_get_line_height(&g_font_16);
+  const int x0 = SC(8), cw = sw - 2 * x0;
+  int y = body_top;
+
+  // ---- stat tiles: Peak / Floor / Channel / Busy ----
+  {
+    static const char* const kTile[4] = { "Peak", "Floor", "Channel", "Busy" };
+    const int gap = SC(5), tw = (cw - 3 * gap) / 4, th = lh12 + lh16 + SC(8);
+    for (int i = 0; i < 4; i++) {
+      lv_obj_t* t = lv_obj_create(s_spec_root);
+      lv_obj_remove_style_all(t);
+      lv_obj_set_size(t, tw, th);
+      lv_obj_set_pos(t, x0 + i * (tw + gap), y);
+      specStylePanel(t, COLOR_PANEL);
+      lv_obj_t* k = lv_label_create(t);
+      lv_label_set_text(k, TR(kTile[i]));
+      lv_obj_set_style_text_font(k, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(k, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_label_set_long_mode(k, LV_LABEL_LONG_DOT);
+      lv_obj_set_width(k, tw - SC(10));
+      lv_obj_set_pos(k, SC(6), SC(3));
+      lv_obj_t* v = lv_label_create(t);
+      lv_label_set_text(v, "--");
+      lv_obj_set_style_text_font(v, &g_font_16, LV_PART_MAIN);
+      lv_obj_set_style_text_color(v, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+      lv_obj_set_pos(v, SC(6), SC(3) + lh12);
+      s_spec_tile_val[i] = v;
+    }
+    y += th + SC(7);
+  }
+
+  // ---- geometry: the plot and the waterfall share one column; the dB labels and
+  // the colour key live in the gutter to its left ----
+  const int ins    = SC(3);                                   // canvas inset inside its frame
+  const int gutter = lv_txt_get_width("-120", 4, &g_font_12, 0, LV_TEXT_FLAG_NONE) + SC(8);
+  const int fx = x0 + gutter, fw = sw - x0 - fx;             // frame: right edge on the tiles'
+  const int axis_h = lh12 + SC(2);
+  int avail = H - y - axis_h - SC(6) - SC(3) - 4 * ins;
+  if (avail < 64) avail = 64;
+  const int ph = avail * 42 / 100;
+  s_spec_wf_rh = SC(2) < 1 ? 1 : SC(2);
+  const int wh = (avail - ph) / s_spec_wf_rh * s_spec_wf_rh;
+  const int pw = fw - 2 * ins;
+
+  // ---- plot ----
+  lv_obj_t* pf = lv_obj_create(s_spec_root);
+  lv_obj_remove_style_all(pf);
+  lv_obj_set_size(pf, fw, ph + 2 * ins);
+  lv_obj_set_pos(pf, fx, y);
+  specStylePanel(pf, COLOR_PANEL);
+  s_spec_plot_x = fx + ins; s_spec_plot_y = y + ins;
+  s_spec_plot_w = pw;       s_spec_plot_h = ph;
+  s_spec_plot_buf = specAlloc((size_t)pw * ph);
+  s_spec_area_lut = specAlloc((size_t)ph);
+  if (s_spec_area_lut) {
+    const uint32_t glow = accentGlowFor(COLOR_ACCENT, s_theme_day, s_theme_high_contrast);
+    for (int r = 0; r < ph; r++)   // ~55% accent at the top of the plot, ~6% at the bottom
+      s_spec_area_lut[r] = lv_color_hex(rgbMix(COLOR_PANEL, glow, (uint8_t)(140 - 125 * r / (ph > 1 ? ph - 1 : 1))));
+  }
+  if (s_spec_plot_buf) {
+    s_spec_plot = lv_canvas_create(s_spec_root);
+    lv_canvas_set_buffer(s_spec_plot, s_spec_plot_buf, pw, ph, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_pos(s_spec_plot, s_spec_plot_x, s_spec_plot_y);
+    lv_obj_add_flag(s_spec_plot, NAV_SKIP_FLAG);
+  }
+  {
+    const int gy[3] = { 0, (ph - 1) / 2, ph - 1 };
+    for (int g = 0; g < 3; g++) {
+      lv_obj_t* l = lv_label_create(s_spec_root);
+      lv_label_set_text(l, "");
+      lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+      lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+      lv_obj_set_width(l, gutter - SC(6));
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+      lv_obj_set_pos(l, x0 - SC(2), s_spec_plot_y + gy[g] - lh12 / 2);
+      s_spec_grid_lbl[g] = l;
+    }
+  }
+  s_spec_peak_tag = lv_label_create(s_spec_root);
+  lv_label_set_text(s_spec_peak_tag, "");
+  lv_obj_set_style_text_font(s_spec_peak_tag, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_spec_peak_tag, lv_color_hex(0xF5A623), LV_PART_MAIN);
+  y += ph + 2 * ins + SC(6);
+
+  // ---- waterfall: newest line on top ----
+  lv_obj_t* wfr = lv_obj_create(s_spec_root);
+  lv_obj_remove_style_all(wfr);
+  lv_obj_set_size(wfr, fw, wh + 2 * ins);
+  lv_obj_set_pos(wfr, fx, y);
+  specStylePanel(wfr, 0x0A0C12);
+  s_spec_wf_w = pw; s_spec_wf_h = wh;
+  s_spec_wf_buf = specAlloc((size_t)pw * wh);
+  if (s_spec_wf_buf) {
+    for (int i = 0; i < pw * wh; i++) s_spec_wf_buf[i] = s_spec_heat_lut[0];
+    s_spec_wf = lv_canvas_create(s_spec_root);
+    lv_canvas_set_buffer(s_spec_wf, s_spec_wf_buf, pw, wh, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_pos(s_spec_wf, fx + ins, y + ins);
+    lv_obj_add_flag(s_spec_wf, NAV_SKIP_FLAG);
+  }
+  // colour key in the gutter: strong at the top, weak at the bottom
+  const int rw = SC(5);
+  s_spec_ramp_buf = specAlloc((size_t)rw * wh);
+  if (s_spec_ramp_buf && wh > 1) {
+    for (int r = 0; r < wh; r++)
+      for (int c = 0; c < rw; c++) s_spec_ramp_buf[r * rw + c] = s_spec_heat_lut[63 - r * 63 / (wh - 1)];
+    s_spec_ramp = lv_canvas_create(s_spec_root);
+    lv_canvas_set_buffer(s_spec_ramp, s_spec_ramp_buf, rw, wh, LV_IMG_CF_TRUE_COLOR);
+    lv_obj_set_pos(s_spec_ramp, fx - SC(6) - rw, y + ins);
+    lv_obj_add_flag(s_spec_ramp, NAV_SKIP_FLAG);
+  }
+  s_spec_view_btn = specChip(s_spec_root, s_spec_chan_view ? TR("Channel") : TR("Band"), spectrumViewCb);
+  lv_obj_set_pos(s_spec_view_btn, fx + ins + SC(4), y + ins + SC(4));
+  static const char* const kWin[3] = { "Live", "1 min", "10 min" };
+  s_spec_win_btn = specChip(s_spec_root, TR(kWin[s_spec_window]), spectrumWindowCb);
+  // right-anchored to the root, so the chip grows leftwards when its text changes
+  // (and no size is read before the first layout)
+  lv_obj_align(s_spec_win_btn, LV_ALIGN_TOP_RIGHT, -(sw - fx - fw) - ins - SC(4), y + ins + SC(4));
+  y += wh + 2 * ins + SC(3);
+
+  // ---- frequency axis: band edges, and our channel under its marker ----
+  s_spec_axis_lbl = specAxisLabel(fx + ins, y, COLOR_SUB);
+  s_spec_axis_c   = specAxisLabel(fx + ins, y, accentGlowFor(COLOR_ACCENT, s_theme_day, s_theme_high_contrast));
+  s_spec_axis_r   = specAxisLabel(fx + ins, y, COLOR_SUB);
+  lv_obj_set_width(s_spec_axis_r, pw);
+  lv_obj_set_style_text_align(s_spec_axis_r, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+  spectrumApplySpan();
 #endif
 
   // Each bin costs ~5.5 ms (1.5 ms settle + ~2.4 ms of peak-hold reads + retune/RX
@@ -33832,9 +34360,14 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   http.setConnectTimeout(8000);
   http.setTimeout(20000);
   http.setUserAgent("wadamesh-touch");
+  Serial.printf("[OTA] GET %s\n", url);
   if (!http.begin(client, url)) { snprintf(s_ota_msg, sizeof s_ota_msg, "connect failed"); s_ota_state = 3; return; }
   const int code = http.GET();
-  if (code != 200) { snprintf(s_ota_msg, sizeof s_ota_msg, "HTTP %d", code); http.end(); s_ota_state = 3; return; }
+  if (code != 200) {
+    // Negative = HTTPClient's own error (-1 refused, -2 headers not sent, ...), named in the log.
+    Serial.printf("[OTA] GET -> %d (%s)\n", code, code < 0 ? http.errorToString(code).c_str() : "server");
+    snprintf(s_ota_msg, sizeof s_ota_msg, "HTTP %d", code); http.end(); s_ota_state = 3; return;
+  }
   const int len = http.getSize();
   if (len <= 0) { snprintf(s_ota_msg, sizeof s_ota_msg, "bad length"); http.end(); s_ota_state = 3; return; }
   // Update.begin() picks the spare OTA slot AND verifies the image fits it -> the size guard. A
@@ -51233,6 +51766,8 @@ static void closeControlCenter() {
   s_m9_cc_screenshot_up = CC_NAV_THEME;
 #endif
   s_cc_gps_label = nullptr;
+  s_cc_clock_label = nullptr;
+  s_cc_date_label = nullptr;
 #if defined(HAS_EXPANSION_KIT)
   s_cc_env_label = nullptr;
 #endif
@@ -52132,6 +52667,25 @@ static void ccVolumeReleaseCb(lv_event_t* e) {
 }
 #endif
 
+// The panel's clock and date. Built once when it opens and then kept current by the
+// status-bar tick: it used to be a snapshot, so a panel left open (or reopened from
+// the screensaver) showed the time it was opened at while the bar kept going (#666).
+static bool ccClockStrings(char* clock_s, size_t clock_cap, char* date_s, size_t date_cap) {
+  bool current = false;
+#if defined(ESP32)
+  time_t now_t = time(nullptr);
+  current = wallClockIsCurrent() && now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH;
+  if (current) {
+    struct tm tm_loc; localtime_r(&now_t, &tm_loc);
+    fmtClockHM(clock_s, clock_cap, &tm_loc);
+    strftime(date_s, date_cap, "%a %d %b %Y", &tm_loc);
+  } else {
+    formatUptimeShort(clock_s, clock_cap);
+    snprintf(date_s, date_cap, "Build %s", FIRMWARE_BUILD_DATE);
+  }
+#endif
+  return current;
+}
 static void openControlCenter() {
 #if defined(TLORA_PAGER)
   const bool cc_fresh = (s_cc_root == nullptr);   // not a rebuild after a chip was toggled
@@ -52213,27 +52767,16 @@ static void openControlCenter() {
 
   // ---- Clock + date (left) ----
   char clock_s[12] = "--:--", date_s[28] = "RTC unset";
-  bool clock_current = false;
-#if defined(ESP32)
-  time_t now_t = time(nullptr);
-  clock_current = wallClockIsCurrent() &&
-                  now_t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH;
-  if (clock_current) {
-    struct tm tm_loc; localtime_r(&now_t, &tm_loc);
-    fmtClockHM(clock_s, sizeof clock_s, &tm_loc);
-    strftime(date_s, sizeof date_s, "%a %d %b %Y", &tm_loc);
-  } else {
-    formatUptimeShort(clock_s, sizeof clock_s);
-    snprintf(date_s, sizeof date_s, "Build %s", FIRMWARE_BUILD_DATE);
-  }
-#endif
+  const bool clock_current = ccClockStrings(clock_s, sizeof clock_s, date_s, sizeof date_s);
   lv_obj_t* clk = lv_label_create(card);
+  s_cc_clock_label = clk;
   lv_label_set_text(clk, clock_s);
   lv_obj_set_style_text_font(clk, &g_font_semi_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(clk,
       lv_color_hex(clock_current ? COLOR_TEXT : COLOR_STATUS_WARN), LV_PART_MAIN);
   lv_obj_align(clk, LV_ALIGN_TOP_LEFT, 0, 0);
   lv_obj_t* dt = lv_label_create(card);
+  s_cc_date_label = dt;
   lv_label_set_text(dt, date_s);
   lv_obj_set_style_text_font(dt, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(dt,
@@ -52643,14 +53186,52 @@ static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I
 static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
 
 #if CAP_BUILTIN_LUA_APPS
-#include "lua_builtin.h"   // generated: the catalog's apps, compiled in
-// Source for a seeded app, or nullptr when the id is not one of the built-ins.
-static const char* luaBuiltinSrc(const char* id) {
+#include "lua_builtin.h"   // generated: the catalog's apps, compiled in, raw-deflated
+#include "rom/miniz.h"     // the S3 ROM's tinfl: inflating costs no flash
+static bool luaBuiltinHas(const char* id) {
   for (int i = 0; i < kLuaBuiltinCount; i++)
-    if (strcmp(kLuaBuiltin[i].id, id) == 0) return kLuaBuiltin[i].src;
+    if (strcmp(kLuaBuiltin[i].id, id) == 0) return true;
+  return false;
+}
+// Source for a seeded app, inflated into a PSRAM buffer, or nullptr when the id is
+// not one of the built-ins. The buffer holds one app and is reused by the next
+// call; every caller hands it straight to luaAppLaunchFile, which compiles it at
+// once. The decompressor state (~11 KB) goes to PSRAM too: the ROM's one-call
+// tinfl_decompress_mem_to_mem would put it on the UI task's stack.
+static const char* luaBuiltinSrc(const char* id) {
+  static char* buf = nullptr;
+  static char cur[20] = "";
+  for (int i = 0; i < kLuaBuiltinCount; i++) {
+    const LuaBuiltinApp& a = kLuaBuiltin[i];
+    if (strcmp(a.id, id) != 0) continue;
+    if (buf && strcmp(cur, id) == 0) return buf;
+    if (buf) { heap_caps_free(buf); buf = nullptr; }
+    cur[0] = 0;
+    buf = (char*)heap_caps_malloc(a.len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    tinfl_decompressor* d = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor),
+                                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    bool ok = false;
+    if (buf && d) {
+      tinfl_init(d);
+      size_t in = a.zlen, out = a.len;
+      const tinfl_status st = tinfl_decompress(d, a.z, &in, (mz_uint8*)buf, (mz_uint8*)buf, &out,
+                                               TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+      ok = st == TINFL_STATUS_DONE && out == a.len;
+    }
+    if (d) heap_caps_free(d);
+    if (!ok) {
+      Serial.printf("[LUA] built-in %s failed to inflate\n", id);
+      if (buf) { heap_caps_free(buf); buf = nullptr; }
+      return nullptr;
+    }
+    buf[a.len] = 0;
+    snprintf(cur, sizeof cur, "%s", id);
+    return buf;
+  }
   return nullptr;
 }
 #else
+static bool luaBuiltinHas(const char*) { return false; }
 static const char* luaBuiltinSrc(const char*) { return nullptr; }
 #endif
 
@@ -52934,6 +53515,7 @@ static bool luaStoreBoardMeets(const char* req) {
   if (!req || !req[0]) return true;
   if (!strcmp(req, "sdk_ext")) return CAP_LUA_SDK_EXT != 0;
   if (!strcmp(req, "sd"))      return CAP_SD != 0;
+  if (!strcmp(req, "audio"))   return CAP_LUA_AUDIO != 0;   // a speaker that plays files (Music)
   return true;
 }
 
@@ -53204,7 +53786,40 @@ static void luaStoreTabCb(lv_event_t* e) {
   luaStoreRebuildList();
 }
 
+// "major.minor": a newer than b. Numeric per part, so 1.10 is newer than 1.9.
+static bool luaVerNewer(const char* a, const char* b) {
+  int am = 0, an = 0, bm = 0, bn = 0;
+  if (sscanf(a, "%d.%d", &am, &an) < 1 || sscanf(b, "%d.%d", &bm, &bn) < 1) return strcmp(a, b) != 0;
+  return am != bm ? am > bm : an > bn;
+}
+static void luaStoreCountUpdates() {
+  if (s_lua_cat_n <= 0 || !luaStoreTablesReady()) return;
+  luaStoreScanInstalled(false);
+  int n = 0;
+  for (int i = 0; i < s_lua_cat_n; i++) {
+    const LuaInstApp* inst = luaStoreFindInstalled(s_lua_cat[i].id);
+    if (inst && luaVerNewer(s_lua_cat[i].ver, inst->ver)) n++;
+  }
+  s_store_updates = n;
+}
+static bool s_store_bg_fetch = false;   // a catalog fetch the Store page did not ask for
+static void storeUpdatesKick() {
+  if (s_luastore_root || s_luacat_request) return;   // the open Store fetches for itself
+  s_luacat_done = false;
+  s_luacat_request = true;
+  s_store_bg_fetch = true;
+}
+static void storeUpdatesPoll() {
+  if (!s_store_bg_fetch || s_luastore_root || !s_luacat_done) return;
+  s_luacat_done = false;
+  s_store_bg_fetch = false;
+  luaStoreParseCatalog();
+  luaStoreCountUpdates();
+  Serial.printf("[STORE] catalog %d apps, %d update(s) for installed apps\n", s_lua_cat_n, s_store_updates);
+}
+
 static void luaStoreRebuildList() {
+  luaStoreCountUpdates();
   if (!s_luastore_list) return;
   // Keep the reader where they were. This runs from ASYNC completions -- the
   // catalog fetch, the card scan, a language catalog -- which land a second or
@@ -53800,6 +54415,10 @@ static void luaStoreOpenLanguages() {
   openLuaStorePage();
 }
 #endif  // CAP_LUA_APPS (store page)
+#if !CAP_LUA_APPS
+static void storeUpdatesKick() {}
+static void storeUpdatesPoll() {}
+#endif
 
 #if CAP_LUA_APPS && CAP_LUA_SD_LIST
 // ===== SD-card malware warning =============================================
@@ -54638,7 +55257,7 @@ static void appTileLongPressCb(lv_event_t* e) {
   int act = (int)(intptr_t)lv_event_get_user_data(e);
   int idx = act - APPACT_LUA_BASE;
   if (idx >= 0 && idx < s_lua_inst_n) {          // installed Lua app -> remove
-    if (luaBuiltinSrc(s_lua_inst[idx].id)) return;   // seeded in the image: nothing to uninstall
+    if (luaBuiltinHas(s_lua_inst[idx].id)) return;   // seeded in the image: nothing to uninstall
     s_tile_lp_fired = true;
     s_lua_rm_pending = idx;
     char msg[64];
@@ -55066,6 +55685,7 @@ static const char* luaAppIconGlyph(const char* name) {
     { "settings", LV_SYMBOL_SETTINGS },
     { "battery",  LV_SYMBOL_CHARGE },
     { "game",     LV_SYMBOL_PLAY },
+    { "music",    LV_SYMBOL_AUDIO },      // a note: players
   };
   for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
   return LV_SYMBOL_PLAY;
@@ -55102,7 +55722,8 @@ static void openAppDrawer() {
   // First tile is "Command" (back to the command centre); the rest are the apps.
   const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
   const int mentions = g_lv.task ? g_lv.task->getUnreadMentionCount() : 0;
-  s_appdrawer_badge_sig = ((uint32_t)(unread & 0x7FFF) << 16) | (uint32_t)(mentions & 0xFFFF) |
+  s_appdrawer_badge_sig = ((uint32_t)(unread & 0x7FFF) << 16) | (uint32_t)(mentions & 0x0FFF) |
+                          ((uint32_t)(s_store_updates & 0xF) << 12) |
                           (s_update_available ? 0x80000000u : 0u);
   s_appdrawer_live = appTilesLiveMask();
   // The launcher's rows follow the redesign: what you say (teal), where things
@@ -55116,7 +55737,8 @@ static void openAppDrawer() {
   for (int k = 0; k < kAppTiles; ++k) {
     const AppTileDef& t = k_app_tiles[k];
     const int badge = t.act == APPACT_CHATS ? unread : t.act == APPACT_MENTIONS ? mentions
-                    : t.act == APPACT_SETTINGS ? (s_update_available ? -1 : 0) : 0;   // "!" = update
+                    : t.act == APPACT_SETTINGS ? (s_update_available ? -1 : 0)      // "!" = update
+                    : t.act == APPACT_STORE ? s_store_updates : 0;                  // app updates waiting
     tiles[k] = { t.icon, TR(k_app_tiles[k].label), t.act, badge, appTileColor(t.hue) };
   }
   const int n_static = kAppTiles;
@@ -55424,6 +56046,9 @@ static void captureScreenToSerial(const char* name) {
   free(buf);
 }
 static void docSettle(int frames) { for (int i = 0; i < frames; ++i) { lv_timer_handler(); delay(22); } esp_task_wdt_reset(); }
+static void docSettleLong(int frames) {   // docSettle only feeds the watchdog at its end
+  for (; frames > 0; frames -= 25) docSettle(frames < 25 ? frames : 25);
+}
 #if CAP_SCREENSAVER
 static void ssaverDocCapture();   // in the screensaver bridge, which comes later in the file
 static void ssaverTeardown(bool lit);
@@ -56527,7 +57152,8 @@ static void updateGlobalStatusBar() {
   // close/open idiom the tile-changing settings already use.
   if (s_appdrawer_root && g_lv.task) {
     const uint32_t sig = ((uint32_t)(g_lv.task->getUnreadTotal() & 0x7FFF) << 16)
-                       | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0xFFFF)
+                       | (uint32_t)(g_lv.task->getUnreadMentionCount() & 0x0FFF)
+                       | ((uint32_t)(s_store_updates & 0xF) << 12)
                        | (s_update_available ? 0x80000000u : 0u);
     if ((sig != s_appdrawer_badge_sig || appTilesLiveMask() != s_appdrawer_live) && !appDrawerCovered()) {
       // Only when nothing is in front of it. Lua apps and the other tools open
@@ -59410,16 +60036,32 @@ static void hwGpsTap(int, lv_event_t*) { goToTab(MAP_TAB_INDEX); }
 static bool hwGpsAvail(uint8_t) { return CAP_GPS != 0; }
 
 // ---- Battery --------------------------------------------------------------------------
+// Below this the percentage no longer fits inside the ring and is drawn on top of
+// its stroke (the Pager's short Home cells, reported on Discord): the number then
+// goes beside a smaller ring instead.
+static const int HW_BATT_RING_MIN = 34;
+static bool hwBattSideBySide(const HwInst& w, int r) { return w.size == HWS_S && r < SC(HW_BATT_RING_MIN); }
 static void hwBatteryBuild(int i) {
   HwInst& w = hwI(i);
   hwBattSeed();
   const int cap_h = hwLh(&g_font_12);
-  const int r = w.size == HWS_S ? LV_MIN(w.pw, w.ph - cap_h - SC(2)) : LV_MIN(w.ph, w.pw / 3);
+  int r = w.size == HWS_S ? LV_MIN(w.pw, w.ph - cap_h - SC(2)) : LV_MIN(w.ph, w.pw / 3);
+  const bool side = hwBattSideBySide(w, r);
+  if (side) r = LV_MIN(r, hwLh(&g_font_semi_14) + SC(2));
   w.fig = hwFigNew(w.box, hwF(i), HWF_RING, r, r);
-  w.l[1] = hwLabel(w.box, r >= SC(36) ? &g_font_semi_14 : &g_font_semi_12, COLOR_TEXT);   // inside the ring
+  w.l[1] = hwLabel(w.box, side || r >= SC(36) ? &g_font_semi_14 : &g_font_semi_12, COLOR_TEXT);   // inside the ring, or beside it
   w.l[4] = hwIcon(w.box, UI_ICON_ZAP, COLOR_HUE[HUE_DEVICE]);
   lv_obj_add_flag(w.l[4], LV_OBJ_FLAG_HIDDEN);
-  if (w.size == HWS_S) {
+  if (side) {
+    // [ring] 97%  on one line, the voltage under it, the pair centred in the cell
+    w.l[2] = hwLine(w.box, &g_font_12, COLOR_SUB, w.pw);
+    lv_obj_set_style_text_align(w.l[2], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    const int tw = (int)lv_txt_get_width("100%", 4, &g_font_semi_14, 0, LV_TEXT_FLAG_NONE);
+    const int row = r + SC(5) + tw;
+    const int y0 = LV_MAX(0, (w.ph - r - cap_h - SC(2)) / 2);
+    lv_obj_set_pos(w.fig, LV_MAX(0, (w.pw - row) / 2), y0);
+    lv_obj_set_pos(w.l[2], 0, y0 + r + SC(2));
+  } else if (w.size == HWS_S) {
     w.l[2] = hwLine(w.box, &g_font_12, COLOR_SUB, w.pw);
     lv_obj_set_style_text_align(w.l[2], LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     const int y0 = LV_MAX(0, (w.ph - r - cap_h - SC(2)) / 2);
@@ -59451,8 +60093,12 @@ static void hwBatteryUpdate(int i) {
                      : pct >= 0 && pct <= 30 ? COLOR_STATUS_WARN : COLOR_HUE[HUE_DEVICE];
   const int16_t val = pct < 0 ? 0 : (int16_t)(pct * 10);
   if (f->value != val || f->ca != col || f->full != chg) { f->value = val; f->ca = col; f->full = chg; lv_obj_invalidate(w.fig); }
+  const bool side = hwBattSideBySide(w, lv_obj_get_style_width(w.fig, LV_PART_MAIN));   // as hwBatteryBuild chose
   char in[8] = "", v[16], a[24], b[64];
-  if (!chg) { if (pct >= 0) snprintf(in, sizeof in, "%d", pct); else snprintf(in, sizeof in, "?"); }
+  if (!chg) {
+    if (pct >= 0) snprintf(in, sizeof in, side ? "%d%%" : "%d", pct);
+    else snprintf(in, sizeof in, "?");
+  }
   snprintf(v, sizeof v, "%u.%02u V", mv / 1000u, (mv % 1000u) / 10u);
   const uint32_t h = hwHash(hwHashStr(hwHashStr(2166136261u, in), v), chg);
   if (h == w.memo && w.size == HWS_S) return;
@@ -59465,13 +60111,15 @@ static void hwBatteryUpdate(int i) {
     if (chg) {
       lv_obj_add_flag(w.l[1], LV_OBJ_FLAG_HIDDEN);
       lv_obj_clear_flag(w.l[4], LV_OBJ_FLAG_HIDDEN);
-      lv_obj_set_pos(w.l[4], fx + (fr - hwLh(&ui_icons_16)) / 2, fy + (fr - hwLh(&ui_icons_16)) / 2);
+      const int ih = hwLh(&ui_icons_16);
+      lv_obj_set_pos(w.l[4], side ? fx + fr + SC(5) : fx + (fr - ih) / 2, fy + (fr - ih) / 2);
     } else {
       lv_obj_add_flag(w.l[4], LV_OBJ_FLAG_HIDDEN);
       lv_obj_clear_flag(w.l[1], LV_OBJ_FLAG_HIDDEN);
       lv_label_set_text(w.l[1], in);
       const lv_font_t* lf = lv_obj_get_style_text_font(w.l[1], LV_PART_MAIN);
-      lv_obj_set_pos(w.l[1], fx + (fr - (int)lv_txt_get_width(in, strlen(in), lf, 0, LV_TEXT_FLAG_NONE)) / 2, fy + (fr - hwLh(lf)) / 2);
+      const int tw = (int)lv_txt_get_width(in, strlen(in), lf, 0, LV_TEXT_FLAG_NONE);
+      lv_obj_set_pos(w.l[1], side ? fx + fr + SC(5) : fx + (fr - tw) / 2, fy + (fr - hwLh(lf)) / 2);
     }
   }
   if (w.size == HWS_S) {
@@ -61773,6 +62421,17 @@ static void refreshStatusLabels() {
   // connects/drops, without having to close and reopen the panel.
   if (s_cc_root) {
     if (s_cc_gps_label) setLabelIfChanged(s_cc_gps_label, gpsStatusStr(true));
+    if (s_cc_clock_label && s_cc_date_label) {
+      char c[12] = "--:--", d[28] = "";
+      const bool cur = ccClockStrings(c, sizeof c, d, sizeof d);
+      setLabelIfChanged(s_cc_clock_label, c);
+      setLabelIfChanged(s_cc_date_label, d);
+      const lv_color_t want = lv_color_hex(cur ? COLOR_TEXT : COLOR_STATUS_WARN);
+      if (lv_obj_get_style_text_color(s_cc_clock_label, LV_PART_MAIN).full != want.full) {   // the clock got set
+        lv_obj_set_style_text_color(s_cc_clock_label, want, LV_PART_MAIN);
+        lv_obj_set_style_text_color(s_cc_date_label, lv_color_hex(cur ? COLOR_SUB : COLOR_STATUS_WARN), LV_PART_MAIN);
+      }
+    }
 #if defined(HAS_EXPANSION_KIT)
     if (s_cc_env_label) setLabelIfChanged(s_cc_env_label, localEnvStatusStr());
 #endif
@@ -67510,8 +68169,25 @@ bool luaHostScreenOn() {
   return g_lv.task ? !g_lv.task->isScreenOff() : true;
 }
 
+// Size class 20 and up is the "figure" size (Airtime's big busy number): Montserrat
+// 24 on the boards that carry it (the same list as ui_font_24.c), else SemiBold 16.
+// It never comes out smaller than the regular 16, which on a scaled-up UI already is
+// Montserrat 24. Older firmware maps any size above 16 to 16, so apps stay readable.
+static const lv_font_t* luaHostFigureFont() {
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
+  if (lv_font_get_line_height(&lv_font_montserrat_24) > lv_font_get_line_height(&g_font_16))
+    return &lv_font_montserrat_24;
+#endif
+  return &g_font_semi_16;
+}
 const lv_font_t* luaHostFontForSize(int size_class) {
-  return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14 : &g_font_16;
+  return size_class <= 12 ? &g_font_12 : size_class <= 14 ? &g_font_14
+       : size_class < 20 ? &g_font_16 : luaHostFigureFont();
+}
+// ui.label's bold flag: the SemiBold face of the same size class.
+const lv_font_t* luaHostBoldFontForSize(int size_class) {
+  return size_class <= 12 ? &g_font_semi_12 : size_class <= 14 ? &g_font_semi_14
+       : size_class < 20 ? &g_font_semi_16 : luaHostFigureFont();
 }
 // Lua wada.sys.beep() (#245). Routes to the SAME per-board chime the UI uses, so
 // a Lua app cannot be louder or different from the rest of the firmware, and it
@@ -68180,7 +68856,13 @@ bool luaHostAudioPlay(fs::FS* fs, const char* path, const char* shown, const cha
 
   TaskHandle_t task = nullptr;
   if (start_task) {
+#if defined(HAS_TDISPLAY_P4)
+    // Core 0: the SDMMC completion ISR lives there, and SD I/O issued from core 1
+    // both crawls and late-frames the DSI panel (#167). sd: tracks stream from it.
+    if (xTaskCreatePinnedToCore(luaAudioWorker, "lua-audio", 8192, nullptr, 3, &task, 0) != pdPASS) {
+#else
     if (xTaskCreate(luaAudioWorker, "lua-audio", 8192, nullptr, 3, &task) != pdPASS) {
+#endif
       portENTER_CRITICAL(&s_lua_audio_mux);
       s_lua_audio_task_state = LuaAudioTaskState::Stopped;
       portEXIT_CRITICAL(&s_lua_audio_mux);
@@ -68290,6 +68972,17 @@ void luaHostAudioStatus(uint32_t owner, char* state, size_t state_cap,
   luaAudioCopy(format, format_cap, status.format);
   luaAudioCopy(error, error_cap, status.error);
 }
+#endif
+
+#if CAP_LUA_SD_READ && !CAP_SD
+// SD_MMC boards (T-Display P4, Tanmatsu, Wio Tracker L2): the same card the file
+// manager browses, through its mount + liveness probe + backoff. Lua only reads it
+// (wada.sd.list and sd: audio); nothing here can write the card.
+fs::FS* luaHostSdFs(bool* busy) {
+  if (busy) *busy = false;
+  return tanSdTryMount() ? (fs::FS*)&SD_MMC : nullptr;
+}
+bool luaHostSdReadFailed() { return !tanSdProbeAlive(true); }
 #endif
 
 #if CAP_LUA_SD_LIST
@@ -71987,7 +72680,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if CAP_KEYBOARD
     s_kb_bl_mode = touchPrefsGetKbBacklight();
 #endif
-#if defined(HAS_TDECK_KEYBOARD)
+#if KB_BL_DIMMABLE
     { uint8_t p = touchPrefsGetKbdBacklight(); s_tdeck_kb_bl_pct = (p < 1) ? 1 : (p > 100 ? 100 : p); }   // shared kbd_bl pref (dark = mode off, not pct 0)
 #endif
     // Accent-popup picker (both boards: on-screen + physical keyboard). Default on.
@@ -77456,11 +78149,11 @@ void UITask::loop() {
   // only, so the tick costs zero I2C in steady state.
   {
     uint8_t kb_bl = 0;
-    if (s_kb_bl_mode == 1) kb_bl = 255;
-    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = 255;
+    if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();   // Settings > Keyboard > Brightness (#664)
+    else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
     if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
-    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = 255;   // notify pulse
-    if (s_pin_root && !_screen_off) kb_bl = 255;   // the PIN screen lights the keys to type it
+    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();   // notify pulse
+    if (s_pin_root && !_screen_off) kb_bl = tdeckKbBlLevel();   // the PIN screen lights the keys to type it
     // Cache the last duty the controller ACTUALLY took, not the last one
     // computed: the write is dropped while the controller (its own MCU, on
     // always-on 3V3 via R3 per the schematic-verified note in platformio.ini
@@ -79513,7 +80206,129 @@ static void docNickAudit() {
 }
 #endif
 
+#if defined(DOC_RADIO_AUDIT)
+// The radio tools' look: Spectrum (band and channel views), RF Monitor (main and a
+// packet's detail card) and Airtime. The Lua apps under test are embedded by the
+// capture script, so the shots show the sources in deploy/apps, not the Store's.
+#include "doc_radio_apps.h"   // scripts/doc/gen-radio-audit-apps.py
+static void docRadioAudit() {
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+  openSpectrumPage(); docSettleLong(260); captureScreenToSerial("radio_spectrum_band");
+  s_spec_chan_view = true; spectrumApplySpan(); docSettleLong(260); captureScreenToSerial("radio_spectrum_chan");
+  s_spec_window = 1; s_spec_chan_view = false; spectrumApplySpan(); docSettleLong(120);
+  captureScreenToSerial("radio_spectrum_1min");
+  s_spec_window = 0; closeSpectrumPage(); docSettle(8);
+  // A build with -DCAP_BUILTIN_LUA_APPS=1 launches the baked, deflated copies
+  // instead, which proves the inflate path on whatever board runs the tour.
+  const char* mon = luaBuiltinSrc("monitor");
+  if (!mon) mon = kAuditMonitor;
+  Serial.printf("DBG: monitor from %s\n", mon == kAuditMonitor ? "audit header" : "built-in");
+  if (luaAppLaunch("monitor", "RF Monitor", mon, strlen(mon))) {
+    docSettleLong(900); captureScreenToSerial("radio_monitor");
+    luaAppSteer(0, 1); docSettle(10); captureScreenToSerial("radio_monitor_sel");
+    luaAppKey(LV_KEY_ENTER); docSettle(20); captureScreenToSerial("radio_monitor_detail");
+    luaAppDismiss(); docSettle(8);
+  }
+  const char* air = luaBuiltinSrc("airtime");
+  if (!air) air = kAuditAirtime;
+  if (luaAppLaunch("airtime", "Airtime", air, strlen(air))) {
+    docSettleLong(900); captureScreenToSerial("radio_airtime"); luaAppDismiss(); docSettle(8);
+  }
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+}
+#endif
+
+#if defined(DOC_MUSIC_AUDIT) && CAP_MICROSD
+// The Music Store app end to end on a card that may hold no music: two short
+// test tones go into /Music/wadamesh test/, the app scans, plays the first and
+// must move to the second by itself when it ends (app.on_audio). Removed after.
+#include "doc_radio_apps.h"   // scripts/doc/gen-radio-audit-apps.py
+static bool docWriteToneWav(fs::FS& card, const char* path, int hz, int ms) {
+  File f = card.open(path, FILE_WRITE);
+  if (!f) return false;
+  const uint32_t rate = 16000, n = rate * (uint32_t)ms / 1000, data = n * 2;
+  uint8_t h[44] = { 'R','I','F','F', 0,0,0,0, 'W','A','V','E', 'f','m','t',' ', 16,0,0,0, 1,0, 1,0,
+                    0,0,0,0, 0,0,0,0, 2,0, 16,0, 'd','a','t','a', 0,0,0,0 };
+  auto le32 = [&](int o, uint32_t v) { h[o] = v; h[o + 1] = v >> 8; h[o + 2] = v >> 16; h[o + 3] = v >> 24; };
+  le32(4, 36 + data); le32(24, rate); le32(28, rate * 2); le32(40, data);
+  f.write(h, sizeof h);
+  int16_t buf[256];   // internal RAM: SD writes need a DMA-capable buffer
+  for (uint32_t i = 0; i < n; ) {
+    uint32_t k = 0;
+    for (; k < 256 && i < n; ++k, ++i) buf[k] = (int16_t)(6000.0f * sinf(6.2831853f * hz * i / rate));
+    f.write((const uint8_t*)buf, k * 2);
+  }
+  f.close();
+  return true;
+}
+// A button anywhere on screen whose label reads `txt`: the audit taps the app's
+// own controls, so the path is the one a finger takes on any board.
+static lv_obj_t* docFindButton(lv_obj_t* root, const char* txt) {
+  if (!root) return nullptr;
+  // Front-most first: the app drawer under an app has tiles with the same glyphs.
+  const uint32_t n = lv_obj_get_child_cnt(root);
+  for (uint32_t i = n; i-- > 0; ) {
+    lv_obj_t* c = lv_obj_get_child(root, (int32_t)i);
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (lv_obj_check_type(c, &lv_btn_class)) {
+      lv_obj_t* l = lv_obj_get_child(c, 0);
+      if (l && lv_obj_check_type(l, &lv_label_class) && !strcmp(lv_label_get_text(l), txt)) return c;
+    }
+    if (lv_obj_t* f = docFindButton(c, txt)) return f;
+  }
+  return nullptr;
+}
+static void docTap(const char* txt) {
+  lv_obj_t* b = docFindButton(luaAppBody(), txt);   // the running app first
+  if (!b) b = docFindButton(lv_layer_top(), txt);
+  if (!b) b = docFindButton(lv_scr_act(), txt);
+  Serial.printf("DBG: tap '%s' %s\n", txt, b ? "ok" : "NOT FOUND");
+  if (b) lv_event_send(b, LV_EVENT_CLICKED, nullptr);
+}
+static void docMusicAudit() {
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+#if CAP_SD
+  if (!fmSdTryMount()) { Serial.println("DBG: MUSIC no card"); return; }
+  fs::FS& card = SD;
+#else
+  if (!tanSdTryMount()) { Serial.println("DBG: MUSIC no card"); return; }
+  fs::FS& card = SD_MMC;
+#endif
+  card.mkdir("/Music");
+  card.mkdir("/Music/wadamesh test");
+  const bool w1 = docWriteToneWav(card, "/Music/wadamesh test/Tone A.wav", 660, 1500);
+  const bool w2 = docWriteToneWav(card, "/Music/wadamesh test/Tone B.wav", 880, 1500);
+  Serial.printf("DBG: MUSIC test tones written %d %d\n", w1, w2);
+  // Sound on for the test only, in memory (never saved), so playback is not refused
+  // as "muted" on a bench device with its sound switched off.
+  NodePrefs* np = the_mesh.getNodePrefs();
+  const uint8_t quiet_was = np ? np->buzzer_quiet : 0;
+  if (np) np->buzzer_quiet = 0;
+  Serial.printf("DBG: MUSIC volume %d%%\n", (int)touchPrefsGetSoundVolume());
+  if (luaAppLaunch("music", "Music", kAuditMusic, strlen(kAuditMusic))) {
+    docSettleLong(120); captureScreenToSerial("music_list");
+    docTap(LV_SYMBOL_PLAY); docSettleLong(20);  captureScreenToSerial("music_playing");
+    docSettleLong(90);   captureScreenToSerial("music_after_first");
+    docSettleLong(90);   captureScreenToSerial("music_end");
+    luaAppDismiss(); docSettle(8);
+  }
+  if (np) np->buzzer_quiet = quiet_was;
+  card.remove("/Music/wadamesh test/Tone A.wav");
+  card.remove("/Music/wadamesh test/Tone B.wav");
+  card.rmdir("/Music/wadamesh test");
+  Serial.println("DBG: MUSIC done, test tones removed");
+}
+#endif
+
 static void docAuditFocus() {
+#if defined(DOC_MUSIC_AUDIT) && CAP_MICROSD
+  docMusicAudit();
+  return;
+#endif
+#if defined(DOC_RADIO_AUDIT)
+  docRadioAudit();
+  return;
+#endif
 #if defined(DOC_FIX_VERIFY)
   docFixVerify();
   return;

@@ -1941,3 +1941,59 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR SF%d mellett
+%s ago	%s ezelőtt
+1 min	1 perc
+10 min	10 perc
+Acknowledgement	Nyugta
+Air split	Megoszlás
+Anonymous request	Névtelen kérés
+Average	Átlag
+Band	Sáv
+Busy	Foglalt
+Channel data	Csatornaadat
+Channel message	Csatornaüzenet
+Decodes to	Dekódolási határ
+Direct with a region code	Közvetlen régiókóddal
+Flood with a region code	Flood régiókóddal
+Floor	Alapzaj
+Hops	Ugrások
+Live	Élő
+Margin	Tartalék
+Multipart	Többrészes
+Noise	Zaj
+Packet	Csomag
+Path	Útvonal
+Peak	Csúcs
+Request	Kérés
+Response	Válasz
+Route	Irányítás
+Tap to go back	Koppints a visszalépéshez
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	keret %d s   tx %d   rx %d   hiba %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	keret %d s  tx %d  rx %d
+channel busy now	a csatorna most foglalt
+listening, nothing heard yet	figyelek, még semmi
+no airtime yet	még nincs adásidő
+over %d:%02d	%d:%02d alatt
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Tegyél MP3 vagy WAV fájlokat az alkalmazás mappájába.
+Cannot play	Nem játszható le
+Looking for music...	Zene keresése...
+Looking for music... %d	Zene keresése... %d
+Music	Zene
+No music found	Nem található zene
+No speaker	Nincs hangszóró
+Playing	Lejátszás
+Put MP3 or WAV files in a Music folder on the SD card.	Tegyél MP3 vagy WAV fájlokat egy Music mappába az SD-kártyán.
+Repeat all	Összes ismétlése
+Repeat off	Ismétlés ki
+Repeat this track	Szám ismétlése
+Showing the first %d tracks	Az első %d szám látható
+Sound is off: Settings > Sound	A hang ki van kapcsolva: Beállítások > Hang
+Stopped	Leállítva
+This device cannot play music.	Ez az eszköz nem tud zenét lejátszani.

@@ -1947,3 +1947,59 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR při SF%d
+%s ago	před %s
+1 min	1 min
+10 min	10 min
+Acknowledgement	Potvrzení
+Air split	Rozdělení
+Anonymous request	Anonymní požadavek
+Average	Průměr
+Band	Pásmo
+Busy	Obsazeno
+Channel data	Data kanálu
+Channel message	Zpráva kanálu
+Decodes to	Dekóduje do
+Direct with a region code	Přímo s kódem regionu
+Flood with a region code	Flood s kódem regionu
+Floor	Dno
+Hops	Skoky
+Live	Živě
+Margin	Rezerva
+Multipart	Vícedílná
+Noise	Šum
+Packet	Paket
+Path	Cesta
+Peak	Špička
+Request	Požadavek
+Response	Odpověď
+Route	Trasa
+Tap to go back	Klepnutím zpět
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	rozpočet %d s   tx %d   rx %d   chyby %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	rozpočet %d s  tx %d  rx %d
+channel busy now	kanál je teď obsazen
+listening, nothing heard yet	poslouchám, zatím nic
+no airtime yet	zatím žádný vysílací čas
+over %d:%02d	za %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Přidejte soubory MP3 nebo WAV do složky této aplikace.
+Cannot play	Nelze přehrát
+Looking for music...	Hledám hudbu...
+Looking for music... %d	Hledám hudbu... %d
+Music	Hudba
+No music found	Žádná hudba nenalezena
+No speaker	Bez reproduktoru
+Playing	Hraje
+Put MP3 or WAV files in a Music folder on the SD card.	Dejte soubory MP3 nebo WAV do složky Music na SD kartě.
+Repeat all	Opakovat vše
+Repeat off	Opakování vypnuto
+Repeat this track	Opakovat tuto skladbu
+Showing the first %d tracks	Zobrazeno prvních %d skladeb
+Sound is off: Settings > Sound	Zvuk je vypnutý: Nastavení > Zvuk
+Stopped	Zastaveno
+This device cannot play music.	Toto zařízení neumí přehrávat hudbu.

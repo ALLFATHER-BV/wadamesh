@@ -1927,3 +1927,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR bij SF%d
+%s ago	%s geleden
+1 min	1 min
+10 min	10 min
+Acknowledgement	Bevestiging
+Air split	Verdeling
+Anonymous request	Anoniem verzoek
+Average	Gemiddeld
+Band	Band
+Busy	Bezet
+Channel data	Kanaaldata
+Channel message	Kanaalbericht
+Decodes to	Decodeert tot
+Direct with a region code	Direct met regiocode
+Flood with a region code	Flood met regiocode
+Floor	Vloer
+Hops	Hops
+Live	Live
+Margin	Marge
+Multipart	Meerdelig
+Noise	Ruis
+Packet	Pakket
+Path	Pad
+Peak	Piek
+Request	Verzoek
+Response	Antwoord
+Route	Route
+Size	Grootte
+Tap to go back	Tik om terug te gaan
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	budget %d s   tx %d   rx %d   fout %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	budget %d s  tx %d  rx %d
+channel busy now	kanaal nu bezet
+listening, nothing heard yet	aan het luisteren, nog niets gehoord
+no airtime yet	nog geen zendtijd
+over %d:%02d	over %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Zet MP3- of WAV-bestanden in de map van deze app.
+Cannot play	Kan niet afspelen
+Looking for music...	Muziek zoeken...
+Looking for music... %d	Muziek zoeken... %d
+Music	Muziek
+No music found	Geen muziek gevonden
+No speaker	Geen luidspreker
+Playing	Speelt
+Put MP3 or WAV files in a Music folder on the SD card.	Zet MP3- of WAV-bestanden in een map Music op de SD-kaart.
+Repeat all	Alles herhalen
+Repeat off	Herhalen uit
+Repeat this track	Dit nummer herhalen
+Showing the first %d tracks	De eerste %d nummers worden getoond
+Sound is off: Settings > Sound	Geluid staat uit: Instellingen > Geluid
+Stopped	Gestopt
+This device cannot play music.	Dit toestel kan geen muziek afspelen.

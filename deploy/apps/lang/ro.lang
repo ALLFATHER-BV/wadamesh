@@ -1931,3 +1931,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR la SF%d
+%s ago	acum %s
+1 min	1 min
+10 min	10 min
+Acknowledgement	Confirmare
+Air split	Împărţire
+Anonymous request	Cerere anonimă
+Average	Medie
+Band	Bandă
+Busy	Ocupat
+Channel data	Date canal
+Channel message	Mesaj canal
+Decodes to	Decodează până la
+Direct with a region code	Direct cu cod de regiune
+Flood with a region code	Flood cu cod de regiune
+Floor	Prag
+Hops	Salturi
+Live	Live
+Margin	Marjă
+Multipart	Multiparte
+Noise	Zgomot
+Packet	Pachet
+Path	Cale
+Peak	Vârf
+Request	Cerere
+Response	Răspuns
+Route	Rută
+Size	Mărime
+Tap to go back	Atinge pentru înapoi
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	buget %d s   tx %d   rx %d   erori %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	buget %d s  tx %d  rx %d
+channel busy now	canal ocupat acum
+listening, nothing heard yet	ascult, nimic recepţionat
+no airtime yet	încă fără timp de emisie
+over %d:%02d	în %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Adaugă fişiere MP3 sau WAV în dosarul acestei aplicaţii.
+Cannot play	Nu se poate reda
+Looking for music...	Caut muzică...
+Looking for music... %d	Caut muzică... %d
+Music	Muzică
+No music found	Nu am găsit muzică
+No speaker	Fără difuzor
+Playing	Redare
+Put MP3 or WAV files in a Music folder on the SD card.	Pune fişiere MP3 sau WAV într-un dosar Music pe cardul SD.
+Repeat all	Repetă tot
+Repeat off	Repetare oprită
+Repeat this track	Repetă piesa
+Showing the first %d tracks	Se arată primele %d piese
+Sound is off: Settings > Sound	Sunetul este oprit: Setări > Sunet
+Stopped	Oprit
+This device cannot play music.	Acest dispozitiv nu poate reda muzică.

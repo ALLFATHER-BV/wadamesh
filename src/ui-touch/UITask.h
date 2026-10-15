@@ -30,6 +30,7 @@ enum class TouchUiScreen : uint8_t { Home = 0, ChatInbox = 1, Contacts = 2, Sett
 void sdMountDiagBegin();
 void sdMountDiagAttempt(uint32_t hz, bool begin_ok, bool card_ready);
 void sdMountDiagSetMounted(bool mounted, uint32_t hz);
+bool sdMountDiagMounted();
 
 class UITask : public AbstractUITask {
 public:

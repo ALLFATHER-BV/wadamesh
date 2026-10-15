@@ -541,6 +541,20 @@
   #else
     #define CAP_LUA_SD_LIST 0
   #endif
+
+// Reading the card from Lua: wada.sd.list and wada.audio.play("sd:/...").
+// CAP_LUA_SD_LIST boards, plus the SD_MMC boards (T-Display P4, Tanmatsu, Wio
+// Tracker L2) through the firmware's own SD_MMC mount. Only reads: the malware
+// removal (sd_clean) stays CAP_LUA_SD_LIST, so an app never writes an SD_MMC card.
+// Streaming a track is a few large sequential reads a second, the same traffic
+// as the map tiles, not the bursts of small writes that flash the P4 panel (#167).
+#ifndef CAP_LUA_SD_READ
+  #if CAP_LUA_SD_LIST || (CAP_LUA_SDK_EXT && CAP_MICROSD && !CAP_SD)
+    #define CAP_LUA_SD_READ 1
+  #else
+    #define CAP_LUA_SD_READ 0
+  #endif
+#endif
 #endif
 
 // Compile the translations into the image (i18n_builtin.h, generated from

@@ -1433,7 +1433,12 @@ void setup() {
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
   // The card holds this device's data but did not mount: say so on screen, and keep the
   // first-boot setup away (its "done" mark lives on the card too).
-  if (!sd_storage && touchPrefsReadUseSdAtBoot()) {
+  // Only when the card really did not mount (#667). "Store data on SD" can also be on
+  // while a card that mounts fine is deliberately not used: an earlier copy to the
+  // card never finished, so the device stays on internal storage and Settings offers
+  // the copy again (g_sd_migration_blocked). beta_94 told those devices their card
+  // could not be read, on every boot.
+  if (!sd_storage && touchPrefsReadUseSdAtBoot() && !sdMountDiagMounted()) {
     g_sd_fallback_boot = true;
     Serial.println("[BOOT] SD storage chosen but the card did not mount: running from internal storage");
   }

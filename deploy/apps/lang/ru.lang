@@ -1930,3 +1930,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f дБ SNR при SF%d
+%s ago	%s назад
+1 min	1 мин
+10 min	10 мин
+Acknowledgement	Подтверждение
+Air split	Доля
+Anonymous request	Анонимный запрос
+Average	Среднее
+Band	Диапазон
+Busy	Занят
+Channel data	Данные канала
+Channel message	Сообщение канала
+Decodes to	Декодирует до
+Direct with a region code	Напрямую с кодом региона
+Flood with a region code	Flood с кодом региона
+Floor	Фон
+Hops	Хопы
+Live	Сейчас
+Margin	Запас
+Multipart	Составной
+Noise	Шум
+Packet	Пакет
+Path	Путь
+Peak	Пик
+Request	Запрос
+Response	Ответ
+Route	Маршрут
+Size	Размер
+Tap to go back	Нажмите, чтобы вернуться
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	бюджет %d с   tx %d   rx %d   ошибки %d   цикл %d%%   SF%d
+budget %d s  tx %d  rx %d	бюджет %d с  tx %d  rx %d
+channel busy now	канал сейчас занят
+listening, nothing heard yet	слушаю, пока ничего
+no airtime yet	эфирного времени пока нет
+over %d:%02d	за %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Добавьте файлы MP3 или WAV в папку этого приложения.
+Cannot play	Не удаётся воспроизвести
+Looking for music...	Ищу музыку...
+Looking for music... %d	Ищу музыку... %d
+Music	Музыка
+No music found	Музыка не найдена
+No speaker	Нет динамика
+Playing	Играет
+Put MP3 or WAV files in a Music folder on the SD card.	Положите файлы MP3 или WAV в папку Music на SD-карте.
+Repeat all	Повторять все
+Repeat off	Повтор выключен
+Repeat this track	Повторять трек
+Showing the first %d tracks	Показаны первые %d треков
+Sound is off: Settings > Sound	Звук выключен: Настройки > Звук
+Stopped	Остановлено
+This device cannot play music.	Это устройство не может воспроизводить музыку.

@@ -1929,3 +1929,60 @@ Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
 Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
 The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
 The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR en SF%d
+%s ago	il y a %s
+1 min	1 min
+10 min	10 min
+Acknowledgement	Accusé de réception
+Air split	Répartition
+Anonymous request	Requête anonyme
+Average	Moyenne
+Band	Bande
+Busy	Occupé
+Channel data	Données de canal
+Channel message	Message de canal
+Decodes to	Décode jusqu’à
+Direct with a region code	Direct avec code de région
+Flood with a region code	Flood avec code de région
+Floor	Plancher
+Hops	Sauts
+Live	En direct
+Margin	Marge
+Multipart	Multipartie
+Noise	Bruit
+Packet	Paquet
+Path	Chemin
+Peak	Crête
+Request	Requête
+Response	Réponse
+Route	Route
+Size	Taille
+Tap to go back	Touchez pour revenir
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	budget %d s  tx %d  rx %d
+channel busy now	canal occupé maintenant
+listening, nothing heard yet	à l’écoute, rien reçu
+no airtime yet	pas encore de temps d’antenne
+over %d:%02d	sur %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Ajoutez des fichiers MP3 ou WAV au dossier de cette app.
+Cannot play	Lecture impossible
+Looking for music...	Recherche de musique...
+Looking for music... %d	Recherche de musique... %d
+Music	Musique
+No music found	Aucune musique trouvée
+No speaker	Pas de haut-parleur
+Playing	Lecture
+Put MP3 or WAV files in a Music folder on the SD card.	Placez des fichiers MP3 ou WAV dans un dossier Music sur la carte SD.
+Repeat all	Tout répéter
+Repeat off	Répétition désactivée
+Repeat this track	Répéter ce titre
+Showing the first %d tracks	Les %d premiers titres sont affichés
+Sound is off: Settings > Sound	Le son est coupé: Paramètres > Son
+Stopped	Arrêté
+This device cannot play music.	Cet appareil ne peut pas lire de musique.

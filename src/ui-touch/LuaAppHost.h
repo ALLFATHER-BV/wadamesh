@@ -9,6 +9,7 @@
 #include "device_caps.h"
 #include <stddef.h>
 #include <stdint.h>
+struct _lv_obj_t; typedef struct _lv_obj_t lv_obj_t;   // LVGL's own typedef, repeated
 
 #if CAP_LUA_APPS
 // Launch an app from a Lua source buffer (id names the store file + bar title).
@@ -19,6 +20,7 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 // seeded built-ins user-editable.
 bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, size_t embedded_len);
 bool luaAppIsOpen();
+lv_obj_t* luaAppBody();              // the running app's page, or null (capture audits)
 void luaAppDismiss();                 // THE close path (AppPage back hook)
 void luaAppSteer(int dx, int dy);     // trackball/keypad direction -> on_input
 void luaAppPress();                   // synthetic centre tap (down+up) -> on_input, for touchless boards' select key
@@ -55,6 +57,7 @@ bool luaWidgetGet(const char* app_id, LuaWidgetSnap* out);   // false: nothing p
 #endif
 #else
 inline bool luaAppIsOpen() { return false; }
+inline lv_obj_t* luaAppBody() { return nullptr; }
 inline void luaAppDismiss() {}
 inline void luaAppSteer(int, int) {}
 inline void luaAppPress() {}

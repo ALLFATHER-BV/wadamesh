@@ -96,10 +96,10 @@ While a chat message is focused and newer messages are below it, a down arrow
 appears at the right edge. Press **Right** to select it, then **OK** to jump to
 the newest message.
 
-Channels, direct messages, and room conversations place **#** and emoji to the
-left of the message input. With the caret at the start of the input, press Left
-to move to emoji, and Left again to move to **#**; Right walks back to the
-input. Press **OK** on either button to open its picker.
+Channels, direct messages, and room conversations place emoji and **#** to the
+right of the message input, next to Send. With the caret at the end of the
+input, press Right to move to emoji, and Right again to move to **#**; Left
+walks back to the input. Press **OK** on either button to open its picker.
 
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.
