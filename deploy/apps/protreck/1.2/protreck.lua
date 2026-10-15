@@ -51,6 +51,7 @@ local MOON_NAMES = {
 -- ── Shared display state ───────────────────────────────────────────────────
 local tab = 1
 local cv, W, H
+local press = nil   -- pending touch: { x, y } from last "down", cleared on swipe/up
 
 -- ── Time helpers ──────────────────────────────────────────────────────────
 local function now_unix()
@@ -185,6 +186,27 @@ local function alarm_adjust(delta_min)
   al.h = math.floor(tot/60);  al.m = tot % 60
   store.set("al"..alarm_sel.."h", al.h)
   store.set("al"..alarm_sel.."m", al.m)
+end
+
+-- schedule_alarm: one-shot callback that fires via wada.timer.after (works while screen sleeps)
+local schedule_alarm   -- forward declaration
+schedule_alarm = function(i)
+  local al = alarms[i]
+  if al.on ~= 1 then return end
+  local dt = sys.datetime and sys.datetime()
+  if not dt then return end
+  local now_min = dt.hour * 60 + dt.min
+  local al_min  = al.h * 60 + al.m
+  local delta   = al_min - now_min
+  if delta <= 0 then delta = delta + 24*60 end
+  local ms = (delta * 60 - (dt.sec or 0)) * 1000
+  tmr.after(math.max(1000, ms), function()
+    if alarms[i].on == 1 then
+      sys.beep()
+      sys.toast(string.format("Alarm A%d %02d:%02d", i, alarms[i].h, alarms[i].m), 4000)
+      schedule_alarm(i)
+    end
+  end)
 end
 
 -- ── Compass / waypoint state ───────────────────────────────────────────────
@@ -351,9 +373,10 @@ end
 -- ── CMPAS tab ─────────────────────────────────────────────────────────────
 local function get_heading()
   local c = sys.compass and sys.compass()
-  if c and c.hdg then return c.hdg end
-  local gps = sys.gps()
-  if gps and (gps.speed_kmh or 0) > 2 then return gps.course end
+  if c then
+    -- raw magnetometer x/y → heading (matches GPS Compass axis mapping: bx=c.y, by=-c.x)
+    return (math.deg(math.atan(c.y, -c.x)) + 360) % 360
+  end
   return nil
 end
 
@@ -557,14 +580,16 @@ end
 
 -- ── App lifecycle ─────────────────────────────────────────────────────────
 function app.on_open(w, h)
-  W, H = w, h
-  cv = ui.canvas(w, h);  cv:pos(0, 0)
+  W, H = math.min(w, 480), math.min(h, 480)
+  cv = ui.canvas(W, H);  cv:pos(0, 0)
   -- restore alarms
   for i = 1, 3 do
     alarms[i].h  = tonumber(store.get("al"..i.."h",  alarms[i].h))  or alarms[i].h
     alarms[i].m  = tonumber(store.get("al"..i.."m",  alarms[i].m))  or alarms[i].m
     alarms[i].on = tonumber(store.get("al"..i.."on", 0))            or 0
   end
+  -- schedule any alarm that was toggled on in a previous session
+  for i = 1, 3 do if alarms[i].on == 1 then schedule_alarm(i) end end
   alti_min = tonumber(store.get("alti_min",   99999)) or  99999
   alti_max = tonumber(store.get("alti_max",  -99999)) or -99999
   tmr_pi   = tonumber(store.get("tmr_pi",         4)) or 4
@@ -597,8 +622,8 @@ function app.on_tick(dt)
   if tmr_end ~= 0 and not tmr_done and sys.millis() >= tmr_end then
     tmr_done = true;  tmr_end = 0;  sys.beep()
   end
-  -- alarm clock check
-  local t = now_unix();  local dc = t and decompose(t) or nil
+  -- alarm clock check (local time via sys.datetime; also fired by schedule_alarm while screen sleeps)
+  local dc = sys.datetime and sys.datetime()
   if dc then
     for _, al in ipairs(alarms) do
       if al.on==1 and dc.hour==al.h and dc.min==al.m then
@@ -614,36 +639,64 @@ function app.on_tick(dt)
   update_astro();  redraw()
 end
 
+local function do_swipe_up()
+  if tab==1 then alarm_adjust(15)
+  elseif tab==3 and chr_run then
+    chr_laps[#chr_laps+1] = fmt_hms(chr_elapsed())
+    sys.toast("Lap "..(#chr_laps), 800)
+  elseif tab==4 then
+    tmr_pi = (tmr_pi%#TMR_PRESETS)+1;  tmr_secs = TMR_PRESETS[tmr_pi]
+    store.set("tmr_pi", tmr_pi);  tmr_end=0;  tmr_done=false
+  end
+end
+
+local function do_swipe_down()
+  if tab==1 then alarm_adjust(-15)
+  elseif tab==3 then chr_run=false;  chr_t0=0;  chr_acc=0;  chr_laps={}
+  elseif tab==4 then tmr_end=0;  tmr_done=false
+  elseif tab==5 then
+    alti_min=99999;  alti_max=-99999;  alti_hist={}
+    alti_dplus=0;  alti_dminus=0;  alti_prev=nil
+    store.set("alti_min",alti_min);  store.set("alti_max",alti_max)
+    sys.toast("Alt + déniv reset", 1000)
+  end
+end
+
 function app.on_input(ev)
   if ev.type == "swipe" then
+    press = nil
     local d = ev.dir
     if     d == "left"  then tab = (tab % #TAB) + 1
     elseif d == "right" then tab = ((tab-2) % #TAB) + 1
-    elseif d == "up" then
-      if tab==1 then alarm_adjust(15)
-      elseif tab==3 and chr_run then
-        chr_laps[#chr_laps+1] = fmt_hms(chr_elapsed())
-        sys.toast("Lap "..(#chr_laps), 800)
-      elseif tab==4 then
-        tmr_pi = (tmr_pi%#TMR_PRESETS)+1;  tmr_secs = TMR_PRESETS[tmr_pi]
-        store.set("tmr_pi", tmr_pi);  tmr_end=0;  tmr_done=false
-      end
-    elseif d == "down" then
-      if tab==1 then alarm_adjust(-15)
-      elseif tab==3 then chr_run=false;  chr_t0=0;  chr_acc=0;  chr_laps={}
-      elseif tab==4 then tmr_end=0;  tmr_done=false
-      elseif tab==5 then
-        alti_min=99999;  alti_max=-99999;  alti_hist={}
-        alti_dplus=0;  alti_dminus=0;  alti_prev=nil
-        store.set("alti_min",alti_min);  store.set("alti_max",alti_max)
-        sys.toast("Alt + déniv reset", 1000)
-      end
+    elseif d == "up"    then do_swipe_up()
+    elseif d == "down"  then do_swipe_down()
     end
     redraw()
   elseif ev.type == "down" then
-    if tab == 1 then
-      alarm_prest = sys.millis()   -- start timing for long-press detection
-    elseif tab == 2 then
+    press = { x = ev.x or 0, y = ev.y or 0 }
+    if tab == 1 then alarm_prest = sys.millis() end
+  elseif ev.type == "up" then
+    local is_tap = false
+    if press then
+      local dx = (ev.x or 0) - press.x
+      local dy = (ev.y or 0) - press.y
+      is_tap = dx*dx + dy*dy <= 144   -- 12 px radius (matches GPS Compass)
+      press = nil
+    end
+    if tab == 1 and is_tap then
+      -- short tap = cycle slot; long hold ≥500ms = toggle on/off
+      local dur = sys.millis() - alarm_prest
+      if dur >= 500 then
+        local al = alarms[alarm_sel]
+        al.on = al.on==1 and 0 or 1
+        store.set("al"..alarm_sel.."on", al.on)
+        if al.on == 1 then schedule_alarm(alarm_sel) end
+      else
+        alarm_sel = (alarm_sel % 3) + 1
+      end
+      alarm_prest = 0
+      redraw()
+    elseif tab == 2 and is_tap then
       local gps2 = sys.gps()
       if wpt_lat then
         wpt_lat=nil;  wpt_lon=nil
@@ -655,29 +708,22 @@ function app.on_input(ev)
         sys.toast(string.format("WPT %.4f,%.4f saved", wpt_lat, wpt_lon), 1200)
       end
       redraw()
-    elseif tab == 3 then
+    elseif tab == 3 and is_tap then
       if chr_run then chr_acc=chr_elapsed();  chr_run=false
       else            chr_t0=sys.millis();    chr_run=true end
       redraw()
-    elseif tab == 4 then
+    elseif tab == 4 and is_tap then
       if tmr_end~=0 then tmr_end=0;  tmr_done=false
       elseif tmr_done then tmr_done=false
       else tmr_end=sys.millis()+tmr_secs*1000 end
       redraw()
     end
-  elseif ev.type == "up" then
-    -- ASTRO: short release = cycle alarm slot; long hold (≥500ms) = toggle on/off
-    if tab == 1 then
-      local dur = sys.millis() - alarm_prest
-      if dur >= 500 then
-        local al = alarms[alarm_sel]
-        al.on = al.on==1 and 0 or 1
-        store.set("al"..alarm_sel.."on", al.on)
-      else
-        alarm_sel = (alarm_sel % 3) + 1
-      end
-      alarm_prest = 0
-      redraw()
+  elseif ev.type == "key" then
+    local k = ev.key
+    if     k == "left"  then tab = ((tab-2) % #TAB) + 1; redraw()
+    elseif k == "right" then tab = (tab % #TAB) + 1;     redraw()
+    elseif k == "up"    then do_swipe_up();   redraw()
+    elseif k == "down"  then do_swipe_down(); redraw()
     end
   end
 end

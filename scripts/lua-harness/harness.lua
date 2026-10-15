@@ -396,7 +396,8 @@ local function build_wada()
     storekv[k] = v end
 
   wada.timer.every = function(ms) checkint(ms, "timer.every"); if ms < 33 then ms = 33 end; widgets.timer_ms = ms end
-  wada.timer.stop = function() widgets.timer_ms = nil end
+  wada.timer.stop  = function() widgets.timer_ms = nil end
+  wada.timer.after = function(ms, fn) checkint(ms, "timer.after ms"); assert(type(fn) == "function", "timer.after fn") end
 
   if cfg.caps.audio then
     wada.audio = {}
@@ -1953,7 +1954,7 @@ local function pt_has_text(s)
 end
 
 scenarios.protreck_tdeck = function()
-  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg = { w = 320, h = 196, caps = { touch = true, keyboard = false, sdk_ext = true } }
   cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
   storekv = {}
   wada = build_wada()
@@ -2015,15 +2016,17 @@ scenarios.protreck_chrono = function()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   -- switch to CHRONO tab (tab 3: skip CMPAS first)
   swipe(app, "left"); swipe(app, "left"); tick(app, 1)
-  -- start chrono
+  -- start chrono (tap = down + up at same position)
   local ops0 = drawlog.ops
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 3)
   -- lap
   swipe(app, "up"); tick(app, 1)
   assert(pt_has_text("Lap 1"), "lap must appear in draw after swipe-up")
   -- stop
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 1)
   -- reset
   swipe(app, "down"); tick(app, 1)
@@ -2042,11 +2045,13 @@ scenarios.protreck_timer = function()
   swipe(app, "left"); swipe(app, "left"); swipe(app, "left"); tick(app, 1)
   -- cycle preset a few times
   swipe(app, "up"); swipe(app, "up"); tick(app, 1)
-  -- start timer
+  -- start timer (tap = down + up at same position)
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 3)
   -- stop
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 1)
   -- reset
   swipe(app, "down"); tick(app, 1)
@@ -2145,10 +2150,10 @@ scenarios.protreck_alarm = function()
 end
 
 scenarios.protreck_compass = function()
-  local hdg_val = 135.0
+  -- x=1, y=1 → atan(c.y, -c.x) = atan(1,-1) = 135°
   cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true, compass = true } }
   cfg.gps = function() return { lat = 45.0, lon = 9.0, sats = 7, alt_m = 200, speed_kmh = 4, course = 135 } end
-  cfg.compass = function() return { hdg = hdg_val } end
+  cfg.compass = function() return { x = 1, y = 1, z = 0 } end
   storekv = {}
   wada = build_wada()
   local app = load_app()
@@ -2166,8 +2171,9 @@ scenarios.protreck_compass = function()
   end
   assert(found_hdg, "heading value '135' must appear in draw text")
 
-  -- tap: set waypoint from current GPS position
+  -- tap: set waypoint from current GPS position (tap = down + up at same position)
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 1)
   assert(storekv.wpt_lat ~= nil and storekv.wpt_lat ~= "",
     "tap on CMPAS must save waypoint to store")
@@ -2177,6 +2183,7 @@ scenarios.protreck_compass = function()
   tick(app, 2)
   -- tap again: clear waypoint
   guarded(BUDGET, app.on_input, { type = "down", x = 0, y = 0 })
+  guarded(BUDGET, app.on_input, { type = "up",   x = 0, y = 0 })
   tick(app, 1)
   assert(storekv.wpt_lat == "" or storekv.wpt_lat == nil, "second tap must clear waypoint")
 
@@ -2185,7 +2192,10 @@ scenarios.protreck_compass = function()
 end
 
 scenarios.protreck_deniv = function()
-  local alt_seq = { 100, 102, 105, 103, 101, 104, 108, 106, 104, 110 }
+  -- 8 GPS calls are consumed by on_open+swipes (draw_status_bar etc.) before the
+  -- first on_tick altimeter sample arrives at step 9; put 110 there so alti_max
+  -- is captured, then let the sequence end and return nil for the reset check.
+  local alt_seq = { 100, 102, 105, 103, 101, 104, 108, 106, 110, 104 }
   local step    = 0
   cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
   cfg.gps = function()
