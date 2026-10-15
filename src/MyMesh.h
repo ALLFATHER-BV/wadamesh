@@ -149,7 +149,7 @@ public:
                   const char* text, uint32_t& expected_ack, uint32_t& est_timeout,
                   uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
   int sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt,
-                      const char* text, uint32_t& est_timeout,
+                      uint8_t txt_type, const char* text, uint32_t& est_timeout,
                       uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
 
   const char *getNodeName();
@@ -308,6 +308,10 @@ protected:
                      const char *text) override;
   void onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                          const char *text) override;
+  void onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
+                        const char *text, char* reply) override;
+  void onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint16_t data_type,
+                         const uint8_t *data, size_t data_len) override;
   void onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const uint8_t *sender_prefix, const char *text) override;
   // An UNCONFIGURED channel slot is all zeroes — including its secret, its hash
@@ -537,7 +541,7 @@ public:
     if (!text || !text[0]) return MSG_SEND_FAILED;
     uint32_t est = 0;
     uint32_t ts = getRTCClock()->getCurrentTimeUnique();
-    return sendCommandData(recipient, ts, 0, text, est);
+    return sendCommandData(recipient, ts, 0, TXT_TYPE_CLI_DATA, text, est);
   }
   /** Cancel UI ping pending state (used by timeout). */
   void cancelUIPingPending() {
@@ -1394,6 +1398,12 @@ private:
   // 200 not 80: the serial sideload ("fadd ...", see cliPutChunk) carries up
   // to ~130 chars per line; every other command is far shorter.
   char cli_command[200];
+  char reply_buf[166];   // CMD_RUN_CLI_COMMAND replies (MeshCore 1.18)
+  // The companion CLI (MeshCore 1.18): app v1.50's Command Line, the serial CLI's
+  // fall-through and the remote CLI of contacts granted that permission.
+  bool handleCommand(const char* text, uint32_t sender_timestamp, char* reply);
+  bool handleRadioCommand(const char* command, char* reply);
+  bool printSharedCliReply();
 #if defined(ESP32)
   // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
   File _cli_put;

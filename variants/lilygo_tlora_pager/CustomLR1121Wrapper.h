@@ -25,7 +25,8 @@ public:
     updatePreamble(sf);
   }
 
-  void doResetAGC() override { lr11x0ResetAGC((LR11x0 *)_radio, ((CustomLR1121 *)_radio)->getFreqMHz()); }
+  // MeshCore 1.18: the AGC reset re-applies the boosted-gain setting it would otherwise clear.
+  void doResetAGC() override { lr11x0ResetAGC((LR11x0 *)_radio, ((CustomLR1121 *)_radio)->getFreqMHz(), getRxBoostedGainMode()); }
   bool isReceivingPacket() override {
     return ((CustomLR1121 *)_radio)->isReceiving();
   }

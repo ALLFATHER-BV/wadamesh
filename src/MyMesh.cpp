@@ -115,6 +115,7 @@ static void persistProtocolClockBeforeReset(mesh::RTCClock* clock) {
 #define CMD_SET_DEFAULT_FLOOD_SCOPE   63
 #define CMD_GET_DEFAULT_FLOOD_SCOPE   64
 #define CMD_SEND_RAW_PACKET           65
+#define CMD_RUN_CLI_COMMAND           66  // v14+ (MeshCore 1.18)
 
 // Stats sub-types for CMD_GET_STATS
 #define STATS_TYPE_CORE               0
@@ -150,6 +151,7 @@ static void persistProtocolClockBeforeReset(mesh::RTCClock* clock) {
 #define RESP_ALLOWED_REPEAT_FREQ      26
 #define RESP_CODE_CHANNEL_DATA_RECV   27
 #define RESP_CODE_DEFAULT_FLOOD_SCOPE 28
+#define RESP_CODE_CLI_REPLY           29  // v14+, a reply to CMD_RUN_CLI_COMMAND
 
 #define MAX_CHANNEL_DATA_LENGTH       (MAX_FRAME_SIZE - 9)
 #define RESP_CODE_SYNC_SINCE_DONE     61  // sent once after SyncSince delta stream; client sets last-sync to now
@@ -1970,7 +1972,7 @@ int MyMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_
 }
 
 int MyMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp,
-                            uint8_t attempt, const char* text, uint32_t& est_timeout,
+                            uint8_t attempt, uint8_t txt_type, const char* text, uint32_t& est_timeout,
                             uint32_t* out_packet_hash4, TxtTxDebugInfo* out_dbg) {
   if (!text) {
     est_timeout = 0;
@@ -1985,7 +1987,7 @@ int MyMesh::sendCommandData(const ContactInfo& recipient, uint32_t timestamp,
 
   _last_plain_tx_meta_valid = false;
   uint32_t packet_hash4 = 0;
-  int result = BaseChatMesh::sendCommandData(recipient, timestamp, attempt, text,
+  int result = BaseChatMesh::sendCommandData(recipient, timestamp, attempt, txt_type, text,
                                              est_timeout, &packet_hash4, out_dbg);
 
   uint8_t retry_key[MAX_HASH_SIZE] = {};
@@ -3394,6 +3396,21 @@ void MyMesh::onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint3
   queueMessage(from, TXT_TYPE_CLI_DATA, pkt, sender_timestamp, NULL, 0, text);
 }
 
+// MeshCore 1.18: a contact's remote CLI command (TXT_TYPE_CLI_COMMAND). Contacts the
+// user granted remote CLI run it here and get the reply; everyone else's lands in the
+// chat as a CLI message, as upstream does.
+void MyMesh::onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
+                              const char *text, char* reply) {
+  markConnectionActive(from); // in case this is from a server, and we have a connection
+  if (from.isRemoteCLIAllowed()) {
+    if (!handleCommand(text, sender_timestamp, reply)) {
+      strcat(reply, "Unknown command");   // reply may have cmd prefix from 'text'
+    }
+  } else {
+    queueMessage(from, TXT_TYPE_CLI_COMMAND, pkt, sender_timestamp, NULL, 0, text);
+  }
+}
+
 void MyMesh::onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                                  const uint8_t *sender_prefix, const char *text) {
   markConnectionActive(from);
@@ -3505,6 +3522,49 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
   }
 #endif
 }
+
+void MyMesh::onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint16_t data_type,
+                               const uint8_t *data, size_t data_len) {
+  if (data_len > MAX_CHANNEL_DATA_LENGTH) {
+    MESH_DEBUG_PRINTLN("onChannelDataRecv: dropping payload_len=%d exceeds frame limit=%d",
+                       (uint32_t)data_len, (uint32_t)MAX_CHANNEL_DATA_LENGTH);
+    return;
+  }
+
+  int i = 0;
+  out_frame[i++] = RESP_CODE_CHANNEL_DATA_RECV;
+  out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
+  out_frame[i++] = 0; // reserved1
+  out_frame[i++] = 0; // reserved2
+
+  uint8_t channel_idx = findChannelIdx(channel);
+  out_frame[i++] = channel_idx;
+  out_frame[i++] = pkt->isRouteFlood() ? pkt->path_len : 0xFF;
+  out_frame[i++] = (uint8_t)(data_type & 0xFF);
+  out_frame[i++] = (uint8_t)(data_type >> 8);
+  out_frame[i++] = (uint8_t)data_len;
+
+  int copy_len = (int)data_len;
+  if (copy_len > 0) {
+    memcpy(&out_frame[i], data, copy_len);
+    i += copy_len;
+  }
+  // Deliver through meshcomod's per-client history ring, as onChannelMessageRecv does.
+  // Upstream queues this with addToOfflineQueue(), but meshcomod's CMD_SYNC_NEXT_MESSAGE
+  // reads getNextFromHistoryForClient() and never the offline queue, so channel data
+  // queued there would never reach any client.
+  uint32_t hist_seq = addToHistoryRing(out_frame, i);
+  if (_serial->isConnected()) {
+    if (_serial->writeFrameToAll(out_frame, i) == (size_t)i && hist_seq != 0 &&
+        _serial->companionUnsolicitedPushesBroadcastToAll()) {
+      advanceHistoryClientsAfterV3Broadcast(hist_seq);
+    }
+    uint8_t frame[1];
+    frame[0] = PUSH_CODE_MSG_WAITING; // send push 'tickle'
+    _serial->writeFrameToAll(frame, 1);
+  }
+}
+
 
 uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_timestamp, const uint8_t *data,
                                  uint8_t len, uint8_t *reply) {
@@ -3742,6 +3802,16 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     i += 4;
     memcpy(&out_frame[i], &data[4], len - 4);
     i += (len - 4);
+    _serial->writeFrame(out_frame, i);
+  } else {
+    // MeshCore 1.18: let the app see unknown/unsolicited responses (eg. pushed telemetry)
+    int i = 0;
+    out_frame[i++] = PUSH_CODE_BINARY_RESPONSE;
+    out_frame[i++] = 0; // reserved
+    int n = len;
+    if (n > MAX_FRAME_SIZE - i) n = MAX_FRAME_SIZE - i;   // a max-size response would overrun out_frame
+    memcpy(&out_frame[i], data, n);
+    i += n;
     _serial->writeFrame(out_frame, i);
   }
 }
@@ -4308,6 +4378,20 @@ void MyMesh::handleCmdFrame(size_t len) {
     memcpy(&out_frame[i], _prefs.node_name, tlen);
     i += tlen;
     _serial->writeFrame(out_frame, i);
+  } else if (cmd_frame[0] == CMD_RUN_CLI_COMMAND && len >= 3) { // V14+ (MeshCore 1.18)
+    int i = 1;
+    char *text = (char *)&cmd_frame[i];
+    int tlen = len - i;
+    text[tlen] = 0; // ensure null
+
+    reply_buf[0] = 0;
+    if (!handleCommand(text, 0, reply_buf)) {
+      strcat(reply_buf, "Unknown command");   // reply_buf may have cmd prefix from 'text'
+    }
+    out_frame[0] = RESP_CODE_CLI_REPLY;
+    int rlen = strlen(reply_buf);
+    memcpy(&out_frame[1], reply_buf, rlen);
+    _serial->writeFrame(out_frame, 1 + rlen);
   } else if (cmd_frame[0] == CMD_SEND_TXT_MSG && len >= 14) {
     int i = 1;
     uint8_t txt_type = cmd_frame[i++];
@@ -4345,7 +4429,7 @@ void MyMesh::handleCmdFrame(size_t len) {
       }
     } else {
     ContactInfo *recipient = lookupContactByPubKey(pub_key_prefix, 6);
-    if (recipient && (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_CLI_DATA)) {
+    if (recipient && (txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND)) {
       char *text = (char *)&cmd_frame[i];
       int tlen = len - i;
       uint32_t est_timeout;
@@ -4380,10 +4464,11 @@ void MyMesh::handleCmdFrame(size_t len) {
           s_last_cmd_txt_seen_ms = now_ms;
         }
       }
-      if (txt_type == TXT_TYPE_CLI_DATA) {
+      // CLI_COMMAND (1.18) targets a companion's remote CLI; CLI_DATA a repeater's admin CLI.
+      if (txt_type == TXT_TYPE_CLI_DATA || txt_type == TXT_TYPE_CLI_COMMAND) {
         msg_timestamp = getRTCClock()->getCurrentTimeUnique(); // Use node's RTC instead of app timestamp to avoid tripping replay protection
         TxtTxDebugInfo dbg{};
-        result = sendCommandData(*recipient, msg_timestamp, attempt, text, est_timeout, nullptr, &dbg);
+        result = sendCommandData(*recipient, msg_timestamp, attempt, txt_type, text, est_timeout, nullptr, &dbg);
         expected_ack = 0; // no Ack expected
         if (_ui) {
           char line[160];
@@ -4529,8 +4614,8 @@ void MyMesh::handleCmdFrame(size_t len) {
       writeErrFrame(ERR_CODE_NOT_FOUND); // bad channel_idx
     } else if (data_type == DATA_TYPE_RESERVED) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
-    } else if (payload_len > MAX_CHANNEL_DATA_LENGTH) {
-      MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d", payload_len, MAX_CHANNEL_DATA_LENGTH);
+    } else if (payload_len > MAX_GROUP_DATA_LENGTH) {
+      MESH_DEBUG_PRINTLN("CMD_SEND_CHANNEL_DATA payload too long: %d > %d", payload_len, MAX_GROUP_DATA_LENGTH);
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
     } else if (sendGroupData(channel.channel, path, path_len, data_type, payload, payload_len)) {
       writeOKFrame();
@@ -4959,10 +5044,13 @@ void MyMesh::handleCmdFrame(size_t len) {
 #endif
   } else if (cmd_frame[0] == CMD_SEND_RAW_DATA && len >= 6) {
     int i = 1;
-    int8_t path_len = cmd_frame[i++];
-    if (path_len >= 0 && i + path_len + 4 <= len) { // minimum 4 byte payload
-      uint8_t *path = &cmd_frame[i];
-      i += path_len;
+    uint8_t path_len = cmd_frame[i++];
+    if (mesh::Packet::isValidPathLen(path_len)) {
+      // MeshCore 1.18: path_len encodes the hash size too (multi-byte path hashes);
+      // writePath decodes it and says how many bytes the path took. An empty path is
+      // 0 and consumes nothing, so path_len == 0 still means empty below.
+      uint8_t path[MAX_PATH_SIZE];
+      i += mesh::Packet::writePath(path, &cmd_frame[i], path_len);
       // Companion OTA panel currently sends `ota url ...` using CMD_SEND_RAW_DATA with empty path.
       // Treat zero-path ASCII `ota ...` as a local meshcomod command.
       if (path_len == 0 && i < (int)len) {
@@ -4999,12 +5087,16 @@ void MyMesh::handleCmdFrame(size_t len) {
           return;
         }
       }
-      auto pkt = createRawData(&cmd_frame[i], len - i);
-      if (pkt) {
-        sendDirect(pkt, path, path_len);
-        writeOKFrame();
+      if (i + 4 > (int)len) {  // min payload 4 bytes
+        writeErrFrame(ERR_CODE_ILLEGAL_ARG);
       } else {
-        writeErrFrame(ERR_CODE_TABLE_FULL);
+        auto pkt = createRawData(&cmd_frame[i], len - i);
+        if (pkt) {
+          sendDirect(pkt, path, path_len);
+          writeOKFrame();
+        } else {
+          writeErrFrame(ERR_CODE_TABLE_FULL);
+        }
       }
     } else {
       writeErrFrame(ERR_CODE_UNSUPPORTED_CMD); // flood, not supported (yet)
@@ -5558,6 +5650,326 @@ void MyMesh::enterCLIRescue() {
   Serial.println("========= CLI Rescue =========");
 }
 
+// Companion CLI (1.18): app v1.50's Command Line and Wi-Fi Settings (CMD_RUN_CLI_COMMAND), the
+// serial CLI's fall-through, and the remote CLI of contacts granted that permission. Upstream
+// drives this off its JSON NodePrefs; meshcomod keeps the binary prefs layout (adding fields
+// shifts it), so commands map onto the fields we have, Wi-Fi goes through the NVS runtime store
+// shared with the UI, and settings without a field here answer "unsupported".
+// sender_timestamp == 0 means a local caller (app over USB/BLE/Wi-Fi, or serial); remote CLI
+// requests carry the sender's timestamp.
+bool MyMesh::handleCommand(const char* command, uint32_t sender_timestamp, char* reply) {
+  while (*command == ' ') command++; // skip leading spaces
+
+  if (strlen(command) > 4 && command[2] == '|') { // optional prefix (for companion radio CLI)
+    memcpy(reply, command, 3);                    // reflect the prefix back
+    reply += 3;
+    *reply = 0;
+    command += 3;
+  }
+
+  if (handleRadioCommand(command, reply)) return true;
+
+  // hook for variant-specific CLI processing
+  if (board.handleCommand(command, sender_timestamp, reply)) return true;
+
+  if (strcmp(command, "reboot") == 0) {
+    if (dirty_contacts_expiry) saveContacts();   // as CMD_REBOOT does
+    board.reboot(); // doesn't return
+    return true;
+  }
+
+  if (strcmp(command, "poweroff") == 0 || strcmp(command, "shutdown") == 0) {
+    if (dirty_contacts_expiry) saveContacts();
+    board.powerOff(); // doesn't return
+    return true;
+  }
+
+  if (memcmp(command, "set name ", 9) == 0) {
+    if (AdvertDataParser::isValidName(&command[9])) {
+      StrHelper::strncpy(_prefs.node_name, &command[9], sizeof(_prefs.node_name));
+      savePrefs();
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Error, bad chars");
+    }
+    return true;
+  }
+  if (strcmp(command, "get name") == 0) {
+    sprintf(reply, "> %s", _prefs.node_name);
+    return true;
+  }
+
+  if (memcmp(command, "set pin ", 8) == 0) {
+    _prefs.ble_pin = atoi(&command[8]);
+    savePrefs();
+    sprintf(reply, "> pin is now %06d", _prefs.ble_pin);
+    return true;
+  }
+
+#if defined(ESP32) && (defined(WIFI_SSID) || defined(MULTI_TRANSPORT_COMPANION))
+  if (memcmp(command, "set wifi.ssid ", 14) == 0) {
+    if (wifiConfigSetSsid(&command[14])) {
+      sprintf(reply, "> wifi.ssid is now %s (set wifi.pwd too)", &command[14]);
+    } else {
+      strcpy(reply, "Error: invalid/too long SSID");
+    }
+    return true;
+  }
+  if (memcmp(command, "set wifi.pwd ", 13) == 0) {
+    if (wifiConfigSetPwd(&command[13])) {
+      wifiConfigRequestApply();   // reconnect from the main loop with the new credentials
+      strcpy(reply, "> wifi.pwd updated, reconnecting");
+    } else {
+      strcpy(reply, "Error: password too long");
+    }
+    return true;
+  }
+  if (strcmp(command, "get wifi.pwd") == 0) {
+    if (sender_timestamp != 0) {   // never hand the network password to a remote node
+      strcpy(reply, "Error: not available remotely");
+    } else {
+      char pwd[WIFI_CONFIG_PWD_MAX + 1];
+      wifiConfigGetPwd(pwd, sizeof(pwd));
+      sprintf(reply, "> %s", pwd);
+    }
+    return true;
+  }
+  if (strcmp(command, "set wifi.clear") == 0 || strcmp(command, "wifi.clear") == 0) {
+    wifiConfigClear();
+    wifiConfigRequestApply();
+    strcpy(reply, "> wifi config cleared");
+    return true;
+  }
+  if (strcmp(command, "wifi.apply") == 0 || strcmp(command, "set wifi.apply") == 0) {
+    wifiConfigRequestApply();
+    strcpy(reply, "OK");
+    return true;
+  }
+  if (strcmp(command, "get wifi.ssid") == 0) {
+    char ssid[WIFI_CONFIG_SSID_MAX + 1];
+    wifiConfigGetSsid(ssid, sizeof(ssid));
+    sprintf(reply, "> %s", ssid[0] ? ssid : "(not set)");
+    return true;
+  }
+  if (memcmp(command, "set wifi.enabled ", 17) == 0) {
+    bool on = atoi(&command[17]) != 0;
+    wifiConfigSetRadioEnabled(on);   // the main loop brings the radio up/down live
+    sprintf(reply, "> wifi.enabled is now %d", on ? 1 : 0);
+    return true;
+  }
+  if (strcmp(command, "get wifi.enabled") == 0) {
+    sprintf(reply, "> %d", wifiConfigGetRadioEnabled() ? 1 : 0);
+    return true;
+  }
+  if (strcmp(command, "get wifi.status") == 0) {
+    strcpy(reply, WiFi.status() == WL_CONNECTED ? "> connected" : "> disconnected");
+    return true;
+  }
+  if (strcmp(command, "get wifi.ip") == 0) {
+    if (WiFi.status() == WL_CONNECTED) {
+      sprintf(reply, "> %s", WiFi.localIP().toString().c_str());
+    } else {
+      strcpy(reply, "> (not connected)");
+    }
+    return true;
+  }
+#endif
+
+  if (strcmp(command, "board") == 0) {
+    strcpy(reply, board.getManufacturerName());
+    return true;
+  }
+
+  if (strcmp(command, "ver") == 0) {
+    sprintf(reply, "%s (Build: %s)", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE);
+    return true;
+  }
+
+  if (strcmp(command, "get tz.offset") == 0 || memcmp(command, "set tz.offset ", 14) == 0) {
+    strcpy(reply, "Error: unsupported");
+    return true;
+  }
+
+  return false;  // not handled
+}
+
+// Upstream's radio command set (CommonRadioPrefs::handleCommand), same syntax and replies, on
+// meshcomod's NodePrefs. Settings that have no field here answer "unsupported" rather than an
+// "OK" that would not survive a reboot.
+bool MyMesh::handleRadioCommand(const char* command, char* reply) {
+  if (strcmp(command, "get radio") == 0) {
+    char freq[16], bw[16];
+    strcpy(freq, StrHelper::ftoa(_prefs.freq));
+    strcpy(bw, StrHelper::ftoa3(_prefs.bw));
+    sprintf(reply, "> %s,%s,%d,%d", freq, bw, (uint32_t)_prefs.sf, (uint32_t)_prefs.cr);
+    return true;
+  }
+  if (memcmp(command, "set radio ", 10) == 0) {
+    char tmp[132];
+    StrHelper::strncpy(tmp, &command[10], sizeof(tmp));
+    const char *parts[4];
+    int num = mesh::Utils::parseTextParts(tmp, parts, 4);
+    float freq  = num > 0 ? strtof(parts[0], nullptr) : 0.0f;
+    float bw    = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
+    uint8_t sf  = num > 2 ? atoi(parts[2]) : 0;
+    uint8_t cr  = num > 3 ? atoi(parts[3]) : 0;
+    if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+      _prefs.freq = freq;
+      _prefs.bw = bw;
+      _prefs.sf = sf;
+      _prefs.cr = cr;
+      savePrefs();
+      strcpy(reply, "OK - reboot to apply");
+    } else {
+      strcpy(reply, "Error, invalid radio params");
+    }
+    return true;
+  }
+  if (strcmp(command, "get freq") == 0) {
+    sprintf(reply, "> %s", StrHelper::ftoa(_prefs.freq));
+    return true;
+  }
+
+  if (strcmp(command, "get af") == 0) {
+    sprintf(reply, "> %s", StrHelper::ftoa(_prefs.airtime_factor));
+    return true;
+  }
+  if (memcmp(command, "set af ", 7) == 0) {
+    char* end;
+    float af = strtof(&command[7], &end);
+    if (end == &command[7] || af < 0 || af > 9) {
+      strcpy(reply, "ERROR: af must be 0-9");
+    } else {
+      _prefs.airtime_factor = af;
+      savePrefs();
+      strcpy(reply, "OK");
+    }
+    return true;
+  }
+  if (strcmp(command, "get dutycycle") == 0) {
+    float dc = 100.0f / (_prefs.airtime_factor + 1.0f);
+    int dc_int = (int)dc;
+    int dc_frac = (int)((dc - dc_int) * 10.0f + 0.5f);
+    sprintf(reply, "> %d.%d%%", dc_int, dc_frac);
+    return true;
+  }
+  if (memcmp(command, "set dutycycle ", 14) == 0) {
+    float dc = atof(&command[14]);
+    if (dc < 1 || dc > 100) {
+      strcpy(reply, "ERROR: dutycycle must be 1-100");
+    } else {
+      _prefs.airtime_factor = (100.0f / dc) - 1.0f;
+      savePrefs();
+      float actual = 100.0f / (_prefs.airtime_factor + 1.0f);
+      int a_int = (int)actual;
+      int a_frac = (int)((actual - a_int) * 10.0f + 0.5f);
+      sprintf(reply, "OK - %d.%d%%", a_int, a_frac);
+    }
+    return true;
+  }
+
+#if defined(USE_SX1262) || defined(USE_SX1268)
+  if (strcmp(command, "get radio.rxgain") == 0) {
+    sprintf(reply, "> %s", _prefs.rx_boosted_gain ? "on" : "off");
+    return true;
+  }
+  if (memcmp(command, "set radio.rxgain ", 17) == 0) {
+    bool enabled = memcmp(&command[17], "on", 2) == 0;
+    _prefs.rx_boosted_gain = enabled ? 1 : 0;
+    savePrefs();
+    if (radio_driver.setRxBoostedGainMode(enabled)) {
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Error: unsupported");
+    }
+    return true;
+  }
+#endif
+
+  if (memcmp(command, "get tx", 6) == 0 && (command[6] == 0 || command[6] == ' ')) {
+    sprintf(reply, "> %d", (int32_t)_prefs.tx_power_dbm);
+    return true;
+  }
+  if (memcmp(command, "set tx ", 7) == 0) {
+    int dbm = atoi(&command[7]);
+    if (dbm < -9 || dbm > MAX_LORA_TX_POWER) {
+      sprintf(reply, "Error, must be -9 to %d", (int)MAX_LORA_TX_POWER);
+    } else {
+      _prefs.tx_power_dbm = dbm;
+      savePrefs();
+      radio_driver.setTxPower(_prefs.tx_power_dbm);
+      strcpy(reply, "OK");
+    }
+    return true;
+  }
+
+  if (strcmp(command, "get rxdelay") == 0) {
+    sprintf(reply, "> %s", StrHelper::ftoa(_prefs.rx_delay_base));
+    return true;
+  }
+  if (memcmp(command, "set rxdelay ", 12) == 0) {
+    float db = atof(&command[12]);
+    if (db >= 0 && db <= 20.0f) {
+      _prefs.rx_delay_base = db;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Error, must be 0-20");
+    }
+    return true;
+  }
+
+  if (strcmp(command, "get path.hash.mode") == 0) {
+    sprintf(reply, "> %d", (uint32_t)_prefs.path_hash_mode);
+    return true;
+  }
+  if (memcmp(command, "set path.hash.mode ", 19) == 0) {
+    uint8_t mode = atoi(command + 19);
+    if (mode < 3) {
+      _prefs.path_hash_mode = mode;
+      savePrefs();
+      strcpy(reply, "OK");
+    } else {
+      strcpy(reply, "Error, must be 0,1, or 2");
+    }
+    return true;
+  }
+
+  if (strcmp(command, "get multi.acks") == 0) {
+    sprintf(reply, "> %d", (uint32_t)_prefs.multi_acks);
+    return true;
+  }
+  if (memcmp(command, "set multi.acks ", 15) == 0) {
+    _prefs.multi_acks = atoi(&command[15]);
+    savePrefs();
+    strcpy(reply, "OK");
+    return true;
+  }
+
+  // No field in meshcomod's prefs (CAD and interference threshold are fixed off in the companion).
+  static const char* const unsupported[] = {
+    "cad", "int.thresh", "agc.reset.interval", "txdelay", "direct.txdelay"
+  };
+  for (const char* name : unsupported) {
+    size_t n = strlen(name);
+    if ((memcmp(command, "get ", 4) == 0 || memcmp(command, "set ", 4) == 0)
+        && memcmp(&command[4], name, n) == 0 && (command[4 + n] == 0 || command[4 + n] == ' ')) {
+      strcpy(reply, "Error: unsupported");
+      return true;
+    }
+  }
+  return false;
+}
+
+// Serial CLI fall-through to the companion CLI (handleCommand), so the commands app v1.50
+// sends also work over USB serial. Returns false when the command is not one of them.
+bool MyMesh::printSharedCliReply() {
+  reply_buf[0] = 0;
+  if (!handleCommand(cli_command, 0, reply_buf)) return false;
+  Serial.print("  "); Serial.println(reply_buf);
+  return true;
+}
+
 void MyMesh::checkCLIRescueCmd() {
   int len = strlen(cli_command);
   bool line_complete = false;
@@ -5659,7 +6071,7 @@ void MyMesh::checkCLIRescueCmd() {
 #else
         Serial.println("  Error: WiFi config only supported on ESP32 builds");
 #endif
-      } else {
+      } else if (!printSharedCliReply()) {   // name, radio, tx, ... (the companion CLI)
         Serial.printf("  Error: unknown config: %s\n", config);
       }
     } else if (strcmp(cli_command, "mqtt.status") == 0 ||
@@ -5908,7 +6320,7 @@ void MyMesh::checkCLIRescueCmd() {
     } else if (strcmp(cli_command, "reboot") == 0) {
       persistProtocolClockBeforeReset(getRTCClock());
       board.reboot();  // doesn't return
-    } else {
+    } else if (!printSharedCliReply()) {   // get name, get radio, ver, board, ... (the companion CLI)
       Serial.println("  Error: unknown command");
     }
 

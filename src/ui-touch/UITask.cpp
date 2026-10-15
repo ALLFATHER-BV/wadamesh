@@ -80320,7 +80320,32 @@ static void docMusicAudit() {
 }
 #endif
 
+#if defined(DOC_I18N_AUDIT) && CAP_BUILTIN_LANGS
+// The deflated built-in language table: switch languages straight from it (no .lang
+// file overlay), print a few translations and how long each language took to inflate.
+static void docI18nAudit() {
+  const uint8_t was = i18nGetLang();
+  i18nSetFileOverlay(nullptr, 0);
+  const uint8_t langs[] = { LANG_NL, LANG_HU, LANG_EL, LANG_EN };
+  const char* keys[] = { "Settings", "Channel", "Busy", "Sound is off: Settings > Sound", "Delete chat" };
+  for (uint8_t l : langs) {
+    const uint32_t t0 = micros();
+    i18nSetLang(l);
+    const uint32_t us = micros() - t0;
+    Serial.printf("DBG: I18N lang %s inflated in %lu us, heap psram free %u\n", kUiLangCodes[l],
+                  (unsigned long)us, (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    for (const char* k : keys) Serial.printf("DBG: I18N   %s -> %s\n", k, TR(k));
+  }
+  i18nSetLang(was);
+  Serial.println("DBG: I18N done (the file overlay comes back on the next boot)");
+}
+#endif
+
 static void docAuditFocus() {
+#if defined(DOC_I18N_AUDIT) && CAP_BUILTIN_LANGS
+  docI18nAudit();
+  return;
+#endif
 #if defined(DOC_MUSIC_AUDIT) && CAP_MICROSD
   docMusicAudit();
   return;
