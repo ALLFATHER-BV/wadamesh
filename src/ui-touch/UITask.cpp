@@ -2308,6 +2308,11 @@ static void pinPadClose();
 static void pinPadKey(int c);            // a character, 8 = backspace, 27 = back
 static void pinRestoreFails();           // at boot: the wrong tries so far (they survive a reboot)
 static inline bool pinChar(int c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+// Locked and lit with a PIN set: the keys are typing the PIN (the first one opens its
+// screen), so the keyboard's Sym/Alt layer must stay live, or its digits can't be typed (#675).
+static inline bool pinTypingLocked(bool locked, bool screen_off) {
+  return locked && !screen_off && (s_pin_on || s_pin_root);
+}
 static lv_obj_t* s_pin_sw = nullptr;          // Settings > Lock screen: the PIN lock switch, while its page is open
 static lv_obj_t* s_pin_change_btn = nullptr;  // "Change PIN"
 static lv_obj_t* s_pin_lock_sw = nullptr;     // "Lock when screen off" (a PIN keeps it on)
@@ -77917,8 +77922,10 @@ void UITask::loop() {
   epaperScrollControlsSync();
 #endif
 #if defined(HAS_TDECK_KEYBOARD)
-  if (_screen_off || _manual_lock || s_remote_mode) tdeckKeyboardDiscardModifiers();
-  else                                              tdeckKeyboardAllowModifiers();
+  if (_screen_off || (_manual_lock && !pinTypingLocked(_manual_lock, _screen_off)) || s_remote_mode)
+    tdeckKeyboardDiscardModifiers();
+  else
+    tdeckKeyboardAllowModifiers();
   // Drain physical-keyboard presses buffered by the touch task into the field.
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = tdeckKeyboardReadKey();
@@ -77972,7 +77979,8 @@ void UITask::loop() {
   // working while the screen is dark. updatePagerKbBacklight() follows the
   // same rule. Remote Mode pauses both because it owns the lit placeholder.
   pagerKeyboardPoll();
-  if (g_lv.task && g_lv.task->isManualLock()) pagerKeyboardDiscardAlt();
+  if (g_lv.task && g_lv.task->isManualLock() &&
+      !pinTypingLocked(true, g_lv.task->isScreenOff())) pagerKeyboardDiscardAlt();
 #if defined(TLORA_PAGER)
   updatePagerTabHold(now);   // a Home/Settings shortcut: released = tap, held = the long press
 #endif
