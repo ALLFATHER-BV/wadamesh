@@ -41842,7 +41842,7 @@ static constexpr lv_coord_t  kChatDividerH       = 16;
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
                                           bool thread_is_room, lv_coord_t bubble_max_w,
-                                          int ring_idx);
+                                          int ring_idx, int logical_i = -1);
 static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChatPanel* p,
                                               int logical_i, int ring_idx);
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
@@ -42231,6 +42231,12 @@ static bool findReplyQuoteText(const char* sender_name, int current_pos,
 
   int oldest = current_pos - UITask::REPLY_QUOTE_MAX_BACK;
   if (oldest < 0) oldest = 0;
+
+  // Count matches — only show the quote when the guess is unambiguous (the
+  // sender has exactly one recent message). A wrong quote in a busy channel
+  // is worse than none.
+  int match_count = 0;
+  int match_idx = -1;
   for (int i = current_pos - 1; i >= oldest; --i) {
     UITask::UIMessage om;
     if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[i], om)) continue;
@@ -42241,53 +42247,61 @@ static bool findReplyQuoteText(const char* sender_name, int current_pos,
       match = (om.sender[0] && strcasecmp(sender_name, om.sender) == 0);
     }
     if (!match) continue;
-
-    const char* orig_sender = om.outgoing ? me : om.sender;
-    // Strip any nested @[sender] prefix from the quoted message.
-    const char* quote_text = om.text;
-    char rq2[UITask::MAX_SENDER_NAME + 1];
-    if (const char* nested = ReplyQuote::parse(quote_text, rq2, sizeof(rq2))) {
-      quote_text = nested;
-    }
-    constexpr lv_coord_t kQuotePad = 6;
-    const lv_coord_t quote_max_w = s_chat_virt.bubble_max_w - 2 * kChatBubblePadH - kQuotePad * 2;
-    // Truncate the sender name (single line), but pass the full quoted
-    // text so LVGL can wrap it across multiple lines.
-    char sender_trunc[UITask::MAX_SENDER_NAME + 1];
-    ReplyQuote::formatQuote(orig_sender, quote_text, quote_max_w,
-                            &g_font_semi_12, &g_font_12,
-                            sender_trunc, sizeof(sender_trunc),
-                            nullptr, 0);
-    d.reply_sender[0] = '\0';
-    if (sender_trunc[0]) {
-      snprintf(d.reply_sender, sizeof(d.reply_sender), "%s", sender_trunc);
-    }
-    d.reply_text[0] = '\0';
-    if (quote_text[0]) {
-      snprintf(d.reply_text, sizeof(d.reply_text), "%s", quote_text);
-      // Sanitize through a scratch buffer — copyUtf8ReplacingMissingGlyphs
-      // begins with out[0]='\0', so aliasing out==in would wipe the source
-      // before it is read and leave the text empty.
-      char san[sizeof(d.reply_text)];
-      copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), d.reply_text);
-      snprintf(d.reply_text, sizeof(d.reply_text), "%s", san);
-    }
-    // Theme the mini-bubble with the quoted sender's colours, except in
-    // high-contrast and e-paper where we stay plain.
-#if !defined(HAS_TDECK_PRO)
-    if (!s_theme_high_contrast) {
-      usernameBubbleColors(orig_sender, &d.reply_bubble_col, &d.reply_sender_col);
-    } else {
-      d.reply_bubble_col = lv_color_hex(COLOR_TEXT);
-      d.reply_sender_col = lv_color_hex(COLOR_CHAT_META);
-    }
-#else
-    d.reply_bubble_col = lv_color_hex(COLOR_TEXT);
-    d.reply_sender_col = lv_color_hex(COLOR_CHAT_META);
-#endif
-    return true;
+    ++match_count;
+    match_idx = i;
+    if (match_count > 1) return false;  // ambiguous — no quote
   }
-  return false;
+  if (match_count != 1) return false;
+
+  UITask::UIMessage om;
+  if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[match_idx], om)) return false;
+
+  const char* orig_sender = om.outgoing ? me : om.sender;
+  // Show the quoted sender through senderShownName() so contact nicknames apply.
+  const char* shown_name = senderShownName(orig_sender);
+  // Strip any nested @[sender] prefix from the quoted message.
+  const char* quote_text = om.text;
+  char rq2[UITask::MAX_SENDER_NAME + 1];
+  if (const char* nested = ReplyQuote::parse(quote_text, rq2, sizeof(rq2))) {
+    quote_text = nested;
+  }
+  constexpr lv_coord_t kQuotePad = 6;
+  const lv_coord_t quote_max_w = s_chat_virt.bubble_max_w - 2 * kChatBubblePadH - kQuotePad * 2;
+  // Truncate the sender name (single line), but pass the full quoted
+  // text so LVGL can wrap it across multiple lines.
+  char sender_trunc[UITask::MAX_SENDER_NAME + 1];
+  ReplyQuote::formatQuote(shown_name, quote_text, quote_max_w,
+                          &g_font_semi_12, &g_font_12,
+                          sender_trunc, sizeof(sender_trunc),
+                          nullptr, 0);
+  d.reply_sender[0] = '\0';
+  if (sender_trunc[0]) {
+    snprintf(d.reply_sender, sizeof(d.reply_sender), "%s", sender_trunc);
+  }
+  d.reply_text[0] = '\0';
+  if (quote_text[0]) {
+    snprintf(d.reply_text, sizeof(d.reply_text), "%s", quote_text);
+    // Sanitize through a scratch buffer — copyUtf8ReplacingMissingGlyphs
+    // begins with out[0]='\0', so aliasing out==in would wipe the source
+    // before it is read and leave the text empty.
+    char san[sizeof(d.reply_text)];
+    copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), d.reply_text);
+    snprintf(d.reply_text, sizeof(d.reply_text), "%s", san);
+  }
+  // Theme the mini-bubble with the quoted sender's colours, except in
+  // high-contrast and e-paper where we stay plain.
+#if !defined(HAS_TDECK_PRO)
+  if (!s_theme_high_contrast) {
+    usernameBubbleColors(orig_sender, &d.reply_bubble_col, &d.reply_sender_col);
+  } else {
+    d.reply_bubble_col = lv_color_hex(COLOR_CHAT_RECV_BG);
+    d.reply_sender_col = lv_color_hex(COLOR_CHAT_TEXT);
+  }
+#else
+  d.reply_bubble_col = lv_color_hex(COLOR_CHAT_RECV_BG);
+  d.reply_sender_col = lv_color_hex(COLOR_CHAT_TEXT);
+#endif
+  return true;
 }
 
 static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mode,
@@ -42614,9 +42628,9 @@ static void chatFootChainDrawCb(lv_event_t* e) {
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
                                           bool thread_is_room, lv_coord_t bubble_max_w,
-                                          int ring_idx) {
+                                          int ring_idx, int logical_i = -1) {
   ChatBubbleDisplay d{};
-  chatParseMessageDisplay(m, channel_mode, thread_is_room, ring_idx, d);
+  chatParseMessageDisplay(m, channel_mode, thread_is_room, ring_idx, d, logical_i);
   const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
   const bool show_sender = (channel_mode || thread_is_room) && !m.outgoing && d.san_sender[0];
   lv_coord_t inner_y = show_sender ? lv_font_get_line_height(&g_font_semi_12) : 0;
@@ -42790,11 +42804,11 @@ static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChat
                                               int logical_i, int ring_idx) {
   if (s_chat_virt.compact_chat) {
     ChatBubbleDisplay d{};
-    chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, ring_idx, d);
+    chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, ring_idx, d, logical_i);
     return chatMeasureCompactRowHeight(m, p, logical_i, d);
   }
   return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
-                                 s_chat_virt.bubble_max_w, ring_idx);
+                                 s_chat_virt.bubble_max_w, ring_idx, logical_i);
 }
 
 // Safe teardown for floating chat widgets — same pattern as popupClose: if the
