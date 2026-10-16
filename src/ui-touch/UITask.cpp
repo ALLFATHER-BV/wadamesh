@@ -42008,7 +42008,12 @@ static bool findReplyQuoteText(const char* sender_name, int current_pos,
     d.reply_text[0] = '\0';
     if (quote_text[0]) {
       snprintf(d.reply_text, sizeof(d.reply_text), "%s", quote_text);
-      copyUtf8ReplacingMissingGlyphs(&g_font_12, d.reply_text, sizeof(d.reply_text), d.reply_text);
+      // Sanitize through a scratch buffer — copyUtf8ReplacingMissingGlyphs
+      // begins with out[0]='\0', so aliasing out==in would wipe the source
+      // before it is read and leave the text empty.
+      char san[sizeof(d.reply_text)];
+      copyUtf8ReplacingMissingGlyphs(&g_font_12, san, sizeof(san), d.reply_text);
+      snprintf(d.reply_text, sizeof(d.reply_text), "%s", san);
     }
     // Theme the mini-bubble with the quoted sender's colours, except in
     // high-contrast and e-paper where we stay plain.
