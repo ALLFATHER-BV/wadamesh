@@ -1091,6 +1091,38 @@ static lv_font_t g_font_semi_14;
 static lv_font_t g_font_semi_16;
 static lv_font_t g_font_badge;
 
+// The last font of every text chain (#673): a '*' for any codepoint no other font
+// has, so a missing glyph looks the same in every label instead of '*' where the
+// text went through copyUtf8ReplacingMissingGlyphs() and LVGL's empty box elsewhere.
+// It is a copy of the chain's Montserrat face with the lookups pointed at '*'. The
+// glyph keeps is_placeholder set, which LVGL still draws, so code that drops
+// undrawable characters instead (Constellation's node names) keeps working.
+static bool missingGlyphDsc(const lv_font_t* font, lv_font_glyph_dsc_t* dsc, uint32_t letter, uint32_t) {
+  if (letter < 0x20 || letter == 0xF8FF || letter == 0x200C) return false;   // LVGL draws these zero-width
+  if (!lv_font_get_glyph_dsc_fmt_txt(font, dsc, '*', 0)) return false;
+#if LV_USE_FONT_PLACEHOLDER
+  dsc->is_placeholder = true;
+#endif
+  return true;
+}
+static const uint8_t* missingGlyphBitmap(const lv_font_t* font, uint32_t) {
+  return lv_font_get_bitmap_fmt_txt(font, '*');
+}
+// The extras fonts are const, so a chain ends in a mutable copy of its tail font
+// (`tail_store`) that falls back to a '*' font made from `base` (`ph_store`).
+// Returns the copy, to use in place of `tail`.
+static const lv_font_t* withMissingGlyph(lv_font_t* tail_store, const lv_font_t* tail,
+                                         lv_font_t* ph_store, const lv_font_t* base) {
+  *ph_store = *base;
+  ph_store->get_glyph_dsc = missingGlyphDsc;
+  ph_store->get_glyph_bitmap = missingGlyphBitmap;
+  ph_store->fallback = nullptr;
+  *tail_store = *tail;
+  tail_store->fallback = ph_store;
+  return tail_store;
+}
+static const lv_font_t* s_text_tail[3] = { nullptr, nullptr, nullptr };   // per size: extras -> '*'
+
 // Swap a label's RESOLVED raw Montserrat for its chained twin (g_font_NN), so
 // accents, Greek, Cyrillic and Arabic reach the fallback fonts instead of
 // rendering as tofu boxes. LVGL's theme puts a font on each widget, so a label
@@ -1108,7 +1140,12 @@ static lv_font_t g_font_badge;
 static const lv_font_t* pagerMapFont() {
   static lv_font_t f;
   static bool ready = false;
-  if (!ready) { f = lv_font_montserrat_14; f.fallback = &extras_14; ready = true; }
+  static lv_font_t tail, missing;
+  if (!ready) {
+    f = lv_font_montserrat_14;
+    f.fallback = withMissingGlyph(&tail, &extras_14, &missing, &lv_font_montserrat_14);
+    ready = true;
+  }
   return &f;
 }
 #endif
@@ -1155,6 +1192,9 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
 static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_t /*len*/,
                                uint32_t unicode, uint32_t /*unicode_next*/) {
   const lv_img_dsc_t* d = emojiGlyphLookup(unicode);
+  // Skin-tone modifiers (U+1F3FB-1F3FF) have no baked image: draw them as the
+  // invisible zero glyph (the same one U+FE0F maps to), so 👍🏽 shows as 👍 (#673).
+  if (!d && unicode >= 0x1F3FB && unicode <= 0x1F3FF) d = emojiGlyphLookup(0xFE0F);
   if (!d) return false;
   lv_memcpy(img_src, d, sizeof(lv_img_dsc_t));
   // The imgfont reuses ONE scratch buffer as the image source for every glyph, so
@@ -1339,8 +1379,8 @@ static void initTouchFontFallbacks() {
 #if LV_USE_IMGFONT
   // Insert the colour-emoji image font as the tail of each chain:
   //   g_font_NN (montserrat, Latin) -> emoji (colour images) -> extras_NN
-  //   (Cyrillic/Greek/Arabic). The emoji font returns false for non-emoji
-  //   codepoints, so they fall straight through to the size-matched extras.
+  //   (Cyrillic/Greek/Arabic) -> '*' (anything else). The emoji font returns false
+  //   for non-emoji codepoints, so they fall straight through to the size-matched extras.
   const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
 #if defined(TLORA_PAGER)
   switch (touchPrefsGetUiScale()) {
@@ -1350,6 +1390,8 @@ static void initTouchFontFallbacks() {
     default: break;
   }
 #endif
+  lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
+  static lv_font_t s_tail[3], s_missing[3];   // each chain ends extras -> '*' (#673)
 #if defined(HAS_TANMATSU)
   // At Large/Huge scale the primaries become Montserrat 20/24/28 (ASCII-only),
   // so accents dropped to the 16 px fallback and looked tiny. Splice the
@@ -1362,11 +1404,15 @@ static void initTouchFontFallbacks() {
   for (int i = 0; i < 3; ++i) {
     if (!acc[i]) continue;
     s_acc_scaled[i] = *acc[i];
-    s_acc_scaled[i].fallback = &extras_16;
+    s_acc_scaled[i].fallback = withMissingGlyph(&s_tail[i], &extras_16, &s_missing[i], prim[i]);
     extras[i] = &s_acc_scaled[i];
   }
 #endif
-  lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
+  for (int i = 0; i < 3; ++i) {
+    if (extras[i]->fallback) continue;   // already ends in '*' (Tanmatsu accent slot)
+    extras[i] = withMissingGlyph(&s_tail[i], extras[i], &s_missing[i], prim[i]);
+  }
+  for (int i = 0; i < 3; ++i) s_text_tail[i] = extras[i];
 #if defined(TLORA_PAGER)
   // LVGL lays out every glyph in a fallback chain using the primary font's
   // line box. The generated OFL fallbacks need a taller box than Montserrat at
@@ -1389,9 +1435,15 @@ static void initTouchFontFallbacks() {
     else                 { prim[i]->fallback = extras[i]; }        // OOM: plain chain
   }
 #else
-  g_font_12.fallback = &extras_12;
-  g_font_14.fallback = &extras_14;
-  g_font_16.fallback = &extras_16;
+  {
+    static lv_font_t s_tail[3], s_missing[3];   // each chain ends extras -> '*' (#673)
+    lv_font_t* prim[3] = { &g_font_12, &g_font_14, &g_font_16 };
+    const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
+    for (int i = 0; i < 3; ++i) {
+      s_text_tail[i] = withMissingGlyph(&s_tail[i], extras[i], &s_missing[i], prim[i]);
+      prim[i]->fallback = s_text_tail[i];
+    }
+  }
 #endif
   // Contacts-tab person glyph: splice onto the HEAD of g_font_16's chain — the
   // tab bar's btnmatrix renders its icons in g_font_16 (g_font_16 -> person ->
@@ -75608,7 +75660,7 @@ static bool      s_glance_font_ready = false;
 static void atGlanceEnsureFont() {
   if (s_glance_font_ready) return;
   s_glance_font_ready = true;
-  const lv_font_t* glance_tail = &extras_16;
+  const lv_font_t* glance_tail = s_text_tail[2] ? s_text_tail[2] : &extras_16;
 #if LV_USE_IMGFONT
   // initTouchFontFallbacks() creates this before any glance can be shown. Reuse
   // it so glance messages resolve the same baked emoji set as normal chat.
