@@ -25,6 +25,12 @@ outdir = sys.argv[2] if len(sys.argv) > 2 else "doc-shots"
 os.makedirs(outdir, exist_ok=True)
 
 ser = serial.Serial(port, 115200, timeout=2)
+# The T-Display P4 sits behind a CH343 bridge whose RTS drives EN: pyserial opens
+# with RTS asserted, which holds the chip in reset. Pulse it once and let it run.
+# The P4 also boots far slower (C6 bring-up), so give it longer to start the tour.
+P4 = bool(os.environ.get("WADA_P4"))
+if P4:
+    ser.setDTR(False); ser.setRTS(True); time.sleep(0.15); ser.setRTS(False)
 print(f"listening on {port} -> {outdir}/")
 
 hdr_re = re.compile(rb"<<<WMSHOT name=(\S+) w=(\d+) h=(\d+) bytes=(\d+)>>>")
@@ -41,7 +47,7 @@ def read_exact(n):
 count = 0
 started = False
 last_go = 0.0
-deadline = time.time() + 90        # give the device up to 90s to start
+deadline = time.time() + (180 if P4 else 90)   # give the device time to start
 while time.time() < deadline:
     if not started and time.time() - last_go > 0.4:
         ser.write(b"G")            # nudge the device to begin the tour

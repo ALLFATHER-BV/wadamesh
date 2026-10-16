@@ -68,6 +68,11 @@ bool pagerKeyboardBackspaceHeld();
  *  "lock screen" gesture). */
 bool pagerKeyboardSpaceHeld();
 
+/** True while the key behind the last character pushed to the ring is still
+ *  physically down (raw state). The press already pushed its character; this
+ *  only tells a tap from a hold (UITask's Home and Settings shortcuts). */
+bool pagerKeyboardLetterHeld();
+
 /** One-shot: true exactly once after Alt(Fn)+Shift is chorded (Shift pressed
  *  while Alt is held). The driver no longer decides what this chord DOES
  *  (that depends on UI state — is a text field being edited? — which this
@@ -86,6 +91,14 @@ void pagerKeyboardToggleCaps();
  *  reports held for this press, so it can't also fire the plain-Backspace
  *  hold-to-back/hold-to-unlock gestures. Consumes the pending flag on read. */
 bool pagerKeyboardConsumeAltBackspaceChord();
+#if !defined(HAS_TDECK_PRO)
+/** One-shot: true exactly once after physical Alt(Fn)+Enter is chorded (Enter
+ *  pressed while Fn is physically held). The Enter press is consumed; it had
+ *  no symbol-layer meaning, so nothing typeable is lost. UITask pastes the
+ *  in-RAM clipboard into the field being edited. Consumes the pending flag on
+ *  read. */
+bool pagerKeyboardConsumeAltEnterChord();
+#endif
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
 /** One-shot: true after physical Alt+B is pressed on T-Deck Pro. The B press
  *  is consumed rather than emitted as the symbol-layer exclamation mark. */

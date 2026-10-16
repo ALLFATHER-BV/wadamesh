@@ -15,6 +15,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | Tanmatsu | ESP32-P4 + ESP32-C6, SX1262 | 4" 800x480, 69-key keyboard (no touch) | Tanmatsu app store on the device (runs under the badge.team launcher, not web-flashable) | Store tracks the test channel | Fully supported; LoRa + Wi-Fi + Bluetooth simultaneously, standalone and companion in one |
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
 | Elecrow CrowPanel Advance 3.5 | ESP32-S3, external SX1262 | 3.5" ILI9488 480x320 touch (GT911) | Web flasher (beta) | Beta, hardware validation pending | Requires an SX1262 module in the LoRa expansion slot; not for other CrowPanel models |
+| Elecrow CrowPanel Advance 5.0 | ESP32-S3, external SX1262 | 5" ST7262 RGB 800x480 touch (GT911) | Web flasher (beta) | Beta, hardware-tested (display, touch, radio) | V1.1+ boards; SX1262 in the wireless slot with the function DIP switch on the wireless module; no SD, GPS or battery gauge |
 | RAK WisMesh Tap V2 (RAK3312) | ESP32-S3, SX1262 | Touch display (LovyanGFX, 30+ fps) | Web flasher | Beta (new in beta_38) | Early community port by Ethac.chen (#136); core mesh, chat and map working |
 | LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" IPS LCD, 480x222 (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Beta (new in beta_45) | Fully supported; keyboard-first navigation, microSD, map tile packs |
 | Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Beta (new in beta_45) | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
@@ -98,7 +99,9 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   mode manually and retry, and please report it.
 - **Seeed Wio Tracker L2**: pre-release touch target under active bring-up. Builds are for
   development and hardware validation only; no public release artifact is
-  promised until the port is verified.
+  promised until the port is verified. It has no battery-backed clock, so the
+  same optional saved-Wi-Fi cold-boot time sync offered on T-Deck is available
+  in Clock settings.
 - **CrowPanel Advance 3.5**: `crowpanel_35_companion_radio_touch` is a
   16 MB flash / 8 MB OPI PSRAM build for the ILI9488/GT911 panel and an SX1262
   in the expansion slot. It starts upright in 480x320 landscape; Display
@@ -124,6 +127,43 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   CrowPanel. Like Wio Tracker L2, it is included in the all-target builds and local beta release
   scripts, not the two-board stable CI workflow. Select it in the upload
   helper with `scripts/build-upload-monitor.sh --crowpanel-35`.
+- **CrowPanel Advance 5.0**: `crowpanel_50_companion_radio_touch` is a
+  16 MB flash / 8 MB OPI PSRAM build for the 800x480 ST7262 RGB panel, the
+  GT911 touch controller and an SX1262 in the wireless-module slot (J8/J9). The
+  board quirks follow Camillia-MT's port:
+  - The panel is driven over the 16-bit RGB bus from a PSRAM framebuffer at a
+    14 MHz pixel clock (Elecrow's demo uses 21 MHz); the slower clock leaves
+    PSRAM bandwidth for WiFi and LVGL so the picture does not drift or tear.
+    LVGL's draw band stays in internal RAM for the same reason.
+  - Flash writes (saving chats and settings) take the bus that the panel's DMA
+    shares with PSRAM, which made the picture jump sideways. The firmware stops
+    the LCD clock for each flash write or erase, so the screen briefly freezes
+    or flickers instead.
+  - Backlight and touch reset sit behind an I2C controller on GPIO15/16 that
+    changed between revisions: a PCA9557 at 0x18 on V1.0, a board MCU at 0x30
+    from V1.1. The driver detects which one answers, resets the GT911 through
+    it and accepts the touch controller at either 0x5D or 0x14. Below full
+    brightness the MCU dims by PWM, which can whine; 100% is steady.
+  - The function DIP switch on the back routes GPIO 2/4/5/6/19/20 to the
+    wireless slot, the microSD slot or the speaker/microphone. Set it to the
+    wireless module (S1=0, S0=1), or the radio is not found (the serial log
+    says so). The microSD slot is therefore unusable; browser Transfer uses the
+    internal tiles partition instead, as on the Attaky.
+  - The radio's chip select is GPIO8 on V1.2/V1.3 boards (current production)
+    and GPIO0 on V1.0. The build targets GPIO8; a V1.0 board is detected at boot
+    and logged, and needs `P_LORA_NSS=0`.
+  - No GPS (no free GPIO pair for a UART; 17/18 are panel data), no battery
+    voltage sensing and no free user button, so hard lock is disabled and the
+    screen wakes by touch.
+  It starts in native 800x480 landscape; Display settings can switch to
+  480x800 portrait. It uses the large-screen layouts and UI-size presets of the
+  Tanmatsu. Serial uses the board's CH340 USB-to-UART bridge. Tested on a physical
+  unit: a steady picture with smooth gradients, responsive typing with key
+  highlighting, the chat header and composer, and sending and receiving messages
+  over the radio (flash writes show as a brief freeze or flicker), and a fresh
+  full install and an on-device update, whose long flash erases the panel
+  recovers from. Select it in
+  the upload helper with `scripts/build-upload-monitor.sh --crowpanel-50`.
 
 ## Requested boards
 

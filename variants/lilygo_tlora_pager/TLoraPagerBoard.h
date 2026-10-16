@@ -88,21 +88,31 @@ public:
   }
 
   uint16_t getBattMilliVolts() {
-    if (!gauge.refresh()) return PAGER_BATT_MILLIVOLTS_FALLBACK;
-    uint16_t mv = gauge.getVoltage();
-    return mv > 0 ? mv : PAGER_BATT_MILLIVOLTS_FALLBACK;
+    // gauge.refresh() reads the BQ27220's whole register block over 100 kHz I2C (about
+    // 6 ms on the UI loop), and the status bar alone asks 4 times a second. A pack moves
+    // slowly: one reading serves every caller for 2 s, short enough that plugging the
+    // charger in still shows at once (the UI publishes a charge flip immediately).
+    const uint32_t now = millis();
+    if (batt_ms_ && now - batt_ms_ < 2000) return batt_mv_;
+    batt_ms_ = now ? now : 1;
+    const uint16_t mv = gauge.refresh() ? gauge.getVoltage() : 0;
+    batt_mv_ = mv > 0 ? mv : PAGER_BATT_MILLIVOLTS_FALLBACK;
+    return batt_mv_;
   }
 
   const char* getManufacturerName() const{
     return "LilyGo T-LoRa Pager";
   }
 
-  // Mute/unmute the NS4150B amp via its XL9555 enable pin. Separate from the
-  // boot-time rail bring-up in begin() (which drives this HIGH permanently,
-  // for bus-integrity reasons unrelated to audio -- see begin()'s comment):
-  // this is the runtime toggle the sound code brackets each chime/WAV with,
-  // so the amp is only live while something is actually playing.
+  // Mute/unmute the NS4150B amp via its XL9555 enable pin: the runtime toggle
+  // the sound code brackets each chime/WAV with, so the amp is only live while
+  // something is actually playing. begin() drives it HIGH with the other rails
+  // and then leaves boot with it off.
   void setAmpEnabled(bool on);
+
+  // GPS module power (XL9555 GPS_EN + GPS_RST), switched by PagerGps.
+  bool setGpsPower(bool on);
+  bool gpsPowerIsOn() const { return gps_on_; }
 
   // TODO: BQ25896 charger (XPowersLib) bring-up is out of scope for now — the
   // BQ27220 gauge alone covers battery %/mV for the UI. Add charge-status/
@@ -113,5 +123,8 @@ public:
 
 private:
   bool expander_ready_ = false;
+  bool gps_on_ = true;     // GPS_EN as last driven (on from the boot rail bring-up)
+  uint16_t batt_mv_ = 0;   // the last gauge reading (getBattMilliVolts)
+  uint32_t batt_ms_ = 0;   // when it was taken, 0 = never
   SemaphoreHandle_t expander_mutex_ = nullptr;
 };

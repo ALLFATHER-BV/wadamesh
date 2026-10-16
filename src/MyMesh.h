@@ -38,7 +38,13 @@
 #endif
 
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "v1.17.4-touch"
+#define FIRMWARE_VERSION "v1.18.0.1-touch"
+#endif
+
+// The meshcomod release the pinned core is (scripts/release.sh reads it from the core's
+// own examples/companion_radio/MyMesh.h and refreshes this default; About shows it).
+#ifndef FIRMWARE_CORE_VERSION
+#define FIRMWARE_CORE_VERSION "v1.18.0.1"
 #endif
 
 #if defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -149,7 +155,7 @@ public:
                   const char* text, uint32_t& expected_ack, uint32_t& est_timeout,
                   uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
   int sendCommandData(const ContactInfo& recipient, uint32_t timestamp, uint8_t attempt,
-                      const char* text, uint32_t& est_timeout,
+                      uint8_t txt_type, const char* text, uint32_t& est_timeout,
                       uint32_t* out_packet_hash4 = nullptr, TxtTxDebugInfo* out_dbg = nullptr);
 
   const char *getNodeName();
@@ -308,6 +314,10 @@ protected:
                      const char *text) override;
   void onCommandDataRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                          const char *text) override;
+  void onCLICommandRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
+                        const char *text, char* reply) override;
+  void onChannelDataRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint16_t data_type,
+                         const uint8_t *data, size_t data_len) override;
   void onSignedMessageRecv(const ContactInfo &from, mesh::Packet *pkt, uint32_t sender_timestamp,
                            const uint8_t *sender_prefix, const char *text) override;
   // An UNCONFIGURED channel slot is all zeroes — including its secret, its hash
@@ -537,7 +547,7 @@ public:
     if (!text || !text[0]) return MSG_SEND_FAILED;
     uint32_t est = 0;
     uint32_t ts = getRTCClock()->getCurrentTimeUnique();
-    return sendCommandData(recipient, ts, 0, text, est);
+    return sendCommandData(recipient, ts, 0, TXT_TYPE_CLI_DATA, text, est);
   }
   /** Cancel UI ping pending state (used by timeout). */
   void cancelUIPingPending() {
@@ -1191,6 +1201,17 @@ public:
     return true;
   }
 
+  /** uiRemoveContact() without the /contacts3 rewrite or the chats-list ping, for
+   *  a bulk delete: rewriting the whole file per contact made deleting hundreds
+   *  take minutes. The caller must finish with uiPersistContacts(); until then a
+   *  reboot brings the removed contacts back. */
+  bool uiRemoveContactNoSave(const uint8_t pub_key[PUB_KEY_SIZE]) {
+    ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+    if (!slot || !removeContact(*slot)) return false;
+    _store->deleteBlobByKey(pub_key, PUB_KEY_SIZE);
+    return true;
+  }
+
   /** Drop a contact that a UI scan installed only so an encrypted reply could be
    *  matched (sendRegionsRequestForUI installs unknown repeaters as ADV_TYPE_NONE).
    *  Those are never written to flash, so this only frees the RAM slot. Refuses
@@ -1383,6 +1404,12 @@ private:
   // 200 not 80: the serial sideload ("fadd ...", see cliPutChunk) carries up
   // to ~130 chars per line; every other command is far shorter.
   char cli_command[200];
+  char reply_buf[166];   // CMD_RUN_CLI_COMMAND replies (MeshCore 1.18)
+  // The companion CLI (MeshCore 1.18): app v1.50's Command Line, the serial CLI's
+  // fall-through and the remote CLI of contacts granted that permission.
+  bool handleCommand(const char* text, uint32_t sender_timestamp, char* reply);
+  bool handleRadioCommand(const char* command, char* reply);
+  bool printSharedCliReply();
 #if defined(ESP32)
   // Serial sideload state ("fput" / "fadd" / "fend"): the file being written.
   File _cli_put;

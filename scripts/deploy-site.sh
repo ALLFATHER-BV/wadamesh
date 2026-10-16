@@ -24,6 +24,10 @@ DEST_PATH="${WADAMESH_SITE_PATH:-/srv/wadamesh/site}"
 DRY=""
 [ "${1:-}" = "--dry-run" ] && DRY="--dry-run"
 
+# The changelog page (what the firmware's text browser opens when there is no home page on
+# the SD card, #622) is generated from release-notes/ so it always matches the builds.
+python3 "$ROOT/scripts/build/gen-changelog.py"
+
 # Mirror deploy/site/ -> web root. --delete prunes files no longer in the repo;
 # everything under deploy/site/ is static (html, svg, json manifests).
 # Note: -a preserves source perms (644 files / 755 dirs) — no --chmod, since the

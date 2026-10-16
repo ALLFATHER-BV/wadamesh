@@ -492,6 +492,20 @@ bool touchPrefsIsIgnored(const uint8_t* pub_key6);
 bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored);
 int  touchPrefsCopyIgnored(uint8_t* out_buf);
 
+/** Contact nicknames: a name of the user's own for a contact, shown in place of the
+ *  one it advertises. Local to this device and never sent, so the mesh and the phone
+ *  app keep the real name. Same 6-byte prefix as favorites, in one blob that stays
+ *  under the SD backend's 2048-byte value cap (48 x 38 B).
+ *  • touchPrefsCopyNicknames: every record in one read ([6-byte key][32-byte name,
+ *    NUL padded]); out_buf holds TOUCH_NICK_MAX * TOUCH_NICK_REC_BYTES. Returns the count.
+ *  • touchPrefsSetNickname: set or replace; "" or nullptr clears. False when the
+ *    table is full or the write failed. */
+constexpr int TOUCH_NICK_MAX = 48;
+constexpr int TOUCH_NICK_NAME_BYTES = 32;   // UTF-8 with its NUL, as a contact name
+constexpr int TOUCH_NICK_REC_BYTES = TOUCH_FAVORITE_KEY_BYTES + TOUCH_NICK_NAME_BYTES;
+int  touchPrefsCopyNicknames(uint8_t* out_buf);
+bool touchPrefsSetNickname(const uint8_t* pub_key6, const char* nick);
+
 /** Ignored / blocked sender NAMES — for channel/room senders who are NOT saved
  *  contacts, so the 6-byte pubkey scheme above can't target them (e.g. a bot
  *  posting inside a joined room: posts carry only a display name, not a pubkey).
@@ -662,6 +676,10 @@ bool touchPrefsSetRepeaterPassword(const uint8_t* pub_key6, const char* password
 constexpr int TOUCH_LOCK_WALLPAPER_MAXLEN = 128;
 int  touchPrefsGetLockWallpaper(char* out, int out_cap);
 bool touchPrefsSetLockWallpaper(const char* path);
+/** Back to the built-in wallpaper (#626): forgets the chosen path. */
+bool touchPrefsResetLockWallpaper();
+/** The path that means "no picture of your own". */
+const char* touchPrefsDefaultLockWallpaper();
 
 /** Lock-screen text colour (clock + labels) as 0xRRGGBB. Default soft white. */
 uint32_t touchPrefsGetLockTextColor();

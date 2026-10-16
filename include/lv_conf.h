@@ -118,6 +118,19 @@
  * cache also means less state to keep coherent across slot reuse. */
 #define LV_IMG_CACHE_DEF_SIZE 8
 
+// Render caches (perf pass 2026-10-09, measured on the T-Deck with the frame benchmark):
+// the UI draws many rounded corners at many radii (cards, chips, buttons, tiles) and
+// LVGL kept masks for only four, and every glass card's gradient was worked out again on
+// each band of each frame. Same pixels, a few percent less time a frame.
+#if !(defined(DOC_CAPTURE) && defined(BENCH_NO_LVCACHE))   // the frame benchmark's "before"
+#define LV_CIRCLE_CACHE_SIZE 16
+#define LV_GRAD_CACHE_DEF_SIZE 8192     // bytes, from the LVGL heap (PSRAM)
+#endif
+// LV_MEMCPY_MEMSET_STD=1 (newlib's memcpy/memset, word-wise even when the two sides are
+// aligned differently) is a -D next to LV_CONF_PATH in platformio.ini, not set here: it
+// changes LVGL's headers, and src/ compiles can resolve "lv_conf.h" to the stale copy
+// vendored with the core, so only a flag reaches every file of a build alike.
+
 /* Image-as-font (lv_imgfont): maps Unicode codepoints to colour images so we can
  * render full-colour emoji inline with text. The emoji set is pre-baked to
  * RGB565+alpha lv_img_dsc_t C-arrays (emoji_data.c) and wired as the tail of the

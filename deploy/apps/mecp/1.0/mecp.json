@@ -1,0 +1,1 @@
+{"id":"mecp","name":"MECP","ver":"1.0","desc":"Write and read MECP emergency messages: pick a severity and codes, add the head count and your position, post to a channel. Decodes MECP lines into words. Code table: MECP by xiang-dev-1, CC BY 4.0.","requires":"sdk_ext","icon":"bell"}

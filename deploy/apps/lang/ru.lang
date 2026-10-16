@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: ru
-# ver: 23
+# ver: 26
 # name: Русский
 # base: ru
  (device behind)	 (устройство отстаёт)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Упоминания
 @ mention sound	Звук @-упоминаний
+A background has to be a JPEG	Фон должен быть в формате JPEG
 AF	AF
 AUTOMATIC ADVERTS	АВТОМАТИЧЕСКИЕ АДВЕРТЫ
 About	О программе
@@ -32,6 +33,23 @@ About the map	О карте
 Accent popups	Подсказки акцентов
 Accent popups: off	Подсказки акцентов: выкл
 Accent popups: on	Подсказки акцентов: вкл
+Background	Фон
+Background colour	Цвет фона
+Background set, it shows after a restart	Фон задан, появится после перезагрузки
+Check position every	Проверять позицию каждые
+Choose an image	Выбрать изображение
+Choose the colour	Выбрать цвет
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Экспериментально. Замедляет процессор при выключенном экране (Bluetooth и Wi-Fi продолжают работать), даёт GPS отдыхать между проверками позиции и останавливает движущийся фон.
+GPS: resting, next check in %lum%02lus	GPS: отдыхает, следующая проверка через %lum%02lus
+Image	Изображение
+Moving aurora	Движущееся сияние
+None	Нет
+Open a JPEG, then tap 'Set as background'	Откройте JPEG, затем нажмите «Задать как фон»
+Save battery	Экономить заряд
+Set as background	Задать как фон
+Still aurora	Неподвижное сияние
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS отдыхает между проверками позиции и просыпается сам. Он остаётся активным, пока открыты карта, эта страница или Discover. Экономия заряда тоже включает это.
+remote view open	открыт удалённый просмотр
 Accent colour	Акцентный цвет
 Appearance	Оформление
 Condense Nav (restart to apply)	Компактная навигация (перезапуск для применения)
@@ -169,6 +187,7 @@ Clear battery history?	Очистить историю батареи?
 Clear history	Очистить историю
 Clear telemetry history for this node?	Очистить историю телеметрии этого узла?
 Client repeat	Повтор клиента
+Clipboard empty	Буфер обмена пуст
 Clock & time	
 Clock synced	Часы синхронизированы
 Clock: 12-hour	Часы: 12-часовые
@@ -296,6 +315,7 @@ Enter SSID first	Сначала введите SSID
 Enter a name	Введите имя
 Enter a network name	Введите имя сети
 Enter a region name	Enter a region name
+Enter a rough location first	Сначала введите примерное местоположение
 Enter adds a new line	Enter добавляет строку
 Enter exactly 32 hex characters.	Введите ровно 32 hex-символа.
 Enter key sends message	Клавиша Enter отправляет сообщение
@@ -348,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Зуммер %s\n%s
 GPS off	GPS выкл
 GPS on	GPS вкл
 GPS serial baud	Скорость GPS (бод)
+GPS sets the position while it has a fix	Положение задаёт GPS, пока есть фикс
 GPS unset	GPS не задан
 GPS: acquiring...	GPS: поиск...
 GPS: fix	GPS: есть
@@ -498,6 +519,7 @@ Messages
 Min zoom for this pack	Мин. зум для этого пакета
 Mode: BLE starting / low memory	Режим: BLE запускается / мало памяти
 Model:	Модель:
+Move the map to your spot	Переместите карту к своему месту
 Multi ACKs	Множественные ACK
 Multi-ack %s · Repeat %s · RX boost %s	Мульти-ack %s · Повтор %s · RX boost %s
 Multi-byte routing (path hash)	Многобайтовая маршрутизация (хеш пути)
@@ -608,6 +630,7 @@ Path reset failed	Не удалось сбросить путь
 Paused  —  score %d	Пауза  —  счёт %d
 Per-transmit switching on	Переключение на каждую передачу вкл.
 Pick colour	Выбрать цвет
+Pick on the map	Выбрать на карте
 Ping	Пинг
 Ping failed	Сбой ping
 Pinged (direct) — waiting…	Ping (прямой) — ожидание…
@@ -1296,7 +1319,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Добавить канал
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1311,7 +1334,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Канал
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1438,7 +1461,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Поделиться контактом
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1472,7 +1495,7 @@ Upload of %s stopped	Upload of %s stopped
 Used	Used
 VNC	VNC
 Waiting for the computer	Waiting for the computer
-Web	Web
+Web	Веб
 Wed	Wed
 Wednesday	Wednesday
 While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
@@ -1542,10 +1565,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Экономия энергии
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Яркость
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1727,7 +1750,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Зарядка
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1755,7 +1778,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Подсветка клавиатуры
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1854,3 +1877,113 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(по умолчанию)
+Back to my position	К моему местоположению
+Battery saver off	Экономия энергии выключена
+Battery saver on	Экономия энергии включена
+Chat settings	Настройки чата
+Contacts on the map	Контакты на карте
+Day or night	День или ночь
+Default wallpaper	Обои по умолчанию
+Discovered nodes	Найденные узлы
+Enter, then turn the wheel	Enter, затем поверните колесо
+Follow me	Следовать за мной
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Определяется автоматически: если GPS не отвечает на этой скорости, устройство пробует остальные и оставляет ту, что работает. Отсюда оно начинает.
+Hold Enter: settings	Удерживайте Enter: настройки
+Keep holding: settings	Держите дальше: настройки
+Keeps the map on your position	Держит карту на вашем местоположении
+Mark all read	Прочитать все
+More	Ещё
+Nickname	Псевдоним
+Nickname not saved	Псевдоним не сохранён
+Nickname removed	Псевдоним удалён
+Nickname saved	Псевдоним сохранён
+Notification sound	Звук уведомления
+Power off or reboot	Выключить или перезагрузить
+Power off?	Выключить?
+Restarts to switch	Перезапуск для переключения
+Saver	Экономия
+Saves power while the screen is off	Экономит энергию при выключенном экране
+Screenshot	Снимок экрана
+Screenshot timer	Снимок по таймеру
+Shows the zoom slider	Показывает ползунок масштаба
+Zoom	Масштаб
+Zoom in	Приблизить
+Zoom out	Отдалить
+
+# beta_94 strings
+Temperature in Fahrenheit	Температура по Фаренгейту
+Up to 15 characters	До 15 символов
+Favorites only	Только избранные
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	Чип Bluetooth не отвечает.
+Bluetooth could not start. Restart the device and try again.	Не удалось запустить Bluetooth. Перезагрузите устройство и попробуйте снова.
+Record track	Записывать трек
+Recording track	Идёт запись трека
+Recording needs an SD card	Для записи нужна SD-карта
+Could not write to the SD card	Не удалось записать на SD-карту
+Try the card again	Попробовать карту снова
+Next page	Следующая страница
+Previous page	Предыдущая страница
+Back to the start	В начало
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f дБ SNR при SF%d
+%s ago	%s назад
+1 min	1 мин
+10 min	10 мин
+Acknowledgement	Подтверждение
+Air split	Доля
+Anonymous request	Анонимный запрос
+Average	Среднее
+Band	Диапазон
+Busy	Занят
+Channel data	Данные канала
+Channel message	Сообщение канала
+Decodes to	Декодирует до
+Direct with a region code	Напрямую с кодом региона
+Flood with a region code	Flood с кодом региона
+Floor	Фон
+Hops	Хопы
+Live	Сейчас
+Margin	Запас
+Multipart	Составной
+Noise	Шум
+Packet	Пакет
+Path	Путь
+Peak	Пик
+Request	Запрос
+Response	Ответ
+Route	Маршрут
+Size	Размер
+Tap to go back	Нажмите, чтобы вернуться
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	бюджет %d с   tx %d   rx %d   ошибки %d   цикл %d%%   SF%d
+budget %d s  tx %d  rx %d	бюджет %d с  tx %d  rx %d
+channel busy now	канал сейчас занят
+listening, nothing heard yet	слушаю, пока ничего
+no airtime yet	эфирного времени пока нет
+over %d:%02d	за %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Добавьте файлы MP3 или WAV в папку этого приложения.
+Cannot play	Не удаётся воспроизвести
+Looking for music...	Ищу музыку...
+Looking for music... %d	Ищу музыку... %d
+Music	Музыка
+No music found	Музыка не найдена
+No speaker	Нет динамика
+Playing	Играет
+Put MP3 or WAV files in a Music folder on the SD card.	Положите файлы MP3 или WAV в папку Music на SD-карте.
+Repeat all	Повторять все
+Repeat off	Повтор выключен
+Repeat this track	Повторять трек
+Showing the first %d tracks	Показаны первые %d треков
+Sound is off: Settings > Sound	Звук выключен: Настройки > Звук
+Stopped	Остановлено
+This device cannot play music.	Это устройство не может воспроизводить музыку.

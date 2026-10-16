@@ -39,6 +39,10 @@ idf_build_set_property(COMPILE_OPTIONS "${_co}")
 set(WADA_DEFS
   HAS_TANMATSU=1 ESP32_PLATFORM MC_VENDORED_TOUCH_APP UI_LVGL=1 HAS_TOUCH_UI=1
   MULTI_TRANSPORT_COMPANION TCP_PORT=5000 WS_PORT=8765
+  # The launcher updates the app (CAP_OTA 0); the only OTA slots are the launcher's own 2 MB ones.
+  # Drops the core's "start ota" upload page and URL install (~55 KB): the launcher loads at most
+  # 50 x 64 KB of an AppFS app (appfsBlMmap), and the app was past that.
+  DISABLE_WIFI_OTA
   BLE_PIN_CODE=123456                       # enables the app's NimBLE companion (BLE over the C6)
   LORA_FREQ=869.618 LORA_BW=62.5 LORA_SF=8
   MAX_CONTACTS=2000 MAX_GROUP_CHANNELS=40  # P4 has ample RAM; contacts array is PSRAM-resident (the_mesh placement-new)

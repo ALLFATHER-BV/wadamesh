@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: it
-# ver: 23
+# ver: 26
 # name: Italiano
 # base: it
  (device behind)	 (dispositivo indietro)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Menzioni
 @ mention sound	Suono menzioni @
+A background has to be a JPEG	Lo sfondo deve essere un JPEG
 AF	AF
 AUTOMATIC ADVERTS	ADVERT AUTOMATICI
 About	Informazioni
@@ -32,6 +33,23 @@ About the map	Informazioni sulla mappa
 Accent popups	Popup accenti
 Accent popups: off	Popup accenti: disattivi
 Accent popups: on	Popup accenti: attivi
+Background	Sfondo
+Background colour	Colore dello sfondo
+Background set, it shows after a restart	Sfondo impostato, appare dopo un riavvio
+Check position every	Controlla la posizione ogni
+Choose an image	Scegli un'immagine
+Choose the colour	Scegli il colore
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Sperimentale. Rallenta il processore a schermo spento (Bluetooth e Wi-Fi continuano a funzionare), lascia riposare il GPS tra un controllo di posizione e l'altro e ferma uno sfondo in movimento.
+GPS: resting, next check in %lum%02lus	GPS: a riposo, prossimo controllo tra %lum%02lus
+Image	Immagine
+Moving aurora	Aurora in movimento
+None	Nessuno
+Open a JPEG, then tap 'Set as background'	Apri un JPEG, poi tocca 'Imposta come sfondo'
+Save battery	Risparmia batteria
+Set as background	Imposta come sfondo
+Still aurora	Aurora fissa
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	Il GPS riposa tra un controllo di posizione e l'altro e si risveglia da solo. Resta attivo finché la mappa, questa pagina o Discover sono aperti. Anche il risparmio batteria lo attiva.
+remote view open	vista remota aperta
 Accent colour	Colore accento
 Appearance	Aspetto
 Condense Nav (restart to apply)	Navigazione compatta (riavvia per applicare)
@@ -169,6 +187,7 @@ Clear battery history?	Cancellare la cronologia batteria?
 Clear history	Cancella cronologia
 Clear telemetry history for this node?	Cancellare la cronologia telemetria di questo nodo?
 Client repeat	Ripetizione client
+Clipboard empty	Appunti vuoti
 Clock & time	
 Clock synced	Orologio sincronizzato
 Clock: 12-hour	Orologio: 12 ore
@@ -296,6 +315,7 @@ Enter SSID first	Inserisci prima l'SSID
 Enter a name	Inserisci un nome
 Enter a network name	Inserisci un nome di rete
 Enter a region name	Enter a region name
+Enter a rough location first	Inserisci prima una posizione approssimativa
 Enter adds a new line	Invio aggiunge una riga
 Enter exactly 32 hex characters.	Inserisci esattamente 32 caratteri hex.
 Enter key sends message	Il tasto Invio invia il messaggio
@@ -348,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Cicalino %s\n%s
 GPS off	GPS spento
 GPS on	GPS acceso
 GPS serial baud	Baud seriale GPS
+GPS sets the position while it has a fix	Il GPS imposta la posizione finché ha il fix
 GPS unset	GPS non impostato
 GPS: acquiring...	GPS: ricerca...
 GPS: fix	GPS: fix
@@ -497,6 +518,7 @@ Messages
 Min zoom for this pack	Zoom min per questo pacchetto
 Mode: BLE starting / low memory	Modalità: BLE avvio / memoria scarsa
 Model:	Modello:
+Move the map to your spot	Sposta la mappa sul tuo punto
 Multi ACKs	Multi-ACK
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Ripeti %s · RX boost %s
 Multi-byte routing (path hash)	Routing multi-byte (hash percorso)
@@ -607,6 +629,7 @@ Path reset failed	Reset percorso non riuscito
 Paused  —  score %d	In pausa  —  punteggio %d
 Per-transmit switching on	Commutazione per trasmissione attiva
 Pick colour	Scegli colore
+Pick on the map	Scegli sulla mappa
 Ping	Ping
 Ping failed	Ping non riuscito
 Pinged (direct) — waiting…	Ping (diretto) — attesa…
@@ -1295,7 +1318,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Aggiungi un canale
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1310,7 +1333,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Canale
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1437,7 +1460,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Condividi il mio contatto
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1541,10 +1564,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Risparmio energetico
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Luminosità
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1726,7 +1749,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	In carica
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1754,7 +1777,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Luce tastiera
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1853,3 +1876,113 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(predefinito)
+Back to my position	Torna alla mia posizione
+Battery saver off	Risparmio energetico disattivato
+Battery saver on	Risparmio energetico attivato
+Chat settings	Impostazioni chat
+Contacts on the map	Contatti sulla mappa
+Day or night	Giorno o notte
+Default wallpaper	Sfondo predefinito
+Discovered nodes	Nodi scoperti
+Enter, then turn the wheel	Invio, poi ruota la rotella
+Follow me	Seguimi
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Trovata automaticamente: se il GPS non risponde a questa velocità, il dispositivo prova le altre e tiene quella che funziona. Si parte da qui.
+Hold Enter: settings	Tieni premuto Invio: impostazioni
+Keep holding: settings	Continua a tenere: impostazioni
+Keeps the map on your position	Tiene la mappa sulla tua posizione
+Mark all read	Segna tutto come letto
+More	Altro
+Nickname	Soprannome
+Nickname not saved	Soprannome non salvato
+Nickname removed	Soprannome rimosso
+Nickname saved	Soprannome salvato
+Notification sound	Suono di notifica
+Power off or reboot	Spegni o riavvia
+Power off?	Spegnere?
+Restarts to switch	Si riavvia per cambiare
+Saver	Risparmio
+Saves power while the screen is off	Risparmia energia a schermo spento
+Screenshot	Screenshot
+Screenshot timer	Screenshot a tempo
+Shows the zoom slider	Mostra il cursore dello zoom
+Zoom	Zoom
+Zoom in	Ingrandisci
+Zoom out	Riduci
+
+# beta_94 strings
+Temperature in Fahrenheit	Temperatura in Fahrenheit
+Up to 15 characters	Fino a 15 caratteri
+Favorites only	Solo preferiti
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	Il chip Bluetooth non risponde.
+Bluetooth could not start. Restart the device and try again.	Impossibile avviare il Bluetooth. Riavvia il dispositivo e riprova.
+Record track	Registra traccia
+Recording track	Registrazione traccia
+Recording needs an SD card	Per registrare serve una scheda SD
+Could not write to the SD card	Impossibile scrivere sulla scheda SD
+Try the card again	Riprova la scheda
+Next page	Pagina successiva
+Previous page	Pagina precedente
+Back to the start	Torna all'inizio
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR a SF%d
+%s ago	%s fa
+1 min	1 min
+10 min	10 min
+Acknowledgement	Conferma
+Air split	Ripartizione
+Anonymous request	Richiesta anonima
+Average	Media
+Band	Banda
+Busy	Occupato
+Channel data	Dati canale
+Channel message	Messaggio canale
+Decodes to	Decodifica fino a
+Direct with a region code	Diretto con codice regione
+Flood with a region code	Flood con codice regione
+Floor	Fondo
+Hops	Salti
+Live	Live
+Margin	Margine
+Multipart	Multiparte
+Noise	Rumore
+Packet	Pacchetto
+Path	Percorso
+Peak	Picco
+Request	Richiesta
+Response	Risposta
+Route	Instradamento
+Size	Dimensione
+Tap to go back	Tocca per tornare
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	budget %d s  tx %d  rx %d
+channel busy now	canale occupato ora
+listening, nothing heard yet	in ascolto, ancora niente
+no airtime yet	ancora nessun tempo in aria
+over %d:%02d	in %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Aggiungi file MP3 o WAV alla cartella di questa app.
+Cannot play	Impossibile riprodurre
+Looking for music...	Cerco musica...
+Looking for music... %d	Cerco musica... %d
+Music	Musica
+No music found	Nessuna musica trovata
+No speaker	Nessun altoparlante
+Playing	In riproduzione
+Put MP3 or WAV files in a Music folder on the SD card.	Metti file MP3 o WAV in una cartella Music sulla scheda SD.
+Repeat all	Ripeti tutto
+Repeat off	Ripetizione disattivata
+Repeat this track	Ripeti questo brano
+Showing the first %d tracks	Mostro i primi %d brani
+Sound is off: Settings > Sound	Il suono è spento: Impostazioni > Suono
+Stopped	Fermo
+This device cannot play music.	Questo dispositivo non può riprodurre musica.

@@ -1,0 +1,42 @@
+# beta_94 - newer ThinkNode M9s work, the radar and Advert widgets fixed, map favourites, Fahrenheit, and a round of community PRs. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, the M9 fix, new things, fixes, the Heltec V4.
+
+Test build, on top of beta_93. The stable build stays beta_85.
+
+# --- ThinkNode M9 ---
+Newer ThinkNode M9s (the Meshtastic edition) work: their keyboard controller answers at a different address, so on beta_93 and earlier no key did anything and the first setup screen could not be passed. Both addresses are found now (#662 by Bfindlay, reported in #644 by thejiraguy and on Discord).
+The GPS on those newer M9s gets a fix: their GPS is switched on the other way round, which the firmware now picks from the keyboard's address (#661 and #663 by Thatindianbruh, measured on two units).
+
+# --- New ---
+Map options > Favorites only shows just your favourite contacts on the map, link lines included, and is remembered.
+Settings > Display > Temperature in Fahrenheit shows temperatures in °F everywhere they appear: sensors, Home widgets and telemetry. What is stored and sent stays in °C.
+The contact list shows each contact's chat icon, the one you picked or the first emoji in its name (#649 by oumike, asked for in #646 by Jess-39).
+T-Deck Pro and Max get the Normal, Large and Huge text sizes the T-Deck has (#645 by oumike, asked for in #639 by Jess-39).
+Pick your advert position on the map instead of typing coordinates (#635 by Confituurke).
+New board: the Elecrow CrowPanel Advance 5.0 (#655 by oumike, #651).
+Hashtags in messages are links: tap #mesh (or select the message with keys) to open that channel or join it, and the message menu gains Map, Web and Channel entries for the coordinates, web addresses and hashtags in it (#580 by TerryTel93).
+T-LoRa Pager: hold Fn and press Enter to paste the clipboard (#624 by jcyrio).
+The web app gets Reply on a channel message (#650 by oumike, asked for in #642 by Danie10).
+New in the Store: MECP, for emergency messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and a hundred more), add the number of people and your position, and post it to a channel; MECP messages you receive are shown in plain words. Asked for on Discord; MECP and its code table are by xiang-dev-1.
+For app makers: a Store app can ship its own files, such as sounds, by listing them in its manifest. They are installed into the app's own folder, which is also the way to play sounds on the T-Display P4.
+
+Record your route: Map options > Record track saves where you go as a GPX file on the SD card (/meshcomod/tracks), the standard format other mapping software opens, with elevation and time. It keeps recording with the screen off, the map shows the route as a red line, and the corner shows the distance and climb while it records (asked for on Discord).
+The Reader is now a library: big text and markdown files on the SD card page through (16 KB at a time, with Next and Previous page), and Files opens web pages and long texts on the card in the Reader. A new desktop tool, scripts/sdpack.py, turns EPUB books and text files into pages on the card with a library home page (asked for on Discord).
+A failed SD card no longer costs your node its key: the device keeps a copy of the key in its own memory. A device that keeps its data on the card and starts without it now says so and offers to try the card again, instead of opening first-time setup (reported on Discord).
+
+# --- Fixes ---
+Tapping the radar widget opens the radar screensaver until you touch the screen, instead of flickering it (reported on Discord). The radar also fits a two-cell space now, and when Home is full, adding a widget tells you to hold one to remove it.
+The Advert widget is readable again: it now looks like the app tiles, with its icon in a tinted square and the name under it (#637, reported by Flyflinger).
+A text symbol chosen as a chat icon (a star, a heart) shows as the icon instead of being ignored (#647, reported by Jess-39).
+Day mode: the numbers on unread badges are readable (#658 by oumike).
+The keyboard's control keys have readable labels (#656 by oumike).
+The Radio widget no longer draws a line through its text.
+A round of fixes by oumike (#628): ThinkNode M9 keys no longer type twice (#625) and its chat header fits its text (#627), A-Z sorts contacts by name and Select all takes every contact that matches (#605), channel region scope applies to every way of sending, phone app included (#614), compact chats fit emoji (#617), the cold-boot time sync over saved Wi-Fi is more reliable (#620), the Pager's backup Import dialog focuses Import (#603), the shade over a background picture stays put in a tall status bar, and the Wio Tracker L2 gets the clock settings and boot time sync.
+T-Display P4: Bluetooth can be switched on again when it was off at start-up. Since beta_88 that failed every time, with a "not enough memory" message that was wrong; the message now also says what really went wrong (#612).
+T-Deck Pro and Max: control panel tiles stay visible when their service is off; the e-paper turned them white on white (#659, reported by oumike).
+The login password field says it takes up to 15 characters: MeshCore logins carry no more than that, on the phone app too.
+Translations: wording fixes in Dutch, German and Hungarian (by jcyrio), and this build's new texts in all 14 languages.
+
+# --- Heltec V4 ---
+The Heltec V4 has all the translations again, beta_93's and this build's included: its built-in table now keeps only the texts the firmware can actually show, which makes it 15 KB smaller than the older table it carried in beta_93.

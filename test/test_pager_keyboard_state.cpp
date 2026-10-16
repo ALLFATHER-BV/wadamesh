@@ -63,6 +63,38 @@ int main() {
   assert(keyboard.event(0, true, 740) == 'q');
   keyboard.event(0, false, 750);
 
+  // Physical Fn+Enter = paste chord: Enter is swallowed, the chord is reported
+  // once, and nothing leaks into the next plain keypress.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 760);
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 770) == 0);
+  assert(keyboard.consumeAltEnterChord());
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 780);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 790);   // used-while-held: no one-shot armed
+  assert(keyboard.event(0, true, 792) == 'q');
+  keyboard.event(0, false, 794);
+  // A plain Enter still types '\r', and tap-Fn-then-Enter (one-shot symbol
+  // layer) is not a chord: Enter has no symbol, so it types nothing, as before.
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 795) == '\r');
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 796);
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 797);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 797);
+  assert(keyboard.event(PagerKeyboardState::ENTER_POS, true, 798) == 0);
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 798);
+  // Fn held + V still types '?': the chord moved off the letter keys.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 799);
+  assert(keyboard.event(2 * PagerKeyboardState::COLS + 4, true, 799) == '?');
+  keyboard.event(2 * PagerKeyboardState::COLS + 4, false, 799);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 799);
+  // discardAlt() drops a pending chord too.
+  keyboard.event(PagerKeyboardState::ALT_POS, true, 799);
+  keyboard.event(PagerKeyboardState::ENTER_POS, true, 799);
+  keyboard.discardAlt();
+  assert(!keyboard.consumeAltEnterChord());
+  keyboard.event(PagerKeyboardState::ENTER_POS, false, 799);
+  keyboard.event(PagerKeyboardState::ALT_POS, false, 799);
+
   keyboard.event(PagerKeyboardState::ALT_POS, true, 800);
   keyboard.discardAlt();
   keyboard.event(PagerKeyboardState::ALT_POS, false, 810);
@@ -83,5 +115,31 @@ int main() {
   keyboard.markAltUsed();                       // physical Alt+encoder equivalent
   keyboard.event(PagerKeyboardState::ALT_POS, false, 1010);
   assert(keyboard.event(0, true, 1020) == 'q');
+  keyboard.event(0, false, 1030);
+  assert(!keyboard.letterHeld());
+
+  // Tap or hold (the Home and Settings shortcuts): the letter's key stays held
+  // until its own release, whatever else is released meanwhile.
+  const uint8_t s_key = PagerKeyboardState::COLS + 1;
+  assert(keyboard.event(s_key, true, 1100) == 's');
+  assert(keyboard.letterHeld());
+  keyboard.event(0, false, 1110);
+  assert(keyboard.letterHeld());
+  keyboard.event(s_key, false, 1500);
+  assert(!keyboard.letterHeld());
+  // A later letter takes over: the earlier key's release no longer counts.
+  assert(keyboard.event(s_key, true, 1600) == 's');
+  assert(keyboard.event(0, true, 1610) == 'q');
+  keyboard.event(s_key, false, 1620);
+  assert(keyboard.letterHeld());
+  keyboard.event(0, false, 1630);
+  assert(!keyboard.letterHeld());
+  // Space and Backspace keep their own hold state and are not letters.
+  assert(keyboard.event(PagerKeyboardState::SPACE_POS, true, 1700) == ' ');
+  assert(!keyboard.letterHeld());
+  keyboard.event(PagerKeyboardState::SPACE_POS, false, 1710);
+  assert(keyboard.event(PagerKeyboardState::BACKSPACE_POS, true, 1720) == '\b');
+  assert(!keyboard.letterHeld());
+  keyboard.event(PagerKeyboardState::BACKSPACE_POS, false, 1730);
   return 0;
 }

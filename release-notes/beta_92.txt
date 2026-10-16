@@ -1,0 +1,20 @@
+# beta_92 - faster screens on most boards, Arabic fixed up, and a round of GitHub fixes. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, speed, then the fixes.
+
+Test build, on top of beta_91. The stable build stays beta_85.
+
+# --- Faster screens ---
+The screens draw faster. On a T-Deck with the still aurora, Home redraws in 85 ms instead of 126, the app drawer scrolls at 69 ms a frame instead of 102 and a chat list at 49 instead of 70: a third to a half more frames a second, with the same pixels.
+How: the T-Deck drew every frame in 14 slices, each a walk through the whole screen, and now draws it in 6; the still aurora is drawn once and copied instead of worked out again every frame; and the drawing code is compiled for speed, with its busiest loops in the chip's fast memory.
+The same treatment reaches the ThinkNode M9, the Attaky, the RAK WisMesh Tap V2, the Wio Tracker L2, the CrowPanel 3.5 and the Heltec V4-R8, and the T-LoRa Pager draws in fewer slices. Those were not tested on their own hardware yet: please report how scrolling feels there, and anything that looks off.
+The Heltec V4 gets the smaller part (rounded corners and gradients are cached now); it has no room left for the rest.
+
+# --- Fixes ---
+Hop counts above 64 are gone (#621, reported by jesshampshire). With 2- and 3-byte path hashes the hop count shares its byte with the hash size, and a few places read the whole byte: the Discovered list, the "auto-delete above N hops" setting (it could throw away nodes one hop away) and the checks for direct neighbours.
+Arabic, thanks to jcyrio and a native-speaking tester (#582): letters join properly now (آ, ئ, ة and the Persian digits were wrong in the graphics library), Shift gives the Arabic 101 shift layer (أ إ آ, لأ لإ لآ, ، ؛ and the tashkeel), ك is on 8, ! $ @ type themselves again and ? types ؟. Text leaves the device as standard Arabic letters, so a #channel name gives the same channel as on a phone.
+The message info popup keeps its colours when a long repeater name wraps (#602). NewtsLament found the cause.
+On the keypad boards (ThinkNode M9, Tanmatsu, T-LoRa Pager) a chat's settings, with Region & scope, can be reached again: move up to the conversation header and press Enter (#623, reported by bobbythefett).
+The web browser opens the wadamesh changelog when there is no home page on the SD card and Wi-Fi is up (#622, an idea from jesshampshire). It is also on the site: wadamesh.com/changelog.html.
+Settings > Theme > Background > Colour changed the accent colour instead; it sets the background now.
+T-Display P4 with Wi-Fi that never connects: the flasher now offers "factory Wi-Fi chip" images, for units whose Wi-Fi chip still runs LilyGo's original firmware (#612; jalevdev spotted the missing choice in #619).

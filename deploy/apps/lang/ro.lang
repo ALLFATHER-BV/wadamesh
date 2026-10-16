@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: ro
-# ver: 23
+# ver: 26
 # name: Română
 # base: ro
  (device behind)	 (dispozitiv în urmă)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Menţiuni
 @ mention sound	Sunet menţiune @
+A background has to be a JPEG	Fundalul trebuie să fie un JPEG
 AF	AF
 AUTOMATIC ADVERTS	ADVERTURI AUTOMATE
 About	Despre
@@ -32,6 +33,23 @@ About the map	Despre hartă
 Accent popups	Popupuri cu accente
 Accent popups: off	Popupuri accente: oprite
 Accent popups: on	Popupuri accente: pornite
+Background	Fundal
+Background colour	Culoarea fundalului
+Background set, it shows after a restart	Fundal setat, apare după o repornire
+Check position every	Verifică poziţia la fiecare
+Choose an image	Alege o imagine
+Choose the colour	Alege culoarea
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimental. Încetineşte procesorul cât timp ecranul este stins (Bluetooth şi Wi-Fi funcţionează în continuare), lasă GPS-ul să se odihnească între verificările de poziţie şi opreşte un fundal în mişcare.
+GPS: resting, next check in %lum%02lus	GPS: în repaus, următoarea verificare în %lum%02lus
+Image	Imagine
+Moving aurora	Auroră în mişcare
+None	Niciunul
+Open a JPEG, then tap 'Set as background'	Deschide un JPEG, apoi atinge 'Setează ca fundal'
+Save battery	Economiseşte bateria
+Set as background	Setează ca fundal
+Still aurora	Auroră statică
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS-ul se odihneşte între verificările de poziţie şi se trezeşte singur. Rămâne activ cât timp harta, această pagină sau Discover sunt deschise. Economisirea bateriei îl porneşte şi ea.
+remote view open	vizualizare la distanţă deschisă
 Accent colour	Culoare de accent
 Appearance	Aspect
 Condense Nav (restart to apply)	Navigare compactă (repornire pentru aplicare)
@@ -169,6 +187,7 @@ Clear battery history?	Goleşti istoricul bateriei?
 Clear history	Şterge istoricul
 Clear telemetry history for this node?	Goleşti istoricul de telemetrie al acestui nod?
 Client repeat	Repetare client
+Clipboard empty	Clipboard gol
 Clock & time	
 Clock synced	Ceas sincronizat
 Clock: 12-hour	Ceas: 12 ore
@@ -296,6 +315,7 @@ Enter SSID first	Introdu mai întâi SSID-ul
 Enter a name	Introdu un nume
 Enter a network name	Introdu un nume de reţea
 Enter a region name	Enter a region name
+Enter a rough location first	Introdu mai întâi o locaţie aproximativă
 Enter adds a new line	Enter adaugă un rând nou
 Enter exactly 32 hex characters.	Introdu exact 32 caractere hex.
 Enter key sends message	Tasta Enter trimite mesajul
@@ -348,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS oprit
 GPS on	GPS pornit
 GPS serial baud	Baud serial GPS
+GPS sets the position while it has a fix	GPS-ul setează poziţia cât timp are fix
 GPS unset	GPS nesetat
 GPS: acquiring...	GPS: căutare semnal...
 GPS: fix	GPS: fix
@@ -498,6 +519,7 @@ Messages
 Min zoom for this pack	Zoom minim pentru acest pachet
 Mode: BLE starting / low memory	Mod: BLE porneşte / memorie redusă
 Model:	Model:
+Move the map to your spot	Mută harta la locul tău
 Multi ACKs	ACK-uri multiple
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Repetare %s · Boost RX %s
 Multi-byte routing (path hash)	Rutare multi-octet (hash de cale)
@@ -608,6 +630,7 @@ Path reset failed	Resetarea căii a eşuat
 Paused  —  score %d	Pauză  —  scor %d
 Per-transmit switching on	Comutare per transmisie pornită
 Pick colour	Alege culoarea
+Pick on the map	Alege pe hartă
 Ping	Ping
 Ping failed	Ping eşuat
 Pinged (direct) — waiting…	Ping trimis (direct) — se aşteaptă…
@@ -1297,7 +1320,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Adaugă un canal
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1312,7 +1335,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Canal
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1439,7 +1462,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Partajează contactul meu
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1543,10 +1566,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Economisire baterie
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Luminozitate
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1728,7 +1751,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Se încarcă
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1756,7 +1779,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Lumină tastatură
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1855,3 +1878,113 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(implicit)
+Back to my position	Înapoi la poziţia mea
+Battery saver off	Economisire baterie oprită
+Battery saver on	Economisire baterie pornită
+Chat settings	Setări chat
+Contacts on the map	Contacte pe hartă
+Day or night	Zi sau noapte
+Default wallpaper	Fundal implicit
+Discovered nodes	Noduri descoperite
+Enter, then turn the wheel	Enter, apoi învârtiţi rotiţa
+Follow me	Urmăreşte-mă
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Găsită automat: dacă GPS-ul nu răspunde la această viteză, dispozitivul le încearcă pe celelalte şi o păstrează pe cea care merge. De aici porneşte.
+Hold Enter: settings	Ţine Enter: setări
+Keep holding: settings	Ţine apăsat în continuare: setări
+Keeps the map on your position	Ţine harta pe poziţia ta
+Mark all read	Marchează tot ca citit
+More	Mai mult
+Nickname	Poreclă
+Nickname not saved	Porecla nu a fost salvată
+Nickname removed	Poreclă eliminată
+Nickname saved	Poreclă salvată
+Notification sound	Sunet notificare
+Power off or reboot	Opreşte sau reporneşte
+Power off?	Opreşti?
+Restarts to switch	Reporneşte pentru schimbare
+Saver	Economie
+Saves power while the screen is off	Economiseşte energie cât ecranul e stins
+Screenshot	Captură de ecran
+Screenshot timer	Captură cu temporizator
+Shows the zoom slider	Arată glisorul de zoom
+Zoom	Zoom
+Zoom in	Măreşte
+Zoom out	Micşorează
+
+# beta_94 strings
+Temperature in Fahrenheit	Temperatură în Fahrenheit
+Up to 15 characters	Maximum 15 caractere
+Favorites only	Doar favorite
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	Cipul Bluetooth nu răspunde.
+Bluetooth could not start. Restart the device and try again.	Bluetooth nu a putut porni. Reporniţi dispozitivul şi încercaţi din nou.
+Record track	Înregistrează traseul
+Recording track	Se înregistrează traseul
+Recording needs an SD card	Înregistrarea necesită un card SD
+Could not write to the SD card	Nu s-a putut scrie pe cardul SD
+Try the card again	Încearcă din nou cardul
+Next page	Pagina următoare
+Previous page	Pagina anterioară
+Back to the start	Înapoi la început
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR la SF%d
+%s ago	acum %s
+1 min	1 min
+10 min	10 min
+Acknowledgement	Confirmare
+Air split	Împărţire
+Anonymous request	Cerere anonimă
+Average	Medie
+Band	Bandă
+Busy	Ocupat
+Channel data	Date canal
+Channel message	Mesaj canal
+Decodes to	Decodează până la
+Direct with a region code	Direct cu cod de regiune
+Flood with a region code	Flood cu cod de regiune
+Floor	Prag
+Hops	Salturi
+Live	Live
+Margin	Marjă
+Multipart	Multiparte
+Noise	Zgomot
+Packet	Pachet
+Path	Cale
+Peak	Vârf
+Request	Cerere
+Response	Răspuns
+Route	Rută
+Size	Mărime
+Tap to go back	Atinge pentru înapoi
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	buget %d s   tx %d   rx %d   erori %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	buget %d s  tx %d  rx %d
+channel busy now	canal ocupat acum
+listening, nothing heard yet	ascult, nimic recepţionat
+no airtime yet	încă fără timp de emisie
+over %d:%02d	în %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Adaugă fişiere MP3 sau WAV în dosarul acestei aplicaţii.
+Cannot play	Nu se poate reda
+Looking for music...	Caut muzică...
+Looking for music... %d	Caut muzică... %d
+Music	Muzică
+No music found	Nu am găsit muzică
+No speaker	Fără difuzor
+Playing	Redare
+Put MP3 or WAV files in a Music folder on the SD card.	Pune fişiere MP3 sau WAV într-un dosar Music pe cardul SD.
+Repeat all	Repetă tot
+Repeat off	Repetare oprită
+Repeat this track	Repetă piesa
+Showing the first %d tracks	Se arată primele %d piese
+Sound is off: Settings > Sound	Sunetul este oprit: Setări > Sunet
+Stopped	Oprit
+This device cannot play music.	Acest dispozitiv nu poate reda muzică.

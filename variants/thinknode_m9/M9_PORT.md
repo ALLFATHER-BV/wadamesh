@@ -54,7 +54,7 @@ this table as schematic-verified, not Meshtastic-derived, going forward.)
 | Peripheral power rail        | 18              | P-MOS, **active-LOW** (LCD/GPS/sensors)                                                                                                                                                                                                                       |
 | microSD                      | 48 (CS)         | Shared LoRa SPI bus (Arduino SD, same as T-Deck) — CS is GPIO48, schematic net `SPICLK_N`. NOT one of the GPIO33-37 octal-PSRAM lines; SPICLK_N/GPIO48 (and SPICLK_P/GPIO47) are only reserved on the R8V/R16V 1.8V-differential-clock variants — this board is a plain R8 (see Hardware summary), which uses the ordinary single-ended SPICLK instead, so GPIO48 is genuinely free. The earlier "CS=36 is octal-PSRAM-reserved" claim conflated physical package pin 36 with GPIO36 — they are not the same pin. Confirmed working on hardware. |
 | Peripheral I2C SDA/SCL       | 7 / 6           | RTC PCF8563 0x51, IMU 0x6b, compass 0x7c. The RTC is driven by `src/helpers/HardwareRtcClock.*`, NOT by the core's `AutoDiscoverRTCClock` probe (issue #383): that path read the calendar registers without ever consulting the chip's VL bit, so after a hard shutdown the stale contents came back as real wall time and the clock looked frozen at the moment the slider was pulled. The adapter refuses an integrity-lost read, clears a latched STOP bit, and reads back every write                                                                                                                                                                                                                              |
-| Keyboard I2C SDA/SCL         | 20 / 21         | controller @ 0x6c, **own bus** (Wire1)                                                                                                                                                                                                                        |
+| Keyboard I2C SDA/SCL         | 20 / 21         | **own bus** (Wire1); see [driver reference](M9Keyboard.h) for revision addresses and fallback probing |
 | Battery ADC                  | 13              | **ADC2**_CH2 (S3: ADC1=GPIO1-10, ADC2=GPIO11-20 — earlier "ADC1_CH2" label was wrong; ADC2 is Wi-Fi-arbitrated, see getBattMilliVolts's per-sample filter), **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
 | GPS RX/TX                    | 2 / 3           | CC1167Q, UART1                                                                                                                                                                                                                                                |
 | GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired, **both active-LOW** (confirmed on schematic: same P-MOS circuit as the peripheral power rail for EN; GPS_RST1 -> R46 -> NPN Q16 base, GPIO HIGH turns Q16 on and pulls the module's reset line to GND, so HIGH asserts reset / LOW releases it — inverted vs. the library defaults, both now overridden in platformio.ini). ON_OFF + 1PPS unused |
@@ -83,6 +83,13 @@ This turn's corrections vs. the earlier (incorrect) attempt:
   asserts reset). Both `PIN_GPS_EN_ACTIVE` and `PIN_GPS_RESET_ACTIVE` are now
   overridden in `platformio.ini`. Fixed a total loss of GPS fix (module was
   held disabled/in-reset on every boot).
+  **Hardware revisions:** that polarity is for the original board (keyboard
+  controller at 0x6C). Newer units (keyboard at 0x6D, e.g. the Meshtastic SKU
+  LMM15409D2) have GPS EN **active-HIGH**; with it driven LOW they never get a
+  fix. `target.cpp` selects the level at runtime from the keyboard address
+  (`WadaNmeaLocationProvider::setEnActive()`), the same split Meshtastic's
+  `ELECROW-ThinkNode-M9` variant makes (`m9Version > 1 ? HIGH : LOW`). The
+  0x6C path keeps the compile-time default and is untested on a 0x6C unit.
 - microSD CS is **GPIO48**, not "deferred pending SDMMC pins" — this board
   never needed SD_MMC at all; the original SPI-CS approach was correct, the
   pin number was just wrong (see the pin table above and "Bonus schematic
@@ -103,7 +110,7 @@ keys). The controller resolves shift/symbol layers itself:
 | right                | 0xB7 | sub_map      | 0x84 |
 | d-pad centre / enter | 0x0D | map          | 0x85 |
 | del (backspace)      | 0x08 | hw_back      | 0x86 |
-| mic (triangle)       | 0x88 | ctrl         | 0x90 |
+| triangle             | 0x88 | ctrl         | 0x90 |
 
 Backspace (0x08) and Enter (0x0D) happen to match the values
 `UITask.cpp::handleHwKey()` already special-cases for the T-Deck, so typing,
@@ -161,8 +168,8 @@ focused — see "Deferred" below.
     _fixed_ hardware d-pad/function-key bytes straight to those same primitives
     instead of going through the programmable letter table. UP/DOWN/LEFT/RIGHT
     move focus or pan the tab bar, the d-pad centre/Enter selects, the dedicated
-    HW-back key backs out, and HOME/MAP/MESSAGE jump to those tabs. MIC and CTRL
-    have no action bound yet.
+    HW-back key backs out, and HOME/MAP/MESSAGE jump to those tabs. The triangle
+    key and CTRL were bound later (see below).
 - **Keypad nav corrected for cases the initial patch missed**: the wizard was
   unreachable by d-pad at all (handleHwKey()'s touch-only setup-root swallow ran
   before M9's key handling); Enter on a focused button after leaving a field via
@@ -264,8 +271,8 @@ compile-verified; on-device validation still wanted for the UX items):
 - **New key bindings**: GPS_LONG 0x87 → `toggleGPS()` + alert (matches the CC
   chip; NB if hardware shows the latched slot also emitting the 0x84 tap
   first, the Advert page will open too — needs on-device check); CTRL 0x90 →
-  Control Center. MIC 0x88 and 0x89 deliberately left unbound (documented in
-  M9Keyboard.h).
+  Control Center. 0x89 deliberately left unbound (documented in M9Keyboard.h).
+  The triangle key (0x88) was bound later: the focused item's hold action (#609).
 - **Keyboard backlight wired**: `m9KeyboardSetBacklight()` (controller reg
   0x02) is now driven from the drain-loop tick — off/on/auto via the CC
   "Keyboard" chip, write-on-change only. The old drain comment claiming "no
@@ -1013,10 +1020,11 @@ These are left intentionally unset/unwired rather than guessed:
    `ESP_WAKEUP` (GPIO12, from the keyboard MCU — RTC-capable): edge vs. level,
    polarity, pulse width. Once known, a real graceful Power-off can return via
    ext0/ext1 on GPIO12.
-7. **KEY_LED (GPIO46) unwired; MIC deliberately unbound; CTRL now bound.**
+7. **KEY_LED (GPIO46) unwired; triangle key and CTRL now bound.**
    CTRL (0x90) opens the Control Center (2026-08-19 pass; the controller
    latches a single key so CTRL can never chord). GPS_LONG (0x87) toggles GPS.
-   MIC (0x88) and 0x89 are deliberately unbound — see M9Keyboard.h. KEY_LED
+   The triangle key (0x88) does the focused item's hold action (#609); 0x89 is
+   deliberately unbound — see M9Keyboard.h. KEY_LED
    still has no driver.
 8. **Battery reading — largely addressed (2026-08-19 pass), one hardware
    question left.** Three separate things were tangled here: (a) the
@@ -1164,9 +1172,11 @@ These are left intentionally unset/unwired rather than guessed:
 
 ## Keyboard: register-addressed I2C slave (protocol build #8, USB-pad release build #9)
 
+For current controller addresses and bus detection, see [the driver reference](M9Keyboard.h).
+
 "No keys do anything" root cause: the keyboard is a separate ESP32-S2 running
 Elecrow's matrix-scanner firmware (ThinkNode-M9-KB-platformio, provided by Kaj
-2026-07-06) as an I2C slave @0x6C with addressed registers: 0x00 HW ver (0x03),
+2026-07-06) as an I2C slave with addressed registers: 0x00 HW ver (0x03),
 0x01 KEY VALUE (0x00 = none, single latched slot), 0x02 backlight duty, 0xFE FW
 ver (0x10). A key read must WRITE the register address (0x01) first, then read
 one byte. The contributed patch's "one raw byte per read" protocol read the

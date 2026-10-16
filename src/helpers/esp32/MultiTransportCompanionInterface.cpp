@@ -218,11 +218,22 @@ void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, 
   if (!_ble_phone_paused) _ble.enable();
 }
 
+#if defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED
+extern "C" bool hostedInitBLE();       // arduino-esp32 esp32-hal-hosted: C6 BLE controller bring-up
+extern "C" bool hostedIsBLEActive();
+#endif
+
+// Why the last cold start from enableBle() did not happen, for the toast (#612: every
+// refusal used to read as a memory shortage).
+static uint8_t s_ble_fail = BLE_FAIL_NONE;
+uint8_t bleLastFailReason() { return s_ble_fail; }
+
 void MultiTransportCompanionInterface::enableBle() {
   if (!_ble_begun) {
+    s_ble_fail = BLE_FAIL_NONE;
     // Deferred at boot (heap guard) or toggled on from off: bring the stack up
     // now, live, from the params stashed by prepareBle()/beginBle().
-    if (_ble_prefix[0] == '\0' && _ble_name[0] == '\0') return;   // no params known
+    if (_ble_prefix[0] == '\0' && _ble_name[0] == '\0') { s_ble_fail = BLE_FAIL_NO_PARAMS; return; }   // no params known
 #if defined(TLORA_PAGER)
     // An idle STA may be kept up for on-device scans with no credentials, and
     // a failed association explicitly falls back to BLE. Only the ordered WPA
@@ -245,8 +256,20 @@ void MultiTransportCompanionInterface::enableBle() {
         internal_max < BLE_COEXIST_MIN_BLOCK) {
       Serial.printf("[ble] cold start refused: free=%u maxblk=%u\n",
                     (unsigned)internal_free, (unsigned)internal_max);
+      s_ble_fail = BLE_FAIL_HEAP;
       return;
     }
+#if defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED
+    // The P4's Bluetooth radio is the C6's controller: at boot main.cpp brings it up only
+    // when BLE is on, so a start from the toggles has to do it here, or NimBLE comes up
+    // against no controller. The user asked for Bluetooth, so the esp-hosted handshake's
+    // bounded wait is acceptable here (it is kept off the boot path on purpose).
+    if (!hostedIsBLEActive() && !hostedInitBLE()) {
+      Serial.println("[ble] cold start: the C6 Bluetooth controller did not come up");
+      s_ble_fail = BLE_FAIL_RADIO;
+      return;
+    }
+#endif
     char name[sizeof(_ble_name)];
     strncpy(name, _ble_name, sizeof(name) - 1);
     name[sizeof(name) - 1] = '\0';

@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 23
+# ver: 26
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminál
 @  Mentions	@  Említések
 @ mention sound	@ említés hangja
+A background has to be a JPEG	A háttérkép csak JPEG lehet
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATIKUS ADVERTEK
 About	Névjegy
@@ -32,6 +33,23 @@ About the map	A térképről
 Accent popups	Ékezetes felugró ablakok
 Accent popups: off	Accent popups: kikapcsolva
 Accent popups: on	Accent popups: bekapcsolva
+Background	Háttér
+Background colour	Háttérszín
+Background set, it shows after a restart	Háttér beállítva, újraindítás után jelenik meg
+Check position every	Pozícióellenőrzés gyakorisága
+Choose an image	Kép választása
+Choose the colour	Szín választása
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Kísérleti. Kikapcsolt kijelzőnél lassítja a processzort (a Bluetooth és a Wi-Fi tovább működik), pihenteti a GPS-t a pozícióellenőrzések között, és megállítja a mozgó hátteret.
+GPS: resting, next check in %lum%02lus	GPS: pihen, következő ellenőrzés %lum%02lus múlva
+Image	Kép
+Moving aurora	Mozgó aurora
+None	Nincs
+Open a JPEG, then tap 'Set as background'	Nyisson meg egy JPEG fájlt, majd koppintson a 'Beállítás háttérképként' lehetőségre
+Save battery	Akkumulátor kímélése
+Set as background	Beállítás háttérképként
+Still aurora	Álló aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	A GPS pihen a pozícióellenőrzések között, és magától felébred. Ébren marad, amíg a térkép, ez az oldal vagy a Felfedezés nyitva van. Az akkumulátorkímélő is bekapcsolja.
+remote view open	távoli nézet nyitva
 Accent colour	Kiemelőszín
 Appearance	Megjelenés
 Condense Nav (restart to apply)	Tömör navigáció (újraindítás az alkalmazáshoz)
@@ -171,6 +189,7 @@ Clear battery history?	Törli az akkumulátorelőzményeket?
 Clear history	Előzmények törlése
 Clear telemetry history for this node?	Törli a telemetriai előzményeket ehhez a csomóponthoz?
 Client repeat	Kliens repeat
+Clipboard empty	A vágólap üres
 Clock & time	Idő és dátum
 Clock synced	Óra szinkronizálva
 Clock: 12-hour	Óra: 12 órás
@@ -300,6 +319,7 @@ Enter SSID first	Először adja meg az SSID-t
 Enter a name	Írjon be egy nevet
 Enter a network name	Adjon meg egy hálózatnevet
 Enter a region name	Enter a region name
+Enter a rough location first	Először adjon meg egy hozzávetőleges helyet
 Enter adds a new line	Az Enter új sort ad hozzá
 Enter exactly 32 hex characters.	Pontosan 32 hex karaktert adjon meg.
 Enter key sends message	Az Enter billentyű elküldi az üzenetet
@@ -353,6 +373,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Buzzer %s\n%s
 GPS off	GPS kikapcsolva
 GPS on	GPS bekapcsolva
 GPS serial baud	GPS soros baud
+GPS sets the position while it has a fix	Amíg van GPS-fix, a pozíciót a GPS adja
 GPS unset	GPS nincs beállítva
 GPS: acquiring...	GPS: begyűjtés...
 GPS: fix	GPS: fix
@@ -504,6 +525,7 @@ Messages	Üzenetek
 Min zoom for this pack	Minimális zoom ehhez a csomaghoz
 Mode: BLE starting / low memory	Mód: BLE indítás / kevés memória
 Model:	Modell
+Move the map to your spot	Mozgassa a térképet a helyére
 Multi ACKs	Multi ACKs
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Ismétlés %s · Vételnövelés %s
 Multi-byte routing (path hash)	Többbájtos útválasztás (útvonal-hash)
@@ -616,6 +638,7 @@ Path reset failed	Útvonal visszaállítása sikertelen
 Paused  —  score %d	Szünet — Pontok %d
 Per-transmit switching on	Adásonkénti váltás bekapcsolva
 Pick colour	Színválasztás
+Pick on the map	Kiválasztás a térképen
 Ping	Ping
 Ping failed	Ping sikertelen
 Pinged (direct) — waiting…	Pingelt (közvetlen) — várakozás…
@@ -1312,7 +1335,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Csatorna hozzáadása
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1327,7 +1350,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Csatorna
 Channels	Channels
 Chat icon reset	Chat icon reset
 Chats	Chats
@@ -1450,7 +1473,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Névjegyem megosztása
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
 Sun	Sun
@@ -1553,10 +1576,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Energiatakarékos mód
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Fényerő
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1738,7 +1761,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Töltés
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1766,7 +1789,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Billentyűzet-világítás
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1865,3 +1888,112 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(alapértelmezett)
+Back to my position	Vissza a pozíciómhoz
+Battery saver off	Energiatakarékos mód ki
+Battery saver on	Energiatakarékos mód be
+Chat settings	Csevegés beállításai
+Contacts on the map	Névjegyek a térképen
+Day or night	Nappal vagy éjszaka
+Default wallpaper	Alapértelmezett háttérkép
+Discovered nodes	Felfedezett csomópontok
+Enter, then turn the wheel	Enter, majd forgasd a tárcsát
+Follow me	Kövess
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Automatikusan megtalálja: ha a GPS ezen a sebességen nem válaszol, az eszköz kipróbálja a többit, és azt tartja meg, amelyik működik. Innen indul.
+Hold Enter: settings	Enter nyomva tartása: beállítások
+Keep holding: settings	Tartsd nyomva: beállítások
+Keeps the map on your position	A térképet a pozíciódon tartja
+Mark all read	Mind olvasott
+More	Továbbiak
+Nickname	Becenév
+Nickname not saved	A becenév nincs mentve
+Nickname removed	Becenév eltávolítva
+Nickname saved	Becenév mentve
+Notification sound	Értesítési hang
+Power off or reboot	Kikapcsolás vagy újraindítás
+Power off?	Kikapcsolod?
+Restarts to switch	Újraindul a váltáshoz
+Saver	Takarékos
+Saves power while the screen is off	Energiát takarít meg, amíg a kijelző ki van kapcsolva
+Screenshot	Képernyőkép
+Screenshot timer	Képernyőkép időzítő
+Shows the zoom slider	Megjeleníti a nagyítás csúszkát
+Zoom	Nagyítás
+Zoom in	Közelítés
+Zoom out	Távolítás
+
+# beta_94 strings
+Temperature in Fahrenheit	Hőmérséklet Fahrenheitben
+Up to 15 characters	Legfeljebb 15 karakter
+Favorites only	Csak kedvencek
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	A Bluetooth-chip nem válaszol.
+Bluetooth could not start. Restart the device and try again.	A Bluetooth nem tudott elindulni. Indítsd újra az eszközt, és próbáld újra.
+Record track	Útvonal rögzítése
+Recording track	Útvonal rögzítése folyamatban
+Recording needs an SD card	A rögzítéshez SD-kártya kell
+Could not write to the SD card	Nem sikerült írni az SD-kártyára
+Try the card again	Kártya újrapróbálása
+Next page	Következő oldal
+Previous page	Előző oldal
+Back to the start	Vissza az elejére
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR SF%d mellett
+%s ago	%s ezelőtt
+1 min	1 perc
+10 min	10 perc
+Acknowledgement	Nyugta
+Air split	Megoszlás
+Anonymous request	Névtelen kérés
+Average	Átlag
+Band	Sáv
+Busy	Foglalt
+Channel data	Csatornaadat
+Channel message	Csatornaüzenet
+Decodes to	Dekódolási határ
+Direct with a region code	Közvetlen régiókóddal
+Flood with a region code	Flood régiókóddal
+Floor	Alapzaj
+Hops	Ugrások
+Live	Élő
+Margin	Tartalék
+Multipart	Többrészes
+Noise	Zaj
+Packet	Csomag
+Path	Útvonal
+Peak	Csúcs
+Request	Kérés
+Response	Válasz
+Route	Irányítás
+Tap to go back	Koppints a visszalépéshez
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	keret %d s   tx %d   rx %d   hiba %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	keret %d s  tx %d  rx %d
+channel busy now	a csatorna most foglalt
+listening, nothing heard yet	figyelek, még semmi
+no airtime yet	még nincs adásidő
+over %d:%02d	%d:%02d alatt
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Tegyél MP3 vagy WAV fájlokat az alkalmazás mappájába.
+Cannot play	Nem játszható le
+Looking for music...	Zene keresése...
+Looking for music... %d	Zene keresése... %d
+Music	Zene
+No music found	Nem található zene
+No speaker	Nincs hangszóró
+Playing	Lejátszás
+Put MP3 or WAV files in a Music folder on the SD card.	Tegyél MP3 vagy WAV fájlokat egy Music mappába az SD-kártyán.
+Repeat all	Összes ismétlése
+Repeat off	Ismétlés ki
+Repeat this track	Szám ismétlése
+Showing the first %d tracks	Az első %d szám látható
+Sound is off: Settings > Sound	A hang ki van kapcsolva: Beállítások > Hang
+Stopped	Leállítva
+This device cannot play music.	Ez az eszköz nem tud zenét lejátszani.

@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: uk
-# ver: 23
+# ver: 26
 # name: Українська
 # base: uk
  (device behind)	 (пристрій відстає)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Згадки
 @ mention sound	Звук @-згадок
+A background has to be a JPEG	Фон має бути у форматі JPEG
 AF	AF
 AUTOMATIC ADVERTS	АВТОМАТИЧНІ АДВЕРТИ
 About	Про програму
@@ -32,6 +33,23 @@ About the map	Про карту
 Accent popups	Підказки акцентів
 Accent popups: off	Підказки акцентів: вимк
 Accent popups: on	Підказки акцентів: увімк
+Background	Фон
+Background colour	Колір фону
+Background set, it shows after a restart	Фон встановлено, з'явиться після перезавантаження
+Check position every	Перевіряти позицію кожні
+Choose an image	Обрати зображення
+Choose the colour	Обрати колір
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Експериментально. Сповільнює процесор при вимкненому екрані (Bluetooth і Wi-Fi далі працюють), дає GPS відпочивати між перевірками позиції та зупиняє рухомий фон.
+GPS: resting, next check in %lum%02lus	GPS: відпочиває, наступна перевірка через %lum%02lus
+Image	Зображення
+Moving aurora	Рухоме сяйво
+None	Немає
+Open a JPEG, then tap 'Set as background'	Відкрийте JPEG, потім торкніться «Встановити як фон»
+Save battery	Економити заряд
+Set as background	Встановити як фон
+Still aurora	Нерухоме сяйво
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	GPS відпочиває між перевірками позиції та прокидається сам. Він лишається активним, поки відкрито карту, цю сторінку або Discover. Економія заряду теж вмикає це.
+remote view open	відкрито віддалений перегляд
 Accent colour	Акцентний колір
 Appearance	Вигляд
 Condense Nav (restart to apply)	Компактна навігація (перезапуск для застосування)
@@ -169,6 +187,7 @@ Clear battery history?	Очистити історію батареї?
 Clear history	Очистити історію
 Clear telemetry history for this node?	Очистити історію телеметрії цього вузла?
 Client repeat	Повтор клієнта
+Clipboard empty	Буфер обміну порожній
 Clock & time	
 Clock synced	Годинник синхронізовано
 Clock: 12-hour	Годинник: 12-годинний
@@ -296,6 +315,7 @@ Enter SSID first	Спочатку введіть SSID
 Enter a name	Введіть ім'я
 Enter a network name	Введіть назву мережі
 Enter a region name	Enter a region name
+Enter a rough location first	Спочатку введіть приблизне місцезнаходження
 Enter adds a new line	Enter додає новий рядок
 Enter exactly 32 hex characters.	Введіть рівно 32 hex-символи.
 Enter key sends message	Клавіша Enter надсилає повідомлення
@@ -348,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Зумер %s\n%s
 GPS off	GPS вимк
 GPS on	GPS увімк
 GPS serial baud	Швидкість GPS (бод)
+GPS sets the position while it has a fix	Положення задає GPS, поки є фікс
 GPS unset	GPS не задано
 GPS: acquiring...	GPS: пошук...
 GPS: fix	GPS: фікс
@@ -498,6 +519,7 @@ Messages
 Min zoom for this pack	Мін. зум для цього пакета
 Mode: BLE starting / low memory	Режим: BLE запускається / мало пам'яті
 Model:	Модель:
+Move the map to your spot	Перемістіть карту до свого місця
 Multi ACKs	Множинні ACK
 Multi-ack %s · Repeat %s · RX boost %s	Мульти-ack %s · Повтор %s · RX boost %s
 Multi-byte routing (path hash)	Багатобайтова маршрутизація (хеш шляху)
@@ -608,6 +630,7 @@ Path reset failed	Не вдалося скинути шлях
 Paused  —  score %d	Пауза  —  рахунок %d
 Per-transmit switching on	Перемикання на кожну передачу увімк.
 Pick colour	Вибрати колір
+Pick on the map	Вибрати на карті
 Ping	Пінг
 Ping failed	Помилка ping
 Pinged (direct) — waiting…	Ping (прямий) — очікування…
@@ -1296,7 +1319,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Додати канал
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1311,7 +1334,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Канал
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1438,7 +1461,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Поділитися контактом
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1472,7 +1495,7 @@ Upload of %s stopped	Upload of %s stopped
 Used	Used
 VNC	VNC
 Waiting for the computer	Waiting for the computer
-Web	Web
+Web	Веб
 Wed	Wed
 Wednesday	Wednesday
 While this screen is open, the companion app cannot use USB.	While this screen is open, the companion app cannot use USB.
@@ -1542,10 +1565,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Енергозбереження
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Яскравість
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1727,7 +1750,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Заряджання
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1755,7 +1778,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Підсвітка клавіатури
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1854,3 +1877,113 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(типово)
+Back to my position	До мого місця
+Battery saver off	Енергозбереження вимкнено
+Battery saver on	Енергозбереження увімкнено
+Chat settings	Налаштування чату
+Contacts on the map	Контакти на карті
+Day or night	День чи ніч
+Default wallpaper	Типові шпалери
+Discovered nodes	Знайдені вузли
+Enter, then turn the wheel	Enter, потім покрутіть коліщатко
+Follow me	Стежити за мною
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Визначається автоматично: якщо GPS не відповідає на цій швидкості, пристрій пробує інші й залишає ту, що працює. Звідси воно починає.
+Hold Enter: settings	Утримуйте Enter: налаштування
+Keep holding: settings	Тримайте далі: налаштування
+Keeps the map on your position	Тримає карту на вашому місці
+Mark all read	Прочитати все
+More	Більше
+Nickname	Псевдонім
+Nickname not saved	Псевдонім не збережено
+Nickname removed	Псевдонім видалено
+Nickname saved	Псевдонім збережено
+Notification sound	Звук сповіщення
+Power off or reboot	Вимкнути або перезавантажити
+Power off?	Вимкнути?
+Restarts to switch	Перезапуск для перемикання
+Saver	Економія
+Saves power while the screen is off	Економить енергію, поки екран вимкнений
+Screenshot	Знімок екрана
+Screenshot timer	Знімок за таймером
+Shows the zoom slider	Показує повзунок масштабу
+Zoom	Масштаб
+Zoom in	Наблизити
+Zoom out	Віддалити
+
+# beta_94 strings
+Temperature in Fahrenheit	Температура за Фаренгейтом
+Up to 15 characters	До 15 символів
+Favorites only	Лише обрані
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	Чип Bluetooth не відповідає.
+Bluetooth could not start. Restart the device and try again.	Не вдалося запустити Bluetooth. Перезапустіть пристрій і спробуйте ще раз.
+Record track	Записувати трек
+Recording track	Йде запис треку
+Recording needs an SD card	Для запису потрібна SD-картка
+Could not write to the SD card	Не вдалося записати на SD-картку
+Try the card again	Спробувати картку знову
+Next page	Наступна сторінка
+Previous page	Попередня сторінка
+Back to the start	На початок
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f дБ SNR при SF%d
+%s ago	%s тому
+1 min	1 хв
+10 min	10 хв
+Acknowledgement	Підтвердження
+Air split	Частка
+Anonymous request	Анонімний запит
+Average	Середнє
+Band	Діапазон
+Busy	Зайнято
+Channel data	Дані каналу
+Channel message	Повідомлення каналу
+Decodes to	Декодує до
+Direct with a region code	Напряму з кодом регіону
+Flood with a region code	Flood з кодом регіону
+Floor	Фон
+Hops	Стрибки
+Live	Зараз
+Margin	Запас
+Multipart	Складений
+Noise	Шум
+Packet	Пакет
+Path	Шлях
+Peak	Пік
+Request	Запит
+Response	Відповідь
+Route	Маршрут
+Size	Розмір
+Tap to go back	Торкніться, щоб повернутися
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	бюджет %d с   tx %d   rx %d   помилки %d   цикл %d%%   SF%d
+budget %d s  tx %d  rx %d	бюджет %d с  tx %d  rx %d
+channel busy now	канал зараз зайнятий
+listening, nothing heard yet	слухаю, поки нічого
+no airtime yet	ефірного часу ще немає
+over %d:%02d	за %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Додайте файли MP3 або WAV до теки цього застосунку.
+Cannot play	Не вдається відтворити
+Looking for music...	Шукаю музику...
+Looking for music... %d	Шукаю музику... %d
+Music	Музика
+No music found	Музику не знайдено
+No speaker	Немає динаміка
+Playing	Грає
+Put MP3 or WAV files in a Music folder on the SD card.	Покладіть файли MP3 або WAV у теку Music на SD-картці.
+Repeat all	Повторювати все
+Repeat off	Повтор вимкнено
+Repeat this track	Повторювати трек
+Showing the first %d tracks	Показано перші %d треків
+Sound is off: Settings > Sound	Звук вимкнено: Налаштування > Звук
+Stopped	Зупинено
+This device cannot play music.	Цей пристрій не може відтворювати музику.

@@ -24,6 +24,7 @@ class PagerKeyboardState {
   static constexpr uint8_t SHIFT_POS = 2 * COLS + 8;
   static constexpr uint8_t BACKSPACE_POS = 2 * COLS + 9;
   static constexpr uint8_t SPACE_POS = 3 * COLS;
+  static constexpr uint8_t ENTER_POS = 1 * COLS + 9;   // physical Alt(Fn)+Enter = paste chord
 #endif
 
   uint8_t event(uint8_t code, bool pressed, uint32_t now_ms) {
@@ -117,12 +118,26 @@ class PagerKeyboardState {
       }
       return 0;
     }
-    if (!pressed) return 0;
+    if (!pressed) {
+      if (code == letter_code_) letter_held_ = false;
+      return 0;
+    }
 
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     if (code == ALT_B_POS && alt_key_held_) {
       alt_.markHeldUsed();
       alt_b_chord_pending_ = true;
+      return 0;
+    }
+#endif
+#if !defined(HAS_TDECK_PRO)
+    // Physical Alt(Fn)+Enter: paste chord, resolved by matrix position before
+    // the symbol map (same shape as the Pro's Alt+B). Enter has no symbol on
+    // this layout, so the chord takes nothing away from typing: Fn is the
+    // Pager's only symbol key, which is why Fn+<letter> was not an option.
+    if (code == ENTER_POS && alt_.held()) {
+      alt_.markHeldUsed();
+      alt_enter_chord_pending_ = true;
       return 0;
     }
 #endif
@@ -134,9 +149,14 @@ class PagerKeyboardState {
     char key = symbol_layer ? symbols[row][col] : base[row][col];
     if (key == '\0') return 0;
     if ((caps_ || shift_held_) && !symbol_layer && key >= 'a' && key <= 'z') key -= 32;
+    letter_code_ = code;
+    letter_held_ = true;
     return (uint8_t)key;
   }
 
+  // The key behind the last character returned is still down, so the UI can tell a
+  // tap from a hold (the Home and Settings shortcuts).
+  bool letterHeld() const { return letter_held_; }
   bool altHeld() const { return alt_.held(); }
   void markAltUsed() { alt_.markHeldUsed(); }
   void discardAlt() {
@@ -145,6 +165,9 @@ class PagerKeyboardState {
     alt_backspace_chord_pending_ = false;
   #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
     alt_b_chord_pending_ = false;
+  #endif
+  #if !defined(HAS_TDECK_PRO)
+    alt_enter_chord_pending_ = false;
   #endif
   }
   bool backspaceHeld() const { return backspace_held_; }
@@ -167,6 +190,13 @@ class PagerKeyboardState {
     return pending;
   }
 #endif
+#if !defined(HAS_TDECK_PRO)
+  bool consumeAltEnterChord() {
+    const bool pending = alt_enter_chord_pending_;
+    alt_enter_chord_pending_ = false;
+    return pending;
+  }
+#endif
 #if defined(HAS_TDECK_MAX)
   bool consumeBothShiftChord() {
     const bool pending = both_shift_chord_pending_;
@@ -183,9 +213,14 @@ class PagerKeyboardState {
   bool alt_backspace_chord_pending_ = false;
   bool backspace_held_ = false;
   bool space_held_ = false;
+  uint8_t letter_code_ = 0xFF;
+  bool letter_held_ = false;
 #if defined(HAS_TDECK_PRO) && !defined(HAS_TDECK_MAX)
   bool alt_key_held_ = false;
   bool alt_b_chord_pending_ = false;
+#endif
+#if !defined(HAS_TDECK_PRO)
+  bool alt_enter_chord_pending_ = false;
 #endif
 #if defined(HAS_TDECK_MAX)
   bool shift_l_held_ = false;

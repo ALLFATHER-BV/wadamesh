@@ -54,7 +54,11 @@ private:
 public:
   ClockFloorRTC(mesh::RTCClock& fallback) : AutoDiscoverRTCClock(fallback) {}
 
-  static constexpr uint32_t MIN_VALID_EPOCH  = 1715770351UL;  // 15 May 2024 — the core's own unset-clock seed
+  // The core's own unset-clock seed (ESP32RTCClock::begin, RTC_TIME_MIN): 1 Mar 2026 from
+  // MeshCore 1.18, 15 May 2024 (1715770351) before. It has to be the seed itself, not
+  // anything below it: a set equal to the seed is the "Sync clock from system" poisoning
+  // described at pushSystemClock(), and a seed above this value would read as a real time.
+  static constexpr uint32_t MIN_VALID_EPOCH  = 1772323200UL;
   static constexpr uint32_t TRUSTED_BACK_CAP = 10UL * 60UL;
 
   // High-side twin of MIN_VALID_EPOCH: an external RTC chip with corrupted/unset date

@@ -6,6 +6,11 @@ void TLoraPagerBoard::begin() {
 
   ESP32Board::begin();
 
+  // Power-off holds the radio's select HIGH through deep sleep (a falling edge would
+  // wake the radio). Let go of it before anything drives the pin.
+  gpio_hold_dis((gpio_num_t)P_LORA_NSS);
+  gpio_deep_sleep_hold_dis();
+
   // XL9555/BQ27220 sit on the shared I2C bus (SDA 3 / SCL 2). ESP32Board::begin()
   // only calls the pin-less Wire.begin() unless PIN_BOARD_SDA/SCL are defined
   // for this env, so re-init explicitly with this board's pins before probing
@@ -78,6 +83,12 @@ void TLoraPagerBoard::begin() {
     io_expander.digitalWrite(PAGER_EXPAND_DISP_RST, HIGH);
 
     delay(50); // let rails + panel settle before anything downstream probes them
+
+    // The speaker amplifier is the sound code's to switch: on for each chime, off
+    // after it (setAmpEnabled). Off is its idle state, so leave boot in it rather
+    // than live until the first sound, a few mA for nothing. Only the amp: the
+    // codec and the other chips keep their rails (see the list above).
+    io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, LOW);
   }
 
   // ES8311 audio codec presence check (address only -- no register writes
@@ -140,6 +151,28 @@ bool TLoraPagerBoard::resetSdCardPower() {
   delay(100);
   if (!setSdCardPower(true)) return false;
   delay(250);
+  return true;
+}
+
+// The u-blox module's rail (XL9555 GPS_EN). The GPS is a UART-only device, not on
+// the shared I2C/SPI buses the rail list above protects, so it can go dark: with
+// GPS off it was otherwise searching for satellites around the clock. Its reset
+// line goes LOW with the rail (a HIGH pin would feed the unpowered module) and is
+// released a moment after power returns, a clean power-on reset. The location
+// provider (PagerGps) switches it.
+bool TLoraPagerBoard::setGpsPower(bool on) {
+  if (!expander_ready_) return false;
+  if (expander_mutex_ && xSemaphoreTake(expander_mutex_, pdMS_TO_TICKS(100)) != pdTRUE) return false;
+  if (on) {
+    io_expander.digitalWrite(PAGER_EXPAND_GPS_EN, HIGH);
+    delay(5);
+    io_expander.digitalWrite(PAGER_EXPAND_GPS_RST, HIGH);
+  } else {
+    io_expander.digitalWrite(PAGER_EXPAND_GPS_RST, LOW);
+    io_expander.digitalWrite(PAGER_EXPAND_GPS_EN, LOW);
+  }
+  if (expander_mutex_) xSemaphoreGive(expander_mutex_);
+  gps_on_ = on;
   return true;
 }
 

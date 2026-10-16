@@ -3,14 +3,14 @@
     {
       "id": "monitor",
       "name": "RF Monitor",
-      "ver": "1.3",
-      "desc": "Scrollable: RSSI/noise chart with dBm axis, link margin, RX rate, radio params, heard feed."
+      "ver": "1.4",
+      "desc": "RSSI, noise, margin and packet-rate tiles, a filled signal chart and the recently heard packets. Tap a packet for who sent it, its route, margin, size and airtime."
     },
     {
       "id": "airtime",
       "name": "Airtime",
-      "ver": "1.5",
-      "desc": "Utilization bars with a % axis, rx/tx split, duty ceiling, budget. Reset button top-right. Keeps a Home widget with the channel load while it runs."
+      "ver": "1.6",
+      "desc": "How busy the channel is: the live load, average, peak, a filled chart with the duty ceiling and the rx/tx split. Keeps a Home widget with the channel load while it runs."
     },
     {
       "id": "snake",
@@ -22,7 +22,8 @@
       "id": "tetris",
       "name": "Tetris",
       "ver": "1.0",
-      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet."
+      "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet.",
+      "seed": false
     },
     {
       "id": "protreck",
@@ -42,7 +43,8 @@
       "id": "2048",
       "name": "2048",
       "ver": "1.2",
-      "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87."
+      "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87.",
+      "seed": false
     },
     {
       "id": "wardrive",
@@ -85,7 +87,8 @@
       "id": "breakout",
       "name": "Breakout",
       "ver": "1.0",
-      "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet."
+      "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet.",
+      "seed": false
     },
     {
       "id": "ping",
@@ -93,6 +96,23 @@
       "ver": "1.0",
       "desc": "Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.",
       "requires": "sdk_ext"
+    },
+    {
+      "id": "mecp",
+      "name": "MECP",
+      "ver": "1.0",
+      "desc": "Emergency messages in MECP code: pick severity and codes, add people and position, post to a channel. Decodes MECP lines into words. Code table: MECP by xiang-dev-1, CC BY 4.0.",
+      "requires": "sdk_ext",
+      "seed": false
+    },
+    {
+      "id": "music",
+      "name": "Music",
+      "ver": "1.0",
+      "desc": "MP3 and WAV from the SD card's Music folder, shuffle, repeat.",
+      "icon": "music",
+      "requires": "audio",
+      "seed": false
     }
   ]
 }

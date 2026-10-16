@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: nl
-# ver: 23
+# ver: 26
 # name: Nederlands
 # base: nl
  (device behind)	(apparaat loopt achter)
@@ -25,6 +25,7 @@
 >_  Terminal	>_  Terminal
 @  Mentions	@  Vermeldingen
 @ mention sound	Geluid bij @-vermelding
+A background has to be a JPEG	Een achtergrond moet een JPEG zijn
 AF	AF
 AUTOMATIC ADVERTS	AUTOMATISCHE ADVERTS
 About	Over
@@ -32,6 +33,23 @@ About the map	Over de kaart
 Accent popups	Accent-popups
 Accent popups: off	Accent-popups: uit
 Accent popups: on	Accent-popups: aan
+Background	Achtergrond
+Background colour	Achtergrondkleur
+Background set, it shows after a restart	Achtergrond ingesteld, zichtbaar na een herstart
+Check position every	Positie controleren elke
+Choose an image	Kies een afbeelding
+Choose the colour	Kies de kleur
+Experimental. Slows the processor while the screen is off (Bluetooth and Wi-Fi keep working), lets the GPS rest between position checks and keeps a moving background still.	Experimenteel. Vertraagt de processor terwijl het scherm uit is (Bluetooth en Wi-Fi blijven werken), laat de GPS rusten tussen positiecontroles en houdt een bewegende achtergrond stil.
+GPS: resting, next check in %lum%02lus	GPS: rust, volgende controle over %lum%02lus
+Image	Afbeelding
+Moving aurora	Bewegende aurora
+None	Geen
+Open a JPEG, then tap 'Set as background'	Open een JPEG, tik dan op 'Instellen als achtergrond'
+Save battery	Batterij sparen
+Set as background	Instellen als achtergrond
+Still aurora	Stilstaande aurora
+The GPS rests between position checks and wakes on its own. It stays awake while the map, this page or Discover is open. The battery saver turns this on too.	De GPS rust tussen positiecontroles en wordt vanzelf wakker. Hij blijft actief zolang de kaart, deze pagina of Discover open is. De batterijbesparing zet dit ook aan.
+remote view open	weergave op afstand open
 Accent colour	Accentkleur
 Appearance	Weergave
 Condense Nav (restart to apply)	Compacte navigatie (herstart om toe te passen)
@@ -169,6 +187,7 @@ Clear battery history?	Batterijgeschiedenis wissen?
 Clear history	Geschiedenis wissen
 Clear telemetry history for this node?	Telemetriegeschiedenis van deze node wissen?
 Client repeat	Client herhaling
+Clipboard empty	Klembord leeg
 Clock & time	Klok & tijd
 Clock synced	Klok gesynchroniseerd
 Clock: 12-hour	Klok: 12-uurs
@@ -296,6 +315,7 @@ Enter SSID first	Voer eerst SSID in
 Enter a name	Voer een naam in
 Enter a network name	Voer een netwerknaam in
 Enter a region name	Enter a region name
+Enter a rough location first	Voer eerst een ruwe locatie in
 Enter adds a new line	Enter voegt een nieuwe regel toe
 Enter exactly 32 hex characters.	Voer precies 32 hex-tekens in.
 Enter key sends message	Enter verstuurt bericht
@@ -348,6 +368,7 @@ GPS %s · Buzzer %s\n%s	GPS %s · Zoemer %s\n%s
 GPS off	GPS uit
 GPS on	GPS aan
 GPS serial baud	GPS seriële baud
+GPS sets the position while it has a fix	GPS bepaalt de positie zolang het een fix heeft
 GPS unset	GPS niet ingesteld
 GPS: acquiring...	GPS: zoeken...
 GPS: fix	GPS: fix
@@ -497,6 +518,7 @@ Messages	Berichten
 Min zoom for this pack	Min zoom voor dit pakket
 Mode: BLE starting / low memory	Modus: BLE start / weinig geheugen
 Model:	Model:
+Move the map to your spot	Schuif de kaart naar je plek
 Multi ACKs	Multi-ACK's
 Multi-ack %s · Repeat %s · RX boost %s	Multi-ack %s · Herhalen %s · RX-boost %s
 Multi-byte routing (path hash)	Multi-byte routing (pad-hash)
@@ -607,6 +629,7 @@ Path reset failed	Pad resetten mislukt
 Paused  —  score %d	Gepauzeerd  —  score %d
 Per-transmit switching on	Per-zending schakelen aan
 Pick colour	Kies kleur
+Pick on the map	Kiezen op de kaart
 Ping	Ping
 Ping failed	Ping mislukt
 Pinged (direct) — waiting…	Ping (direct) — wachten…
@@ -1293,7 +1316,7 @@ and %d more	and %d more
 4 numbers or letters	4 numbers or letters
 A day	A day
 A week	A week
-Add a channel	Add a channel
+Add a channel	Kanaal toevoegen
 Add, download or delete files on this device from a computer.	Add, download or delete files on this device from a computer.
 Advertise	Advertise
 Always on when connected to power	Always on when connected to power
@@ -1308,7 +1331,7 @@ Aug	Aug
 August	August
 Blocked	Blocked
 Change PIN	Change PIN
-Channel	Channel
+Channel	Kanaal
 Channels	Channels
 Chat	Chat
 Chat icon reset	Chat icon reset
@@ -1435,7 +1458,7 @@ Sending your report...	Sending your report...
 Sensor	Sensor
 Sep	Sep
 September	September
-Share my contact	Share my contact
+Share my contact	Mijn contact delen
 Spectrum	Spectrum
 Stop USB Files	Stop USB Files
 Storage and SD	Storage and SD
@@ -1539,10 +1562,10 @@ Applies after a restart.	Applies after a restart.
 Backlight	Backlight
 Bandwidth (kHz)	Bandwidth (kHz)
 Battery and sensor readings, for nodes that ask. Your location has its own setting below.	Battery and sensor readings, for nodes that ask. Your location has its own setting below.
-Battery saver	Battery saver
+Battery saver	Batterijbesparing
 Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.	Bluetooth pairing isn't available on this device. The radio chip's factory firmware doesn't support it.
 Bottom	Bottom
-Brightness	Brightness
+Brightness	Helderheid
 Broker	Broker
 By hand (local time)	By hand (local time)
 Calibrate as full	Calibrate as full
@@ -1724,7 +1747,7 @@ Asks every so often for its readings	Asks every so often for its readings
 BT off	BT off
 BT on	BT on
 Busy, try again in a moment	Busy, try again in a moment
-Charging	Charging
+Charging	Opladen
 Chat not found	Chat not found
 Choose a chat	Choose a chat
 Choose a node	Choose a node
@@ -1752,7 +1775,7 @@ Home is empty. Hold here to add widgets.	Home is empty. Hold here to add widgets
 Home is full	Home is full
 Home: %s	Home: %s
 Install GPS Compass from the Store to calibrate	Install GPS Compass from the Store to calibrate
-Keyboard light	Keyboard light
+Keyboard light	Toetsenbordverlichting
 Links	Links
 MQTT on	MQTT on
 MQTT waiting	MQTT waiting
@@ -1851,3 +1874,113 @@ unread	unread
 up %s	up %s
 Channel busy	Channel busy
 avg %.1f%%, peak %.1f%%	avg %.1f%%, peak %.1f%%
+(default)	(standaard)
+Back to my position	Terug naar mijn positie
+Battery saver off	Batterijbesparing uit
+Battery saver on	Batterijbesparing aan
+Chat settings	Chatinstellingen
+Contacts on the map	Contacten op de kaart
+Day or night	Dag of nacht
+Default wallpaper	Standaardachtergrond
+Discovered nodes	Ontdekte nodes
+Enter, then turn the wheel	Enter, draai dan aan het wiel
+Follow me	Volg mij
+Found automatically: when the GPS does not answer at this speed, the device tries the others and keeps the one that works. This is where it starts.	Wordt automatisch gevonden: als de GPS op deze snelheid niet antwoordt, probeert het toestel de andere en houdt het de snelheid die werkt. Hier begint het.
+Hold Enter: settings	Enter ingedrukt: instellingen
+Keep holding: settings	Blijf vasthouden: instellingen
+Keeps the map on your position	Houdt de kaart op je positie
+Mark all read	Alles als gelezen
+More	Meer
+Nickname	Bijnaam
+Nickname not saved	Bijnaam niet opgeslagen
+Nickname removed	Bijnaam verwijderd
+Nickname saved	Bijnaam opgeslagen
+Notification sound	Meldingsgeluid
+Power off or reboot	Uitschakelen of herstarten
+Power off?	Uitschakelen?
+Restarts to switch	Herstart om te wisselen
+Saver	Besparing
+Saves power while the screen is off	Spaart stroom terwijl het scherm uit is
+Screenshot	Schermafbeelding
+Screenshot timer	Schermafbeelding-timer
+Shows the zoom slider	Toont de zoomschuif
+Zoom	Zoom
+Zoom in	Inzoomen
+Zoom out	Uitzoomen
+
+# beta_94 strings
+Temperature in Fahrenheit	Temperatuur in Fahrenheit
+Up to 15 characters	Maximaal 15 tekens
+Favorites only	Alleen favorieten
+Home is full: hold a widget to remove one	Home is full: hold a widget to remove one
+The Bluetooth chip is not responding.	De Bluetooth-chip reageert niet.
+Bluetooth could not start. Restart the device and try again.	Bluetooth kon niet starten. Herstart het apparaat en probeer het opnieuw.
+Record track	Route opnemen
+Recording track	Route wordt opgenomen
+Recording needs an SD card	Opnemen vraagt een SD-kaart
+Could not write to the SD card	Kon niet naar de SD-kaart schrijven
+Try the card again	Kaart opnieuw proberen
+Next page	Volgende pagina
+Previous page	Vorige pagina
+Back to the start	Terug naar het begin
+Track saved: %.2f km, %u points	Track saved: %.2f km, %u points
+Track stopped: the SD card is not writable	Track stopped: the SD card is not writable
+The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.	The SD card could not be read, so this start runs from internal storage. Your node's key is kept. Messages, contacts and settings on the card come back when it reads again.
+The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.	The SD card could not be read, so this start runs from internal storage. This device had no copy of the node's key, so it started with a new one; the card still holds the old key, and its messages, contacts and settings.
+%.1f dB SNR at SF%d	%.1f dB SNR bij SF%d
+%s ago	%s geleden
+1 min	1 min
+10 min	10 min
+Acknowledgement	Bevestiging
+Air split	Verdeling
+Anonymous request	Anoniem verzoek
+Average	Gemiddeld
+Band	Band
+Busy	Bezet
+Channel data	Kanaaldata
+Channel message	Kanaalbericht
+Decodes to	Decodeert tot
+Direct with a region code	Direct met regiocode
+Flood with a region code	Flood met regiocode
+Floor	Vloer
+Hops	Hops
+Live	Live
+Margin	Marge
+Multipart	Meerdelig
+Noise	Ruis
+Packet	Pakket
+Path	Pad
+Peak	Piek
+Request	Verzoek
+Response	Antwoord
+Route	Route
+Size	Grootte
+Tap to go back	Tik om terug te gaan
+budget %d s   tx %d   rx %d   err %d   duty %d%%   SF%d	budget %d s   tx %d   rx %d   fout %d   duty %d%%   SF%d
+budget %d s  tx %d  rx %d	budget %d s  tx %d  rx %d
+channel busy now	kanaal nu bezet
+listening, nothing heard yet	aan het luisteren, nog niets gehoord
+no airtime yet	nog geen zendtijd
+over %d:%02d	over %d:%02d
+#	#
+@	@
+RSSI	RSSI
+RX	RX
+RX/min	RX/min
+rx %d%%  tx %d%%	rx %d%%  tx %d%%
+Add MP3 or WAV files to this app's folder.	Zet MP3- of WAV-bestanden in de map van deze app.
+Cannot play	Kan niet afspelen
+Looking for music...	Muziek zoeken...
+Looking for music... %d	Muziek zoeken... %d
+Music	Muziek
+No music found	Geen muziek gevonden
+No speaker	Geen luidspreker
+Playing	Speelt
+Put MP3 or WAV files in a Music folder on the SD card.	Zet MP3- of WAV-bestanden in een map Music op de SD-kaart.
+Repeat all	Alles herhalen
+Repeat off	Herhalen uit
+Repeat this track	Dit nummer herhalen
+Showing the first %d tracks	De eerste %d nummers worden getoond
+Sound is off: Settings > Sound	Geluid staat uit: Instellingen > Geluid
+Stopped	Gestopt
+This device cannot play music.	Dit toestel kan geen muziek afspelen.

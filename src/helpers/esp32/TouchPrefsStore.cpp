@@ -61,6 +61,8 @@ static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover 
 static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
 #if defined(HAS_CROWPANEL_35)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
+#elif defined(HAS_CROWPANEL_50)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 800x480 landscape
 #elif defined(ATTAKY_MESH_SERIES)
 static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else
@@ -732,6 +734,18 @@ int touchPrefsGetLockWallpaper(char* out, int out_cap) {
   out[n] = '\0';
   return n;
 }
+
+bool touchPrefsResetLockWallpaper() {
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  if (s_prefs.isKey(KEY_LOCK_WALL)) s_prefs.remove(KEY_LOCK_WALL);
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return true;
+}
+
+const char* touchPrefsDefaultLockWallpaper() { return DEFAULT_LOCK_WALL; }
 
 bool touchPrefsSetLockWallpaper(const char* path) {
   if (!path) return false;
@@ -2083,6 +2097,60 @@ bool touchPrefsIsIgnored(const uint8_t* pub_key6) {
 int touchPrefsCopyIgnored(uint8_t* out_buf) {
   if (!out_buf) return 0;
   return ignReadAll(out_buf);
+}
+
+// Contact nicknames blob: N records of [6-byte pub_key prefix][32-byte name, NUL padded].
+static const char* KEY_NICK = "nick";
+
+int touchPrefsCopyNicknames(uint8_t* out_buf) {
+  if (!out_buf) return 0;
+  if (!s_begun) touchPrefsBegin();
+  if (!s_prefs.isKey(KEY_NICK)) return 0;   // none set yet: skip the [E] NOT_FOUND log
+  const size_t cap = (size_t)(TOUCH_NICK_MAX * TOUCH_NICK_REC_BYTES);
+  const size_t n = s_prefs.getBytes(KEY_NICK, out_buf, cap);
+  if (n == 0 || n > cap) return 0;
+  return (int)(n / TOUCH_NICK_REC_BYTES);   // whole records only (a torn write)
+}
+
+bool touchPrefsSetNickname(const uint8_t* pub_key6, const char* nick) {
+  if (!pub_key6) return false;
+  static uint8_t buf[TOUCH_NICK_MAX * TOUCH_NICK_REC_BYTES];   // 1.8 KB: too much for the UI stack
+  int n = touchPrefsCopyNicknames(buf);
+  int at = -1;
+  for (int i = 0; i < n; ++i)
+    if (memcmp(&buf[i * TOUCH_NICK_REC_BYTES], pub_key6, TOUCH_FAVORITE_KEY_BYTES) == 0) { at = i; break; }
+  if (!nick || !nick[0]) {
+    if (at < 0) return true;   // nothing to clear
+    memmove(&buf[at * TOUCH_NICK_REC_BYTES], &buf[(at + 1) * TOUCH_NICK_REC_BYTES],
+            (size_t)(n - at - 1) * TOUCH_NICK_REC_BYTES);
+    --n;
+  } else {
+    if (at < 0) {
+      if (n >= TOUCH_NICK_MAX) return false;
+      at = n++;
+    }
+    uint8_t* r = &buf[at * TOUCH_NICK_REC_BYTES];
+    memcpy(r, pub_key6, TOUCH_FAVORITE_KEY_BYTES);
+    memset(r + TOUCH_FAVORITE_KEY_BYTES, 0, TOUCH_NICK_NAME_BYTES);
+    size_t len = strlen(nick);
+    if (len > (size_t)(TOUCH_NICK_NAME_BYTES - 1)) {
+      len = TOUCH_NICK_NAME_BYTES - 1;
+      while (len > 0 && ((uint8_t)nick[len] & 0xC0) == 0x80) --len;   // never split a character
+    }
+    memcpy(r + TOUCH_FAVORITE_KEY_BYTES, nick, len);
+  }
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = s_prefs.begin(TOUCH_NS, true); return false; }
+  bool ok;
+  if (n <= 0) {
+    s_prefs.remove(KEY_NICK);
+    ok = true;
+  } else {
+    ok = s_prefs.putBytes(KEY_NICK, buf, (size_t)(n * TOUCH_NICK_REC_BYTES)) > 0;
+  }
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
 }
 
 bool touchPrefsSetIgnored(const uint8_t* pub_key6, bool ignored) {

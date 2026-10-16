@@ -150,6 +150,22 @@ endforeach()
 # and reflashed over its own USB. Harmless when the env var is unset (normal builds are unaffected).
 # #167 SD-coupling experiments: WADA_SD_KHZ=<khz> / WADA_SD_1BIT=1 derate the primary SD mount
 # (clock and/or bus width) to isolate + mitigate the SD-activity screen flash.
+# Bench-only: install the newest published build as soon as the update check sees
+# it (no tap needed), with every step on the serial log. Never set for a release.
+# Bench-only screenshot tours (scripts/doc/capture.py): WADA_DOC=music runs the
+# Music app audit (DOC_MUSIC_AUDIT). Never set for a release.
+if(DEFINED ENV{WADA_DOC})
+  idf_build_set_property(COMPILE_OPTIONS "-DDOC_CAPTURE" APPEND)
+  idf_build_set_property(COMPILE_OPTIONS "-DDOC_AUDIT_FOCUS" APPEND)
+  if("$ENV{WADA_DOC}" STREQUAL "music")
+    idf_build_set_property(COMPILE_OPTIONS "-DDOC_MUSIC_AUDIT" APPEND)
+  endif()
+  message(STATUS "wadamesh: DOC capture build ($ENV{WADA_DOC})")
+endif()
+if(DEFINED ENV{WADA_OTA_SELFTEST})
+  idf_build_set_property(COMPILE_OPTIONS "-DWADA_OTA_SELFTEST=1" APPEND)
+  message(STATUS "wadamesh: OTA self-test build (installs the latest beta unattended)")
+endif()
 if(DEFINED ENV{WADA_SD_KHZ})
   idf_build_set_property(COMPILE_OPTIONS "-DTDP4_SD_KHZ=$ENV{WADA_SD_KHZ}" APPEND)
   message(STATUS "wadamesh: SD primary rung clock = $ENV{WADA_SD_KHZ} kHz")

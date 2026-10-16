@@ -120,6 +120,7 @@ void DataStore::begin() {
 #if defined(ESP32)
   #include <SPIFFS.h>
   #include <nvs_flash.h>
+  #include <nvs.h>
 #elif defined(RP2040_PLATFORM)
   #include <LittleFS.h>
 #elif defined(NRF52_PLATFORM) || defined(STM32_PLATFORM)
@@ -280,12 +281,74 @@ bool DataStore::formatFileSystem() {
 #endif
 }
 
+bool g_identity_restored_from_copy = false;
+
+#if defined(ESP32)
+// A copy of the node's identity (its private key) in NVS, the chip's own flash. On a
+// device that keeps its data on the SD card the identity file lives only on the card,
+// so a card that died, or would not mount one morning, used to cost the node its key:
+// boot found no identity and made a new one, and the next good card was then given the
+// NEW key, so the old one was gone for good (reported on Discord). Now every save also
+// writes the copy, a load that finds no file falls back to it, and a successful load
+// seeds it when missing. A different copy is never replaced silently: it stays this
+// device's key until an explicit save (setup, an import) changes the identity.
+static const char* kIdNvsNs = "mc_id";
+
+static bool idNvsRead(uint8_t* buf, size_t cap, size_t* len) {
+  nvs_handle_t h;
+  if (nvs_open(kIdNvsNs, NVS_READONLY, &h) != ESP_OK) return false;
+  size_t n = cap;
+  const bool ok = nvs_get_blob(h, "main", buf, &n) == ESP_OK && n > 0;
+  nvs_close(h);
+  if (ok) *len = n;
+  return ok;
+}
+static void idNvsWrite(const uint8_t* buf, size_t len) {
+  nvs_handle_t h;
+  if (nvs_open(kIdNvsNs, NVS_READWRITE, &h) != ESP_OK) return;
+  if (nvs_set_blob(h, "main", buf, len) == ESP_OK) nvs_commit(h);
+  nvs_close(h);
+}
+#endif
+
 bool DataStore::loadMainIdentity(mesh::LocalIdentity &identity) {
-  return identity_store.load("_main", identity);
+  const bool ok = identity_store.load("_main", identity);
+#if defined(ESP32)
+  uint8_t cur[128], copy[128];
+  size_t copy_len = 0;
+  const bool have_copy = idNvsRead(copy, sizeof copy, &copy_len);
+  if (ok) {
+    if (!have_copy) {   // seed it once, so this device has a copy from now on
+      const size_t n = identity.writeTo(cur, sizeof cur);
+      if (n > 0) idNvsWrite(cur, n);
+    }
+    return true;
+  }
+  if (have_copy) {
+    identity.readFrom(copy, copy_len);
+    Serial.println("[id] no identity file: restored the node's key from the NVS copy");
+    identity_store.save("_main", identity);   // and back into the active store
+    g_identity_restored_from_copy = true;
+    return true;
+  }
+#endif
+  return ok;
 }
 
 bool DataStore::saveMainIdentity(const mesh::LocalIdentity &identity) {
-  return identity_store.save("_main", identity);
+  const bool ok = identity_store.save("_main", identity);
+#if defined(ESP32)
+  uint8_t buf[128];
+  mesh::LocalIdentity id = identity;
+  const size_t n = id.writeTo(buf, sizeof buf);
+  if (n > 0) {
+    uint8_t copy[128];
+    size_t copy_len = 0;
+    if (!idNvsRead(copy, sizeof copy, &copy_len) || copy_len != n || memcmp(copy, buf, n) != 0)
+      idNvsWrite(buf, n);
+  }
+#endif
+  return ok;
 }
 
 void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) {

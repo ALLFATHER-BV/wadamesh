@@ -2,7 +2,10 @@
 #include <string.h>
 #include "device_caps.h"
 #if CAP_BUILTIN_LANGS
-#include "i18n_builtin.h"   // generated: baked-in translations
+#include "i18n_builtin.h"   // generated: baked-in translations, one deflated blob per language
+#include <stdlib.h>
+#include "esp_heap_caps.h"
+#include "rom/miniz.h"      // the S3 ROM's tinfl: inflating costs no flash
 #endif
 
 // Native language names shown in the picker. Index order == UiLang.
@@ -20,7 +23,63 @@ const char* const kUiLangCodes[LANG_COUNT] = {
 };
 
 static uint8_t s_ui_lang = LANG_EN;
-void    i18nSetLang(uint8_t l) { s_ui_lang = (l < LANG_COUNT) ? l : LANG_EN; }
+
+#if CAP_BUILTIN_LANGS
+// The active built-in language, inflated into PSRAM: its "key\0value\0" rows and a
+// sorted pair index into them (~50 KB for one language; the V4 has 2 MB of PSRAM).
+// Only one language is ever resident: switching frees the previous one. A failed
+// allocation or inflate leaves the table empty, so the UI simply stays English.
+static I18nPair* s_bi_pairs = nullptr;
+static char*     s_bi_text  = nullptr;
+static int       s_bi_n     = 0;
+static uint8_t   s_bi_lang  = 0xFF;
+static void i18nBuiltinLoad(uint8_t lang) {
+  if (lang == s_bi_lang) return;
+  s_bi_lang = lang;
+  s_bi_n = 0;
+  if (s_bi_pairs) { heap_caps_free(s_bi_pairs); s_bi_pairs = nullptr; }
+  if (s_bi_text)  { heap_caps_free(s_bi_text);  s_bi_text  = nullptr; }
+  const I18nBlob& b = kBuiltinBlob[lang];
+  if (!b.z || !b.count) return;
+  char* text = (char*)heap_caps_malloc(b.len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  I18nPair* pairs = (I18nPair*)heap_caps_malloc(b.count * sizeof(I18nPair), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  tinfl_decompressor* d = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor),
+                                                                MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  bool ok = false;
+  if (text && pairs && d) {
+    tinfl_init(d);   // ~11 KB of state: never on a task stack
+    size_t in = b.zlen, out = b.len;
+    ok = tinfl_decompress(d, b.z, &in, (mz_uint8*)text, (mz_uint8*)text, &out,
+                          TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF) == TINFL_STATUS_DONE && out == b.len;
+  }
+  if (d) heap_caps_free(d);
+  int n = 0;
+  if (ok) {   // walk the rows; the generator wrote them sorted, so the index is too
+    const char* p = text;
+    const char* end = text + b.len;
+    while (n < b.count && p < end) {
+      pairs[n].key = p; p += strlen(p) + 1;
+      if (p >= end) break;
+      pairs[n].val = p; p += strlen(p) + 1;
+      ++n;
+    }
+    ok = n == b.count;
+  }
+  if (!ok) {
+    if (text) heap_caps_free(text);
+    if (pairs) heap_caps_free(pairs);
+    return;
+  }
+  s_bi_text = text; s_bi_pairs = pairs; s_bi_n = n;
+}
+#endif
+
+void    i18nSetLang(uint8_t l) {
+  s_ui_lang = (l < LANG_COUNT) ? l : LANG_EN;
+#if CAP_BUILTIN_LANGS
+  i18nBuiltinLoad(s_ui_lang);
+#endif
+}
 uint8_t i18nGetLang() { return s_ui_lang; }
 
 // File-language overlay: sorted key/translation pairs owned by the loader
@@ -130,9 +189,10 @@ const char* TR(const char* en) {
     }
   }
 #if CAP_BUILTIN_LANGS
-  if (!v && s_ui_lang != LANG_EN && kBuiltinLang[s_ui_lang]) {
-    const I18nPair* tab = kBuiltinLang[s_ui_lang];
-    int lo = 0, hi = kBuiltinLangCount[s_ui_lang] - 1;
+  if (!v && s_ui_lang != LANG_EN) {
+    if (s_bi_lang != s_ui_lang) i18nBuiltinLoad(s_ui_lang);   // first use without i18nSetLang
+    const I18nPair* tab = s_bi_pairs;
+    int lo = 0, hi = s_bi_n - 1;
     while (lo <= hi) {                     // sorted by the generator
       const int mid = (lo + hi) / 2;
       const int c = strcmp(base, tab[mid].key);

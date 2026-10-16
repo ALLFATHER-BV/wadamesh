@@ -29,6 +29,8 @@ mkdir -p components/lvgl
 cp -R "$LIBDEPS/lvgl" components/lvgl/upstream
 python3 ../scripts/build/patch_lvgl_anim_uaf.py \
   --patch-file components/lvgl/upstream/src/misc/lv_anim.c
+python3 ../scripts/build/patch_lvgl_arabic.py \
+  --patch-file components/lvgl/upstream/src/misc/lv_txt_ap.c
 echo "vendored: lvgl ($(find components/lvgl/upstream/src -name '*.c' | wc -l | tr -d ' ') c)"
 
 # --- Arduino libraries: ALL go into ONE 'ardlibs' component so inter-library #includes
