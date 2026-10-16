@@ -9,8 +9,10 @@
 // to you, through the repeater it took when we know it; a ring on your own node
 // is you transmitting; light running inward along a route is a node heard in the
 // last ten minutes. Nodes you have not heard from in a while fade, so a quiet
-// night shows as a quiet screen. Nothing else animates except the breathing of
-// your own node and the slow drift that keeps the image off the same pixels.
+// night shows as a quiet screen. Beyond that only burn-in care moves: the whole
+// picture turns slowly about you (a turn an hour, so north goes round and the N
+// with it) and drifts a few pixels, your own node pulses, and the status changes
+// corners every two minutes.
 //
 // Pure LVGL, and it knows nothing about MeshCore: UITask.cpp turns contacts into
 // CstNode records and calls in, the same arrangement LuaAppHost uses, so the
@@ -74,4 +76,4 @@ void cstSetStatus(const CstStatus& s);              // touches only what changed
 void cstPing(uint32_t key);           // a packet arrived from this node
 void cstPingSelf();                   // we transmitted
 void cstPingFar();                    // heard something we cannot place
-void cstTick(uint32_t now_ms);        // burn-in drift; cheap, call every loop
+void cstTick(uint32_t now_ms);        // the turn, the drift, the status corners; call every loop

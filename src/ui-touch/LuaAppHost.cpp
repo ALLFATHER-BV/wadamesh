@@ -967,6 +967,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
   lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");    // wada.sys.compass()
   lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
+  lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "widget");     // wada.widget (a Home widget)
   return 1;
 }
 
@@ -2020,6 +2021,137 @@ void storeFlush() {
   s_h->store_dirty = false;
 }
 
+#if CAP_LUA_SDK_EXT
+// ---- Home widget (wada.widget) ----
+// What each app last published for its Home widget. Kept outside the Host, so Home
+// still has it after the app closes, and written to <root>/apps/<id>.wgt when the
+// app does. Read lazily: the first look from Home loads the file once.
+struct WidgetSlot { char id[24]; LuaWidgetSnap snap; uint32_t ms; bool have, dirty, probed; };
+static const int   kWgtSlots = 8;
+static const uint8_t kWgtFileVer = 1;
+static WidgetSlot* s_wgt = nullptr;   // PSRAM, kWgtSlots of them
+
+WidgetSlot* wgtSlot(const char* id, bool make) {
+  if (!id || !id[0]) return nullptr;
+  if (!s_wgt) {
+    s_wgt = (WidgetSlot*)heap_caps_calloc(kWgtSlots, sizeof(WidgetSlot), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_wgt) return nullptr;
+  }
+  WidgetSlot* free_slot = nullptr;
+  for (int k = 0; k < kWgtSlots; ++k) {
+    if (s_wgt[k].id[0] && !strcmp(s_wgt[k].id, id)) return &s_wgt[k];
+    if (!free_slot && !s_wgt[k].id[0]) free_slot = &s_wgt[k];
+  }
+  if (!make) return nullptr;
+  if (!free_slot) free_slot = &s_wgt[0];   // more than eight apps with widgets: the first gives way
+  memset(free_slot, 0, sizeof *free_slot);
+  snprintf(free_slot->id, sizeof free_slot->id, "%s", id);
+  free_slot->snap.bar = -1;
+  return free_slot;
+}
+void wgtPath(char* out, size_t cap, const char* id) {
+  char rel[48];
+  snprintf(rel, sizeof rel, "/apps/%s.wgt", id);
+  luaHostAppPath(out, cap, rel);
+}
+WidgetSlot* wgtLoad(const char* id) {
+  WidgetSlot* w = wgtSlot(id, true);
+  if (!w || w->probed || w->have) return w;
+  w->probed = true;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return w;
+  char path[64];
+  wgtPath(path, sizeof path, id);
+  File f = fs->open(path, "r");
+  if (!f) return w;
+  uint8_t ver = 0;
+  LuaWidgetSnap sn;
+  if (f.read(&ver, 1) == 1 && ver == kWgtFileVer &&
+      f.read((uint8_t*)&sn, sizeof sn) == sizeof sn) {
+    sn.title[sizeof sn.title - 1] = 0;
+    sn.value[sizeof sn.value - 1] = 0;
+    sn.line[sizeof sn.line - 1] = 0;
+    if (sn.spark_n > LUA_WIDGET_SPARK_MAX) sn.spark_n = LUA_WIDGET_SPARK_MAX;
+    w->snap = sn;
+    w->have = true;
+  }
+  f.close();
+  return w;
+}
+void wgtFlush(const char* id) {
+  WidgetSlot* w = wgtSlot(id, false);
+  if (!w || !w->dirty) return;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return;
+  char path[64];
+  wgtPath(path, sizeof path, id);
+  w->dirty = false;
+  if (!w->have) { fs->remove(path); return; }
+  File f = fs->open(path, "w");
+  if (!f) return;
+  f.write(&kWgtFileVer, 1);
+  f.write((const uint8_t*)&w->snap, sizeof w->snap);
+  f.close();
+}
+// wada.widget.set{ title=, value=, line=, bar=0..1, spark={...} } -> true, or false when
+// called again within a second (ignored). The spark is up to 24 numbers, oldest first,
+// drawn to fit their own range.
+int widgetSet(lua_State* L) {
+  if (!s_h) return 0;
+  luaL_checktype(L, 1, LUA_TTABLE);
+  WidgetSlot* w = wgtLoad(s_h->id);
+  const uint32_t now = millis();
+  if (!w || (w->ms && now - w->ms < 1000)) { lua_pushboolean(L, 0); return 1; }
+  LuaWidgetSnap& sn = w->snap;
+  auto field = [&](const char* k, char* out, size_t cap) {
+    out[0] = 0;
+    lua_getfield(L, 1, k);
+    if (lua_type(L, -1) == LUA_TSTRING || lua_type(L, -1) == LUA_TNUMBER) {
+      size_t n = 0;
+      const char* t = lua_tolstring(L, -1, &n);
+      size_t sl = 0;
+      const char* safe = safeUiText(t, n, &sl);
+      snprintf(out, cap, "%.*s", (int)sl, safe);
+    }
+    lua_pop(L, 1);
+  };
+  field("title", sn.title, sizeof sn.title);
+  field("value", sn.value, sizeof sn.value);
+  field("line", sn.line, sizeof sn.line);
+  lua_getfield(L, 1, "bar");
+  sn.bar = lua_isnumber(L, -1) ? (int16_t)LV_MIN(1000, LV_MAX(0, (int)(lua_tonumber(L, -1) * 1000.0f))) : (int16_t)-1;
+  lua_pop(L, 1);
+  sn.spark_n = 0;
+  lua_getfield(L, 1, "spark");
+  if (lua_istable(L, -1)) {
+    const int n = (int)lua_rawlen(L, -1);
+    const int from = n > LUA_WIDGET_SPARK_MAX ? n - LUA_WIDGET_SPARK_MAX + 1 : 1;
+    for (int k = from; k <= n; ++k) {
+      lua_rawgeti(L, -1, k);
+      sn.spark[sn.spark_n++] = lua_isnumber(L, -1)
+          ? (int16_t)LV_MAX(-32000, LV_MIN(32000, (int)lua_tonumber(L, -1))) : (int16_t)INT16_MIN;
+      lua_pop(L, 1);
+    }
+  }
+  lua_pop(L, 1);
+  const time_t t = time(nullptr);
+  sn.epoch = t > 1577836800 ? (uint32_t)t : 0;   // 2020-01-01: before that the clock is not set
+  w->ms = now ? now : 1;
+  w->have = true;
+  w->dirty = true;
+  lua_pushboolean(L, 1);
+  return 1;
+}
+// wada.widget.clear(): the app's Home widget goes back to its name and nothing else.
+int widgetClear(lua_State* L) {
+  (void)L;
+  if (!s_h) return 0;
+  WidgetSlot* w = wgtSlot(s_h->id, true);
+  if (w) { w->have = false; w->dirty = true; w->ms = 0; }
+  return 0;
+}
+#endif
+
 // ---- input plumbing ----
 void sendInput(const char* type, const char* dir, int x, int y) {
   if (!s_h || !s_h->L) return;
@@ -2593,6 +2725,11 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "timer");
 
 #if CAP_LUA_SDK_EXT
+  lua_newtable(L);                                       // wada.widget (the app's Home widget)
+  lua_pushcfunction(L, widgetSet);   lua_setfield(L, -2, "set");
+  lua_pushcfunction(L, widgetClear); lua_setfield(L, -2, "clear");
+  lua_setfield(L, -2, "widget");
+
   lua_newtable(L);                                       // wada.map
   lua_pushcfunction(L, mapView); lua_setfield(L, -2, "view");
   lua_setfield(L, -2, "map");
@@ -2909,6 +3046,9 @@ void hostTeardown() {
     storeFlush();
     s_h = nullptr;
 #if CAP_LUA_SDK_EXT
+    wgtFlush(h->id);       // the Home widget's last word, for after a restart
+#endif
+#if CAP_LUA_SDK_EXT
     destroyLiveMapView();  // leaves map userdata inert when lua_close runs __gc
 #endif
     lua_close(L);          // runs canvas __gc -> frees pixel buffers
@@ -2921,6 +3061,16 @@ void hostTeardown() {
   delete h;
 }
 }  // namespace
+
+#if CAP_LUA_SDK_EXT
+bool luaWidgetGet(const char* app_id, LuaWidgetSnap* out) {
+  if (!out) return false;
+  WidgetSlot* w = wgtLoad(app_id);
+  if (!w || !w->have) return false;
+  *out = w->snap;
+  return true;
+}
+#endif
 
 void luaAppDismiss() {
   if (!s_h) return;

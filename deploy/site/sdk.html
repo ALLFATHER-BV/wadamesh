@@ -147,6 +147,7 @@
     <a href="#timer">wada.timer</a>
     <a href="#discover">Discovery</a>
     <a href="#map">wada.map</a>
+    <a href="#widget">wada.widget</a>
     <a href="#geo">wada.geo</a>
     <a href="#packets">on_packet</a>
     <a href="#timers">Timers</a>
@@ -391,6 +392,18 @@ end</code></pre>
       </div></div>
     </section>
 
+    <section class="doc" id="widget">
+      <h2>wada.widget <span class="chip">ext</span></h2>
+      <div class="row"><div class="prose">
+        <p>Your app's widget on Home. The user adds it from <b>Arrange &rarr; Add &rarr; From apps</b> and picks your app; it then shows what your app last published, with how long ago, and a tap opens your app. Home keeps the last one after your app closes and across a restart, so publish whenever something worth showing changes.</p>
+        <table class="api">
+          <tr><td>wada.widget.set{title, value, line, bar, spark}</td><td>Every field is optional. <code>title</code> (up to 23 characters) replaces your app's name on the widget; <code>value</code> (15) is the figure, drawn large; <code>line</code> (47) is the detail under it; <code>bar</code> is 0..1 and draws a progress bar; <code>spark</code> is a list of up to 24 numbers, oldest first, drawn as a curve fitted to their own range (send integers: scale a reading like 21.4 to 214). A bar wins over a spark. Returns <code>true</code>, or <code>false</code> when called again within a second; that call is ignored, so there is no point publishing faster.</td></tr>
+          <tr><td>wada.widget.clear()</td><td>Back to just your app's name.</td></tr>
+        </table>
+        <p>Nothing runs your app in the background: the widget shows what you published while the app was open. <code>caps().widget</code> says whether this board has it. The <b>Airtime</b> app in the Store is the worked example: it keeps the channel load and a two-minute curve on Home while it is open.</p>
+      </div></div>
+    </section>
+
     <section class="doc" id="geo">
       <h2>wada.geo</h2>
       <div class="row"><div class="prose">
@@ -493,7 +506,7 @@ end</code></pre>
           <tr><td colspan="2" style="color:var(--mut)">Text entry you open with <code>wada.ui.input()</code> is the firmware's own field, so it comes with the firmware's editing: long-press it for Cut, Copy, Paste, All, Sym (special characters) and Emoji. You do not need to build any of that yourself, and anything copied from a chat pastes straight in.</td></tr>
           <tr><td>wada.sys.tr(s)</td><td>Translate <code>s</code> through the device's active language, using the same table the firmware's own interface uses. Returns <code>s</code> unchanged when there is no translation, so it is always safe to wrap a string. Add your keys to <code>deploy/apps/lang/&lt;code&gt;.lang</code> alongside the firmware's. Older firmware has no <code>sys.tr</code>: write <code>local tr = sys.tr or function(x) return x end</code> and call <code>tr()</code>.</td></tr>
           <tr><td>wada.sys.beep()</td><td>Short beep on boards with a buzzer; silent elsewhere, and silent when the user has sound off.</td></tr>
-          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
+          <tr><td>wada.sys.caps()</td><td><code>{sdk_ext, keyboard, touch, sd, sd_list, sd_clean, audio, audio_wav, audio_mp3, audio_sd, compass, accel, discover, input, rx_identity, list, packets, sensors, map, measure, widget}</code>. Check <code>sdk_ext</code> before using anything marked <span class="chip">ext</span>, <code>sd_list</code> before using <code>wada.sd</code>, and <code>audio</code> plus the format flag before using <code>wada.audio</code>. <code>audio_sd</code> means direct <code>sd:</code> paths are available; plain audio names use app storage and do not require it.</td></tr>
           <tr><td>wada.sys.battery() <span class="chip">ext</span></td><td><code>{mv, pct, charging}</code>.</td></tr>
           <tr><td>wada.sys.env() <span class="chip">sensors</span></td><td><code>{temp_c, humidity, pressure_hpa, alt_m}</code>, or <code>nil</code>. A field is present only when the hardware actually reported it, so you can tell "no humidity sensor" from "0% humidity". Gated on <code>caps().sensors</code> &mdash; does this board <i>have</i> the sensor rail &mdash; and <b>not</b> on <code>sdk_ext</code>, which is a memory gate. Those are different questions: the plain Heltec V4 has the Expansion Kit but not the extended SDK, and most boards with the extended SDK have no sensors at all.</td></tr>
           <tr><td>wada.sys.gps() <span class="chip">ext</span></td><td><code>{lat, lon, lat_e6, lon_e6, sats, alt_m, time, speed_kmh, course}</code>, or <code>nil</code> with no fix &mdash; which is the normal indoor case, so handle it. <code>lat_e6</code>/<code>lon_e6</code> are exact micro-degrees; <code>lat</code>/<code>lon</code> are single-precision floats, so <a href="#discover">log the integers</a>. <code>alt_m</code> is metres. <code>time</code> is satellite time, absent until the receiver has decoded the date. <code>speed_kmh</code> and <code>course</code> (degrees clockwise from north) appear only on boards whose GPS provider reports them, and <code>course</code> only while actually moving &mdash; a stationary receiver has no course, so it is absent rather than 0. Treat those last three as optional.</td></tr>

@@ -313,6 +313,16 @@ bool     touchPrefsSetReportedBeta(uint16_t n);
 // when the UI is built, so a change takes effect after a restart.
 bool     touchPrefsGetCondenseNav();
 bool     touchPrefsSetCondenseNav(bool on);
+/** Where the navigation bar sits (Settings > Display > Navigation bar). Stored in the
+ *  v66 condense_nav byte, so no schema change: 0 bottom (the default) and 1 right (the
+ *  old Condense Nav rail) keep their meaning; 2 top and 3 left are new. Read once when
+ *  the UI is built; changing it restarts. */
+constexpr uint8_t TOUCH_NAV_BOTTOM = 0;
+constexpr uint8_t TOUCH_NAV_RIGHT  = 1;
+constexpr uint8_t TOUCH_NAV_TOP    = 2;
+constexpr uint8_t TOUCH_NAV_LEFT   = 3;
+uint8_t  touchPrefsGetNavPos();
+bool     touchPrefsSetNavPos(uint8_t pos);
 
 /* Keyboard-nav tab hotkeys: the ASCII key that jumps to each main tab while
  * keyboard navigation is on. `tab` is the tab index 0..4 = chat / contacts / home
@@ -679,6 +689,22 @@ uint8_t touchPrefsGetColorStyle();
 void    touchPrefsSetColorStyle(uint8_t style);
 bool    touchPrefsGetRainbow();
 void    touchPrefsSetRainbow(bool on);
+// Settings > Theme > Background: what is behind every screen. A plain colour is kept dark
+// (by night) or light (by day) enough for the text; 0xFFFFFFFF follows the accent.
+enum : uint8_t { TOUCH_BG_AURORA = 0, TOUCH_BG_AURORA_MOVING = 1, TOUCH_BG_COLOR = 2, TOUCH_BG_IMAGE = 3,
+                 TOUCH_BG_NONE = 4 };   // NONE: the plain theme (black by night, its light grey-white by day)
+// Settings > GPS > Save battery: the receiver rests between position checks, this
+// often (index into 2 / 5 / 15 / 30 minutes). The battery saver implies it.
+bool    touchPrefsGetGpsSaver();
+void    touchPrefsSetGpsSaver(bool on);
+uint8_t touchPrefsGetGpsSaverEvery();
+void    touchPrefsSetGpsSaverEvery(uint8_t idx);
+uint8_t  touchPrefsGetBackground();
+void     touchPrefsSetBackground(uint8_t kind);
+uint32_t touchPrefsGetBackgroundColor();
+void     touchPrefsSetBackgroundColor(uint32_t rgb);
+int      touchPrefsGetBackgroundImage(char* out, int out_cap);   // "sd:/path" or an internal path
+bool     touchPrefsSetBackgroundImage(const char* path);
 
 /** Tanmatsu message-notification LED: flash the envelope-icon LED on a new message and breathe it
  *  softly while there are unread messages. Default ON. Tanmatsu-only (no such LED on T-Deck/V4). */

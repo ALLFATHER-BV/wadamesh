@@ -111,8 +111,10 @@ function app.on_tick(dt) refresh() end
 return app
 )WADALUA";
 static const char kLuaSrc_airtime[] = R"WADALUA(-- Airtime (Lua) — channel utilization over time: live + average bars with a %
--- axis, rx/tx air split, duty ceiling, tx budget and packet counters.
+-- axis, rx/tx air split, duty ceiling, tx budget and packet counters. While it
+-- runs it also keeps its Home widget current (wada.widget, extended SDK boards).
 local ui, sys, mesh, timer = wada.ui, wada.sys, wada.mesh, wada.timer
+local widget = wada.widget            -- nil on firmware or boards without it
 -- Translate through the device's language table (wada.sys.tr, added for #257).
 -- Older firmware has no sys.tr, so fall back to the English string rather than error.
 local tr = sys.tr or function(x) return x end
@@ -123,6 +125,7 @@ local W, narrow
 local head, sub, legend, detail, chart
 local base, t0, last
 local peak_pct = 0
+local spark, wlast = {}, 0            -- the Home widget's curve (one point per 5 s)
 
 local function restart_window()
   local st = mesh.stats()
@@ -160,6 +163,13 @@ local function refresh()
   head:set(string.format(tr("channel busy %.1f%%"), live))
   head:color(live > 50 and C.bad or live > 20 and 0xE8A33D or C.good)
   sub:set(string.format(tr("avg %.1f%%   peak %.1f%%   over %ds"), avg, peak_pct, math.floor(wall)))
+  if widget and now - wlast >= 5000 then
+    wlast = now
+    spark[#spark + 1] = math.floor(live * 10)
+    if #spark > 24 then table.remove(spark, 1) end
+    widget.set{ title = tr("Channel busy"), value = string.format("%.1f%%", live),
+                line = string.format(tr("avg %.1f%%, peak %.1f%%"), avg, peak_pct), spark = spark }
+  end
   if narrow then
     detail:set(string.format("air rx %ds / tx %ds\nduty %d%%   budget %dms\ntx %d  rx %d  err %d",
       rx_air, tx_air, st.duty_pct, st.tx_budget_ms, st.tx_pkts, st.rx_pkts, st.rx_err))
@@ -588,6 +598,7 @@ function app.on_close() end
 
 return app
 )WADALUA";
+#if CAP_LUA_SDK_EXT
 static const char kLuaSrc_sdktest[] = R"WADALUA(-- SDK self-test. Exercises the extended SDK so the results can be read off the
 -- screen instead of inferred from a build log. Published to the store as a
 -- developer/bench tool.
@@ -882,6 +893,7 @@ end
 
 return app
 )WADALUA";
+#endif
 static const char kLuaSrc_2048[] = R"WADALUA(-- 2048 — wada.* reference app
 -- Swipe (or trackball mapped swipe) to move tiles.
 -- Tap after win or game over to restart.
@@ -1720,6 +1732,7 @@ end
 
 return app
 )WADALUA";
+#if CAP_LUA_SDK_EXT
 static const char kLuaSrc_wardrive[] = R"WADALUA(-- Wardrive (Lua) — a LoRa coverage survey that logs to a CSV you can pull off
 -- the device afterwards.
 --
@@ -2486,6 +2499,8 @@ end
 
 return app
 )WADALUA";
+#endif
+#if CAP_LUA_SDK_EXT
 static const char kLuaSrc_nearby[] = R"WADALUA(-- Nearby (Lua) — contacts on a real map, with distance and bearing, and a live
 -- packet counter.
 --
@@ -2624,6 +2639,7 @@ end
 
 return app
 )WADALUA";
+#endif
 static const char kLuaSrc_breakout[] = R"WADALUA(-- Breakout — wadamesh Lua app
 -- Swipe left/right to move paddle  |  Swipe up to launch
 -- Keyboard: arrows to move, Enter / Space to launch
@@ -2813,6 +2829,7 @@ function app.on_close() end
 
 return app
 )WADALUA";
+#if CAP_LUA_SDK_EXT
 static const char kLuaSrc_ping[] = R"WADALUA(-- Ping — wadamesh Lua app
 -- Send a DM to any contact and measure round-trip time.
 -- Both devices exchange their GPS position; the result shows RTT,
@@ -2983,17 +3000,26 @@ function app.on_close() end
 
 return app
 )WADALUA";
+#endif
 
 static const LuaBuiltinApp kLuaBuiltin[] = {
   { "monitor", "RF Monitor", "1.3", kLuaSrc_monitor },
-  { "airtime", "Airtime", "1.4", kLuaSrc_airtime },
+  { "airtime", "Airtime", "1.5", kLuaSrc_airtime },
   { "snake", "Snake", "1.0", kLuaSrc_snake },
   { "tetris", "Tetris", "1.0", kLuaSrc_tetris },
+#if CAP_LUA_SDK_EXT
   { "sdktest", "SDK Test", "1.7", kLuaSrc_sdktest },
+#endif
   { "2048", "2048", "1.2", kLuaSrc_2048 },
+#if CAP_LUA_SDK_EXT
   { "wardrive", "Wardrive", "1.2", kLuaSrc_wardrive },
+#endif
+#if CAP_LUA_SDK_EXT
   { "nearby", "Nearby", "1.0", kLuaSrc_nearby },
+#endif
   { "breakout", "Breakout", "1.0", kLuaSrc_breakout },
+#if CAP_LUA_SDK_EXT
   { "ping", "Ping", "1.0", kLuaSrc_ping },
+#endif
 };
 static const int kLuaBuiltinCount = (int)(sizeof(kLuaBuiltin)/sizeof(kLuaBuiltin[0]));
