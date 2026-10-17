@@ -453,7 +453,12 @@ constexpr const char* k_ui_seg_ok      = "/msgs/store.ok";
 constexpr uint32_t    k_ui_seg_magic   = 0x55495347;   // "UISG"
 constexpr uint16_t    k_ui_seg_version = 1;
 constexpr int         k_ui_seg_records = 256;          // records per segment (~60 KB at v1 size)
-constexpr int         k_ui_seg_max     = 24;           // table cap: 5000/256 = 20 live segments + slack
+// Segment files: merging keeps the count at k_ui_seg_soft (24, what every older
+// build can read back), and only when no neighbouring pair fits in one file may it
+// grow towards k_ui_seg_max. Below 41 files some adjacent pair of the 5000 ring
+// records always fits in 256, so the hard cap is never what stops a save.
+constexpr int         k_ui_seg_soft    = 24;
+constexpr int         k_ui_seg_max     = 48;           // table + scan capacity
 
 struct __attribute__((packed)) UiSegHeader {
   uint32_t magic;          // k_ui_seg_magic
@@ -71342,7 +71347,48 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
   // slot with NO live-record loss. The deferred records are the NEWEST (above
   // the watermark, so the ring evicts them last); they wait safely in RAM and
   // land next cycle once a slot is free. Below the cap this is a no-op.
-  deferred = create && s_seg_count >= k_ui_seg_max;
+  deferred = create && s_seg_count >= k_ui_seg_soft;
+  // 3) At the soft cap with new records waiting, free a slot BEFORE appending.
+  //    Step 1's deferral assumed the oldest segment ages out of a FULL ring,
+  //    but after a reboot the ring only holds what was loaded (per-chat caps
+  //    thin the segments out without ever emptying one), so nothing was
+  //    evicted, no segment emptied, and every new message stayed RAM-only:
+  //    "messages from the last days vanish after a reboot". Pending compactions
+  //    go first (they may empty a segment); otherwise merge the adjacent pair
+  //    with the fewest live records into the older file (the newest segment is
+  //    the append target and never part of a pair). If no pair fits, a new
+  //    segment is allowed up to the hard cap instead: nothing is ever dropped.
+  if (deferred) {
+    const bool pending = count > 0 && ring[(head - 1 + cap) % cap].seq > s_seg_flushed_seq;
+    bool dirty = false;
+    for (int i = 0; i < s_seg_count && !dirty; ++i) dirty = s_seg[i].compact_dirty;
+    if (!pending) {
+      deferred = false;                         // nothing to append: step 1 is a no-op
+    } else if (!dirty) {
+      int best = -1, best_n = k_ui_seg_records + 1;
+      for (int i = 0; i + 2 < s_seg_count; ++i) {
+        const uint32_t hi = s_seg[i + 2].first_seq - 1;
+        const int n = segCountRange(ring, cap, count, head, s_seg[i].first_seq, hi);
+        if (n < best_n) { best_n = n; best = i; }
+      }
+      if (best >= 0 && best_n <= k_ui_seg_records) {
+        const uint32_t hi = s_seg[best + 2].first_seq - 1;
+        const int cn = segGatherRange(ring, cap, count, head, s_seg[best].first_seq, hi,
+                                      buf, k_ui_seg_records);
+        out->kind       = SEGJOB_COMPACT;
+        out->first_seq  = s_seg[best].first_seq;
+        out->last_seq   = s_seg[best + 1].last_seq;   // the merged file covers both ranges
+        out->create     = false;
+        out->n          = cn;
+        out->absorb_seq = s_seg[best + 1].first_seq;
+        Serial.printf("[HIST] %d segments: merging seg %lu + %lu (%d records)\n", (int)s_seg_count,
+                      (unsigned long)s_seg[best].first_seq,
+                      (unsigned long)s_seg[best + 1].first_seq, cn);
+        return 1;
+      }
+      if (s_seg_count < k_ui_seg_max) deferred = false;   // no pair fits: grow instead
+    }
+  }
   if (!deferred) {
     int n = 0;
     uint32_t last = s_seg_flushed_seq;
@@ -71380,47 +71426,19 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
     out->n         = cn;                      // 0 = every record gone -> unlink the file
     return 1;
   }
-  // 3) Still blocked at the cap with nothing to compact: free a slot ourselves.
-  //    Step 1's deferral assumed the oldest segment ages out of a FULL ring,
-  //    but after a reboot the ring only holds what was loaded (per-chat caps
-  //    thin the segments out without ever emptying one), so nothing is
-  //    evicted, no segment empties, and every new message stayed RAM-only:
-  //    "messages from the last days vanish after a reboot". Merge the adjacent
-  //    pair with the fewest live records into the older file (the newest
-  //    segment is the full append target, so it is never part of a pair).
-  if (deferred && count > 0 && ring[(head - 1 + cap) % cap].seq > s_seg_flushed_seq) {
-    int best = -1, best_n = k_ui_seg_records + 1;
-    for (int i = 0; i + 2 < s_seg_count; ++i) {
-      const uint32_t hi = s_seg[i + 2].first_seq - 1;
-      const int n = segCountRange(ring, cap, count, head, s_seg[i].first_seq, hi);
-      if (n < best_n) { best_n = n; best = i; }
-    }
-    if (best >= 0 && best_n <= k_ui_seg_records) {
-      const uint32_t hi = s_seg[best + 2].first_seq - 1;
-      const int cn = segGatherRange(ring, cap, count, head, s_seg[best].first_seq, hi,
-                                    buf, k_ui_seg_records);
-      out->kind       = SEGJOB_COMPACT;
-      out->first_seq  = s_seg[best].first_seq;
-      out->last_seq   = s_seg[best + 1].last_seq;   // the merged file covers both ranges
-      out->create     = false;
-      out->n          = cn;
-      out->absorb_seq = s_seg[best + 1].first_seq;
-      Serial.printf("[HIST] at segment cap: merging seg %lu + %lu (%d records)\n",
-                    (unsigned long)s_seg[best].first_seq,
-                    (unsigned long)s_seg[best + 1].first_seq, cn);
-      return 1;
-    }
-    // No pair fits (more than ~3000 live records spread over the table):
-    // retire the oldest segment, like the ring would if it were full. Those
-    // messages stay visible until the next reboot; new ones keep saving.
-    if (s_seg_count > 1) {
+  // Unreachable in practice (see k_ui_seg_max): a full table with nothing to
+  // merge or compact. Retire the oldest segment rather than stop saving; its
+  // messages stay on screen until the next reboot.
+  if (deferred && s_seg_count > 1) {
+    bool dirty = false;
+    for (int i = 0; i < s_seg_count && !dirty; ++i) dirty = s_seg[i].compact_dirty;
+    if (!dirty) {
       out->kind      = SEGJOB_COMPACT;
       out->first_seq = s_seg[0].first_seq;
       out->last_seq  = 0;
       out->create    = false;
       out->n         = 0;                       // unlink
-      Serial.printf("[HIST] at segment cap, no merge fits: retiring seg %lu\n",
-                    (unsigned long)s_seg[0].first_seq);
+      Serial.printf("[HIST] segment table full: retiring seg %lu\n", (unsigned long)s_seg[0].first_seq);
       return 1;
     }
   }
