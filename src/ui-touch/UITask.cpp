@@ -30147,7 +30147,7 @@ static constexpr uint32_t kFileTransferRestoreMaxBytes = 4u * 1024u * 1024u;
 static bool s_file_transfer_restore_upload = false;
 static bool s_file_transfer_backup_download = false;
 // Settings backup helpers, defined with the Backups settings page further down.
-static void backupMakeFilename(char* out, size_t cap);
+static void backupMakeFilename(char* out, size_t cap, bool probe_storage);
 static bool backupImportAndReboot(fs::FS* fsp, const char* path,
                                   void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
@@ -30511,7 +30511,7 @@ static void fileTransferBackupBegin() {
     return;
   }
   char name[48];
-  backupMakeFilename(name, sizeof name);
+  backupMakeFilename(name, sizeof name, false);   // lands on the computer, not device storage
   s_file_transfer_downloading = true;
   s_file_transfer_download_size = static_cast<uint32_t>(size);
   s_file_transfer_download_offset = 0;
@@ -49277,17 +49277,27 @@ static void backupsRebuildAsyncCb(void* /*p*/) {
   if (s_settings_open_cat == CAT_BACKUPS) openSettingsCategory(CAT_BACKUPS);
 }
 
-// Unique backup filename from the device clock (local time) when it's set, else a
-// uptime fallback. e.g. "meshcore-20260612-143205.json".
-static void backupMakeFilename(char* out, size_t cap) {
+// Unique backup filename, always "meshcore-backup-<stamp>.json". The stamp is the
+// device clock (local time) when it's set, e.g. "meshcore-backup-20260612-143205.json".
+// Without a set clock it's "nodate-N"; with `probe_storage` N is the first one not
+// already on the card or in internal storage, so an export after a reboot can't
+// overwrite an older backup (the old uptime-seconds stamp repeated, #686).
+static void backupMakeFilename(char* out, size_t cap, bool probe_storage) {
   uint32_t t = 0;
   if (mesh::RTCClock* rtc = the_mesh.getRTCClock()) t = rtc->getCurrentTime();
   if (wallClockIsCurrent() && t > ClockFloorRTC::MIN_VALID_EPOCH) {
     time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v);
-    snprintf(out, cap, "meshcore-%04d%02d%02d-%02d%02d%02d.json",
+    snprintf(out, cap, "meshcore-backup-%04d%02d%02d-%02d%02d%02d.json",
              v.tm_year + 1900, v.tm_mon + 1, v.tm_mday, v.tm_hour, v.tm_min, v.tm_sec);
-  } else {
-    snprintf(out, cap, "meshcore-backup-%lu.json", (unsigned long)(millis() / 1000));
+    return;
+  }
+  fs::FS* sd_fs  = probe_storage ? backupSdFs() : nullptr;
+  fs::FS* int_fs = backupInternalFs();
+  for (unsigned n = 1; ; n++) {
+    snprintf(out, cap, "meshcore-backup-nodate-%u.json", n);
+    if (!probe_storage || n >= 999) return;
+    char path[64]; snprintf(path, sizeof path, "/%s", out);
+    if (!(sd_fs && sd_fs->exists(path)) && !int_fs->exists(path)) return;
   }
 }
 
@@ -49448,7 +49458,7 @@ static void buildBackupsSettings() {
       char timestamped[48];
       const char* filename = "meshcore-backup.json";
       if (s_backup_append_timestamp) {
-        backupMakeFilename(timestamped, sizeof timestamped);
+        backupMakeFilename(timestamped, sizeof timestamped, true);
         filename = timestamped;
       }
       doExportBackupFile(filename);
