@@ -78,6 +78,8 @@ int main() {
   assert(readablePath("/meshcore-backup.json"));
   assert(readablePath("/meshcore-20260907-120000.json"));
   assert(readablePath("/meshcore-backup-123.json"));
+  assert(readablePath("/meshcore-backup-20261017-143205.json"));
+  assert(readablePath("/meshcore-backup-nodate-1.json"));
   assert(!readablePath("/transfer/.upload.part"));
   assert(!readablePath("/transfer/../secret.txt"));
   assert(!readablePath("/transfer/nested/file.txt"));
