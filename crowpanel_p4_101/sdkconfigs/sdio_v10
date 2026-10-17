@@ -1,0 +1,9 @@
+# CrowPanel P4 10.1 V1.0: the C6 data lines run the other way round (schematic: GPIO14 = SD2_D0 ->
+# C6 IO20 ... GPIO17 = SD2_D3 -> C6 IO23), and V1.0 has none of the series resistors / caps V1.1
+# added on those lines. Elecrow's V1.0 Lesson17 runs the link 1-bit (D0 = GPIO14, D1 = GPIO15 as the
+# interrupt line), so this does the same.
+CONFIG_ESP_HOSTED_SDIO_1_BIT_BUS=y
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CLK_SLOT_1=18
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_CMD_SLOT_1=19
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D0_SLOT_1=14
+CONFIG_ESP_HOSTED_PRIV_SDIO_PIN_D1_1BIT_BUS_SLOT_1=15

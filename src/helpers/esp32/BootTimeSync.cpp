@@ -21,7 +21,7 @@
 // The T-Display P4 joins on its esp-hosted build (see CAP_BOOT_TIME_SYNC), and the
 // Wio Tracker L2 (no RTC) joins too.
 #if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(HAS_WIO_TRACKER_L2) || \
-    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
+    (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED) || defined(HAS_CROWPANEL_P4_101)
   #define BOOT_TIME_SYNC_SUPPORTED 1
 #else
   #define BOOT_TIME_SYNC_SUPPORTED 0

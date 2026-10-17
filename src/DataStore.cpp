@@ -10,7 +10,7 @@
 #endif
 #include "helpers/esp32/WdtHeavyGuard.h"   // suspend core-0 idle WDT during the (SPIFFS-GC-prone) contact write
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
 #include <SD_MMC.h>
 #endif
 
@@ -474,7 +474,7 @@ void DataStore::loadPrefsInt(const char *filename, NodePrefs& _prefs, double& no
 }
 
 bool DataStore::savePrefs(const NodePrefs& _prefs, double node_lat, double node_lon) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; const NodePrefs* p; double la, lo; bool r; } a{ this, &_prefs, node_lat, node_lon, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->savePrefs(*a->p, a->la, a->lo); }, &a);
@@ -733,7 +733,7 @@ bool DataStore::saveContactsInPlace(DataStoreHost* host, bool (*filter)(const Co
 #endif
 
 void DataStore::saveContacts(DataStoreHost* host, bool (*filter)(const ContactInfo& c)) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; DataStoreHost* h; bool (*f)(const ContactInfo&); } a{ this, host, filter };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveContacts(a->h, a->f); }, &a);
@@ -896,7 +896,7 @@ void DataStore::loadChannels(DataStoreHost* host) {
 }
 
 void DataStore::saveChannels(DataStoreHost* host) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; DataStoreHost* h; } a{ this, host };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->d->saveChannels(a->h); }, &a);
@@ -1073,7 +1073,7 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
@@ -1117,7 +1117,7 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
   return false; // error
 }
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
@@ -1150,7 +1150,7 @@ uint8_t DataStore::getBlobByKey(const uint8_t key[], int key_len, uint8_t dest_b
 }
 
 bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src_buf[], uint8_t len) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; const uint8_t* k; int kl; const uint8_t* b; uint8_t l; bool r; } a{ this, key, key_len, src_buf, len, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->putBlobByKey(a->k, a->kl, a->b, a->l); }, &a);
@@ -1172,7 +1172,7 @@ bool DataStore::putBlobByKey(const uint8_t key[], int key_len, const uint8_t src
 }
 
 bool DataStore::deleteBlobByKey(const uint8_t key[], int key_len) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {
     struct A { DataStore* d; const uint8_t* k; int kl; bool r; } a{ this, key, key_len, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->r = a->d->deleteBlobByKey(a->k, a->kl); }, &a);
@@ -1210,7 +1210,7 @@ bool DataStore::useSdStorage() {
 }
 #endif
 
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
 // Full-store adoption on an SD_MMC slot. P4 callers migrate internal files
 // first; the Wio Tracker L2 mounts and adopts the card directly at boot.
 bool DataStore::useSdMmcStorage() {
@@ -1234,7 +1234,7 @@ bool DataStore::useSdMmcStorage() {
 }
 #endif
 
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
 // #167: core-0 storage dispatcher. The DSI panel's frame-restart ISR lives on core 1 (where
 // Arduino's loop task also runs); SDMMC/FATFS write paths entered FROM core 1 mask that core's
 // interrupts inside their critical sections long enough to drop a display frame -- the

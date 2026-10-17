@@ -1,0 +1,8 @@
+# build output + component manager cache (project-local ESP-IDF comes in via the ../tanmatsu symlinks)
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+# flashable images produced by build.sh merge
+*.bin
