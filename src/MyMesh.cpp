@@ -3656,6 +3656,7 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     _ui_pending_status = 0;
     _ui_pending_kind = UiReqKind::None;
     _ui_pending_tag = 0;
+    cancelUIDeferredLogin();   // answered: no login fallback, no late deferred REQ
     if (kind == UiReqKind::Telemetry) {
       // CayenneLPP payload — let the UI decode the LPP channels.
       _ui->onTelemetryReply(contact, &data[4], (size_t)(len - 4));
@@ -3697,9 +3698,12 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       const UiReqKind k = _ui_login_then_kind;
       cancelUIDeferredLogin();
       if (login_ok) {
-        ContactInfo& rc = const_cast<ContactInfo&>(contact);
-        if (k == UiReqKind::Telemetry) sendTelemetryRequestForUI(rc);
-        else                           sendStatusPingForUI(rc);
+        // Not from inside this callback: the login reply is still being re-flooded
+        // by the neighbours, and a REQ sent now mostly collided with it (#683).
+        memcpy(_ui_deferred_key, contact.id.pub_key, PUB_KEY_SIZE);
+        _ui_deferred_kind = k;
+        _ui_deferred_at = millis() + 2000;
+        if (!_ui_deferred_at) _ui_deferred_at = 1;
       }
       return;   // login frame consumed (OK fired the REQ; fail disarmed)
     }
@@ -6509,6 +6513,9 @@ void MyMesh::loop() {
   // Connections stuff"); the on-device room UI needs it. Cheap: scans 16 slots,
   // transmits only when a connection is armed and due (see the room login branch).
   checkConnections();
+#ifdef DISPLAY_CLASS
+  uiRequestTick();   // direct-first UI requests: login fallback + delayed REQ (#683)
+#endif
 
   if (g_usb_files_owns_serial) {
     // USB Files owns the USB serial port (ui-touch/UsbFilesSession.h): no console

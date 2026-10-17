@@ -456,12 +456,35 @@ public:
    *  auto-poll keeps the immediate chained send above (a single arm slot can't
    *  serve its multi-node loop, and a missed poll just retries next interval). */
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind) {
+    cancelUIDeferredLogin();
     // Nothing to defer behind on a companion: send the request itself, now.
     if (!contactNeedsGuestLogin(recipient)) {
-      cancelUIDeferredLogin();
       return (kind == UiReqKind::Telemetry) ? sendTelemetryRequestForUI(recipient)
                                             : sendStatusPingForUI(recipient);
     }
+    // Repeaters, rooms, sensors: ask directly first, the way the MeshCore app does,
+    // and only fall back to the guest login when no reply comes (we are not in the
+    // node's ACL yet). Login-first threw away a working path on every tap and fired
+    // the REQ from inside the login-reply callback while that reply was still being
+    // re-flooded: against a repeater next to the device it answered 2 of 8 times,
+    // direct-first 8 of 8, about 1 s each (#683, "under 5% from the device").
+    const bool had_path = recipient.out_path_len != OUT_PATH_UNKNOWN;
+    const int r = (kind == UiReqKind::Telemetry) ? sendTelemetryRequestForUI(recipient)
+                                                 : sendStatusPingForUI(recipient);
+    if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+      memcpy(_ui_fallback_key, recipient.id.pub_key, PUB_KEY_SIZE);
+      _ui_fallback_kind = kind;
+      _ui_fallback_at = millis() + (had_path ? 6000u : 12000u);
+      if (!_ui_fallback_at) _ui_fallback_at = 1;
+      return r;
+    }
+    return uiSendRequestViaGuestLogin(recipient, kind);   // could not even send: try the login
+  }
+
+  /** The guest-login route: reset the path, send a blank LOGIN, and send the
+   *  request a moment after LOGIN-OK (uiRequestTick), so it does not go out while
+   *  the login reply is still being re-flooded around the sender. */
+  int uiSendRequestViaGuestLogin(ContactInfo& recipient, UiReqKind kind) {
     uiResetPathForLogin(recipient);
     uint32_t login_est = 0;
     int r = sendLogin(recipient, "", login_est);
@@ -561,6 +584,28 @@ public:
   void cancelUIDeferredLogin() {
     _ui_login_then      = 0;
     _ui_login_then_kind = UiReqKind::None;
+    _ui_fallback_at     = 0;
+    _ui_deferred_at     = 0;
+  }
+  /** Runs from loop(): the login fallback when a direct request got no reply, and
+   *  the request a moment after a fallback login was accepted. */
+  void uiRequestTick() {
+    const uint32_t now = millis();
+    if (_ui_fallback_at && (int32_t)(now - _ui_fallback_at) >= 0) {
+      _ui_fallback_at = 0;
+      if (_ui_pending_status && memcmp(&_ui_pending_status, _ui_fallback_key, 4) == 0) {
+        ContactInfo* c = lookupContactByPubKey(_ui_fallback_key, PUB_KEY_SIZE);
+        if (c) uiSendRequestViaGuestLogin(*c, _ui_fallback_kind);
+      }
+    }
+    if (_ui_deferred_at && (int32_t)(now - _ui_deferred_at) >= 0) {
+      _ui_deferred_at = 0;
+      ContactInfo* c = lookupContactByPubKey(_ui_deferred_key, PUB_KEY_SIZE);
+      if (c) {
+        if (_ui_deferred_kind == UiReqKind::Telemetry) sendTelemetryRequestForUI(*c);
+        else                                           sendStatusPingForUI(*c);
+      }
+    }
   }
   /** True if a UI ping is still waiting on a reply. */
   bool hasUIPingPending() const { return _ui_pending_status != 0; }
@@ -1388,6 +1433,15 @@ private:
    *  matching LOGIN-OK arrives, removing the ACL-commit race on the first try. */
   uint32_t _ui_login_then = 0;
   UiReqKind _ui_login_then_kind = UiReqKind::None;
+  // Direct-first UI requests (#683): fall back to the guest login at _ui_fallback_at
+  // if the reply has not come; after a fallback LOGIN-OK the REQ waits until
+  // _ui_deferred_at. 0 = not armed.
+  uint8_t   _ui_fallback_key[PUB_KEY_SIZE] = {0};
+  UiReqKind _ui_fallback_kind = UiReqKind::None;
+  uint32_t  _ui_fallback_at = 0;
+  uint8_t   _ui_deferred_key[PUB_KEY_SIZE] = {0};
+  UiReqKind _ui_deferred_kind = UiReqKind::None;
+  uint32_t  _ui_deferred_at = 0;
   BaseSerialInterface *_serial;
   AbstractUITask* _ui;
 
