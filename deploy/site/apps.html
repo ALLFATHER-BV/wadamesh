@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" data-sky="soft">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
+<meta name="theme-color" content="#000400">
+<title>WADAMESH · App Store</title>
+<meta name="description" content="The Lua apps you can install on a WADAMESH device from its built-in Store: radio tools, navigation, emergency messaging, music and games. Free, sandboxed and reviewed. Write your own with the SDK.">
+<link rel="canonical" href="https://wadamesh.com/apps.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WADAMESH">
+<meta property="og:url" content="https://wadamesh.com/apps.html">
+<meta property="og:title" content="WADAMESH · App Store">
+<meta property="og:description" content="Radio tools, navigation, emergency messaging, music and games for your mesh radio. Free, sandboxed and reviewed.">
+<meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="wadamesh-badge.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000400; --ink:#E6EBED; --mut:#B0BAC0; --line:#1C2428; --teal:#15B6A6; --teal-ink:#19D6C2; color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased}
+  a{color:var(--teal-ink); text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .top{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px; padding:12px 22px;
+    background:var(--bar); -webkit-backdrop-filter:saturate(1.2) blur(10px); backdrop-filter:saturate(1.2) blur(10px); border-bottom:1px solid var(--line)}
+  .top .word{font-weight:700; letter-spacing:2px; font-size:1.05rem; color:var(--ink)}
+  .top .word .t{color:var(--teal)}
+  .top .tag{font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); border:1px solid var(--line); border-radius:100px; padding:4px 9px}
+  .top .sp{flex:1}
+  .top .home{display:inline-flex; align-items:center; gap:7px; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:var(--control)}
+  .top .home:hover{color:var(--teal-ink); border-color:var(--teal); text-decoration:none}
+  .top .home svg{width:16px;height:16px}
+
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px 80px}
+  h1{font-size:2.1rem; line-height:1.15; margin:38px 0 10px; letter-spacing:-.01em; text-wrap:balance; text-shadow:var(--glow-text)}
+  .lede{color:var(--sky-sub); max-width:66ch; font-size:1.03rem; text-shadow:var(--glow-text)}
+  .cta{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:8px; padding:10px 18px; border-radius:100px; font-size:.92rem; font-weight:600;
+    border:1px solid var(--line); background:var(--control); color:var(--ink)}
+  .btn:hover{text-decoration:none; border-color:var(--teal)}
+  .btn.pri{background:var(--accent-fill); border-color:var(--accent-fill); color:var(--on-accent)}
+  .btn svg{width:17px; height:17px}
+
+  .steps{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:30px 0 8px}
+  .step{padding:14px 16px; border-radius:14px; background:var(--surface); border:1px solid var(--line); font-size:.9rem; color:var(--mut)}
+  .step b{display:block; color:var(--ink); font-size:.95rem; margin-bottom:2px}
+  .step .n{font-family:'JetBrains Mono',monospace; color:var(--teal-ink); font-size:.75rem; letter-spacing:.12em}
+
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin:34px -10px 4px; position:sticky; top:66px; z-index:20; padding:8px 10px; border-radius:18px;
+    background:var(--bar); -webkit-backdrop-filter:saturate(1.2) blur(10px); backdrop-filter:saturate(1.2) blur(10px)}
+  .chip{display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:100px; cursor:pointer; font:inherit; font-size:.85rem;
+    border:1px solid var(--line); background:var(--control); color:var(--ink2)}
+  .chip span{color:var(--dim); font-size:.78rem; font-variant-numeric:tabular-nums}
+  .chip:hover{border-color:var(--teal)}
+  .chip.on{border-color:var(--teal); background:var(--accent-soft); color:var(--teal-ink); font-weight:600}
+
+  .cat h2{font-size:1.15rem; margin:30px 0 12px; text-shadow:var(--glow-text)}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; align-items:start}
+  .app{border-radius:16px; background:var(--surface); border:1px solid var(--line); padding:16px; box-shadow:var(--shadow); scroll-margin-top:150px}
+  .app .shot{margin:-4px -4px 14px; border-radius:11px; background:#05080A; border:1px solid var(--frame-edge); display:grid; place-items:center; padding:10px; height:200px}
+  .app .shot.poster{color:var(--hue); border-color:color-mix(in srgb, var(--hue) 22%, transparent);
+    background:radial-gradient(120% 90% at 50% 110%, color-mix(in srgb, var(--hue) 26%, transparent), transparent 70%), var(--bg2)}
+  .app .shot.poster .pg{width:72px; height:72px; stroke-width:1.3; opacity:.9; filter:drop-shadow(0 0 18px color-mix(in srgb, var(--hue) 55%, transparent))}
+  .app .shot img{max-width:100%; max-height:180px; width:auto; height:auto; border-radius:6px; display:block}
+  .app .shot.tall img{width:170px; height:180px; max-height:none; object-fit:cover; object-position:top; border-radius:8px}
+  .app .head{display:flex; gap:12px; align-items:flex-start}
+  .app .ico{flex:none; width:46px; height:46px; border-radius:13px; display:grid; place-items:center;
+    color:var(--hue); background:color-mix(in srgb, var(--hue) 15%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--hue) 30%, transparent)}
+  .app .ico .g{width:24px; height:24px}
+  .app h3{font-size:1.05rem; line-height:1.25}
+  .app .ver{font-family:'JetBrains Mono',monospace; font-size:.7rem; color:var(--dim); font-weight:600; margin-left:4px}
+  .app .tl{color:var(--mut); font-size:.9rem; margin-top:2px}
+  .app .runs{display:inline-block; margin-top:12px; padding:3px 10px; border-radius:100px; font-size:.76rem; font-weight:600}
+  .app .runs.every{color:var(--ok); background:var(--ok-bg)}
+  .app .runs.most{color:var(--info); background:color-mix(in srgb, var(--info) 14%, transparent)}
+  .app .runs.some{color:var(--warn-ink); background:var(--warn-bg)}
+  .app .by{font-size:.8rem; color:var(--dim); margin-top:8px}
+  .app details{margin-top:10px; border-top:1px solid var(--line); padding-top:8px}
+  .app summary{cursor:pointer; font-size:.85rem; color:var(--teal-ink); list-style:none}
+  .app summary::-webkit-details-marker{display:none}
+  .app summary::before{content:"+ "; font-family:'JetBrains Mono',monospace}
+  .app details[open] summary::before{content:"\2212  "}
+  .app details p{font-size:.9rem; color:var(--ink2); margin-top:8px}
+  .app details ul{margin:8px 0 2px 18px; font-size:.86rem; color:var(--mut)}
+
+  .make{scroll-margin-top:140px; margin-top:56px; padding:26px; border-radius:18px; background:var(--surface); border:1px solid var(--line)}
+  .make h2{font-size:1.4rem; margin-bottom:6px}
+  .make > p{color:var(--mut); max-width:70ch}
+  .mk{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:20px}
+  .mk div{padding:16px 18px; border-radius:14px; background:var(--bg2); border:1px solid var(--line)}
+  .mk h3{font-size:.98rem; margin-bottom:6px}
+  .mk p, .mk li{font-size:.9rem; color:var(--mut)}
+  .mk ul{margin:6px 0 0 18px}
+  code{font-family:'JetBrains Mono',monospace; font-size:.82em; background:var(--bg2); border:1px solid var(--line); padding:1px 6px; border-radius:6px; color:var(--ink2); overflow-wrap:anywhere}
+  .foot{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); color:var(--mut); font-size:.85rem}
+  [hidden]{display:none!important}
+
+  @media (max-width:760px){
+    .steps,.mk{grid-template-columns:1fr}
+    h1{font-size:1.65rem}
+    .wrap{padding:0 16px 60px}
+    .top{padding:10px 16px}
+    .top .tag{display:none}
+    .chips{top:60px; margin-inline:-6px; padding-inline:6px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{flex:none}
+    .app .shot{height:160px}
+    .app .shot img,.app .shot.tall img{max-height:140px}
+    .app .shot.tall img{height:140px; width:140px}
+    .grid{grid-template-columns:1fr}
+    .make{padding:18px}
+  }
+</style>
+<link rel="stylesheet" href="theme.css?v=2">
+<script src="theme.js?v=2" defer></script>
+</head>
+<body>
+
+<header class="top">
+  <span class="word">WADA<span class="t">MESH</span></span>
+  <span class="tag">app store</span>
+  <span class="sp"></span>
+  <button type="button" class="wm-theme" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+  <a class="home" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
+    Home
+  </a>
+</header>
+
+<main class="wrap">
+  <h1>Apps for your mesh radio</h1>
+  <p class="lede">16 small apps you install from the Store on the device itself, over Wi-Fi. Radio tools, navigation, emergency messages, music and games. They are free, run in a sandbox that keeps them away from your keys, and every one is read before it is listed.</p>
+  <div class="cta">
+    <a class="btn pri" href="#make"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>Make your own app</a>
+    <a class="btn" href="sdk.html"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg>Lua SDK guide</a>
+  </div>
+
+  <div class="steps">
+    <div class="step"><span class="n">01</span><b>Open the Store</b>In the app drawer, tap Store. It needs Wi-Fi.</div>
+    <div class="step"><span class="n">02</span><b>Tap Get</b>The app installs in a few seconds and shows up in the drawer.</div>
+    <div class="step"><span class="n">03</span><b>Updates find you</b>The Store tile shows a number when an installed app has a newer version.</div>
+  </div>
+
+  <nav class="chips" aria-label="Filter by category">
+<button type="button" class="chip on" data-f="all">All <span>16</span></button>
+<button type="button" class="chip" data-f="radio">Radio tools <span>3</span></button>
+<button type="button" class="chip" data-f="outdoors">Navigation and outdoors <span>4</span></button>
+<button type="button" class="chip" data-f="messaging">Messaging and safety <span>2</span></button>
+<button type="button" class="chip" data-f="media">Media <span>1</span></button>
+<button type="button" class="chip" data-f="games">Games <span>4</span></button>
+<button type="button" class="chip" data-f="tools">Tools <span>2</span></button>
+  </nav>
+
+<section class="cat" data-cat="radio"><h2>Radio tools</h2><div class="grid">
+<article class="app" id="monitor" data-cat="radio" style="--hue:var(--hue-radio)">
+<div class="shot"><img src="img/apps/monitor.png" alt="RF Monitor on a device" loading="lazy" width="320" height="240"></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg></span><div><h3>RF Monitor <span class="ver">v1.4</span></h3><p class="tl">Your channel at a glance, and every packet you hear.</p></div></div>
+<p class="runs every">Every board</p>
+<details><summary>More about RF Monitor</summary><p>Live RSSI and noise as tiles and a filled chart, with the noise floor dashed underneath, and the packets heard most recently with their type, signal bars, SNR and hop count. Tap a packet for its details: who sent it, the route it took, how far its SNR sat above what your spreading factor can still decode, its size and how long it was on the air.</p>
+<ul><li>Margin above the decode limit, per packet</li><li>Packet type, route and airtime</li><li>Works with keys and trackball too</li></ul>
+</details></article>
+<article class="app" id="airtime" data-cat="radio" style="--hue:var(--hue-radio)">
+<div class="shot"><img src="img/apps/airtime.png" alt="Airtime on a device" loading="lazy" width="320" height="240"></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/></svg></span><div><h3>Airtime <span class="ver">v1.6</span></h3><p class="tl">How busy the channel really is.</p></div></div>
+<p class="runs every">Every board</p>
+<details><summary>More about Airtime</summary><p>The live channel load as a big figure, the average and peak over the session, and your own time on the air. A filled chart shows the load against your region&#x27;s duty-cycle limit, and a bar splits the airtime into what you received and what you sent. While it runs it keeps a Home widget with the load up to date.</p>
+<ul><li>Duty-cycle limit on the chart</li><li>Receive and transmit split</li><li>Home widget while it runs (not on the 2 MB Heltec V4)</li></ul>
+</details></article>
+<article class="app" id="wardrive" data-cat="radio" style="--hue:var(--hue-radio)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg></span><div><h3>Wardrive <span class="ver">v1.2</span></h3><p class="tl">Survey your coverage while you drive or walk.</p></div></div>
+<p class="runs most">Every board but the 2 MB Heltec V4</p>
+<details><summary>More about Wardrive</summary><p>Every 20 seconds it sends a discovery probe that every node in earshot answers, and logs each reply with your GPS position, altitude and both directions of the link: how well you heard them and how well they heard you. The run goes to a CSV you can take off the device, and it plots back on the map so you can check coverage before you drive it again.</p>
+<ul><li>Both link directions per node</li><li>CSV log with position and altitude</li><li>Run plotted on the map</li></ul>
+</details></article>
+</div></section>
+<section class="cat" data-cat="outdoors"><h2>Navigation and outdoors</h2><div class="grid">
+<article class="app" id="protreck" data-cat="outdoors" style="--hue:var(--hue-place)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg></span><div><h3>ProTreck <span class="ver">v1.0</span></h3><p class="tl">An outdoor watch: sun, moon, stopwatch, timer and altitude.</p></div></div>
+<p class="runs every">Every board</p>
+<p class="by">By <a href="https://github.com/samuelcoustet" target="_blank" rel="noopener">samuelcoustet</a></p>
+<details><summary>More about ProTreck</summary><p>Four tools you swipe between. Astro shows sunrise, sunset and the moon phase for where you are. Chrono is a stopwatch with laps, Timer a countdown with an alarm, and Alti your GPS altitude with its minimum, maximum and a trend graph.</p>
+<ul><li>Sunrise, sunset and moon phase</li><li>Stopwatch with laps and a countdown timer</li><li>Altitude trend graph</li></ul>
+</details></article>
+<article class="app" id="nearby" data-cat="outdoors" style="--hue:var(--hue-place)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg></span><div><h3>Nearby <span class="ver">v1.0</span></h3><p class="tl">Your contacts on a real map, nearest first.</p></div></div>
+<p class="runs most">Every board but the 2 MB Heltec V4</p>
+<details><summary>More about Nearby</summary><p>Shows the contacts that share a position on the firmware&#x27;s own map tiles, sorted by distance, with the bearing to each one and a live count of the packets you hear. It is also the reference app for the SDK&#x27;s map, list, geo and packet calls, so it is a good place to start reading code.</p>
+<ul><li>Real map tiles inside the app</li><li>Distance and bearing to each contact</li><li>Reference app for wada.map and wada.geo</li></ul>
+</details></article>
+<article class="app" id="gpscompass" data-cat="outdoors" style="--hue:var(--hue-place)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5Z"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5Z"/></svg></span><div><h3>GPS Compass <span class="ver">v1.0</span></h3><p class="tl">A compass dial, the live GPS fix, and the way to a contact.</p></div></div>
+<p class="runs every">Every board</p>
+<details><summary>More about GPS Compass</summary><p>A heading dial with the live GPS fix underneath. On the ThinkNode M9 the heading comes from its magnetometer, with a calibration you run once by turning the device around; on other boards it uses your GPS course while you move. Pick a contact with a known position and it appears on the dial with its bearing and range.</p>
+<ul><li>Magnetometer heading on the M9</li><li>GPS course on every other board</li><li>Bearing and range to a contact</li></ul>
+</details></article>
+<article class="app" id="tripodometer" data-cat="outdoors" style="--hue:var(--hue-place)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-7-6.3-7-11a7 7 0 0 1 14 0c0 4.7-7 11-7 11Z"/><circle cx="12" cy="10" r="2.5"/></svg></span><div><h3>Trip Odometer <span class="ver">v1.0</span></h3><p class="tl">A trip computer for your walk or ride.</p></div></div>
+<p class="runs most">Needs a GPS</p>
+<p class="by">By <a href="https://github.com/samuelcoustet" target="_blank" rel="noopener">samuelcoustet</a></p>
+<details><summary>More about Trip Odometer</summary><p>Tracks the distance, time, speed and altitude of a trip from the GPS. Start and stop it as you go, reset it for the next trip, and it keeps your trip across app restarts.</p>
+<ul><li>Distance, time, speed and altitude</li><li>Survives app restarts</li><li>Needs a GPS</li></ul>
+</details></article>
+</div></section>
+<section class="cat" data-cat="messaging"><h2>Messaging and safety</h2><div class="grid">
+<article class="app" id="ping" data-cat="messaging" style="--hue:var(--hue-msg)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z"/></svg></span><div><h3>Ping <span class="ver">v1.0</span></h3><p class="tl">Round-trip time to any contact, with distance and bearing.</p></div></div>
+<p class="runs most">Every board but the 2 MB Heltec V4</p>
+<p class="by">By <a href="https://github.com/samuelcoustet" target="_blank" rel="noopener">samuelcoustet</a></p>
+<details><summary>More about Ping</summary><p>Sends a ping as a direct message and measures how long the answer takes. Both devices swap their GPS position, so the result shows the round-trip time, the distance and the bearing when both have a fix. It also answers pings from other people running Ping.</p>
+<ul><li>Round-trip time over the mesh</li><li>Distance and bearing when both have GPS</li><li>Answers other people&#x27;s pings</li></ul>
+</details></article>
+<article class="app" id="mecp" data-cat="messaging" style="--hue:var(--hue-msg)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span><div><h3>MECP <span class="ver">v1.0</span></h3><p class="tl">Emergency messages everyone can read in their own language.</p></div></div>
+<p class="runs most">Every board but the 2 MB Heltec V4</p>
+<p class="by">Code table: MECP by <a href="https://github.com/xiang-dev-1" target="_blank" rel="noopener">xiang-dev-1</a>, CC BY 4.0</p>
+<details><summary>More about MECP</summary><p>Writes and reads messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and many more), add the number of people and your position, and post it to the channel you choose. MECP lines heard on your channels while the app is open are shown decoded in plain words.</p>
+<ul><li>Severity, codes, head count and position</li><li>Decodes MECP messages you receive</li><li>Plain text, so it crosses any channel</li></ul>
+</details></article>
+</div></section>
+<section class="cat" data-cat="media"><h2>Media</h2><div class="grid">
+<article class="app" id="music" data-cat="media" style="--hue:var(--hue-device)">
+<div class="shot tall"><img src="img/apps/music.png" alt="Music on a device" loading="lazy" width="284" height="616"></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></span><div><h3>Music <span class="ver">v1.0</span></h3><p class="tl">Your MP3s and WAVs from the SD card, with the screen off.</p></div></div>
+<p class="runs some">Boards with a speaker</p>
+<details><summary>More about Music</summary><p>Plays the MP3 and WAV files in a Music folder on the SD card, three folder levels deep, so Music/Artist/Album works. Previous, play and pause, next, shuffle and repeat, and it keeps going through the list with the screen off. It follows the device&#x27;s sound switch and volume, and message chimes stay quiet while a track plays.</p>
+<ul><li>Shuffle and repeat, one track or all</li><li>Keeps playing with the screen off</li><li>T-Deck, T-LoRa Pager, T-Display P4, Tanmatsu, T-Deck Max</li></ul>
+</details></article>
+</div></section>
+<section class="cat" data-cat="games"><h2>Games</h2><div class="grid">
+<article class="app" id="snake" data-cat="games" style="--hue:var(--hue-bad)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18h6a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h10"/><circle cx="19.5" cy="6" r="1.5"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18h6a3 3 0 0 0 0-6H8a3 3 0 0 1 0-6h10"/><circle cx="19.5" cy="6" r="1.5"/></svg></span><div><h3>Snake <span class="ver">v1.0</span></h3><p class="tl">The classic. Swipe to steer.</p></div></div>
+<p class="runs every">Every board</p>
+<details><summary>More about Snake</summary><p>Eat the food, grow longer, do not bite yourself. Steer with swipes, the trackball or the arrow keys, and tap after a game over to play again. Small enough to read in one sitting, which makes it the SDK&#x27;s first reference app.</p>
+<ul><li>Swipe, trackball or keys</li><li>Runs on every board, the Heltec V4 included</li><li>Reference app for wada.ui and wada.input</li></ul>
+</details></article>
+<article class="app" id="tetris" data-cat="games" style="--hue:var(--hue-bad)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h5v5H4zM9 14h5v5H9zM9 9h5v5H9zM15 4h5v5h-5z"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14h5v5H4zM9 14h5v5H9zM9 9h5v5H9zM15 4h5v5h-5z"/></svg></span><div><h3>Tetris <span class="ver">v1.0</span></h3><p class="tl">The falling-block puzzle.</p></div></div>
+<p class="runs every">Every board</p>
+<p class="by">By <a href="https://github.com/samuelcoustet" target="_blank" rel="noopener">samuelcoustet</a></p>
+<details><summary>More about Tetris</summary><p>Swipe left and right to move, up to rotate and down to drop. On a keyboard the arrows move and rotate, and Enter or Space drops.</p>
+<ul><li>Touch and keyboard controls</li></ul>
+</details></article>
+<article class="app" id="2048" data-cat="games" style="--hue:var(--hue-bad)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18M15 3v18M3 9h18M3 15h18"/></svg></span><div><h3>2048 <span class="ver">v1.2</span></h3><p class="tl">The sliding-tile puzzle, with your best score kept.</p></div></div>
+<p class="runs every">Every board</p>
+<p class="by">By <a href="https://github.com/pisti87" target="_blank" rel="noopener">pisti87</a></p>
+<details><summary>More about 2048</summary><p>Slide the tiles, merge equal numbers and reach 2048. Swipe or use the trackball to move, tap to start again, and your best score is kept between games.</p>
+<ul><li>Best score kept</li><li>Swipe or trackball</li></ul>
+</details></article>
+<article class="app" id="breakout" data-cat="games" style="--hue:var(--hue-bad)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h8v4H3zM13 4h8v4h-8zM7 10h10v4H7z"/><path d="M8 20h8"/><circle cx="12" cy="17" r="1.2"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h8v4H3zM13 4h8v4h-8zM7 10h10v4H7z"/><path d="M8 20h8"/><circle cx="12" cy="17" r="1.2"/></svg></span><div><h3>Breakout <span class="ver">v1.0</span></h3><p class="tl">Brick-breaker, level after level.</p></div></div>
+<p class="runs every">Every board</p>
+<p class="by">By <a href="https://github.com/samuelcoustet" target="_blank" rel="noopener">samuelcoustet</a></p>
+<details><summary>More about Breakout</summary><p>Move the paddle with swipes or the arrow keys, launch the ball with a swipe up or Enter, and clear every brick to reach the next level.</p>
+<ul><li>Levels</li><li>Touch and keyboard controls</li></ul>
+</details></article>
+</div></section>
+<section class="cat" data-cat="tools"><h2>Tools</h2><div class="grid">
+<article class="app" id="sdktest" data-cat="tools" style="--hue:var(--hue-sys)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></span><div><h3>SDK Test <span class="ver">v1.7</span></h3><p class="tl">For app makers: checks the extended SDK on your board.</p></div></div>
+<p class="runs most">Every board but the 2 MB Heltec V4</p>
+<details><summary>More about SDK Test</summary><p>Runs through the extended Lua SDK on the board in your hand and shows the results on screen: capabilities, clock, battery, GPS, private files, audio, SD listing, crypto against published test vectors and channel discovery. A few buttons transmit test messages, so it is a bench tool rather than something to leave running.</p>
+<ul><li>Crypto checked against RFC test vectors</li><li>Every capability flag on one screen</li><li>Some buttons transmit</li></ul>
+</details></article>
+<article class="app" id="sdscan" data-cat="tools" style="--hue:var(--hue-sys)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span><div><h3>SD Scan <span class="ver">v1.1</span></h3><p class="tl">Finds and removes Windows malware on the SD card.</p></div></div>
+<p class="runs most">Boards with an SD card</p>
+<details><summary>More about SD Scan</summary><p>Written for the SD-card worm some ThinkNode M9 cards shipped with: a hidden autorun file and Windows programs disguised as shortcuts. They cannot run on a radio, but they run on the first Windows PC the card goes into. The firmware decides what counts as a threat, so the app can remove those files and nothing else: never map tiles, backups or chat history.</p>
+<ul><li>Firmware decides what is a threat</li><li>Cannot delete your own files</li><li>Asks before removing anything</li></ul>
+</details></article>
+</div></section>
+
+  <section class="make" id="make">
+    <h2>Make your own app</h2>
+    <p>Apps are one Lua file plus a one-line manifest. They talk to the device through the <code>wada.*</code> API: screens and input, timers, storage, the mesh, GPS, the map and audio. Read a reference app, write yours on the device, and send it in for everyone.</p>
+    <div class="mk">
+      <div><h3>1. Read the SDK guide</h3><p>The <a href="sdk.html">SDK guide</a> starts with <a href="sdk.html#hello">your first app</a> in ten lines and documents every call. Snake, RF Monitor and Nearby are small enough to read in one sitting.</p></div>
+      <div><h3>2. Try it on your own device</h3><p>Copy your <code>.lua</code> file to <code>/meshcomod/apps/</code> on the SD card (or <code>/apps/</code> on boards that store internally) and it appears in the app drawer, no manifest needed. <a href="sdk.html#install">How side-loading works</a>.</p></div>
+      <div><h3>3. Send it in</h3><p>Fork <a href="https://github.com/ALLFATHER-BV/wadamesh" target="_blank" rel="noopener">ALLFATHER-BV/wadamesh</a>, add <code>deploy/apps/&lt;id&gt;/&lt;ver&gt;/</code> with your <code>.lua</code> and manifest, add your app to <code>deploy/apps/apps.json</code>, and open a pull request saying what it does and which boards you tried. A published version is never edited: a change ships as the next version. No git? <a href="https://github.com/ALLFATHER-BV/wadamesh/issues/new" target="_blank" rel="noopener">Open an issue</a> with the file attached. <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/deploy/apps/README.md" target="_blank" rel="noopener">The full guide</a>.</p></div>
+      <div><h3>4. What review looks for</h3><ul>
+        <li>Never reads, sends or stores keys, identities or channel secrets</li>
+        <li>No flash writes in a loop or on every packet</li>
+        <li>Nothing that needs more than the Heltec V4's 2 MB of PSRAM</li>
+        <li>Transmits or changes radio settings only when the user asks</li>
+        <li>Data leaves the device only when the user asked for it</li>
+      </ul><p style="margin-top:6px">If something needs changing we say what and why on the PR, and help you land it. Apps are published under GPL-3.0 like the rest of the firmware.</p></div>
+    </div>
+  </section>
+
+  <p class="foot">This page is generated from the same catalog the devices read, so the versions here are the versions you get. Questions? Ask on <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a> or read the <a href="docs.html">user guide</a>.</p>
+</main>
+
+<script>
+(function(){
+  var chips=document.querySelectorAll('.chip'), cats=document.querySelectorAll('.cat');
+  function show(f){
+    chips.forEach(function(c){c.classList.toggle('on', c.dataset.f===f)});
+    cats.forEach(function(s){s.hidden = !(f==='all' || s.dataset.cat===f)});
+  }
+  chips.forEach(function(c){c.addEventListener('click', function(){show(c.dataset.f)})});
+  // a link to #<app id> opens that app's details
+  var id=location.hash.slice(1), el=id && document.getElementById(id);
+  if(el && el.classList.contains('app')){var d=el.querySelector('details'); if(d) d.open=true}
+})();
+</script>
+</body>
+</html>

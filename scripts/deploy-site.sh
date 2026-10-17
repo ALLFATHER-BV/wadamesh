@@ -27,6 +27,9 @@ DRY=""
 # The changelog page (what the firmware's text browser opens when there is no home page on
 # the SD card, #622) is generated from release-notes/ so it always matches the builds.
 python3 "$ROOT/scripts/build/gen-changelog.py"
+# The app store page lists the Store catalog (deploy/apps/apps.json) with the write-ups in
+# deploy/site/apps-info.json, so a new app version shows up there at the next site deploy.
+python3 "$ROOT/scripts/build/gen-apps-page.py"
 
 # Mirror deploy/site/ -> web root. --delete prunes files no longer in the repo;
 # everything under deploy/site/ is static (html, svg, json manifests).

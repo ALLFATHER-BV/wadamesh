@@ -1,0 +1,221 @@
+{
+  "_comment": "Site-only text for wadamesh.com/apps.html. Names, versions and requirements come from deploy/apps/apps.json (the Store catalog); scripts/build/gen-apps-page.py merges the two at every site deploy. One entry per app id. No em dashes.",
+  "categories": [
+    {
+      "id": "radio",
+      "name": "Radio tools",
+      "hue": "--hue-radio"
+    },
+    {
+      "id": "outdoors",
+      "name": "Navigation and outdoors",
+      "hue": "--hue-place"
+    },
+    {
+      "id": "messaging",
+      "name": "Messaging and safety",
+      "hue": "--hue-msg"
+    },
+    {
+      "id": "media",
+      "name": "Media",
+      "hue": "--hue-device"
+    },
+    {
+      "id": "games",
+      "name": "Games",
+      "hue": "--hue-bad"
+    },
+    {
+      "id": "tools",
+      "name": "Tools",
+      "hue": "--hue-sys"
+    }
+  ],
+  "apps": {
+    "monitor": {
+      "category": "radio",
+      "glyph": "signal",
+      "tagline": "Your channel at a glance, and every packet you hear.",
+      "about": "Live RSSI and noise as tiles and a filled chart, with the noise floor dashed underneath, and the packets heard most recently with their type, signal bars, SNR and hop count. Tap a packet for its details: who sent it, the route it took, how far its SNR sat above what your spreading factor can still decode, its size and how long it was on the air.",
+      "highlights": [
+        "Margin above the decode limit, per packet",
+        "Packet type, route and airtime",
+        "Works with keys and trackball too"
+      ],
+      "shot": "img/apps/monitor.png"
+    },
+    "airtime": {
+      "category": "radio",
+      "glyph": "chart",
+      "tagline": "How busy the channel really is.",
+      "about": "The live channel load as a big figure, the average and peak over the session, and your own time on the air. A filled chart shows the load against your region's duty-cycle limit, and a bar splits the airtime into what you received and what you sent. While it runs it keeps a Home widget with the load up to date.",
+      "highlights": [
+        "Duty-cycle limit on the chart",
+        "Receive and transmit split",
+        "Home widget while it runs (not on the 2 MB Heltec V4)"
+      ],
+      "shot": "img/apps/airtime.png"
+    },
+    "wardrive": {
+      "category": "radio",
+      "glyph": "map",
+      "tagline": "Survey your coverage while you drive or walk.",
+      "about": "Every 20 seconds it sends a discovery probe that every node in earshot answers, and logs each reply with your GPS position, altitude and both directions of the link: how well you heard them and how well they heard you. The run goes to a CSV you can take off the device, and it plots back on the map so you can check coverage before you drive it again.",
+      "highlights": [
+        "Both link directions per node",
+        "CSV log with position and altitude",
+        "Run plotted on the map"
+      ]
+    },
+    "ping": {
+      "category": "messaging",
+      "glyph": "message",
+      "tagline": "Round-trip time to any contact, with distance and bearing.",
+      "about": "Sends a ping as a direct message and measures how long the answer takes. Both devices swap their GPS position, so the result shows the round-trip time, the distance and the bearing when both have a fix. It also answers pings from other people running Ping.",
+      "highlights": [
+        "Round-trip time over the mesh",
+        "Distance and bearing when both have GPS",
+        "Answers other people's pings"
+      ],
+      "credit": "samuelcoustet"
+    },
+    "mecp": {
+      "category": "messaging",
+      "glyph": "bell",
+      "tagline": "Emergency messages everyone can read in their own language.",
+      "about": "Writes and reads messages in the Mesh Emergency Communication Protocol. Pick a severity and the codes (injury, flooding, need water and many more), add the number of people and your position, and post it to the channel you choose. MECP lines heard on your channels while the app is open are shown decoded in plain words.",
+      "highlights": [
+        "Severity, codes, head count and position",
+        "Decodes MECP messages you receive",
+        "Plain text, so it crosses any channel"
+      ],
+      "credit_note": "Code table: MECP by xiang-dev-1, CC BY 4.0",
+      "credit_user": "xiang-dev-1"
+    },
+    "nearby": {
+      "category": "outdoors",
+      "glyph": "person",
+      "tagline": "Your contacts on a real map, nearest first.",
+      "about": "Shows the contacts that share a position on the firmware's own map tiles, sorted by distance, with the bearing to each one and a live count of the packets you hear. It is also the reference app for the SDK's map, list, geo and packet calls, so it is a good place to start reading code.",
+      "highlights": [
+        "Real map tiles inside the app",
+        "Distance and bearing to each contact",
+        "Reference app for wada.map and wada.geo"
+      ]
+    },
+    "gpscompass": {
+      "category": "outdoors",
+      "glyph": "compass",
+      "tagline": "A compass dial, the live GPS fix, and the way to a contact.",
+      "about": "A heading dial with the live GPS fix underneath. On the ThinkNode M9 the heading comes from its magnetometer, with a calibration you run once by turning the device around; on other boards it uses your GPS course while you move. Pick a contact with a known position and it appears on the dial with its bearing and range.",
+      "highlights": [
+        "Magnetometer heading on the M9",
+        "GPS course on every other board",
+        "Bearing and range to a contact"
+      ]
+    },
+    "tripodometer": {
+      "category": "outdoors",
+      "glyph": "gps",
+      "tagline": "A trip computer for your walk or ride.",
+      "about": "Tracks the distance, time, speed and altitude of a trip from the GPS. Start and stop it as you go, reset it for the next trip, and it keeps your trip across app restarts.",
+      "highlights": [
+        "Distance, time, speed and altitude",
+        "Survives app restarts",
+        "Needs a GPS"
+      ],
+      "credit": "samuelcoustet"
+    },
+    "protreck": {
+      "category": "outdoors",
+      "glyph": "star",
+      "tagline": "An outdoor watch: sun, moon, stopwatch, timer and altitude.",
+      "about": "Four tools you swipe between. Astro shows sunrise, sunset and the moon phase for where you are. Chrono is a stopwatch with laps, Timer a countdown with an alarm, and Alti your GPS altitude with its minimum, maximum and a trend graph.",
+      "highlights": [
+        "Sunrise, sunset and moon phase",
+        "Stopwatch with laps and a countdown timer",
+        "Altitude trend graph"
+      ],
+      "credit": "samuelcoustet"
+    },
+    "music": {
+      "category": "media",
+      "glyph": "music",
+      "tagline": "Your MP3s and WAVs from the SD card, with the screen off.",
+      "about": "Plays the MP3 and WAV files in a Music folder on the SD card, three folder levels deep, so Music/Artist/Album works. Previous, play and pause, next, shuffle and repeat, and it keeps going through the list with the screen off. It follows the device's sound switch and volume, and message chimes stay quiet while a track plays.",
+      "highlights": [
+        "Shuffle and repeat, one track or all",
+        "Keeps playing with the screen off",
+        "T-Deck, T-LoRa Pager, T-Display P4, Tanmatsu, T-Deck Max"
+      ],
+      "shot": "img/apps/music.png",
+      "shot_tall": true
+    },
+    "snake": {
+      "category": "games",
+      "glyph": "snake",
+      "tagline": "The classic. Swipe to steer.",
+      "about": "Eat the food, grow longer, do not bite yourself. Steer with swipes, the trackball or the arrow keys, and tap after a game over to play again. Small enough to read in one sitting, which makes it the SDK's first reference app.",
+      "highlights": [
+        "Swipe, trackball or keys",
+        "Runs on every board, the Heltec V4 included",
+        "Reference app for wada.ui and wada.input"
+      ]
+    },
+    "2048": {
+      "category": "games",
+      "glyph": "grid",
+      "tagline": "The sliding-tile puzzle, with your best score kept.",
+      "about": "Slide the tiles, merge equal numbers and reach 2048. Swipe or use the trackball to move, tap to start again, and your best score is kept between games.",
+      "highlights": [
+        "Best score kept",
+        "Swipe or trackball"
+      ],
+      "credit": "pisti87"
+    },
+    "tetris": {
+      "category": "games",
+      "glyph": "blocks",
+      "tagline": "The falling-block puzzle.",
+      "about": "Swipe left and right to move, up to rotate and down to drop. On a keyboard the arrows move and rotate, and Enter or Space drops.",
+      "highlights": [
+        "Touch and keyboard controls"
+      ],
+      "credit": "samuelcoustet"
+    },
+    "breakout": {
+      "category": "games",
+      "glyph": "bricks",
+      "tagline": "Brick-breaker, level after level.",
+      "about": "Move the paddle with swipes or the arrow keys, launch the ball with a swipe up or Enter, and clear every brick to reach the next level.",
+      "highlights": [
+        "Levels",
+        "Touch and keyboard controls"
+      ],
+      "credit": "samuelcoustet"
+    },
+    "sdscan": {
+      "category": "tools",
+      "glyph": "search",
+      "tagline": "Finds and removes Windows malware on the SD card.",
+      "about": "Written for the SD-card worm some ThinkNode M9 cards shipped with: a hidden autorun file and Windows programs disguised as shortcuts. They cannot run on a radio, but they run on the first Windows PC the card goes into. The firmware decides what counts as a threat, so the app can remove those files and nothing else: never map tiles, backups or chat history.",
+      "highlights": [
+        "Firmware decides what is a threat",
+        "Cannot delete your own files",
+        "Asks before removing anything"
+      ]
+    },
+    "sdktest": {
+      "category": "tools",
+      "glyph": "settings",
+      "tagline": "For app makers: checks the extended SDK on your board.",
+      "about": "Runs through the extended Lua SDK on the board in your hand and shows the results on screen: capabilities, clock, battery, GPS, private files, audio, SD listing, crypto against published test vectors and channel discovery. A few buttons transmit test messages, so it is a bench tool rather than something to leave running.",
+      "highlights": [
+        "Crypto checked against RFC test vectors",
+        "Every capability flag on one screen",
+        "Some buttons transmit"
+      ]
+    }
+  }
+}
