@@ -33609,14 +33609,16 @@ struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; cha
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
 // by luaAppIconGlyph(); empty = the generic app symbol.
 struct LuaInstApp { char id[20]; char name[28]; char ver[12]; char icon[12]; };
-static const int kLuaCatMax = 16, kLuaInstMax = 16;
+// The catalog reached 16 apps in beta_95, and the parse loop stops at the cap,
+// so a 17th row (or install) was silently never listed. PSRAM only.
+static const int kLuaCatMax = 40, kLuaInstMax = 40;
 static const int kLangCatMax = LANG_COUNT + 2, kLangInstMax = LANG_COUNT;
 static LuaCatApp* s_lua_cat = nullptr;      // PSRAM, allocated on first store use
 static int        s_lua_cat_n = 0;          // -1 = last fetch failed
 static LuaInstApp* s_lua_inst = nullptr;    // PSRAM (see luaStoreTablesReady)
 static int        s_lua_inst_n = 0;
 static char*      s_luacat_buf = nullptr;   // catalog JSON (PSRAM, worker-filled)
-static const size_t kLuaCatBufMax = 8192;
+static const size_t kLuaCatBufMax = 24576;   // ~280 B per catalog row; PSRAM
 static volatile bool s_luacat_request = false, s_luacat_done = false;
 static volatile bool s_luainst_request = false, s_luainst_done = false;
 static bool  s_luainst_ok = false;

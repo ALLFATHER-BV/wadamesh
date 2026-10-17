@@ -261,17 +261,19 @@ return app</code></pre>
           <tr><td>wada.ui.clear()</td><td>Remove every widget from the app's page, leaving the page itself. This is how you build an app with more than one screen: clear, then create the next screen's widgets in the same place you built the first. <b>Any handle you still hold from before the clear is dead</b>: calling a method on it does nothing rather than crashing, but it will not come back, so re-create and re-assign. Older firmware has no <code>ui.clear</code>: write <code>local clear = ui.clear or function() end</code> if you need to run on both.</td></tr>
           <tr><td>wada.ui.list(x, y, w, h)</td><td>A scrollable list of selectable rows, the "pick one of N" widget. Methods: <code>add(text [, fn])</code> returning the row index, <code>set(i, text)</code>, <code>color(i, c)</code>, <code>select(i)</code> (highlights <i>and</i> scrolls it into view), <code>selected()</code>, <code>count()</code>, <code>clear()</code>, <code>pos(x, y)</code>. Rows are real buttons, so keyboard and trackball navigation walks them on touchless boards without you doing anything.</td></tr>
           <tr><td>wada.ui.input(title, initial, cb)</td><td>A modal text field. <code>cb(text)</code> on OK, <code>cb(nil)</code> on cancel or on the dialog being closed any other way: exactly one call, always, so an app that disabled itself while waiting always gets to re-enable. Uses the firmware's own dialog and keyboard, so it behaves identically on a touchscreen, on the Tanmatsu's physical keyboard and on a trackball board. One prompt at a time.</td></tr>
-          <tr><td>wada.ui.canvas(w, h)</td><td>A drawing surface. See the canvas methods below.</td></tr>
+          <tr><td>wada.ui.canvas(w, h)</td><td>A drawing surface. See the canvas methods below. Each side is clamped to the screen's long side (at least 480), so sizing it from <code>on_open(w, h)</code> is safe on every board.</td></tr>
           <tr><td>wada.ui.chart(points)</td><td>A line chart sized to the page. The Airtime and RF Monitor primitive.</td></tr>
           <tr><td>wada.ui.scroll(on)</td><td>Allow the page to scroll when content is taller than the screen.</td></tr>
           <tr><td>wada.ui.text_h(size)</td><td>Line height in pixels for a size class. Use it to lay out a canvas.</td></tr>
           <tr><td>wada.ui.colors</td><td>Theme table: <code>text</code>, <code>sub</code>, <code>bg</code>, <code>panel</code>, <code>accent</code>, <code>good</code>, <code>bad</code>, and on newer firmware <code>warn</code> (amber) and <code>border</code> (a panel's frame). Write <code>colors.warn or 0xE8A33D</code> to run on both.</td></tr>
         </table>
         <h3>Label handle</h3>
+        <p>A button returns the same kind of handle, so all of these work on buttons too; <code>color</code> sets a button's text colour.</p>
         <table class="api">
           <tr><td>lbl:set(text)</td><td>Replace the text.</td></tr>
           <tr><td>lbl:color(c)</td><td>Set the colour, e.g. <code>wada.ui.colors.accent</code>.</td></tr>
           <tr><td>lbl:pos(x, y)</td><td>Place it explicitly instead of in flow.</td></tr>
+          <tr><td>lbl:bg(fill [, border])</td><td>Fill colour behind it: on a button handle, the button's own colour (and its frame when <code>border</code> is given), so a coloured button stays a focus stop for the keys and trackball. New in beta_96: write <code>if b.bg then b:bg(c) end</code> to run on older firmware too.</td></tr>
           <tr><td>lbl:width(px, [align])</td><td>Fix the width; longer text wraps instead of running off the panel. Optional <code>"center"</code> / <code>"right"</code> aligns the text inside that width (default left).</td></tr>
         </table>
         <h3>Canvas handle</h3>

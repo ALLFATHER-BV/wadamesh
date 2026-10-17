@@ -437,8 +437,17 @@ int cvGc(lua_State* L) {
 int uiCanvas(lua_State* L) {
   if (!s_h || !s_h->body) return luaL_error(L, "no app body");
   int w = (int)luaL_checkinteger(L, 1), h = (int)luaL_checkinteger(L, 2);
-  luaL_argcheck(L, w > 0 && w <= 480, 1, "width 1..480");
-  luaL_argcheck(L, h > 0 && h <= 480, 2, "height 1..480");
+  luaL_argcheck(L, w > 0, 1, "width must be positive");
+  luaL_argcheck(L, h > 0, 2, "height must be positive");
+  // Up to the screen's long side (at least 480). A hard 480 made apps that size
+  // a canvas from on_open(w, h) die with a Lua error on the larger screens:
+  // the T-Display P4's body is ~575 tall, the Tanmatsu and CrowPanel 5 are 800
+  // wide (Discord, Blackjack on the P4). Larger requests are clamped, not fatal.
+  int lim = (int)lv_disp_get_hor_res(nullptr);
+  if ((int)lv_disp_get_ver_res(nullptr) > lim) lim = (int)lv_disp_get_ver_res(nullptr);
+  if (lim < 480) lim = 480;
+  if (w > lim) w = lim;
+  if (h > lim) h = lim;
   size_t bytes = (size_t)w * h * sizeof(lv_color_t);
   lv_color_t* buf = (lv_color_t*)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!buf) return luaL_error(L, "canvas alloc failed");
@@ -495,6 +504,23 @@ int lbPos(lua_State* L) {
 int lbColor(lua_State* L) {
   WidgetUd* u = checkLabel(L);
   if (u->obj) lv_obj_set_style_text_color(u->obj, lv_color_hex(argColor(L, 2)), LV_PART_MAIN);
+  return 0;
+}
+
+// button:bg(fill [, border]) -- the fill colour of a button (or a label, which
+// then gets a solid box behind its text). Apps asked for coloured buttons and
+// were drawing their own from panels, which are no focus stop for keypad
+// navigation. Older firmware has no bg: `if b.bg then b:bg(c) end`.
+int lbBg(lua_State* L) {
+  WidgetUd* u = checkLabel(L);
+  if (!u->obj) return 0;
+  lv_obj_set_style_bg_color(u->obj, lv_color_hex(argColor(L, 2)), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(u->obj, LV_OPA_COVER, LV_PART_MAIN);
+  if (!lua_isnoneornil(L, 3)) {
+    lv_obj_set_style_border_color(u->obj, lv_color_hex(argColor(L, 3)), LV_PART_MAIN);
+    if (lv_obj_get_style_border_width(u->obj, LV_PART_MAIN) == 0)
+      lv_obj_set_style_border_width(u->obj, 1, LV_PART_MAIN);
+  }
   return 0;
 }
 
@@ -3068,6 +3094,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, lbPos);   lua_setfield(L, -2, "pos");
   lua_pushcfunction(L, lbColor); lua_setfield(L, -2, "color");
   lua_pushcfunction(L, lbWidth); lua_setfield(L, -2, "width");
+  lua_pushcfunction(L, lbBg);    lua_setfield(L, -2, "bg");
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 }
