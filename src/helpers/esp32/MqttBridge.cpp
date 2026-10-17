@@ -5,7 +5,7 @@
 // makes MqttBridge a no-op stub on the Tanmatsu, and the real bridge below on all other boards.
 MqttBridge mqtt_bridge;
 
-#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)   // ---- real PubSubClient/WiFiClient implementation; NOT built on the P4 boards ----
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)   // ---- real PubSubClient/WiFiClient implementation; NOT built on the P4 boards ----
 #include "SdNvsPrefs.h"   // NOT raw NVS Preferences: the touch firmware abandoned NVS (tiny, shared,
                          // doesn't survive Launcher) for a file-backed store. MQTT was the last setting
                          // still on NVS, so its writes silently failed / didn't persist (GH #128).

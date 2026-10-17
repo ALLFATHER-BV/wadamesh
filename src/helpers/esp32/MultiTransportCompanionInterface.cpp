@@ -218,7 +218,7 @@ void MultiTransportCompanionInterface::beginBle(const char* prefix, char* name, 
   if (!_ble_phone_paused) _ble.enable();
 }
 
-#if defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED
+#if (defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED) || defined(HAS_CROWPANEL_P4_101)
 extern "C" bool hostedInitBLE();       // arduino-esp32 esp32-hal-hosted: C6 BLE controller bring-up
 extern "C" bool hostedIsBLEActive();
 #endif
@@ -259,7 +259,7 @@ void MultiTransportCompanionInterface::enableBle() {
       s_ble_fail = BLE_FAIL_HEAP;
       return;
     }
-#if defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED
+#if (defined(HAS_TDISPLAY_P4) && defined(TDP4_C6_HOSTED) && TDP4_C6_HOSTED) || defined(HAS_CROWPANEL_P4_101)
     // The P4's Bluetooth radio is the C6's controller: at boot main.cpp brings it up only
     // when BLE is on, so a start from the toggles has to do it here, or NimBLE comes up
     // against no controller. The user asked for Bluetooth, so the esp-hosted handshake's

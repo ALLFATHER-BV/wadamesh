@@ -133,7 +133,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #ifndef PIN_I2S_SDIN
     #define PIN_I2S_SDIN 17
   #endif
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
   #include <FFat.h>            // internal FAT partition (Tanmatsu 'locfd' / P4 'storage')
   #include <SD_MMC.h>          // microSD on the P4-class boards' SDMMC slot 0; slot 1 = C6 radio
   extern bool g_fs_ok;         // set in main.cpp once the internal FAT is mounted
@@ -226,6 +226,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #else
       #include <RM69A10Display.h>            // RM69A10 MIPI-DSI AMOLED (default SKU) on the T-Display P4
     #endif
+  #elif defined(HAS_CROWPANEL_P4_101)
+    #include <EK79007Display.h>              // EK79007 MIPI-DSI IPS, 1024x600, on the CrowPanel P4 10.1
   #else
     #include <helpers/ui/ST7789LCDDisplay.h>
   #endif
@@ -293,6 +295,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
     extern DISPLAY_CLASS display;            // RM69A10Display (AMOLED) or HI8561Display (LCD) — set in CMakeLists
+  #elif defined(HAS_CROWPANEL_P4_101)
+    extern DISPLAY_CLASS display;            // EK79007Display
   #else
     extern ST7789LCDDisplay display;
   #endif
@@ -9556,7 +9560,7 @@ static void kbShowRotateArrows(bool show) {
 // control. The arrows are not created on these boards; every other reference to
 // the two pointers is null-guarded, so leaving them null is enough to remove
 // the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -15686,12 +15690,16 @@ static void screenTimeoutSliderReleasedCb(lv_event_t* e) {
 #if defined(ESP32)
 #if defined(HAS_TDISPLAY_P4)
 esp_reset_reason_t tdisplayP4ResetReason();   // variants/tdisplay_p4/target.cpp
+#elif defined(HAS_CROWPANEL_P4_101)
+esp_reset_reason_t crowpanelP4ResetReason();  // variants/crowpanel_p4_101/target.cpp
 #endif
 // esp_reset_reason(), except on the T-Display P4, where every software restart is made a full system
 // reset (so the panel does not come back dark) and would otherwise read as a watchdog crash.
 static esp_reset_reason_t bootResetReason() {
 #if defined(HAS_TDISPLAY_P4)
   return tdisplayP4ResetReason();
+#elif defined(HAS_CROWPANEL_P4_101)
+  return crowpanelP4ResetReason();
 #else
   return esp_reset_reason();
 #endif
@@ -18087,7 +18095,7 @@ static void buildLockPage() {
                  });
 #endif
   }
-#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there, so no lock to put a PIN on
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)   // no unlock control there, so no lock to put a PIN on
   {
     // PIN lock: off until switched on here. On asks for a new PIN twice; off and Change
     // ask for the current one first. The switch follows the PIN, not the tap.
@@ -24155,13 +24163,13 @@ static char      s_fm_path[160]  = {0};     // current dir within s_fm_fs (e.g. 
 // fmRefresh, so they blip the LED too.
 #if CAP_SD || defined(TLORA_PAGER)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD; }   // hardware or software SPI SD
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
 static inline bool fmIsSd(fs::FS* fs) { return fs == &SD_MMC; }   // microSD on SDMMC slot 0
 #else
 static inline bool fmIsSd(fs::FS*) { return false; }       // Heltec: no Arduino SD global in this FM path
 #endif
 static inline void fmMarkSdIo() { if (fmIsSd(s_fm_fs)) markSdIo(); }
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
 // Arduino loop-task WDT shim: the P4 IDF builds (Tanmatsu + T-Display P4) don't expose feedLoopWDT
 // (the long file-copy loop calls it). The IDF task WDT isn't armed on our LVGL loop, so a no-op is safe.
 static inline void feedLoopWDT() {}
@@ -25641,7 +25649,7 @@ static void fmInternalClickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(HAS_TANMATSU)
   fmOpenStorage(&FFat, "Internal", "/");   // internal FAT data partition (locfd)
-#elif defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   fmOpenStorage(&LittleFS, "Internal", "/");   // internal LittleFS 'storage' partition
 #else
   fmOpenStorage(&SPIFFS, "Internal", "/");
@@ -27088,7 +27096,7 @@ static bool fmOpenInReader(const char* name) {
   bool on_card = false;
 #if CAP_SD || defined(TLORA_PAGER)
   on_card = s_fm_fs == &SD;
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   on_card = s_fm_fs == &SD_MMC;
 #endif
   if (!on_card) return false;
@@ -27307,7 +27315,7 @@ static void fmRefresh() {
 }
 
 // Roots screen: list the available storages.
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
 // ---- Tanmatsu / T-Display P4 microSD (SDMMC slot 0) ----------------------------------------------
 // The card sits on the P4's SDMMC *slot 0* (IOMUX pins CLK43/CMD44/D0-3 39-42, selected by the
 // BOARD_SDMMC_SLOT=0 build define); slot 1 is the C6 radio (esp-hosted / ESP-AT SDIO), which we never
@@ -27372,6 +27380,11 @@ static bool tanSdTryMount() {
   // not Arduino's 40 MHz HIGHSPEED default.
   attempted = true;
   begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT);
+#elif defined(HAS_CROWPANEL_P4_101)
+  // Hot-insert path. The J5 slot only has D0 wired, so 1-bit; pins + external pad power were set by
+  // main.cpp (SD_MMC keeps them across end/begin).
+  attempted = true;
+  begin_ok = SD_MMC.begin("/sdcard", true /*1-bit*/, false, SDMMC_FREQ_DEFAULT);
 #else
   attempted = true;
   begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/);
@@ -27430,7 +27443,10 @@ static void fmShowRoots() {
   if (s_fm_path_lbl) lv_label_set_text(s_fm_path_lbl, TR("Storage"));
 
   char sub[48], us[16], ts[16];
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_CROWPANEL_P4_101)
+  fmFmtSize(LittleFS.usedBytes(),  us, sizeof us);   // "Internal" = the LittleFS 'storage' partition
+  fmFmtSize(LittleFS.totalBytes(), ts, sizeof ts);
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   fmFmtSize(FFat.usedBytes(),  us, sizeof us);   // "Internal" = the FAT data partition (locfd / 'storage')
   fmFmtSize(FFat.totalBytes(), ts, sizeof ts);
 #else
@@ -27493,7 +27509,7 @@ static void fmShowRoots() {
     lv_obj_add_event_cb(sd, fmSdRetryMountCb, LV_EVENT_CLICKED, nullptr);
   }
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
   // microSD (SDMMC slot 0). Probe outside the mount-backoff window so an absent card doesn't grind
   // the bus on every render; tapping the row forces a fresh mount attempt (tanSdClickCb clears it).
   if ((s_tan_sd_mounted || millis() >= s_tan_sd_retry_after) && tanSdTryMount()) {
@@ -28150,7 +28166,7 @@ static ReaderLocalResult readerReadLocal(const char* url, uint8_t* raw, size_t c
   storage_claimed = true;
   if (sdAdoptLiveMount()) storage = &SD;
   else if (!sdRuntimeLifecycleBusy() && fmSdTryMount()) storage = &SD;
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   s_reader_sd_busy = true;
   s_reader_sd_owner = xTaskGetCurrentTaskHandle();
   storage_claimed = true;
@@ -34495,6 +34511,16 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "tdisplay-p4" TDP4_C6_ID
     #endif
   #endif
+#elif defined(HAS_CROWPANEL_P4_101)
+  // Experimental: no release artifact yet (CAP_OTA 0), so this only names the board in test
+  // reports. Per revision, because the LoRa pins and the C6 SDIO set differ between them.
+  #if CP_REV == 10
+#define WADA_BOARD_ID "crowpanel-p4-101-v10"
+  #elif CP_REV == 11
+#define WADA_BOARD_ID "crowpanel-p4-101-v11"
+  #else
+#define WADA_BOARD_ID "crowpanel-p4-101-v12"
+  #endif
 #elif defined(HAS_TANMATSU)
 #define WADA_BOARD_ID "tanmatsu"
 #elif defined(HELTEC_LORA_V4_R8)          // must precede the V4-TFT fallback
@@ -39108,6 +39134,23 @@ static void mapPickUseCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
+#if !CAP_KEYPAD_NAV
+// navOpenChatPanel / navGoToMainTab live in the CAP_KEYPAD_NAV block above, but two callers below
+// (this map jump and the chat-header composer sync) run on every board. A board without keypad
+// navigation (the CrowPanel P4 10.1 is the first) gets the same two helpers without the nav group.
+static bool anyPopupOpen();   // defined further down (popup registry)
+static LvChatPanel* navOpenChatPanel() {
+  if (g_lv.dm.detail_open && g_lv.dm.overlay && !lv_obj_has_flag(g_lv.dm.overlay, LV_OBJ_FLAG_HIDDEN)) return &g_lv.dm;
+  if (g_lv.ch.detail_open && g_lv.ch.overlay && !lv_obj_has_flag(g_lv.ch.overlay, LV_OBJ_FLAG_HIDDEN)) return &g_lv.ch;
+  return nullptr;
+}
+static bool navGoToMainTab(int tab) {
+  if (anyPopupOpen()) return false;   // no keypad: leave an open popup to its own close control
+  goToTab(tab);
+  return true;
+}
+#endif
+
 static void mapPickStart() {
   if (!g_lv.task || !s_map_canvas || !s_map_page) return;
   if (mapPickGpsOwnsPosition()) {   // the Profile row was built before the fix arrived
@@ -40032,10 +40075,12 @@ static bool crashDumpExport(char* out_path, size_t out_cap) {
   const char* path = "/wadamesh-crash.elf";
 #if CAP_SD || defined(TLORA_PAGER)
   if (fmSdTryMount()) { dst = &SD; used_sd = true; }
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (tanSdTryMount()) { dst = &SD_MMC; used_sd = true; }   // microSD on SDMMC slot 0
 #endif
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if defined(HAS_CROWPANEL_P4_101)
+  if (!dst) dst = &LittleFS;          // internal = the LittleFS 'storage' partition (P4 storage law)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
   if (!dst) dst = &FFat;              // no SPIFFS on these boards; internal = the FAT data partition
 #else
   if (!dst) { SPIFFS.begin(false); dst = &SPIFFS; }
@@ -48998,7 +49043,7 @@ static void backupAddPath(const char* stored, const char* disp) {
 // would fail on an already-mounted volume), plain SPIFFS on the T-Deck / V4. Mirrors the file
 // manager's "Internal" root so a backup lands where the user can actually see + restore it.
 static fs::FS* backupInternalFs() {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // The P4 hot store moved from FFat to LittleFS('storage') in beta_54 (#167);
   // FFat is never mounted here anymore, so opening it failed every backup (#231).
   return &LittleFS;
@@ -49012,7 +49057,7 @@ static fs::FS* backupInternalFs() {
 static fs::FS* backupSdFs() {
 #if CAP_SD || defined(TLORA_PAGER)
   return fmSdTryMount() ? &SD : nullptr;
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
   return tanSdTryMount() ? &SD_MMC : nullptr;
 #else
   return nullptr;
@@ -52464,7 +52509,7 @@ static void powerOffNow() {
 #endif  // directly wakeable PIN_USER_BTN (powerOffCb)
 
 #if defined(ESP32)
-#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
 #include "soc/rtc_cntl_reg.h"   // RTC_CNTL_FORCE_DOWNLOAD_BOOT (header-guarded)
 #endif
 // Force the ROM serial bootloader (USB download / flash mode) on the next reset,
@@ -52473,7 +52518,7 @@ static void powerOffNow() {
 // esptool's post-flash reset — or a power cycle — clears it back to a normal boot.
 // (Tanmatsu/P4 has no RTC_CNTL_OPTION1_REG and the launcher manages flashing — plain restart.)
 static void rebootToDownloadMode() {
-#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
+#if !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
   REG_SET_BIT(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
 #endif
   ESP.restart();
@@ -52996,7 +53041,7 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 63;
 static void applyBrightness(uint8_t pct) {
@@ -59021,7 +59066,7 @@ static lv_obj_t* hwIcon(lv_obj_t* parent, const char* glyph, uint32_t col, bool 
 static const lv_font_t* hwFitFont(const char* txt, int w, int h) {
   const lv_font_t* faces[] = {
     &lv_font_montserrat_28,
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
     &lv_font_montserrat_24, &lv_font_montserrat_20,
 #endif
     &g_font_semi_16, &g_font_semi_14, &g_font_12,
@@ -67171,7 +67216,7 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
@@ -68592,7 +68637,7 @@ static bool uiDataFsReady() {
     return true;
   }
   if (SPIFFS.begin(false)) { s_ui_data_fs = &SPIFFS; s_ui_data_root[0] = '\0'; return true; }
-#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#elif defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // Tanmatsu + T-Display P4: use each board's mounted internal data partition
   // (Tanmatsu FFat 'locfd', P4 LittleFS 'storage'), with SD_MMC as fallback.
   // #167: hot UI data (chat history) lives on the INTERNAL LittleFS -- SD write bursts
@@ -68719,7 +68764,7 @@ bool luaHostScreenOn() {
 // It never comes out smaller than the regular 16, which on a scaled-up UI already is
 // Montserrat 24. Older firmware maps any size above 16 to 16, so apps stay readable.
 static const lv_font_t* luaHostFigureFont() {
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
   if (lv_font_get_line_height(&lv_font_montserrat_24) > lv_font_get_line_height(&g_font_16))
     return &lv_font_montserrat_24;
 #endif
@@ -70243,7 +70288,7 @@ void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const 
 // message ring (MAX_UI_MESSAGES_SD) since the card has room for the bigger file.
 static bool uiDataFsIsSdCard() {
   if (!uiDataFsReady()) return false;
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_WIO_TRACKER_L2)
   return s_ui_data_fs == &SD_MMC;
 #elif CAP_SD || defined(TLORA_PAGER)
   return s_ui_data_fs == &SD;
@@ -70851,7 +70896,7 @@ bool UITask::loadHistoryFromStorage() {
 
 bool UITask::saveThreadsToStorage() {
 #if defined(ESP32)
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // #167: the threads file is rewritten on every contact add/delete and chat-state change --
   // hop the write to the core-0 storage task like every other hot writer (see p4StorageCall).
   if (!p4OnStorageTask()) {
@@ -71034,7 +71079,7 @@ static bool uiSegWriteRecords(File& f, const UITask::UIMessage* recs, int n) {
 // the whole point of the segmented layout).
 static bool uiSegAppendRecords(uint32_t first_seq, bool create,
                                const UITask::UIMessage* recs, int n) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // #167: history writes hop to the core-0 storage task (see p4StorageCall in DataStore.cpp) --
   // a core-1 SD write can mask the DSI frame-restart ISR long enough to drop a display frame.
   if (!p4OnStorageTask()) {
@@ -71095,7 +71140,7 @@ static bool uiSegAppendRecords(uint32_t first_seq, bool create,
 // lesson from the single-file store).
 static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs, int n,
                               bool sync_writer) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
     struct A { uint32_t fs; const UITask::UIMessage* r; int n; bool sw; bool ok; } a{ first_seq, recs, n, sync_writer, false };
     p4StorageCall([](void* p){ auto* a = (A*)p; a->ok = uiSegCompactWrite(a->fs, a->r, a->n, a->sw); }, &a);
@@ -71135,7 +71180,7 @@ static bool uiSegCompactWrite(uint32_t first_seq, const UITask::UIMessage* recs,
 // Remove a retired segment (ring grew past retention; its records are gone
 // from RAM too).
 static void uiSegRemoveFile(uint32_t first_seq) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   if (!p4OnStorageTask()) {   // #167: hop to core 0 (see uiSegAppendRecords)
     p4StorageCall([](void* p){ uiSegRemoveFile((uint32_t)(uintptr_t)p); }, (void*)(uintptr_t)first_seq);
     return;
@@ -72813,7 +72858,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] Tanmatsu: no SD card -> caching Wi-Fi tiles on FFat /tiles (best-effort)");
   }
 #endif
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // T-Display P4: no dedicated "tiles" partition in its table. Prefer the microSD (SD_MMC slot 0,
   // mounted by main.cpp at boot — XL9535 SD_EN must be LOW, it gates the slot's power); else the
   // internal 8 MB FFat 'storage' partition — a standard FFat mount of OUR OWN partition, so none of
@@ -72850,7 +72895,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] wio-l2: caching Wi-Fi tiles on SD_MMC /tiles\n");
   }
 #endif
-#if !defined(HAS_TDISPLAY_P4) && !defined(HAS_WIO_TRACKER_L2)
+#if !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101) && !defined(HAS_WIO_TRACKER_L2)
   else {
     s_tile_fs = nullptr;   // no cache backend at all -> map shows the storage notice
   }
@@ -73004,7 +73049,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
   s_lock_on_screen_off = touchPrefsGetLockOnScreenOff();
 #endif
-#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there, so no lock to put a PIN on
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)   // no unlock control there, so no lock to put a PIN on
   s_pin_on = touchPrefsPinIsSet();
   pinRestoreFails();
 #endif
@@ -73110,6 +73155,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       g_draw_buf_px = 800 * LV_DRAW_BUF_LINES;
       const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
       g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
+#elif defined(HAS_CROWPANEL_P4_101)
+      // 1024-wide band at native resolution. Internal DMA RAM first (~48 KB): the DSI DMA already
+      // streams the 1.2 MB framebuffer out of PSRAM continuously, so a PSRAM band would add a
+      // third PSRAM stream to every flush (see the RM69A10 flush note). PSRAM as the fallback.
+      g_draw_buf_px = 1024 * LV_DRAW_BUF_LINES;
+      const size_t buf_bytes = sizeof(lv_color_t) * g_draw_buf_px;
+      g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+      if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)heap_caps_malloc(buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
       if (!g_draw_buffer) g_draw_buffer = (lv_color_t*)malloc(buf_bytes);
 #elif defined(HAS_TDISPLAY_P4)
       // P4: LVGL renders at half res (upscaled 2x on flush) — full-width band in the abundant 32MB PSRAM.
@@ -73257,8 +73311,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_WIO_TRACKER_L2)
-    // The panel driver exposes its fixed 320x240 landscape surface directly.
+  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
+    // The panel driver exposes its fixed landscape surface directly (320x240 / 1024x600).
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
@@ -73361,6 +73415,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // stays == the panel width, so it's never entered).
     g_lv.disp_drv.hor_res  = TAN_PANEL_PW;   // 480
     g_lv.disp_drv.ver_res  = TAN_PANEL_PH;   // 800
+#elif defined(HAS_CROWPANEL_P4_101)
+    // Native 1024x600 landscape (low-density 10.1" panel: no upscale; the large-screen layouts and
+    // UI-size fonts carry the sizing). The GT911 driver reports in this same space.
+    g_lv.disp_drv.hor_res  = 1024;
+    g_lv.disp_drv.ver_res  = 600;
 #elif defined(HAS_TDISPLAY_P4)
     // Render at HALF the native panel; the P4 DisplayDriver upscales 2x on flush, so the whole UI is
     // uniformly 2x bigger on the high-DPI panel (simpler than per-element scaling). The touch driver
@@ -74791,7 +74850,7 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
   // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5).
   if (on) applyBrightness(s_brightness_pct);
   else    display.setBrightness(0);
@@ -74814,7 +74873,7 @@ static inline void touchScreenBacklight(bool on) {
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
 static void setCpuForScreen(bool screen_on) {
-#if defined(HAS_TDISPLAY_P4)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
   // The P4's Arduino HAL only accepts 360 MHz (240/80 log a "could not be set" error every screen
   // toggle) — no DFS downclock available through this API on that chip, so skip entirely.
   (void)screen_on;
@@ -75279,7 +75338,7 @@ void UITask::wakeScreen() {
 }
 
 void UITask::lockScreen() {
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
   // No physical unlock button: imported lock preferences must still allow touch wake.
   sleepScreen();
   return;
@@ -76192,7 +76251,7 @@ void consoleHostRebootToUi() {
 }
 #endif
 
-#if defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU)
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_TANMATSU) || defined(HAS_CROWPANEL_P4_101)
 // gpsEnsureBigRxRing() is defined in src/main.cpp, which the two ESP32-P4
 // targets never compile, while the calls to it live in UITask.cpp and
 // MyMesh.cpp which every target does. That left both P4 builds with an
@@ -78192,7 +78251,7 @@ void UITask::loop() {
       // thing with or without it.
       ssaverStart(now, false);
       _screen_off = true;
-#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50)   // no unlock control there; its lockScreen() only sleeps too
+#if !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)   // no unlock control there; its lockScreen() only sleeps too
       _manual_lock = s_lock_on_screen_off || s_pin_on;
 #endif
     } else

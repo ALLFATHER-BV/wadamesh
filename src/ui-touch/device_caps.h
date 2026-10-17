@@ -173,6 +173,19 @@
   // settings page carries the "Lock when screen off" switch (as on the L2).
   #define CAP_LOCK_SCREEN  1
 
+#elif defined(HAS_CROWPANEL_P4_101)   // ===== Elecrow CrowPanel Advanced 10.1" (ESP32-P4 + C6) =====
+  // EXPERIMENTAL. 1024x600 EK79007 IPS on MIPI-DSI, GT911 touch, SX1262 module on the wireless
+  // header, C6 Wi-Fi/BLE (esp-hosted 2.12.3 factory firmware), SD_MMC 1-bit. 32 MB PSRAM.
+  #define CAP_TOUCH        1   // GT911 capacitive touch
+  #define CAP_ROTATABLE    0   // native 1024x600 landscape; the DSI panel cannot rotate in hardware
+  #define CAP_LARGE_SCREEN 1   // large-panel layouts + the UI-size fonts, rendered at native resolution
+  #define CAP_SD           0   // card is SD_MMC (slot 0), exposed through CAP_FILESYSTEM like the T-Display P4
+  #define CAP_FILESYSTEM   1   // internal LittleFS 'storage' + SD_MMC
+  #define CAP_GPS          0   // no GPS fitted
+  #define CAP_OTA          0   // no release artifact on the update server yet: keep self-update off
+  #define CAP_LOCK_SCREEN  0   // no wake/unlock path wired yet (the BOOT key on GPIO35 could become one)
+  #define CAP_BATTERY      0   // battery charging + sensing belong to the on-board STC8, not the P4
+
 #elif defined(ATTAKY_MESH_SERIES)
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    1   // landscape (ROT_90) by default; portrait for the build without a keyboard
@@ -202,7 +215,8 @@
 // Physical removable microSD slot, independent of the filesystem API used to
 // drive it. CAP_SD means the SD-compatible SPI API (hardware or software);
 // SD_MMC boards still need the same user-facing card diagnostics.
-#if CAP_SD || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4)
+#if CAP_SD || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || \
+    defined(HAS_CROWPANEL_P4_101)
   #define CAP_MICROSD 1
 #else
   #define CAP_MICROSD 0
@@ -237,7 +251,7 @@
 // the T-Display P4's C6 firmware has no Bluetooth, and the Tanmatsu runs another
 // NimBLE wrapper.
 #if defined(BLE_PIN_CODE) && defined(MULTI_TRANSPORT_COMPANION) && \
-    !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4)
+    !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
   #define CAP_BLE_KEYBOARD 1
 #else
   #define CAP_BLE_KEYBOARD 0
@@ -300,7 +314,8 @@
 // WiFi, which the legacy ESP-AT build must never touch. The Wio Tracker L2 has
 // no RTC and an ESP32-S3 radio, so it gets the same opt-in.
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || \
-    defined(HAS_WIO_TRACKER_L2) || (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED)
+    defined(HAS_WIO_TRACKER_L2) || (defined(HAS_TDISPLAY_P4) && TDP4_C6_HOSTED) || \
+    defined(HAS_CROWPANEL_P4_101)
   #define CAP_BOOT_TIME_SYNC 1
 #else
   #define CAP_BOOT_TIME_SYNC 0

@@ -1,0 +1,58 @@
+# Elecrow CrowPanel Advanced 10.1" ESP32-P4 HMI (1024x600) board sdkconfig fragment. EXPERIMENTAL.
+# Modelled on sdkconfigs/tdisplay_p4 (same ESP32-P4NRW32 + ESP32-C6-MINI-1 esp-hosted pairing). The
+# C6 SDIO pin/width set lives in a per-revision fragment (sdio_v10 / sdio_v11), layered after this.
+CONFIG_IDF_TARGET="esp32p4"
+
+# 32 MB HEX PSRAM @ 200 MHz (in-package on the P4NRW32; Elecrow's V1.0/V1.1 lessons run HEX 200M).
+# 200 MHz is behind CONFIG_IDF_EXPERIMENTAL_FEATURES on IDF 5.5; without it Kconfig drops to 20 MHz
+# and the DPI panel underruns fetching its PSRAM framebuffer.
+CONFIG_SPIRAM=y
+CONFIG_IDF_EXPERIMENTAL_FEATURES=y
+CONFIG_SPIRAM_SPEED_200M=y
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+
+# 16 MB W25Q128 + our standalone dual-OTA partition table (same layout as the T-Display P4).
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partition_tables/crowpanel_p4_101_16M.csv"
+
+# MIPI-DSI (EK79007)
+CONFIG_LCD_DSI_ISR_IRAM_SAFE=y
+
+# ESP32-C6-MINI-1 co-processor over SDIO slot 1 (CLK18 / CMD19; data pins per revision fragment).
+# Factory C6 firmware is esp-hosted MCU 2.12.3 (Elecrow "Advance_P4_On-Board_ESP32C6_Firmware_V2.12.3"),
+# the same version as the hosted fork tanmatsu-wifi pulls in.
+CONFIG_SLAVE_IDF_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_CP_TARGET_ESP32C6=y
+CONFIG_ESP_HOSTED_SDIO_CLOCK_FREQ_KHZ=40000
+# C6_EN = GPIO32 (schematic, all revisions). Reset through hosted_reset_slave_callback() in
+# variants/crowpanel_p4_101/target.cpp, so the polarity and the GPIO are explicit in code.
+CONFIG_ESP_HOSTED_SLAVE_RESET_ONLY_IF_NECESSARY=y
+CONFIG_ESP_HOSTED_RESET_SLAVE_USING_CALLBACK=y
+CONFIG_ESP_HOSTED_SDIO_RESET_SLAVE_USING_CALLBACK=y
+CONFIG_ESP_HOSTED_ENABLE_BT_NIMBLE=y
+# The P4 has no Bluetooth controller of its own: NimBLE's HCI runs over esp-hosted SDIO.
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_DISABLED=y
+# CONFIG_BT_NIMBLE_TRANSPORT_UART is not set
+# A C6 that cannot be reached must cost Wi-Fi and BLE, never the device (see sdkconfigs/tdisplay_p4).
+CONFIG_ESP_HOSTED_HOST_RESTART_NO_COMMUNICATION_WITH_SLAVE=n
+CONFIG_ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE=n
+
+# Panic coredump -> the 64K 'coredump' partition (ELF, decodable against the build's elf).
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+CONFIG_ESP_COREDUMP_MAX_TASKS_NUM=64
+
+# DPI/video panel: the 1.2 MB framebuffer lives in PSRAM and is streamed continuously, so the same
+# underrun mitigations as the T-Display P4: run code from PSRAM (flash writes no longer drop the
+# cache under the DSI DMA), a 256 KB L2 cache with 128 B lines, -O2.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=n
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_CACHE_L2_CACHE_128KB=n
+CONFIG_CACHE_L2_CACHE_256KB=y
+CONFIG_CACHE_L2_CACHE_LINE_64B=n
+CONFIG_CACHE_L2_CACHE_LINE_128B=y

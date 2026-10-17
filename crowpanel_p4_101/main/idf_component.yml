@@ -1,0 +1,12 @@
+dependencies:
+  idf: ">=5.5.1"
+  # Same component set as the T-Display P4 (esp-hosted 2.12.3 fork via tanmatsu-wifi, arduino-esp32
+  # for the shared Arduino src/, esp-nimble-cpp for BLE over the C6). badge-bsp is not initialised on
+  # this board; it is here because tanmatsu-wifi depends on it.
+  badgeteam/badge-bsp: "^0.9.9"
+  nicolaielectronics/tanmatsu-wifi: "^1.1.2"
+  nicolaielectronics/tanmatsu-lora: "^0.3.0"
+  espressif/arduino-esp32: "3.3.10"
+  h2zero/esp-nimble-cpp: "^2.3.0"
+  # EK79007 MIPI-DSI panel driver (Elecrow's lessons pin ^1.0.2).
+  espressif/esp_lcd_ek79007: "^1.0.2"
