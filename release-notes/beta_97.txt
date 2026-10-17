@@ -1,0 +1,14 @@
+# beta_97 - chat history never drops old messages, Store installs complete, repeater requests answer, CrowPanel Advanced 10.1. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, fixes, the new board.
+
+Test build, on top of beta_96. The stable build stays beta_85.
+
+# --- Fixes ---
+Chat history: when the history files can no longer be merged to make room, a new file is opened instead of retiring the oldest one, so no message is ever dropped to keep saving. beta_96 could still lose old messages on devices with a lot of history in many quiet chats. Checked with a simulation of 60,000 messages, constant reboots and power cuts in the middle of a merge.
+Store installs complete: a downloaded app could land cut off on the SD card, which reported a network error and left an app that failed to start with "syntax error near <eof>" (Blackjack, reported by halflive-743 on Discord). Downloads are now written in pieces, checked on the card and only then installed, so a failed install leaves nothing behind and a failed update keeps the old version.
+Repeater telemetry and status requests answer: the device now asks directly first, the way the MeshCore app does, and only logs in when that gets no reply. The old order (log in, then ask) got an answer 2 times out of 8 from a repeater next to the device; this build 7 out of 8 (#683, reported by 900steve).
+Lua apps that save larger files with wada.fs.write no longer risk a file that is cut off on the SD card.
+
+# --- New board ---
+Elecrow CrowPanel Advanced 10.1 (ESP32-P4, 1024 by 600) is in the web flasher as an experimental board, with one image per board revision (V1.0, V1.1, V1.2, printed on the board). It needs an SX1262 module in the wireless slot. It has not run on a real unit yet, so please report what works (asked for on Discord).
