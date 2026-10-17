@@ -80238,7 +80238,7 @@ static void docRadioAudit() {
 }
 #endif
 
-#if defined(DOC_MUSIC_AUDIT) && CAP_MICROSD
+#if (defined(DOC_MUSIC_AUDIT) || defined(DOC_APPS_AUDIT)) && CAP_MICROSD
 // The Music Store app end to end on a card that may hold no music: two short
 // test tones go into /Music/wadamesh test/, the app scans, plays the first and
 // must move to the second by itself when it ends (app.on_audio). Removed after.
@@ -80341,7 +80341,56 @@ static void docI18nAudit() {
 }
 #endif
 
+#if defined(DOC_APPS_AUDIT) && CAP_MICROSD
+// One screenshot per Store app for wadamesh.com/apps.html: each catalog app is
+// launched from the embedded source, given ~3 s to settle and captured as
+// store_<id>. Music gets two short test tracks on the card (removed after) and a
+// press of Play, so its shot shows a list and playback rather than an empty card.
+static void docAppsAudit() {
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+#if CAP_SD
+  const bool card_ok = fmSdTryMount();
+  fs::FS& card = SD;
+#else
+  const bool card_ok = tanSdTryMount();
+  fs::FS& card = SD_MMC;
+#endif
+  if (card_ok) {
+    card.mkdir("/Music");
+    card.mkdir("/Music/Bench");
+    docWriteToneWav(card, "/Music/Bench/Track 01.wav", 660, 4000);
+    docWriteToneWav(card, "/Music/Bench/Track 02.wav", 880, 4000);
+  }
+  NodePrefs* np = the_mesh.getNodePrefs();
+  const uint8_t quiet_was = np ? np->buzzer_quiet : 0;
+  if (np) np->buzzer_quiet = 0;
+  for (int i = 0; i < kAuditStoreCount; ++i) {
+    const AuditStoreApp& a = kAuditStore[i];
+    Serial.printf("DBG: STORE %s\n", a.id);
+    if (!luaAppLaunch(a.id, a.name, a.src, strlen(a.src))) { Serial.printf("DBG: STORE %s did not launch\n", a.id); continue; }
+    docSettleLong(140);
+    if (!strcmp(a.id, "music")) { docTap(LV_SYMBOL_PLAY); docSettleLong(30); }
+    char nm[40];
+    snprintf(nm, sizeof nm, "store_%s", a.id);
+    captureScreenToSerial(nm);
+    luaAppDismiss(); docSettle(10);
+  }
+  if (np) np->buzzer_quiet = quiet_was;
+  if (card_ok) {
+    card.remove("/Music/Bench/Track 01.wav");
+    card.remove("/Music/Bench/Track 02.wav");
+    card.rmdir("/Music/Bench");
+  }
+  navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
+  Serial.println("DBG: STORE done");
+}
+#endif
+
 static void docAuditFocus() {
+#if defined(DOC_APPS_AUDIT) && CAP_MICROSD
+  docAppsAudit();
+  return;
+#endif
 #if defined(DOC_I18N_AUDIT) && CAP_BUILTIN_LANGS
   docI18nAudit();
   return;

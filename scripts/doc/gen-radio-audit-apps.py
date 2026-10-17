@@ -20,4 +20,16 @@ open(out, 'w', encoding='utf-8').write(
     'static const char kAuditMonitor[] = R"WADALUA(' + src('monitor') + ')WADALUA";\n'
     'static const char kAuditAirtime[] = R"WADALUA(' + src('airtime') + ')WADALUA";\n'
     'static const char kAuditMusic[] = R"WADALUA(' + src('music') + ')WADALUA";\n')
-print('wrote', os.path.relpath(out, ROOT), 'monitor', cat['monitor'], 'airtime', cat['airtime'], 'music', cat['music'])
+# Every catalog app, for the Store page screenshots (DOC_APPS_AUDIT).
+apps = json.load(open(os.path.join(ROOT, 'deploy/apps/apps.json')))['apps']
+rows = []
+with open(out, 'a', encoding='utf-8') as f:
+    for i, a in enumerate(apps):
+        code = src(a['id'])
+        assert ')WADALUA"' not in code, a['id']
+        f.write('static const char kAuditStoreSrc%d[] = R"WADALUA(%s)WADALUA";\n' % (i, code))
+        rows.append('  { "%s", "%s", kAuditStoreSrc%d },' % (a['id'], a['name'], i))
+    f.write('struct AuditStoreApp { const char* id; const char* name; const char* src; };\n')
+    f.write('static const AuditStoreApp kAuditStore[] = {\n' + '\n'.join(rows) + '\n};\n')
+    f.write('static const int kAuditStoreCount = %d;\n' % len(rows))
+print('wrote', os.path.relpath(out, ROOT), 'monitor', cat['monitor'], 'airtime', cat['airtime'], 'music', cat['music'], '+', len(rows), 'store apps')
