@@ -20,6 +20,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" IPS LCD, 480x222 (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Beta (new in beta_45) | Fully supported; keyboard-first navigation, microSD, map tile packs |
 | Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Beta (new in beta_45) | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
 | LilyGo T-Display P4 | ESP32-P4 + ESP32-C6, SX1262 or LR2021 | AMOLED or TFT-LCD, touch | Web flasher | Beta (new in beta_45) | Four panel/radio builds; AMOLED + SX1262 hardware-tested, the other combinations need validation |
+| Elecrow CrowPanel Advanced 10.1 | ESP32-P4 + ESP32-C6, external SX1262 | 10.1" EK79007 MIPI-DSI 1024x600 touch (GT911) | Web flasher (beta) | Experimental (new in beta_97), not yet tested on hardware | One image per board revision (V1.0, V1.1, V1.2); SX1262 in the wireless slot; no battery reading, sound or GPS |
 | Attaky Mesh Series | ESP32-S3, SX1262 | Touch display + front D-pad | Web flasher | Beta (new in beta_47) | Community port by attakygit (#158/#169); detachable keyboard supported; the front D-pad + SELECT navigate the UI |
 
 ## Feature notes per board

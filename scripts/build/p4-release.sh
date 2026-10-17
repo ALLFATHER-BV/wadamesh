@@ -32,6 +32,10 @@
 # shipped exactly that bug (a Max self-updating to Pro firmware) and this table
 # has been wrong three times. The check is cheap; a mismatch aborts the release.
 #
+# The Elecrow CrowPanel Advanced 10.1" (ESP32-P4, experimental since beta_97) is a
+# separate IDF project (crowpanel_p4_101/) with one image per board revision; it is
+# built and verified here in the same loop, from its own directory.
+#
 # Usage:
 #   scripts/build/p4-release.sh beta_88 [outdir]
 set -euo pipefail
@@ -46,7 +50,7 @@ IDFPY="$ROOT/tanmatsu/esp-idf-tools/python_env/idf5.5_py3.9_env/bin/python"
 [ -x "$IDFPY" ] || { echo "ABORT: IDF python not found at $IDFPY" >&2; exit 1; }
 mkdir -p "$OUT"
 
-# name | build dir | env assignments ("-" = none)
+# name | build dir | env assignments ("-" = none) [| project dir, default tdisplay_p4]
 VARIANTS=(
   "wadamesh-tdisplay-p4|tdisplay_p4|-"
   "wadamesh-tdisplay-p4-lr2021|tdisplay_p4_lr2021|WADA_P4_LR2021=1"
@@ -56,14 +60,19 @@ VARIANTS=(
   "wadamesh-tdisplay-p4-lr2021-at|tdisplay_p4_lr2021|WADA_P4_LR2021=1 WADA_P4_LEGACY_AT=1"
   "wadamesh-tdisplay-p4-lcd-at|tdisplay_p4_lcd|WADA_P4_LCD=1 WADA_P4_LEGACY_AT=1"
   "wadamesh-tdisplay-p4-lcd-lr2021-at|tdisplay_p4_lcd_lr2021|WADA_P4_LCD=1 WADA_P4_LR2021=1 WADA_P4_LEGACY_AT=1"
+  "wadamesh-crowpanel-p4-101-v12|crowpanel_p4_101_v12|WADA_CP_REV=1.2|crowpanel_p4_101"
+  "wadamesh-crowpanel-p4-101-v11|crowpanel_p4_101_v11|WADA_CP_REV=1.1|crowpanel_p4_101"
+  "wadamesh-crowpanel-p4-101-v10|crowpanel_p4_101_v10|WADA_CP_REV=1.0|crowpanel_p4_101"
 )
 
-cd "$P4"
 fail=0
 for v in "${VARIANTS[@]}"; do
   name="${v%%|*}"; rest="${v#*|}"
-  dir="${rest%%|*}"; envs="${rest#*|}"
-  echo "=== $name  (build/$dir)"
+  dir="${rest%%|*}"; rest="${rest#*|}"
+  envs="${rest%%|*}"
+  proj="tdisplay_p4"; [ "$rest" != "$envs" ] && proj="${rest#*|}"
+  cd "$ROOT/$proj"
+  echo "=== $name  ($proj/build/$dir)"
 
   # Trap 1: never inherit another variant's selection. Two dirs are shared by an
   # esp-hosted and an ESP-AT build (the C6 axis does not change the dir name), so
@@ -88,9 +97,9 @@ for v in "${VARIANTS[@]}"; do
   # a script that runs once per release.
   if [ -d "build/$dir" ]; then
     if [ "$envs" = "-" ]; then
-      env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT ./build.sh fullclean >> "/tmp/p4rel_$name.clean.log" 2>&1 || true
+      env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT -u WADA_CP_REV ./build.sh fullclean >> "/tmp/p4rel_$name.clean.log" 2>&1 || true
     else
-      env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT $envs ./build.sh fullclean >> "/tmp/p4rel_$name.clean.log" 2>&1 || true
+      env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT -u WADA_CP_REV $envs ./build.sh fullclean >> "/tmp/p4rel_$name.clean.log" 2>&1 || true
     fi
   fi
   if [ -d "build/$dir" ]; then
@@ -103,10 +112,10 @@ for v in "${VARIANTS[@]}"; do
   # caller's shell would otherwise leak in and silently change the build.
   rc=0
   if [ "$envs" = "-" ]; then
-    env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT \
+    env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT -u WADA_CP_REV \
         WADA_FW_TAG="$TAG" ./build.sh build > "/tmp/p4rel_$name.log" 2>&1 || rc=$?
   else
-    env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT \
+    env -u WADA_P4_LCD -u WADA_P4_LR2021 -u WADA_P4_LEGACY_AT -u WADA_CP_REV \
         $envs WADA_FW_TAG="$TAG" ./build.sh build > "/tmp/p4rel_$name.log" 2>&1 || rc=$?
   fi
 
@@ -129,7 +138,7 @@ for v in "${VARIANTS[@]}"; do
   # they have what they need, which SIGPIPEs `strings`, and under `set -o
   # pipefail` that non-zero status reads as "check failed" on a perfectly good
   # image. Read the whole stream and decide afterwards.
-  ids="$(strings -a "$app" | grep -oE 'wadamesh-tdisplay-p4[a-z0-9-]*' | sort -u || true)"
+  ids="$(strings -a "$app" | grep -oE 'wadamesh-(tdisplay-p4|crowpanel-p4-101)[a-z0-9-]*' | sort -u || true)"
   got="$(printf '%s\n' "$ids" | sed -n '1p')"
   if [ "$got" != "$name" ]; then
     echo "   FAIL: image identifies as '$got', expected '$name'"

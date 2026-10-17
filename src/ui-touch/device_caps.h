@@ -182,7 +182,7 @@
   #define CAP_SD           0   // card is SD_MMC (slot 0), exposed through CAP_FILESYSTEM like the T-Display P4
   #define CAP_FILESYSTEM   1   // internal LittleFS 'storage' + SD_MMC
   #define CAP_GPS          0   // no GPS fitted
-  #define CAP_OTA          0   // no release artifact on the update server yet: keep self-update off
+  #define CAP_OTA          1   // released per revision from beta_97 (wadamesh-crowpanel-p4-101-v1x.bin)
   #define CAP_LOCK_SCREEN  0   // no wake/unlock path wired yet (the BOOT key on GPIO35 could become one)
   #define CAP_BATTERY      0   // battery charging + sensing belong to the on-board STC8, not the P4
 

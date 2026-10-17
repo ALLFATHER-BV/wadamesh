@@ -34512,8 +34512,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
     #endif
   #endif
 #elif defined(HAS_CROWPANEL_P4_101)
-  // Experimental: no release artifact yet (CAP_OTA 0), so this only names the board in test
-  // reports. Per revision, because the LoRa pins and the C6 SDIO set differ between them.
+  // Experimental. Per revision, because the LoRa pins and the C6 SDIO set differ between
+  // them: a V1.0 board must never self-update to a V1.2 image.
   #if CP_REV == 10
 #define WADA_BOARD_ID "crowpanel-p4-101-v10"
   #elif CP_REV == 11

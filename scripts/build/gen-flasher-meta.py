@@ -46,6 +46,12 @@ BOARDS = {
     "manifest-wio-tracker-l2.json": ("wadamesh - Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
     "manifest-crowpanel-35.json": ("wadamesh - Elecrow CrowPanel Advance 3.5 (experimental)", "wadamesh-crowpanel-35-merged.bin", "ESP32-S3"),
     "manifest-crowpanel-50.json": ("wadamesh - Elecrow CrowPanel Advance 5.0 (experimental)", "wadamesh-crowpanel-50-merged.bin", "ESP32-S3"),
+    # The 10.1" CrowPanel is an ESP32-P4 board with one image per hardware revision
+    # (LoRa DIO1/RST and the C6 SDIO lines moved between them): the revision is printed
+    # on the board, and the wrong image leaves the radio or Wi-Fi dead.
+    "manifest-crowpanel-p4-101-v12.json": ("wadamesh - Elecrow CrowPanel Advanced 10.1 P4 V1.2 (experimental)", "wadamesh-crowpanel-p4-101-v12-merged.bin", "ESP32-P4"),
+    "manifest-crowpanel-p4-101-v11.json": ("wadamesh - Elecrow CrowPanel Advanced 10.1 P4 V1.1 (experimental)", "wadamesh-crowpanel-p4-101-v11-merged.bin", "ESP32-P4"),
+    "manifest-crowpanel-p4-101-v10.json": ("wadamesh - Elecrow CrowPanel Advanced 10.1 P4 V1.0 (experimental)", "wadamesh-crowpanel-p4-101-v10-merged.bin", "ESP32-P4"),
     "manifest-tdeck-pro-v1-0.json":   ("wadamesh - LilyGo T-Deck Pro V1.0 (experimental)", "wadamesh-tdeck-pro-v1-0-merged.bin", "ESP32-S3"),
     "manifest-tdeck-pro-v1-1.json":   ("wadamesh - LilyGo T-Deck Pro V1.1 (experimental)", "wadamesh-tdeck-pro-v1-1-merged.bin", "ESP32-S3"),
     "manifest-tdeck-max.json":        ("wadamesh - LilyGo T-Deck Max (experimental)", "wadamesh-tdeck-max-merged.bin", "ESP32-S3"),

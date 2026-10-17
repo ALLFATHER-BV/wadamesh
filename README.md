@@ -28,6 +28,7 @@ per-board status.
 - LilyGo T-Lora Pager: envs `tlora_pager_lr1121_companion_radio_touch` / `tlora_pager_sx1262_companion_radio_touch` (beta); [keyboard shortcuts](TLORA_PAGER_SHORTCUTS.md)
 - Heltec V4-R8 + Expansion Kit V2: env `heltec_v4_r8_tft_companion_radio_usb_tcp_touch` (beta)
 - LilyGo T-Display P4: built from `tdisplay_p4/` (ESP-IDF); AMOLED + SX1262 by default, with `WADA_P4_LCD=1` for TFT-LCD and `WADA_P4_LR2021=1` for LR2021 (beta)
+- Elecrow CrowPanel Advanced 10.1 (ESP32-P4): built from `crowpanel_p4_101/` (ESP-IDF), one image per board revision with `WADA_CP_REV=1.0|1.1|1.2` (experimental, not yet tested on hardware; requires an SX1262 in the wireless slot)
 - Attaky Mesh Series: env `attaky_mesh_series_companion_radio_touch` (beta)
 - Elecrow CrowPanel Advance 3.5: env `crowpanel_35_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the expansion slot)
 - Elecrow CrowPanel Advance 5.0: env `crowpanel_50_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the wireless slot and the DIP switch set to it)
