@@ -1984,3 +1984,14 @@ Showing the first %d tracks	Die ersten %d Titel werden gezeigt
 Sound is off: Settings > Sound	Ton ist aus: Einstellungen > Ton
 Stopped	Gestoppt
 This device cannot play music.	Dieses Gerät kann keine Musik abspielen.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Display & lock	Anzeige & Sperre
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Lass Bluetooth an, um die MeshCore-App auf deinem Handy zu koppeln. WLAN kannst du jederzeit in den Einstellungen einrichten.
+Radio:	Funkmodul:
+Keyboard:	Tastatur:
+newer keyboard	neuere Tastatur
+older keyboard	ältere Tastatur
+older keyboard (set manually)	ältere Tastatur (manuell gesetzt)
+keyboard not detected yet	Tastatur noch nicht erkannt

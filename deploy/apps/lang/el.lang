@@ -1987,3 +1987,14 @@ Showing the first %d tracks	Εμφανίζονται τα πρώτα %d κομμ
 Sound is off: Settings > Sound	Ο ήχος είναι κλειστός: Ρυθμίσεις > Ήχος
 Stopped	Σταμάτησε
 This device cannot play music.	Αυτή η συσκευή δεν μπορεί να παίξει μουσική.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Υλικό
+Display & lock	Οθόνη & κλείδωμα
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Αφήστε το Bluetooth ενεργό για να συνδέσετε την εφαρμογή MeshCore στο τηλέφωνό σας. Το Wi-Fi ρυθμίζεται οποτεδήποτε από τις Ρυθμίσεις.
+Radio:	Πομποδέκτης:
+Keyboard:	Πληκτρολόγιο:
+newer keyboard	νεότερο πληκτρολόγιο
+older keyboard	παλαιότερο πληκτρολόγιο
+older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
+keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα

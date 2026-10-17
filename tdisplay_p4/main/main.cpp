@@ -71,9 +71,8 @@
 // in sdkconfigs/tdisplay_p4. Measured on an ESP-AT unit before the second one was set: five resets
 // in a 45 s capture, each rst:0x9 HP_SYS_LP_WDT_RESET. Do not re-enable either.
 #define TDP4_C6_READY TDP4_C6_HOSTED
-// BLE over the C6 uses arduino-esp32's hostedInitBLE(), which only exists in arduino-esp32 >=3.3.10.
-// We pin 3.3.0 (so esp_hosted can be the C6-compatible 2.0.17), which predates hostedInitBLE — so BLE
-// needs its own bring-up. Keep BLE gated OFF until that's provided; Wi-Fi (esp_wifi_remote) works now.
+// BLE over the C6 runs on the esp-hosted build: app_main brings it up through hostedInitBLE()
+// when Bluetooth is switched on (see below). The legacy ESP-AT build has no BLE.
 #define TDP4_BLE_READY TDP4_C6_HOSTED
 
 #if TDP4_C6_HOSTED && defined(CONFIG_BT_NIMBLE_TRANSPORT_UART)

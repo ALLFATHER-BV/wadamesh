@@ -1997,3 +1997,14 @@ Showing the first %d tracks	Az első %d szám látható
 Sound is off: Settings > Sound	A hang ki van kapcsolva: Beállítások > Hang
 Stopped	Leállítva
 This device cannot play music.	Ez az eszköz nem tud zenét lejátszani.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardver
+Display & lock	Kijelző és zár
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Hagyd bekapcsolva a Bluetooth-t, hogy párosíthasd a telefonodon a MeshCore alkalmazást. A Wi-Fi bármikor beállítható a Beállításokban.
+Radio:	Rádió:
+Keyboard:	Billentyűzet:
+newer keyboard	újabb billentyűzet
+older keyboard	régebbi billentyűzet
+older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
+keyboard not detected yet	a billentyűzet még nincs felismerve

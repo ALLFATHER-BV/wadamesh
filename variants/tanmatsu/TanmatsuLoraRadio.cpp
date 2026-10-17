@@ -12,6 +12,10 @@ bool TanmatsuLoraRadio::init() {
   if (lora_init_remote(&_h, 32) != ESP_OK) return false;
   _started = true;
   lora_set_config(&_h, &_cfg);   // push whatever setParams()/setTxPower() captured
+  // Which modem is fitted, for Settings > Device (#596). Asked once, here at
+  // bring-up before recvRaw() starts polling, so it never contends with RX.
+  lora_protocol_status_params_t st = {};
+  if (lora_get_status(&_h, &st) == ESP_OK) _chip = (int)st.chip_type;
   return true;
 }
 

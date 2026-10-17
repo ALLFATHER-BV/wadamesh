@@ -1986,3 +1986,14 @@ Showing the first %d tracks	Mostrando as primeiras %d faixas
 Sound is off: Settings > Sound	O som está desligado: Ajustes > Som
 Stopped	Parado
 This device cannot play music.	Este dispositivo não toca música.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Hardware
+Display & lock	Tela e bloqueio
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Deixe o Bluetooth ligado para parear o app MeshCore no seu celular. O Wi-Fi pode ser configurado a qualquer momento em Configurações.
+Radio:	Rádio:
+Keyboard:	Teclado:
+newer keyboard	teclado novo
+older keyboard	teclado antigo
+older keyboard (set manually)	teclado antigo (definido manualmente)
+keyboard not detected yet	teclado ainda não detectado

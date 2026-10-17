@@ -1986,3 +1986,14 @@ Showing the first %d tracks	Les %d premiers titres sont affichés
 Sound is off: Settings > Sound	Le son est coupé: Paramètres > Son
 Stopped	Arrêté
 This device cannot play music.	Cet appareil ne peut pas lire de musique.
+
+# Settings > Device / keyboard protocol / setup wizard strings
+Hardware	Matériel
+Display & lock	Affichage et verrouillage
+Keep Bluetooth on to pair the MeshCore app on your phone. Wi-Fi can be set up anytime in Settings.	Laissez le Bluetooth activé pour appairer l'application MeshCore de votre téléphone. Le Wi-Fi peut être configuré à tout moment dans Réglages.
+Radio:	Radio :
+Keyboard:	Clavier :
+newer keyboard	clavier récent
+older keyboard	ancien clavier
+older keyboard (set manually)	ancien clavier (réglé manuellement)
+keyboard not detected yet	clavier pas encore détecté
