@@ -336,8 +336,8 @@ class Link {
 let link = null, info = null, root = null, cwd = '/', entries = [], busy = false, cancelled = false, pingTimer = 0;
 const rootsById = {};
 const HINTS = {
-  sd: 'The meshcomod folder is the device\'s own data. You can download it, but not change it here.',
-  internal: 'Files the device keeps in use (identity, contacts, settings, chat history) are download-only. Put your own files in the transfer folder; settings backups (meshcore-*.json) go in the top folder.',
+  sd: 'The meshcomod folder is the device\'s own data. You can download it, but not change it here. The one exception is meshcomod/apps, which takes Lua apps (.lua and .json files).',
+  internal: 'Files the device keeps in use (identity, contacts, settings, chat history) are download-only. Put your own files in the transfer folder; settings backups (meshcore-*.json) go in the top folder, Lua apps (.lua and .json) in the apps folder.',
   tiles: 'Offline map tiles, stored as zoom/x/y.png. Upload a tile folder to use it on the map.',
 };
 

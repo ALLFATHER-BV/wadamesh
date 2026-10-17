@@ -180,6 +180,27 @@ int main() {
   assert(acc(ROOT_INTERNAL, "/prefs/touch.kv", false) == A_READ);
   assert(acc(ROOT_INTERNAL, "/msgs/seg_0001", false) == A_READ);
   assert(acc(ROOT_INTERNAL, "/apps/sdscan/main.lua", false) == A_READ);
+  // the Lua apps folder: top-level .lua / .json only
+  assert(acc(ROOT_SD, "/meshcomod/apps/bible.lua", true) == A_WRITE);
+  assert(acc(ROOT_SD, "/meshcomod/apps/bible.json", true) == A_WRITE);
+  assert(acc(ROOT_SD, "/MeshComod/Apps/Bible.LUA", true) == A_WRITE);   // FAT ignores case
+  assert(acc(ROOT_SD, "/meshcomod/apps", true) == A_READ);              // the folder itself
+  assert(acc(ROOT_SD, "/meshcomod/apps/snake.sav", true) == A_READ);    // written by the app
+  assert(acc(ROOT_SD, "/meshcomod/apps/snake.wgt", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/apps/wardrive.d/log.csv", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/apps/x.d/a.lua", true) == A_READ);    // no subfolders
+  assert(acc(ROOT_SD, "/meshcomod/apps/.lua", true) == A_READ);         // no hidden / bare ext
+  assert(acc(ROOT_SD, "/meshcomod/apps/.hid.lua", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/apps/BIBLE~1.LUA", true) == A_READ);  // 8.3 alias
+  assert(acc(ROOT_SD, "/meshcomod/apps/langtest.tmp", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/apps/x.lua.bak", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/appsx/a.lua", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/contacts3.lua", true) == A_READ);
+  assert(acc(ROOT_INTERNAL, "/apps/bible.lua", false) == A_WRITE);
+  assert(acc(ROOT_INTERNAL, "/apps/bible.json", false) == A_WRITE);
+  assert(acc(ROOT_INTERNAL, "/Apps/bible.lua", false) == A_READ);       // SPIFFS is case-sensitive
+  assert(acc(ROOT_INTERNAL, "/apps/snake.sav", false) == A_READ);
+  assert(acc(ROOT_INTERNAL, "/apps", false) == A_READ);
   assert(acc(ROOT_INTERNAL, "/sub/meshcore-x.json", false) == A_READ);   // top level only
   assert(acc(ROOT_INTERNAL, "/meshcore-.json", false) == A_READ);        // too short to be one
   assert(acc(ROOT_INTERNAL, "/Transfer/x", false) == A_READ);            // SPIFFS is case-sensitive

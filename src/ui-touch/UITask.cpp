@@ -54592,6 +54592,11 @@ class UiUsbFilesHost : public UsbFilesHost {
   }
   void noteChanged(UsbFiles::Root r) override {
     if (r == UsbFiles::ROOT_TILES || r == UsbFiles::ROOT_SD) s_usbfiles_map_dirty = true;
+#if CAP_LUA_APPS
+    // A .lua or .json may have landed in the apps folder: rescan it the next
+    // time the drawer or the Store opens (the listing is cached otherwise).
+    if (r == UsbFiles::ROOT_SD || r == UsbFiles::ROOT_INTERNAL) luaStoreInvalidateInstalled();
+#endif
   }
   void describe(char* out, size_t cap) override {
 #if defined(HAS_TDECK_GT911)

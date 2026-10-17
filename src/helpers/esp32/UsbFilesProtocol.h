@@ -283,6 +283,11 @@ inline bool splitPath(const char* p, size_t len, Root* root, char* rel, size_t r
 //   SD card     everything except /meshcomod, the firmware's data folder
 //   internal    only /transfer, /screenshots, /lock (wallpapers), settings
 //               backups (meshcore-*.json) and crash reports in the top folder
+//   apps        on both, the Lua apps folder (/meshcomod/apps on the card,
+//               /apps internally) takes .lua and .json files at its top level,
+//               so an app can be side-loaded without pulling the card. Its
+//               save files (.sav, .wgt) and data folders (<id>.d) are written
+//               by running apps and stay read-only.
 //   map tiles   everything (a re-downloadable cache)
 //
 // On FAT (case_insensitive) names compare without case, and any '~' is refused:
@@ -316,12 +321,39 @@ inline bool nameIsBackupOrCrash(const char* name) {
   return n > 14 && strncmp(name, "meshcore-", 9) == 0 && strcmp(name + n - 5, ".json") == 0;
 }
 
+inline bool endsWithCi(const char* s, size_t n, const char* ext) {
+  const size_t e = strlen(ext);
+  if (n <= e) return false;   // the extension alone is not a name
+  for (size_t i = 0; i < e; ++i)
+    if (lowerAscii(s[n - e + i]) != ext[i]) return false;
+  return true;
+}
+
+// rel is "<dir>/<leaf>" where dir is "/meshcomod/apps" (card) or "/apps"
+// (internal) and leaf is a plain .lua / .json file name: no subfolder, no
+// hidden or 8.3-alias name. The folder itself is not included, so it can never
+// be deleted or renamed from the page.
+inline bool appFileUnder(const char* rel, const char* dir, bool ci) {
+  if (!rel) return false;
+  const size_t d = strlen(dir);
+  for (size_t i = 0; i < d; ++i) {
+    const char a = ci ? lowerAscii(rel[i]) : rel[i];
+    if (a != dir[i]) return false;
+  }
+  if (rel[d] != '/') return false;
+  const char* leaf = rel + d + 1;
+  if (leaf[0] == '\0' || leaf[0] == '.' || strchr(leaf, '/') || strchr(leaf, '~')) return false;
+  const size_t n = strlen(leaf);
+  return endsWithCi(leaf, n, ".lua") || endsWithCi(leaf, n, ".json");
+}
+
 inline Access access(Root root, const char* rel, bool case_insensitive) {
   if (root == ROOT_NONE || !rel || rel[0] != '/') return A_NONE;
   if (rel[1] == '\0') return A_READ;   // a root itself: list it, never delete or rename it
   switch (root) {
     case ROOT_SD:
       if (case_insensitive && strchr(rel, '~')) return A_READ;
+      if (appFileUnder(rel, "/meshcomod/apps", case_insensitive)) return A_WRITE;
       if (relUnder(rel, "meshcomod", case_insensitive)) return A_READ;
       return A_WRITE;
     case ROOT_INTERNAL:
@@ -330,6 +362,7 @@ inline Access access(Root root, const char* rel, bool case_insensitive) {
           relUnder(rel, "screenshots", case_insensitive) ||
           relUnder(rel, "lock", case_insensitive))
         return A_WRITE;
+      if (appFileUnder(rel, "/apps", case_insensitive)) return A_WRITE;
       if (topLevelFile(rel) && nameIsBackupOrCrash(rel + 1)) return A_WRITE;
       return A_READ;
     case ROOT_TILES:
