@@ -34065,7 +34065,16 @@ static bool luaStoreFetchAppFiles(WiFiClient& client, HTTPClient& http, fs::FS* 
   return true;
 }
 
+static size_t langWriteAll(File& f, const uint8_t* src, size_t n);                      // below
+static bool   langVerifyInstall(fs::FS* fs, const char* tmp, const char* path, size_t n);  // below
+
 // Download <id>.lua + <id>.json (immutable per-version path) into /apps/.
+// Each file goes to a .tmp through the internal bounce-buffer writer, is checked
+// on the card, and only then replaces the real name. The old single f.write()
+// straight from the PSRAM buffer came back short on SD: Blackjack (48 KB) landed
+// cut off near 32 KB, the install reported a network error, and the half file
+// stayed behind as an "installed" app that failed with a syntax error at <eof>
+// (Discord). Smaller apps happened to fit in what one short write got through.
 static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
                                    const char* id, const char* ver) {
   fs::FS* fs = luaHostAppFs();
@@ -34082,17 +34091,21 @@ static bool luaStoreDownloadWorker(WiFiClient& client, HTTPClient& http,
     snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/%s/%s/%s.%s", id, ver, id, kExt[e]);
     int n = luaStoreHttpGet(client, http, url, buf, kCap[e]);
     if (n <= 0) { heap_caps_free(buf); return false; }
-    char rel[40], path[64];
+    char rel[40], path[64], tmp[72];
     snprintf(rel, sizeof rel, "/apps/%s.%s", id, kExt[e]);
     luaHostAppPath(path, sizeof path, rel);
-    File f = fs->open(path, "w");
+    snprintf(tmp, sizeof tmp, "%s.tmp", path);   // ends in .tmp: the drawer never lists it
+    File f = fs->open(tmp, "w");
     if (!f) { heap_caps_free(buf); return false; }
-    size_t wr = f.write((const uint8_t*)buf, n);
+    const size_t wr = langWriteAll(f, (const uint8_t*)buf, (size_t)n);
     f.close();
     char files[192] = "";
     if (e == 1) luaJsonField(buf, "files", files, sizeof files);   // the manifest
     heap_caps_free(buf);
-    if (wr != (size_t)n) return false;
+    if (wr != (size_t)n || !langVerifyInstall(fs, tmp, path, (size_t)n)) {
+      fs->remove(tmp);   // an update keeps the version it had; a new install leaves nothing
+      return false;
+    }
     if (files[0] && !luaStoreFetchAppFiles(client, http, fs, id, ver, files)) return false;
   }
   return true;

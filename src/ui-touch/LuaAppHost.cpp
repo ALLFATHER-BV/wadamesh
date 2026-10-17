@@ -1767,6 +1767,28 @@ static void fsEnsureDir() {
 // An app that ignores the advice in deploy/apps/README.md and writes every frame
 // gets `false, "too fast"` instead of wedging the device. The guard covers the
 // case where a write DOES trigger GC, so it stalls briefly instead of rebooting.
+// Lua strings live in PSRAM (the app allocator), and an SD write straight from
+// PSRAM can come back short. Copy through a small internal buffer instead; the
+// Store's app downloads hit exactly this (Blackjack cut off near 32 KB).
+static bool fsWriteBounced(File& f, const uint8_t* src, size_t n) {
+  if (n == 0) return true;
+  const size_t kChunk = 2048;
+  uint8_t* bounce = (uint8_t*)heap_caps_malloc(kChunk, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!bounce) return f.write(src, n) == n;   // no internal memory free: the old way
+  size_t done = 0;
+  int stalls = 0;
+  while (done < n) {
+    const size_t step = (n - done) < kChunk ? (n - done) : kChunk;
+    memcpy(bounce, src + done, step);
+    const size_t w = f.write(bounce, step);
+    if (w == 0) { if (++stalls > 3) break; vTaskDelay(pdMS_TO_TICKS(20)); continue; }
+    stalls = 0;
+    done += w;
+  }
+  heap_caps_free(bounce);
+  return done == n;
+}
+
 static int fsWriteCommon(lua_State* L, const char* mode) {
   const char* name = luaL_checkstring(L, 1);
   size_t len = 0;
@@ -1785,7 +1807,7 @@ static int fsWriteCommon(lua_State* L, const char* mode) {
   {
     WdtHeavyGuard guard;            // a GC pass here must stall, not reboot
     File f = fs->open(path, mode);
-    if (f) { ok = (f.write((const uint8_t*)data, len) == len); f.close(); }
+    if (f) { ok = fsWriteBounced(f, (const uint8_t*)data, len); f.close(); }
   }
   s_h->fs_last_write_ms = now;
   lua_pushboolean(L, ok);
@@ -2262,7 +2284,7 @@ void wgtFlush(const char* id) {
   File f = fs->open(path, "w");
   if (!f) return;
   f.write(&kWgtFileVer, 1);
-  f.write((const uint8_t*)&w->snap, sizeof w->snap);
+  fsWriteBounced(f, (const uint8_t*)&w->snap, sizeof w->snap);   // the slot table is in PSRAM
   f.close();
 }
 // wada.widget.set{ title=, value=, line=, bar=0..1, spark={...} } -> true, or false when
