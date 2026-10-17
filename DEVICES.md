@@ -16,6 +16,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | Elecrow ThinkNode M9 | ESP32-S3, LR1110 | 2.4" 240x320 (no touch), I2C QWERTY + d-pad | Web flasher | Beta (new in beta_38) | Hardware-complete community port by ded (#138): GPS, microSD, buzzer, lock screen, d-pad navigation |
 | Elecrow CrowPanel Advance 3.5 | ESP32-S3, external SX1262 | 3.5" ILI9488 480x320 touch (GT911) | Web flasher (beta) | Beta, hardware validation pending | Requires an SX1262 module in the LoRa expansion slot; not for other CrowPanel models |
 | Elecrow CrowPanel Advance 5.0 | ESP32-S3, external SX1262 | 5" ST7262 RGB 800x480 touch (GT911) | Web flasher (beta) | Beta, hardware-tested (display, touch, radio) | V1.1+ boards; SX1262 in the wireless slot with the function DIP switch on the wireless module; no SD, GPS or battery gauge |
+| Seeed SenseCAP Indicator D1L | ESP32-S3, SX1262 | 4" 480x480 touch (FT6336) | Development build only | Experimental | Hardware-tested (display, touch, radio); USB-powered, no battery; the RP2040's buzzer and microSD are not used |
 | RAK WisMesh Tap V2 (RAK3312) | ESP32-S3, SX1262 | Touch display (LovyanGFX, 30+ fps) | Web flasher | Beta (new in beta_38) | Early community port by Ethac.chen (#136); core mesh, chat and map working |
 | LilyGo T-Lora Pager | ESP32-S3, LR1121 or SX1262 | 2.33" IPS LCD, 480x222 (no touch), QWERTY + rotary encoder | Web flasher (pick the build matching your radio) | Beta (new in beta_45) | Fully supported; keyboard-first navigation, microSD, map tile packs |
 | Heltec V4-R8 + Expansion Kit V2 | ESP32-S3 (8 MB octal PSRAM), SX1262 | 2.4" touch (CHSC6x) | Web flasher | Beta (new in beta_45) | As the V4 plus microSD and the Expansion Kit sensors; buzzer supported |
@@ -165,6 +166,14 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   full install and an on-device update, whose long flash erases the panel
   recovers from. Select it in
   the upload helper with `scripts/build-upload-monitor.sh --crowpanel-50`.
+- **SenseCAP Indicator D1L**: `sensecap_indicator_companion_radio_touch` drives
+  the 480x480 ST7701S RGB panel, the FT6336 touch controller and the SX1262,
+  whose control lines sit on a TCA9535 I/O expander. It is USB-powered with no
+  battery, so the battery readouts and Power off are hidden. The RP2040
+  peripherals (buzzer, microSD, Grove, D1Pro sensors) are not used, and without
+  storage there are no map tiles. The D1Pro shares the ESP32 side and is expected
+  to run the same image, but is untested. See
+  [variants/sensecap_indicator/PORT.md](variants/sensecap_indicator/PORT.md).
 
 ## Requested boards
 
@@ -173,7 +182,6 @@ Open hardware requests, roughly in demand order. Ports are welcome, see
 PRs.
 
 - LilyGo T-Deck Pro hardware validation / T-Deck Max variants: [#62](https://github.com/ALLFATHER-BV/wadamesh/issues/62)
-- SenseCAP Indicator D1L: [#14](https://github.com/ALLFATHER-BV/wadamesh/issues/14)
 
 ## Channels
 

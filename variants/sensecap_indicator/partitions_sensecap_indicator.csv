@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# SenseCAP Indicator D1L: 8 MB flash, one factory app slot, no map tile partition.
+# Name,   Type, SubType,  Offset,   Size,     Flags
+nvs,      data, nvs,      0x9000,   0x5000,
+otadata,  data, ota,      0xe000,   0x2000,
+factory,  app,  factory,  0x10000,  0x480000,
+spiffs,   data, spiffs,   0x490000, 0x360000,
+coredump, data, coredump, 0x7F0000, 0x10000,

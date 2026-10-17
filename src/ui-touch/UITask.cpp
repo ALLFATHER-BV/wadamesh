@@ -211,6 +211,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include <TDeckProDisplay.h>
   #elif defined(TLORA_PAGER)
     #include <helpers/ui/ST7796LCDDisplay.h>
+  #elif defined(HAS_SENSECAP_INDICATOR)
+    #include <IndicatorDisplay.h>
   #elif defined(HAS_WIO_TRACKER_L2)
     #include <WioTrackerL2Display.h>
     #include <WioTrackerL2Io.h>
@@ -285,6 +287,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern TDeckProDisplay display;
   #elif defined(TLORA_PAGER)
     extern ST7796LCDDisplay display;
+  #elif defined(HAS_SENSECAP_INDICATOR)
+    extern IndicatorDisplay display;
   #elif defined(HAS_WIO_TRACKER_L2)
     extern WioTrackerL2Display display;
   #elif defined(HAS_CROWPANEL_35)
@@ -9560,7 +9564,9 @@ static void kbShowRotateArrows(bool show) {
 // control. The arrows are not created on these boards; every other reference to
 // the two pointers is null-guarded, so leaving them null is enough to remove
 // the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
+// The SenseCAP Indicator's square 480x480 panel does not rotate either.
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101) && \
+    !defined(HAS_SENSECAP_INDICATOR)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -34537,6 +34543,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
   #endif
 #elif defined(ATTAKY_MESH_SERIES)
 #define WADA_BOARD_ID "attaky"
+#elif defined(HAS_SENSECAP_INDICATOR)
+#define WADA_BOARD_ID "sensecap-indicator"
 #elif defined(HAS_WIO_TRACKER_L2)
 #define WADA_BOARD_ID "wio-tracker-l2"
 #elif defined(HAS_CROWPANEL_35)
@@ -52401,7 +52409,7 @@ static void powerRebootCb(lv_event_t* e) {
 // finds the hardware switch — and that is what the T-Display P4 did: no wake
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
-#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4)
+#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
 static void powerOffNow();
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -52570,7 +52578,11 @@ static void openPowerMenu() {
 
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
+#if defined(HAS_SENSECAP_INDICATOR)
+  const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 3 * p_step + 8;   // Power-off row hidden: 3 rows
+#else
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#endif
 #elif defined(HAS_RAK_TAP_V2)
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
@@ -52626,11 +52638,12 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
+#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4) || defined(HAS_SENSECAP_INDICATOR)
   // No "Power off" here: nothing on this board can wake it from deep sleep.
   // (The P4's BOOT button is GPIO35, not one of its LP GPIOs, so it cannot.)
   // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the L2's
   // wake button is behind an I2C expander, which cannot wake the ESP32-S3; the
+  // Indicator's user button is GPIO38, not an RTC GPIO, so it cannot wake it; the
   // T-Display P4 and Tanmatsu have no user button either. Offering a software
   // power-off that cannot be undone reads as a freeze (#310, #406). Remaining
   // rows shift up one slot.
@@ -53041,7 +53054,8 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101) || \
+      defined(HAS_SENSECAP_INDICATOR)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 63;
 static void applyBrightness(uint8_t pct) {
@@ -59066,7 +59080,7 @@ static lv_obj_t* hwIcon(lv_obj_t* parent, const char* glyph, uint32_t col, bool 
 static const lv_font_t* hwFitFont(const char* txt, int w, int h) {
   const lv_font_t* faces[] = {
     &lv_font_montserrat_28,
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE)
     &lv_font_montserrat_24, &lv_font_montserrat_20,
 #endif
     &g_font_semi_16, &g_font_semi_14, &g_font_12,
@@ -67216,7 +67230,8 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101) && \
+    !defined(HAS_SENSECAP_INDICATOR)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
@@ -68764,7 +68779,7 @@ bool luaHostScreenOn() {
 // It never comes out smaller than the regular 16, which on a scaled-up UI already is
 // Montserrat 24. Older firmware maps any size above 16 to 16, so apps stay readable.
 static const lv_font_t* luaHostFigureFont() {
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE)
   if (lv_font_get_line_height(&lv_font_montserrat_24) > lv_font_get_line_height(&g_font_16))
     return &lv_font_montserrat_24;
 #endif
@@ -73217,6 +73232,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 240;
       g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
       band_psram = true;
+#elif defined(HAS_SENSECAP_INDICATOR)
+      // A full 480 px row in internal DMA RAM, not the PSRAM band above: the RGB panel
+      // scans its frame buffer out of PSRAM all the time, and the flush copies each band
+      // into that buffer. From internal RAM the copy is one PSRAM write instead of a read
+      // and a write, and drawing the band does not compete with the scan-out.
+      const int draw_band_w = 480;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
 #else
       const int draw_band_w = 240;
 #endif
@@ -73311,8 +73333,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
-    // The panel driver exposes its fixed landscape surface directly (320x240 / 1024x600).
+  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
+    // The panel driver exposes its fixed surface directly (320x240 / 1024x600
+    // landscape, Indicator 480x480).
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
@@ -73437,6 +73460,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // display for the browser without changing the physical placeholder panel.
     g_lv.disp_drv.hor_res  = (s_remote_mode && !s_remote_landscape) ? 222 : 480;
     g_lv.disp_drv.ver_res  = (s_remote_mode && !s_remote_landscape) ? 480 : 222;
+#elif defined(HAS_SENSECAP_INDICATOR)
+  g_lv.disp_drv.hor_res  = 480;
+  g_lv.disp_drv.ver_res  = 480;
 #elif defined(HAS_WIO_TRACKER_L2)
   g_lv.disp_drv.hor_res  = 320;
   g_lv.disp_drv.ver_res  = 240;
@@ -74850,8 +74876,10 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
-  // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5).
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101) || \
+      defined(HAS_SENSECAP_INDICATOR)
+  // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5,
+  // LEDC on the Indicator).
   if (on) applyBrightness(s_brightness_pct);
   else    display.setBrightness(0);
 #elif defined(HAS_TDISPLAY_P4)
