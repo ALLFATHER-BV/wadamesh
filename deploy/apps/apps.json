@@ -113,6 +113,14 @@
       "icon": "music",
       "requires": "audio",
       "seed": false
+    },
+    {
+      "id": "blackjack",
+      "name": "Blackjack",
+      "ver": "1.0",
+      "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, and T-Deck/T-Display P4 controls. Contributed by halflive-743.",
+      "icon": "game",
+      "seed": false
     }
   ]
 }
