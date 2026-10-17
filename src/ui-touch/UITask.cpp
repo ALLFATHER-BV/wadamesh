@@ -3502,6 +3502,7 @@ static const char* tempUnit() { return tempF() ? "F" : "C"; }
 static uint8_t* s_nick_tab = nullptr;   // TOUCH_NICK_MAX records, PSRAM where there is any
 static int      s_nick_n   = -1;        // -1: not read yet
 static uint8_t  s_nick_gen = 0;
+static uint8_t  s_deliv_gen = 0;   // a DM's delivery state flipped: the chats list redraws its ticks (#670)
 static void nickLoad() {
   if (s_nick_n >= 0) return;
   s_nick_n = 0;
@@ -22055,7 +22056,9 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   const int title_h = PSC(28);
   const int padding = PSC(6);
 #else
-  const int card_w = 232;
+  // 232 wide left a long name and the button labels cramped on a 320 px screen
+  // (#668); use most of the width there, never more than 300.
+  const int card_w = LV_MAX(232, LV_MIN((int)sw - 24, 300));
   // Two-column button grid keeps the common actions compact. Delete spans the
   // full-width bottom danger row, and unusually tall sets scroll below.
   const int btn_h = 30;
@@ -22110,7 +22113,23 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
 #endif
   const int grid_rows  = one_col ? grid_items : (grid_items + 1) / 2;   // ceil
   const int body_content_h = (grid_rows + 1) * btn_h + grid_rows * btn_gap;
-  const int head_h = title_h + sub_h;   // title, plus the advertised name under a nickname
+  // The title takes a second line when the name needs it: with Large Text a long
+  // node name wrapped and its second line ran under the buttons (#668).
+  char ttl[64];
+  {
+    char nm[40];
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), nick ? nick : (name ? name : ""));
+    snprintf(ttl, sizeof ttl, "%s%s",
+             is_repeater ? TOUCH_SYM_ANTENNA "  " :
+             is_room     ? LV_SYMBOL_LOOP    "  " : TOUCH_SYM_PERSON "  ",
+             nm[0] ? nm : "(unnamed)");
+  }
+  const int title_w = card_w - 2 * padding - 32;   // clear of the close-X badge
+  const int title_lh = (int)lv_font_get_line_height(&g_font_14);
+  const int title_lines =
+      lv_txt_get_width(ttl, strlen(ttl), &g_font_14, 0, LV_TEXT_FLAG_NONE) > title_w ? 2 : 1;
+  const int title_row_h = LV_MAX(title_h, title_lines * title_lh + (title_h - title_lh > 0 ? title_h - title_lh : 6));
+  const int head_h = title_row_h + sub_h;   // title, plus the advertised name under a nickname
   int card_h = 2 * padding + head_h + body_content_h;
   // Cap the card to the visible area and let the BUTTON BODY (below the fixed title/X) scroll when it
   // overflows — so a tall sheet (repeater, big UI scale) always fits on-screen and every button stays
@@ -22131,18 +22150,14 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   addCloseXBadge(card, actionSheetCloseCb);
 
   lv_obj_t* title = lv_label_create(card);
-  char nm[40];
-  copyUtf8ReplacingMissingGlyphs(&g_font_14, nm, sizeof(nm), nick ? nick : (name ? name : ""));
-  lv_label_set_text_fmt(title, "%s%s",
-                        is_repeater ? TOUCH_SYM_ANTENNA "  " :
-                        is_room     ? LV_SYMBOL_LOOP    "  " : TOUCH_SYM_PERSON "  ",
-                        nm[0] ? nm : "(unnamed)");
+  lv_label_set_text(title, ttl);
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
   lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-  // Trim 32 px on the right so the close-X badge doesn't sit on top of
-  // the contact name when it's long.
-  lv_obj_set_width(title, card_w - 2 * padding - 32);
+  // A fixed size: LONG_DOT only shortens a label of fixed height (one that sizes
+  // itself wraps instead). Trim 32 px on the right so the close-X badge doesn't
+  // sit on top of a long name.
+  lv_obj_set_size(title, title_w, title_lines * title_lh);
   lv_obj_set_pos(title, 0, 0);
   if (nick) {   // the name it advertises, so a nickname never hides who this is
     lv_obj_t* real = lv_label_create(card);
@@ -22153,7 +22168,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
     lv_obj_set_style_text_font(real, &g_font_12, LV_PART_MAIN);
     lv_label_set_long_mode(real, LV_LABEL_LONG_DOT);
     lv_obj_set_width(real, card_w - 2 * padding - 32);
-    lv_obj_set_pos(real, 0, title_h - 4);
+    lv_obj_set_pos(real, 0, title_row_h - 4);
   }
 
   // Scrollable button body below the fixed title/X. The absolute-positioned grid buttons go in here;
@@ -22310,7 +22325,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // left unscrollable and the overflow is simply unreachable, which is the shape
   // of #306. `y` is the truth, so use it and let the tally be wrong harmlessly.
   {
-    const int body_h = card_h - 2 * padding - title_h;
+    const int body_h = card_h - 2 * padding - head_h;
     if (y > body_h) {
       lv_obj_set_scroll_dir(body, LV_DIR_VER);
       lv_obj_add_flag(body, LV_OBJ_FLAG_SCROLLABLE);
@@ -44516,6 +44531,7 @@ static void refreshChatList(LvChatPanel& p) {
   mix(compact_rows ? 0xC0FFEEu : 1u);
   mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
   mix(s_nick_gen);     // so does a contact's new nickname
+  mix(s_deliv_gen);    // and a sent DM turning delivered (#670)
   mix(p.inbox_combined ? 0xF1u + s_chats_filter : 0u);
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
@@ -47511,8 +47527,18 @@ static void lockscreenShow() {
     lv_obj_remove_style_all(dim);
     lv_obj_clear_flag(dim, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_size(dim, sw, sh);
-    lv_obj_set_style_bg_color(dim, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(dim, (lv_opa_t)150, LV_PART_MAIN);
+    // A light black veil, and light ink on it whatever the theme, the way a phone
+    // lock screen treats a photo. The theme's own background at 150/255 made a
+    // picture milky on the Day themes and cloudy on Night (#652).
+    lv_obj_set_style_bg_color(dim, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dim, (lv_opa_t)105, LV_PART_MAIN);
+#if defined(TLORA_PAGER)
+    const uint32_t wclk = 0xFFFFFF;
+#else
+    const uint32_t wclk = touchPrefsGetLockTextColor();
+#endif
+    s_lock_ink = { wclk, 0xF2F5F6, 0xC9D1D5, 0xA3AEB4, COLOR_GLOW, COLOR_ACCENT, COLOR_ACCENT,
+                   0x0B0E10, 0x2A3439, false };
 #endif
   }
 
@@ -56979,6 +57005,7 @@ static void chatHeaderApply(bool chat_open) {
       lv_obj_set_height(g_statusbar.root, statusBarCurH());
       for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_x(o, 0, LV_PART_MAIN);
+      if (g_statusbar.layout_label) lv_obj_set_style_translate_y(g_statusbar.layout_label, 0, LV_PART_MAIN);
       if (g_statusbar.gps_icon) {
         lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
         statusBarPackRight();
@@ -57105,16 +57132,29 @@ static void chatHeaderApply(bool chat_open) {
     for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
       if (o) lv_obj_set_style_translate_x(o, -corner, LV_PART_MAIN);
     lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + corner), 0);
+    // Left of the clock: the keyboard layout ("EN", "BG") while a second layout is
+    // on, then the GPS glyph. Both used to take the same spot, so the layout code
+    // sat on top of the GPS glyph (#672).
+    lv_coord_t right_x = pct_w + 8 + clk_w + SBX(6) + corner;
+    lv_coord_t lay_w = 0;
+    if (g_statusbar.layout_label && !lv_obj_has_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN)) {
+      const char* lt = lv_label_get_text(g_statusbar.layout_label);
+      lay_w = lv_txt_get_width(lt, strlen(lt), lv_obj_get_style_text_font(g_statusbar.layout_label, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+      lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -right_x, 0);
+      lv_obj_set_style_translate_y(g_statusbar.layout_label, line_dy, LV_PART_MAIN);
+      right_x += lay_w + SBX(6);
+    }
     lv_coord_t gps_w = 0;
     if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
       const char* gt = lv_label_get_text(g_statusbar.gps_icon);
       gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-      lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6) + corner), 0);
+      lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -right_x, 0);
       lv_obj_set_style_translate_y(g_statusbar.gps_icon, line_dy, LV_PART_MAIN);
     }
-    // The title stays short of the clock (and the GPS glyph left of it).
+    // The title stays short of the clock (and the layout code and GPS glyph left of it).
     {
-      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (gps_w ? gps_w + SBX(6) : 0));
+      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (gps_w ? gps_w + SBX(6) : 0)
+                                                    - (lay_w ? lay_w + SBX(6) : 0));
       lv_obj_set_width(g_statusbar.left_label, tw);
       lv_obj_set_width(g_statusbar.chat_sub, tw);
       char ttl[sizeof(s_chat_title) + 4];
@@ -70037,6 +70077,8 @@ bool UITask::loadMsgsFromSegments() {
   _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
   _ui_seq_next  = max_seq + 1;
   s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
+  Serial.printf("[HIST] loaded %d records from %d segments (cap %d), ring %d/%d\n",
+                total, (int)s_seg_count, k_ui_seg_max, n_keep, _ui_msg_cap);
   // _msgcount isn't stored in segments; the threads-file header carries it and
   // the mesh layer re-asserts it with every message. Keep it monotonic vs seq.
   if ((int)max_seq > _msgcount) _msgcount = (int)max_seq;
@@ -71614,7 +71656,11 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
     }
   }
 #if defined(HAS_TOUCH_UI)
-  if (any) g_lv.dirty_timeline = true;
+  if (any) {
+    g_lv.dirty_timeline = true;
+    g_lv.dirty_threads  = true;   // the chats list shows the last DM's ticks too (#670)
+    ++s_deliv_gen;
+  }
 #else
   (void)any;
 #endif
