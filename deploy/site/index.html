@@ -422,13 +422,17 @@
   .cookiebar a{color:var(--teal-ink); cursor:pointer}
   .cookiebar button{background:var(--accent-fill); color:var(--on-accent); border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none; font-family:inherit}
   /* the way in, straight under the intro */
-  .cta-row{margin-top:26px}
+  .cta-row{margin-top:26px; display:flex; flex-wrap:wrap; justify-content:center; gap:12px}
   .cta{display:inline-flex; align-items:center; gap:10px; padding:13px 26px; border-radius:100px;
     background:var(--accent-fill); color:var(--on-accent); font-weight:700; font-size:1.02rem; text-shadow:none;
     box-shadow:0 16px 36px -14px rgba(25,214,194,.6); transition:transform .15s, filter .15s}
   .cta:hover, .cta:focus-visible{transform:translateY(-2px); filter:brightness(1.08); outline:none}
   .cta:focus-visible{box-shadow:0 0 0 3px var(--bg), 0 0 0 5px var(--teal)}
   .cta svg{width:19px; height:19px}
+  .cta.alt{background:var(--control); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line), var(--shadow);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px)}
+  .cta.alt svg{color:#5865F2}
+  .cta.alt:hover, .cta.alt:focus-visible{box-shadow:inset 0 0 0 1px #5865F2, var(--shadow)}
   /* a soft dark scrim behind the hero text, so it reads on the brightest part of the sky */
   header{position:relative; isolation:isolate}
   header::before{content:""; position:absolute; z-index:-1; left:50%; top:20px; transform:translateX(-50%);
@@ -529,7 +533,7 @@
     </div>
     <p class="lede">The whole mesh, on the radio itself.</p>
     <p class="sub">MeshCore firmware with chat, channels, contacts, a map and apps on the device itself, by touch, keyboard or trackball, <b>and</b> a companion radio for the <b>MeshCore app</b> at the same time. Runs on <a href="#devices">14 boards</a>, from the <b>LilyGo&nbsp;T-Deck</b> and <b>Heltec&nbsp;V4</b> to the <b>Tanmatsu</b>.</p>
-    <div class="cta-row"><a class="cta" href="#install"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>Install WADAMESH</a></div>
+    <div class="cta-row"><a class="cta" href="#install"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M5 21h14"/></svg>Install WADAMESH</a><a class="cta alt" href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.249a18.27 18.27 0 0 0-5.487 0 12.6 12.6 0 0 0-.617-1.249.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.369a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.2 14.2 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .078-.01c3.927 1.793 8.18 1.793 12.061 0a.074.074 0 0 1 .079.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 0 0-.031-.029zM8.02 15.331c-1.182 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg>Join the community</a></div>
     <div class="pills">
       <span class="pill" tabindex="0" style="--hue:var(--hue-place)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-6-3V4l6 3 6-3 6 3v13l-6-3-6 3z"/><path d="M9 7v13M15 4v13"/></svg>Offline map
         <span class="pop"><b>Offline map</b>A real OpenStreetMap you can pan and zoom on the device. Pre-load tile packs to an SD card for fully offline use, or fetch over Wi-Fi, and see your contacts' GPS positions plotted on it.</span></span>
