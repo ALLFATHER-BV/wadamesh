@@ -84,6 +84,15 @@ select OSM, and enable **Tiles from SD card**. See the
 [offline map tile guide](README.md#offline-map-tiles) for the QGIS export steps
 and map-provider policy requirements.
 
+## Web pages
+
+In the Web browser, **Up** and **Down** read the page: each press moves the
+highlight to the next link already on screen, or, when there is none, scrolls
+the text by about two-thirds of a screen. If the highlighted link scrolls out
+of view, the highlight moves to a link coming into view. Only at the top or
+bottom of the page does focus leave for the address bar or the toolbar.
+**OK** opens the highlighted link.
+
 ## Typing & editing
 
 Inside a text field the left/right arrows move the caret, and when the caret
