@@ -1097,8 +1097,24 @@ static lv_font_t g_font_badge;
 // It is a copy of the chain's Montserrat face with the lookups pointed at '*'. The
 // glyph keeps is_placeholder set, which LVGL still draws, so code that drops
 // undrawable characters instead (Constellation's node names) keeps working.
+// Invisible format characters: zero-width space/joiner, the bidi marks and
+// embeddings (LRM/RLM are common in Arabic and Hebrew messages), word joiner,
+// invisible operators, isolates and the BOM. LVGL only zero-widths <0x20, F8FF
+// and 200C itself, so without this the '*' fallback would show them all.
+static bool isInvisibleFormatChar(uint32_t c) {
+  return c == 0x200B || c == 0x200D || c == 0x200E || c == 0x200F ||
+         (c >= 0x202A && c <= 0x202E) || (c >= 0x2060 && c <= 0x2064) ||
+         (c >= 0x2066 && c <= 0x2069) || c == 0xFEFF;
+}
 static bool missingGlyphDsc(const lv_font_t* font, lv_font_glyph_dsc_t* dsc, uint32_t letter, uint32_t) {
   if (letter < 0x20 || letter == 0xF8FF || letter == 0x200C) return false;   // LVGL draws these zero-width
+  if (isInvisibleFormatChar(letter)) {   // a real, empty glyph: nothing drawn, no advance
+    dsc->adv_w = 0; dsc->box_w = 0; dsc->box_h = 0; dsc->ofs_x = 0; dsc->ofs_y = 0; dsc->bpp = 1;
+#if LV_USE_FONT_PLACEHOLDER
+    dsc->is_placeholder = false;
+#endif
+    return true;
+  }
   if (!lv_font_get_glyph_dsc_fmt_txt(font, dsc, '*', 0)) return false;
 #if LV_USE_FONT_PLACEHOLDER
   dsc->is_placeholder = true;
