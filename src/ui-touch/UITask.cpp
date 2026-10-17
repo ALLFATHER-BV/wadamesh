@@ -8327,6 +8327,8 @@ struct SegJob {
   bool     create    = false;  // APPEND: file doesn't exist yet (write header)
   bool     repair    = false;  // COMPACT of an untrusted file: also absorbs the unflushed tail
   int      n         = 0;
+  uint32_t absorb_seq = 0;     // COMPACT merge: the NEXT segment folded into this one; its
+                               // file is unlinked after the merged file lands (0 = none)
 };
 // The WORKER's armed job. Written only while !(busy || req); the sync drain
 // uses its own local SegJob + its own buffer so a worker stalled past the 9 s
@@ -8336,6 +8338,7 @@ static uint32_t s_segjob_first_seq = 0;
 static uint32_t s_segjob_last_seq  = 0;
 static bool     s_segjob_create    = false;
 static int      s_segjob_n         = 0;
+static uint32_t s_segjob_absorb_seq = 0;
 static UITask::UIMessage* s_segjob_buf = nullptr;   // worker jobs only
 static UITask::UIMessage* s_segsync_buf = nullptr;  // sync-drain jobs only
 // A delete landed inside the segment a COMPACT job is currently rewriting —
@@ -44254,6 +44257,8 @@ static void chatVirtJumpToLatest(LvChatPanel* p) {
   chatUpdateJumpButtons(p);
 }
 
+static bool chatSeenByUser();   // fwd: screen on, unlocked, not just a glance (defined with the glance state)
+
 static void refreshChatDetail(LvChatPanel& p) {
   if (!g_lv.task || !p.msgs) return;
   const bool       opening         = s_chat_just_opened;
@@ -44265,7 +44270,11 @@ static void refreshChatDetail(LvChatPanel& p) {
     chatVirtResetToPlaceholder(p, "No thread selected.\n\nTap a chat to open it.");
     return;
   }
-  if (p.detail_open) g_lv.task->markActiveThreadRead();
+  // Only what the user can actually see counts as read. A chat left open under
+  // a dark or locked screen used to clear every new message on arrival, so the
+  // lock screen's unread cards stayed empty. wakeScreen / lockscreenHide re-run
+  // this refresh, which marks them read once the chat is really back in view.
+  if (p.detail_open && chatSeenByUser()) g_lv.task->markActiveThreadRead();
 
   chatVirtEnsureMsgIdx();
   if (!s_chat_msg_idx || s_chat_msg_idx_cap <= 0) {
@@ -47708,6 +47717,7 @@ static void lockscreenHide() {
   s_lock_clock_min = -1;
   s_lock_clock_current = -1;
   s_lock_unread_ok = false;
+  g_lv.dirty_timeline = true;   // an open chat is in view again: mark what arrived as read
   // Give the status bar back the fill of the page under it: see-through over the
   // map and under a tall bar's glass, solid everywhere else. (A plain "solid"
   // left the bar black over the map after unlocking there.)
@@ -67859,6 +67869,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
       done.last_seq  = s_segjob_last_seq;
       done.create    = s_segjob_create;
       done.n         = s_segjob_n;
+      done.absorb_seq = s_segjob_absorb_seq;
       const uint32_t pre_wm = s_seg_flushed_seq;
       segCommitJob(done);
       // Deletes that raced the in-flight APPEND: segMarkSeqDirty skipped them
@@ -67956,6 +67967,15 @@ void UITask::flushHistoryIfDue(unsigned long now) {
     const int armed = segBuildJob(_ui_msgs, _ui_msg_cap, _ui_msg_count, _ui_msg_head,
                                   segEnsureBuf(&s_segjob_buf), &job);
     if (armed == 0) {
+      // Nothing buildable. Normally that means everything is durable — but if
+      // records are still pending, the store is stuck, and reporting that as
+      // "saved" is exactly how history silently stopped landing for days at
+      // the segment cap. Keep it dirty and retry instead of clearing the flag.
+      if (segMoreWorkPending(_ui_seq_next ? _ui_seq_next - 1 : 0)) {
+        Serial.printf("[HIST] flush stuck: %d segments, records pending\n", (int)s_seg_count);
+        _next_msgs_flush_ms = now + 30000;
+        return;
+      }
       // Everything durable. A resync's leftover files can go now that every
       // table entry has a real, current file on disk.
       if (s_seg_stale_purge) segPurgeStaleFiles();
@@ -67976,6 +67996,7 @@ void UITask::flushHistoryIfDue(unsigned long now) {
     s_segjob_last_seq  = job.last_seq;
     s_segjob_create    = job.create;
     s_segjob_n         = job.n;
+    s_segjob_absorb_seq = job.absorb_seq;
     s_segjob_redirty   = false;
     s_hist_flush_req   = true;
     // One job armed for the worker. A multi-segment backlog (burst bigger
@@ -70735,6 +70756,17 @@ static int segGatherRange(const UITask::UIMessage* ring, int cap, int count, int
   return n;
 }
 
+// Number of live records with seq in [lo, hi] in the ring.
+static int segCountRange(const UITask::UIMessage* ring, int cap, int count, int head,
+                         uint32_t lo, uint32_t hi) {
+  int n = 0;
+  for (int i = 0; i < count; ++i) {
+    const UITask::UIMessage& m = ring[(head - count + i + cap) % cap];
+    if (m.thread[0] && m.seq >= lo && m.seq <= hi) ++n;
+  }
+  return n;
+}
+
 // Build the next job into `buf` + `out`. PURE with respect to the worker
 // descriptor — arming (copying into the statics + raising req) is the async
 // caller's step, so the sync drain can use this with its own buffer and a
@@ -70769,6 +70801,7 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
   bool create = true;
   uint32_t target = 0;
   int room = k_ui_seg_records;
+  bool deferred = false;   // a create-append is blocked by the table cap (see below)
   if (s_seg_count > 0 && s_seg[s_seg_count - 1].disk_recs < k_ui_seg_records) {
     create = false;
     target = s_seg[s_seg_count - 1].first_seq;
@@ -70788,7 +70821,8 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
   // slot with NO live-record loss. The deferred records are the NEWEST (above
   // the watermark, so the ring evicts them last); they wait safely in RAM and
   // land next cycle once a slot is free. Below the cap this is a no-op.
-  if (!(create && s_seg_count >= k_ui_seg_max)) {
+  deferred = create && s_seg_count >= k_ui_seg_max;
+  if (!deferred) {
     int n = 0;
     uint32_t last = s_seg_flushed_seq;
     for (int i = 0; i < count; ++i) {
@@ -70825,6 +70859,50 @@ static int segBuildJob(const UITask::UIMessage* ring, int cap, int count, int he
     out->n         = cn;                      // 0 = every record gone -> unlink the file
     return 1;
   }
+  // 3) Still blocked at the cap with nothing to compact: free a slot ourselves.
+  //    Step 1's deferral assumed the oldest segment ages out of a FULL ring,
+  //    but after a reboot the ring only holds what was loaded (per-chat caps
+  //    thin the segments out without ever emptying one), so nothing is
+  //    evicted, no segment empties, and every new message stayed RAM-only:
+  //    "messages from the last days vanish after a reboot". Merge the adjacent
+  //    pair with the fewest live records into the older file (the newest
+  //    segment is the full append target, so it is never part of a pair).
+  if (deferred && count > 0 && ring[(head - 1 + cap) % cap].seq > s_seg_flushed_seq) {
+    int best = -1, best_n = k_ui_seg_records + 1;
+    for (int i = 0; i + 2 < s_seg_count; ++i) {
+      const uint32_t hi = s_seg[i + 2].first_seq - 1;
+      const int n = segCountRange(ring, cap, count, head, s_seg[i].first_seq, hi);
+      if (n < best_n) { best_n = n; best = i; }
+    }
+    if (best >= 0 && best_n <= k_ui_seg_records) {
+      const uint32_t hi = s_seg[best + 2].first_seq - 1;
+      const int cn = segGatherRange(ring, cap, count, head, s_seg[best].first_seq, hi,
+                                    buf, k_ui_seg_records);
+      out->kind       = SEGJOB_COMPACT;
+      out->first_seq  = s_seg[best].first_seq;
+      out->last_seq   = s_seg[best + 1].last_seq;   // the merged file covers both ranges
+      out->create     = false;
+      out->n          = cn;
+      out->absorb_seq = s_seg[best + 1].first_seq;
+      Serial.printf("[HIST] at segment cap: merging seg %lu + %lu (%d records)\n",
+                    (unsigned long)s_seg[best].first_seq,
+                    (unsigned long)s_seg[best + 1].first_seq, cn);
+      return 1;
+    }
+    // No pair fits (more than ~3000 live records spread over the table):
+    // retire the oldest segment, like the ring would if it were full. Those
+    // messages stay visible until the next reboot; new ones keep saving.
+    if (s_seg_count > 1) {
+      out->kind      = SEGJOB_COMPACT;
+      out->first_seq = s_seg[0].first_seq;
+      out->last_seq  = 0;
+      out->create    = false;
+      out->n         = 0;                       // unlink
+      Serial.printf("[HIST] at segment cap, no merge fits: retiring seg %lu\n",
+                    (unsigned long)s_seg[0].first_seq);
+      return 1;
+    }
+  }
   return 0;
 }
 
@@ -70853,6 +70931,20 @@ static void segCommitJob(const SegJob& job) {
       break;
     }
   } else if (job.kind == SEGJOB_COMPACT) {
+    if (job.absorb_seq) {
+      // Merge: the absorbed segment's records now live in job.first_seq's file
+      // (and its own file was unlinked by the writer). Drop its table entry.
+      for (int i = 0; i < s_seg_count; ++i) {
+        if (s_seg[i].first_seq != job.absorb_seq) continue;
+        s_seg_total_bytes = (s_seg_total_bytes >= s_seg[i].bytes)
+                                ? s_seg_total_bytes - s_seg[i].bytes : 0;
+        // A delete that raced the merge marked the ABSORBED entry; carry it over.
+        if (s_seg[i].compact_dirty) s_segjob_redirty = true;
+        for (int k = i; k + 1 < s_seg_count; ++k) s_seg[k] = s_seg[k + 1];
+        --s_seg_count;
+        break;
+      }
+    }
     for (int i = 0; i < s_seg_count; ++i) {
       if (s_seg[i].first_seq != job.first_seq) continue;
       s_seg_total_bytes = (s_seg_total_bytes >= s_seg[i].bytes)
@@ -70894,8 +70986,13 @@ static bool uiSegRunArmedJob() {
   switch (s_segjob_kind) {
     case SEGJOB_APPEND:
       return uiSegAppendRecords(s_segjob_first_seq, s_segjob_create, s_segjob_buf, s_segjob_n);
-    case SEGJOB_COMPACT:
-      return uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, false);
+    case SEGJOB_COMPACT: {
+      const bool ok = uiSegCompactWrite(s_segjob_first_seq, s_segjob_buf, s_segjob_n, false);
+      // Merge: unlink the absorbed file only once the merged one has landed. A
+      // crash in between leaves duplicates the loader's monotonic-seq filter drops.
+      if (ok && s_segjob_absorb_seq) uiSegRemoveFile(s_segjob_absorb_seq);
+      return ok;
+    }
     default:
       return true;
   }
@@ -70911,7 +71008,9 @@ static void segMarkSeqDirty(uint32_t seq) {
       s_seg[i].compact_dirty = 1;
       // Racing an in-flight compact of this very segment: its snapshot was
       // taken before this delete, so the commit must not clear the flag.
-      if (s_segjob_kind == SEGJOB_COMPACT && s_segjob_first_seq == s_seg[i].first_seq &&
+      if (s_segjob_kind == SEGJOB_COMPACT &&
+          (s_segjob_first_seq == s_seg[i].first_seq ||
+           (s_segjob_absorb_seq && s_segjob_absorb_seq == s_seg[i].first_seq)) &&
           (s_hist_flush_busy || s_hist_flush_req))
         s_segjob_redirty = true;
       return;
@@ -71066,6 +71165,7 @@ bool UITask::saveMsgsToStorage() {
       }
     } else {
       ok = uiSegCompactWrite(job.first_seq, buf, job.n, true);
+      if (ok && job.absorb_seq) uiSegRemoveFile(job.absorb_seq);
       if (ok) segCommitJob(job);
     }
     if (!ok) return false;
@@ -74610,6 +74710,7 @@ void UITask::noteUserInput() {
 
 void UITask::wakeScreen() {
   if (!_screen_off) return;
+  g_lv.dirty_timeline = true;   // an open chat comes back into view (refreshChatDetail marks read)
   // Several boards unlock with a plain wake (their button is the unlock control).
   // With a PIN that is an unlock like any other, and asks for it.
   if (_manual_lock && s_pin_on) { unlockScreen(); return; }
@@ -75445,6 +75546,7 @@ static bool uiHistWaitWorkerIdle() {
   // flushHistoryIfDue observe a stale job and commit it a SECOND time
   // (double-counted record/byte totals, or a duplicate table entry).
   s_segjob_kind    = SEGJOB_NONE;
+  s_segjob_absorb_seq = 0;
   s_segjob_redirty = false;
   // If the job was already in the worker's hands its fate is now unknown — it
   // may have written some or all of its records without being credited. Flag
@@ -75580,6 +75682,15 @@ static lv_obj_t* s_glance_clock      = nullptr;   // the time above it, on a scr
 static uint32_t  s_glance_lit_ms     = 0;         // millis() when (re)shown, 0 = not showing -- loop() re-dims 5s later
 static bool      s_glance_fading_out = false;     // one-shot guard: the 200ms fade-out anim has already been started
 static uint8_t   s_glance_count      = 0;         // messages in this burst (the card shows the newest)
+
+static bool chatSeenByUser() {
+  if (!g_lv.task || g_lv.task->isScreenOff() || g_lv.task->isManualLocked() || s_glance_lit_ms)
+    return false;
+#if CAP_LOCK_SCREEN
+  if (s_lock_root) return false;
+#endif
+  return true;
+}
 static lv_opa_t  s_glance_dim        = LV_OPA_COVER;   // the backdrop: solid on a dark screen, a dim over the screensaver or lock screen
 
 static void atGlanceOpaCb(void* var, int32_t v) {
@@ -75679,6 +75790,7 @@ static void atGlanceHide() {
   }
   atGlanceLockRestore();
   s_glance_lit_ms = 0;
+  g_lv.dirty_timeline = true;   // re-check an open chat: read only if the screen stays on
   s_glance_fading_out = false;
   s_glance_count = 0;
 }
