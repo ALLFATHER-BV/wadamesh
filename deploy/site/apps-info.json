@@ -195,6 +195,18 @@
       ],
       "credit": "samuelcoustet"
     },
+    "blackjack": {
+      "category": "games",
+      "glyph": "cards",
+      "tagline": "Casino Blackjack, with your bankroll kept between sessions.",
+      "about": "Twenty-one against the dealer from a six-deck shoe. Hit, stand, double down and split, set your bet before each hand, and your bankroll is still there the next time you open the app. Play it by touch, on the keyboard (H, S, D, P) or with the trackball, and the table scales to the screen, the T-Display P4 included.",
+      "highlights": [
+        "Split and double down",
+        "Bankroll kept between sessions",
+        "Touch, keyboard or trackball"
+      ],
+      "credit": "halflive-743"
+    },
     "sdscan": {
       "category": "tools",
       "glyph": "search",

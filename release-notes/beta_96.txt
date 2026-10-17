@@ -1,0 +1,32 @@
+# beta_96 - chat history keeps saving on busy devices, unread messages under a locked screen, Settings > Device, Lua apps over USB, Blackjack. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, the important fix, new things, fixes, for app makers.
+
+Test build, on top of beta_95. The stable build stays beta_85.
+
+# --- Important fix ---
+Chat history keeps saving on a device with a lot of it. Once the history on the card or in the device's storage reached its 24 files, a reboot could leave every new message in memory only, so it was gone after the next restart, without any warning (reported on Discord). Full files are now merged to make room, and a save that cannot land says so. Messages lost before this build cannot be recovered; older history is untouched.
+Messages that arrive in a chat you left open while the screen is off or locked stay unread, so the lock screen shows them. They count as read once you wake the device and see the chat (reported on Discord).
+
+# --- New ---
+Settings opens with a Device page: what this unit is, its radio and hardware, and the About information, with Run setup again and Reboot. The group with Display, Theme, Lock screen, Sound and Keyboard is now called Display & lock (#596 by oumike, asked for by Jess-39).
+First-time setup keeps Bluetooth on and shows a switch for it (#416, by oumike).
+T-Display P4: a one-row status bar with the title on the left and the clock beside the icons, and Settings in landscape uses two real columns (by oumike).
+In a chat, the clock and battery stay at the height they have on every other screen (by oumike).
+USB Files can put Lua apps on the device: drop a .lua or .json file into the apps folder (meshcomod/apps on the SD card) at files.wadamesh.com, no need to take the card out. It shows up the next time you open the app drawer (asked for on Discord).
+New in the Store: Blackjack, with split, double down and your bankroll kept between sessions (#681 by halflive-743).
+The Store now lists more than 16 apps; it stopped at 16 before, so new apps would not have shown up.
+
+# --- Fixes ---
+ThinkNode M9 and other keypad boards: Up and Down on a web page scroll the text instead of jumping past it to the toolbar (#680 by oumike, reported by Buko84 in #677).
+A lock screen PIN with a 0 (or any digit on the Sym layer) can be typed on the T-Deck (#676 by oumike, reported by TerryTel93 in #675).
+Characters a font cannot draw show as one "*" everywhere, skin-tone modifiers are hidden, and invisible marks in Arabic and Hebrew messages stay invisible (#679 by oumike, reported by neoemit in #673).
+The chats list shows the double tick as soon as a direct message is delivered (reported by neoemit in #670).
+ThinkNode M9: the keyboard language code in the chat header no longer sits on top of the GPS icon (reported by neoemit in #672).
+The contact popup is wider on 320 pixel screens and gives a long name a second line, so with Large Text it no longer runs under the buttons (reported by Danie10 in #668).
+A lock screen with your own picture is no longer milky: a lighter dark tint and light text on every theme (reported by Flyflinger in #652).
+Translations: this build's new texts in all 14 languages.
+
+# --- For app makers ---
+Canvases larger than 480 pixels are fitted to the screen instead of stopping the app, so apps that size their canvas from on_open work on the T-Display P4, Tanmatsu and CrowPanel 5 (reported on Discord).
+button:bg(colour) gives a button its own fill colour, and it stays reachable with the keys and trackball (SDK guide).
