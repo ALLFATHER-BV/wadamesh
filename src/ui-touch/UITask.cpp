@@ -6090,10 +6090,16 @@ static void navSliderNudge(lv_obj_t* s, int dir) {
   lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
 }
 
-static void navMoveDir(int dir) {
-  if (!s_nav_group) return;
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+static bool readerNavMove(lv_obj_t* cur, int dir);   // the Web page's Up/Down (with the Reader below)
+#endif
+// Returns true when the Web page's own Up/Down took the press (a link already on
+// screen, or a page scroll), so a caller's "focus did not move: scroll" fallback
+// must not scroll a second time.
+static bool navMoveDir(int dir) {
+  if (!s_nav_group) return false;
   const int n = s_nav_count < kNavMax ? s_nav_count : kNavMax;
-  if (n <= 0) return;
+  if (n <= 0) return false;
   lv_obj_t* cur = lv_group_get_focused(s_nav_group);
   if (!cur || !lv_obj_is_valid(cur)) {
     // s_nav_objs is a raw mirror that only refreshes on the next navMaybeRebuild
@@ -6102,7 +6108,7 @@ static void navMoveDir(int dir) {
     // freed memory inside lv_group_focus_obj.
     s_nav_show = true;
     if (s_nav_objs[0] && lv_obj_is_valid(s_nav_objs[0])) lv_group_focus_obj(s_nav_objs[0]);
-    return;
+    return false;
   }
   // The app-drawer gear is a deliberate edge target, not a generic object above/right
   // of the grid. Only the top-right tile may enter it; spatial nav otherwise ignores it.
@@ -6111,7 +6117,7 @@ static void navMoveDir(int dir) {
     s_nav_show = true;
     lv_group_focus_obj(s_nav_drawer_gear);
     if (g_lv.task) g_lv.task->noteUserInput();
-    return;
+    return false;
   }
   if (navIsStoreTab(cur)) {
     if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
@@ -6121,7 +6127,7 @@ static void navMoveDir(int dir) {
       lv_group_focus_obj(s_nav_store_first);
       if (g_lv.task) g_lv.task->noteUserInput();
     }
-    if (dir == NAV_UP || dir == NAV_DOWN) return;
+    if (dir == NAV_UP || dir == NAV_DOWN) return false;
   } else if (dir == NAV_UP && s_nav_store_top_row &&
              navStoreRowFor(cur) == s_nav_store_top_row) {
     if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list) &&
@@ -6134,7 +6140,7 @@ static void navMoveDir(int dir) {
       lv_group_focus_obj(s_nav_store_active_tab);
     }
     if (g_lv.task) g_lv.task->noteUserInput();
-    return;
+    return false;
   }
   // A focused slider captures LEFT/RIGHT to adjust its VALUE instead of moving focus —
   // so horizontal tunes the slider and you leave it by going UP/DOWN. (Same idea as the
@@ -6146,10 +6152,13 @@ static void navMoveDir(int dir) {
     lv_event_send(cur, LV_EVENT_RELEASED, nullptr);
     s_nav_show = true;
     if (g_lv.task) g_lv.task->noteUserInput();
-    return;
+    return false;
   }
 #if defined(HAS_THINKNODE_M9)
-  if (m9ControlCenterMove(cur, dir)) return;
+  if (m9ControlCenterMove(cur, dir)) return false;
+#endif
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  if (readerNavMove(cur, dir)) return true;
 #endif
   lv_area_t a; lv_obj_get_coords(cur, &a);
   // The Discovered header is fixed immediately above its scrolling list. When a
@@ -6237,6 +6246,7 @@ static void navMoveDir(int dir) {
     lv_group_focus_obj(best);
     if (g_lv.task) g_lv.task->noteUserInput();
   }
+  return false;
 }
 
 static inline int  navKeyLower(int k)   { return (k >= 'A' && k <= 'Z') ? k - 'A' + 'a' : k; }
@@ -28300,6 +28310,75 @@ static void readerRenderBody() {
   if (cursor < tlen) mkRange(cursor, tlen, false, -1);
   lv_obj_scroll_to_y(s_reader_scroll, 0, LV_ANIM_OFF);
 }
+// Up/Down on the Web page with keys or a d-pad (#677). Links are the body's only focus
+// targets, so spatial nav jumped from a link to the next one however far down the page,
+// or to the toolbar when there was none (a changelog with one link at the top), and the
+// text in between could not be read without touch. Here a press moves to the next link
+// already on screen, else scrolls the body a page; only at the end of the page does focus
+// leave for the address row or the toolbar.
+#if CAP_KEYPAD_NAV
+static bool readerNavMove(lv_obj_t* cur, int dir) {
+  if (dir != NAV_UP && dir != NAV_DOWN) return false;
+  if (!s_reader_root || !s_reader_scroll || !cur || cur == s_reader_scroll ||
+      !lv_obj_is_valid(s_reader_scroll) || lv_obj_has_flag(s_reader_scroll, LV_OBJ_FLAG_HIDDEN)) return false;
+  auto within = [](lv_obj_t* o, lv_obj_t* ancestor) {
+    for (; o; o = lv_obj_get_parent(o)) if (o == ancestor) return true;
+    return false;
+  };
+  if (!within(cur, s_reader_root)) return false;   // a popup over the page owns the keys
+  const bool up = dir == NAV_UP;
+  lv_area_t view; lv_obj_get_coords(s_reader_scroll, &view);
+  lv_area_t a;    lv_obj_get_coords(cur, &a);
+  const bool in_body = within(cur, s_reader_scroll);
+  // From outside the body, only Down from above it (the address row) or Up from below
+  // it (the toolbar) enters it.
+  if (!in_body && (up ? a.y1 < view.y2 : a.y2 > view.y1)) return false;
+  // The nearest link fully on screen in the pressed direction, once the body has
+  // scrolled by `shift` (the focused link moves with it).
+  auto nearestLink = [&](lv_coord_t shift) -> lv_obj_t* {
+    const lv_coord_t from = a.y1 + (in_body ? shift : 0);
+    lv_obj_t* best = nullptr;
+    int32_t best_gap = INT32_MAX;
+    const uint32_t n = lv_obj_get_child_cnt(s_reader_scroll);
+    for (uint32_t i = 0; i < n; ++i) {
+      lv_obj_t* o = lv_obj_get_child(s_reader_scroll, i);
+      if (o == cur || lv_obj_get_group(o) != s_nav_group || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) continue;
+      lv_area_t b; lv_obj_get_coords(o, &b);
+      if (b.y1 + shift < view.y1 || b.y2 + shift > view.y2) continue;
+      const int32_t gap = up ? (int32_t)from - (b.y1 + shift) : (int32_t)(b.y1 + shift) - from;
+      if (gap > 0 && gap < best_gap) { best_gap = gap; best = o; }
+    }
+    return best;
+  };
+  if (lv_obj_t* next = nearestLink(0)) {
+    s_nav_show = true;
+    lv_group_focus_obj(next);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return true;
+  }
+  const lv_coord_t room = up ? lv_obj_get_scroll_top(s_reader_scroll) : lv_obj_get_scroll_bottom(s_reader_scroll);
+  if (room <= 0) return false;   // end of the page: let focus leave the body
+  lv_coord_t step = lv_obj_get_height(s_reader_scroll) * 2 / 3;   // navScrollBy's page
+  if (step > room) step = room;
+  // A focused link that scrolls off hands focus to the next link coming on screen, so
+  // the highlight (and what Enter opens) stays where the reader can see it. Picked from
+  // the positions before the scroll starts (a press mid-animation scrolls on from where
+  // the body is now), and focusing it must not scroll the body again (navFocusCb's
+  // scroll-into-view).
+  const lv_coord_t shift = up ? step : -step;
+  lv_obj_t* handoff = nullptr;
+  if (in_body && (a.y1 + shift < view.y1 || a.y2 + shift > view.y2)) handoff = nearestLink(shift);
+  navScrollBy(s_reader_scroll, up);
+  if (handoff) {
+    s_nav_suppress_scroll = true;
+    s_nav_show = true;
+    lv_group_focus_obj(handoff);
+    s_nav_suppress_scroll = false;
+  }
+  if (g_lv.task) g_lv.task->noteUserInput();
+  return true;
+}
+#endif  // CAP_KEYPAD_NAV
 static void closeReaderPage() {
   if (!s_reader_root) return;
   ++s_reader_generation;
@@ -49858,14 +49937,14 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
   switch (key) {
     case M9_KEY_UP: {
       lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-      navMoveDir(NAV_UP);
+      const bool took = navMoveDir(NAV_UP);
       // Focus had nowhere to go: page-scroll instead. A display-only Lua app
       // scrolls its own body (RF Monitor's feed); everything else falls to
       // navScrollFocused — nearest scrollable ancestor, else the biggest
       // scrollable on screen — which is what makes sparse pages with few or
       // NO focusable rows (the Signal info popup's stats) scrollable at all
       // on a board with no touch to drag them.
-      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+      if (!took && s_nav_group && lv_group_get_focused(s_nav_group) == was) {
         if (!(luaAppIsOpen() && luaAppScroll(true))) navScrollFocused(true);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
@@ -49873,8 +49952,8 @@ static bool m9HandleArrowKey(int key, lv_obj_t* ta) {
     }
     case M9_KEY_DOWN: {
       lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-      navMoveDir(NAV_DOWN);
-      if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+      const bool took = navMoveDir(NAV_DOWN);
+      if (!took && s_nav_group && lv_group_get_focused(s_nav_group) == was) {
         if (!(luaAppIsOpen() && luaAppScroll(false))) navScrollFocused(false);
       }
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput();
@@ -51379,11 +51458,11 @@ static void attakyNavPump() {
         // the dropdown's own handler, which moves the highlighted option.
         if (navOpenDropdown()) { navPushTap(up ? LV_KEY_UP : LV_KEY_DOWN); break; }
         lv_obj_t* const was = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-        navMoveDir(up ? NAV_UP : NAV_DOWN);
+        const bool took = navMoveDir(up ? NAV_UP : NAV_DOWN);
         // Focus had nowhere to go: page-scroll instead. A display-only Lua app
         // scrolls its own body; everything else falls to navScrollFocused, so
         // pages with few or no focusable rows still move under the D-pad.
-        if (s_nav_group && lv_group_get_focused(s_nav_group) == was) {
+        if (!took && s_nav_group && lv_group_get_focused(s_nav_group) == was) {
           if (!(luaAppIsOpen() && luaAppScroll(up))) navScrollFocused(up);
         }
         break;
