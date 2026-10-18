@@ -411,6 +411,22 @@
     else if (e.key === 'Backspace' && ime.value === '') { e.preventDefault(); imeKey(0x08); imeReset(); }
   });
   ime.addEventListener('blur', function () { imeOn = false; setTimeout(fitAboveKeyboard, 50); });
+  // iOS opens its keyboard only for a focus() made inside the touch's own handlers, and it
+  // is touchend (not every pointerup) it trusts for that: the same check, here too.
+  canvas.addEventListener('touchend', function (e) {
+    if (!touchDevice || !M || !running || !e.changedTouches.length) return;
+    var t = e.changedTouches[0], p = toCanvas(t);
+    if (M._wadaWebTextareaAt(p[0], p[1])) imeOpen();
+  });
+  // A field the UI focused by itself (a screen that opens with its text field active, the
+  // composer after a tap on a chat) has no tap of its own to open the phone's keyboard:
+  // a Keyboard button is that tap.
+  var kbPill = $('kb-pill');
+  kbPill.addEventListener('click', function () { kbPill.hidden = true; imeOpen(); });
+  setInterval(function () {
+    var want = touchDevice && !!M && running && !imeOn && !!M._wadaWebEditing();
+    if (kbPill.hidden === want) kbPill.hidden = !want;
+  }, 250);
   // The edit ended in the UI (the chat closed, a field was left): the keyboard goes too.
   setInterval(function () {
     if (!imeOn || !M || !running) return;

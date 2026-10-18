@@ -80,6 +80,13 @@ body{
   box-shadow:0 0 0 1px var(--frame-edge), 0 0 0 7px var(--frame), 0 0 0 8px var(--frame-edge), var(--shadow)}
 #screen{display:block; width:800px; height:480px; border-radius:2px; touch-action:none; outline:none;
   -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; cursor:default}
+/* a field the UI focused by itself (a screen opened with it): the phone shows its keyboard
+   only for a tap, so this is the tap (app.js "phone keyboard") */
+#kb-pill{position:absolute; left:50%; bottom:72px; transform:translateX(-50%); z-index:5;
+  display:inline-flex; align-items:center; gap:8px; line-height:1.2; padding:10px 18px;
+  border-radius:999px; box-shadow:0 6px 20px rgba(0,0,0,.45)}
+#kb-pill[hidden]{display:none}
+#kb-pill svg{width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:2; stroke-linecap:round; stroke-linejoin:round}
 #screen.crisp{image-rendering:crisp-edges; image-rendering:pixelated}   /* integer device-pixel scale: nearest */
 
 #overlay{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;

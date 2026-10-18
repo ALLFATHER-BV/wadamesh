@@ -33,6 +33,40 @@
 
 using namespace companion;
 
+#if defined(__EMSCRIPTEN__)
+#include <emscripten.h>
+// The browser's own sync id, kept in localStorage next to the page's other settings. A
+// browser that already synced under the old shared id keeps it (its cursor on the node
+// is there, so nothing is delivered twice); new ones get "wadaweb-" + 8 random characters.
+EM_JS(int, wada_js_client_id, (char* out, int cap), {
+  var id = null;
+  try { id = localStorage.getItem('wadamesh.syncId'); } catch (e) {}
+  if (!id || !/^[A-Za-z0-9-]{1,31}$/.test(id)) {
+    var legacy = false;
+    try { legacy = !!localStorage.getItem('wadamesh.nodes'); } catch (e) {}
+    if (legacy) id = 'wadamesh-web';
+    else {
+      var a = new Uint8Array(8), abc = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      crypto.getRandomValues(a);
+      id = 'wadaweb-';
+      for (var i = 0; i < 8; i++) id += abc[a[i] % 36];
+    }
+    try { localStorage.setItem('wadamesh.syncId', id); } catch (e) {}
+  }
+  stringToUTF8(id, out, cap);
+  return 1;
+});
+#endif
+
+const char* companion::clientId() {
+  static char id[32] = "";
+#if defined(__EMSCRIPTEN__)
+  if (!id[0]) wada_js_client_id(id, sizeof id);
+#endif
+  if (!id[0]) strcpy(id, "wadamesh-web");
+  return id;
+}
+
 namespace {
 
 typedef std::array<uint8_t, PUB_KEY_SIZE> Key;
@@ -553,8 +587,9 @@ private:
       if (!_link_up) return;
       if (!r || r[0] != RESP_DEVICE_INFO || n < 4) { _handshake_retry_at = _now + 1500; return; }
       onDeviceInfo(r, n);
-      std::vector<uint8_t> f = {CMD_APP_START, (uint8_t)strlen(CLIENT_ID)};
-      f.insert(f.end(), CLIENT_ID, CLIENT_ID + strlen(CLIENT_ID));
+      const char* cid = clientId();
+      std::vector<uint8_t> f = {CMD_APP_START, (uint8_t)strlen(cid)};
+      f.insert(f.end(), cid, cid + strlen(cid));
       while (f.size() < 8) f.push_back(0);
       f.insert(f.end(), APP_NAME, APP_NAME + strlen(APP_NAME));
       send(f, [this](const uint8_t* r2, size_t n2) {
