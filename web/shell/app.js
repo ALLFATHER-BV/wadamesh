@@ -108,6 +108,7 @@
 
   // ---- input -----------------------------------------------------------------------------
   var activePointer = null;
+  var lastPt = [0, 0];      // where the finger last was, so a forced release lands there
   function toCanvas(e) {
     var r = canvas.getBoundingClientRect();
     return [Math.floor((e.clientX - r.left) * W / r.width), Math.floor((e.clientY - r.top) * H / r.height)];
@@ -115,10 +116,18 @@
   function sendPointer(down, e) {
     if (!M || !running) return;
     var p = toCanvas(e);
+    lastPt = p;
     M._wadaWebPointer(down ? 1 : 0, p[0], p[1]);
   }
   canvas.addEventListener('pointerdown', function (e) {
-    if (activePointer !== null) return;              // one finger: the panel is single-touch
+    // One finger: the panel is single-touch. A mouse has only one pointer, so a new
+    // mouse press while one is "active" means its release was lost (released outside
+    // the window, a focus change): drop the stale one instead of ignoring input forever.
+    if (activePointer !== null) {
+      if (e.pointerType !== 'mouse') return;
+      activePointer = null;
+      if (M && running) M._wadaWebPointer(0, lastPt[0], lastPt[1]);
+    }
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     activePointer = e.pointerId;
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
@@ -137,6 +146,14 @@
   }
   canvas.addEventListener('pointerup', pointerEnd);
   canvas.addEventListener('pointercancel', pointerEnd);
+  canvas.addEventListener('lostpointercapture', pointerEnd);
+  // Window loses focus mid-press (alt-tab, a dialog): release, or the UI keeps a
+  // phantom finger down.
+  window.addEventListener('blur', function () {
+    if (activePointer === null) return;
+    activePointer = null;
+    if (M && running) M._wadaWebPointer(0, lastPt[0], lastPt[1]);
+  });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
   // The computer keyboard is the UI's external keyboard (HAS_CARDKB): ASCII, Enter,
