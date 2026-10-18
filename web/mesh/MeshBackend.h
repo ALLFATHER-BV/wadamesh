@@ -85,6 +85,8 @@ public:
   virtual void beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) = 0;
   // The link to the node came up / went away (status line, terminal).
   virtual void beLinkState(bool up, const char* detail) = 0;
+  // A line for the Terminal (a node CLI reply).
+  virtual void beTerminalLine(const char* text) = 0;
 };
 
 class MeshBackend {
@@ -122,6 +124,11 @@ public:
   }
   // Zero-hop re-advert of a contact (CMD_SHARE_CONTACT).
   virtual bool shareContact(const uint8_t pub_key[32]) { (void)pub_key; return false; }
+  // A command line for the node's own CLI (the Terminal); the reply comes back as
+  // beTerminalLine. False = this backend has no CLI to run it on.
+  virtual bool runNodeCli(const char* cmd) { (void)cmd; return false; }
+  // The node's Bluetooth pairing PIN (0 = random per boot).
+  virtual bool setBlePin(uint32_t pin) { (void)pin; return false; }
 
   // ---- configuration pushed back to the node ----
   virtual void prefsChanged(const NodePrefs& p) { (void)p; }

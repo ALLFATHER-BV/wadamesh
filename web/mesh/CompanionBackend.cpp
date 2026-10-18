@@ -111,6 +111,7 @@ const char* cmdName(uint8_t c) {
     case CMD_GET_CHANNEL: return "GET_CHANNEL"; case CMD_SET_CHANNEL: return "SET_CHANNEL";
     case CMD_SEND_TRACE_PATH: return "SEND_TRACE_PATH"; case CMD_SET_OTHER_PARAMS: return "SET_OTHER_PARAMS";
     case CMD_SEND_TELEMETRY_REQ: return "SEND_TELEMETRY_REQ"; case CMD_SEND_ANON_REQ: return "SEND_ANON_REQ";
+    case CMD_RUN_CLI_COMMAND: return "RUN_CLI_COMMAND"; case CMD_SET_DEVICE_PIN: return "SET_DEVICE_PIN";
     default: return "CMD";
   }
 }
@@ -277,6 +278,42 @@ public:
     });
     est_timeout = 8000;
     return MSG_SEND_SENT_DIRECT;
+  }
+  bool runNodeCli(const char* cmd) override {
+    if (!_ready || !cmd || !cmd[0]) return false;
+    // --read-only: only commands that read. Anything else could change the node.
+    if (_read_only && strncmp(cmd, "get ", 4) != 0 && strcmp(cmd, "ver") != 0 && strcmp(cmd, "board") != 0 &&
+        strcmp(cmd, "clock") != 0) {
+      if (_ev) _ev->beTerminalLine("read-only link: only get / ver / board / clock run on the node");
+      return true;
+    }
+    std::vector<uint8_t> f = {CMD_RUN_CLI_COMMAND};
+    f.insert(f.end(), cmd, cmd + strnlen(cmd, 160));
+    send(f, [this](const uint8_t* r, size_t n) {
+      if (!_ev) return;
+      if (r && r[0] == RESP_CLI_REPLY) {
+        std::string text((const char*)r + 1, n - 1);
+        size_t a = 0;   // one terminal line per reply line
+        while (a < text.size()) {
+          size_t b = text.find('\n', a);
+          if (b == std::string::npos) b = text.size();
+          if (b > a) _ev->beTerminalLine(text.substr(a, b - a).c_str());
+          a = b + 1;
+        }
+      } else {
+        _ev->beTerminalLine(r ? "this node has no CLI over the companion link (MeshCore 1.18 or later)"
+                              : "the node did not answer");
+      }
+    });
+    return true;
+  }
+  bool setBlePin(uint32_t pin) override {
+    if (!_ready || _read_only || (pin != 0 && (pin < 100000 || pin > 999999))) return false;
+    std::vector<uint8_t> f = {CMD_SET_DEVICE_PIN};
+    wr32(f, pin);
+    send(f, nullptr);
+    _node_prefs.ble_pin = pin;
+    return true;
   }
   bool shareContact(const uint8_t pub_key[32]) override {
     if (!_ready) return false;

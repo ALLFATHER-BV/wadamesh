@@ -128,7 +128,11 @@ void MyMesh::loop() {
   if (_backend) _backend->loop(millis());
 }
 
-bool MyMesh::setBLEPin(uint32_t pin) { (void)pin; return false; }
+bool MyMesh::setBLEPin(uint32_t pin) {
+  if (!_backend || !_backend->setBlePin(pin)) return false;
+  _prefs.ble_pin = pin;
+  return true;
+}
 
 void MyMesh::applyRadioFromPrefs() {
   if (_backend) _backend->prefsChanged(_prefs);
@@ -505,6 +509,7 @@ uint32_t MyMesh::uiSendTraceRoute(const ContactInfo& c) {
 void MyMesh::setTerminalSink(void (*cb)(const char* line)) { s_terminal_sink = cb; }
 void MyMesh::runLocalCli(const char* cmd) {
   if (!s_terminal_sink || !cmd) return;
+  if (_backend && _backend->runNodeCli(cmd)) return;   // a companion node runs it (beTerminalLine)
   char line[160];
   if (!strcmp(cmd, "ver") || !strcmp(cmd, "version")) {
     snprintf(line, sizeof line, "%s (%s), web build, backend %s", FIRMWARE_VERSION, FIRMWARE_BUILD_DATE,
@@ -792,4 +797,8 @@ void MyMesh::beLinkState(bool up, const char* detail) {
   Serial.printf("[web] companion %s\n", line);
   if (s_terminal_sink) s_terminal_sink(line);
   if (_ui) _ui->onThreadsChanged();
+}
+
+void MyMesh::beTerminalLine(const char* text) {
+  if (s_terminal_sink && text) s_terminal_sink(text);
 }

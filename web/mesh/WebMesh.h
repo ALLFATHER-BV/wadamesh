@@ -100,7 +100,7 @@ public:
   const uint8_t* getSelfPubKey() const { return self_id.pub_key; }
   NodePrefs* getNodePrefs() { return &_prefs; }
   bool savePrefs();
-  bool setBLEPin(uint32_t pin);                         // [unavailable] no BLE on the web board: false
+  bool setBLEPin(uint32_t pin);                         // the node's PIN (companion); demo: false
   uint32_t getOrphanedBlobs() const { return 0; }
   DataStore* getStore() { return nullptr; }             // no local DataStore: the About store lines hide
   mesh::RTCClock* getRTCClock() const { return _rtc; }
@@ -252,7 +252,7 @@ public:
 
   // ---- on-device terminal -----------------------------------------------------------------
   static void setTerminalSink(void (*cb)(const char* line));
-  void runLocalCli(const char* cmd);                    // a small subset; the rest replies "unavailable"
+  void runLocalCli(const char* cmd);                    // the node's CLI (companion, MeshCore 1.18+); else a small subset
 
 private:
   // MeshBackendEvents
@@ -281,6 +281,7 @@ private:
   void beCliReply(const uint8_t pub_key[32], const char* text) override;
   void beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) override;
   void beLinkState(bool up, const char* detail) override;
+  void beTerminalLine(const char* text) override;
   void trackSentFp(uint32_t fp);
   void stashRxMeta(bool for_channel, const uint8_t* key_or_hash, uint8_t path_len);
 

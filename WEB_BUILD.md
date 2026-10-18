@@ -11,6 +11,7 @@ web/build.sh host     # build web/build-host/wadamesh-host
 web/build.sh run      # build and start it (data in web/data/)
 web/build.sh shots    # run the acceptance tour headless -> web/docs/*.png
 web/build.sh smoke    # the same tour, exit status only (CI, release gate)
+web/build-host/wadamesh-host --serial /dev/cu.usbmodem101   # drive a real node (see "The companion backend")
 web/build.sh web      # phase 2 (says so and exits)
 ```
 
@@ -111,37 +112,113 @@ Everything that needs the network goes through one interface,
   after a short delay and sometimes answered, channel posts are heard
   repeated, the repeater answers status pings, someone talks on Public every
   minute or so, nodes re-advert.
-- **CompanionBackend** (phase 3): the same interface over the companion frame
-  protocol.
+- **CompanionBackend**: a real MeshCore companion node, over the protocol the
+  phone apps use (next section).
 
-Of the 100 members, 61 have the device's semantics (contacts, channels,
-sending, ACKs, repeats, RX metadata, signal, status/telemetry/trace requests
-via the backend, prefs, a terminal subset). 39 are inert because nothing in a
-browser can answer them yet:
+Of the 100 members, 77 have the device's semantics with a companion node behind
+them (contacts, channels, sending, ACKs, repeats heard with the repeaters' names,
+RX metadata and route, signal, the RX log, advert routes, status / telemetry /
+trace / regions requests, admin login and CLI, room sessions, prefs, the node's
+CLI in the Terminal). The demo backend leaves the network-only ones (login, CLI,
+RX log, advert routes) unanswered. 23 are inert because nothing behind a
+companion link can answer them:
 
 | Unavailable / inert | Returns |
 |---|---|
-| `setBLEPin` | false (no Bluetooth) |
-| `uiShareContact` | false |
-| `uiExportBackup`, `uiImportBackup` | `{}` / false |
-| `uiSendAdminLogin`, `uiSendAdminCommand`, `uiRoomRelogin`, `sendRegionsRequestForUI` | MSG_SEND_FAILED (phase 3: companion login/CLI) |
-| `uiSendSignalProbe`, `uiStartDiscoverScan`, `discoverCount/Get/Clear` | 0 / empty (no own radio) |
-| `uiRxLogCount`, `uiRxLogGet` | empty (no raw frames) |
-| `getAdvertPath`, `lastRxPath` | unknown / empty |
-| `uiRepeatHopCount`, `uiRepeatHop` | 0 (repeat counts work, repeater identities are not reported) |
+| `uiExportBackup`, `uiImportBackup` | `{}` / false (could be built from the contact list + `CMD_EXPORT_CONTACT`; not yet) |
+| `uiSendSignalProbe`, `uiStartDiscoverScan`, `discoverCount/Get/Clear` | 0 / empty (no own radio; `CMD_SEND_CONTROL_DATA` could carry discovery later) |
 | `getTotalAirTime`, `getReceiveAirTime`, `getRemainingTxBudget`, `isRadioReceiving`, `getProtoNumClients` | 0 / false |
 | `getStore`, `getOrphanedBlobs` | nullptr / 0 (no local DataStore) |
-| `lastRxScope`, `lastRxScopeSlot`, `lastRxScopeIsHome`, `pushChannelScope`, `popChannelScope`, `setScopeDirectFloods` | no region scope on the backend link yet |
-| `uiHasConnectionTo`, `uiIsMeshcomodRecipient`, `cancelUIDeferredLogin` | false / no-op |
+| `lastRxScopeIsHome`, `pushChannelScope`, `popChannelScope`, `setScopeDirectFloods` | the node's region key and per-send scope are not in the protocol (a wadamesh node applies each channel's scope itself) |
+| `uiIsMeshcomodRecipient` | false |
 | `uiRegisterExpectedAck` | no-op (the backend matches its own ACKs) |
 | `getNextCompanionRetryWakeDelay`, `hasPendingWork`, `persistSyncHistoryNow` | false / no-op (no companion retry or sync ring here) |
-| `runLocalCli` | `ver`, `name`, `contacts`; anything else says it is not available |
+
+Moved from unavailable to working by the companion backend (16): `setBLEPin`,
+`uiShareContact`, `uiSendAdminLogin`, `uiSendAdminCommand`, `uiRoomRelogin`,
+`sendRegionsRequestForUI`, `uiHasConnectionTo`, `cancelUIDeferredLogin`,
+`uiRxLogCount`, `uiRxLogGet`, `getAdvertPath`, `lastRxPath`, `uiRepeatHopCount`,
+`uiRepeatHop`, `lastRxScope`, `lastRxScopeSlot`; and `runLocalCli` now runs every
+command on the node (`CMD_RUN_CLI_COMMAND`, MeshCore 1.18+), the old subset as
+the fallback.
 
 The other board globals follow the same rule: `radio_driver` is
 `web/platform/WebRadio.h` (only the members the UI calls; every reading says
 "no radio"), `board` is `WebBoard`, `display` is `WebDisplay` (the RGB565
 canvas LVGL flushes into), and the touch API (`heltecV4CapTouch*`) is
 `WebTouch.cpp`, the CHSC6x driver's gesture rules over the SDL pointer.
+
+## The companion backend (`web/mesh/Companion*`)
+
+```
+wadamesh-host --serial /dev/cu.usbmodem101          # USB (the node's companion over USB)
+wadamesh-host --tcp 192.168.1.50:5000               # the node's TCP companion server (Wi-Fi on)
+wadamesh-host --serial /dev/cu.usbmodem101 --read-only
+wadamesh --companion web-serial | ble | ws:ws://192.168.1.50:8765/   # browser (Module.arguments)
+```
+
+The demo is the default; naming a transport selects the companion backend
+(`web/mesh/BackendSelect.cpp`, one line in `host_main.cpp`). `--read-only` never
+sends a command that changes the node (settings, contacts, channels, clock, PIN,
+CLI other than `get`/`ver`/`board`/`clock`); messages, adverts and requests still
+go out. `WADA_COMPANION_DEBUG=1` logs every frame.
+
+**Protocol.** STOCK MeshCore 1.17 / 1.18 companion behaviour (`CompanionBackend.h`
+has the codes), with the wadamesh differences handled: wadamesh also pushes
+message frames live (so 16/17 count as the reply only while
+`CMD_SYNC_NEXT_MESSAGE` is in flight, and a message seen both ways is dropped
+once), keeps a per-client sync cursor (we send client id `wadamesh-web` in
+`APP_START`, which stock ignores), and appends a "Meshcomod" pseudo contact
+(filtered). One command is in flight at a time; pushes arrive any time.
+
+| On link up | Frames |
+|---|---|
+| identity, radio, node prefs | `DEVICE_QUERY(3)` -> 13, `APP_START` -> 5 (`beSelfInfo`: the node's settings replace the stand-in's) |
+| clock | `GET_DEVICE_TIME`; an UNSET node clock is set from the computer (as the phone apps do) |
+| contacts | `GET_CONTACTS` -> 2, 3 x N, 4 (contacts the node no longer has are dropped) |
+| channels | `GET_CHANNEL i` for every slot `DEVICE_INFO` reports |
+| waiting messages | `SYNC_NEXT_MESSAGE` until 10; again on every `PUSH 0x83` |
+
+| UI feature | Frames | Event |
+|---|---|---|
+| DM | `SEND_TXT_MSG` -> 6 (node's ack -> the UI's tag), `PUSH 0x82` | `onMessageAcked` (Delivered) |
+| channel post | `SEND_CHANNEL_TXT_MSG` -> 0 | repeats: below |
+| incoming DM / channel / room post / CLI reply | 16 / 17 (or v1 7 / 8), txt_type 0 / 2 / 1 | `newMsgFromPubWithMeta`, `newRoomMsgFromPubWithMeta`, `onAdminCommandReply` |
+| status / telemetry | `SEND_STATUS_REQ` / `SEND_TELEMETRY_REQ`, `PUSH 0x87` / `0x8B`; no answer from a repeater/room/sensor in 6 s (12 s flood): guest `SEND_LOGIN`, the request again 2 s after `0x85` (the device's #683 order) | `onPingReply`, `onTelemetryReply` |
+| trace ping / route | `SEND_TRACE_PATH` (our tag), `PUSH 0x89` | `onTracePingResult` (per-hop SNRs) |
+| admin login, room re-login | `SEND_LOGIN`, `PUSH 0x85/0x86` | `onServerClock`, `onAdminLoginResult` |
+| regions | `SEND_ANON_REQ [01 00]`, `PUSH 0x8C` with the request tag | `onRegionListReply` |
+| adverts | `PUSH 0x80/0x81` -> `GET_CONTACT_BY_KEY`; `0x8A` (not added) | `discoveredContact` (Discovered list), thread refresh |
+| raw RX | `PUSH 0x88` | RX log ring, 0-hop signal, advert routes, message route + scope, repeats heard |
+| edits | `ADD_UPDATE_CONTACT` (favourite, telemetry perms, position, manual add), `REMOVE_CONTACT`, `RESET_PATH`, `SHARE_CONTACT`, `SET_CHANNEL`, `SEND_SELF_ADVERT`, `SET_ADVERT_NAME` / `SET_RADIO_PARAMS` / `SET_RADIO_TX_POWER` / `SET_OTHER_PARAMS` (only fields that differ from the node's), `SET_DEVICE_PIN`, `RUN_CLI_COMMAND` (Terminal) | |
+
+**Repeats heard** work as on a device: a channel post's flood payload is
+deterministic (`sendGroupMessage` + `createGroupDatagram`), so the backend
+computes it, and the stand-in fingerprints every raw RX push the same way the
+device's `logRxRaw` does (FNV-1a over the payload, last path hop = the
+repeater). A DM is encrypted with a key only the node holds, so its echo is
+recognised by destination + source hash (the first flooded TXT_MSG from us to that
+contact after the send), then by that payload.
+
+**Transports** (`CompanionTransport.h`): the backend works in frames; each
+transport owns its framing.
+
+| Transport | host -> node | node -> host | Where |
+|---|---|---|---|
+| USB serial, TCP | `'<'` len16 LE payload | `'>'` len16 LE payload in a byte stream (log text skipped) | `SerialTransport.cpp` (termios; DTR+RTS released in one ioctl, HUPCL off; reconnects) |
+| WebSocket (port 8765) | `'<'` len16 payload in ONE binary message | the raw payload, one message per frame | `BrowserTransport.cpp` + `js/companion-transports.js` |
+| BLE (Nordic UART `6e400001-b5a3-f393-e0a9-e50e24dcca9e`) | the payload, written to RX `...0002...` | one TX `...0003...` notification per frame | same |
+| Web Serial | as USB | as USB | same |
+
+The browser glue is `--pre-js` (one `if(EMSCRIPTEN)` line in CMakeLists.txt): JS
+moves bytes (`WadaCompanion.open/send/close`, and `WadaCompanion.connect(kind)`
+for the page's Connect button, since Web Serial / Bluetooth need a user gesture
+the first time; afterwards a granted device reconnects by itself), C++ frames
+them; JS reaches C++ through three `EMSCRIPTEN_KEEPALIVE` functions, no
+`EXPORTED_FUNCTIONS`. Received bytes are queued under a mutex and delivered on
+the UI thread, so it works with or without pthreads. Verified: an Emscripten
+test program with this glue against a mock WS node (DEVICE_QUERY round trip in
+node.js); the page shell that offers Connect is phase 2's.
 
 ## The compat layer (`web/compat/`)
 
@@ -183,7 +260,7 @@ file builds against Emscripten's SDL2 port. Options: `--headless` (no window,
 for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
 `web/scripts/tour.wada` is the acceptance tour), `--shots DIR`, `--scale N`.
 
-## Known gaps (phase 1)
+## Known gaps
 
 - Typing on the computer keyboard is ASCII (the UI's CardKB path); other
   scripts and emoji use the on-screen keyboard and the emoji picker.
@@ -196,6 +273,17 @@ for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
 - The demo history is stamped with the first-boot time (the UI stamps
   outgoing bubbles with the system clock), not demo.py's "minutes ago".
 - No sound, no console mode (no `DISPLAY_CLASS` text renderer), no lock screen.
+- Companion: a send the node refuses (unknown contact, empty channel slot) is
+  only logged; the bubble stays "Sent" without Delivered.
+- Companion: the UI floods every DM (its "deterministic" send); over the link the
+  node routes it by its own path, as for the phone app.
+- Companion: messages the node itself sent (on its own screen or from another
+  app) are not in the protocol's sync, so they do not appear here.
+- Companion: a stock node's waiting-message queue is shared with the phone app
+  (whoever syncs first gets the messages); wadamesh keeps a cursor per client.
+- Companion: 256-bit channel keys cannot be written (the protocol carries 128).
+- Companion: the guest-login fallback does not reset the route first (the device
+  does); the contact list is refreshed on connect and by pushes, not polled.
 - `ClockFloorRTC::pushSystemClock` calls `settimeofday`, which a normal user
   is not allowed to do; it fails harmlessly and the host clock is already right.
 
@@ -211,7 +299,7 @@ for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
    or a fiber-based cooperative scheduler behind the same FreeRTOS shim
    (Asyncify). `UITask.cpp` already compiles front-end clean with `em++`
    (checked on this branch). HTTP over `fetch()` for the map tiles proxy.
-3. **Companion backend.** `CompanionBackend : MeshBackend` speaking the
+3. **Companion backend** (done, branch `web-companion`; see above). `CompanionBackend : MeshBackend` speaking the
    companion frames that `src/MyMesh.cpp`'s `handleCmdFrame()` serves
    (APP_START, DEVICE_QUERY, GET_CONTACTS, GET_CHANNEL, SEND_TXT_MSG,
    SEND_CHANNEL_TXT_MSG, SYNC_NEXT_MESSAGE, the PUSH codes, status/telemetry/
