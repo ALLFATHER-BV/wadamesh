@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>wadamesh in your browser</title>
-<meta name="description" content="The real wadamesh touch UI, running in your browser on a demo mesh.">
+<meta name="description" content="The real wadamesh touch UI, running in your browser on a demo mesh or your own MeshCore node.">
 <meta name="theme-color" content="#000400">
 <link rel="icon" href="wadamesh-mark.svg" type="image/svg+xml">
 <link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
@@ -17,8 +17,9 @@
   <a class="brand" href="https://wadamesh.com/" title="wadamesh.com">
     <img src="wadamesh-mark.svg" alt="" width="30" height="20"><span>wadamesh</span>
   </a>
-  <span class="badge" title="A scripted neighbourhood: nothing you send leaves this browser">Demo</span>
+  <span id="mode" class="badge" title="A scripted neighbourhood: nothing you send leaves this browser">Demo</span>
   <span class="spacer"></span>
+  <button id="btn-pair" class="btn" type="button" hidden>Reconnect</button>
   <button id="btn-connect" class="btn primary" type="button">Connect</button>
   <button id="btn-reset" class="btn" type="button" title="Reset demo data">Reset<span class="wide"> demo data</span></button>
   <button id="btn-full" class="btn icon" type="button" aria-label="Fullscreen" title="Fullscreen">
@@ -41,6 +42,30 @@
 <p class="hint">Mouse or finger = touch. Your keyboard types into the focused field, Enter sends, Esc goes back.
   Everything stays in this browser.</p>
 <div id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="connect-dlg" aria-labelledby="connect-title">
+  <form method="dialog">
+    <h2 id="connect-title">Connect your node</h2>
+    <p class="lead">Run this UI on your own MeshCore companion node instead of the demo.
+      Its contacts, channels and messages stay on the node and in this browser.</p>
+    <div class="choices">
+      <button class="choice" type="button" data-kind="web-serial" hidden>
+        <strong>USB cable</strong><span>Plug the node into this computer</span></button>
+      <button class="choice" type="button" data-kind="ble" hidden>
+        <strong>Bluetooth</strong><span>Pair with the node (it may ask for its PIN)</span></button>
+      <div class="choice wifi">
+        <strong>Wi-Fi</strong><span>The node's address on your network (its Wi-Fi on)</span>
+        <div class="row">
+          <input id="ws-host" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+                 placeholder="192.168.1.50" aria-label="Node address">
+          <button class="btn primary" type="button" data-kind="ws">Connect</button>
+        </div>
+      </div>
+    </div>
+    <p id="connect-note" class="note" hidden></p>
+    <div class="actions"><button class="btn" value="cancel">Cancel</button></div>
+  </form>
+</dialog>
 
 <script src="app.js?v=__WADA_BUILD__"></script>
 </body>

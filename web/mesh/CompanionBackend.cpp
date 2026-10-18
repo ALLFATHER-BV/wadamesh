@@ -524,7 +524,10 @@ private:
     _handshake_retry_at = 0;
     // A node that just reset (port open, USB re-enumeration) takes a few seconds to
     // answer; DEVICE_QUERY is retried until it does.
+    // Every step checks the link is still up: a link lost mid-handshake fails the queued
+    // commands (no reply), which must not walk the chain on to "ready".
     send({CMD_DEVICE_QUERY, APP_TARGET_VER}, [this](const uint8_t* r, size_t n) {
+      if (!_link_up) return;
       if (!r || r[0] != RESP_DEVICE_INFO || n < 4) { _handshake_retry_at = _now + 1500; return; }
       onDeviceInfo(r, n);
       std::vector<uint8_t> f = {CMD_APP_START, (uint8_t)strlen(CLIENT_ID)};
@@ -532,12 +535,14 @@ private:
       while (f.size() < 8) f.push_back(0);
       f.insert(f.end(), APP_NAME, APP_NAME + strlen(APP_NAME));
       send(f, [this](const uint8_t* r2, size_t n2) {
+        if (!_link_up) return;
         if (!r2 || r2[0] != RESP_SELF_INFO || n2 < 58) { _handshake_retry_at = _now + 1500; return; }
         onSelfInfo(r2, n2);
         send({CMD_GET_DEVICE_TIME}, [this](const uint8_t* r3, size_t n3) { onDeviceTime(r3, n3); });
         fetchContacts();
         fetchChannels();
         send({CMD_GET_BATT_AND_STORAGE}, [this](const uint8_t* r4, size_t n4) {
+          if (!_link_up) return;
           if (r4 && r4[0] == RESP_BATT_AND_STORAGE && n4 >= 3) _batt_mv = (uint16_t)(r4[1] | (r4[2] << 8));
           // Everything above is in: the link is ready, then the waiting messages.
           _ready = true;
@@ -604,6 +609,7 @@ private:
   void fetchContacts() {
     _list_seen.clear();
     send({CMD_GET_CONTACTS}, [this](const uint8_t* r, size_t) {
+      if (!_link_up) return;
       if (!r || r[0] != RESP_END_OF_CONTACTS) {
         fprintf(stderr, "[companion] contact list incomplete (%s)\n", r ? "error" : "no reply");
         return;

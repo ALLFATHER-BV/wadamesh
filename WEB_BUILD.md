@@ -230,6 +230,38 @@ the UI thread, so it works with or without pthreads. Verified: an Emscripten
 test program with this glue against a mock WS node (DEVICE_QUERY round trip in
 node.js); the page shell that offers Connect is phase 2's.
 
+### Connecting the page to a node
+
+The bar's **Connect** opens a chooser with the transports this browser has: USB
+cable (Web Serial) and Bluetooth (Web Bluetooth) on Chrome / Edge, Wi-Fi
+(WebSocket to `ws://HOST:8765/`, the node's companion server) everywhere; Safari
+and Firefox get Wi-Fi and a short note. Wi-Fi from an `https://` page is blocked
+by the browser (mixed content), which the chooser says.
+
+- The choice (`{kind, arg, key}`) is kept in localStorage; the page passes it to
+  `web_main.cpp` (`Module.wadaBackend`) and the UI boots on that backend.
+  Switching (Connect, Disconnect) saves and reloads; a reload reconnects.
+- **Data never mixes**: each backend has its own data dir under the IndexedDB
+  mount: `/data/demo`, `/data/node-<first 4 key bytes>`. A node's first session
+  runs on `/data/node-new` until its key is known and moves there on the next
+  start; a different node on the same cable or address switches to its own
+  dir. The old top-level demo data moves into `/data/demo` once; "Reset demo
+  data" clears only that.
+- A node is already set up, so its first boot skips the demo's setup wizard
+  (it would rename and re-tune the node).
+- The badge says `Demo`, `Connecting`, `Connected: <node name> over USB /
+  Bluetooth / Wi-Fi` or `Reconnecting` (from `g_wada_link_hook`). A lost link
+  is retried every 3 s; a granted USB device reconnects when it is plugged in.
+- Web Serial reopens the granted port (matched by USB VID:PID) without a
+  prompt; Web Bluetooth does where the browser has `bluetooth.getDevices()`.
+  Otherwise the bar shows **Reconnect** / **Pair again** (one click, the
+  browser's picker).
+- `web/build.sh nodetest` runs it end to end in Chromium against
+  `web/mesh/test/mock_ws_node.py`: chooser, connect over Wi-Fi, the node's
+  contacts / channels / waiting messages, a DM that gets Delivered and answered,
+  a live message, reload reconnects with the history, Disconnect returns to an
+  untouched demo (`web/docs/node-*.png`).
+
 ## The compat layer (`web/compat/`)
 
 Small and honest; what is faked says so in its header.

@@ -10,7 +10,13 @@
 //              WadaCompanion.close()
 //   The page   WadaCompanion.connect(kind?, arg?)  from a click: Web Serial and Web
 //              Bluetooth need a user gesture to pick a device the first time.
-//              WadaCompanion.onstate = function (up, detail) {...}   optional UI hook
+//              Module.wadaCompanionState(up, detail)   optional: link up / down, why
+//              Module.wadaCompanionNeedsGesture(kind)  optional: no device this page
+//                  may open without a click (show a button that calls connect())
+//
+// arg: "ws" the URL; "web-serial" "VID:PID" of the port to prefer (from the page's
+// requestPort); "ble" the Web Bluetooth device id to prefer. A lost link is retried
+// every few seconds (a node that resets comes back on its own) until close().
 //
 // Web Serial: the port is opened with DTR and RTS released (an ESP32-S3 can reset or
 // enter its bootloader on a DTR/RTS sequence), 115200 baud (ignored by USB CDC).
@@ -25,7 +31,10 @@ var WadaCompanion = (function () {
   var kind = null, arg = "";
   var link = null;         // {write(bytes) -> Promise, close()}
   var writeChain = Promise.resolve();
+  var wanted = false;      // keep the link up (retry when it drops) until close()
+  var retryTimer = 0, starting = false;
   var api = { onstate: null };
+  var RETRY_MS = 3000;
 
   function toC(bytes) {
     var p = _wada_companion_js_alloc(bytes.length);
@@ -39,11 +48,27 @@ var WadaCompanion = (function () {
     var d = new TextEncoder().encode((detail || "") + "\0");
     _wada_companion_js_state(up ? 1 : 0, toC(d));
     if (typeof api.onstate === "function") { try { api.onstate(up, detail || ""); } catch (e) {} }
+    if (typeof Module !== "undefined" && typeof Module["wadaCompanionState"] === "function") {
+      try { Module["wadaCompanionState"](up, detail || ""); } catch (e) {}
+    }
   }
   function lost(detail) {
     if (!link) return;
     link = null;
     state(false, detail);
+    retry();
+  }
+  function retry() {
+    if (!wanted || retryTimer) return;
+    retryTimer = setTimeout(function () {
+      retryTimer = 0;
+      if (wanted && !link) api.open(kind, arg);
+    }, RETRY_MS);
+  }
+  function needGesture() {
+    if (typeof Module !== "undefined" && typeof Module["wadaCompanionNeedsGesture"] === "function") {
+      try { Module["wadaCompanionNeedsGesture"](kind); } catch (e) {}
+    }
   }
 
   // ---- Web Serial ----
@@ -77,7 +102,12 @@ var WadaCompanion = (function () {
     if (!navigator.serial) return false;
     var ports = await navigator.serial.getPorts();
     if (!ports.length) return false;
-    await openSerial(ports[0]);
+    var want = (arg || "").split(":"), pick = ports[0];
+    ports.forEach(function (p) {
+      var i = p.getInfo ? p.getInfo() : {};
+      if (want.length === 2 && String(i.usbVendorId) === want[0] && String(i.usbProductId) === want[1]) pick = p;
+    });
+    await openSerial(pick);
     return true;
   }
   async function serialPick() {
@@ -108,6 +138,7 @@ var WadaCompanion = (function () {
   async function bleAuto() {
     if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return false;
     var devs = await navigator.bluetooth.getDevices();
+    if (arg) devs = devs.filter(function (d) { return d.id === arg; });
     if (!devs.length) return false;
     await openBle(devs[0]);
     return true;
@@ -145,16 +176,25 @@ var WadaCompanion = (function () {
   }
 
   async function start(k, a, gesture) {
-    if (link) await api.close();
+    if (link) { var l = link; link = null; await l.close(); }
     kind = k; arg = a || "";
+    wanted = true;
     if (kind === "ws") return openWs(arg);
-    if (kind === "web-serial") return (await serialAuto()) || !gesture ? undefined : serialPick();
-    if (kind === "ble") return (await bleAuto()) || !gesture ? undefined : blePick();
-    throw new Error("unknown companion transport " + kind);
+    var auto = kind === "web-serial" ? serialAuto : kind === "ble" ? bleAuto : null;
+    if (!auto) throw new Error("unknown companion transport " + kind);
+    if (await auto()) return;
+    if (!gesture) { needGesture(); return; }
+    return kind === "web-serial" ? serialPick() : blePick();
   }
 
   api.open = function (k, a) {
-    start(k, a, false).catch(function (e) { state(false, String(e && e.message || e)); });
+    if (starting) return;
+    starting = true;
+    start(k, a, false).then(function () { starting = false; }, function (e) {
+      starting = false;
+      state(false, String(e && e.message || e));
+      retry();
+    });
   };
   // From a click: may show the browser's device picker.
   api.connect = function (k, a) {
@@ -173,11 +213,19 @@ var WadaCompanion = (function () {
     return true;
   };
   api.close = async function () {
+    wanted = false;
+    clearTimeout(retryTimer); retryTimer = 0;
     var l = link;
     link = null;
     if (l) await l.close();
   };
   api.isConnected = function () { return !!link; };
+  // A granted USB device plugged (back) in: reconnect without a click.
+  if (typeof navigator !== "undefined" && navigator.serial && navigator.serial.addEventListener) {
+    navigator.serial.addEventListener("connect", function () {
+      if (wanted && !link && kind === "web-serial") api.open(kind, arg);
+    });
+  }
   return api;
 })();
 if (typeof Module !== "undefined") Module.WadaCompanion = WadaCompanion;

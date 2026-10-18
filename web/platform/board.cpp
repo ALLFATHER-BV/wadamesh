@@ -13,6 +13,7 @@
 #include "WebMesh.h"
 #include "WebPlatform.h"
 #include "BackendSelect.h"
+#include "helpers/esp32/TouchPrefsStore.h"
 #include "wada_host.h"
 #include <time.h>
 
@@ -78,6 +79,9 @@ void wadaBoardBegin(const WadaBackendChoice& choice) {
     sensors.node_lon = 4.8934;
   }
   the_mesh.begin(wadaCreateBackend(choice));   // the demo, or a companion node (BackendSelect.h)
+  // A node is set up already: the first-run wizard (name + LoRa region) would rename
+  // and re-tune it. It is the demo's welcome only.
+  if (choice.kind != "demo" && !touchPrefsGetSetupDone()) touchPrefsSetSetupDone(true);
   ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
   Serial.println("[BOOT] ui ready");
 }

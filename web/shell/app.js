@@ -7,6 +7,10 @@
 //  - scales the 800x480 canvas to the window (aspect kept; whole device pixels = crisp
 //    nearest when that costs little, smooth otherwise)
 //  - pointer = finger, keyboard = the UI's external keyboard (CardKB codes)
+//  - Connect: the demo, or the visitor's own MeshCore node over USB (Web Serial),
+//    Bluetooth (Web Bluetooth) or Wi-Fi (WebSocket, the node's port 8765). The choice
+//    is kept in localStorage; each backend has its own data dir under /data
+//    (/data/demo, /data/node-<key>), and switching reboots the UI into it.
 (function () {
   'use strict';
   var W = 800, H = 480;
@@ -19,6 +23,18 @@
   var M = null;            // the Emscripten module once created
   var running = false;     // the UI has presented its first frame
   var resetting = false;   // a "Reset demo data" reload is under way: write nothing more
+
+  // ---- which mesh: the demo or a node ----------------------------------------------
+  var CHOICE_KEY = 'wadamesh.backend';   // {kind, arg, key?, name?}: the node to connect to
+  var NODES_KEY = 'wadamesh.nodes';      // kind|arg -> the node key last seen there
+  var HOST_KEY = 'wadamesh.wsHost';
+  function lsGet(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }
+  function lsSet(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+  var choice = lsGet(CHOICE_KEY);
+  if (!choice || !/^(web-serial|ble|ws)$/.test(choice.kind)) choice = null;
+  function nodeDir(c) { return DB_MOUNT + '/node-' + (c.key || 'new'); }
+  var dataDir = choice ? nodeDir(choice) : DB_MOUNT + '/demo';
+  var everUp = false;
 
   // ---- status / overlay ------------------------------------------------------------
   function setStatus(text, detail, busy) {
@@ -166,7 +182,8 @@
     if (!M || !running) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;        // browser shortcuts stay the browser's
     var t = e.target;
-    if (t && t !== canvas && t !== document.body && /^(BUTTON|A|INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) {
+    if ($('connect-dlg').open || (t && /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;   // the page's own fields
+    if (t && t !== canvas && t !== document.body && /^(BUTTON|A)$/.test(t.tagName)) {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'Tab') return;   // the bar's own buttons
     }
     var code = KEYS[e.key];
@@ -217,9 +234,114 @@
   window.addEventListener('pagehide', flushNow);
 
   // ---- the bar -------------------------------------------------------------------------
+  function setMode(cls, text, title) {
+    var b = $('mode');
+    b.className = 'badge' + (cls ? ' ' + cls : '');
+    b.textContent = text;
+    b.title = title || text;
+  }
+  // Save what the running UI has, then boot the UI again into `next` (null = the demo).
+  function switchTo(next) {
+    lsSet(CHOICE_KEY, next);
+    running = false;
+    setStatus(next ? 'Connecting to your node' : 'Back to the demo', '', true);
+    try { if (M && M._wadaWebFlush) M._wadaWebFlush(); } catch (e) {}
+    persist(function () { location.reload(); });
+  }
+  function nodeKeyFor(kind, arg) { var m = lsGet(NODES_KEY) || {}; return m[kind + '|' + arg] || ''; }
+  function rememberNode(c) {
+    var m = lsGet(NODES_KEY) || {};
+    m[c.kind + '|' + c.arg] = c.key;
+    lsSet(NODES_KEY, m);
+  }
+  function connectTo(kind, arg) {
+    $('connect-dlg').close();
+    switchTo({ kind: kind, arg: arg, key: nodeKeyFor(kind, arg) });
+  }
+
+  // The chooser: only the transports this browser has.
+  var NUS = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+  var hasSerial = !!navigator.serial, hasBle = !!navigator.bluetooth;
+  (function setupChooser() {
+    var dlg = $('connect-dlg');
+    dlg.querySelector('[data-kind="web-serial"]').hidden = !hasSerial;
+    dlg.querySelector('[data-kind="ble"]').hidden = !hasBle;
+    var notes = [];
+    if (!hasSerial && !hasBle) notes.push('USB and Bluetooth need Chrome or Edge on a computer; this browser can connect over Wi-Fi.');
+    else if (!hasBle) notes.push('Bluetooth needs Chrome or Edge.');
+    else if (!hasSerial) notes.push('USB needs Chrome or Edge on a computer.');
+    if (location.protocol === 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname))
+      notes.push('Over Wi-Fi the browser has to reach ws://, which it blocks on a secure (https) page; use the page from your own computer or network for Wi-Fi.');
+    $('connect-note').hidden = !notes.length;
+    $('connect-note').textContent = notes.join(' ');
+    var host = $('ws-host');
+    host.value = lsGet(HOST_KEY) || '';
+    dlg.querySelector('[data-kind="web-serial"]').addEventListener('click', function () {
+      navigator.serial.requestPort().then(function (port) {
+        var i = port.getInfo ? port.getInfo() : {};
+        connectTo('web-serial', i.usbVendorId != null ? i.usbVendorId + ':' + i.usbProductId : '');
+      }, function () { /* the visitor closed the picker */ });
+    });
+    dlg.querySelector('[data-kind="ble"]').addEventListener('click', function () {
+      navigator.bluetooth.requestDevice({ filters: [{ services: [NUS] }, { namePrefix: 'MeshCore' }], optionalServices: [NUS] })
+        .then(function (dev) { connectTo('ble', dev.id); }, function () {});
+    });
+    var goWs = function () {
+      var h = host.value.trim();
+      if (!h) { host.focus(); return; }
+      lsSet(HOST_KEY, h);
+      var url = /^wss?:\/\//i.test(h) ? h : 'ws://' + (/:\d+$/.test(h) ? h : h + ':8765') + '/';
+      connectTo('ws', url);
+    };
+    dlg.querySelector('[data-kind="ws"]').addEventListener('click', goWs);
+    host.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goWs(); } });
+  })();
+
   $('btn-connect').addEventListener('click', function () {
-    toast('Coming soon: connect this UI to your own MeshCore node over USB, Bluetooth or Wi-Fi. For now it runs on a demo mesh.');
+    if (choice) { switchTo(null); return; }   // Disconnect: back to the demo
+    var dlg = $('connect-dlg');
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute('open', '');
+    if (!hasSerial && !hasBle) $('ws-host').focus();
   });
+  // Web Serial / Bluetooth without a device this page may open by itself: one click.
+  $('btn-pair').addEventListener('click', function () {
+    $('btn-pair').hidden = true;
+    var wc = M && M.WadaCompanion;
+    if (wc) wc.connect().catch(function (e) { toast(String(e && e.message || e)); });
+  });
+  if (choice) {
+    $('btn-connect').textContent = 'Disconnect';
+    $('btn-connect').classList.remove('primary');
+    $('btn-reset').hidden = true;
+    setMode('wait', 'Connecting');
+    var hint = document.querySelector('.hint');
+    if (hint) hint.textContent = 'Mouse or finger = touch. Your keyboard types into the focused field, Enter sends, Esc goes back. ' +
+      'Messages go out through your node; this browser keeps a copy of the chats.';
+  }
+  // From web_main.cpp (BackendSelect.h g_wada_link_hook): state 1 = up, 0 = (re)connecting.
+  function onLink(state, name, via, key) {
+    if (!choice) return;
+    if (state === 1) {
+      everUp = true;
+      $('btn-pair').hidden = true;
+      setMode('up', 'Connected: ' + name + ' over ' + via);
+      if (key && choice.key !== key) {
+        var first = !choice.key;
+        choice.key = key; choice.name = name;
+        lsSet(CHOICE_KEY, choice);
+        rememberNode(choice);
+        // A different node on the same cable / address: its own data dir, so the two
+        // nodes' contacts and messages never mix. (The first time, the data this
+        // session wrote moves there on the next start.)
+        if (!first) { toast('This is a different node: opening its own data.'); switchTo(choice); }
+      } else if (name && choice.name !== name) {
+        choice.name = name; lsSet(CHOICE_KEY, choice);
+      }
+    } else {
+      setMode('wait', everUp ? 'Reconnecting' : 'Connecting', linkDetail || undefined);
+    }
+  }
+  var linkDetail = '';
   $('btn-reset').addEventListener('click', function () {
     if (!confirm('Reset the demo? Your messages, contacts and settings in this browser are deleted and the demo starts fresh.')) return;
     resetting = true;
@@ -257,13 +379,32 @@
     history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
   }
 
-  function deleteDb(cb) {
-    var done = false, fin = function () { if (!done) { done = true; cb(); } };
-    try {
-      var rq = indexedDB.deleteDatabase(DB_MOUNT);
-      rq.onsuccess = rq.onerror = fin;
-      rq.onblocked = function () { setTimeout(fin, 1500); };
-    } catch (e) { fin(); }
+  // Each backend boots on its own directory under /data: /data/demo, /data/node-<key>.
+  function exists(FS, p) { try { FS.stat(p); return true; } catch (e) { return false; } }
+  function rmrf(FS, p) {
+    var st; try { st = FS.stat(p); } catch (e) { return; }
+    if (FS.isDir(st.mode)) {
+      FS.readdir(p).forEach(function (n) { if (n !== '.' && n !== '..') rmrf(FS, p + '/' + n); });
+      FS.rmdir(p);
+    } else FS.unlink(p);
+  }
+  function prepareDataDirs(FS) {
+    var demo = DB_MOUNT + '/demo';
+    // Before the node backends the demo lived at the top of /data: move it down.
+    if (!exists(FS, demo)) {
+      var old = FS.readdir(DB_MOUNT).filter(function (n) { return n !== '.' && n !== '..' && !/^(demo|node-.*)$/.test(n); });
+      if (old.length) {
+        FS.mkdir(demo);
+        old.forEach(function (n) { FS.rename(DB_MOUNT + '/' + n, demo + '/' + n); });
+      }
+    }
+    if (wantReset) rmrf(FS, demo);   // "Reset demo data": only the demo's
+    // A node connected the first time ran on node-new until its key was known.
+    if (choice && choice.key) {
+      var fresh = DB_MOUNT + '/node-new', mine = nodeDir(choice);
+      if (exists(FS, fresh)) { if (exists(FS, mine)) rmrf(FS, fresh); else FS.rename(fresh, mine); }
+    }
+    if (!exists(FS, dataDir)) FS.mkdir(dataDir);
   }
 
   function mountStorage(Mod) {
@@ -277,10 +418,11 @@
           console.warn('[web] IndexedDB unavailable, running without saving', err);
           toast('This browser does not allow saving here (private window?). The demo works, but resets on reload.');
         }
+        try { prepareDataDirs(FS); } catch (e) { console.warn('[web] data dirs', e); }
         Mod.removeRunDependency('wada-idbfs');
       });
     };
-    if (wantReset) deleteDb(load); else load();
+    load();
   }
 
   setStatus('Loading wadamesh', '', true);
@@ -299,6 +441,16 @@
         fatal('wadamesh stopped', 'Something went wrong: <code>' + String(what).replace(/</g, '&lt;') + '</code>', true);
       },
       wadaPresent: present,
+      // which mesh to boot on (web_main.cpp reads it before the UI starts)
+      wadaBackend: choice ? { kind: choice.kind, arg: choice.arg, dataDir: dataDir }
+                          : { kind: 'demo', dataDir: dataDir },
+      wadaLink: function (state, name, via, key) { onLink(state, name, via, key); },
+      wadaCompanionState: function (up, detail) { if (!up) linkDetail = detail; },
+      wadaCompanionNeedsGesture: function (kind) {
+        $('btn-pair').hidden = false;
+        $('btn-pair').textContent = kind === 'ble' ? 'Pair again' : 'Reconnect';
+        setMode('wait', kind === 'ble' ? 'Bluetooth: tap Pair again' : 'USB: tap Reconnect');
+      },
       wadaReboot: function () {
         // esp_restart(): the UI flushed what a device flushes; save, then start over.
         running = false;
@@ -319,6 +471,8 @@
     build: BUILD,
     stats: stats,
     storage: persistState,
+    backend: function () { return choice; },
+    dataDir: dataDir,
     persist: function () { return new Promise(function (res) { persist(res); }); },
     flush: function () { return new Promise(function (res) { flushNow(); persist(res); }); },
     running: function () { return running; },

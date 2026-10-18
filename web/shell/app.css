@@ -115,3 +115,34 @@ body{
   #frame{border-radius:6px; box-shadow:0 0 0 1px var(--frame-edge), 0 0 0 4px var(--frame), 0 0 0 5px var(--frame-edge)}
 }
 @media (prefers-reduced-motion:reduce){ #overlay.busy #status::after{animation:none; content:"..."} }
+
+/* ---- the node link ---- */
+.badge{max-width:46vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.badge.wait{background:var(--control); color:var(--mut); box-shadow:inset 0 0 0 1px var(--line)}
+.badge.up{background:var(--accent-soft); color:var(--cyan); box-shadow:inset 0 0 0 1px rgba(25,214,194,.38)}
+dialog#connect-dlg{
+  width:min(460px, calc(100vw - 2*var(--gutter))); padding:22px; border:0; border-radius:18px;
+  background:var(--solid); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line), var(--shadow);
+}
+dialog#connect-dlg::backdrop{background:rgba(0,0,0,.6)}
+#connect-dlg h2{margin:0 0 6px; font-size:19px}
+#connect-dlg .lead{margin:0 0 16px; color:var(--mut); font-size:14px; line-height:1.45}
+#connect-dlg .choices{display:flex; flex-direction:column; gap:10px}
+#connect-dlg .choice{
+  display:flex; flex-direction:column; align-items:flex-start; gap:3px; width:100%;
+  padding:12px 14px; border:0; border-radius:12px; text-align:left; cursor:pointer;
+  background:var(--control); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line); font:inherit;
+}
+#connect-dlg .choice[hidden]{display:none}
+#connect-dlg .choice.wifi{cursor:default}
+#connect-dlg button.choice:hover{background:var(--control-hi)}
+#connect-dlg .choice strong{font-size:15px}
+#connect-dlg .choice span{color:var(--dim); font-size:13px}
+#connect-dlg .row{display:flex; gap:8px; width:100%; margin-top:8px}
+#connect-dlg input{
+  flex:1; min-width:0; height:36px; padding:0 12px; border:0; border-radius:10px;
+  background:var(--bg); color:var(--ink); box-shadow:inset 0 0 0 1px var(--line); font:inherit; font-size:14px;
+}
+#connect-dlg input:focus{outline:none; box-shadow:inset 0 0 0 1px var(--teal)}
+#connect-dlg .note{margin:14px 0 0; color:var(--mut); font-size:13px; line-height:1.45}
+#connect-dlg .actions{display:flex; justify-content:flex-end; margin-top:16px}

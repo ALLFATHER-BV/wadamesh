@@ -10,6 +10,7 @@
 # web/build.sh webtest  the acceptance tour in headless browsers against web/dist
 #                     (Playwright: npm install --prefix web playwright && npx playwright install)
 #                     BROWSERS=chromium,firefox,webkit; screenshots -> web/docs/web-*.png
+# web/build.sh nodetest the page connected to a mock node over WebSocket -> web/docs/node-*.png
 set -euo pipefail
 cd "$(dirname "$0")"
 WEB="$(pwd)"
@@ -76,5 +77,18 @@ case "$target" in
     sleep 1
     node "$WEB/scripts/web-tour.mjs" --url "http://localhost:$port/" --browsers "${BROWSERS:-chromium}" "$@"
     ;;
-  *) echo "usage: web/build.sh host|run|shots|smoke|web|web-debug|serve|webtest" >&2; exit 2;;
+  nodetest)
+    # The page connected to a node: a mock node's WebSocket server (web/mesh/test/
+    # mock_ws_node.py) in place of a device, Connect > Wi-Fi, DM, live message, reload,
+    # Disconnect. Screenshots -> web/docs/node-*.png
+    [ -f "$WEB/dist/index.html" ] || "$SELF" web
+    [ -d "$WEB/node_modules/playwright" ] || { echo "nodetest: npm install --prefix web playwright && (cd web && npx playwright install)" >&2; exit 1; }
+    port="${PORT:-8188}"; wsport="${WS_PORT:-18766}"
+    WADA_SERVE_QUIET=1 python3 "$WEB/scripts/serve.py" "$WEB/dist" "$port" & srv=$!
+    python3 "$WEB/mesh/test/mock_ws_node.py" "$wsport" >/dev/null 2>&1 & mock=$!
+    trap 'kill $srv $mock 2>/dev/null' EXIT
+    sleep 1
+    node "$WEB/scripts/node-tour.mjs" --url "http://localhost:$port/" --ws "localhost:$wsport" "$@"
+    ;;
+  *) echo "usage: web/build.sh host|run|shots|smoke|web|web-debug|serve|webtest|nodetest" >&2; exit 2;;
 esac
