@@ -175,7 +175,8 @@
 
 #elif defined(HAS_CROWPANEL_P4_101)   // ===== Elecrow CrowPanel Advanced 10.1" (ESP32-P4 + C6) =====
   // EXPERIMENTAL. 1024x600 EK79007 IPS on MIPI-DSI, GT911 touch, SX1262 module on the wireless
-  // header, C6 Wi-Fi/BLE (esp-hosted 2.12.3 factory firmware), SD_MMC 1-bit. 32 MB PSRAM.
+  // header, C6 Wi-Fi/BLE (esp-hosted; Elecrow documents 2.12.3, but V1.0 units have been seen with
+  // 2.3.0, which still comes up: main.cpp logs the version), SD_MMC 1-bit. 32 MB PSRAM.
   #define CAP_TOUCH        1   // GT911 capacitive touch
   #define CAP_ROTATABLE    0   // native 1024x600 landscape; the DSI panel cannot rotate in hardware
   #define CAP_LARGE_SCREEN 1   // large-panel layouts + the UI-size fonts, rendered at native resolution
@@ -220,6 +221,17 @@
   #define CAP_MICROSD 1
 #else
   #define CAP_MICROSD 0
+#endif
+
+// No dedicated "tiles" LittleFS partition in the board's own partition table, and no free flash to
+// add one without moving partitions that hold user data (16 MB maps: 2 x 4 MB OTA + 8000 KB storage
+// + coredump fill the chip). The Wi-Fi map tile cache then goes to the microSD when one is mounted,
+// else to the internal LittleFS 'storage' partition, where tilesFsLowSpace() keeps headroom free for
+// identity, contacts and chat history.
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+  #define CAP_TILES_ON_STORAGE 1
+#else
+  #define CAP_TILES_ON_STORAGE 0
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already

@@ -75,6 +75,10 @@ set(WADA_DEFS
 
   # --- microSD: SDMMC slot 0, 1-bit (only D0 is wired): CLK43 / CMD44 / D0 39. C6 is slot 1. ---
   BOARD_HAS_SDMMC=1 BOARD_SDMMC_SLOT=0
+  # The generic esp32p4 Arduino variant names GPIO45 as an SD power switch (BOARD_SDMMC_POWER_PIN);
+  # here 45 is the touch/codec I2C SDA and the card has no power switch. build.sh makes SD_MMC.cpp
+  # skip that pin when this is defined; without it every SD_MMC.begin()/end() tore down I2C0.
+  WADA_SDMMC_NO_POWER_PIN=1
 )
 foreach(_d ${WADA_DEFS})
   idf_build_set_property(COMPILE_OPTIONS "-D${_d}" APPEND)

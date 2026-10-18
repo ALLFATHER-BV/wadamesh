@@ -160,6 +160,47 @@ if [ -f "$SDMMC_C" ] && ! grep -q 'wadamesh P4: slot0 pullups' "$SDMMC_C"; then
   echo "[build.sh] patched arduino SD_MMC.cpp (slot-0 struct pull-up flag)"
 fi
 
+# --- Build-time patch: the generic esp32p4 variant's SD power pin is THIS board's touch SDA ---------
+# Arduino's esp32p4 variant (the Espressif P4 Function EV board) defines BOARD_SDMMC_POWER_PIN 45, so
+# SD_MMC.begin() does pinMode(45, OUTPUT) + a 200 ms power toggle, leaves it driven LOW, and
+# SD_MMC.end() clears the pin again. On the CrowPanel GPIO45 is I2C0 SDA (GT911, codec, HY2.0 port):
+# the pinMode makes the peripheral manager detach I2C0 (i2cDeinit), so every Wire call afterwards
+# failed with "bus is not initialized" and touch never came up (beta_97, tester V1.0 log). The card
+# here is powered straight from VDD_3V3 (no switch), so the block has no job on this board at all.
+# main/CMakeLists.txt defines WADA_SDMMC_NO_POWER_PIN; the guard below makes SD_MMC honour it. Fails
+# the build if the upstream lines change, because touch depends on it. Idempotent.
+if [ -f "$SDMMC_C" ] && ! grep -q 'WADA_SDMMC_NO_POWER_PIN' "$SDMMC_C"; then
+  if [ "$(grep -c '^#if defined(BOARD_SDMMC_POWER_PIN)$' "$SDMMC_C")" -lt 2 ]; then
+    echo "[build.sh] SD_MMC.cpp: BOARD_SDMMC_POWER_PIN blocks not found; the GPIO45 patch needs updating" >&2
+    exit 1
+  fi
+  sed -i '' 's|^#if defined(BOARD_SDMMC_POWER_PIN)$|#if defined(BOARD_SDMMC_POWER_PIN) \&\& !defined(WADA_SDMMC_NO_POWER_PIN)  // wadamesh CrowPanel P4: GPIO45 is I2C SDA|' "$SDMMC_C"
+  echo "[build.sh] patched arduino SD_MMC.cpp (no SD power pin: GPIO45 stays I2C SDA)"
+fi
+
+# --- Build-time patch: remember the C6's esp-hosted version from its init event ---------------------
+# The slave reports its firmware version in the transport INIT event; the host only compares it
+# (major.minor) and logs a warning. Keep the raw value so main.cpp can say plainly which C6
+# firmware is fitted. Asking for it over RPC instead (esp_hosted_get_coprocessor_fwversion) is what
+# an old co-processor may not answer. The variable is defined in variants/crowpanel_p4_101/target.cpp.
+HOSTED_TDRV="managed_components/nicolaielectronics__esp-hosted-tanmatsu/host/drivers/transport/transport_drv.c"
+if [ -f "$HOSTED_TDRV" ] && ! grep -q 'wadamesh_c6_fw_version' "$HOSTED_TDRV"; then
+  python3 - "$HOSTED_TDRV" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = "\t// if ESP_PRIV_FIRMWARE_VERSION was not received, slave version will be 0.0.0\n\tcompare_fw_version(slave_fw_version);\n"
+new = ("\t// if ESP_PRIV_FIRMWARE_VERSION was not received, slave version will be 0.0.0\n"
+       "\t{ extern volatile uint32_t wadamesh_c6_fw_version; extern volatile int wadamesh_c6_fw_known;\n"
+       "\t  wadamesh_c6_fw_version = slave_fw_version; wadamesh_c6_fw_known = 1; }  /* wadamesh: C6 version for the boot log */\n"
+       "\tcompare_fw_version(slave_fw_version);\n")
+if s.count(old) != 1:
+    sys.exit("esp-hosted transport_drv.c: version compare not found; patch needs updating")
+open(p, "w").write(s.replace(old, new))
+PYEOF
+  echo "[build.sh] patched esp-hosted transport_drv.c (keep the C6 firmware version)"
+fi
+
 # --- Build-time patch: this board's C6 ships esp-hosted, so Arduino's hostedInit() must be the real
 # one. A managed_components tree copied from a legacy ESP-AT T-Display build may carry the stub.
 HOSTED_C="managed_components/espressif__arduino-esp32/cores/esp32/esp32-hal-hosted.c"

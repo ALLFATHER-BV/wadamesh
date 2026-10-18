@@ -1,4 +1,5 @@
 #include "SdNvsPrefs.h"
+#include <nvs.h>
 #if defined(ESP32)
 
 #include <FS.h>
@@ -411,10 +412,22 @@ fs::FS* SdNvsPrefs::fileFs() { return fileMode() ? s_file_fs : nullptr; }
 // Does NVS hold settings from an older (NVS) build worth migrating? Probed ONCE
 // (RO open of the main namespace) so fresh devices don't spam NOT_FOUND when the
 // per-namespace migration fallback opens.
+// Arduino's Preferences::begin(ns, true) logs "[E][Preferences.cpp] begin(): nvs_open failed:
+// NOT_FOUND" whenever the namespace does not exist yet, which is every read-only open on a fresh
+// device (and on the shared USB-CDC that is also the companion stream). The IDF's own nvs_open()
+// gives the same answer without logging, so ask it first and skip the Arduino call when the
+// namespace is simply absent. Any other outcome falls through to Preferences unchanged.
+static bool nvsNamespaceAbsent(const char* ns) {
+  nvs_handle_t h = 0;
+  const esp_err_t err = nvs_open(ns, NVS_READONLY, &h);
+  if (err == ESP_OK) nvs_close(h);
+  return err == ESP_ERR_NVS_NOT_FOUND;
+}
+
 static bool nvsHasLegacyData() {
   if (s_migrate < 0) {
     Preferences p;
-    bool ok = p.begin("touch", true);   // TOUCH_NS, read-only
+    bool ok = !nvsNamespaceAbsent("touch") && p.begin("touch", true);   // TOUCH_NS, read-only
     if (ok) p.end();
     s_migrate = ok ? 1 : 0;
   }
@@ -448,7 +461,7 @@ bool SdNvsPrefs::begin(const char* ns, bool readOnly) {
   if (useNvs()) {
     _sd.clear();
     _sd_loaded = false;
-    _nvs_open = _nvs.begin(ns, readOnly);
+    _nvs_open = !(readOnly && ns && nvsNamespaceAbsent(ns)) && _nvs.begin(ns, readOnly);
     return _nvs_open;
   }
   if (!ns || snprintf(_path, sizeof(_path), "/meshcomod/%s.kv", ns) >= (int)sizeof(_path))

@@ -6,6 +6,10 @@
 #include <helpers/ArduinoHelpers.h>   // RadioNoiseListener / StdRNG
 #include "esp_ldo_regulator.h"
 #include "driver/gpio.h"
+#include "driver/sdmmc_host.h"
+#include "sdmmc_cmd.h"
+#include "esp_log.h"
+#include "esp_hosted_host_fw_ver.h"   // ESP_HOSTED_VERSION_MAJOR_1/MINOR_1/PATCH_1 (host side)
 
 CrowPanelP4Board board;
 
@@ -62,8 +66,12 @@ void crowpanelP4PowerOn() {
   delay(20);
 }
 
+bool crowpanelP4PadPowerOk() { return s_ldo4 != nullptr; }
+
 void CrowPanelP4Board::begin() {
   ESP32Board::begin();   // Wire on PIN_BOARD_SDA/SCL = 45/46 (GT911, codec, HY2.0 port)
+  printf("[BOOT] i2c bus 0 on SDA%d/SCL%d: %s\n", PIN_BOARD_SDA, PIN_BOARD_SCL,
+         i2cIsInit(0) ? "ok" : "FAIL (Wire.begin refused; touch will retry)");
 }
 
 bool radio_init() {
@@ -103,6 +111,87 @@ extern "C" int hosted_reset_slave_callback() {
   gpio_set_level(GPIO_NUM_32, 1);
   delay(1000);
   return 0;
+}
+
+// ---- microSD presence probe ------------------------------------------------------------------------
+// One quiet card-identification pass on SDMMC slot 0, 1-bit, IOMUX pins (CLK43 CMD44 D0 39), at the
+// 400 kHz probing clock. Card identification always runs at 400 kHz, so when the card does not
+// answer the first command (ESP_ERR_TIMEOUT, 0x107) a 20/10/5 MHz mount ladder can only fail the same
+// way three times, each with an IDF error and an Arduino error. The IDF sdmmc tags are muted for this
+// pass only. Boot use only: it inits and deinits the whole SDMMC host, so it must run before the C6
+// (SDMMC slot 1) is started.
+esp_err_t crowpanelSdProbe() {
+  static const char* const kTags[] = {"sdmmc_common", "sdmmc_init", "sdmmc_sd", "sdmmc_cmd",
+                                      "sdmmc_req", "sdmmc_periph", "sdmmc_mmc"};
+  esp_log_level_t prev[sizeof kTags / sizeof kTags[0]];
+  for (size_t i = 0; i < sizeof kTags / sizeof kTags[0]; i++) {
+    prev[i] = esp_log_level_get(kTags[i]);
+    esp_log_level_set(kTags[i], ESP_LOG_NONE);
+  }
+
+  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+  host.slot = SDMMC_HOST_SLOT_0;
+  host.flags = SDMMC_HOST_FLAG_1BIT;
+  host.max_freq_khz = SDMMC_FREQ_PROBING;
+  // All pins 0 = "not set" = the slot's dedicated IOMUX pins (same trick as Arduino's SD_MMC slot-0
+  // branch: the IDF's pin-not-set check is !pin, which GPIO_NUM_NC would fail).
+  sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+  slot.clk = slot.cmd = slot.d0 = slot.d1 = slot.d2 = slot.d3 = GPIO_NUM_0;
+  slot.d4 = slot.d5 = slot.d6 = slot.d7 = GPIO_NUM_0;
+  slot.cd = SDMMC_SLOT_NO_CD;
+  slot.wp = SDMMC_SLOT_NO_WP;
+  slot.width = 1;
+  slot.flags = SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
+
+  esp_err_t err = sdmmc_host_init();
+  if (err == ESP_OK) {
+    err = sdmmc_host_init_slot(SDMMC_HOST_SLOT_0, &slot);
+    if (err == ESP_OK) {
+      sdmmc_card_t* card = (sdmmc_card_t*)calloc(1, sizeof(sdmmc_card_t));
+      err = card ? sdmmc_card_init(&host, card) : ESP_ERR_NO_MEM;
+      free(card);
+      sdmmc_host_deinit_slot(SDMMC_HOST_SLOT_0);
+    }
+    sdmmc_host_deinit();
+  }
+
+  for (size_t i = 0; i < sizeof kTags / sizeof kTags[0]; i++) esp_log_level_set(kTags[i], prev[i]);
+  return err;
+}
+
+// ---- ESP32-C6 firmware version ----------------------------------------------------------------------
+// Written by esp-hosted's transport driver when the C6's INIT event arrives (build.sh patch to
+// transport_drv.c), read by crowpanelC6Describe(). 0 / unknown until the transport has come up.
+extern "C" {
+volatile uint32_t wadamesh_c6_fw_version = 0;
+volatile int      wadamesh_c6_fw_known   = 0;
+}
+
+int crowpanelC6Describe(char* out, size_t cap) {
+  if (!out || !cap) return -1;
+  if (!wadamesh_c6_fw_known) {
+    snprintf(out, cap, "C6 firmware version not reported (transport not up)");
+    return -1;
+  }
+  const uint32_t v = wadamesh_c6_fw_version;
+  const unsigned maj = ESP_HOSTED_VERSION_MAJOR(v), min = ESP_HOSTED_VERSION_MINOR(v), pat = ESP_HOSTED_VERSION_PATCH(v);
+  if (v == 0) {
+    snprintf(out, cap, "C6 esp-hosted firmware did not report a version (very old); host is %d.%d.%d. "
+             "Wi-Fi/BLE may be slow or fail; update the C6 with Elecrow's V2.12.3 image",
+             ESP_HOSTED_VERSION_MAJOR_1, ESP_HOSTED_VERSION_MINOR_1, ESP_HOSTED_VERSION_PATCH_1);
+    return 1;
+  }
+  const bool older = (maj < ESP_HOSTED_VERSION_MAJOR_1) ||
+                     (maj == ESP_HOSTED_VERSION_MAJOR_1 && min < ESP_HOSTED_VERSION_MINOR_1);
+  if (older) {
+    snprintf(out, cap, "C6 esp-hosted firmware %u.%u.%u, host %d.%d.%d: the C6 is older. Wi-Fi/BLE "
+             "may be slow or time out (Elecrow's V2.12.3 C6 image matches this host)",
+             maj, min, pat, ESP_HOSTED_VERSION_MAJOR_1, ESP_HOSTED_VERSION_MINOR_1, ESP_HOSTED_VERSION_PATCH_1);
+  } else {
+    snprintf(out, cap, "C6 esp-hosted firmware %u.%u.%u (host %d.%d.%d): ok", maj, min, pat,
+             ESP_HOSTED_VERSION_MAJOR_1, ESP_HOSTED_VERSION_MINOR_1, ESP_HOSTED_VERSION_PATCH_1);
+  }
+  return older ? 1 : 0;
 }
 
 // ---- Software restart = full system reset ---------------------------------------------------------

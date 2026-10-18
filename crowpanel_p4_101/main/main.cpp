@@ -46,6 +46,23 @@ extern "C" bool hostedSetPins(int8_t clk, int8_t cmd, int8_t d0, int8_t d1, int8
 // P4 and the CrowPanel V1.0, but V1.1/V1.2 route D0..D3 to GPIO17..14, and C6_EN is GPIO32 on every
 // revision. Must run before anything can start esp-hosted (Wi-Fi, BLE, boot time sync).
 // The bus width (4-bit, or 1-bit on V1.0) still comes from the sdkconfig fragment.
+// Say once, plainly, which esp-hosted firmware the C6 runs (known once the transport is up). A C6
+// older than the host (V1.0 units have shipped with 2.3.0 against this 2.12.x host) can leave RPCs
+// unanswered, each costing the 5 s RPC timeout on the calling task, so Wi-Fi reconnects are spaced
+// out further on such a C6 rather than stalling the UI loop every 10 s.
+static int s_c6_state = -1;   // -1 unknown, 0 matches the host, 1 older than the host
+static void crowpanelC6ReportOnce(const char* when) {
+  static bool s_done = false;
+  if (s_done) return;
+  char line[200];
+  const int st = crowpanelC6Describe(line, sizeof line);
+  if (st < 0) return;
+  s_done = true;
+  s_c6_state = st;
+  printf("[C6] %s (seen at %s)\n", line, when);
+  if (st == 1) printf("[C6] old co-processor: Wi-Fi reconnect attempts every 60 s instead of 10 s\n");
+}
+
 static void crowpanelC6Pins() {
 #if CP_REV == 10
   const bool ok = hostedSetPins(18, 19, 14, 15, 16, 17, 32);
@@ -63,6 +80,7 @@ extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
 DataStore store(LittleFS, rtc_clock);
 bool g_fs_ok = false;   // internal 'storage' (LittleFS) mounted
 bool g_sd_ok = false;   // microSD mounted
+bool g_sd_no_card_at_boot = false;   // boot probe: no card answered (UITask's first lazy mount skips)
 MultiTransportCompanionInterface serial_interface;
 StdRNG fast_rng;
 SimpleMeshTables tables;
@@ -105,12 +123,29 @@ static void wadameshSetup() {
   if (g_fs_ok) { LittleFS.mkdir("/identity"); LittleFS.mkdir("/bl"); }
   // microSD on SDMMC slot 0, 1-bit: the J5 slot only has D0 routed (CLK43 / CMD44 / D0 39), as in
   // Elecrow's Lesson08. Pad power is LDO4, which crowpanelP4PowerOn() already holds, so SD_MMC must
-  // not try to claim it again (-1 = external power). The card has pull-ups on CMD/D0 (R27/R28); the
-  // build also enables the internal ones (build.sh patch), as Elecrow does.
+  // not try to claim it again (-1 = external power; the card itself is on VDD_3V3 with no switch).
+  // The card has pull-ups on CMD/D0 (R27/R28); the build also enables the internal ones (build.sh
+  // patch), as Elecrow does. DAT1-DAT3 are not connected to the P4 (schematic V1.0-V1.2), so the slot
+  // can only run 1-bit. V1.0 also shows a 10k pull-down on the card's DAT3 (R33, with the pull-up
+  // R29 marked "10K/NC"); a card that sees DAT3 low at its first command enters SPI mode and never
+  // answers in SD mode, which would look exactly like an empty slot (unverified on hardware).
   SD_MMC.setPowerChannel(-1);
   SD_MMC.setPins(43, 44, 39);
   for (int p : {44, 39}) gpio_pullup_en((gpio_num_t)p);
-  {
+  // Quiet presence check first: an empty slot (or a card that never answers the first command) is
+  // reported once, instead of three IDF + Arduino error pairs from the mount ladder below. The
+  // ladder only runs when a card answered, which is when a lower clock can actually help.
+  const esp_err_t sd_probe = crowpanelSdProbe();
+  if (sd_probe == ESP_ERR_TIMEOUT) {
+    g_sd_no_card_at_boot = true;
+    sdMountDiagBegin();
+    sdMountDiagAttempt(400000u, false, false);
+    sdMountDiagSetMounted(false, 0);
+    printf("[storage] SD_MMC = no card or not responding (1-bit slot, no answer at 400 kHz)\n");
+  } else {
+    if (sd_probe != ESP_OK)
+      printf("[storage] SD_MMC probe: card answered but init failed (%s); trying the mount ladder\n",
+             esp_err_to_name(sd_probe));
     struct { int khz; const char* tag; } tries[] = {
       { SDMMC_FREQ_DEFAULT, "1-bit 20MHz" },
       { 10000,              "1-bit 10MHz (Elecrow)" },
@@ -128,8 +163,8 @@ static void wadameshSetup() {
       delay(120);
     }
     sdMountDiagSetMounted(g_sd_ok, mounted_hz);
+    printf("[storage] SD_MMC = %s\n", g_sd_ok ? "OK" : "card present but mount failed");
   }
-  printf("[storage] SD_MMC = %s\n", g_sd_ok ? "OK" : "no card");
   store.begin();   // internal LittleFS is the DataStore root (P4 storage law)
 
   the_mesh.begin(disp != NULL);
@@ -153,7 +188,8 @@ static void wadameshSetup() {
   serial_interface.prepareBle("wadamesh-", nm, the_mesh.getBLEPin());
   if (wifiConfigGetBleEnabled()) {
     if (hostedInitBLE()) serial_interface.beginBle("wadamesh-", nm, the_mesh.getBLEPin());
-    else                 printf("[BOOT] hostedInitBLE FAILED\n");
+    else                 printf("[BOOT] hostedInitBLE FAILED (BLE unavailable; LoRa, touch and the UI keep running)\n");
+    crowpanelC6ReportOnce("BLE start");
   } else {
     printf("[BOOT] BLE off in settings: C6 not started for it\n");
   }
@@ -181,6 +217,7 @@ extern "C" void app_main(void) {
   bool     sntp_kicked = false, sntp_pushed = false, modem_sleep_set = false;
   uint32_t last_wifi_retry_ms = 0;
   const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+  const uint32_t WIFI_RETRY_INTERVAL_OLD_C6_MS = 60000;   // see crowpanelC6ReportOnce()
 
   for (;;) {
     ui_task.loop();
@@ -213,7 +250,9 @@ extern "C" void app_main(void) {
       }
       if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED) {
         uint32_t now = millis();
-        if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
+        crowpanelC6ReportOnce("Wi-Fi start");
+        const uint32_t retry_ms = (s_c6_state == 1) ? WIFI_RETRY_INTERVAL_OLD_C6_MS : WIFI_RETRY_INTERVAL_MS;
+        if ((uint32_t)(now - last_wifi_retry_ms) >= retry_ms) {
           last_wifi_retry_ms = now;
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];
           wifiConfigGetSsid(ssid, sizeof(ssid)); wifiConfigGetPwd(pwd, sizeof(pwd));
@@ -221,7 +260,7 @@ extern "C" void app_main(void) {
         }
       }
       if (WiFi.status() == WL_CONNECTED) {
-        if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; }
+        if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; crowpanelC6ReportOnce("Wi-Fi connected"); }
         serial_interface.startTcpServer(true);
         if (!sntp_pushed) {
           if (!sntp_kicked) { configTime(0, 0, "pool.ntp.org", "time.nist.gov"); sntp_kicked = true; }
