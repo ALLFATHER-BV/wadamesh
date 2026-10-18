@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "vfs_api.h"
+#include <unistd.h>
 
 using namespace fs;
 
@@ -396,7 +397,22 @@ size_t VFSFileImpl::write(const uint8_t *buf, size_t size)
         return 0;
     }
     _written = true;
+#if defined(__EMSCRIPTEN__)
+    // Straight to the descriptor. musl's buffered fwrite retries a 0-byte write for ever
+    // (__stdio_write), and in the no-threads build that froze the page's only thread
+    // mid Store install. Here a stall is a short write the caller handles.
+    if (fflush(_f) != 0) return 0;
+    size_t done = 0;
+    while (done < size) {
+        const ssize_t r = ::write(fileno(_f), buf + done, size - done);
+        if (r <= 0) break;
+        done += (size_t)r;
+    }
+    if (done) fseek(_f, 0, SEEK_CUR);   // re-sync the FILE's own position with the descriptor
+    return done;
+#else
     return fwrite(buf, 1, size, _f);
+#endif
 }
 
 size_t VFSFileImpl::read(uint8_t* buf, size_t size)

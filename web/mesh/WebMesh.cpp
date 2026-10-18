@@ -12,6 +12,10 @@
 
 namespace {
 const char* k_prefs_path = "/web_node_prefs";   // NodePrefs blob (versioned by size)
+// The UI's own position (Profile / Settings > GPS, or this computer's last fix): two
+// doubles. The device keeps it next to its prefs (DataStore::savePrefs); without this
+// a typed position was gone after every reload.
+const char* k_pos_path = "/web_node_pos";
 
 int b64val(char c) {
   if (c >= 'A' && c <= 'Z') return c - 'A';
@@ -103,6 +107,12 @@ bool MyMesh::savePrefs() {
   File f = SPIFFS.open(k_prefs_path, "w");
   bool ok = false;
   if (f) { ok = f.write((const uint8_t*)&_prefs, sizeof _prefs) == sizeof _prefs; f.close(); }
+  File pf = SPIFFS.open(k_pos_path, "w");
+  if (pf) {
+    const double pos[2] = {sensors.node_lat, sensors.node_lon};
+    if (pf.write((const uint8_t*)pos, sizeof pos) != sizeof pos) ok = false;
+    pf.close();
+  }
   if (_backend) _backend->prefsChanged(_prefs);
   return ok;
 }
@@ -110,6 +120,16 @@ bool MyMesh::savePrefs() {
 void MyMesh::begin(MeshBackend* backend) {
   _backend = backend;
   loadPrefs();
+  File pf = SPIFFS.open(k_pos_path, "r");
+  if (pf) {
+    double pos[2] = {0, 0};
+    if (pf.size() == sizeof pos && pf.read((uint8_t*)pos, sizeof pos) == (int)sizeof pos) {
+      sensors.node_lat = pos[0];
+      sensors.node_lon = pos[1];
+      _have_own_pos = pos[0] != 0.0 || pos[1] != 0.0;
+    }
+    pf.close();
+  }
   _region_reg.begin(&SPIFFS);
   // Identity: whatever the backend says this node is (a companion reports its key;
   // the demo derives a fixed one), kept in a LocalIdentity like the device does.
@@ -973,10 +993,12 @@ void MyMesh::beSelfInfo(const NodePrefs& np, const uint8_t pub_key[32], int32_t 
   _node_pos_lat = (double)lat_e6 / 1.0e6;
   _node_pos_lon = (double)lon_e6 / 1.0e6;
   // The node's position is the UI's, unless this computer's GPS has one (it wins, as a
-  // device's fix wins over its stored position; syncAdvertPosition decides if it is sent).
+  // device's fix wins over its stored position; syncAdvertPosition decides if it is sent)
+  // or this browser already keeps one (a position typed here stays; the node's is often
+  // the privacy-displaced copy it advertises, or none at all).
   LocationProvider* lp = sensors.getLocationProvider();
   const bool own_fix = _prefs.gps_enabled && lp && lp->isValid();
-  if ((lat_e6 != 0 || lon_e6 != 0) && !own_fix) {
+  if ((lat_e6 != 0 || lon_e6 != 0) && !own_fix && !_have_own_pos) {
     sensors.node_lat = _node_pos_lat;
     sensors.node_lon = _node_pos_lon;
   }

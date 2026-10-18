@@ -48,7 +48,11 @@
     }
     return best || Math.max(lo, Math.min(hi, Math.round(target)));
   }
-  if (fill) {
+  // Measured now for the first frame, and again just before the UI boots: a home-screen
+  // app on iOS starts with a viewport that is not settled yet (taller than what it ends up
+  // as), which cut the UI's bottom bar off until a turn of the phone restarted it.
+  function pickSize() {
+    if (!fill) return;
     document.body.classList.add('fill');
     if (portrait) document.body.classList.add('portrait');
     var st0 = document.getElementById('stage'), r0 = st0.getBoundingClientRect(), c0 = getComputedStyle(st0);
@@ -67,6 +71,7 @@
     }
     W -= W & 1; H -= H & 1;
   }
+  pickSize();
   var BUILD = '__WADA_BUILD__';
   var DB_MOUNT = '/data';   // also the IndexedDB database name IDBFS uses
 
@@ -132,6 +137,7 @@
       canvas.style.width = aw + 'px';
       canvas.style.height = Math.round(H * f) + 'px';
       canvas.classList.toggle('crisp', Math.abs(d - Math.round(d)) < 0.02 || d >= 3);
+      overflowCheck();
       return;
     }
     var dpr = window.devicePixelRatio || 1;
@@ -146,6 +152,30 @@
     canvas.classList.toggle('crisp', crisp);
   }
   window.addEventListener('resize', layout);
+  // The space got shorter than the UI after it booted, with no keyboard up (a viewport
+  // that settled late): the bottom of the UI is cut off, so boot it again at the right
+  // size. At most once every 30 s, so a browser that keeps changing its mind cannot loop.
+  var overflowTimer = 0;
+  // How far the UI's bottom edge sits below the visible window (the stage itself can grow
+  // with its content, so the window is the measure).
+  function overflowPx() {
+    var vh = window.innerHeight;
+    var r = canvas.getBoundingClientRect();
+    return r.bottom - vh;
+  }
+  function overflowCheck() {
+    clearTimeout(overflowTimer);
+    if (!running || overflowPx() <= 8) return;
+    overflowTimer = setTimeout(function () {
+      if (!running || resetting || imeOn || (document.activeElement && document.activeElement.id === 'ime')) return;
+      if (overflowPx() <= 8) return;
+      var last = 0;
+      try { last = +sessionStorage.getItem('wada.refit') || 0; } catch (e) {}
+      if (Date.now() - last < 30000) return;
+      try { sessionStorage.setItem('wada.refit', String(Date.now())); } catch (e) {}
+      restartUi('Fitting the screen');
+    }, 900);
+  }
   // ---- orientation: the other layout needs a restart of the UI (data kept) -----------
   // Debounced, only when the window's aspect really flipped AND its width changed (a phone
   // keyboard or a collapsing toolbar only changes the height, which is no rotation), and
@@ -193,6 +223,7 @@
     stats.presents++; stats.presentedPx += w * h;
     if (!running) {
       running = true;
+      if (fill) { overflowCheck(); setTimeout(overflowCheck, 1500); }   // a viewport that settled while it booted
       overlay.hidden = true;
       canvas.focus({ preventScroll: true });
     }
@@ -691,10 +722,14 @@
   function linkTrouble(up, detail) {
     var box = $('link-help');
     if (up) { linkFails = 0; if (box && !box.hidden) { box.hidden = true; layout(); } return; }
-    if (everUp || !choice) return;
+    if (/^paused/.test(detail || '')) return;   // this page was out of sight and let the node go
+    // The node dropped us for another client (companion-transports.js): worth saying even
+    // after the link was up once, since it looks like a connection that never finishes.
+    var taken = !!choice && choice.kind === 'ws' && /another app or browser/.test(detail || '');
+    if ((everUp && !taken) || !choice) return;
     var mixed = choice.kind === 'ws' && /mixed content/.test(detail || '');
-    if (++linkFails < 2 && !mixed) return;  // one miss can be a slow start (a blocked ws:// cannot)
-    setMode('bad', "Can't reach your node", detail || undefined);
+    if (++linkFails < 2 && !mixed && !taken) return;  // one miss can be a slow start (a blocked ws:// cannot)
+    setMode('bad', taken ? 'Node in use elsewhere' : "Can't reach your node", detail || undefined);
     if (!box) {
       box = document.createElement('div');
       box.id = 'link-help';
@@ -702,7 +737,10 @@
       var bar = document.querySelector('.bar');
       bar.parentNode.insertBefore(box, bar.nextSibling);
     }
-    var how = mixed ? 'This secure (https) copy of the page may not open a plain ws:// connection to your node. Use the http copy for Wi-Fi: ' + wifiCopyUrl('').replace(/#wifi=$/, '')
+    var how = taken ? 'Your node serves one Wi-Fi app at a time, and something else just took it: another tab or ' +
+        'window of this page, the home-screen app, another phone or computer, or the MeshCore app over Wi-Fi. Close that ' +
+        'one and this page takes over again; it keeps trying, more slowly.'
+      : mixed ? 'This secure (https) copy of the page may not open a plain ws:// connection to your node. Use the http copy for Wi-Fi: ' + wifiCopyUrl('').replace(/#wifi=$/, '')
       : choice.kind === 'ws'
       ? 'Check that the node has Wi-Fi on and is on the same network as this computer (a guest or IoT network often cannot reach the rest), and that you typed its address right: ' + choice.arg.replace(/^wss?:\/\//, '').replace(/\/$/, '') + '.'
       : choice.kind === 'web-serial'
@@ -710,7 +748,7 @@
         : 'Check that the node is on, in range, and has Bluetooth on.';
     box.innerHTML = '';
     var p = document.createElement('p');
-    p.textContent = mixed ? how : 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
+    p.textContent = mixed || taken ? how : 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
     // A ws:// that never connected from the https copy (blocked, or a silent timeout): the
     // http copy is the way, with this address.
     if (choice.kind === 'ws' && location.protocol === 'https:' && /^ws:/i.test(choice.arg)) {
@@ -876,7 +914,8 @@
   // localhost dev server) the threaded one next to the page; without it (the http copy,
   // which reaches a node's ws:// over Wi-Fi) the no-threads one in nt/.
   var isolated = !!window.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined';
-  var BUNDLE = isolated ? '' : 'nt/';
+  // ?nt forces the no-threads build (tests: the http copy's engine on any page)
+  var BUNDLE = isolated && !/[?&]nt\b/.test(location.search) ? '' : 'nt/';
   var devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   function cannotLoad() {
     if (devHost) {
@@ -949,6 +988,11 @@
   script.onerror = cannotLoad;
   script.onload = function () {
     var t0 = performance.now();
+    if (fill) {   // the viewport has had the time to settle: size the UI from it
+      pickSize();
+      canvas.width = W; canvas.height = H;
+      layout();
+    }
     var Mod = {
       locateFile: function (path) { return BUNDLE + path + '?v=' + BUILD; },
       print: function (t) { console.log(t); },

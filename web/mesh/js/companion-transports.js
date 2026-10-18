@@ -35,6 +35,13 @@ var WadaCompanion = (function () {
   var retryTimer = 0, starting = false;
   var api = { onstate: null };
   var RETRY_MS = 3000;
+  // A node's Wi-Fi server keeps few clients and drops the oldest for a new one, so two
+  // copies of this page (a tab, the home-screen app, another computer) used to knock each
+  // other off every few seconds, each one mid-handshake: the node name came in, the rest
+  // never did. Now a copy out of sight lets go (and stays off until it is looked at
+  // again), and a link the node closes soon after opening backs off before trying again.
+  var retryMs = RETRY_MS, openedAt = 0, paused = false, hideTimer = 0;
+  var HIDDEN_RELEASE_MS = 15000, STABLE_MS = 30000, RETRY_MAX_MS = 60000;
 
   function toC(bytes) {
     var p = _wada_companion_js_alloc(bytes.length);
@@ -59,11 +66,32 @@ var WadaCompanion = (function () {
     retry();
   }
   function retry() {
-    if (!wanted || retryTimer) return;
+    if (!wanted || retryTimer || paused) return;
     retryTimer = setTimeout(function () {
       retryTimer = 0;
-      if (wanted && !link) api.open(kind, arg);
-    }, RETRY_MS);
+      if (wanted && !link && !paused) api.open(kind, arg);
+    }, kind === "ws" ? retryMs : RETRY_MS);
+  }
+  // Out of sight for a while: hand the node back (Wi-Fi only; a USB or Bluetooth link is
+  // this device's own). Back in sight: connect again at once.
+  if (typeof document !== "undefined" && document.addEventListener) {
+    document.addEventListener("visibilitychange", function () {
+      clearTimeout(hideTimer); hideTimer = 0;
+      if (document.hidden) {
+        hideTimer = setTimeout(function () {
+          if (!document.hidden || kind !== "ws" || !wanted) return;
+          paused = true;
+          clearTimeout(retryTimer); retryTimer = 0;
+          var l = link;
+          link = null;
+          if (l) { state(false, "paused while this page is not shown"); l.close(); }
+        }, HIDDEN_RELEASE_MS);
+      } else if (paused) {
+        paused = false;
+        retryMs = RETRY_MS;
+        if (wanted && !link) api.open(kind, arg);
+      }
+    });
   }
   function needGesture() {
     if (typeof Module !== "undefined" && typeof Module["wadaCompanionNeedsGesture"] === "function") {
@@ -167,6 +195,7 @@ var WadaCompanion = (function () {
       var opened = false;
       ws.onopen = function () {
         opened = true;
+        openedAt = Date.now();
         clearTimeout(giveUp);
         link = {
           write: function (b) { ws.send(b); return Promise.resolve(); },
@@ -186,7 +215,19 @@ var WadaCompanion = (function () {
         reject(new Error("could not reach " + url));
       }, 6000);
       ws.onerror = function () { if (!opened) { clearTimeout(giveUp); reject(new Error("could not reach " + url)); } };
-      ws.onclose = function () { clearTimeout(giveUp); if (opened) lost("the WebSocket closed"); };
+      ws.onclose = function () {
+        clearTimeout(giveUp);
+        if (!opened || link === null) return;   // never opened, or closed by us
+        // Closed by the node soon after opening: most likely another app or browser took
+        // its Wi-Fi slot. Wait longer each time instead of taking it straight back.
+        if (Date.now() - openedAt < STABLE_MS) {
+          retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+          lost("the node closed the connection: another app or browser may be connected to it");
+        } else {
+          retryMs = RETRY_MS;
+          lost("the WebSocket closed");
+        }
+      };
     });
   }
 

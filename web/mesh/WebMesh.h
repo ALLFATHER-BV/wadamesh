@@ -283,6 +283,7 @@ private:
                      uint8_t extra_hops, const int8_t* extra_snrs) override;
   void beSignal(int8_t snr_q4, int8_t rssi) override;
   void beSelfInfo(const NodePrefs& node_prefs, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) override;
+  bool _have_own_pos = false;   // a position saved in this browser (k_pos_path) outranks the node's
   void beSelfPosition(int32_t lat_e6, int32_t lon_e6) override;
   void beContactRemoved(const uint8_t pub_key[32]) override;
   void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) override;
