@@ -15,6 +15,7 @@
 #include "CompanionTransport.h"
 #include "MeshBackend.h"
 #include <Arduino.h>
+#include <esp_random.h>
 #include <Utils.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/BaseChatMesh.h>
@@ -43,9 +44,11 @@ uint32_t fnv1a32(const uint8_t* d, size_t n) {
   for (size_t i = 0; i < n; i++) { h ^= d[i]; h *= 16777619u; }
   return h ? h : 1;
 }
+// Tags the UI stores with a message (the ack it waits for) outlive the session in the
+// chat history, so they come from the OS CSPRNG, not a per-run sequence.
 uint32_t randomTag() {
   uint32_t t = 0;
-  while (!t) t = (uint32_t)random(0x7fffffff) ^ ((uint32_t)random(0xffff) << 16);
+  while (!t) t = esp_random();
   return t;
 }
 std::string hex(const uint8_t* p, size_t n) {
@@ -94,6 +97,29 @@ bool changesNode(uint8_t cmd) {
       return true;
     default:
       return false;
+  }
+}
+// Is `code` an answer to `cmd`? A reply that arrives after its command timed out must
+// not be taken as the answer to the next one.
+bool replyFits(uint8_t cmd, uint8_t code) {
+  if (code == RESP_ERR || code == RESP_DISABLED) return true;
+  switch (cmd) {
+    case CMD_DEVICE_QUERY: return code == RESP_DEVICE_INFO;
+    case CMD_APP_START: return code == RESP_SELF_INFO;
+    case CMD_GET_DEVICE_TIME: return code == RESP_CURR_TIME;
+    case CMD_GET_CONTACTS: return code == RESP_END_OF_CONTACTS;
+    case CMD_GET_CONTACT_BY_KEY: return code == RESP_CONTACT;
+    case CMD_GET_CHANNEL: return code == RESP_CHANNEL_INFO;
+    case CMD_SYNC_NEXT_MESSAGE:
+      return code == RESP_NO_MORE_MESSAGES || code == RESP_CONTACT_MSG_RECV || code == RESP_CHANNEL_MSG_RECV ||
+             code == RESP_CONTACT_MSG_RECV_V3 || code == RESP_CHANNEL_MSG_RECV_V3;
+    case CMD_SEND_TXT_MSG: case CMD_SEND_LOGIN: case CMD_SEND_STATUS_REQ: case CMD_SEND_TELEMETRY_REQ:
+    case CMD_SEND_TRACE_PATH: case CMD_SEND_ANON_REQ: case CMD_SEND_BINARY_REQ:
+      return code == RESP_SENT;
+    case CMD_GET_BATT_AND_STORAGE: return code == RESP_BATT_AND_STORAGE;
+    case CMD_RUN_CLI_COMMAND: return code == RESP_CLI_REPLY;
+    case CMD_GET_STATS: return code == RESP_STATS;
+    default: return code == RESP_OK;
   }
 }
 const char* cmdName(uint8_t c) {
@@ -480,6 +506,10 @@ private:
     if (want == CMD_GET_CONTACTS && (code == RESP_CONTACTS_START || code == RESP_CONTACT)) {
       _deadline = _now + 6000;   // the stream is alive
       if (code == RESP_CONTACT) onContactListEntry(f, n);
+      return;
+    }
+    if (!replyFits(want, code)) {
+      if (_debug) fprintf(stderr, "[companion] late reply 0x%02x ignored (waiting on %s)\n", code, cmdName(want));
       return;
     }
     complete(f, n);
