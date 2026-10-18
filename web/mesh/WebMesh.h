@@ -94,6 +94,9 @@ public:
   /** Boot: load prefs, start the backend, replay its contacts/channels. */
   void begin(MeshBackend* backend);
   void loop();
+  // (board-facing, not the UI's) commands still on their way to a node: a restart
+  // waits for them (web_main.cpp), as a device finishes its flash writes first.
+  bool backendBusy() const { return _backend && _backend->busy(); }
 
   // ---- identity + prefs -------------------------------------------------------
   mesh::LocalIdentity self_id;
@@ -133,9 +136,9 @@ public:
   int  getRecentlyHeard(RecentlyHeardName dest[], int max_num);
   bool getAdvertPath(const uint8_t* pubkey_prefix, int prefix_len, uint8_t& path_len,
                      uint8_t* path, size_t path_cap);
-  void uiExportBackup(Print& out, double node_lat, double node_lon);   // [unavailable] writes "{}"
+  void uiExportBackup(Print& out, double node_lat, double node_lon);   // the device's file, without the private key
   bool uiImportBackup(Stream& in, uint8_t sections, bool replace_channels, bool replace_contacts,
-                      int* out_channels, int* out_contacts);       // [unavailable] false
+                      int* out_channels, int* out_contacts);       // settings, channels, contacts (no key)
   bool uiFactoryReset();                                // wipes the host data dir's SPIFFS
 
   // ---- channels -----------------------------------------------------------------

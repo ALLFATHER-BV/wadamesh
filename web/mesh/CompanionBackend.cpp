@@ -353,6 +353,7 @@ public:
 
   // ---- configuration written back to the node -----------------------------------------
   bool ownsPrefs() const override { return _have_self; }
+  bool busy() const override { return _t && _t->isConnected() && (_inflight || !_q.empty()); }
   void prefsChanged(const NodePrefs& p) override {
     if (!_have_self || !_ready) return;   // nothing to compare against yet: never write placeholders
     NodePrefs& b = _node_prefs;

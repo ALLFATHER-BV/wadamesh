@@ -54,7 +54,10 @@ The web build is a board like any other: `-DWADA_WEB` selects a block in
 | CAP_RADIO_TOOLS (new) | 0 | no own radio: no Signal / Discover / Spectrum tiles |
 | CAP_SCREEN_MIRROR (new) | 0 | it is the browser view: no Remote / VNC tiles |
 | CAP_WEB_BROWSER | 0 | a page cannot fetch arbitrary sites (CORS) |
-| CAP_BUILTIN_LANGS, CAP_BUILTIN_LUA_APPS | 1 | no Store download yet: translations and catalog apps are baked in |
+| CAP_BUILTIN_LANGS, CAP_BUILTIN_LUA_APPS | 1 | translations and catalog apps are baked in: the offline first load |
+| CAP_STORE_DOWNLOADS (new) | 1 | ...and the Store installs and updates anyway (Apps tab, language downloads) |
+| CAP_FW_UPDATE_CHECK (new) | 0 | a reload is the update: no firmware check, no beta report, no install count; the Store badge fetches the catalog itself |
+| CAP_FILE_HANDOFF (new) | 1 | an exported backup is downloaded by the browser; "Import from this computer" opens its file picker |
 | CAP_EXT_KEYBOARD, CAP_KEYPAD_NAV | 1 (derived) | the computer keyboard is the UI's external keyboard (`HAS_CARDKB`) |
 
 **Why 800x480.** It is the size of the two shipping large-screen layouts (the
@@ -94,9 +97,12 @@ Every change is behaviour-neutral for the device builds (they never define
 | `src/ui-touch/UITask.cpp:33922, 53974, 54679` | Store: the catalog's `"radio": "own"` field, honoured with `CAP_RADIO_TOOLS` | apps that need the board's own radio (below) |
 | `src/ui-touch/lua_builtin.h` (generated) + `scripts/build/gen-lua-builtin.py` | apps with `"radio": "own"` baked under `#if CAP_RADIO_TOOLS` | same |
 | `deploy/apps/apps.json` | `"radio": "own"` on RF Monitor, Airtime, Wardrive | same |
+| `src/ui-touch/UITask.cpp:9153-9165` | `!CAP_FW_UPDATE_CHECK`: no version check; the Store badge fetches the catalog every 6 h | Store badge without the firmware check |
+| `src/ui-touch/UITask.cpp:54501, 54511, 54825, 54884` | the Store's picker-only mode is `CAP_BUILTIN_* && !CAP_STORE_DOWNLOADS` | baked apps AND a working Store |
+| `src/ui-touch/UITask.cpp:49385, 49516, 49529, 77989` | `CAP_FILE_HANDOFF`: the export is handed to the board (download), "Import from this computer" (file picker), the picked file goes to the usual import confirm | backups in and out of a browser |
 | `src/ui-touch/device_caps.h:28` | the `WADA_WEB` board block | a new board |
 | `src/ui-touch/device_caps.h:507` (CAP_WEB_BROWSER) | wrapped in `#ifndef` so a board block can preset it | like CAP_LUA_APPS |
-| `src/ui-touch/device_caps.h:519-545` (new) | `CAP_RADIO_TOOLS`, `CAP_SCREEN_MIRROR`, `CAP_WIFI_SETUP`, `CAP_BT_SETUP`, `CAP_USB_FLASH`, `CAP_GPS_RECEIVER`, default 1 | see above |
+| `src/ui-touch/device_caps.h:519-555, 657-675` (new) | `CAP_RADIO_TOOLS`, `CAP_SCREEN_MIRROR`, `CAP_WIFI_SETUP`, `CAP_BT_SETUP`, `CAP_USB_FLASH`, `CAP_GPS_RECEIVER`, `CAP_FW_UPDATE_CHECK` default 1; `CAP_FILE_HANDOFF` default 0; `CAP_STORE_DOWNLOADS` default `!CAP_BUILTIN_LUA_APPS` | each a board's value today (behaviour-neutral) |
 | `src/helpers/esp32/MqttBridge.h:32` | `|| defined(WADA_WEB)` on the P4 no-op bridge | no sockets of its own yet |
 | `src/ui-touch/ui_font_18.c`, `_20.c`, `_24.c` (guard lines) + `scripts/build/gen-touch-fonts.sh:418` | `|| defined(WADA_WEB)` in the big-font board list | an 800x480 board carries the UI-size fonts; the generator and its output stay in step |
 
@@ -146,7 +152,7 @@ companion link can answer them:
 
 | Unavailable / inert | Returns |
 |---|---|
-| `uiExportBackup`, `uiImportBackup` | `{}` / false (could be built from the contact list + `CMD_EXPORT_CONTACT`; not yet) |
+| private key in a backup | the export writes `"private_key": ""` and the import never sends one: the demo has no key, a node keeps its own (export it on the node, behind its own setting) |
 | `uiSendSignalProbe`, `uiStartDiscoverScan`, `discoverCount/Get/Clear` | 0 / empty (no own radio; `CMD_SEND_CONTROL_DATA` could carry discovery later) |
 | `getTotalAirTime`, `getReceiveAirTime`, `getRemainingTxBudget`, `isRadioReceiving`, `getProtoNumClients` | 0 / false |
 | `getStore`, `getOrphanedBlobs` | nullptr / 0 (no local DataStore) |
@@ -155,7 +161,8 @@ companion link can answer them:
 | `uiRegisterExpectedAck` | no-op (the backend matches its own ACKs) |
 | `getNextCompanionRetryWakeDelay`, `hasPendingWork`, `persistSyncHistoryNow` | false / no-op (no companion retry or sync ring here) |
 
-Moved from unavailable to working by the companion backend (16): `setBLEPin`,
+Moved from unavailable to working: `uiExportBackup`, `uiImportBackup` (see
+"Backups"); by the companion backend (16): `setBLEPin`,
 `uiShareContact`, `uiSendAdminLogin`, `uiSendAdminCommand`, `uiRoomRelogin`,
 `sendRegionsRequestForUI`, `uiHasConnectionTo`, `cancelUIDeferredLogin`,
 `uiRxLogCount`, `uiRxLogGet`, `getAdvertPath`, `lastRxPath`, `uiRepeatHopCount`,
@@ -337,6 +344,58 @@ The tile fetch task (`tile_fetch`, a pthread) downloads with the firmware's own 
   seconds. `web/build.sh webtest` checks the map shows tiles around Ghent when the
   server can reach the tile server (skipped without a network).
 
+## Store and Lua apps
+
+The Store works as on an 8 MB device: the Apps tab (catalog, Get / Update / Remove,
+the app's own `"files"`), the Built-in tab, the Languages tab (catalog + downloads),
+and the update badge. `CAP_STORE_DOWNLOADS 1` keeps the baked apps and languages as
+the offline first load and turns the Store on; a downloaded copy wins, as everywhere.
+
+- **Path**: the firmware's own install code over `wadaHttpRequest()`: every
+  `http://firmware.wadamesh.com/apps/...` URL becomes the same-origin `fw/apps/...`
+  next to the page. `web/scripts/serve.py` proxies exactly the catalog, app, file
+  and `.lang` paths (`STORE_PATH`; catalogs `no-cache`, version folders a week), and
+  `location ^~ /web/fw/apps/` in `web/deploy/nginx-snippet.conf` does the same on the
+  site. The rest of that server (update check, OTA images, beta reports, the install
+  count) is refused in the compat layer and has no proxy: `CAP_OTA 0`,
+  `CAP_FW_UPDATE_CHECK 0`. `web/CMakeLists.txt` fails the configure if the catalog URL
+  moves in UITask.cpp (`WADA_STORE_BASE`).
+- **Storage**: installed apps (`apps/<id>.lua/.json`, `apps/<id>.d/`), app data
+  (`wada.store`, `wada.fs`, saves, widgets) and languages (`lang/`) live in the
+  backend's own data dir (IndexedDB), so they survive reloads and never mix between
+  the demo and a node. The firmware's install writes a `.tmp` through its bounce
+  buffer and renames it; rename is a plain VFS rename on MEMFS/IDBFS and bumps the
+  write counter, so the page persists after an install like after any write.
+- **wada.net** (HTTP from apps): no open proxy. A request to any other server is a
+  direct browser fetch: it works when that server sends CORS headers and fails
+  cleanly otherwise (the app sees an error). No published app uses wada.net today.
+- Apps that need the board's own radio are left out (below). The live catalog shows
+  them greyed only once the `"radio"` field is published (deploy-apps).
+
+## Backups
+
+Settings > Backups works with the firmware's own code:
+
+- **Export**: `MyMesh::uiExportBackup` in the stand-in writes the device's file
+  (`src/MyMesh.cpp`'s fields, the MeshCore app's shape plus wadamesh's blocks and the
+  app preferences) without the private key; the UI saves it in the data dir as on a
+  device, and `CAP_FILE_HANDOFF` hands it to the browser, which downloads it
+  (`web/platform/WebFiles.cpp boardHandOffFile`, a Blob + `<a download>`; the UI's
+  button press is the gesture).
+- **Import**: "Import backup" lists the saved ones as on a device; "Import from this
+  computer" opens the browser's file picker (`boardPickFile`), the page writes the
+  file into this backend's SPIFFS, and the UI's usual confirm + import + restart
+  follow. The stand-in's import applies name, radio, wadamesh and app settings,
+  position, channels and contacts (a node: `SET_ADVERT_NAME`, `SET_RADIO_PARAMS`,
+  `SET_OTHER_PARAMS`, `SET_CHANNEL`, `ADD_UPDATE_CONTACT`; contacts are added and
+  updated, never deleted from a node over the link). A restart waits up to 20 s for
+  those commands to reach the node (`web_main.cpp drainThenReboot`). The demo replays
+  its cast and channels at every start, so there an import keeps the settings.
+- **This browser**: the bar's More menu has "Back up this browser" (one `.tar` of the
+  active backend's data dir: chats, settings, installed apps and their data,
+  languages; not the map tile cache) and "Restore a browser backup" (replaces that
+  data dir, then restarts), for moving to another browser or computer.
+
 ## Lua apps that need the board's own radio
 
 RF Monitor (noise floor, margin), Airtime (channel load) and Wardrive (discovery
@@ -384,9 +443,9 @@ Small and honest; what is faked says so in its header.
 - **Network**: `WiFi.status()` is `WL_CONNECTED` while the browser is online
   (`navigator.onLine`; natively `WADA_NET`), with no address of its own
   (`localIP()` 0.0.0.0, so the version check, File Transfer and Remote stay off);
-  `HTTPClient` goes through one hook, `wadaHttpRequest()` (`wada_http.h`), which
-  serves the map tile server only (see "Map tiles"); everything else is refused
-  and takes its offline path.
+  `HTTPClient` goes through one hook, `wadaHttpRequest()` (`wada_http.h`): the
+  tile server and the Store same-origin (see "Map tiles", "Store"), other servers
+  directly (CORS), never the update check, OTA images or reports.
 - **Misc**: `mbedtls/md.h` (SHA-1/SHA-256 + HMAC for the PIN hash and the Lua
   crypto API), `rom/miniz.h` (upstream miniz's tinfl for the baked language
   and app blobs), `Wire`/`SPI` with nothing attached, rweather/Crypto's `RNG`
@@ -454,8 +513,7 @@ the demo backend replays its cast at every boot, as a companion node will.
 
 **Network.** One hook: `HTTPClient` sends every request through
 `wadaHttpRequest()` (`web/compat/wada_http.h`) and serves the reply from memory
-(getString, getSize, getStreamPtr, writeToStream). It serves the map tile server
-only; see "Map tiles".
+(getString, getSize, getStreamPtr, writeToStream). See "Map tiles" and "Store".
 
 **Size and speed** (release, `-O2`, Emscripten 6.0.12): wadamesh.wasm 2.45 MB
 (gzip 1.28 MB, brotli 1.14 MB), wadamesh.js 98 KB (brotli 23 KB); `-Os` saves

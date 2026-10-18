@@ -3,20 +3,24 @@
 // request through wadaHttpRequest() and serves the reply from memory (getString,
 // getSize, getStreamPtr / writeToStream).
 //
-// What gets through (compat/src/http_host.cpp): requests to the firmware's default map
-// tile server (DEFAULT_TILE_SERVER in src/helpers/esp32/TouchPrefsStore.cpp, read by
-// web/CMakeLists.txt as WADA_TILE_SERVER): map tiles and the line-of-sight elevation
-// query. Everything else (the version check, beta reports, the install count, the Store,
-// the Reader, Lua HTTP) is refused with HTTPC_ERROR_CONNECTION_REFUSED and takes its
-// offline path, as before.
+// Where requests go (compat/src/http_host.cpp):
+//   * the firmware's map tile server (DEFAULT_TILE_SERVER in TouchPrefsStore.cpp, read by
+//     web/CMakeLists.txt as WADA_TILE_SERVER): tiles + the line-of-sight elevation query
+//   * the Store, http://firmware.wadamesh.com/apps (WADA_STORE_BASE, checked against
+//     UITask.cpp at configure time): catalogs, app files, language files
+//   * never the rest of firmware.wadamesh.com: the update check, OTA images, beta
+//     reports and the install count are refused (CAP_OTA 0) and take their offline path
+//   * anything else (a Lua app's wada.net, the Reader): fetched directly, which works
+//     when that server sends CORS headers and fails cleanly otherwise. No open proxy.
 //
-//   browser  a synchronous emscripten_fetch from the calling pthread (the UI's tile_fetch
-//            task), SAME-ORIGIN: <tile server>/z/x/y.jpg becomes tiles/z/x/y.jpg next to
-//            the page (/tiles/... locally, /web/tiles/... on the site), which its host
+//   browser  a synchronous emscripten_fetch from the calling pthread (the UI's net
+//            worker, tile_fetch). The firmware's servers SAME-ORIGIN: <tile server>/z/x/y.jpg
+//            becomes tiles/z/x/y.jpg and <store>/apps.json fw/apps/apps.json next to the
+//            page (/tiles/... locally, /web/tiles/... on the site), which its host
 //            proxies (web/scripts/serve.py; web/deploy/nginx-snippet.conf for the site).
 //            A same-origin reply needs no CORS and satisfies COEP. Calls from the
 //            browser main thread fail at once (a synchronous fetch would block the page).
-//   native   plain HTTP/1.0 over a socket straight to the tile server (it is http://);
+//   native   plain HTTP/1.0 over a socket straight to the server (http:// only);
 //            off in --headless runs unless WADA_NET=1, so the smoke tour stays offline.
 #include <stddef.h>
 #include <stdint.h>

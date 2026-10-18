@@ -145,6 +145,8 @@ public:
   // node's advert-location setting is "share", with the Location privacy displacement
   // applied (WebMesh.cpp syncAdvertPosition, WEB_BUILD.md "Location").
   virtual void advertPositionChanged(int32_t lat_e6, int32_t lon_e6) { (void)lat_e6; (void)lon_e6; }
+  // Commands queued or in flight to a node (a restart lets them go out first).
+  virtual bool busy() const { return false; }
   // True once the backend has the node's own settings (until then the stand-in's
   // prefs are placeholders and must not be written to a node).
   virtual bool ownsPrefs() const { return false; }

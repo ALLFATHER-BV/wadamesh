@@ -46,8 +46,11 @@
   #define CAP_WIFI_SETUP   0   // the page's bar picks the node and the link; the browser is online
   #define CAP_BT_SETUP     0
   #define CAP_USB_FLASH    0   // no bootloader to reboot into: no "Download mode"
-  #define CAP_BUILTIN_LANGS    1   // no Lua Store download yet: carry the translations
-  #define CAP_BUILTIN_LUA_APPS 1   // ...and the catalog's apps
+  #define CAP_FILE_HANDOFF 1   // a backup is downloaded by the browser, imported with its file picker
+  #define CAP_BUILTIN_LANGS    1   // the translations and the catalog's apps ship in the
+  #define CAP_BUILTIN_LUA_APPS 1   // build (offline, first load), and...
+  #define CAP_STORE_DOWNLOADS  1   // ...the Store still installs and updates (same-origin proxy)
+  #define CAP_FW_UPDATE_CHECK  0   // a reload is the update: no firmware check, no reports
 
 #elif defined(HAS_CROWPANEL_35)          // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
   #define CAP_TOUCH        1   // GT911 capacitive touch
@@ -543,6 +546,12 @@
 #ifndef CAP_GPS_RECEIVER
   #define CAP_GPS_RECEIVER 1
 #endif
+// CAP_FILE_HANDOFF: files leave and enter through the host instead of a card (the
+// browser build: an exported backup is downloaded, an import is picked from the
+// computer). The board provides boardHandOffFile / boardPickFile / boardTakePickedFile.
+#ifndef CAP_FILE_HANDOFF
+  #define CAP_FILE_HANDOFF 0
+#endif
 
 // ---- Lua app host (LUA_APPS.md) --------------------------------------------
 // Sandboxed Lua 5.4 apps from the store catalog. Board-agnostic by design: the
@@ -646,6 +655,23 @@
   #else
     #define CAP_BUILTIN_LANGS 0
   #endif
+#endif
+
+// The Store downloads apps and languages (its Apps tab, the Languages downloads). A
+// board that bakes them in (CAP_BUILTIN_*) shows a picker instead, unless it can also
+// reach the Store (the browser build: CAP_STORE_DOWNLOADS 1, the baked copies are the
+// offline first load and a download wins, as everywhere). CAP_FW_UPDATE_CHECK: the
+// firmware version check (and the beta report / install count it carries); off, the
+// Store's update badge fetches the catalog on its own.
+#ifndef CAP_STORE_DOWNLOADS
+  #if CAP_BUILTIN_LUA_APPS
+    #define CAP_STORE_DOWNLOADS 0
+  #else
+    #define CAP_STORE_DOWNLOADS 1
+  #endif
+#endif
+#ifndef CAP_FW_UPDATE_CHECK
+  #define CAP_FW_UPDATE_CHECK 1
 #endif
 
 // Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from

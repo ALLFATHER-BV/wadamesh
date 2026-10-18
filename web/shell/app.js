@@ -451,6 +451,126 @@
     u.searchParams.set('reset', '1');
     location.replace(u.toString());
   });
+  // ---- files: the UI's downloads + file picker (web/platform/WebFiles.cpp) -------------
+  function download(bytes, name, type) {
+    var url = URL.createObjectURL(new Blob([bytes], { type: type || 'application/octet-stream' }));
+    var a = document.createElement('a');
+    a.href = url; a.download = name; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+  }
+  // The UI asked for a file (Settings > Backups > Import from this computer): the chosen
+  // file goes into this backend's SPIFFS root, then the UI's own import takes it.
+  var pickInput = $('file-pick');
+  var pickFor = null;   // 'ui' (into the data dir) or 'restore' (a browser backup)
+  function pickFile(accept, purpose) {
+    pickFor = purpose;
+    pickInput.value = '';
+    pickInput.accept = accept || '';
+    pickInput.click();
+  }
+  pickInput.addEventListener('change', function () {
+    var f = pickInput.files && pickInput.files[0];
+    if (!f) return;
+    f.arrayBuffer().then(function (buf) {
+      var bytes = new Uint8Array(buf);
+      if (pickFor === 'restore') { restoreBrowser(bytes, f.name); return; }
+      if (!M || !M.FS) return;
+      var name = f.name.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 48) || 'import.json';
+      if (!/\.json$/i.test(name)) name += '.json';
+      M.FS.writeFile(dataDir + '/spiffs/' + name, bytes);
+      persist();
+      M.ccall('wadaWebFilePicked', null, ['string'], ['/' + name]);
+    });
+  });
+
+  // ---- "Back up this browser" / "Restore": the active backend's whole data dir --------
+  // One tar file (ustar), so it moves to another browser or computer. The map tile cache
+  // is left out (it downloads again). A marker file names what it is.
+  var TAR_MARK = 'wadamesh-browser-backup.json';
+  function tarFiles(entries) {   // [{path, data:Uint8Array}] -> Uint8Array
+    var enc = new TextEncoder(), blocks = [], total = 0;
+    var oct = function (n, len) { var t = n.toString(8); while (t.length < len - 1) t = '0' + t; return t + '\0'; };
+    entries.forEach(function (e) {
+      var h = new Uint8Array(512), put = function (str, off) { h.set(enc.encode(str), off); };
+      var name = e.path, prefix = '';
+      if (name.length > 99) { var cut = name.lastIndexOf('/', 154); prefix = name.slice(0, cut); name = name.slice(cut + 1); }
+      put(name, 0); put('0000644\0', 100); put(oct(0, 8), 108); put(oct(0, 8), 116);
+      put(oct(e.data.length, 12), 124); put(oct(Math.floor(Date.now() / 1000), 12), 136);
+      put('        ', 148); put('0', 156); put('ustar\0', 257); put('00', 263); put(prefix, 345);
+      var sum = 0; for (var i = 0; i < 512; i++) sum += h[i];
+      put(oct(sum, 7) + ' ', 148);
+      blocks.push(h); total += 512;
+      var pad = new Uint8Array(Math.ceil(e.data.length / 512) * 512); pad.set(e.data);
+      blocks.push(pad); total += pad.length;
+    });
+    blocks.push(new Uint8Array(1024)); total += 1024;
+    var out = new Uint8Array(total), o = 0;
+    blocks.forEach(function (b) { out.set(b, o); o += b.length; });
+    return out;
+  }
+  function untar(bytes) {   // -> [{path, data}]
+    var dec = new TextDecoder(), out = [], o = 0;
+    var str = function (a, b) { var s = dec.decode(bytes.subarray(a, b)); var z = s.indexOf('\0'); return z >= 0 ? s.slice(0, z) : s; };
+    while (o + 512 <= bytes.length) {
+      if (bytes[o] === 0) break;
+      var name = str(o, o + 100), size = parseInt(str(o + 124, o + 136).trim() || '0', 8), type = str(o + 156, o + 157);
+      var prefix = str(o + 345, o + 500);
+      if (prefix) name = prefix + '/' + name;
+      o += 512;
+      if (type === '0' || type === '') out.push({ path: name, data: bytes.slice(o, o + size) });
+      o += Math.ceil(size / 512) * 512;
+    }
+    return out;
+  }
+  function walk(FS, dir, rel, out) {
+    FS.readdir(dir).forEach(function (n) {
+      if (n === '.' || n === '..') return;
+      var p = dir + '/' + n, r = rel ? rel + '/' + n : n, st = FS.stat(p);
+      if (FS.isDir(st.mode)) { if (r !== 'littlefs/tiles') walk(FS, p, r, out); }
+      else out.push({ path: r, data: FS.readFile(p) });
+    });
+  }
+  function backupBrowser() {
+    if (!M || !M.FS || !running) return;
+    try { M._wadaWebFlush(); } catch (e) {}
+    var files = [];
+    walk(M.FS, dataDir, '', files);
+    var who = choice ? (choice.name || 'node') : 'demo';
+    files.unshift({ path: TAR_MARK, data: new TextEncoder().encode(JSON.stringify({
+      kind: 'wadamesh-browser-backup', version: 1, backend: choice ? choice.kind : 'demo', node: choice ? (choice.name || '') : '',
+      dataDir: dataDir, created: new Date().toISOString(), build: BUILD, files: files.length }, null, 1)) });
+    var day = new Date().toISOString().slice(0, 10);
+    download(tarFiles(files), 'wadamesh-browser-' + who.replace(/[^A-Za-z0-9_-]+/g, '-') + '-' + day + '.tar', 'application/x-tar');
+    toast('Saved ' + (files.length - 1) + ' files. Restore them from this menu in any browser.');
+  }
+  function restoreBrowser(bytes, fname) {
+    var files = untar(bytes), mark = null;
+    files.forEach(function (f) { if (f.path === TAR_MARK) { try { mark = JSON.parse(new TextDecoder().decode(f.data)); } catch (e) {} } });
+    if (!mark || mark.kind !== 'wadamesh-browser-backup') { toast(fname + ' is not a wadamesh browser backup.'); return; }
+    var into = choice ? 'your node\'s data in this browser' : 'the demo';
+    if (!confirm('Restore ' + fname + '? It replaces ' + into + ' (messages, contacts, settings, apps), then restarts.')) return;
+    if (!M || !M.FS) return;
+    var FS = M.FS;
+    resetting = true;   // nothing else writes or saves from here
+    rmrf(FS, dataDir);
+    FS.mkdir(dataDir);
+    files.forEach(function (f) {
+      if (f.path === TAR_MARK || /(^|\/)\.\.(\/|$)/.test(f.path) || f.path[0] === '/') return;
+      var parts = f.path.split('/'), d = dataDir;
+      for (var i = 0; i < parts.length - 1; i++) { d += '/' + parts[i]; if (!exists(FS, d)) FS.mkdir(d); }
+      FS.writeFile(dataDir + '/' + f.path, f.data);
+    });
+    setStatus('Restoring', '', true);
+    FS.syncfs(false, function () { location.reload(); });
+  }
+  var moreBtn = $('btn-more'), moreMenu = $('more-menu');
+  function menuOpen(on) { moreMenu.hidden = !on; moreBtn.setAttribute('aria-expanded', on ? 'true' : 'false'); }
+  moreBtn.addEventListener('click', function (e) { e.stopPropagation(); menuOpen(moreMenu.hidden); });
+  document.addEventListener('click', function (e) { if (!moreMenu.hidden && !moreMenu.contains(e.target)) menuOpen(false); });
+  $('btn-backup').addEventListener('click', function () { menuOpen(false); backupBrowser(); });
+  $('btn-restore').addEventListener('click', function () { menuOpen(false); pickFile('.tar,application/x-tar', 'restore'); });
+
   var fsBtn = $('btn-full');
   var canFull = stage.requestFullscreen || stage.webkitRequestFullscreen;
   if (!canFull) fsBtn.hidden = true;
@@ -550,6 +670,8 @@
         fatal('wadamesh stopped', 'Something went wrong: <code>' + String(what).replace(/</g, '&lt;') + '</code>', true);
       },
       wadaPresent: present,
+      wadaDownload: function (bytes, name) { download(bytes, name, /\.json$/i.test(name) ? 'application/json' : undefined); },
+      wadaPickFile: function (accept) { pickFile(accept, 'ui'); },
       wadaGeoStart: geoStart,
       wadaGeoStop: geoStop,
       // which mesh to boot on (web_main.cpp reads it before the UI starts)
@@ -590,6 +712,7 @@
     geo: function () { return { want: geo.want, watching: geo.watch !== null, waitingTap: geo.waitingTap }; },
     _m: function () { return M; },   // the module, for tests
     // Is `needle` in any saved file under /data? (the persistence test)
+    tar: tarFiles, untar: untar,   // for tests
     findInStorage: function (needle) {
       if (!M || !M.FS) return false;
       var FS = M.FS, hits = [];

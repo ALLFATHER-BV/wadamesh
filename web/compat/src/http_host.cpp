@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// wadaHttpRequest (compat/wada_http.h): the map tile server, and nothing else.
+// wadaHttpRequest (compat/wada_http.h): the firmware's tile server and Store, same-origin;
+// other servers directly (CORS); never the update check, OTA or reports.
 #include "wada_http.h"
 #include "HTTPClient.h"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
+#include <strings.h>
 #if defined(__EMSCRIPTEN__)
 #include <emscripten.h>
 #include <emscripten/fetch.h>
@@ -17,8 +19,8 @@
 #include <unistd.h>
 #endif
 
-#ifndef WADA_TILE_SERVER
-#error "WADA_TILE_SERVER: web/CMakeLists.txt reads it from src/helpers/esp32/TouchPrefsStore.cpp"
+#if !defined(WADA_TILE_SERVER) || !defined(WADA_STORE_BASE)
+#error "WADA_TILE_SERVER / WADA_STORE_BASE: web/CMakeLists.txt reads them from the firmware's sources"
 #endif
 
 namespace {
@@ -29,14 +31,38 @@ void dbg(const std::string& url, int code, size_t n) {
   if (on) fprintf(stderr, "[http] %s -> %d (%u bytes)\n", url.c_str(), code, (unsigned)n);
 }
 
-// The part of `url` after the tile server's base, or false when the URL is not the
-// tile server's (only "<base>/..." counts; "<base>.evil.example/..." does not).
-bool tilePath(const std::string& url, std::string& rest) {
-  static const std::string base = WADA_TILE_SERVER;
-  if (url.compare(0, base.size(), base) != 0) return false;
-  if (url.size() == base.size() || url[base.size()] != '/') return false;
-  rest = url.substr(base.size());
-  return rest.find("..") == std::string::npos;
+// Where a request may go. The firmware's own servers are reached through the page's
+// host, same-origin (local path next to the page, proxied by serve.py / nginx):
+//   the map tile server (tiles, line-of-sight elevation)
+//   the Store (app + language catalogs, app files, .lang files)
+// The rest of the firmware server stays unreachable: the update check, OTA images,
+// beta reports and the install count (CAP_OTA 0; nothing phones home from a page).
+// Any other URL (a Lua app's wada.net request, the Reader) is fetched directly: it
+// works when that server allows it (CORS), and fails cleanly otherwise. No open proxy.
+struct Route { const char* base; const char* local; };
+const Route kRoutes[] = {
+  { WADA_TILE_SERVER, "tiles" },
+  { WADA_STORE_BASE, "fw/apps" },
+};
+const char* const kNever[] = { "http://firmware.wadamesh.com", "https://firmware.wadamesh.com",
+                               WADA_TILE_SERVER };
+enum class Way { Refused, Proxied, Direct };
+bool under(const std::string& url, const char* base) {
+  const size_t n = strlen(base);
+  return url.compare(0, n, base) == 0 && (url.size() == n || url[n] == '/' || url[n] == '?');
+}
+// For Proxied: `route` is the matching route, `rest` the part after its base.
+Way classify(const std::string& url, const Route** route, std::string& rest) {
+  for (const Route& r : kRoutes) {
+    if (!under(url, r.base)) continue;
+    rest = url.substr(strlen(r.base));
+    if (rest.find("..") != std::string::npos) return Way::Refused;
+    *route = &r;
+    return Way::Proxied;
+  }
+  for (const char* b : kNever) if (under(url, b)) return Way::Refused;
+  if (url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0) return Way::Direct;
+  return Way::Refused;
 }
 }  // namespace
 
@@ -60,29 +86,45 @@ extern "C" EMSCRIPTEN_KEEPALIVE void wadaWebOnline(int up) { wadaNetSetOnline(up
 
 int wadaHttpRequest(const char* method, const std::string& url, const std::vector<std::string>& headers,
                     const uint8_t* body, size_t body_len, uint32_t timeout_ms, WadaHttpReply& out) {
-  (void)headers;   // the proxy sets the User-Agent (a page may not)
   out = WadaHttpReply();
+  const Route* route = nullptr;
   std::string rest;
-  if (!wadaNetOnline() || !tilePath(url, rest) || emscripten_is_main_browser_thread())
+  const Way way = classify(url, &route, rest);
+  if (way == Way::Refused || !wadaNetOnline() || emscripten_is_main_browser_thread())
     return HTTPC_ERROR_CONNECTION_REFUSED;
-  // Same origin, relative to the page's folder (a pthread resolves it against wadamesh.js,
-  // which sits next to index.html): /tiles/... locally, /web/tiles/... on the site.
-  const std::string local = "tiles" + rest;
+  // Proxied: same origin, relative to the page's folder (a pthread resolves it against
+  // wadamesh.js, which sits next to index.html): /tiles/... locally, /web/tiles/... on
+  // the site. Direct: the URL itself (CORS decides; an http:// one from an https page
+  // is blocked by the browser).
+  const std::string target = way == Way::Proxied ? std::string(route->local) + rest : url;
   emscripten_fetch_attr_t attr;
   emscripten_fetch_attr_init(&attr);
   strncpy(attr.requestMethod, method && *method ? method : "GET", sizeof(attr.requestMethod) - 1);
   attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS | EMSCRIPTEN_FETCH_REPLACE;
   // The device bounds each socket read (2 s); here one call is the whole request through
-  // a proxy that may fetch the tile first, and this pthread has no watchdog.
+  // a proxy that may fetch the file first, and this pthread has no watchdog.
   attr.timeoutMSecs = timeout_ms > 15000 ? timeout_ms : 15000;
+  // Request headers a page may set (not User-Agent / Host: the proxy sets those).
+  std::vector<std::string> kv;
+  for (const std::string& h : headers) {
+    const size_t c = h.find(':');
+    if (c == std::string::npos) continue;
+    std::string k = h.substr(0, c), v = h.substr(c + 1);
+    while (!v.empty() && v[0] == ' ') v.erase(0, 1);
+    if (strcasecmp(k.c_str(), "Content-Type") == 0 || strcasecmp(k.c_str(), "Accept") == 0) { kv.push_back(k); kv.push_back(v); }
+  }
+  std::vector<const char*> hp;
+  for (const std::string& x : kv) hp.push_back(x.c_str());
+  hp.push_back(nullptr);
+  if (kv.size()) attr.requestHeaders = hp.data();
   if (body && body_len) { attr.requestData = (const char*)body; attr.requestDataSize = body_len; }
-  emscripten_fetch_t* f = emscripten_fetch(&attr, local.c_str());
+  emscripten_fetch_t* f = emscripten_fetch(&attr, target.c_str());
   if (!f) return HTTPC_ERROR_CONNECTION_REFUSED;
   const int status = f->status;
   if (status > 0) {
     out.status = status;
     if (f->data && f->numBytes) out.body.assign((const uint8_t*)f->data, (const uint8_t*)f->data + f->numBytes);
-    out.location = local;
+    out.location = target;
   }
   emscripten_fetch_close(f);
   return status > 0 ? status : HTTPC_ERROR_CONNECTION_LOST;
@@ -101,10 +143,16 @@ int wadaHttpRequest(const char* method, const std::string& url, const std::vecto
 static int nativeRequest(const char* method, const std::string& url, const std::vector<std::string>& headers,
                          const uint8_t* body, size_t body_len, uint32_t timeout_ms, WadaHttpReply& out) {
   out = WadaHttpReply();
+  const Route* route = nullptr;
   std::string rest;
-  if (!wadaNetOnline() || !tilePath(url, rest)) return HTTPC_ERROR_CONNECTION_REFUSED;
-  // WADA_TILE_SERVER is "http://host[:port]"
-  std::string hostport = std::string(WADA_TILE_SERVER).substr(7), port = "80";
+  const Way way = classify(url, &route, rest);
+  if (way == Way::Refused || !wadaNetOnline()) return HTTPC_ERROR_CONNECTION_REFUSED;
+  // Natively straight to the server, http:// only (no TLS here).
+  const std::string full = way == Way::Proxied ? std::string(route->base) + rest : url;
+  if (full.compare(0, 7, "http://") != 0) return HTTPC_ERROR_CONNECTION_REFUSED;
+  const size_t slash = full.find('/', 7);
+  std::string hostport = full.substr(7, slash == std::string::npos ? std::string::npos : slash - 7), port = "80";
+  rest = slash == std::string::npos ? "/" : full.substr(slash);
   const size_t colon = hostport.find(':');
   std::string host = hostport;
   if (colon != std::string::npos) { host = hostport.substr(0, colon); port = hostport.substr(colon + 1); }

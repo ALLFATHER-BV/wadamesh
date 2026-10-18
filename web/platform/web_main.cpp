@@ -21,6 +21,7 @@
 #include "WebPlatform.h"
 #include "BackendSelect.h"
 #include "wada_host.h"
+#include "WebMesh.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string>
@@ -117,10 +118,24 @@ void step() {
 
 // esp_restart() (Reboot, factory reset, a language change, ...): the page persists the
 // IDBFS mount and reloads. The caller already flushed what the device flushes.
+// A restart right after changes for a node (a backup import: its channels and contacts)
+// lets the queued commands reach the node first: only the mesh runs, up to 20 s.
+uint32_t s_drain_until = 0;
+void drainThenReboot() {
+  the_mesh.loop();
+  if (the_mesh.backendBusy() && (int32_t)(millis() - s_drain_until) < 0) return;
+  emscripten_cancel_main_loop();
+  wada_js_reboot();
+}
 void webRestart() {
   if (emscripten_is_main_browser_thread()) {
     emscripten_cancel_main_loop();
-    wada_js_reboot();
+    if (the_mesh.backendBusy()) {
+      s_drain_until = millis() + 20000;
+      emscripten_set_main_loop(drainThenReboot, 0, false);
+    } else {
+      wada_js_reboot();
+    }
     emscripten_unwind_to_js_event_loop();   // no return: the page reloads after the sync
   }
   MAIN_THREAD_ASYNC_EM_ASM({ if (Module["wadaReboot"]) Module["wadaReboot"](); else location.reload(); });

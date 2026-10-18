@@ -149,6 +149,14 @@ if(NOT WADA_TILE_SERVER MATCHES "^\"http://")
   message(FATAL_ERROR "DEFAULT_TILE_SERVER not found (or not http://) in TouchPrefsStore.cpp: ${_tile_srv}")
 endif()
 
+# The Store's base (catalogs, app and language files): the URLs are literals in
+# UITask.cpp; this fails the configure when they move, so the proxy path never drifts.
+file(STRINGS ${UI}/UITask.cpp _store_url REGEX "\"http://firmware\\.wadamesh\\.com/apps/apps\\.json\"")
+if(NOT _store_url)
+  message(FATAL_ERROR "the Store catalog URL http://firmware.wadamesh.com/apps/apps.json is gone from UITask.cpp: update WADA_STORE_BASE")
+endif()
+set(WADA_STORE_BASE "\"http://firmware.wadamesh.com/apps\"")
+
 set(WADA_APP_DEFS
   ESP32=1                    # the UI's ESP32 code paths ARE the device code paths; compat/ backs them
   HAS_TOUCH_UI=1
@@ -161,6 +169,7 @@ set(WADA_APP_DEFS
   ENABLE_ADVERT_ON_BOOT=0
   HAS_GPS_MOTION=1           # speed + course from the host's location (platform/WebLocation.cpp wadaGpsMotion)
   WADA_TILE_SERVER=${WADA_TILE_SERVER}
+  WADA_STORE_BASE=${WADA_STORE_BASE}
   NDEBUG
 )
 
@@ -212,7 +221,7 @@ if(EMSCRIPTEN)
     -sEXIT_RUNTIME=0
     -lidbfs.js
     -sFETCH=1 -sFETCH_SUPPORT_INDEXEDDB=0   # map tiles: a synchronous same-origin fetch from the tile_fetch pthread
-    -sEXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency
+    -sEXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency,ccall
     -sEXPORTED_FUNCTIONS=_main,_malloc,_free
   )
   if(CMAKE_BUILD_TYPE STREQUAL "Release")

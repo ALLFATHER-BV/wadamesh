@@ -8,6 +8,7 @@
 // Needs Playwright (npm install --prefix web playwright; npx playwright install).
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,7 +24,7 @@ const URL_ = arg('--url', 'http://localhost:8080/');
 const BROWSERS = arg('--browsers', 'chromium').split(',');
 const SHOTS = arg('--shots', path.join(here, '..', 'docs'));
 const QUICK = process.argv.includes('--quick');
-const GEO_ONLY = process.argv.includes('--geo-only');   // just the location + map tiles check
+const ONLY = arg('--only', process.argv.includes('--geo-only') ? 'geo' : '');   // geo | store: just that check
 const ALL_SHOTS = process.argv.includes('--all-shots');   // screenshots from every browser, not just Chromium
 const tour = fs.readFileSync(path.join(here, 'tour.wada'), 'utf8').split('\n');
 fs.mkdirSync(SHOTS, { recursive: true });
@@ -181,6 +182,97 @@ async function geoAndTiles(browser, r, shots) {
   await ctx.close();
 }
 
+// ---- the Store, Lua apps, backups ------------------------------------------------------
+// A Store-only app (2048) installed through the same-origin Store proxy survives a
+// reload and runs; a settings backup exported (a browser download) and imported into a
+// fresh profile (the browser's file picker) carries a setting across; the page's own
+// "Back up this browser" file restored into another fresh profile brings the app back.
+const SETTINGS_END = ['tap 720 456', 'wait 1500', 'wheel 400 300 600', 'wait 800'];   // Settings, scrolled to the end
+async function freshPage(browser, r, tag) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+  const page = await ctx.newPage();
+  const log = [];
+  page.on('console', (m) => log.push(m.text()));
+  page.on('pageerror', (e) => r.errors.push(`[${tag}] ` + String(e)));
+  await bootPage(page);
+  await runScript(page, ['wait 5000', 'tap 60 283', 'wait 3000'], { shots: false });   // the demo's welcome
+  return { ctx, page, log };
+}
+async function exportBackup(page) {
+  const [d] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }),
+    runScript(page, [...SETTINGS_END, 'tap 600 356', 'wait 1500', 'tap 400 126', 'wait 2500'], { shots: false })]);
+  return { name: d.suggestedFilename(), text: fs.readFileSync(await d.path(), 'utf8') };
+}
+async function storeAndBackups(browser, r, shots) {
+  const st = r.store = {};
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wada-store-'));
+  try {
+    // 1. Store: install 2048 (catalog row 7), reload, run it.
+    let { ctx, page, log } = await freshPage(browser, r, 'store');
+    const net = await page.evaluate(() => fetch('fw/apps/apps.json').then((x) => x.status, () => 0));
+    st.storeServer = net === 200 ? 200 : 'skipped (no Store server)';
+    if (net === 200) {
+      await runScript(page, ['tap 695 360', 'wait 1500', 'tap 60 150', 'wait 5000', 'shot 16-store',
+                             'tap 740 463', 'wait 6000', 'shot 17-store-installed', 'key esc', 'wait 1000'], { prefix: 'web-', shots });
+      await page.evaluate(() => window.wadamesh.flush());
+      st.installed = (await page.evaluate(() => window.wadamesh.findInStorage('wada'))).some((h) => /\/spiffs\/apps\/2048\.lua$/.test(h));
+      await bootPage(page);   // reload
+      await sleep(4000);
+      log.length = 0;
+      await runScript(page, ['tap 695 360', 'wait 1500', 'shot 18-drawer-2048', 'tap 398 150', 'wait 2500', 'shot 19-2048'], { prefix: 'web-', shots });
+      st.runsAfterReload = log.some((t) => /\[LUAAPP\] 2048 open/.test(t));
+      await bootPage(page);   // leave the game the simple way
+      await sleep(4000);
+    }
+    // 2. Settings backup: Location privacy 1 km, export (a download).
+    await runScript(page, [...SETTINGS_END, 'tap 100 302', 'wait 1500', 'tap 680 305', 'wait 800', 'key esc', 'wait 1000', 'key esc', 'wait 1000'], { shots: false });
+    const b1 = await exportBackup(page);
+    st.exportDownloaded = /\.json$/.test(b1.name) && /"gps_fuzz_m": 1000/.test(b1.text) && /"contacts": \[/.test(b1.text);
+    st.exportHasNoPrivateKey = /"private_key": ""/.test(b1.text);
+    fs.writeFileSync(path.join(tmp, b1.name), b1.text);
+    // 3. The page's own backup (everything this backend keeps), for step 5.
+    await page.click('#btn-more');
+    const [tar] = await Promise.all([page.waitForEvent('download', { timeout: 20000 }), page.click('#btn-backup')]);
+    const tarPath = path.join(tmp, tar.suggestedFilename());
+    fs.copyFileSync(await tar.path(), tarPath);
+    st.browserBackupDownloaded = /\.tar$/.test(tarPath) && fs.statSync(tarPath).size > 2048;
+    await ctx.close();
+
+    // 4. A fresh profile imports the settings backup through the file picker.
+    ({ ctx, page, log } = await freshPage(browser, r, 'import'));
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 30000 }),
+      runScript(page, [...SETTINGS_END, 'tap 600 356', 'wait 1500', 'tap 400 391', 'wait 500'], { shots: false })]);
+    await chooser.setFiles(path.join(tmp, b1.name));
+    await sleep(1500);
+    if (shots) await canvasPng(page, path.join(SHOTS, 'web-20-import-confirm.png'));
+    await runScript(page, ['tap 550 391', 'wait 500'], { shots: false });   // the confirm's Import
+    await page.waitForFunction(() => !window.wadamesh.running(), null, { timeout: 20000 }).catch(() => {});
+    await page.waitForFunction(() => window.wadamesh && window.wadamesh.running(), null, { timeout: 60000 });
+    await sleep(4000);
+    const b2 = await exportBackup(page);
+    st.importCarriesSettings = /"gps_fuzz_m": 1000/.test(b2.text);
+    await ctx.close();
+
+    // 5. Another fresh profile restores the page backup: the installed app is back.
+    ({ ctx, page, log } = await freshPage(browser, r, 'restore'));
+    page.on('dialog', (d) => d.accept());
+    await page.click('#btn-more');
+    const [chooser2] = await Promise.all([page.waitForEvent('filechooser', { timeout: 20000 }), page.click('#btn-restore')]);
+    await chooser2.setFiles(tarPath);
+    await page.waitForEvent('load', { timeout: 30000 });
+    await page.waitForFunction(() => window.wadamesh && window.wadamesh.running(), null, { timeout: 60000 });
+    await sleep(3000);
+    const hits = await page.evaluate(() => window.wadamesh.findInStorage('wada'));
+    if (net === 200) st.restoreBringsTheApp = hits.some((h) => /\/spiffs\/apps\/2048\.lua$/.test(h));
+    st.restoreKeepsSettings = (await exportBackup(page)).text.includes('"gps_fuzz_m": 1000');
+    await ctx.close();
+  } catch (e) {
+    r.errors.push('RUNNER store: ' + (e && e.stack || e));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 const results = {};
 for (const name of BROWSERS) {
   const r = results[name] = { errors: [], warnings: [] };
@@ -194,7 +286,12 @@ for (const name of BROWSERS) {
     });
     page.on('pageerror', (e) => r.errors.push(String(e)));
     r.coi = null;
-    if (GEO_ONLY) { await ctx.close(); await geoAndTiles(browser, r, name === 'chromium' || ALL_SHOTS); continue; }
+    if (ONLY) {
+      await ctx.close();
+      if (ONLY === 'geo') await geoAndTiles(browser, r, name === 'chromium' || ALL_SHOTS);
+      if (ONLY === 'store') await storeAndBackups(browser, r, name === 'chromium' || ALL_SHOTS);
+      continue;
+    }
     r.firstLoadMs = await bootPage(page);
     r.coi = await page.evaluate(() => crossOriginIsolated);
     r.bootMs = await page.evaluate(() => window.wadamesh.stats.bootMs);
@@ -218,6 +315,7 @@ for (const name of BROWSERS) {
     await ctx.close();
 
     if (name === 'chromium') await geoAndTiles(browser, r, shots);
+    if (name === 'chromium') await storeAndBackups(browser, r, shots);
 
     if (name === 'chromium' || name === 'webkit') {
       // a phone: portrait, touch
@@ -240,6 +338,7 @@ for (const name of BROWSERS) {
 }
 console.log(JSON.stringify(results, null, 2));
 const geoBad = (g) => g && (g.promptedAtBoot || !g.watching || !g.centredOnGhent || g.tilesShown === false);
-const bad = Object.values(results).some((r) => (!GEO_ONLY && !r.persisted) || geoBad(r.geo) ||
+const storeBad = (g) => g && Object.values(g).some((v) => v === false);
+const bad = Object.values(results).some((r) => (!ONLY && !r.persisted) || geoBad(r.geo) || storeBad(r.store) ||
                                                r.errors.some((e) => e.startsWith('RUNNER')));
 process.exit(bad ? 1 : 0);

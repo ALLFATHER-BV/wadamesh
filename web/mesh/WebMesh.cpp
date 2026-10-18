@@ -7,6 +7,7 @@
 #include <Utils.h>
 #include <helpers/TxtDataHelpers.h>
 #include "helpers/esp32/TouchPrefsStore.h"
+#include <ArduinoJson.h>
 #include <math.h>
 
 namespace {
@@ -376,16 +377,250 @@ bool MyMesh::getAdvertPath(const uint8_t* pubkey_prefix, int prefix_len, uint8_t
   }
   return false;
 }
+// ---- settings backup (Settings > Backups) ---------------------------------------------
+// src/MyMesh.cpp's file, field for field (the MeshCore app's shape plus wadamesh's own
+// blocks), so a backup moves between the browser, a device and the phone app. Two
+// deliberate differences: no private key ("private_key" is empty, which every importer
+// skips): the demo has none and a node keeps its own (MeshCore exports it only on the
+// node, behind its own setting); and no Wi-Fi credentials (the browser has none).
 void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
-  (void)node_lat; (void)node_lon;
-  out.print("{}");
+  static const char* HX = "0123456789abcdef";
+  auto hex = [&](const uint8_t* d, int n) {
+    for (int i = 0; i < n; ++i) { out.write(HX[d[i] >> 4]); out.write(HX[d[i] & 0xF]); }
+  };
+  auto esc = [&](const char* str) {
+    for (; str && *str; ++str) {
+      const char c = *str;
+      if (c == '"' || c == '\\') { out.write('\\'); out.write((uint8_t)c); }
+      else if (c == '\n') out.print("\\n");
+      else if (c == '\r') out.print("\\r");
+      else if (c == '\t') out.print("\\t");
+      else if ((uint8_t)c < 0x20) { char b[8]; snprintf(b, sizeof b, "\\u%04x", (unsigned)(uint8_t)c); out.print(b); }
+      else out.write((uint8_t)c);
+    }
+  };
+  const NodePrefs* p = &_prefs;
+  char l[256];
+  out.print("{\n  \"name\": \""); esc(p->node_name); out.print("\",\n");
+  out.print("  \"public_key\": \""); hex(self_id.pub_key, 32); out.print("\",\n");
+  out.print("  \"private_key\": \"\",\n");
+  snprintf(l, sizeof l,
+    "  \"radio_settings\": {\"frequency\": %.4f, \"bandwidth\": %.1f, \"spreading_factor\": %u, \"coding_rate\": %u, \"tx_power\": %d},\n",
+    (double)p->freq, (double)p->bw, (unsigned)p->sf, (unsigned)p->cr, (int)p->tx_power_dbm);
+  out.print(l);
+  snprintf(l, sizeof l, "  \"position_settings\": {\"latitude\": %.6f, \"longitude\": %.6f},\n", node_lat, node_lon);
+  out.print(l);
+  out.print("  \"other_settings\": null,\n");
+  out.print("  \"auto_add_settings\": null,\n");
+  snprintf(l, sizeof l,
+    "  \"wadamesh_settings\": {\"version\": 1, \"airtime_factor\": %.3f, \"rx_boosted_gain\": %u, "
+    "\"multi_acks\": %u, \"manual_add_contacts\": %u, \"autoadd_config\": %u, \"autoadd_max_hops\": %u, ",
+    (double)p->airtime_factor, (unsigned)p->rx_boosted_gain, (unsigned)p->multi_acks,
+    (unsigned)p->manual_add_contacts, (unsigned)p->autoadd_config, (unsigned)p->autoadd_max_hops);
+  out.print(l);
+  snprintf(l, sizeof l,
+    "\"advert_loc_policy\": %u, \"telemetry_mode_base\": %u, \"telemetry_mode_loc\": %u, "
+    "\"telemetry_mode_env\": %u, \"gps_enabled\": %u, \"gps_interval\": %lu, \"path_hash_mode\": %u, ",
+    (unsigned)p->advert_loc_policy, (unsigned)p->telemetry_mode_base, (unsigned)p->telemetry_mode_loc,
+    (unsigned)p->telemetry_mode_env, (unsigned)p->gps_enabled, (unsigned long)p->gps_interval,
+    (unsigned)p->path_hash_mode);
+  out.print(l);
+  snprintf(l, sizeof l, "\"rx_delay_base\": %.3f, \"buzzer_quiet\": %u, \"client_repeat\": %u, \"ble_pin\": %lu, ",
+           (double)p->rx_delay_base, (unsigned)p->buzzer_quiet, (unsigned)p->client_repeat, (unsigned long)p->ble_pin);
+  out.print(l);
+  snprintf(l, sizeof l, "\"gps_fuzz_m\": %u, ", (unsigned)touchPrefsGetGpsFuzzM());
+  out.print(l);
+  out.print("\"region_scope\": \"");
+  {
+    char region[TOUCH_REGION_SCOPE_MAXLEN] = {0};
+    touchPrefsGetRegionScope(region, sizeof(region));
+    esc(region);
+  }
+  out.print("\"},\n");
+  out.print("  \"app_settings\": {\"version\": 1,\n    \"prefs\": ");
+  touchPrefsBackupExport(out);
+  out.print("\n  },\n");
+  out.print("  \"channels\": [");
+  bool first = true;
+  for (int i = 0; i < MAX_GROUP_CHANNELS; ++i) {
+    const ChannelDetails& cd = _channels[i];
+    if (cd.name[0] == '\0') continue;
+    out.print(first ? "\n    {\"name\": \"" : ",\n    {\"name\": \"");
+    first = false;
+    esc(cd.name);
+    out.print("\", \"secret\": \""); hex(cd.channel.secret, 16); out.print("\"}");
+  }
+  out.print(first ? "],\n" : "\n  ],\n");
+  out.print("  \"contacts\": [");
+  first = true;
+  for (int i = 0; i < _num_contacts; ++i) {
+    const ContactInfo& c = _contacts[i];
+    out.print(first ? "\n    {\"type\": " : ",\n    {\"type\": ");
+    first = false;
+    snprintf(l, sizeof l, "%u, \"name\": \"", (unsigned)c.type); out.print(l);
+    esc(c.name);
+    out.print("\", \"custom_name\": null, \"public_key\": \""); hex(c.id.pub_key, 32);
+    snprintf(l, sizeof l,
+      "\", \"flags\": %u, \"latitude\": \"%.6f\", \"longitude\": \"%.6f\", \"last_advert\": %lu, \"last_modified\": %lu, \"out_path\": null}",
+      (unsigned)c.flags, (double)c.gps_lat / 1e6, (double)c.gps_lon / 1e6,
+      (unsigned long)c.last_advert_timestamp, (unsigned long)c.lastmod);
+    out.print(l);
+  }
+  out.print(first ? "]\n}\n" : "\n  ]\n}\n");
 }
+
+static uint8_t hexNib(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return 0;
+}
+static int hexToBytes(const char* hx, uint8_t* out, int max_bytes) {
+  int n = 0;
+  while (hx && hx[0] && hx[1] && n < max_bytes) { out[n++] = (uint8_t)((hexNib(hx[0]) << 4) | hexNib(hx[1])); hx += 2; }
+  return n;
+}
+
+// src/MyMesh.cpp's import, onto the stand-in: settings go through savePrefs (a node gets
+// the ones it owns, as when they are changed by hand), channels and contacts through the
+// backend (a node: SET_CHANNEL / ADD_UPDATE_CONTACT). Differences: no private key (see
+// the export); contacts are added and updated, never deleted from a node over the link
+// (replace_contacts only clears this browser's copy); 256-bit channel keys are not in
+// the companion protocol. The demo replays its own cast and channels at every start, so
+// there an import keeps the name, settings and app preferences.
 bool MyMesh::uiImportBackup(Stream& in, uint8_t sections, bool replace_channels, bool replace_contacts,
                             int* out_channels, int* out_contacts) {
-  (void)in; (void)sections; (void)replace_channels; (void)replace_contacts;
+  (void)replace_channels;
   if (out_channels) *out_channels = 0;
   if (out_contacts) *out_contacts = 0;
-  return false;
+  JsonDocument doc;
+  if (deserializeJson(doc, in)) return false;
+  JsonObjectConst root = doc.as<JsonObjectConst>();
+  if (root.isNull()) return false;
+  bool dirty = false;
+  if (sections & 0x01) {
+    const char* nm = root["name"].as<const char*>();
+    if (nm && nm[0]) { StrHelper::strncpy(_prefs.node_name, nm, sizeof(_prefs.node_name)); dirty = true; }
+  }
+  if (sections & 0x02) {
+    JsonObjectConst r = root["radio_settings"].as<JsonObjectConst>();
+    if (!r.isNull()) {
+      if (!r["frequency"].isNull())        { _prefs.freq = r["frequency"].as<float>(); dirty = true; }
+      if (!r["bandwidth"].isNull())        { _prefs.bw = r["bandwidth"].as<float>(); dirty = true; }
+      if (!r["spreading_factor"].isNull()) { _prefs.sf = (uint8_t)r["spreading_factor"].as<int>(); dirty = true; }
+      if (!r["coding_rate"].isNull())      { _prefs.cr = (uint8_t)r["coding_rate"].as<int>(); dirty = true; }
+      if (!r["tx_power"].isNull())         { _prefs.tx_power_dbm = (int8_t)r["tx_power"].as<int>(); dirty = true; }
+    }
+    JsonObjectConst w = root["wadamesh_settings"].as<JsonObjectConst>();
+    if (!w.isNull()) {
+      auto u8 = [&](const char* k, uint8_t& dst, int max_v) {
+        if (w[k].isNull()) return;
+        const int v = w[k].as<int>();
+        if (v >= 0 && v <= max_v) { dst = (uint8_t)v; dirty = true; }
+      };
+      if (!w["airtime_factor"].isNull()) {
+        const float af = w["airtime_factor"].as<float>();
+        if (af >= 0.0f && af <= 9.0f) { _prefs.airtime_factor = af; dirty = true; }
+      }
+      u8("rx_boosted_gain", _prefs.rx_boosted_gain, 1);
+      u8("multi_acks", _prefs.multi_acks, 255);
+      u8("manual_add_contacts", _prefs.manual_add_contacts, 255);
+      u8("autoadd_config", _prefs.autoadd_config, 255);
+      u8("autoadd_max_hops", _prefs.autoadd_max_hops, 64);
+      u8("advert_loc_policy", _prefs.advert_loc_policy, 255);
+      u8("telemetry_mode_base", _prefs.telemetry_mode_base, 255);
+      u8("telemetry_mode_loc", _prefs.telemetry_mode_loc, 255);
+      u8("telemetry_mode_env", _prefs.telemetry_mode_env, 255);
+      u8("gps_enabled", _prefs.gps_enabled, 1);
+      u8("path_hash_mode", _prefs.path_hash_mode, 255);
+      if (!w["gps_interval"].isNull()) { _prefs.gps_interval = w["gps_interval"].as<uint32_t>(); dirty = true; }
+      u8("buzzer_quiet", _prefs.buzzer_quiet, 1);
+      u8("client_repeat", _prefs.client_repeat, 255);
+      if (!w["rx_delay_base"].isNull()) {
+        const float rd = w["rx_delay_base"].as<float>();
+        if (rd >= 0.0f && rd <= 20.0f) { _prefs.rx_delay_base = rd; dirty = true; }
+      }
+      if (!w["gps_fuzz_m"].isNull()) {
+        const uint32_t fz = w["gps_fuzz_m"].as<uint32_t>();
+        if (fz == 0 || fz == 100 || fz == 250 || fz == 1000) touchPrefsSetGpsFuzzM((uint16_t)fz);
+      }
+      const char* region = w["region_scope"].as<const char*>();
+      if (region) {
+        StrHelper::strncpy(_prefs.default_scope_name, region, sizeof(_prefs.default_scope_name));
+        touchPrefsSetRegionScope(region);
+        if (region[0]) _region_reg.ensureRegion(region);
+        dirty = true;
+      }
+    }
+  }
+  if (sections & 0x04) {
+    JsonObjectConst ps = root["position_settings"].as<JsonObjectConst>();
+    if (!ps.isNull()) {
+      if (!ps["latitude"].isNull())  { sensors.node_lat = ps["latitude"].as<double>(); dirty = true; }
+      if (!ps["longitude"].isNull()) { sensors.node_lon = ps["longitude"].as<double>(); dirty = true; }
+    }
+  }
+  if (dirty) savePrefs();
+  int nch = 0;
+  if (sections & 0x08) {
+    JsonArrayConst ch = root["channels"].as<JsonArrayConst>();
+    int idx = 0;
+    for (JsonVariantConst ev : ch) {
+      JsonObjectConst e = ev.as<JsonObjectConst>();
+      const char* nm = e["name"].as<const char*>();
+      const char* sec = e["secret"].as<const char*>();
+      if (idx >= MAX_GROUP_CHANNELS) break;
+      if (nm && sec && strlen(sec) >= 32) {
+        uint8_t secret[16];
+        hexToBytes(sec, secret, 16);
+        if (uiAddOrUpdateChannel(idx, nm, secret)) nch++;
+      }
+      idx++;
+    }
+  }
+  int nco = 0;
+  if (sections & 0x10) {
+    JsonArrayConst co = root["contacts"].as<JsonArrayConst>();
+    if (replace_contacts && !co.isNull() && !(_backend && _backend->ownsPrefs())) _num_contacts = 0;
+    for (JsonVariantConst ev : co) {
+      JsonObjectConst e = ev.as<JsonObjectConst>();
+      const char* pk = e["public_key"].as<const char*>();
+      if (!pk || strlen(pk) < 64) continue;
+      ContactInfo c{};
+      hexToBytes(pk, c.id.pub_key, 32);
+      const char* cn = e["custom_name"].as<const char*>();
+      const char* nm = (cn && cn[0]) ? cn : e["name"].as<const char*>();
+      StrHelper::strncpy(c.name, nm ? nm : "", sizeof(c.name));
+      c.type = e["type"].as<uint8_t>();
+      c.flags = e["flags"].as<uint8_t>();
+      c.out_path_len = OUT_PATH_UNKNOWN;
+      const char* la = e["latitude"].as<const char*>();
+      const char* lo = e["longitude"].as<const char*>();
+      c.gps_lat = la ? (int32_t)(atof(la) * 1e6) : 0;
+      c.gps_lon = lo ? (int32_t)(atof(lo) * 1e6) : 0;
+      c.last_advert_timestamp = e["last_advert"].as<uint32_t>();
+      c.lastmod = e["last_modified"].as<uint32_t>();
+      ContactInfo* slot = lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
+      if (slot) { c.out_path_len = slot->out_path_len; memcpy(c.out_path, slot->out_path, sizeof c.out_path); *slot = c; }
+      else if (!addContact(c)) continue;
+      if (_backend) _backend->contactChanged(c);
+      nco++;
+    }
+  }
+  if (sections & 0x20) {
+    JsonObjectConst app = root["app_settings"].as<JsonObjectConst>();
+    for (JsonVariantConst ev : app["prefs"].as<JsonArrayConst>()) {
+      JsonArrayConst e = ev.as<JsonArrayConst>();
+      const char* key = e[0].as<const char*>();
+      const char* type = e[1].as<const char*>();
+      const char* val = e[2].as<const char*>();
+      if (key && type && type[0] && !type[1] && val) touchPrefsBackupRestore(key, type[0], val);
+    }
+  }
+  if (_ui) _ui->onThreadsChanged();
+  if (out_channels) *out_channels = nch;
+  if (out_contacts) *out_contacts = nco;
+  return true;
 }
 bool MyMesh::uiFactoryReset() { return SPIFFS.format(); }
 

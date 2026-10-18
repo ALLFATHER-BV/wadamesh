@@ -7,6 +7,7 @@
 #include "WebRadio.h"
 #include "WebDisplay.h"
 #include "WebLocation.h"
+#include "WebFiles.h"     // CAP_FILE_HANDOFF: downloads and the file picker
 
 extern WebBoard board;
 extern WebRadio radio_driver;

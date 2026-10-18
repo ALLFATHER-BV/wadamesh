@@ -9150,6 +9150,20 @@ static int s_store_updates = 0;
 static void storeUpdatesKick();
 static void storeUpdatesPoll();
 static void versionCheckService(unsigned long now) {
+#if !CAP_FW_UPDATE_CHECK
+  // No firmware update check on this board (the browser build: a reload is the update).
+  // The Store's update badge still needs the catalog now and then.
+  {
+    static unsigned long s_store_next = 20000;
+    storeUpdatesPoll();
+    if (WiFi.status() == WL_CONNECTED && (long)(now - s_store_next) >= 0) {
+      s_store_next = now + 6UL * 60UL * 60UL * 1000UL;
+      ensureTileFetchTaskRunning();
+      storeUpdatesKick();
+    }
+    return;
+  }
+#endif
 #if defined(MULTI_TRANSPORT_COMPANION)
   if (firmwareReleaseN() < 0) return;   // dev build: nothing to compare against
   storeUpdatesPoll();
@@ -49368,6 +49382,9 @@ static void doExportBackupFile(const char* fname) {
   lv_obj_del(ov);
   char msg[120]; snprintf(msg, sizeof msg, "Saved %s:%s", where, path);
   g_lv.task->showAlert(msg, 2600);
+#if CAP_FILE_HANDOFF
+  boardHandOffFile(*backupInternalFs(), path, fname);   // and to the computer (a browser download)
+#endif
 }
 
 static void doDeleteBackup() {
@@ -49496,7 +49513,11 @@ static void buildBackupsSettings() {
     }, nullptr, SET_PRIMARY);
     setSwitchRow(c, "Append timestamp", "Off reuses meshcore-backup.json, the file name the MeshCore app uses.",
                  s_backup_append_timestamp, backupAppendTimestampCb);
+#if CAP_FILE_HANDOFF
+    setNote(c, "Downloaded to this computer, and kept in this browser.");
+#else
     setNote(c, "Saved to the SD card when one is in, otherwise to internal storage.");
+#endif
   }
 
   // Restore: every internal and SD backup in a picker, then a confirmation.
@@ -49505,6 +49526,13 @@ static void buildBackupsSettings() {
     setActionRow(c, LV_SYMBOL_DOWNLOAD, "Import backup", nullptr, [](lv_event_t* e) {
       if (lv_event_get_code(e) == LV_EVENT_CLICKED) openBackupPicker();
     });
+#if CAP_FILE_HANDOFF
+    // A backup file from this computer: the browser's picker, then the same confirm +
+    // import as a saved one (UITask::loop picks it up).
+    setActionRow(c, LV_SYMBOL_UPLOAD, "Import from this computer", nullptr, [](lv_event_t* e) {
+      if (lv_event_get_code(e) == LV_EVENT_CLICKED) boardPickFile(".json,application/json");
+    });
+#endif
     setNote(c, "Replaces identity, channels and contacts with the backup's, then restarts.");
   }
 
@@ -54470,7 +54498,7 @@ static void luaStoreRebuildList() {
     };
 
     lv_obj_t* hint = lv_label_create(s_luastore_list);
-#if CAP_BUILTIN_LANGS
+#if CAP_BUILTIN_LANGS && !CAP_STORE_DOWNLOADS
     lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply."));
 #else
     lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own."));
@@ -54480,7 +54508,7 @@ static void luaStoreRebuildList() {
     lv_obj_set_width(hint, W - 12);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
 
-#if CAP_BUILTIN_LANGS
+#if CAP_BUILTIN_LANGS && !CAP_STORE_DOWNLOADS
     // All translations ship in the image on this board: a picker, no downloads.
     for (uint8_t l = 0; l < LANG_COUNT; ++l) {
       lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
@@ -54794,7 +54822,7 @@ static void openLuaStorePage() {
     lv_obj_set_pos(bar, 6, 4);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
-#if CAP_BUILTIN_LUA_APPS
+#if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
     // This board ships its apps and languages inside the image, so there is
     // nothing to browse or install — the page is a picker, not a shop.
     const int t_first = 1, t_count = 2;
@@ -54853,7 +54881,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-#if CAP_BUILTIN_LUA_APPS
+#if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
   if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
 #endif
   appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
@@ -77958,6 +77986,16 @@ void UITask::loop() {
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
   gpsSaverTick((uint32_t)now);   // the GPS saver: rest the receiver between position checks
+#if CAP_FILE_HANDOFF
+  {   // a backup the visitor picked on the computer (Settings > Backups): confirm, import
+    char picked[96];
+    if (boardTakePickedFile(picked, sizeof picked)) {
+      char stored[110];
+      snprintf(stored, sizeof stored, "int:%s", picked);
+      confirmBackupImport(stored);
+    }
+  }
+#endif
   trackTick((uint32_t)now);      // Map options > Record track: a GPX point as we move
   updateGpsLocation(now);
   uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed
