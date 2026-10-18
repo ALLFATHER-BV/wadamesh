@@ -47,6 +47,7 @@
   #define CAP_BT_SETUP     0
   #define CAP_USB_FLASH    0   // no bootloader to reboot into: no "Download mode"
   #define CAP_FILE_HANDOFF 1   // a backup is downloaded by the browser, imported with its file picker
+  #define CAP_NATIVE_KEYBOARD 1   // on a phone the phone's own keyboard types (boardNativeKeyboard())
   #define CAP_BUILTIN_LANGS    1   // the translations and the catalog's apps ship in the
   #define CAP_BUILTIN_LUA_APPS 1   // build (offline, first load), and...
   #define CAP_STORE_DOWNLOADS  1   // ...the Store still installs and updates (same-origin proxy)
@@ -551,6 +552,11 @@
 // computer). The board provides boardHandOffFile / boardPickFile / boardTakePickedFile.
 #ifndef CAP_FILE_HANDOFF
   #define CAP_FILE_HANDOFF 0
+#endif
+// CAP_NATIVE_KEYBOARD: the host may supply its own text input (a phone's keyboard in the
+// browser build); while boardNativeKeyboard() is true the UI never brings up its own keys.
+#ifndef CAP_NATIVE_KEYBOARD
+  #define CAP_NATIVE_KEYBOARD 0
 #endif
 
 // ---- Lua app host (LUA_APPS.md) --------------------------------------------

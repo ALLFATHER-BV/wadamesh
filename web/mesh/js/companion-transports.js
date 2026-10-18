@@ -155,7 +155,14 @@ var WadaCompanion = (function () {
   // ---- WebSocket ----
   function openWs(url) {
     return new Promise(function (resolve, reject) {
-      var ws = new WebSocket(url);
+      var ws;
+      try { ws = new WebSocket(url); } catch (e) {
+        // A secure (https) page may not open a plain ws:// (mixed content): the page then
+        // points at its http copy (web/shell/app.js linkTrouble).
+        reject(new Error(location.protocol === "https:" && /^ws:/i.test(url)
+          ? "mixed content: a secure (https) page may not open " + url : String((e && e.message) || e)));
+        return;
+      }
       ws.binaryType = "arraybuffer";
       var opened = false;
       ws.onopen = function () {

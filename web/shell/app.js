@@ -13,12 +13,34 @@
 //    (/data/demo, /data/node-<key>), and switching reboots the UI into it.
 (function () {
   'use strict';
+  // The canvas size = the board's resolution, picked once per boot from the window
+  // (web_main.cpp reads Module.wadaSize): 800x480 landscape, or on a phone held upright a
+  // portrait canvas 480 wide (the large-screen portrait layouts the rotatable 800x480
+  // boards use), as tall as the screen allows. 420-540 wide when that is a whole number
+  // of device pixels per canvas pixel (crisp). Turning the phone restarts the UI in the
+  // other layout (see "orientation" below); the data stays.
+  var touchDevice = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  function wantPortrait() {   // a phone upright; a desktop window clearly taller than wide
+    return window.innerHeight > window.innerWidth * (touchDevice ? 1.0 : 1.15);
+  }
+  var portrait = wantPortrait();
   var W = 800, H = 480;
+  if (portrait) {
+    document.body.classList.add('portrait');
+    var barH = document.querySelector('.bar').getBoundingClientRect().height;
+    var vw = document.documentElement.clientWidth || window.innerWidth;
+    var vh = Math.max(320, window.innerHeight - barH);
+    var devW = vw * (window.devicePixelRatio || 1);
+    W = 480;
+    for (var k = 2; k <= 4; k++) { var w = Math.round(devW / k); if (w >= 420 && w <= 540 && Math.abs(devW / k - w) < 0.01) { W = w; break; } }
+    H = Math.max(560, Math.min(1200, 2 * Math.round(W * vh / vw / 2)));
+  }
   var BUILD = '__WADA_BUILD__';
   var DB_MOUNT = '/data';   // also the IndexedDB database name IDBFS uses
 
   var $ = function (id) { return document.getElementById(id); };
   var canvas = $('screen'), stage = $('stage'), overlay = $('overlay');
+  canvas.width = W; canvas.height = H;
   var ctx = canvas.getContext('2d', { alpha: false });
   var M = null;            // the Emscripten module once created
   var running = false;     // the UI has presented its first frame
@@ -70,12 +92,13 @@
     var cs = getComputedStyle(stage);
     var aw = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var ah = r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
-    if (!full) {
-      ah = Math.max(ah, 120);
-      // a phone in portrait: scale to the width, the page scrolls if it must. Only in
-      // portrait: a small LANDSCAPE window (a docked or split browser) must fit its height,
-      // or the screen grows past the stage and over the header.
-      if (window.innerWidth < 600 && window.innerHeight > window.innerWidth) ah = Math.max(ah, aw * H / W);
+    if (!full) ah = Math.max(ah, 120);
+    if (portrait) {   // the canvas was sized for this screen: fill its width
+      var f = aw / W, d = f * (window.devicePixelRatio || 1);
+      canvas.style.width = Math.round(W * f) + 'px';
+      canvas.style.height = Math.round(H * f) + 'px';
+      canvas.classList.toggle('crisp', Math.abs(d - Math.round(d)) < 0.02);
+      return;
     }
     var dpr = window.devicePixelRatio || 1;
     var fit = Math.max(0.1, Math.min(aw / W, ah / H));
@@ -89,6 +112,20 @@
     canvas.classList.toggle('crisp', crisp);
   }
   window.addEventListener('resize', layout);
+  // ---- orientation: the other layout needs a restart of the UI (data kept) -----------
+  // Debounced, only when the orientation really flipped, and never while the visitor is
+  // typing (the phone keyboard shrinks the window, which is no rotation).
+  var flipTimer = 0;
+  function maybeFlip() {
+    clearTimeout(flipTimer);
+    flipTimer = setTimeout(function () {
+      if (!running || resetting || wantPortrait() === portrait) return;
+      if (document.activeElement && document.activeElement.id === 'ime') return;
+      restartUi(portrait ? 'Turning to landscape' : 'Turning to portrait');
+    }, 700);
+  }
+  window.addEventListener('resize', maybeFlip);
+  if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', maybeFlip);
   document.addEventListener('fullscreenchange', layout);
   document.addEventListener('webkitfullscreenchange', layout);
   if (window.matchMedia) {
@@ -214,6 +251,12 @@
     if (e.pointerId !== activePointer) return;
     activePointer = null;
     sendPointer(false, e);
+    // A tap on a text field opens the phone's own keyboard, here, inside the gesture
+    // (iOS only shows it for a focus() made in the user's own event).
+    if (e.type === 'pointerup' && touchDevice && M && running) {
+      var p = toCanvas(e);
+      if (M._wadaWebTextareaAt(p[0], p[1])) imeOpen();
+    }
   }
   canvas.addEventListener('pointerup', pointerEnd);
   canvas.addEventListener('pointercancel', pointerEnd);
@@ -227,7 +270,7 @@
   });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   // The mouse wheel / two-finger trackpad scroll: scrolls the list or page under the
-  // pointer (web/platform/WebWheel.cpp). Pixels, lines and pages all become canvas pixels.
+  // pointer (web/platform/WebLvglInput.cpp). Pixels, lines and pages all become canvas pixels.
   var wheelRest = 0;
   canvas.addEventListener('wheel', function (e) {
     if (!M || !running || e.ctrlKey) return;   // ctrl+wheel / pinch: the browser's zoom
@@ -260,11 +303,95 @@
       var c = e.key.charCodeAt(0);
       if (c >= 0x20 && c < 0x7F) code = c;
     }
+    if (code === undefined && Array.from(e.key).length === 1 && e.key.codePointAt(0) >= 0xA0) {
+      e.preventDefault();   // any other script, typed on the computer: as text (UTF-8)
+      geoTap();
+      M.ccall('wadaWebText', null, ['string'], [e.key]);
+      return;
+    }
     if (code === undefined) return;
     e.preventDefault();
     geoTap();
     M._wadaWebKey(code);
   });
+
+  // ---- the phone's own keyboard --------------------------------------------------------
+  // On a touch device the UI's on-screen keys stay down (the phone keyboard counts as an
+  // external keyboard: wadaWebNativeKeyboard) and a hidden <textarea> takes the typing:
+  // autocorrect, emoji, every language, voice. What changes in it goes to the bound LVGL
+  // field as text (UTF-8) and Backspaces, as a diff, so a composing / autocorrecting
+  // keyboard is followed word by word. A leading space is a sentinel the keyboard can
+  // delete, so Backspace works on an empty field too. Enter = the UI's Enter (send).
+  var ime = $('ime'), IME_PAD = ' ';
+  var imeLast = IME_PAD, imeOn = false, imeComposing = false, imeIdle = 0;
+  function imeReset() {
+    ime.value = IME_PAD; imeLast = IME_PAD;
+    try { ime.setSelectionRange(1, 1); } catch (e) {}
+  }
+  function imeOpen() {
+    if (!M || !running) return;
+    if (!imeOn) imeReset();
+    imeOn = true; imeIdle = 0;
+    ime.focus({ preventScroll: true });
+  }
+  function imeClose() {
+    imeOn = false;
+    if (document.activeElement === ime) ime.blur();
+    fitAboveKeyboard();
+  }
+  function imeKey(code) { if (M && running) M._wadaWebKey(code); }
+  function imeSync() {
+    if (!M || !running) return;
+    var a = Array.from(imeLast), b = Array.from(ime.value), p = 0;
+    while (p < a.length && p < b.length && a[p] === b[p]) p++;
+    for (var i = p; i < a.length; i++) imeKey(0x08);
+    var add = b.slice(p).join('');
+    if (add) {
+      var parts = add.split(/\r?\n/);
+      parts.forEach(function (t, j) {
+        if (t) M.ccall('wadaWebText', null, ['string'], [t]);
+        if (j < parts.length - 1) imeKey(0x0D);
+      });
+    }
+    imeLast = ime.value;
+    if (!imeComposing && (ime.value.indexOf(IME_PAD) !== 0 || ime.value.length > 400 || /\n/.test(ime.value))) imeReset();
+  }
+  ime.addEventListener('input', imeSync);
+  ime.addEventListener('compositionstart', function () { imeComposing = true; });
+  ime.addEventListener('compositionend', function () { imeComposing = false; imeSync(); });
+  ime.addEventListener('beforeinput', function (e) {
+    if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+      e.preventDefault(); imeKey(0x0D); imeReset();
+    }
+  });
+  ime.addEventListener('keydown', function (e) {
+    if (imeComposing || e.isComposing) return;
+    if (e.key === 'Enter') { e.preventDefault(); imeKey(0x0D); imeReset(); }
+    else if (e.key === 'Escape') { e.preventDefault(); imeKey(0x1B); }
+    else if (e.key === 'Backspace' && ime.value === '') { e.preventDefault(); imeKey(0x08); imeReset(); }
+  });
+  ime.addEventListener('blur', function () { imeOn = false; setTimeout(fitAboveKeyboard, 50); });
+  // The edit ended in the UI (the chat closed, a field was left): the keyboard goes too.
+  setInterval(function () {
+    if (!imeOn || !M || !running) return;
+    imeIdle = M._wadaWebEditing() ? 0 : imeIdle + 1;
+    if (imeIdle >= 2) imeClose();
+  }, 300);
+  // While the keyboard is up, slide the screen up so its bottom (the composer) sits on
+  // the keyboard instead of under it.
+  function fitAboveKeyboard() {
+    var frame = $('frame'), vv = window.visualViewport;
+    if (!vv || !imeOn) { frame.style.transform = ''; return; }
+    frame.style.transform = '';
+    var r = canvas.getBoundingClientRect();
+    var visibleBottom = vv.offsetTop + vv.height;
+    var lift = Math.min(0, visibleBottom - r.bottom);
+    frame.style.transform = lift ? 'translateY(' + Math.round(lift) + 'px)' : '';
+  }
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', fitAboveKeyboard);
+    window.visualViewport.addEventListener('scroll', fitAboveKeyboard);
+  }
 
   // ---- storage: IndexedDB behind /data -----------------------------------------------
   var persistState = { inflight: false, again: false, waiters: [], lastGen: -1, savedGen: -1,
@@ -310,6 +437,13 @@
     b.textContent = text;
     b.title = title || text;
   }
+  // Save what the running UI has and boot it again (an orientation change).
+  function restartUi(why) {
+    running = false;
+    setStatus(why, '', true);
+    try { if (M && M._wadaWebFlush) M._wadaWebFlush(); } catch (e) {}
+    persist(function () { location.reload(); });
+  }
   // Save what the running UI has, then boot the UI again into `next` (null = the demo).
   function switchTo(next) {
     lsSet(CHOICE_KEY, next);
@@ -336,14 +470,34 @@
     var dlg = $('connect-dlg');
     dlg.querySelector('[data-kind="web-serial"]').hidden = !hasSerial;
     dlg.querySelector('[data-kind="ble"]').hidden = !hasBle;
-    var notes = [];
-    if (!hasSerial && !hasBle) notes.push('USB and Bluetooth need Chrome or Edge on a computer; this browser can connect over Wi-Fi.');
+    // The two copies of the page (WEB_BUILD.md "Two copies"): https has USB, Bluetooth and
+    // the location (secure context), http reaches a node's plain ws:// over Wi-Fi.
+    var local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+    var secure = window.isSecureContext;
+    var ios = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var notes = [], links = [];
+    if (!secure) {
+      notes.push('This copy of the page connects over Wi-Fi.');
+      links.push(['For USB, Bluetooth and your location, use ', 'https://' + location.host + location.pathname]);
+    } else if (ios) notes.push('On iPhone and iPad the browser has no Bluetooth or USB: connect over Wi-Fi.');
+    else if (!hasSerial && !hasBle) notes.push('USB and Bluetooth need Chrome or Edge; this browser can connect over Wi-Fi.');
     else if (!hasBle) notes.push('Bluetooth needs Chrome or Edge.');
     else if (!hasSerial) notes.push('USB needs Chrome or Edge on a computer.');
-    if (location.protocol === 'https:' && !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname))
-      notes.push('Over Wi-Fi the browser has to reach ws://, which it blocks on a secure (https) page; use the page from your own computer or network for Wi-Fi.');
-    $('connect-note').hidden = !notes.length;
-    $('connect-note').textContent = notes.join(' ');
+    if (location.protocol === 'https:' && !local)
+      links.push(['Wi-Fi to a node needs the http version (nodes speak plain ws://, which a secure page may not open): ',
+                  'http://' + location.host + location.pathname]);
+    var note = $('connect-note');
+    note.textContent = notes.join(' ');
+    links.forEach(function (l) {
+      var span = document.createElement('span');
+      span.className = 'link-line';
+      span.appendChild(document.createTextNode(l[0]));
+      var a = document.createElement('a');
+      a.href = l[1]; a.textContent = l[1].replace(/\/$/, '');
+      span.appendChild(a);
+      note.appendChild(span);
+    });
+    note.hidden = !notes.length && !links.length;
     var host = $('ws-host');
     host.value = lsGet(HOST_KEY) || '';
     dlg.querySelector('[data-kind="web-serial"]').addEventListener('click', function () {
@@ -420,7 +574,8 @@
     var box = $('link-help');
     if (up) { linkFails = 0; if (box && !box.hidden) { box.hidden = true; layout(); } return; }
     if (everUp || !choice) return;
-    if (++linkFails < 2) return;            // one miss can be a slow start
+    var mixed = choice.kind === 'ws' && /mixed content/.test(detail || '');
+    if (++linkFails < 2 && !mixed) return;  // one miss can be a slow start (a blocked ws:// cannot)
     setMode('bad', "Can't reach your node", detail || undefined);
     if (!box) {
       box = document.createElement('div');
@@ -429,14 +584,15 @@
       var bar = document.querySelector('.bar');
       bar.parentNode.insertBefore(box, bar.nextSibling);
     }
-    var how = choice.kind === 'ws'
+    var how = mixed ? 'This secure (https) copy of the page may not open a plain ws:// connection to your node. Use the http copy for Wi-Fi: http://' + location.host + location.pathname
+      : choice.kind === 'ws'
       ? 'Check that the node has Wi-Fi on and is on the same network as this computer (a guest or IoT network often cannot reach the rest), and that you typed its address right: ' + choice.arg.replace(/^wss?:\/\//, '').replace(/\/$/, '') + '.'
       : choice.kind === 'web-serial'
         ? 'Check the cable (a charge-only cable carries no data) and that no other app has the port open.'
         : 'Check that the node is on, in range, and has Bluetooth on.';
     box.innerHTML = '';
     var p = document.createElement('p');
-    p.textContent = 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
+    p.textContent = mixed ? how : 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
     var back = document.createElement('button');
     back.type = 'button'; back.className = 'btn'; back.textContent = 'Back to the demo';
     back.addEventListener('click', function () { switchTo(null); });
@@ -444,6 +600,8 @@
     box.hidden = false;
     layout();   // the box takes height from the stage: refit the screen below it
   }
+  $('btn-reset2').hidden = !!choice;
+  $('btn-reset2').addEventListener('click', function () { menuOpen(false); $('btn-reset').click(); });
   $('btn-reset').addEventListener('click', function () {
     if (!confirm('Reset the demo? Your messages, contacts and settings in this browser are deleted and the demo starts fresh.')) return;
     resetting = true;
@@ -661,6 +819,7 @@
       onRuntimeInitialized: function () {
         stats.bootMs = Math.round(performance.now() - t0);
         // The map's tile downloads need the network (web/compat/wada_http.h wadaNetOnline).
+        if (touchDevice) Mod._wadaWebNativeKeyboard(1);   // the phone's keyboard, not the UI's keys
         var online = function () { try { Mod._wadaWebOnline(navigator.onLine === false ? 0 : 1); } catch (e) {} };
         online();
         window.addEventListener('online', online);
@@ -670,6 +829,7 @@
         fatal('wadamesh stopped', 'Something went wrong: <code>' + String(what).replace(/</g, '&lt;') + '</code>', true);
       },
       wadaPresent: present,
+      wadaSize: [W, H],
       wadaDownload: function (bytes, name) { download(bytes, name, /\.json$/i.test(name) ? 'application/json' : undefined); },
       wadaPickFile: function (accept) { pickFile(accept, 'ui'); },
       wadaGeoStart: geoStart,

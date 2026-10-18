@@ -413,7 +413,7 @@ position and stay.
 
 Mouse and finger are the touch panel; the keyboard is the external keyboard. The mouse
 wheel and two-finger trackpad scrolling scroll the list or page under the pointer
-(`web/platform/WebWheel.cpp`: LVGL's own hit test, the first ancestor that can still
+(`web/platform/WebLvglInput.cpp`: LVGL's own hit test, the first ancestor that can still
 scroll that way, `lv_obj_scroll_by`, SCROLL_END once the wheel stops; vertical only).
 The tour scripts have `wheel X Y DY`.
 

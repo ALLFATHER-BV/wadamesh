@@ -3,8 +3,24 @@
 #include <stdlib.h>
 #include <string.h>
 
-WebDisplay::WebDisplay() : DisplayDriver(WADA_WEB_W, WADA_WEB_H) {
-  _fb = (uint16_t*)calloc((size_t)WADA_WEB_W * WADA_WEB_H, sizeof(uint16_t));
+int g_wada_web_w = 800, g_wada_web_h = 480;
+extern WebDisplay display;   // board.cpp
+void wadaWebSetSize(int w, int h) {
+  if (w < 240 || h < 240 || w > 2048 || h > 2048) return;
+  g_wada_web_w = w;
+  g_wada_web_h = h;
+  display.resize(w, h);
+}
+
+WebDisplay::WebDisplay() : DisplayDriver(800, 480) {
+  _fb = (uint16_t*)calloc((size_t)800 * 480, sizeof(uint16_t));
+}
+void WebDisplay::resize(int w, int h) {
+  free(_fb);
+  _fb = (uint16_t*)calloc((size_t)w * h, sizeof(uint16_t));
+  setLogicalSize(w, h);
+  resetBox();
+  addBox(0, 0, w, h);
 }
 void WebDisplay::clear() {
   memset(_fb, 0, (size_t)WADA_WEB_W * WADA_WEB_H * sizeof(uint16_t));

@@ -21,7 +21,8 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0; height:100%}
-html{background:var(--bg)}
+html{background:var(--bg); overscroll-behavior:none; -webkit-text-size-adjust:100%}
+body{overscroll-behavior:none}
 body{
   min-height:100%; display:flex; flex-direction:column;
   color:var(--ink); background:
@@ -35,14 +36,18 @@ body{
 
 /* ---- the bar ---- */
 .bar{
-  display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  display:flex; align-items:center; gap:10px;
   min-height:var(--bar-h); padding:8px var(--gutter);
   padding-left:max(var(--gutter), env(safe-area-inset-left));
   padding-right:max(var(--gutter), env(safe-area-inset-right));
   background:var(--bar); border-bottom:1px solid var(--line);
   -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
   position:relative; z-index:30;   /* its menu opens over the stage */
+  padding-top:max(8px, env(safe-area-inset-top));
+  flex-wrap:nowrap; min-width:0;
 }
+.bar > *{flex-shrink:0}
+.bar .badge{flex-shrink:1; min-width:0}
 .brand{display:inline-flex; align-items:center; gap:8px; color:var(--ink); text-decoration:none;
   font-weight:700; letter-spacing:.02em; font-size:17px}
 .brand img{display:block}
@@ -103,12 +108,30 @@ body{
 #stage:-webkit-full-screen{padding:0; background:#000; align-items:center}
 #stage:fullscreen #frame, #stage:-webkit-full-screen #frame{box-shadow:none; border-radius:0}
 
+/* a narrower window: the bar stays one row (labels shorten, the brand name goes first) */
+@media (max-width:720px){
+  .wide{display:none}
+  .brand span{display:none}
+  .bar{gap:8px}
+}
+@media (max-width:420px){
+  .btn{height:34px; padding:0 10px; font-size:13px}
+  .btn.icon{width:34px}
+  #btn-reset{display:none}   /* the More menu has it too */
+}
+
+/* ---- a phone held upright: the canvas IS the screen (portrait layout, app.js) ---- */
+body.portrait{height:100dvh; min-height:0; overflow:hidden}
+body.portrait #stage{padding:0; padding-bottom:env(safe-area-inset-bottom); align-items:flex-start; overflow:hidden}
+body.portrait #frame{border-radius:0; box-shadow:none; transition:transform .18s ease-out}
+body.portrait #screen{border-radius:0}
+body.portrait .hint{display:none}
+
 .rotate-hint{display:none}
 @media (max-width:560px){
   :root{--bar-h:auto}
   .wide{display:none}
   #stage{align-items:flex-start; flex:0 0 auto}
-  .rotate-hint{display:block; margin:0 auto 10px; padding:0 var(--gutter); text-align:center; color:var(--mut); font-size:13px}
   .bar{gap:8px}
   .brand span{display:none}
   .btn{height:34px; padding:0 12px; font-size:13px}
@@ -152,7 +175,13 @@ dialog#connect-dlg::backdrop{background:rgba(0,0,0,.6)}
 }
 #connect-dlg input:focus{outline:none; box-shadow:inset 0 0 0 1px var(--teal)}
 #connect-dlg .note{margin:14px 0 0; color:var(--mut); font-size:13px; line-height:1.45}
+#connect-dlg .note .link-line{display:block; margin-top:6px}
+#connect-dlg .note a{color:var(--cyan)}
 #connect-dlg .actions{display:flex; justify-content:flex-end; margin-top:16px}
+
+/* the hidden field the phone's own keyboard types into (app.js "phone keyboard") */
+#ime{position:fixed; left:0; top:0; width:1px; height:1px; opacity:0; border:0; padding:0; margin:0;
+  font-size:16px; resize:none; background:transparent; color:transparent; caret-color:transparent; z-index:-1}
 
 /* the bar's "More" menu: browser backup / restore */
 .more{position:relative}
@@ -160,7 +189,7 @@ dialog#connect-dlg::backdrop{background:rgba(0,0,0,.6)}
 .menu{position:absolute; right:0; top:calc(100% + 6px); z-index:20; min-width:260px; padding:6px;
   background:var(--solid); border:1px solid var(--line); border-radius:12px;
   box-shadow:0 10px 30px rgba(0,0,0,.5); display:flex; flex-direction:column; gap:2px}
-.menu[hidden]{display:none}
+.menu[hidden], .menu button[hidden]{display:none}
 .menu button{all:unset; cursor:pointer; padding:9px 12px; border-radius:8px; color:var(--ink);
   font:600 14px/1.25 Montserrat, system-ui, sans-serif}
 .menu button span{display:block; font-weight:500; font-size:12px; opacity:.7; margin-top:2px}

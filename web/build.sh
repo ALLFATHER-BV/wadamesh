@@ -47,7 +47,9 @@ case "$target" in
     mkdir -p "$dist"; find "$dist" -mindepth 1 -delete   # keep the folder: a running serve keeps serving it
     cp "$bdir/wadamesh.js" "$bdir/wadamesh.wasm" "$dist/"
     cp "$WEB/shell/app.js" "$WEB/shell/app.css" "$dist/"
-    cp "$WEB/../deploy/site/wadamesh-mark.svg" "$WEB/../deploy/site/favicon.ico" "$dist/"
+    cp "$WEB/../deploy/site/wadamesh-mark.svg" "$WEB/../deploy/site/favicon.ico" \
+       "$WEB/../deploy/site/apple-touch-icon.png" "$WEB/../deploy/site/wadamesh-icon-512.png" \
+       "$WEB/shell/manifest.webmanifest" "$dist/"
     # Cache key: the page asks for every file with ?v=<hash>, so a CDN can keep them for good.
     build="$(cat "$dist/wadamesh.wasm" "$dist/wadamesh.js" "$dist/app.js" "$dist/app.css" | shasum -a 256 | cut -c1-12)"
     sed "s/__WADA_BUILD__/$build/g" "$WEB/shell/index.html" > "$dist/index.html"

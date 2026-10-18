@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Mouse wheel / trackpad scrolling for the web board (WebInput.h webWheel). A panel has
-// no wheel, so the UI never asks for one: this scrolls the LVGL object under the
-// pointer the way a finger drag would, without a press (nothing gets clicked or
+// LVGL-side input helpers of the web board (WebInput.h): text fields for the phone's
+// keyboard (below), and mouse wheel / trackpad scrolling (webWheel). A panel has no
+// wheel, so the UI never asks for one: this scrolls the LVGL object under the pointer the way a finger drag would, without a press (nothing gets clicked or
 // long-pressed). It finds the topmost object under the pointer (system layer, top
 // layer, then the screen, as LVGL's own pointer search does) and walks up to the first
 // ancestor that can still scroll that way, so a list inside a page scrolls before the
@@ -45,4 +45,40 @@ void webWheelTick() {
   if (!s_scrolled || millis() - s_last_ms < 150) return;
   if (lv_obj_is_valid(s_scrolled)) lv_event_send(s_scrolled, LV_EVENT_SCROLL_END, nullptr);
   s_scrolled = nullptr;
+}
+
+// ---- text fields, for the phone's own keyboard (web/shell/app.js) -----------------------
+bool webTextareaAt(int x, int y) {
+  if (!lv_scr_act()) return false;
+  for (lv_obj_t* o = hit(lv_point_t{(lv_coord_t)x, (lv_coord_t)y}); o; o = lv_obj_get_parent(o))
+    if (lv_obj_check_type(o, &lv_textarea_class)) return true;
+  return false;
+}
+namespace {
+lv_obj_t* findKeyboard(lv_obj_t* o, int depth) {
+  if (!o || depth > 12) return nullptr;
+  if (lv_obj_check_type(o, &lv_keyboard_class)) return o;
+  const uint32_t n = lv_obj_get_child_cnt(o);
+  for (uint32_t i = 0; i < n; ++i)
+    if (lv_obj_t* k = findKeyboard(lv_obj_get_child(o, i), depth + 1)) return k;
+  return nullptr;
+}
+lv_obj_t* s_kb = nullptr;
+uint32_t s_kb_look_ms = 0;
+}  // namespace
+// The UI keeps one keyboard object and binds it to the field being edited (showKb), also
+// while an external keyboard types and the keys stay hidden; unbinding ends the edit.
+bool webEditing() {
+  if (s_kb && !lv_obj_is_valid(s_kb)) s_kb = nullptr;
+  if (!s_kb && millis() - s_kb_look_ms > 1000) {
+    s_kb_look_ms = millis();
+    s_kb = findKeyboard(lv_layer_top(), 0);
+    if (!s_kb) s_kb = findKeyboard(lv_layer_sys(), 0);
+    if (!s_kb) s_kb = findKeyboard(lv_scr_act(), 0);
+  }
+  return s_kb && lv_keyboard_get_textarea(s_kb) != nullptr;
+}
+bool webOskShown() {
+  webEditing();   // finds the keyboard object
+  return s_kb && !lv_obj_has_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
 }

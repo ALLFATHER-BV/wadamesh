@@ -9,3 +9,5 @@ public:
   void powerOff() override;
   uint8_t getStartupReason() const override { return BD_STARTUP_NORMAL; }
 };
+// CAP_NATIVE_KEYBOARD: the phone's own keyboard types (web/platform/WebKeyboard.cpp).
+bool boardNativeKeyboard();

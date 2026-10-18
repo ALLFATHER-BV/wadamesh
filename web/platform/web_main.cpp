@@ -156,7 +156,17 @@ EMSCRIPTEN_KEEPALIVE void wadaWebPointer(int down, int x, int y) {
   s_q[s_qh] = PtrEv{down != 0, (int16_t)x, (int16_t)y};
   s_qh = next;
 }
-EMSCRIPTEN_KEEPALIVE void wadaWebKey(int cardkb_code) { webKeyPush((uint8_t)cardkb_code); }
+EMSCRIPTEN_KEEPALIVE void wadaWebKey(int code) { webKeyPush(code); }
+// Text from the page (the phone's keyboard, a non-ASCII key): UTF-8.
+EMSCRIPTEN_KEEPALIVE void wadaWebText(const char* utf8) { webTextPush(utf8); }
+// The phone's own keyboard is the UI's keyboard from now on (the on-screen keys stay down).
+EMSCRIPTEN_KEEPALIVE void wadaWebNativeKeyboard(int on) { webKeyboardPresent(on != 0); }
+// Is there a text field under (x, y)? Asked in the tap's own event handler, so the page can
+// focus its hidden field (and the phone open its keyboard) inside the user's gesture.
+EMSCRIPTEN_KEEPALIVE int wadaWebTextareaAt(int x, int y) { return webTextareaAt(x, y) ? 1 : 0; }
+// Is a text field being edited (the UI's keyboard is bound to one)?
+EMSCRIPTEN_KEEPALIVE int wadaWebEditing() { return webEditing() ? 1 : 0; }
+EMSCRIPTEN_KEEPALIVE int wadaWebOskShown() { return webOskShown() ? 1 : 0; }
 // The mouse wheel / a two-finger trackpad scroll over (x, y), in canvas pixels.
 EMSCRIPTEN_KEEPALIVE void wadaWebWheel(int x, int y, int dy) { webWheel(x, y, dy); }
 EMSCRIPTEN_KEEPALIVE unsigned wadaWebFsGeneration() { return wadaHostFsGeneration(); }
@@ -165,8 +175,15 @@ EMSCRIPTEN_KEEPALIVE unsigned wadaWebFsGeneration() { return wadaHostFsGeneratio
 EMSCRIPTEN_KEEPALIVE void wadaWebFlush() { wadaBoardFlush(); }
 }
 
+// The canvas size the page picked from the window (web/shell/app.js Module.wadaSize).
+EM_JS(int, wada_js_size, (int which), {
+  var s = Module["wadaSize"] || [800, 480];
+  return s[which] | 0;
+});
+
 int main() {
   setvbuf(stdout, nullptr, _IOLBF, 0);
+  wadaWebSetSize(wada_js_size(0), wada_js_size(1));
   s_rgba = (uint8_t*)malloc((size_t)WADA_WEB_W * WADA_WEB_H * 4);
   g_wada_restart_hook = webRestart;
   // Which mesh: the demo, or the node the page's Connect chooser picked. Each backend

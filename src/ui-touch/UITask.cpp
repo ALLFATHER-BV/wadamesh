@@ -9852,6 +9852,11 @@ static void externalKbdNoteFieldPress(lv_obj_t* ta) {
 }
 // On CLICKED: for such a second tap, summon the keys for this editing session.
 static void externalKbdSecondTap(lv_obj_t* ta) {
+#if CAP_NATIVE_KEYBOARD
+  // The phone's own keyboard is this board's keys (the browser build on a phone): a second
+  // tap reopens it (the page does that), it does not summon the UI's keys on top.
+  if (boardNativeKeyboard()) { s_osk_press_ta = nullptr; return; }
+#endif
   if (ta && ta == s_osk_press_ta) s_osk_forced = true;
   s_osk_press_ta = nullptr;
 }
@@ -49617,6 +49622,9 @@ static int bleKbdLuaCode(int key) {
 
 #if defined(HAS_CARDKB)
 static int cardKbUiKey(int raw) {
+  // A keyboard that already speaks Unicode (the browser's: any script, emoji, the phone's
+  // own keyboard) hands over text as BLE_KEY_TEXT | code point. A CardKB never sets it.
+  if (raw & BLE_KEY_TEXT) return raw;
   switch (raw) {
     case 0x08:
     case 0x7F: return BLE_KEY_BACKSPACE;
@@ -73525,7 +73533,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 800 : 480);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 480 : 800);
 #elif defined(WADA_WEB)
-    // The web board's canvas (web/platform/WebDisplay.h): fixed landscape, no remote mode.
+    // The web board's canvas (web/platform/WebDisplay.h): picked at boot from the window
+    // (800x480 landscape, or portrait on a phone), already upright; no remote mode.
     g_lv.disp_drv.hor_res  = WADA_WEB_W;
     g_lv.disp_drv.ver_res  = WADA_WEB_H;
 #else

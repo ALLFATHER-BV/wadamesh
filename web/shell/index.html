@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="wadamesh">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>wadamesh in your browser</title>
 <meta name="description" content="The real wadamesh touch UI, running in your browser on a demo mesh or your own MeshCore node.">
 <meta name="theme-color" content="#000400">
@@ -29,9 +35,12 @@
     <div id="more-menu" class="menu" role="menu" hidden>
       <button id="btn-backup" type="button" role="menuitem">Back up this browser<span>Everything this page keeps for the demo or your node, as one file</span></button>
       <button id="btn-restore" type="button" role="menuitem">Restore a browser backup<span>Replaces what this page keeps, then restarts</span></button>
+      <button id="btn-reset2" type="button" role="menuitem">Reset demo data<span>The demo starts fresh</span></button>
     </div>
   </div>
   <input id="file-pick" type="file" hidden>
+  <textarea id="ime" autocapitalize="sentences" autocomplete="off" spellcheck="true" enterkeyhint="send"
+            aria-label="Message text" tabindex="-1"></textarea>
   <button id="btn-full" class="btn icon" type="button" aria-label="Fullscreen" title="Fullscreen">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
   </button>
@@ -48,7 +57,6 @@
   </div>
 </main>
 
-<p class="rotate-hint">Turn your phone sideways for a bigger screen.</p>
 <p class="hint">Mouse or finger = touch. Your keyboard types into the focused field, Enter sends, Esc goes back.
   Everything stays in this browser.</p>
 <div id="toast" role="status" aria-live="polite" hidden></div>

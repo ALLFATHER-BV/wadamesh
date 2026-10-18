@@ -7,12 +7,15 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#ifndef WADA_WEB_W
-#define WADA_WEB_W 800
-#endif
-#ifndef WADA_WEB_H
-#define WADA_WEB_H 480
-#endif
+// The canvas size is the board's resolution, picked by the front end at boot from the
+// window (web_main.cpp / host_main.cpp --size): 800x480 landscape, or a portrait
+// canvas on a phone (WEB_BUILD.md "Phones"). It never changes while the UI runs: an
+// orientation flip restarts the UI in the other layout, as a rotatable board does.
+extern int g_wada_web_w, g_wada_web_h;
+#define WADA_WEB_W g_wada_web_w
+#define WADA_WEB_H g_wada_web_h
+// Before the board boots (the display is a global, built before main()).
+void wadaWebSetSize(int w, int h);
 
 class WebDisplay : public DisplayDriver {
 public:
@@ -37,7 +40,8 @@ public:
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* px);
   void setBrightness(uint8_t level) { _brightness = level; }
   uint8_t brightness() const { return _brightness; }
-  void setDisplayRotation(uint8_t r) { (void)r; }   // fixed landscape canvas
+  void setDisplayRotation(uint8_t r) { (void)r; }   // the canvas is already the right way up
+  void resize(int w, int h);
 
   // platform side
   const uint16_t* framebuffer() const { return _fb; }

@@ -5,7 +5,7 @@
 // boot/loop order (shared with web_main.cpp, the Emscripten front end); this file is
 // the SDL window, the event pump and the scripted tour.
 //
-//   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N]
+//   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N] [--size WxH]
 //                 [--serial PATH | --tcp HOST:PORT] [--read-only]
 //     --headless   no window (CI / release gate); the framebuffer is still rendered
 //     --script     scripted input: wait/tap/drag/key/type/shot/quit, one per line
@@ -114,8 +114,7 @@ void pumpEvents() {
         break;
       case SDL_KEYDOWN: keyDown(e.key.keysym); break;
       case SDL_TEXTINPUT:
-        for (const char* p = e.text.text; *p; ++p)
-          if ((uint8_t)*p >= 0x20 && (uint8_t)*p < 0x7F) webKeyPush((uint8_t)*p);   // ASCII (CardKB path)
+        webTextPush(e.text.text);   // any script: ASCII as CardKB codes, the rest as text
         break;
       case SDL_WINDOWEVENT:
         if (e.window.event == SDL_WINDOWEVENT_EXPOSED || e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
@@ -219,6 +218,10 @@ int main(int argc, char** argv) {
     else if (a == "--script" && i + 1 < argc) script_path = argv[++i];
     else if (a == "--shots" && i + 1 < argc) s_shot_dir = argv[++i];
     else if (a == "--scale" && i + 1 < argc) scale = atoi(argv[++i]);
+    else if (a == "--size" && i + 1 < argc) {   // e.g. 480x960: a phone's portrait canvas
+      int w = 0, h = 0;
+      if (sscanf(argv[++i], "%dx%d", &w, &h) == 2) wadaWebSetSize(w, h);
+    }
     else if (a == "--serial" && i + 1 < argc) { choice.kind = "serial"; choice.arg = argv[++i]; }
     else if (a == "--tcp" && i + 1 < argc) { choice.kind = "tcp"; choice.arg = argv[++i]; }
     else if (a == "--read-only") choice.read_only = true;
