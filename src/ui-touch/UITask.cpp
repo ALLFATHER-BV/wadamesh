@@ -47520,8 +47520,20 @@ static const unsigned long kLockUnlockHoldMs = 1000;
 static lv_obj_t* s_unlock_popup = nullptr;
 static lv_obj_t* s_unlock_count = nullptr;
 
-// Decode the configured wallpaper (internal SPIFFS path, or an "sd:"-prefixed SD
-// path) into a fresh RGB565 buffer; fall back to the embedded placeholder.
+static fs::FS* backupInternalFs();   // (with the Backups page) the file manager's Internal root
+static fs::FS* backupSdFs();         // and its SD card, mounted on demand; nullptr without one
+
+// The store a saved picture path (lock wallpaper, background) lives on: an "sd:"
+// prefix is the card, anything else internal storage. Same roots the file manager
+// picked it from, so SD_MMC and LittleFS/FFat on the P4 boards too (#691).
+static fs::FS* picturePathFs(const char* path, const char** fp) {
+  if (!strncmp(path, "sd:", 3)) { *fp = path + 3; return backupSdFs(); }
+  *fp = path;
+  return backupInternalFs();
+}
+
+// Decode the configured wallpaper (internal path, or an "sd:"-prefixed SD path)
+// into a fresh RGB565 buffer; fall back to the embedded placeholder.
 // Caller owns the buffer (lvglPsramFree). Returns nullptr only if even the
 // placeholder fails to decode.
 static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
@@ -47529,14 +47541,11 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
   touchPrefsGetLockWallpaper(path, sizeof path);
   // (The built-in default is handled by lockscreenShow() via the RGB565 embed;
   // this path only runs for user-selected wallpapers.)
-  fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD || defined(TLORA_PAGER)
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes (T-Deck SD only)
-#endif
+  fs::FS* fsp = picturePathFs(path, &fp);
 
   uint8_t* rgb = nullptr;
-  if (fp && fp[0]) {
+  if (fsp && fp[0]) {
     File f = fsp->open(fp, "r");
     if (f) {
       size_t sz = f.size();
@@ -48953,11 +48962,9 @@ static bool bgImageLoad() {
   {
   char path[TOUCH_LOCK_WALLPAPER_MAXLEN];
   if (touchPrefsGetBackgroundImage(path, sizeof path) <= 0) return false;
-  fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD || defined(TLORA_PAGER)
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }
-#endif
+  fs::FS* fsp = picturePathFs(path, &fp);
+  if (!fsp) return false;   // on a card that isn't in
   File f = fsp->open(fp, "r");
   if (!f) return false;
   const size_t sz = f.size();
