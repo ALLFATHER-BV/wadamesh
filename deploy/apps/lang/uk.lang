@@ -1998,3 +1998,165 @@ newer keyboard	новіша клавіатура
 older keyboard	старіша клавіатура
 older keyboard (set manually)	старіша клавіатура (задано вручну)
 keyboard not detected yet	клавіатуру ще не визначено
+Always use the external antenna (MMCX)	Завжди зовнішня антена (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Під час кожного запуску працює через зовнішній роз'єм. Лише для антени, що лишається підключеною.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Обирайте Зовнішню лише з антеною на зовнішньому роз'ємі. Після перезапуску вмикається вбудована антена, якщо перемикач нижче не ввімкнено.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Завжди використовувати зовнішню антену?\n\nРадіо запускатиметься на зовнішньому роз'ємі (MMCX) під час кожного ввімкнення. Передавання без підключеної антени може пошкодити радіо.\n\nВмикайте, лише якщо зовнішня антена лишається підключеною.
+Turn on	Увімкнути
+On-board antenna selected	Вибрано вбудовану антену
+External antenna at every boot	Зовнішня антена під час кожного запуску
+Antenna	Антена
+On-board	Вбудов.
+Glass tiles	Скляні плитки
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Віджети, картки й плитки панелі пропускають тло. Вимк.: суцільні плитки.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	Від 0 до 9. Більше значення довше чекає між надсиланнями.
+A name is required	Потрібне ім'я
+A node clock only moves forward: syncing cannot set it back.	Годинник вузла йде лише вперед: синхронізація не може повернути його назад.
+A room server lists only its admins here.	Room-сервер показує тут лише своїх адміністраторів.
+Access	Доступ
+Access changed	Доступ змінено
+Actions	Дії
+Admin password	Пароль адміністратора
+Admin password changed.	Пароль адміністратора змінено.
+Admin password for full control, or the room password.	Пароль адміністратора для повного керування або пароль кімнати.
+Admin password for full control. A guest sees status and neighbours.	Пароль адміністратора для повного керування. Гість бачить стан і сусідів.
+Advanced	Додатково
+Advert hop limit	Ліміт хопів для оголошень
+Advert intervals	Інтервали оголошень
+Adverts	Оголошення
+Again	Ще раз
+Airtime factor	Коефіцієнт ефірного часу
+Bandwidth	Ширина смуги
+Change	Змінити
+Change radio settings	Змінити налаштування радіо
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Змінити пароль адміністратора? Якщо ви його втратите, то більше не зможете керувати цим вузлом через мережу.
+Clients	Клієнти
+Coding rate	Швидкість кодування
+Console	Консоль
+Current	Поточні
+Decimal degrees, for example 4.4025	Десяткові градуси, наприклад 4.4025
+Decimal degrees, for example 51.2194	Десяткові градуси, наприклад 51.2194
+Direct send delay	Затримка прямого надсилання
+Discover neighbours	Шукати сусідів
+Duplicates	Дублікати
+Enter a number	Введіть число
+Enter a password	Введіть пароль
+Error	Помилка
+Errors	Помилки
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Оновлення: вузол відкриває точку доступу Wi-Fi; під'єднайтеся до неї й завантажте нову прошивку в браузері, як сказано в інструкціях вузла.
+Flood advert	Flood-оголошення
+Flood hop limit	Ліміт хопів для flood
+Flood send delay	Затримка надсилання flood
+Floods with more hops are not repeated. 0 to 64.	Flood з більшою кількістю хопів не повторюється. Від 0 до 64.
+Frequency: 150 to 2500 MHz	Частота: від 150 до 2500 МГц
+Guest	Гість
+Guest password	Пароль гостя
+Hours between flood adverts: 0 (off) or 3 to 168.	Години між flood-оголошеннями: 0 (вимк.) або від 3 до 168.
+How hard to drop packets that came back around.	Наскільки суворо відкидати пакети, що повернулися по колу.
+Identity	Ідентифікація
+Identity & location	Ідентифікація і місце
+Last reply	Остання відповідь
+Last signal	Останній сигнал
+Lets a wrong or blank password in to read, not to post.	Пускає з неправильним або порожнім паролем для читання, але не для дописів.
+Load more (%d of %u)	Завантажити ще (%d з %u)
+Local advert	Локальне оголошення
+Location	Місцезнаходження
+Log in	Увійти
+Log in as admin	Увійти як адміністратор
+Log in as guest	Увійти як гість
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Вхід як гість: можна читати стан і сусідів. Увійдіть із паролем адміністратора, щоб змінювати налаштування.
+Logged in without admin rights. Log in with the admin password to change settings.	Вхід без прав адміністратора. Увійдіть із паролем адміністратора, щоб змінювати налаштування.
+Logging in...	Вхід...
+Login refused.	Вхід відхилено.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Вхід як гість. Порожній пускає будь-кого гостем. До 15 символів.
+Loop detection	Виявлення петель
+Manage	Керування
+Members log in with it to post. Up to 15 characters.	Учасники входять із ним, щоб писати. До 15 символів.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Хвилини між оголошеннями без хопів: 0 (вимк.) або від 60 до 240.
+Moderate	Помірне
+Neighbours	Сусіди
+New password	Новий пароль
+Newest	Найновіші
+No neighbours heard yet.	Сусідів ще не чути.
+No reply	Немає відповіді
+No reply from the node	Вузол не відповідає
+No reply. Check the password, that the node is in range, and this device's clock.	Немає відповіді. Перевірте пароль, чи вузол у зоні зв'язку, і годинник цього пристрою.
+No reply. It may or may not have been applied: read it again.	Немає відповіді. Можливо, застосовано, а можливо, ні: прочитайте знову.
+No spaces	Без пробілів
+Nobody on the list.	У списку нікого немає.
+Node clock	Годинник вузла
+Noise floor	Рівень шуму
+Not in your contacts	Немає у ваших контактах
+Not in your contacts, so only removing is possible here.	Немає у ваших контактах, тож тут можна лише видалити.
+Not saved	Не збережено
+Off: this node stops forwarding anything.	Вимк.: цей вузол перестає будь-що пересилати.
+Order	Порядок
+Owner	Власник
+Owner info	Інформація власника
+Password	Пароль
+Passwords	Паролі
+Passwords & access	Паролі й доступ
+Posts	Дописи
+Prefers stronger copies of a flood. 0 to 20.	Надає перевагу сильнішим копіям flood. Від 0 до 20.
+Queue	Черга
+Random delay factor before repeating a flood. 0 to 2.	Випадковий коефіцієнт затримки перед повтором flood. Від 0 до 2.
+Read again	Прочитати знову
+Read-only	Лише читання
+Read-only access	Доступ лише для читання
+Read-write	Читання й запис
+Reading...	Читання...
+Reboot sent. The node is back in about 10 s.	Перезавантаження надіслано. Вузол повернеться приблизно за 10 с.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Перезавантажити вузол? Він буде поза ефіром близько 10 с і забуде входи гостей.
+Receive delay	Затримка приймання
+Received	Отримано
+Refresh	Оновити
+Regions	Регіони
+Remove access	Видалити доступ
+Remove this client's access?	Видалити доступ цього клієнта?
+Repeat packets	Повторювати пакети
+Repeaters this node hears directly, with the signal it hears them at.	Ретранслятори, які цей вузол чує напряму, із сигналом, з яким він їх чує.
+Repeating	Повтор
+Repeating & limits	Повтор і обмеження
+Reset counters	Скинути лічильники
+Reset the node's packet counters?	Скинути лічильники пакетів вузла?
+Room password	Пароль кімнати
+Save (after a reboot)	Зберегти (після перезавантаження)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Зберегти нові налаштування радіо?\nЗараз: %s\nНові: %s\nВони діють після перезавантаження. Неправильні значення можуть назавжди відрізати цей вузол.
+Saved. Applies after a reboot.	Збережено. Діє після перезавантаження.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Збережено. Вузол використає нові налаштування радіо після перезавантаження. Перезавантажити зараз?
+Saving...	Збереження...
+Send flood advert	Надіслати flood-оголошення
+Send now	Надіслати зараз
+Send zero-hop advert	Надіслати оголошення без хопів
+Set the node's position to this device's position?	Встановити позицію вузла за позицією цього пристрою?
+Shown to anyone who asks this node. Up to 119 characters.	Показується кожному, хто запитає цей вузол. До 119 символів.
+Spreading factor	Фактор розширення
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Почати оновлення прошивки на вузлі? Він відкриє власну точку доступу Wi-Fi до оновлення чи перезавантаження і тим часом нічого не повторює.
+Start firmware update	Почати оновлення прошивки
+Strict	Суворе
+Strongest	Найсильніші
+Sync clock to this device	Синхронізувати годинник із цим пристроєм
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Дерево регіонів вузла: ^ позначає його домашній регіон, F що він повторює flood для цього регіону. Регіони змінюються в Консолі.
+The passwords do not match	Паролі не збігаються
+The position goes out in the node's adverts.	Позиція передається в оголошеннях вузла.
+The same for direct packets. 0 to 2.	Те саме для прямих пакетів. Від 0 до 2.
+The same limit for adverts. 0 to 64.	Той самий ліміт для оголошень. Від 0 до 64.
+This device	Цей пристрій
+This device has no position	Цей пристрій не має позиції
+Transmit power	Потужність передавання
+Try	Спробувати
+Try for 10 minutes	Спробувати 10 хвилин
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Спробувати нові налаштування радіо на %u хвилин?\nЗараз: %s\nПроба: %s\nВузол повернеться сам. До того він доступний лише на нових налаштуваннях.
+Up to 31 characters, without [ ] \\ : , ? *	До 31 символу, без [ ] \\ : , ? *
+Updated %s ago	Оновлено %s тому
+Uptime	Час роботи
+Use my position	Використати мою позицію
+Use this device's settings	Використати налаштування цього пристрою
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Неправильні налаштування радіо можуть відрізати цей вузол: тоді він доступний лише на нових налаштуваннях або зовсім недоступний. Спершу спробуйте їх; вузол повернеться сам.
+dBm, -9 to 30. Applies at once.	дБм, від -9 до 30. Діє одразу.
+pushed	надіслано
+you	ви
+Flood in / out	Flood вхід / вихід
+Direct in / out	Прямі вхід / вихід
+Airtime TX / RX	Ефірний час TX / RX

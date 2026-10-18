@@ -138,6 +138,7 @@ const char* cmdName(uint8_t c) {
     case CMD_GET_CHANNEL: return "GET_CHANNEL"; case CMD_SET_CHANNEL: return "SET_CHANNEL";
     case CMD_SEND_TRACE_PATH: return "SEND_TRACE_PATH"; case CMD_SET_OTHER_PARAMS: return "SET_OTHER_PARAMS";
     case CMD_SEND_TELEMETRY_REQ: return "SEND_TELEMETRY_REQ"; case CMD_SEND_ANON_REQ: return "SEND_ANON_REQ";
+    case CMD_SEND_BINARY_REQ: return "SEND_BINARY_REQ";
     case CMD_RUN_CLI_COMMAND: return "RUN_CLI_COMMAND"; case CMD_SET_DEVICE_PIN: return "SET_DEVICE_PIN";
     default: return "CMD";
   }
@@ -291,6 +292,18 @@ public:
       send(f, [this, k](const uint8_t* r, size_t) { if (r && r[0] == RESP_ERR) _sessions.erase(k); });
     }
     return true;
+  }
+  int binaryRequest(const ContactInfo& c, const uint8_t* payload, uint8_t len) override {
+    if (!_ready || !payload || !len) return MSG_SEND_FAILED;
+    std::vector<uint8_t> f = {CMD_SEND_BINARY_REQ};
+    f.insert(f.end(), c.id.pub_key, c.id.pub_key + PUB_KEY_SIZE);
+    f.insert(f.end(), payload, payload + len);
+    const Key k = toKey(c.id.pub_key);
+    _bin_tag = 0;
+    send(f, [this, k](const uint8_t* r, size_t n) {
+      if (r && r[0] == RESP_SENT && n >= 10) { _bin_tag = rd32(r + 2); _bin_key = k; }
+    });
+    return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
   }
   int requestRegions(const uint8_t pub_key[32], uint32_t& est_timeout) override {
     est_timeout = 0;
@@ -797,6 +810,9 @@ private:
         return;
       case PUSH_LOGIN_SUCCESS:
       case PUSH_LOGIN_FAIL:
+        // A modern LOGIN_OK: code, perms, key prefix (6), server clock (4), ACL, firmware level
+        if (f[0] == PUSH_LOGIN_SUCCESS && n >= 14 && _ev)
+          if (const ContactInfo* c = findKnownPrefix(f + 2, 6)) _ev->beLoginInfo(c->id.pub_key, f[12], f[13]);
         if (n >= 8) onLogin(f[0] == PUSH_LOGIN_SUCCESS, f[1], f + 2, n >= 12 ? rd32(f + 8) : 0);
         return;
       case PUSH_STATUS_RESPONSE:
@@ -826,7 +842,14 @@ private:
         return;
       }
       case PUSH_BINARY_RESPONSE: {
-        if (n < 6 || !_regions_tag || rd32(f + 2) != _regions_tag) return;
+        if (n < 6) return;
+        const uint32_t tag = rd32(f + 2);
+        if (_bin_tag && tag == _bin_tag) {   // the admin app's request (CMD_SEND_BINARY_REQ)
+          _bin_tag = 0;
+          if (_ev) _ev->beBinaryReply(_bin_key.data(), f + 6, n - 6);
+          return;
+        }
+        if (!_regions_tag || tag != _regions_tag) return;
         _regions_tag = 0;
         if (_ev) _ev->beRegionsReply(_regions_key.data(), f + 2, n - 2);   // tag, clock, CSV: as on a device
         return;
@@ -1021,6 +1044,8 @@ private:
   std::map<Key, uint32_t> _sessions;   // logged in this session -> last checked
   uint32_t _regions_tag = 0;
   Key _regions_key{};
+  uint32_t _bin_tag = 0;   // the admin app's binary request in flight
+  Key _bin_key{};
 };
 
 }  // namespace

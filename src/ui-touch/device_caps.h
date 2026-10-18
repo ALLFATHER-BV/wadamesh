@@ -77,6 +77,17 @@
   #define CAP_LOCK_SCREEN  0   // no user button to unlock with
   #define CAP_BATTERY      0   // no battery voltage sensing
 
+#elif defined(HAS_SENSECAP_INDICATOR)    // ===== Seeed SenseCAP Indicator D1L (ESP32-S3) =====
+  #define CAP_TOUCH        1
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 1   // 480x480
+  #define CAP_SD           0
+  #define CAP_FILESYSTEM   1
+  #define CAP_GPS          0
+  #define CAP_OTA          0   // one factory app slot, no in-place update
+  #define CAP_LOCK_SCREEN  0
+  #define CAP_BATTERY      0   // no battery fitted
+
 #elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    0
@@ -203,7 +214,8 @@
 
 #elif defined(HAS_CROWPANEL_P4_101)   // ===== Elecrow CrowPanel Advanced 10.1" (ESP32-P4 + C6) =====
   // EXPERIMENTAL. 1024x600 EK79007 IPS on MIPI-DSI, GT911 touch, SX1262 module on the wireless
-  // header, C6 Wi-Fi/BLE (esp-hosted 2.12.3 factory firmware), SD_MMC 1-bit. 32 MB PSRAM.
+  // header, C6 Wi-Fi/BLE (esp-hosted; Elecrow documents 2.12.3, but V1.0 units have been seen with
+  // 2.3.0, which still comes up: main.cpp logs the version), SD_MMC 1-bit. 32 MB PSRAM.
   #define CAP_TOUCH        1   // GT911 capacitive touch
   #define CAP_ROTATABLE    0   // native 1024x600 landscape; the DSI panel cannot rotate in hardware
   #define CAP_LARGE_SCREEN 1   // large-panel layouts + the UI-size fonts, rendered at native resolution
@@ -248,6 +260,17 @@
   #define CAP_MICROSD 1
 #else
   #define CAP_MICROSD 0
+#endif
+
+// No dedicated "tiles" LittleFS partition in the board's own partition table, and no free flash to
+// add one without moving partitions that hold user data (16 MB maps: 2 x 4 MB OTA + 8000 KB storage
+// + coredump fill the chip). The Wi-Fi map tile cache then goes to the microSD when one is mounted,
+// else to the internal LittleFS 'storage' partition, where tilesFsLowSpace() keeps headroom free for
+// identity, contacts and chat history.
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+  #define CAP_TILES_ON_STORAGE 1
+#else
+  #define CAP_TILES_ON_STORAGE 0
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
@@ -378,6 +401,16 @@
   #define CAP_GPS_BAUD_AUTO 1
 #else
   #define CAP_GPS_BAUD_AUTO 0
+#endif
+
+// A switchable LoRa antenna: an on-board antenna plus an external socket, picked at
+// run time (T-Display P4: SKY13453 on XL9535 IO1). Gates the Radio settings antenna
+// rows, the "Always use the external antenna" boot option and the control panel
+// antenna tile. The board glue lives in UITask.cpp (antSelMode/antSelSet).
+#if defined(HAS_TDISPLAY_P4)
+  #define CAP_ANTENNA_SELECT 1
+#else
+  #define CAP_ANTENNA_SELECT 0
 #endif
 
 // ---- Capabilities aliased to existing device-neutral macros -----------------

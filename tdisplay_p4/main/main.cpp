@@ -517,7 +517,10 @@ extern "C" void app_main(void) {
   #if TDP4_C6_HOSTED
     const bool c6_up = s_hosted_c6_up;
   #else
-    const bool c6_up = c6at_is_up();
+    // A runtime C6 reset (#685) still counts as "up" here: the worker is bringing the link
+    // back and rejoins by itself. Treating it as down would run the radio-off branch below
+    // (disconnect + WIFI_OFF), which cancels that rejoin and forgets the station was wanted.
+    const bool c6_up = c6at_is_up() || c6at_is_recovering();
   #endif
     bool wifi_radio_en = c6_up && wifiConfigWantsWifi();
     // The C6 runs its own AT firmware with auto-connect enabled, so after a power
@@ -558,6 +561,12 @@ extern "C" void app_main(void) {
       }
       if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED) {
         uint32_t now = millis();
+#if !TDP4_C6_HOSTED
+        // A join already pending or running on the C6 (or a C6 reset in progress, which rejoins
+        // on its own) owns the association. Retrying now would only stack a second CWJAP behind
+        // it, so restart the 10 s window instead.
+        if (c6at_join_busy() || c6at_is_recovering()) last_wifi_retry_ms = now;
+#endif
         if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
           last_wifi_retry_ms = now;
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];

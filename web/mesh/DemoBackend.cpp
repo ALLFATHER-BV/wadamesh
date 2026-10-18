@@ -21,6 +21,7 @@
 #include <helpers/BaseChatMesh.h>
 #include <helpers/TxtDataHelpers.h>
 #include <vector>
+#include <array>
 #include <string>
 #include <math.h>
 #include "WebLocation.h"
@@ -100,9 +101,10 @@ int32_t absCoord(int32_t base, double d) { return d == 0.0 ? 0 : (int32_t)(base 
 
 struct Pending {
   uint32_t due_ms;
-  enum Kind { Ack, Reply, Repeat, Status, Trace } kind;
+  enum Kind { Ack, Reply, Repeat, Status, Trace, Login, Binary, Cli } kind;
   uint8_t key[PUB_KEY_SIZE];
   uint32_t value;
+  std::string text;   // Cli: the command line; Binary: the request
 };
 
 class DemoBackend : public MeshBackend {
@@ -214,6 +216,36 @@ public:
   int requestStatus(const ContactInfo& c) override {
     if (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
     queue(Pending::Status, c.id.pub_key, 0, 900 + (uint32_t)random(800));
+    return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
+  }
+  // Repeater / room admin (the repeater admin app): any password is the admin's, an
+  // empty one a guest's; the demo repeater answers status, neighbours, its access list,
+  // owner info and a few CLI lines.
+  int login(const ContactInfo& c, const char* password) override {
+    if (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
+    queue(Pending::Login, c.id.pub_key, (password && password[0]) ? 1u : 0u, 700 + (uint32_t)random(600));
+    return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
+  }
+  bool hasConnectionTo(const uint8_t pub_key[32]) override {
+    for (const auto& k : _logged_in) if (memcmp(k.data(), pub_key, PUB_KEY_SIZE) == 0) return true;
+    return false;
+  }
+  int binaryRequest(const ContactInfo& c, const uint8_t* payload, uint8_t len) override {
+    if ((c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) || !payload || !len) return MSG_SEND_FAILED;
+    Pending p{};
+    p.due_ms = millis() + 800 + (uint32_t)random(700); p.kind = Pending::Binary;
+    memcpy(p.key, c.id.pub_key, PUB_KEY_SIZE);
+    p.text.assign((const char*)payload, len);
+    _pending.push_back(p);
+    return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
+  }
+  int sendCli(const ContactInfo& c, const char* text) override {
+    if ((c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) || !text) return MSG_SEND_FAILED;
+    Pending p{};
+    p.due_ms = millis() + 700 + (uint32_t)random(600); p.kind = Pending::Cli;
+    memcpy(p.key, c.id.pub_key, PUB_KEY_SIZE);
+    p.text = text;
+    _pending.push_back(p);
     return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
   }
   uint32_t tracePing(const uint8_t pub_key[32]) override {
@@ -330,12 +362,83 @@ private:
         put16(4, (uint16_t)(int16_t)-118);  // noise_floor
         put16(6, (uint16_t)(int16_t)-87);   // last_rssi
         put32(8, 18234); put32(12, 9120);   // n_recv, n_sent
-        put32(16, 6 * 86400 + 4 * 3600 + 17 * 60);   // uptime_secs (at offset 16 in the UI's reader)
+        put32(16, 2 * 3600 + 13 * 60);              // TX airtime
+        put32(20, 6 * 86400 + 4 * 3600 + 17 * 60);   // uptime_secs
+        put32(24, 3120); put32(28, 2210);   // sent flood / direct
+        put32(32, 11870); put32(36, 6364);  // recv flood / direct
+        put16(42, (uint16_t)(int16_t)(6 * 4));   // last SNR x4
+        put16(44, 41); put16(46, 377);      // direct / flood duplicates
+        put32(48, 41 * 60); put32(52, 12);  // rx airtime, receive errors (a repeater's extras)
         _ev->beStatusReply(p.key, s, sizeof s);
         break;
       }
       case Pending::Trace:  _ev->beTraceResult(p.value, (int8_t)(5 + random(4)), (int8_t)(6 + random(4))); break;
+      case Pending::Login: {
+        std::array<uint8_t, PUB_KEY_SIZE> k; memcpy(k.data(), p.key, PUB_KEY_SIZE);
+        _logged_in.push_back(k);
+        _ev->beLoginInfo(p.key, p.value ? 3 : 0, 2);   // ACL role admin / guest, firmware level 2
+        _ev->beLoginResult(p.key, true, p.value ? 1 : 0, (uint32_t)time(nullptr));
+        break;
+      }
+      case Pending::Binary: fireBinary(p); break;
+      case Pending::Cli: {
+        const std::string& c = p.text;
+        std::string out;
+        if (c == "ver") out = "v1.18.0 (demo)";
+        else if (c == "clock") out = "> the repeater's clock matches yours";
+        else if (c.rfind("get ", 0) == 0) {
+          const std::string k = c.substr(4);
+          out = k == "name" ? "> Hilltop Repeater" : k == "radio" ? "> 869.525,250.0,11,5"
+              : k == "tx" ? "> 22" : k == "advert.interval" ? "> 120" : k == "flood.max" ? "> 64"
+              : k == "repeat" ? "> on" : k == "owner.info" ? "> Run by the demo club" : "> (demo) " + k;
+        } else if (c.rfind("set ", 0) == 0) out = "OK";
+        else out = "Error: the demo repeater only knows get, set, ver and clock";
+        _ev->beCliReply(p.key, out.c_str());
+        break;
+      }
     }
+  }
+  // The repeater's answers to the admin app's binary requests (RepeaterAdminProto.h).
+  void fireBinary(const Pending& p) {
+    const uint8_t* q = (const uint8_t*)p.text.data();
+    const size_t ql = p.text.size();
+    std::vector<uint8_t> r;
+    auto u16 = [&](uint16_t v) { r.push_back((uint8_t)v); r.push_back((uint8_t)(v >> 8)); };
+    auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) r.push_back((uint8_t)(v >> (8 * i))); };
+    switch (ql ? q[0] : 0) {
+      case 0x06: {   // GET_NEIGHBOURS: count at [2], offset [3..4], prefix length [6]
+        const uint8_t plen = (ql > 6 && q[6] >= 1 && q[6] <= 8) ? q[6] : 4;
+        static const char* const kNb[] = { "Sanne", "Diego", "Ridge Repeater", "Harbor Room", "Lars", "Femke" };
+        static const uint32_t kAgo[] = { 95, 1500, 380, 640, 140, 3 * 86400 };
+        static const int8_t kSnr[] = { 34, 10, 22, -6, 14, -18 };
+        const int n = 6;
+        u16(n); u16(n);
+        for (int i = 0; i < n; ++i) {
+          uint8_t k[PUB_KEY_SIZE]; demoKey(kNb[i], k);
+          r.insert(r.end(), k, k + plen);
+          u32(kAgo[i]);
+          r.push_back((uint8_t)kSnr[i]);
+        }
+        break;
+      }
+      case 0x05: {   // GET_ACCESS_LIST: 6-byte prefix + permissions
+        static const char* const kAcl[] = { NODE_NAME, "Sanne", "Diego" };
+        static const uint8_t kPerm[] = { 3, 2, 1 };
+        for (int i = 0; i < 3; ++i) {
+          uint8_t k[PUB_KEY_SIZE]; demoKey(kAcl[i], k);
+          r.insert(r.end(), k, k + 6);
+          r.push_back(kPerm[i]);
+        }
+        break;
+      }
+      case 0x07: {   // GET_OWNER_INFO
+        static const char kOwner[] = "v1.18.0\nHilltop Repeater\nRun by the demo club. Solar, 6 dBi on the water tower.";
+        r.insert(r.end(), kOwner, kOwner + sizeof kOwner - 1);
+        break;
+      }
+      default: return;   // unknown request: no answer, as a repeater
+    }
+    _ev->beBinaryReply(p.key, r.data(), r.size());
   }
   void queue(Pending::Kind k, const uint8_t key[PUB_KEY_SIZE], uint32_t value, uint32_t delay_ms) {
     Pending p{};
@@ -350,6 +453,7 @@ private:
   uint32_t _t0 = 0, _next_chatter = 0, _next_advert = 0;
   unsigned _chatter_i = 0, _advert_i = 0, _reply_i = 0;
   std::vector<Pending> _pending;
+  std::vector<std::array<uint8_t, PUB_KEY_SIZE>> _logged_in;
 };
 
 }  // namespace

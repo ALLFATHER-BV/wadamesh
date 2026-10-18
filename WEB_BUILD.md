@@ -162,6 +162,16 @@ companion link can answer them:
 | `uiRegisterExpectedAck` | no-op (the backend matches its own ACKs) |
 | `getNextCompanionRetryWakeDelay`, `hasPendingWork`, `persistSyncHistoryNow` | false / no-op (no companion retry or sync ring here) |
 
+The repeater admin app (main's `RepeaterAdminApp.h`) added `sendStatusPingForUI`,
+`sendTelemetryRequestForUI`, `uiSendBinaryRequest` (-> `AbstractUITask::onBinaryReply`),
+`UiReqKind::Binary` and `uiLastLoginInfo()` / `UiLoginInfo`: over a node they are
+`SEND_STATUS_REQ` / `SEND_TELEMETRY_REQ`, `CMD_SEND_BINARY_REQ` answered by
+`PUSH_BINARY_RESPONSE` with the request's tag, and the ACL + firmware-level bytes of a
+modern `PUSH_LOGIN_SUCCESS` (`beLoginInfo`); the demo's Hilltop Repeater and Harbor Room
+take any password as the admin's (empty: guest) and answer status, neighbours, the
+access list, owner info and a few CLI lines (screenshots `web/docs/admin-demo-*.png`;
+the mock node answers neighbours and owner info for `nodetest`-style runs).
+
 Moved from unavailable to working: `uiExportBackup`, `uiImportBackup` (see
 "Backups"); by the companion backend (16): `setBLEPin`,
 `uiShareContact`, `uiSendAdminLogin`, `uiSendAdminCommand`, `uiRoomRelogin`,
@@ -362,8 +372,10 @@ is never cross-origin isolated, so there is no SharedArrayBuffer and no pthreads
   (hist_flush, tile_fetch, the prefs writer, ...) are Emscripten fibers on the page's one
   thread, `web/compat/src/freertos_coop.cpp`, run once per frame after the UI step.
   Every wait is a yield point (vTaskDelay, semaphore / queue / notification waits,
-  `delay()`, `yield()`); a wait on the UI thread runs the tasks meanwhile and lets the
-  browser in with `emscripten_sleep`. HTTP from a task is an async `emscripten_fetch`
+  `delay()`, `yield()`); a wait on the UI thread runs the tasks meanwhile and, inside
+  the main loop's step only, lets the browser in with `emscripten_sleep` (a call from
+  the page, such as the flush before a reload, must not unwind: there the wait runs
+  the tasks, and gives up after 3 s). HTTP from a task is an async `emscripten_fetch`
   the task waits for (the synchronous one would block the only thread); from the UI
   thread it fails at once, as in the threaded build. `esp_timer` callbacks are small
   tasks. Size: wasm 3.76 MB (gzip 1.61 MB) against 2.56 MB (1.32 MB) threaded (Asyncify

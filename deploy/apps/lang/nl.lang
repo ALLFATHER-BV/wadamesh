@@ -1995,3 +1995,166 @@ newer keyboard	nieuwer toetsenbord
 older keyboard	ouder toetsenbord
 older keyboard (set manually)	ouder toetsenbord (handmatig ingesteld)
 keyboard not detected yet	toetsenbord nog niet herkend
+Always use the external antenna (MMCX)	Altijd de externe antenne gebruiken (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Start bij elke opstart op de externe aansluiting. Alleen voor een antenne die aangesloten blijft.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Kies Extern alleen met een antenne op de externe aansluiting. Na een herstart begint hij op de ingebouwde antenne, tenzij de schakelaar hieronder aan staat.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Altijd de externe antenne gebruiken?\n\nDe radio start bij elke opstart op de externe (MMCX) aansluiting. Zenden zonder aangesloten antenne kan de radio beschadigen.\n\nZet dit alleen aan als je externe antenne aangesloten blijft.
+Turn on	Aanzetten
+On-board antenna selected	Ingebouwde antenne geselecteerd
+External antenna at every boot	Externe antenne bij elke opstart
+Antenna	Antenne
+On-board	Intern
+Glass tiles	Glazen tegels
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgets, kaarten en tegels in het bedieningspaneel laten de achtergrond doorschijnen. Uit: effen tegels.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 tot 9. Hoger wacht langer tussen verzendingen.
+A name is required	Een naam is verplicht
+A node clock only moves forward: syncing cannot set it back.	De klok van een node gaat alleen vooruit: synchroniseren kan hem niet terugzetten.
+A room server lists only its admins here.	Een room server toont hier alleen zijn admins.
+Access	Toegang
+Access changed	Toegang gewijzigd
+Actions	Acties
+Admin password	Adminwachtwoord
+Admin password changed.	Adminwachtwoord gewijzigd.
+Admin password for full control, or the room password.	Adminwachtwoord voor volledige controle, of het roomwachtwoord.
+Admin password for full control. A guest sees status and neighbours.	Adminwachtwoord voor volledige controle. Een gast ziet status en buren.
+Advanced	Geavanceerd
+Advert hop limit	Hoplimiet voor adverts
+Advert intervals	Advertintervallen
+Adverts	Adverts
+Again	Nogmaals
+Airtime factor	Zendtijdfactor
+Bandwidth	Bandbreedte
+Change	Wijzigen
+Change radio settings	Radio-instellingen wijzigen
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Adminwachtwoord wijzigen? Ben je het kwijt, dan kun je deze node niet meer via het mesh beheren.
+Clients	Clients
+Coding rate	Codeersnelheid
+Console	Console
+Current	Huidig
+Decimal degrees, for example 4.4025	Decimale graden, bijvoorbeeld 4.4025
+Decimal degrees, for example 51.2194	Decimale graden, bijvoorbeeld 51.2194
+Direct send delay	Zendvertraging direct
+Discover neighbours	Buren zoeken
+Duplicates	Duplicaten
+Enter a number	Voer een getal in
+Enter a password	Voer een wachtwoord in
+Error	Fout
+Errors	Fouten
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Firmware-update: de node opent een wifi-toegangspunt; maak er verbinding mee en upload de nieuwe firmware in een browser, zoals de instructies van de node zeggen.
+Flood advert	Flood-advert
+Flood hop limit	Hoplimiet voor floods
+Flood send delay	Zendvertraging flood
+Floods with more hops are not repeated. 0 to 64.	Floods met meer hops worden niet herhaald. 0 tot 64.
+Frequency: 150 to 2500 MHz	Frequentie: 150 tot 2500 MHz
+Guest	Gast
+Guest password	Gastwachtwoord
+Hours between flood adverts: 0 (off) or 3 to 168.	Uren tussen flood-adverts: 0 (uit) of 3 tot 168.
+How hard to drop packets that came back around.	Hoe streng pakketten die rondgingen worden weggegooid.
+Identity	Identiteit
+Identity & location	Identiteit & locatie
+Last reply	Laatste antwoord
+Last signal	Laatste signaal
+Lets a wrong or blank password in to read, not to post.	Laat een fout of leeg wachtwoord binnen om te lezen, niet om te posten.
+Load more (%d of %u)	Meer laden (%d van %u)
+Local advert	Lokale advert
+Location	Locatie
+Log in	Inloggen
+Log in as admin	Inloggen als admin
+Log in as guest	Inloggen als gast
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Ingelogd als gast: je kunt de status en buren lezen. Log in met het adminwachtwoord om instellingen te wijzigen.
+Logged in without admin rights. Log in with the admin password to change settings.	Ingelogd zonder adminrechten. Log in met het adminwachtwoord om instellingen te wijzigen.
+Logging in...	Inloggen...
+Login refused.	Inloggen geweigerd.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Logt in als gast. Leeg laat iedereen als gast binnen. Tot 15 tekens.
+Loop detection	Lusdetectie
+Manage	Beheren
+Members log in with it to post. Up to 15 characters.	Leden loggen hiermee in om te posten. Tot 15 tekens.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Minuten tussen zero-hop-adverts: 0 (uit) of 60 tot 240.
+Moderate	Gemiddeld
+Neighbours	Buren
+New password	Nieuw wachtwoord
+Newest	Nieuwste
+No neighbours heard yet.	Nog geen buren gehoord.
+No reply	Geen antwoord
+No reply from the node	Geen antwoord van de node
+No reply. Check the password, that the node is in range, and this device's clock.	Geen antwoord. Controleer het wachtwoord, of de node in bereik is, en de klok van dit toestel.
+No reply. It may or may not have been applied: read it again.	Geen antwoord. Misschien is het toegepast, misschien niet: lees het opnieuw.
+No spaces	Geen spaties
+Nobody on the list.	Niemand op de lijst.
+Node clock	Klok van de node
+Noise floor	Ruisvloer
+Not in your contacts	Niet in je contacten
+Not in your contacts, so only removing is possible here.	Niet in je contacten, dus hier is alleen verwijderen mogelijk.
+Not saved	Niet opgeslagen
+Off: this node stops forwarding anything.	Uit: deze node stuurt niets meer door.
+Order	Volgorde
+Owner	Eigenaar
+Owner info	Eigenaarsinfo
+Password	Wachtwoord
+Passwords	Wachtwoorden
+Passwords & access	Wachtwoorden & toegang
+Posts	Berichten
+Prefers stronger copies of a flood. 0 to 20.	Verkiest sterkere kopieën van een flood. 0 tot 20.
+Queue	Wachtrij
+Random delay factor before repeating a flood. 0 to 2.	Willekeurige vertragingsfactor voor het herhalen van een flood. 0 tot 2.
+Read again	Opnieuw lezen
+Read-only	Alleen lezen
+Read-only access	Alleen-lezentoegang
+Read-write	Lezen en schrijven
+Reading...	Lezen...
+Reboot sent. The node is back in about 10 s.	Herstart verstuurd. De node is over ongeveer 10 s terug.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	De node herstarten? Hij is ongeveer 10 s uit de lucht en vergeet gastlogins.
+Receive delay	Ontvangstvertraging
+Received	Ontvangen
+Refresh	Vernieuwen
+Regions	Regio's
+Remove access	Toegang verwijderen
+Remove this client's access?	De toegang van deze client verwijderen?
+Repeat packets	Pakketten herhalen
+Repeaters this node hears directly, with the signal it hears them at.	Repeaters die deze node rechtstreeks hoort, met het signaal waarmee hij ze hoort.
+Repeating	Herhalen
+Repeating & limits	Herhalen & limieten
+Reset counters	Tellers resetten
+Reset the node's packet counters?	De pakkettellers van de node resetten?
+Room password	Roomwachtwoord
+Save (after a reboot)	Opslaan (na een herstart)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Nieuwe radio-instellingen opslaan?\nNu: %s\nNieuw: %s\nZe gelden na een herstart. Foute waarden kunnen deze node voorgoed afsnijden.
+Saved. Applies after a reboot.	Opgeslagen. Geldt na een herstart.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Opgeslagen. De node gebruikt de nieuwe radio-instellingen na een herstart. Nu herstarten?
+Saving...	Opslaan...
+Send flood advert	Flood-advert versturen
+Send now	Nu versturen
+Send zero-hop advert	Zero-hop-advert versturen
+Set the node's position to this device's position?	De positie van de node instellen op de positie van dit toestel?
+Shown to anyone who asks this node. Up to 119 characters.	Getoond aan iedereen die deze node vraagt. Tot 119 tekens.
+Spreading factor	Spreidingsfactor
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Een firmware-update op de node starten? Hij opent een eigen wifi-toegangspunt tot hij bijgewerkt of herstart is, en herhaalt intussen niets.
+Start firmware update	Firmware-update starten
+Status	Status
+Strict	Streng
+Strongest	Sterkste
+Sync clock to this device	Klok gelijkzetten met dit toestel
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	De regioboom van de node: ^ markeert zijn thuisregio, F dat hij floods voor die regio herhaalt. Regio's bewerk je in de Console.
+The passwords do not match	De wachtwoorden komen niet overeen
+The position goes out in the node's adverts.	De positie gaat mee in de adverts van de node.
+The same for direct packets. 0 to 2.	Hetzelfde voor directe pakketten. 0 tot 2.
+The same limit for adverts. 0 to 64.	Dezelfde limiet voor adverts. 0 tot 64.
+This device	Dit toestel
+This device has no position	Dit toestel heeft geen positie
+Transmit power	Zendvermogen
+Try	Proberen
+Try for 10 minutes	10 minuten proberen
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Nieuwe radio-instellingen %u minuten proberen?\nNu: %s\nProef: %s\nDe node gaat vanzelf terug. Tot dan bereik je hem alleen met de nieuwe instellingen.
+Up to 31 characters, without [ ] \\ : , ? *	Tot 31 tekens, zonder [ ] \\ : , ? *
+Updated %s ago	%s geleden bijgewerkt
+Uptime	Uptime
+Use my position	Mijn positie gebruiken
+Use this device's settings	Instellingen van dit toestel gebruiken
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Foute radio-instellingen kunnen deze node afsnijden: je bereikt hem dan alleen met de nieuwe instellingen, of helemaal niet. Probeer ze eerst; de node gaat vanzelf terug.
+dBm, -9 to 30. Applies at once.	dBm, -9 tot 30. Geldt meteen.
+pushed	gepusht
+you	jij
+Flood in / out	Flood in / uit
+Direct in / out	Direct in / uit
+Airtime TX / RX	Zendtijd TX / RX

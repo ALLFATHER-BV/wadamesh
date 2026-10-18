@@ -1997,3 +1997,165 @@ newer keyboard	clavier récent
 older keyboard	ancien clavier
 older keyboard (set manually)	ancien clavier (réglé manuellement)
 keyboard not detected yet	clavier pas encore détecté
+Always use the external antenna (MMCX)	Toujours utiliser l'antenne externe (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Démarre sur la prise externe à chaque démarrage. Seulement pour une antenne qui reste branchée.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Ne choisissez Externe qu'avec une antenne branchée sur la prise externe. Après un redémarrage, c'est l'antenne embarquée, sauf si l'interrupteur ci-dessous est activé.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Toujours utiliser l'antenne externe ?\n\nLa radio démarrera sur la prise externe (MMCX) à chaque démarrage. Émettre sans antenne branchée peut endommager la radio.\n\nN'activez ceci que si votre antenne externe reste branchée.
+Turn on	Activer
+On-board antenna selected	Antenne embarquée sélectionnée
+External antenna at every boot	Antenne externe à chaque démarrage
+Antenna	Antenne
+On-board	Interne
+Glass tiles	Tuiles en verre
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Les widgets, cartes et tuiles du panneau laissent voir le fond. Désactivé : tuiles opaques.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 à 9. Plus haut attend plus longtemps entre deux envois.
+A name is required	Un nom est requis
+A node clock only moves forward: syncing cannot set it back.	L'horloge d'un nœud ne fait qu'avancer : la synchroniser ne peut pas la reculer.
+A room server lists only its admins here.	Un serveur de salon ne liste ici que ses admins.
+Access	Accès
+Access changed	Accès modifié
+Actions	Actions
+Admin password	Mot de passe admin
+Admin password changed.	Mot de passe admin modifié.
+Admin password for full control, or the room password.	Mot de passe admin pour le contrôle complet, ou le mot de passe du salon.
+Admin password for full control. A guest sees status and neighbours.	Mot de passe admin pour le contrôle complet. Un invité voit l'état et les voisins.
+Advanced	Avancé
+Advert hop limit	Limite de sauts des annonces
+Advert intervals	Intervalles d'annonce
+Adverts	Annonces
+Again	Encore
+Airtime factor	Facteur de temps d'antenne
+Bandwidth	Bande passante
+Change	Changer
+Change radio settings	Changer les réglages radio
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Changer le mot de passe admin ? Si vous le perdez, vous ne pourrez plus gérer ce nœud par le maillage.
+Clients	Clients
+Coding rate	Taux de codage
+Console	Console
+Current	Actuel
+Decimal degrees, for example 4.4025	Degrés décimaux, par exemple 4.4025
+Decimal degrees, for example 51.2194	Degrés décimaux, par exemple 51.2194
+Direct send delay	Délai d'envoi direct
+Discover neighbours	Chercher des voisins
+Duplicates	Doublons
+Enter a number	Entrez un nombre
+Enter a password	Entrez un mot de passe
+Error	Erreur
+Errors	Erreurs
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Mise à jour : le nœud ouvre un point d'accès Wi-Fi ; connectez-vous et envoyez le nouveau firmware dans un navigateur, comme l'indiquent les instructions du nœud.
+Flood advert	Annonce flood
+Flood hop limit	Limite de sauts des floods
+Flood send delay	Délai d'envoi flood
+Floods with more hops are not repeated. 0 to 64.	Les floods avec plus de sauts ne sont pas répétés. 0 à 64.
+Frequency: 150 to 2500 MHz	Fréquence : 150 à 2500 MHz
+Guest	Invité
+Guest password	Mot de passe invité
+Hours between flood adverts: 0 (off) or 3 to 168.	Heures entre annonces flood : 0 (arrêt) ou 3 à 168.
+How hard to drop packets that came back around.	Avec quelle rigueur jeter les paquets revenus en boucle.
+Identity	Identité
+Identity & location	Identité et position
+Last reply	Dernière réponse
+Last signal	Dernier signal
+Lets a wrong or blank password in to read, not to post.	Laisse entrer un mot de passe faux ou vide pour lire, pas pour publier.
+Load more (%d of %u)	Charger plus (%d sur %u)
+Local advert	Annonce locale
+Location	Position
+Log in	Se connecter
+Log in as admin	Se connecter en admin
+Log in as guest	Se connecter en invité
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Connecté en invité : vous pouvez lire l'état et les voisins. Connectez-vous avec le mot de passe admin pour changer les réglages.
+Logged in without admin rights. Log in with the admin password to change settings.	Connecté sans droits admin. Connectez-vous avec le mot de passe admin pour changer les réglages.
+Logging in...	Connexion...
+Login refused.	Connexion refusée.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Connexion en invité. Vide laisse entrer tout le monde en invité. 15 caractères au plus.
+Loop detection	Détection de boucles
+Manage	Gérer
+Members log in with it to post. Up to 15 characters.	Les membres se connectent avec pour publier. 15 caractères au plus.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Minutes entre annonces zéro saut : 0 (arrêt) ou 60 à 240.
+Moderate	Modérée
+Neighbours	Voisins
+New password	Nouveau mot de passe
+Newest	Plus récents
+No neighbours heard yet.	Aucun voisin entendu pour l'instant.
+No reply	Pas de réponse
+No reply from the node	Pas de réponse du nœud
+No reply. Check the password, that the node is in range, and this device's clock.	Pas de réponse. Vérifiez le mot de passe, que le nœud est à portée, et l'horloge de cet appareil.
+No reply. It may or may not have been applied: read it again.	Pas de réponse. Appliqué ou non, impossible de savoir : relisez la valeur.
+No spaces	Pas d'espaces
+Nobody on the list.	Personne dans la liste.
+Node clock	Horloge du nœud
+Noise floor	Bruit de fond
+Not in your contacts	Pas dans vos contacts
+Not in your contacts, so only removing is possible here.	Pas dans vos contacts : seule la suppression est possible ici.
+Not saved	Non enregistré
+Off: this node stops forwarding anything.	Arrêt : ce nœud ne relaie plus rien.
+Order	Ordre
+Owner	Propriétaire
+Owner info	Infos propriétaire
+Password	Mot de passe
+Passwords	Mots de passe
+Passwords & access	Mots de passe et accès
+Posts	Messages
+Prefers stronger copies of a flood. 0 to 20.	Préfère les copies plus fortes d'un flood. 0 à 20.
+Queue	File d'attente
+Random delay factor before repeating a flood. 0 to 2.	Facteur de délai aléatoire avant de répéter un flood. 0 à 2.
+Read again	Relire
+Read-only	Lecture seule
+Read-only access	Accès en lecture seule
+Read-write	Lecture et écriture
+Reading...	Lecture...
+Reboot sent. The node is back in about 10 s.	Redémarrage envoyé. Le nœud revient dans 10 s environ.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Redémarrer le nœud ? Il est hors antenne 10 s environ et oublie les connexions invité.
+Receive delay	Délai de réception
+Received	Reçus
+Refresh	Actualiser
+Regions	Régions
+Remove access	Retirer l'accès
+Remove this client's access?	Retirer l'accès de ce client ?
+Repeat packets	Répéter les paquets
+Repeaters this node hears directly, with the signal it hears them at.	Les répéteurs que ce nœud entend directement, avec le signal reçu.
+Repeating	Répétition
+Repeating & limits	Répétition et limites
+Reset counters	Remettre les compteurs à zéro
+Reset the node's packet counters?	Remettre à zéro les compteurs de paquets du nœud ?
+Room password	Mot de passe du salon
+Save (after a reboot)	Enregistrer (après redémarrage)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Enregistrer les nouveaux réglages radio ?\nActuel : %s\nNouveau : %s\nIls s'appliquent après un redémarrage. De mauvaises valeurs peuvent couper ce nœud pour de bon.
+Saved. Applies after a reboot.	Enregistré. S'applique après un redémarrage.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Enregistré. Le nœud utilise les nouveaux réglages radio après un redémarrage. Redémarrer maintenant ?
+Saving...	Enregistrement...
+Send flood advert	Envoyer une annonce flood
+Send now	Envoyer maintenant
+Send zero-hop advert	Envoyer une annonce zéro saut
+Set the node's position to this device's position?	Mettre la position du nœud à celle de cet appareil ?
+Shown to anyone who asks this node. Up to 119 characters.	Montré à quiconque interroge ce nœud. 119 caractères au plus.
+Spreading factor	Facteur d'étalement
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Lancer une mise à jour du firmware sur le nœud ? Il ouvre son propre point d'accès Wi-Fi jusqu'à la mise à jour ou un redémarrage, et ne répète plus rien entre-temps.
+Start firmware update	Lancer la mise à jour
+Strict	Stricte
+Strongest	Plus forts
+Sync clock to this device	Régler l'horloge sur cet appareil
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	L'arbre des régions du nœud : ^ marque sa région d'origine, F qu'il répète les floods de cette région. Modifiez les régions dans la Console.
+The passwords do not match	Les mots de passe ne correspondent pas
+The position goes out in the node's adverts.	La position part dans les annonces du nœud.
+The same for direct packets. 0 to 2.	Pareil pour les paquets directs. 0 à 2.
+The same limit for adverts. 0 to 64.	La même limite pour les annonces. 0 à 64.
+This device	Cet appareil
+This device has no position	Cet appareil n'a pas de position
+Transmit power	Puissance d'émission
+Try	Essayer
+Try for 10 minutes	Essayer 10 minutes
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Essayer de nouveaux réglages radio pendant %u minutes ?\nActuel : %s\nEssai : %s\nLe nœud revient seul en arrière. D'ici là, vous ne le joignez qu'avec les nouveaux réglages.
+Up to 31 characters, without [ ] \\ : , ? *	31 caractères au plus, sans [ ] \\ : , ? *
+Updated %s ago	Mis à jour il y a %s
+Uptime	Temps de fonctionnement
+Use my position	Utiliser ma position
+Use this device's settings	Utiliser les réglages de cet appareil
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	De mauvais réglages radio peuvent couper ce nœud : vous ne le joignez alors qu'avec les nouveaux réglages, ou plus du tout. Essayez-les d'abord ; le nœud revient seul en arrière.
+dBm, -9 to 30. Applies at once.	dBm, -9 à 30. S'applique tout de suite.
+pushed	poussés
+you	vous
+Flood in / out	Flood reçus / émis
+Direct in / out	Direct reçus / émis
+Airtime TX / RX	Temps d'antenne TX / RX

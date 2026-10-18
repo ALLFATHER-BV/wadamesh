@@ -2008,3 +2008,165 @@ newer keyboard	újabb billentyűzet
 older keyboard	régebbi billentyűzet
 older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
 keyboard not detected yet	a billentyűzet még nincs felismerve
+Always use the external antenna (MMCX)	Mindig a külső antenna (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Minden indításkor a külső csatlakozón indul. Csak tartósan csatlakoztatott antennához.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Külsőt csak akkor válassz, ha antenna van a külső csatlakozón. Újraindítás után a beépített antennán indul, kivéve ha az alábbi kapcsoló be van kapcsolva.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Mindig a külső antennát használod?\n\nA rádió minden indításkor a külső (MMCX) csatlakozón indul. Antenna nélküli adás károsíthatja a rádiót.\n\nCsak akkor kapcsold be, ha a külső antenna csatlakoztatva marad.
+Turn on	Bekapcsol
+On-board antenna selected	Beépített antenna kiválasztva
+External antenna at every boot	Külső antenna minden indításkor
+Antenna	Antenna
+On-board	Beépített
+Glass tiles	Üveg csempék
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	A widgetek, kártyák és a panel csempéi átengedik a hátteret. Ki: tömör csempék.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 és 9 között. Magasabb érték több várakozás a küldések között.
+A name is required	Név megadása kötelező
+A node clock only moves forward: syncing cannot set it back.	Egy node órája csak előre jár: a szinkronizálás nem tudja visszaállítani.
+A room server lists only its admins here.	Egy room szerver itt csak az adminjait listázza.
+Access	Hozzáférés
+Access changed	Hozzáférés módosítva
+Actions	Műveletek
+Admin password	Admin jelszó
+Admin password changed.	Admin jelszó megváltoztatva.
+Admin password for full control, or the room password.	Admin jelszó a teljes irányításhoz, vagy a szoba jelszava.
+Admin password for full control. A guest sees status and neighbours.	Admin jelszó a teljes irányításhoz. Vendégként az állapot és a szomszédok láthatók.
+Advanced	Haladó
+Advert hop limit	Hop korlát advertekhez
+Advert intervals	Advert időközök
+Adverts	Advertek
+Again	Újra
+Airtime factor	Adásidő szorzó
+Bandwidth	Sávszélesség
+Change	Módosítás
+Change radio settings	Rádióbeállítások módosítása
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Megváltoztatod az admin jelszót? Ha elveszíted, többé nem kezelheted ezt a node-ot a hálón keresztül.
+Clients	Kliensek
+Coding rate	Kódolási arány
+Console	Konzol
+Current	Jelenlegi
+Decimal degrees, for example 4.4025	Tizedes fok, például 4.4025
+Decimal degrees, for example 51.2194	Tizedes fok, például 51.2194
+Direct send delay	Direkt küldési késleltetés
+Discover neighbours	Szomszédok keresése
+Duplicates	Duplikátumok
+Enter a number	Adj meg egy számot
+Enter a password	Adj meg egy jelszót
+Error	Hiba
+Errors	Hibák
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Firmware frissítés: a node Wi-Fi hozzáférési pontot nyit; csatlakozz hozzá, és töltsd fel az új firmware-t böngészőben, ahogy a node utasításai mondják.
+Flood advert	Flood advert
+Flood hop limit	Hop korlát floodokhoz
+Flood send delay	Flood küldési késleltetés
+Floods with more hops are not repeated. 0 to 64.	A több hopos floodokat nem ismétli. 0 és 64 között.
+Frequency: 150 to 2500 MHz	Frekvencia: 150 és 2500 MHz között
+Guest	Vendég
+Guest password	Vendég jelszó
+Hours between flood adverts: 0 (off) or 3 to 168.	Órák a flood advertek között: 0 (ki) vagy 3 és 168 között.
+How hard to drop packets that came back around.	Mennyire szigorúan dobja el a körbe visszaért csomagokat.
+Identity	Azonosító
+Identity & location	Azonosító és hely
+Last reply	Utolsó válasz
+Last signal	Utolsó jel
+Lets a wrong or blank password in to read, not to post.	Hibás vagy üres jelszóval is beenged olvasni, de írni nem.
+Load more (%d of %u)	Továbbiak betöltése (%d / %u)
+Local advert	Helyi advert
+Location	Hely
+Log in	Bejelentkezés
+Log in as admin	Bejelentkezés adminként
+Log in as guest	Bejelentkezés vendégként
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Vendégként bejelentkezve: olvashatod az állapotot és a szomszédokat. A beállítások módosításához jelentkezz be az admin jelszóval.
+Logged in without admin rights. Log in with the admin password to change settings.	Admin jogok nélkül bejelentkezve. A beállítások módosításához jelentkezz be az admin jelszóval.
+Logging in...	Bejelentkezés...
+Login refused.	Bejelentkezés elutasítva.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Vendégként jelentkeztet be. Üresen bárkit beenged vendégként. Legfeljebb 15 karakter.
+Loop detection	Hurokészlelés
+Manage	Kezelés
+Members log in with it to post. Up to 15 characters.	A tagok ezzel jelentkeznek be, hogy írhassanak. Legfeljebb 15 karakter.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Percek a zero-hop advertek között: 0 (ki) vagy 60 és 240 között.
+Moderate	Mérsékelt
+Neighbours	Szomszédok
+New password	Új jelszó
+Newest	Legújabb
+No neighbours heard yet.	Még nem hallott szomszédot.
+No reply	Nincs válasz
+No reply from the node	A node nem válaszol
+No reply. Check the password, that the node is in range, and this device's clock.	Nincs válasz. Ellenőrizd a jelszót, hogy a node hatótávon belül van-e, és ennek az eszköznek az óráját.
+No reply. It may or may not have been applied: read it again.	Nincs válasz. Lehet, hogy érvénybe lépett, lehet, hogy nem: olvasd be újra.
+No spaces	Szóközök nélkül
+Nobody on the list.	Senki sincs a listán.
+Node clock	A node órája
+Noise floor	Zajszint
+Not in your contacts	Nincs a névjegyeid között
+Not in your contacts, so only removing is possible here.	Nincs a névjegyeid között, ezért itt csak eltávolítani lehet.
+Not saved	Nincs mentve
+Off: this node stops forwarding anything.	Ki: ez a node semmit sem továbbít.
+Order	Sorrend
+Owner	Tulajdonos
+Owner info	Tulajdonos infó
+Password	Jelszó
+Passwords	Jelszavak
+Passwords & access	Jelszavak és hozzáférés
+Posts	Bejegyzések
+Prefers stronger copies of a flood. 0 to 20.	A flood erősebb példányait részesíti előnyben. 0 és 20 között.
+Queue	Sor
+Random delay factor before repeating a flood. 0 to 2.	Véletlen késleltetési szorzó egy flood ismétlése előtt. 0 és 2 között.
+Read again	Újraolvasás
+Read-only	Csak olvasás
+Read-only access	Csak olvasási hozzáférés
+Read-write	Olvasás és írás
+Reading...	Olvasás...
+Reboot sent. The node is back in about 10 s.	Újraindítás elküldve. A node kb. 10 mp múlva visszatér.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Újraindítod a node-ot? Kb. 10 mp-ig nem ad, és elfelejti a vendég bejelentkezéseket.
+Receive delay	Vételi késleltetés
+Received	Fogadott
+Refresh	Frissítés
+Regions	Régiók
+Remove access	Hozzáférés eltávolítása
+Remove this client's access?	Eltávolítod ennek a kliensnek a hozzáférését?
+Repeat packets	Csomagok ismétlése
+Repeaters this node hears directly, with the signal it hears them at.	Az átjátszók, amelyeket ez a node közvetlenül hall, azzal a jellel, ahogy hallja őket.
+Repeating	Ismétlés
+Repeating & limits	Ismétlés és korlátok
+Reset counters	Számlálók nullázása
+Reset the node's packet counters?	Nullázod a node csomagszámlálóit?
+Room password	Szoba jelszó
+Save (after a reboot)	Mentés (újraindítás után)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Mented az új rádióbeállításokat?\nMost: %s\nÚj: %s\nÚjraindítás után lépnek életbe. Hibás értékek végleg elvághatják ezt a node-ot.
+Saved. Applies after a reboot.	Mentve. Újraindítás után lép életbe.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Mentve. A node újraindítás után használja az új rádióbeállításokat. Újraindítod most?
+Saving...	Mentés...
+Send flood advert	Flood advert küldése
+Send now	Küldés most
+Send zero-hop advert	Zero-hop advert küldése
+Set the node's position to this device's position?	A node helyét ennek az eszköznek a helyére állítod?
+Shown to anyone who asks this node. Up to 119 characters.	Bárki láthatja, aki megkérdezi a node-ot. Legfeljebb 119 karakter.
+Spreading factor	Szórási tényező
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Firmware frissítést indítasz a node-on? Saját Wi-Fi hozzáférési pontot nyit, amíg frissítik vagy újraindul, és addig semmit sem ismétel.
+Start firmware update	Firmware frissítés indítása
+Strict	Szigorú
+Strongest	Legerősebb
+Sync clock to this device	Óra szinkronizálása ehhez az eszközhöz
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	A node régiófája: ^ jelöli az otthoni régióját, F azt, hogy ismétli a floodokat abban a régióban. A régiókat a Konzolban szerkesztheted.
+The passwords do not match	A jelszavak nem egyeznek
+The position goes out in the node's adverts.	A hely a node advertjeiben megy ki.
+The same for direct packets. 0 to 2.	Ugyanez a direkt csomagokra. 0 és 2 között.
+The same limit for adverts. 0 to 64.	Ugyanez a korlát advertekre. 0 és 64 között.
+This device	Ez az eszköz
+This device has no position	Ennek az eszköznek nincs helyzete
+Transmit power	Adóteljesítmény
+Try	Kipróbálás
+Try for 10 minutes	Kipróbálás 10 percig
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Kipróbálod az új rádióbeállításokat %u percig?\nMost: %s\nPróba: %s\nA node magától visszaáll. Addig csak az új beállításokkal éred el.
+Up to 31 characters, without [ ] \\ : , ? *	Legfeljebb 31 karakter, ezek nélkül: [ ] \\ : , ? *
+Updated %s ago	Frissítve %s ezelőtt
+Uptime	Üzemidő
+Use my position	Saját helyem használata
+Use this device's settings	Ennek az eszköznek a beállításai
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	A hibás rádióbeállítások elvághatják ezt a node-ot: akkor csak az új beállításokkal éred el, vagy sehogy. Előbb próbáld ki őket; a node magától visszaáll.
+dBm, -9 to 30. Applies at once.	dBm, -9 és 30 között. Azonnal érvényes.
+pushed	kiküldve
+you	te
+Flood in / out	Flood be / ki
+Direct in / out	Direkt be / ki
+Airtime TX / RX	Adásidő TX / RX

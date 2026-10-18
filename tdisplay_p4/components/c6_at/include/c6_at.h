@@ -28,11 +28,19 @@ extern "C" {
 void c6at_worker_start(void);
 bool c6at_is_up(void);        // transport up + ESP-AT answered (set by the worker)
 bool c6at_is_dead(void);      // worker gave up bringing the link up (AT probe exhausted)
+// Runtime recovery (#685): the worker saw the link stall (3 command timeouts in a row, or a dead
+// "AT" ping), took it down and is resetting the C6 (with 30 s .. 5 min backoff between resets).
+// c6at_is_up() is false meanwhile; the UI shows "reconnecting" and the worker rejoins by itself.
+bool c6at_is_recovering(void);
 
 // ---- async requests (enqueue only; the worker executes) -----------------------------------------
 void c6at_req_scan(void);
+// Join/disconnect share ONE latest-wins slot (not the request queue): a join replaces whatever is
+// pending, a disconnect cancels a pending join. A join posted while the link is recovering waits
+// for the link to come back.
 void c6at_req_join(const char *ssid, const char *pass);   // copies the strings
 void c6at_req_disconnect(void);
+bool c6at_join_busy(void);    // a join is pending in the slot or running on the C6
 
 // ---- lock-free status cache (safe from any task) -------------------------------------------------
 bool     c6at_connected(void);

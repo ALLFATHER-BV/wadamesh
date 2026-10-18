@@ -24,6 +24,7 @@ lv_obj_t* hit(lv_point_t p) {
 
 void webWheel(int x, int y, int dy) {
   if (dy == 0 || !lv_scr_act()) return;
+  lv_disp_trig_activity(nullptr);   // a wheel is the user at the screen: no screensaver
   for (lv_obj_t* o = hit(lv_point_t{(lv_coord_t)x, (lv_coord_t)y}); o; o = lv_obj_get_parent(o)) {
     if (!lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) || !(lv_obj_get_scroll_dir(o) & LV_DIR_VER)) continue;
     // dy > 0: the wheel turned down / two fingers moved up: show what is further down

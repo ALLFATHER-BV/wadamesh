@@ -22,4 +22,5 @@ bool wadaHostMkdirs(const std::string& path);
 bool wadaCoopInTask();               // running inside a task fiber
 void wadaCoopSleep(uint32_t ms);     // a task: yield for ms; the UI thread: wait, running the tasks
 void wadaCoopRunTasks();             // the board loop: every task that is due runs until it waits
+void wadaCoopSetInLoop(bool in);     // web_main.cpp: true while the main loop's step runs
 #endif

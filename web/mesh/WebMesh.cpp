@@ -759,6 +759,28 @@ int MyMesh::uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind)
   }
   return r;
 }
+// The admin app's requests (src/MyMesh.h): straight to the node, one at a time.
+int MyMesh::uiStraightRequest(ContactInfo& recipient, UiReqKind kind) {
+  if (!_backend) return MSG_SEND_FAILED;
+  const int r = (kind == UiReqKind::Telemetry) ? _backend->requestTelemetry(recipient)
+                                               : _backend->requestStatus(recipient);
+  if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    _ui_pending_kind = kind;
+    memcpy(_ui_pending_key, recipient.id.pub_key, PUB_KEY_SIZE);
+  }
+  return r;
+}
+int MyMesh::sendStatusPingForUI(ContactInfo& recipient) { return uiStraightRequest(recipient, UiReqKind::Status); }
+int MyMesh::sendTelemetryRequestForUI(ContactInfo& recipient) { return uiStraightRequest(recipient, UiReqKind::Telemetry); }
+int MyMesh::uiSendBinaryRequest(ContactInfo& recipient, const uint8_t* payload, uint8_t len) {
+  if (!_backend || !payload || !len) return MSG_SEND_FAILED;
+  const int r = _backend->binaryRequest(recipient, payload, len);
+  if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    _ui_pending_kind = UiReqKind::Binary;
+    memcpy(_ui_pending_key, recipient.id.pub_key, PUB_KEY_SIZE);
+  }
+  return r;
+}
 int MyMesh::uiSendAdminLogin(ContactInfo& recipient, const char* password) {
   if (!_backend) return MSG_SEND_FAILED;
   return _backend->login(recipient, password ? password : "");
@@ -1073,6 +1095,18 @@ void MyMesh::beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, ui
   _ui->onAdminLoginResult(*c, ok, perms);
 }
 
+void MyMesh::beLoginInfo(const uint8_t pub_key[32], uint8_t acl, uint8_t fw_level) {
+  memcpy(_ui_last_login.pub4, pub_key, 4);
+  _ui_last_login.acl = acl;
+  _ui_last_login.fw_level = fw_level;
+  _ui_last_login.valid = true;
+}
+void MyMesh::beBinaryReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) {
+  if (_ui_pending_kind != UiReqKind::Binary || memcmp(_ui_pending_key, pub_key, PUB_KEY_SIZE) != 0) return;
+  _ui_pending_kind = UiReqKind::None;
+  ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (c && _ui) _ui->onBinaryReply(*c, data, len);
+}
 void MyMesh::beCliReply(const uint8_t pub_key[32], const char* text) {
   ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
   if (c && _ui) _ui->onAdminCommandReply(*c, text);

@@ -1,7 +1,7 @@
 #pragma once
-// Partitions: a host has no flash partition table. Lookups find nothing, so every
-// partition-dependent path (OTA slots, coredump, raw tile partition) takes its
-// "not present" branch.
+// Partitions: a host has no flash partition table. Lookups find nothing (but "tiles",
+// below), so every partition-dependent path (OTA slots, coredump) takes its "not
+// present" branch. Reads and writes are refused: nothing touches a partition raw.
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -26,7 +26,17 @@ typedef struct esp_partition_t {
   uint32_t address; uint32_t size; uint32_t erase_size; char label[17]; bool encrypted; bool readonly;
 } esp_partition_t;
 typedef struct esp_partition_iterator_opaque_* esp_partition_iterator_t;
-static inline const esp_partition_t* esp_partition_find_first(esp_partition_type_t t, esp_partition_subtype_t s, const char* l) { (void)t; (void)s; (void)l; return NULL; }
+// One exception: the "tiles" data partition exists. The web board's LittleFS volume
+// (fs_host.cpp, <data>/littlefs) IS the touch boards' tiles partition, and the UI mounts
+// it only when the running table has one (UITask.cpp, the tile cache backend).
+static inline const esp_partition_t* esp_partition_find_first(esp_partition_type_t t, esp_partition_subtype_t s, const char* l) {
+  static const esp_partition_t k_tiles = { NULL, ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_LITTLEFS,
+                                           0x0, 0x4C0000, 0x1000, "tiles", false, false };
+  if (l && t == ESP_PARTITION_TYPE_DATA && (s == ESP_PARTITION_SUBTYPE_ANY || s == ESP_PARTITION_SUBTYPE_DATA_LITTLEFS) &&
+      l[0] == 't' && l[1] == 'i' && l[2] == 'l' && l[3] == 'e' && l[4] == 's' && l[5] == 0)
+    return &k_tiles;
+  return NULL;
+}
 static inline esp_partition_iterator_t esp_partition_find(esp_partition_type_t t, esp_partition_subtype_t s, const char* l) { (void)t; (void)s; (void)l; return NULL; }
 static inline const esp_partition_t* esp_partition_get(esp_partition_iterator_t it) { (void)it; return NULL; }
 static inline esp_partition_iterator_t esp_partition_next(esp_partition_iterator_t it) { (void)it; return NULL; }

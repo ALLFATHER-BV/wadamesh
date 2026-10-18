@@ -1998,3 +1998,165 @@ newer keyboard	νεότερο πληκτρολόγιο
 older keyboard	παλαιότερο πληκτρολόγιο
 older keyboard (set manually)	παλαιότερο πληκτρολόγιο (χειροκίνητα)
 keyboard not detected yet	το πληκτρολόγιο δεν έχει εντοπιστεί ακόμα
+Always use the external antenna (MMCX)	Πάντα η εξωτερική κεραία (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Ξεκινά στην εξωτερική υποδοχή σε κάθε εκκίνηση. Μόνο για κεραία που μένει συνδεδεμένη.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Επιλέξτε Εξωτερική μόνο με κεραία στην εξωτερική υποδοχή. Μετά από επανεκκίνηση ξεκινά στην ενσωματωμένη κεραία, εκτός αν ο διακόπτης παρακάτω είναι ενεργός.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Πάντα η εξωτερική κεραία;\n\nΟ πομποδέκτης θα ξεκινά στην εξωτερική υποδοχή (MMCX) σε κάθε εκκίνηση. Η εκπομπή χωρίς συνδεδεμένη κεραία μπορεί να καταστρέψει τον πομποδέκτη.\n\nΕνεργοποιήστε το μόνο αν η εξωτερική κεραία μένει συνδεδεμένη.
+Turn on	Ενεργοποίηση
+On-board antenna selected	Επιλέχθηκε η ενσωματωμένη κεραία
+External antenna at every boot	Εξωτερική κεραία σε κάθε εκκίνηση
+Antenna	Κεραία
+On-board	Ενσωμ.
+Glass tiles	Γυάλινα πλακίδια
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Τα widget, οι κάρτες και τα πλακίδια του πίνακα αφήνουν να φαίνεται το φόντο. Ανενεργό: συμπαγή πλακίδια.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 έως 9. Μεγαλύτερο σημαίνει μεγαλύτερη αναμονή μεταξύ αποστολών.
+A name is required	Απαιτείται όνομα
+A node clock only moves forward: syncing cannot set it back.	Το ρολόι ενός κόμβου πάει μόνο μπροστά: ο συγχρονισμός δεν μπορεί να το γυρίσει πίσω.
+A room server lists only its admins here.	Ένας room server εμφανίζει εδώ μόνο τους διαχειριστές του.
+Access	Πρόσβαση
+Access changed	Η πρόσβαση άλλαξε
+Actions	Ενέργειες
+Admin password	Κωδικός διαχειριστή
+Admin password changed.	Ο κωδικός διαχειριστή άλλαξε.
+Admin password for full control, or the room password.	Κωδικός διαχειριστή για πλήρη έλεγχο, ή ο κωδικός του δωματίου.
+Admin password for full control. A guest sees status and neighbours.	Κωδικός διαχειριστή για πλήρη έλεγχο. Ένας επισκέπτης βλέπει κατάσταση και γείτονες.
+Advanced	Για προχωρημένους
+Advert hop limit	Όριο αλμάτων για adverts
+Advert intervals	Διαστήματα advert
+Adverts	Adverts
+Again	Ξανά
+Airtime factor	Συντελεστής χρόνου εκπομπής
+Bandwidth	Εύρος ζώνης
+Change	Αλλαγή
+Change radio settings	Αλλαγή ρυθμίσεων ραδιοφώνου
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Αλλαγή κωδικού διαχειριστή; Αν τον χάσετε, δεν θα μπορείτε πια να διαχειριστείτε αυτόν τον κόμβο μέσω του δικτύου.
+Clients	Πελάτες
+Coding rate	Ρυθμός κωδικοποίησης
+Console	Κονσόλα
+Current	Τρέχον
+Decimal degrees, for example 4.4025	Δεκαδικές μοίρες, για παράδειγμα 4.4025
+Decimal degrees, for example 51.2194	Δεκαδικές μοίρες, για παράδειγμα 51.2194
+Direct send delay	Καθυστέρηση άμεσης αποστολής
+Discover neighbours	Αναζήτηση γειτόνων
+Duplicates	Διπλότυπα
+Enter a number	Εισαγάγετε αριθμό
+Enter a password	Εισαγάγετε κωδικό
+Error	Σφάλμα
+Errors	Σφάλματα
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Ενημέρωση: ο κόμβος ανοίγει σημείο πρόσβασης Wi-Fi· συνδεθείτε και ανεβάστε το νέο υλικολογισμικό από φυλλομετρητή, όπως λένε οι οδηγίες του κόμβου.
+Flood advert	Flood advert
+Flood hop limit	Όριο αλμάτων για floods
+Flood send delay	Καθυστέρηση αποστολής flood
+Floods with more hops are not repeated. 0 to 64.	Τα floods με περισσότερα άλματα δεν επαναλαμβάνονται. 0 έως 64.
+Frequency: 150 to 2500 MHz	Συχνότητα: 150 έως 2500 MHz
+Guest	Επισκέπτης
+Guest password	Κωδικός επισκέπτη
+Hours between flood adverts: 0 (off) or 3 to 168.	Ώρες μεταξύ flood adverts: 0 (ανενεργό) ή 3 έως 168.
+How hard to drop packets that came back around.	Πόσο αυστηρά απορρίπτονται πακέτα που γύρισαν κυκλικά.
+Identity	Ταυτότητα
+Identity & location	Ταυτότητα και τοποθεσία
+Last reply	Τελευταία απάντηση
+Last signal	Τελευταίο σήμα
+Lets a wrong or blank password in to read, not to post.	Αφήνει να μπει με λάθος ή κενό κωδικό για ανάγνωση, όχι για δημοσίευση.
+Load more (%d of %u)	Φόρτωση περισσότερων (%d από %u)
+Local advert	Τοπικό advert
+Location	Τοποθεσία
+Log in	Σύνδεση
+Log in as admin	Σύνδεση ως διαχειριστής
+Log in as guest	Σύνδεση ως επισκέπτης
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Συνδεθήκατε ως επισκέπτης: βλέπετε κατάσταση και γείτονες. Συνδεθείτε με τον κωδικό διαχειριστή για να αλλάξετε ρυθμίσεις.
+Logged in without admin rights. Log in with the admin password to change settings.	Συνδεθήκατε χωρίς δικαιώματα διαχειριστή. Συνδεθείτε με τον κωδικό διαχειριστή για να αλλάξετε ρυθμίσεις.
+Logging in...	Σύνδεση...
+Login refused.	Η σύνδεση απορρίφθηκε.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Σύνδεση ως επισκέπτης. Κενός αφήνει οποιονδήποτε ως επισκέπτη. Έως 15 χαρακτήρες.
+Loop detection	Ανίχνευση βρόχων
+Manage	Διαχείριση
+Members log in with it to post. Up to 15 characters.	Τα μέλη συνδέονται με αυτόν για να δημοσιεύουν. Έως 15 χαρακτήρες.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Λεπτά μεταξύ zero-hop adverts: 0 (ανενεργό) ή 60 έως 240.
+Moderate	Μέτρια
+Neighbours	Γείτονες
+New password	Νέος κωδικός
+Newest	Νεότεροι
+No neighbours heard yet.	Δεν έχουν ακουστεί γείτονες ακόμα.
+No reply	Καμία απάντηση
+No reply from the node	Ο κόμβος δεν απαντά
+No reply. Check the password, that the node is in range, and this device's clock.	Καμία απάντηση. Ελέγξτε τον κωδικό, ότι ο κόμβος είναι εντός εμβέλειας, και το ρολόι αυτής της συσκευής.
+No reply. It may or may not have been applied: read it again.	Καμία απάντηση. Ίσως εφαρμόστηκε, ίσως όχι: διαβάστε το ξανά.
+No spaces	Χωρίς κενά
+Nobody on the list.	Κανείς στη λίστα.
+Node clock	Ρολόι κόμβου
+Noise floor	Επίπεδο θορύβου
+Not in your contacts	Δεν είναι στις επαφές σας
+Not in your contacts, so only removing is possible here.	Δεν είναι στις επαφές σας, οπότε εδώ μπορεί μόνο να αφαιρεθεί.
+Not saved	Δεν αποθηκεύτηκε
+Off: this node stops forwarding anything.	Ανενεργό: ο κόμβος σταματά να προωθεί οτιδήποτε.
+Order	Σειρά
+Owner	Ιδιοκτήτης
+Owner info	Πληροφορίες ιδιοκτήτη
+Password	Κωδικός
+Passwords	Κωδικοί
+Passwords & access	Κωδικοί και πρόσβαση
+Posts	Αναρτήσεις
+Prefers stronger copies of a flood. 0 to 20.	Προτιμά τα ισχυρότερα αντίγραφα ενός flood. 0 έως 20.
+Queue	Ουρά
+Random delay factor before repeating a flood. 0 to 2.	Τυχαίος συντελεστής καθυστέρησης πριν από επανάληψη flood. 0 έως 2.
+Read again	Ανάγνωση ξανά
+Read-only	Μόνο ανάγνωση
+Read-only access	Πρόσβαση μόνο ανάγνωσης
+Read-write	Ανάγνωση και εγγραφή
+Reading...	Ανάγνωση...
+Reboot sent. The node is back in about 10 s.	Η επανεκκίνηση στάλθηκε. Ο κόμβος επιστρέφει σε περίπου 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Επανεκκίνηση του κόμβου; Μένει εκτός αέρα περίπου 10 s και ξεχνά τις συνδέσεις επισκεπτών.
+Receive delay	Καθυστέρηση λήψης
+Received	Ελήφθησαν
+Refresh	Ανανέωση
+Regions	Περιοχές
+Remove access	Αφαίρεση πρόσβασης
+Remove this client's access?	Αφαίρεση της πρόσβασης αυτού του πελάτη;
+Repeat packets	Επανάληψη πακέτων
+Repeaters this node hears directly, with the signal it hears them at.	Αναμεταδότες που ακούει απευθείας αυτός ο κόμβος, με το σήμα που τους ακούει.
+Repeating	Επανάληψη
+Repeating & limits	Επανάληψη και όρια
+Reset counters	Μηδενισμός μετρητών
+Reset the node's packet counters?	Μηδενισμός των μετρητών πακέτων του κόμβου;
+Room password	Κωδικός δωματίου
+Save (after a reboot)	Αποθήκευση (μετά από επανεκκίνηση)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Αποθήκευση νέων ρυθμίσεων ραδιοφώνου;\nΤώρα: %s\nΝέες: %s\nΙσχύουν μετά από επανεκκίνηση. Λάθος τιμές μπορούν να αποκόψουν οριστικά αυτόν τον κόμβο.
+Saved. Applies after a reboot.	Αποθηκεύτηκε. Ισχύει μετά από επανεκκίνηση.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Αποθηκεύτηκε. Ο κόμβος χρησιμοποιεί τις νέες ρυθμίσεις μετά από επανεκκίνηση. Επανεκκίνηση τώρα;
+Saving...	Αποθήκευση...
+Send flood advert	Αποστολή flood advert
+Send now	Αποστολή τώρα
+Send zero-hop advert	Αποστολή zero-hop advert
+Set the node's position to this device's position?	Ορισμός της θέσης του κόμβου στη θέση αυτής της συσκευής;
+Shown to anyone who asks this node. Up to 119 characters.	Εμφανίζεται σε όποιον ρωτήσει αυτόν τον κόμβο. Έως 119 χαρακτήρες.
+Spreading factor	Συντελεστής διασποράς
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Έναρξη ενημέρωσης υλικολογισμικού στον κόμβο; Ανοίγει δικό του σημείο πρόσβασης Wi-Fi μέχρι να ενημερωθεί ή να επανεκκινηθεί, και στο μεταξύ δεν επαναλαμβάνει τίποτα.
+Start firmware update	Έναρξη ενημέρωσης υλικολογισμικού
+Strict	Αυστηρή
+Strongest	Ισχυρότεροι
+Sync clock to this device	Συγχρονισμός ρολογιού με αυτή τη συσκευή
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Το δέντρο περιοχών του κόμβου: το ^ σημειώνει την οικεία περιοχή του, το F ότι επαναλαμβάνει floods για την περιοχή. Επεξεργαστείτε τις περιοχές στην Κονσόλα.
+The passwords do not match	Οι κωδικοί δεν ταιριάζουν
+The position goes out in the node's adverts.	Η θέση στέλνεται στα adverts του κόμβου.
+The same for direct packets. 0 to 2.	Το ίδιο για άμεσα πακέτα. 0 έως 2.
+The same limit for adverts. 0 to 64.	Το ίδιο όριο για adverts. 0 έως 64.
+This device	Αυτή η συσκευή
+This device has no position	Αυτή η συσκευή δεν έχει θέση
+Transmit power	Ισχύς εκπομπής
+Try	Δοκιμή
+Try for 10 minutes	Δοκιμή για 10 λεπτά
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Δοκιμή νέων ρυθμίσεων ραδιοφώνου για %u λεπτά;\nΤώρα: %s\nΔοκιμή: %s\nΟ κόμβος επιστρέφει μόνος του. Ως τότε τον βρίσκετε μόνο με τις νέες ρυθμίσεις.
+Up to 31 characters, without [ ] \\ : , ? *	Έως 31 χαρακτήρες, χωρίς [ ] \\ : , ? *
+Updated %s ago	Ενημερώθηκε πριν από %s
+Uptime	Χρόνος λειτουργίας
+Use my position	Χρήση της θέσης μου
+Use this device's settings	Χρήση των ρυθμίσεων αυτής της συσκευής
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Λάθος ρυθμίσεις ραδιοφώνου μπορούν να αποκόψουν τον κόμβο: τότε τον βρίσκετε μόνο με τις νέες ρυθμίσεις, ή καθόλου. Δοκιμάστε τες πρώτα· ο κόμβος επιστρέφει μόνος του.
+dBm, -9 to 30. Applies at once.	dBm, -9 έως 30. Ισχύει αμέσως.
+pushed	προωθήθηκαν
+you	εσείς
+Flood in / out	Flood εισ. / εξ.
+Direct in / out	Άμεσα εισ. / εξ.
+Airtime TX / RX	Χρόνος εκπομπής TX / RX

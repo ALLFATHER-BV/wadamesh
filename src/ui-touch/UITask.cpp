@@ -217,6 +217,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include <TDeckProDisplay.h>
   #elif defined(TLORA_PAGER)
     #include <helpers/ui/ST7796LCDDisplay.h>
+  #elif defined(HAS_SENSECAP_INDICATOR)
+    #include <IndicatorDisplay.h>
   #elif defined(HAS_WIO_TRACKER_L2)
     #include <WioTrackerL2Display.h>
     #include <WioTrackerL2Io.h>
@@ -293,6 +295,8 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern TDeckProDisplay display;
   #elif defined(TLORA_PAGER)
     extern ST7796LCDDisplay display;
+  #elif defined(HAS_SENSECAP_INDICATOR)
+    extern IndicatorDisplay display;
   #elif defined(HAS_WIO_TRACKER_L2)
     extern WioTrackerL2Display display;
   #elif defined(HAS_CROWPANEL_35)
@@ -836,6 +840,7 @@ static bool     s_look_rainbow = false;
 static bool     s_aur_on       = false;   // the aurora is behind every screen (bgTheme / auroraBoot, at boot)
 static uint8_t  s_bg_kind      = 0xFF;    // Settings > Theme > Background (TOUCH_BG_*); 0xFF: the plain theme
 static bool     s_glass_on     = false;   // cards on pages are glass (styleGlass)
+static bool     s_glass_tiles  = true;    // Settings > Theme > Glass tiles (off: solid tiles and panel), at boot
 static inline bool bgActive() { return s_bg_kind != 0xFF; }
 // A picture behind every screen (the lock screen's JPEG decode and file picker), and the
 // moving aurora. No picture on the 2 MB Heltec V4: a full-screen one is a big share of
@@ -2692,7 +2697,23 @@ static inline lv_coord_t chatComposerTopRowH() {
 static inline lv_coord_t chatComposerChromeH() {
   return 4 + chatComposerTopRowH();
 }
+// Slim composer: on the large screens in landscape (T-Display P4 landscape, Tanmatsu,
+// CrowPanel 5.0 / 10.1) the empty text box is ONE text line tall and grows a line at a
+// time from there, instead of starting as the fixed 60-px box (three lines of Normal text,
+// the dead space zomgugoff asked about). The row stays tall enough for its buttons; a
+// text box shorter than them sits centred on them (chatComposerSlimRowH and friends,
+// defined with the button sizes below). The P4's portrait two-row layout is unchanged.
+static inline bool chatComposerSlim() {
+#if CAP_LARGE_SCREEN
+  return lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr) && !chatComposerTwoRow();
+#else
+  return false;
+#endif
+}
+static lv_coord_t chatComposerOneLineTaH();
+static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h);
 static inline lv_coord_t chatComposerBaseH() {
+  if (chatComposerSlim()) return chatComposerSlimRowH(chatComposerOneLineTaH());
   if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
@@ -2710,6 +2731,7 @@ static inline lv_coord_t chatComposerBaseH() {
 // composer automatically reclaims space from the message list. Reset to
 // CHAT_COMP_H on each chat-panel (re)build; updated by chatComposerAutoGrow().
 static lv_coord_t s_comp_h = CHAT_COMP_H;
+static lv_coord_t s_comp_ta_h = CHAT_COMP_H - 4;   // ...and its text box's (the slim layout sets them apart)
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
 constexpr int CHAT_KB_H        = 160;  // larger original-V4 touch targets
 #else
@@ -2815,6 +2837,43 @@ static inline lv_coord_t chatComposerLeftInset() {
   return chatComposerTwoRow() ? 0 : SB_INSET_X;
 #else
   return 0;
+#endif
+}
+// The slim composer's numbers (see chatComposerSlim). One text line in the box: the
+// font's line plus the box's 3-px vertical pads, the label's 4-px top pad, the border
+// and a little slack (an exact fit made the text bob a pixel per keystroke), which is
+// the 30-px box the small boards use at Normal size.
+static lv_coord_t chatComposerOneLineTaH() {
+  return lv_font_get_line_height(&g_font_14) + 14;
+}
+#if CAP_ROUND_CORNERS
+// P4: the buttons centre on the text box but never come closer than kMinLift to the
+// bottom edge (the corner arcs); the text box follows the buttons while it is shorter.
+static constexpr lv_coord_t CHAT_COMP_MIN_LIFT_P4 = SB_TOP_PAD - 2;
+static inline lv_coord_t chatComposerP4Lift(lv_coord_t ta_h) {
+  const lv_coord_t lift = (ta_h - CHAT_COMP_BTN_P4) / 2;
+  return lift < CHAT_COMP_MIN_LIFT_P4 ? CHAT_COMP_MIN_LIFT_P4 : lift;
+}
+static inline lv_coord_t chatComposerP4TaOff(lv_coord_t ta_h) {
+  if (!chatComposerSlim()) return 0;
+  const lv_coord_t off = chatComposerP4Lift(ta_h) + (CHAT_COMP_BTN_P4 - ta_h) / 2;
+  return off > 0 ? off : 0;
+}
+#endif
+// The tallest button on the slim composer's row (QR / emoji chips, Send).
+static inline lv_coord_t chatComposerSlimBand() {
+  const lv_coord_t c = chatComposerChipSz(), s = chatComposerSendSz();
+  return c > s ? c : s;
+}
+// Row height for a text box ta_h tall, slim layout.
+static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h) {
+#if CAP_ROUND_CORNERS
+  const lv_coord_t top_ta  = chatComposerP4TaOff(ta_h) + ta_h;
+  const lv_coord_t top_btn = chatComposerP4Lift(ta_h) + CHAT_COMP_BTN_P4;
+  return (top_ta > top_btn ? top_ta : top_btn) + chatComposerChromeH();
+#else
+  const lv_coord_t band = chatComposerSlimBand();
+  return (ta_h > band ? ta_h : band) + chatComposerChromeH();
 #endif
 }
 static inline lv_coord_t chatComposerTaW(bool channel_mode) {
@@ -9380,6 +9439,10 @@ constexpr int KB_MIRROR_STRIP_H = 52;
 
 // Keyboard rotation helpers (defined here so showKb/hideKb/kbMirrorBind can use them).
 // Layout adjusts keyboard + mirror + rotate arrows for the current rotation.
+#if CAP_LARGE_SCREEN && !CAP_ROUND_CORNERS
+static void chatComposerAutoGrow(LvChatPanel* p);       // the rotation re-runs it (kbApplyLayoutForRotation)
+static void chatComposerAlignSlim(LvChatPanel* p);      // defined after chatComposerAutoGrow
+#endif
 #if CAP_ROUND_CORNERS
 static void chatComposerApplyRows(LvChatPanel* p);      // defined after chatComposerAutoGrow
 static void chatComposerPlaceButtons(LvChatPanel* p);   // ditto
@@ -9424,6 +9487,15 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
       lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW(s_kb_panel->channel_mode));
 #if CAP_ROUND_CORNERS
     chatComposerApplyRows(s_kb_panel);   // one row <-> two rows as the orientation flips
+#elif CAP_LARGE_SCREEN
+    // Slim (landscape) <-> classic (portrait) on a rotatable large panel (CrowPanel 5.0):
+    // re-run the auto-grow on the new width so heights, Y and the centring follow. The
+    // width was just set, so lay out first (it reads the box's content width).
+    if (s_kb_panel->composer_row) {
+      lv_obj_update_layout(s_kb_panel->composer_row);
+      s_comp_h = -1;
+      chatComposerAutoGrow(s_kb_panel);
+    }
 #endif
   }
   // Rotation arrows. Default: just above the keyboard's top edge. In the
@@ -9586,7 +9658,9 @@ static void kbShowRotateArrows(bool show) {
 // control. The arrows are not created on these boards; every other reference to
 // the two pointers is null-guarded, so leaving them null is enough to remove
 // the buttons everywhere — the same pattern the retired s_kb_alt_btn uses.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
+// The SenseCAP Indicator's square 480x480 panel does not rotate either.
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101) && \
+    !defined(HAS_SENSECAP_INDICATOR)
 static void kbRotLeftCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   // Tap the left arrow: rotate landscape that way; tap again returns to portrait.
@@ -9902,19 +9976,28 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
-  const lv_coord_t want = chatComposerBaseH() + (lv_coord_t)(lines - 1) * lh;
-  if (want == s_comp_h) return;   // height unchanged → nothing to relayout
+  // Text box: one line (slim) or the board's base box, plus a line per extra wrapped line.
+  // Row: the box plus chrome, or (slim) at least as tall as the buttons beside it.
+  const bool slim = chatComposerSlim();
+  const lv_coord_t base_ta = slim ? chatComposerOneLineTaH() : chatComposerBaseH() - chatComposerChromeH();
+  const lv_coord_t ta_h = base_ta + (lv_coord_t)(lines - 1) * lh;
+  const lv_coord_t want = slim ? chatComposerSlimRowH(ta_h) : ta_h + chatComposerChromeH();
+  if (want == s_comp_h && ta_h == s_comp_ta_h) return;   // unchanged → nothing to relayout
   // Read before the bottom inset changes below: if the newest message was in
   // view, keep it in view. Growing the inset alone left the scroll where it was,
   // so the taller composer covered the last messages (#617; an @-mention wraps
   // the text at once, which is where it showed).
   const bool stick_bottom = p->detail_open && !chatVirtAwayFromBottom(p);
   s_comp_h = want;
+  s_comp_ta_h = ta_h;
   // Keyboard shown (V4) lifts the composer above the keys; otherwise (T-Deck, or
   // V4 with the keyboard down) it sits at the screen bottom.
   const bool kb = g_lv.keyboard && !lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_height(p->composer_row, s_comp_h);
-  lv_obj_set_height(p->composer_ta,  s_comp_h - chatComposerChromeH());
+  lv_obj_set_height(p->composer_ta,  s_comp_ta_h);
+  // A pill at one line, the radius fixed at that size (see makeChatDetail, #617); set
+  // here too because a rotation can switch between the slim and the classic box.
+  lv_obj_set_style_radius(p->composer_ta, base_ta / 2, LV_PART_MAIN);
   lv_obj_set_y(p->composer_row, kb ? chatCompYKb() : chatCompYOpen());
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
@@ -9922,12 +10005,40 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   if (stick_bottom) chatVirtQueueScroll(p, LV_COORD_MAX);
 #if CAP_ROUND_CORNERS
   chatComposerPlaceButtons(p);   // keep the buttons centred on the grown text box
+#elif CAP_LARGE_SCREEN
+  chatComposerAlignSlim(p);      // a box shorter than the buttons sits centred on them
 #endif
 }
 
 static void composerAutoGrowCb(lv_event_t* e) {
   chatComposerAutoGrow(static_cast<LvChatPanel*>(lv_event_get_user_data(e)));
 }
+
+#if CAP_LARGE_SCREEN && !CAP_ROUND_CORNERS
+// Slim composer on the square-cornered large screens (Tanmatsu, CrowPanels): every control
+// keeps its bottom alignment and x, and is lifted to sit centred in the band of the tallest
+// button, so a one-line text box and the smaller Send button line up with the big chips.
+// A text box taller than that band rests on the bottom as before. Classic layout (portrait
+// CrowPanel 5.0): everything back on the bottom edge. lv_obj_set_y keeps each align.
+static void chatComposerAlignSlim(LvChatPanel* p) {
+  if (!p || !p->composer_ta) return;
+  const bool slim = chatComposerSlim();
+  const lv_coord_t band = chatComposerSlimBand();
+  auto lift = [&](lv_obj_t* o, lv_coord_t h) {
+    if (!o) return;
+    const lv_coord_t off = (slim && h < band) ? (band - h) / 2 : 0;
+    lv_obj_set_y(o, -off);
+  };
+  lift(p->composer_ta, s_comp_ta_h);
+  lift(p->qr_btn,      chatComposerChipSz());
+  lift(p->emoji_btn,   chatComposerChipSz());
+#if defined(HAS_CROWPANEL_50)
+  lift(p->send_btn,    chatComposerSendSz());
+#else
+  lift(p->send_btn,    30);   // a 30-px circle in a send_sz-wide slot (makeChatDetail)
+#endif
+}
+#endif
 
 #if CAP_ROUND_CORNERS
 // Position the composer's controls for the current orientation (see chatComposerTwoRow):
@@ -9943,10 +10054,8 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
   const lv_coord_t b = CHAT_COMP_BTN_P4;
   const lv_coord_t gap = 6;
   const lv_coord_t right = chatComposerSendInset();
-  const lv_coord_t ta_h = s_comp_h - chatComposerChromeH();
-  const lv_coord_t kMinLift = SB_TOP_PAD - 2;
-  lv_coord_t lift = (ta_h - b) / 2;
-  if (lift < kMinLift) lift = kMinLift;
+  const lv_coord_t ta_h = s_comp_ta_h;
+  const lv_coord_t lift = chatComposerP4Lift(ta_h);   // at least CHAT_COMP_MIN_LIFT_P4
   if (chatComposerTwoRow()) {
     lv_obj_align(p->emoji_btn, LV_ALIGN_TOP_RIGHT, -right, 0);
     lv_obj_align(p->qr_btn, LV_ALIGN_TOP_RIGHT, -(right + b + gap), 0);
@@ -9954,7 +10063,8 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
   } else {
     const lv_coord_t left = chatComposerLeftInset();
     lv_obj_align(p->qr_btn, LV_ALIGN_BOTTOM_LEFT, left, -lift);
-    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, 0);
+    // Slim (landscape): a box shorter than the buttons rides up to sit centred on them.
+    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -chatComposerP4TaOff(ta_h));
     lv_obj_align(p->emoji_btn, LV_ALIGN_BOTTOM_RIGHT, -(right + b + gap), -lift);
   }
   lv_obj_align(p->send_btn, LV_ALIGN_BOTTOM_RIGHT, -right, -lift);
@@ -15256,40 +15366,61 @@ static void radioScopeDirectToggleCb(lv_event_t* e) {
   touchPrefsSetScopeDirect(on);
   the_mesh.setScopeDirectFloods(on);
 }
-#if defined(HAS_TDISPLAY_P4)
-// T-Display P4 LoRa antenna select. Applies live (no reboot) but is deliberately SESSION-ONLY:
-// every boot re-forces the on-board antenna (see the boot-apply in begin() and the park in
-// Xl9535::powerOnSequence). Transmitting into an external connector with no antenna fitted is
-// what kills a PA, so the safe state has to be the one you get for free after a power cycle,
-// and picking the external antenna has to be a fresh, explicit decision each time.
-static lv_obj_t* s_p4_ant_dd = nullptr;   // showConfirm takes a bare callback, so stash the widget
-static uint8_t   s_p4_ant_pending = Xl9535::ANT_INTERNAL;
+#if CAP_ANTENNA_SELECT
+// Switchable LoRa antenna (CAP_ANTENNA_SELECT). Board glue, the one place that names the
+// hardware: the T-Display P4's SKY13453 on XL9535 IO1 (HIGH = on-board, LOW = external socket;
+// see Xl9535.h). Modes: 0 on-board, 1 external, 2 the legacy per-transmit toggle (diagnostic).
+enum : uint8_t { ANT_SEL_INTERNAL = 0, ANT_SEL_EXTERNAL = 1, ANT_SEL_AUTO = 2 };
+static uint8_t antSelMode()          { return xl9535.antennaMode(); }
+static void    antSelSet(uint8_t m)  { xl9535.setAntennaMode(m); }   // takes effect on the next transmit
 
-static void radioP4AntennaConfirmApply() {
-  xl9535.setAntennaMode(s_p4_ant_pending);   // takes effect on the very next transmit
-  if (s_p4_ant_dd) lv_dropdown_set_selected(s_p4_ant_dd, s_p4_ant_pending);
-  if (g_lv.task) {
-    g_lv.task->showAlert(s_p4_ant_pending == Xl9535::ANT_EXTERNAL ? TR("External antenna selected")
-                                                                  : TR("Per-transmit switching on"), 1200);
-  }
+// The Radio settings choice applies live and on its own is SESSION-ONLY: every boot re-forces the
+// on-board antenna (the boot-apply in begin() and the park in Xl9535::powerOnSequence), unless the
+// owner turned on "Always use the external antenna", an explicit opt-in behind a damage warning.
+// Transmitting into an external connector with no antenna fitted is what kills a PA, so the safe
+// state has to be the one you get for free after a power cycle for everyone who did not opt in.
+static lv_obj_t* s_ant_dd        = nullptr;   // showConfirm takes a bare callback, so stash the widgets
+static lv_obj_t* s_ant_always_sw = nullptr;
+static uint8_t   s_ant_pending   = ANT_SEL_INTERNAL;
+// Forget a stashed widget when its page goes: a freed pointer could come back as some
+// other object, and lv_obj_is_valid would then say yes.
+static void antSelWidgetDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_DELETE) return;
+  lv_obj_t* o = lv_event_get_target(e);
+  if (o == s_ant_dd)        s_ant_dd = nullptr;
+  if (o == s_ant_always_sw) s_ant_always_sw = nullptr;
 }
 
-static void radioP4AntennaSelectCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  lv_obj_t* dd = lv_event_get_target(e);
-  const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
-  if (m == Xl9535::ANT_INTERNAL) { xl9535.setAntennaMode(m); return; }   // always safe, no prompt
+// Show the live antenna wherever it is on screen: the Radio settings dropdown, the panel tile.
+static void antSelShowLive() {
+  if (s_ant_dd) lv_dropdown_set_selected(s_ant_dd, antSelMode());
+  if (s_cc_root) openControlCenter();   // rebuild so the antenna tile flips
+}
 
-  // External moves BOTH directions onto the external socket, so it needs an antenna actually fitted
-  // there — that is the one real hardware risk and it gets the damage warning. Auto (the legacy
-  // per-TX toggle) transmits on the on-board antenna and only listens on the external socket, so it
-  // is not a PA hazard, just permanently lopsided; it gets an accurate performance warning instead
-  // of a scary one. Revert the widget FIRST and only re-select from the confirm handler: showConfirm
-  // has no cancel callback, so a dismissed dialog must leave UI and hardware where they were.
-  s_p4_ant_dd = dd;
-  s_p4_ant_pending = m;
-  lv_dropdown_set_selected(dd, xl9535.antennaMode());
-  showConfirm(m == Xl9535::ANT_EXTERNAL
+static void antSelConfirmApply() {
+  antSelSet(s_ant_pending);
+  if (g_lv.task) {
+    g_lv.task->showAlert(s_ant_pending == ANT_SEL_EXTERNAL ? TR("External antenna selected")
+                       : s_ant_pending == ANT_SEL_AUTO     ? TR("Per-transmit switching on")
+                                                           : TR("On-board antenna selected"), 1200);
+  }
+  antSelShowLive();
+}
+
+// Ask for an antenna. On-board is always safe and applies at once. External moves BOTH
+// directions onto the external socket, so it needs an antenna actually fitted there: that is
+// the one real hardware risk and it gets the damage warning, except for an owner who already
+// accepted it by turning on "Always use the external antenna". Auto (the legacy per-TX toggle)
+// transmits on the on-board antenna and only listens on the external socket, so it is not a PA
+// hazard, just permanently lopsided; it gets an accurate performance warning instead.
+static void antSelRequest(uint8_t m) {
+  s_ant_pending = (m > ANT_SEL_AUTO) ? ANT_SEL_INTERNAL : m;
+  if (s_ant_pending == ANT_SEL_INTERNAL ||
+      (s_ant_pending == ANT_SEL_EXTERNAL && touchPrefsGetAntExtAlways())) {
+    antSelConfirmApply();
+    return;
+  }
+  showConfirm(s_ant_pending == ANT_SEL_EXTERNAL
                 ? TR("Switch to the external antenna?\n\nMake sure an antenna is actually connected "
                      "to the external antenna socket first. Transmitting with nothing attached can "
                      "damage the radio.\n\nResets to the on-board antenna on every reboot.")
@@ -15297,7 +15428,55 @@ static void radioP4AntennaSelectCb(lv_event_t* e) {
                      "only. It transmits on the on-board antenna and listens on the external one, "
                      "so your outbound signal will be much weaker than your inbound.\n\nResets to "
                      "the on-board antenna on every reboot."),
-              TR("Switch"), radioP4AntennaConfirmApply);
+              TR("Switch"), antSelConfirmApply);
+}
+
+static void radioAntennaSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* dd = lv_event_get_target(e);
+  const uint8_t m = (uint8_t)lv_dropdown_get_selected(dd);
+  // Revert the widget FIRST and only re-select once applied: showConfirm has no cancel
+  // callback, so a dismissed dialog must leave UI and hardware where they were.
+  s_ant_dd = dd;
+  lv_dropdown_set_selected(dd, antSelMode());
+  antSelRequest(m);
+}
+
+// "Always use the external antenna (MMCX)": boot selects the external socket. Persisted in its
+// own key (touchPrefsGetAntExtAlways). Turning it ON asks first, with the damage warning, and the
+// switch only flips from the confirm handler; turning it OFF also goes back to the on-board
+// antenna at once, since the usual reason is that the external antenna came off.
+static void antAlwaysConfirmApply() {
+  touchPrefsSetAntExtAlways(true);
+  const bool saved = touchPrefsGetAntExtAlways();   // read back: a failed write must not look on
+  if (s_ant_always_sw) {
+    if (saved) lv_obj_add_state(s_ant_always_sw, LV_STATE_CHECKED);
+    else       lv_obj_clear_state(s_ant_always_sw, LV_STATE_CHECKED);
+  }
+  if (!saved) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1500);
+    return;
+  }
+  s_ant_pending = ANT_SEL_EXTERNAL;
+  antSelSet(ANT_SEL_EXTERNAL);
+  if (g_lv.task) g_lv.task->showAlert(TR("External antenna at every boot"), 1500);
+  antSelShowLive();
+}
+static void radioAntAlwaysToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  s_ant_always_sw = sw;
+  if (!lv_obj_has_state(sw, LV_STATE_CHECKED)) {
+    touchPrefsSetAntExtAlways(false);
+    s_ant_pending = ANT_SEL_INTERNAL;
+    antSelConfirmApply();   // "On-board antenna selected"
+    return;
+  }
+  lv_obj_clear_state(sw, LV_STATE_CHECKED);   // stays off unless the confirm turns it on
+  showConfirm(TR("Always use the external antenna?\n\nThe radio will start on the external (MMCX) "
+                 "socket at every boot. Transmitting without an antenna attached can damage the "
+                 "radio.\n\nOnly turn this on if your external antenna stays connected."),
+              TR("Turn on"), antAlwaysConfirmApply);
 }
 #endif
 #if defined(HELTEC_LORA_V4_TFT)
@@ -15513,15 +15692,20 @@ static void buildRadioSettings() {
   // The receiver and the sending side.
   {
     lv_obj_t* c = setCard("Signal");
-#if defined(HAS_TDISPLAY_P4)
-    // The SKY13453 on XL9535 IO1 (HIGH = on-board, LOW = external socket; see Xl9535.h).
-    // On-board is re-forced at every boot; External sits behind a confirmation, because
-    // keying the PA into an empty socket is how one gets destroyed. "Auto" keeps the old
-    // per-transmit toggle for comparison only (sends on-board, listens external).
-    setDropdownRow(c, "LoRa antenna (P4)",
-                   "Always starts on the on-board antenna after a reboot. Only pick External with an antenna fitted to the external socket.",
+#if CAP_ANTENNA_SELECT
+    // The switchable antenna (see antSelMode). On-board is re-forced at every boot unless the
+    // switch below is on; External sits behind a confirmation, because keying the PA into an
+    // empty socket is how one gets destroyed. "Auto" keeps the old per-transmit toggle for
+    // comparison only (sends on-board, listens external).
+    s_ant_dd = setDropdownRow(c, "LoRa antenna (P4)",
+                   "Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.",
                    TR("Internal (on-board)\nExternal (MMCX)\nAuto (legacy, per transmit)"),
-                   xl9535.antennaMode(), radioP4AntennaSelectCb);   // live state, not a stored pref
+                   antSelMode(), radioAntennaSelectCb);   // live state, not a stored pref
+    s_ant_always_sw = setSwitchRow(c, "Always use the external antenna (MMCX)",
+                   "Starts on the external socket at every boot. Only for an antenna that stays connected.",
+                   touchPrefsGetAntExtAlways(), radioAntAlwaysToggleCb);
+    lv_obj_add_event_cb(s_ant_dd, antSelWidgetDeleteCb, LV_EVENT_DELETE, nullptr);
+    lv_obj_add_event_cb(s_ant_always_sw, antSelWidgetDeleteCb, LV_EVENT_DELETE, nullptr);
 #endif
 #if defined(HELTEC_LORA_V4_TFT)
     // Heltec V4.3 only: the FEM's ~17 dB receive amplifier, separate from the SX1262's own
@@ -21518,14 +21702,15 @@ static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed)
   openAdminLoginPrompt(*c);
 }
 
+static void openRepeaterAdmin(const ContactInfo& c);   // RepeaterAdminApp.h, included below
 static void actionSheetAdminCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   ContactInfo c;
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  s_room_join_idx = -1;   // repeater admin login, not a room join
-  openAdminLoginPrompt(c);
+  s_room_join_idx = -1;   // repeater admin, not a room join
+  openRepeaterAdmin(c);   // the admin app (login, status, settings, console)
 }
 
 // "Join" a room server: same login mechanism as repeater admin (sendLogin is
@@ -21541,6 +21726,14 @@ static void actionSheetJoinRoomCb(lv_event_t* e) {
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
   openAdminLoginPrompt(c);
 }
+
+// ---- Repeater / room server admin app (RepeaterAdminApp.h) ---------------------
+// Shares this translation unit: it builds on the settings kit, the confirm popup and
+// the console above. These are defined further down.
+static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt);
+static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
+static bool raOverlayAboveClose();   // closes a popup opened over the app (defined by the popup registry)
+#include "RepeaterAdminApp.h"
 
 // Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore (the
 // star marker + favorites filter) AND mirrors into the firmware contact
@@ -22344,7 +22537,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // block + share contact (7), + trace/admin for repeaters (2), + Join for
   // rooms (1), + line-of-sight (1), + Show on map (1 when contact has GPS and
   // !from_map).
-  const int grid_items = (from_map ? 5 : 8) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
+  const int grid_items = (from_map ? 5 : 8) + (is_repeater ? 2 : 0) + (is_room ? 2 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   // P4 portrait: the 2-column grid cut most labels off with "..." on the narrow
   // panel, so every action gets its own full-width row. The card grows to fit and
   // the body scrolls past the screen height like any tall sheet. Landscape and the
@@ -22494,6 +22687,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   if (is_room) {
     mk_btn(TR(LV_SYMBOL_LOOP "  Join"), actionSheetJoinRoomCb, COLOR_STATUS_OK);
     mk_btn(TR(LV_SYMBOL_ENVELOPE "  Open chat"), actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_SETTINGS "  Admin"), actionSheetAdminCb, 0);   // the admin app, room flavour
   } else if (is_repeater) {
     mk_btn(TR(LV_SYMBOL_REFRESH "  Ping"), actionSheetPingCb, 0);
   } else {
@@ -27433,7 +27627,19 @@ static bool tanSdTryMount() {
   begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT);
 #elif defined(HAS_CROWPANEL_P4_101)
   // Hot-insert path. The J5 slot only has D0 wired, so 1-bit; pins + external pad power were set by
-  // main.cpp (SD_MMC keeps them across end/begin).
+  // main.cpp (SD_MMC keeps them across end/begin). The first caller (the tile backend pick, a few
+  // hundred ms after boot) would only repeat what main.cpp's quiet probe just found, with an IDF and
+  // an Arduino error line, so an empty slot at boot starts in the normal 8 s backoff instead.
+  {
+    extern bool g_sd_no_card_at_boot;   // crowpanel_p4_101/main/main.cpp
+    static bool s_first_try = true;
+    const bool skip = s_first_try && g_sd_no_card_at_boot;
+    s_first_try = false;
+    if (skip) {
+      s_tan_sd_retry_after = millis() + 8000;
+      return false;
+    }
+  }
   attempted = true;
   begin_ok = SD_MMC.begin("/sdcard", true /*1-bit*/, false, SDMMC_FREQ_DEFAULT);
 #else
@@ -30198,7 +30404,7 @@ static constexpr uint32_t kFileTransferRestoreMaxBytes = 4u * 1024u * 1024u;
 static bool s_file_transfer_restore_upload = false;
 static bool s_file_transfer_backup_download = false;
 // Settings backup helpers, defined with the Backups settings page further down.
-static void backupMakeFilename(char* out, size_t cap);
+static void backupMakeFilename(char* out, size_t cap, bool probe_storage);
 static bool backupImportAndReboot(fs::FS* fsp, const char* path,
                                   void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
@@ -30562,7 +30768,7 @@ static void fileTransferBackupBegin() {
     return;
   }
   char name[48];
-  backupMakeFilename(name, sizeof name);
+  backupMakeFilename(name, sizeof name, false);   // lands on the computer, not device storage
   s_file_transfer_downloading = true;
   s_file_transfer_download_size = static_cast<uint32_t>(size);
   s_file_transfer_download_offset = 0;
@@ -33359,6 +33565,16 @@ static inline void tileCacheMkdir(const char* rel) {
 // #tiles: bytes of tiles written to FFat this session — the Tanmatsu FFat-fallback budget (the SD path
 // isn't space-constrained). Reset each boot; a genuinely-full FAT then just fails writes cleanly.
 static volatile uint32_t s_ffat_tile_bytes  = 0;
+#if CAP_TILES_ON_STORAGE
+// Share of the internal 'storage' partition kept free for user data when map tiles fall back to it.
+static constexpr size_t kTileStorageReservePct = 30;
+static constexpr size_t kTileStorageReserveMin = 2u * 1024u * 1024u;
+#if defined(HAS_CROWPANEL_P4_101)
+static const char* const kTileBoardName = "CrowPanel P4 10.1";
+#else
+static const char* const kTileBoardName = "T-Display P4";
+#endif
+#endif
 static bool tilesFsLowSpace() {
   if (!s_tiles_fs_ready || !s_tile_fs) return false;   // no cache backend -> nothing to guard
 #if defined(HAS_TANMATSU)
@@ -33384,6 +33600,28 @@ static bool tilesFsLowSpace() {
   // gate wedged permanently ON and blocked EVERY tile download (the fetcher bailed
   // before the HTTP GET: ok 0, fail N, http 0, wr 'S'). The SD card has gigabytes
   // free, so it is never the constraint here — only guard the LittleFS partition.
+#if CAP_TILES_ON_STORAGE
+  // No-card fallback: the tiles share the internal LittleFS 'storage' partition with identity,
+  // contacts and chat history. Stop caching NEW tiles while less than kTileStorageReservePct of it
+  // (at least kTileStorageReserveMin) is free. A full LittleFS also faults in lfs_alloc instead of
+  // returning NOSPC (see above), and here that would be the user's own data partition.
+  if (s_tile_fs == &LittleFS) {
+    static uint32_t st_last_ms = 0;
+    static bool     st_low     = false;
+    const uint32_t now = millis();
+    if (st_last_ms == 0 || (uint32_t)(now - st_last_ms) >= 5000) {
+      st_last_ms = now ? now : 1;
+      const size_t tot = LittleFS.totalBytes();
+      const size_t use = LittleFS.usedBytes();
+      const size_t freeb = (tot > use) ? (tot - use) : 0;
+      size_t reserve = tot / 100 * kTileStorageReservePct;
+      if (reserve < kTileStorageReserveMin) reserve = kTileStorageReserveMin;
+      s_tiles_free_kb = (uint16_t)((freeb / 1024 > 0xFFFE) ? 0xFFFE : freeb / 1024);
+      st_low = (tot > 0) && (freeb < reserve);
+    }
+    return st_low;
+  }
+#endif
   if (s_tile_fs != &s_tiles_fs) return false;          // SD-backed cache: not space-constrained
   static uint32_t last_ms = 0;
   static bool     low     = false;
@@ -34592,6 +34830,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
   #endif
 #elif defined(ATTAKY_MESH_SERIES)
 #define WADA_BOARD_ID "attaky"
+#elif defined(HAS_SENSECAP_INDICATOR)
+#define WADA_BOARD_ID "sensecap-indicator"
 #elif defined(HAS_WIO_TRACKER_L2)
 #define WADA_BOARD_ID "wio-tracker-l2"
 #elif defined(HAS_CROWPANEL_35)
@@ -34748,8 +34988,39 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   Update.onProgress([](size_t done, size_t total) {
     s_ota_pct = total ? (int)((uint64_t)done * 100 / total) : 0;
   });
+  // Copy by hand, yielding, instead of Update.writeStream(): that reads through
+  // Stream::timedRead, which spins without yielding until http's 20 s timeout, so a
+  // slow start starved IDLE0 on this core-0 worker and the 5 s task watchdog
+  // rebooted the device, "stuck at 0%, then a restart" (#689). Same loop as the SD
+  // download below: wait with vTaskDelay, give up after 15 s without data.
   auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
-  const size_t written = stream ? Update.writeStream(*stream) : 0;
+  size_t written = 0;
+  {
+    size_t bufsz = 4096;
+    uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!buf) { bufsz = 1024; buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
+    unsigned long last_data = millis();
+    while (buf && stream && written < (size_t)len) {
+      const int avail = stream->available();
+      if (avail <= 0) {
+        if (!http.connected() || (millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      const size_t want = ((size_t)avail > bufsz) ? bufsz : (size_t)avail;
+      const int n = stream->read(buf, want);
+      if (n <= 0) {
+        if ((millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+      last_data = millis();
+      if (Update.write(buf, (size_t)n) != (size_t)n) break;   // flash write failed: reported below
+      written += (size_t)n;
+      vTaskDelay(1);   // let IDLE0 (and Wi-Fi) run between blocks
+    }
+    if (buf) heap_caps_free(buf);
+  }
   http.end();
   if (written != (size_t)len) {
     snprintf(s_ota_msg, sizeof s_ota_msg, "short read %u/%d", (unsigned)written, len);
@@ -39589,6 +39860,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // types (chatComposerAutoGrow). Reset here so a previous chat's grown height
   // doesn't leak into this one's initial layout math below.
   s_comp_h = chatComposerBaseH();
+  s_comp_ta_h = chatComposerSlim() ? chatComposerOneLineTaH() : s_comp_h - chatComposerChromeH();
 
   // ---- Message area (scrollable container of speech-bubble children) ----
   // Each message gets its own lv_obj bubble inside p.msgs so we can style
@@ -39840,7 +40112,7 @@ static void makeChatDetail(LvChatPanel& p) {
   p.composer_ta = lv_textarea_create(p.composer_row);
   // M9 conversations: QR | message input | emoji | # | Send. Other boards
   // have QR | message input | emoji | Send.
-  lv_obj_set_size(p.composer_ta, comp_ta_w, composer_h - chatComposerChromeH());
+  lv_obj_set_size(p.composer_ta, comp_ta_w, s_comp_ta_h);
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
   styleCard(p.composer_ta);
@@ -39848,7 +40120,7 @@ static void makeChatDetail(LvChatPanel& p) {
   // A pill at one line. The radius is fixed at that size, not LV_RADIUS_CIRCLE:
   // as the box grows, a circle radius would grow with it, and at four lines the
   // curve cut through the start and end of the first and last lines (#617).
-  lv_obj_set_style_radius(p.composer_ta, (composer_h - chatComposerChromeH()) / 2, LV_PART_MAIN);
+  lv_obj_set_style_radius(p.composer_ta, s_comp_ta_h / 2, LV_PART_MAIN);
   lv_obj_set_style_pad_hor(p.composer_ta, SC(12), LV_PART_MAIN);
   // Keep a few px of vertical slack in the textarea CONTENT so it never sits at
   // exactly one line-height (that made the internal scroll oscillate ±1px per
@@ -39948,6 +40220,8 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_center(sl);
 #if CAP_ROUND_CORNERS
   chatComposerApplyRows(&p);
+#elif CAP_LARGE_SCREEN
+  chatComposerAlignSlim(&p);   // centre the one-line box and Send on the chips (slim layout)
 #endif
 
   // No floating HOME button — exit is the Back chevron in the (double-height) status
@@ -48653,6 +48927,9 @@ static int rgbDist(uint32_t a, uint32_t b) {
 static void bgTheme() {
   s_bg_kind = 0xFF;
   s_aur_on = s_glass_on = false;
+  // Glass tiles off: the background stays, but every card, Home widget and control panel
+  // tile is the solid panel colour, as before the aurora (ljh08ralith liked that look).
+  s_glass_tiles = touchPrefsGetGlassTiles();
 #if !defined(HAS_TDECK_PRO)
   if (s_theme_high_contrast) return;
   s_bg_kind = touchPrefsGetBackground();
@@ -48669,10 +48946,10 @@ static void bgTheme() {
   if (s_bg_kind == TOUCH_BG_COLOR) {
     const uint32_t c = touchPrefsGetBackgroundColor();
     COLOR_BG = bgSafeColor(c == 0xFFFFFFFFu ? COLOR_GLOW : c, s_theme_day);
-    s_glass_on = rgbDist(COLOR_BG, COLOR_PANEL) > 24;   // glass only where it stands apart from the cards
+    s_glass_on = s_glass_tiles && rgbDist(COLOR_BG, COLOR_PANEL) > 24;   // glass only where it stands apart from the cards
     return;
   }
-  s_glass_on = true;
+  s_glass_on = s_glass_tiles;
   if ((COLOR_BG & 0xF8FCF8u) == 0) COLOR_BG = 0x000400u;
   s_aur_key = lv_color_hex(COLOR_BG).full;
 #endif
@@ -49336,17 +49613,37 @@ static void backupsRebuildAsyncCb(void* /*p*/) {
   if (s_settings_open_cat == CAT_BACKUPS) openSettingsCategory(CAT_BACKUPS);
 }
 
-// Unique backup filename from the device clock (local time) when it's set, else a
-// uptime fallback. e.g. "meshcore-20260612-143205.json".
-static void backupMakeFilename(char* out, size_t cap) {
+// Unique backup filename, always "meshcore-backup-<stamp>.json". The stamp is the
+// device clock (local time) when it's set, e.g. "meshcore-backup-20260612-143205.json".
+// Without a set clock it's "nodate-N"; with `probe_storage` N is the first one not
+// already on the card or in internal storage, so an export after a reboot can't
+// overwrite an older backup (the old uptime-seconds stamp repeated, #686).
+static void backupMakeFilename(char* out, size_t cap, bool probe_storage) {
   uint32_t t = 0;
   if (mesh::RTCClock* rtc = the_mesh.getRTCClock()) t = rtc->getCurrentTime();
   if (wallClockIsCurrent() && t > ClockFloorRTC::MIN_VALID_EPOCH) {
     time_t tt = (time_t)t; struct tm v; localtime_r(&tt, &v);
-    snprintf(out, cap, "meshcore-%04d%02d%02d-%02d%02d%02d.json",
+    snprintf(out, cap, "meshcore-backup-%04d%02d%02d-%02d%02d%02d.json",
              v.tm_year + 1900, v.tm_mon + 1, v.tm_mday, v.tm_hour, v.tm_min, v.tm_sec);
-  } else {
-    snprintf(out, cap, "meshcore-backup-%lu.json", (unsigned long)(millis() / 1000));
+    return;
+  }
+  fs::FS* sd_fs  = probe_storage ? backupSdFs() : nullptr;
+  fs::FS* int_fs = backupInternalFs();
+  // open() rather than exists(): FFat's exists() says "missing" for files that are
+  // there on the Tanmatsu (and stat lies on the P4), so without a card every export
+  // would pick nodate-1 and overwrite the last one.
+  auto present = [](fs::FS* fs, const char* path) {
+    if (!fs) return false;
+    File f = fs->open(path, FILE_READ);
+    const bool ok = (bool)f;
+    if (f) f.close();
+    return ok;
+  };
+  for (unsigned n = 1; ; n++) {
+    snprintf(out, cap, "meshcore-backup-nodate-%u.json", n);
+    if (!probe_storage || n >= 999) return;
+    char path[64]; snprintf(path, sizeof path, "/%s", out);
+    if (!present(sd_fs, path) && !present(int_fs, path)) return;
   }
 }
 
@@ -49510,7 +49807,7 @@ static void buildBackupsSettings() {
       char timestamped[48];
       const char* filename = "meshcore-backup.json";
       if (s_backup_append_timestamp) {
-        backupMakeFilename(timestamped, sizeof timestamped);
+        backupMakeFilename(timestamped, sizeof timestamped, true);
         filename = timestamped;
       }
       doExportBackupFile(filename);
@@ -52072,6 +52369,12 @@ static void showSubtleNotifyLvgl(const char* text, uint32_t duration_ms) {
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char* wifiStaStatusBrief(int s) {
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
+  // Legacy ESP-AT C6: the facade's status() only knows connected/disconnected, so say what the
+  // AT worker is actually doing (#685: a runtime C6 reset, or a join still running).
+  if (c6at_is_recovering()) return "reconnecting…";
+  if (s != WL_CONNECTED && c6at_join_busy()) return "joining…";
+#endif
   switch (s) {
     case WL_CONNECTED: return "connected";
     case WL_IDLE_STATUS: return "idle";
@@ -52477,7 +52780,7 @@ static void powerRebootCb(lv_event_t* e) {
 // finds the hardware switch — and that is what the T-Display P4 did: no wake
 // source armed at all, under a toast promising a trackball it does not have
 // (#310). Boards without the symbol get no Power-off row (see openPowerMenu).
-#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4)
+#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
 static void powerOffNow();
 static void powerOffCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -52646,7 +52949,11 @@ static void openPowerMenu() {
 
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 80 > 420) ? 420 : (sw - 80);
+#if defined(HAS_SENSECAP_INDICATOR)
+  const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 3 * p_step + 8;   // Power-off row hidden: 3 rows
+#else
   const int p_bh = 52, p_y0 = 46, p_step = 60, card_h = p_y0 + 4 * p_step + 8;   // bigger on the 800×480 panel
+#endif
 #elif defined(HAS_RAK_TAP_V2)
   // ROM force-download leaves a COM that esptool cannot open on HW CDC — hide the entry.
   const int card_w = (sw - 40 > 240) ? 240 : (sw - 40);
@@ -52708,11 +53015,12 @@ static void openPowerMenu() {
     lv_obj_center(l);
     return b;
   };
-#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
+#if !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4) || defined(HAS_SENSECAP_INDICATOR)
   // No "Power off" here: nothing on this board can wake it from deep sleep.
   // (The P4's BOOT button is GPIO35, not one of its LP GPIOs, so it cannot.)
   // The M9 has a power-cut slider and reset, neither a wakeable GPIO; the L2's
   // wake button is behind an I2C expander, which cannot wake the ESP32-S3; the
+  // Indicator's user button is GPIO38, not an RTC GPIO, so it cannot wake it; the
   // T-Display P4 and Tanmatsu have no user button either. Offering a software
   // power-off that cannot be undone reads as a freeze (#310, #406). Remaining
   // rows shift up one slot.
@@ -52758,6 +53066,17 @@ static void ccDndCb(lv_event_t* e) {
   refreshStatusLabels();   // update the status-bar DND moon right away
   openControlCenter();     // rebuild so the chip's icon + highlight flip
 }
+
+#if CAP_ANTENNA_SELECT
+// The antenna chip: shows the live antenna (filled = external, "MMCX" or "On-board" under the icon). A tap
+// on external goes back to the on-board antenna at once; a tap on the on-board one asks for
+// the external socket through antSelRequest, so the damage warning shows here too (unless
+// "Always use the external antenna" is on). Holding it opens Radio settings.
+static void ccAntennaCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  antSelRequest(antSelMode() == ANT_SEL_EXTERNAL ? ANT_SEL_INTERNAL : ANT_SEL_EXTERNAL);
+}
+#endif
 
 // The battery saver's chip: boards with a battery, and whose panel was laid out for a
 // tenth chip (the Tanmatsu, T-Display P4 and M9 grids are fixed; those keep it in
@@ -52913,8 +53232,11 @@ static void ccToggle(lv_obj_t* parent, const char* sym, const char* label,
     lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : LV_OPA_TRANSP, LV_PART_MAIN);
     icon_col = active ? COLOR_BG : COLOR_TEXT;
   } else {
-    lv_obj_set_style_bg_color(b, lv_color_hex(hue), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(b, active ? LV_OPA_COVER : s_look_tint, LV_PART_MAIN);
+    // Off: the hue at the look's tint, see-through over the panel; with Glass tiles off
+    // the same colour mixed in solid.
+    const bool solid_off = !active && !s_glass_tiles;
+    lv_obj_set_style_bg_color(b, lv_color_hex(solid_off ? rgbMix(COLOR_PANEL, hue, s_look_tint) : hue), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, (active || solid_off) ? LV_OPA_COVER : s_look_tint, LV_PART_MAIN);
     icon_col = active ? (accentLuma(hue) > 150 ? 0x00201Cu : 0xFFFFFFu) : hue;
     if (lookNeon()) {   // the launcher's lit neon edge
       lv_obj_set_style_border_color(b, lv_color_hex(hue), LV_PART_MAIN);
@@ -53123,7 +53445,8 @@ static void applyVolume(uint8_t pct) {
   if (pct > 100) pct = 100;
   s_volume_pct = pct;   // play paths read the persisted pref; this keeps the slider live
 }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101) || \
+      defined(HAS_SENSECAP_INDICATOR)
 #define HAS_CC_BRIGHTNESS 1
 static uint8_t s_brightness_pct = 63;
 static void applyBrightness(uint8_t pct) {
@@ -53269,7 +53592,8 @@ static void openControlCenter() {
   // Frosted-glass panel: translucent fill so the (dimmed) screen behind shows through.
   // Only the panel BACKGROUND is see-through — the clock/sliders/chips drawn on top stay
   // fully opaque, so nothing becomes hard to read. ~85% keeps it clearly a solid surface.
-  lv_obj_set_style_bg_opa(card, 218, LV_PART_MAIN);
+  // Glass tiles off (Settings > Theme): a solid panel instead.
+  lv_obj_set_style_bg_opa(card, s_glass_tiles ? 218 : LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_radius(card, 12, LV_PART_MAIN);
   // Subtle light hairline (instead of the near-black border) reads more like a glass edge.
   lv_obj_set_style_border_color(card, lv_color_hex(themeRole(0x3A3D42, COLOR_BORDER)), LV_PART_MAIN);
@@ -53604,6 +53928,9 @@ static void openControlCenter() {
   chip_count++;
 #endif
   chip_count++;   // Do Not Disturb (all boards)
+#if CAP_ANTENNA_SELECT
+  chip_count++;   // Antenna
+#endif
 #if CC_HAS_SAVER
   chip_count++;   // Battery saver
 #endif
@@ -53676,6 +54003,13 @@ static void openControlCenter() {
     ccToggle(row, UI_ICON_MOON, TR("DND"), dnd_on, ccDndCb, tw, th,
              CAT_SOUND, nullptr, CC_NAV_DND);
   }
+#if CAP_ANTENNA_SELECT
+  {
+    const bool ext = antSelMode() == ANT_SEL_EXTERNAL;
+    ccToggle(row, UI_ICON_ANTENNA, TR("Antenna"), ext, ccAntennaCb, tw, th,
+             CAT_RADIO, ext ? "MMCX" : TR("On-board"));
+  }
+#endif
 #if CC_HAS_SAVER
   ccToggle(row, UI_ICON_BATTERY, TR("Saver"), touchSleep::enabled(), ccSaverCb, tw, th,
            CAT_BATTERY, nullptr, CC_NAV_SAVER);
@@ -59152,7 +59486,7 @@ static lv_obj_t* hwIcon(lv_obj_t* parent, const char* glyph, uint32_t col, bool 
 static const lv_font_t* hwFitFont(const char* txt, int w, int h) {
   const lv_font_t* faces[] = {
     &lv_font_montserrat_28,
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE)
     &lv_font_montserrat_24, &lv_font_montserrat_20,
 #endif
     &g_font_semi_16, &g_font_semi_14, &g_font_12,
@@ -64366,6 +64700,7 @@ static const uint32_t kThemeColors[] = {
 struct ThemeChoice {
   uint8_t mode; uint32_t accent; bool more; uint8_t style; bool rainbow;
   uint8_t bg_kind; uint32_t bg_col; char bg_img[TOUCH_LOCK_WALLPAPER_MAXLEN];   // Background
+  bool glass;                                                                    // Glass tiles
 };
 static ThemeChoice s_theme_saved = {}, s_theme_pend = {};
 static constexpr int kThemeColorN = (int)(sizeof(kThemeColors) / sizeof(kThemeColors[0]));
@@ -64386,7 +64721,7 @@ struct ThemePageUi {
   lv_obj_t* swatch[kThemeColorN]; lv_obj_t* custom; lv_obj_t* custom_dot; lv_obj_t* accent_note;
   lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
   lv_obj_t* bg[5]; lv_obj_t* bg_sw[5]; lv_obj_t* bg_col_btn; lv_obj_t* bg_col_dot;
-  lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note;
+  lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note; lv_obj_t* glass_sw;
   lv_obj_t* icons[2]; lv_obj_t* icons_av[2];
   lv_obj_t* apply; lv_obj_t* apply_lbl;   // Apply and restart, on the preview box
   lv_obj_t* mini;                         // the bar that keeps it in reach once the box scrolls away
@@ -64642,7 +64977,7 @@ static bool themePendingDiffers() {
   const ThemeChoice& b = s_theme_saved;
   return a.mode != b.mode || a.accent != b.accent || a.more != b.more ||
          a.style != b.style || a.rainbow != b.rainbow || a.bg_kind != b.bg_kind ||
-         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0;
+         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass;
 }
 // MORE COLORS! as the pending choice has it: Taste the rainbow brings it along, and
 // high contrast keeps its own fixed colours.
@@ -65052,6 +65387,8 @@ static void themePageRepaint() {
       base = base ? base + 1 : (strncmp(s_theme_pend.bg_img, "sd:", 3) ? s_theme_pend.bg_img : s_theme_pend.bg_img + 3);
       lv_label_set_text(s_tp.bg_img_lbl, base && base[0] ? base : TR("Choose an image"));
     }
+    // Glass tiles: nothing to see through in high contrast or on the plain theme.
+    themeSwitchSet(s_tp.glass_sw, s_theme_pend.glass, !hc && s_theme_pend.bg_kind != TOUCH_BG_NONE);
     if (s_tp.bg_note) {
       if (hc) lv_obj_clear_flag(s_tp.bg_note, LV_OBJ_FLAG_HIDDEN);
       else    lv_obj_add_flag(s_tp.bg_note, LV_OBJ_FLAG_HIDDEN);
@@ -65156,6 +65493,11 @@ static void themeBgColorCb(lv_event_t* e) {
   s_picker_for_bg = true;
   openAccentPicker();
 }
+static void themeGlassCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_theme_pend.glass = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  themePageRepaint();
+}
 static void themeBgImageCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED && !themeModeIsHc(s_theme_pend.mode)) themeBgPickImage();
 }
@@ -65194,6 +65536,7 @@ static void themeApplyCb(lv_event_t* e) {
   touchPrefsSetBackground(s_theme_pend.bg_kind);
   touchPrefsSetBackgroundColor(s_theme_pend.bg_col);
   touchPrefsSetBackgroundImage(s_theme_pend.bg_img);
+  touchPrefsSetGlassTiles(s_theme_pend.glass);
 #endif
   s_theme_saved = s_theme_pend;
   lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
@@ -65392,6 +65735,7 @@ static void buildThemeSettings() {
   s_theme_saved.bg_kind = touchPrefsGetBackground();
   s_theme_saved.bg_col  = touchPrefsGetBackgroundColor();
   touchPrefsGetBackgroundImage(s_theme_saved.bg_img, sizeof s_theme_saved.bg_img);
+  s_theme_saved.glass   = touchPrefsGetGlassTiles();
   s_theme_pend = s_theme_saved;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t card_w = sw - 22;   // as createSettingsModal's cards
@@ -65644,6 +65988,11 @@ static void buildThemeSettings() {
     lv_obj_set_style_text_color(ic, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_move_to_index(ic, 0);
 #endif
+    // Glass tiles (default on): Home widgets, cards and the control panel's tiles let the
+    // background through. Off draws them in the solid panel colour, the pre-aurora look.
+    s_tp.glass_sw = themeSwitchRow(c, cw, "Glass tiles",
+                                   "Widgets, cards and panel tiles let the background show through. Off: solid tiles.",
+                                   s_theme_pend.glass, themeGlassCb);
     s_tp.bg_note = themeNote(c, cw, "High contrast keeps its own fixed colours.");
   }
 #endif  // !HAS_TDECK_PRO
@@ -67302,7 +67651,8 @@ static void buildUiTree() {
   };
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
-#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101)
+#if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101) && \
+    !defined(HAS_SENSECAP_INDICATOR)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
@@ -67502,6 +67852,10 @@ void UITask::onThreadsChanged() {
 #endif
 }
 
+void UITask::onBinaryReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  raOnBinaryReply(contact, data, len);   // only the repeater admin app sends these
+}
+
 void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
   if (s_region_scan_phase != RegionScanPhase::Querying || !s_region_scan_waiting ||
       s_region_scan_next >= s_region_scan_count ||
@@ -67514,6 +67868,7 @@ void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, 
 }
 
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  if (raOnStatusReply(contact, data, len)) return;   // the repeater admin app asked
   s_ui_ping_deadline_ms = 0;  // reply arrived, cancel timeout
 
   unsigned batt_mv = 0;
@@ -67526,12 +67881,12 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
    *   u16 batt_mv, u16 queue_len, i16 noise_floor, i16 last_rssi,
    *   u32 n_recv, u32 n_sent, u32 air_secs, u32 uptime_secs, ...
    * Room servers and sensors reply with a JSON blob via StatsFormatHelper. */
-  if (len >= 20) {
+  if (len >= 24) {
     batt_mv   = (unsigned)(data[0] | (data[1] << 8));
     queue_len = (unsigned)(data[2] | (data[3] << 8));
     last_rssi = (int16_t)(data[6] | (data[7] << 8));
-    // uptime_secs is at offset 16 (after 2+2+2+2 + 4+4 = 16)
-    uptime_s  = (unsigned)(data[16] | (data[17] << 8) | (data[18] << 16) | (data[19] << 24));
+    // uptime_secs is at offset 20 (2+2+2+2 + recv 4 + sent 4 + airtime 4); 16 is the TX airtime
+    uptime_s  = (unsigned)(data[20] | (data[21] << 8) | (data[22] << 16) | (data[23] << 24));
     if (batt_mv >= 2000 && batt_mv <= 5500) parsed = true;
   }
   if (!parsed) {
@@ -68380,6 +68735,7 @@ void UITask::onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
 }
 
 void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
+  if (raOnLoginResult(contact, success, perms)) return;   // the repeater admin app's login
   // Which pending attempt, if any, is this the reply to? Disarming the watchdog
   // used to be unconditional, which was harmless while it only drove a toast —
   // but it means the once-a-minute background room self-heal, logging in to some
@@ -68472,6 +68828,7 @@ void UITask::onAdminCommandReply(const ContactInfo& contact, const char* text) {
   // Only append if the reply is from the contact we're currently logged
   // into. Replies from a different repeater would be confusing — the
   // companion-serial side handles those separately via queueMessage.
+  if (raOnCliReply(contact, text)) return;   // a "wX|" reply to the admin app
   if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
   adminLogAppend("", text ? text : "");
 }
@@ -68850,7 +69207,7 @@ bool luaHostScreenOn() {
 // It never comes out smaller than the regular 16, which on a scaled-up UI already is
 // Montserrat 24. Older firmware maps any size above 16 to 16, so apps stay readable.
 static const lv_font_t* luaHostFigureFont() {
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(DOC_CAPTURE)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE)
   if (lv_font_get_line_height(&lv_font_montserrat_24) > lv_font_get_line_height(&g_font_16))
     return &lv_font_montserrat_24;
 #endif
@@ -72819,7 +73176,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // the V4 here avoids dragging the T-Deck *down* to 160. The V4-R8 env now
   // sets ESP32_CPU_FREQ=240 itself (whole of setup() at full clock), so this
   // is a no-op there.
-#if !defined(HAS_TDECK_GT911)
+#if !defined(HAS_TDECK_GT911) && !defined(CONFIG_IDF_TARGET_ESP32P4)
+  // (Not on the ESP32-P4: it runs at a fixed 360 MHz and Arduino refuses 240 with an error line.)
   setCpuFrequencyMhz(240);   // S3 max; watch the map tiles for SJPG decode noise (drop to 160 if it shows)
 #endif
 
@@ -72848,8 +73206,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // initialised to an empty FS instead of failing to mount. partition
   // label "tiles" matches the CSV; base path "/tiles_lfs" is for VFS
   // access (we use the FS object directly, so it's mostly a label).
-  s_tiles_fs_ready = s_tiles_fs.begin(true /*formatOnFail*/, "/tiles_lfs",
-                                       10 /*maxOpenFiles*/, "tiles");
+  // Only when the running partition table HAS a "tiles" partition: under Launcher, and on boards
+  // whose own table has none (CAP_TILES_ON_STORAGE), the mount, the forced format() and the remount
+  // below could only fail, each with a misleading "partition not found / Formatting LittleFS failed"
+  // error, before the fallbacks further down pick the real backend.
+  const bool tiles_part_present =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "tiles") != nullptr;
+  s_tiles_fs_ready = tiles_part_present &&
+                     s_tiles_fs.begin(true /*formatOnFail*/, "/tiles_lfs", 10 /*maxOpenFiles*/, "tiles");
 #if defined(ESP32)
   // Mount failed outright: the Arduino LittleFS wrapper only auto-formats when
   // esp_vfs_littlefs_register returns exactly ESP_FAIL — but grow_on_mount=true
@@ -72857,7 +73221,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // partition is left unmounted and the map showed "Reflash the tiles partition"
   // forever even though the partition is present. format() targets the stored
   // "tiles" label, so force a wipe + remount. Tiles are a re-downloadable cache.
-  if (!s_tiles_fs_ready) {
+  if (!s_tiles_fs_ready && tiles_part_present) {
     WIRE_DBG("[TILE] tiles begin() failed — forcing format() + remount");
     s_tiles_fs.format();
     s_tiles_fs_ready = s_tiles_fs.begin(true, "/tiles_lfs", 10, "tiles");
@@ -72944,16 +73308,18 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] Tanmatsu: no SD card -> caching Wi-Fi tiles on FFat /tiles (best-effort)");
   }
 #endif
-#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
-  // T-Display P4: no dedicated "tiles" partition in its table. Prefer the microSD (SD_MMC slot 0,
-  // mounted by main.cpp at boot — XL9535 SD_EN must be LOW, it gates the slot's power); else the
-  // internal 8 MB FFat 'storage' partition — a standard FFat mount of OUR OWN partition, so none of
-  // the Tanmatsu locfd metadata quirks apply. Either way the map gets a working Wi-Fi tile cache.
+#if CAP_TILES_ON_STORAGE
+  // No dedicated "tiles" partition in this board's table (and no free flash to add one without
+  // moving partitions that hold user data). Prefer the microSD (SD_MMC slot 0, mounted by main.cpp at
+  // boot); else the internal LittleFS 'storage' partition, which then shares its space with identity,
+  // contacts and chat history: tilesFsLowSpace() stops caching tiles while that partition is short of
+  // headroom, so a full map cache can never crowd out user data.
+  // (T-Display P4: XL9535 SD_EN must be LOW, it gates the slot's power.)
   else if (tanSdTryMount()) {
     s_tile_fs        = &SD_MMC;
     s_tile_root[0]   = '\0';
     s_tiles_fs_ready = true;
-    printf("[TILE] T-Display P4: caching Wi-Fi tiles on microSD /tiles (SD_MMC)\n");
+    printf("[TILE] %s: caching Wi-Fi tiles on microSD /tiles (SD_MMC)\n", kTileBoardName);
   }
   else {
     if (g_fs_ok) {
@@ -72966,10 +73332,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       s_tile_fs        = &LittleFS;
       s_tile_root[0]   = '\0';
       s_tiles_fs_ready = true;
-      printf("[TILE] T-Display P4: no SD card -> caching Wi-Fi tiles on internal LittleFS /tiles\n");
+      printf("[TILE] %s: no SD card, caching Wi-Fi tiles in internal storage /tiles (LittleFS 'storage', "
+             "kept below %u%% so user data keeps room)\n", kTileBoardName, (unsigned)(100 - kTileStorageReservePct));
     } else {
       s_tile_fs = nullptr;
-      printf("[TILE] T-Display P4: NO tile backend (no SD, FFat down)\n");
+      printf("[TILE] %s: NO tile backend (no SD card, internal storage not mounted)\n", kTileBoardName);
     }
   }
 #endif
@@ -72981,7 +73348,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] wio-l2: caching Wi-Fi tiles on SD_MMC /tiles\n");
   }
 #endif
-#if !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101) && !defined(HAS_WIO_TRACKER_L2)
+#if !CAP_TILES_ON_STORAGE && !defined(HAS_WIO_TRACKER_L2)
   else {
     s_tile_fs = nullptr;   // no cache backend at all -> map shows the storage notice
   }
@@ -73047,7 +73414,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // can see ground truth in the Settings diag, and delete any image file
   // (*.jpg / *.png) — no legitimate SPIFFS file is an image, so identity /
   // contacts3 / channels2 / new_prefs / chat history are never touched.
-  {
+  // Only where SPIFFS is actually mounted: the P4 boards keep their data on LittleFS/FFat and never
+  // mount it, so walking it there only logged "open(): File system is not mounted".
+  // (totalBytes() is esp_spiffs_info, which fails silently when nothing is mounted.)
+  if (SPIFFS.totalBytes() > 0) {
     // Big work buffers from INTERNAL heap (NOT PSRAM: SPIFFS.remove() disables
     // the flash cache, making PSRAM unreadable mid-op). Freed right after.
     const int   PATHLEN = 72;
@@ -73303,6 +73673,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 240;
       g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
       band_psram = true;
+#elif defined(HAS_SENSECAP_INDICATOR)
+      // A full 480 px row in internal DMA RAM, not the PSRAM band above: the RGB panel
+      // scans its frame buffer out of PSRAM all the time, and the flush copies each band
+      // into that buffer. From internal RAM the copy is one PSRAM write instead of a read
+      // and a write, and drawing the band does not compete with the scan-out.
+      const int draw_band_w = 480;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
 #else
       const int draw_band_w = 240;
 #endif
@@ -73397,8 +73774,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
-    // The panel driver exposes its fixed landscape surface directly (320x240 / 1024x600).
+  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
+    // The panel driver exposes its fixed surface directly (320x240 / 1024x600
+    // landscape, Indicator 480x480).
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
@@ -73523,6 +73901,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // display for the browser without changing the physical placeholder panel.
     g_lv.disp_drv.hor_res  = (s_remote_mode && !s_remote_landscape) ? 222 : 480;
     g_lv.disp_drv.ver_res  = (s_remote_mode && !s_remote_landscape) ? 480 : 222;
+#elif defined(HAS_SENSECAP_INDICATOR)
+  g_lv.disp_drv.hor_res  = 480;
+  g_lv.disp_drv.ver_res  = 480;
 #elif defined(HAS_WIO_TRACKER_L2)
   g_lv.disp_drv.hor_res  = 320;
   g_lv.disp_drv.ver_res  = 240;
@@ -73776,15 +74157,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // the plain V4; ON on the V4-R8 since prefs v49). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
 #endif
-#if defined(HAS_TDISPLAY_P4)
-    // T-Display P4 antenna select: force the on-board antenna (RF1 / IO1 HIGH) on EVERY boot,
-    // deliberately ignoring whatever was chosen last session. The external socket may have
-    // nothing screwed onto it, and transmitting into an open connector is what damages the PA —
+#if CAP_ANTENNA_SELECT
+    // Switchable antenna (T-Display P4): force the on-board antenna (RF1 / IO1 HIGH) on EVERY
+    // boot, deliberately ignoring whatever was chosen last session. The external socket may have
+    // nothing screwed onto it, and transmitting into an open connector is what damages the PA,
     // so the state you get for free after any power cycle, crash or OTA has to be the safe one.
-    // LilyGo's own driver preloads the same level for the same reason. Choosing external is a
-    // per-session confirmed action; this re-asserts powerOnSequence()'s park in case anything
+    // LilyGo's own driver preloads the same level for the same reason. The one exception is the
+    // owner's confirmed "Always use the external antenna (MMCX)" opt-in (its own NVS key, never
+    // the reserved cfg byte). This also re-asserts powerOnSequence()'s park in case anything
     // touched IO1 in between.
-    xl9535.setAntennaMode(Xl9535::ANT_INTERNAL);
+    antSelSet(touchPrefsGetAntExtAlways() ? ANT_SEL_EXTERNAL : ANT_SEL_INTERNAL);
 #endif
 
     // Buffered LoRa receive (experimental, default OFF): apply the saved opt-in.
@@ -74941,8 +75323,10 @@ static inline void touchScreenBacklight(bool on) {
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
-#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101)
-  // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5).
+#elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_CROWPANEL_P4_101) || \
+      defined(HAS_SENSECAP_INDICATOR)
+  // The display owns its backlight (I2C on Wio and the CrowPanel 5.0, PWM on the 3.5,
+  // LEDC on the Indicator).
   if (on) applyBrightness(s_brightness_pct);
   else    display.setBrightness(0);
 #elif defined(HAS_TDISPLAY_P4)
@@ -74964,7 +75348,7 @@ static inline void touchScreenBacklight(bool on) {
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
 static void setCpuForScreen(bool screen_on) {
-#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
   // The P4's Arduino HAL only accepts 360 MHz (240/80 log a "could not be set" error every screen
   // toggle) — no DFS downclock available through this API on that chip, so skip entirely.
   (void)screen_on;
@@ -79496,6 +79880,7 @@ static constexpr uint8_t PF_BASE  = 4;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
+  { P_OPEN(s_ra_edit_root),          []{ raCloseEditSheet(); },           PF_COUNT },   // repeater admin: edit sheet
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet
   { P_OPEN(s_hw_pick_root),          []{ hwPickClose(); },                PF_COUNT },   // a Home widget's choices
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
@@ -79580,6 +79965,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_los_root),              []{ closeLosModal(); },              PF_COUNT },
 #endif
   { P_OPEN(s_admin_root),            []{ closeAdminConsole(); },          PF_COUNT },
+  { P_OPEN(s_ra_root),               []{ raBack(); },                     PF_COUNT },   // repeater admin app (Back = one page up)
 #if CAP_LUA_APPS
   // The Store page (also where Settings -> Language lands, see luaStoreOpenLanguages)
   // was never registered, so backspace/Esc did nothing on it and the ONLY way out was
@@ -79601,6 +79987,23 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_appdrawer_root),        []{ setHomeDrawer(false); },         PF_COUNT | PF_BASE },
 };
 #undef P_OPEN
+
+// The repeater admin app is an app page, and Back reaches an app page's close hook
+// before the popup ladder, so the popups that open OVER it (console, telemetry
+// window) are closed here first, by the same registry rows.
+static bool raOverlayAboveClose() {
+  struct Over { bool (*is_open)(); void (*close)(); };
+  static const Over k_over[] = {
+    { []{ return s_admin_picker_root != nullptr; }, []{ closeAdminCmdPicker(); } },
+    { []{ return s_admin_root != nullptr; },        []{ closeAdminConsole(); } },
+#if CAP_SD || defined(TLORA_PAGER)
+    { []{ return s_telem_config_root != nullptr; }, []{ telemetryConfigClose(); } },
+    { []{ return s_telemetry_root != nullptr; },    []{ telemetryClose(); } },
+#endif
+  };
+  for (const Over& o : k_over) if (o.is_open()) { o.close(); return true; }
+  return false;
+}
 
 static bool popupRegistryAny() {
   for (const auto& e : k_popup_registry)
@@ -81204,7 +81607,109 @@ static void docAppsAudit() {
 }
 #endif
 
+#if defined(DOC_ADMIN_AUDIT)
+// The repeater admin app against a real node in range, as a GUEST only (a blank
+// login; never a password, never a set/reboot/OTA). The tour holds the loop, so the
+// mesh is pumped here while replies come in. -DDOC_ADMIN_NAME='"..."' picks the node.
+#ifndef DOC_ADMIN_NAME
+#define DOC_ADMIN_NAME "ALLFATHER Yagi"
+#endif
+static void docMeshWait(uint32_t ms, bool (*done)() = nullptr) {
+  const uint32_t t0 = millis();
+  while ((uint32_t)(millis() - t0) < ms) {
+    the_mesh.loop();
+    lv_timer_handler();
+    delay(5);
+    esp_task_wdt_reset();
+    if (done && done()) break;
+  }
+}
+static bool docRaIdle() { return s_ra && !s_ra->busy && s_ra->q_len == 0 && !s_ra->logging_in; }
+static void docRaShotPages(const char* base) {
+  char nm[40];
+  for (int part = 1; part <= 4 && s_ra_page; ++part) {
+    snprintf(nm, sizeof nm, part > 1 ? "%s_%d" : "%s", base, part);
+    auditShot(nm);
+    lv_obj_update_layout(s_ra_page);
+    if (lv_obj_get_scroll_bottom(s_ra_page) <= 0) break;
+    lv_obj_scroll_by(s_ra_page, 0, -(lv_obj_get_height(s_ra_page) - 60), LV_ANIM_OFF);
+  }
+}
+static void docAdminAudit() {
+  ContactInfo c; bool found = false;
+  for (uint32_t i = 0; i < the_mesh.getNumContacts(); ++i)
+    if (the_mesh.getContactByIdx(i, c) && strstr(c.name, DOC_ADMIN_NAME) &&
+        (c.type == ADV_TYPE_REPEATER || c.type == ADV_TYPE_ROOM)) { found = true; break; }
+  if (!found) { Serial.printf("DBG: ADMIN no contact '%s'\n", DOC_ADMIN_NAME); return; }
+  Serial.printf("DBG: ADMIN node '%s' type=%u path=%d\n", c.name, (unsigned)c.type, (int)c.out_path_len);
+  openRepeaterAdmin(c); docSettle(12);
+  auditShot("admin_login");
+  if (s_ra->role < 0) {
+    if (s_ra->logging_in) docMeshWait(25000, []{ return !s_ra->logging_in; });   // (no auto-login in this build)
+    raLoginSubmit(true);   // guest: blank password
+    docMeshWait(25000, []{ return s_ra->role >= 0 || !s_ra->logging_in; });
+  }
+  Serial.printf("DBG: ADMIN login role=%d\n", (int)s_ra->role);
+  if (s_ra->role < 0) { auditShot("admin_login_failed"); raClose(); return; }
+  docMeshWait(40000, docRaIdle);
+  const RAP::Status& st = s_ra->status;
+  Serial.printf("DBG: ADMIN status=%d batt=%u up=%lu noise=%d rssi=%d snr4=%d recv=%lu sent=%lu air=%lu rxair=%lu q=%u\n",
+                (int)s_ra->has_status, st.batt_mv, (unsigned long)st.uptime_secs, st.noise_floor, st.last_rssi, st.last_snr_q4,
+                (unsigned long)st.recv, (unsigned long)st.sent, (unsigned long)st.air_secs, (unsigned long)st.rx_air_secs, st.queue_len);
+  Serial.printf("DBG: ADMIN owner=%d fw='%s'\n", (int)s_ra->has_owner, s_ra->fw);
+  docSettle(8);
+  docRaShotPages("admin_overview");
+  if (!s_ra->is_room) {
+    raBuildView(RA_V_NEIGHBOURS); docSettle(6);
+    docMeshWait(40000, docRaIdle);
+    Serial.printf("DBG: ADMIN neighbours %d of %u\n", s_ra->nb_n, (unsigned)s_ra->nb_total);
+    for (int i = 0; i < s_ra->nb_n && i < 20; ++i)
+      Serial.printf("DBG: ADMIN nb %02X%02X%02X snr4=%d ago=%lu\n", s_ra->nb[i].prefix[0], s_ra->nb[i].prefix[1],
+                    s_ra->nb[i].prefix[2], (int)s_ra->nb[i].snr_q4, (unsigned long)s_ra->nb[i].heard_ago);
+    docSettle(8);
+    docRaShotPages("admin_neighbours");
+    s_ra->nb_order = RAP::NB_STRONGEST; s_ra->nb_n = 0; s_ra->nb_total = 0; s_ra->nb_loaded = false;
+    raBuildView(RA_V_NEIGHBOURS); docMeshWait(40000, docRaIdle); docSettle(8);
+    auditShot("admin_neighbours_strongest");
+  }
+  // The admin pages' LAYOUT, with nothing read: the role is faked locally and every
+  // queued request is dropped before the pump runs, so not one CLI line goes out.
+  {
+    const int8_t real_role = s_ra->role;
+    s_ra->role = RAP::ROLE_ADMIN;
+    static const struct { uint8_t v; const char* n; } k_pages[] = {
+      { RA_V_OVERVIEW, "admin_x_overview" }, { RA_V_IDENTITY, "admin_x_identity" }, { RA_V_RADIO, "admin_x_radio" },
+      { RA_V_FORWARD, "admin_x_repeating" }, { RA_V_ADVERTS, "admin_x_adverts" }, { RA_V_ACCESS, "admin_x_access" },
+      { RA_V_REGIONS, "admin_x_regions" }, { RA_V_ACTIONS, "admin_x_actions" }, { RA_V_CLIENTS, "admin_x_clients" },
+    };
+    for (const auto& pg : k_pages) {
+      raBuildView(pg.v);
+      raQueueClear();
+      for (int f = 0; f < RA_F_COUNT; ++f) if (s_ra->fst[f] == RA_FS_LOADING) { s_ra->fst[f] = RA_FS_UNKNOWN; raRenderField(f); }
+      docSettle(8);
+      docRaShotPages(pg.n);
+      if (pg.v == RA_V_FORWARD) {
+        raOpenEdit(RA_F_FLOODMAX); docSettle(8); auditShot("admin_x_edit_number");
+        raOpenEdit(RA_F_LOOP); docSettle(8); auditShot("admin_x_edit_choice");
+        raCloseEditSheet(); docSettle(4);
+      }
+    }
+    s_ra->role = real_role;
+    raQueueClear();
+  }
+  raBuildView(RA_V_OVERVIEW); raQueueClear(); docSettle(8);
+  s_ra->role = -1;   // the next real open logs in afresh
+  raBack();   // Back from the overview closes the app
+  docSettle(8);
+  Serial.printf("DBG: ADMIN closed root=%d bar=%d\n", (int)(s_ra_root != nullptr), (int)(s_apppage_close != nullptr));
+  auditShot("admin_after_close");
+}
+#endif
 static void docAuditFocus() {
+#if defined(DOC_ADMIN_AUDIT)
+  docAdminAudit();
+  return;
+#endif
 #if defined(DOC_APPS_AUDIT) && CAP_MICROSD
   docAppsAudit();
   return;

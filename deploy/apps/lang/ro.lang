@@ -1999,3 +1999,165 @@ newer keyboard	tastatură nouă
 older keyboard	tastatură veche
 older keyboard (set manually)	tastatură veche (setată manual)
 keyboard not detected yet	tastatura nu a fost detectată încă
+Always use the external antenna (MMCX)	Folosește mereu antena externă (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Pornește pe conectorul extern la fiecare pornire. Doar pentru o antenă care rămâne conectată.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Alege Externă doar cu o antenă montată pe conectorul extern. După o repornire pornește pe antena integrată, dacă comutatorul de mai jos nu este activ.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Folosești mereu antena externă?\n\nRadioul va porni pe conectorul extern (MMCX) la fiecare pornire. Transmisia fără antenă conectată poate defecta radioul.\n\nActivează doar dacă antena externă rămâne conectată.
+Turn on	Activează
+On-board antenna selected	Antenă integrată selectată
+External antenna at every boot	Antenă externă la fiecare pornire
+Antenna	Antenă
+On-board	Integrată
+Glass tiles	Plăci de sticlă
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgeturile, cardurile și plăcile din panou lasă fundalul să se vadă. Oprit: plăci opace.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 până la 9. Mai mare așteaptă mai mult între trimiteri.
+A name is required	Este nevoie de un nume
+A node clock only moves forward: syncing cannot set it back.	Ceasul unui nod merge doar înainte: sincronizarea nu îl poate da înapoi.
+A room server lists only its admins here.	Un server de cameră listează aici doar administratorii săi.
+Access	Acces
+Access changed	Acces schimbat
+Actions	Acțiuni
+Admin password	Parolă de administrator
+Admin password changed.	Parola de administrator a fost schimbată.
+Admin password for full control, or the room password.	Parola de administrator pentru control complet, sau parola camerei.
+Admin password for full control. A guest sees status and neighbours.	Parola de administrator pentru control complet. Un oaspete vede starea și vecinii.
+Advanced	Avansat
+Advert hop limit	Limită de salturi pentru anunțuri
+Advert intervals	Intervale de anunț
+Adverts	Anunțuri
+Again	Din nou
+Airtime factor	Factor de timp în aer
+Bandwidth	Lățime de bandă
+Change	Schimbă
+Change radio settings	Schimbă setările radio
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Schimbi parola de administrator? Dacă o pierzi, nu mai poți administra acest nod prin rețea.
+Clients	Clienți
+Coding rate	Rată de codare
+Console	Consolă
+Current	Actual
+Decimal degrees, for example 4.4025	Grade zecimale, de exemplu 4.4025
+Decimal degrees, for example 51.2194	Grade zecimale, de exemplu 51.2194
+Direct send delay	Întârziere trimitere directă
+Discover neighbours	Caută vecini
+Duplicates	Duplicate
+Enter a number	Introdu un număr
+Enter a password	Introdu o parolă
+Error	Eroare
+Errors	Erori
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Actualizare: nodul deschide un punct de acces Wi-Fi; conectează-te la el și încarcă noul firmware într-un browser, cum spun instrucțiunile nodului.
+Flood advert	Anunț flood
+Flood hop limit	Limită de salturi pentru flood
+Flood send delay	Întârziere trimitere flood
+Floods with more hops are not repeated. 0 to 64.	Floodurile cu mai multe salturi nu sunt repetate. 0 până la 64.
+Frequency: 150 to 2500 MHz	Frecvență: 150 până la 2500 MHz
+Guest	Oaspete
+Guest password	Parolă de oaspete
+Hours between flood adverts: 0 (off) or 3 to 168.	Ore între anunțuri flood: 0 (oprit) sau 3 până la 168.
+How hard to drop packets that came back around.	Cât de strict se aruncă pachetele care s-au întors în buclă.
+Identity	Identitate
+Identity & location	Identitate și locație
+Last reply	Ultimul răspuns
+Last signal	Ultimul semnal
+Lets a wrong or blank password in to read, not to post.	Lasă să intre cu o parolă greșită sau goală pentru citire, nu pentru postare.
+Load more (%d of %u)	Încarcă mai mult (%d din %u)
+Local advert	Anunț local
+Location	Locație
+Log in	Autentificare
+Log in as admin	Autentificare ca administrator
+Log in as guest	Autentificare ca oaspete
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Autentificat ca oaspete: poți citi starea și vecinii. Autentifică-te cu parola de administrator pentru a schimba setările.
+Logged in without admin rights. Log in with the admin password to change settings.	Autentificat fără drepturi de administrator. Autentifică-te cu parola de administrator pentru a schimba setările.
+Logging in...	Autentificare...
+Login refused.	Autentificare refuzată.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Autentifică ca oaspete. Goală lasă pe oricine ca oaspete. Până la 15 caractere.
+Loop detection	Detectare bucle
+Manage	Administrare
+Members log in with it to post. Up to 15 characters.	Membrii se autentifică cu ea ca să posteze. Până la 15 caractere.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Minute între anunțuri zero-hop: 0 (oprit) sau 60 până la 240.
+Moderate	Moderată
+Neighbours	Vecini
+New password	Parolă nouă
+Newest	Cele mai noi
+No neighbours heard yet.	Niciun vecin auzit încă.
+No reply	Niciun răspuns
+No reply from the node	Nodul nu răspunde
+No reply. Check the password, that the node is in range, and this device's clock.	Niciun răspuns. Verifică parola, dacă nodul e în rază și ceasul acestui dispozitiv.
+No reply. It may or may not have been applied: read it again.	Niciun răspuns. Poate s-a aplicat, poate nu: citește din nou.
+No spaces	Fără spații
+Nobody on the list.	Nimeni pe listă.
+Node clock	Ceasul nodului
+Noise floor	Zgomot de fond
+Not in your contacts	Nu e în contactele tale
+Not in your contacts, so only removing is possible here.	Nu e în contactele tale, deci aici se poate doar elimina.
+Not saved	Nesalvat
+Off: this node stops forwarding anything.	Oprit: acest nod nu mai retransmite nimic.
+Order	Ordine
+Owner	Proprietar
+Owner info	Info proprietar
+Password	Parolă
+Passwords	Parole
+Passwords & access	Parole și acces
+Posts	Postări
+Prefers stronger copies of a flood. 0 to 20.	Preferă copiile mai puternice ale unui flood. 0 până la 20.
+Queue	Coadă
+Random delay factor before repeating a flood. 0 to 2.	Factor de întârziere aleator înainte de a repeta un flood. 0 până la 2.
+Read again	Citește din nou
+Read-only	Doar citire
+Read-only access	Acces doar citire
+Read-write	Citire și scriere
+Reading...	Se citește...
+Reboot sent. The node is back in about 10 s.	Repornire trimisă. Nodul revine în circa 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Repornești nodul? Nu emite circa 10 s și uită autentificările oaspeților.
+Receive delay	Întârziere recepție
+Received	Primite
+Refresh	Reîmprospătează
+Regions	Regiuni
+Remove access	Elimină accesul
+Remove this client's access?	Elimini accesul acestui client?
+Repeat packets	Repetă pachete
+Repeaters this node hears directly, with the signal it hears them at.	Repetoarele pe care acest nod le aude direct, cu semnalul cu care le aude.
+Repeating	Repetare
+Repeating & limits	Repetare și limite
+Reset counters	Resetează contoarele
+Reset the node's packet counters?	Resetezi contoarele de pachete ale nodului?
+Room password	Parola camerei
+Save (after a reboot)	Salvează (după repornire)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Salvezi noile setări radio?\nAcum: %s\nNoi: %s\nSe aplică după o repornire. Valori greșite pot izola definitiv acest nod.
+Saved. Applies after a reboot.	Salvat. Se aplică după o repornire.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Salvat. Nodul folosește noile setări radio după o repornire. Îl repornești acum?
+Saving...	Se salvează...
+Send flood advert	Trimite anunț flood
+Send now	Trimite acum
+Send zero-hop advert	Trimite anunț zero-hop
+Set the node's position to this device's position?	Setezi poziția nodului la poziția acestui dispozitiv?
+Shown to anyone who asks this node. Up to 119 characters.	Afișat oricui întreabă acest nod. Până la 119 caractere.
+Spreading factor	Factor de împrăștiere
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Pornești o actualizare de firmware pe nod? Deschide propriul punct de acces Wi-Fi până e actualizat sau repornit și între timp nu mai repetă nimic.
+Start firmware update	Pornește actualizarea de firmware
+Strict	Strictă
+Strongest	Cele mai puternice
+Sync clock to this device	Sincronizează ceasul cu acest dispozitiv
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Arborele de regiuni al nodului: ^ marchează regiunea de bază, F că repetă floodurile pentru acea regiune. Regiunile se editează în Consolă.
+The passwords do not match	Parolele nu se potrivesc
+The position goes out in the node's adverts.	Poziția pleacă în anunțurile nodului.
+The same for direct packets. 0 to 2.	La fel pentru pachetele directe. 0 până la 2.
+The same limit for adverts. 0 to 64.	Aceeași limită pentru anunțuri. 0 până la 64.
+This device	Acest dispozitiv
+This device has no position	Acest dispozitiv nu are poziție
+Transmit power	Putere de emisie
+Try	Încearcă
+Try for 10 minutes	Încearcă 10 minute
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Încerci noi setări radio timp de %u minute?\nAcum: %s\nTest: %s\nNodul revine singur. Până atunci îl găsești doar pe noile setări.
+Up to 31 characters, without [ ] \\ : , ? *	Până la 31 de caractere, fără [ ] \\ : , ? *
+Updated %s ago	Actualizat acum %s
+Uptime	Timp de funcționare
+Use my position	Folosește poziția mea
+Use this device's settings	Folosește setările acestui dispozitiv
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Setări radio greșite pot izola acest nod: îl găsești apoi doar pe noile setări, sau deloc. Încearcă-le întâi; nodul revine singur.
+dBm, -9 to 30. Applies at once.	dBm, -9 până la 30. Se aplică imediat.
+pushed	trimise
+you	tu
+Flood in / out	Flood intrare / ieșire
+Direct in / out	Direct intrare / ieșire
+Airtime TX / RX	Timp în aer TX / RX

@@ -707,6 +707,10 @@ uint8_t touchPrefsGetColorStyle();
 void    touchPrefsSetColorStyle(uint8_t style);
 bool    touchPrefsGetRainbow();
 void    touchPrefsSetRainbow(bool on);
+// Settings > Theme > Glass tiles: Home widgets, cards and control panel tiles are frosted
+// glass over the background (default ON, today's look); off = opaque panel-colour fills.
+bool    touchPrefsGetGlassTiles();
+void    touchPrefsSetGlassTiles(bool on);
 // Settings > Theme > Background: what is behind every screen. A plain colour is kept dark
 // (by night) or light (by day) enough for the text; 0xFFFFFFFF follows the accent.
 enum : uint8_t { TOUCH_BG_AURORA = 0, TOUCH_BG_AURORA_MOVING = 1, TOUCH_BG_COLOR = 2, TOUCH_BG_IMAGE = 3,
@@ -783,8 +787,13 @@ bool     touchPrefsGetSigProbeEnabled();
 bool     touchPrefsSetSigProbeEnabled(bool on);
 uint16_t touchPrefsGetSigPollMins();
 
-/* NB: there is deliberately no touchPrefsGet/SetP4Antenna(). The T-Display P4 antenna choice is
- * session-only so that every boot comes up on the on-board antenna — see the note in the .cpp. */
+/* Boards with a switchable LoRa antenna (CAP_ANTENNA_SELECT, the T-Display P4): "Always use the
+ * external antenna". OFF by default, and then every boot comes up on the on-board antenna and the
+ * Radio settings antenna choice stays session-only (see the note in the .cpp). ON is an explicit,
+ * confirmed opt-in that makes boot select the external (MMCX) socket. Its own NVS key, NOT the
+ * reserved cfg byte p4_antenna, and NOT in the settings backup. */
+bool     touchPrefsGetAntExtAlways();
+void     touchPrefsSetAntExtAlways(bool on);
 bool     touchPrefsSetSigPollMins(uint16_t mins);
 
 /** Settings backup: the screen and app preferences (display, sounds, keyboard,

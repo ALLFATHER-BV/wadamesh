@@ -111,10 +111,14 @@ void present() {
 }
 
 void step() {
+#if defined(WADA_NO_THREADS)
+  wadaCoopSetInLoop(true);
+#endif
   drainPointer();
   wadaBoardStep();
 #if defined(WADA_NO_THREADS)
   wadaCoopRunTasks();   // the background tasks, on this thread (compat/src/freertos_coop.cpp)
+  wadaCoopSetInLoop(false);
 #endif
   present();
 }

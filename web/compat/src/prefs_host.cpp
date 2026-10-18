@@ -193,6 +193,16 @@ extern "C" esp_err_t nvs_get_stats(const char*, nvs_stats_t* s) {
   return ESP_OK;
 }
 extern "C" esp_err_t nvs_flash_init(void) { return ESP_OK; }
+extern "C" esp_err_t nvs_open(const char* name, nvs_open_mode_t mode, nvs_handle_t* out) {
+  std::lock_guard<std::recursive_mutex> lk(g_mx);
+  load();
+  if (!name) return ESP_ERR_NVS_NOT_FOUND;
+  if (mode == NVS_READONLY && !g_db.count(name)) return ESP_ERR_NVS_NOT_FOUND;
+  if (mode != NVS_READONLY) g_db[name];
+  if (out) *out = 1;
+  return ESP_OK;
+}
+extern "C" void nvs_close(nvs_handle_t) {}
 extern "C" esp_err_t nvs_flash_erase(void) {
   std::lock_guard<std::recursive_mutex> lk(g_mx);
   g_db.clear(); g_loaded = true; save();

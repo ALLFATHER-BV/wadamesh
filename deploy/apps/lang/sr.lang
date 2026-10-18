@@ -1998,3 +1998,165 @@ newer keyboard	новија тастатура
 older keyboard	старија тастатура
 older keyboard (set manually)	старија тастатура (ручно подешено)
 keyboard not detected yet	тастатура још није препозната
+Always use the external antenna (MMCX)	Увек спољна антена (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	При сваком покретању ради преко спољног прикључка. Само за антену која остаје прикључена.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Изаберите Спољну само са антеном на спољном прикључку. После поновног покретања креће на уграђеној антени, осим ако је прекидач испод укључен.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Увек користити спољну антену?\n\nРадио ће се покретати на спољном прикључку (MMCX) при сваком укључивању. Слање без прикључене антене може оштетити радио.\n\nУкључите ово само ако спољна антена остаје прикључена.
+Turn on	Укључи
+On-board antenna selected	Изабрана уграђена антена
+External antenna at every boot	Спољна антена при сваком покретању
+Antenna	Антена
+On-board	Уграђена
+Glass tiles	Стаклене плочице
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Виџети, картице и плочице панела пропуштају позадину. Искључено: пуне плочице.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	Од 0 до 9. Веће чека дуже између слања.
+A name is required	Име је обавезно
+A node clock only moves forward: syncing cannot set it back.	Сат чвора иде само унапред: синхронизација не може да га врати уназад.
+A room server lists only its admins here.	Room сервер овде приказује само своје администраторе.
+Access	Приступ
+Access changed	Приступ је промењен
+Actions	Радње
+Admin password	Лозинка администратора
+Admin password changed.	Лозинка администратора је промењена.
+Admin password for full control, or the room password.	Лозинка администратора за пуну контролу, или лозинка собе.
+Admin password for full control. A guest sees status and neighbours.	Лозинка администратора за пуну контролу. Гост види стање и суседе.
+Advanced	Напредно
+Advert hop limit	Ограничење скокова за огласе
+Advert intervals	Интервали огласа
+Adverts	Огласи
+Again	Поново
+Airtime factor	Фактор времена емитовања
+Bandwidth	Ширина опсега
+Change	Промени
+Change radio settings	Промени радио подешавања
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Променити лозинку администратора? Ако је изгубите, више не можете да управљате овим чвором преко мреже.
+Clients	Клијенти
+Coding rate	Брзина кодирања
+Console	Конзола
+Current	Тренутно
+Decimal degrees, for example 4.4025	Децимални степени, на пример 4.4025
+Decimal degrees, for example 51.2194	Децимални степени, на пример 51.2194
+Direct send delay	Кашњење директног слања
+Discover neighbours	Тражи суседе
+Duplicates	Дупликати
+Enter a number	Унесите број
+Enter a password	Унесите лозинку
+Error	Грешка
+Errors	Грешке
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Ажурирање: чвор отвара Wi-Fi приступну тачку; повежите се на њу и отпремите нови фирмвер у прегледачу, како кажу упутства чвора.
+Flood advert	Flood оглас
+Flood hop limit	Ограничење скокова за flood
+Flood send delay	Кашњење flood слања
+Floods with more hops are not repeated. 0 to 64.	Flood са више скокова се не понавља. Од 0 до 64.
+Frequency: 150 to 2500 MHz	Фреквенција: од 150 до 2500 MHz
+Guest	Гост
+Guest password	Лозинка госта
+Hours between flood adverts: 0 (off) or 3 to 168.	Сати између flood огласа: 0 (искључено) или од 3 до 168.
+How hard to drop packets that came back around.	Колико строго одбацити пакете који су се вратили у круг.
+Identity	Идентитет
+Identity & location	Идентитет и локација
+Last reply	Последњи одговор
+Last signal	Последњи сигнал
+Lets a wrong or blank password in to read, not to post.	Пушта са погрешном или празном лозинком ради читања, не објављивања.
+Load more (%d of %u)	Учитај још (%d од %u)
+Local advert	Локални оглас
+Location	Локација
+Log in	Пријава
+Log in as admin	Пријава као администратор
+Log in as guest	Пријава као гост
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Пријављени сте као гост: можете да читате стање и суседе. Пријавите се лозинком администратора да бисте мењали подешавања.
+Logged in without admin rights. Log in with the admin password to change settings.	Пријављени сте без права администратора. Пријавите се лозинком администратора да бисте мењали подешавања.
+Logging in...	Пријављивање...
+Login refused.	Пријава је одбијена.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Пријављује као госта. Празна пушта свакога као госта. До 15 знакова.
+Loop detection	Откривање петљи
+Manage	Управљање
+Members log in with it to post. Up to 15 characters.	Чланови се њом пријављују да би објављивали. До 15 знакова.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Минути између огласа без скока: 0 (искључено) или од 60 до 240.
+Moderate	Умерено
+Neighbours	Суседи
+New password	Нова лозинка
+Newest	Најновији
+No neighbours heard yet.	Још нису чути суседи.
+No reply	Нема одговора
+No reply from the node	Чвор не одговара
+No reply. Check the password, that the node is in range, and this device's clock.	Нема одговора. Проверите лозинку, да ли је чвор у домету, и сат овог уређаја.
+No reply. It may or may not have been applied: read it again.	Нема одговора. Можда је примењено, а можда није: прочитајте поново.
+No spaces	Без размака
+Nobody on the list.	На листи нема никога.
+Node clock	Сат чвора
+Noise floor	Ниво шума
+Not in your contacts	Није у вашим контактима
+Not in your contacts, so only removing is possible here.	Није у вашим контактима, па је овде могуће само уклањање.
+Not saved	Није сачувано
+Off: this node stops forwarding anything.	Искључено: овај чвор престаје да прослеђује било шта.
+Order	Редослед
+Owner	Власник
+Owner info	Подаци о власнику
+Password	Лозинка
+Passwords	Лозинке
+Passwords & access	Лозинке и приступ
+Posts	Објаве
+Prefers stronger copies of a flood. 0 to 20.	Даје предност јачим копијама flood-а. Од 0 до 20.
+Queue	Ред чекања
+Random delay factor before repeating a flood. 0 to 2.	Насумични фактор кашњења пре понављања flood-а. Од 0 до 2.
+Read again	Прочитај поново
+Read-only	Само читање
+Read-only access	Приступ само за читање
+Read-write	Читање и писање
+Reading...	Читање...
+Reboot sent. The node is back in about 10 s.	Поновно покретање послато. Чвор се враћа за око 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Поново покренути чвор? Око 10 s није у етру и заборавља пријаве гостију.
+Receive delay	Кашњење пријема
+Received	Примљено
+Refresh	Освежи
+Regions	Региони
+Remove access	Уклони приступ
+Remove this client's access?	Уклонити приступ овог клијента?
+Repeat packets	Понављај пакете
+Repeaters this node hears directly, with the signal it hears them at.	Репетитори које овај чвор чује директно, са сигналом са којим их чује.
+Repeating	Понављање
+Repeating & limits	Понављање и ограничења
+Reset counters	Ресетуј бројаче
+Reset the node's packet counters?	Ресетовати бројаче пакета чвора?
+Room password	Лозинка собе
+Save (after a reboot)	Сачувај (после поновног покретања)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Сачувати нова радио подешавања?\nСада: %s\nНова: %s\nВаже после поновног покретања. Погрешне вредности могу заувек да одсеку овај чвор.
+Saved. Applies after a reboot.	Сачувано. Важи после поновног покретања.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Сачувано. Чвор користи нова радио подешавања после поновног покретања. Поново покренути сада?
+Saving...	Чување...
+Send flood advert	Пошаљи flood оглас
+Send now	Пошаљи сада
+Send zero-hop advert	Пошаљи оглас без скока
+Set the node's position to this device's position?	Поставити позицију чвора на позицију овог уређаја?
+Shown to anyone who asks this node. Up to 119 characters.	Приказује се свакоме ко пита овај чвор. До 119 знакова.
+Spreading factor	Фактор ширења
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Покренути ажурирање фирмвера на чвору? Отвара сопствену Wi-Fi приступну тачку док не буде ажуриран или поново покренут, и у међувремену ништа не понавља.
+Start firmware update	Покрени ажурирање фирмвера
+Strict	Строго
+Strongest	Најјачи
+Sync clock to this device	Синхронизуј сат са овим уређајем
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Стабло региона чвора: ^ означава његов матични регион, F да понавља flood за тај регион. Регионе мењајте у Конзоли.
+The passwords do not match	Лозинке се не поклапају
+The position goes out in the node's adverts.	Позиција иде у огласима чвора.
+The same for direct packets. 0 to 2.	Исто за директне пакете. Од 0 до 2.
+The same limit for adverts. 0 to 64.	Исто ограничење за огласе. Од 0 до 64.
+This device	Овај уређај
+This device has no position	Овај уређај нема позицију
+Transmit power	Снага предаје
+Try	Пробај
+Try for 10 minutes	Пробај 10 минута
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Пробати нова радио подешавања %u минута?\nСада: %s\nПроба: %s\nЧвор се сам враћа. Дотле га достижете само на новим подешавањима.
+Up to 31 characters, without [ ] \\ : , ? *	До 31 знака, без [ ] \\ : , ? *
+Updated %s ago	Ажурирано пре %s
+Uptime	Време рада
+Use my position	Користи моју позицију
+Use this device's settings	Користи подешавања овог уређаја
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Погрешна радио подешавања могу да одсеку овај чвор: тада га достижете само на новим подешавањима, или никако. Прво их пробајте; чвор се сам враћа.
+dBm, -9 to 30. Applies at once.	dBm, од -9 до 30. Важи одмах.
+pushed	послато
+you	ви
+Flood in / out	Flood улаз / излаз
+Direct in / out	Директни улаз / излаз
+Airtime TX / RX	Време емитовања TX / RX

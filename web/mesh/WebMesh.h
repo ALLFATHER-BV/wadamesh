@@ -190,10 +190,15 @@ public:
   uint32_t uiSignalMs()    const { return _ui_sig_ms; }
 
   // ---- UI requests (status / telemetry / login / trace) --------------------------------
-  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3 };
+  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3, Binary = 4 };
+  int sendStatusPingForUI(ContactInfo& recipient);       // straight request (the admin app; no guest login)
+  int sendTelemetryRequestForUI(ContactInfo& recipient);
+  int uiSendBinaryRequest(ContactInfo& recipient, const uint8_t* payload, uint8_t len);   // -> onBinaryReply
+  struct UiLoginInfo { uint8_t pub4[4]; uint8_t acl; uint8_t fw_level; bool valid; };
+  const UiLoginInfo& uiLastLoginInfo() const { return _ui_last_login; }
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient);
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind);
-  int uiSendAdminLogin(ContactInfo& recipient, const char* password);       // backend login (demo: failed)
+  int uiSendAdminLogin(ContactInfo& recipient, const char* password);       // backend login (demo: its repeater / room)
   int uiSendAdminCommand(ContactInfo& recipient, const char* text);         // backend CLI line
   int uiRoomRelogin(const uint8_t pub_key[32]);
   int sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_t& est_timeout);
@@ -282,6 +287,9 @@ private:
   void beContactRemoved(const uint8_t pub_key[32]) override;
   void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) override;
   void beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) override;
+  void beLoginInfo(const uint8_t pub_key[32], uint8_t acl, uint8_t fw_level) override;
+  void beBinaryReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) override;
+  int  uiStraightRequest(ContactInfo& recipient, UiReqKind kind);
   void beCliReply(const uint8_t pub_key[32], const char* text) override;
   void beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) override;
   void beLinkState(bool up, const char* detail) override;
@@ -346,6 +354,7 @@ private:
   uint32_t _ui_sig_ms = 0;
 
   UiReqKind _ui_pending_kind = UiReqKind::None;
+  UiLoginInfo _ui_last_login = {};
   uint8_t   _ui_pending_key[PUB_KEY_SIZE] = {0};
   uint32_t  _ui_trace_tag = 0;
 

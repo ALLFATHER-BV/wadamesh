@@ -82,6 +82,11 @@ public:
   virtual void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) = 0;
   // A login the UI asked for (uiSendAdminLogin / uiRoomRelogin) was answered.
   virtual void beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) = 0;
+  // What a modern LOGIN_OK carries beyond admin-or-not: the ACL permission byte and the
+  // server's firmware version level (the repeater admin app); before beLoginResult.
+  virtual void beLoginInfo(const uint8_t pub_key[32], uint8_t acl, uint8_t fw_level) = 0;
+  // The reply to binaryRequest (after its 4-byte tag): neighbours, access list, owner info.
+  virtual void beBinaryReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) = 0;
   // A CLI reply from a repeater / room (TXT_TYPE_CLI_DATA).
   virtual void beCliReply(const uint8_t pub_key[32], const char* text) = 0;
   // The REGIONS answer: reflected tag, the repeater's clock, then CSV names.
@@ -121,6 +126,11 @@ public:
   virtual int  login(const ContactInfo& c, const char* password) { (void)c; (void)password; return 0; }
   virtual int  sendCli(const ContactInfo& c, const char* text) { (void)c; (void)text; return 0; }
   virtual bool hasConnectionTo(const uint8_t pub_key[32]) { (void)pub_key; return false; }
+  // A binary request (first byte REQ_TYPE_*, then its parameters) to a repeater / room we
+  // are logged in to; the reply comes back as beBinaryReply. MSG_SEND_* result.
+  virtual int  binaryRequest(const ContactInfo& c, const uint8_t* payload, uint8_t len) {
+    (void)c; (void)payload; (void)len; return 0;
+  }
   // The anonymous REGIONS request to a directly heard repeater.
   virtual int  requestRegions(const uint8_t pub_key[32], uint32_t& est_timeout) {
     (void)pub_key; est_timeout = 0; return 0;

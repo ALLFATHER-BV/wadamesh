@@ -47,6 +47,15 @@ extern "C" void set_boot_phase(int phase);
 // touch I2C, LCD reset and microSD lines) and park the backlight dark. Call first in app_main, before
 // Wire / the display / the SD card touch any of those pads.
 void crowpanelP4PowerOn();
+// True once crowpanelP4PowerOn() holds LDO4 (the GT911 / SD pad supply).
+bool crowpanelP4PadPowerOk();
+// One plain line about the C6's esp-hosted firmware version vs the host's (from the transport INIT
+// event). Returns -1 while the transport has not come up yet, 0 when the C6 matches the host,
+// 1 when the C6 is older than the host (major.minor), which is when RPCs can time out.
+int crowpanelC6Describe(char* out, size_t cap);
+// Quiet one-pass microSD identification (boot only, before the C6 starts). ESP_OK = a card answered,
+// ESP_ERR_TIMEOUT = no card or it does not respond, anything else = a card that answered but failed.
+esp_err_t crowpanelSdProbe();
 
 // Makes every software restart a full system reset, so the MIPI-DSI host comes back clean (same
 // P4 silicon behaviour, and the same fix, as the T-Display P4). Call first thing in app_main.

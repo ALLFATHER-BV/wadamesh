@@ -529,6 +529,13 @@ static const uint16_t SIG_POLL_MAX_MINS = 1440;
 // safety property only holds if a power cycle cannot restore "external", which means the
 // choice must never reach flash. p4_antenna stays as a reserved trailing byte: dropping it
 // would rewind TOUCH_CFG_VER on devices already carrying a v41 blob, for no gain.
+//
+// The one exception is an explicit opt-in: "Always use the external antenna (MMCX)" in Radio
+// settings, behind a damage warning, for owners whose external antenna stays fitted. It lives
+// in its OWN key ("ant_ext", default 0), never in p4_antenna: an old v41 blob may still carry a
+// stale 1 there from when the choice was persisted, and that must not turn external on silently.
+// It is left out of the settings backup on purpose, so restoring a backup onto a unit with no
+// antenna fitted cannot switch it to the empty socket either.
 
 // --- Per-chat history cap -----------------------------------------------------
 // A single busy channel could previously fill the entire shared message ring, which both
@@ -2478,6 +2485,10 @@ uint8_t touchPrefsGetColorStyle() {
 void touchPrefsSetColorStyle(uint8_t style) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_style", style > TOUCH_LOOK_PASTEL ? TOUCH_LOOK_REGULAR : style); }
 bool touchPrefsGetRainbow() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("col_rb", 0) != 0; }
 void touchPrefsSetRainbow(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_rb", on ? 1 : 0); }
+bool touchPrefsGetGlassTiles() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glass", 1) != 0; }
+void touchPrefsSetGlassTiles(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glass", on ? 1 : 0); }
+bool touchPrefsGetAntExtAlways() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ant_ext", 0) == 1; }
+void touchPrefsSetAntExtAlways(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ant_ext", on ? 1 : 0); }
 static void prefsPutUInt(const char* key, uint32_t v);   // the re-open dance, below with its siblings
 bool touchPrefsGetGpsSaver() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("gps_save", 0) != 0; }
 void touchPrefsSetGpsSaver(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("gps_save", on ? 1 : 0); }
@@ -2886,6 +2897,7 @@ static int backupKeys(BkKey* out, int cap) {
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
+    "glass",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');

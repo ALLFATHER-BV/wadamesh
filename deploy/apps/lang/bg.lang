@@ -1998,3 +1998,165 @@ newer keyboard	по-нова клавиатура
 older keyboard	по-стара клавиатура
 older keyboard (set manually)	по-стара клавиатура (ръчно)
 keyboard not detected yet	клавиатурата още не е разпозната
+Always use the external antenna (MMCX)	Винаги външната антена (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Стартира на външния конектор при всяко включване. Само за антена, която остава свързана.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Избирайте Външна само с антена на външния конектор. След рестарт започва на вградената антена, освен ако превключвателят по-долу е включен.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Винаги да се ползва външната антена?\n\nРадиото ще стартира на външния конектор (MMCX) при всяко включване. Предаване без свързана антена може да повреди радиото.\n\nВключете това само ако външната антена остава свързана.
+Turn on	Включи
+On-board antenna selected	Избрана е вградената антена
+External antenna at every boot	Външна антена при всяко включване
+Antenna	Антена
+On-board	Вградена
+Glass tiles	Стъклени плочки
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Джаджите, картите и плочките в панела пропускат фона. Изключено: плътни плочки.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	От 0 до 9. По-високо чака по-дълго между изпращанията.
+A name is required	Нужно е име
+A node clock only moves forward: syncing cannot set it back.	Часовникът на възел върви само напред: синхронизирането не може да го върне назад.
+A room server lists only its admins here.	Room сървър показва тук само своите администратори.
+Access	Достъп
+Access changed	Достъпът е променен
+Actions	Действия
+Admin password	Парола на администратор
+Admin password changed.	Паролата на администратора е променена.
+Admin password for full control, or the room password.	Парола на администратор за пълен контрол, или паролата на стаята.
+Admin password for full control. A guest sees status and neighbours.	Парола на администратор за пълен контрол. Гост вижда състоянието и съседите.
+Advanced	Разширени
+Advert hop limit	Лимит на скоковете за обяви
+Advert intervals	Интервали на обявите
+Adverts	Обяви
+Again	Отново
+Airtime factor	Коефициент на ефирно време
+Bandwidth	Честотна лента
+Change	Промени
+Change radio settings	Промяна на радионастройките
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Да се промени ли паролата на администратора? Ако я загубите, вече няма да можете да управлявате този възел през мрежата.
+Clients	Клиенти
+Coding rate	Кодова скорост
+Console	Конзола
+Current	Текущи
+Decimal degrees, for example 4.4025	Десетични градуси, например 4.4025
+Decimal degrees, for example 51.2194	Десетични градуси, например 51.2194
+Direct send delay	Закъснение при директно изпращане
+Discover neighbours	Търсене на съседи
+Duplicates	Дубликати
+Enter a number	Въведете число
+Enter a password	Въведете парола
+Error	Грешка
+Errors	Грешки
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Обновяване: възелът отваря Wi-Fi точка за достъп; свържете се с нея и качете новия фърмуер в браузър, както казват инструкциите на възела.
+Flood advert	Flood обява
+Flood hop limit	Лимит на скоковете за flood
+Flood send delay	Закъснение при flood изпращане
+Floods with more hops are not repeated. 0 to 64.	Flood с повече скокове не се повтаря. От 0 до 64.
+Frequency: 150 to 2500 MHz	Честота: от 150 до 2500 MHz
+Guest	Гост
+Guest password	Парола за гост
+Hours between flood adverts: 0 (off) or 3 to 168.	Часове между flood обявите: 0 (изкл.) или от 3 до 168.
+How hard to drop packets that came back around.	Колко строго да се изхвърлят пакети, върнали се в кръг.
+Identity	Идентичност
+Identity & location	Идентичност и местоположение
+Last reply	Последен отговор
+Last signal	Последен сигнал
+Lets a wrong or blank password in to read, not to post.	Пуска с грешна или празна парола за четене, не за публикуване.
+Load more (%d of %u)	Зареди още (%d от %u)
+Local advert	Локална обява
+Location	Местоположение
+Log in	Вход
+Log in as admin	Вход като администратор
+Log in as guest	Вход като гост
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Влезли сте като гост: можете да четете състоянието и съседите. Влезте с паролата на администратора, за да променяте настройки.
+Logged in without admin rights. Log in with the admin password to change settings.	Влезли сте без права на администратор. Влезте с паролата на администратора, за да променяте настройки.
+Logging in...	Влизане...
+Login refused.	Входът е отказан.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Влиза като гост. Празна пуска всеки като гост. До 15 знака.
+Loop detection	Откриване на цикли
+Manage	Управление
+Members log in with it to post. Up to 15 characters.	Членовете влизат с нея, за да публикуват. До 15 знака.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Минути между обявите без скок: 0 (изкл.) или от 60 до 240.
+Moderate	Умерено
+Neighbours	Съседи
+New password	Нова парола
+Newest	Най-нови
+No neighbours heard yet.	Още не са чути съседи.
+No reply	Няма отговор
+No reply from the node	Възелът не отговаря
+No reply. Check the password, that the node is in range, and this device's clock.	Няма отговор. Проверете паролата, дали възелът е в обхват, и часовника на това устройство.
+No reply. It may or may not have been applied: read it again.	Няма отговор. Може да е приложено, а може и да не е: прочетете отново.
+No spaces	Без интервали
+Nobody on the list.	Няма никой в списъка.
+Node clock	Часовник на възела
+Noise floor	Ниво на шума
+Not in your contacts	Не е в контактите ви
+Not in your contacts, so only removing is possible here.	Не е в контактите ви, затова тук може само да се премахне.
+Not saved	Не е запазено
+Off: this node stops forwarding anything.	Изкл.: този възел спира да препраща каквото и да е.
+Order	Ред
+Owner	Собственик
+Owner info	Информация за собственика
+Password	Парола
+Passwords	Пароли
+Passwords & access	Пароли и достъп
+Posts	Публикации
+Prefers stronger copies of a flood. 0 to 20.	Предпочита по-силните копия на flood. От 0 до 20.
+Queue	Опашка
+Random delay factor before repeating a flood. 0 to 2.	Случаен коефициент на закъснение преди повтаряне на flood. От 0 до 2.
+Read again	Прочети отново
+Read-only	Само четене
+Read-only access	Достъп само за четене
+Read-write	Четене и запис
+Reading...	Четене...
+Reboot sent. The node is back in about 10 s.	Рестартът е изпратен. Възелът се връща след около 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Да се рестартира ли възелът? Той е извън ефир около 10 s и забравя входовете на гостите.
+Receive delay	Закъснение при приемане
+Received	Получени
+Refresh	Опресни
+Regions	Региони
+Remove access	Премахни достъпа
+Remove this client's access?	Да се премахне ли достъпът на този клиент?
+Repeat packets	Повтаряй пакети
+Repeaters this node hears directly, with the signal it hears them at.	Ретранслатори, които този възел чува директно, със сигнала, с който ги чува.
+Repeating	Повтаряне
+Repeating & limits	Повтаряне и ограничения
+Reset counters	Нулиране на броячите
+Reset the node's packet counters?	Да се нулират ли броячите на пакети на възела?
+Room password	Парола на стаята
+Save (after a reboot)	Запази (след рестарт)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Да се запазят ли новите радионастройки?\nСега: %s\nНови: %s\nВлизат в сила след рестарт. Грешни стойности могат завинаги да откъснат този възел.
+Saved. Applies after a reboot.	Запазено. Влиза в сила след рестарт.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Запазено. Възелът ползва новите радионастройки след рестарт. Да се рестартира ли сега?
+Saving...	Запазване...
+Send flood advert	Изпрати flood обява
+Send now	Изпрати сега
+Send zero-hop advert	Изпрати обява без скок
+Set the node's position to this device's position?	Да се зададе ли позицията на възела като тази на това устройство?
+Shown to anyone who asks this node. Up to 119 characters.	Показва се на всеки, който попита този възел. До 119 знака.
+Spreading factor	Фактор на разпръскване
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Да се стартира ли обновяване на фърмуера на възела? Той отваря своя Wi-Fi точка за достъп, докато не бъде обновен или рестартиран, и междувременно не повтаря нищо.
+Start firmware update	Стартирай обновяване на фърмуера
+Strict	Строго
+Strongest	Най-силни
+Sync clock to this device	Синхронизирай часовника с това устройство
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Дървото с региони на възела: ^ отбелязва домашния му регион, F че повтаря flood за този регион. Регионите се редактират в Конзолата.
+The passwords do not match	Паролите не съвпадат
+The position goes out in the node's adverts.	Позицията се изпраща в обявите на възела.
+The same for direct packets. 0 to 2.	Същото за директни пакети. От 0 до 2.
+The same limit for adverts. 0 to 64.	Същият лимит за обяви. От 0 до 64.
+This device	Това устройство
+This device has no position	Това устройство няма позиция
+Transmit power	Мощност на предаване
+Try	Опитай
+Try for 10 minutes	Опитай за 10 минути
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Да се опитат ли нови радионастройки за %u минути?\nСега: %s\nОпит: %s\nВъзелът се връща сам. Дотогава го достигате само с новите настройки.
+Up to 31 characters, without [ ] \\ : , ? *	До 31 знака, без [ ] \\ : , ? *
+Updated %s ago	Обновено преди %s
+Uptime	Време на работа
+Use my position	Използвай моята позиция
+Use this device's settings	Използвай настройките на това устройство
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Грешни радионастройки могат да откъснат този възел: тогава го достигате само с новите настройки, или изобщо не. Първо ги опитайте; възелът се връща сам.
+dBm, -9 to 30. Applies at once.	dBm, от -9 до 30. Важи веднага.
+pushed	изпратени
+you	вие
+Flood in / out	Flood вход / изход
+Direct in / out	Директни вход / изход
+Airtime TX / RX	Ефирно време TX / RX

@@ -2014,3 +2014,165 @@ newer keyboard	novější klávesnice
 older keyboard	starší klávesnice
 older keyboard (set manually)	starší klávesnice (nastaveno ručně)
 keyboard not detected yet	klávesnice zatím nerozpoznána
+Always use the external antenna (MMCX)	Vždy používat externí anténu (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Při každém spuštění začne na externím konektoru. Jen pro anténu, která zůstává připojená.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Externí vyberte jen s anténou na externím konektoru. Po restartu začne na vestavěné anténě, pokud není zapnutý přepínač níže.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Vždy používat externí anténu?\n\nRádio začne při každém spuštění na externím konektoru (MMCX). Vysílání bez připojené antény může rádio poškodit.\n\nZapněte to jen tehdy, když externí anténa zůstává připojená.
+Turn on	Zapnout
+On-board antenna selected	Vybrána vestavěná anténa
+External antenna at every boot	Externí anténa při každém startu
+Antenna	Anténa
+On-board	Vestavěná
+Glass tiles	Skleněné dlaždice
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgety, karty a dlaždice panelu nechají prosvítat pozadí. Vypnuto: plné dlaždice.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	0 až 9. Vyšší čeká mezi odesláními déle.
+A name is required	Jméno je povinné
+A node clock only moves forward: syncing cannot set it back.	Hodiny uzlu jdou jen dopředu: synchronizace je nemůže vrátit.
+A room server lists only its admins here.	Room server zde uvádí jen své správce.
+Access	Přístup
+Access changed	Přístup změněn
+Actions	Akce
+Admin password	Heslo správce
+Admin password changed.	Heslo správce změněno.
+Admin password for full control, or the room password.	Heslo správce pro plnou kontrolu, nebo heslo místnosti.
+Admin password for full control. A guest sees status and neighbours.	Heslo správce pro plnou kontrolu. Host vidí stav a sousedy.
+Advanced	Pokročilé
+Advert hop limit	Limit skoků pro adverty
+Advert intervals	Intervaly advertů
+Adverts	Adverty
+Again	Znovu
+Airtime factor	Faktor vysílacího času
+Bandwidth	Šířka pásma
+Change	Změnit
+Change radio settings	Změnit nastavení rádia
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Změnit heslo správce? Pokud ho ztratíte, nebudete moci tento uzel spravovat přes síť.
+Clients	Klienti
+Coding rate	Kódovací poměr
+Console	Konzole
+Current	Aktuální
+Decimal degrees, for example 4.4025	Desetinné stupně, například 4.4025
+Decimal degrees, for example 51.2194	Desetinné stupně, například 51.2194
+Direct send delay	Zpoždění přímého odeslání
+Discover neighbours	Hledat sousedy
+Duplicates	Duplikáty
+Enter a number	Zadejte číslo
+Enter a password	Zadejte heslo
+Error	Chyba
+Errors	Chyby
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Aktualizace: uzel otevře přístupový bod Wi-Fi; připojte se k němu a nahrajte nový firmware v prohlížeči podle pokynů uzlu.
+Flood advert	Flood advert
+Flood hop limit	Limit skoků pro floody
+Flood send delay	Zpoždění odeslání floodu
+Floods with more hops are not repeated. 0 to 64.	Floody s více skoky se neopakují. 0 až 64.
+Frequency: 150 to 2500 MHz	Frekvence: 150 až 2500 MHz
+Guest	Host
+Guest password	Heslo hosta
+Hours between flood adverts: 0 (off) or 3 to 168.	Hodiny mezi flood adverty: 0 (vypnuto) nebo 3 až 168.
+How hard to drop packets that came back around.	Jak přísně zahazovat pakety, které se vrátily dokola.
+Identity	Identita
+Identity & location	Identita a poloha
+Last reply	Poslední odpověď
+Last signal	Poslední signál
+Lets a wrong or blank password in to read, not to post.	Pustí dovnitř se špatným nebo prázdným heslem ke čtení, ne k psaní.
+Load more (%d of %u)	Načíst další (%d z %u)
+Local advert	Místní advert
+Location	Poloha
+Log in	Přihlásit
+Log in as admin	Přihlásit jako správce
+Log in as guest	Přihlásit jako host
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Přihlášeno jako host: můžete číst stav a sousedy. Pro změnu nastavení se přihlaste heslem správce.
+Logged in without admin rights. Log in with the admin password to change settings.	Přihlášeno bez práv správce. Pro změnu nastavení se přihlaste heslem správce.
+Logging in...	Přihlašování...
+Login refused.	Přihlášení odmítnuto.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Přihlásí jako hosta. Prázdné pustí kohokoli jako hosta. Až 15 znaků.
+Loop detection	Detekce smyček
+Manage	Spravovat
+Members log in with it to post. Up to 15 characters.	Členové se jím přihlašují, aby mohli psát. Až 15 znaků.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Minuty mezi adverty bez skoku: 0 (vypnuto) nebo 60 až 240.
+Moderate	Střední
+Neighbours	Sousedé
+New password	Nové heslo
+Newest	Nejnovější
+No neighbours heard yet.	Zatím nebyli slyšet žádní sousedé.
+No reply	Bez odpovědi
+No reply from the node	Uzel neodpovídá
+No reply. Check the password, that the node is in range, and this device's clock.	Bez odpovědi. Zkontrolujte heslo, zda je uzel v dosahu, a hodiny tohoto zařízení.
+No reply. It may or may not have been applied: read it again.	Bez odpovědi. Možná bylo použito, možná ne: načtěte znovu.
+No spaces	Bez mezer
+Nobody on the list.	Na seznamu nikdo není.
+Node clock	Hodiny uzlu
+Noise floor	Šumové pozadí
+Not in your contacts	Není ve vašich kontaktech
+Not in your contacts, so only removing is possible here.	Není ve vašich kontaktech, takže zde lze jen odebrat.
+Not saved	Neuloženo
+Off: this node stops forwarding anything.	Vypnuto: tento uzel přestane cokoli přeposílat.
+Order	Pořadí
+Owner	Vlastník
+Owner info	Info vlastníka
+Password	Heslo
+Passwords	Hesla
+Passwords & access	Hesla a přístup
+Posts	Příspěvky
+Prefers stronger copies of a flood. 0 to 20.	Dává přednost silnějším kopiím floodu. 0 až 20.
+Queue	Fronta
+Random delay factor before repeating a flood. 0 to 2.	Náhodný faktor zpoždění před opakováním floodu. 0 až 2.
+Read again	Načíst znovu
+Read-only	Jen čtení
+Read-only access	Přístup jen pro čtení
+Read-write	Čtení a zápis
+Reading...	Načítání...
+Reboot sent. The node is back in about 10 s.	Restart odeslán. Uzel se vrátí asi za 10 s.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Restartovat uzel? Asi 10 s nebude vysílat a zapomene přihlášení hostů.
+Receive delay	Zpoždění příjmu
+Received	Přijato
+Refresh	Obnovit
+Regions	Regiony
+Remove access	Odebrat přístup
+Remove this client's access?	Odebrat přístup tohoto klienta?
+Repeat packets	Opakovat pakety
+Repeaters this node hears directly, with the signal it hears them at.	Opakovače, které tento uzel slyší přímo, se signálem, se kterým je slyší.
+Repeating	Opakování
+Repeating & limits	Opakování a limity
+Reset counters	Vynulovat počítadla
+Reset the node's packet counters?	Vynulovat počítadla paketů uzlu?
+Room password	Heslo místnosti
+Save (after a reboot)	Uložit (po restartu)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Uložit nové nastavení rádia?\nNyní: %s\nNové: %s\nPlatí po restartu. Špatné hodnoty mohou tento uzel navždy odříznout.
+Saved. Applies after a reboot.	Uloženo. Platí po restartu.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Uloženo. Uzel použije nové nastavení rádia po restartu. Restartovat nyní?
+Saving...	Ukládání...
+Send flood advert	Odeslat flood advert
+Send now	Odeslat nyní
+Send zero-hop advert	Odeslat advert bez skoku
+Set the node's position to this device's position?	Nastavit polohu uzlu na polohu tohoto zařízení?
+Shown to anyone who asks this node. Up to 119 characters.	Zobrazí se každému, kdo se uzlu zeptá. Až 119 znaků.
+Spreading factor	Rozprostírací faktor
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Spustit aktualizaci firmwaru na uzlu? Otevře vlastní přístupový bod Wi-Fi, dokud nebude aktualizován nebo restartován, a mezitím nic neopakuje.
+Start firmware update	Spustit aktualizaci firmwaru
+Strict	Přísná
+Strongest	Nejsilnější
+Sync clock to this device	Synchronizovat hodiny s tímto zařízením
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Strom regionů uzlu: ^ označuje jeho domovský region, F že opakuje floody pro tento region. Regiony upravujte v Konzoli.
+The passwords do not match	Hesla se neshodují
+The position goes out in the node's adverts.	Poloha se posílá v advertech uzlu.
+The same for direct packets. 0 to 2.	Totéž pro přímé pakety. 0 až 2.
+The same limit for adverts. 0 to 64.	Stejný limit pro adverty. 0 až 64.
+This device	Toto zařízení
+This device has no position	Toto zařízení nemá polohu
+Transmit power	Vysílací výkon
+Try	Zkusit
+Try for 10 minutes	Zkusit na 10 minut
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Zkusit nové nastavení rádia na %u minut?\nNyní: %s\nZkouška: %s\nUzel se vrátí sám. Do té doby ho zastihnete jen na novém nastavení.
+Up to 31 characters, without [ ] \\ : , ? *	Až 31 znaků, bez [ ] \\ : , ? *
+Updated %s ago	Aktualizováno před %s
+Uptime	Doba běhu
+Use my position	Použít mou polohu
+Use this device's settings	Použít nastavení tohoto zařízení
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Špatné nastavení rádia může tento uzel odříznout: zastihnete ho pak jen na novém nastavení, nebo vůbec. Nejdřív ho zkuste; uzel se vrátí sám.
+dBm, -9 to 30. Applies at once.	dBm, -9 až 30. Platí ihned.
+pushed	odesláno
+you	vy
+Flood in / out	Flood příchozí / odchozí
+Direct in / out	Přímé příchozí / odchozí
+Airtime TX / RX	Vysílací čas TX / RX

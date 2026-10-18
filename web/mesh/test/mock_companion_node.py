@@ -89,6 +89,20 @@ def handle(f, send, later):
     elif cmd == 26:
         send(bytes([6, 0]) + f[1:5] + struct.pack('<I', 3000))
         later(1.0, bytes([0x85, 1]) + f[1:7] + struct.pack('<I', int(time.time())) + bytes([1, 1]))
+    elif cmd == 50:   # CMD_SEND_BINARY_REQ (the repeater admin app): neighbours / owner info
+        tag = b'\x51\x52\x53\x54'
+        send(bytes([6, 0]) + tag + struct.pack('<I', 3000))
+        req = f[33:]
+        if req[:1] == b'\x06':
+            pl = req[6] if len(req) > 6 else 4
+            body = struct.pack('<HH', 2, 2)
+            for name, ago, snr in (('Alice', 60, 30), ('Bob', 900, -8)):
+                body += key(name)[:pl] + struct.pack('<Ib', ago, snr)
+        elif req[:1] == b'\x07':
+            body = b'v-mock\nMock Repeater\nthe mock owner'
+        else:
+            body = b''
+        if body: later(0.8, bytes([0x8C, 0]) + tag + body)
     elif cmd == 66:
         send(bytes([29]) + b'mock cli: ' + f[1:] + b'\nsecond line')
     elif cmd == 7:

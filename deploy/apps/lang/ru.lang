@@ -1998,3 +1998,165 @@ newer keyboard	новая клавиатура
 older keyboard	старая клавиатура
 older keyboard (set manually)	старая клавиатура (задано вручную)
 keyboard not detected yet	клавиатура ещё не определена
+Always use the external antenna (MMCX)	Всегда внешняя антенна (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	При каждом запуске работает через внешний разъём. Только для антенны, которая остаётся подключённой.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Выбирайте Внешнюю только с антенной на внешнем разъёме. После перезагрузки включается встроенная антенна, если переключатель ниже не включён.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Всегда использовать внешнюю антенну?\n\nРадио будет запускаться на внешнем разъёме (MMCX) при каждом включении. Передача без подключённой антенны может повредить радио.\n\nВключайте, только если внешняя антенна остаётся подключённой.
+Turn on	Включить
+On-board antenna selected	Выбрана встроенная антенна
+External antenna at every boot	Внешняя антенна при каждом запуске
+Antenna	Антенна
+On-board	Встроен.
+Glass tiles	Стеклянные плитки
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Виджеты, карточки и плитки панели пропускают фон. Выкл.: сплошные плитки.
+# repeater admin app
+0 to 9. Higher waits longer between sends.	От 0 до 9. Чем больше, тем дольше пауза между отправками.
+A name is required	Нужно имя
+A node clock only moves forward: syncing cannot set it back.	Часы узла идут только вперёд: синхронизация не может их отвести назад.
+A room server lists only its admins here.	Room-сервер показывает здесь только своих администраторов.
+Access	Доступ
+Access changed	Доступ изменён
+Actions	Действия
+Admin password	Пароль администратора
+Admin password changed.	Пароль администратора изменён.
+Admin password for full control, or the room password.	Пароль администратора для полного управления или пароль комнаты.
+Admin password for full control. A guest sees status and neighbours.	Пароль администратора для полного управления. Гость видит статус и соседей.
+Advanced	Дополнительно
+Advert hop limit	Лимит хопов для объявлений
+Advert intervals	Интервалы объявлений
+Adverts	Объявления
+Again	Ещё раз
+Airtime factor	Коэффициент эфирного времени
+Bandwidth	Ширина полосы
+Change	Изменить
+Change radio settings	Изменить настройки радио
+Change the admin password? If you lose it you can no longer manage this node over the mesh.	Изменить пароль администратора? Если вы его потеряете, то больше не сможете управлять этим узлом через сеть.
+Clients	Клиенты
+Coding rate	Скорость кодирования
+Console	Консоль
+Current	Текущие
+Decimal degrees, for example 4.4025	Десятичные градусы, например 4.4025
+Decimal degrees, for example 51.2194	Десятичные градусы, например 51.2194
+Direct send delay	Задержка прямой отправки
+Discover neighbours	Найти соседей
+Duplicates	Дубликаты
+Enter a number	Введите число
+Enter a password	Введите пароль
+Error	Ошибка
+Errors	Ошибки
+Firmware update: the node opens a Wi-Fi access point; join it and upload the new firmware in a browser, as the node's own instructions say.	Обновление: узел открывает точку доступа Wi-Fi; подключитесь к ней и загрузите новую прошивку в браузере, как сказано в инструкциях узла.
+Flood advert	Flood-объявление
+Flood hop limit	Лимит хопов для flood
+Flood send delay	Задержка отправки flood
+Floods with more hops are not repeated. 0 to 64.	Flood с большим числом хопов не повторяется. От 0 до 64.
+Frequency: 150 to 2500 MHz	Частота: от 150 до 2500 МГц
+Guest	Гость
+Guest password	Пароль гостя
+Hours between flood adverts: 0 (off) or 3 to 168.	Часы между flood-объявлениями: 0 (выкл.) или от 3 до 168.
+How hard to drop packets that came back around.	Насколько строго отбрасывать пакеты, вернувшиеся по кругу.
+Identity	Идентификация
+Identity & location	Идентификация и место
+Last reply	Последний ответ
+Last signal	Последний сигнал
+Lets a wrong or blank password in to read, not to post.	Пускает с неверным или пустым паролем для чтения, но не для публикации.
+Load more (%d of %u)	Загрузить ещё (%d из %u)
+Local advert	Локальное объявление
+Location	Местоположение
+Log in	Войти
+Log in as admin	Войти как администратор
+Log in as guest	Войти как гость
+Logged in as a guest: you can read the status and neighbours. Log in with the admin password to change settings.	Вход как гость: можно читать статус и соседей. Войдите с паролем администратора, чтобы менять настройки.
+Logged in without admin rights. Log in with the admin password to change settings.	Вход без прав администратора. Войдите с паролем администратора, чтобы менять настройки.
+Logging in...	Вход...
+Login refused.	Вход отклонён.
+Logs in as a guest. Blank lets anyone in as a guest. Up to 15 characters.	Вход как гость. Пустой пускает любого гостем. До 15 символов.
+Loop detection	Обнаружение петель
+Manage	Управление
+Members log in with it to post. Up to 15 characters.	Участники входят с ним, чтобы публиковать. До 15 символов.
+Minutes between zero-hop adverts: 0 (off) or 60 to 240.	Минуты между объявлениями без хопов: 0 (выкл.) или от 60 до 240.
+Moderate	Умеренное
+Neighbours	Соседи
+New password	Новый пароль
+Newest	Новые
+No neighbours heard yet.	Соседи пока не слышны.
+No reply	Нет ответа
+No reply from the node	Узел не отвечает
+No reply. Check the password, that the node is in range, and this device's clock.	Нет ответа. Проверьте пароль, находится ли узел в зоне связи, и часы этого устройства.
+No reply. It may or may not have been applied: read it again.	Нет ответа. Возможно, применено, а возможно, нет: прочитайте заново.
+No spaces	Без пробелов
+Nobody on the list.	В списке никого нет.
+Node clock	Часы узла
+Noise floor	Уровень шума
+Not in your contacts	Нет в ваших контактах
+Not in your contacts, so only removing is possible here.	Нет в ваших контактах, поэтому здесь можно только удалить.
+Not saved	Не сохранено
+Off: this node stops forwarding anything.	Выкл.: этот узел перестаёт что-либо пересылать.
+Order	Порядок
+Owner	Владелец
+Owner info	Информация владельца
+Password	Пароль
+Passwords	Пароли
+Passwords & access	Пароли и доступ
+Posts	Сообщения
+Prefers stronger copies of a flood. 0 to 20.	Предпочитает более сильные копии flood. От 0 до 20.
+Queue	Очередь
+Random delay factor before repeating a flood. 0 to 2.	Случайный коэффициент задержки перед повтором flood. От 0 до 2.
+Read again	Прочитать заново
+Read-only	Только чтение
+Read-only access	Доступ только для чтения
+Read-write	Чтение и запись
+Reading...	Чтение...
+Reboot sent. The node is back in about 10 s.	Перезагрузка отправлена. Узел вернётся примерно через 10 с.
+Reboot the node? It is off the air for about 10 s and forgets guest logins.	Перезагрузить узел? Он будет вне эфира около 10 с и забудет входы гостей.
+Receive delay	Задержка приёма
+Received	Принято
+Refresh	Обновить
+Regions	Регионы
+Remove access	Удалить доступ
+Remove this client's access?	Удалить доступ этого клиента?
+Repeat packets	Повторять пакеты
+Repeaters this node hears directly, with the signal it hears them at.	Ретрансляторы, которые этот узел слышит напрямую, с сигналом, с которым он их слышит.
+Repeating	Повтор
+Repeating & limits	Повтор и ограничения
+Reset counters	Сбросить счётчики
+Reset the node's packet counters?	Сбросить счётчики пакетов узла?
+Room password	Пароль комнаты
+Save (after a reboot)	Сохранить (после перезагрузки)
+Save new radio settings?\nNow: %s\nNew: %s\nThey apply after a reboot. Wrong values can cut this node off for good.	Сохранить новые настройки радио?\nСейчас: %s\nНовые: %s\nОни вступят в силу после перезагрузки. Неверные значения могут навсегда отрезать этот узел.
+Saved. Applies after a reboot.	Сохранено. Вступит в силу после перезагрузки.
+Saved. The node uses the new radio settings after a reboot. Reboot it now?	Сохранено. Узел использует новые настройки радио после перезагрузки. Перезагрузить сейчас?
+Saving...	Сохранение...
+Send flood advert	Отправить flood-объявление
+Send now	Отправить сейчас
+Send zero-hop advert	Отправить объявление без хопов
+Set the node's position to this device's position?	Установить позицию узла по позиции этого устройства?
+Shown to anyone who asks this node. Up to 119 characters.	Показывается всем, кто запросит этот узел. До 119 символов.
+Spreading factor	Фактор расширения
+Start a firmware update on the node? It opens its own Wi-Fi access point until it is updated or rebooted, and stops repeating meanwhile.	Запустить обновление прошивки на узле? Он откроет свою точку доступа Wi-Fi до обновления или перезагрузки и тем временем ничего не повторяет.
+Start firmware update	Запустить обновление прошивки
+Strict	Строгое
+Strongest	Сильнейшие
+Sync clock to this device	Синхронизировать часы с этим устройством
+The node's region tree: ^ marks its home region, F that it repeats floods for that region. Edit regions in the Console.	Дерево регионов узла: ^ отмечает его домашний регион, F что он повторяет flood для этого региона. Регионы меняются в Консоли.
+The passwords do not match	Пароли не совпадают
+The position goes out in the node's adverts.	Позиция передаётся в объявлениях узла.
+The same for direct packets. 0 to 2.	То же для прямых пакетов. От 0 до 2.
+The same limit for adverts. 0 to 64.	Тот же лимит для объявлений. От 0 до 64.
+This device	Это устройство
+This device has no position	У этого устройства нет позиции
+Transmit power	Мощность передачи
+Try	Попробовать
+Try for 10 minutes	Попробовать 10 минут
+Try new radio settings for %u minutes?\nNow: %s\nTry: %s\nThe node goes back by itself. Until then you reach it only on the new settings.	Попробовать новые настройки радио на %u минут?\nСейчас: %s\nПроба: %s\nУзел вернётся сам. До тех пор он доступен только на новых настройках.
+Up to 31 characters, without [ ] \\ : , ? *	До 31 символа, без [ ] \\ : , ? *
+Updated %s ago	Обновлено %s назад
+Uptime	Время работы
+Use my position	Использовать мою позицию
+Use this device's settings	Использовать настройки этого устройства
+Wrong radio settings can cut this node off: you then reach it only on the new settings, or not at all. Try them first; the node goes back by itself.	Неверные настройки радио могут отрезать этот узел: тогда он доступен только на новых настройках или вовсе недоступен. Сначала попробуйте их; узел вернётся сам.
+dBm, -9 to 30. Applies at once.	дБм, от -9 до 30. Действует сразу.
+pushed	отправлено
+you	вы
+Flood in / out	Flood вход / выход
+Direct in / out	Прямые вход / выход
+Airtime TX / RX	Эфирное время TX / RX

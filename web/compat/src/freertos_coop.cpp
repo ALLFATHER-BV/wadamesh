@@ -52,6 +52,16 @@ WadaHostTask g_main_task;
 WadaHostTask* g_cur = nullptr;            // the task running now (nullptr: the UI thread)
 std::vector<WadaHostTask*> g_tasks;
 int g_running = 0;                        // wadaCoopRunTasks nesting (a UI wait inside a frame)
+bool g_in_loop = false;                   // inside the main loop's step: the browser may be let in
+// The UI thread waits: the tasks run meanwhile, and inside the main loop the browser is
+// let in for a moment (emscripten_sleep) so a fetch a task waits for can land. Called
+// from the page directly (wadaWebFlush, a backup), sleeping would unwind under a caller
+// that is not waiting for it: there it only runs the tasks, for at most 3 s.
+void mainWaitStep(uint32_t started) {
+  wadaCoopRunTasks();
+  if (g_in_loop) emscripten_sleep(1);
+  (void)started;
+}
 
 void ensureMain() {
   if (g_main_astack) return;
@@ -76,24 +86,26 @@ void taskYield(uint32_t wake) {
 bool waitFor(const std::function<bool()>& pred, TickType_t wait) {
   if (pred()) return true;
   if (wait == 0) return false;
-  const uint32_t until = nowMs() + (wait == portMAX_DELAY ? 0 : wait);
+  const uint32_t until = nowMs() + (wait == portMAX_DELAY ? 0 : wait);   // (portMAX: the start)
   for (;;) {
     if (g_cur) taskYield(nowMs() + 1);
-    else {
-      wadaCoopRunTasks();
-      if (!pred()) emscripten_sleep(1);
-    }
+    else if (!pred()) mainWaitStep(until);
     if (pred()) return true;
     if (wait != portMAX_DELAY && (int32_t)(nowMs() - until) >= 0) return false;
+    if (!g_cur && !g_in_loop && wait == portMAX_DELAY && (int32_t)(nowMs() - (until + 3000)) >= 0) {
+      fprintf(stderr, "[freertos] a wait outside the main loop gave up after 3 s\n");
+      return false;
+    }
   }
 }
 }  // namespace
 
 bool wadaCoopInTask() { return g_cur != nullptr; }
+void wadaCoopSetInLoop(bool in) { g_in_loop = in; }
 void wadaCoopSleep(uint32_t ms) {
   if (g_cur) { taskYield(nowMs() + ms); return; }
   const uint32_t until = nowMs() + ms;
-  while ((int32_t)(nowMs() - until) < 0) { wadaCoopRunTasks(); emscripten_sleep(1); }
+  while ((int32_t)(nowMs() - until) < 0) mainWaitStep(until);
 }
 void wadaCoopRunTasks() {
   if (g_cur) return;   // only the UI thread schedules

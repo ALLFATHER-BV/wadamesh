@@ -167,7 +167,11 @@ async function geoAndTiles(browser, r, shots) {
   ], { prefix: 'web-', shots });
   let st = await mapPixelStats(page);
   // The UI paces its downloads (OSM etiquette), so the screen fills over some seconds.
-  for (let i = 0; i < 40 && net === 200 && st.emptyShare > 0.1; i++) { await sleep(1000); st = await mapPixelStats(page); }
+  for (let i = 0; i < 40 && net === 200 && st.emptyShare > 0.1; i++) {
+    await sleep(1000);
+    if (i % 8 === 7) await runScript(page, ['wheel 400 240 1'], { shots: false });   // keep the screensaver away
+    st = await mapPixelStats(page);
+  }
   if (shots) await canvasPng(page, path.join(SHOTS, 'web-15-map-tiles.png'));
   const z = tiles.length ? Math.max(...tiles.map((t) => t[0])) : 0;
   const [cx, cy] = tileOf(GHENT.latitude, GHENT.longitude, z);
