@@ -44,6 +44,7 @@ BOARDS = {
     "manifest-tlora-pager-sx1262.json": ("wadamesh - LilyGo T-LoRa Pager (SX1262)", "wadamesh-tlora-pager-sx1262-merged.bin", "ESP32-S3"),
     "manifest-attaky.json":           ("wadamesh - Attaky Core (experimental)", "wadamesh-attaky-merged.bin", "ESP32-S3"),
     "manifest-wio-tracker-l2.json": ("wadamesh - Seeed Wio Tracker L2 (experimental)", "wadamesh-wio-tracker-l2-merged.bin", "ESP32-S3"),
+    "manifest-sensecap-indicator.json": ("wadamesh - Seeed SenseCAP Indicator D1L (experimental)", "wadamesh-sensecap-indicator-merged.bin", "ESP32-S3"),
     "manifest-crowpanel-35.json": ("wadamesh - Elecrow CrowPanel Advance 3.5 (experimental)", "wadamesh-crowpanel-35-merged.bin", "ESP32-S3"),
     "manifest-crowpanel-50.json": ("wadamesh - Elecrow CrowPanel Advance 5.0 (experimental)", "wadamesh-crowpanel-50-merged.bin", "ESP32-S3"),
     # The 10.1" CrowPanel is an ESP32-P4 board with one image per hardware revision
