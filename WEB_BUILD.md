@@ -16,6 +16,7 @@ web/build.sh web-nothreads  # only the no-threads bundle -> web/dist-nothreads/ 
 web/build.sh web-debug  # -g + runtime assertions -> web/dist-debug/
 web/build.sh serve    # serve web/dist on http://localhost:8080 with COOP/COEP
 web/build.sh webtest  # the same tour in headless Chromium/Firefox/WebKit (Playwright)
+web/build.sh mobiletest  # phones and tablets: iPhone 14, Pixel 7, iPad (Playwright device emulation)
 web/build-host/wadamesh-host --serial /dev/cu.usbmodem101   # drive a real node (see "The companion backend")
 ```
 
@@ -44,8 +45,9 @@ The web build is a board like any other: `-DWADA_WEB` selects a block in
 | Capability | Web board | Why |
 |---|---|---|
 | CAP_TOUCH | 1 | mouse / finger |
-| CAP_LARGE_SCREEN | 1 | 800x480 landscape |
-| CAP_ROTATABLE | 0 | fixed canvas |
+| CAP_LARGE_SCREEN | 1 | the large-panel layouts and UI-size fonts, at every size the page picks (800x480 on a computer, the screen's own size on a phone or tablet) |
+| CAP_ROTATABLE | 0 | no rotation setting: the page picks portrait or landscape from the window, and a turn restarts the UI in the other layout |
+| CAP_NATIVE_KEYBOARD (new) | 1 | on a touch device the phone's own keyboard types (`boardNativeKeyboard()`): the UI's on-screen keys, focus ring and tab hotkeys stay away |
 | CAP_SD, CAP_FILESYSTEM | 0 | storage is the host directory behind SPIFFS |
 | CAP_GPS | 1 | the computer's or phone's location (see "Location") |
 | CAP_GPS_RECEIVER (new) | 0 | not a serial receiver: Settings > GPS has no baud rate and no rest-between-checks saver |
@@ -61,11 +63,11 @@ The web build is a board like any other: `-DWADA_WEB` selects a block in
 | CAP_FILE_HANDOFF (new) | 1 | an exported backup is downloaded by the browser; "Import from this computer" opens its file picker |
 | CAP_EXT_KEYBOARD, CAP_KEYPAD_NAV | 1 (derived) | the computer keyboard is the UI's external keyboard (`HAS_CARDKB`) |
 
-**Why 800x480.** It is the size of the two shipping large-screen layouts (the
+**Why 800x480 on a computer.** It is the size of the two shipping large-screen layouts (the
 CrowPanel 5.0 with touch, the Tanmatsu with keys), so the web build runs a
-layout path real devices already exercise, with the UI-size fonts. It also
-fits a laptop browser window at 1:1 and scales cleanly to phones and big screens
-(the window/canvas scales; LVGL renders at 800x480).
+layout path real devices already exercise, with the UI-size fonts, and it
+fits a laptop browser window at 1:1. Phones and tablets get the size of their own
+screen instead (see "Phones and tablets").
 
 Build defines (all in `web/CMakeLists.txt`): `WADA_WEB ESP32 HAS_TOUCH_UI UI_LVGL
 MULTI_TRANSPORT_COMPANION HAS_CARDKB WADAMESH_FORK_BUILD MAX_CONTACTS=500
@@ -87,7 +89,10 @@ Every change is behaviour-neutral for the device builds (they never define
 | `src/ui-touch/UITask.cpp:212` | `WADA_WEB` branch of the display-class include chain: `<WebDisplay.h>` | the board's display, as every board adds its own here |
 | `src/ui-touch/UITask.cpp:288` | `WADA_WEB` branch of the `extern ... display` chain | same |
 | `src/ui-touch/UITask.cpp:34584` | `WADA_BOARD_ID "web"` | the chain ends in `#error` for unknown boards (on purpose) |
-| `src/ui-touch/UITask.cpp:73499` | `WADA_WEB` branch of the LVGL resolution chain: `WADA_WEB_W x WADA_WEB_H` | the `#else` is the V4's 320x240 |
+| `src/ui-touch/UITask.cpp:73542` | `WADA_WEB` branch of the LVGL resolution chain: `WADA_WEB_W x WADA_WEB_H` (the size the page picked at boot) | the `#else` is the V4's 320x240 |
+| `src/ui-touch/UITask.cpp:9855-9859` | `CAP_NATIVE_KEYBOARD`: a second tap on a field does not summon the UI's keys while the phone's keyboard types | the page reopens the phone keyboard instead |
+| `src/ui-touch/UITask.cpp:49627` | `cardKbUiKey` passes `BLE_KEY_TEXT \| code point` through | text in any script and emoji from the page (a CardKB only ever sends bytes, never that bit) |
+| `src/ui-touch/UITask.cpp:51733-51748` | `CAP_NATIVE_KEYBOARD`: the phone's keyboard counts as an external keyboard for typing, but turns on no focus ring and no tab hotkeys or their letters | a phone keyboard has no keys to navigate by |
 | `src/ui-touch/UITask.cpp:55254-55262` | Signal/Discover/Spectrum tiles under `CAP_RADIO_TOOLS`; Remote/VNC also under `CAP_SCREEN_MIRROR` | capability gates, not board names |
 | `src/ui-touch/UITask.cpp:4189-4193` | the GPS "searching" hint: sky + cold start under `CAP_GPS_RECEIVER`, else "allow this page to use your location" | the browser's GPS has no sky |
 | `src/ui-touch/UITask.cpp:17639, 17679` | Settings > GPS: the Receiver (baud) and Battery (saver) cards under `CAP_GPS_RECEIVER` | settings of a serial receiver |
@@ -102,6 +107,7 @@ Every change is behaviour-neutral for the device builds (they never define
 | `src/ui-touch/UITask.cpp:54501, 54511, 54825, 54884` | the Store's picker-only mode is `CAP_BUILTIN_* && !CAP_STORE_DOWNLOADS` | baked apps AND a working Store |
 | `src/ui-touch/UITask.cpp:49385, 49516, 49529, 77989` | `CAP_FILE_HANDOFF`: the export is handed to the board (download), "Import from this computer" (file picker), the picked file goes to the usual import confirm | backups in and out of a browser |
 | `src/ui-touch/device_caps.h:28` | the `WADA_WEB` board block | a new board |
+| `src/ui-touch/device_caps.h:561-565` (new) | `CAP_NATIVE_KEYBOARD` default 0 | every device board's value |
 | `src/ui-touch/device_caps.h:507` (CAP_WEB_BROWSER) | wrapped in `#ifndef` so a board block can preset it | like CAP_LUA_APPS |
 | `src/ui-touch/device_caps.h:519-555, 657-675` (new) | `CAP_RADIO_TOOLS`, `CAP_SCREEN_MIRROR`, `CAP_WIFI_SETUP`, `CAP_BT_SETUP`, `CAP_USB_FLASH`, `CAP_GPS_RECEIVER`, `CAP_FW_UPDATE_CHECK` default 1; `CAP_FILE_HANDOFF` default 0; `CAP_STORE_DOWNLOADS` default `!CAP_BUILTIN_LUA_APPS` | each a board's value today (behaviour-neutral) |
 | `src/helpers/esp32/MqttBridge.h:32` | `|| defined(WADA_WEB)` on the P4 no-op bridge | no sockets of its own yet |
@@ -367,7 +373,8 @@ is never cross-origin isolated, so there is no SharedArrayBuffer and no pthreads
   `crossOriginIsolated`, else `nt/wadamesh.js` (`web/dist-nothreads`, deployed at
   `/nt/`). `web/build.sh web` builds both (the page's `?v=` hash covers both);
   `web/build.sh serve` serves `nt/` too. Tile and Store URLs are relative, so both
-  bundles use the same `tiles/` and `fw/apps/` next to the page.
+  bundles use the same `tiles/` and `fw/apps/` next to the page. The page (shell) is
+  one: phones get the same portrait layout and phone keyboard on either copy.
 - **No-threads bundle** (`-DWADA_NO_THREADS=ON`, `-sASYNCIFY`): the FreeRTOS tasks
   (hist_flush, tile_fetch, the prefs writer, ...) are Emscripten fibers on the page's one
   thread, `web/compat/src/freertos_coop.cpp`, run once per frame after the UI step.
@@ -466,6 +473,83 @@ wheel and two-finger trackpad scrolling scroll the list or page under the pointe
 scroll that way, `lv_obj_scroll_by`, SCROLL_END once the wheel stops; vertical only).
 The tour scripts have `wheel X Y DY`.
 
+Typing on a computer keyboard: ASCII, Enter, Backspace, Esc, Tab and arrows are CardKB
+codes (hotkeys and navigation work); any other character (accents, other scripts) goes
+in as text, UTF-8, through `cardKbUiKey`'s `BLE_KEY_TEXT` path.
+
+## Phones and tablets
+
+**The size.** `web/shell/app.js` picks the board's resolution once per boot from the
+window (`Module.wadaSize`, read by `web_main.cpp` before the display exists;
+`WebDisplay` takes any size; natively `wadamesh-host --size WxH`):
+
+| Window | Canvas | Shown |
+|---|---|---|
+| a computer (fine pointer), landscape | 800x480 | the framed device, scaled to the window, whole device pixels when that costs at most 20 % (unchanged; the tours and docs shots are at this size) |
+| a phone or tablet (coarse pointer), or a computer window clearly taller than wide | the space below the bar, safe areas out, at about one CSS pixel per canvas pixel | edge to edge, no frame |
+
+The phone width is the phone's own CSS width (360-430), so the UI's text is as big as a
+web page's, with a whole number of device pixels per canvas pixel when one is within
+16 % (crisp, nearest-neighbour): iPhone 14 390x616 (Safari, at 3:1), Pixel 7 360x692
+(3:1; 412 CSS px wide), iPad 540x686 (3:1, 1.5 CSS px each; tablets stay near 600
+wide). The height fills the rest. Landscape picks the height the same way (up to 600)
+and the width from the window's aspect: iPhone 14 664x358, Pixel 7 734x330, iPad
+720x506. Why not 800x480 scaled on a tablet or a phone on its side: the bars around a
+fixed aspect waste up to a third of a phone screen, and a phone's 390 CSS px would
+draw a 480- or 800-wide UI at 0.8 or 0.5 scale (small text). The computer keeps
+800x480 because a desktop window is resized freely (each new size would mean a
+restart) and the frame at 1:1 is the intended look there.
+
+**Layouts reused.** No new layout code: the large-screen layouts (`CAP_LARGE_SCREEN`,
+the UI-size fonts, `PSC`/`PCW` popup sizing clamped to the screen) already size
+themselves from `lv_disp_get_hor_res/ver_res`, as on the CrowPanel 5.0 in portrait
+(480x800), the Tanmatsu, and the T-Display P4 (284x616 portrait, 616x284 landscape,
+also `CAP_LARGE_SCREEN`). Checked at 360-540 wide portrait and 330-506 high landscape:
+Home widgets, chat list, conversation + composer, contacts, the contact popup, map,
+Settings, the app drawer.
+
+**Turning the device.** A turn that really flips the aspect (and changes the window's
+width: a keyboard or a toolbar only changes its height) saves the UI's data
+(`_wadaWebFlush` + IndexedDB) and reloads into the other layout, 600 ms after the
+last resize, never while the phone keyboard is open (it checks again when the keyboard
+closes). The UI comes back on Home; chats, sent messages and settings are kept.
+
+**The phone's own keyboard** (`CAP_NATIVE_KEYBOARD`). On a touch device the UI's
+on-screen keys stay down (`wadaWebNativeKeyboard(1)`: the phone keyboard counts as an
+external keyboard, without the focus ring and tab hotkeys a real keyboard gets). A tap on
+an LVGL text field (`wadaWebTextareaAt`, asked inside the tap's own `pointerup`, since
+iOS opens a keyboard only for a focus() made in the user's gesture) focuses a hidden
+`<textarea id="ime">`: autocorrect, emoji, every language, voice typing. Its changes are
+forwarded as a diff (Backspaces + UTF-8 text) to the bound field, so a composing keyboard
+(Gboard, CJK IMEs) is followed live and an autocorrection replaces the word; a leading
+sentinel space lets Backspace work on an empty field; Enter (and the keyboard's Send key,
+`enterkeyhint="send"`) is the UI's Enter; the keyboard closes when the edit ends in the UI
+(`wadaWebEditing`). While it is up, `visualViewport` slides the screen up so the
+composer sits on the keyboard.
+
+**The page on a phone.** One slim bar row (logo, status badge, Connect, the More menu;
+labels shorten and never wrap; slimmer still on a phone on its side); `viewport-fit=cover`
+with the safe areas (notch, home indicator, rounded corners) kept clear; no page zoom
+(`maximum-scale=1`, 16 px hidden field); `overscroll-behavior: none` (no
+pull-to-refresh). "Add to Home Screen" opens it standalone: `manifest.webmanifest`
+(`display: standalone`, theme and background colours, 192/512 + maskable icons) and
+the Apple tags (`apple-mobile-web-app-capable`, a black-translucent status bar,
+`icons/icon-180.png`). The icons are `web/shell/icons/app-icon.svg` rendered by
+`web/shell/icons/render.mjs`. The Connect chooser shows only what the browser has: iPhone
+and iPad get Wi-Fi with one line ("On iPhone and iPad the browser has no Bluetooth or
+USB: connect over Wi-Fi."), Android Chrome gets Bluetooth.
+
+**Tests.** `web/build.sh mobiletest` (`web/scripts/mobile-tour.mjs`, Playwright device
+emulation: iPhone 14 and iPad in WebKit, Pixel 7 in Chromium): the canvas covers more
+than 90 % of the window below a one-row bar; tap into a chat (taps go by label text,
+`wadamesh.findText`, or by the canvas's own size), type "Grüße vom Handy 👋" through the
+hidden field, the LVGL field holds exactly that (`wadamesh.editText`), the UI's keys stay
+down, Enter sends, it is saved as UTF-8; on the Pixel an IME composition grows, commits
+and is deleted; turn to landscape (fills, the message is there) and back (same size,
+the message is in the chat); the chooser; the manifest and icons; no page errors.
+Screenshots `web/docs/mobile-*.png`. The desktop tour (`webtest`) still runs at 800x480;
+its phone step checks the portrait canvas.
+
 ## The compat layer (`web/compat/`)
 
 Small and honest; what is faked says so in its header.
@@ -541,7 +625,7 @@ same for our host. Without isolation the page says so and does not start.
 **Display and input.** The LVGL flush writes the RGB565 framebuffer
 (`WebDisplay`), which tracks the changed rectangle; each frame that rectangle
 is converted to RGBA and put on the canvas. `web/shell/app.js` scales the
-800x480 canvas to the window with the aspect kept: whole device pixels with
+canvas (800x480 on a computer; phones: "Phones and tablets") to the window with the aspect kept: whole device pixels with
 nearest-neighbour when that loses at most 20 % of the space (crisp on HiDPI),
 smooth fractional scaling otherwise. Pointer events (mouse, pen, one finger)
 map to canvas pixels; press/release edges are queued and handed to the touch
@@ -590,8 +674,10 @@ requestAnimationFrame, ~40 UI frames/s presented (LVGL's refresh period).
 
 ## Known gaps
 
-- Typing on the computer keyboard is ASCII (the UI's CardKB path); other
-  scripts and emoji use the on-screen keyboard and the emoji picker.
+- A computer keyboard's IME composition (Chinese, Japanese, ...) does not reach the
+  canvas; on a phone it does (the hidden field). Dead keys and other scripts work.
+- Phones: the phone keyboard has no cursor movement inside the LVGL field (it types and
+  deletes at the end); a turn restarts the UI on Home.
 - The Control Center's Wi-Fi chip still toggles the (inert) Wi-Fi preference;
   Settings > Wi-Fi explains.
 - A custom tile server (Map options) is not reachable from a page: only the

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- The home-screen icon of the web app (web/shell/manifest.webmanifest): the wadamesh
+       mark in the accent on the page's night background, full bleed, so the same image
+       works as a plain, an Apple touch and a maskable icon (the mark stays inside the
+       maskable safe circle). PNGs: web/shell/icons/render.mjs. -->
+  <defs>
+    <radialGradient id="g" cx="50%" cy="38%" r="70%">
+      <stop offset="0" stop-color="#0E3B37"/>
+      <stop offset="1" stop-color="#000400"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#g)"/>
+  <g transform="translate(106 156) scale(1.6667)" fill="none" stroke="#19D6C2" stroke-width="8"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 60 L50 108 L90 60 L130 108 L170 60"/>
+    <path d="M10 60 L50 12 L90 60 L130 12 L170 60"/>
+    <g fill="#E6EBED" stroke="none">
+      <circle cx="10" cy="60" r="10"/><circle cx="90" cy="60" r="10"/><circle cx="170" cy="60" r="10"/>
+      <circle cx="50" cy="12" r="10"/><circle cx="130" cy="12" r="10"/>
+      <circle cx="50" cy="108" r="10"/><circle cx="130" cy="108" r="10"/>
+    </g>
+  </g>
+</svg>

@@ -13,6 +13,8 @@
 #                     (Playwright: npm install --prefix web playwright && npx playwright install)
 #                     BROWSERS=chromium,firefox,webkit; screenshots -> web/docs/web-*.png
 # web/build.sh nodetest the page connected to a mock node over WebSocket -> web/docs/node-*.png
+# web/build.sh mobiletest phones and tablets (iPhone 14, Pixel 7, iPad: portrait fill, phone
+#                     keyboard, turning) -> web/docs/mobile-*.png
 set -euo pipefail
 cd "$(dirname "$0")"
 WEB="$(pwd)"
@@ -73,8 +75,9 @@ case "$target" in
     cp "$bdir/wadamesh.js" "$bdir/wadamesh.wasm" "$dist/"
     cp "$WEB/shell/app.js" "$WEB/shell/app.css" "$dist/"
     cp "$WEB/../deploy/site/wadamesh-mark.svg" "$WEB/../deploy/site/favicon.ico" \
-       "$WEB/../deploy/site/apple-touch-icon.png" "$WEB/../deploy/site/wadamesh-icon-512.png" \
        "$WEB/shell/manifest.webmanifest" "$dist/"
+    mkdir -p "$dist/icons"   # the home-screen icons (web/shell/icons/render.mjs)
+    cp "$WEB/shell/icons/"*.png "$WEB/shell/icons/app-icon.svg" "$dist/icons/"
     # Cache key: the page asks for every file with ?v=<hash>, so a CDN can keep them for good.
     nt=""; [ -f "$WEB/dist-nothreads/wadamesh.wasm" ] && nt="$WEB/dist-nothreads/wadamesh.wasm $WEB/dist-nothreads/wadamesh.js"
     # shellcheck disable=SC2086
@@ -106,6 +109,17 @@ case "$target" in
     sleep 1
     node "$WEB/scripts/web-tour.mjs" --url "http://localhost:$port/" --browsers "${BROWSERS:-chromium}" "$@"
     ;;
+  mobiletest)
+    # Phones and tablets (Playwright device emulation): the canvas fills the screen at the
+    # device's own size, the phone keyboard path, turning the device. web/docs/mobile-*.png
+    [ -f "$WEB/dist/index.html" ] || "$SELF" web
+    [ -d "$WEB/node_modules/playwright" ] || { echo "mobiletest: npm install --prefix web playwright && (cd web && npx playwright install)" >&2; exit 1; }
+    port="${PORT:-8189}"
+    WADA_SERVE_QUIET=1 python3 "$WEB/scripts/serve.py" "$WEB/dist" "$port" & srv=$!
+    trap 'kill $srv 2>/dev/null' EXIT
+    sleep 1
+    node "$WEB/scripts/mobile-tour.mjs" --url "http://localhost:$port/" "$@"
+    ;;
   nodetest)
     # The page connected to a node: a mock node's WebSocket server (web/mesh/test/
     # mock_ws_node.py) in place of a device, Connect > Wi-Fi, DM, live message, reload,
@@ -119,5 +133,5 @@ case "$target" in
     sleep 1
     node "$WEB/scripts/node-tour.mjs" --url "http://localhost:$port/" --ws "localhost:$wsport" "$@"
     ;;
-  *) echo "usage: web/build.sh host|run|shots|smoke|web|web-debug|web-nothreads|serve|webtest|nodetest" >&2; exit 2;;
+  *) echo "usage: web/build.sh host|run|shots|smoke|web|web-debug|web-nothreads|serve|webtest|nodetest|mobiletest" >&2; exit 2;;
 esac

@@ -21,3 +21,5 @@ void webWheelTick();
 bool webTextareaAt(int x, int y);
 bool webEditing();
 bool webOskShown();   // the UI's own on-screen keys are up (tests)
+int webFindText(const char* text);   // tests: the middle of a visible label, (x << 16) | y, or -1
+const char* webEditText();          // tests: the text of the field being edited, or ""

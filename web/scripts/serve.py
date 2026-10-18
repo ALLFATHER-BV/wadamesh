@@ -54,6 +54,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '.js': 'text/javascript',
         '.mjs': 'text/javascript',
         '.svg': 'image/svg+xml',
+        '.webmanifest': 'application/manifest+json',
     }
 
     def translate_path(self, path):

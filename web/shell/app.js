@@ -4,8 +4,10 @@
 //    SharedArrayBuffer, which needs COOP: same-origin + COEP: require-corp)
 //  - mounts IndexedDB (IDBFS) at /data and loads it BEFORE the UI boots
 //  - persists /data after writes settle, and on tab hide / page close
-//  - scales the 800x480 canvas to the window (aspect kept; whole device pixels = crisp
-//    nearest when that costs little, smooth otherwise)
+//  - picks the canvas size (800x480 on a computer, the screen's own size on a phone or
+//    tablet) and scales it to the window (whole device pixels = crisp nearest when that
+//    costs little, smooth otherwise); a turn of the phone restarts the UI in the other layout
+//  - on a phone, the phone's own keyboard types into the UI (a hidden textarea)
 //  - pointer = finger, keyboard = the UI's external keyboard (CardKB codes)
 //  - Connect: the demo, or the visitor's own MeshCore node over USB (Web Serial),
 //    Bluetooth (Web Bluetooth) or Wi-Fi (WebSocket, the node's port 8765). The choice
@@ -14,26 +16,56 @@
 (function () {
   'use strict';
   // The canvas size = the board's resolution, picked once per boot from the window
-  // (web_main.cpp reads Module.wadaSize): 800x480 landscape, or on a phone held upright a
-  // portrait canvas 480 wide (the large-screen portrait layouts the rotatable 800x480
-  // boards use), as tall as the screen allows. 420-540 wide when that is a whole number
-  // of device pixels per canvas pixel (crisp). Turning the phone restarts the UI in the
-  // other layout (see "orientation" below); the data stays.
+  // (web_main.cpp reads Module.wadaSize; WEB_BUILD.md "Phones and tablets").
+  //  - A computer (fine pointer) in a landscape window: 800x480, the framed device, scaled
+  //    to the window (the acceptance tours and the docs shots are at this size).
+  //  - A phone or tablet (coarse pointer), or a computer window clearly taller than wide:
+  //    the canvas IS the screen. It is sized from the space below the bar (safe areas
+  //    out) so it fills that space edge to edge, with about one CSS pixel per canvas pixel
+  //    (text as big as the page's own), preferring a width that is a whole number of
+  //    device pixels per canvas pixel (crisp): iPhone 14 390x616 at 3:1, Pixel 7 360x692
+  //    at 3:1, iPad 540x686 at 3:1. Portrait or landscape follows the window.
+  // Turning the phone restarts the UI in the other layout (see "orientation"); data stays.
   var touchDevice = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-  function wantPortrait() {   // a phone upright; a desktop window clearly taller than wide
+  function wantPortrait() {   // upright; a desktop window must be clearly taller than wide
     return window.innerHeight > window.innerWidth * (touchDevice ? 1.0 : 1.15);
   }
   var portrait = wantPortrait();
+  var fill = touchDevice || portrait;   // the canvas fills the stage (no device frame)
+  var bootWidth = window.innerWidth;
   var W = 800, H = 480;
-  if (portrait) {
-    document.body.classList.add('portrait');
-    var barH = document.querySelector('.bar').getBoundingClientRect().height;
-    var vw = document.documentElement.clientWidth || window.innerWidth;
-    var vh = Math.max(320, window.innerHeight - barH);
-    var devW = vw * (window.devicePixelRatio || 1);
-    W = 480;
-    for (var k = 2; k <= 4; k++) { var w = Math.round(devW / k); if (w >= 420 && w <= 540 && Math.abs(devW / k - w) < 0.01) { W = w; break; } }
-    H = Math.max(560, Math.min(1200, 2 * Math.round(W * vh / vw / 2)));
+  // The best logical length for `css` CSS pixels (dev = the same in device pixels):
+  // near `target`, within [lo, hi], a whole number of device pixels per canvas pixel
+  // when one is within 16 % of the target (a bit bigger is fine; smaller is not).
+  function pickLen(css, dev, target, lo, hi) {
+    var best = 0, bestErr = 1e9;
+    for (var k = 1; k <= 6; k++) {
+      var w = Math.round(dev / k);
+      if (w < lo || w > hi || Math.abs(dev / k - w) > 0.75) continue;
+      var err = (target - w) / target;   // > 0: the UI is drawn bigger than 1:1
+      if (err < -0.02 || err > 0.16) continue;
+      if (Math.abs(err) < bestErr) { best = w; bestErr = Math.abs(err); }
+    }
+    return best || Math.max(lo, Math.min(hi, Math.round(target)));
+  }
+  if (fill) {
+    document.body.classList.add('fill');
+    if (portrait) document.body.classList.add('portrait');
+    var st0 = document.getElementById('stage'), r0 = st0.getBoundingClientRect(), c0 = getComputedStyle(st0);
+    var aw0 = Math.max(240, r0.width - parseFloat(c0.paddingLeft) - parseFloat(c0.paddingRight));
+    var ah0 = Math.max(200, r0.height - parseFloat(c0.paddingTop) - parseFloat(c0.paddingBottom));
+    var dpr0 = window.devicePixelRatio || 1;
+    if (portrait) {
+      // width: the phone's CSS width (360-430 on phones); a tablet stays near 600 wide
+      W = pickLen(aw0, aw0 * dpr0, Math.min(aw0, 600), 300, 640);
+      H = Math.max(480, Math.min(1400, Math.floor(W * ah0 / aw0)));   // never taller than the space
+    } else {
+      // height: 1:1 up to 600 (a phone on its side: ~330; a tablet: ~500-600)
+      H = pickLen(ah0, ah0 * dpr0, Math.min(ah0, 600), 280, 640);
+      W = Math.max(480, Math.min(1280, Math.round(H * aw0 / ah0)));
+      if (W * ah0 / aw0 < H) H = Math.floor(W * ah0 / aw0);   // the width rules (layout): never taller
+    }
+    W -= W & 1; H -= H & 1;
   }
   var BUILD = '__WADA_BUILD__';
   var DB_MOUNT = '/data';   // also the IndexedDB database name IDBFS uses
@@ -93,11 +125,13 @@
     var aw = r.width - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
     var ah = r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     if (!full) ah = Math.max(ah, 120);
-    if (portrait) {   // the canvas was sized for this screen: fill its width
+    if (fill && !full) {   // the canvas was sized for this space: fill it edge to edge
+      // (the keyboard or a toolbar can shorten the space later: the width rules, and
+      // fitAboveKeyboard slides the screen up instead of shrinking it)
       var f = aw / W, d = f * (window.devicePixelRatio || 1);
-      canvas.style.width = Math.round(W * f) + 'px';
+      canvas.style.width = aw + 'px';
       canvas.style.height = Math.round(H * f) + 'px';
-      canvas.classList.toggle('crisp', Math.abs(d - Math.round(d)) < 0.02);
+      canvas.classList.toggle('crisp', Math.abs(d - Math.round(d)) < 0.02 || d >= 3);
       return;
     }
     var dpr = window.devicePixelRatio || 1;
@@ -113,17 +147,21 @@
   }
   window.addEventListener('resize', layout);
   // ---- orientation: the other layout needs a restart of the UI (data kept) -----------
-  // Debounced, only when the orientation really flipped, and never while the visitor is
-  // typing (the phone keyboard shrinks the window, which is no rotation).
+  // Debounced, only when the window's aspect really flipped AND its width changed (a phone
+  // keyboard or a collapsing toolbar only changes the height, which is no rotation), and
+  // never while the visitor is typing.
   var flipTimer = 0;
   function maybeFlip() {
     clearTimeout(flipTimer);
     flipTimer = setTimeout(function () {
       if (!running || resetting || wantPortrait() === portrait) return;
-      if (document.activeElement && document.activeElement.id === 'ime') return;
+      if (Math.abs(window.innerWidth - bootWidth) < 40) return;
+      if (imeOn || (document.activeElement && document.activeElement.id === 'ime')) return;
       restartUi(portrait ? 'Turning to landscape' : 'Turning to portrait');
-    }, 700);
+    }, 600);
   }
+  // A keyboard that was open during the turn: check again once it has closed.
+  window.addEventListener('focusout', function () { setTimeout(maybeFlip, 400); });
   window.addEventListener('resize', maybeFlip);
   if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', maybeFlip);
   document.addEventListener('fullscreenchange', layout);
@@ -239,7 +277,8 @@
     activePointer = e.pointerId;
     geoTap();
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-    canvas.focus({ preventScroll: true });
+    // While the phone keyboard is up, a tap on the UI (Send, a bubble) leaves it up.
+    if (!(touchDevice && imeOn)) canvas.focus({ preventScroll: true });
     sendPointer(true, e);
     e.preventDefault();
   });
@@ -256,6 +295,7 @@
     if (e.type === 'pointerup' && touchDevice && M && running) {
       var p = toCanvas(e);
       if (M._wadaWebTextareaAt(p[0], p[1])) imeOpen();
+      else if (imeOn && document.activeElement !== ime) ime.focus({ preventScroll: true });   // the edit goes on
     }
   }
   canvas.addEventListener('pointerup', pointerEnd);
@@ -915,20 +955,38 @@
     running: function () { return running; },
     geo: function () { return { want: geo.want, watching: geo.watch !== null, waitingTap: geo.waitingTap }; },
     _m: function () { return M; },   // the module, for tests
-    // Is `needle` in any saved file under /data? (the persistence test)
-    tar: tarFiles, untar: untar,   // for tests
+    // Is `needle` (text, compared as UTF-8 bytes) in any saved file under /data? (the
+    // persistence tests)
     findInStorage: function (needle) {
       if (!M || !M.FS) return false;
-      var FS = M.FS, hits = [];
+      var FS = M.FS, hits = [], nb = new TextEncoder().encode(needle);
+      var has = function (b) {
+        outer: for (var i = 0; i + nb.length <= b.length; i++) {
+          if (b[i] !== nb[0]) continue;
+          for (var j = 1; j < nb.length; j++) if (b[i + j] !== nb[j]) continue outer;
+          return true;
+        }
+        return false;
+      };
       (function walk(dir) {
         FS.readdir(dir).forEach(function (n) {
           if (n === '.' || n === '..') return;
           var p = dir + '/' + n, st = FS.stat(p);
           if (FS.isDir(st.mode)) walk(p);
-          else if (new TextDecoder('latin1').decode(FS.readFile(p)).indexOf(needle) >= 0) hits.push(p);
+          else if (has(FS.readFile(p))) hits.push(p);
         });
       })(DB_MOUNT);
       return hits;
     },
+    // The middle of the first visible LVGL label showing `text` (canvas pixels), or null:
+    // lets the phone tests tap by name at any canvas size (web/platform/WebLvglInput.cpp).
+    findText: function (text) {
+      if (!M || !running) return null;
+      var v = M.ccall('wadaWebFindText', 'number', ['string'], [text]);
+      return v < 0 ? null : [v >> 16, v & 0xffff];
+    },
+    // The text of the LVGL field being edited (tests: what the phone keyboard typed).
+    editText: function () { return M && running ? M.ccall('wadaWebEditText', 'string', [], []) : ''; },
+    size: function () { return [W, H]; },
   };
 })();
