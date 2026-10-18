@@ -4,3 +4,9 @@
 /build-*/
 # host runtime data (the virtual flash: prefs, SPIFFS files)
 /data/
+
+# browser test tooling (Playwright) and the web builds
+/node_modules/
+/dist/
+/dist-debug/
+/package-lock.json

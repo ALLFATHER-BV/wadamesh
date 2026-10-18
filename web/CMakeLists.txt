@@ -2,7 +2,7 @@
 # wadamesh in the browser: the real touch UI (src/ui-touch) built for a host OS.
 #
 #   web/build.sh host   -> build-host/wadamesh-host  (native, SDL2 window)
-#   web/build.sh web    -> phase 2 (Emscripten, same CMake with emcmake)
+#   web/build.sh web    -> build-web/wadamesh.{js,wasm} + dist/ (Emscripten, same CMake via emcmake)
 #
 # Layout (see WEB_BUILD.md at the repo root):
 #   third_party/  pinned sources fetched by fetch-deps.sh (gitignored)
@@ -41,6 +41,24 @@ set(WADA_COMMON_DEFS
 )
 set(WADA_COMPAT_INC ${WEB}/compat ${WEB}/compat/arduino)
 
+# ---- the browser build (Emscripten) -------------------------------------------------
+# Every object is compiled with -pthread (shared wasm memory: the UI's background
+# FreeRTOS tasks are pthreads, compat/src/freertos_host.cpp); LVGL + the UI loop stay on
+# the browser main thread (platform/web_main.cpp). See WEB_BUILD.md, "Phase 2".
+if(EMSCRIPTEN)
+  # Release = the deploy: WADA_WEB_OPT (-O2 by default; -Os trades ~speed for size),
+  # no debug info. RelWithDebInfo = the debug variant (-O2 -g, runtime assertions).
+  set(WADA_WEB_OPT "-O2" CACHE STRING "optimisation level of the release web build")
+  foreach(_lang C CXX)
+    set(CMAKE_${_lang}_FLAGS_RELEASE "${WADA_WEB_OPT} -DNDEBUG")
+    set(CMAKE_${_lang}_FLAGS_RELWITHDEBINFO "-O2 -g -DNDEBUG")
+  endforeach()
+  set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${WADA_WEB_OPT}")
+  set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "-O2 -g")
+  add_compile_options(-pthread)
+  list(APPEND WADA_COMMON_DEFS WADA_DEFAULT_DATA_DIR="/data")   # the IDBFS mount (shell/wadamesh.js)
+endif()
+
 # ---- LVGL 8.4 (same lv_conf.h as the firmware: include/lv_conf.h) ----------------
 file(GLOB_RECURSE LVGL_SRCS CONFIGURE_DEPENDS ${TP}/lvgl/src/*.c)
 add_library(wada_lvgl STATIC ${LVGL_SRCS})
@@ -72,6 +90,10 @@ target_include_directories(wada_thirdparty PUBLIC ${WADA_COMPAT_INC} ${CRYPTO} $
                            ${TP}/ArduinoJson/src ${TP}/miniz)
 target_compile_definitions(wada_thirdparty PUBLIC ${WADA_COMMON_DEFS})
 target_compile_options(wada_thirdparty PRIVATE -w)
+if(EMSCRIPTEN)
+  # vfs_api.cpp's mkdir mode; musl only defines it under _GNU_SOURCE / _BSD_SOURCE.
+  target_compile_definitions(wada_thirdparty PRIVATE ACCESSPERMS=0777)
+endif()
 
 # ---- MeshCore core: only the plain-data / crypto parts the UI touches ------------
 # (No Dispatcher/Mesh/BaseChatMesh .cpp: the mesh is the stand-in in mesh/.)
@@ -103,6 +125,12 @@ set(APP_SRCS
   ${CORE}/helpers/IdentityStore.cpp
 )
 file(GLOB WEB_SRCS CONFIGURE_DEPENDS ${WEB}/compat/src/*.cpp ${WEB}/mesh/*.cpp ${WEB}/platform/*.cpp)
+# One front end per target: host_main.cpp (SDL2) natively, web_main.cpp (a <canvas>) in a browser.
+if(EMSCRIPTEN)
+  list(FILTER WEB_SRCS EXCLUDE REGEX "/platform/host_main\\.cpp$")
+else()
+  list(FILTER WEB_SRCS EXCLUDE REGEX "/platform/web_main\\.cpp$")
+endif()
 
 # Version strings: the defaults src/MyMesh.h carries (release.sh refreshes them), so the
 # web build's About page names the same firmware as the device build of this commit.
@@ -126,10 +154,8 @@ set(WADA_APP_DEFS
   NDEBUG
 )
 
-find_package(PkgConfig QUIET)
 if(EMSCRIPTEN)
-  set(SDL2_LIBS "")
-  set(SDL2_CFLAGS "-sUSE_SDL=2")
+  set(SDL2_LIBS "")   # the page is the window: no SDL in the browser build
 else()
   find_package(SDL2 REQUIRED)
   set(SDL2_LIBS SDL2::SDL2)
@@ -150,4 +176,38 @@ target_compile_options(wadamesh-host PRIVATE -w -fno-strict-aliasing)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # 81k-line UITask.cpp: keep clang's bracket-nesting / constexpr limits out of the way.
   target_compile_options(wadamesh-host PRIVATE -fbracket-depth=512)
+endif()
+
+if(EMSCRIPTEN)
+  # Output: wadamesh.js (loader + pthread worker entry) + wadamesh.wasm. build.sh web
+  # copies them next to web/shell/ into web/dist/.
+  set_target_properties(wadamesh-host PROPERTIES OUTPUT_NAME wadamesh)
+  set(WADA_WEB_LINK
+    -pthread
+    # Threads the UI starts in the browser: hist_flush (always), tile_fetch, the Reader
+    # and the prefs writer on demand. Pre-spawned so pthread_create from the main loop
+    # never waits for a Worker to boot; more are created on demand if ever needed.
+    -sPTHREAD_POOL_SIZE=6
+    -sPTHREAD_POOL_SIZE_STRICT=0
+    -sDEFAULT_PTHREAD_STACK_SIZE=262144   # device tasks ask 6-16 KB; generous for Lua/FatFs-style paths
+    -sSTACK_SIZE=2097152                  # the UI loop's stack (the device's loopTask runs 16-32 KB)
+    # Heap: the tour peaks at ~17 MB RSS natively (code included). Start at 64 MB and
+    # grow on demand (big histories, Lua apps) up to 1 GB; the growable-heap cost of
+    # pthreads only touches JS-side heap reads (one framebuffer upload per frame).
+    -sINITIAL_MEMORY=67108864
+    -sALLOW_MEMORY_GROWTH=1
+    -sMAXIMUM_MEMORY=1073741824
+    -sMODULARIZE=1 -sEXPORT_NAME=createWadamesh
+    -sENVIRONMENT=web,worker
+    -sEXIT_RUNTIME=0
+    -lidbfs.js
+    -sEXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency
+    -sEXPORTED_FUNCTIONS=_main,_malloc,_free
+  )
+  if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    list(APPEND WADA_WEB_LINK -sASSERTIONS=0)
+  else()
+    list(APPEND WADA_WEB_LINK -sASSERTIONS=1 -sSAFE_HEAP=0)
+  endif()
+  target_link_options(wadamesh-host PRIVATE ${WADA_WEB_LINK})
 endif()
