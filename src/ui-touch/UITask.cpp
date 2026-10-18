@@ -51730,16 +51730,23 @@ static void bleKbdUiTick() {
   static bool s_was_external_connected = false;
   if (external_connected != s_was_external_connected) {
     s_was_external_connected = external_connected;
+    // A phone's own keyboard (CAP_NATIVE_KEYBOARD) only types: no focus ring, no tab
+    // hotkeys and their letters, which belong to a keyboard with keys to navigate by.
+    bool nav_keys = external_connected;
+#if CAP_NATIVE_KEYBOARD
+    if (boardNativeKeyboard()) nav_keys = false;
+#endif
 #if BLE_KBD_OWNS_NAV
-    bleKbdNavEnable(external_connected);
+    bleKbdNavEnable(nav_keys);
 #endif
 #if !CAP_KEYBOARD
     if (external_connected) externalKbdTookOverField();
 #endif
 #if CAP_KEYPAD_NAV
-    s_ble_kbd_hotkeys = external_connected;
+    s_ble_kbd_hotkeys = nav_keys;
     navMenubarKeysSync();
 #endif
+    (void)nav_keys;
   }
 #if CAP_BLE_KEYBOARD
   BleKbd::Device dev = {};

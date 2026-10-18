@@ -167,6 +167,9 @@ EMSCRIPTEN_KEEPALIVE int wadaWebTextareaAt(int x, int y) { return webTextareaAt(
 // Is a text field being edited (the UI's keyboard is bound to one)?
 EMSCRIPTEN_KEEPALIVE int wadaWebEditing() { return webEditing() ? 1 : 0; }
 EMSCRIPTEN_KEEPALIVE int wadaWebOskShown() { return webOskShown() ? 1 : 0; }
+// Tests: where a label with this text is (web/shell/app.js wadamesh.findText).
+EMSCRIPTEN_KEEPALIVE int wadaWebFindText(const char* text) { return webFindText(text); }
+EMSCRIPTEN_KEEPALIVE const char* wadaWebEditText() { return webEditText(); }
 // The mouse wheel / a two-finger trackpad scroll over (x, y), in canvas pixels.
 EMSCRIPTEN_KEEPALIVE void wadaWebWheel(int x, int y, int dy) { webWheel(x, y, dy); }
 EMSCRIPTEN_KEEPALIVE unsigned wadaWebFsGeneration() { return wadaHostFsGeneration(); }

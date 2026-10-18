@@ -10,6 +10,7 @@
 #include "WebInput.h"
 #include <Arduino.h>
 #include <lvgl.h>
+#include <string.h>
 
 namespace {
 lv_obj_t* s_scrolled = nullptr;   // the object the last wheel step moved
@@ -81,4 +82,42 @@ bool webEditing() {
 bool webOskShown() {
   webEditing();   // finds the keyboard object
   return s_kb && !lv_obj_has_flag(s_kb, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---- tests: find a label by its text (web/shell/app.js wadamesh.findText) -------------------
+// The phone tests run at whatever size the phone gets, so they tap things by name instead of
+// by fixed coordinates. Exact match first, then a label that contains the text; only labels
+// that are visible on screen. Returns the middle as (x << 16) | y, or -1.
+namespace {
+lv_obj_t* findLabel(lv_obj_t* o, const char* text, bool exact, int depth) {
+  if (!o || depth > 40 || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+  if (lv_obj_check_type(o, &lv_label_class) && lv_obj_is_visible(o)) {
+    const char* t = lv_label_get_text(o);
+    if (t && (exact ? strcmp(t, text) == 0 : strstr(t, text) != nullptr)) return o;
+  }
+  const uint32_t n = lv_obj_get_child_cnt(o);
+  for (uint32_t i = 0; i < n; ++i)
+    if (lv_obj_t* f = findLabel(lv_obj_get_child(o, i), text, exact, depth + 1)) return f;
+  return nullptr;
+}
+}  // namespace
+int webFindText(const char* text) {
+  if (!text || !*text || !lv_scr_act()) return -1;
+  lv_obj_t* roots[3] = {lv_layer_sys(), lv_layer_top(), lv_scr_act()};
+  for (int pass = 0; pass < 2; ++pass)
+    for (lv_obj_t* r : roots)
+      if (lv_obj_t* o = findLabel(r, text, pass == 0, 0)) {
+        lv_area_t a;
+        lv_obj_get_coords(o, &a);
+        const int x = LV_CLAMP(0, (a.x1 + a.x2) / 2, 0x7fff), y = LV_CLAMP(0, (a.y1 + a.y2) / 2, 0xffff);
+        return (x << 16) | y;
+      }
+  return -1;
+}
+// Tests: the text of the field the UI's keyboard is bound to ("" when none).
+const char* webEditText() {
+  if (!webEditing()) return "";
+  lv_obj_t* ta = lv_keyboard_get_textarea(s_kb);
+  const char* t = ta ? lv_textarea_get_text(ta) : nullptr;
+  return t ? t : "";
 }

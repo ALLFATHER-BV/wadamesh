@@ -26,12 +26,17 @@
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
 #if defined(WADA_WEB)                    // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
-  // A virtual 800x480 landscape touch panel: the large-screen layouts the CrowPanel 5.0
-  // and the Tanmatsu ship, driven by a mouse or a finger. The mesh behind it is a backend
-  // (demo now, a companion node later), so nothing radio- or hardware-bound is advertised.
-  #define CAP_TOUCH        1   // mouse / touch via SDL
-  #define CAP_ROTATABLE    0   // fixed landscape canvas
-  #define CAP_LARGE_SCREEN 1   // 800x480: large-panel layouts and the UI-size fonts
+  // A virtual touch panel whose size the page picks at boot (WEB_BUILD.md "Phones and
+  // tablets"): 800x480 landscape on a computer, the large-screen layouts the CrowPanel 5.0
+  // and the Tanmatsu ship; on a phone or tablet the size of its screen below the page's
+  // bar, portrait or landscape (e.g. 390x616 on an iPhone 14), on the same layouts, which
+  // size themselves from the display (as on the portrait CrowPanel and the P4). Driven by
+  // a mouse or a finger. The mesh behind it is a backend (the demo or a companion node),
+  // so nothing radio- or hardware-bound is advertised.
+  #define CAP_TOUCH        1   // mouse / touch
+  #define CAP_ROTATABLE    0   // no rotation setting: the page follows the window, and a turn
+                               // of the phone restarts the UI in the other layout (data kept)
+  #define CAP_LARGE_SCREEN 1   // large-panel layouts and the UI-size fonts at every size
   #define CAP_SD           0   // no card; storage is the host directory behind SPIFFS
   #define CAP_FILESYSTEM   0
   #define CAP_GPS          1   // the computer's / phone's location (web/platform/WebLocation.h)

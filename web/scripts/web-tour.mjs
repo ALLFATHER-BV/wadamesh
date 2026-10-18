@@ -325,9 +325,21 @@ for (const name of BROWSERS) {
       p2.on('pageerror', (e) => r.errors.push('[phone] ' + String(e)));
       r.phoneLoadMs = await bootPage(p2);
       await sleep(4000);
-      await runScript(p2, ['tap 60 283', 'wait 2500', 'tap 80 456', 'wait 1500'], { prefix, touch: true, shots: false });
+      // The phone gets its own portrait canvas (its CSS width; web/build.sh mobiletest covers
+      // phones in depth), so tap by label and by the canvas's own size here.
+      const [pw2, ph2] = await p2.evaluate(() => window.wadamesh.size());
+      r.phoneCanvas = `${pw2}x${ph2}`;
+      const ptap = async (x, y) => {
+        const b = await p2.locator('#screen').boundingBox();
+        await p2.touchscreen.tap(b.x + (x + 0.5) * b.width / pw2, b.y + (y + 0.5) * b.height / ph2);
+      };
+      const skip = await p2.evaluate(() => window.wadamesh.findText('Skip'));
+      if (skip) await ptap(skip[0], skip[1]);
+      await sleep(2500);
+      await ptap(pw2 * 0.1, ph2 - 16);   // Chats, the first tab
+      await sleep(1500);
       if (shots) await p2.screenshot({ path: path.join(SHOTS, `${prefix}phone.png`) });
-      r.phoneTapWorked = true;
+      r.phoneTapWorked = ph2 > pw2 && !!(await p2.evaluate(() => window.wadamesh.findText('Public')));
       await phone.close();
     }
   } catch (e) {
@@ -339,6 +351,6 @@ for (const name of BROWSERS) {
 console.log(JSON.stringify(results, null, 2));
 const geoBad = (g) => g && (g.promptedAtBoot || !g.watching || !g.centredOnGhent || g.tilesShown === false);
 const storeBad = (g) => g && Object.values(g).some((v) => v === false);
-const bad = Object.values(results).some((r) => (!ONLY && !r.persisted) || geoBad(r.geo) || storeBad(r.store) ||
+const bad = Object.values(results).some((r) => (!ONLY && !r.persisted) || geoBad(r.geo) || storeBad(r.store) || r.phoneTapWorked === false ||
                                                r.errors.some((e) => e.startsWith('RUNNER')));
 process.exit(bad ? 1 : 0);
