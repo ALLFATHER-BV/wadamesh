@@ -11,7 +11,8 @@ web/build.sh host     # build web/build-host/wadamesh-host
 web/build.sh run      # build and start it (data in web/data/)
 web/build.sh shots    # run the acceptance tour headless -> web/docs/*.png
 web/build.sh smoke    # the same tour, exit status only (CI, release gate)
-web/build.sh web      # the browser build -> web/dist/ (static files)
+web/build.sh web      # the browser build -> web/dist/ (static files), and the no-threads bundle
+web/build.sh web-nothreads  # only the no-threads bundle -> web/dist-nothreads/ (served at nt/)
 web/build.sh web-debug  # -g + runtime assertions -> web/dist-debug/
 web/build.sh serve    # serve web/dist on http://localhost:8080 with COOP/COEP
 web/build.sh webtest  # the same tour in headless Chromium/Firefox/WebKit (Playwright)
@@ -343,6 +344,42 @@ The tile fetch task (`tile_fetch`, a pthread) downloads with the firmware's own 
 - The UI paces its downloads (OSM etiquette), so a fresh area fills in over a few
   seconds. `web/build.sh webtest` checks the map shows tiles around Ghent when the
   server can reach the tile server (skipped without a network).
+
+## Two copies: https (threads) and http (no threads)
+
+The public page is served twice (app.wadamesh.com): **https** is the full client (Web
+Serial, Web Bluetooth and the location need a secure context); **http** is the one that
+can reach a node over Wi-Fi, because a node's companion server speaks plain `ws://`,
+which a secure page may not open (mixed content). On http (other than localhost) a page
+is never cross-origin isolated, so there is no SharedArrayBuffer and no pthreads.
+
+- Two bundles, one page: `app.js` loads `wadamesh.js` next to itself when
+  `crossOriginIsolated`, else `nt/wadamesh.js` (`web/dist-nothreads`, deployed at
+  `/nt/`). `web/build.sh web` builds both (the page's `?v=` hash covers both);
+  `web/build.sh serve` serves `nt/` too. Tile and Store URLs are relative, so both
+  bundles use the same `tiles/` and `fw/apps/` next to the page.
+- **No-threads bundle** (`-DWADA_NO_THREADS=ON`, `-sASYNCIFY`): the FreeRTOS tasks
+  (hist_flush, tile_fetch, the prefs writer, ...) are Emscripten fibers on the page's one
+  thread, `web/compat/src/freertos_coop.cpp`, run once per frame after the UI step.
+  Every wait is a yield point (vTaskDelay, semaphore / queue / notification waits,
+  `delay()`, `yield()`); a wait on the UI thread runs the tasks meanwhile and lets the
+  browser in with `emscripten_sleep`. HTTP from a task is an async `emscripten_fetch`
+  the task waits for (the synchronous one would block the only thread); from the UI
+  thread it fails at once, as in the threaded build. `esp_timer` callbacks are small
+  tasks. Size: wasm 3.76 MB (gzip 1.61 MB) against 2.56 MB (1.32 MB) threaded (Asyncify
+  instruments the code); the scroll probe measures the same ~40 frames/s.
+- **Messages**: on http the chooser offers Wi-Fi (USB and Bluetooth do not exist there)
+  and links the https copy "for USB, Bluetooth and your location"; on https the Wi-Fi
+  row has "Open the Wi-Fi version", which opens the http copy with the address
+  (`#wifi=<address>`: the http page opens the chooser with it filled in). A Wi-Fi
+  connect tried from https anyway fails as mixed content (or silently times out): the
+  help under the bar says so, with the same button. A browser that is not isolated
+  on https either gets the no-threads bundle; if a bundle cannot load the user sees a
+  plain message, developer hints only on localhost.
+- Checked: `web-tour.mjs` and `node-tour.mjs` against `http://<LAN IP>:8081/`
+  (`serve.py --bind <IP>`; Chrome treats only localhost as secure): demo tour,
+  persistence, map tiles, Store install + run, backups, mock node connect / DM /
+  reload. Location is unavailable on an insecure page (skipped there).
 
 ## Store and Lua apps
 

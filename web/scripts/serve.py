@@ -12,7 +12,9 @@
 #   /tiles/...   -> the map tile server (DEFAULT_TILE_SERVER in
 #                   src/helpers/esp32/TouchPrefsStore.cpp, or --tiles URL)
 #   /fw/apps/... -> the Store, http://firmware.wadamesh.com/apps (or --store URL)
-#   serve.py DIR [PORT] [--bind ADDR] [--tiles http://tiles.example] [--store http://x/apps]
+#   serve.py DIR [PORT] [--bind ADDR] [--tiles http://tiles.example] [--store http://x/apps] [--nt DIR]
+# /nt/ serves the no-threads bundle (web/dist-nothreads, or --nt DIR) the page loads when
+# it is not cross-origin isolated (any http:// origin other than localhost).
 import http.server
 import os
 import re
@@ -38,6 +40,7 @@ def default_tile_server():
 
 
 TILE_UPSTREAM = default_tile_server()
+NT_DIR = None   # the no-threads bundle served at /nt/ (main(): --nt DIR, else ../dist-nothreads)
 STORE_UPSTREAM = 'http://firmware.wadamesh.com/apps'
 # catalogs, <id>/<ver>/<file> (code, manifest, the app's own files), language files
 STORE_PATH = re.compile(r'^/fw/apps/(apps\.json|langs\.json|[A-Za-z0-9_-]{1,20}/[0-9][0-9.]{0,7}/[A-Za-z0-9_-][A-Za-z0-9._-]{0,39}'
@@ -52,6 +55,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         '.mjs': 'text/javascript',
         '.svg': 'image/svg+xml',
     }
+
+    def translate_path(self, path):
+        # nt/: the no-threads bundle (web/dist-nothreads), as the site serves it at /nt/
+        if NT_DIR and path.split('?', 1)[0].startswith('/nt/'):
+            rel = path.split('?', 1)[0][len('/nt/'):]
+            if '..' in rel or rel.startswith('/'):
+                return os.path.join(NT_DIR, '__nope__')
+            return os.path.join(NT_DIR, rel)
+        return super().translate_path(path)
 
     def do_GET(self):
         if self.path.startswith('/tiles/'):
@@ -134,6 +146,10 @@ def main():
         STORE_UPSTREAM = sys.argv[sys.argv.index('--store') + 1].rstrip('/')
         args = [a for a in args if a.rstrip('/') != STORE_UPSTREAM]
     root = args[0] if args else '.'
+    global NT_DIR
+    nt = sys.argv[sys.argv.index('--nt') + 1] if '--nt' in sys.argv else os.path.join(root, '..', 'dist-nothreads')
+    args = [a for a in args if a != nt]
+    NT_DIR = os.path.abspath(nt) if os.path.isdir(nt) else None
     port = int(args[1]) if len(args) > 1 else 8080
     os.chdir(root)
     srv = http.server.ThreadingHTTPServer((bind, port), Handler)

@@ -157,6 +157,7 @@ async function geoAndTiles(browser, r, shots) {
   page.on('request', (q) => { const m = q.url().match(/\/tiles\/(\d+)\/(\d+)\/(\d+)\.jpg/); if (m) tiles.push(m.slice(1).map(Number)); });
   await bootPage(page);
   const geoAtBoot = await page.evaluate(() => window.wadamesh.geo());
+  const secure = await page.evaluate(() => window.isSecureContext);   // http (not localhost): no location
   const net = await page.evaluate(() => fetch('tiles/3/4/2.jpg').then((x) => x.status, () => 0));
   await runScript(page, [
     'wait 5000', 'tap 60 283', 'wait 3000',            // onboarding, Home
@@ -175,7 +176,8 @@ async function geoAndTiles(browser, r, shots) {
     watching: (await page.evaluate(() => window.wadamesh.geo())).watching,
     tileServer: net,
     tilesRequested: tiles.length,
-    centredOnGhent: tiles.some((t) => t[0] === z && Math.abs(t[1] - cx) <= 1 && Math.abs(t[2] - cy) <= 1),
+    centredOnGhent: secure ? tiles.some((t) => t[0] === z && Math.abs(t[1] - cx) <= 1 && Math.abs(t[2] - cy) <= 1)
+                           : 'skipped (no location on an insecure page)',
     map: st,
     tilesShown: net === 200 ? (st.colours >= 150 && st.stddev >= 12) : 'skipped (no tile server)',
   };
@@ -281,7 +283,7 @@ for (const name of BROWSERS) {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2 });
     const page = await ctx.newPage();
     page.on('console', (m) => {
-      if (m.type() === 'error') r.errors.push(m.text());
+      if (m.type() === 'error' && !/Cross-Origin-Opener-Policy header has been ignored/.test(m.text())) r.errors.push(m.text());
       else if (m.type() === 'warning') r.warnings.push(m.text().slice(0, 200));
     });
     page.on('pageerror', (e) => r.errors.push(String(e)));
@@ -337,7 +339,8 @@ for (const name of BROWSERS) {
   }
 }
 console.log(JSON.stringify(results, null, 2));
-const geoBad = (g) => g && (g.promptedAtBoot || !g.watching || !g.centredOnGhent || g.tilesShown === false);
+const geoBad = (g) => g && (g.promptedAtBoot || (g.centredOnGhent !== 'skipped (no location on an insecure page)' &&
+                                                  (!g.watching || !g.centredOnGhent)) || g.tilesShown === false);
 const storeBad = (g) => g && Object.values(g).some((v) => v === false);
 const bad = Object.values(results).some((r) => (!ONLY && !r.persisted) || geoBad(r.geo) || storeBad(r.store) ||
                                                r.errors.some((e) => e.startsWith('RUNNER')));

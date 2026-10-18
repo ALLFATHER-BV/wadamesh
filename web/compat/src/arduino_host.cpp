@@ -3,6 +3,9 @@
 #include <Arduino.h>
 #include <esp_timer.h>
 #include <esp_system.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "wada_host.h"
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -29,9 +32,20 @@ extern "C" unsigned long micros(void) {
 extern "C" int64_t esp_timer_get_time(void) {
   return (int64_t)std::chrono::duration_cast<std::chrono::microseconds>(Clock::now() - g_boot).count();
 }
+#if defined(WADA_NO_THREADS)
+// One thread (compat/src/freertos_coop.cpp): a task's delay yields to the others; the UI
+// thread's runs them while it waits. Microsecond delays (bus timings) just spin.
+extern "C" void delay(uint32_t ms) { wadaCoopSleep(ms); }
+extern "C" void delayMicroseconds(uint32_t us) {
+  const unsigned long t0 = micros();
+  while (micros() - t0 < us) {}
+}
+extern "C" void yield(void) { if (wadaCoopInTask()) wadaCoopSleep(0); }
+#else
 extern "C" void delay(uint32_t ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
 extern "C" void delayMicroseconds(uint32_t us) { std::this_thread::sleep_for(std::chrono::microseconds(us)); }
 extern "C" void yield(void) { std::this_thread::yield(); }
+#endif
 
 extern "C" void esp_fill_random(void* buf, size_t len) {
 #if defined(__APPLE__)
@@ -122,6 +136,26 @@ extern "C" esp_err_t esp_timer_create(const esp_timer_create_args_t* args, esp_t
   *out = t;
   return ESP_OK;
 }
+#if defined(WADA_NO_THREADS)
+// One thread: a timer is a small task that sleeps, then calls back.
+struct TimerRun { esp_timer_handle_t t; uint64_t us; bool periodic; uint64_t gen; };
+static void timerTask(void* arg) {
+  TimerRun r = *static_cast<TimerRun*>(arg);
+  delete static_cast<TimerRun*>(arg);
+  for (;;) {
+    vTaskDelay((TickType_t)(r.us / 1000));
+    if (r.t->gen != r.gen) break;
+    if (!r.periodic) r.t->active = false;
+    r.t->args.callback(r.t->args.arg);
+    if (!r.periodic) break;
+  }
+  vTaskDelete(nullptr);
+}
+static void timerArm(esp_timer_handle_t t, uint64_t us, bool periodic) {
+  t->gen++; t->active = true;
+  xTaskCreate(timerTask, "esp_timer", 4096, new TimerRun{t, us, periodic, t->gen}, 1, nullptr);
+}
+#else
 static void timerArm(esp_timer_handle_t t, uint64_t us, bool periodic) {
   uint64_t gen;
   { std::lock_guard<std::mutex> lk(t->m); gen = ++t->gen; t->active = true; }
@@ -136,6 +170,7 @@ static void timerArm(esp_timer_handle_t t, uint64_t us, bool periodic) {
     }
   }).detach();
 }
+#endif
 extern "C" esp_err_t esp_timer_start_once(esp_timer_handle_t t, uint64_t us) { timerArm(t, us, false); return ESP_OK; }
 extern "C" esp_err_t esp_timer_start_periodic(esp_timer_handle_t t, uint64_t us) { timerArm(t, us, true); return ESP_OK; }
 extern "C" esp_err_t esp_timer_stop(esp_timer_handle_t t) {

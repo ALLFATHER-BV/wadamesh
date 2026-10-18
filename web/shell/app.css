@@ -194,3 +194,4 @@ dialog#connect-dlg::backdrop{background:rgba(0,0,0,.6)}
   font:600 14px/1.25 Montserrat, system-ui, sans-serif}
 .menu button span{display:block; font-weight:500; font-size:12px; opacity:.7; margin-top:2px}
 .menu button:hover, .menu button:focus-visible{background:var(--control-hi)}
+#connect-dlg #btn-wifi-copy{margin-top:8px}

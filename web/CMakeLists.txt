@@ -55,7 +55,15 @@ if(EMSCRIPTEN)
   endforeach()
   set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${WADA_WEB_OPT}")
   set(CMAKE_EXE_LINKER_FLAGS_RELWITHDEBINFO "-O2 -g")
-  add_compile_options(-pthread)
+  # WADA_NO_THREADS: the variant for a page that is not cross-origin isolated (the
+  # http copy: no SharedArrayBuffer, so no pthreads). The FreeRTOS tasks become
+  # cooperative fibers (compat/src/freertos_coop.cpp, Asyncify); web/build.sh web-nothreads.
+  option(WADA_NO_THREADS "browser build without pthreads (cooperative tasks)" OFF)
+  if(WADA_NO_THREADS)
+    list(APPEND WADA_COMMON_DEFS WADA_NO_THREADS=1)
+  else()
+    add_compile_options(-pthread)
+  endif()
   list(APPEND WADA_COMMON_DEFS WADA_DEFAULT_DATA_DIR="/data")   # the IDBFS mount (shell/wadamesh.js)
 endif()
 
@@ -201,14 +209,22 @@ if(EMSCRIPTEN)
   # Output: wadamesh.js (loader + pthread worker entry) + wadamesh.wasm. build.sh web
   # copies them next to web/shell/ into web/dist/.
   set_target_properties(wadamesh-host PROPERTIES OUTPUT_NAME wadamesh)
+  if(WADA_NO_THREADS)
+    set(WADA_THREAD_LINK
+      -sASYNCIFY=1                 # fibers: the FreeRTOS tasks on the page's one thread
+      -sASYNCIFY_STACK_SIZE=65536)
+  else()
+    set(WADA_THREAD_LINK
+      -pthread
+      # Threads the UI starts in the browser: hist_flush (always), tile_fetch, the Reader
+      # and the prefs writer on demand. Pre-spawned so pthread_create from the main loop
+      # never waits for a Worker to boot; more are created on demand if ever needed.
+      -sPTHREAD_POOL_SIZE=6
+      -sPTHREAD_POOL_SIZE_STRICT=0
+      -sDEFAULT_PTHREAD_STACK_SIZE=262144)   # device tasks ask 6-16 KB; generous for Lua/FatFs-style paths
+  endif()
   set(WADA_WEB_LINK
-    -pthread
-    # Threads the UI starts in the browser: hist_flush (always), tile_fetch, the Reader
-    # and the prefs writer on demand. Pre-spawned so pthread_create from the main loop
-    # never waits for a Worker to boot; more are created on demand if ever needed.
-    -sPTHREAD_POOL_SIZE=6
-    -sPTHREAD_POOL_SIZE_STRICT=0
-    -sDEFAULT_PTHREAD_STACK_SIZE=262144   # device tasks ask 6-16 KB; generous for Lua/FatFs-style paths
+    ${WADA_THREAD_LINK}
     -sSTACK_SIZE=2097152                  # the UI loop's stack (the device's loopTask runs 16-32 KB)
     # Heap: the tour peaks at ~17 MB RSS natively (code included). Start at 64 MB and
     # grow on demand (big histories, Lua apps) up to 1 GB; the growable-heap cost of

@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// FreeRTOS shim implementation (see web/compat/freertos/FreeRTOS.h for what is faked).
+// FreeRTOS shim implementation (see web/compat/freertos/FreeRTOS.h for what is faked):
+// tasks are threads. The no-threads browser build (WADA_NO_THREADS) uses
+// freertos_coop.cpp instead: the same API on cooperative fibers.
+#if !defined(WADA_NO_THREADS)
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -235,3 +238,5 @@ BaseType_t xQueueReset(QueueHandle_t q) {
   return pdPASS;
 }
 void vQueueDelete(QueueHandle_t q) { delete q; }
+
+#endif  // !WADA_NO_THREADS

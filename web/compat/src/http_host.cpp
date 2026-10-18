@@ -3,6 +3,7 @@
 // other servers directly (CORS); never the update check, OTA or reports.
 #include "wada_http.h"
 #include "HTTPClient.h"
+#include "wada_host.h"
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
@@ -90,8 +91,13 @@ int wadaHttpRequest(const char* method, const std::string& url, const std::vecto
   const Route* route = nullptr;
   std::string rest;
   const Way way = classify(url, &route, rest);
+#if defined(WADA_NO_THREADS)
+  // One thread: only a task (the net worker fiber) may wait for the network.
+  if (way == Way::Refused || !wadaNetOnline() || !wadaCoopInTask()) return HTTPC_ERROR_CONNECTION_REFUSED;
+#else
   if (way == Way::Refused || !wadaNetOnline() || emscripten_is_main_browser_thread())
     return HTTPC_ERROR_CONNECTION_REFUSED;
+#endif
   // Proxied: same origin, relative to the page's folder (a pthread resolves it against
   // wadamesh.js, which sits next to index.html): /tiles/... locally, /web/tiles/... on
   // the site. Direct: the URL itself (CORS decides; an http:// one from an https page
@@ -100,7 +106,17 @@ int wadaHttpRequest(const char* method, const std::string& url, const std::vecto
   emscripten_fetch_attr_t attr;
   emscripten_fetch_attr_init(&attr);
   strncpy(attr.requestMethod, method && *method ? method : "GET", sizeof(attr.requestMethod) - 1);
+#if defined(WADA_NO_THREADS)
+  // Asynchronous, and the task yields until it lands (a synchronous fetch would block
+  // the page's only thread).
+  attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_REPLACE;
+  static volatile int s_done;   // one request at a time: only the net worker fetches
+  s_done = 0;
+  attr.onsuccess = [](emscripten_fetch_t*) { s_done = 1; };
+  attr.onerror = [](emscripten_fetch_t*) { s_done = 1; };
+#else
   attr.attributes = EMSCRIPTEN_FETCH_LOAD_TO_MEMORY | EMSCRIPTEN_FETCH_SYNCHRONOUS | EMSCRIPTEN_FETCH_REPLACE;
+#endif
   // The device bounds each socket read (2 s); here one call is the whole request through
   // a proxy that may fetch the file first, and this pthread has no watchdog.
   attr.timeoutMSecs = timeout_ms > 15000 ? timeout_ms : 15000;
@@ -120,6 +136,9 @@ int wadaHttpRequest(const char* method, const std::string& url, const std::vecto
   if (body && body_len) { attr.requestData = (const char*)body; attr.requestDataSize = body_len; }
   emscripten_fetch_t* f = emscripten_fetch(&attr, target.c_str());
   if (!f) return HTTPC_ERROR_CONNECTION_REFUSED;
+#if defined(WADA_NO_THREADS)
+  while (!s_done) wadaCoopSleep(5);
+#endif
   const int status = f->status;
   if (status > 0) {
     out.status = status;

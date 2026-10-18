@@ -113,6 +113,9 @@ void present() {
 void step() {
   drainPointer();
   wadaBoardStep();
+#if defined(WADA_NO_THREADS)
+  wadaCoopRunTasks();   // the background tasks, on this thread (compat/src/freertos_coop.cpp)
+#endif
   present();
 }
 
@@ -128,6 +131,12 @@ void drainThenReboot() {
   wada_js_reboot();
 }
 void webRestart() {
+#if defined(WADA_NO_THREADS)
+  if (wadaCoopInTask()) {   // a background task asked: the page reloads; park the task
+    wada_js_reboot();
+    for (;;) delay(1000);
+  }
+#endif
   if (emscripten_is_main_browser_thread()) {
     emscripten_cancel_main_loop();
     if (the_mesh.backendBusy()) {

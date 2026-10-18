@@ -500,6 +500,15 @@
     note.hidden = !notes.length && !links.length;
     var host = $('ws-host');
     host.value = lsGet(HOST_KEY) || '';
+    // On the https copy a node's plain ws:// is blocked: a button takes the address to the
+    // http copy, which opens this chooser with it (#wifi=<address>).
+    if (location.protocol === 'https:' && !local) {
+      var go = document.createElement('button');
+      go.type = 'button'; go.className = 'btn'; go.id = 'btn-wifi-copy';
+      go.textContent = 'Open the Wi-Fi version';
+      go.addEventListener('click', function () { location.href = wifiCopyUrl(host.value.trim()); });
+      dlg.querySelector('.choice.wifi').appendChild(go);
+    }
     dlg.querySelector('[data-kind="web-serial"]').addEventListener('click', function () {
       navigator.serial.requestPort().then(function (port) {
         var i = port.getInfo ? port.getInfo() : {};
@@ -521,6 +530,20 @@
     host.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goWs(); } });
   })();
 
+  // The http copy of the page, opening the chooser with this node address (#wifi=...).
+  function wifiCopyUrl(addr) {
+    return 'http://' + location.host + location.pathname + (addr ? '#wifi=' + encodeURIComponent(addr) : '#wifi=');
+  }
+  // Arrived from the https copy with an address: the chooser, Wi-Fi, that address.
+  (function wifiFromHash() {
+    var m = /^#wifi=(.*)$/.exec(location.hash);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (choice) return;   // already on a node
+    var addr = decodeURIComponent(m[1] || '');
+    if (addr) { $('ws-host').value = addr; lsSet(HOST_KEY, addr); }
+    setTimeout(function () { $('btn-connect').click(); $('ws-host').focus(); }, 0);
+  })();
   $('btn-connect').addEventListener('click', function () {
     if (choice) { switchTo(null); return; }   // Disconnect: back to the demo
     var dlg = $('connect-dlg');
@@ -593,10 +616,21 @@
     box.innerHTML = '';
     var p = document.createElement('p');
     p.textContent = mixed ? how : 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
+    // A ws:// that never connected from the https copy (blocked, or a silent timeout): the
+    // http copy is the way, with this address.
+    if (choice.kind === 'ws' && location.protocol === 'https:' && /^ws:/i.test(choice.arg)) {
+      var addr = choice.arg.replace(/^wss?:\/\//, '').replace(/\/$/, '');
+      var copy = document.createElement('button');
+      copy.type = 'button'; copy.className = 'btn primary'; copy.textContent = 'Open the Wi-Fi version';
+      copy.addEventListener('click', function () { lsSet(CHOICE_KEY, null); location.href = wifiCopyUrl(addr); });
+      box.appendChild(p); box.appendChild(copy);
+      p = null;
+    }
     var back = document.createElement('button');
     back.type = 'button'; back.className = 'btn'; back.textContent = 'Back to the demo';
     back.addEventListener('click', function () { switchTo(null); });
-    box.appendChild(p); box.appendChild(back);
+    if (p) box.appendChild(p);
+    box.appendChild(back);
     box.hidden = false;
     layout();   // the box takes height from the stage: refit the screen below it
   }
@@ -743,12 +777,21 @@
     fatal('This browser cannot run wadamesh', 'It needs WebAssembly. Any current Chrome, Edge, Firefox or Safari has it.');
     return;
   }
-  if (!window.crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
-    fatal('This page is not cross-origin isolated',
-      'wadamesh runs its background tasks on WebAssembly threads, which browsers only allow on a page served with ' +
-      '<code>Cross-Origin-Opener-Policy: same-origin</code> and <code>Cross-Origin-Embedder-Policy: require-corp</code>. ' +
-      'Run it with <code>web/build.sh serve</code>, or add the headers in <code>web/deploy/nginx-snippet.conf</code> to your server.');
-    return;
+  // Two bundles (WEB_BUILD.md "Two copies"): with cross-origin isolation (https, or a
+  // localhost dev server) the threaded one next to the page; without it (the http copy,
+  // which reaches a node's ws:// over Wi-Fi) the no-threads one in nt/.
+  var isolated = !!window.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined';
+  var BUNDLE = isolated ? '' : 'nt/';
+  var devHost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  function cannotLoad() {
+    if (devHost) {
+      fatal('Could not load wadamesh', 'The ' + (isolated ? 'threaded' : 'no-threads') + ' bundle (<code>' + BUNDLE +
+        'wadamesh.js</code>) did not load. <code>web/build.sh web</code> builds both; <code>web/build.sh serve</code> serves ' +
+        'the no-threads one at <code>nt/</code>.', true);
+    } else {
+      fatal('wadamesh could not start here', 'This browser blocks something the web client needs. Try a current ' +
+        'Chrome, Edge, Firefox or Safari.', true);
+    }
   }
 
   var params = new URLSearchParams(location.search);
@@ -807,12 +850,12 @@
 
   setStatus('Loading wadamesh', '', true);
   var script = document.createElement('script');
-  script.src = 'wadamesh.js?v=' + BUILD;
-  script.onerror = function () { fatal('Could not load wadamesh', 'The file <code>wadamesh.js</code> did not load.', true); };
+  script.src = BUNDLE + 'wadamesh.js?v=' + BUILD;
+  script.onerror = cannotLoad;
   script.onload = function () {
     var t0 = performance.now();
     var Mod = {
-      locateFile: function (path) { return path + '?v=' + BUILD; },
+      locateFile: function (path) { return BUNDLE + path + '?v=' + BUILD; },
       print: function (t) { console.log(t); },
       printErr: function (t) { console.warn(t); },
       preRun: [function () { setStatus('Starting', '', true); mountStorage(Mod); }],
@@ -862,6 +905,7 @@
   // For tests and the curious: window.wadamesh.stats, .persist(), .idle()
   window.wadamesh = {
     build: BUILD,
+    threads: function () { return isolated; },
     stats: stats,
     storage: persistState,
     backend: function () { return choice; },

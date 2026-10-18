@@ -57,7 +57,8 @@ const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 }, g
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
-page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+// (an http page that is not localhost: the browser notes it ignores COOP; that is the point)
+page.on('console', (m) => { if (m.type() === 'error' && !/Cross-Origin-Opener-Policy header has been ignored/.test(m.text())) errors.push(m.text()); });
 
 // 1. The demo, then the chooser.
 await page.goto(URL_, { waitUntil: 'load' });
@@ -129,6 +130,9 @@ check('history kept across the reload', hits.some((h) => h.startsWith(dir2)), { 
 // 6. Location privacy: with the GPS on, this computer's position reaches the node ONLY
 // while the node's own "share position in adverts" is on (WEB_BUILD.md "Location").
 const mockState = () => fetch(`http://${WS}/latlon`).then((r) => r.json());
+if (!(await page.evaluate(() => window.isSecureContext))) {
+  results['location privacy'] = 'skipped (an insecure http page has no location)';
+} else {
 for (const t of ['tap 720 456', 'wait 1500']) if (t.startsWith('tap')) await tap(page, ...t.split(' ').slice(1).map(Number)); else await sleep(1500);
 {
   const r = await page.locator('#screen').boundingBox();
@@ -153,6 +157,7 @@ check('share on: the node gets this computer\'s position',
       shared.length >= 1 && Math.abs(shared[0][0] - GHENT.latitude) < 0.001 && Math.abs(shared[0][1] - GHENT.longitude) < 0.001,
       { latlon: shared });
 await fetch(`http://${WS}/share/0`);
+}
 
 // 7. Disconnect: back to the demo, whose data never saw the node's.
 await page.click('#btn-connect');
