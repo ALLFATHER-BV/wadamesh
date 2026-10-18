@@ -22,10 +22,14 @@
 #include <helpers/TxtDataHelpers.h>
 #include <vector>
 #include <string>
+#include <math.h>
+#include "WebLocation.h"
 
 namespace {
 
-// demo.py: self node (Amsterdam centre) + radio.
+// demo.py: self node (Amsterdam centre) + radio. With the visitor's location (the web
+// board's GPS, once allowed) the whole neighbourhood moves there, same offsets, so the
+// map and the distances look like a real mesh around them (kept for the next visit).
 const int32_t SELF_LAT = 52372800, SELF_LON = 4893400;
 const char* NODE_NAME = "Kaj T-Deck";
 
@@ -110,6 +114,8 @@ public:
     demoKey(NODE_NAME, self_pub_key);
     StrHelper::strncpy(prefs.node_name, NODE_NAME, sizeof(prefs.node_name));
     prefs.freq = 869.525f; prefs.bw = 250.0f; prefs.sf = 11; prefs.cr = 5; prefs.tx_power_dbm = 22;   // demo.py RADIO
+    loadHome();
+    ev.beSelfPosition(_home_lat, _home_lon);
     const uint32_t now = (uint32_t)time(nullptr);
     for (const DemoContact& d : k_contacts) {
       ContactInfo c{};
@@ -120,8 +126,8 @@ public:
       c.out_path_len = d.direct ? 0 : OUT_PATH_UNKNOWN;
       c.last_advert_timestamp = now - d.age_s;
       c.lastmod = now - d.age_s;
-      c.gps_lat = absCoord(SELF_LAT, d.dlat);
-      c.gps_lon = absCoord(SELF_LON, d.dlon);
+      c.gps_lat = absCoord(_home_lat, d.dlat);
+      c.gps_lon = absCoord(_home_lon, d.dlon);
       ev.beContact(c, false, 0);
     }
     addChannel(0, "Public", nullptr);
@@ -130,6 +136,7 @@ public:
 
   void loop(uint32_t now_ms) override {
     if (!_started) { _started = true; _t0 = now_ms; }
+    followHost();
     // After the splash: the heard-not-added nodes, then (first boot only) the history.
     if (!_seeded && now_ms - _t0 > 1500) {
       _seeded = true;
@@ -141,8 +148,8 @@ public:
         c.type = d.type;
         c.out_path_len = OUT_PATH_UNKNOWN;
         c.last_advert_timestamp = now - d.age_s;
-        c.gps_lat = absCoord(SELF_LAT, d.dlat);
-        c.gps_lon = absCoord(SELF_LON, d.dlon);
+        c.gps_lat = absCoord(_home_lat, d.dlat);
+        c.gps_lon = absCoord(_home_lon, d.dlon);
         _ev->beDiscovered(c, d.path_len);
       }
       if (!SPIFFS.exists(k_seed_marker)) {
@@ -166,8 +173,8 @@ public:
       c.type = d.type; c.flags = d.fav ? 0x01 : 0;
       c.out_path_len = d.direct ? 0 : OUT_PATH_UNKNOWN;
       c.last_advert_timestamp = c.lastmod = (uint32_t)time(nullptr);
-      c.gps_lat = absCoord(SELF_LAT, d.dlat);
-      c.gps_lon = absCoord(SELF_LON, d.dlon);
+      c.gps_lat = absCoord(_home_lat, d.dlat);
+      c.gps_lon = absCoord(_home_lon, d.dlon);
       _ev->beContact(c, true, d.direct ? 0 : 2);
       _ev->beSignal((int8_t)(4 * (random(14) - 4)), (int8_t)(-55 - random(50)));
       _next_advert = now_ms + 40000 + (uint32_t)random(40000);
@@ -218,6 +225,59 @@ public:
 
 private:
   static constexpr const char* k_seed_marker = "/web_demo_seeded";
+  static constexpr const char* k_home_file = "/web_demo_home";   // "lat_e6,lon_e6": the last re-homing
+
+  void loadHome() {
+    _home_lat = SELF_LAT; _home_lon = SELF_LON;
+    File f = SPIFFS.open(k_home_file, "r");
+    if (!f) return;
+    char b[40] = {0};
+    f.read((uint8_t*)b, sizeof b - 1);
+    f.close();
+    long la = 0, lo = 0;
+    if (sscanf(b, "%ld,%ld", &la, &lo) == 2 && (la || lo)) { _home_lat = (int32_t)la; _home_lon = (int32_t)lo; }
+  }
+  // The visitor's location arrived (a GPS fix on the web board) and is more than a
+  // kilometre from where the cast stands: move everyone there, offsets unchanged.
+  void followHost() {
+    double la = 0, lo = 0;
+    if (!wadaHostLocation(la, lo)) return;
+    const int32_t lat = (int32_t)llround(la * 1e6), lon = (int32_t)llround(lo * 1e6);
+    if (labs((long)lat - _home_lat) < 10000 && labs((long)lon - _home_lon) < 10000) return;   // ~1 km
+    _home_lat = lat; _home_lon = lon;
+    File f = SPIFFS.open(k_home_file, "w");
+    if (f) { f.printf("%ld,%ld", (long)lat, (long)lon); f.close(); }
+    const uint32_t now = (uint32_t)time(nullptr);
+    for (const DemoContact& d : k_contacts) {   // the contact table: replaced in place, no "heard"
+      ContactInfo c{};
+      demoKey(d.name, c.id.pub_key);
+      StrHelper::strncpy(c.name, d.name, sizeof(c.name));
+      c.type = d.type;
+      c.flags = d.fav ? 0x01 : 0;
+      c.out_path_len = d.direct ? 0 : OUT_PATH_UNKNOWN;
+      c.last_advert_timestamp = now - d.age_s;
+      c.lastmod = now - d.age_s;
+      c.gps_lat = absCoord(_home_lat, d.dlat);
+      c.gps_lon = absCoord(_home_lon, d.dlon);
+      _ev->beContact(c, false, 0);
+    }
+    if (_seeded) {   // the heard-not-added nodes were listed at their old places: hear them again
+      for (const DemoDiscovered& d : k_discovered) {
+        ContactInfo c{};
+        demoKey(d.name, c.id.pub_key);
+        StrHelper::strncpy(c.name, d.name, sizeof(c.name));
+        c.type = d.type;
+        c.out_path_len = OUT_PATH_UNKNOWN;
+        c.last_advert_timestamp = now - d.age_s;
+        c.gps_lat = absCoord(_home_lat, d.dlat);
+        c.gps_lon = absCoord(_home_lon, d.dlon);
+        _ev->beDiscovered(c, d.path_len);
+      }
+    }
+    _ev->beSelfPosition(_home_lat, _home_lon);
+    Serial.println("[web] demo: the neighbourhood moved to this device's location");
+  }
+  int32_t _home_lat = SELF_LAT, _home_lon = SELF_LON;
 
   void addChannel(int idx, const char* name, const char* hashtag_key) {
     ChannelDetails ch{};

@@ -3,7 +3,7 @@
 # the raw payload, one message per frame. Same node as mock_companion_node.py.
 #   python3 web/mesh/test/mock_ws_node.py 18765
 #   then connect the page (Connect > Wi-Fi) to ws://localhost:18765/
-import asyncio, base64, hashlib, os, struct, sys, threading
+import asyncio, base64, hashlib, json, os, struct, sys, threading
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18765
 sys.argv = sys.argv[:1]
@@ -16,8 +16,12 @@ async def handle(r, w):
         if not d: return
         hdr += d
     key = [l.split(b':', 1)[1].strip() for l in hdr.split(b'\r\n') if l.lower().startswith(b'sec-websocket-key')]
-    if not key:   # a plain browser GET, as the device serves an info page
-        w.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 10\r\n\r\nmock node\n'); await w.drain(); w.close(); return
+    if not key:   # a plain GET, as the device serves an info page; /latlon and /share/N are for the tests
+        path = hdr.split(b' ', 2)[1] if hdr.count(b' ') >= 2 else b'/'
+        if path.startswith(b'/share/'): node.STATE['share'] = int(path[7:8] or b'0')
+        body = json.dumps(node.STATE).encode() if path != b'/' else b'mock node\n'
+        w.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: '
+                + str(len(body)).encode() + b'\r\n\r\n' + body); await w.drain(); w.close(); return
     acc = base64.b64encode(hashlib.sha1(key[0] + b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest())
     w.write(b'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + acc + b'\r\n\r\n')
     loop = asyncio.get_running_loop()

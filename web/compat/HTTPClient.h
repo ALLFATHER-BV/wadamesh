@@ -1,8 +1,8 @@
 #pragma once
 // HTTPClient for the web board: every request goes through wadaHttpRequest()
 // (compat/wada_http.h, the one network hook) and the reply is served from memory.
-// Today that hook fails every request with HTTPC_ERROR_CONNECTION_REFUSED, so the map
-// tiles, the version check and the Reader take their offline paths.
+// That hook serves the map tile server only (see wada_http.h); every other request is
+// refused with HTTPC_ERROR_CONNECTION_REFUSED and takes its offline path.
 #include "Arduino.h"
 #include "WiFiClient.h"
 #include "wada_http.h"
@@ -91,7 +91,7 @@ public:
     for (uint8_t c : _reply.body) out += (char)c;
     return out;
   }
-  static String errorToString(int) { return String("no network in the web build yet"); }
+  static String errorToString(int) { return String("not reachable from the web build"); }
   const String& getLocation() { return _url; }
 private:
   String _url;

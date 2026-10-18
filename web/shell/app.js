@@ -124,6 +124,58 @@
   }
   (function countFrames() { stats.frames++; requestAnimationFrame(countFrames); })();
 
+  // ---- location: the UI's GPS (web/platform/WebLocation.cpp) --------------------------------
+  // The UI asks for it only while its GPS is switched on (Module.wadaGeoStart / Stop).
+  // The browser's permission prompt is never shown on page load: when the visitor has not
+  // decided yet, the request waits for a tap (the GPS switch itself, opening the map, any
+  // tap). Refused or unavailable: the UI keeps "searching"; nothing asks again until the
+  // GPS is switched off and on. The position stays in this page unless the node's own
+  // "share position in adverts" setting is on (WEB_BUILD.md "Location").
+  var geo = { want: false, watch: null, waitingTap: false, lastTap: -1e9, toldDenied: false };
+  function geoUserActive() {
+    if (navigator.userActivation) return navigator.userActivation.isActive;
+    return performance.now() - geo.lastTap < 5000;
+  }
+  function geoPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return Promise.resolve('prompt');
+    return navigator.permissions.query({ name: 'geolocation' }).then(function (r) { return r.state; },
+                                                                   function () { return 'prompt'; });
+  }
+  function geoBegin() {
+    geo.waitingTap = false;
+    if (!geo.want || geo.watch !== null || !M) return;
+    if (!navigator.geolocation) { M._wadaWebGeoLost(2); return; }
+    geo.watch = navigator.geolocation.watchPosition(function (p) {
+      var c = p.coords, n = function (v) { return v == null ? NaN : v; };
+      if (M && geo.want) M._wadaWebGeoFix(c.latitude, c.longitude, n(c.accuracy), n(c.altitude),
+                                          n(c.speed), n(c.heading), p.timestamp / 1000);
+    }, function (err) {
+      if (err.code !== 1) return;   // unavailable / timeout: the browser keeps trying by itself
+      geoEnd();
+      if (M) M._wadaWebGeoLost(1);
+      if (!geo.toldDenied) { geo.toldDenied = true; toast('The browser does not let this page use your location, so the GPS has no position. You can allow it in the site settings.'); }
+    }, { enableHighAccuracy: true, maximumAge: 30000 });
+  }
+  function geoEnd() {
+    if (geo.watch !== null && navigator.geolocation) navigator.geolocation.clearWatch(geo.watch);
+    geo.watch = null;
+  }
+  function geoStart() {
+    geo.want = true;
+    if (geo.watch !== null) return;
+    geoPermission().then(function (state) {
+      if (!geo.want || geo.watch !== null) return;
+      if (state === 'denied') { if (M) M._wadaWebGeoLost(1); return; }
+      if (state === 'granted' || geoUserActive()) geoBegin();
+      else geo.waitingTap = true;   // switched on at boot: ask on the visitor's next tap
+    });
+  }
+  function geoStop() { geo.want = false; geo.waitingTap = false; geoEnd(); }
+  function geoTap() {
+    geo.lastTap = performance.now();
+    if (geo.waitingTap && geo.want) geoBegin();
+  }
+
   // ---- input -----------------------------------------------------------------------------
   var activePointer = null;
   var lastPt = [0, 0];      // where the finger last was, so a forced release lands there
@@ -148,6 +200,7 @@
     }
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     activePointer = e.pointerId;
+    geoTap();
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
     canvas.focus({ preventScroll: true });
     sendPointer(true, e);
@@ -173,6 +226,22 @@
     if (M && running) M._wadaWebPointer(0, lastPt[0], lastPt[1]);
   });
   canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  // The mouse wheel / two-finger trackpad scroll: scrolls the list or page under the
+  // pointer (web/platform/WebWheel.cpp). Pixels, lines and pages all become canvas pixels.
+  var wheelRest = 0;
+  canvas.addEventListener('wheel', function (e) {
+    if (!M || !running || e.ctrlKey) return;   // ctrl+wheel / pinch: the browser's zoom
+    e.preventDefault();
+    var r = canvas.getBoundingClientRect();
+    // deltaMode 0: CSS pixels (scaled to canvas pixels), 1: lines (16 px), 2: pages
+    var k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? H * 0.9 : H / r.height;
+    var dy = e.deltaY * k + wheelRest;
+    var whole = Math.trunc(dy);
+    wheelRest = dy - whole;
+    if (!whole) return;
+    var p = toCanvas(e);
+    M._wadaWebWheel(p[0], p[1], whole);
+  }, { passive: false });
 
   // The computer keyboard is the UI's external keyboard (HAS_CARDKB): ASCII, Enter,
   // Backspace, Esc (Back), Tab, arrows. Same codes as host_main.cpp's keyDown().
@@ -193,6 +262,7 @@
     }
     if (code === undefined) return;
     e.preventDefault();
+    geoTap();
     M._wadaWebKey(code);
   });
 
@@ -468,11 +538,20 @@
       print: function (t) { console.log(t); },
       printErr: function (t) { console.warn(t); },
       preRun: [function () { setStatus('Starting', '', true); mountStorage(Mod); }],
-      onRuntimeInitialized: function () { stats.bootMs = Math.round(performance.now() - t0); },
+      onRuntimeInitialized: function () {
+        stats.bootMs = Math.round(performance.now() - t0);
+        // The map's tile downloads need the network (web/compat/wada_http.h wadaNetOnline).
+        var online = function () { try { Mod._wadaWebOnline(navigator.onLine === false ? 0 : 1); } catch (e) {} };
+        online();
+        window.addEventListener('online', online);
+        window.addEventListener('offline', online);
+      },
       onAbort: function (what) {
         fatal('wadamesh stopped', 'Something went wrong: <code>' + String(what).replace(/</g, '&lt;') + '</code>', true);
       },
       wadaPresent: present,
+      wadaGeoStart: geoStart,
+      wadaGeoStop: geoStop,
       // which mesh to boot on (web_main.cpp reads it before the UI starts)
       wadaBackend: choice ? { kind: choice.kind, arg: choice.arg, dataDir: dataDir }
                           : { kind: 'demo', dataDir: dataDir },
@@ -508,6 +587,7 @@
     persist: function () { return new Promise(function (res) { persist(res); }); },
     flush: function () { return new Promise(function (res) { flushNow(); persist(res); }); },
     running: function () { return running; },
+    geo: function () { return { want: geo.want, watching: geo.watch !== null, waitingTap: geo.waitingTap }; },
     _m: function () { return M; },   // the module, for tests
     // Is `needle` in any saved file under /data? (the persistence test)
     findInStorage: function (needle) {

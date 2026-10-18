@@ -425,6 +425,15 @@ public:
     wr32(f, c.lastmod);
     send(f, nullptr);
   }
+  // Only ever called while the node's advert location is shared (WebMesh.cpp
+  // syncAdvertPosition): the node then advertises it as a phone app's position.
+  void advertPositionChanged(int32_t lat_e6, int32_t lon_e6) override {
+    if (!_ready) return;
+    std::vector<uint8_t> f = {CMD_SET_ADVERT_LATLON};
+    wr32(f, (uint32_t)lat_e6);
+    wr32(f, (uint32_t)lon_e6);
+    send(f, nullptr);
+  }
   void contactPathReset(const uint8_t pub_key[32]) override {
     auto it = _known.find(toKey(pub_key));
     if (it != _known.end()) it->second.out_path_len = OUT_PATH_UNKNOWN;

@@ -46,7 +46,11 @@ The web build is a board like any other: `-DWADA_WEB` selects a block in
 | CAP_LARGE_SCREEN | 1 | 800x480 landscape |
 | CAP_ROTATABLE | 0 | fixed canvas |
 | CAP_SD, CAP_FILESYSTEM | 0 | storage is the host directory behind SPIFFS |
-| CAP_GPS, CAP_BATTERY, CAP_LOCK_SCREEN, CAP_OTA, CAP_USB_FILES | 0 | no such hardware; a page updates by reloading |
+| CAP_GPS | 1 | the computer's or phone's location (see "Location") |
+| CAP_GPS_RECEIVER (new) | 0 | not a serial receiver: Settings > GPS has no baud rate and no rest-between-checks saver |
+| CAP_BATTERY, CAP_LOCK_SCREEN, CAP_OTA, CAP_USB_FILES | 0 | no such hardware; a page updates by reloading |
+| CAP_WIFI_SETUP, CAP_BT_SETUP (new) | 0 | the page's bar picks the node and the link: Settings > Wi-Fi / Bluetooth explain that instead of showing switches that change nothing |
+| CAP_USB_FLASH (new) | 0 | no bootloader: the Power menu has no "Download mode" |
 | CAP_RADIO_TOOLS (new) | 0 | no own radio: no Signal / Discover / Spectrum tiles |
 | CAP_SCREEN_MIRROR (new) | 0 | it is the browser view: no Remote / VNC tiles |
 | CAP_WEB_BROWSER | 0 | a page cannot fetch arbitrary sites (CORS) |
@@ -61,7 +65,8 @@ fits a laptop browser window at 1:1 and scales cleanly to phones and big screens
 
 Build defines (all in `web/CMakeLists.txt`): `WADA_WEB ESP32 HAS_TOUCH_UI UI_LVGL
 MULTI_TRANSPORT_COMPANION HAS_CARDKB WADAMESH_FORK_BUILD MAX_CONTACTS=500
-MAX_GROUP_CHANNELS=40`. `ESP32` is on because the UI's ESP32 code paths are the
+MAX_GROUP_CHANNELS=40 HAS_GPS_MOTION` and `WADA_TILE_SERVER` (read from
+`DEFAULT_TILE_SERVER` in `src/helpers/esp32/TouchPrefsStore.cpp`, like the version). `ESP32` is on because the UI's ESP32 code paths are the
 device code paths; the compat layer backs them. `MULTI_TRANSPORT_COMPANION` is
 on because every touch board builds that UI (the non-companion path does not
 compile any more). The version strings are read from `src/MyMesh.h`, so the
@@ -77,17 +82,27 @@ Every change is behaviour-neutral for the device builds (they never define
 | `src/ui-touch/UITask.cpp:5` | `#if defined(WADA_WEB)` include `WebMesh.h`, else `../MyMesh.h` | the mesh stand-in (a relative include cannot be redirected by include paths) |
 | `src/ui-touch/UITask.cpp:212` | `WADA_WEB` branch of the display-class include chain: `<WebDisplay.h>` | the board's display, as every board adds its own here |
 | `src/ui-touch/UITask.cpp:288` | `WADA_WEB` branch of the `extern ... display` chain | same |
-| `src/ui-touch/UITask.cpp:34556` | `WADA_BOARD_ID "web"` | the chain ends in `#error` for unknown boards (on purpose) |
-| `src/ui-touch/UITask.cpp:73461` | `WADA_WEB` branch of the LVGL resolution chain: `WADA_WEB_W x WADA_WEB_H` | the `#else` is the V4's 320x240 |
-| `src/ui-touch/UITask.cpp:55216-55224` | Signal/Discover/Spectrum tiles under `CAP_RADIO_TOOLS`; Remote/VNC also under `CAP_SCREEN_MIRROR` | capability gates, not board names |
+| `src/ui-touch/UITask.cpp:34584` | `WADA_BOARD_ID "web"` | the chain ends in `#error` for unknown boards (on purpose) |
+| `src/ui-touch/UITask.cpp:73499` | `WADA_WEB` branch of the LVGL resolution chain: `WADA_WEB_W x WADA_WEB_H` | the `#else` is the V4's 320x240 |
+| `src/ui-touch/UITask.cpp:55254-55262` | Signal/Discover/Spectrum tiles under `CAP_RADIO_TOOLS`; Remote/VNC also under `CAP_SCREEN_MIRROR` | capability gates, not board names |
+| `src/ui-touch/UITask.cpp:4189-4193` | the GPS "searching" hint: sky + cold start under `CAP_GPS_RECEIVER`, else "allow this page to use your location" | the browser's GPS has no sky |
+| `src/ui-touch/UITask.cpp:17639, 17679` | Settings > GPS: the Receiver (baud) and Battery (saver) cards under `CAP_GPS_RECEIVER` | settings of a serial receiver |
+| `src/ui-touch/UITask.cpp:19243-19251` | Settings > Bluetooth: `!CAP_BT_SETUP` shows where the connection is set | no switches that change nothing |
+| `src/ui-touch/UITask.cpp:20290-20298` | Settings > Wi-Fi: `!CAP_WIFI_SETUP` likewise | same |
+| `src/ui-touch/UITask.cpp:40894` | the Bluetooth row's On/Off state under `CAP_BT_SETUP` | same |
+| `src/ui-touch/UITask.cpp:52628-52634, 52689` | Power menu: "Download mode" under `CAP_USB_FLASH`, the card sized by its rows | no bootloader in a browser |
+| `src/ui-touch/UITask.cpp:33922, 53974, 54679` | Store: the catalog's `"radio": "own"` field, honoured with `CAP_RADIO_TOOLS` | apps that need the board's own radio (below) |
+| `src/ui-touch/lua_builtin.h` (generated) + `scripts/build/gen-lua-builtin.py` | apps with `"radio": "own"` baked under `#if CAP_RADIO_TOOLS` | same |
+| `deploy/apps/apps.json` | `"radio": "own"` on RF Monitor, Airtime, Wardrive | same |
 | `src/ui-touch/device_caps.h:28` | the `WADA_WEB` board block | a new board |
-| `src/ui-touch/device_caps.h:503` (CAP_WEB_BROWSER) | wrapped in `#ifndef` so a board block can preset it | like CAP_LUA_APPS |
-| `src/ui-touch/device_caps.h:515-520` (new) | `CAP_RADIO_TOOLS`, `CAP_SCREEN_MIRROR`, default 1 | see above |
+| `src/ui-touch/device_caps.h:507` (CAP_WEB_BROWSER) | wrapped in `#ifndef` so a board block can preset it | like CAP_LUA_APPS |
+| `src/ui-touch/device_caps.h:519-545` (new) | `CAP_RADIO_TOOLS`, `CAP_SCREEN_MIRROR`, `CAP_WIFI_SETUP`, `CAP_BT_SETUP`, `CAP_USB_FLASH`, `CAP_GPS_RECEIVER`, default 1 | see above |
 | `src/helpers/esp32/MqttBridge.h:32` | `|| defined(WADA_WEB)` on the P4 no-op bridge | no sockets of its own yet |
 | `src/ui-touch/ui_font_18.c`, `_20.c`, `_24.c` (guard lines) + `scripts/build/gen-touch-fonts.sh:418` | `|| defined(WADA_WEB)` in the big-font board list | an 800x480 board carries the UI-size fonts; the generator and its output stay in step |
 
 That is five `WADA_WEB` sites in UITask.cpp, all at places where every board
-adds a line (display, board id, resolution) or the one unavoidable include.
+adds a line (display, board id, resolution) or the one unavoidable include; every
+other difference is a capability flag that a future board can use too.
 
 ## The mesh stand-in and the drift alarm
 
@@ -262,6 +277,87 @@ by the browser (mixed content), which the chooser says.
   a live message, reload reconnects with the history, Disconnect returns to an
   untouched demo (`web/docs/node-*.png`).
 
+## Location (the browser's position is the board's GPS)
+
+The web board has `CAP_GPS 1`. The UI gets a position here exactly as on a device:
+`SensorManager::getLocationProvider()`, switched by `setSettingValue("gps", ...)`
+(UITask::toggleGPS, setGpsPower, the boot resume), copied into
+`sensors.node_lat/lon` by `UITask::updateGpsLocation`. `web/platform/WebLocation.*`
+is that SensorManager + LocationProvider, fed by the host instead of NMEA, so the
+GPS switch (Settings > GPS, the Control Center chip), the status bar pin, the GPS
+status text, map centring and follow, distances and bearings, `wada.sys.gps()` (with
+speed and course: `HAS_GPS_MOTION`, `wadaGpsMotion`) all work unchanged.
+
+- **Browser**: `navigator.geolocation.watchPosition` (`web/shell/app.js`, through
+  `Module.wadaGeoStart/Stop`), running only while the UI has its GPS on. Nothing asks
+  on page load: when the visitor has not decided yet (permission state `prompt`) the
+  request waits for a tap (the GPS switch itself, opening the map, any tap); when the
+  GPS was left on, a granted page simply resumes. Refused or unavailable = no fix (the
+  UI says "searching", with a note to allow the location), one toast, no retry loop;
+  switching the GPS off and on asks again. Accuracy is kept (the provider's
+  diagnostics line); the UI shows no HDOP, and satellites read 0.
+- **Native**: `WADA_GPS="lat,lon"` gives a fixed position; unset = no fix.
+- **Privacy rule.** A device advertises its position only while `advert_loc_policy`
+  is "share". In the browser the advert is the node's, so the same setting decides
+  whether this computer's position is handed to the node at all
+  (`WebMesh.cpp syncAdvertPosition`): share off = the position stays in this page
+  (map, distances, Lua), nothing is sent; share on = `CMD_SET_ADVERT_LATLON` with the
+  Location privacy displacement applied (the device's `advertPosition()` math, so a
+  stock node advertises the displaced point), when the UI's position differs from the
+  node's by more than ~11 m, at most every 2 minutes. The demo has no node to tell;
+  `--read-only` refuses the command. While this computer has a fix it wins over the
+  node's stored position on the map, as a device's fix does. Stricter than a device in
+  one way: a device's location telemetry also answers with its GPS position; here
+  nothing but the share setting sends it. `web/build.sh nodetest` checks both halves
+  against the mock node.
+- **Demo**: when the visitor allows the location, the demo's cast moves around it
+  (demo.py's offsets, so distances look right) and keeps that place for the next
+  visit (`/web_demo_home`, cleared by "Reset demo data"); otherwise Amsterdam.
+
+## Map tiles
+
+The tile fetch task (`tile_fetch`, a pthread) downloads with the firmware's own code;
+`wadaHttpRequest()` lets through only URLs under the firmware's default tile server
+(`WADA_TILE_SERVER`, read from `DEFAULT_TILE_SERVER` at configure time):
+
+- **Browser**: a synchronous `emscripten_fetch` (`-sFETCH`) on that pthread, to the
+  same-origin path `tiles/<z>/<x>/<y>.jpg` next to the page (and `tiles/elev?...`,
+  line of sight). Same origin needs no CORS and satisfies COEP. A call from the main
+  thread fails at once. The page's host proxies it: `web/scripts/serve.py` (path
+  allow-list, identifying User-Agent, `Cache-Control: public, max-age=1209600`) and,
+  for the public host, the `location ^~ /web/tiles/` block in
+  `web/deploy/nginx-snippet.conf` (proxy_cache 14 days).
+- **Native**: plain HTTP/1.0 over a socket straight to the tile server; off in
+  `--headless` runs unless `WADA_NET=1` (the smoke tour stays offline).
+  `WADA_HTTP_DEBUG=1` logs every request.
+- Tiles are cached as on a device, in the LittleFS "tiles" volume (here under the
+  backend's data dir, so in IndexedDB: the map works offline afterwards), within the
+  device's 4.75 MB budget.
+- The UI paces its downloads (OSM etiquette), so a fresh area fills in over a few
+  seconds. `web/build.sh webtest` checks the map shows tiles around Ghent when the
+  server can reach the tile server (skipped without a network).
+
+## Lua apps that need the board's own radio
+
+RF Monitor (noise floor, margin), Airtime (channel load) and Wardrive (discovery
+scans) read the device's own LoRa radio, which the browser does not have. They are
+left out through the catalog: `"radio": "own"` in `deploy/apps/apps.json`, baked under
+`#if CAP_RADIO_TOOLS` by `gen-lua-builtin.py`, and greyed in the Store's Apps tab.
+A separate field, not a `"requires": "radio"` value, because `requires` holds one
+name and Wardrive already needs `sdk_ext`: older firmware compares it as a whole
+string and treats an unknown value as runnable, so `"sdk_ext,radio"` would have
+offered Wardrive on the 2 MB V4 again. Older firmware ignores the new field (every
+device has a radio anyway). Nearby and Ping work from contacts, messages and the
+position and stay.
+
+## Input
+
+Mouse and finger are the touch panel; the keyboard is the external keyboard. The mouse
+wheel and two-finger trackpad scrolling scroll the list or page under the pointer
+(`web/platform/WebWheel.cpp`: LVGL's own hit test, the first ancestor that can still
+scroll that way, `lv_obj_scroll_by`, SCROLL_END once the wheel stops; vertical only).
+The tour scripts have `wheel X Y DY`.
+
 ## The compat layer (`web/compat/`)
 
 Small and honest; what is faked says so in its header.
@@ -285,9 +381,12 @@ Small and honest; what is faked says so in its header.
   (`esp_random` from the OS CSPRNG, restart = exit), and inert
   `esp_partition`, `esp_ota_ops`, `esp_core_dump`, `esp_sleep`, `nvs`,
   `esp_task_wdt`, `rtc_io`, `esp_chip_info`.
-- **Network**: `WiFi` reports no Wi-Fi hardware; `HTTPClient` goes through
-  one hook, `wadaHttpRequest()` (`wada_http.h`), which fails every request
-  today (tiles, update check, Store and Reader take their offline paths).
+- **Network**: `WiFi.status()` is `WL_CONNECTED` while the browser is online
+  (`navigator.onLine`; natively `WADA_NET`), with no address of its own
+  (`localIP()` 0.0.0.0, so the version check, File Transfer and Remote stay off);
+  `HTTPClient` goes through one hook, `wadaHttpRequest()` (`wada_http.h`), which
+  serves the map tile server only (see "Map tiles"); everything else is refused
+  and takes its offline path.
 - **Misc**: `mbedtls/md.h` (SHA-1/SHA-256 + HMAC for the PIN hash and the Lua
   crypto API), `rom/miniz.h` (upstream miniz's tinfl for the baked language
   and app blobs), `Wire`/`SPI` with nothing attached, rweather/Crypto's `RNG`
@@ -353,13 +452,10 @@ reset, ...) persists and reloads the page. "Reset demo data" deletes the
 database before the next boot (`?reset=1`). Contacts are not a stand-in file:
 the demo backend replays its cast at every boot, as a companion node will.
 
-**Network.** Still off, behind one hook: `HTTPClient` sends every request
-through `wadaHttpRequest()` (`web/compat/wada_http.h`) and serves the reply
-from memory (getString, getSize, getStreamPtr, writeToStream). It returns
-"connection refused" today. Map tiles later: implement it with a synchronous
-`emscripten_fetch` from the calling pthread (the UI's `tile_fetch` task
-already is one), make the tile server answer with CORS + CORP (COEP) or proxy
-it same-origin, and let `WiFi` report connected when the hook is live.
+**Network.** One hook: `HTTPClient` sends every request through
+`wadaHttpRequest()` (`web/compat/wada_http.h`) and serves the reply from memory
+(getString, getSize, getStreamPtr, writeToStream). It serves the map tile server
+only; see "Map tiles".
 
 **Size and speed** (release, `-O2`, Emscripten 6.0.12): wadamesh.wasm 2.45 MB
 (gzip 1.28 MB, brotli 1.14 MB), wadamesh.js 98 KB (brotli 23 KB); `-Os` saves
@@ -377,7 +473,6 @@ requestAnimationFrame, ~40 UI frames/s presented (LVGL's refresh period).
 
 ## Known gaps (phase 2)
 
-- The mouse wheel does not scroll (drag does, as on the panel).
 - A background tab pauses the UI loop (requestAnimationFrame); the demo mesh
   catches up when the tab is shown again.
 - Saving on page close is best effort (IndexedDB is asynchronous); normal use
@@ -385,17 +480,15 @@ requestAnimationFrame, ~40 UI frames/s presented (LVGL's refresh period).
 - In a private window IndexedDB may be refused: the page says the demo resets
   on reload.
 - iPhone Safari has no element fullscreen; the button hides there.
-- The Power menu still offers "Download mode" (no CAP gate for it yet).
 
 ## Known gaps
 
 - Typing on the computer keyboard is ASCII (the UI's CardKB path); other
   scripts and emoji use the on-screen keyboard and the emoji picker.
-- The Wi-Fi and Bluetooth settings pages still show (Wi-Fi even says "On")
-  and do nothing; a `CAP_WIFI` / `CAP_BLE` pair would hide them.
-- No map tiles (HTTP is off); contacts still plot on the empty map.
-- The baked radio Lua apps (RF Monitor, Airtime, Wardrive) open but have no
-  radio data.
+- The Control Center's Wi-Fi chip still toggles the (inert) Wi-Fi preference;
+  Settings > Wi-Fi explains.
+- A custom tile server (Map options) is not reachable from a page: only the
+  default one is proxied.
 - The Home RAM widget shows a synthetic 50 % (fixed heap report).
 - The demo history is stamped with the first-boot time (the UI stamps
   outgoing bubbles with the system clock), not demo.py's "minutes ago".

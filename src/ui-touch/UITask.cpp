@@ -4186,7 +4186,11 @@ static const char* gpsStatusStr(bool compact = false) {
     }
     if (!compact && n < (int)sizeof s)
       snprintf(s + n, sizeof s - n, "\n%s",
+#if CAP_GPS_RECEIVER
                TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+#else
+               TR("No position yet. Allow this page to use your location when the browser asks."));
+#endif
     return s;
   }
   s_gps_acq_since = 0;
@@ -17632,6 +17636,7 @@ static void buildGpsPage() {
       lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
     }
   }
+#if CAP_GPS_RECEIVER
   {
     lv_obj_t* c = setCard("Receiver");
 #ifdef GPS_BAUD_RATE
@@ -17671,6 +17676,7 @@ static void buildGpsPage() {
       setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
     });
   }
+#endif  // CAP_GPS_RECEIVER
 #endif  // CAP_GPS
 #if defined(ESP32)
   {
@@ -19234,6 +19240,15 @@ static void bleKbdBuildPage(bool ble_active) {
 #endif  // CAP_BLE_KEYBOARD
 
 static void buildBluetoothSettings() {
+#if !CAP_BT_SETUP
+  {   // the browser build: the page's bar picks the node and the link (CAP_BT_SETUP)
+    lv_obj_t* c = setCard("");
+    setNote(c, "In the browser, the connection is set in the page bar: Connect reaches your node over "
+               "Bluetooth, USB or Wi-Fi.", SET_TONE_INFO);
+    setNote(c, "Your node's own Bluetooth and pairing code are set on the node.");
+    return;
+  }
+#endif
   if (!g_lv.task || !g_lv.task->hasBleCapability()) {
     // No BLE on this board (the T-Display P4: the C6's factory firmware cannot do a
     // BLE companion). An explanation beats a hidden row: people coming from other
@@ -20272,6 +20287,15 @@ static void buildMqttSettings() {
 }
 
 static void buildWifiSettings() {
+#if !CAP_WIFI_SETUP
+  {   // the browser build: online through the computer, the node chosen in the page's bar
+    lv_obj_t* c = setCard("");
+    setNote(c, "In the browser, the connection is set in the page bar: Connect reaches your node over "
+               "Wi-Fi, USB or Bluetooth.", SET_TONE_INFO);
+    setNote(c, "The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.");
+    return;
+  }
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
     lv_obj_t* c = setCard("");
@@ -33895,7 +33919,11 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 // which need the extended SDK, and the Heltec V4 does not have it -- so the most
 // common board in the mesh offered a prominent Get button for two apps that then
 // refused to do anything, with no warning anywhere (reported on Discord).
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; };
+// `radio` = "own" marks an app that reads the board's own LoRa radio (RF Monitor,
+// Airtime, Wardrive): a separate field because `requires` holds one name, and older
+// firmware ignores a field it does not know (a second name in `requires` would have
+// unhidden Wardrive on the 2 MB V4).
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8]; };
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -40863,7 +40891,9 @@ static void settingsCatValue(int c, char* out, size_t cap) {
       break;
 #endif
     case CAT_BLUETOOTH:
+#if CAP_BT_SETUP
       snprintf(out, cap, "%s", bleRequestedOrEnabled() ? TR("On") : TR("Off"));
+#endif
       break;
 #if !defined(HAS_TDECK_PRO)
     case CAT_THEME:   // the mode, and the colour look when there is one
@@ -52595,7 +52625,13 @@ static void openPowerMenu() {
 #endif
   lv_obj_t* card = lv_obj_create(s_power_menu);
   lv_obj_remove_style_all(card);
+#if CAP_USB_FLASH
   lv_obj_set_size(card, card_w, card_h);
+#elif !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
+  lv_obj_set_size(card, card_w, p_y0 + 2 * p_step + 8);   // Reboot, Cancel (no Download mode)
+#else
+  lv_obj_set_size(card, card_w, p_y0 + 3 * p_step + 8);   // Power off, Reboot, Cancel
+#endif
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 10);
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
@@ -52650,7 +52686,7 @@ static void openPowerMenu() {
   const int p_y = p_y0 + p_step;
 #endif
   mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
-#if !defined(HAS_RAK_TAP_V2)
+#if !defined(HAS_RAK_TAP_V2) && CAP_USB_FLASH
   mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode (wait for USB flash)"), powerDownloadCb, 0,        p_y + p_step, true);
   mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
 #else
@@ -53935,6 +53971,7 @@ static void luaStoreParseCatalog() {
         luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
       if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
+      if (!luaJsonField(obj, "radio", c.radio, sizeof c.radio)) c.radio[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -54639,7 +54676,8 @@ static void luaStoreRebuildList() {
     const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
     if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_INFO), LV_PART_MAIN);
-    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap);
+    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap) &&
+                          (CAP_RADIO_TOOLS || strcmp(s_lua_cat[i].radio, "own") != 0);
     lv_label_set_text(bl, !runnable ? TR("N/A") : !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
     lv_obj_center(bl);

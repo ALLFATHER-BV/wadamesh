@@ -121,8 +121,15 @@ def main():
             sys.exit('%s contains the raw-string delimiter' % aid)
         # An app that needs the extended SDK cannot run on a board without it, so it
         # is baked in only where it can (CAP_LUA_SDK_EXT, every board but the 2 MB
-        # Heltec V4, the one with the least flash to give).
-        entries.append((aid, name, ver, code, app.get('requires') == 'sdk_ext'))
+        # Heltec V4, the one with the least flash to give). Likewise an app that reads
+        # the board's OWN LoRa radio ("radio": "own": RF Monitor, Airtime, Wardrive)
+        # only where there is one (CAP_RADIO_TOOLS; not the browser build).
+        conds = []
+        if app.get('requires') == 'sdk_ext':
+            conds.append('CAP_LUA_SDK_EXT')
+        if app.get('radio') == 'own':
+            conds.append('CAP_RADIO_TOOLS')
+        entries.append((aid, name, ver, code, ' && '.join(conds)))
 
     if not entries:
         sys.exit('no app sources found under ' + APPS)
@@ -143,7 +150,7 @@ def main():
         c = zlib.compressobj(9, zlib.DEFLATED, -15)
         z = c.compress(raw) + c.flush()
         zs[aid] = (z, len(raw))
-        if ext: w.append('#if CAP_LUA_SDK_EXT')
+        if ext: w.append('#if ' + ext)
         w.append('static const uint8_t kLuaZ_%s[%d] = {  // %d B of Lua' % (aid, len(z), len(raw)))
         for i in range(0, len(z), 20):
             w.append('  ' + ','.join('0x%02x' % b for b in z[i:i + 20]) + ',')
@@ -152,7 +159,7 @@ def main():
     w.append('')
     w.append('static const LuaBuiltinApp kLuaBuiltin[] = {')
     for aid, name, ver, _, ext in entries:
-        if ext: w.append('#if CAP_LUA_SDK_EXT')
+        if ext: w.append('#if ' + ext)
         z, n = zs[aid]
         w.append('  { "%s", "%s", "%s", kLuaZ_%s, %d, %d },' % (aid, name, ver, aid, len(z), n))
         if ext: w.append('#endif')
@@ -166,7 +173,7 @@ def main():
           (os.path.relpath(OUT, ROOT), len(entries), total, sum(len(z) for z, _ in zs.values())))
     for aid, _, ver, code, ext in entries:
         print('   %-10s v%-4s %6d B -> %5d B%s' % (aid, ver, len(code), len(zs[aid][0]),
-                                                '  (extended SDK only)' if ext else ''))
+                                                ('  (only with ' + ext + ')') if ext else ''))
 
 
 if __name__ == '__main__':

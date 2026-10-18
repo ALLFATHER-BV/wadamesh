@@ -23,6 +23,10 @@ WAITING = [
 ]
 
 waiting = list(WAITING)   # like a node's sync cursor: delivered once, not per connection
+# The node's "share position in adverts" (SELF_INFO advert_loc_policy) and every
+# CMD_SET_ADVERT_LATLON it was sent: the location privacy test (node-tour.mjs) reads
+# and sets these through the WebSocket mock's plain-HTTP side.
+STATE = {'share': 0, 'latlon': []}
 
 def on_connect(send, later):
     # a live channel post a few seconds after a client connects
@@ -35,7 +39,7 @@ def handle(f, send, later):
     if cmd == 22:
         send(bytes([13, 10, 200, 8]) + bytes(4) + b'7 Jun 2026'.ljust(12, b'\0') + b'Mock Board'.ljust(40, b'\0') + b'v-mock'.ljust(20, b'\0') + bytes([0, 0]))
     elif cmd == 1:
-        send(bytes([5, 1, 22, 22]) + SELF + struct.pack('<ii', 52370000, 4890000) + bytes([0, 0, 0, 0])
+        send(bytes([5, 1, 22, 22]) + SELF + struct.pack('<ii', 52370000, 4890000) + bytes([0, STATE['share'], 0, 0])
              + struct.pack('<II', 869618, 62500) + bytes([8, 5]) + b'Mock Node')
     elif cmd == 5:
         send(bytes([9]) + struct.pack('<I', int(time.time())))
@@ -88,6 +92,10 @@ def handle(f, send, later):
     elif cmd == 66:
         send(bytes([29]) + b'mock cli: ' + f[1:] + b'\nsecond line')
     elif cmd == 7:
+        send(bytes([0]))
+    elif cmd == 14:   # CMD_SET_ADVERT_LATLON
+        lat, lon = struct.unpack('<ii', f[1:9])
+        STATE['latlon'].append([lat / 1e6, lon / 1e6])
         send(bytes([0]))
     else:
         print('mock: unhandled', cmd, flush=True)

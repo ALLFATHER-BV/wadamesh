@@ -50,7 +50,10 @@ async function waitBadge(page, re, ms = 20000) {
 const inStorage = (page, needle) => page.evaluate((n) => window.wadamesh.findInStorage(n), needle);
 
 const browser = await pw.chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 } });
+// The visitor is in Ghent and lets the page use the location (step 6: the privacy rule).
+const GHENT = { latitude: 51.05, longitude: 3.72 };
+const ctx = await browser.newContext({ viewport: { width: 1100, height: 760 }, geolocation: GHENT,
+                                       permissions: ['geolocation'] });
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e)));
@@ -123,7 +126,35 @@ await shot(page, '08-after-reload');
 const hits = await inStorage(page, 'hello from the browser');
 check('history kept across the reload', hits.some((h) => h.startsWith(dir2)), { hits });
 
-// 6. Disconnect: back to the demo, whose data never saw the node's.
+// 6. Location privacy: with the GPS on, this computer's position reaches the node ONLY
+// while the node's own "share position in adverts" is on (WEB_BUILD.md "Location").
+const mockState = () => fetch(`http://${WS}/latlon`).then((r) => r.json());
+for (const t of ['tap 720 456', 'wait 1500']) if (t.startsWith('tap')) await tap(page, ...t.split(' ').slice(1).map(Number)); else await sleep(1500);
+{
+  const r = await page.locator('#screen').boundingBox();
+  const at = (x, y) => [r.x + (x + 0.5) * r.width / W, r.y + (y + 0.5) * r.height / H];
+  await page.mouse.move(...at(200, 420)); await page.mouse.down();
+  for (let i = 1; i <= 24; i++) { await page.mouse.move(...at(200, 420 - 380 * i / 24)); await sleep(16); }
+  await sleep(400); await page.mouse.up(); await sleep(1500);   // Settings, scrolled to the end
+}
+await tap(page, 100, 302);   // GPS
+await sleep(1500);
+await tap(page, 745, 95);    // GPS on
+await sleep(9000);
+await shot(page, '10-gps-on');
+check('share off: the position stays in the browser', (await mockState()).latlon.length === 0, await mockState());
+await fetch(`http://${WS}/share/1`);   // the node now shares its position (as if set in the phone app)
+await page.reload({ waitUntil: 'load' });
+await booted(page);
+await waitBadge(page, /^Connected: Mock Node/);
+await sleep(9000);
+const shared = (await mockState()).latlon;
+check('share on: the node gets this computer\'s position',
+      shared.length >= 1 && Math.abs(shared[0][0] - GHENT.latitude) < 0.001 && Math.abs(shared[0][1] - GHENT.longitude) < 0.001,
+      { latlon: shared });
+await fetch(`http://${WS}/share/0`);
+
+// 7. Disconnect: back to the demo, whose data never saw the node's.
 await page.click('#btn-connect');
 await page.waitForLoadState('load');
 await booted(page);

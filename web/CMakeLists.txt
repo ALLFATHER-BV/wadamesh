@@ -83,7 +83,7 @@ add_library(wada_thirdparty STATIC
   ${TP}/miniz/miniz.c ${TP}/miniz/miniz_tinfl.c ${TP}/miniz/miniz_tdef.c   # ROM tinfl stand-in + the PNG writer
   # the String/Print/Stream/FS layer of arduino-esp32 2.0.17, unmodified
   ${WEB}/compat/arduino/WString.cpp ${WEB}/compat/arduino/Print.cpp ${WEB}/compat/arduino/Stream.cpp
-  ${WEB}/compat/arduino/StreamString.cpp ${WEB}/compat/arduino/stdlib_noniso.c
+  ${WEB}/compat/arduino/StreamString.cpp ${WEB}/compat/arduino/stdlib_noniso.c ${WEB}/compat/arduino/IPAddress.cpp
   ${WEB}/compat/arduino/FS.cpp ${WEB}/compat/arduino/vfs_api.cpp
 )
 target_include_directories(wada_thirdparty PUBLIC ${WADA_COMPAT_INC} ${CRYPTO} ${TP}/CayenneLPP/src
@@ -141,6 +141,14 @@ foreach(_l IN LISTS _mm_ver)
   list(APPEND WADA_VERSION_DEFS "${_d}")
 endforeach()
 
+# The map tile server the web board may reach (compat/src/http_host.cpp, wada_http.h):
+# the firmware's own default, read from its one definition so the two never drift.
+file(STRINGS ${SRC}/helpers/esp32/TouchPrefsStore.cpp _tile_srv REGEX "DEFAULT_TILE_SERVER = \"")
+string(REGEX REPLACE ".*DEFAULT_TILE_SERVER = (\"[^\"]+\").*" "\\1" WADA_TILE_SERVER "${_tile_srv}")
+if(NOT WADA_TILE_SERVER MATCHES "^\"http://")
+  message(FATAL_ERROR "DEFAULT_TILE_SERVER not found (or not http://) in TouchPrefsStore.cpp: ${_tile_srv}")
+endif()
+
 set(WADA_APP_DEFS
   ESP32=1                    # the UI's ESP32 code paths ARE the device code paths; compat/ backs them
   HAS_TOUCH_UI=1
@@ -151,6 +159,8 @@ set(WADA_APP_DEFS
   MAX_CONTACTS=500
   MAX_GROUP_CHANNELS=40
   ENABLE_ADVERT_ON_BOOT=0
+  HAS_GPS_MOTION=1           # speed + course from the host's location (platform/WebLocation.cpp wadaGpsMotion)
+  WADA_TILE_SERVER=${WADA_TILE_SERVER}
   NDEBUG
 )
 
@@ -201,6 +211,7 @@ if(EMSCRIPTEN)
     -sENVIRONMENT=web,worker
     -sEXIT_RUNTIME=0
     -lidbfs.js
+    -sFETCH=1 -sFETCH_SUPPORT_INDEXEDDB=0   # map tiles: a synchronous same-origin fetch from the tile_fetch pthread
     -sEXPORTED_RUNTIME_METHODS=FS,IDBFS,addRunDependency,removeRunDependency
     -sEXPORTED_FUNCTIONS=_main,_malloc,_free
   )

@@ -72,6 +72,11 @@ some users silently run different code from others under the same version number
    built-ins for boards that cannot reach the Store, and that is flash spent on
    the boards with the least of it. A large app, or one that needs hardware
    those boards do not have, is better left to the Store.
+   Add `"radio": "own"` if the app only makes sense with the device's OWN LoRa
+   radio (it reads the noise floor, airtime, or runs discovery scans, like RF
+   Monitor, Airtime and Wardrive). wadamesh in the browser drives a node over a
+   link and has no radio of its own, so it leaves such apps out. Apps that work
+   from contacts, messages and a position (Nearby, Ping) do not need it.
 4. Open a pull request. In the description, say what the app does, which boards
    you tested it on, and anything it persists via `wada.store`.
 

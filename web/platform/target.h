@@ -6,9 +6,10 @@
 #include "WebBoard.h"
 #include "WebRadio.h"
 #include "WebDisplay.h"
+#include "WebLocation.h"
 
 extern WebBoard board;
 extern WebRadio radio_driver;
 extern ClockFloorRTC rtc_clock;
-extern SensorManager sensors;
+extern WebSensorManager sensors;   // GPS = the host's location (WebLocation.h)
 extern WebDisplay display;

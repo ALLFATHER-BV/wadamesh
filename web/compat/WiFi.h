@@ -1,9 +1,13 @@
 #pragma once
 // Wi-Fi on the web board: there is no Wi-Fi radio to drive. The browser (or the host OS)
-// already has a network; the UI's own Wi-Fi panels report "no Wi-Fi hardware"
-// (status WL_NO_SHIELD, scans fail). Network access for the UI goes through
-// HTTPClient.h, which is where phase 2 plugs in fetch().
+// already has a network, so status() is WL_CONNECTED while it is online (wada_http.h
+// wadaNetOnline: what the UI's map tile download checks) and the "network" is the
+// browser's own. There is still no address of our own (localIP 0.0.0.0, so the
+// version check, File Transfer and Remote stay off), scans fail, and nothing here
+// configures anything (Settings > Wi-Fi says so: CAP_WIFI_SETUP 0). Network access for
+// the UI goes through HTTPClient.h -> wadaHttpRequest().
 #include "Arduino.h"
+#include "wada_http.h"
 #include "arduino/IPAddress.h"
 #include "WiFiClient.h"
 #include "WiFiServer.h"
@@ -31,8 +35,8 @@ typedef int arduino_event_id_t;
 
 class WiFiClass {
 public:
-  wl_status_t status() { return WL_NO_SHIELD; }
-  bool isConnected() { return false; }
+  wl_status_t status() { return wadaNetOnline() ? WL_CONNECTED : WL_DISCONNECTED; }
+  bool isConnected() { return wadaNetOnline(); }
   wifi_mode_t getMode() { return WIFI_MODE_NULL; }
   bool mode(wifi_mode_t m) { (void)m; return false; }
   bool enableSTA(bool) { return false; }
@@ -56,9 +60,9 @@ public:
   }
   int16_t scanComplete() { return WIFI_SCAN_FAILED; }
   void scanDelete() {}
-  String SSID() const { return String(); }
+  String SSID() const { return wadaNetOnline() ? String("Browser") : String(); }
   String SSID(uint8_t) const { return String(); }
-  int32_t RSSI() { return 0; }
+  int32_t RSSI() { return wadaNetOnline() ? -50 : 0; }   // "online" reads as full bars
   int32_t RSSI(uint8_t) { return 0; }
   int32_t channel() { return 0; }
   int32_t channel(uint8_t) { return 0; }

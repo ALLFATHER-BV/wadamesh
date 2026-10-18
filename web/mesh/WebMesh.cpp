@@ -6,6 +6,8 @@
 #include <SPIFFS.h>
 #include <Utils.h>
 #include <helpers/TxtDataHelpers.h>
+#include "helpers/esp32/TouchPrefsStore.h"
+#include <math.h>
 
 namespace {
 const char* k_prefs_path = "/web_node_prefs";   // NodePrefs blob (versioned by size)
@@ -125,7 +127,58 @@ void MyMesh::begin(MeshBackend* backend) {
 }
 
 void MyMesh::loop() {
-  if (_backend) _backend->loop(millis());
+  const uint32_t now = millis();
+  if (_backend) _backend->loop(now);
+  if (now - _pos_sync_ms >= 5000) { _pos_sync_ms = now; syncAdvertPosition(now); }
+}
+
+// ---- this computer's position and the node (WEB_BUILD.md "Location") --------------------
+// The device's advertPosition() (src/MyMesh.cpp, #399), unchanged: the Location privacy
+// radius moves the ADVERTISED point by a fixed offset derived from the node key and the
+// radius; the local map keeps the real one.
+static void advertDisplace(const uint8_t pub_key[PUB_KEY_SIZE], double& lat, double& lon) {
+  const uint16_t r = touchPrefsGetGpsFuzzM();
+  if (r == 0 || (lat == 0 && lon == 0)) return;
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < PUB_KEY_SIZE; ++i) { h ^= pub_key[i]; h *= 16777619u; }
+  h ^= (uint32_t)r;         h *= 16777619u;
+  h ^= (uint32_t)(r >> 8);  h *= 16777619u;
+  const double bearing = ((double)(h & 0xFFFFu) / 65536.0) * 2.0 * 3.14159265358979;
+  const double dist    = (0.5 + ((double)((h >> 16) & 0xFFFFu) / 131072.0)) * (double)r;
+  const double dlat    = (dist * cos(bearing)) / 111320.0;
+  double coslat = cos(lat * 3.14159265358979 / 180.0);
+  if (coslat < 0.01) coslat = 0.01;
+  const double dlon    = (dist * sin(bearing)) / (111320.0 * coslat);
+  lat += dlat;
+  lon += dlon;
+}
+
+// A device advertises sensors.node_lat/lon (its GPS fix, or the Profile position) only
+// while advert_loc_policy is ADVERT_LOC_SHARE. Here the advert is the node's, so the
+// same rule decides whether the position the UI holds is handed to the node at all:
+//   * share off: it stays in this browser (map, distances, Lua); nothing is sent
+//   * share on, and the UI's position differs from the node's (this computer's GPS, a
+//     Profile edit): CMD_SET_ADVERT_LATLON with the Location privacy displacement,
+//     at most every 2 minutes (the device's own persist rate), the first one at once
+// The demo has no node to tell (ownsPrefs() is false), and a read-only link refuses it.
+void MyMesh::syncAdvertPosition(uint32_t now_ms) {
+  if (!_backend || !_backend->ownsPrefs()) return;
+  if (_prefs.advert_loc_policy != ADVERT_LOC_SHARE) return;   // the privacy rule
+  const double la = sensors.node_lat, lo = sensors.node_lon;
+  if (la == 0.0 && lo == 0.0) return;
+  if (fabs(la - _node_pos_lat) < 1e-4 && fabs(lo - _node_pos_lon) < 1e-4) return;   // ~11 m
+  if (_pos_pushed_ms && now_ms - _pos_pushed_ms < 120000) return;
+  double alat = la, alon = lo;
+  advertDisplace(self_id.pub_key, alat, alon);
+  _backend->advertPositionChanged((int32_t)llround(alat * 1.0e6), (int32_t)llround(alon * 1.0e6));
+  _node_pos_lat = la;
+  _node_pos_lon = lo;
+  _pos_pushed_ms = now_ms ? now_ms : 1;
+}
+void MyMesh::beSelfPosition(int32_t lat_e6, int32_t lon_e6) {
+  sensors.node_lat = (double)lat_e6 / 1.0e6;
+  sensors.node_lon = (double)lon_e6 / 1.0e6;
+  if (_ui) _ui->onThreadsChanged();
 }
 
 bool MyMesh::setBLEPin(uint32_t pin) {
@@ -660,9 +713,15 @@ void MyMesh::beSelfInfo(const NodePrefs& np, const uint8_t pub_key[32], int32_t 
   _prefs.path_hash_mode = np.path_hash_mode;
   _prefs.ble_pin = np.ble_pin;
   memcpy(self_id.pub_key, pub_key, PUB_KEY_SIZE);
-  if (lat_e6 != 0 || lon_e6 != 0) {
-    sensors.node_lat = (double)lat_e6 / 1.0e6;
-    sensors.node_lon = (double)lon_e6 / 1.0e6;
+  _node_pos_lat = (double)lat_e6 / 1.0e6;
+  _node_pos_lon = (double)lon_e6 / 1.0e6;
+  // The node's position is the UI's, unless this computer's GPS has one (it wins, as a
+  // device's fix wins over its stored position; syncAdvertPosition decides if it is sent).
+  LocationProvider* lp = sensors.getLocationProvider();
+  const bool own_fix = _prefs.gps_enabled && lp && lp->isValid();
+  if ((lat_e6 != 0 || lon_e6 != 0) && !own_fix) {
+    sensors.node_lat = _node_pos_lat;
+    sensors.node_lon = _node_pos_lon;
   }
   // Keep the local copy in step without echoing it back to the node.
   File f = SPIFFS.open(k_prefs_path, "w");

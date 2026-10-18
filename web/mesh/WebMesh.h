@@ -275,6 +275,7 @@ private:
                      uint8_t extra_hops, const int8_t* extra_snrs) override;
   void beSignal(int8_t snr_q4, int8_t rssi) override;
   void beSelfInfo(const NodePrefs& node_prefs, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) override;
+  void beSelfPosition(int32_t lat_e6, int32_t lon_e6) override;
   void beContactRemoved(const uint8_t pub_key[32]) override;
   void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) override;
   void beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) override;
@@ -286,6 +287,7 @@ private:
   void stashRxMeta(bool for_channel, const uint8_t* key_or_hash, uint8_t path_len);
 
   void loadPrefs();
+  void syncAdvertPosition(uint32_t now_ms);   // this computer's position -> the node, when shared
   int  channelIdxOf(const mesh::GroupChannel& ch) const;
   void noteHeard(const ContactInfo& c);
 
@@ -293,6 +295,10 @@ private:
   AbstractUITask* _ui;
   MeshBackend* _backend = nullptr;
   NodePrefs _prefs{};
+  // The position the node holds as far as we know (its SELF_INFO, or what we last told
+  // it), undisplaced; a local position that differs from it is what syncAdvertPosition sends.
+  double _node_pos_lat = 0, _node_pos_lon = 0;
+  uint32_t _pos_sync_ms = 0, _pos_pushed_ms = 0;
   ContactInfo _contacts[MAX_CONTACTS];
   int _num_contacts = 0;
   ChannelDetails _channels[MAX_GROUP_CHANNELS];

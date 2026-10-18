@@ -34,7 +34,8 @@
   #define CAP_LARGE_SCREEN 1   // 800x480: large-panel layouts and the UI-size fonts
   #define CAP_SD           0   // no card; storage is the host directory behind SPIFFS
   #define CAP_FILESYSTEM   0
-  #define CAP_GPS          0
+  #define CAP_GPS          1   // the computer's / phone's location (web/platform/WebLocation.h)
+  #define CAP_GPS_RECEIVER 0   // ...not a serial receiver: no baud rate, no rest between checks
   #define CAP_OTA          0   // updated by reloading the page
   #define CAP_LOCK_SCREEN  0   // no unlock button
   #define CAP_BATTERY      0
@@ -42,6 +43,9 @@
   #define CAP_RADIO_TOOLS  0   // no radio of its own: no Signal / Discover / Spectrum
   #define CAP_SCREEN_MIRROR 0  // it IS the browser view: no Remote / VNC
   #define CAP_WEB_BROWSER  0   // a page cannot fetch arbitrary sites (CORS)
+  #define CAP_WIFI_SETUP   0   // the page's bar picks the node and the link; the browser is online
+  #define CAP_BT_SETUP     0
+  #define CAP_USB_FLASH    0   // no bootloader to reboot into: no "Download mode"
   #define CAP_BUILTIN_LANGS    1   // no Lua Store download yet: carry the translations
   #define CAP_BUILTIN_LUA_APPS 1   // ...and the catalog's apps
 
@@ -517,6 +521,27 @@
 #endif
 #ifndef CAP_SCREEN_MIRROR
   #define CAP_SCREEN_MIRROR 1
+#endif
+
+// ---- Links the board sets up itself ------------------------------------------
+// CAP_WIFI_SETUP / CAP_BT_SETUP: Settings > Wi-Fi and > Bluetooth configure the board's
+// own radios (networks, the pairing code). A board whose links are chosen elsewhere
+// (the browser build: the page's bar) shows what to do instead of switches that
+// change nothing. CAP_USB_FLASH: the Power menu's "Download mode" (reboot into the
+// ROM bootloader for a USB flash). CAP_GPS_RECEIVER: the GPS is a serial receiver
+// (Settings > GPS offers its baud rate and the rest-between-checks saver); a position
+// from elsewhere (the browser's location) has neither.
+#ifndef CAP_WIFI_SETUP
+  #define CAP_WIFI_SETUP 1
+#endif
+#ifndef CAP_BT_SETUP
+  #define CAP_BT_SETUP 1
+#endif
+#ifndef CAP_USB_FLASH
+  #define CAP_USB_FLASH 1
+#endif
+#ifndef CAP_GPS_RECEIVER
+  #define CAP_GPS_RECEIVER 1
 #endif
 
 // ---- Lua app host (LUA_APPS.md) --------------------------------------------

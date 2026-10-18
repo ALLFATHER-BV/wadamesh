@@ -12,6 +12,7 @@
 #include "UITask.h"
 #include "WebMesh.h"
 #include "WebPlatform.h"
+#include "WebInput.h"
 #include "BackendSelect.h"
 #include "helpers/esp32/TouchPrefsStore.h"
 #include "wada_host.h"
@@ -47,7 +48,7 @@ WebSerialInterface s_serial;
 WebBoard board;
 WebRadio radio_driver;
 ClockFloorRTC rtc_clock(s_host_clock);
-SensorManager sensors;
+WebSensorManager sensors;
 WebDisplay display;
 TwoWire Wire(0), Wire1(1);
 SPIClass SPI;
@@ -74,10 +75,6 @@ void wadaBoardBegin(const WadaBackendChoice& choice) {
   SPIFFS.begin(true);
   LittleFS.begin(true);
   rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
-  if (choice.kind == "demo") {   // the demo node's position (scripts/doc/web-demo/demo.py);
-    sensors.node_lat = 52.3728;    // a real node reports its own
-    sensors.node_lon = 4.8934;
-  }
   the_mesh.begin(wadaCreateBackend(choice));   // the demo, or a companion node (BackendSelect.h)
   // A node is set up already: the first-run wizard (name + LoRa region) would rename
   // and re-tune it. It is the demo's welcome only.
@@ -88,6 +85,7 @@ void wadaBoardBegin(const WadaBackendChoice& choice) {
 
 // UI first, then the mesh (same order as src/main.cpp, same reason).
 void wadaBoardStep() {
+  webWheelTick();
   ui_task.loop();
   the_mesh.loop();
 }

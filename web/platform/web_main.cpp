@@ -142,6 +142,8 @@ EMSCRIPTEN_KEEPALIVE void wadaWebPointer(int down, int x, int y) {
   s_qh = next;
 }
 EMSCRIPTEN_KEEPALIVE void wadaWebKey(int cardkb_code) { webKeyPush((uint8_t)cardkb_code); }
+// The mouse wheel / a two-finger trackpad scroll over (x, y), in canvas pixels.
+EMSCRIPTEN_KEEPALIVE void wadaWebWheel(int x, int y, int dy) { webWheel(x, y, dy); }
 EMSCRIPTEN_KEEPALIVE unsigned wadaWebFsGeneration() { return wadaHostFsGeneration(); }
 // pagehide / visibilitychange: write the lazily-flushed chat history now, then the
 // page persists the mount.

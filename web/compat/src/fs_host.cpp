@@ -125,8 +125,11 @@ bool mountVolume(FS& fs, VFSImpl& impl, HostVolume& v, const char* sub) {
   (void)fs;
   return true;
 }
-std::shared_ptr<FlatVFSImpl> g_spiffs_impl = std::make_shared<FlatVFSImpl>();
-std::shared_ptr<FlatVFSImpl> g_lfs_impl = std::make_shared<FlatVFSImpl>();
+// Constructed on first use: an FS object in another translation unit (UITask.cpp's own
+// LittleFSFS for the tiles partition) is built during static initialisation, possibly
+// before this file's globals, and would copy an empty pointer (every open then fails).
+std::shared_ptr<FlatVFSImpl>& spiffsImpl() { static auto p = std::make_shared<FlatVFSImpl>(); return p; }
+std::shared_ptr<FlatVFSImpl>& lfsImpl() { static auto p = std::make_shared<FlatVFSImpl>(); return p; }
 HostVolume g_spiffs_vol, g_lfs_vol;
 }  // namespace
 
@@ -135,20 +138,20 @@ HostVolume g_spiffs_vol, g_lfs_vol;
 static const size_t k_spiffs_total = 0x170000;
 static const size_t k_lfs_total = 0x4C0000;
 
-fs::SPIFFSFS::SPIFFSFS() : FS(g_spiffs_impl) {}
-bool fs::SPIFFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *g_spiffs_impl, g_spiffs_vol, "spiffs"); }
+fs::SPIFFSFS::SPIFFSFS() : FS(spiffsImpl()) {}
+bool fs::SPIFFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *spiffsImpl(), g_spiffs_vol, "spiffs"); }
 bool fs::SPIFFSFS::format() { if (!g_spiffs_vol.mounted) begin(); rmTree(g_spiffs_vol.root, true); wadaHostFsTouched(); return true; }
 size_t fs::SPIFFSFS::totalBytes() { return k_spiffs_total; }
 size_t fs::SPIFFSFS::usedBytes() { return g_spiffs_vol.mounted ? duBytes(g_spiffs_vol.root) : 0; }
-void fs::SPIFFSFS::end() { g_spiffs_impl->mountpoint(NULL); g_spiffs_vol.mounted = false; }
+void fs::SPIFFSFS::end() { spiffsImpl()->mountpoint(NULL); g_spiffs_vol.mounted = false; }
 fs::SPIFFSFS SPIFFS;
 
-fs::LittleFSFS::LittleFSFS() : FS(g_lfs_impl) {}
-bool fs::LittleFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *g_lfs_impl, g_lfs_vol, "littlefs"); }
+fs::LittleFSFS::LittleFSFS() : FS(lfsImpl()) {}
+bool fs::LittleFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *lfsImpl(), g_lfs_vol, "littlefs"); }
 bool fs::LittleFSFS::format() { if (!g_lfs_vol.mounted) begin(); rmTree(g_lfs_vol.root, true); wadaHostFsTouched(); return true; }
 size_t fs::LittleFSFS::totalBytes() { return k_lfs_total; }
 size_t fs::LittleFSFS::usedBytes() { return g_lfs_vol.mounted ? duBytes(g_lfs_vol.root) : 0; }
-void fs::LittleFSFS::end() { g_lfs_impl->mountpoint(NULL); g_lfs_vol.mounted = false; }
+void fs::LittleFSFS::end() { lfsImpl()->mountpoint(NULL); g_lfs_vol.mounted = false; }
 fs::LittleFSFS LittleFS;
 
 // ---- SD: no card (compat/SD.h) ---------------------------------------------------

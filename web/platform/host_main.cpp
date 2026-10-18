@@ -88,6 +88,7 @@ void keyDown(const SDL_Keysym& k) {
   }
 }
 
+int s_mouse_x = 0, s_mouse_y = 0;
 void pumpEvents() {
   if (!s_win) return;
   SDL_Event e;
@@ -98,8 +99,16 @@ void pumpEvents() {
         if (e.button.button == SDL_BUTTON_LEFT) webPointer(e.type == SDL_MOUSEBUTTONDOWN, e.button.x, e.button.y);
         break;
       case SDL_MOUSEMOTION:
+        s_mouse_x = e.motion.x; s_mouse_y = e.motion.y;   // where a wheel turn applies
         if (e.motion.state & SDL_BUTTON_LMASK) webPointer(true, e.motion.x, e.motion.y);
         break;
+      case SDL_MOUSEWHEEL: {
+        // precise (trackpad) deltas when SDL has them; a wheel notch = 3 lines of 16 px
+        const float dy = e.wheel.preciseY != 0 ? e.wheel.preciseY : (float)e.wheel.y;
+        const int sign = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1 : 1;
+        webWheel(s_mouse_x, s_mouse_y, (int)(-dy * sign * 48.0f));
+        break;
+      }
       case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
         webPointer(e.type != SDL_FINGERUP, (int)(e.tfinger.x * WADA_WEB_W), (int)(e.tfinger.y * WADA_WEB_H));
         break;
@@ -179,6 +188,11 @@ void scriptStep() {
       if (code) webKeyPush(code);
       s_script.wait_until = now + 150; return;
     }
+    if (cmd == "wheel") {   // wheel X Y DY: a wheel turn over (X, Y), DY canvas pixels (> 0 = down)
+      int x = 0, y = 0, dy = 0; in >> x >> y >> dy;
+      webWheel(x, y, dy);
+      s_script.wait_until = now + 50; return;
+    }
     if (cmd == "shot") { std::string n; in >> n; savePng(s_shot_dir + "/" + n + ".png"); continue; }
     if (cmd == "quit") { s_quit = true; return; }
     fprintf(stderr, "[script] unknown command '%s'\n", cmd.c_str());
@@ -209,6 +223,9 @@ int main(int argc, char** argv) {
     else if (a == "--tcp" && i + 1 < argc) { choice.kind = "tcp"; choice.arg = argv[++i]; }
     else if (a == "--read-only") choice.read_only = true;
   }
+  // A headless run (the smoke tour, CI) stays offline unless asked: no map tiles from
+  // the network in its screenshots (compat/wada_http.h).
+  if (headless) setenv("WADA_NET", "0", 0);
   if (!script_path.empty()) {
     std::ifstream f(script_path);
     for (std::string l; std::getline(f, l);) s_script.lines.push_back(l);

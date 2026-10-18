@@ -72,6 +72,9 @@ public:
   // The node said who it is: name, radio, the node-owned prefs, its public key. The
   // stand-in adopts these (a node's settings live on the node).
   virtual void beSelfInfo(const NodePrefs& node_prefs, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) = 0;
+  // The node's own position moved without a SELF_INFO (the demo placing its
+  // neighbourhood around this computer's location): the map's "you are here".
+  virtual void beSelfPosition(int32_t lat_e6, int32_t lon_e6) = 0;
   // The node dropped a contact (deleted, or overwritten when its table was full).
   virtual void beContactRemoved(const uint8_t pub_key[32]) = 0;
   // A raw received packet (MeshCore's PUSH_CODE_LOG_RX_DATA): the RX log, the live
@@ -138,6 +141,10 @@ public:
   // manual add): the node keeps the table, so the backend writes it back.
   virtual void contactChanged(const ContactInfo& c) { (void)c; }
   virtual void contactPathReset(const uint8_t pub_key[32]) { (void)pub_key; }
+  // The position the node should advertise (CMD_SET_ADVERT_LATLON). Called ONLY while the
+  // node's advert-location setting is "share", with the Location privacy displacement
+  // applied (WebMesh.cpp syncAdvertPosition, WEB_BUILD.md "Location").
+  virtual void advertPositionChanged(int32_t lat_e6, int32_t lon_e6) { (void)lat_e6; (void)lon_e6; }
   // True once the backend has the node's own settings (until then the stand-in's
   // prefs are placeholders and must not be written to a node).
   virtual bool ownsPrefs() const { return false; }

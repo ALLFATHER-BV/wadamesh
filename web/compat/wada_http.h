@@ -1,21 +1,23 @@
 #pragma once
 // The web board's one door to the network: HTTPClient (compat/HTTPClient.h) sends every
 // request through wadaHttpRequest() and serves the reply from memory (getString,
-// getSize, getStreamPtr / writeToStream), so turning HTTP on is a single function.
+// getSize, getStreamPtr / writeToStream).
 //
-// Today (native and browser) it returns HTTPC_ERROR_CONNECTION_REFUSED: map tiles, the
-// version check, the Store and the Reader take their offline paths.
+// What gets through (compat/src/http_host.cpp): requests to the firmware's default map
+// tile server (DEFAULT_TILE_SERVER in src/helpers/esp32/TouchPrefsStore.cpp, read by
+// web/CMakeLists.txt as WADA_TILE_SERVER): map tiles and the line-of-sight elevation
+// query. Everything else (the version check, beta reports, the install count, the Store,
+// the Reader, Lua HTTP) is refused with HTTPC_ERROR_CONNECTION_REFUSED and takes its
+// offline path, as before.
 //
-// Planned for map tiles in the browser (not built yet):
-//   - implement it with emscripten_fetch() + EMSCRIPTEN_FETCH_SYNCHRONOUS. A synchronous
-//     fetch is only allowed off the browser main thread, and the UI's tile downloads
-//     already run on their own task (tile_fetch, a pthread here), so the UI's blocking
-//     HTTP code is unchanged. Calls from the main thread must keep failing fast.
-//   - the tile server must answer with CORS (Access-Control-Allow-Origin) and, because
-//     the page is cross-origin isolated (COEP: require-corp), with
-//     Cross-Origin-Resource-Policy: cross-origin; or proxy tiles same-origin.
-//   - the UI only queues tile downloads while Wi-Fi is up: the WiFi compat must then
-//     report "connected" (compat/WiFi.h), gated on this hook being live.
+//   browser  a synchronous emscripten_fetch from the calling pthread (the UI's tile_fetch
+//            task), SAME-ORIGIN: <tile server>/z/x/y.jpg becomes tiles/z/x/y.jpg next to
+//            the page (/tiles/... locally, /web/tiles/... on the site), which its host
+//            proxies (web/scripts/serve.py; web/deploy/nginx-snippet.conf for the site).
+//            A same-origin reply needs no CORS and satisfies COEP. Calls from the
+//            browser main thread fail at once (a synchronous fetch would block the page).
+//   native   plain HTTP/1.0 over a socket straight to the tile server (it is http://);
+//            off in --headless runs unless WADA_NET=1, so the smoke tour stays offline.
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
@@ -32,3 +34,10 @@ int wadaHttpRequest(const char* method, const std::string& url,
                     const std::vector<std::string>& headers,
                     const uint8_t* body, size_t body_len, uint32_t timeout_ms,
                     WadaHttpReply& out);
+
+// Is the network up? WiFi.status() answers WL_CONNECTED from this (the browser is online),
+// which is what the UI's tile download checks; WiFi.localIP() stays 0.0.0.0, so the
+// features that need an address of their own (version check, File Transfer, Remote)
+// stay off. Browser: navigator.onLine (the page reports changes); native: WADA_NET.
+bool wadaNetOnline();
+void wadaNetSetOnline(bool online);
