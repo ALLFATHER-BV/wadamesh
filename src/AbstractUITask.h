@@ -141,6 +141,12 @@ public:
     (void)data;
     (void)len;
   }
+  /** Reply to MyMesh::uiSendBinaryRequest (repeater admin app: neighbours,
+   *  access list, owner info). `data` is the reply after its 4-byte reflected
+   *  tag. Default no-op. */
+  virtual void onBinaryReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+    (void)contact; (void)data; (void)len;
+  }
   /** Admin-login finished. `success=true` means the repeater accepted the
    *  password and added us to its ACL; `perms` is the granted permission
    *  bitmask (e.g. PERM_ACL_ADMIN | PERM_ACL_GUEST). On `success=false` the

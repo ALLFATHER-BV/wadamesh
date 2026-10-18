@@ -366,7 +366,7 @@ protected:
 public:
   /** Which kind of touch-UI request is currently in flight, so the response
    *  matcher in onContactResponse routes to the right callback. */
-  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3 };
+  enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3, Binary = 4 };
 
   /** Fire a REQ_TYPE_GET_STATUS from the touch UI side. Result is delivered
    *  via AbstractUITask::onPingReply when the reply arrives.
@@ -1009,6 +1009,31 @@ public:
     return r;
   }
 
+  /** Repeater admin app: send a binary REQ (first byte = REQ_TYPE_*, then its
+   *  parameters, e.g. GET_NEIGHBOURS' count/offset/order/prefix) to a repeater or
+   *  room server we are logged in to. The reply (minus its 4-byte reflected tag)
+   *  lands in AbstractUITask::onBinaryReply. Same single-flight slot as the
+   *  status/telemetry helpers above, so the caller serialises its requests. */
+  int uiSendBinaryRequest(ContactInfo& recipient, const uint8_t* payload, uint8_t len) {
+    if (!payload || len == 0) return MSG_SEND_FAILED;
+    uint32_t tag = 0, est = 0;
+    pending_req = 0;
+    int r = sendRequest(recipient, payload, len, tag, est);
+    if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+      memcpy(&_ui_pending_status, recipient.id.pub_key, 4);
+      _ui_pending_kind = UiReqKind::Binary;
+      _ui_pending_tag  = tag;
+    }
+    return r;
+  }
+
+  /** What the last LOGIN_OK said beyond "admin or not" (repeater admin app): the
+   *  ACL permission byte (data[7], PERM_ACL_* in the low two bits) and the
+   *  server's firmware version level (data[12]). `valid` is false until a
+   *  LOGIN_OK of the new format has been seen for `pub4`. */
+  struct UiLoginInfo { uint8_t pub4[4]; uint8_t acl; uint8_t fw_level; bool valid; };
+  const UiLoginInfo& uiLastLoginInfo() const { return _ui_last_login; }
+
   /** Ask a directly-heard repeater for the public regions it allows. Region
    *  discovery is direct-only in MeshCore, so this deliberately sends zero-hop
    *  and requests a zero-hop reply even when the contact has a saved flood path.
@@ -1427,6 +1452,7 @@ private:
    *  matching by pubkey alone misroutes the login OK as the REQ reply.
    *  Compare tag in onContactResponse to keep the two streams separate. */
   uint32_t _ui_pending_tag = 0;
+  UiLoginInfo _ui_last_login = {};   // uiLastLoginInfo()
   /** Deferred guest-login-then-request arm: holds the first 4 bytes of the
    *  recipient pub_key (0 = none) plus which REQ to send, set by
    *  uiSendRequestAfterGuestLogin(). onContactResponse fires the REQ when the

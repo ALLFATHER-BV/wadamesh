@@ -21651,14 +21651,15 @@ static void openRoomJoinPrompt(const uint8_t pub[32], bool after_relogin_failed)
   openAdminLoginPrompt(*c);
 }
 
+static void openRepeaterAdmin(const ContactInfo& c);   // RepeaterAdminApp.h, included below
 static void actionSheetAdminCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   ContactInfo c;
   bool ok = the_mesh.getContactByIdx(s_action_sheet_mesh_idx, c);
   closeActionSheet();
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
-  s_room_join_idx = -1;   // repeater admin login, not a room join
-  openAdminLoginPrompt(c);
+  s_room_join_idx = -1;   // repeater admin, not a room join
+  openRepeaterAdmin(c);   // the admin app (login, status, settings, console)
 }
 
 // "Join" a room server: same login mechanism as repeater admin (sendLogin is
@@ -21674,6 +21675,14 @@ static void actionSheetJoinRoomCb(lv_event_t* e) {
   if (!ok) { g_lv.task->showAlert(TR("Contact gone"), 1200); return; }
   openAdminLoginPrompt(c);
 }
+
+// ---- Repeater / room server admin app (RepeaterAdminApp.h) ---------------------
+// Shares this translation unit: it builds on the settings kit, the confirm popup and
+// the console above. These are defined further down.
+static inline void setLabelIfChanged(lv_obj_t* lbl, const char* txt);
+static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
+static bool raOverlayAboveClose();   // closes a popup opened over the app (defined by the popup registry)
+#include "RepeaterAdminApp.h"
 
 // Toggle a contact's favorite state. Persists in NVS via TouchPrefsStore (the
 // star marker + favorites filter) AND mirrors into the firmware contact
@@ -22477,7 +22486,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   // block + share contact (7), + trace/admin for repeaters (2), + Join for
   // rooms (1), + line-of-sight (1), + Show on map (1 when contact has GPS and
   // !from_map).
-  const int grid_items = (from_map ? 5 : 8) + (is_repeater ? 2 : 0) + (is_room ? 1 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
+  const int grid_items = (from_map ? 5 : 8) + (is_repeater ? 2 : 0) + (is_room ? 2 : 0) + (has_los ? 1 : 0) + (has_map_btn ? 1 : 0);
   // P4 portrait: the 2-column grid cut most labels off with "..." on the narrow
   // panel, so every action gets its own full-width row. The card grows to fit and
   // the body scrolls past the screen height like any tall sheet. Landscape and the
@@ -22627,6 +22636,7 @@ static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const ch
   if (is_room) {
     mk_btn(TR(LV_SYMBOL_LOOP "  Join"), actionSheetJoinRoomCb, COLOR_STATUS_OK);
     mk_btn(TR(LV_SYMBOL_ENVELOPE "  Open chat"), actionSheetSendMsgCb, 0);
+    mk_btn(TR(LV_SYMBOL_SETTINGS "  Admin"), actionSheetAdminCb, 0);   // the admin app, room flavour
   } else if (is_repeater) {
     mk_btn(TR(LV_SYMBOL_REFRESH "  Ping"), actionSheetPingCb, 0);
   } else {
@@ -67756,6 +67766,10 @@ void UITask::onThreadsChanged() {
 #endif
 }
 
+void UITask::onBinaryReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  raOnBinaryReply(contact, data, len);   // only the repeater admin app sends these
+}
+
 void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
   if (s_region_scan_phase != RegionScanPhase::Querying || !s_region_scan_waiting ||
       s_region_scan_next >= s_region_scan_count ||
@@ -67768,6 +67782,7 @@ void UITask::onRegionListReply(const ContactInfo& contact, const uint8_t* data, 
 }
 
 void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t len) {
+  if (raOnStatusReply(contact, data, len)) return;   // the repeater admin app asked
   s_ui_ping_deadline_ms = 0;  // reply arrived, cancel timeout
 
   unsigned batt_mv = 0;
@@ -67780,12 +67795,12 @@ void UITask::onPingReply(const ContactInfo& contact, const uint8_t* data, size_t
    *   u16 batt_mv, u16 queue_len, i16 noise_floor, i16 last_rssi,
    *   u32 n_recv, u32 n_sent, u32 air_secs, u32 uptime_secs, ...
    * Room servers and sensors reply with a JSON blob via StatsFormatHelper. */
-  if (len >= 20) {
+  if (len >= 24) {
     batt_mv   = (unsigned)(data[0] | (data[1] << 8));
     queue_len = (unsigned)(data[2] | (data[3] << 8));
     last_rssi = (int16_t)(data[6] | (data[7] << 8));
-    // uptime_secs is at offset 16 (after 2+2+2+2 + 4+4 = 16)
-    uptime_s  = (unsigned)(data[16] | (data[17] << 8) | (data[18] << 16) | (data[19] << 24));
+    // uptime_secs is at offset 20 (2+2+2+2 + recv 4 + sent 4 + airtime 4); 16 is the TX airtime
+    uptime_s  = (unsigned)(data[20] | (data[21] << 8) | (data[22] << 16) | (data[23] << 24));
     if (batt_mv >= 2000 && batt_mv <= 5500) parsed = true;
   }
   if (!parsed) {
@@ -68634,6 +68649,7 @@ void UITask::onServerClock(const ContactInfo& contact, uint32_t server_epoch) {
 }
 
 void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_t perms) {
+  if (raOnLoginResult(contact, success, perms)) return;   // the repeater admin app's login
   // Which pending attempt, if any, is this the reply to? Disarming the watchdog
   // used to be unconditional, which was harmless while it only drove a toast —
   // but it means the once-a-minute background room self-heal, logging in to some
@@ -68726,6 +68742,7 @@ void UITask::onAdminCommandReply(const ContactInfo& contact, const char* text) {
   // Only append if the reply is from the contact we're currently logged
   // into. Replies from a different repeater would be confusing — the
   // companion-serial side handles those separately via queueMessage.
+  if (raOnCliReply(contact, text)) return;   // a "wX|" reply to the admin app
   if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
   adminLogAppend("", text ? text : "");
 }
@@ -79762,6 +79779,7 @@ static constexpr uint8_t PF_BASE  = 4;
 #define P_OPEN(root) []{ return (root) != nullptr; }
 static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
+  { P_OPEN(s_ra_edit_root),          []{ raCloseEditSheet(); },           PF_COUNT },   // repeater admin: edit sheet
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet
   { P_OPEN(s_hw_pick_root),          []{ hwPickClose(); },                PF_COUNT },   // a Home widget's choices
   { P_OPEN(s_urlqr_root),            []{ closeUrlQr(); },                 PF_COUNT },   // chat URL -> QR
@@ -79846,6 +79864,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_los_root),              []{ closeLosModal(); },              PF_COUNT },
 #endif
   { P_OPEN(s_admin_root),            []{ closeAdminConsole(); },          PF_COUNT },
+  { P_OPEN(s_ra_root),               []{ raBack(); },                     PF_COUNT },   // repeater admin app (Back = one page up)
 #if CAP_LUA_APPS
   // The Store page (also where Settings -> Language lands, see luaStoreOpenLanguages)
   // was never registered, so backspace/Esc did nothing on it and the ONLY way out was
@@ -79867,6 +79886,23 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_appdrawer_root),        []{ setHomeDrawer(false); },         PF_COUNT | PF_BASE },
 };
 #undef P_OPEN
+
+// The repeater admin app is an app page, and Back reaches an app page's close hook
+// before the popup ladder, so the popups that open OVER it (console, telemetry
+// window) are closed here first, by the same registry rows.
+static bool raOverlayAboveClose() {
+  struct Over { bool (*is_open)(); void (*close)(); };
+  static const Over k_over[] = {
+    { []{ return s_admin_picker_root != nullptr; }, []{ closeAdminCmdPicker(); } },
+    { []{ return s_admin_root != nullptr; },        []{ closeAdminConsole(); } },
+#if CAP_SD || defined(TLORA_PAGER)
+    { []{ return s_telem_config_root != nullptr; }, []{ telemetryConfigClose(); } },
+    { []{ return s_telemetry_root != nullptr; },    []{ telemetryClose(); } },
+#endif
+  };
+  for (const Over& o : k_over) if (o.is_open()) { o.close(); return true; }
+  return false;
+}
 
 static bool popupRegistryAny() {
   for (const auto& e : k_popup_registry)
@@ -81470,7 +81506,109 @@ static void docAppsAudit() {
 }
 #endif
 
+#if defined(DOC_ADMIN_AUDIT)
+// The repeater admin app against a real node in range, as a GUEST only (a blank
+// login; never a password, never a set/reboot/OTA). The tour holds the loop, so the
+// mesh is pumped here while replies come in. -DDOC_ADMIN_NAME='"..."' picks the node.
+#ifndef DOC_ADMIN_NAME
+#define DOC_ADMIN_NAME "ALLFATHER Yagi"
+#endif
+static void docMeshWait(uint32_t ms, bool (*done)() = nullptr) {
+  const uint32_t t0 = millis();
+  while ((uint32_t)(millis() - t0) < ms) {
+    the_mesh.loop();
+    lv_timer_handler();
+    delay(5);
+    esp_task_wdt_reset();
+    if (done && done()) break;
+  }
+}
+static bool docRaIdle() { return s_ra && !s_ra->busy && s_ra->q_len == 0 && !s_ra->logging_in; }
+static void docRaShotPages(const char* base) {
+  char nm[40];
+  for (int part = 1; part <= 4 && s_ra_page; ++part) {
+    snprintf(nm, sizeof nm, part > 1 ? "%s_%d" : "%s", base, part);
+    auditShot(nm);
+    lv_obj_update_layout(s_ra_page);
+    if (lv_obj_get_scroll_bottom(s_ra_page) <= 0) break;
+    lv_obj_scroll_by(s_ra_page, 0, -(lv_obj_get_height(s_ra_page) - 60), LV_ANIM_OFF);
+  }
+}
+static void docAdminAudit() {
+  ContactInfo c; bool found = false;
+  for (uint32_t i = 0; i < the_mesh.getNumContacts(); ++i)
+    if (the_mesh.getContactByIdx(i, c) && strstr(c.name, DOC_ADMIN_NAME) &&
+        (c.type == ADV_TYPE_REPEATER || c.type == ADV_TYPE_ROOM)) { found = true; break; }
+  if (!found) { Serial.printf("DBG: ADMIN no contact '%s'\n", DOC_ADMIN_NAME); return; }
+  Serial.printf("DBG: ADMIN node '%s' type=%u path=%d\n", c.name, (unsigned)c.type, (int)c.out_path_len);
+  openRepeaterAdmin(c); docSettle(12);
+  auditShot("admin_login");
+  if (s_ra->role < 0) {
+    if (s_ra->logging_in) docMeshWait(25000, []{ return !s_ra->logging_in; });   // (no auto-login in this build)
+    raLoginSubmit(true);   // guest: blank password
+    docMeshWait(25000, []{ return s_ra->role >= 0 || !s_ra->logging_in; });
+  }
+  Serial.printf("DBG: ADMIN login role=%d\n", (int)s_ra->role);
+  if (s_ra->role < 0) { auditShot("admin_login_failed"); raClose(); return; }
+  docMeshWait(40000, docRaIdle);
+  const RAP::Status& st = s_ra->status;
+  Serial.printf("DBG: ADMIN status=%d batt=%u up=%lu noise=%d rssi=%d snr4=%d recv=%lu sent=%lu air=%lu rxair=%lu q=%u\n",
+                (int)s_ra->has_status, st.batt_mv, (unsigned long)st.uptime_secs, st.noise_floor, st.last_rssi, st.last_snr_q4,
+                (unsigned long)st.recv, (unsigned long)st.sent, (unsigned long)st.air_secs, (unsigned long)st.rx_air_secs, st.queue_len);
+  Serial.printf("DBG: ADMIN owner=%d fw='%s'\n", (int)s_ra->has_owner, s_ra->fw);
+  docSettle(8);
+  docRaShotPages("admin_overview");
+  if (!s_ra->is_room) {
+    raBuildView(RA_V_NEIGHBOURS); docSettle(6);
+    docMeshWait(40000, docRaIdle);
+    Serial.printf("DBG: ADMIN neighbours %d of %u\n", s_ra->nb_n, (unsigned)s_ra->nb_total);
+    for (int i = 0; i < s_ra->nb_n && i < 20; ++i)
+      Serial.printf("DBG: ADMIN nb %02X%02X%02X snr4=%d ago=%lu\n", s_ra->nb[i].prefix[0], s_ra->nb[i].prefix[1],
+                    s_ra->nb[i].prefix[2], (int)s_ra->nb[i].snr_q4, (unsigned long)s_ra->nb[i].heard_ago);
+    docSettle(8);
+    docRaShotPages("admin_neighbours");
+    s_ra->nb_order = RAP::NB_STRONGEST; s_ra->nb_n = 0; s_ra->nb_total = 0; s_ra->nb_loaded = false;
+    raBuildView(RA_V_NEIGHBOURS); docMeshWait(40000, docRaIdle); docSettle(8);
+    auditShot("admin_neighbours_strongest");
+  }
+  // The admin pages' LAYOUT, with nothing read: the role is faked locally and every
+  // queued request is dropped before the pump runs, so not one CLI line goes out.
+  {
+    const int8_t real_role = s_ra->role;
+    s_ra->role = RAP::ROLE_ADMIN;
+    static const struct { uint8_t v; const char* n; } k_pages[] = {
+      { RA_V_OVERVIEW, "admin_x_overview" }, { RA_V_IDENTITY, "admin_x_identity" }, { RA_V_RADIO, "admin_x_radio" },
+      { RA_V_FORWARD, "admin_x_repeating" }, { RA_V_ADVERTS, "admin_x_adverts" }, { RA_V_ACCESS, "admin_x_access" },
+      { RA_V_REGIONS, "admin_x_regions" }, { RA_V_ACTIONS, "admin_x_actions" }, { RA_V_CLIENTS, "admin_x_clients" },
+    };
+    for (const auto& pg : k_pages) {
+      raBuildView(pg.v);
+      raQueueClear();
+      for (int f = 0; f < RA_F_COUNT; ++f) if (s_ra->fst[f] == RA_FS_LOADING) { s_ra->fst[f] = RA_FS_UNKNOWN; raRenderField(f); }
+      docSettle(8);
+      docRaShotPages(pg.n);
+      if (pg.v == RA_V_FORWARD) {
+        raOpenEdit(RA_F_FLOODMAX); docSettle(8); auditShot("admin_x_edit_number");
+        raOpenEdit(RA_F_LOOP); docSettle(8); auditShot("admin_x_edit_choice");
+        raCloseEditSheet(); docSettle(4);
+      }
+    }
+    s_ra->role = real_role;
+    raQueueClear();
+  }
+  raBuildView(RA_V_OVERVIEW); raQueueClear(); docSettle(8);
+  s_ra->role = -1;   // the next real open logs in afresh
+  raBack();   // Back from the overview closes the app
+  docSettle(8);
+  Serial.printf("DBG: ADMIN closed root=%d bar=%d\n", (int)(s_ra_root != nullptr), (int)(s_apppage_close != nullptr));
+  auditShot("admin_after_close");
+}
+#endif
 static void docAuditFocus() {
+#if defined(DOC_ADMIN_AUDIT)
+  docAdminAudit();
+  return;
+#endif
 #if defined(DOC_APPS_AUDIT) && CAP_MICROSD
   docAppsAudit();
   return;
