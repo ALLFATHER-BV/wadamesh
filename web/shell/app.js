@@ -518,14 +518,14 @@
     var notes = [], links = [];
     if (!secure) {
       notes.push('This copy of the page connects over Wi-Fi.');
-      links.push(['For USB, Bluetooth and your location, use ', 'https://' + location.host + location.pathname]);
+      links.push(['For USB, Bluetooth and your location, use ', secureCopyUrl()]);
     } else if (ios) notes.push('On iPhone and iPad the browser has no Bluetooth or USB: connect over Wi-Fi.');
     else if (!hasSerial && !hasBle) notes.push('USB and Bluetooth need Chrome or Edge; this browser can connect over Wi-Fi.');
     else if (!hasBle) notes.push('Bluetooth needs Chrome or Edge.');
     else if (!hasSerial) notes.push('USB needs Chrome or Edge on a computer.');
     if (location.protocol === 'https:' && !local)
       links.push(['Wi-Fi to a node needs the http version (nodes speak plain ws://, which a secure page may not open): ',
-                  'http://' + location.host + location.pathname]);
+                  wifiCopyUrl('').replace(/#wifi=$/, '')]);
     var note = $('connect-note');
     note.textContent = notes.join(' ');
     links.forEach(function (l) {
@@ -570,9 +570,20 @@
     host.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goWs(); } });
   })();
 
-  // The http copy of the page, opening the chooser with this node address (#wifi=...).
+  // The hosted client has two names: app.wadamesh.com (https, behind Cloudflare) and
+  // wifi.wadamesh.com, which answers plain http only. Chrome upgrades a typed or linked
+  // http:// to https whenever the name answers https, which would bring Wi-Fi visitors
+  // straight back to the copy that may not open ws://; a name with no https stays http.
+  // (function declarations, not a var: the chooser above calls these before this runs)
+  function wifiHosts() { return { 'app.wadamesh.com': 'wifi.wadamesh.com' }; }
   function wifiCopyUrl(addr) {
-    return 'http://' + location.host + location.pathname + (addr ? '#wifi=' + encodeURIComponent(addr) : '#wifi=');
+    var h = wifiHosts()[location.hostname] || location.host;
+    return 'http://' + h + location.pathname + (addr ? '#wifi=' + encodeURIComponent(addr) : '#wifi=');
+  }
+  function secureCopyUrl() {
+    var m = wifiHosts();
+    for (var k in m) if (m[k] === location.hostname) return 'https://' + k + location.pathname;
+    return 'https://' + location.host + location.pathname;
   }
   // Arrived from the https copy with an address: the chooser, Wi-Fi, that address.
   (function wifiFromHash() {
@@ -647,7 +658,7 @@
       var bar = document.querySelector('.bar');
       bar.parentNode.insertBefore(box, bar.nextSibling);
     }
-    var how = mixed ? 'This secure (https) copy of the page may not open a plain ws:// connection to your node. Use the http copy for Wi-Fi: http://' + location.host + location.pathname
+    var how = mixed ? 'This secure (https) copy of the page may not open a plain ws:// connection to your node. Use the http copy for Wi-Fi: ' + wifiCopyUrl('').replace(/#wifi=$/, '')
       : choice.kind === 'ws'
       ? 'Check that the node has Wi-Fi on and is on the same network as this computer (a guest or IoT network often cannot reach the rest), and that you typed its address right: ' + choice.arg.replace(/^wss?:\/\//, '').replace(/\/$/, '') + '.'
       : choice.kind === 'web-serial'
