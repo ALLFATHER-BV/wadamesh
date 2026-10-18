@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en" data-sky="soft">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>try{if(localStorage.getItem('wm-theme')==='light')document.documentElement.setAttribute('data-theme','light')}catch(e){}</script>
+<meta name="theme-color" content="#000400">
+<title>WADAMESH · Web client</title>
+<meta name="description" content="The WADAMESH interface in your browser: try the demo, or drive any MeshCore companion node over USB, Bluetooth or Wi-Fi from a computer or phone. Free, no install, no account.">
+<link rel="canonical" href="https://wadamesh.com/webclient.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="WADAMESH">
+<meta property="og:url" content="https://wadamesh.com/webclient.html">
+<meta property="og:title" content="WADAMESH · Web client">
+<meta property="og:description" content="The WADAMESH interface in your browser, for any MeshCore node: USB, Bluetooth or Wi-Fi. Free, no install.">
+<meta property="og:image" content="https://wadamesh.com/og-image.png?v=2">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="32x32">
+<link rel="icon" href="wadamesh-badge.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#000400; --ink:#E6EBED; --mut:#B0BAC0; --line:#1C2428; --teal:#15B6A6; --teal-ink:#19D6C2; color-scheme:dark}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased}
+  a{color:var(--teal-ink); text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  .top{position:sticky; top:0; z-index:30; display:flex; align-items:center; gap:14px; padding:12px 22px;
+    background:var(--bar); -webkit-backdrop-filter:saturate(1.2) blur(10px); backdrop-filter:saturate(1.2) blur(10px); border-bottom:1px solid var(--line)}
+  .top .word{font-weight:700; letter-spacing:2px; font-size:1.05rem; color:var(--ink)}
+  .top .word .t{color:var(--teal)}
+  .top .tag{font-family:'JetBrains Mono',monospace; font-size:.66rem; letter-spacing:.18em; text-transform:uppercase; color:var(--mut); border:1px solid var(--line); border-radius:100px; padding:4px 9px}
+  .top .sp{flex:1}
+  .top .home{display:inline-flex; align-items:center; gap:7px; color:var(--mut); font-size:.86rem; border:1px solid var(--line); border-radius:100px; padding:6px 13px; background:var(--control)}
+  .top .home:hover{color:var(--teal-ink); border-color:var(--teal); text-decoration:none}
+  .top .home svg{width:16px;height:16px}
+
+  .wrap{max-width:1080px; margin:0 auto; padding:0 22px 80px}
+  h1{font-size:2.1rem; line-height:1.15; margin:38px 0 10px; letter-spacing:-.01em; text-wrap:balance; text-shadow:var(--glow-text)}
+  .lede{color:var(--sky-sub); max-width:66ch; font-size:1.03rem; text-shadow:var(--glow-text)}
+  .cta{display:flex; flex-wrap:wrap; gap:10px; margin-top:20px}
+  .btn{display:inline-flex; align-items:center; gap:8px; padding:10px 18px; border-radius:100px; font-size:.92rem; font-weight:600;
+    border:1px solid var(--line); background:var(--control); color:var(--ink)}
+  .btn:hover{text-decoration:none; border-color:var(--teal)}
+  .btn.pri{background:var(--accent-fill); border-color:var(--accent-fill); color:var(--on-accent)}
+  .btn svg{width:17px; height:17px}
+
+  .steps{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:30px 0 8px}
+  .step{padding:14px 16px; border-radius:14px; background:var(--surface); border:1px solid var(--line); font-size:.9rem; color:var(--mut)}
+  .step b{display:block; color:var(--ink); font-size:.95rem; margin-bottom:2px}
+  .step .n{font-family:'JetBrains Mono',monospace; color:var(--teal-ink); font-size:.75rem; letter-spacing:.12em}
+
+  .chips{display:flex; flex-wrap:wrap; gap:8px; margin:34px -10px 4px; position:sticky; top:66px; z-index:20; padding:8px 10px; border-radius:18px;
+    background:var(--bar); -webkit-backdrop-filter:saturate(1.2) blur(10px); backdrop-filter:saturate(1.2) blur(10px)}
+  .chip{display:inline-flex; align-items:center; gap:7px; padding:7px 13px; border-radius:100px; cursor:pointer; font:inherit; font-size:.85rem;
+    border:1px solid var(--line); background:var(--control); color:var(--ink2)}
+  .chip span{color:var(--dim); font-size:.78rem; font-variant-numeric:tabular-nums}
+  .chip:hover{border-color:var(--teal)}
+  .chip.on{border-color:var(--teal); background:var(--accent-soft); color:var(--teal-ink); font-weight:600}
+
+  .cat h2{font-size:1.15rem; margin:30px 0 12px; text-shadow:var(--glow-text)}
+  .grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:16px; align-items:start}
+  .app{border-radius:16px; background:var(--surface); border:1px solid var(--line); padding:16px; box-shadow:var(--shadow); scroll-margin-top:150px}
+  .app .shot{margin:-4px -4px 14px; border-radius:11px; background:#05080A; border:1px solid var(--frame-edge); display:grid; place-items:center; padding:10px; height:200px}
+  .app .shot.poster{color:var(--hue); border-color:color-mix(in srgb, var(--hue) 22%, transparent);
+    background:radial-gradient(120% 90% at 50% 110%, color-mix(in srgb, var(--hue) 26%, transparent), transparent 70%), var(--bg2)}
+  .app .shot.poster .pg{width:72px; height:72px; stroke-width:1.3; opacity:.9; filter:drop-shadow(0 0 18px color-mix(in srgb, var(--hue) 55%, transparent))}
+  .app .shot img{max-width:100%; max-height:180px; width:auto; height:auto; border-radius:6px; display:block}
+  .app .shot.tall img{width:170px; height:180px; max-height:none; object-fit:cover; object-position:top; border-radius:8px}
+  .app .head{display:flex; gap:12px; align-items:flex-start}
+  .app .ico{flex:none; width:46px; height:46px; border-radius:13px; display:grid; place-items:center;
+    color:var(--hue); background:color-mix(in srgb, var(--hue) 15%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--hue) 30%, transparent)}
+  .app .ico .g{width:24px; height:24px}
+  .app h3{font-size:1.05rem; line-height:1.25}
+  .app .ver{font-family:'JetBrains Mono',monospace; font-size:.7rem; color:var(--dim); font-weight:600; margin-left:4px}
+  .app .tl{color:var(--mut); font-size:.9rem; margin-top:2px}
+  .app .runs{display:inline-block; margin-top:12px; padding:3px 10px; border-radius:100px; font-size:.76rem; font-weight:600}
+  .app .runs.every{color:var(--ok); background:var(--ok-bg)}
+  .app .runs.most{color:var(--info); background:color-mix(in srgb, var(--info) 14%, transparent)}
+  .app .runs.some{color:var(--warn-ink); background:var(--warn-bg)}
+  .app .by{font-size:.8rem; color:var(--dim); margin-top:8px}
+  .app details{margin-top:10px; border-top:1px solid var(--line); padding-top:8px}
+  .app summary{cursor:pointer; font-size:.85rem; color:var(--teal-ink); list-style:none}
+  .app summary::-webkit-details-marker{display:none}
+  .app summary::before{content:"+ "; font-family:'JetBrains Mono',monospace}
+  .app details[open] summary::before{content:"\2212  "}
+  .app details p{font-size:.9rem; color:var(--ink2); margin-top:8px}
+  .app details ul{margin:8px 0 2px 18px; font-size:.86rem; color:var(--mut)}
+
+  .make{scroll-margin-top:140px; margin-top:56px; padding:26px; border-radius:18px; background:var(--surface); border:1px solid var(--line)}
+  .make h2{font-size:1.4rem; margin-bottom:6px}
+  .make > p{color:var(--mut); max-width:70ch}
+  .mk{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:20px}
+  .mk div{padding:16px 18px; border-radius:14px; background:var(--bg2); border:1px solid var(--line)}
+  .mk h3{font-size:.98rem; margin-bottom:6px}
+  .mk p, .mk li{font-size:.9rem; color:var(--mut)}
+  .mk ul{margin:6px 0 0 18px}
+  code{font-family:'JetBrains Mono',monospace; font-size:.82em; background:var(--bg2); border:1px solid var(--line); padding:1px 6px; border-radius:6px; color:var(--ink2); overflow-wrap:anywhere}
+  .foot{margin-top:40px; padding-top:18px; border-top:1px solid var(--line); color:var(--mut); font-size:.85rem}
+  [hidden]{display:none!important}
+
+  @media (max-width:760px){
+    .steps,.mk{grid-template-columns:1fr}
+    h1{font-size:1.65rem}
+    .wrap{padding:0 16px 60px}
+    .top{padding:10px 16px}
+    .top .tag{display:none}
+    .chips{top:60px; margin-inline:-6px; padding-inline:6px; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none}
+    .chips::-webkit-scrollbar{display:none}
+    .chip{flex:none}
+    .app .shot{height:160px}
+    .app .shot img,.app .shot.tall img{max-height:140px}
+    .app .shot.tall img{height:140px; width:140px}
+    .grid{grid-template-columns:1fr}
+    .make{padding:18px}
+  }
+
+  .gal{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:28px}
+  .gal figure{margin:0; border-radius:14px; overflow:hidden; background:#05080A; box-shadow:0 0 0 1px var(--frame-edge), var(--shadow)}
+  .gal img{display:block; width:100%; height:auto}
+  .gal figcaption{padding:9px 12px; font-size:.84rem; color:var(--mut); background:var(--surface)}
+  .sec{margin-top:52px}
+  .sec h2{font-size:1.4rem; margin-bottom:6px; text-shadow:var(--glow-text)}
+  .sec > p{color:var(--mut); max-width:72ch}
+  .ways{display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:18px}
+  .way{padding:16px 18px; border-radius:14px; background:var(--surface); border:1px solid var(--line)}
+  .way h3{font-size:1.02rem; margin-bottom:4px; display:flex; align-items:center; gap:9px}
+  .way h3 svg{width:20px; height:20px; color:var(--teal-ink)}
+  .way .who{font-size:.8rem; color:var(--dim); margin-bottom:8px}
+  .way ol{margin:0 0 0 18px; font-size:.9rem; color:var(--ink2)}
+  .way li{margin:3px 0}
+  .tbl{width:100%; border-collapse:collapse; margin-top:16px; font-size:.9rem}
+  .tblwrap{overflow-x:auto; border-radius:14px; border:1px solid var(--line); background:var(--surface); margin-top:16px}
+  .tblwrap .tbl{margin:0}
+  .tbl th,.tbl td{padding:9px 12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap}
+  .tbl tr:last-child td{border-bottom:0}
+  .tbl th{color:var(--mut); font-weight:600; font-size:.8rem; letter-spacing:.04em}
+  .tbl td.y{color:var(--ok)} .tbl td.n{color:var(--dim)}
+  .note{margin-top:12px; font-size:.86rem; color:var(--mut); max-width:80ch}
+  .two{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px}
+  .box{padding:16px 18px; border-radius:14px; background:var(--surface); border:1px solid var(--line)}
+  .box h3{font-size:1rem; margin-bottom:6px}
+  .box p,.box li{font-size:.9rem; color:var(--mut)}
+  .box ul{margin:6px 0 0 18px}
+  .faq details{border-top:1px solid var(--line); padding:12px 0}
+  .faq details:last-child{border-bottom:1px solid var(--line)}
+  .faq summary{cursor:pointer; font-weight:600}
+  .faq details p{margin-top:8px; color:var(--mut); max-width:75ch; font-size:.92rem}
+  @media (max-width:760px){
+    .gal,.ways,.two{grid-template-columns:1fr}
+  }
+</style>
+<link rel="stylesheet" href="theme.css?v=2">
+<script src="theme.js?v=2" defer></script>
+</head>
+<body>
+
+<header class="top">
+  <span class="word">WADA<span class="t">MESH</span></span>
+  <span class="tag">web client</span>
+  <span class="sp"></span>
+  <button type="button" class="wm-theme" data-theme-toggle aria-label="Switch to light mode" title="Switch to light mode"><svg class="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg><svg class="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg></button>
+  <a class="home" href="/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>
+    Home
+  </a>
+</header>
+
+<main class="wrap">
+  <h1>WADAMESH in your browser</h1>
+  <p class="lede">The same interface you run on a T-Deck or a Heltec, in a browser tab. Try it on demo data, or connect it to your own MeshCore companion node over a USB cable, Bluetooth or Wi-Fi, from a computer or a phone. Free, nothing to install, no account.</p>
+  <div class="cta">
+    <a class="btn pri" href="https://app.wadamesh.com/" data-app-link><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Open the web client</a>
+    <a class="btn" href="#connect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v14"/><path d="m8 6 4-4 4 4"/><circle cx="12" cy="19" r="3"/><path d="M8 11h8"/></svg>How to connect</a>
+  </div>
+
+  <div class="gal">
+    <figure><img src="img/webclient/home.jpg" alt="Home screen with widgets in the web client" width="800" height="480" loading="lazy"><figcaption>Home, widgets and all, at full size</figcaption></figure>
+    <figure><img src="img/webclient/chat.jpg" alt="A conversation in the web client" width="800" height="480" loading="lazy"><figcaption>Chats, channels and rooms with delivery ticks</figcaption></figure>
+    <figure><img src="img/webclient/map.jpg" alt="The map with your location in the web client" width="800" height="480" loading="lazy"><figcaption>The map, centred on where your computer or phone is</figcaption></figure>
+    <figure><img src="img/webclient/store.jpg" alt="The app Store in the web client" width="800" height="480" loading="lazy"><figcaption>The Store and Lua apps, kept in your browser</figcaption></figure>
+  </div>
+
+  <section class="sec" id="what">
+    <h2>The real interface, not a lookalike</h2>
+    <p>The web client is built from exactly the same code that runs on the devices, so it looks and behaves the same and gets every improvement with each release. Your browser does the drawing; the node does the radio. Anything a MeshCore companion node can do through its app link, the web client can do: chats, channels, rooms, contacts, repeater status and telemetry, repeater admin, the terminal, settings for your node, the map, the Store and its apps.</p>
+  </section>
+
+  <section class="sec" id="connect">
+    <h2>Connect your node</h2>
+    <p>Open the web client, press <b>Connect</b> and pick how your node is attached. It works with stock MeshCore companion firmware as well as WADAMESH and meshcomod. The page remembers your choice and reconnects by itself next time.</p>
+    <div class="ways">
+      <div class="way"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v14"/><path d="m8 6 4-4 4 4"/><circle cx="12" cy="19" r="3"/><path d="M8 11h8"/></svg>USB cable</h3><p class="who">Chrome or Edge on a computer</p><ol>
+        <li>Plug the node into the computer with a data cable.</li>
+        <li>Press Connect, then USB cable.</li>
+        <li>Pick the node's port in the browser's list.</li></ol></div>
+      <div class="way"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 7 10 10-5 5V2l5 5L7 17"/></svg>Bluetooth</h3><p class="who">Chrome or Edge on a computer or an Android phone</p><ol>
+        <li>Turn Bluetooth on, on the node.</li>
+        <li>Press Connect, then Bluetooth.</li>
+        <li>Pick the node and enter its PIN if it asks.</li></ol></div>
+      <div class="way"><h3><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><path d="M12 20h.01"/></svg>Wi-Fi</h3><p class="who">Any browser, nodes with WADAMESH or meshcomod firmware</p><ol>
+        <li>Turn Wi-Fi on, on the node, on the same network as you.</li>
+        <li>Open the <a href="http://app.wadamesh.com/">Wi-Fi version</a> of the web client.</li>
+        <li>Press Connect, then Wi-Fi, and type the node's address.</li></ol></div>
+    </div>
+    <p class="note">Why a separate Wi-Fi version? Nodes speak plain, unencrypted WebSocket on your network (encryption is too heavy for the radio's chip next to Wi-Fi), and browsers do not let a secure https page open an unencrypted connection. The Wi-Fi version is the same client on plain http. Browsers in turn only allow USB, Bluetooth and your location on secure pages, so those work in the main version. In Chrome you can also allow "Insecure content" for the site to use Wi-Fi from the main version.</p>
+  </section>
+
+  <section class="sec" id="where">
+    <h2>Where it works</h2>
+    <div class="tblwrap"><table class="tbl">
+      <tr><th></th><th>Demo</th><th>USB</th><th>Bluetooth</th><th>Wi-Fi</th><th>Your location</th></tr>
+      <tr><td>Chrome or Edge, computer</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+      <tr><td>Firefox or Safari, computer</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+      <tr><td>Android, Chrome</td><td class="y">Yes</td><td class="n">Depends on the phone</td><td class="y">Yes</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+      <tr><td>iPhone and iPad</td><td class="y">Yes</td><td class="n">No</td><td class="n">No</td><td class="y">Yes</td><td class="y">Yes</td></tr>
+    </table></div>
+    <p class="note">Apple does not allow USB or Bluetooth from a web page in any iPhone or iPad browser, so on those the web client connects over Wi-Fi only. On a phone the interface switches to portrait, uses your phone's own keyboard, and can be added to your home screen to open like an app.</p>
+  </section>
+
+  <section class="sec" id="data">
+    <h2>Your data stays with you</h2>
+    <div class="two">
+      <div class="box"><h3>Kept in your browser</h3><p>Chat history, settings and installed apps live in this browser on this device, nowhere else. Each node you connect gets its own storage, separate from the demo. Use <b>Backup this browser</b> in the page menu to move everything to another browser or computer.</p></div>
+      <div class="box"><h3>Your location</h3><p>The browser asks before it shares your location, and the web client uses it for the map, distances and bearings. It only reaches your node, and from there the mesh, when that node's own "share my position" setting is on, exactly as with a GPS on a device.</p></div>
+    </div>
+  </section>
+
+  <section class="sec" id="diff">
+    <h2>What is different from a device</h2>
+    <div class="two">
+      <div class="box"><h3>Works the same</h3><ul>
+        <li>Chats, channels, rooms and contacts</li>
+        <li>Repeater status, telemetry and admin</li>
+        <li>The map, with tiles and your location</li>
+        <li>The Store, Lua apps and languages</li>
+        <li>Your node's settings and the terminal</li></ul></div>
+      <div class="box"><h3>Only on a device</h3><ul>
+        <li>The radio tools: Spectrum, RF Monitor and Airtime</li>
+        <li>Discover scans and wardriving</li>
+        <li>Sound, the SD card and USB Files</li>
+        <li>Firmware updates (the web client is always the latest)</li></ul></div>
+    </div>
+  </section>
+
+  <section class="sec faq" id="faq">
+    <h2>Questions</h2>
+    <details><summary>Do I need a WADAMESH device?</summary><p>No. Any MeshCore companion node works, including stock MeshCore firmware on a Heltec, RAK or T-Beam. The demo needs no node at all.</p></details>
+    <details><summary>Is it the MeshCore app?</summary><p>No, it is the WADAMESH interface. It talks to your node over the same companion link the MeshCore app uses, so you use one or the other at a time on a given connection.</p></details>
+    <details><summary>Does anything go through your servers?</summary><p>The page itself, map tiles and the app Store come from wadamesh.com. Your messages go straight between your browser and your node.</p></details>
+    <details><summary>Can I use it offline?</summary><p>Once loaded, chatting through a connected node keeps working without internet. Map tiles and the Store need a connection.</p></details>
+    <details><summary>Something does not work</summary><p>Ask on <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a> or <a href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">open an issue</a>, and say which browser and node you use.</p></details>
+  </section>
+
+  <p class="foot" style="margin-top:40px;color:var(--mut);font-size:.85rem">Open source under GPL-3.0, like the firmware. <a href="/">Back to wadamesh.com</a></p>
+</main>
+</body>
+</html>
