@@ -49332,11 +49332,21 @@ static void backupMakeFilename(char* out, size_t cap, bool probe_storage) {
   }
   fs::FS* sd_fs  = probe_storage ? backupSdFs() : nullptr;
   fs::FS* int_fs = backupInternalFs();
+  // open() rather than exists(): FFat's exists() says "missing" for files that are
+  // there on the Tanmatsu (and stat lies on the P4), so without a card every export
+  // would pick nodate-1 and overwrite the last one.
+  auto present = [](fs::FS* fs, const char* path) {
+    if (!fs) return false;
+    File f = fs->open(path, FILE_READ);
+    const bool ok = (bool)f;
+    if (f) f.close();
+    return ok;
+  };
   for (unsigned n = 1; ; n++) {
     snprintf(out, cap, "meshcore-backup-nodate-%u.json", n);
     if (!probe_storage || n >= 999) return;
     char path[64]; snprintf(path, sizeof path, "/%s", out);
-    if (!(sd_fs && sd_fs->exists(path)) && !int_fs->exists(path)) return;
+    if (!present(sd_fs, path) && !present(int_fs, path)) return;
   }
 }
 
