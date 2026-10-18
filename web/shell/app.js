@@ -571,11 +571,11 @@
   })();
 
   // The hosted client has two names: app.wadamesh.com (https, behind Cloudflare) and
-  // wifi.wadamesh.com, which answers plain http only. Chrome upgrades a typed or linked
+  // wifi.app.wadamesh.com, which answers plain http only. Chrome upgrades a typed or linked
   // http:// to https whenever the name answers https, which would bring Wi-Fi visitors
   // straight back to the copy that may not open ws://; a name with no https stays http.
   // (function declarations, not a var: the chooser above calls these before this runs)
-  function wifiHosts() { return { 'app.wadamesh.com': 'wifi.wadamesh.com' }; }
+  function wifiHosts() { return { 'app.wadamesh.com': 'wifi.app.wadamesh.com' }; }
   function wifiCopyUrl(addr) {
     var h = wifiHosts()[location.hostname] || location.host;
     return 'http://' + h + location.pathname + (addr ? '#wifi=' + encodeURIComponent(addr) : '#wifi=');
