@@ -110,11 +110,11 @@
     }
   }
   var toastTimer = 0;
-  function toast(text) {
+  function toast(text, ms) {
     var t = $('toast');
     t.textContent = text; t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, 4200);
+    toastTimer = setTimeout(function () { t.hidden = true; }, ms || 4200);
   }
 
   // ---- scaling -------------------------------------------------------------------------
@@ -523,9 +523,6 @@
     else if (!hasSerial && !hasBle) notes.push('USB and Bluetooth need Chrome or Edge; this browser can connect over Wi-Fi.');
     else if (!hasBle) notes.push('Bluetooth needs Chrome or Edge.');
     else if (!hasSerial) notes.push('USB needs Chrome or Edge on a computer.');
-    if (location.protocol === 'https:' && !local)
-      links.push(['Wi-Fi to a node needs the http version (nodes speak plain ws://, which a secure page may not open): ',
-                  wifiCopyUrl('').replace(/#wifi=$/, '')]);
     var note = $('connect-note');
     note.textContent = notes.join(' ');
     links.forEach(function (l) {
@@ -540,15 +537,6 @@
     note.hidden = !notes.length && !links.length;
     var host = $('ws-host');
     host.value = lsGet(HOST_KEY) || '';
-    // On the https copy a node's plain ws:// is blocked: a button takes the address to the
-    // http copy, which opens this chooser with it (#wifi=<address>).
-    if (location.protocol === 'https:' && !local) {
-      var go = document.createElement('button');
-      go.type = 'button'; go.className = 'btn'; go.id = 'btn-wifi-copy';
-      go.textContent = 'Open the Wi-Fi version';
-      go.addEventListener('click', function () { location.href = wifiCopyUrl(host.value.trim()); });
-      dlg.querySelector('.choice.wifi').appendChild(go);
-    }
     dlg.querySelector('[data-kind="web-serial"]').addEventListener('click', function () {
       navigator.serial.requestPort().then(function (port) {
         var i = port.getInfo ? port.getInfo() : {};
@@ -563,9 +551,35 @@
       var h = host.value.trim();
       if (!h) { host.focus(); return; }
       lsSet(HOST_KEY, h);
-      var url = /^wss?:\/\//i.test(h) ? h : 'ws://' + (/:\d+$/.test(h) ? h : h + ':8765') + '/';
+      var url = wsUrlFor(h);
+      // The https copy may not open a node's plain ws://: say so, then carry the address
+      // to the Wi-Fi (http) copy, which connects to it on arrival (#wifi=<address>).
+      if (location.protocol === 'https:' && !local && /^ws:/i.test(url)) { wifiHandoff(h); return; }
       connectTo('ws', url);
     };
+    function wifiHandoff(addr) {
+      var wifi = dlg.querySelector('.choice.wifi');
+      var old = $('wifi-handoff');
+      if (old) old.remove();
+      var box = document.createElement('div');
+      box.id = 'wifi-handoff';
+      var p = document.createElement('p');
+      p.textContent = 'Wi-Fi opens the Wi-Fi version of this page (' + wifiCopyUrl('').replace(/^http:\/\/|\/?#wifi=$/g, '') +
+        ') and connects to ' + addr + ' there. Browsers only let a plain http page talk to a node on your ' +
+        'network; USB, Bluetooth and your location stay on this secure page.';
+      var row = document.createElement('div');
+      row.className = 'row';
+      var go = document.createElement('button');
+      go.type = 'button'; go.className = 'btn primary'; go.textContent = 'Continue';
+      go.addEventListener('click', function () { location.href = wifiCopyUrl(addr); });
+      var no = document.createElement('button');
+      no.type = 'button'; no.className = 'btn'; no.textContent = 'Cancel';
+      no.addEventListener('click', function () { box.remove(); host.focus(); });
+      row.appendChild(go); row.appendChild(no);
+      box.appendChild(p); box.appendChild(row);
+      wifi.appendChild(box);
+      go.focus();
+    }
     dlg.querySelector('[data-kind="ws"]').addEventListener('click', goWs);
     host.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); goWs(); } });
   })();
@@ -580,6 +594,9 @@
     var h = wifiHosts()[location.hostname] || location.host;
     return 'http://' + h + location.pathname + (addr ? '#wifi=' + encodeURIComponent(addr) : '#wifi=');
   }
+  function wsUrlFor(h) {
+    return /^wss?:\/\//i.test(h) ? h : 'ws://' + (/:\d+$/.test(h) ? h : h + ':8765') + '/';
+  }
   function secureCopyUrl() {
     var m = wifiHosts();
     for (var k in m) if (m[k] === location.hostname) return 'https://' + k + location.pathname;
@@ -592,8 +609,19 @@
     history.replaceState(null, '', location.pathname + location.search);
     if (choice) return;   // already on a node
     var addr = decodeURIComponent(m[1] || '');
-    if (addr) { $('ws-host').value = addr; lsSet(HOST_KEY, addr); }
-    setTimeout(function () { $('btn-connect').click(); $('ws-host').focus(); }, 0);
+    if (!addr) { setTimeout(function () { $('btn-connect').click(); $('ws-host').focus(); }, 0); return; }
+    $('ws-host').value = addr; lsSet(HOST_KEY, addr);
+    try { sessionStorage.setItem('wada.wifiNotice', '1'); } catch (e) {}
+    setTimeout(function () { connectTo('ws', wsUrlFor(addr)); }, 0);
+  })();
+  // Just handed over from the https copy (the connect reloads the page): say where we are.
+  (function wifiNotice() {
+    if (!choice || choice.kind !== 'ws') return;   // still the demo: the connect reloads into the node
+    var shown = null;
+    try { shown = sessionStorage.getItem('wada.wifiNotice'); sessionStorage.removeItem('wada.wifiNotice'); } catch (e) {}
+    if (shown)
+      toast('This is the Wi-Fi version of the web client: plain http, so it can reach your node. ' +
+            'For USB, Bluetooth and your location use ' + secureCopyUrl().replace(/^https:\/\/|\/$/g, '') + '.', 9000);
   })();
   $('btn-connect').addEventListener('click', function () {
     if (choice) { switchTo(null); return; }   // Disconnect: back to the demo
