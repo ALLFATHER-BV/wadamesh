@@ -50,6 +50,7 @@ void save() {
   }
   fclose(f);
   rename(tmp.c_str(), dbPath().c_str());
+  wadaHostFsTouched();
 }
 bool keyOk(const char* key) { return key && *key && strlen(key) <= 15; }   // NVS_KEY_NAME_MAX_SIZE-1
 }  // namespace

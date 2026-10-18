@@ -9,11 +9,20 @@
 #include <string>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
+
+#ifndef WADA_DEFAULT_DATA_DIR
+#define WADA_DEFAULT_DATA_DIR "wadamesh-data"
+#endif
+
+namespace { std::atomic<unsigned> g_fs_gen{0}; }
+void wadaHostFsTouched() { g_fs_gen.fetch_add(1, std::memory_order_relaxed); }
+unsigned wadaHostFsGeneration() { return g_fs_gen.load(std::memory_order_relaxed); }
 
 const std::string& wadaHostDataDir() {
   static std::string dir = [] {
     const char* e = getenv("WADA_DATA_DIR");
-    std::string d = (e && *e) ? e : "wadamesh-data";
+    std::string d = (e && *e) ? e : WADA_DEFAULT_DATA_DIR;
     wadaHostMkdirs(d);
     return d;
   }();
@@ -32,13 +41,48 @@ bool wadaHostMkdirs(const std::string& path) {
 }
 
 namespace {
+// A file opened for writing: the real VFS file, plus "the flash changed" on every write
+// and on close (wadaHostFsTouched: the browser persists its IDBFS mount after writes).
+class TouchingFileImpl : public FileImpl {
+public:
+  explicit TouchingFileImpl(FileImplPtr f) : _f(std::move(f)) {}
+  ~TouchingFileImpl() override { _f.reset(); wadaHostFsTouched(); }
+  size_t write(const uint8_t* buf, size_t size) override { size_t n = _f->write(buf, size); wadaHostFsTouched(); return n; }
+  size_t read(uint8_t* buf, size_t size) override { return _f->read(buf, size); }
+  void flush() override { _f->flush(); wadaHostFsTouched(); }
+  bool seek(uint32_t pos, SeekMode mode) override { return _f->seek(pos, mode); }
+  size_t position() const override { return _f->position(); }
+  size_t size() const override { return _f->size(); }
+  bool setBufferSize(size_t size) override { return _f->setBufferSize(size); }
+  void close() override { _f->close(); wadaHostFsTouched(); }
+  time_t getLastWrite() override { return _f->getLastWrite(); }
+  const char* path() const override { return _f->path(); }
+  const char* name() const override { return _f->name(); }
+  boolean isDirectory(void) override { return _f->isDirectory(); }
+  FileImplPtr openNextFile(const char* mode) override { return _f->openNextFile(mode); }
+  boolean seekDir(long position) override { return _f->seekDir(position); }
+  String getNextFileName(void) override { return _f->getNextFileName(); }
+  String getNextFileName(bool* isDir) override { return _f->getNextFileName(isDir); }
+  void rewindDirectory(void) override { _f->rewindDirectory(); }
+  operator bool() override { return (bool)*_f; }
+private:
+  FileImplPtr _f;
+};
+
 // SPIFFS/LittleFS semantics on top of real folders: a write never fails for want of a folder.
 class FlatVFSImpl : public VFSImpl {
 public:
   FileImplPtr open(const char* path, const char* mode, const bool create) override {
     const bool writes = mode && mode[0] != 'r';
-    return VFSImpl::open(path, mode, create || writes);
+    FileImplPtr f = VFSImpl::open(path, mode, create || writes);
+    if (!writes || !f) return f;
+    wadaHostFsTouched();
+    return std::make_shared<TouchingFileImpl>(std::move(f));
   }
+  bool rename(const char* from, const char* to) override { bool ok = VFSImpl::rename(from, to); wadaHostFsTouched(); return ok; }
+  bool remove(const char* path) override { bool ok = VFSImpl::remove(path); wadaHostFsTouched(); return ok; }
+  bool mkdir(const char* path) override { bool ok = VFSImpl::mkdir(path); wadaHostFsTouched(); return ok; }
+  bool rmdir(const char* path) override { bool ok = VFSImpl::rmdir(path); wadaHostFsTouched(); return ok; }
 };
 size_t duBytes(const std::string& dir) {
   size_t total = 0;
@@ -93,7 +137,7 @@ static const size_t k_lfs_total = 0x4C0000;
 
 fs::SPIFFSFS::SPIFFSFS() : FS(g_spiffs_impl) {}
 bool fs::SPIFFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *g_spiffs_impl, g_spiffs_vol, "spiffs"); }
-bool fs::SPIFFSFS::format() { if (!g_spiffs_vol.mounted) begin(); rmTree(g_spiffs_vol.root, true); return true; }
+bool fs::SPIFFSFS::format() { if (!g_spiffs_vol.mounted) begin(); rmTree(g_spiffs_vol.root, true); wadaHostFsTouched(); return true; }
 size_t fs::SPIFFSFS::totalBytes() { return k_spiffs_total; }
 size_t fs::SPIFFSFS::usedBytes() { return g_spiffs_vol.mounted ? duBytes(g_spiffs_vol.root) : 0; }
 void fs::SPIFFSFS::end() { g_spiffs_impl->mountpoint(NULL); g_spiffs_vol.mounted = false; }
@@ -101,7 +145,7 @@ fs::SPIFFSFS SPIFFS;
 
 fs::LittleFSFS::LittleFSFS() : FS(g_lfs_impl) {}
 bool fs::LittleFSFS::begin(bool, const char*, uint8_t, const char*) { return mountVolume(*this, *g_lfs_impl, g_lfs_vol, "littlefs"); }
-bool fs::LittleFSFS::format() { if (!g_lfs_vol.mounted) begin(); rmTree(g_lfs_vol.root, true); return true; }
+bool fs::LittleFSFS::format() { if (!g_lfs_vol.mounted) begin(); rmTree(g_lfs_vol.root, true); wadaHostFsTouched(); return true; }
 size_t fs::LittleFSFS::totalBytes() { return k_lfs_total; }
 size_t fs::LittleFSFS::usedBytes() { return g_lfs_vol.mounted ? duBytes(g_lfs_vol.root) : 0; }
 void fs::LittleFSFS::end() { g_lfs_impl->mountpoint(NULL); g_lfs_vol.mounted = false; }

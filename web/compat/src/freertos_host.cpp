@@ -13,6 +13,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#if defined(__EMSCRIPTEN__)
+#include <pthread.h>
+#endif
 
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -57,7 +60,13 @@ TaskHandle_t xTaskCreateStaticPinnedToCore(TaskFunction_t fn, const char* name, 
 }
 void vTaskDelete(TaskHandle_t t) {
   if (t == nullptr || t == t_self) {
+#if defined(__EMSCRIPTEN__)
+    // The browser build has no C++ exceptions (smaller, faster wasm): end the pthread
+    // directly. Like vTaskDelete(NULL) on FreeRTOS, the task's locals are not unwound.
+    if (t_self) pthread_exit(nullptr);
+#else
     if (t_self) throw TaskExit{};
+#endif
     fprintf(stderr, "[freertos] vTaskDelete(NULL) from the main thread ignored\n");
     return;
   }

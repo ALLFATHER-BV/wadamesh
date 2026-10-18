@@ -170,3 +170,11 @@ extern "C" char* utoa(unsigned int value, char* str, int base) {
   str[j] = 0;
   return str;
 }
+
+#if defined(__EMSCRIPTEN__)
+// The browser owns the clock: ClockFloorRTC::pushSystemClock's settimeofday() fails
+// as it does for a normal user natively (Emscripten's libc has no settimeofday).
+#include <errno.h>
+#include <sys/time.h>
+extern "C" int settimeofday(const struct timeval*, const struct timezone*) { errno = EPERM; return -1; }
+#endif
