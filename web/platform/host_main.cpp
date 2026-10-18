@@ -80,7 +80,6 @@ void AutoDiscoverRTCClock::begin(TwoWire&) {}
 uint32_t AutoDiscoverRTCClock::getCurrentTime() { return _fallback->getCurrentTime(); }
 void AutoDiscoverRTCClock::setCurrentTime(uint32_t t) { _fallback->setCurrentTime(t); }
 
-extern void (*g_wada_restart_hook)();
 void WebBoard::reboot() { esp_restart(); }
 void WebBoard::powerOff() { esp_restart(); }
 
@@ -292,6 +291,9 @@ int main(int argc, char** argv) {
   Serial.println("[BOOT] ui ready");
 
   while (wadaHostStep()) SDL_Delay(4);
+  // Closing the window is the web board's power-off: flush what the device flushes
+  // on its deliberate power paths (chat history is written lazily).
+  ui_task.persistHistoryNow();
 
   if (s_win) { SDL_DestroyTexture(s_tex); SDL_DestroyRenderer(s_ren); SDL_DestroyWindow(s_win); SDL_Quit(); }
   fflush(stdout);

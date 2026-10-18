@@ -39,6 +39,9 @@
   #define CAP_LOCK_SCREEN  0   // no unlock button
   #define CAP_BATTERY      0
   #define CAP_USB_FILES    0
+  #define CAP_RADIO_TOOLS  0   // no radio of its own: no Signal / Discover / Spectrum
+  #define CAP_SCREEN_MIRROR 0  // it IS the browser view: no Remote / VNC
+  #define CAP_WEB_BROWSER  0   // a page cannot fetch arbitrary sites (CORS)
   #define CAP_BUILTIN_LANGS    1   // no Lua Store download yet: carry the translations
   #define CAP_BUILTIN_LUA_APPS 1   // ...and the catalog's apps
 
@@ -497,10 +500,23 @@
 // Tap) have that headroom; the 2 MB Heltec V4 TFT can't complete the handshake
 // (fetch returns -1), so the Web app is gated out there. Tapping a link in chat still
 // offers "Create QR" everywhere — only "Open in web" is gated to these boards.
-#if defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)
-  #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
-#else
-  #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
+#ifndef CAP_WEB_BROWSER
+  #if defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)
+    #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
+  #else
+    #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
+  #endif
+#endif
+
+// ---- Radio tools + screen mirror ----------------------------------------------
+// The drawer's Signal / Discover / Spectrum tiles drive the board's OWN LoRa radio,
+// and Remote / VNC serve this screen to a browser. Every radio board has both; a
+// board without its own radio (the browser build, WADA_WEB) opts out in its block.
+#ifndef CAP_RADIO_TOOLS
+  #define CAP_RADIO_TOOLS 1
+#endif
+#ifndef CAP_SCREEN_MIRROR
+  #define CAP_SCREEN_MIRROR 1
 #endif
 
 // ---- Lua app host (LUA_APPS.md) --------------------------------------------

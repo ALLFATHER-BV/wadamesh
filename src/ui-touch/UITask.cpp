@@ -55213,13 +55213,15 @@ static const AppTileDef k_app_tiles[] = {
   { UI_ICON_AT_SIGN,            "Mentions",  APPACT_MENTIONS,  HUE_MSG },
   { UI_ICON_MAP_PIN,            "Map",       APPACT_MAP,       HUE_PLACE },
   { UI_ICON_RADIO,              "Advertise", APPACT_ADVERT,    HUE_RADIO },
+#if CAP_RADIO_TOOLS
   { UI_ICON_SIGNAL,             "Signal",    APPACT_SIGNAL,    HUE_RADIO },
   { UI_ICON_RADAR,              "Discover",  APPACT_DISCOVER,  HUE_RADIO },   // active node-discovery sweep
   { UI_ICON_AUDIO_LINES,        "Spectrum",  APPACT_SPECTRUM,  HUE_RADIO },   // RF spectrum analyzer
+#endif
 #if defined(HAS_TOUCH_UI)
   { UI_ICON_SQUARE_TERMINAL,    "Terminal",  APPACT_TERMINAL,  HUE_SYS },
 #endif
-#if !defined(HAS_TANMATSU)
+#if !defined(HAS_TANMATSU) && CAP_SCREEN_MIRROR
   { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // headless web-resolution UI
   { UI_ICON_CAST,               "VNC",       APPACT_VNC,       HUE_SYS },     // browser screen mirror
 #endif
