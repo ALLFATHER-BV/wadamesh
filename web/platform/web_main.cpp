@@ -44,12 +44,19 @@ struct PtrEv { bool down; int16_t x, y; };
 PtrEv s_q[64];
 unsigned s_qh = 0, s_qt = 0;
 bool s_down = false;
+uint32_t s_down_ms = 0;
+// A press must outlive a couple of LVGL input reads (LV_INDEV_DEF_READ_PERIOD) or the UI
+// never sees it: a trackpad tap-to-click sends press and release in the same frame, and
+// one 16 ms step was shorter than the 30 ms read period, so taps landed at random.
+constexpr uint32_t kMinPressMs = 70;
 
 void drainPointer() {
   while (s_qt != s_qh) {
     const PtrEv e = s_q[s_qt];
     if (e.down != s_down) {          // an edge: deliver it and stop until the next step
+      if (!e.down && (uint32_t)(millis() - s_down_ms) < kMinPressMs) return;   // hold the press
       s_down = e.down;
+      if (e.down) s_down_ms = millis();
       webPointer(e.down, e.x, e.y);
       s_qt = (s_qt + 1) & 63u;
       return;
