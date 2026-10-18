@@ -16,6 +16,7 @@
 #include "driver/sdmmc_default_configs.h"
 #include "sdmmc_cmd.h"
 #include "esp_heap_caps.h"
+#include "c6_link_health.h"
 
 static const char *TAG = "c6_at";
 
@@ -99,7 +100,7 @@ static volatile uint32_t s_sntp_at_ms = 0;   // esp_timer ms when it was sampled
 static bool s_sntp_cfged = false;
 
 // ---- worker request queue -----------------------------------------------------------------------
-typedef enum { REQ_SCAN = 1, REQ_JOIN, REQ_DISCONNECT,
+typedef enum { REQ_SCAN = 1,
                REQ_SOCK_CONNECT, REQ_SOCK_SEND, REQ_SOCK_PULL, REQ_SOCK_CLOSE,
                REQ_SERVER_START, REQ_SERVER_STOP } req_type_t;
 // Blocking bridge: the caller stack-allocates `status` (REQ_PENDING) and polls it; the worker writes
@@ -109,7 +110,6 @@ typedef enum { REQ_SCAN = 1, REQ_JOIN, REQ_DISCONNECT,
 #define REQ_FAIL    2
 typedef struct {
     req_type_t type;
-    char ssid[33]; char pass[65];              // JOIN
     char host[96]; uint16_t port; bool ssl;    // SOCK_CONNECT
     int  id;                                   // SOCK_*
     const uint8_t *data; size_t len;           // SOCK_SEND (caller's buffer; caller blocks until done)
@@ -117,6 +117,39 @@ typedef struct {
 } c6_req_t;
 static QueueHandle_t s_reqq = NULL;
 static TaskHandle_t  s_worker = NULL;
+
+// ---- association slot (latest wins) ---------------------------------------------------------------
+// Join/disconnect do NOT go through the request queue: a 6-deep FIFO filled up when main.cpp's 10 s
+// retry fired disconnect+join pairs behind a slow CWJAP, the user's own Connect was then dropped on
+// a full queue, and a queued CWQAP that ran right after a successful join disconnected again. One
+// slot instead: a join overwrites any pending op, a disconnect clears a pending join. The worker
+// takes the slot atomically and marks the join running in the same critical section, so
+// c6at_join_busy() never sees a gap between "pending" and "running".
+typedef enum { ASSOC_NONE = 0, ASSOC_JOIN, ASSOC_LEAVE } assoc_op_t;
+static portMUX_TYPE   s_assoc_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile assoc_op_t s_assoc_op = ASSOC_NONE;
+static char           s_assoc_ssid[33], s_assoc_pass[65];
+static volatile bool  s_join_running = false;
+static volatile bool  s_want_assoc   = false;   // last request was a join (not a disconnect)
+static char           s_last_ssid[33], s_last_pass[65];   // worker-only: last join taken, for rejoin after a reset
+
+// ---- link health (worker-only; see c6_link_health.h) --------------------------------------------
+// A C6 whose ESP-AT stack wedges mid-session (#685: scans empty, Connect dead after about an hour,
+// only a reboot helped) used to stay dead: s_up was set once and every command just timed out.
+// The worker now counts command timeouts, takes the link down on a stall, resets the C6 through
+// the same path the boot uses (with backoff), then rejoins and re-arms the listener.
+static c6h_t          s_health;
+static bool           s_health_armed = false;   // count outcomes only while the worker runs an up link
+static c6h_act_t      s_health_act   = C6H_ACT_NONE;
+static volatile bool  s_recovering   = false;   // link down after a runtime stall, reset pending/running
+
+static inline uint32_t now_ms(void) { return (uint32_t)(esp_timer_get_time() / 1000); }
+
+static void health_note(c6h_res_t r, c6h_kind_t k) {
+    if (!s_health_armed) return;
+    c6h_act_t a = c6h_note(&s_health, r, k, now_ms());
+    if (a > s_health_act) s_health_act = a;
+}
 
 // ---- transport ---------------------------------------------------------------------------------
 
@@ -355,44 +388,66 @@ static size_t drain_rx(char *out, size_t sz, uint32_t deadline_ms) {
 
 static void urc_scan(const char *buf, size_t n);   // spot +IPD / <id>,CLOSED lines in any response
 
-bool c6at_command(const char *cmd, char *resp, size_t resp_sz, uint32_t timeout_ms) {
-    if (!s_transport_up || !s_tx) return false;
+// One AT exchange. Result is tri-state (+busy) so the link-health counter can tell "the C6
+// answered ERROR" (alive) from "nothing came back" (possibly wedged).
+static c6h_res_t at_exec(const char *cmd, char *resp, size_t resp_sz, uint32_t timeout_ms,
+                         c6h_kind_t kind) {
+    if (resp && resp_sz) resp[0] = '\0';
+    if (!s_transport_up || !s_tx) return C6H_RES_TIMEOUT;
+    // A stall is already decided: fail the rest of the current request at once instead of
+    // spending another full timeout per command before the worker gets to the reset.
+    if (s_health_armed && s_health_act == C6H_ACT_STALL) return C6H_RES_TIMEOUT;
     int len = snprintf((char *)s_tx, C6_TX_CAP, "%s\r\n", cmd);
-    if (len <= 0 || len >= C6_TX_CAP) return false;
+    if (len <= 0 || len >= C6_TX_CAP) return C6H_RES_ERR;
     if (!transport_send_packet(s_tx, (size_t)len, 1000)) {
         ESP_LOGW(TAG, "send '%s' failed", cmd);
-        return false;
+        health_note(C6H_RES_TIMEOUT, kind);   // the C6 is not taking data: same as no answer
+        return C6H_RES_TIMEOUT;
     }
 
     // Collect the reply until a terminating status line appears. Static: only the worker calls this.
     static char buf[3584]; size_t n = 0; buf[0] = '\0';
-    uint32_t deadline = (uint32_t)(esp_timer_get_time() / 1000) + timeout_ms;
-    bool ok = false, done = false, truncated = false;
-    while (!done && (uint32_t)(esp_timer_get_time() / 1000) < deadline) {
+    uint32_t deadline = now_ms() + timeout_ms;
+    c6h_res_t res = C6H_RES_TIMEOUT;
+    bool done = false, truncated = false;
+    while (!done && now_ms() < deadline) {
         static char chunk[C6_RECV_BUF];
         size_t got = drain_rx(chunk, sizeof(chunk), deadline);
-        bool chunk_ok = false, chunk_err = false;
+        bool chunk_ok = false, chunk_err = false, chunk_busy = false;
         if (got) {
             // A dense CWLAP response can fill `buf` before ESP-AT sends its
             // terminal status packet. Always inspect the fresh chunk too, or
             // the discarded trailing OK turns a successful scan into TIMEOUT.
             chunk_ok = strstr(chunk, "\r\nOK\r\n") || (got >= 4 && !strncmp(chunk, "OK\r\n", 4));
             chunk_err = strstr(chunk, "\r\nERROR\r\n") || strstr(chunk, "\r\nFAIL\r\n");
+            // "busy p..." / "busy s...": ESP-AT rejected the line because it is still stuck on
+            // something else. No OK/ERROR will follow, so stop waiting for one.
+            chunk_busy = strstr(chunk, "busy p") || strstr(chunk, "busy s");
             size_t cp = (n + got < sizeof(buf) - 1) ? got : (sizeof(buf) - 1 - n);
             memcpy(buf + n, chunk, cp); n += cp; buf[n] = '\0';
             if (cp < got) truncated = true;
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(2));   // SDIO read error: don't spin the core until the deadline
         }
         if (chunk_ok || strstr(buf, "\r\nOK\r\n") || (n >= 4 && !strncmp(buf, "OK\r\n", 4))) {
-            ok = true; done = true;
+            res = C6H_RES_OK; done = true;
         } else if (chunk_err || strstr(buf, "\r\nERROR\r\n") || strstr(buf, "\r\nFAIL\r\n")) {
-            ok = false; done = true;
+            res = C6H_RES_ERR; done = true;
+        } else if (chunk_busy) {
+            res = C6H_RES_BUSY; done = true;
         }
     }
     urc_scan(buf, n);   // "+IPD"/"<id>,CLOSED" lines interleave with command output — never miss them
-    if (resp) { strncpy(resp, buf, resp_sz - 1); resp[resp_sz - 1] = '\0'; }
-    ESP_LOGI(TAG, "AT '%s' -> %s (%u bytes%s)", cmd, ok ? "OK" : (done ? "ERR" : "TIMEOUT"),
-             (unsigned)n, truncated ? ", truncated" : "");
-    return ok;
+    if (resp && resp_sz) { strncpy(resp, buf, resp_sz - 1); resp[resp_sz - 1] = '\0'; }
+    static const char *const RES_NAME[] = { "OK", "ERR", "TIMEOUT", "BUSY" };
+    ESP_LOGI(TAG, "AT '%s' -> %s (%u bytes%s)", cmd, RES_NAME[res], (unsigned)n,
+             truncated ? ", truncated" : "");
+    health_note(res, kind);
+    return res;
+}
+
+bool c6at_command(const char *cmd, char *resp, size_t resp_sz, uint32_t timeout_ms) {
+    return at_exec(cmd, resp, resp_sz, timeout_ms, C6H_KIND_CMD) == C6H_RES_OK;
 }
 
 // ---- TEMP diagnostic: scan the C6's mfg_nvs partition for the baked-in GATT service table --------
@@ -518,6 +573,30 @@ bool c6at_begin(void) {
     c6at_command("AT+CWMODE=1", NULL, 0, 1000);    // station mode
     c6at_command("AT+CIPMUX=1", NULL, 0, 1000);    // multi-connection (link ids 0..4)
     c6at_command("AT+CIPRECVMODE=1", NULL, 0, 1000); // passive rx: data buffers on the C6, host pulls
+    // Modem sleep off (#685). The C6 runs off the P4's supply, so the saving is small, and a
+    // sleeping station that misses beacons is the likeliest way for an old AT build to drift off
+    // its AP. Re-sent after every runtime reset, since c6at_begin is the shared bring-up path.
+    if (!c6at_command("AT+SLEEP=0", NULL, 0, 1000))
+        printf("[C6AT] AT+SLEEP=0 not accepted by this AT build (ignored)\n");
+    {   // Let the C6 rejoin a lost AP by itself (every 5 s, unlimited). Query first: the setting is
+        // stored in the C6's flash, so only write it when it differs. ERROR on the query = an AT
+        // build without the command; the P4-side retry in main.cpp still covers reconnects.
+        char r[96];
+        if (!c6at_command("AT+CWRECONNCFG?", r, sizeof(r), 1000)) {
+            printf("[C6AT] AT+CWRECONNCFG unsupported on this AT build (ignored)\n");
+        } else {
+            const char *q = strstr(r, "+CWRECONNCFG:");
+            int iv = -1, cnt = -1;
+            if (q) sscanf(q + 13, "%d,%d", &iv, &cnt);
+            if (iv == 5 && cnt == 0) {
+                printf("[C6AT] C6 auto-reconnect already on (5 s, unlimited)\n");
+            } else {
+                bool ok = c6at_command("AT+CWRECONNCFG=5,0", NULL, 0, 1000);
+                printf("[C6AT] C6 auto-reconnect 5 s, unlimited -> %s (was %d,%d)\n",
+                       ok ? "OK" : "ERROR (ignored)", iv, cnt);
+            }
+        }
+    }
     {   // Log the slave firmware version once per boot (cheap, invaluable in bug reports).
         // BLE survey result (2026-07-15, factory LilyGo ESP-AT v4.1.0.0-dev): BLE commands PRESENT,
         // but the GATT table is the BAKED-IN stock demo (16-bit 0xC30x/0xC40x chars) — ESP-AT can't
@@ -613,7 +692,9 @@ static void worker_sock_connect(c6_req_t *rq) {
     char cmd[160];
     snprintf(cmd, sizeof(cmd), "AT+CIPSTART=%d,\"%s\",\"%s\",%u",
              rq->id, rq->ssl ? "SSL" : "TCP", rq->host, (unsigned)rq->port);
-    bool ok = c6at_command(cmd, NULL, 0, 15000);
+    // SOFT: a connect can time out because the far host is dead, not the C6. It only asks for a
+    // liveness ping and never counts toward the stall streak (tile fetches hit dead hosts).
+    bool ok = at_exec(cmd, NULL, 0, 15000, C6H_KIND_SOFT) == C6H_RES_OK;
     s->open = ok;
     if (rq->status) *rq->status = ok ? REQ_OK : REQ_FAIL;
 }
@@ -630,7 +711,12 @@ static void worker_sock_send(c6_req_t *rq) {
         snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d,%u", rq->id, (unsigned)chunk);
         int clen = snprintf((char *)s_tx, C6_TX_CAP, "%s\r\n", cmd);
         if (!transport_send_packet(s_tx, (size_t)clen, 1000)) { ok = false; break; }
-        if (!collect_until(">", acc, sizeof(acc), 3000)) { ok = false; break; }
+        if (!collect_until(">", acc, sizeof(acc), 3000)) {
+            // No prompt: either an ERROR (link closed) or a C6 that stopped answering. Ask for a
+            // ping so a dead parser is caught even while only sends are flowing.
+            if (!strstr(acc, "ERROR")) health_note(C6H_RES_TIMEOUT, C6H_KIND_SOFT);
+            ok = false; break;
+        }
         // Raw payload: exactly `chunk` bytes, as promised by CIPSEND.
         memcpy(s_tx, p, chunk);
         if (!transport_send_packet(s_tx, chunk, 2000)) { ok = false; break; }
@@ -819,48 +905,168 @@ static void worker_do_join(const char *ssid, const char *pass) {
     }
 }
 
+// Bring the AT link up, rebuilding the SDIO slot + resetting the C6 every third failed attempt.
+// Shared by the boot path (10 attempts) and the runtime recovery path (3 attempts).
+static bool link_bringup(int attempts) {
+    for (int i = 0; i < attempts; i++) {
+        if (c6at_begin()) return true;
+        // Reuse a successfully initialized slot while the C6 is merely
+        // booting, but periodically rebuild a poisoned/half-open SDIO link.
+        if (i % 3 == 2 && i + 1 < attempts) {
+            ESP_LOGW(TAG, "worker: rebuilding C6 SDIO link after failed AT probes");
+            sdio_bring_down();
+            if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "worker: C6 reset hook failed");
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    return false;
+}
+
+// Fail one request without touching the bus (link down).
+static void req_fail_fast(const c6_req_t *req) {
+    if (req->type == REQ_SCAN) { s_scan_n = 0; s_scan_state = 0; }
+    if (req->type == REQ_SOCK_PULL && req->id >= 0 && req->id < SOCK_MAX)
+        s_sock[req->id].pull_inflight = false;   // else the link could never be kicked again
+    if (req->status) *req->status = REQ_FAIL;
+}
+
+// A stall was decided: take the link down NOW (every caller fails fast from here on), forget all
+// state that lived on the C6, and leave the reset to worker_link_recover() once the backoff allows.
+static void worker_link_stalled(void) {
+    const uint32_t now = now_ms();
+    s_health_armed = false;
+    s_health_act   = C6H_ACT_NONE;
+    s_up           = false;
+    s_recovering   = true;
+    if (c6h_reset_due(&s_health, now))
+        printf("[C6AT] link stalled: resetting the C6\n");
+    else
+        printf("[C6AT] link stalled: resetting the C6 in %lu s (backoff)\n",
+               (unsigned long)((s_health.next_reset_ms - now) / 1000));
+    // Association, IP, listener and SNTP config all lived on the C6 and die with the reset. The
+    // listener WANT flag (s_srv_want/s_srv_port) is kept: the idle loop re-arms CIPSERVER once the
+    // link is back, and the router's C6Server stays begun, so nothing app-side has to restart it.
+    s_connected = false; s_ip4 = 0; s_cur_rssi = 0;
+    s_srv_up = false;
+    s_sntp_cfged = false;
+    if (s_scan_state == -1) { s_scan_n = 0; s_scan_state = 0; }   // a scan in flight ends empty
+    // Links: mark closed so every C6Client reads connected()==false (once its ring drains) and the
+    // TCP/WS companion servers prune it; the owner's stop() frees the slot (`used` stays theirs, so
+    // a recycled id can never be closed by a stale holder). Rings are left to their consumers.
+    for (int id = 0; id < SOCK_MAX; id++) {
+        s_sock[id].open = false;
+        s_sock[id].rx_notified = false;
+        s_sock[id].pull_inflight = false;
+    }
+    // Requests already queued were aimed at the dead link: fail them so their callers return.
+    c6_req_t req;
+    while (s_reqq && xQueueReceive(s_reqq, &req, 0) == pdTRUE) req_fail_fast(&req);
+}
+
+// Reset the C6 through the boot path and, on success, rejoin the last network. Worker-only: the
+// worker owns all SDIO access, so nothing else can touch slot 1 while it is torn down.
+static void worker_link_recover(void) {
+    const uint32_t now = now_ms();
+    const unsigned attempt = (unsigned)s_health.resets + 1;
+    c6h_on_reset(&s_health, now);      // arms the backoff for the NEXT attempt, success or not
+    printf("[C6AT] reset attempt %u: SDIO down, C6 reset, AT bring-up\n", attempt);
+    sdio_bring_down();
+    if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "recover: C6 reset hook failed");
+    if (!link_bringup(3)) {
+        sdio_bring_down();             // leave the slot clean for the next attempt
+        printf("[C6AT] reset attempt %u failed: C6 still silent, next try in %lu s\n", attempt,
+               (unsigned long)((s_health.next_reset_ms - now_ms()) / 1000));
+        return;                        // stay in recovery; callers keep failing fast
+    }
+    s_recovering   = false;
+    s_health_armed = true;
+    s_health_act   = C6H_ACT_NONE;
+    printf("[C6AT] link back up after reset attempt %u\n", attempt);
+    // Rejoin: only if the last request was a join, the station is still wanted, and nothing
+    // newer is already waiting in the slot (a Connect the user tapped meanwhile wins).
+    taskENTER_CRITICAL(&s_assoc_mux);
+    if (s_want_assoc && s_sta_en && s_last_ssid[0] && s_assoc_op == ASSOC_NONE) {
+        memcpy(s_assoc_ssid, s_last_ssid, sizeof(s_assoc_ssid));
+        memcpy(s_assoc_pass, s_last_pass, sizeof(s_assoc_pass));
+        s_assoc_op = ASSOC_JOIN;
+    }
+    taskEXIT_CRITICAL(&s_assoc_mux);
+}
+
+// After a timeout the health counter asks for a plain "AT" ping; a stall takes the link down.
+static void worker_health_service(void) {
+    if (!s_health_armed) return;
+    if (s_health_act == C6H_ACT_PING) {
+        s_health_act = C6H_ACT_NONE;
+        (void)at_exec("AT", NULL, 0, 1000, C6H_KIND_PING);   // may escalate to STALL
+    }
+    if (s_health_act == C6H_ACT_STALL) worker_link_stalled();
+}
+
+// Execute the latest join/disconnect from the association slot.
+static void worker_assoc_service(void) {
+    if (s_assoc_op == ASSOC_NONE) return;     // racy peek; re-checked under the lock
+    char ssid[33], pass[65];
+    assoc_op_t op;
+    taskENTER_CRITICAL(&s_assoc_mux);
+    op = s_assoc_op;
+    if (op == ASSOC_LEAVE && !s_up) {
+        s_assoc_op = ASSOC_NONE;              // link down: the association is gone anyway
+        op = ASSOC_NONE;
+    } else if (op == ASSOC_JOIN && !s_up) {
+        op = ASSOC_NONE;                      // keep it pending until the link is back
+    } else {
+        s_assoc_op = ASSOC_NONE;
+        if (op == ASSOC_JOIN) {
+            memcpy(ssid, s_assoc_ssid, sizeof(ssid));
+            memcpy(pass, s_assoc_pass, sizeof(pass));
+            s_join_running = true;            // same critical section: no busy-gap for main.cpp
+        }
+    }
+    taskEXIT_CRITICAL(&s_assoc_mux);
+    if (op == ASSOC_JOIN) {
+        memcpy(s_last_ssid, ssid, sizeof(s_last_ssid));
+        memcpy(s_last_pass, pass, sizeof(s_last_pass));
+        worker_do_join(ssid, pass);
+        if (s_connected) worker_sntp_service(true);
+        // A (re)association drops any running CIPSERVER on the C6:
+        // re-arm the want-flag so the idle loop restarts it.
+        if (s_srv_want) s_srv_up = false;
+        s_join_running = false;
+    } else if (op == ASSOC_LEAVE) {
+        c6at_command("AT+CWQAP", NULL, 0, 3000);
+        s_connected = false; s_ip4 = 0;
+    }
+}
+
 static void c6WorkerTask(void *arg) {
     (void)arg;
+    c6h_init(&s_health);
     // Match LilyGo's factory transport lifecycle: reset immediately before
     // configuring SDIO, then let ESP-AT reach its ready state.
     if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "worker: C6 reset hook failed");
-    bool up = false;
-    for (int i = 0; i < 10 && !up; i++) {
-        up = c6at_begin();
-        if (!up) {
-            // Reuse a successfully initialized slot while the C6 is merely
-            // booting, but periodically rebuild a poisoned/half-open SDIO link.
-            if (i == 2 || i == 5 || i == 8) {
-                ESP_LOGW(TAG, "worker: rebuilding C6 SDIO link after failed AT probes");
-                sdio_bring_down();
-                if (!tdisplay_p4_reset_c6()) ESP_LOGE(TAG, "worker: C6 reset hook failed");
-            }
-            vTaskDelay(pdMS_TO_TICKS(1000));
-        }
-    }
+    bool up = link_bringup(10);
     if (!up) {
         s_dead = true;
         ESP_LOGE(TAG, "worker: C6 AT link never came up — Wi-Fi unavailable");
         // Keep servicing the queue as no-ops so requesters never wedge.
+    } else {
+        s_health_armed = true;
     }
     uint32_t last_refresh = 0;
     for (;;) {
+        // Runtime recovery: the link stalled earlier; reset once the backoff window allows.
+        if (s_recovering && c6h_reset_due(&s_health, now_ms())) worker_link_recover();
+        worker_assoc_service();
+        worker_health_service();
         c6_req_t req;
         if (xQueueReceive(s_reqq, &req, pdMS_TO_TICKS(150)) == pdTRUE) {
             if (!s_up) {                       // link dead: fail requests fast
-                if (req.type == REQ_SCAN) { s_scan_n = 0; s_scan_state = 0; }
-                if (req.status) *req.status = REQ_FAIL;
+                req_fail_fast(&req);
                 continue;
             }
             switch (req.type) {
                 case REQ_SCAN:         worker_do_scan(); break;
-                case REQ_JOIN:         worker_do_join(req.ssid, req.pass);
-                                       if (s_connected) worker_sntp_service(true);
-                                       // A (re)association drops any running CIPSERVER on the
-                                       // C6 — re-arm the want-flag so the idle loop restarts it.
-                                       if (s_srv_want) s_srv_up = false;
-                                       break;
-                case REQ_DISCONNECT:   c6at_command("AT+CWQAP", NULL, 0, 3000); s_connected = false; s_ip4 = 0; break;
                 case REQ_SOCK_CONNECT: worker_sock_connect(&req); break;
                 case REQ_SOCK_SEND:    worker_sock_send(&req); break;
                 case REQ_SOCK_PULL:    worker_sock_pull(req.id); break;
@@ -883,7 +1089,7 @@ static void c6WorkerTask(void *arg) {
                     if (req.status) *req.status = REQ_OK;
                     break;
             }
-            last_refresh = (uint32_t)(esp_timer_get_time() / 1000);
+            last_refresh = now_ms();
         } else if (s_up) {
             // Idle housekeeping:
             // 1. service links with data waiting on the C6 (+IPD seen) — pull into their rings.
@@ -951,22 +1157,34 @@ void c6at_req_scan(void) {
     if (s_dead) { s_scan_n = 0; s_scan_state = 0; return; }
     s_scan_state = -1;                       // running (set now so a poll right after sees RUNNING)
     c6_req_t r = { .type = REQ_SCAN };
-    if (s_reqq) xQueueSend(s_reqq, &r, 0);
+    // A dropped request must not leave the UI on "scanning" forever: report an empty result.
+    if (!s_reqq || xQueueSend(s_reqq, &r, 0) != pdTRUE) { s_scan_n = 0; s_scan_state = 0; }
 }
 
 void c6at_req_join(const char *ssid, const char *pass) {
     if (s_dead || !ssid) return;
-    c6_req_t r = { .type = REQ_JOIN };
-    strncpy(r.ssid, ssid, sizeof(r.ssid) - 1);
-    if (pass) strncpy(r.pass, pass, sizeof(r.pass) - 1);
-    if (s_reqq) xQueueSend(s_reqq, &r, 0);
+    taskENTER_CRITICAL(&s_assoc_mux);
+    memset(s_assoc_ssid, 0, sizeof(s_assoc_ssid));
+    memset(s_assoc_pass, 0, sizeof(s_assoc_pass));
+    strncpy(s_assoc_ssid, ssid, sizeof(s_assoc_ssid) - 1);
+    if (pass) strncpy(s_assoc_pass, pass, sizeof(s_assoc_pass) - 1);
+    s_assoc_op   = ASSOC_JOIN;          // latest wins: replaces any pending join or disconnect
+    s_want_assoc = true;
+    taskEXIT_CRITICAL(&s_assoc_mux);
 }
 
 void c6at_req_disconnect(void) {
     if (s_dead) return;
-    c6_req_t r = { .type = REQ_DISCONNECT };
-    if (s_reqq) xQueueSend(s_reqq, &r, 0);
+    taskENTER_CRITICAL(&s_assoc_mux);
+    s_assoc_op   = ASSOC_LEAVE;         // also cancels a join that has not started yet
+    s_want_assoc = false;
+    memset(s_assoc_ssid, 0, sizeof(s_assoc_ssid));
+    memset(s_assoc_pass, 0, sizeof(s_assoc_pass));
+    taskEXIT_CRITICAL(&s_assoc_mux);
 }
+
+bool c6at_join_busy(void)     { return s_join_running || s_assoc_op == ASSOC_JOIN; }
+bool c6at_is_recovering(void) { return s_recovering; }
 
 bool     c6at_connected(void)        { return s_connected; }
 uint32_t c6at_ip4(void)              { return s_ip4; }
@@ -1077,7 +1295,9 @@ bool c6at_sock_connected(int id) {
 
 void c6at_sock_close(int id) {
     if (id < 0 || id >= SOCK_MAX || !s_sock[id].used) return;
-    if (s_reqq && !s_dead) {
+    // Link down (recovering): the C6 was or will be reset, so there is nothing to close on it, and
+    // waiting for the worker would block the caller (often the main loop) through the reset.
+    if (s_reqq && !s_dead && s_up) {
         c6_req_t r = { .type = REQ_SOCK_CLOSE, .id = id };
         volatile int st = REQ_PENDING; r.status = &st;
         if (xQueueSend(s_reqq, &r, pdMS_TO_TICKS(250)) == pdTRUE)
