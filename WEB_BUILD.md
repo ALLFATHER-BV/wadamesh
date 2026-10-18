@@ -1,20 +1,26 @@
 # wadamesh in the browser (WEB_BUILD)
 
 The real wadamesh touch UI (`src/ui-touch`) built for a computer instead of an
-ESP32, driving a mesh it reaches through a backend. Phase 1 (this branch) is a
-native macOS/Linux build in an SDL2 window with a demo backend. Later phases put
-the same build in a web page (Emscripten) and connect it to a real MeshCore
-companion node.
+ESP32, driving a mesh it reaches through a backend. Phase 1 is a native
+macOS/Linux build in an SDL2 window with a demo backend; phase 2 is the same
+build in a web page (Emscripten, `web/dist/`). Phase 3 connects it to a real
+MeshCore companion node.
 
 ```
 web/build.sh host     # build web/build-host/wadamesh-host
 web/build.sh run      # build and start it (data in web/data/)
 web/build.sh shots    # run the acceptance tour headless -> web/docs/*.png
 web/build.sh smoke    # the same tour, exit status only (CI, release gate)
-web/build.sh web      # phase 2 (says so and exits)
+web/build.sh web      # the browser build -> web/dist/ (static files)
+web/build.sh web-debug  # -g + runtime assertions -> web/dist-debug/
+web/build.sh serve    # serve web/dist on http://localhost:8080 with COOP/COEP
+web/build.sh webtest  # the same tour in headless Chromium/Firefox/WebKit (Playwright)
 ```
 
-Needs cmake, ninja, SDL2 (`brew install cmake ninja sdl2`). The first build
+Needs cmake, ninja, SDL2 (`brew install cmake ninja sdl2`); the browser build
+also needs Emscripten (`brew install emscripten`, built with 6.0.12) and the
+test needs Playwright (`npm install --prefix web playwright`, then
+`cd web && npx playwright install`; `web/node_modules/` is gitignored). The first build
 runs `web/fetch-deps.sh`, which fetches pinned third-party sources into
 `web/third_party/` (gitignored). Window: 800x480, resizable; mouse = finger,
 the computer keyboard types into the focused field, Enter sends, Esc is Back,
@@ -166,8 +172,9 @@ Small and honest; what is faked says so in its header.
   (`esp_random` from the OS CSPRNG, restart = exit), and inert
   `esp_partition`, `esp_ota_ops`, `esp_core_dump`, `esp_sleep`, `nvs`,
   `esp_task_wdt`, `rtc_io`, `esp_chip_info`.
-- **Network**: `WiFi` reports no Wi-Fi hardware; `HTTPClient` fails every
-  request (tiles, update check, Store and Reader take their offline paths).
+- **Network**: `WiFi` reports no Wi-Fi hardware; `HTTPClient` goes through
+  one hook, `wadaHttpRequest()` (`wada_http.h`), which fails every request
+  today (tiles, update check, Store and Reader take their offline paths).
 - **Misc**: `mbedtls/md.h` (SHA-1/SHA-256 + HMAC for the PIN hash and the Lua
   crypto API), `rom/miniz.h` (upstream miniz's tinfl for the baked language
   and app blobs), `Wire`/`SPI` with nothing attached, rweather/Crypto's `RNG`
@@ -175,13 +182,97 @@ Small and honest; what is faked says so in its header.
 
 ## Platform (`web/platform/`)
 
-`host_main.cpp` is the board's main.cpp: it defines the board globals, starts
-SPIFFS, the mesh stand-in and the UI in `src/main.cpp`'s order, and runs one
-loop step at a time (`wadaHostStep()`: events, UI loop, mesh loop, present),
-the shape Emscripten's main loop needs. Only SDL2 APIs are used, so the same
-file builds against Emscripten's SDL2 port. Options: `--headless` (no window,
+`board.cpp` is the board's main.cpp: it defines the board globals, starts
+SPIFFS, the mesh stand-in and the UI in `src/main.cpp`'s order
+(`wadaBoardBegin()`), and runs one loop step at a time (`wadaBoardStep()`: UI
+loop, mesh loop). `host_main.cpp` is the native front end (SDL2 events, the
+scripted tour, present); `web_main.cpp` is the browser one (phase 2 below). Options: `--headless` (no window,
 for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
 `web/scripts/tour.wada` is the acceptance tour), `--shots DIR`, `--scale N`.
+
+## Phase 2: the browser build
+
+Same `web/CMakeLists.txt` under `emcmake`; only the front end differs.
+`web/platform/board.cpp` owns the board globals and src/main.cpp's
+setup()/loop() order; `host_main.cpp` (SDL2 window, scripted tour) and
+`web_main.cpp` (a `<canvas>`) are the two front ends, one per target.
+No SDL in the browser build: the page is the window.
+
+**Threads.** Emscripten pthreads (`-pthread` on every object,
+`PTHREAD_POOL_SIZE=6`, non-strict). LVGL and the UI loop run on the browser
+main thread via `emscripten_set_main_loop` (one board step per animation
+frame; no PROXY_TO_PTHREAD). The UI's background FreeRTOS tasks are pthreads
+through the unchanged compat shim: `hist_flush` always, `tile_fetch`, the
+Reader and the prefs writer on demand; file I/O from them is proxied to the
+main thread by Emscripten. Waits on the main thread spin (no Atomics.wait
+there) and are short. `vTaskDelete(NULL)` ends the pthread with `pthread_exit`
+(the browser build has no C++ exceptions; FreeRTOS does not unwind either).
+Stacks: 2 MB main, 256 KB per task. Memory: 64 MB initial, growth to 1 GB
+(the tour peaks at ~17 MB RSS natively); the growable-heap cost of pthreads
+only touches JS-side heap reads, which is one rectangle upload per frame,
+made inside the module (`EM_JS`) where HEAPU8 is kept current.
+
+Threads need SharedArrayBuffer, so the page must be cross-origin isolated:
+`Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy:
+require-corp`. `web/build.sh serve` (`web/scripts/serve.py`) sends them and
+serves the precompressed `.br`/`.gz`; `web/deploy/nginx-snippet.conf` is the
+same for our host. Without isolation the page says so and does not start.
+
+**Display and input.** The LVGL flush writes the RGB565 framebuffer
+(`WebDisplay`), which tracks the changed rectangle; each frame that rectangle
+is converted to RGBA and put on the canvas. `web/shell/app.js` scales the
+800x480 canvas to the window with the aspect kept: whole device pixels with
+nearest-neighbour when that loses at most 20 % of the space (crisp on HiDPI),
+smooth fractional scaling otherwise. Pointer events (mouse, pen, one finger)
+map to canvas pixels; press/release edges are queued and handed to the touch
+driver one per step, so a click faster than a frame is never lost. The
+keyboard maps to the same CardKB codes as the host build (ASCII, Enter,
+Backspace, Esc, Tab, arrows); Ctrl/Cmd/Alt shortcuts stay the browser's.
+
+**Storage.** `/data` is an IDBFS mount (IndexedDB database `/data`), loaded in
+`preRun` before `main()`, so the UI boots on the saved prefs, chat history,
+NVS store and Lua app data. The compat file layer bumps one counter on every
+write, close, remove, rename, mkdir, format and NVS commit
+(`wadaHostFsTouched()`); the page persists once writes settle (0.8 s quiet,
+at least every 5 s), and on `visibilitychange` (hidden) and `pagehide` after
+flushing the lazily written chat history. `esp_restart()` (Reboot, factory
+reset, ...) persists and reloads the page. "Reset demo data" deletes the
+database before the next boot (`?reset=1`). Contacts are not a stand-in file:
+the demo backend replays its cast at every boot, as a companion node will.
+
+**Network.** Still off, behind one hook: `HTTPClient` sends every request
+through `wadaHttpRequest()` (`web/compat/wada_http.h`) and serves the reply
+from memory (getString, getSize, getStreamPtr, writeToStream). It returns
+"connection refused" today. Map tiles later: implement it with a synchronous
+`emscripten_fetch` from the calling pthread (the UI's `tile_fetch` task
+already is one), make the tile server answer with CORS + CORP (COEP) or proxy
+it same-origin, and let `WiFi` report connected when the hook is live.
+
+**Size and speed** (release, `-O2`, Emscripten 6.0.12): wadamesh.wasm 2.45 MB
+(gzip 1.28 MB, brotli 1.14 MB), wadamesh.js 98 KB (brotli 23 KB); `-Os` saves
+only 2 % (most of the wasm is fonts, emoji and the baked languages/apps), so
+release stays `-O2`. First frame (Chromium, cold cache, brotli): ~0.4 s local,
+~0.5 s at 50 Mbit/s, ~1.5 s at 10 Mbit/s, ~7.4 s on "Fast 3G"; the boot splash
+then plays as on a device. The debug variant is 12.3 MB (DWARF).
+
+**Checked** with `web/build.sh webtest` in Chromium 156, Firefox 157 and
+WebKit 27 (headless, Playwright), plus the Claude desktop browser pane: the
+acceptance tour, send + reload (the sent DM is in IndexedDB and on screen after
+reload), Reboot from the Power menu, Reset demo data, a 390x844 touch phone
+(Chromium, WebKit), the no-isolation message. Scrolling a list: 60 fps
+requestAnimationFrame, ~40 UI frames/s presented (LVGL's refresh period).
+
+## Known gaps (phase 2)
+
+- The mouse wheel does not scroll (drag does, as on the panel).
+- A background tab pauses the UI loop (requestAnimationFrame); the demo mesh
+  catches up when the tab is shown again.
+- Saving on page close is best effort (IndexedDB is asynchronous); normal use
+  is covered by the debounced save.
+- In a private window IndexedDB may be refused: the page says the demo resets
+  on reload.
+- iPhone Safari has no element fullscreen; the button hides there.
+- The Power menu still offers "Download mode" (no CAP gate for it yet).
 
 ## Known gaps (phase 1)
 
@@ -202,15 +293,8 @@ for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
 ## Phase plan
 
 1. **Native host + demo** (done): this document.
-2. **Emscripten + IDBFS + demo deploy.** `emcmake cmake -S web` with SDL2 from
-   the Emscripten port; the main loop via `emscripten_set_main_loop(wadaHostStep)`;
-   `$WADA_DATA_DIR` on an IDBFS mount with a `syncfs` after Preferences and
-   history writes; a small HTML shell that scales the canvas and maps touch.
-   Decision to make: the UI's background tasks (history flush, prefs writer)
-   need pthreads (`-pthread`, so the page must be served with COOP/COEP headers)
-   or a fiber-based cooperative scheduler behind the same FreeRTOS shim
-   (Asyncify). `UITask.cpp` already compiles front-end clean with `em++`
-   (checked on this branch). HTTP over `fetch()` for the map tiles proxy.
+2. **Emscripten + IDBFS + demo deploy** (done, see "Phase 2: the browser
+   build"; left: put `web/dist/` on the site with `web/deploy/nginx-snippet.conf`).
 3. **Companion backend.** `CompanionBackend : MeshBackend` speaking the
    companion frames that `src/MyMesh.cpp`'s `handleCmdFrame()` serves
    (APP_START, DEVICE_QUERY, GET_CONTACTS, GET_CHANNEL, SEND_TXT_MSG,
