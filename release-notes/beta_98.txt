@@ -1,0 +1,22 @@
+# beta_98 - repeater and room server admin, SenseCAP Indicator, CrowPanel 10.1 touch, OTA and backup fixes, wadamesh in the browser. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards.
+
+Test build, on top of beta_97. The stable build stays beta_85.
+
+# --- New ---
+Repeater and room server admin: the Admin button on a repeater or room server now opens a full admin app instead of a password box and a raw console. Log in as admin or guest (a remembered password logs in at once), then see the node's status, firmware and owner, its neighbours (newest or strongest), telemetry and the access list, change roles, edit identity and location, radio, repeating and limits, adverts, passwords and regions, and run actions such as an advert, a clock sync, discovering neighbours, resetting counters, a reboot or a firmware update. The old console stays under Advanced.
+wadamesh in your browser: the same touch UI runs at app.wadamesh.com and drives your own MeshCore node over USB or Bluetooth (Chrome or Edge), or a wadamesh or meshcomod node over Wi-Fi from wifi.app.wadamesh.com. It brings the map, the Store and Lua apps, backups and your device's location, keeps its chats in the browser, and works on phones in portrait. Without a node it runs a demo mesh.
+Theme: Settings, Theme, Background has a Glass tiles switch (on by default); off draws the Home tiles solid.
+Large screens in landscape (T-Display P4, Tanmatsu, CrowPanel 5.0 and 10.1): the empty message box is one line tall and grows as you type.
+
+# --- Fixes ---
+Firmware updates over Wi-Fi no longer stop at 0 percent and restart the device: the download waited without yielding, so a slow start tripped the task watchdog. It now copies the image in small blocks and gives up cleanly after 15 seconds without data (#689, reported by Hixsten on a T-Deck Plus).
+Backups get one name, meshcore-backup-<date>, and a device without a set clock never overwrites an earlier backup: it numbers them instead (#688 by oumike, for #686 reported by zomgugoff). On the Tanmatsu the free name is found by opening the file, since its storage reports existing files as missing.
+T-Display P4: when the Wi-Fi chip stops answering (units running LilyGo's factory ESP-AT image lost Wi-Fi after about an hour, with empty scans and Connect doing nothing), it is now reset and rejoins the network on its own, no reboot needed (#685, reported by william-stearns). Not yet checked on a unit that shows the problem, so please report.
+Companion sync: a node keeps a sync position for up to 8 apps. When all 8 were taken, a new app was never synced at all; the slot of the app that synced longest ago is now reused.
+
+# --- Boards ---
+SenseCAP Indicator D1L is a new board in the web flasher (#682 by Confituurke): the ST7701S screen, FT6336 touch and the SX1262 radio behind the TCA9535 expander. Power off is hidden, as nothing on the board can wake it again.
+CrowPanel Advanced 10.1: touch works. The SD card driver claimed pin 45, the touch controller's data line, and shut the touch bus down after the first card check. Map tiles are kept on the board's own storage, and the boot is quieter. Still experimental, so please report what works.
+T-Display P4: Radio settings has "Always use the external antenna (MMCX)", which asks first with a warning, and the control panel has an Antenna tile.
