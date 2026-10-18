@@ -213,4 +213,7 @@ if(EMSCRIPTEN)
   # The browser companion transports (Web Serial / Web Bluetooth / WebSocket) are JS
   # glue that shares the module scope; the framing is C++ (web/mesh/BrowserTransport.cpp).
   target_link_options(wadamesh-host PRIVATE "SHELL:--pre-js ${WEB}/mesh/js/companion-transports.js")
+  # A --pre-js file is not a source CMake tracks: without this, editing the transports
+  # left wadamesh.js stale (the change built "fine" and never shipped).
+  set_property(TARGET wadamesh-host APPEND PROPERTY LINK_DEPENDS ${WEB}/mesh/js/companion-transports.js)
 endif()

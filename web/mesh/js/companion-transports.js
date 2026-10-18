@@ -160,6 +160,7 @@ var WadaCompanion = (function () {
       var opened = false;
       ws.onopen = function () {
         opened = true;
+        clearTimeout(giveUp);
         link = {
           write: function (b) { ws.send(b); return Promise.resolve(); },
           close: async function () { try { ws.close(); } catch (e) {} },
@@ -170,8 +171,15 @@ var WadaCompanion = (function () {
       ws.onmessage = function (ev) {
         if (ev.data instanceof ArrayBuffer) rx(new Uint8Array(ev.data));
       };
-      ws.onerror = function () { if (!opened) reject(new Error("could not reach " + url)); };
-      ws.onclose = function () { if (opened) lost("the WebSocket closed"); };
+      // A node on a network this computer cannot route to never answers at all: the
+      // browser would sit on its own TCP timeout (often 20 s or more) before onerror.
+      var giveUp = setTimeout(function () {
+        if (opened) return;
+        try { ws.close(); } catch (e) {}
+        reject(new Error("could not reach " + url));
+      }, 6000);
+      ws.onerror = function () { if (!opened) { clearTimeout(giveUp); reject(new Error("could not reach " + url)); } };
+      ws.onclose = function () { clearTimeout(giveUp); if (opened) lost("the WebSocket closed"); };
     });
   }
 

@@ -342,6 +342,38 @@
     }
   }
   var linkDetail = '';
+  // A node that never answered gets a plain explanation instead of an endless
+  // "Connecting": the likely causes, and the demo one click away. (Kaj's V4 sat on
+  // another VLAN, 192.168.20.x, that this computer could not route to.)
+  var linkFails = 0;
+  function linkTrouble(up, detail) {
+    var box = $('link-help');
+    if (up) { linkFails = 0; if (box && !box.hidden) { box.hidden = true; layout(); } return; }
+    if (everUp || !choice) return;
+    if (++linkFails < 2) return;            // one miss can be a slow start
+    setMode('bad', "Can't reach your node", detail || undefined);
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'link-help';
+      box.className = 'link-help';
+      var bar = document.querySelector('.bar');
+      bar.parentNode.insertBefore(box, bar.nextSibling);
+    }
+    var how = choice.kind === 'ws'
+      ? 'Check that the node has Wi-Fi on and is on the same network as this computer (a guest or IoT network often cannot reach the rest), and that you typed its address right: ' + choice.arg.replace(/^wss?:\/\//, '').replace(/\/$/, '') + '.'
+      : choice.kind === 'web-serial'
+        ? 'Check the cable (a charge-only cable carries no data) and that no other app has the port open.'
+        : 'Check that the node is on, in range, and has Bluetooth on.';
+    box.innerHTML = '';
+    var p = document.createElement('p');
+    p.textContent = 'No answer from your node yet. ' + how + ' Still trying every few seconds.';
+    var back = document.createElement('button');
+    back.type = 'button'; back.className = 'btn'; back.textContent = 'Back to the demo';
+    back.addEventListener('click', function () { switchTo(null); });
+    box.appendChild(p); box.appendChild(back);
+    box.hidden = false;
+    layout();   // the box takes height from the stage: refit the screen below it
+  }
   $('btn-reset').addEventListener('click', function () {
     if (!confirm('Reset the demo? Your messages, contacts and settings in this browser are deleted and the demo starts fresh.')) return;
     resetting = true;
@@ -445,7 +477,7 @@
       wadaBackend: choice ? { kind: choice.kind, arg: choice.arg, dataDir: dataDir }
                           : { kind: 'demo', dataDir: dataDir },
       wadaLink: function (state, name, via, key) { onLink(state, name, via, key); },
-      wadaCompanionState: function (up, detail) { if (!up) linkDetail = detail; },
+      wadaCompanionState: function (up, detail) { if (!up) linkDetail = detail; linkTrouble(up, detail); },
       wadaCompanionNeedsGesture: function (kind) {
         $('btn-pair').hidden = false;
         $('btn-pair').textContent = kind === 'ble' ? 'Pair again' : 'Reconnect';
