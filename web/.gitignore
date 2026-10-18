@@ -1,0 +1,6 @@
+# fetched by web/fetch-deps.sh (pinned, regenerable) and build output
+/third_party/
+/build/
+/build-*/
+# host runtime data (the virtual flash: prefs, SPIFFS files)
+/data/

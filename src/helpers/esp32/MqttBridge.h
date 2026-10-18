@@ -29,7 +29,8 @@ struct MqttBridgeStatus {
     uint32_t retryAtMs = 0;
 };
 
-#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(WADA_WEB)
+// (WADA_WEB: the browser build has no sockets of its own yet; same no-op bridge.)
 // ---- MQTT DISABLED on the ESP32-P4 boards (Tanmatsu + T-Display P4) ----
 // The P4's Wi-Fi runs through the esp-hosted C6 co-processor; the Arduino WiFiClient / PubSubClient
 // path this bridge uses is not wired for that and crashed at boot. Provide a no-op bridge with the

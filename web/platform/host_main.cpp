@@ -1,0 +1,299 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// wadamesh-host: the real touch UI in an SDL2 window (phase 1 of WEB_BUILD.md).
+//
+// This file is the web board's main.cpp: it owns the board globals a variants/*/
+// target.cpp would define, starts storage, the mesh stand-in and the UI exactly in
+// src/main.cpp's order, then runs one loop step at a time (wadaHostStep), which is
+// also the shape Emscripten's main loop wants (phase 2).
+//
+//   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N]
+//     --headless   no window (CI / release gate); the framebuffer is still rendered
+//     --script     scripted input: wait/tap/drag/key/type/shot/quit, one per line
+//     --shots DIR  where `shot` and F12 write PNGs (default: current directory)
+//     --scale N    initial window scale (default 1; the window is resizable)
+//   $WADA_DATA_DIR  the virtual flash (SPIFFS, LittleFS, NVS), default ./wadamesh-data
+#include <Arduino.h>
+#include <SPIFFS.h>
+#include <LittleFS.h>
+#include <Wire.h>
+#include <SPI.h>
+#include <WiFi.h>
+#include <helpers/BaseSerialInterface.h>
+#include "UITask.h"
+#include "WebMesh.h"
+#include "WebInput.h"
+#include "wada_host.h"
+#include "miniz.h"
+#include <SDL.h>
+#include <string>
+#include <vector>
+#include <fstream>
+#include <unistd.h>
+#include <sstream>
+
+// ---- the web board's globals (what variants/*/target.cpp + src/main.cpp define) ----
+namespace {
+// The mesh clock: the host's wall clock (a browser always knows the time).
+class HostRTCClock : public mesh::RTCClock {
+public:
+  uint32_t getCurrentTime() override { return (uint32_t)time(nullptr); }
+  void setCurrentTime(uint32_t) override {}   // the OS owns the clock
+};
+HostRTCClock s_host_clock;
+
+// No companion transport is served BY the web board (it is the companion's client in
+// phase 3), so the UI's companion-link controls see a disabled, unconnected interface.
+class WebSerialInterface : public BaseSerialInterface {
+public:
+  void enable() override { _en = true; }
+  void disable() override { _en = false; }
+  bool isEnabled() const override { return _en; }
+  bool isConnected() const override { return false; }
+  bool isWriteBusy() const override { return false; }
+  size_t writeFrame(const uint8_t src[], size_t len) override { (void)src; return len; }
+  size_t checkRecvFrame(uint8_t dest[]) override { (void)dest; return 0; }
+  bool isTcpEnabled() const override { return false; }
+private:
+  bool _en = false;
+};
+WebSerialInterface s_serial;
+}  // namespace
+
+WebBoard board;
+WebRadio radio_driver;
+ClockFloorRTC rtc_clock(s_host_clock);
+SensorManager sensors;
+WebDisplay display;
+TwoWire Wire(0), Wire1(1);
+SPIClass SPI;
+WiFiClass WiFi;
+UITask ui_task(&board, &s_serial);
+static MyMesh s_mesh(rtc_clock, &ui_task);
+MyMesh& the_mesh = s_mesh;
+
+// src/main.cpp / DataStore.cpp / MultiTransportCompanionInterface.cpp symbols the UI reads.
+bool g_identity_restored_from_copy = false;
+uint8_t bleLastFailReason() { return 0; }   // BLE_FAIL_NONE: there is no Bluetooth stack to fail
+
+// AutoDiscoverRTCClock (core): no I2C RTC chips on a host, the fallback clock is it.
+void AutoDiscoverRTCClock::begin(TwoWire&) {}
+uint32_t AutoDiscoverRTCClock::getCurrentTime() { return _fallback->getCurrentTime(); }
+void AutoDiscoverRTCClock::setCurrentTime(uint32_t t) { _fallback->setCurrentTime(t); }
+
+extern void (*g_wada_restart_hook)();
+void WebBoard::reboot() { esp_restart(); }
+void WebBoard::powerOff() { esp_restart(); }
+
+// ---- presentation ------------------------------------------------------------------
+namespace {
+SDL_Window* s_win = nullptr;
+SDL_Renderer* s_ren = nullptr;
+SDL_Texture* s_tex = nullptr;
+bool s_quit = false;
+std::string s_shot_dir = ".";
+
+bool savePng(const std::string& path) {
+  const uint16_t* fb = display.framebuffer();
+  std::vector<uint8_t> rgb((size_t)WADA_WEB_W * WADA_WEB_H * 3);
+  for (size_t i = 0; i < (size_t)WADA_WEB_W * WADA_WEB_H; ++i) {
+    const uint16_t p = fb[i];
+    const uint8_t r = (p >> 11) & 0x1F, g = (p >> 5) & 0x3F, b = p & 0x1F;
+    rgb[i * 3 + 0] = (uint8_t)((r << 3) | (r >> 2));
+    rgb[i * 3 + 1] = (uint8_t)((g << 2) | (g >> 4));
+    rgb[i * 3 + 2] = (uint8_t)((b << 3) | (b >> 2));
+  }
+  size_t len = 0;
+  void* png = tdefl_write_image_to_png_file_in_memory(rgb.data(), WADA_WEB_W, WADA_WEB_H, 3, &len);
+  if (!png) return false;
+  FILE* f = fopen(path.c_str(), "wb");
+  bool ok = f && fwrite(png, 1, len, f) == len;
+  if (f) fclose(f);
+  mz_free(png);
+  fprintf(stderr, "[web] screenshot %s %s\n", path.c_str(), ok ? "written" : "FAILED");
+  return ok;
+}
+
+void present() {
+  if (!s_ren || !display.takeDirty()) return;
+  SDL_UpdateTexture(s_tex, nullptr, display.framebuffer(), WADA_WEB_W * 2);
+  SDL_RenderClear(s_ren);
+  SDL_RenderCopy(s_ren, s_tex, nullptr, nullptr);
+  SDL_RenderPresent(s_ren);
+}
+
+// SDL key -> CardKB code (the external-keyboard path the UI already has).
+void keyDown(const SDL_Keysym& k) {
+  switch (k.sym) {
+    case SDLK_RETURN: case SDLK_KP_ENTER: webKeyPush(0x0D); break;
+    case SDLK_BACKSPACE: webKeyPush(0x08); break;
+    case SDLK_ESCAPE: webKeyPush(0x1B); break;
+    case SDLK_TAB: webKeyPush(0x09); break;
+    case SDLK_LEFT: webKeyPush(0xB4); break;
+    case SDLK_UP: webKeyPush(0xB5); break;
+    case SDLK_DOWN: webKeyPush(0xB6); break;
+    case SDLK_RIGHT: webKeyPush(0xB7); break;
+    case SDLK_F12: {
+      char name[64]; snprintf(name, sizeof name, "/wadamesh-%lu.png", (unsigned long)millis());
+      savePng(s_shot_dir + name);
+      break;
+    }
+    default: break;
+  }
+}
+
+void pumpEvents() {
+  if (!s_win) return;
+  SDL_Event e;
+  while (SDL_PollEvent(&e)) {
+    switch (e.type) {
+      case SDL_QUIT: s_quit = true; break;
+      case SDL_MOUSEBUTTONDOWN: case SDL_MOUSEBUTTONUP:
+        if (e.button.button == SDL_BUTTON_LEFT) webPointer(e.type == SDL_MOUSEBUTTONDOWN, e.button.x, e.button.y);
+        break;
+      case SDL_MOUSEMOTION:
+        if (e.motion.state & SDL_BUTTON_LMASK) webPointer(true, e.motion.x, e.motion.y);
+        break;
+      case SDL_FINGERDOWN: case SDL_FINGERMOTION: case SDL_FINGERUP:
+        webPointer(e.type != SDL_FINGERUP, (int)(e.tfinger.x * WADA_WEB_W), (int)(e.tfinger.y * WADA_WEB_H));
+        break;
+      case SDL_KEYDOWN: keyDown(e.key.keysym); break;
+      case SDL_TEXTINPUT:
+        for (const char* p = e.text.text; *p; ++p)
+          if ((uint8_t)*p >= 0x20 && (uint8_t)*p < 0x7F) webKeyPush((uint8_t)*p);   // ASCII (CardKB path)
+        break;
+      case SDL_WINDOWEVENT:
+        if (e.window.event == SDL_WINDOWEVENT_EXPOSED || e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
+          SDL_UpdateTexture(s_tex, nullptr, display.framebuffer(), WADA_WEB_W * 2);
+          SDL_RenderClear(s_ren); SDL_RenderCopy(s_ren, s_tex, nullptr, nullptr); SDL_RenderPresent(s_ren);
+        }
+        break;
+      default: break;
+    }
+  }
+}
+
+// ---- scripted input (screenshots, smoke tests, the phase-4 release gate) ------------
+struct Script {
+  std::vector<std::string> lines;
+  size_t pc = 0;
+  uint32_t wait_until = 0;
+  // an in-flight press: release at release_at
+  bool pressing = false; uint32_t release_at = 0;
+  int drag_x0 = 0, drag_y0 = 0, drag_x1 = 0, drag_y1 = 0; uint32_t drag_t0 = 0, drag_ms = 0; bool dragging = false;
+} s_script;
+
+void scriptStep() {
+  const uint32_t now = millis();
+  if (s_script.dragging) {
+    const uint32_t t = now - s_script.drag_t0;
+    if (t >= s_script.drag_ms) { webPointer(true, s_script.drag_x1, s_script.drag_y1); s_script.dragging = false; s_script.pressing = true; s_script.release_at = now + 40; }
+    else {
+      const float f = (float)t / (float)s_script.drag_ms;
+      webPointer(true, s_script.drag_x0 + (int)((s_script.drag_x1 - s_script.drag_x0) * f),
+                 s_script.drag_y0 + (int)((s_script.drag_y1 - s_script.drag_y0) * f));
+    }
+    return;
+  }
+  if (s_script.pressing) {
+    if ((int32_t)(now - s_script.release_at) < 0) return;
+    webPointer(false, 0, 0);   // (coordinates of a release are not used)
+    s_script.pressing = false;
+    s_script.wait_until = now + 120;   // let the UI see the release before the next step
+    return;
+  }
+  if ((int32_t)(now - s_script.wait_until) < 0) return;
+  while (s_script.pc < s_script.lines.size()) {
+    std::istringstream in(s_script.lines[s_script.pc++]);
+    std::string cmd; in >> cmd;
+    if (cmd.empty() || cmd[0] == '#') continue;
+    fprintf(stderr, "[script] %s\n", s_script.lines[s_script.pc - 1].c_str());
+    if (cmd == "wait") { uint32_t ms = 0; in >> ms; s_script.wait_until = now + ms; return; }
+    if (cmd == "tap" || cmd == "hold") {
+      int x = 0, y = 0; uint32_t ms = (cmd == "tap") ? 60 : 1300; in >> x >> y; if (cmd == "hold") in >> ms;
+      webPointer(true, x, y); s_script.pressing = true; s_script.release_at = now + ms; return;
+    }
+    if (cmd == "drag") {
+      in >> s_script.drag_x0 >> s_script.drag_y0 >> s_script.drag_x1 >> s_script.drag_y1 >> s_script.drag_ms;
+      if (!s_script.drag_ms) s_script.drag_ms = 300;
+      webPointer(true, s_script.drag_x0, s_script.drag_y0);
+      s_script.drag_t0 = now; s_script.dragging = true; return;
+    }
+    if (cmd == "type") {
+      std::string rest; std::getline(in, rest);
+      if (!rest.empty() && rest[0] == ' ') rest.erase(0, 1);
+      for (char c : rest) webKeyPush((uint8_t)c);
+      s_script.wait_until = now + 200; return;
+    }
+    if (cmd == "key") {
+      std::string k; in >> k;
+      const uint8_t code = k == "enter" ? 0x0D : k == "esc" ? 0x1B : k == "bs" ? 0x08 : k == "tab" ? 0x09
+                         : k == "left" ? 0xB4 : k == "up" ? 0xB5 : k == "down" ? 0xB6 : k == "right" ? 0xB7
+                         : (uint8_t)(k.empty() ? 0 : k[0]);
+      if (code) webKeyPush(code);
+      s_script.wait_until = now + 150; return;
+    }
+    if (cmd == "shot") { std::string n; in >> n; savePng(s_shot_dir + "/" + n + ".png"); continue; }
+    if (cmd == "quit") { s_quit = true; return; }
+    fprintf(stderr, "[script] unknown command '%s'\n", cmd.c_str());
+  }
+}
+}  // namespace
+
+// One iteration of src/main.cpp's loop(): UI first, then the mesh (same order, same reason).
+bool wadaHostStep() {
+  pumpEvents();
+  if (!s_script.lines.empty()) scriptStep();
+  ui_task.loop();
+  the_mesh.loop();
+  present();
+  return !s_quit;
+}
+
+int main(int argc, char** argv) {
+  bool headless = false;
+  int scale = 1;
+  std::string script_path;
+  for (int i = 1; i < argc; ++i) {
+    std::string a = argv[i];
+    if (a == "--headless") headless = true;
+    else if (a == "--script" && i + 1 < argc) script_path = argv[++i];
+    else if (a == "--shots" && i + 1 < argc) s_shot_dir = argv[++i];
+    else if (a == "--scale" && i + 1 < argc) scale = atoi(argv[++i]);
+  }
+  if (!script_path.empty()) {
+    std::ifstream f(script_path);
+    for (std::string l; std::getline(f, l);) s_script.lines.push_back(l);
+    if (s_script.lines.empty()) fprintf(stderr, "[web] script %s is empty or missing\n", script_path.c_str());
+  }
+  wadaHostMkdirs(s_shot_dir);
+  setvbuf(stdout, nullptr, _IOLBF, 0);
+  Serial.printf("[web] wadamesh-host %s, data dir %s\n", FIRMWARE_VERSION, wadaHostDataDir().c_str());
+
+  if (!headless) {
+    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
+    if (scale < 1) scale = 1;
+    s_win = SDL_CreateWindow("wadamesh", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                             WADA_WEB_W * scale, WADA_WEB_H * scale, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
+    SDL_RenderSetLogicalSize(s_ren, WADA_WEB_W, WADA_WEB_H);   // mouse coordinates arrive in canvas pixels
+    s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, WADA_WEB_W, WADA_WEB_H);
+    SDL_StartTextInput();
+  }
+
+  // Storage, then the mesh, then the UI: src/main.cpp's setup() order.
+  SPIFFS.begin(true);
+  LittleFS.begin(true);
+  rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
+  sensors.node_lat = 52.3728;   // the demo node's position (scripts/doc/web-demo/demo.py)
+  sensors.node_lon = 4.8934;
+  the_mesh.begin(wadaCreateDemoBackend());
+  ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
+  Serial.println("[BOOT] ui ready");
+
+  while (wadaHostStep()) SDL_Delay(4);
+
+  if (s_win) { SDL_DestroyTexture(s_tex); SDL_DestroyRenderer(s_ren); SDL_DestroyWindow(s_win); SDL_Quit(); }
+  fflush(stdout);
+  _exit(0);   // detached host tasks may still be sleeping; do not unwind them
+}

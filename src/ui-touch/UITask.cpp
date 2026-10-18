@@ -2,7 +2,11 @@
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
 
-#include "../MyMesh.h"
+#if defined(WADA_WEB)
+  #include "WebMesh.h"     // web/mesh: the MyMesh stand-in (the UI's compile-time mesh contract)
+#else
+  #include "../MyMesh.h"
+#endif
 #include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
@@ -205,7 +209,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
-  #if defined(HAS_TANMATSU)
+  #if defined(WADA_WEB)
+    #include <WebDisplay.h>                  // web/platform: the canvas behind the SDL window
+  #elif defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
   #elif defined(HAS_TDECK_PRO)
     #include <TDeckProDisplay.h>
@@ -279,7 +285,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
       #endif
     #endif
   #endif
-  #if defined(HAS_TANMATSU)
+  #if defined(WADA_WEB)
+    extern WebDisplay display;
+  #elif defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
   #elif defined(HAS_TDECK_PRO)
     extern TDeckProDisplay display;
@@ -34545,6 +34553,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "crowpanel-50"
 #elif defined(HELTEC_LORA_V4_TFT)
 #define WADA_BOARD_ID "heltec-v4-tft"
+#elif defined(WADA_WEB)
+#define WADA_BOARD_ID "web"            // never self-updates (CAP_OTA 0); names its test reports
 #else
 #error "WADA_BOARD_ID: this board has no release artifact name. Add it here AND to scripts/release.sh ENVS, or a self-update fetches another board's firmware and its test reports land under the wrong board."
 #endif
@@ -73446,6 +73456,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #elif defined(HAS_CROWPANEL_50)
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 800 : 480);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 480 : 800);
+#elif defined(WADA_WEB)
+    // The web board's canvas (web/platform/WebDisplay.h): fixed landscape, no remote mode.
+    g_lv.disp_drv.hor_res  = WADA_WEB_W;
+    g_lv.disp_drv.ver_res  = WADA_WEB_H;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let

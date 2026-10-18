@@ -25,7 +25,24 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(HAS_CROWPANEL_35)            // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
+#if defined(WADA_WEB)                    // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
+  // A virtual 800x480 landscape touch panel: the large-screen layouts the CrowPanel 5.0
+  // and the Tanmatsu ship, driven by a mouse or a finger. The mesh behind it is a backend
+  // (demo now, a companion node later), so nothing radio- or hardware-bound is advertised.
+  #define CAP_TOUCH        1   // mouse / touch via SDL
+  #define CAP_ROTATABLE    0   // fixed landscape canvas
+  #define CAP_LARGE_SCREEN 1   // 800x480: large-panel layouts and the UI-size fonts
+  #define CAP_SD           0   // no card; storage is the host directory behind SPIFFS
+  #define CAP_FILESYSTEM   0
+  #define CAP_GPS          0
+  #define CAP_OTA          0   // updated by reloading the page
+  #define CAP_LOCK_SCREEN  0   // no unlock button
+  #define CAP_BATTERY      0
+  #define CAP_USB_FILES    0
+  #define CAP_BUILTIN_LANGS    1   // no Lua Store download yet: carry the translations
+  #define CAP_BUILTIN_LUA_APPS 1   // ...and the catalog's apps
+
+#elif defined(HAS_CROWPANEL_35)          // ===== Elecrow CrowPanel Advance 3.5 (ESP32-S3) =====
   #define CAP_TOUCH        1   // GT911 capacitive touch
   #define CAP_ROTATABLE    1   // ILI9488 native portrait, upright landscape = rotation 3
   #define CAP_LARGE_SCREEN 0   // native 480x320, no upscaling
