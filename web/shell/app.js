@@ -56,8 +56,10 @@
     var ah = r.height - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     if (!full) {
       ah = Math.max(ah, 120);
-      // a phone in portrait: scale to the width, the page scrolls if it must
-      if (window.innerWidth < 600) ah = Math.max(ah, aw * H / W);
+      // a phone in portrait: scale to the width, the page scrolls if it must. Only in
+      // portrait: a small LANDSCAPE window (a docked or split browser) must fit its height,
+      // or the screen grows past the stage and over the header.
+      if (window.innerWidth < 600 && window.innerHeight > window.innerWidth) ah = Math.max(ah, aw * H / W);
     }
     var dpr = window.devicePixelRatio || 1;
     var fit = Math.max(0.1, Math.min(aw / W, ah / H));
