@@ -11,8 +11,8 @@
 #include <unistd.h>
 #if defined(__APPLE__)
   #include <stdlib.h>   // arc4random_buf
-#elif defined(__EMSCRIPTEN__) || defined(__linux__)
-  #include <sys/random.h>
+#else
+  #include <unistd.h>   // getentropy (glibc >= 2.25, musl, Emscripten)
 #endif
 
 namespace {
@@ -38,7 +38,7 @@ extern "C" void esp_fill_random(void* buf, size_t len) {
   arc4random_buf(buf, len);
 #else
   uint8_t* p = (uint8_t*)buf;
-  while (len) { ssize_t n = getrandom(p, len, 0); if (n <= 0) break; p += n; len -= (size_t)n; }
+  while (len) { const size_t n = len > 256 ? 256 : len; if (getentropy(p, n) != 0) break; p += n; len -= n; }
 #endif
 }
 extern "C" uint32_t esp_random(void) { uint32_t v; esp_fill_random(&v, sizeof v); return v; }
