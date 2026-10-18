@@ -114,7 +114,7 @@ public:
   void resetPathTo(ContactInfo& recipient);
   int uiContactIdxByPubKey(const uint8_t pub_key[32]);
   bool uiResetContactPath(const uint8_t pub_key[32]);
-  bool uiShareContact(const uint8_t pub_key[32]);       // [unavailable] zero-hop re-advert of a 3rd party: false
+  bool uiShareContact(const uint8_t pub_key[32]);       // companion: CMD_SHARE_CONTACT; demo: false
   bool uiSetContactGps(const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6);
   bool uiAddManualContact(const uint8_t pub_key[32], const char* name);
   bool uiAddDiscoveredContact(const uint8_t pub_key[32], uint8_t type, const char* name);
@@ -127,7 +127,7 @@ public:
   bool uiRemoveContactNoSave(const uint8_t pub_key[PUB_KEY_SIZE]);
   bool removeTransientContact(const uint8_t pub_key[PUB_KEY_SIZE]);
   bool uiIsMeshcomodRecipient(const uint8_t* pub_key_prefix_6) const { (void)pub_key_prefix_6; return false; }
-  bool uiHasConnectionTo(const uint8_t pub_key[32]) { (void)pub_key; return false; }   // no logged-in sessions
+  bool uiHasConnectionTo(const uint8_t pub_key[32]) { return _backend && _backend->hasConnectionTo(pub_key); }
   bool uiHopName(const uint8_t* hash, int prefix_len, char* out, size_t out_sz);
   bool uiHopPos(const uint8_t* hash, int prefix_len, double* out_lat, double* out_lon);
   int  getRecentlyHeard(RecentlyHeardName dest[], int max_num);
@@ -145,7 +145,7 @@ public:
   bool uiDeleteChannel(int idx);
   bool uiJoinPublicChannel();
   void setDefaultFloodScope(const char* region_name);
-  void setScopeDirectFloods(bool on) { _scope_direct_floods = on; }
+  void setScopeDirectFloods(bool on) { _scope_direct_floods = on; }   // [unavailable] a node setting the protocol lacks
   bool pushChannelScope(const char* region_name);
   void popChannelScope() {}
   RegionRegistry& regionRegistry() { return _region_reg; }
@@ -168,19 +168,17 @@ public:
   // ---- repeats heard + RX metadata -------------------------------------------------
   uint32_t uiLastSentFp() const { return _last_sent_fp; }
   uint8_t uiRepeatsForFp(uint32_t fp) const;
-  uint8_t uiRepeatHopCount(uint32_t fp) const { (void)fp; return 0; }   // repeater identities: not reported
-  uint8_t uiRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t out_sz) const {
-    (void)fp; (void)idx; (void)out; (void)out_sz; return 0;
-  }
+  uint8_t uiRepeatHopCount(uint32_t fp) const;
+  uint8_t uiRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t out_sz) const;
   bool takeEchoDirty() { bool d = _echo_dirty; _echo_dirty = false; return d; }
   uint8_t lastRxPath(uint8_t* buf, uint8_t max) const {
     uint8_t n = _last_rx_path_n < max ? _last_rx_path_n : max;
     if (buf && n) memcpy(buf, _last_rx_path, n);
     return n;
   }
-  uint16_t lastRxScope(bool* has) const { if (has) *has = false; return 0; }
-  uint8_t lastRxScopeSlot() const { return REGION_SLOT_NONE; }
-  bool lastRxScopeIsHome() const { return false; }
+  uint16_t lastRxScope(bool* has) const { if (has) *has = _last_rx_has_scope; return _last_rx_scope; }
+  uint8_t lastRxScopeSlot() const { return _last_rx_scope_slot; }
+  bool lastRxScopeIsHome() const { return false; }   // [unavailable] the node's region key is not reported
   uint32_t uiConsumeLastSenderTs() { uint32_t t = _last_sender_ts; _last_sender_ts = 0; return t; }
 
   // ---- live signal (status bar) ------------------------------------------------------
@@ -192,12 +190,12 @@ public:
   enum class UiReqKind : uint8_t { None = 0, Status = 1, Telemetry = 2, Regions = 3 };
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient);
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind);
-  int uiSendAdminLogin(ContactInfo& recipient, const char* password);       // [unavailable]
-  int uiSendAdminCommand(ContactInfo& recipient, const char* text);         // [unavailable]
-  int uiRoomRelogin(const uint8_t pub_key[32]);                             // [unavailable]
-  int sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_t& est_timeout);   // [unavailable]
+  int uiSendAdminLogin(ContactInfo& recipient, const char* password);       // backend login (demo: failed)
+  int uiSendAdminCommand(ContactInfo& recipient, const char* text);         // backend CLI line
+  int uiRoomRelogin(const uint8_t pub_key[32]);
+  int sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_t& est_timeout);
   void cancelUIPingPending() { _ui_pending_kind = UiReqKind::None; memset(_ui_pending_key, 0, sizeof _ui_pending_key); }
-  void cancelUIDeferredLogin() {}
+  void cancelUIDeferredLogin() { if (_backend) _backend->cancelRequests(); }
   bool hasUIRequestPending() const { return _ui_pending_kind != UiReqKind::None; }
   uint32_t uiSendTracePing(const uint8_t pub_key[32]);
   uint32_t uiSendTraceRoute(const ContactInfo& c);
@@ -234,8 +232,12 @@ public:
     uint8_t  org[4];
   };
   static const int UI_RXLOG_MAX = 16;
-  uint8_t uiRxLogCount() const { return 0; }             // [unavailable] no raw frames on the web board
-  bool    uiRxLogGet(uint8_t i, UiRxRec& out) const { (void)i; (void)out; return false; }
+  uint8_t uiRxLogCount() const { return _rxlog_cnt; }   // from the node's raw RX pushes (demo: empty)
+  bool    uiRxLogGet(uint8_t i, UiRxRec& out) const {
+    if (i >= _rxlog_cnt) return false;
+    out = _rxlog[(uint8_t)((_rxlog_head + UI_RXLOG_MAX - 1 - i) % UI_RXLOG_MAX)];
+    return true;
+  }
 
   // ---- radio counters (Dispatcher) ---------------------------------------------------------
   uint32_t getNumSentFlood() const { return _n_sent_flood; }
@@ -266,11 +268,21 @@ private:
   void beRoomMessage(const uint8_t room_pub_key[32], const char* author, uint32_t sender_ts,
                      const char* text, uint8_t path_len, int8_t snr_q4, int8_t rssi) override;
   void beAck(uint32_t expected_ack) override;
-  void beRepeatHeard(uint32_t sent_fp) override;
+  void beRepeatHeard(uint32_t sent_fp, const uint8_t* hop, uint8_t hop_sz) override;
   void beStatusReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) override;
   void beTelemetryReply(const uint8_t pub_key[32], const uint8_t* lpp, size_t len) override;
-  void beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr) override;
+  void beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
+                     uint8_t extra_hops, const int8_t* extra_snrs) override;
   void beSignal(int8_t snr_q4, int8_t rssi) override;
+  void beSelfInfo(const NodePrefs& node_prefs, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) override;
+  void beContactRemoved(const uint8_t pub_key[32]) override;
+  void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) override;
+  void beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) override;
+  void beCliReply(const uint8_t pub_key[32], const char* text) override;
+  void beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) override;
+  void beLinkState(bool up, const char* detail) override;
+  void trackSentFp(uint32_t fp);
+  void stashRxMeta(bool for_channel, const uint8_t* key_or_hash, uint8_t path_len);
 
   void loadPrefs();
   int  channelIdxOf(const mesh::GroupChannel& ch) const;
@@ -297,7 +309,27 @@ private:
   uint32_t _echo_fp[UI_ECHO_SLOTS] = {0};
   uint8_t  _echo_rep[UI_ECHO_SLOTS] = {0};
   uint8_t  _echo_idx = 0;
+  static const int ECHO_MAX_HOPS = 8;
+  uint8_t  _echo_hop[UI_ECHO_SLOTS][ECHO_MAX_HOPS][4] = {};
+  uint8_t  _echo_hop_n[UI_ECHO_SLOTS] = {0};
+  uint8_t  _echo_hop_sz[UI_ECHO_SLOTS] = {0};
   volatile bool _echo_dirty = false;
+
+  // Raw RX (beRxRaw): the RF monitor ring, the last message packet (for the Info
+  // popup's route + scope), advert routes.
+  UiRxRec  _rxlog[UI_RXLOG_MAX] = {};
+  uint8_t  _rxlog_head = 0, _rxlog_cnt = 0;
+  uint8_t  _last_msg_raw[256] = {0};
+  uint16_t _last_msg_raw_len = 0;
+  uint32_t _last_msg_raw_ms = 0;
+  bool     _last_rx_has_scope = false;
+  uint16_t _last_rx_scope = 0;
+  uint8_t  _last_rx_scope_slot = REGION_SLOT_NONE;
+  static const int ADVERT_PATHS = 32;
+  AdvertPath _advert_paths[ADVERT_PATHS] = {};
+  uint32_t _advert_seq = 0;
+  int8_t   _last_rx_snr_q4 = 0;
+  int8_t   _last_rx_rssi = 0;
 
   int8_t   _ui_sig_snr_q4 = -128;
   int8_t   _ui_sig_rssi = 0;

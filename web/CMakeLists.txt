@@ -151,3 +151,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   # 81k-line UITask.cpp: keep clang's bracket-nesting / constexpr limits out of the way.
   target_compile_options(wadamesh-host PRIVATE -fbracket-depth=512)
 endif()
+
+# The browser companion transports (Web Serial / Web Bluetooth / WebSocket) are JS glue
+# that shares the module scope; the framing is C++ (web/mesh/BrowserTransport.cpp).
+if(EMSCRIPTEN)
+  target_link_options(wadamesh-host PRIVATE "SHELL:--pre-js ${WEB}/mesh/js/companion-transports.js")
+endif()

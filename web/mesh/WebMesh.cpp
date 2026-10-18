@@ -35,6 +35,39 @@ void channelHash(ChannelDetails& cd) {
   mesh::Utils::sha256(cd.channel.hash, sizeof(cd.channel.hash), cd.channel.secret, klen);
 }
 void (*s_terminal_sink)(const char*) = nullptr;
+
+// The device's "repeats heard" fingerprint (src/MyMesh.cpp fnv1a32): FNV-1a over a
+// flood's payload, which repeaters leave unchanged.
+uint32_t fnv1a32(const uint8_t* d, int n) {
+  uint32_t h = 2166136261u;
+  for (int i = 0; i < n; i++) { h ^= d[i]; h *= 16777619u; }
+  return h ? h : 1;
+}
+bool isMsgFloodType(uint8_t t) { return t == PAYLOAD_TYPE_TXT_MSG || t == PAYLOAD_TYPE_GRP_TXT; }
+
+// Where a raw packet's path and payload start (header, optional transport codes, the
+// packed path-length byte: low 6 bits hop count, top 2 bits hash size - 1).
+struct RawView {
+  uint8_t ptype = 0, route = 0, hops = 0, hash_sz = 1;
+  int path_off = 0, payload_off = 0;
+  bool ok = false;
+};
+RawView rawView(const uint8_t* raw, size_t len) {
+  RawView v;
+  if (!raw || len < 2) return v;
+  v.route = raw[0] & 0x03;
+  v.ptype = (raw[0] >> 2) & 0x0F;
+  const bool xp = (v.route == ROUTE_TYPE_TRANSPORT_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_DIRECT);
+  const int ps = 1 + (xp ? 4 : 0);
+  if ((size_t)ps >= len) return v;
+  const uint8_t plb = raw[ps];
+  v.hops = plb & 0x3F;
+  v.hash_sz = (uint8_t)(((plb >> 6) & 0x03) + 1);
+  v.path_off = ps + 1;
+  v.payload_off = v.path_off + (int)v.hops * (int)v.hash_sz;
+  v.ok = (size_t)v.payload_off <= len;
+  return v;
+}
 }  // namespace
 
 MyMesh::MyMesh(mesh::RTCClock& rtc, AbstractUITask* ui) : _rtc(&rtc), _ui(ui) {
@@ -87,6 +120,8 @@ void MyMesh::begin(MeshBackend* backend) {
   if (!have_saved) _prefs = from_backend;
   memcpy(self_id.pub_key, pub, PUB_KEY_SIZE);
   Serial.printf("[web] mesh backend: %s, %d contacts\n", _backend ? _backend->name() : "none", _num_contacts);
+  // (A companion backend reports the node's identity and settings once its link is
+  // up: beSelfInfo, which overrides the placeholders above.)
 }
 
 void MyMesh::loop() {
@@ -129,15 +164,20 @@ bool MyMesh::uiResetContactPath(const uint8_t pub_key[32]) {
   if (!slot) return false;
   slot->out_path_len = OUT_PATH_UNKNOWN;
   memset(slot->out_path, 0, sizeof(slot->out_path));
+  if (_backend) _backend->contactPathReset(pub_key);
   return true;
 }
-bool MyMesh::uiShareContact(const uint8_t pub_key[32]) { (void)pub_key; return false; }
+bool MyMesh::uiShareContact(const uint8_t pub_key[32]) {
+  if (!_backend || !lookupContactByPubKey(pub_key, PUB_KEY_SIZE)) return false;
+  return _backend->shareContact(pub_key);
+}
 bool MyMesh::uiSetContactGps(const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) {
   ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
   if (!slot) return false;
   slot->gps_lat = lat_e6;
   slot->gps_lon = lon_e6;
   slot->lastmod = getRTCClock()->getCurrentTime();
+  if (_backend) _backend->contactChanged(*slot);
   return true;
 }
 bool MyMesh::uiAddManualContact(const uint8_t pub_key[32], const char* name) {
@@ -150,6 +190,7 @@ bool MyMesh::uiAddManualContact(const uint8_t pub_key[32], const char* name) {
   ci.lastmod = getRTCClock()->getCurrentTime();
   StrHelper::strncpy(ci.name, name, sizeof(ci.name));
   if (!addContact(ci)) return false;
+  if (_backend) _backend->contactChanged(ci);
   if (_ui) _ui->onThreadsChanged();
   return true;
 }
@@ -163,6 +204,7 @@ bool MyMesh::uiAddDiscoveredContact(const uint8_t pub_key[32], uint8_t type, con
   ci.lastmod = getRTCClock()->getCurrentTime();
   StrHelper::strncpy(ci.name, name, sizeof(ci.name));
   if (!addContact(ci)) return false;
+  if (_backend) _backend->contactChanged(ci);
   if (_ui) _ui->onThreadsChanged();
   return true;
 }
@@ -175,13 +217,17 @@ bool MyMesh::uiSetContactTelemetryPerm(const uint8_t pub_key[32], uint8_t telem_
   ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
   if (!slot) return false;
   const uint8_t bit = contactTelemBit(telem_perm);
+  const uint8_t before = slot->flags;
   slot->flags = on ? (uint8_t)(slot->flags | bit) : (uint8_t)(slot->flags & ~bit);
+  if (_backend && slot->flags != before) _backend->contactChanged(*slot);
   return true;
 }
 bool MyMesh::uiSetContactFavorite(const uint8_t pub_key[32], bool fav) {
   ContactInfo* slot = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
   if (!slot) return false;
+  const uint8_t before = slot->flags;
   slot->flags = fav ? (uint8_t)(slot->flags | 0x01) : (uint8_t)(slot->flags & ~0x01);
+  if (_backend && slot->flags != before) _backend->contactChanged(*slot);
   return true;
 }
 static bool removeAt(ContactInfo* table, int& n, const uint8_t* pub_key) {
@@ -258,8 +304,20 @@ int MyMesh::getRecentlyHeard(RecentlyHeardName dest[], int max_num) {
 }
 bool MyMesh::getAdvertPath(const uint8_t* pubkey_prefix, int prefix_len, uint8_t& path_len,
                            uint8_t* path, size_t path_cap) {
-  (void)pubkey_prefix; (void)prefix_len; (void)path_len; (void)path; (void)path_cap;
-  return false;   // advert routes are not reported by the backend: "unknown"
+  // The route of the last advert heard from this node, from the raw RX pushes (beRxRaw);
+  // the same table and answer as src/MyMesh.cpp's. The demo reports none: "unknown".
+  if (!pubkey_prefix || prefix_len <= 0) return false;
+  if (prefix_len > (int)sizeof(AdvertPath::pubkey_prefix)) prefix_len = sizeof(AdvertPath::pubkey_prefix);
+  for (int i = 0; i < ADVERT_PATHS; i++) {
+    const AdvertPath& p = _advert_paths[i];
+    if (!p.used || memcmp(p.pubkey_prefix, pubkey_prefix, (size_t)prefix_len) != 0) continue;
+    const size_t bytes = (size_t)(p.path_len & 63) * (size_t)((p.path_len >> 6) + 1);
+    if (bytes > path_cap || bytes > sizeof(p.path) || (bytes && !path)) return false;
+    path_len = p.path_len;
+    if (bytes) memcpy(path, p.path, bytes);
+    return true;
+  }
+  return false;
 }
 void MyMesh::uiExportBackup(Print& out, double node_lat, double node_lon) {
   (void)node_lat; (void)node_lon;
@@ -337,11 +395,7 @@ int MyMesh::sendMessage(const ContactInfo& recipient, uint32_t timestamp, uint8_
     _last_txt_hash4 = expected_ack ^ 0x5741u;   // stands in for the packet hash: unique per send
     if (out_packet_hash4) *out_packet_hash4 = _last_txt_hash4;
     if (out_dbg) { *out_dbg = TxtTxDebugInfo{}; out_dbg->uniq_ts = timestamp; out_dbg->packet_hash4 = _last_txt_hash4; }
-    if (fp && r == MSG_SEND_SENT_FLOOD) {
-      _last_sent_fp = fp;
-      _echo_fp[_echo_idx] = fp; _echo_rep[_echo_idx] = 0;
-      _echo_idx = (uint8_t)((_echo_idx + 1) % UI_ECHO_SLOTS);
-    }
+    if (fp && r == MSG_SEND_SENT_FLOOD) trackSentFp(fp);
   }
   return r;
 }
@@ -357,11 +411,7 @@ bool MyMesh::sendGroupMessage(uint32_t timestamp, mesh::GroupChannel& channel, c
   const bool ok = _backend->sendChannel(idx, _channels[idx], timestamp, sender_name, body, fp);
   if (ok) {
     _n_sent_flood++;
-    if (fp) {
-      _last_sent_fp = fp;
-      _echo_fp[_echo_idx] = fp; _echo_rep[_echo_idx] = 0;
-      _echo_idx = (uint8_t)((_echo_idx + 1) % UI_ECHO_SLOTS);
-    }
+    if (fp) trackSentFp(fp);
   }
   return ok;
 }
@@ -379,6 +429,29 @@ uint8_t MyMesh::uiRepeatsForFp(uint32_t fp) const {
   for (int i = 0; i < UI_ECHO_SLOTS; i++) if (_echo_fp[i] == fp) return _echo_rep[i];
   return 0;
 }
+uint8_t MyMesh::uiRepeatHopCount(uint32_t fp) const {
+  if (fp == 0) return 0;
+  for (int i = 0; i < UI_ECHO_SLOTS; i++) if (_echo_fp[i] == fp) return _echo_hop_n[i];
+  return 0;
+}
+uint8_t MyMesh::uiRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t out_sz) const {
+  if (fp == 0 || !out) return 0;
+  for (int i = 0; i < UI_ECHO_SLOTS; i++) if (_echo_fp[i] == fp) {
+    if (idx >= _echo_hop_n[i]) return 0;
+    uint8_t sz = _echo_hop_sz[i]; if (sz > out_sz) sz = out_sz; if (sz > 4) sz = 4;
+    memcpy(out, _echo_hop[i][idx], sz);
+    return sz;
+  }
+  return 0;
+}
+// src/MyMesh.h uiTrackSentFp.
+void MyMesh::trackSentFp(uint32_t fp) {
+  if (fp == 0) return;
+  _last_sent_fp = fp;
+  for (int i = 0; i < UI_ECHO_SLOTS; i++) if (_echo_fp[i] == fp) { _echo_rep[i] = 0; _echo_hop_n[i] = 0; return; }
+  _echo_fp[_echo_idx] = fp; _echo_rep[_echo_idx] = 0; _echo_hop_n[_echo_idx] = 0;
+  _echo_idx = (uint8_t)((_echo_idx + 1) % UI_ECHO_SLOTS);
+}
 
 // ---- UI requests ------------------------------------------------------------------------
 int MyMesh::sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
@@ -394,18 +467,39 @@ int MyMesh::uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind)
   }
   return r;
 }
-int MyMesh::uiSendAdminLogin(ContactInfo& recipient, const char* password) { (void)recipient; (void)password; return MSG_SEND_FAILED; }
-int MyMesh::uiSendAdminCommand(ContactInfo& recipient, const char* text) { (void)recipient; (void)text; return MSG_SEND_FAILED; }
-int MyMesh::uiRoomRelogin(const uint8_t pub_key[32]) { (void)pub_key; return MSG_SEND_FAILED; }
+int MyMesh::uiSendAdminLogin(ContactInfo& recipient, const char* password) {
+  if (!_backend) return MSG_SEND_FAILED;
+  return _backend->login(recipient, password ? password : "");
+}
+int MyMesh::uiSendAdminCommand(ContactInfo& recipient, const char* text) {
+  if (!_backend || !text || !text[0]) return MSG_SEND_FAILED;
+  return _backend->sendCli(recipient, text);
+}
+int MyMesh::uiRoomRelogin(const uint8_t pub_key[32]) {
+  ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (!c || c->type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
+  return uiSendAdminLogin(*c, "");
+}
 int MyMesh::sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_t& est_timeout) {
-  (void)pub_key; est_timeout = 0; return MSG_SEND_FAILED;
+  est_timeout = 0;
+  if (!_backend || !pub_key || hasUIRequestPending()) return MSG_SEND_FAILED;
+  const int r = _backend->requestRegions(pub_key, est_timeout);
+  if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+    _ui_pending_kind = UiReqKind::Regions;
+    memcpy(_ui_pending_key, pub_key, PUB_KEY_SIZE);
+  }
+  return r;
 }
 uint32_t MyMesh::uiSendTracePing(const uint8_t pub_key[32]) {
   if (!_backend || !pub_key) return 0;
   _ui_trace_tag = _backend->tracePing(pub_key);
   return _ui_trace_tag;
 }
-uint32_t MyMesh::uiSendTraceRoute(const ContactInfo& c) { return uiSendTracePing(c.id.pub_key); }
+uint32_t MyMesh::uiSendTraceRoute(const ContactInfo& c) {
+  if (!_backend) return 0;
+  _ui_trace_tag = _backend->traceRoute(c);
+  return _ui_trace_tag;
+}
 
 // ---- terminal -----------------------------------------------------------------------------
 void MyMesh::setTerminalSink(void (*cb)(const char* line)) { s_terminal_sink = cb; }
@@ -465,7 +559,7 @@ void MyMesh::beDirectMessage(const uint8_t pub_key[32], uint32_t sender_ts, cons
   if (!from || !_ui) return;
   if (flood) _n_recv_flood++; else _n_recv_direct++;
   beSignal(snr_q4, rssi);
-  _last_rx_path_n = 0;
+  stashRxMeta(false, from->id.pub_key, flood ? path_len : 0xFF);
   _ui->notify(UIEventType::contactMessage);
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(flood ? path_len : 0xFF, flood, from->id.pub_key, from->name, text,
@@ -479,7 +573,8 @@ void MyMesh::beChannelMessage(int channel_idx, uint32_t sender_ts, const char* t
     channel_name = _channels[channel_idx].name;
   _n_recv_flood++;
   beSignal(snr_q4, rssi);
-  _last_rx_path_n = 0;
+  stashRxMeta(true, (channel_idx >= 0 && channel_idx < MAX_GROUP_CHANNELS) ? _channels[channel_idx].channel.hash : nullptr,
+              path_len);
   _ui->notify(UIEventType::channelMessage);
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(path_len, true, nullptr, channel_name, text, ++_msgcount, snr_q4, rssi);
@@ -490,16 +585,31 @@ void MyMesh::beRoomMessage(const uint8_t room_pub_key[32], const char* author, u
   if (!room || !_ui) return;
   _n_recv_flood++;
   beSignal(snr_q4, rssi);
-  _last_rx_path_n = 0;
+  stashRxMeta(false, room->id.pub_key, path_len);
   _ui->notify(UIEventType::roomMessage);
   _last_sender_ts = sender_ts;
   _ui->newRoomMsgFromPubWithMeta(path_len, true, room->id.pub_key, room->name, author, text,
                                  ++_msgcount, snr_q4, rssi);
 }
 void MyMesh::beAck(uint32_t expected_ack) { if (_ui) _ui->onMessageAcked(expected_ack); }
-void MyMesh::beRepeatHeard(uint32_t sent_fp) {
-  for (int i = 0; i < UI_ECHO_SLOTS; i++)
-    if (_echo_fp[i] == sent_fp) { if (_echo_rep[i] < 255) _echo_rep[i]++; _echo_dirty = true; return; }
+// src/MyMesh.h uiCountEcho: count one echo, remember which repeater re-flooded it.
+void MyMesh::beRepeatHeard(uint32_t sent_fp, const uint8_t* hop, uint8_t hop_sz) {
+  for (int i = 0; i < UI_ECHO_SLOTS; i++) {
+    if (_echo_fp[i] != sent_fp) continue;
+    if (_echo_rep[i] < 255) _echo_rep[i]++;
+    _echo_dirty = true;
+    if (hop && hop_sz > 0 && hop_sz <= 4 && _echo_hop_n[i] < ECHO_MAX_HOPS) {
+      bool seen = false;
+      for (uint8_t k = 0; k < _echo_hop_n[i]; k++)
+        if (_echo_hop_sz[i] == hop_sz && memcmp(_echo_hop[i][k], hop, hop_sz) == 0) { seen = true; break; }
+      if (!seen) {
+        memcpy(_echo_hop[i][_echo_hop_n[i]], hop, hop_sz);
+        _echo_hop_sz[i] = hop_sz;
+        _echo_hop_n[i]++;
+      }
+    }
+    return;
+  }
 }
 void MyMesh::beStatusReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) {
   ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
@@ -513,14 +623,173 @@ void MyMesh::beTelemetryReply(const uint8_t pub_key[32], const uint8_t* lpp, siz
   _ui_pending_kind = UiReqKind::None;
   if (c && _ui) _ui->onTelemetryReply(*c, lpp, len);
 }
-void MyMesh::beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr) {
+void MyMesh::beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
+                           uint8_t extra_hops, const int8_t* extra_snrs) {
   if (!_ui || tag == 0 || tag != _ui_trace_tag) return;
   _ui_trace_tag = 0;
-  _ui->onTracePingResult(tag, their_snr, our_snr, 0, nullptr);
+  _ui->onTracePingResult(tag, their_snr, our_snr, extra_snrs ? extra_hops : 0, extra_snrs);
 }
 void MyMesh::beSignal(int8_t snr_q4, int8_t rssi) {
   _ui_sig_snr_q4 = snr_q4;
   _ui_sig_rssi = rssi;
   _ui_sig_ms = millis();
   if (_ui_sig_ms == 0) _ui_sig_ms = 1;
+}
+
+// ---- events only a link to a real node produces ----------------------------------------
+void MyMesh::beSelfInfo(const NodePrefs& np, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) {
+  // The node owns these; everything else in NodePrefs is this UI's own.
+  StrHelper::strncpy(_prefs.node_name, np.node_name, sizeof(_prefs.node_name));
+  _prefs.freq = np.freq;
+  _prefs.bw = np.bw;
+  _prefs.sf = np.sf;
+  _prefs.cr = np.cr;
+  _prefs.tx_power_dbm = np.tx_power_dbm;
+  _prefs.multi_acks = np.multi_acks;
+  _prefs.manual_add_contacts = np.manual_add_contacts;
+  _prefs.advert_loc_policy = np.advert_loc_policy;
+  _prefs.telemetry_mode_base = np.telemetry_mode_base;
+  _prefs.telemetry_mode_loc = np.telemetry_mode_loc;
+  _prefs.telemetry_mode_env = np.telemetry_mode_env;
+  _prefs.client_repeat = np.client_repeat;
+  _prefs.path_hash_mode = np.path_hash_mode;
+  _prefs.ble_pin = np.ble_pin;
+  memcpy(self_id.pub_key, pub_key, PUB_KEY_SIZE);
+  if (lat_e6 != 0 || lon_e6 != 0) {
+    sensors.node_lat = (double)lat_e6 / 1.0e6;
+    sensors.node_lon = (double)lon_e6 / 1.0e6;
+  }
+  // Keep the local copy in step without echoing it back to the node.
+  File f = SPIFFS.open(k_prefs_path, "w");
+  if (f) { f.write((const uint8_t*)&_prefs, sizeof _prefs); f.close(); }
+  if (_ui) _ui->onThreadsChanged();
+}
+
+void MyMesh::beContactRemoved(const uint8_t pub_key[32]) {
+  if (removeAt(_contacts, _num_contacts, pub_key) && _ui) _ui->onThreadsChanged();
+}
+
+// src/MyMesh.cpp logRxRaw, on the node's copy of the frame: the RF monitor ring, the
+// live signal (0-hop only), advert routes, and "repeats heard" for our own floods.
+void MyMesh::beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) {
+  const RawView v = rawView(raw, len);
+  if (!v.ok) return;
+  const uint32_t now_ms = millis();
+  _last_rx_snr_q4 = snr_q4;
+  _last_rx_rssi = rssi;
+  uint8_t org_kind = 0, org[4] = {0, 0, 0, 0};
+  const int pl = v.payload_off;
+  switch (v.ptype) {
+    case PAYLOAD_TYPE_ADVERT:
+      if ((size_t)pl + 32 <= len) { org_kind = 1; memcpy(org, &raw[pl], 4); }
+      break;
+    case PAYLOAD_TYPE_REQ: case PAYLOAD_TYPE_RESPONSE: case PAYLOAD_TYPE_TXT_MSG: case PAYLOAD_TYPE_PATH:
+      if ((size_t)pl + 2 <= len) { org_kind = 2; org[0] = raw[pl]; org[1] = raw[pl + 1]; }
+      break;
+    default: break;
+  }
+  if (v.hops == 0) beSignal(snr_q4, rssi);
+  UiRxRec& r = _rxlog[_rxlog_head];
+  r.ms = now_ms; r.rssi = rssi; r.snr_q4 = snr_q4; r.ptype = v.ptype; r.route = v.route; r.hops = v.hops;
+  r.len = (uint8_t)(len > 255 ? 255 : len);
+  r.org_kind = org_kind;
+  memcpy(r.org, org, 4);
+  _rxlog_head = (uint8_t)((_rxlog_head + 1) % UI_RXLOG_MAX);
+  if (_rxlog_cnt < UI_RXLOG_MAX) _rxlog_cnt++;
+
+  // Advert routes (getAdvertPath).
+  if (v.ptype == PAYLOAD_TYPE_ADVERT && org_kind == 1) {
+    int slot = -1, oldest = 0;
+    for (int i = 0; i < ADVERT_PATHS; i++) {
+      if (_advert_paths[i].used && memcmp(_advert_paths[i].pubkey_prefix, &raw[pl], sizeof(AdvertPath::pubkey_prefix)) == 0) { slot = i; break; }
+      if (!_advert_paths[i].used) { if (slot < 0) slot = i; continue; }
+      if (_advert_paths[i].recv_seq < _advert_paths[oldest].recv_seq) oldest = i;
+    }
+    if (slot < 0) slot = oldest;
+    AdvertPath& a = _advert_paths[slot];
+    memcpy(a.pubkey_prefix, &raw[pl], sizeof(a.pubkey_prefix));
+    const size_t bytes = (size_t)v.hops * v.hash_sz;
+    a.path_len = (uint8_t)(raw[v.path_off - 1]);
+    if (bytes <= sizeof(a.path)) memcpy(a.path, &raw[v.path_off], bytes);
+    else a.path_len = 0;
+    a.recv_timestamp = getRTCClock()->getCurrentTime();
+    a.recv_seq = ++_advert_seq;
+    a.used = true;
+  }
+
+  // A message packet: kept for the Info popup of the message event that follows it.
+  if ((v.ptype == PAYLOAD_TYPE_TXT_MSG || v.ptype == PAYLOAD_TYPE_GRP_TXT) && len <= sizeof(_last_msg_raw)) {
+    memcpy(_last_msg_raw, raw, len);
+    _last_msg_raw_len = (uint16_t)len;
+    _last_msg_raw_ms = now_ms ? now_ms : 1;
+  }
+
+  // Repeats heard: our own flood coming back (same payload, longer path).
+  if (isMsgFloodType(v.ptype) && (size_t)pl < len) {
+    const uint32_t fp = fnv1a32(raw + pl, (int)(len - pl));
+    const uint8_t* lasthop = v.hops >= 1 ? raw + pl - v.hash_sz : nullptr;
+    beRepeatHeard(fp, lasthop, lasthop ? v.hash_sz : 0);
+  }
+}
+
+// src/MyMesh.h uiStashRxMeta: route + scope of the packet that carried the message the
+// UI is about to be told about. Over a companion link that is the raw RX push that came
+// just before it, when it is plausibly the same packet (type, sender/channel hash, hops).
+void MyMesh::stashRxMeta(bool for_channel, const uint8_t* key_or_hash, uint8_t path_len) {
+  _last_rx_path_n = 0;
+  _last_rx_has_scope = false;
+  _last_rx_scope = 0;
+  _last_rx_scope_slot = REGION_SLOT_NONE;
+  if (!_last_msg_raw_ms || !key_or_hash || (uint32_t)(millis() - _last_msg_raw_ms) > 3000) return;
+  const RawView v = rawView(_last_msg_raw, _last_msg_raw_len);
+  _last_msg_raw_ms = 0;
+  if (!v.ok || (size_t)v.payload_off + 2 > _last_msg_raw_len) return;
+  if (for_channel) {
+    if (v.ptype != PAYLOAD_TYPE_GRP_TXT || _last_msg_raw[v.payload_off] != key_or_hash[0]) return;
+  } else {
+    if (v.ptype != PAYLOAD_TYPE_TXT_MSG || _last_msg_raw[v.payload_off + 1] != key_or_hash[0]) return;
+  }
+  const bool flood = (v.route == ROUTE_TYPE_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_FLOOD);
+  if (flood && path_len != 0xFF && (path_len & 0x3F) != v.hops) return;
+  if (flood) {
+    int nb = (int)v.hops * (int)v.hash_sz;
+    if (nb > (int)sizeof(_last_rx_path)) nb = (int)sizeof(_last_rx_path);
+    if (nb > 0) { memcpy(_last_rx_path, &_last_msg_raw[v.path_off], (size_t)nb); _last_rx_path_n = (uint8_t)nb; }
+  }
+  if (v.route == ROUTE_TYPE_TRANSPORT_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_DIRECT) {
+    mesh::Packet pkt;
+    if (pkt.readFrom(_last_msg_raw, (uint8_t)_last_msg_raw_len)) {
+      _last_rx_has_scope = true;
+      _last_rx_scope = pkt.transport_codes[0] ? pkt.transport_codes[0] : pkt.transport_codes[1];
+      _last_rx_scope_slot = pkt.transport_codes[0] ? _region_reg.matchPacket(&pkt, pkt.transport_codes[0])
+                                                   : REGION_SLOT_NONE;
+    }
+  }
+}
+
+void MyMesh::beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) {
+  ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (!c || !_ui) return;
+  if (ok) _ui->onServerClock(*c, server_clock);
+  _ui->onAdminLoginResult(*c, ok, perms);
+}
+
+void MyMesh::beCliReply(const uint8_t pub_key[32], const char* text) {
+  ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (c && _ui) _ui->onAdminCommandReply(*c, text);
+}
+
+void MyMesh::beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) {
+  if (_ui_pending_kind != UiReqKind::Regions || memcmp(_ui_pending_key, pub_key, PUB_KEY_SIZE) != 0) return;
+  _ui_pending_kind = UiReqKind::None;
+  ContactInfo* c = lookupContactByPubKey(pub_key, PUB_KEY_SIZE);
+  if (c && _ui) _ui->onRegionListReply(*c, data, len);
+}
+
+void MyMesh::beLinkState(bool up, const char* detail) {
+  char line[160];
+  snprintf(line, sizeof line, "%s: %s", up ? "Connected" : "Disconnected", detail ? detail : "");
+  Serial.printf("[web] companion %s\n", line);
+  if (s_terminal_sink) s_terminal_sink(line);
+  if (_ui) _ui->onThreadsChanged();
 }

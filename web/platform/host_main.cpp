@@ -7,10 +7,13 @@
 // also the shape Emscripten's main loop wants (phase 2).
 //
 //   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N]
+//                 [--serial PATH | --tcp HOST:PORT] [--read-only]
 //     --headless   no window (CI / release gate); the framebuffer is still rendered
 //     --script     scripted input: wait/tap/drag/key/type/shot/quit, one per line
 //     --shots DIR  where `shot` and F12 write PNGs (default: current directory)
 //     --scale N    initial window scale (default 1; the window is resizable)
+//     --serial / --tcp  drive a real MeshCore companion node instead of the demo
+//                       (web/mesh/BackendSelect.cpp; --read-only leaves its settings alone)
 //   $WADA_DATA_DIR  the virtual flash (SPIFFS, LittleFS, NVS), default ./wadamesh-data
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -286,7 +289,7 @@ int main(int argc, char** argv) {
   rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
   sensors.node_lat = 52.3728;   // the demo node's position (scripts/doc/web-demo/demo.py)
   sensors.node_lon = 4.8934;
-  the_mesh.begin(wadaCreateDemoBackend());
+  the_mesh.begin(wadaCreateBackendFromArgs(argc, argv));   // demo, or a companion node (web/mesh/BackendSelect.cpp)
   ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
   Serial.println("[BOOT] ui ready");
 
