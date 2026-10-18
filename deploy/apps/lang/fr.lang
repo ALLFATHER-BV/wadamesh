@@ -1997,3 +1997,14 @@ newer keyboard	clavier récent
 older keyboard	ancien clavier
 older keyboard (set manually)	ancien clavier (réglé manuellement)
 keyboard not detected yet	clavier pas encore détecté
+Always use the external antenna (MMCX)	Toujours utiliser l'antenne externe (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Démarre sur la prise externe à chaque démarrage. Seulement pour une antenne qui reste branchée.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Ne choisissez Externe qu'avec une antenne branchée sur la prise externe. Après un redémarrage, c'est l'antenne embarquée, sauf si l'interrupteur ci-dessous est activé.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Toujours utiliser l'antenne externe ?\n\nLa radio démarrera sur la prise externe (MMCX) à chaque démarrage. Émettre sans antenne branchée peut endommager la radio.\n\nN'activez ceci que si votre antenne externe reste branchée.
+Turn on	Activer
+On-board antenna selected	Antenne embarquée sélectionnée
+External antenna at every boot	Antenne externe à chaque démarrage
+Antenna	Antenne
+On-board	Interne
+Glass tiles	Tuiles en verre
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Les widgets, cartes et tuiles du panneau laissent voir le fond. Désactivé : tuiles opaques.

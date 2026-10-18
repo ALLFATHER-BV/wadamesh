@@ -1998,3 +1998,14 @@ newer keyboard	новая клавиатура
 older keyboard	старая клавиатура
 older keyboard (set manually)	старая клавиатура (задано вручную)
 keyboard not detected yet	клавиатура ещё не определена
+Always use the external antenna (MMCX)	Всегда внешняя антенна (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	При каждом запуске работает через внешний разъём. Только для антенны, которая остаётся подключённой.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Выбирайте Внешнюю только с антенной на внешнем разъёме. После перезагрузки включается встроенная антенна, если переключатель ниже не включён.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Всегда использовать внешнюю антенну?\n\nРадио будет запускаться на внешнем разъёме (MMCX) при каждом включении. Передача без подключённой антенны может повредить радио.\n\nВключайте, только если внешняя антенна остаётся подключённой.
+Turn on	Включить
+On-board antenna selected	Выбрана встроенная антенна
+External antenna at every boot	Внешняя антенна при каждом запуске
+Antenna	Антенна
+On-board	Встроен.
+Glass tiles	Стеклянные плитки
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Виджеты, карточки и плитки панели пропускают фон. Выкл.: сплошные плитки.

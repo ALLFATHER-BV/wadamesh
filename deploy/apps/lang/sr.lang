@@ -1998,3 +1998,14 @@ newer keyboard	новија тастатура
 older keyboard	старија тастатура
 older keyboard (set manually)	старија тастатура (ручно подешено)
 keyboard not detected yet	тастатура још није препозната
+Always use the external antenna (MMCX)	Увек спољна антена (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	При сваком покретању ради преко спољног прикључка. Само за антену која остаје прикључена.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Изаберите Спољну само са антеном на спољном прикључку. После поновног покретања креће на уграђеној антени, осим ако је прекидач испод укључен.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Увек користити спољну антену?\n\nРадио ће се покретати на спољном прикључку (MMCX) при сваком укључивању. Слање без прикључене антене може оштетити радио.\n\nУкључите ово само ако спољна антена остаје прикључена.
+Turn on	Укључи
+On-board antenna selected	Изабрана уграђена антена
+External antenna at every boot	Спољна антена при сваком покретању
+Antenna	Антена
+On-board	Уграђена
+Glass tiles	Стаклене плочице
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Виџети, картице и плочице панела пропуштају позадину. Искључено: пуне плочице.

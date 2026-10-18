@@ -1995,3 +1995,14 @@ newer keyboard	nieuwer toetsenbord
 older keyboard	ouder toetsenbord
 older keyboard (set manually)	ouder toetsenbord (handmatig ingesteld)
 keyboard not detected yet	toetsenbord nog niet herkend
+Always use the external antenna (MMCX)	Altijd de externe antenne gebruiken (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Start bij elke opstart op de externe aansluiting. Alleen voor een antenne die aangesloten blijft.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Kies Extern alleen met een antenne op de externe aansluiting. Na een herstart begint hij op de ingebouwde antenne, tenzij de schakelaar hieronder aan staat.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Altijd de externe antenne gebruiken?\n\nDe radio start bij elke opstart op de externe (MMCX) aansluiting. Zenden zonder aangesloten antenne kan de radio beschadigen.\n\nZet dit alleen aan als je externe antenne aangesloten blijft.
+Turn on	Aanzetten
+On-board antenna selected	Ingebouwde antenne geselecteerd
+External antenna at every boot	Externe antenne bij elke opstart
+Antenna	Antenne
+On-board	Intern
+Glass tiles	Glazen tegels
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgets, kaarten en tegels in het bedieningspaneel laten de achtergrond doorschijnen. Uit: effen tegels.

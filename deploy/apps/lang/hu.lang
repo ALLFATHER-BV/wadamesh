@@ -2008,3 +2008,14 @@ newer keyboard	újabb billentyűzet
 older keyboard	régebbi billentyűzet
 older keyboard (set manually)	régebbi billentyűzet (kézzel beállítva)
 keyboard not detected yet	a billentyűzet még nincs felismerve
+Always use the external antenna (MMCX)	Mindig a külső antenna (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Minden indításkor a külső csatlakozón indul. Csak tartósan csatlakoztatott antennához.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Külsőt csak akkor válassz, ha antenna van a külső csatlakozón. Újraindítás után a beépített antennán indul, kivéve ha az alábbi kapcsoló be van kapcsolva.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Mindig a külső antennát használod?\n\nA rádió minden indításkor a külső (MMCX) csatlakozón indul. Antenna nélküli adás károsíthatja a rádiót.\n\nCsak akkor kapcsold be, ha a külső antenna csatlakoztatva marad.
+Turn on	Bekapcsol
+On-board antenna selected	Beépített antenna kiválasztva
+External antenna at every boot	Külső antenna minden indításkor
+Antenna	Antenna
+On-board	Beépített
+Glass tiles	Üveg csempék
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	A widgetek, kártyák és a panel csempéi átengedik a hátteret. Ki: tömör csempék.

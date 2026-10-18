@@ -80,7 +80,8 @@ public:
 
   enum AntMode : uint8_t {
     ANT_INTERNAL = 0,   // RF1, on-board antenna — always attached, the safe default, forced every boot
-    ANT_EXTERNAL = 1,   // RF2, external socket — needs an antenna fitted; session-only, never persisted
+    ANT_EXTERNAL = 1,   // RF2, external socket — needs an antenna fitted; session-only unless the owner
+                        // turned on "Always use the external antenna" (own NVS key ant_ext, UITask boot-apply)
     ANT_AUTO     = 2,   // legacy per-TX toggle: transmits internal, receives external. Diagnostic only.
   };
 

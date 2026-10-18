@@ -107,7 +107,8 @@ void Xl9535::powerOnSequence() {
   // Antenna select: park on the on-board antenna (RF1) before the radio exists, so the first
   // transmit after any boot cannot key the PA into a possibly-empty external socket. LilyGo's own
   // XL9535 init preloads this same level as its safe state. Choosing the external antenna is a
-  // deliberate, confirmed, session-only action from Settings -> Radio.
+  // deliberate, confirmed action from Settings -> Radio: session-only, unless the owner turned on
+  // "Always use the external antenna", which UITask::begin applies later in boot.
   write(IO_RF_SWITCH, INTERNAL_LEVEL);
   write(IO_TOUCH_RST, true);           // release touch (HI8561 driver probes it)
   // NB: SCREEN_RST is intentionally NOT touched here — RM69A10Display::begin() sequences it with
