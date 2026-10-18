@@ -1999,3 +1999,14 @@ newer keyboard	tastatură nouă
 older keyboard	tastatură veche
 older keyboard (set manually)	tastatură veche (setată manual)
 keyboard not detected yet	tastatura nu a fost detectată încă
+Always use the external antenna (MMCX)	Folosește mereu antena externă (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Pornește pe conectorul extern la fiecare pornire. Doar pentru o antenă care rămâne conectată.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Alege Externă doar cu o antenă montată pe conectorul extern. După o repornire pornește pe antena integrată, dacă comutatorul de mai jos nu este activ.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Folosești mereu antena externă?\n\nRadioul va porni pe conectorul extern (MMCX) la fiecare pornire. Transmisia fără antenă conectată poate defecta radioul.\n\nActivează doar dacă antena externă rămâne conectată.
+Turn on	Activează
+On-board antenna selected	Antenă integrată selectată
+External antenna at every boot	Antenă externă la fiecare pornire
+Antenna	Antenă
+On-board	Integrată
+Glass tiles	Plăci de sticlă
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgeturile, cardurile și plăcile din panou lasă fundalul să se vadă. Oprit: plăci opace.

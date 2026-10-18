@@ -2014,3 +2014,14 @@ newer keyboard	novější klávesnice
 older keyboard	starší klávesnice
 older keyboard (set manually)	starší klávesnice (nastaveno ručně)
 keyboard not detected yet	klávesnice zatím nerozpoznána
+Always use the external antenna (MMCX)	Vždy používat externí anténu (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Při každém spuštění začne na externím konektoru. Jen pro anténu, která zůstává připojená.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Externí vyberte jen s anténou na externím konektoru. Po restartu začne na vestavěné anténě, pokud není zapnutý přepínač níže.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Vždy používat externí anténu?\n\nRádio začne při každém spuštění na externím konektoru (MMCX). Vysílání bez připojené antény může rádio poškodit.\n\nZapněte to jen tehdy, když externí anténa zůstává připojená.
+Turn on	Zapnout
+On-board antenna selected	Vybrána vestavěná anténa
+External antenna at every boot	Externí anténa při každém startu
+Antenna	Anténa
+On-board	Vestavěná
+Glass tiles	Skleněné dlaždice
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgety, karty a dlaždice panelu nechají prosvítat pozadí. Vypnuto: plné dlaždice.

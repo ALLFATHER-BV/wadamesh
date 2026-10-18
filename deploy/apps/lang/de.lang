@@ -1995,3 +1995,14 @@ newer keyboard	neuere Tastatur
 older keyboard	ältere Tastatur
 older keyboard (set manually)	ältere Tastatur (manuell gesetzt)
 keyboard not detected yet	Tastatur noch nicht erkannt
+Always use the external antenna (MMCX)	Immer die externe Antenne nutzen (MMCX)
+Starts on the external socket at every boot. Only for an antenna that stays connected.	Startet bei jedem Booten an der externen Buchse. Nur für eine Antenne, die dauerhaft angeschlossen bleibt.
+Only pick External with an antenna fitted to the external socket. After a reboot it starts on the on-board antenna, unless the switch below is on.	Extern nur wählen, wenn eine Antenne an der externen Buchse steckt. Nach einem Neustart läuft es über die interne Antenne, außer der Schalter unten ist an.
+Always use the external antenna?\n\nThe radio will start on the external (MMCX) socket at every boot. Transmitting without an antenna attached can damage the radio.\n\nOnly turn this on if your external antenna stays connected.	Immer die externe Antenne nutzen?\n\nDas Funkmodul startet bei jedem Booten an der externen Buchse (MMCX). Senden ohne angeschlossene Antenne kann das Funkmodul beschädigen.\n\nNur einschalten, wenn deine externe Antenne angeschlossen bleibt.
+Turn on	Einschalten
+On-board antenna selected	Interne Antenne gewählt
+External antenna at every boot	Externe Antenne bei jedem Start
+Antenna	Antenne
+On-board	Intern
+Glass tiles	Glas-Kacheln
+Widgets, cards and panel tiles let the background show through. Off: solid tiles.	Widgets, Karten und Kacheln im Kontrollfeld lassen den Hintergrund durchscheinen. Aus: deckende Kacheln.
