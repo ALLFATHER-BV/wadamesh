@@ -71,6 +71,8 @@ public:
   int32_t channel(uint8_t i) { return (int32_t)c6at_scan_channel(i); }   // scan-result channel
 
   // ---- accepted no-ops (ESP-AT handles reconnect + power policy on the C6 itself) ----
+  // c6at_begin() sends AT+SLEEP=0 and AT+CWRECONNCFG after every link bring-up (boot and each
+  // runtime reset), so main.cpp's setSleep(true) must stay a no-op here or it would undo that.
   bool setAutoReconnect(bool en) { (void)en; return true; }
   bool setSleep(bool en)         { (void)en; return true; }
 };

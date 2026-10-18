@@ -52035,6 +52035,12 @@ static void showSubtleNotifyLvgl(const char* text, uint32_t duration_ms) {
 
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
 static const char* wifiStaStatusBrief(int s) {
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
+  // Legacy ESP-AT C6: the facade's status() only knows connected/disconnected, so say what the
+  // AT worker is actually doing (#685: a runtime C6 reset, or a join still running).
+  if (c6at_is_recovering()) return "reconnecting…";
+  if (s != WL_CONNECTED && c6at_join_busy()) return "joining…";
+#endif
   switch (s) {
     case WL_CONNECTED: return "connected";
     case WL_IDLE_STATUS: return "idle";
