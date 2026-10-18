@@ -41,8 +41,29 @@ public:
 
   // platform side
   const uint16_t* framebuffer() const { return _fb; }
-  bool takeDirty() { bool d = _dirty; _dirty = false; return d; }
+  bool takeDirty() { bool d = _dirty; _dirty = false; resetBox(); return d; }
+  // The changed area since the last take (x0,y0 inclusive, x1,y1 exclusive): the
+  // canvas front end uploads only that rectangle.
+  bool takeDirtyRect(int& x0, int& y0, int& x1, int& y1) {
+    if (!_dirty) return false;
+    x0 = _bx0; y0 = _by0; x1 = _bx1; y1 = _by1;
+    _dirty = false; resetBox();
+    return x1 > x0 && y1 > y0;
+  }
 private:
+  void resetBox() { _bx0 = WADA_WEB_W; _by0 = WADA_WEB_H; _bx1 = 0; _by1 = 0; }
+  void addBox(int x0, int y0, int x1, int y1) {
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > WADA_WEB_W) x1 = WADA_WEB_W;
+    if (y1 > WADA_WEB_H) y1 = WADA_WEB_H;
+    if (x0 < _bx0) _bx0 = x0;
+    if (y0 < _by0) _by0 = y0;
+    if (x1 > _bx1) _bx1 = x1;
+    if (y1 > _by1) _by1 = y1;
+    _dirty = true;
+  }
+  int _bx0 = 0, _by0 = 0, _bx1 = WADA_WEB_W, _by1 = WADA_WEB_H;
   uint16_t* _fb;
   ColorVal _color = 0xFFFF;
   uint8_t _brightness = 255;

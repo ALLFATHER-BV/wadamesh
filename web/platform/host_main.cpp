@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // wadamesh-host: the real touch UI in an SDL2 window (phase 1 of WEB_BUILD.md).
 //
-// This file is the web board's main.cpp: it owns the board globals a variants/*/
-// target.cpp would define, starts storage, the mesh stand-in and the UI exactly in
-// src/main.cpp's order, then runs one loop step at a time (wadaHostStep), which is
-// also the shape Emscripten's main loop wants (phase 2).
+// The native front end of the web board: board.cpp owns the board globals and the
+// boot/loop order (shared with web_main.cpp, the Emscripten front end); this file is
+// the SDL window, the event pump and the scripted tour.
 //
 //   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N]
 //     --headless   no window (CI / release gate); the framebuffer is still rendered
@@ -13,15 +12,9 @@
 //     --scale N    initial window scale (default 1; the window is resizable)
 //   $WADA_DATA_DIR  the virtual flash (SPIFFS, LittleFS, NVS), default ./wadamesh-data
 #include <Arduino.h>
-#include <SPIFFS.h>
-#include <LittleFS.h>
-#include <Wire.h>
-#include <SPI.h>
-#include <WiFi.h>
-#include <helpers/BaseSerialInterface.h>
-#include "UITask.h"
-#include "WebMesh.h"
+#include "WebDisplay.h"
 #include "WebInput.h"
+#include "WebPlatform.h"
 #include "wada_host.h"
 #include "miniz.h"
 #include <SDL.h>
@@ -31,57 +24,7 @@
 #include <unistd.h>
 #include <sstream>
 
-// ---- the web board's globals (what variants/*/target.cpp + src/main.cpp define) ----
-namespace {
-// The mesh clock: the host's wall clock (a browser always knows the time).
-class HostRTCClock : public mesh::RTCClock {
-public:
-  uint32_t getCurrentTime() override { return (uint32_t)time(nullptr); }
-  void setCurrentTime(uint32_t) override {}   // the OS owns the clock
-};
-HostRTCClock s_host_clock;
-
-// No companion transport is served BY the web board (it is the companion's client in
-// phase 3), so the UI's companion-link controls see a disabled, unconnected interface.
-class WebSerialInterface : public BaseSerialInterface {
-public:
-  void enable() override { _en = true; }
-  void disable() override { _en = false; }
-  bool isEnabled() const override { return _en; }
-  bool isConnected() const override { return false; }
-  bool isWriteBusy() const override { return false; }
-  size_t writeFrame(const uint8_t src[], size_t len) override { (void)src; return len; }
-  size_t checkRecvFrame(uint8_t dest[]) override { (void)dest; return 0; }
-  bool isTcpEnabled() const override { return false; }
-private:
-  bool _en = false;
-};
-WebSerialInterface s_serial;
-}  // namespace
-
-WebBoard board;
-WebRadio radio_driver;
-ClockFloorRTC rtc_clock(s_host_clock);
-SensorManager sensors;
-WebDisplay display;
-TwoWire Wire(0), Wire1(1);
-SPIClass SPI;
-WiFiClass WiFi;
-UITask ui_task(&board, &s_serial);
-static MyMesh s_mesh(rtc_clock, &ui_task);
-MyMesh& the_mesh = s_mesh;
-
-// src/main.cpp / DataStore.cpp / MultiTransportCompanionInterface.cpp symbols the UI reads.
-bool g_identity_restored_from_copy = false;
-uint8_t bleLastFailReason() { return 0; }   // BLE_FAIL_NONE: there is no Bluetooth stack to fail
-
-// AutoDiscoverRTCClock (core): no I2C RTC chips on a host, the fallback clock is it.
-void AutoDiscoverRTCClock::begin(TwoWire&) {}
-uint32_t AutoDiscoverRTCClock::getCurrentTime() { return _fallback->getCurrentTime(); }
-void AutoDiscoverRTCClock::setCurrentTime(uint32_t t) { _fallback->setCurrentTime(t); }
-
-void WebBoard::reboot() { esp_restart(); }
-void WebBoard::powerOff() { esp_restart(); }
+extern WebDisplay display;   // board.cpp
 
 // ---- presentation ------------------------------------------------------------------
 namespace {
@@ -238,12 +181,10 @@ void scriptStep() {
 }
 }  // namespace
 
-// One iteration of src/main.cpp's loop(): UI first, then the mesh (same order, same reason).
 bool wadaHostStep() {
   pumpEvents();
   if (!s_script.lines.empty()) scriptStep();
-  ui_task.loop();
-  the_mesh.loop();
+  wadaBoardStep();
   present();
   return !s_quit;
 }
@@ -266,7 +207,6 @@ int main(int argc, char** argv) {
   }
   wadaHostMkdirs(s_shot_dir);
   setvbuf(stdout, nullptr, _IOLBF, 0);
-  Serial.printf("[web] wadamesh-host %s, data dir %s\n", FIRMWARE_VERSION, wadaHostDataDir().c_str());
 
   if (!headless) {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
@@ -280,20 +220,12 @@ int main(int argc, char** argv) {
     SDL_StartTextInput();
   }
 
-  // Storage, then the mesh, then the UI: src/main.cpp's setup() order.
-  SPIFFS.begin(true);
-  LittleFS.begin(true);
-  rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
-  sensors.node_lat = 52.3728;   // the demo node's position (scripts/doc/web-demo/demo.py)
-  sensors.node_lon = 4.8934;
-  the_mesh.begin(wadaCreateDemoBackend());
-  ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
-  Serial.println("[BOOT] ui ready");
+  wadaBoardBegin();
 
   while (wadaHostStep()) SDL_Delay(4);
   // Closing the window is the web board's power-off: flush what the device flushes
   // on its deliberate power paths (chat history is written lazily).
-  ui_task.persistHistoryNow();
+  wadaBoardFlush();
 
   if (s_win) { SDL_DestroyTexture(s_tex); SDL_DestroyRenderer(s_ren); SDL_DestroyWindow(s_win); SDL_Quit(); }
   fflush(stdout);

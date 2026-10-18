@@ -8,14 +8,14 @@ WebDisplay::WebDisplay() : DisplayDriver(WADA_WEB_W, WADA_WEB_H) {
 }
 void WebDisplay::clear() {
   memset(_fb, 0, (size_t)WADA_WEB_W * WADA_WEB_H * sizeof(uint16_t));
-  _dirty = true;
+  addBox(0, 0, WADA_WEB_W, WADA_WEB_H);
 }
 void WebDisplay::fillRect(int x, int y, int w, int h) {
   for (int r = y; r < y + h; ++r) {
     if (r < 0 || r >= WADA_WEB_H) continue;
     for (int c = x; c < x + w; ++c) if (c >= 0 && c < WADA_WEB_W) _fb[(size_t)r * WADA_WEB_W + c] = _color;
   }
-  _dirty = true;
+  addBox(x, y, x + w, y + h);
 }
 void WebDisplay::drawRect(int x, int y, int w, int h) {
   fillRect(x, y, w, 1); fillRect(x, y + h - 1, w, 1);
@@ -32,5 +32,5 @@ void WebDisplay::writePixelsRGB565(int x, int y, int w, int h, const uint16_t* p
     if (x0 + cw > WADA_WEB_W) cw = WADA_WEB_W - x0;
     if (cw > 0) memcpy(_fb + (size_t)dy * WADA_WEB_W + x0, px + (size_t)r * w + sx, (size_t)cw * sizeof(uint16_t));
   }
-  _dirty = true;
+  addBox(x, y, x + w, y + h);
 }
