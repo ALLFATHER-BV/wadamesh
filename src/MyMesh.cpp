@@ -3662,6 +3662,8 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       _ui->onTelemetryReply(contact, &data[4], (size_t)(len - 4));
     } else if (kind == UiReqKind::Regions) {
       _ui->onRegionListReply(contact, data, len);
+    } else if (kind == UiReqKind::Binary) {
+      _ui->onBinaryReply(contact, &data[4], (size_t)(len - 4));
     } else {
       // STATUS or unknown — let the UI fall through its RepeaterStats /
       // JSON parser path.
@@ -3748,6 +3750,12 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       out_frame[i++] = data[12]; // FIRMWARE_VER_LEVEL
       ok = true;
       perms = data[6];
+#ifdef DISPLAY_CLASS
+      memcpy(_ui_last_login.pub4, contact.id.pub_key, 4);
+      _ui_last_login.acl      = data[7];
+      _ui_last_login.fw_level = data[12];
+      _ui_last_login.valid    = true;
+#endif
     } else {
       out_frame[i++] = PUSH_CODE_LOGIN_FAIL;
       out_frame[i++] = 0; // reserved
