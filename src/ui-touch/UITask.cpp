@@ -27566,7 +27566,19 @@ static bool tanSdTryMount() {
   begin_ok = SD_MMC.begin("/sdcard", false /*4-bit*/, false, SDMMC_FREQ_DEFAULT);
 #elif defined(HAS_CROWPANEL_P4_101)
   // Hot-insert path. The J5 slot only has D0 wired, so 1-bit; pins + external pad power were set by
-  // main.cpp (SD_MMC keeps them across end/begin).
+  // main.cpp (SD_MMC keeps them across end/begin). The first caller (the tile backend pick, a few
+  // hundred ms after boot) would only repeat what main.cpp's quiet probe just found, with an IDF and
+  // an Arduino error line, so an empty slot at boot starts in the normal 8 s backoff instead.
+  {
+    extern bool g_sd_no_card_at_boot;   // crowpanel_p4_101/main/main.cpp
+    static bool s_first_try = true;
+    const bool skip = s_first_try && g_sd_no_card_at_boot;
+    s_first_try = false;
+    if (skip) {
+      s_tan_sd_retry_after = millis() + 8000;
+      return false;
+    }
+  }
   attempted = true;
   begin_ok = SD_MMC.begin("/sdcard", true /*1-bit*/, false, SDMMC_FREQ_DEFAULT);
 #else
@@ -33492,6 +33504,16 @@ static inline void tileCacheMkdir(const char* rel) {
 // #tiles: bytes of tiles written to FFat this session — the Tanmatsu FFat-fallback budget (the SD path
 // isn't space-constrained). Reset each boot; a genuinely-full FAT then just fails writes cleanly.
 static volatile uint32_t s_ffat_tile_bytes  = 0;
+#if CAP_TILES_ON_STORAGE
+// Share of the internal 'storage' partition kept free for user data when map tiles fall back to it.
+static constexpr size_t kTileStorageReservePct = 30;
+static constexpr size_t kTileStorageReserveMin = 2u * 1024u * 1024u;
+#if defined(HAS_CROWPANEL_P4_101)
+static const char* const kTileBoardName = "CrowPanel P4 10.1";
+#else
+static const char* const kTileBoardName = "T-Display P4";
+#endif
+#endif
 static bool tilesFsLowSpace() {
   if (!s_tiles_fs_ready || !s_tile_fs) return false;   // no cache backend -> nothing to guard
 #if defined(HAS_TANMATSU)
@@ -33517,6 +33539,28 @@ static bool tilesFsLowSpace() {
   // gate wedged permanently ON and blocked EVERY tile download (the fetcher bailed
   // before the HTTP GET: ok 0, fail N, http 0, wr 'S'). The SD card has gigabytes
   // free, so it is never the constraint here — only guard the LittleFS partition.
+#if CAP_TILES_ON_STORAGE
+  // No-card fallback: the tiles share the internal LittleFS 'storage' partition with identity,
+  // contacts and chat history. Stop caching NEW tiles while less than kTileStorageReservePct of it
+  // (at least kTileStorageReserveMin) is free. A full LittleFS also faults in lfs_alloc instead of
+  // returning NOSPC (see above), and here that would be the user's own data partition.
+  if (s_tile_fs == &LittleFS) {
+    static uint32_t st_last_ms = 0;
+    static bool     st_low     = false;
+    const uint32_t now = millis();
+    if (st_last_ms == 0 || (uint32_t)(now - st_last_ms) >= 5000) {
+      st_last_ms = now ? now : 1;
+      const size_t tot = LittleFS.totalBytes();
+      const size_t use = LittleFS.usedBytes();
+      const size_t freeb = (tot > use) ? (tot - use) : 0;
+      size_t reserve = tot / 100 * kTileStorageReservePct;
+      if (reserve < kTileStorageReserveMin) reserve = kTileStorageReserveMin;
+      s_tiles_free_kb = (uint16_t)((freeb / 1024 > 0xFFFE) ? 0xFFFE : freeb / 1024);
+      st_low = (tot > 0) && (freeb < reserve);
+    }
+    return st_low;
+  }
+#endif
   if (s_tile_fs != &s_tiles_fs) return false;          // SD-backed cache: not space-constrained
   static uint32_t last_ms = 0;
   static bool     low     = false;
@@ -73029,7 +73073,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // the V4 here avoids dragging the T-Deck *down* to 160. The V4-R8 env now
   // sets ESP32_CPU_FREQ=240 itself (whole of setup() at full clock), so this
   // is a no-op there.
-#if !defined(HAS_TDECK_GT911)
+#if !defined(HAS_TDECK_GT911) && !defined(CONFIG_IDF_TARGET_ESP32P4)
+  // (Not on the ESP32-P4: it runs at a fixed 360 MHz and Arduino refuses 240 with an error line.)
   setCpuFrequencyMhz(240);   // S3 max; watch the map tiles for SJPG decode noise (drop to 160 if it shows)
 #endif
 
@@ -73058,8 +73103,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // initialised to an empty FS instead of failing to mount. partition
   // label "tiles" matches the CSV; base path "/tiles_lfs" is for VFS
   // access (we use the FS object directly, so it's mostly a label).
-  s_tiles_fs_ready = s_tiles_fs.begin(true /*formatOnFail*/, "/tiles_lfs",
-                                       10 /*maxOpenFiles*/, "tiles");
+  // Only when the running partition table HAS a "tiles" partition: under Launcher, and on boards
+  // whose own table has none (CAP_TILES_ON_STORAGE), the mount, the forced format() and the remount
+  // below could only fail, each with a misleading "partition not found / Formatting LittleFS failed"
+  // error, before the fallbacks further down pick the real backend.
+  const bool tiles_part_present =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "tiles") != nullptr;
+  s_tiles_fs_ready = tiles_part_present &&
+                     s_tiles_fs.begin(true /*formatOnFail*/, "/tiles_lfs", 10 /*maxOpenFiles*/, "tiles");
 #if defined(ESP32)
   // Mount failed outright: the Arduino LittleFS wrapper only auto-formats when
   // esp_vfs_littlefs_register returns exactly ESP_FAIL — but grow_on_mount=true
@@ -73067,7 +73118,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // partition is left unmounted and the map showed "Reflash the tiles partition"
   // forever even though the partition is present. format() targets the stored
   // "tiles" label, so force a wipe + remount. Tiles are a re-downloadable cache.
-  if (!s_tiles_fs_ready) {
+  if (!s_tiles_fs_ready && tiles_part_present) {
     WIRE_DBG("[TILE] tiles begin() failed — forcing format() + remount");
     s_tiles_fs.format();
     s_tiles_fs_ready = s_tiles_fs.begin(true, "/tiles_lfs", 10, "tiles");
@@ -73154,16 +73205,18 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] Tanmatsu: no SD card -> caching Wi-Fi tiles on FFat /tiles (best-effort)");
   }
 #endif
-#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
-  // T-Display P4: no dedicated "tiles" partition in its table. Prefer the microSD (SD_MMC slot 0,
-  // mounted by main.cpp at boot — XL9535 SD_EN must be LOW, it gates the slot's power); else the
-  // internal 8 MB FFat 'storage' partition — a standard FFat mount of OUR OWN partition, so none of
-  // the Tanmatsu locfd metadata quirks apply. Either way the map gets a working Wi-Fi tile cache.
+#if CAP_TILES_ON_STORAGE
+  // No dedicated "tiles" partition in this board's table (and no free flash to add one without
+  // moving partitions that hold user data). Prefer the microSD (SD_MMC slot 0, mounted by main.cpp at
+  // boot); else the internal LittleFS 'storage' partition, which then shares its space with identity,
+  // contacts and chat history: tilesFsLowSpace() stops caching tiles while that partition is short of
+  // headroom, so a full map cache can never crowd out user data.
+  // (T-Display P4: XL9535 SD_EN must be LOW, it gates the slot's power.)
   else if (tanSdTryMount()) {
     s_tile_fs        = &SD_MMC;
     s_tile_root[0]   = '\0';
     s_tiles_fs_ready = true;
-    printf("[TILE] T-Display P4: caching Wi-Fi tiles on microSD /tiles (SD_MMC)\n");
+    printf("[TILE] %s: caching Wi-Fi tiles on microSD /tiles (SD_MMC)\n", kTileBoardName);
   }
   else {
     if (g_fs_ok) {
@@ -73176,10 +73229,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       s_tile_fs        = &LittleFS;
       s_tile_root[0]   = '\0';
       s_tiles_fs_ready = true;
-      printf("[TILE] T-Display P4: no SD card -> caching Wi-Fi tiles on internal LittleFS /tiles\n");
+      printf("[TILE] %s: no SD card, caching Wi-Fi tiles in internal storage /tiles (LittleFS 'storage', "
+             "kept below %u%% so user data keeps room)\n", kTileBoardName, (unsigned)(100 - kTileStorageReservePct));
     } else {
       s_tile_fs = nullptr;
-      printf("[TILE] T-Display P4: NO tile backend (no SD, FFat down)\n");
+      printf("[TILE] %s: NO tile backend (no SD card, internal storage not mounted)\n", kTileBoardName);
     }
   }
 #endif
@@ -73191,7 +73245,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     WIRE_DBG("[TILE] wio-l2: caching Wi-Fi tiles on SD_MMC /tiles\n");
   }
 #endif
-#if !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101) && !defined(HAS_WIO_TRACKER_L2)
+#if !CAP_TILES_ON_STORAGE && !defined(HAS_WIO_TRACKER_L2)
   else {
     s_tile_fs = nullptr;   // no cache backend at all -> map shows the storage notice
   }
@@ -73257,7 +73311,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // can see ground truth in the Settings diag, and delete any image file
   // (*.jpg / *.png) — no legitimate SPIFFS file is an image, so identity /
   // contacts3 / channels2 / new_prefs / chat history are never touched.
-  {
+  // Only where SPIFFS is actually mounted: the P4 boards keep their data on LittleFS/FFat and never
+  // mount it, so walking it there only logged "open(): File system is not mounted".
+  // (totalBytes() is esp_spiffs_info, which fails silently when nothing is mounted.)
+  if (SPIFFS.totalBytes() > 0) {
     // Big work buffers from INTERNAL heap (NOT PSRAM: SPIFFS.remove() disables
     // the flash cache, making PSRAM unreadable mid-op). Freed right after.
     const int   PATHLEN = 72;
@@ -75183,7 +75240,7 @@ static inline void touchScreenBacklight(bool on) {
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
 static void setCpuForScreen(bool screen_on) {
-#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+#if defined(CONFIG_IDF_TARGET_ESP32P4)
   // The P4's Arduino HAL only accepts 360 MHz (240/80 log a "could not be set" error every screen
   // toggle) — no DFS downclock available through this API on that chip, so skip entirely.
   (void)screen_on;

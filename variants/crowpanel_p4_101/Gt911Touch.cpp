@@ -3,8 +3,16 @@
 // touch-input API (HeltecV4CapTouch.h).
 //
 // Wiring (schematic V1.0/V1.1/V1.2, all identical, and Elecrow's Lesson05 BSP): GT911 on the touch
-// FPC, I2C0 SDA=GPIO45 / SCL=GPIO46 (shared with the codec and the HY2.0 I2C port; Wire is begun
-// there by ESP32Board::begin via PIN_BOARD_SDA/SCL), RST=GPIO40, INT=GPIO42, both active low.
+// FPC, I2C0 SDA=GPIO45 / SCL=GPIO46 (shared with the ES8311 codec and the HY2.0 I2C port through
+// BSS138 level shifters), RST=GPIO40, INT=GPIO42. ESP32Board::begin starts Wire there, and every
+// init attempt below checks the bus is still up and begins it again if it is not.
+//
+// Why it checks: on beta_97 the bus was begun at boot and then torn down before touch ever ran.
+// The generic esp32p4 Arduino variant defines BOARD_SDMMC_POWER_PIN 45 (the Espressif Function EV
+// board's SD power switch), so every SD_MMC.begin() did pinMode(45, OUTPUT): the peripheral manager
+// detached I2C0 (i2cDeinit) and SDA was then driven as a GPIO. build.sh now compiles SD_MMC without
+// that block on this board (WADA_SDMMC_NO_POWER_PIN); the check here keeps touch alive whatever
+// else might claim the pins later, and names the owner in the log if it happens.
 // Elecrow configures the controller for 1024x600 with no swap or mirror, so raw == screen; the
 // driver still reads the GT911's own X/Y maximum at init and scales if it reports another grid.
 //
@@ -18,12 +26,20 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <helpers/ui/MomentaryButton.h>
+#include "esp32-hal-i2c.h"      // i2cIsInit(): is the Arduino I2C0 master actually up?
+#include "esp32-hal-periman.h"  // who owns a pin, for the failure log
 
 #ifndef PIN_TOUCH_RST
   #define PIN_TOUCH_RST 40
 #endif
 #ifndef PIN_TOUCH_INT
   #define PIN_TOUCH_INT 42
+#endif
+#ifndef PIN_TOUCH_SDA
+  #define PIN_TOUCH_SDA 45
+#endif
+#ifndef PIN_TOUCH_SCL
+  #define PIN_TOUCH_SCL 46
 #endif
 
 static const int SCR_W = 1024;
@@ -36,6 +52,8 @@ static uint16_t s_native_h = SCR_H;
 static bool     s_init_ok  = false;
 static bool     s_given_up = false;
 static int      s_retries  = 0;
+static uint32_t s_last_try_ms = 0;
+static bool     s_bus_ever_up = false;
 static char     s_scan_str[128] = "scan: (not run)";
 
 static volatile uint16_t s_dbg_rawx = 0, s_dbg_rawy = 0;
@@ -91,62 +109,156 @@ static bool probe(uint8_t a) {
   return Wire.endTransmission() == 0;
 }
 
-// Hardware reset with INT held LOW through the rising edge of RST: the GT911 then latches I2C
-// address 0x5D (Goodix datasheet power-on timing). INT is released to an input afterwards.
-static void gtHardReset() {
-  pinMode(PIN_TOUCH_INT, OUTPUT);
-  digitalWrite(PIN_TOUCH_INT, LOW);
+// Pad power for the touch lines. GPIO39-46 (GT911 SDA45/SCL46, RST40, INT42) sit in the VDDPST_5
+// domain that the P4's on-chip LDO4 feeds (net ESP32_LDO4 via R109, schematic V1.0/V1.1/V1.2), and the
+// SDA/SCL/RST/INT pull-ups (R97/R98/R74/R75) hang off that same rail. crowpanelP4PowerOn() acquires it
+// first thing in app_main (target.cpp); without it the bus floats low and nothing can ACK.
+extern bool crowpanelP4PadPowerOk();
+
+// Bring up (or re-attach) the Arduino I2C0 master on SDA45/SCL46 and SAY whether it worked. Every
+// attempt runs this first, so a bus that something else released in between is begun again rather
+// than silently failing every transaction with "bus is not initialized".
+static bool gtBusBegin(int attempt) {
+  const uint32_t hz = 400000;   // Elecrow's bsp_i2c.c runs the GT911 at 400 kHz, internal pull-ups on
+  const bool was_up = i2cIsInit(0);
+  bool ok = was_up;
+  if (was_up) {
+    ok = Wire.setClock(hz);
+  } else {
+    if (attempt > 1 || s_bus_ever_up) {
+      // It was up before (ESP32Board::begin) and is not now: some driver re-claimed a pin. Name the owner.
+      Serial.printf("[TOUCH] i2c bus 0 was released (GPIO%d now %s, GPIO%d now %s); beginning it again\n",
+                    PIN_TOUCH_SDA, perimanGetTypeName(perimanGetPinBusType(PIN_TOUCH_SDA)),
+                    PIN_TOUCH_SCL, perimanGetTypeName(perimanGetPinBusType(PIN_TOUCH_SCL)));
+    }
+    ok = Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL, hz);
+  }
+  if (ok) {
+    s_bus_ever_up = true;
+    Wire.setTimeOut(20);
+    Serial.printf("[TOUCH] i2c bus 0 on SDA%d/SCL%d @ %u kHz: ok (%s)\n", PIN_TOUCH_SDA, PIN_TOUCH_SCL,
+                  (unsigned)(hz / 1000), was_up ? "already up" : "begun now");
+  } else {
+    Serial.printf("[TOUCH] i2c bus 0 on SDA%d/SCL%d @ %u kHz: FAIL (%s; SDA owner %s, SCL owner %s)\n",
+                  PIN_TOUCH_SDA, PIN_TOUCH_SCL, (unsigned)(hz / 1000),
+                  was_up ? "setClock refused" : "Wire.begin refused",
+                  perimanGetTypeName(perimanGetPinBusType(PIN_TOUCH_SDA)),
+                  perimanGetTypeName(perimanGetPinBusType(PIN_TOUCH_SCL)));
+  }
+  return ok;
+}
+
+// Hardware reset with the GT911's address strap (Goodix GT911 datasheet, power-on timing):
+//   RST low and INT at the strap level for > 100 us, RST high while INT still holds the level,
+//   keep it > 5 ms so the address latches, then (0x5D) drive INT low for 50 ms, release INT to an
+//   input and allow > 50 ms before the first I2C access.
+// INT low at the RST edge selects 0x5D, INT high selects 0x14. Attempt 1 straps 0x5D (Elecrow's
+// MicroPython driver does exactly this), attempt 2 straps 0x14, attempt 3 only pulses RST and leaves
+// INT to its pull-up R75 (what Elecrow's ESP-IDF BSP effectively does). Whichever address then ACKs
+// is used, so a strap that did not take is harmless.
+static const char* gtHardReset(int attempt) {
+  const bool strap_14 = (attempt == 2);
+  const bool strap    = (attempt != 3);
   pinMode(PIN_TOUCH_RST, OUTPUT);
   digitalWrite(PIN_TOUCH_RST, LOW);
-  delay(20);
+  if (strap) {
+    pinMode(PIN_TOUCH_INT, OUTPUT);
+    digitalWrite(PIN_TOUCH_INT, strap_14 ? HIGH : LOW);
+  } else {
+    pinMode(PIN_TOUCH_INT, INPUT);
+  }
+  delay(11);
   digitalWrite(PIN_TOUCH_RST, HIGH);
-  delay(60);   // address latched >= 5 ms after RST rises; keep INT low until the controller is up
+  delay(6);
+  if (strap) {
+    digitalWrite(PIN_TOUCH_INT, LOW);
+    delay(50);
+  }
   pinMode(PIN_TOUCH_INT, INPUT);
-  delay(50);
+  delay(55);
+  return strap ? (strap_14 ? "INT high (0x14)" : "INT low (0x5D)") : "RST only, INT on its pull-up";
 }
+
+// Minimum spacing between attempts: UITask retries every loop, which would burn all three in a few
+// milliseconds while the controller is still booting.
+#ifndef CP_TOUCH_RETRY_MS
+  #define CP_TOUCH_RETRY_MS 700
+#endif
 
 bool heltecV4CapTouchBegin() {
   if (s_init_ok)  return true;
   if (s_given_up) return false;
+  const uint32_t now = millis();
+  if (s_last_try_ms && (uint32_t)(now - s_last_try_ms) < CP_TOUCH_RETRY_MS) return false;
+  s_last_try_ms = now ? now : 1;
   if (++s_retries > 3) {
     s_given_up = true;
     Serial.println("[TOUCH] GT911 giving up after 3 attempts, booting without touch");
     return false;
   }
+  const int attempt = s_retries;
 
-  Wire.setClock(400000);
-  Wire.setTimeOut(20);
-  if (s_retries == 1) gtHardReset();
+  // 1. Power: LDO4 (pad domain of GPIO39-46 and the touch pull-ups).
+  const bool pwr = crowpanelP4PadPowerOk();
+  Serial.printf("[TOUCH] attempt %d/3: pad power LDO4 3.3 V %s\n", attempt, pwr ? "held" : "NOT held (touch lines unpowered)");
 
-  if (s_retries == 1) {   // log the bus once: tells a tester exactly what answered on 45/46
-    char sc[96]; int n = snprintf(sc, sizeof sc, "[TOUCH] i2c45/46 scan:");
-    for (uint8_t a = 0x08; a < 0x78 && n < (int)sizeof sc - 6; a++)
-      if (probe(a)) n += snprintf(sc + n, sizeof sc - n, " %02X", a);
-    Serial.println(sc);
-  }
-
-  s_addr = probe(0x5D) ? 0x5D : (probe(0x14) ? 0x14 : 0);
-  if (!s_addr) {
-    snprintf(s_scan_str, sizeof s_scan_str, "i2c45/46: no GT911 at 0x5D/0x14");
-    Serial.printf("[TOUCH] GT911 not found (retry %d/3)\n", s_retries);
+  // 2. Bus.
+  if (!gtBusBegin(attempt)) {
+    snprintf(s_scan_str, sizeof s_scan_str, "i2c0 45/46: bus begin failed");
     return false;
   }
 
-  // Product ID "911" at 0x8140, config X/Y maximum at 0x8048..0x804B (little-endian).
-  uint8_t id[4] = {0}, cfg[4] = {0};
-  gtRead(0x8140, id, 4);
-  if (gtRead(0x8048, cfg, 4)) {
-    const uint16_t xm = (uint16_t)(cfg[0] | (cfg[1] << 8));
-    const uint16_t ym = (uint16_t)(cfg[2] | (cfg[3] << 8));
+  // 3. Reset + address strap.
+  const char* strap = gtHardReset(attempt);
+
+  // 4. Scan: every address that ACKs, so a tester log shows exactly what lives on 45/46
+  //    (GT911 0x5D/0x14, ES8311 codec 0x18, anything on the HY2.0 port).
+  char sc[112];
+  int n = snprintf(sc, sizeof sc, "[TOUCH] i2c0 45/46 scan after %s:", strap);
+  int found = 0;
+  for (uint8_t a = 0x08; a < 0x78; a++) {
+    if (!probe(a)) continue;
+    found++;
+    if (n < (int)sizeof sc - 6) n += snprintf(sc + n, sizeof sc - n, " %02X", a);
+  }
+  if (!found) snprintf(sc + n, sizeof sc - n, " (nothing ACKed)");
+  Serial.println(sc);
+
+  // 5. Pick the GT911 address.
+  s_addr = probe(0x5D) ? 0x5D : (probe(0x14) ? 0x14 : 0);
+  if (!s_addr) {
+    snprintf(s_scan_str, sizeof s_scan_str, "i2c0 45/46: %d device(s), no GT911 at 0x5D/0x14", found);
+    Serial.printf("[TOUCH] GT911 not found at 0x5D or 0x14 (attempt %d/3)\n", attempt);
+    return false;
+  }
+
+  // 6. Identify: product ID "911" at 0x8140..0x8143 (ASCII), firmware version 0x8144..0x8145 (LE),
+  //    config version 0x8047, X/Y output maximum 0x8048..0x804B (LE), touch count 0x804C.
+  uint8_t id[4] = {0}, fw[2] = {0}, cfg[6] = {0};
+  const bool id_ok  = gtRead(0x8140, id, 4) && gtRead(0x8144, fw, 2);
+  const bool cfg_ok = gtRead(0x8047, cfg, 6);
+  if (cfg_ok) {
+    const uint16_t xm = (uint16_t)(cfg[1] | (cfg[2] << 8));
+    const uint16_t ym = (uint16_t)(cfg[3] | (cfg[4] << 8));
     if (xm >= 100 && xm <= 4096 && ym >= 100 && ym <= 4096) { s_native_w = xm; s_native_h = ym; }
   }
+  char pid[5];
+  for (int i = 0; i < 4; i++) pid[i] = (id[i] >= 0x20 && id[i] < 0x7F) ? (char)id[i] : '\0';
+  pid[4] = '\0';
+  if (!id_ok) {
+    Serial.printf("[TOUCH] 0x%02X ACKs but the GT911 ID read failed (attempt %d/3)\n", s_addr, attempt);
+    snprintf(s_scan_str, sizeof s_scan_str, "0x%02X ACK, GT911 ID read failed", s_addr);
+    return false;
+  }
+  Serial.printf("[TOUCH] GT911 at 0x%02X: product '%s' fw 0x%04X, config v0x%02X%s %ux%u, %u touch points\n",
+                s_addr, pid[0] ? pid : "?", (unsigned)(fw[0] | (fw[1] << 8)), (unsigned)cfg[0],
+                cfg_ok ? "" : " (config read failed, assuming)", (unsigned)s_native_w, (unsigned)s_native_h,
+                (unsigned)(cfg_ok ? (cfg[5] & 0x0F) : 0));
   gtWrite8(0x814E, 0);   // clear any stale "buffer ready"
 
   s_init_ok = true;
-  snprintf(s_scan_str, sizeof s_scan_str, "0x%02X gt911 '%c%c%c%c' %ux%u",
-           s_addr, id[0] ? id[0] : '?', id[1] ? id[1] : '?', id[2] ? id[2] : '?', id[3] ? id[3] : ' ',
-           (unsigned)s_native_w, (unsigned)s_native_h);
-  Serial.printf("[TOUCH] %s\n", s_scan_str);
+  snprintf(s_scan_str, sizeof s_scan_str, "0x%02X gt911 '%s' fw %04X %ux%u", s_addr, pid[0] ? pid : "?",
+           (unsigned)(fw[0] | (fw[1] << 8)), (unsigned)s_native_w, (unsigned)s_native_h);
   return true;
 }
 
