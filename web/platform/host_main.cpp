@@ -6,15 +6,20 @@
 // the SDL window, the event pump and the scripted tour.
 //
 //   wadamesh-host [--headless] [--script FILE] [--shots DIR] [--scale N]
+//                 [--serial PATH | --tcp HOST:PORT] [--read-only]
 //     --headless   no window (CI / release gate); the framebuffer is still rendered
 //     --script     scripted input: wait/tap/drag/key/type/shot/quit, one per line
 //     --shots DIR  where `shot` and F12 write PNGs (default: current directory)
 //     --scale N    initial window scale (default 1; the window is resizable)
+//     --serial PATH     drive a real MeshCore companion node over USB instead of the demo
+//     --tcp HOST[:PORT] the same over the node's TCP companion server (default port 5000)
+//     --read-only       never change the node's settings, contacts, channels or clock
 //   $WADA_DATA_DIR  the virtual flash (SPIFFS, LittleFS, NVS), default ./wadamesh-data
 #include <Arduino.h>
 #include "WebDisplay.h"
 #include "WebInput.h"
 #include "WebPlatform.h"
+#include "BackendSelect.h"
 #include "wada_host.h"
 #include "miniz.h"
 #include <SDL.h>
@@ -193,12 +198,16 @@ int main(int argc, char** argv) {
   bool headless = false;
   int scale = 1;
   std::string script_path;
+  WadaBackendChoice choice;   // the demo unless a node is named
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
     if (a == "--headless") headless = true;
     else if (a == "--script" && i + 1 < argc) script_path = argv[++i];
     else if (a == "--shots" && i + 1 < argc) s_shot_dir = argv[++i];
     else if (a == "--scale" && i + 1 < argc) scale = atoi(argv[++i]);
+    else if (a == "--serial" && i + 1 < argc) { choice.kind = "serial"; choice.arg = argv[++i]; }
+    else if (a == "--tcp" && i + 1 < argc) { choice.kind = "tcp"; choice.arg = argv[++i]; }
+    else if (a == "--read-only") choice.read_only = true;
   }
   if (!script_path.empty()) {
     std::ifstream f(script_path);
@@ -220,7 +229,7 @@ int main(int argc, char** argv) {
     SDL_StartTextInput();
   }
 
-  wadaBoardBegin();
+  wadaBoardBegin(choice);   // demo, or the companion node --serial / --tcp named
 
   while (wadaHostStep()) SDL_Delay(4);
   // Closing the window is the web board's power-off: flush what the device flushes

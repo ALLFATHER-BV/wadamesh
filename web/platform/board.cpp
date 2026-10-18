@@ -12,6 +12,7 @@
 #include "UITask.h"
 #include "WebMesh.h"
 #include "WebPlatform.h"
+#include "BackendSelect.h"
 #include "wada_host.h"
 #include <time.h>
 
@@ -24,8 +25,8 @@ public:
 };
 HostRTCClock s_host_clock;
 
-// No companion transport is served BY the web board (it is the companion's client in
-// phase 3), so the UI's companion-link controls see a disabled, unconnected interface.
+// No companion transport is served BY the web board (it is a companion's CLIENT, see
+// web/mesh/CompanionBackend.cpp), so the UI's companion-link controls see a disabled, unconnected interface.
 class WebSerialInterface : public BaseSerialInterface {
 public:
   void enable() override { _en = true; }
@@ -66,15 +67,17 @@ void AutoDiscoverRTCClock::setCurrentTime(uint32_t t) { _fallback->setCurrentTim
 void WebBoard::reboot() { esp_restart(); }
 void WebBoard::powerOff() { esp_restart(); }
 
-void wadaBoardBegin() {
+void wadaBoardBegin(const WadaBackendChoice& choice) {
   Serial.printf("[web] wadamesh %s, data dir %s\n", FIRMWARE_VERSION, wadaHostDataDir().c_str());
   // Storage, then the mesh, then the UI: src/main.cpp's setup() order.
   SPIFFS.begin(true);
   LittleFS.begin(true);
   rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
-  sensors.node_lat = 52.3728;   // the demo node's position (scripts/doc/web-demo/demo.py)
-  sensors.node_lon = 4.8934;
-  the_mesh.begin(wadaCreateDemoBackend());
+  if (choice.kind == "demo") {   // the demo node's position (scripts/doc/web-demo/demo.py);
+    sensors.node_lat = 52.3728;    // a real node reports its own
+    sensors.node_lon = 4.8934;
+  }
+  the_mesh.begin(wadaCreateBackend(choice));   // the demo, or a companion node (BackendSelect.h)
   ui_task.begin(&display, &sensors, the_mesh.getNodePrefs());
   Serial.println("[BOOT] ui ready");
 }

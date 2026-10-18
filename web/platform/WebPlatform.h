@@ -5,8 +5,9 @@
 // board.cpp owns the board globals and runs src/main.cpp's setup()/loop() order.
 #include <stdint.h>
 
-// setup(): storage, the mesh stand-in on the demo backend, the UI.
-void wadaBoardBegin();
+struct WadaBackendChoice;   // web/mesh/BackendSelect.h
+// setup(): storage, the mesh stand-in on the chosen backend (demo or a node), the UI.
+void wadaBoardBegin(const WadaBackendChoice& choice);
 // One iteration of src/main.cpp's loop(): UI first, then the mesh.
 void wadaBoardStep();
 // The deliberate power-off paths: flush what the device flushes (chat history is lazy).

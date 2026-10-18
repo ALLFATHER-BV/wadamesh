@@ -210,4 +210,7 @@ if(EMSCRIPTEN)
     list(APPEND WADA_WEB_LINK -sASSERTIONS=1 -sSAFE_HEAP=0)
   endif()
   target_link_options(wadamesh-host PRIVATE ${WADA_WEB_LINK})
+  # The browser companion transports (Web Serial / Web Bluetooth / WebSocket) are JS
+  # glue that shares the module scope; the framing is C++ (web/mesh/BrowserTransport.cpp).
+  target_link_options(wadamesh-host PRIVATE "SHELL:--pre-js ${WEB}/mesh/js/companion-transports.js")
 endif()

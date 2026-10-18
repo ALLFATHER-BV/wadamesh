@@ -19,9 +19,11 @@
 #include "WebDisplay.h"
 #include "WebInput.h"
 #include "WebPlatform.h"
+#include "BackendSelect.h"
 #include "wada_host.h"
 #include <stdint.h>
 #include <stdlib.h>
+#include <string>
 
 extern WebDisplay display;            // board.cpp
 extern void (*g_wada_restart_hook)();  // compat/src/arduino_host.cpp
@@ -30,6 +32,23 @@ extern void (*g_wada_restart_hook)();  // compat/src/arduino_host.cpp
 // across memory growth (pthreads + ALLOW_MEMORY_GROWTH).
 EM_JS(void, wada_js_present, (const uint8_t* rgba, int x, int y, int w, int h), {
   if (Module["wadaPresent"]) Module["wadaPresent"](HEAPU8.subarray(rgba, rgba + w * h * 4), x, y, w, h);
+});
+// The page's backend choice (web/shell/app.js Module.wadaBackend): kind, arg, data dir,
+// read-only, one per line, in a malloc'd string main() frees.
+EM_JS(char*, wada_js_backend_config, (), {
+  var c = Module["wadaBackend"] || {};
+  var s = [c.kind || "demo", c.arg || "", c.dataDir || "", c.readOnly ? "1" : "0"].join("\n");
+  var b = new TextEncoder().encode(s);
+  var p = _malloc(b.length + 1);
+  HEAPU8.set(b, p);
+  HEAPU8[p + b.length] = 0;
+  return p;
+});
+// The companion link for the page's status bar (BackendSelect.h g_wada_link_hook).
+EM_JS(void, wada_js_link, (int state, const char* name, const char* via, const char* key), {
+  if (!Module["wadaLink"]) return;
+  var str = function (p) { var e = p; while (HEAPU8[e]) e++; return new TextDecoder().decode(HEAPU8.slice(p, e)); };
+  Module["wadaLink"](state, str(name), str(via), str(key));
 });
 EM_JS(void, wada_js_reboot, (), {
   if (Module["wadaReboot"]) Module["wadaReboot"](); else location.reload();
@@ -133,7 +152,22 @@ int main() {
   setvbuf(stdout, nullptr, _IOLBF, 0);
   s_rgba = (uint8_t*)malloc((size_t)WADA_WEB_W * WADA_WEB_H * 4);
   g_wada_restart_hook = webRestart;
-  wadaBoardBegin();
+  // Which mesh: the demo, or the node the page's Connect chooser picked. Each backend
+  // has its own data dir under /data, so demo and node data never mix.
+  WadaBackendChoice choice;
+  {
+    char* cfg = wada_js_backend_config();
+    std::string f[4];
+    int i = 0;
+    for (const char* p = cfg; *p && i < 4; ++p) { if (*p == '\n') ++i; else f[i] += *p; }
+    free(cfg);
+    if (!f[0].empty()) choice.kind = f[0];
+    choice.arg = f[1];
+    choice.read_only = f[3] == "1";
+    if (!f[2].empty()) setenv("WADA_DATA_DIR", f[2].c_str(), 1);
+  }
+  g_wada_link_hook = [](int state, const char* name, const char* via, const char* key) { wada_js_link(state, name, via, key); };
+  wadaBoardBegin(choice);
   emscripten_set_main_loop(step, 0, false);   // requestAnimationFrame pace
   return 0;
 }

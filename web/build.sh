@@ -13,6 +13,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 WEB="$(pwd)"
+SELF="$WEB/$(basename "$0")"   # "$0" may be relative to where we were called from
 target="${1:-host}"; shift || true
 [ -f third_party/meshcore/src/Mesh.h ] || ./fetch-deps.sh
 case "$target" in
@@ -27,7 +28,7 @@ case "$target" in
   shots|smoke)
     # The acceptance tour on a fresh data dir, headless: web/docs/*.png ("shots"), or a
     # scratch dir that is thrown away ("smoke": exit status only, for CI / the release gate).
-    "$0" host
+    "$SELF" host
     tmp="$(mktemp -d)"
     out="$WEB/docs"; [ "$target" = smoke ] && out="$tmp/shots"
     WADA_DATA_DIR="$tmp/data" "$WEB/build-host/wadamesh-host" --headless \
@@ -63,11 +64,11 @@ case "$target" in
     done
     ;;
   serve)
-    [ -f "$WEB/dist/index.html" ] || "$0" web
+    [ -f "$WEB/dist/index.html" ] || "$SELF" web
     exec python3 "$WEB/scripts/serve.py" "$WEB/dist" "${PORT:-8080}" "$@"
     ;;
   webtest)
-    [ -f "$WEB/dist/index.html" ] || "$0" web
+    [ -f "$WEB/dist/index.html" ] || "$SELF" web
     [ -d "$WEB/node_modules/playwright" ] || { echo "webtest: npm install --prefix web playwright && (cd web && npx playwright install)" >&2; exit 1; }
     port="${PORT:-8187}"
     WADA_SERVE_QUIET=1 python3 "$WEB/scripts/serve.py" "$WEB/dist" "$port" & srv=$!

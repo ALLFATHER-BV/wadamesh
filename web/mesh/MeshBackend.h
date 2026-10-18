@@ -6,17 +6,23 @@
 // stand-in keeps the same local mirror a real MyMesh keeps (prefs, contacts, channels,
 // counters) and forwards everything that needs a network to ONE backend:
 //
-//   DemoBackend       (phase 1) a scripted neighbourhood for the website demo
-//   CompanionBackend  (phase 3) a real MeshCore companion node over Web Serial /
-//                     Web Bluetooth / WebSocket, speaking the companion frame protocol
-//                     that src/MyMesh.cpp's handleCmdFrame() implements on the device
+//   DemoBackend       a scripted neighbourhood for the website demo
+//   CompanionBackend  a real MeshCore companion node (USB serial / TCP natively; Web
+//                     Serial / Web Bluetooth / WebSocket in the browser), speaking the
+//                     companion frame protocol that src/MyMesh.cpp's handleCmdFrame()
+//                     implements on the device (CompanionBackend.cpp)
 //
 // The interface is deliberately the companion protocol's vocabulary (send a DM, send
 // to a channel slot, advert, status/telemetry request, contact + channel sync, push
 // events), so phase 3 is a transport + framing job, not a redesign.
 //
 // Threading: every call in both directions happens on the UI thread. A backend that
-// has its own I/O thread (phase 3) queues and delivers from loop().
+// has its own I/O thread queues and delivers from loop().
+//
+// Requests are fire-and-forget on a link: a call returns what the device's MyMesh would
+// return at once (MSG_SEND_*, a tag), and the outcome arrives later as an event, exactly
+// like the radio answering a device. Members the backend cannot serve keep the defaults
+// below, which are the "unavailable" answers listed in WEB_BUILD.md.
 #include <stdint.h>
 #include <stddef.h>
 #include <helpers/ContactInfo.h>
@@ -51,13 +57,36 @@ public:
   // The ACK for a DM we sent (the expected_ack the backend returned from sendDirect).
   virtual void beAck(uint32_t expected_ack) = 0;
   // A flood we sent was heard repeated (fingerprint from sendDirect/sendChannel).
-  virtual void beRepeatHeard(uint32_t sent_fp) = 0;
+  // hop = the re-flooding repeater's path hash (the echo's last hop), when known.
+  virtual void beRepeatHeard(uint32_t sent_fp, const uint8_t* hop = nullptr, uint8_t hop_sz = 0) = 0;
   // Replies to UI requests.
   virtual void beStatusReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) = 0;
   virtual void beTelemetryReply(const uint8_t pub_key[32], const uint8_t* lpp, size_t len) = 0;
-  virtual void beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr) = 0;
+  // their_snr / our_snr / extra_snrs are SNR*4, as on the wire (onTracePingResult).
+  virtual void beTraceResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
+                             uint8_t extra_hops = 0, const int8_t* extra_snrs = nullptr) = 0;
   // Every received frame's signal, for the status-bar bars and the RF monitor.
   virtual void beSignal(int8_t snr_q4, int8_t rssi) = 0;
+
+  // ---- events only a link to a real node produces (the demo never fires them) ----
+  // The node said who it is: name, radio, the node-owned prefs, its public key. The
+  // stand-in adopts these (a node's settings live on the node).
+  virtual void beSelfInfo(const NodePrefs& node_prefs, const uint8_t pub_key[32], int32_t lat_e6, int32_t lon_e6) = 0;
+  // The node dropped a contact (deleted, or overwritten when its table was full).
+  virtual void beContactRemoved(const uint8_t pub_key[32]) = 0;
+  // A raw received packet (MeshCore's PUSH_CODE_LOG_RX_DATA): the RX log, the live
+  // signal, advert paths and "repeats heard" are computed from these as on a device.
+  virtual void beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len) = 0;
+  // A login the UI asked for (uiSendAdminLogin / uiRoomRelogin) was answered.
+  virtual void beLoginResult(const uint8_t pub_key[32], bool ok, uint8_t perms, uint32_t server_clock) = 0;
+  // A CLI reply from a repeater / room (TXT_TYPE_CLI_DATA).
+  virtual void beCliReply(const uint8_t pub_key[32], const char* text) = 0;
+  // The REGIONS answer: reflected tag, the repeater's clock, then CSV names.
+  virtual void beRegionsReply(const uint8_t pub_key[32], const uint8_t* data, size_t len) = 0;
+  // The link to the node came up / went away (status line, terminal).
+  virtual void beLinkState(bool up, const char* detail) = 0;
+  // A line for the Terminal (a node CLI reply).
+  virtual void beTerminalLine(const char* text) = 0;
 };
 
 class MeshBackend {
@@ -81,16 +110,44 @@ public:
   virtual int  requestStatus(const ContactInfo& c) { (void)c; return 0; }       // MSG_SEND_FAILED
   virtual int  requestTelemetry(const ContactInfo& c) { (void)c; return 0; }
   virtual uint32_t tracePing(const uint8_t pub_key[32]) { (void)pub_key; return 0; }   // tag, 0 = failed
+  // Along the contact's known route (one SNR per hop); default: a single-hop ping.
+  virtual uint32_t traceRoute(const ContactInfo& c) { return tracePing(c.id.pub_key); }
+  // The UI gave up waiting (its reply deadline): stop any follow-up (login fallback).
+  virtual void cancelRequests() {}
+  // Repeater / room admin: login (empty password = guest), a CLI line, session state.
+  virtual int  login(const ContactInfo& c, const char* password) { (void)c; (void)password; return 0; }
+  virtual int  sendCli(const ContactInfo& c, const char* text) { (void)c; (void)text; return 0; }
+  virtual bool hasConnectionTo(const uint8_t pub_key[32]) { (void)pub_key; return false; }
+  // The anonymous REGIONS request to a directly heard repeater.
+  virtual int  requestRegions(const uint8_t pub_key[32], uint32_t& est_timeout) {
+    (void)pub_key; est_timeout = 0; return 0;
+  }
+  // Zero-hop re-advert of a contact (CMD_SHARE_CONTACT).
+  virtual bool shareContact(const uint8_t pub_key[32]) { (void)pub_key; return false; }
+  // A command line for the node's own CLI (the Terminal); the reply comes back as
+  // beTerminalLine. False = this backend has no CLI to run it on.
+  virtual bool runNodeCli(const char* cmd) { (void)cmd; return false; }
+  // The node's Bluetooth pairing PIN (0 = random per boot).
+  virtual bool setBlePin(uint32_t pin) { (void)pin; return false; }
 
   // ---- configuration pushed back to the node ----
   virtual void prefsChanged(const NodePrefs& p) { (void)p; }
   virtual void channelChanged(int idx, const ChannelDetails& ch) { (void)idx; (void)ch; }
   virtual void contactRemoved(const uint8_t pub_key[32]) { (void)pub_key; }
+  // A contact was added or edited here (favourite, telemetry permissions, position,
+  // manual add): the node keeps the table, so the backend writes it back.
+  virtual void contactChanged(const ContactInfo& c) { (void)c; }
+  virtual void contactPathReset(const uint8_t pub_key[32]) { (void)pub_key; }
+  // True once the backend has the node's own settings (until then the stand-in's
+  // prefs are placeholders and must not be written to a node).
+  virtual bool ownsPrefs() const { return false; }
 
   // Radio counters, for the About/Radio pages (0 when the backend cannot know).
   virtual uint32_t packetsRecv() const { return 0; }
   virtual uint32_t packetsSent() const { return 0; }
 };
 
-// The backend the web build runs with (web/mesh/WebMesh.cpp picks it at boot).
+// The backends (BackendSelect.h picks one at boot from the front end's choice).
 MeshBackend* wadaCreateDemoBackend();
+class CompanionTransport;
+MeshBackend* wadaCreateCompanionBackend(CompanionTransport* transport, bool read_only);
