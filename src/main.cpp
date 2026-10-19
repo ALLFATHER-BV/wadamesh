@@ -871,13 +871,13 @@ void setup() {
     // live in SPIFFS/SD, which aren't mounted yet, so read the NVS boot copy.
     {
       uint8_t r = touchPrefsGetBootUiRotation();
+#if defined(ATTAKY_MESH_SERIES)
+      if (r != 0) r = 1;   // UI init coerces any landscape to ROT_90
+#endif
       if (r == 1)      display.setDisplayRotation(1);
       else if (r == 3) display.setDisplayRotation(3);
 #if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
-      else if (r == 2) display.setDisplayRotation(2);  // portrait 180: the display class maps it (#698)
       else             display.setDisplayRotation(0);  // restore saved portrait
-#elif (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)) || defined(ATTAKY_MESH_SERIES)
-      else if (r == 2) display.setDisplayRotation((DISPLAY_ROTATION + 2) & 3);   // portrait 180 (#698)
 #endif
     }
 #endif
