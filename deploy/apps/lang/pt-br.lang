@@ -1155,7 +1155,7 @@ Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Protocolo de teclado antigo
 Device	Dispositivo
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	ative se o teclado digitar letras erradas; desativa a trava de modificadores
+turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1365,7 +1365,7 @@ Double-tap SPACE while typing to switch	Toque duas vezes em ESPAÇO ao digitar p
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Exportar backup
+Export Backup	Export Backup
 Feb	Feb
 February	February
 Fri	Fri
@@ -1417,10 +1417,10 @@ Navigate	Navigate
 Never	Nunca
 New PIN	New PIN
 No backups available to restore.	Nenhum backup para restaurar.
-No backups yet. Use Export Backup above to create one.	Ainda sem backups. Use "Exportar backup" acima para criar um.
+No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nTexto grande\nTexto enorme
+Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1589,7 +1589,7 @@ Encryption	Encryption
 Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.	Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.
 Experimental. Throttles the processor while the device sits idle.	Experimental. Throttles the processor while the device sits idle.
 Export	Export
-Export backup	Export backup
+Export backup	Exportar backup
 Firmware	Firmware
 Firmware %s\nDevelopment build: the update check is off.	Firmware %s\nDevelopment build: the update check is off.
 Flashes on a new message and breathes while any are unread.	Flashes on a new message and breathes while any are unread.
@@ -1598,13 +1598,13 @@ Frequency (MHz)	Frequency (MHz)
 From	From
 Hold the key to copy it.	Hold the key to copy it.
 Huge	Huge
-Huge text	Huge text
+Huge text	Texto enorme
 Joins a saved network briefly at boot just to set the clock.	Joins a saved network briefly at boot just to set the clock.
 Jumbo	Jumbo
 Keep per chat	Keep per chat
 Keeps your node's name off the status bar.	Keeps your node's name off the status bar.
 Keyboard layouts	Keyboard layouts
-Large text	Large text
+Large text	Texto grande
 Layout	Layout
 Letters move the highlight when no text field is focused; they still type in text fields.	Letters move the highlight when no text field is focused; they still type in text fields.
 Lights the keyboard and wakes the screen when a message arrives.	Lights the keyboard and wakes the screen when a message arrives.
@@ -1631,7 +1631,7 @@ Navigation	Navigation
 Navigation bar	Navigation bar
 New messages	New messages
 No GPS module on this device. You can still set your advert position by hand in Profile.	No GPS module on this device. You can still set your advert position by hand in Profile.
-No backups yet. Use Export backup above to create one.	No backups yet. Use Export backup above to create one.
+No backups yet. Use Export backup above to create one.	Ainda sem backups. Use "Exportar backup" acima para criar um.
 No limit	No limit
 No messages yet.\nSay hello!	No messages yet.\nSay hello!
 No network chosen yet.	No network chosen yet.
@@ -1699,7 +1699,7 @@ The touchscreen ignores taps until you unlock.	The touchscreen ignores taps unti
 This device has no speaker.	This device has no speaker.
 Time on air	Time on air
 Top	Top
-Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Turn on if your keyboard types the wrong letters. It turns off modifier latching.
+Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Ative se o teclado digitar letras erradas. Desativa a trava de modificadores.
 Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Ative apenas se o seu repetidor reinundar só uma região. Caso contrário, deixe desligado — pode bloquear login/DMs entre regiões.
 Typing	Typing
 Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Receber firmware de teste não lançado — recursos mais novos, mas menos testados. A verificação e a instalação seguem o canal beta.
@@ -2354,7 +2354,6 @@ Turn the knob • click to insert	Turn the knob • click to insert
 Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
 W A S D,  Q / E	W A S D,  Q / E
 30 sec	30 s
-Timer	Temporizador
 Peak -- dBm	Pico -- dBm
 Peak %d dBm @ %.1f MHz	Pico %d dBm @ %.1f MHz
 peak %d @ %.1f	pico %d @ %.1f

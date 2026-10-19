@@ -1387,7 +1387,7 @@ Double-tap SPACE while typing to switch	Pro přepnutí při psaní dvakrát klep
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Exportovat zálohu
+Export Backup	Export Backup
 Feb	Feb
 February	February
 Fri	Fri
@@ -1438,7 +1438,7 @@ Navigate	Navigate
 Never	Nikdy
 New PIN	New PIN
 No backups available to restore.	Žádné zálohy k obnovení.
-No backups yet. Use Export Backup above to create one.	Zatím žádné zálohy. Vytvořte ji tlačítkem „Exportovat zálohu“ výše.
+No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
 Not delivered, tap to resend	Not delivered, tap to resend
@@ -1607,7 +1607,7 @@ Encryption	Encryption
 Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.	Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.
 Experimental. Throttles the processor while the device sits idle.	Experimental. Throttles the processor while the device sits idle.
 Export	Export
-Export backup	Export backup
+Export backup	Exportovat zálohu
 Firmware	Firmware
 Firmware %s\nDevelopment build: the update check is off.	Firmware %s\nDevelopment build: the update check is off.
 Flashes on a new message and breathes while any are unread.	Flashes on a new message and breathes while any are unread.
@@ -1649,7 +1649,7 @@ Navigation	Navigation
 Navigation bar	Navigation bar
 New messages	New messages
 No GPS module on this device. You can still set your advert position by hand in Profile.	No GPS module on this device. You can still set your advert position by hand in Profile.
-No backups yet. Use Export backup above to create one.	No backups yet. Use Export backup above to create one.
+No backups yet. Use Export backup above to create one.	Zatím žádné zálohy. Vytvořte ji tlačítkem „Exportovat zálohu“ výše.
 No limit	No limit
 No messages yet.\nSay hello!	No messages yet.\nSay hello!
 No network chosen yet.	No network chosen yet.
@@ -1717,7 +1717,7 @@ The touchscreen ignores taps until you unlock.	The touchscreen ignores taps unti
 This device has no speaker.	This device has no speaker.
 Time on air	Time on air
 Top	Top
-Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Turn on if your keyboard types the wrong letters. It turns off modifier latching.
+Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Zapněte, pokud klávesnice píše nesprávná písmena. Vypne blokování modifikátorů.
 Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Povolte pouze tehdy, pokud váš opakovač znovu šíří pouze jeden region. Jinak ponechte vypnuto — může blokovat přihlášení/DM mezi regiony.
 Typing	Typing
 Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Přijímat nevydaný testovací firmware — novější funkce, ale méně otestované. Kontrola aktualizací i Instalovat aktualizaci používají beta kanál.
@@ -2370,7 +2370,6 @@ Turn the knob • click to insert	Turn the knob • click to insert
 Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
 W A S D,  Q / E	W A S D,  Q / E
 30 sec	30 s
-Timer	Časovač
 Peak -- dBm	Špička -- dBm
 Peak %d dBm @ %.1f MHz	Špička %d dBm @ %.1f MHz
 peak %d @ %.1f	špička %d @ %.1f

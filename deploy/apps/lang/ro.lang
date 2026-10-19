@@ -1157,7 +1157,7 @@ Detecting the keyboard protocol	Detecting the keyboard protocol
 Older keyboard protocol	Protocol vechi de tastatură
 Device	Dispozitiv
 Using the older keyboard protocol	Using the older keyboard protocol
-turn on if your keyboard types the wrong letters; disables modifier latching	activează dacă tastatura scrie litere greșite; dezactivează blocarea tastelor modificatoare
+turn on if your keyboard types the wrong letters; disables modifier latching	turn on if your keyboard types the wrong letters; disables modifier latching
 Formatted OK - card did not remount, reinsert it	Formatted OK - card did not remount, reinsert it
 Allow saved open networks for time sync	Allow saved open networks for time sync
 Sync time from saved Wi-Fi after cold boot	Sync time from saved Wi-Fi after cold boot
@@ -1367,7 +1367,7 @@ Double-tap SPACE while typing to switch	Atinge de două ori SPAŢIU în timp ce 
 Emoji	Emoji
 Enter PIN	Enter PIN
 Enter it again	Enter it again
-Export Backup	Exportă backup
+Export Backup	Export Backup
 Feb	Feb
 February	February
 Fri	Fri
@@ -1419,10 +1419,10 @@ Navigate	Navigate
 Never	Niciodată
 New PIN	New PIN
 No backups available to restore.	Niciun backup de restaurat.
-No backups yet. Use Export Backup above to create one.	Încă niciun backup. Foloseşte „Exportă backup” de mai sus pentru a crea unul.
+No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
 No channels yet	No channels yet
 No direct chats yet	No direct chats yet
-Normal\nLarge text\nHuge text	Normal\nText mare\nText foarte mare
+Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -1591,7 +1591,7 @@ Encryption	Encryption
 Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.	Experimental. Boots into a text console with no graphical interface: type commands, read replies. Type 'ui' there to come back; if it ever fails to start, the device returns here on its own. Turning it on or off restarts.
 Experimental. Throttles the processor while the device sits idle.	Experimental. Throttles the processor while the device sits idle.
 Export	Export
-Export backup	Export backup
+Export backup	Exportă backup
 Firmware	Firmware
 Firmware %s\nDevelopment build: the update check is off.	Firmware %s\nDevelopment build: the update check is off.
 Flashes on a new message and breathes while any are unread.	Flashes on a new message and breathes while any are unread.
@@ -1600,13 +1600,13 @@ Frequency (MHz)	Frequency (MHz)
 From	From
 Hold the key to copy it.	Hold the key to copy it.
 Huge	Huge
-Huge text	Huge text
+Huge text	Text foarte mare
 Joins a saved network briefly at boot just to set the clock.	Joins a saved network briefly at boot just to set the clock.
 Jumbo	Jumbo
 Keep per chat	Keep per chat
 Keeps your node's name off the status bar.	Keeps your node's name off the status bar.
 Keyboard layouts	Keyboard layouts
-Large text	Large text
+Large text	Text mare
 Layout	Layout
 Letters move the highlight when no text field is focused; they still type in text fields.	Letters move the highlight when no text field is focused; they still type in text fields.
 Lights the keyboard and wakes the screen when a message arrives.	Lights the keyboard and wakes the screen when a message arrives.
@@ -1633,7 +1633,7 @@ Navigation	Navigation
 Navigation bar	Navigation bar
 New messages	New messages
 No GPS module on this device. You can still set your advert position by hand in Profile.	No GPS module on this device. You can still set your advert position by hand in Profile.
-No backups yet. Use Export backup above to create one.	No backups yet. Use Export backup above to create one.
+No backups yet. Use Export backup above to create one.	Încă niciun backup. Foloseşte „Exportă backup” de mai sus pentru a crea unul.
 No limit	No limit
 No messages yet.\nSay hello!	No messages yet.\nSay hello!
 No network chosen yet.	No network chosen yet.
@@ -1701,7 +1701,7 @@ The touchscreen ignores taps until you unlock.	The touchscreen ignores taps unti
 This device has no speaker.	This device has no speaker.
 Time on air	Time on air
 Top	Top
-Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Turn on if your keyboard types the wrong letters. It turns off modifier latching.
+Turn on if your keyboard types the wrong letters. It turns off modifier latching.	Activează dacă tastatura scrie litere greșite. Dezactivează blocarea tastelor modificatoare.
 Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Activează doar dacă repetorul tău redifuzează o singură regiune. Altfel lasă oprit — poate bloca autentificarea/DM-urile între regiuni.
 Typing	Typing
 Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Primeşti firmware de test nepublicat — funcţii mai noi, dar mai puţin testate. Verificarea de actualizare şi Instalează actualizarea urmează ambele canalul beta.
@@ -2355,7 +2355,6 @@ Turn the knob • click to insert	Turn the knob • click to insert
 Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
 W A S D,  Q / E	W A S D,  Q / E
 30 sec	30 s
-Timer	Temporizator
 Peak -- dBm	Vârf -- dBm
 Peak %d dBm @ %.1f MHz	Vârf %d dBm @ %.1f MHz
 peak %d @ %.1f	vârf %d @ %.1f

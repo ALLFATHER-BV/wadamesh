@@ -57785,9 +57785,9 @@ static void openControlCenter() {
            CAT_BATTERY, nullptr, CC_NAV_SAVER);
 #endif
 #if defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
-  ccToggle(row, UI_ICON_TIMER, TR("Timer"), s_cc_screenshot_delay_s != 0,
+  ccToggle(row, UI_ICON_TIMER, "Timer", s_cc_screenshot_delay_s != 0,
            ccScreenshotDelayCb, tw, th, -1, ccScreenshotDelayText(), CC_NAV_TIMER);
-  ccToggle(row, UI_ICON_IMAGE, TR("Screenshot"), false, ccScreenshotCb, tw, th,
+  ccToggle(row, UI_ICON_IMAGE, "Screenshot", false, ccScreenshotCb, tw, th,
            -1, nullptr, CC_NAV_SCREENSHOT);
 #endif
   // (Power is the round icon in the card's top-right corner, not a grid chip.)
