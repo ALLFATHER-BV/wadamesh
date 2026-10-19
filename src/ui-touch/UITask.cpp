@@ -3263,22 +3263,15 @@ static bool      s_accent_popups     = true;
 // at boot BEFORE the screens are built so the layout reflows to the rotated
 // resolution. The keyboard-landscape toggle above is transient and layers on
 // top of this; hideKb() reverts to s_ui_rotation (not hard portrait).
-// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270, and on
-// the T-Display P4 also 2 = portrait 180.
+// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 2 = portrait 180,
+// 3 = ROT_270.
 static uint8_t   s_ui_rotation       = 0;
 
-// The rotation the keyboard should use when shown: if the UI is already in a
-// landscape base orientation, keep it; otherwise honour the transient
-// keyboard-landscape toggle. Lets the rotate arrows still work in portrait.
+// The rotation the keyboard should use when shown: if the UI has a base orientation
+// other than plain portrait (a landscape, or Portrait 180), keep it; otherwise honour
+// the transient keyboard-landscape toggle. Lets the rotate arrows still work in portrait.
 static inline uint8_t effectiveKbRotation() {
-  const bool ui_landscape =
-      (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270);
-#if defined(HAS_TDISPLAY_P4)
-  // Portrait 180 (#698) is a base of its own too: the keyboard shows in it rather
-  // than dropping LVGL back to the unturned portrait while it is up.
-  if (s_ui_rotation == LV_DISP_ROT_180) return s_ui_rotation;
-#endif
-  return ui_landscape ? s_ui_rotation : s_kb_rotation;
+  return (s_ui_rotation != LV_DISP_ROT_NONE) ? s_ui_rotation : s_kb_rotation;
 }
 
 // ---- Discovered adverts ring buffer ----
@@ -5535,10 +5528,23 @@ static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_col
 // to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited, except
 // on the CrowPanel (0) and the Attaky (its build DISPLAY_ROTATION, 2), where
 // UITask::begin turns it back from a landscape the boot logo may have applied.
+// ROT_180 (Portrait 180, #698) is the portrait base turned half way: the CrowPanel
+// and Wio Tracker L2 display classes map the UI's rotation to their own panel
+// rotation themselves; the ST7789 boards (V4, Attaky) sit at DISPLAY_ROTATION in
+// portrait, so two steps on from that.
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation(2);
+#elif defined(HELTEC_LORA_V4_R8)
+  // The R8's LovyanGFX panel is portrait at rotation 0, whatever the inherited
+  // DISPLAY_ROTATION=2 says, so its half turn is 2 (#701).
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation(2);
+#elif defined(DISPLAY_ROTATION)
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation((DISPLAY_ROTATION + 2) & 3);
+#endif
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
   else                                  display.setDisplayRotation(0);
 #elif defined(ATTAKY_MESH_SERIES)
   else                                  display.setDisplayRotation(DISPLAY_ROTATION);
@@ -9517,12 +9523,14 @@ static void kbApplyRotation(uint8_t rot) {
   // of the gesture BEFORE rotating so the jump is never seen as movement.
   lv_indev_t* act = lv_indev_get_act();
   if (act) lv_indev_wait_release(act);
-  // In hardware-landscape the panel is already rotated; applying LVGL software
-  // rotation on top would double-rotate. Software rotation is used ONLY for the
-  // transient keyboard-landscape trick when the base orientation is portrait.
-  const bool hw_landscape = (s_ui_rotation == LV_DISP_ROT_90 ||
-                             s_ui_rotation == LV_DISP_ROT_270);
-  if (!hw_landscape) {
+  // Any base but plain portrait (a landscape, or Portrait 180, #698) is already on
+  // screen, the panel turned in hardware (or LVGL at boot on the P4); applying LVGL
+  // software rotation on top would double-rotate, so the keyboard keeps the base.
+  // Software rotation is used ONLY for the transient keyboard-landscape trick when
+  // the base orientation is portrait.
+  if (s_ui_rotation != LV_DISP_ROT_NONE) {
+    rot = s_ui_rotation;
+  } else {
     lv_disp_set_rotation(disp, static_cast<lv_disp_rot_t>(rot));
   }
   // Keep the touch driver's swipe-axis transform in sync with the visible
@@ -17052,52 +17060,23 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
   }
 }
 
-// Screen orientation: the persistent base rotation, applied at boot. Tapping
-// cycles Portrait -> Landscape -> Landscape (flipped) and reboots so the whole
-// UI rebuilds at the chosen resolution (rebootDevice() saves chat history
-// synchronously first, so nothing is lost).
-static const char* uiRotationLabel() {
-#if defined(ESP32)
-  // Portrait (0) vs Landscape (anything else). The button toggles between the
-  // two so a single tap always returns to portrait from any landscape.
-  return (touchPrefsGetUiRotation() == LV_DISP_ROT_NONE) ? "Screen: Portrait"
-                                                         : "Screen: Landscape";
+// Screen orientation: the persistent base rotation, applied at boot. Four choices
+// (#698), each an LVGL rotation: Portrait, Portrait 180, Landscape (the board's
+// upright landscape, ROT_270 on the CrowPanels and ROT_90 elsewhere) and
+// Landscape 180. Picking one reboots so the whole UI rebuilds at the chosen
+// resolution (rebootDevice() saves chat history synchronously first).
+#if CAP_ROTATABLE
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
+static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_270, LV_DISP_ROT_90 };
 #else
-  return "Screen: Portrait";
-#endif
-}
-
-static void rotateScreenCycleCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-#if defined(ESP32)
-  // Simple toggle: portrait <-> the board's upright landscape orientation.
-  const uint8_t cur  = touchPrefsGetUiRotation();
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
-  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_270
-                                                 : (uint8_t)LV_DISP_ROT_NONE;
-#else
-  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_90
-                                                 : (uint8_t)LV_DISP_ROT_NONE;
-#endif
-  if (!touchPrefsSetUiRotation(next)) {
-    if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1200);
-    return;
-  }
-#endif
-  // Same as the theme and language switches: reboot on a timer so the notice is
-  // actually painted first, rather than going dark under the user's finger.
-  rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
-}
-
-#if defined(HAS_TDISPLAY_P4)
-// The T-Display P4 picks from four orientations (#698) instead of the toggle above,
-// each an LVGL rotation (LVGL turns this MIPI panel in software): Portrait,
-// Portrait 180, Landscape (ROT_90, the toggle's landscape) and Landscape 180.
 static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_90, LV_DISP_ROT_270 };
+#endif
 
 static int uiRotationPicked() {
+#if defined(ESP32)
   const uint8_t cur = touchPrefsGetUiRotation();
   for (int i = 0; i < 4; ++i) if (kUiRotOrder[i] == cur) return i;
+#endif
   return 0;
 }
 
@@ -17105,14 +17084,18 @@ static void uiRotationPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int i = setChoiceIndex(e);
   if (i < 0 || i > 3 || i == uiRotationPicked()) return;
+#if defined(ESP32)
   if (!touchPrefsSetUiRotation(kUiRotOrder[i])) {
     if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1200);
     return;
   }
+#endif
   setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+  // Same as the theme and language switches: reboot on a timer so the notice is
+  // actually painted first, rather than going dark under the user's finger.
   rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
 }
-#endif
+#endif  // CAP_ROTATABLE
 
 // ---- Manual clock offset (Device modal): nudge local time +/- whole hours ----
 // Applied on top of the automatic (NTP / companion / mesh) time, purely at the
@@ -17702,14 +17685,11 @@ static void buildDisplayPage() {
     setChoiceRow(c, "Text size", "Applies after a restart.", sizes, (int)(sizeof sizes / sizeof sizes[0]),
                  touchPrefsGetUiScale(), uiScalePickCb);
 #endif
-#if defined(HAS_TDISPLAY_P4)
+#if CAP_ROTATABLE
     {
       const char* orient[] = { TR("Portrait"), TR("Portrait 180"), TR("Landscape"), TR("Landscape 180") };
       setChoiceRow(c, "Orientation", "Applies after a restart.", orient, 4, uiRotationPicked(), uiRotationPickCb);
     }
-#elif CAP_ROTATABLE
-    setActionRow(c, UI_ICON_REFRESH_CW, "Orientation", uiRotationLabel(), rotateScreenCycleCb, nullptr,
-                 SET_NORMAL, false);
 #endif
 #if !defined(HAS_THINKNODE_M9)
     {
@@ -73679,8 +73659,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // same map landed every touch point-mirrored and the setting could not be reached to undo
     // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
     // until a tester confirms it, booting always returns to the known-good portrait, so the
-    // worst case of trying landscape is a reboot.
-    if (s_ui_rotation != LV_DISP_ROT_NONE) {
+    // worst case of trying landscape is a reboot. Portrait 180 is allowed (#701): it is a
+    // plain half turn, and its touch map flips both axes, so it cannot land mirrored.
+    if (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270) {
       s_ui_rotation = LV_DISP_ROT_NONE;
       touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
       // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
@@ -73727,19 +73708,17 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
-    // The panel driver exposes its fixed surface directly (320x240 / 1024x600
-    // landscape, Indicator 480x480).
+  #if defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
+    // The panel driver exposes its fixed surface directly (1024x600 landscape,
+    // Indicator 480x480).
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
-    // Landscape (ROT_90, panel rotation 1) or portrait, from Settings > Display >
-    // Orientation. Landscape is the stored default (see TouchPrefsStore), and the
-    // Mesh Deck build without a keyboard can flip to portrait, which runs at the
-    // panel's DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4.
-    // UI init below turns the panel back to it: the boot logo may have left it landscape.
-    // Only those two: the Orientation button toggles between them.
-    if (s_ui_rotation != LV_DISP_ROT_NONE) s_ui_rotation = LV_DISP_ROT_90;
+    // Any of the four from Settings > Display > Orientation (#698). Landscape
+    // (ROT_90, panel rotation 1) is the stored default (see TouchPrefsStore), and the
+    // Mesh Deck build without a keyboard can pick portrait, which runs at the panel's
+    // DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4. UI init
+    // below turns the panel back to it: the boot logo may have left it landscape.
 #endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
@@ -73858,8 +73837,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   g_lv.disp_drv.hor_res  = 480;
   g_lv.disp_drv.ver_res  = 480;
 #elif defined(HAS_WIO_TRACKER_L2)
-  g_lv.disp_drv.hor_res  = 320;
-  g_lv.disp_drv.ver_res  = 240;
+  // Native 320x240 landscape (UI rotation 3), or 240x320 in the portraits (#698).
+  g_lv.disp_drv.hor_res  = ui_landscape ? 320 : 240;
+  g_lv.disp_drv.ver_res  = ui_landscape ? 240 : 320;
 #elif defined(HAS_CROWPANEL_35)
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 480 : 320);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 320 : 480);
@@ -73898,7 +73878,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // MIPI-DSI too, so there is no MADCTL to rotate and LVGL has to turn each
     // flushed area into panel coordinates itself. The logical surface becomes
     // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows. Portrait
-    // 180 (#698) turns it the same way, at the portrait size.
+    // 180 turns it the same way, at the portrait size.
     if (s_ui_rotation != LV_DISP_ROT_NONE) lv_disp_set_rotation(lv_disp_get_default(),
                                                                 static_cast<lv_disp_rot_t>(s_ui_rotation));
 #endif
@@ -73929,11 +73909,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       }
     }
 
-#if defined(HAS_TDISPLAY_P4)
     if (s_ui_rotation != LV_DISP_ROT_NONE) {           // a landscape, or Portrait 180 (#698)
-#else
-    if (ui_landscape) {
-#endif
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
 #endif
@@ -73943,7 +73919,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES) || defined(HAS_WIO_TRACKER_L2)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
       // The logo reads the legacy NVS copy before main.cpp moves prefs to SPIFFS. On

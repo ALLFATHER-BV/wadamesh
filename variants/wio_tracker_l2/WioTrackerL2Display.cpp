@@ -133,8 +133,13 @@ void WioTrackerL2Display::writePixelsRGB565(int x, int y, int w, int h, const ui
   _lcd.endWrite();
 }
 
-void WioTrackerL2Display::setDisplayRotation(uint8_t) {
-  _lcd.setRotation(0);
+// The UI's portrait is 0 and its upright landscape 3 (ROT_270), as on the CrowPanels.
+// The panel is native 320x240 landscape at LovyanGFX rotation 0 (offset_rotation 1),
+// so map 3 to that, 1 to landscape turned 180 degrees, 0 to portrait and 2 to portrait
+// turned 180 degrees (#698). LovyanGFX rotates the GT911 coordinates with the panel.
+void WioTrackerL2Display::setDisplayRotation(uint8_t rotation) {
+  static const uint8_t kPanelRot[4] = { 1, 2, 3, 0 };
+  _lcd.setRotation(kPanelRot[rotation & 3]);
   setLogicalSize(_lcd.width(), _lcd.height());
 }
 

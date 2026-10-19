@@ -62,8 +62,8 @@
 
 #elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0
-  #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
+  #define CAP_ROTATABLE    1   // native 320x240 landscape = UI rotation 3, as on the CrowPanels (#698)
+  #define CAP_LARGE_SCREEN 0   // 320x240
   #define CAP_SD           0   // SD_MMC, not Arduino SD
   #define CAP_FILESYSTEM   1
   #define CAP_GPS          1
