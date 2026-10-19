@@ -65,6 +65,8 @@ static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 800x480 landscape
 #elif defined(HAS_WIO_TRACKER_L2)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 320x240 landscape, as before it was a setting
+#elif defined(HAS_CROWPANEL_P4_101)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 1024x600 landscape, as before it was a setting
 #elif defined(ATTAKY_MESH_SERIES)
 static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else
@@ -309,10 +311,10 @@ static void cfgLoadOrMigrate() {
         // portrait default) was never seen. Start everyone on landscape once, as before.
         if (stored_version < 68) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
 #endif
-#if defined(HAS_WIO_TRACKER_L2)
-        // v71: the Wio Tracker L2 gains the Orientation setting (#698), the same story as
-        // the Attaky's v68: the UI always ran landscape whatever was stored (usually 0,
-        // which now means portrait). Start everyone on landscape once.
+#if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
+        // v71: the Wio Tracker L2 and the CrowPanel P4 10.1 gain the Orientation setting
+        // (#701), the same story as the Attaky's v68: the UI always ran landscape whatever
+        // was stored (usually 0, which now means portrait). Start everyone on landscape once.
         if (stored_version < 71) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
 #endif
 #if defined(TLORA_PAGER)

@@ -3266,12 +3266,23 @@ static bool      s_accent_popups     = true;
 // Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 2 = portrait 180,
 // 3 = ROT_270.
 static uint8_t   s_ui_rotation       = 0;
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+// What LVGL turns the MIPI panel by in software for that orientation, which is also
+// what the touch driver maps its points by. The T-Display P4 panel is portrait-native,
+// so it is s_ui_rotation itself; the CrowPanel P4 10.1 is landscape-native, so its UI
+// landscape (ROT_270) is the panel's own 0 and the rest follow a quarter turn on (#701).
+static uint8_t   s_lvgl_base_rot     = 0;
+#endif
 
 // The rotation the keyboard should use when shown: if the UI has a base orientation
 // other than plain portrait (a landscape, or Portrait 180), keep it; otherwise honour
 // the transient keyboard-landscape toggle. Lets the rotate arrows still work in portrait.
 static inline uint8_t effectiveKbRotation() {
+#if defined(HAS_CROWPANEL_P4_101)
+  return s_ui_rotation;   // no keyboard-only rotation on the 10.1 (#701)
+#else
   return (s_ui_rotation != LV_DISP_ROT_NONE) ? s_ui_rotation : s_kb_rotation;
+#endif
 }
 
 // ---- Discovered adverts ring buffer ----
@@ -8004,26 +8015,26 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
      ) {
     p.x = static_cast<lv_coord_t>(x);
     p.y = static_cast<lv_coord_t>(y);
-#if defined(HAS_TDISPLAY_P4)
-    // P4 landscape is LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+    // P4 orientations are LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
     // rotated display itself (indev_pointer_proc) -- it expects the point in the
-    // unrotated panel frame. The touch driver already maps to landscape, which its
+    // unrotated panel frame. The touch driver already maps to the turned frame, which its
     // swipe detection and the direct readers (tab-bar guard, remote hold) need, so
     // hand LVGL the panel-frame point back. Passing the landscape point through
     // rotated it twice: a tap at (X,Y) arrived at (615-Y, X), so nav-bar taps hit
     // the middle of the screen or nothing at all, while swipes still worked.
-    // Keyed on s_ui_rotation (what the driver maps by), not the display's live
+    // Keyed on s_lvgl_base_rot (what the driver maps by), not the display's live
     // rotation: the chat keyboard's rotate trick turns LVGL on a portrait UI while
     // the driver keeps reporting portrait points, and those must pass unchanged.
     {
-      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = portrait panel frame
-      if (s_ui_rotation == LV_DISP_ROT_90) {
+      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = the unturned panel frame
+      if (s_lvgl_base_rot == LV_DISP_ROT_90) {
         p.x = static_cast<lv_coord_t>(y);
         p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - x);
-      } else if (s_ui_rotation == LV_DISP_ROT_270) {
+      } else if (s_lvgl_base_rot == LV_DISP_ROT_270) {
         p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - y);
         p.y = static_cast<lv_coord_t>(x);
-      } else if (s_ui_rotation == LV_DISP_ROT_180) {   // portrait 180 (#698)
+      } else if (s_lvgl_base_rot == LV_DISP_ROT_180) {   // portrait 180 (#698) / landscape 180 on the 10.1
         p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - x);
         p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - y);
       }
@@ -9527,8 +9538,14 @@ static void kbApplyRotation(uint8_t rot) {
   // screen, the panel turned in hardware (or LVGL at boot on the P4); applying LVGL
   // software rotation on top would double-rotate, so the keyboard keeps the base.
   // Software rotation is used ONLY for the transient keyboard-landscape trick when
-  // the base orientation is portrait.
+  // the base orientation is portrait. The CrowPanel P4 10.1 has no such trick (no
+  // rotate arrows), and its portrait is itself an LVGL turn, so it always keeps
+  // the base (#701).
+#if defined(HAS_CROWPANEL_P4_101)
+  if (true) {
+#else
   if (s_ui_rotation != LV_DISP_ROT_NONE) {
+#endif
     rot = s_ui_rotation;
   } else {
     lv_disp_set_rotation(disp, static_cast<lv_disp_rot_t>(rot));
@@ -17066,7 +17083,7 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
 // Landscape 180. Picking one reboots so the whole UI rebuilds at the chosen
 // resolution (rebootDevice() saves chat history synchronously first).
 #if CAP_ROTATABLE
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
 static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_270, LV_DISP_ROT_90 };
 #else
 static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_90, LV_DISP_ROT_270 };
@@ -73708,9 +73725,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
-    // The panel driver exposes its fixed surface directly (1024x600 landscape,
-    // Indicator 480x480).
+  #if defined(HAS_SENSECAP_INDICATOR)
+    // The panel driver exposes its fixed 480x480 surface directly.
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
@@ -73748,6 +73764,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
     if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
 #endif
+#endif
+#if defined(HAS_CROWPANEL_P4_101)
+    // UI landscape (ROT_270) is the panel's own 0, so no software turn for the default.
+    // Remote mode keeps the panel unturned, as it always ran (#701).
+    s_lvgl_base_rot = s_remote_mode ? (uint8_t)LV_DISP_ROT_NONE : (uint8_t)((s_ui_rotation + 1) & 3);
+#elif defined(HAS_TDISPLAY_P4)
+    s_lvgl_base_rot = s_ui_rotation;
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
@@ -73873,14 +73896,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Apply the 270° software rotation now that the driver is registered: logical surface
     // becomes 800x480 and lv_disp_get_hor/ver_res report landscape for every layout query.
     lv_disp_set_rotation(lv_disp_get_default(), LV_DISP_ROT_270);
-#elif defined(HAS_TDISPLAY_P4)
-    // Same mechanism, from the saved preference rather than pinned: this panel is
+#elif defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+    // Same mechanism, from the saved preference rather than pinned: these panels are
     // MIPI-DSI too, so there is no MADCTL to rotate and LVGL has to turn each
-    // flushed area into panel coordinates itself. The logical surface becomes
-    // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows. Portrait
-    // 180 turns it the same way, at the portrait size.
-    if (s_ui_rotation != LV_DISP_ROT_NONE) lv_disp_set_rotation(lv_disp_get_default(),
-                                                                static_cast<lv_disp_rot_t>(s_ui_rotation));
+    // flushed area into panel coordinates itself. On the T-Display P4 the logical
+    // surface becomes 616x284 (AMOLED) or 584x270 (LCD) in landscape; on the 10.1
+    // it becomes 600x1024 in portrait (#701). Every layout query follows.
+    if (s_lvgl_base_rot != LV_DISP_ROT_NONE) lv_disp_set_rotation(lv_disp_get_default(),
+                                                                  static_cast<lv_disp_rot_t>(s_lvgl_base_rot));
 #endif
 
     // Make the full glyph set the INHERITED default font. The default theme sets
@@ -73909,6 +73932,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       }
     }
 
+#if defined(HAS_CROWPANEL_P4_101)
+    // No hardware rotation here: the driver maps its points by the LVGL turn (0 in the
+    // default landscape), and lvglTouchRead hands them back in the panel frame (#701).
+    heltecV4CapTouchSetPointRotation(s_lvgl_base_rot);
+#else
     if (s_ui_rotation != LV_DISP_ROT_NONE) {           // a landscape, or Portrait 180 (#698)
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
@@ -73919,6 +73947,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
+#endif
 #if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES) || defined(HAS_WIO_TRACKER_L2)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
