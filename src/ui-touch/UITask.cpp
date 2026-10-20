@@ -2161,7 +2161,7 @@ static void maxPreviewWavFile(const char* prefpath) {
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_TDECK_MAX
 
 // ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9
-//      piezo / T-Display P4 ES8311 codec) ----
+//      piezo / T-Display P4, T-Deck Max and Wio Tracker L2 ES8311 codec) ----
 // One source of truth: device_caps.h computes the same board list as CAP_SOUND.
 #if CAP_SOUND
   #define HAS_UI_SOUND 1
@@ -2201,6 +2201,29 @@ static void p4PlayNotifySlot(int slot) {
   s_p4_snd_playing = true;
   if (xTaskCreate(p4NotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
     s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
+  }
+}
+#endif
+
+#if defined(HAS_WIO_TRACKER_L2)
+// Wio Tracker L2: ES8311 codec + class-D amp (WioTrackerL2Audio.cpp in the variant). Same
+// three chime patterns as the T-Deck. The codec and amp are switched on this task and the
+// I2S writes run on a worker; UITask::loop() calls wioL2AudioService() to switch them off
+// again. Loudness is the codec's volume register, from the volume pref.
+#include <WioTrackerL2Audio.h>
+static void l2PlayNotifySlot(int slot) {
+  if (tileFetchPendingLoad() > 0) return;      // don't fight the Wi-Fi/tile DMA buffers
+  const uint8_t pct = touchPrefsGetSoundVolume();
+  if (pct == 0 || wioL2AudioBusy()) return;    // already chiming -- don't stack
+  if (slot == TOUCH_SND_MEN) {                 // @-mention: bright 3-note rising arpeggio
+    static const uint16_t f[] = {1318, 1760, 2349}, d[] = {70, 70, 130};   // E6 A6 D7
+    wioL2AudioPlay(f, d, 3, pct);
+  } else if (slot == TOUCH_SND_DM) {           // direct message: distinct rising fifth
+    static const uint16_t f[] = {1047, 1568}, d[] = {90, 120};             // C6 G6
+    wioL2AudioPlay(f, d, 2, pct);
+  } else {                                     // message: the original two-note chime
+    static const uint16_t f[] = {880, 1318}, d[] = {90, 110};              // A5 E6
+    wioL2AudioPlay(f, d, 2, pct);
   }
 }
 #endif
@@ -2266,6 +2289,8 @@ static inline void uiPlaySlot(int slot) {
   maxPlayNotifySlot(slot);
 #elif defined(HAS_TDISPLAY_P4)
   p4PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
+#elif defined(HAS_WIO_TRACKER_L2)
+  l2PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
 #elif defined(TLORA_PAGER)
   pagerPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
@@ -12771,7 +12796,8 @@ static void toggleMentionSoundCb(lv_event_t* e) {
 #endif
   }
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
+    defined(HAS_WIO_TRACKER_L2)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -18004,7 +18030,8 @@ static void buildSoundPage() {
 #endif
                  toggleLoudAlertsCb);
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
+    defined(HAS_WIO_TRACKER_L2)
     s_vol_val_lbl = setStepperRow(c, "Volume", nullptr, LV_SYMBOL_MINUS, LV_SYMBOL_PLUS,
                                   volumeStepCb, volumeStepCb, (void*)(intptr_t)-10, (void*)(intptr_t)10);
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
@@ -77949,6 +77976,9 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if defined(HAS_WIO_TRACKER_L2)
+  wioL2AudioService();   // amp + codec off once a chime has finished (before any early return)
+#endif
 #if CAP_CONSOLE
   if (s_console_mode) {
 #if CAP_TOUCH
