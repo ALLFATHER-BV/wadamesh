@@ -408,6 +408,7 @@ Image too large (>4 MB)	A kép túl nagy (>4 MB)
 Import	Importálás
 Import backup	Biztonsági mentés importálása
 Import failed (bad/unreadable JSON)	Importálás sikertelen (hibás/olvashatatlan JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Beállítások importálása
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importálja ezt a biztonsági mentést?\nLecseréli az identitást,\ncsatornákat és\nkapcsolatokat, majd újraindul.
 Import: storage unavailable	Importálás: tárhely nem elérhető
@@ -569,6 +570,7 @@ No contact to trace	Nincs nyomon követhető kapcsolat
 No contacts have shared\na GPS location yet.	Még egyetlen névjegy sem osztotta meg GPS-helyzetét.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Még nincsenek felfedezett csomópontok.\n\nMinden, amit a rádióban hallasz, és ami nem szerepel a névjegyeid között, itt fog megjelenni. Ha az automatikus hozzáadás ki van kapcsolva, manuálisan is hozzáadhatsz csomópontokat a névjegyeidhez.
 No earlier versions yet	Még nincsenek korábbi verziók
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Nincsenek helyi bővítési adatok
 No location for this contact	Nincs hely ehhez a névjegyhez
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Nincs térképtárhely.\n\nHelyezzen be egy SD-kártyát a Wi-Fi csempék gyorsítótárazásához (vagy flashelje újra a csempék partíciójának visszaállításához).

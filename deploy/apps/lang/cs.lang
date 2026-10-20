@@ -401,6 +401,7 @@ Image too large (>4 MB)	Obrázek je příliš velký (>4 MB)
 Import	Importovat
 Import backup	Importovat zálohu
 Import failed (bad/unreadable JSON)	Import se nezdařil (vadný/nečitelný JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Importovat nastavení
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importovat tuto zálohu?\nNahradí identitu,\nkanály a kontakty\na poté restartuje.
 Import: storage unavailable	Import: úložiště není dostupné
@@ -560,6 +561,7 @@ No contact to trace	Žádný kontakt ke sledování
 No contacts have shared\na GPS location yet.	Žádný kontakt zatím nesdílel\nGPS polohu.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Zatím žádné objevené uzly.\n\nCokoli zachycené rádiem, co není ve vašich kontaktech, se zobrazí zde. Když je automatické přidávání vypnuté, můžete uzly přidat do kontaktů ručně.
 No earlier versions yet	Zatím žádné starší verze
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Žádná lokální data rozšíření
 No location for this contact	Pro tento kontakt není žádná poloha
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Žádné úložiště map.\n\nVložte SD kartu pro ukládání\nWi-Fi dlaždic (nebo znovu nahrajte\noddíl dlaždic).
