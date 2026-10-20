@@ -227,13 +227,21 @@ static void cfgSetDefaults(TouchCfg& c) {
 }
 
 // Update the whole blob using the same end()/begin(RW)/put/end()/begin(RO)
-// discipline every setter in this file uses. File mode queues a coalesced write.
+// discipline every setter in this file uses. File mode queues a coalesced write
+// and then forces it to disk so the change is durable before we return.
+// Without the flush, settings only sat in the RAM cache until the async writer
+// got scheduled by touchPrefsTick() — if the device rebooted or loop() stalled
+// before that window, every pending setting was silently lost on restart.
 static bool cfgFlush() {
   s_prefs.end();
   if (!s_prefs.begin(TOUCH_NS, false)) { s_begun = false; return false; }
   bool ok = s_prefs.putBytes(KEY_CFG, &s_cfg, sizeof(s_cfg)) == sizeof(s_cfg);
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  // Force the async snapshot worker to land the dirty cache NOW.
+  // In NVS mode putBytes() is synchronous (Preferences writes directly), so
+  // this no-ops harmlessly there. In file mode it ensures durability.
+  if (ok) ok = touchPrefsFlush(12000);
   return ok;
 }
 
