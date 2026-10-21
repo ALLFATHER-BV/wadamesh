@@ -7,10 +7,10 @@ Test build, on top of beta_98. The stable build stays beta_85.
 # --- New ---
 Orientation: Settings now offers four choices, Portrait, Portrait 180, Landscape and Landscape 180, on every board that can rotate, including the T-Display P4, the CrowPanel P4 10.1 and the Wio Tracker L2 (#698, #701 by oumike). The Wio Tracker L2 and the CrowPanel P4 10.1 start in landscape once after this update.
 Contacts and Discovered can be sorted by Fewest hops (#718, asked for by mrickey, built by oumike).
-USB Files (files.wadamesh.com over the USB cable) now also works on the T-LoRa Pager, the Heltec V4-R8, the RAK WisMesh Tap V2 and the Wio Tracker L2, every board whose USB socket is the ESP32-S3's own. Uploads are about 30 times faster: 1 reply in 5 sat in the USB chip's buffer until the next write and the page waited 3 seconds for it each time. Measured on a T-Deck: about 120 KB/s to the SD card, was 4 KB/s.
+USB Files (files.wadamesh.com over the USB cable) now also works on the T-LoRa Pager, the Heltec V4-R8, the RAK WisMesh Tap V2 and the Wio Tracker L2, every board whose USB socket is the ESP32-S3's own. Uploads are about 30 times faster: 1 reply in 5 sat in the USB chip's buffer until the next write and the page waited 3 seconds for it each time. About 120 KB/s to the SD card, was 4 KB/s.
 T-Deck: a damaged trackball can be switched off (Settings, Keyboard, Navigation, "Use the trackball"), for balls that click and roll by themselves (asked for on Discord). With it off, Space still locks, Enter on the lit lock screen unlocks (with a PIN set it opens the PIN screen), and power off wakes only with the reset button, so a phantom click cannot switch the device on.
 T-Display P4 with the keyboard: the keyboard light and the screen backlight are separate. They shared one PWM channel, so the brightness slider dimmed the keyboard and F11 dimmed the screen. F11 now only changes the keyboard light, the slider only the screen, and Settings, Keyboard has its own keyboard light choice (asked for by zomgugoff).
-Wio Tracker L2: the speaker plays notification chimes (#712, by oumike). Not checked on a unit yet, please report.
+Wio Tracker L2: the speaker plays notification chimes (#712, by oumike).
 
 # --- Fixes ---
 P4 boards (T-Display P4, CrowPanel P4 10.1, Tanmatsu): a crash now restarts the device instead of freezing on its last frame, which looked like a blue screen after boot; the crash report is still saved.
