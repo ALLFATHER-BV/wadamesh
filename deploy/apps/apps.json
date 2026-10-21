@@ -117,8 +117,8 @@
     {
       "id": "blackjack",
       "name": "Blackjack",
-      "ver": "1.0",
-      "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, and T-Deck/T-Display P4 controls. Contributed by halflive-743.",
+      "ver": "1.2.2",
+      "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, pixel-perfect suit pips, and auto-scaling UI with double-stacked P4 controls. Contributed by halflive-743.",
       "icon": "game",
       "seed": false
     }
