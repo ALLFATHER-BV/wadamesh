@@ -1351,12 +1351,27 @@ static void uiFitButtonCaption(lv_obj_t* btn) {
   if (lv_obj_get_style_layout(btn, LV_PART_MAIN) != LV_LAYOUT_FLEX) lv_obj_center(lbl);
 }
 
+// The button whose fit is running right now, and whether it asked for another one
+// meanwhile. The layout update below resizes the button, which queues a fit for it
+// from inside its own fit. LVGL 8.4's lv_async_call_cancel would then free the async
+// call that is still running, and lv_async_timer_cb frees it a second time when the
+// callback returns: a double free (heap corruption on the boards, an abort under
+// AddressSanitizer in the web/ host build). So a fit asked for during its own run is
+// remembered here and queued once that run is over.
+static lv_obj_t* s_fit_running = nullptr;
+static bool s_fit_again = false;
+
 static void uiFitButtonAsync(void* p) {
   // Queued fits are cancelled when their button is deleted (below), so the pointer
   // is live here.
   lv_obj_t* btn = static_cast<lv_obj_t*>(p);
+  s_fit_running = btn;
+  s_fit_again = false;
   lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
-  uiFitButtonCaption(btn);
+  if (s_fit_running) uiFitButtonCaption(btn);   // cleared: deleted during the layout
+  const bool again = s_fit_running && s_fit_again;
+  s_fit_running = nullptr;
+  if (again) lv_async_call(uiFitButtonAsync, btn);
 }
 
 // Queues one fit for after the current builder or layout pass, which is when the
@@ -1364,6 +1379,7 @@ static void uiFitButtonAsync(void* p) {
 // so nothing is measured here. Any fit already queued for the button is replaced,
 // so a button has at most one, however many events arrive first.
 static void uiFitButtonQueue(lv_obj_t* btn) {
+  if (btn == s_fit_running) { s_fit_again = true; return; }   // queued when its run ends
   lv_async_call_cancel(uiFitButtonAsync, btn);
   lv_async_call(uiFitButtonAsync, btn);
 }
@@ -1375,6 +1391,8 @@ static void uiFitButtonChangeCb(lv_event_t* e) {
   lv_obj_t* btn = lv_event_get_target(e);
   const lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_DELETE) {
+    // Its own running fit is freed by LVGL when it returns: only forget it.
+    if (btn == s_fit_running) { s_fit_running = nullptr; return; }
     lv_async_call_cancel(uiFitButtonAsync, btn);
     return;
   }
@@ -12010,10 +12028,12 @@ static void composerSendFromPanel(LvChatPanel* p) {
   if (!g_lv.task || !p || !p->composer_ta) return;
   const char* text = lv_textarea_get_text(p->composer_ta);
   if (!text || !text[0]) return;
-  hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
   for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  // After the copy: hideKb() unfocuses the text box, whose restyle sets its label's
+  // text again (a realloc), which can leave `text` pointing at freed memory.
+  hideKb();
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
@@ -12032,10 +12052,12 @@ static void sendFromPanelCb(lv_event_t* e) {
   if (!p || !p->composer_ta) return;
   const char* text = lv_textarea_get_text(p->composer_ta);
   if (!text || !text[0]) return;
-  hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
   for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  // After the copy: hideKb() unfocuses the text box, whose restyle sets its label's
+  // text again (a realloc), which can leave `text` pointing at freed memory.
+  hideKb();
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
