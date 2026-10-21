@@ -96,6 +96,20 @@ if [ -z "${WADA_P4_LEGACY_AT:-}" ] && [ -f sdkconfig ] &&
   echo "[build.sh] disabled stale NimBLE UART HCI (P4 uses hosted HCI over SDIO)"
 fi
 
+# A crash restarts the device (the coredump is still saved for the crash report)
+# instead of halting it on a frozen frame: on the CrowPanel 10.1 a halt looked like
+# a "blue screen after boot" with nothing to do but pull the power. Saved values
+# beat sdkconfig defaults, so migrate an existing generated sdkconfig too.
+migrate_panic() {
+  [ -f "$1" ] || return 0
+  if grep -q '^CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y$' "$1"; then
+    sed -i '' -e 's/^CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y$/# CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT is not set/' \
+              -e 's/^# CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT is not set$/CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y/' "$1"
+    echo "[build.sh] panic now reboots instead of halting ($1)"
+  fi
+}
+migrate_panic sdkconfig
+
 # A fresh clone has no managed_components yet. Configure once to download them,
 # then apply the compatibility patches below before the first compilation.
 if [ ! -f managed_components/espressif__libsodium/CMakeLists.txt ]; then

@@ -77,6 +77,20 @@ IDF_ARGS=(-B "build/$P4_BUILD_TARGET" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4)
 
+# A crash restarts the device (the coredump is still saved for the crash report)
+# instead of halting it on a frozen frame: on the CrowPanel 10.1 a halt looked like
+# a "blue screen after boot" with nothing to do but pull the power. Saved values
+# beat sdkconfig defaults, so migrate an existing generated sdkconfig too.
+migrate_panic() {
+  [ -f "$1" ] || return 0
+  if grep -q '^CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y$' "$1"; then
+    sed -i '' -e 's/^CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y$/# CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT is not set/' \
+              -e 's/^# CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT is not set$/CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y/' "$1"
+    echo "[build.sh] panic now reboots instead of halting ($1)"
+  fi
+}
+migrate_panic "$P4_BUILD_DIR/sdkconfig"
+
 # A fresh clone has no managed_components yet. Configure once to download them,
 # then apply the compatibility patches below before the first compilation.
 if [ ! -f managed_components/espressif__libsodium/CMakeLists.txt ]; then
