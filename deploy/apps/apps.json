@@ -121,6 +121,14 @@
       "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, pixel-perfect suit pips, and auto-scaling UI with double-stacked P4 controls. Contributed by halflive-743.",
       "icon": "game",
       "seed": false
+    },
+    {
+      "id": "spaceinvaders",
+      "name": "Space Invaders",
+      "ver": "1.0",
+      "desc": "Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.",
+      "icon": "game",
+      "seed": false
     }
   ]
 }
