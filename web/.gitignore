@@ -9,4 +9,5 @@
 /node_modules/
 /dist/
 /dist-debug/
+/dist-nothreads/
 /package-lock.json
