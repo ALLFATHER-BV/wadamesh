@@ -38,6 +38,30 @@ else
   ARCH="$OUT/releases/BETA";  FEED="$OUT/latest-beta"
 fi
 
+# 0. Web build gate (beta only, optional): the browser build compiles the same UI
+#    against the web stand-in (web/mesh/WebMesh.*), so a UI change the stand-in lacks
+#    breaks it, and its tours have caught memory bugs the boards hide. Runs when emcc
+#    is installed and fails the release on a broken web build; skipped, with a note,
+#    without emcc. The browser tour needs Playwright (web/node_modules) and is skipped
+#    without it. Nothing here is published: web/dist is deployed separately
+#    (scripts/deploy-webclient.sh). WADA_SKIP_WEB=1 skips the whole gate.
+if [ "$MODE" = "beta" ] && [ -z "${WADA_SKIP_WEB:-}" ]; then
+  if command -v emcc >/dev/null && command -v emcmake >/dev/null; then
+    echo "web gate: web/build.sh web"
+    "$ROOT/web/build.sh" web || { echo "ERROR: the web build is broken (web/build.sh web); WADA_SKIP_WEB=1 skips this gate"; exit 1; }
+    if [ -d "$ROOT/web/node_modules/playwright" ]; then
+      WEB_SHOTS="$(mktemp -d)"   # keep the tracked web/docs shots out of a release run
+      echo "web gate: web/build.sh webtest"
+      "$ROOT/web/build.sh" webtest --shots "$WEB_SHOTS" || { echo "ERROR: the web acceptance tour failed (web/build.sh webtest); WADA_SKIP_WEB=1 skips this gate"; exit 1; }
+      rm -rf "$WEB_SHOTS"
+    else
+      echo "note: web gate: Playwright not installed (web/node_modules), browser tour skipped"
+    fi
+  else
+    echo "note: web gate skipped: emcc not found (brew install emscripten to check the web build)"
+  fi
+fi
+
 # 1. Pull the current published tree so listings stay complete across tags.
 if [ -n "$DEST" ]; then
   mkdir -p "$OUT"
