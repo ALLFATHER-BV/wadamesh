@@ -2170,3 +2170,14 @@ Portrait	Verticale
 Portrait 180	Verticale 180
 Landscape	Orizzontale
 Landscape 180	Orizzontale 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Usa la trackball
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Disattiva una trackball danneggiata che si muove o clicca da sola. Finché è spenta, Invio sblocca la schermata di blocco.
+Trackball on	Trackball accesa
+Trackball off	Trackball spenta
+press Enter to unlock	premi Invio per sbloccare
+Locks when screen off\n(press Enter to unlock)	Si blocca a schermo spento\n(premi Invio per sbloccare)
+Powering off… press reset to wake	Spegnimento… premi reset per riattivare
+Low	Low
+F11 on the keyboard steps through these too.	Anche F11 sulla tastiera scorre questi livelli.

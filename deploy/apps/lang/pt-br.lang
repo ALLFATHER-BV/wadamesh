@@ -2171,3 +2171,14 @@ Portrait	Retrato
 Portrait 180	Retrato 180
 Landscape	Paisagem
 Landscape 180	Paisagem 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Usar o trackball
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Desliga um trackball danificado que se move ou clica sozinho. Enquanto estiver desligado, Enter desbloqueia a tela de bloqueio.
+Trackball on	Trackball ligado
+Trackball off	Trackball desligado
+press Enter to unlock	pressione Enter para desbloquear
+Locks when screen off\n(press Enter to unlock)	Bloqueia com tela desligada\n(pressione Enter para desbloquear)
+Powering off… press reset to wake	Desligando… pressione reset para acordar
+Low	Low
+F11 on the keyboard steps through these too.	F11 no teclado também alterna entre estes níveis.

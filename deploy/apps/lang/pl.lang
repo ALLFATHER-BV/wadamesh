@@ -2183,3 +2183,14 @@ Portrait	Portrait
 Portrait 180	Portrait 180
 Landscape	Landscape
 Landscape 180	Landscape 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Use the trackball
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.
+Trackball on	Trackball on
+Trackball off	Trackball off
+press Enter to unlock	press Enter to unlock
+Locks when screen off\n(press Enter to unlock)	Locks when screen off\n(press Enter to unlock)
+Powering off… press reset to wake	Powering off… press reset to wake
+Low	Low
+F11 on the keyboard steps through these too.	F11 on the keyboard steps through these too.

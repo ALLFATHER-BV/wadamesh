@@ -2399,6 +2399,8 @@ bool touchPrefsGetScrollReverse()   { if (!s_begun) touchPrefsBegin(); return s_
 void touchPrefsSetScrollReverse(bool on)   { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_rev", on ? 1 : 0); }
 bool touchPrefsGetEdgeScroll()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("tb_edgesc", 0) != 0; }
 void touchPrefsSetEdgeScroll(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_edgesc", on ? 1 : 0); }
+bool touchPrefsGetTrackballOn()     { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("tb_on", 1) != 0; }
+void touchPrefsSetTrackballOn(bool on)     { if (!s_begun) touchPrefsBegin(); prefsPutUChar("tb_on", on ? 1 : 0); }
 bool touchPrefsGetLockOnScreenOff() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_off", 0) != 0; }
 void touchPrefsSetLockOnScreenOff(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_off", on ? 1 : 0); }
 bool touchPrefsGetScreensaver() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver", 1) != 0; }
@@ -2905,7 +2907,8 @@ bool touchPrefsSetGpsBaud(uint32_t baud) {
 // never write a key this build does not own (or with the wrong type — NVS refuses a
 // uchar read of a string key). Left out on purpose: "use_sd" (storage choice of this
 // unit), "setup_ok" (the wizard), "rgn_scope" (exported with the node settings, where
-// import also derives the flood-scope key), and the discovered-nodes cache.
+// import also derives the flood-scope key), the discovered-nodes cache, and "tb_on"
+// (switched off for this unit's damaged trackball, not a preference to carry over).
 struct BkKey { char name[16]; char type; };
 static int backupKeys(BkKey* out, int cap) {
   int n = 0;

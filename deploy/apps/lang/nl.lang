@@ -2169,3 +2169,14 @@ Portrait	Staand
 Portrait 180	Staand 180
 Landscape	Liggend
 Landscape 180	Liggend 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Trackball gebruiken
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Schakel een beschadigde trackball uit die vanzelf beweegt of klikt. Zolang hij uit staat, ontgrendelt Enter het vergrendelscherm.
+Trackball on	Trackball aan
+Trackball off	Trackball uit
+press Enter to unlock	druk op Enter om te ontgrendelen
+Locks when screen off\n(press Enter to unlock)	Vergrendelt bij scherm uit\n(druk op Enter om te ontgrendelen)
+Powering off… press reset to wake	Uitschakelen… druk op reset om te wekken
+Low	Low
+F11 on the keyboard steps through these too.	F11 op het toetsenbord loopt hier ook doorheen.

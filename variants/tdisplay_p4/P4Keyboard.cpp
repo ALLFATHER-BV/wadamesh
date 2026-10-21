@@ -215,6 +215,8 @@ bool attach(TwoWire* w) {
   // TCA8418 has events waiting.
   pinMode(P4KB_INT_PIN, INPUT_PULLDOWN);
   if (!s_bl_attached) {
+    // Arduino's first free channel (0): the LCD backlight is kept off it, on the last
+    // channel, so the two lights dim independently (see HI8561Display.cpp).
     s_bl_attached = ledcAttach(P4KB_BL_PIN, P4KB_BL_HZ, 8);
     if (!s_bl_attached) printf("[P4KB] backlight PWM attach failed\n");
   }

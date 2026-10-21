@@ -30,7 +30,28 @@ static void IRAM_ATTR isrLeft()  { ++s_cnt_left; }
 static void IRAM_ATTR isrRight() { ++s_cnt_right; }
 
 static bool    s_inited = false;
+static bool    s_enabled = true;    // Settings > Keyboard > Trackball
+static bool    s_isr_on  = false;   // the direction interrupts are attached
 static uint8_t s_rot = 0;
+
+static void attachIsrs(bool on) {
+  if (on == s_isr_on) return;
+  s_isr_on = on;
+  if (on) {
+    attachInterrupt(digitalPinToInterrupt(PIN_TB_UP),    isrUp,    FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_TB_DOWN),  isrDown,  FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_TB_LEFT),  isrLeft,  FALLING);
+    attachInterrupt(digitalPinToInterrupt(PIN_TB_RIGHT), isrRight, FALLING);
+  } else {
+    detachInterrupt(digitalPinToInterrupt(PIN_TB_UP));
+    detachInterrupt(digitalPinToInterrupt(PIN_TB_DOWN));
+    detachInterrupt(digitalPinToInterrupt(PIN_TB_LEFT));
+    detachInterrupt(digitalPinToInterrupt(PIN_TB_RIGHT));
+  }
+  noInterrupts();
+  s_cnt_up = s_cnt_down = s_cnt_left = s_cnt_right = 0;   // nothing counted while off carries over
+  interrupts();
+}
 
 void tdeckTrackballBegin() {
   if (s_inited) return;
@@ -40,15 +61,24 @@ void tdeckTrackballBegin() {
   pinMode(PIN_TB_LEFT, INPUT_PULLUP);
   pinMode(PIN_TB_RIGHT, INPUT_PULLUP);
   pinMode(PIN_TB_CLICK, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(PIN_TB_UP),    isrUp,    FALLING);
-  attachInterrupt(digitalPinToInterrupt(PIN_TB_DOWN),  isrDown,  FALLING);
-  attachInterrupt(digitalPinToInterrupt(PIN_TB_LEFT),  isrLeft,  FALLING);
-  attachInterrupt(digitalPinToInterrupt(PIN_TB_RIGHT), isrRight, FALLING);
+  attachIsrs(s_enabled);
 }
+
+void tdeckTrackballSetEnabled(bool on) {
+  s_enabled = on;
+  if (s_inited) attachIsrs(on);
+}
+
+bool tdeckTrackballEnabled() { return s_enabled; }
 
 void tdeckTrackballSetRotation(uint8_t lvgl_rot) { s_rot = lvgl_rot & 3; }
 
 bool tdeckTrackballReadMotion(int* dx, int* dy) {
+  if (!s_enabled) {
+    if (dx) *dx = 0;
+    if (dy) *dy = 0;
+    return false;
+  }
   // Atomically snapshot + clear the ISR counters.
   noInterrupts();
   uint32_t u = s_cnt_up, d = s_cnt_down, l = s_cnt_left, r = s_cnt_right;
@@ -82,6 +112,7 @@ bool tdeckTrackballReadMotion(int* dx, int* dy) {
 }
 
 bool tdeckTrackballClickHeld() {
+  if (!s_enabled) return false;
   return digitalRead(PIN_TB_CLICK) == LOW;  // active-low
 }
 

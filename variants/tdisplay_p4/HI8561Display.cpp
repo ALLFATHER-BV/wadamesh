@@ -27,9 +27,17 @@
 // hi8561::kScreenBacklight). Unlike the AMOLED (RM69A10, self-emissive, brightness via DCS 0x51),
 // the LCD panel renders but stays dark until this PWM is driven — the "no backlight, works under a
 // flashlight" report on the P4 LCD. Set up LEDC and drive it from setBrightness().
+//
+// The LAST timer and channel, not the first: this is set up straight through the IDF
+// driver, so Arduino's LEDC layer does not know they are taken and hands out channel 0
+// and timer 0 to its own first ledcAttach(). That first caller is the keyboard
+// expansion's backlight (P4Keyboard.cpp, GPIO47). On channel 0 the two pins shared ONE
+// duty: F11 dimmed the screen and the Control Center slider dimmed the keyboard (a
+// user heard the keyboard light whine at the screen's mid/high levels). Arduino only
+// reaches channel 7 / timer 3 once seven channels / four timer configs are in use.
 static constexpr int      kBacklightGpio = 51;
-static constexpr ledc_timer_t   kBlTimer = LEDC_TIMER_0;
-static constexpr ledc_channel_t kBlChan  = LEDC_CHANNEL_0;
+static constexpr ledc_timer_t   kBlTimer = LEDC_TIMER_3;
+static constexpr ledc_channel_t kBlChan  = LEDC_CHANNEL_7;
 static bool s_hi8561_bl_ready = false;
 
 // The DPI panel copies each draw_bitmap band into the internal frame buffer ASYNCHRONOUSLY

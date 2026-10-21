@@ -585,6 +585,8 @@ bool    touchPrefsGetScrollReverse();          // invert trackball/scrollball di
 void    touchPrefsSetScrollReverse(bool on);
 bool    touchPrefsGetEdgeScroll();             // push cursor past edge to scroll content (default false)
 void    touchPrefsSetEdgeScroll(bool on);
+bool    touchPrefsGetTrackballOn();            // T-Deck trackball in use (default true; off for a ball that rolls and clicks by itself)
+void    touchPrefsSetTrackballOn(bool on);
 bool    touchPrefsGetLockOnScreenOff();        // idle screen-off auto-locks (default false; forced on for Pro/Max e-paper)
 void    touchPrefsSetLockOnScreenOff(bool on);
 // Optional unlock PIN: four characters, digits and letters (letters match in either

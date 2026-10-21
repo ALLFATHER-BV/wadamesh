@@ -2171,3 +2171,14 @@ Portrait	Портретна
 Portrait 180	Портретна 180
 Landscape	Альбомна
 Landscape 180	Альбомна 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Використовувати трекбол
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Вимикає пошкоджений трекбол, який сам рухається або натискається. Поки він вимкнений, Enter знімає блокування екрана.
+Trackball on	Трекбол увімк
+Trackball off	Трекбол вимк
+press Enter to unlock	натисніть Enter для розблокування
+Locks when screen off\n(press Enter to unlock)	Блокується при вимк. екрані\n(натисніть Enter для розблокування)
+Powering off… press reset to wake	Вимкнення… натисніть reset для пробудження
+Low	Low
+F11 on the keyboard steps through these too.	Клавіша F11 на клавіатурі теж перемикає ці рівні.
