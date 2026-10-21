@@ -2160,6 +2160,7 @@ you	ви
 Flood in / out	Flood вхід / вихід
 Direct in / out	Прямі вхід / вихід
 Airtime TX / RX	Ефірний час TX / RX
+Fewest hops	Найменше хопів
 
 # Mesh Deck keyboard module strings
 module attached	модуль під'єднано

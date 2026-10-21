@@ -3248,14 +3248,15 @@ enum ContactsSortMode : uint8_t {
   CONTACTS_SORT_LAST_HEARD  = 1,  // most recent advert first (default)
   CONTACTS_SORT_LAST_MSG    = 2,  // most recent message first (falls back to last-heard)
   CONTACTS_SORT_DISTANCE    = 3,  // nearest first; rows with no shared location are excluded
-  CONTACTS_SORT_COUNT       = 4,
+  CONTACTS_SORT_HOPS        = 4,  // fewest hops first; path-unknown rows sink to the end (#718)
+  CONTACTS_SORT_COUNT       = 5,
 };
 // Default to most-recently-heard at the top — operators care who's on the
 // air now far more than alphabetical order. Favorites still pin above all
 // (see the qsort comparator in refreshContactsList).
 static uint8_t g_contacts_sort = CONTACTS_SORT_LAST_HEARD;
 // Reverse the active sort's natural order (the asc/desc toggle). Natural order is
-// A→Z / newest-heard / newest-message / nearest; `desc` flips just the primary key
+// A→Z / newest-heard / newest-message / nearest / fewest hops; `desc` flips just the primary key
 // (favourites stay pinned on top, "?"-heard rows stay sunk). Reset when the mode
 // changes; re-tapping the active mode in the Sort sheet flips it.
 static bool    g_contacts_sort_desc = false;
@@ -3266,6 +3267,7 @@ static const char* contactsSortLabel(uint8_t m) {
     case CONTACTS_SORT_LAST_HEARD: return "RECENT";
     case CONTACTS_SORT_LAST_MSG:   return "MSG";
     case CONTACTS_SORT_DISTANCE:   return "DIST";
+    case CONTACTS_SORT_HOPS:       return "HOPS";
   }
   return "?";
 }
@@ -3276,6 +3278,7 @@ static const char* contactsSortOptName(uint8_t m) {
     case CONTACTS_SORT_LAST_HEARD: return "Recently heard";
     case CONTACTS_SORT_LAST_MSG:   return "Recent message";
     case CONTACTS_SORT_DISTANCE:   return "Nearest first";
+    case CONTACTS_SORT_HOPS:       return "Fewest hops";
   }
   return "?";
 }
@@ -14546,14 +14549,15 @@ static DiscoveredAddCtx s_disc_add_ctx[DISCOVERED_MAX];
 static void openDiscoveredModalCb(lv_event_t* e);
 
 // ---- Discovered-list sort (mirrors the Contacts sort) -------------------------
-// Recently heard / Name / Distance, each with an ascending/descending toggle.
+// Recently heard / Name / Distance / Hops, each with an ascending/descending toggle.
 // "Recent message" is contacts-only (discovered nodes have no message history) so
 // it's omitted. Distance excludes entries that have shared no location.
 enum DiscSortMode : uint8_t {
   DISC_SORT_RECENT   = 0,   // newest advert first (default)
   DISC_SORT_AZ       = 1,   // name A-Z
   DISC_SORT_DISTANCE = 2,   // nearest first; no-location entries excluded
-  DISC_SORT_COUNT    = 3,
+  DISC_SORT_HOPS     = 3,   // fewest hops first; path-unknown entries sink to the end (#718)
+  DISC_SORT_COUNT    = 4,
 };
 static uint8_t g_disc_sort      = DISC_SORT_RECENT;
 static bool    g_disc_sort_desc = false;
@@ -14562,6 +14566,7 @@ static const char* discSortOptName(uint8_t m) {
     case DISC_SORT_RECENT:   return "Recently heard";
     case DISC_SORT_AZ:       return "Name (A-Z)";
     case DISC_SORT_DISTANCE: return "Nearest first";
+    case DISC_SORT_HOPS:     return "Fewest hops";
   }
   return "?";
 }
@@ -14576,6 +14581,14 @@ static bool discSortBefore(int ia, int ib, double self_lat, double self_lon) {
       const double da = contactDistanceKm(self_lat, self_lon, A.ci.gps_lat / 1.0e6, A.ci.gps_lon / 1.0e6);
       const double db = contactDistanceKm(self_lat, self_lon, B.ci.gps_lat / 1.0e6, B.ci.gps_lon / 1.0e6);
       if (da < db) prim = -1; else if (da > db) prim = 1;
+      break;
+    }
+    case DISC_SORT_HOPS: {
+      // Unknown path sinks to the end whichever way the list is flipped.
+      const bool ua = (A.path_len == OUT_PATH_UNKNOWN), ub = (B.path_len == OUT_PATH_UNKNOWN);
+      if (ua != ub) return ub;
+      const uint8_t ha = pathHops(A.path_len), hb = pathHops(B.path_len);
+      if (ha != hb) prim = (ha < hb) ? -1 : 1;
       break;
     }
     case DISC_SORT_AZ:
@@ -33078,7 +33091,7 @@ static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
 static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
-static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = { nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = {};
 static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
@@ -33474,6 +33487,7 @@ static void openContactsSortSheet(){
   s_ct_sort_btns[1] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_HEARD), ctSortOptCb, CONTACTS_SORT_LAST_HEARD, false);
   s_ct_sort_btns[2] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_MSG),   ctSortOptCb, CONTACTS_SORT_LAST_MSG,   false);
   s_ct_sort_btns[3] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_DISTANCE),   ctSortOptCb, CONTACTS_SORT_DISTANCE,   false);
+  s_ct_sort_btns[4] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_HOPS),       ctSortOptCb, CONTACTS_SORT_HOPS,       false);
   ctSortRowsRepaint();   // tap the active row again to flip ascending/descending
   lv_obj_t* sp = lv_obj_create(card); lv_obj_remove_style_all(sp); lv_obj_set_size(sp, 1, 4);
   ctSheetOption(card, LV_SYMBOL_TRASH "  Select to delete", ctSelectFromSheetCb, 0, false);
@@ -46309,6 +46323,13 @@ static void refreshContactsList() {
       const double db = contactDistanceKm(s_ct_sort_self_lat, s_ct_sort_self_lon,
                                           eb->gps_lat / 1.0e6, eb->gps_lon / 1.0e6);
       if (da < db) prim = -1; else if (da > db) prim = 1;
+    } else if (g_contacts_sort == CONTACTS_SORT_HOPS) {
+      // Fewest hops first; a row with no known path (shows no hop count) sinks to
+      // the end whichever way the list is flipped.
+      const bool ua = (ea->out_path_len == OUT_PATH_UNKNOWN), ub = (eb->out_path_len == OUT_PATH_UNKNOWN);
+      if (ua != ub) return ua ? 1 : -1;
+      const uint8_t ha = pathHops(ea->out_path_len), hb = pathHops(eb->out_path_len);
+      if (ha != hb) prim = (ha < hb) ? -1 : 1;
     } else if (g_contacts_sort == CONTACTS_SORT_LAST_HEARD ||
                g_contacts_sort == CONTACTS_SORT_LAST_MSG) {
       // Contacts whose last-heard renders as "?" sink to the end of the time-based
