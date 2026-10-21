@@ -2166,3 +2166,9 @@ Fewest hops	Cele mai puține salturi
 # Mesh Deck keyboard module strings
 module attached	modul atașat
 not attached	neatașat
+
+# Orientation choices (#698 / #701)
+Portrait	Portret
+Portrait 180	Portret 180
+Landscape	Peisaj
+Landscape 180	Peisaj 180

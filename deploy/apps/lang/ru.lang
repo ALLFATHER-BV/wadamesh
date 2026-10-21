@@ -2165,3 +2165,9 @@ Fewest hops	Меньше всего хопов
 # Mesh Deck keyboard module strings
 module attached	модуль подключён
 not attached	не подключён
+
+# Orientation choices (#698 / #701)
+Portrait	Портретная
+Portrait 180	Портретная 180
+Landscape	Альбомная
+Landscape 180	Альбомная 180

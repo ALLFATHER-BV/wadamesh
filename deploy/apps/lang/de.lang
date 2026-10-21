@@ -2163,3 +2163,9 @@ Fewest hops	Wenigste Hops
 # Mesh Deck keyboard module strings
 module attached	Modul angeschlossen
 not attached	nicht angeschlossen
+
+# Orientation choices (#698 / #701)
+Portrait	Hochformat
+Portrait 180	Hochformat 180
+Landscape	Querformat
+Landscape 180	Querformat 180

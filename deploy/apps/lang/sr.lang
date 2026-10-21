@@ -2165,3 +2165,9 @@ Fewest hops	Најмање скокова
 # Mesh Deck keyboard module strings
 module attached	модул прикључен
 not attached	није прикључен
+
+# Orientation choices (#698 / #701)
+Portrait	Усправно
+Portrait 180	Усправно 180
+Landscape	Положено
+Landscape 180	Положено 180

@@ -2165,3 +2165,9 @@ Fewest hops	Λιγότερα άλματα
 # Mesh Deck keyboard module strings
 module attached	μονάδα συνδεδεμένη
 not attached	μη συνδεδεμένη
+
+# Orientation choices (#698 / #701)
+Portrait	Κατακόρυφα
+Portrait 180	Κατακόρυφα 180
+Landscape	Οριζόντια
+Landscape 180	Οριζόντια 180

@@ -2164,3 +2164,9 @@ Fewest hops	Meno salti
 # Mesh Deck keyboard module strings
 module attached	modulo collegato
 not attached	non collegato
+
+# Orientation choices (#698 / #701)
+Portrait	Verticale
+Portrait 180	Verticale 180
+Landscape	Orizzontale
+Landscape 180	Orizzontale 180

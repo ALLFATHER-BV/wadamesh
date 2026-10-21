@@ -2181,3 +2181,9 @@ Fewest hops	Nejméně skoků
 # Mesh Deck keyboard module strings
 module attached	modul připojen
 not attached	nepřipojeno
+
+# Orientation choices (#698 / #701)
+Portrait	Na výšku
+Portrait 180	Na výšku 180
+Landscape	Na šířku
+Landscape 180	Na šířku 180

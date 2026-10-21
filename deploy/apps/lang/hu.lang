@@ -2175,3 +2175,9 @@ Fewest hops	Legkevesebb ugrás
 # Mesh Deck keyboard module strings
 module attached	modul csatlakoztatva
 not attached	nincs csatlakoztatva
+
+# Orientation choices (#698 / #701)
+Portrait	Álló
+Portrait 180	Álló 180
+Landscape	Fekvő
+Landscape 180	Fekvő 180

@@ -2165,3 +2165,9 @@ Fewest hops	Menos saltos
 # Mesh Deck keyboard module strings
 module attached	módulo conectado
 not attached	não conectado
+
+# Orientation choices (#698 / #701)
+Portrait	Retrato
+Portrait 180	Retrato 180
+Landscape	Paisagem
+Landscape 180	Paisagem 180
