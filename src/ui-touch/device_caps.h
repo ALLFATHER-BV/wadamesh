@@ -707,23 +707,6 @@
   #endif
 #endif
 
-// The Store downloads apps and languages (its Apps tab, the Languages downloads). A
-// board that bakes them in (CAP_BUILTIN_*) shows a picker instead, unless it can also
-// reach the Store (the browser build: CAP_STORE_DOWNLOADS 1, the baked copies are the
-// offline first load and a download wins, as everywhere). CAP_FW_UPDATE_CHECK: the
-// firmware version check (and the beta report / install count it carries); off, the
-// Store's update badge fetches the catalog on its own.
-#ifndef CAP_STORE_DOWNLOADS
-  #if CAP_BUILTIN_LUA_APPS
-    #define CAP_STORE_DOWNLOADS 0
-  #else
-    #define CAP_STORE_DOWNLOADS 1
-  #endif
-#endif
-#ifndef CAP_FW_UPDATE_CHECK
-  #define CAP_FW_UPDATE_CHECK 1
-#endif
-
 // Ship the catalog's Lua apps inside the image (lua_builtin.h, generated from
 // deploy/apps/) so a board that cannot reach the Lua Store still has them in
 // the drawer. A downloaded <data>/apps/<id>.lua always wins, because
@@ -738,4 +721,23 @@
   #else
     #define CAP_BUILTIN_LUA_APPS 0
   #endif
+#endif
+
+// The Store downloads apps and languages (its Apps tab, the Languages downloads). A
+// board that bakes them in (CAP_BUILTIN_*) shows a picker instead, unless it can also
+// reach the Store (the browser build: CAP_STORE_DOWNLOADS 1, the baked copies are the
+// offline first load and a download wins, as everywhere). CAP_FW_UPDATE_CHECK: the
+// firmware version check (and the beta report / install count it carries); off, the
+// Store's update badge fetches the catalog on its own. Defined after
+// CAP_BUILTIN_LUA_APPS, which it reads: above it, an undefined macro reads 0 and the
+// 2 MB V4 would get the downloading Store instead of its picker.
+#ifndef CAP_STORE_DOWNLOADS
+  #if CAP_BUILTIN_LUA_APPS
+    #define CAP_STORE_DOWNLOADS 0
+  #else
+    #define CAP_STORE_DOWNLOADS 1
+  #endif
+#endif
+#ifndef CAP_FW_UPDATE_CHECK
+  #define CAP_FW_UPDATE_CHECK 1
 #endif
