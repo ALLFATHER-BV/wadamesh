@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: cs
-# ver: 27
+# ver: 28
 # name: Čeština
 # base: cs
  (device behind)	 (zařízení za)
@@ -2176,3 +2176,14 @@ you	vy
 Flood in / out	Flood příchozí / odchozí
 Direct in / out	Přímé příchozí / odchozí
 Airtime TX / RX	Vysílací čas TX / RX
+Fewest hops	Nejméně skoků
+
+# Mesh Deck keyboard module strings
+module attached	modul připojen
+not attached	nepřipojeno
+
+# Orientation choices (#698 / #701)
+Portrait	Na výšku
+Portrait 180	Na výšku 180
+Landscape	Na šířku
+Landscape 180	Na šířku 180

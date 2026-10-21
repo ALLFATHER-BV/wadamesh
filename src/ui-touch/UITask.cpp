@@ -1223,6 +1223,167 @@ static void uiFitLabelWidth(lv_obj_t* lbl, lv_coord_t max_w) {
   }
   lv_obj_set_style_text_font(lbl, &g_font_12, LV_PART_MAIN);   // still wide: 12 px beats clipping a bigger font
 }
+
+// ---- Button captions that fit any language (#418) ---------------------------------
+// A translation that fits most panels can still overflow a button on the narrowest
+// (the Heltec V4 with its kit) or at a large UI size, and asking translators to
+// shorten every string for the smallest screen only makes it worse everywhere else.
+// So the layout adapts instead: every button styled by styleButton() checks its
+// caption when it is styled and whenever it or its caption changes size (a new text
+// or font resizes the label) and, only when the text is wider than the button, steps
+// the font down 16 -> 14 -> 12, then wraps it onto two centred lines if the button
+// has the height, else ends it in "...". A caption that fits is never touched.
+//
+// Scope: buttons whose only visible label child is a centred caption. Icon + caption
+// pairs, anything with a deliberate scrolling label, and left-aligned rows (Backups,
+// the map's contact picker), whose builders already dot their own text, are left as
+// they were. No spare object flag (USER_1..4 are all nav markers), so a finished
+// caption is recognised by the state step 2 leaves: the button's exact width, and
+// either wrapped at content height or dotted because two lines would not fit.
+
+static bool uiCaptionCentred(lv_obj_t* btn, lv_obj_t* lbl) {
+  const lv_align_t a = (lv_align_t)lv_obj_get_style_align(lbl, LV_PART_MAIN);
+  if (a == LV_ALIGN_CENTER) return true;
+  if (a != LV_ALIGN_DEFAULT) return false;
+  if (lv_obj_get_style_layout(btn, LV_PART_MAIN) == LV_LAYOUT_FLEX)
+    return lv_obj_get_style_flex_main_place(btn, LV_PART_MAIN) == LV_FLEX_ALIGN_CENTER;
+  return lv_obj_get_style_text_align(lbl, LV_PART_MAIN) == LV_TEXT_ALIGN_CENTER;
+}
+
+static lv_obj_t* uiButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* cap = nullptr;
+  const uint32_t n = lv_obj_get_child_cnt(btn);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* c = lv_obj_get_child(btn, i);
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    if (!lv_obj_check_type(c, &lv_label_class)) continue;
+    if (cap) return nullptr;            // icon + caption: not ours to rearrange
+    cap = c;
+  }
+  if (!cap) return nullptr;
+  const lv_label_long_mode_t lm = lv_label_get_long_mode(cap);
+  if (lm == LV_LABEL_LONG_SCROLL || lm == LV_LABEL_LONG_SCROLL_CIRCULAR) return nullptr;
+  if (!uiCaptionCentred(btn, cap)) return nullptr;
+  const char* t = lv_label_get_text(cap);
+  return (t && t[0]) ? cap : nullptr;
+}
+
+static lv_coord_t uiCaptionTextW(lv_obj_t* lbl, const lv_font_t* f) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN), 0, LV_COORD_MAX,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  return sz.x;
+}
+
+// The caption's height when wrapped to max_w.
+static lv_coord_t uiCaptionWrappedH(lv_obj_t* lbl, const lv_font_t* f, lv_coord_t max_w) {
+  lv_point_t sz;
+  lv_txt_get_size(&sz, lv_label_get_text(lbl), f,
+                  lv_obj_get_style_text_letter_space(lbl, LV_PART_MAIN),
+                  lv_obj_get_style_text_line_space(lbl, LV_PART_MAIN), max_w,
+                  lv_label_get_recolor(lbl) ? LV_TEXT_FLAG_RECOLOR : LV_TEXT_FLAG_NONE);
+  return sz.y;
+}
+
+static inline bool uiFontIsSemi(const lv_font_t* f) {
+  return f == &g_font_semi_16 || f == &g_font_semi_14 || f == &g_font_semi_12;
+}
+
+// Whether the caption still needs work: it overflows and either a smaller font of
+// its weight is left to try or it is not yet wrapped / dotted the way step 2 would.
+// The floor is the smallest font of the SAME weight: semibold 12 is taller than
+// regular 12, so measuring a semibold caption against regular 12 never let it count
+// as fitted.
+static bool uiCaptionNeedsFit(lv_obj_t* btn, lv_obj_t* lbl) {
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  if (avail_w <= 6) return false;
+  const lv_font_t* f = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  if (uiCaptionTextW(lbl, f) <= avail_w) return false;
+  const lv_font_t* floor_f = uiFontIsSemi(f) ? &g_font_semi_12 : &g_font_12;
+  if (lv_font_get_line_height(f) > lv_font_get_line_height(floor_f)) return true;
+  if (lv_obj_get_style_width(lbl, LV_PART_MAIN) != avail_w) return true;
+  const bool two_fit = uiCaptionWrappedH(lbl, f, avail_w) <= lv_obj_get_content_height(btn);
+  const bool content_h = lv_obj_get_style_height(lbl, LV_PART_MAIN) == LV_SIZE_CONTENT;
+  switch (lv_label_get_long_mode(lbl)) {
+    // A builder's one-line box would show only the first wrapped line, with no dots.
+    case LV_LABEL_LONG_WRAP: return !two_fit || !content_h;
+    // A builder's own dots, when two lines would have fit.
+    case LV_LABEL_LONG_DOT:  return two_fit || content_h;
+    default:                 return true;
+  }
+}
+
+static void uiFitButtonCaption(lv_obj_t* btn) {
+  lv_obj_t* lbl = uiButtonCaption(btn);
+  if (!lbl || !uiCaptionNeedsFit(btn, lbl)) return;
+  const lv_coord_t avail_w = lv_obj_get_content_width(btn);
+  const lv_coord_t avail_h = lv_obj_get_content_height(btn);
+  // 1. The largest baked font, no bigger than the current one, that fits on one line.
+  const lv_font_t* cur = lv_obj_get_style_text_font(lbl, LV_PART_MAIN);
+  const lv_coord_t cur_h = lv_font_get_line_height(cur);
+  // Primary buttons are semibold; shrink them within that weight.
+  const bool semi = uiFontIsSemi(cur);
+  const lv_font_t* ladder[3] = { semi ? &g_font_semi_16 : &g_font_16, semi ? &g_font_semi_14 : &g_font_14,
+                                 semi ? &g_font_semi_12 : &g_font_12 };
+  const lv_font_t* use = nullptr;
+  for (const lv_font_t* f : ladder) {
+    if (lv_font_get_line_height(f) > cur_h) continue;
+    use = f;                                   // smallest-so-far; the last one is 12 px
+    if (uiCaptionTextW(lbl, f) <= avail_w) break;
+  }
+  if (use && use != cur) lv_obj_set_style_text_font(lbl, use, LV_PART_MAIN);
+  const lv_font_t* f = use ? use : cur;
+  if (uiCaptionTextW(lbl, f) <= avail_w) return;
+  // 2. Still too wide at 12 px: two centred lines when the button is tall enough,
+  //    otherwise one line ending in "..." rather than text spilling past the edge.
+  //    The height is set either way: a builder may have pinned the caption to one
+  //    line, which would cut a wrapped caption to its first line.
+  lv_obj_set_width(lbl, avail_w);
+  lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  if (uiCaptionWrappedH(lbl, f, avail_w) <= avail_h) {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_height(lbl, LV_SIZE_CONTENT);
+  } else {
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_height(lbl, lv_font_get_line_height(f));
+  }
+  if (lv_obj_get_style_layout(btn, LV_PART_MAIN) != LV_LAYOUT_FLEX) lv_obj_center(lbl);
+}
+
+static void uiFitButtonAsync(void* p) {
+  // Queued fits are cancelled when their button is deleted (below), so the pointer
+  // is live here.
+  lv_obj_t* btn = static_cast<lv_obj_t*>(p);
+  lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
+  uiFitButtonCaption(btn);
+}
+
+// Queues one fit for after the current builder or layout pass, which is when the
+// button's size and caption are final. Restyling inside a size event is not safe,
+// so nothing is measured here. Any fit already queued for the button is replaced,
+// so a button has at most one, however many events arrive first.
+static void uiFitButtonQueue(lv_obj_t* btn) {
+  lv_async_call_cancel(uiFitButtonAsync, btn);
+  lv_async_call(uiFitButtonAsync, btn);
+}
+
+// The button was resized, or a child of it was: its caption label resizes when its
+// text or font changes. A fit that changes the caption comes back through here once
+// and then finds nothing left to do, so a caption is fitted on changes, not frames.
+static void uiFitButtonChangeCb(lv_event_t* e) {
+  lv_obj_t* btn = lv_event_get_target(e);
+  const lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_DELETE) {
+    lv_async_call_cancel(uiFitButtonAsync, btn);
+    return;
+  }
+  if (code == LV_EVENT_CHILD_CHANGED) {
+    lv_obj_t* child = static_cast<lv_obj_t*>(lv_event_get_param(e));
+    if (!child || !lv_obj_check_type(child, &lv_label_class)) return;
+  }
+  uiFitButtonQueue(btn);
+}
 #if LV_USE_IMGFONT
 // lv_imgfont path callback: hand back the baked colour image for an emoji
 // codepoint (copied into the imgfont's scratch buffer as an lv_img_dsc_t), or
@@ -2169,7 +2330,7 @@ static void maxPreviewWavFile(const char* prefpath) {
 #endif  // HAS_TDECK_GT911 || TLORA_PAGER || HAS_TDECK_MAX
 
 // ---- Unified UI notification sound (T-Deck I2S / pager codec / Heltec V4 + Elecrow M9
-//      piezo / T-Display P4 ES8311 codec) ----
+//      piezo / T-Display P4, T-Deck Max and Wio Tracker L2 ES8311 codec) ----
 // One source of truth: device_caps.h computes the same board list as CAP_SOUND.
 #if CAP_SOUND
   #define HAS_UI_SOUND 1
@@ -2209,6 +2370,29 @@ static void p4PlayNotifySlot(int slot) {
   s_p4_snd_playing = true;
   if (xTaskCreate(p4NotifyTaskFn, "notify", 4096, nullptr, 3, nullptr) != pdPASS) {
     s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
+  }
+}
+#endif
+
+#if defined(HAS_WIO_TRACKER_L2)
+// Wio Tracker L2: ES8311 codec + class-D amp (WioTrackerL2Audio.cpp in the variant). Same
+// three chime patterns as the T-Deck. The codec and amp are switched on this task and the
+// I2S writes run on a worker; UITask::loop() calls wioL2AudioService() to switch them off
+// again. Loudness is the codec's volume register, from the volume pref.
+#include <WioTrackerL2Audio.h>
+static void l2PlayNotifySlot(int slot) {
+  if (tileFetchPendingLoad() > 0) return;      // don't fight the Wi-Fi/tile DMA buffers
+  const uint8_t pct = touchPrefsGetSoundVolume();
+  if (pct == 0 || wioL2AudioBusy()) return;    // already chiming -- don't stack
+  if (slot == TOUCH_SND_MEN) {                 // @-mention: bright 3-note rising arpeggio
+    static const uint16_t f[] = {1318, 1760, 2349}, d[] = {70, 70, 130};   // E6 A6 D7
+    wioL2AudioPlay(f, d, 3, pct);
+  } else if (slot == TOUCH_SND_DM) {           // direct message: distinct rising fifth
+    static const uint16_t f[] = {1047, 1568}, d[] = {90, 120};             // C6 G6
+    wioL2AudioPlay(f, d, 2, pct);
+  } else {                                     // message: the original two-note chime
+    static const uint16_t f[] = {880, 1318}, d[] = {90, 110};              // A5 E6
+    wioL2AudioPlay(f, d, 2, pct);
   }
 }
 #endif
@@ -2274,6 +2458,8 @@ static inline void uiPlaySlot(int slot) {
   maxPlayNotifySlot(slot);
 #elif defined(HAS_TDISPLAY_P4)
   p4PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
+#elif defined(HAS_WIO_TRACKER_L2)
+  l2PlayNotifySlot(slot);                // ES8311 codec chimes (same patterns as the T-Deck)
 #elif defined(TLORA_PAGER)
   pagerPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
@@ -2516,6 +2702,61 @@ void appPageEnd(void (*close_fn)()) {
 void appPageDeleteRootAsync(lv_obj_t* root) {
   if (root) lv_obj_del_async(root);
 }
+
+// ---- Settings sub-pages ---------------------------------------------------------
+// A full-screen page opened FROM a settings page (time-zone list, Wi-Fi scan, backup
+// and accent pickers) leaves the same way as the category page under it: "‹ <title>"
+// in the tall status bar, a tap on the bar closes it, and no header row or Close
+// button of its own. Whoever owned that hook before (the category, or another
+// sub-page) is remembered and handed back on close, so Back steps out one level.
+struct SettingsSubPage { void (*close)(); const char* prev_title; void (*prev_close)(); bool prev_slim; };
+static SettingsSubPage s_subpages[4];
+static uint8_t         s_subpage_n = 0;
+
+// Returns the page root, already below the tall bar; the caller fills it from y = 0.
+static lv_obj_t* settingsSubPageOpen(const char* title, void (*close_fn)()) {
+  if (s_subpage_n < sizeof s_subpages / sizeof s_subpages[0])
+    s_subpages[s_subpage_n++] = { close_fn, s_apppage_title, s_apppage_close, s_apppage_slim };
+  s_apppage_title = title;
+  s_apppage_close = close_fn;
+  s_apppage_slim  = false;
+  statusBarSetTall(true);
+  const lv_coord_t top = statusBarCurH();   // measured once tall, like Known regions
+  lv_obj_t* root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(root);
+  lv_obj_set_size(root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr) - top);
+  lv_obj_set_pos(root, 0, top);
+  lv_obj_set_style_bg_color(root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);   // modal: presses never reach the page below
+  updateGlobalStatusBar();
+  if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);   // keep "‹ title" tappable
+  return root;
+}
+
+// Call from the page's own close function (whatever closed it: the bar, Back, a pick).
+// A no-op for a page that was not opened through settingsSubPageOpen.
+static void settingsSubPageClose(void (*close_fn)()) {
+  int k = (int)s_subpage_n - 1;
+  while (k >= 0 && s_subpages[k].close != close_fn) --k;
+  if (k < 0) return;
+  const SettingsSubPage gone = s_subpages[k];
+  if (k + 1 < (int)s_subpage_n) {
+    // A sub-page above this one is still open: it now hands back to our predecessor.
+    s_subpages[k + 1].prev_title = gone.prev_title;
+    s_subpages[k + 1].prev_close = gone.prev_close;
+    s_subpages[k + 1].prev_slim  = gone.prev_slim;
+  }
+  for (int i = k; i + 1 < (int)s_subpage_n; ++i) s_subpages[i] = s_subpages[i + 1];
+  --s_subpage_n;
+  if (s_apppage_close != close_fn) return;   // the bar belongs to someone else now
+  s_apppage_title = gone.prev_title;
+  s_apppage_close = gone.prev_close;
+  s_apppage_slim  = gone.prev_slim;
+  statusBarSetTall(gone.prev_title && !gone.prev_slim);   // a category page re-talls it itself
+  updateGlobalStatusBar();
+}
 static const char* tsBlockReason();    // fwd decl (defined near idle-sleep hooks)
 static const char* tsWakeReasonStr(touchSleep::WakeReason r);  // fwd decl (defined near idle-sleep hooks)
 static void batteryTapCb(lv_event_t* e);   // fwd decl (defined near the battery chart) — Settings "Battery" button reuses it
@@ -2682,8 +2923,22 @@ constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped
 // send below. Landscape keeps the single row. Checked live: the keyboard's rotate
 // button flips orientation with the chat open.
 static constexpr lv_coord_t CHAT_COMP_BTN_P4 = (56 + 34) / 2;
+// The T-Deck Pro uses the same portrait split (no corner arcs to clear), with
+// its 30-px buttons matching its one-line text box.
+#if CAP_ROUND_CORNERS || defined(HAS_TDECK_PRO)
+#define CHAT_COMP_SPLIT 1
+#else
+#define CHAT_COMP_SPLIT 0
+#endif
+static inline lv_coord_t chatComposerBtnSz() {
+#if defined(HAS_TDECK_PRO)
+  return 30;
+#else
+  return CHAT_COMP_BTN_P4;
+#endif
+}
 static inline bool chatComposerTwoRow() {
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   return lv_disp_get_hor_res(nullptr) <= lv_disp_get_ver_res(nullptr);
 #else
   return false;
@@ -2691,11 +2946,31 @@ static inline bool chatComposerTwoRow() {
 }
 // Height the top (QR + emoji) row adds above the text row; 0 when single-row.
 static inline lv_coord_t chatComposerTopRowH() {
-  return chatComposerTwoRow() ? (lv_coord_t)(CHAT_COMP_BTN_P4 + 4) : 0;
+  return chatComposerTwoRow() ? (lv_coord_t)(chatComposerBtnSz() + 4) : 0;
 }
-// Composer row height not available to the text box: row padding and the top row.
+// Portrait P4: the full-width text box would otherwise sit under the bottom corner
+// arcs, so the whole composer rides this far above the screen's bottom edge (the
+// row's bottom padding). Matches the corner safe-area the status bar uses.
+static inline lv_coord_t chatComposerBottomLift() {
+#if CAP_ROUND_CORNERS
+  return chatComposerTwoRow() ? SB_INSET_X : 0;
+#else
+  return 0;
+#endif
+}
+// Composer row height not available to the text box: row padding, the top row, the lift.
 static inline lv_coord_t chatComposerChromeH() {
-  return 4 + chatComposerTopRowH();
+  return 4 + chatComposerTopRowH() + chatComposerBottomLift();
+}
+// Lines the text box shows while it is empty. The T-Deck Pro's box starts tall
+// enough for two lines (its keyboard is physical, so the room is free); it
+// still grows to CHAT_COMP_MAX_LINES as the message wraps.
+static inline int chatComposerMinLines() {
+#if defined(HAS_TDECK_PRO)
+  return 2;
+#else
+  return 1;
+#endif
 }
 // Slim composer: on the large screens in landscape (T-Display P4 landscape, Tanmatsu,
 // CrowPanel 5.0 / 10.1) the empty text box is ONE text line tall and grows a line at a
@@ -2714,7 +2989,9 @@ static lv_coord_t chatComposerOneLineTaH();
 static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h);
 static inline lv_coord_t chatComposerBaseH() {
   if (chatComposerSlim()) return chatComposerSlimRowH(chatComposerOneLineTaH());
-  if (chatComposerTwoRow()) return CHAT_COMP_H + chatComposerTopRowH();
+  if (chatComposerTwoRow())
+    return CHAT_COMP_H + chatComposerTopRowH() + chatComposerBottomLift()
+         + (lv_coord_t)(chatComposerMinLines() - 1) * lv_font_get_line_height(&g_font_14);
 #if defined(TLORA_PAGER)
   // Preserve the 34-px Small composer, then add enough chrome around the live
   // font line for Medium/Large without globally scaling the short viewport.
@@ -2911,6 +3188,15 @@ static inline lv_coord_t m9ChatHeadH() {
   return (lv_coord_t)(3 + lv_font_get_line_height(&g_font_semi_14) + lv_font_get_line_height(&g_font_12) + 2);
 }
 #endif
+// The chat header's foot: where a conversation's message list starts its content on
+// the boards whose header floats over the list (makeChatDetail).
+static inline lv_coord_t chatHeadFootY() {
+#if defined(HAS_THINKNODE_M9)
+  return m9ChatHeadH();
+#else
+  return chatBarH();
+#endif
+}
 static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - chatContentTop(); }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
@@ -2970,14 +3256,15 @@ enum ContactsSortMode : uint8_t {
   CONTACTS_SORT_LAST_HEARD  = 1,  // most recent advert first (default)
   CONTACTS_SORT_LAST_MSG    = 2,  // most recent message first (falls back to last-heard)
   CONTACTS_SORT_DISTANCE    = 3,  // nearest first; rows with no shared location are excluded
-  CONTACTS_SORT_COUNT       = 4,
+  CONTACTS_SORT_HOPS        = 4,  // fewest hops first; path-unknown rows sink to the end (#718)
+  CONTACTS_SORT_COUNT       = 5,
 };
 // Default to most-recently-heard at the top — operators care who's on the
 // air now far more than alphabetical order. Favorites still pin above all
 // (see the qsort comparator in refreshContactsList).
 static uint8_t g_contacts_sort = CONTACTS_SORT_LAST_HEARD;
 // Reverse the active sort's natural order (the asc/desc toggle). Natural order is
-// A→Z / newest-heard / newest-message / nearest; `desc` flips just the primary key
+// A→Z / newest-heard / newest-message / nearest / fewest hops; `desc` flips just the primary key
 // (favourites stay pinned on top, "?"-heard rows stay sunk). Reset when the mode
 // changes; re-tapping the active mode in the Sort sheet flips it.
 static bool    g_contacts_sort_desc = false;
@@ -2988,6 +3275,7 @@ static const char* contactsSortLabel(uint8_t m) {
     case CONTACTS_SORT_LAST_HEARD: return "RECENT";
     case CONTACTS_SORT_LAST_MSG:   return "MSG";
     case CONTACTS_SORT_DISTANCE:   return "DIST";
+    case CONTACTS_SORT_HOPS:       return "HOPS";
   }
   return "?";
 }
@@ -2998,6 +3286,7 @@ static const char* contactsSortOptName(uint8_t m) {
     case CONTACTS_SORT_LAST_HEARD: return "Recently heard";
     case CONTACTS_SORT_LAST_MSG:   return "Recent message";
     case CONTACTS_SORT_DISTANCE:   return "Nearest first";
+    case CONTACTS_SORT_HOPS:       return "Fewest hops";
   }
   return "?";
 }
@@ -3271,16 +3560,26 @@ static bool      s_accent_popups     = true;
 // at boot BEFORE the screens are built so the layout reflows to the rotated
 // resolution. The keyboard-landscape toggle above is transient and layers on
 // top of this; hideKb() reverts to s_ui_rotation (not hard portrait).
-// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270.
+// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 2 = portrait 180,
+// 3 = ROT_270.
 static uint8_t   s_ui_rotation       = 0;
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+// What LVGL turns the MIPI panel by in software for that orientation, which is also
+// what the touch driver maps its points by. The T-Display P4 panel is portrait-native,
+// so it is s_ui_rotation itself; the CrowPanel P4 10.1 is landscape-native, so its UI
+// landscape (ROT_270) is the panel's own 0 and the rest follow a quarter turn on (#701).
+static uint8_t   s_lvgl_base_rot     = 0;
+#endif
 
-// The rotation the keyboard should use when shown: if the UI is already in a
-// landscape base orientation, keep it; otherwise honour the transient
-// keyboard-landscape toggle. Lets the rotate arrows still work in portrait.
+// The rotation the keyboard should use when shown: if the UI has a base orientation
+// other than plain portrait (a landscape, or Portrait 180), keep it; otherwise honour
+// the transient keyboard-landscape toggle. Lets the rotate arrows still work in portrait.
 static inline uint8_t effectiveKbRotation() {
-  const bool ui_landscape =
-      (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270);
-  return ui_landscape ? s_ui_rotation : s_kb_rotation;
+#if defined(HAS_CROWPANEL_P4_101)
+  return s_ui_rotation;   // no keyboard-only rotation on the 10.1 (#701)
+#else
+  return (s_ui_rotation != LV_DISP_ROT_NONE) ? s_ui_rotation : s_kb_rotation;
+#endif
 }
 
 // ---- Discovered adverts ring buffer ----
@@ -4788,6 +5087,18 @@ static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool 
     ini[o] = '\0';
     for (char* u = ini; *u; ++u) if ((uint8_t)*u < 0x80) *u = (char)toupper((unsigned char)*u);
     const lv_font_t* f = size >= 36 ? &g_font_16 : size >= 26 ? &g_font_semi_14 : &g_font_semi_12;
+    // g_font_* grow with the UI size while the disc may not, so "PU" can spill past
+    // it at Large / Huge. Step down until the letters sit inside: 3/4 of the
+    // diameter keeps the text box's corners within the circle.
+    {
+      const lv_font_t* steps[3] = { &g_font_16, &g_font_semi_14, &g_font_semi_12 };
+      const int from = f == &g_font_16 ? 0 : f == &g_font_semi_14 ? 1 : 2;
+      for (int i = from; i < 3; ++i) {
+        f = steps[i];
+        if (lv_txt_get_width(ini[0] ? ini : "?", (uint32_t)strlen(ini[0] ? ini : "?"), f, 0, LV_TEXT_FLAG_NONE)
+            <= size * 3 / 4) break;
+      }
+    }
     char txt[16];
     copyUtf8ReplacingMissingGlyphs(f, txt, sizeof txt, ini[0] ? ini : "?");
     lv_obj_t* l = lv_label_create(av);
@@ -4986,6 +5297,13 @@ static void styleButton(lv_obj_t* obj) {
   lv_obj_set_style_text_font(obj, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_radius(obj, 9, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(obj, 0, LV_PART_MAIN);
+  // Captions that overflow shrink, then wrap (#418). Remove first: some buttons are
+  // restyled, and the callback must only be attached once.
+  while (lv_obj_remove_event_cb(obj, uiFitButtonChangeCb)) {}   // removes one per call
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_SIZE_CHANGED, nullptr);
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_CHILD_CHANGED, nullptr);
+  lv_obj_add_event_cb(obj, uiFitButtonChangeCb, LV_EVENT_DELETE, nullptr);
+  uiFitButtonQueue(obj);   // the caption is usually added after styling; this runs after
   styleLookPress(obj);
 }
 
@@ -5541,10 +5859,23 @@ static void lvglFlushImpl(lv_disp_drv_t* disp_drv, const lv_area_t* area, lv_col
 // to panel rotation 1, ROT_270 to 3. Portrait leaves the panel as inited, except
 // on the CrowPanel (0) and the Attaky (its build DISPLAY_ROTATION, 2), where
 // UITask::begin turns it back from a landscape the boot logo may have applied.
+// ROT_180 (Portrait 180, #698) is the portrait base turned half way: the CrowPanel
+// and Wio Tracker L2 display classes map the UI's rotation to their own panel
+// rotation themselves; the ST7789 boards (V4, Attaky) sit at DISPLAY_ROTATION in
+// portrait, so two steps on from that.
 static void applyHardwarePanelRotation(uint8_t lvgl_rot) {
   if (lvgl_rot == LV_DISP_ROT_90)       display.setDisplayRotation(1);
   else if (lvgl_rot == LV_DISP_ROT_270) display.setDisplayRotation(3);
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation(2);
+#elif defined(HELTEC_LORA_V4_R8)
+  // The R8's LovyanGFX panel is portrait at rotation 0, whatever the inherited
+  // DISPLAY_ROTATION=2 says, so its half turn is 2 (#701).
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation(2);
+#elif defined(DISPLAY_ROTATION)
+  else if (lvgl_rot == LV_DISP_ROT_180) display.setDisplayRotation((DISPLAY_ROTATION + 2) & 3);
+#endif
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
   else                                  display.setDisplayRotation(0);
 #elif defined(ATTAKY_MESH_SERIES)
   else                                  display.setDisplayRotation(DISPLAY_ROTATION);
@@ -7936,6 +8267,17 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   if (!heltecV4CapTouchIsAsyncPolling()) {
     (void)heltecV4CapTouchCheck();
   }
+  // Stamp s_slider_touch_ms while the finger is down on any slider. Both the press
+  // abort below and the tab / swipe-back handler skip a slider drag on this stamp,
+  // but nothing ever set it, so a sideways drag past the swipe threshold aborted the
+  // press: the slider never got RELEASED (where Screen timeout and the others save)
+  // and the drag could also count as swipe-right = Back on a settings page. LVGL
+  // keeps the pressed object from the previous read, so the stamp is in place well
+  // before the drag reaches the swipe threshold.
+  if (lv_indev_t* sl_act = lv_indev_get_act()) {
+    lv_obj_t* pressed = sl_act->proc.types.pointer.act_obj;
+    if (pressed && lv_obj_check_type(pressed, &lv_slider_class)) s_slider_touch_ms = millis();
+  }
   // If the gesture has turned into a swipe, tell LVGL to abandon the press
   // it started on the originally-touched widget. Without this, swiping
   // sideways across a settings row both switches tabs (our applySwipeGesture)
@@ -8004,25 +8346,28 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
      ) {
     p.x = static_cast<lv_coord_t>(x);
     p.y = static_cast<lv_coord_t>(y);
-#if defined(HAS_TDISPLAY_P4)
-    // P4 landscape is LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
+#if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+    // P4 orientations are LVGL SOFTWARE rotation, and LVGL rotates pointer input for a
     // rotated display itself (indev_pointer_proc) -- it expects the point in the
-    // unrotated panel frame. The touch driver already maps to landscape, which its
+    // unrotated panel frame. The touch driver already maps to the turned frame, which its
     // swipe detection and the direct readers (tab-bar guard, remote hold) need, so
     // hand LVGL the panel-frame point back. Passing the landscape point through
     // rotated it twice: a tap at (X,Y) arrived at (615-Y, X), so nav-bar taps hit
     // the middle of the screen or nothing at all, while swipes still worked.
-    // Keyed on s_ui_rotation (what the driver maps by), not the display's live
+    // Keyed on s_lvgl_base_rot (what the driver maps by), not the display's live
     // rotation: the chat keyboard's rotate trick turns LVGL on a portrait UI while
     // the driver keeps reporting portrait points, and those must pass unchanged.
     {
-      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = portrait panel frame
-      if (s_ui_rotation == LV_DISP_ROT_90) {
+      const lv_disp_drv_t& dd = g_lv.disp_drv;   // hor_res/ver_res = the unturned panel frame
+      if (s_lvgl_base_rot == LV_DISP_ROT_90) {
         p.x = static_cast<lv_coord_t>(y);
         p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - x);
-      } else if (s_ui_rotation == LV_DISP_ROT_270) {
+      } else if (s_lvgl_base_rot == LV_DISP_ROT_270) {
         p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - y);
         p.y = static_cast<lv_coord_t>(x);
+      } else if (s_lvgl_base_rot == LV_DISP_ROT_180) {   // portrait 180 (#698) / landscape 180 on the 10.1
+        p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - x);
+        p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - y);
       }
     }
 #endif
@@ -8369,6 +8714,11 @@ static void deviceHardwareText(char* out, size_t cap) {
 #if defined(HAS_TDECK_KEYBOARD)
   if (n > 0 && (size_t)n < cap)
     snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"), deviceKeyboardText());
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module comes and goes; the line follows it (refreshed on the change).
+  if (n > 0 && (size_t)n < cap)
+    snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"),
+             attakyKeyboardPresent() ? TR("module attached") : TR("not attached"));
 #endif
 }
 
@@ -9443,7 +9793,7 @@ constexpr int KB_MIRROR_STRIP_H = 52;
 static void chatComposerAutoGrow(LvChatPanel* p);       // the rotation re-runs it (kbApplyLayoutForRotation)
 static void chatComposerAlignSlim(LvChatPanel* p);      // defined after chatComposerAutoGrow
 #endif
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
 static void chatComposerApplyRows(LvChatPanel* p);      // defined after chatComposerAutoGrow
 static void chatComposerPlaceButtons(LvChatPanel* p);   // ditto
 #endif
@@ -9485,7 +9835,7 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
     }
     if (s_kb_panel->composer_ta)
       lv_obj_set_width(s_kb_panel->composer_ta, chatComposerTaW(s_kb_panel->channel_mode));
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
     chatComposerApplyRows(s_kb_panel);   // one row <-> two rows as the orientation flips
 #elif CAP_LARGE_SCREEN
     // Slim (landscape) <-> classic (portrait) on a rotatable large panel (CrowPanel 5.0):
@@ -9534,12 +9884,20 @@ static void kbApplyRotation(uint8_t rot) {
   // of the gesture BEFORE rotating so the jump is never seen as movement.
   lv_indev_t* act = lv_indev_get_act();
   if (act) lv_indev_wait_release(act);
-  // In hardware-landscape the panel is already rotated; applying LVGL software
-  // rotation on top would double-rotate. Software rotation is used ONLY for the
-  // transient keyboard-landscape trick when the base orientation is portrait.
-  const bool hw_landscape = (s_ui_rotation == LV_DISP_ROT_90 ||
-                             s_ui_rotation == LV_DISP_ROT_270);
-  if (!hw_landscape) {
+  // Any base but plain portrait (a landscape, or Portrait 180, #698) is already on
+  // screen, the panel turned in hardware (or LVGL at boot on the P4); applying LVGL
+  // software rotation on top would double-rotate, so the keyboard keeps the base.
+  // Software rotation is used ONLY for the transient keyboard-landscape trick when
+  // the base orientation is portrait. The CrowPanel P4 10.1 has no such trick (no
+  // rotate arrows), and its portrait is itself an LVGL turn, so it always keeps
+  // the base (#701).
+#if defined(HAS_CROWPANEL_P4_101)
+  if (true) {
+#else
+  if (s_ui_rotation != LV_DISP_ROT_NONE) {
+#endif
+    rot = s_ui_rotation;
+  } else {
     lv_disp_set_rotation(disp, static_cast<lv_disp_rot_t>(rot));
   }
   // Keep the touch driver's swipe-axis transform in sync with the visible
@@ -9921,6 +10279,12 @@ static void showKb(LvChatPanel* p, bool reveal) {
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
 static void externalKbdNoteFieldPress(lv_obj_t* ta) {
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module summons the keys with its '#'. A tap must not: a settings
+  // field is often bound already when the page opens (Profile's node name), so the
+  // first tap counted as a "second" one and brought the keys up over the module.
+  if (attakyKeyboardPresent()) { s_osk_press_ta = nullptr; return; }
+#endif
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
   s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
@@ -9976,11 +10340,12 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   int lines = (int)((sz.y + lh - 1) / lh);   // ceil to whole lines
   if (lines < 1) lines = 1;
   if (lines > CHAT_COMP_MAX_LINES) lines = CHAT_COMP_MAX_LINES;
-  // Text box: one line (slim) or the board's base box, plus a line per extra wrapped line.
+  // Text box: one line (slim) or the board's base box (two lines on the Pro), plus a line per extra wrapped line.
   // Row: the box plus chrome, or (slim) at least as tall as the buttons beside it.
   const bool slim = chatComposerSlim();
   const lv_coord_t base_ta = slim ? chatComposerOneLineTaH() : chatComposerBaseH() - chatComposerChromeH();
-  const lv_coord_t ta_h = base_ta + (lv_coord_t)(lines - 1) * lh;
+  if (lines < chatComposerMinLines()) lines = chatComposerMinLines();
+  const lv_coord_t ta_h = base_ta + (lv_coord_t)(lines - chatComposerMinLines()) * lh;
   const lv_coord_t want = slim ? chatComposerSlimRowH(ta_h) : ta_h + chatComposerChromeH();
   if (want == s_comp_h && ta_h == s_comp_ta_h) return;   // unchanged → nothing to relayout
   // Read before the bottom inset changes below: if the newest message was in
@@ -10003,7 +10368,7 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
   lv_obj_set_style_pad_bottom(p->msgs, s_comp_h + 6, LV_PART_MAIN);
   if (stick_bottom) chatVirtQueueScroll(p, LV_COORD_MAX);
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   chatComposerPlaceButtons(p);   // keep the buttons centred on the grown text box
 #elif CAP_LARGE_SCREEN
   chatComposerAlignSlim(p);      // a box shorter than the buttons sits centred on them
@@ -10040,7 +10405,7 @@ static void chatComposerAlignSlim(LvChatPanel* p) {
 }
 #endif
 
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
 // Position the composer's controls for the current orientation (see chatComposerTwoRow):
 //   portrait:  [          QR  emoji ]     landscape: [ QR  text ...  emoji send ]
 //              [ text ...      send ]
@@ -10051,11 +10416,19 @@ static void chatComposerAlignSlim(LvChatPanel* p) {
 // pad counts toward it).
 static void chatComposerPlaceButtons(LvChatPanel* p) {
   if (!p || !p->composer_row || !p->composer_ta || !p->qr_btn || !p->emoji_btn || !p->send_btn) return;
-  const lv_coord_t b = CHAT_COMP_BTN_P4;
+  const lv_coord_t b = chatComposerBtnSz();
   const lv_coord_t gap = 6;
   const lv_coord_t right = chatComposerSendInset();
   const lv_coord_t ta_h = s_comp_ta_h;
+#if CAP_ROUND_CORNERS
   const lv_coord_t lift = chatComposerP4Lift(ta_h);   // at least CHAT_COMP_MIN_LIFT_P4
+  const lv_coord_t ta_off = chatComposerP4TaOff(ta_h);
+#else
+  // T-Deck Pro: square corners, so the buttons just centre on the text box; it has
+  // no slim layout, so the box never rides up.
+  const lv_coord_t lift = ta_h > b ? (ta_h - b) / 2 : 0;
+  const lv_coord_t ta_off = 0;
+#endif
   if (chatComposerTwoRow()) {
     lv_obj_align(p->emoji_btn, LV_ALIGN_TOP_RIGHT, -right, 0);
     lv_obj_align(p->qr_btn, LV_ALIGN_TOP_RIGHT, -(right + b + gap), 0);
@@ -10064,7 +10437,7 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
     const lv_coord_t left = chatComposerLeftInset();
     lv_obj_align(p->qr_btn, LV_ALIGN_BOTTOM_LEFT, left, -lift);
     // Slim (landscape): a box shorter than the buttons rides up to sit centred on them.
-    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -chatComposerP4TaOff(ta_h));
+    lv_obj_align(p->composer_ta, LV_ALIGN_BOTTOM_LEFT, left + b + gap, -ta_off);
     lv_obj_align(p->emoji_btn, LV_ALIGN_BOTTOM_RIGHT, -(right + b + gap), -lift);
   }
   lv_obj_align(p->send_btn, LV_ALIGN_BOTTOM_RIGHT, -right, -lift);
@@ -10074,12 +10447,13 @@ static void chatComposerPlaceButtons(LvChatPanel* p) {
 // text box height, Y and button placement all follow the current orientation.
 static void chatComposerApplyRows(LvChatPanel* p) {
   if (!p || !p->composer_row || !p->composer_ta || !p->qr_btn || !p->emoji_btn || !p->send_btn) return;
-  const lv_coord_t b = CHAT_COMP_BTN_P4;
+  const lv_coord_t b = chatComposerBtnSz();
   lv_obj_set_size(p->qr_btn, b, b);
   lv_obj_set_size(p->emoji_btn, b, b);
   lv_obj_set_size(p->send_btn, b, b);
   lv_obj_set_style_radius(p->qr_btn, b / 2, LV_PART_MAIN);
   lv_obj_set_style_radius(p->emoji_btn, b / 2, LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(p->composer_row, 2 + chatComposerBottomLift(), LV_PART_MAIN);
   // Two-row: the top row's left end is free; the near-limit counter moves there so
   // it doesn't sit on the emoji button.
   if (p->composer_cnt) {
@@ -11931,7 +12305,10 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
   lv_obj_set_pos(title, 2, 0);
   addCloseXBadge(card, emojiSheetCloseCb);
 
-  // Hint line: how to use the board's primary picker controls.
+  // Hint line: how to use the board's primary picker controls. The T-Deck Pro has no
+  // trackball or arrow keys to drive the selector (picks are by touch), so none there.
+  lv_coord_t grid_y = 26;
+#if !defined(HAS_TDECK_PRO)
   lv_obj_t* hint = lv_label_create(card);
 #if defined(HAS_M9_KEYBOARD)
   lv_label_set_text(hint, TR("Arrows \xE2\x80\xA2 OK"));
@@ -11940,14 +12317,31 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = k_emoji_ite
 #endif
   lv_obj_set_style_text_color(hint, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
-  lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
+  // Title and hint share the top line when they fit left of the close badge; a narrow
+  // card gives the hint its own line under the title instead.
+  {
+    const char* tt = lv_label_get_text(title);
+    const char* ht = lv_label_get_text(hint);
+    const lv_coord_t title_w = lv_txt_get_width(tt, strlen(tt), &g_font_14, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t hint_w  = lv_txt_get_width(ht, strlen(ht), &g_font_12, 0, LV_TEXT_FLAG_NONE);
+    if (2 + title_w + 8 + hint_w + 24 <= cardw - 16) {
+      lv_obj_align(hint, LV_ALIGN_TOP_RIGHT, -24, 4);
+    } else {
+      lv_obj_set_width(hint, cardw - 16 - 2 - 24);
+      lv_label_set_long_mode(hint, LV_LABEL_LONG_DOT);
+      const lv_coord_t hy = lv_font_get_line_height(&g_font_14) + 2;
+      lv_obj_set_pos(hint, 2, hy);
+      grid_y = hy + lv_font_get_line_height(&g_font_12) + 6;
+    }
+  }
+#endif
 
   // Scrollable grid of glyph buttons.
   const lv_coord_t grid_w = cardw - 16;
   lv_obj_t* grid = lv_obj_create(card);
   lv_obj_remove_style_all(grid);
-  lv_obj_set_size(grid, grid_w, cardh - 16 - 26);
-  lv_obj_set_pos(grid, 0, 26);
+  lv_obj_set_size(grid, grid_w, cardh - 16 - grid_y);
+  lv_obj_set_pos(grid, 0, grid_y);
   lv_obj_set_flex_flow(grid, LV_FLEX_FLOW_ROW_WRAP);
   lv_obj_set_style_pad_row(grid, 4, LV_PART_MAIN);
   lv_obj_set_style_pad_column(grid, 4, LV_PART_MAIN);
@@ -12802,7 +13196,8 @@ static void toggleMentionSoundCb(lv_event_t* e) {
 #endif
   }
 }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
+    defined(HAS_WIO_TRACKER_L2)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -14185,14 +14580,15 @@ static DiscoveredAddCtx s_disc_add_ctx[DISCOVERED_MAX];
 static void openDiscoveredModalCb(lv_event_t* e);
 
 // ---- Discovered-list sort (mirrors the Contacts sort) -------------------------
-// Recently heard / Name / Distance, each with an ascending/descending toggle.
+// Recently heard / Name / Distance / Hops, each with an ascending/descending toggle.
 // "Recent message" is contacts-only (discovered nodes have no message history) so
 // it's omitted. Distance excludes entries that have shared no location.
 enum DiscSortMode : uint8_t {
   DISC_SORT_RECENT   = 0,   // newest advert first (default)
   DISC_SORT_AZ       = 1,   // name A-Z
   DISC_SORT_DISTANCE = 2,   // nearest first; no-location entries excluded
-  DISC_SORT_COUNT    = 3,
+  DISC_SORT_HOPS     = 3,   // fewest hops first; path-unknown entries sink to the end (#718)
+  DISC_SORT_COUNT    = 4,
 };
 static uint8_t g_disc_sort      = DISC_SORT_RECENT;
 static bool    g_disc_sort_desc = false;
@@ -14201,6 +14597,7 @@ static const char* discSortOptName(uint8_t m) {
     case DISC_SORT_RECENT:   return "Recently heard";
     case DISC_SORT_AZ:       return "Name (A-Z)";
     case DISC_SORT_DISTANCE: return "Nearest first";
+    case DISC_SORT_HOPS:     return "Fewest hops";
   }
   return "?";
 }
@@ -14215,6 +14612,14 @@ static bool discSortBefore(int ia, int ib, double self_lat, double self_lon) {
       const double da = contactDistanceKm(self_lat, self_lon, A.ci.gps_lat / 1.0e6, A.ci.gps_lon / 1.0e6);
       const double db = contactDistanceKm(self_lat, self_lon, B.ci.gps_lat / 1.0e6, B.ci.gps_lon / 1.0e6);
       if (da < db) prim = -1; else if (da > db) prim = 1;
+      break;
+    }
+    case DISC_SORT_HOPS: {
+      // Unknown path sinks to the end whichever way the list is flipped.
+      const bool ua = (A.path_len == OUT_PATH_UNKNOWN), ub = (B.path_len == OUT_PATH_UNKNOWN);
+      if (ua != ub) return ub;
+      const uint8_t ha = pathHops(A.path_len), hb = pathHops(B.path_len);
+      if (ha != hb) prim = (ha < hb) ? -1 : 1;
       break;
     }
     case DISC_SORT_AZ:
@@ -14784,6 +15189,15 @@ static lv_coord_t setRowText(lv_obj_t* row, const char* title, const char* help,
   return y - y0;
 }
 
+// A tap on something that stands for a switch (its row, a status line under it): flip
+// the switch (the event's user data) and tell its owner, as a tap on the switch would.
+static void setSwitchTapCb(lv_event_t* e) {
+  lv_obj_t* s = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+  if (!s || !lv_obj_is_valid(s) || lv_obj_has_state(s, LV_STATE_DISABLED)) return;
+  if (lv_obj_has_state(s, LV_STATE_CHECKED)) lv_obj_clear_state(s, LV_STATE_CHECKED);
+  else                                       lv_obj_add_state(s, LV_STATE_CHECKED);
+  lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
+}
 // A name (and help) on the left, a switch on the right. Returns the switch.
 static lv_obj_t* setSwitchRow(lv_obj_t* card, const char* title, const char* help, bool on,
                               lv_event_cb_t cb, void* ud = nullptr) {
@@ -14795,6 +15209,12 @@ static lv_obj_t* setSwitchRow(lv_obj_t* card, const char* title, const char* hel
   if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
   if (cb) lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, ud);
   setRowText(row, title, help, w - 58, 6);
+  // The switch alone is a small target (about 50x29 on the 320x240 Attaky), and a tap
+  // just under it fell through to the card. A tap anywhere on the row, or a few pixels
+  // past its edge, now flips the switch as if it had been tapped.
+  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(row, SC(8));
+  lv_obj_add_event_cb(row, setSwitchTapCb, LV_EVENT_CLICKED, sw);
   return sw;
 }
 
@@ -15020,6 +15440,9 @@ static lv_obj_t* setField(lv_obj_t* parent, const char* title, const char* place
   lv_obj_t* ta = lv_textarea_create(col);
   lv_obj_set_size(ta, w, SC(32));
   lv_textarea_set_one_line(ta, true);
+  // Not inherited: inheritance here lands on LV_FONT_DEFAULT, whose Montserrat has no
+  // fallback chain, so anything outside it draws as LVGL's empty box.
+  lv_obj_set_style_text_font(ta, &g_font_14, LV_PART_MAIN);
   if (placeholder && placeholder[0]) taSetPlaceholder(ta, TR(placeholder));
   if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
   attachSettingsTaEvents(ta);
@@ -17074,42 +17497,42 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
   }
 }
 
-// Screen orientation: the persistent base rotation, applied at boot. Tapping
-// cycles Portrait -> Landscape -> Landscape (flipped) and reboots so the whole
-// UI rebuilds at the chosen resolution (rebootDevice() saves chat history
-// synchronously first, so nothing is lost).
-static const char* uiRotationLabel() {
-#if defined(ESP32)
-  // Portrait (0) vs Landscape (anything else). The button toggles between the
-  // two so a single tap always returns to portrait from any landscape.
-  return (touchPrefsGetUiRotation() == LV_DISP_ROT_NONE) ? "Screen: Portrait"
-                                                         : "Screen: Landscape";
+// Screen orientation: the persistent base rotation, applied at boot. Four choices
+// (#698), each an LVGL rotation: Portrait, Portrait 180, Landscape (the board's
+// upright landscape, ROT_270 on the CrowPanels and ROT_90 elsewhere) and
+// Landscape 180. Picking one reboots so the whole UI rebuilds at the chosen
+// resolution (rebootDevice() saves chat history synchronously first).
+#if CAP_ROTATABLE
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
+static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_270, LV_DISP_ROT_90 };
 #else
-  return "Screen: Portrait";
+static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_90, LV_DISP_ROT_270 };
 #endif
+
+static int uiRotationPicked() {
+#if defined(ESP32)
+  const uint8_t cur = touchPrefsGetUiRotation();
+  for (int i = 0; i < 4; ++i) if (kUiRotOrder[i] == cur) return i;
+#endif
+  return 0;
 }
 
-static void rotateScreenCycleCb(lv_event_t* e) {
+static void uiRotationPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i > 3 || i == uiRotationPicked()) return;
 #if defined(ESP32)
-  // Simple toggle: portrait <-> the board's upright landscape orientation.
-  const uint8_t cur  = touchPrefsGetUiRotation();
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
-  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_270
-                                                 : (uint8_t)LV_DISP_ROT_NONE;
-#else
-  const uint8_t next = (cur == LV_DISP_ROT_NONE) ? (uint8_t)LV_DISP_ROT_90
-                                                 : (uint8_t)LV_DISP_ROT_NONE;
-#endif
-  if (!touchPrefsSetUiRotation(next)) {
+  if (!touchPrefsSetUiRotation(kUiRotOrder[i])) {
     if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1200);
     return;
   }
 #endif
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
   // Same as the theme and language switches: reboot on a timer so the notice is
   // actually painted first, rather than going dark under the user's finger.
   rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
 }
+#endif  // CAP_ROTATABLE
 
 // ---- Manual clock offset (Device modal): nudge local time +/- whole hours ----
 // Applied on top of the automatic (NTP / companion / mesh) time, purely at the
@@ -17155,8 +17578,10 @@ static lv_obj_t* s_tz_picker  = nullptr;   // picker overlay (singleton)
 static void tzBtnLabelRefresh() {
   if (s_tz_btn_lbl) lv_label_set_text(s_tz_btn_lbl, touchPrefsTimezoneLabel(touchPrefsGetTimezone()));
 }
-static void tzPickerClose() { if (s_tz_picker) { popupClose(&s_tz_picker); } }
-static void tzPickerCloseCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) tzPickerClose(); }
+static void tzPickerClose() {
+  if (s_tz_picker) { popupClose(&s_tz_picker); }
+  settingsSubPageClose(tzPickerClose);
+}
 static void tzPickerSelectCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int idx = (int)(intptr_t)lv_event_get_user_data(e);
@@ -17172,33 +17597,13 @@ static void tzPickerSelectCb(lv_event_t* e) {
 static void openTimezonePicker() {
   tzPickerClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_tz_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_tz_picker);
-  lv_obj_set_size(s_tz_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_tz_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_tz_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_tz_picker, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(s_tz_picker, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* title = lv_label_create(s_tz_picker);
-  lv_label_set_text(title, TR("Time zone"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 8, 8);
-
-  lv_obj_t* close = lv_btn_create(s_tz_picker);
-  lv_obj_set_size(close, SC(30), SC(26));
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(close);
-  lv_obj_add_event_cb(close, tzPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+  // Title + Back ride in the status bar, as on the Clock page this opens from.
+  s_tz_picker = settingsSubPageOpen(TR("Time zone"), tzPickerClose);
 
   lv_obj_t* list = lv_obj_create(s_tz_picker);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - 12, sh - STATUSBAR_H - 44);
-  lv_obj_set_pos(list, 6, 40);
+  lv_obj_set_size(list, sw - 12, lv_obj_get_height(s_tz_picker) - 12);
+  lv_obj_set_pos(list, 6, 6);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -17700,8 +18105,10 @@ static void buildDisplayPage() {
                  touchPrefsGetUiScale(), uiScalePickCb);
 #endif
 #if CAP_ROTATABLE
-    setActionRow(c, UI_ICON_REFRESH_CW, "Orientation", uiRotationLabel(), rotateScreenCycleCb, nullptr,
-                 SET_NORMAL, false);
+    {
+      const char* orient[] = { TR("Portrait"), TR("Portrait 180"), TR("Landscape"), TR("Landscape 180") };
+      setChoiceRow(c, "Orientation", "Applies after a restart.", orient, 4, uiRotationPicked(), uiRotationPickCb);
+    }
 #endif
 #if !defined(HAS_THINKNODE_M9)
     {
@@ -17814,7 +18221,7 @@ static void buildGpsPage() {
 #else
   {
     lv_obj_t* c = setCard("");
-    setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
+    lv_obj_t* gps_sw = setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
     // The live fix status, re-texted every tick while the page is open
     // (refreshSettingsSectionSubtitles). Its height is pinned to the tallest text it can
     // hold, so a fix arriving never pushes the rows below it around.
@@ -17824,6 +18231,10 @@ static void buildGpsPage() {
     lv_obj_set_style_text_color(g_set_modal.gps_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_pad_left(g_set_modal.gps_status, 2, LV_PART_MAIN);
+    // The status sits right under the switch, where a slightly low tap lands; it belongs
+    // to the GPS row, so a tap on it flips the switch instead of doing nothing.
+    lv_obj_add_flag(g_set_modal.gps_status, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(g_set_modal.gps_status, setSwitchTapCb, LV_EVENT_CLICKED, gps_sw);
     {
       char probe[200];
       lv_coord_t worst_h = 0;
@@ -18037,7 +18448,8 @@ static void buildSoundPage() {
 #endif
                  toggleLoudAlertsCb);
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
+#if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
+    defined(HAS_WIO_TRACKER_L2)
     s_vol_val_lbl = setStepperRow(c, "Volume", nullptr, LV_SYMBOL_MINUS, LV_SYMBOL_PLUS,
                                   volumeStepCb, volumeStepCb, (void*)(intptr_t)-10, (void*)(intptr_t)10);
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
@@ -19648,6 +20060,7 @@ static void saveWifiCb(lv_event_t* e) {
 static void wifiScanPopupClose() {
   popupClose(&s_wifi_scan_popup);
   s_wifi_scan_list = nullptr;
+  settingsSubPageClose(wifiScanPopupClose);
 }
 static void wifiScanPopupCloseCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED) wifiScanPopupClose();
@@ -19693,11 +20106,25 @@ static void wifiScanFillList() {
 }
 
 // Full-screen scan overlay (covers the bottom bar + sub-tabs) so the SSID list
-// is big and easy to scroll. Sits below the status bar, on lv_layer_top.
+// is big and easy to scroll. From Settings it is a sub-page: "‹ Select network"
+// in the status bar, like the Wi-Fi page under it. The setup wizard hides the
+// status bar, so there it keeps its own title and Close button.
 static void openWifiScanPopup() {
   wifiScanPopupClose();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  if (!s_setup_root) {
+    s_wifi_scan_popup = settingsSubPageOpen(TR("Select network"), wifiScanPopupClose);
+    s_wifi_scan_list = lv_obj_create(s_wifi_scan_popup);
+    lv_obj_remove_style_all(s_wifi_scan_list);
+    lv_obj_set_size(s_wifi_scan_list, sw - 12, lv_obj_get_height(s_wifi_scan_popup) - 12);
+    lv_obj_set_pos(s_wifi_scan_list, 6, 6);
+    lv_obj_set_flex_flow(s_wifi_scan_list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_wifi_scan_list, 6, LV_PART_MAIN);
+    lv_obj_set_scroll_dir(s_wifi_scan_list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_wifi_scan_list, LV_SCROLLBAR_MODE_AUTO);
+    return;
+  }
   s_wifi_scan_popup = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_wifi_scan_popup);
   lv_obj_set_size(s_wifi_scan_popup, sw, sh - STATUSBAR_H);
@@ -32305,6 +32732,7 @@ static uint32_t  s_appdrawer_badge_sig = 0;
 static bool appDrawerCovered() {
   lv_obj_t* layer = s_appdrawer_root ? lv_obj_get_parent(s_appdrawer_root) : nullptr;
   if (!layer) return false;
+  if (lv_obj_has_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN)) return true;   // behind a settings page (settingsHideDrawer)
   const uint32_t n = lv_obj_get_child_cnt(layer);
   uint32_t idx = 0;
   bool found = false;
@@ -32714,7 +33142,7 @@ static lv_obj_t* s_ct_sort_sheet  = nullptr; // Sort & filter overlay
 static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal mode
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
-static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = { nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = {};
 static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
@@ -33110,6 +33538,7 @@ static void openContactsSortSheet(){
   s_ct_sort_btns[1] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_HEARD), ctSortOptCb, CONTACTS_SORT_LAST_HEARD, false);
   s_ct_sort_btns[2] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_LAST_MSG),   ctSortOptCb, CONTACTS_SORT_LAST_MSG,   false);
   s_ct_sort_btns[3] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_DISTANCE),   ctSortOptCb, CONTACTS_SORT_DISTANCE,   false);
+  s_ct_sort_btns[4] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_HOPS),       ctSortOptCb, CONTACTS_SORT_HOPS,       false);
   ctSortRowsRepaint();   // tap the active row again to flip ascending/descending
   lv_obj_t* sp = lv_obj_create(card); lv_obj_remove_style_all(sp); lv_obj_set_size(sp, 1, 4);
   ctSheetOption(card, LV_SYMBOL_TRASH "  Select to delete", ctSelectFromSheetCb, 0, false);
@@ -39878,12 +40307,13 @@ static void makeChatDetail(LvChatPanel& p) {
   // panel's chat content already starts below its whole header (chatContentTop).
 #if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || CAP_ROUND_CORNERS
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
-#elif defined(HAS_THINKNODE_M9)
-  // Content starts at the conversation header's foot (m9ChatHeadH). Set here, before
-  // any row is placed: the list is virtualised and does not move rows it has laid out.
-  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(m9ChatHeadH() - chatContentTop())), LV_PART_MAIN);
 #else
-  lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
+  // Every other board's chat header is a double bar floating over the list's top:
+  // content starts at the header's foot (chatHeadFootY). The old 6 px more left a
+  // strip of bare background between the header's shade and the first message (#627).
+  // Set here, before any row is placed: the list is virtualised and does not move
+  // rows it has laid out.
+  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(chatHeadFootY() - chatContentTop())), LV_PART_MAIN);
 #endif
   // The composer floats over the list's lower edge (transparent row), so reserve a
   // bottom inset == the composer height: the newest bubble rests just above it and
@@ -40025,7 +40455,11 @@ static void makeChatDetail(LvChatPanel& p) {
   // pressed state still lifts it.
   lv_obj_set_style_bg_color(qr_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(qr_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(qr_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
+#else
   lv_obj_set_style_text_color(qr_btn, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#endif
   lv_obj_add_event_cb(qr_btn, openQuickReplyPickerCb, LV_EVENT_CLICKED, &p);
   navSetTip(qr_btn, TR("Quick replies"));
   lv_obj_t* ql = lv_label_create(qr_btn);
@@ -40056,7 +40490,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
   lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_text_color(p.emoji_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
+#else
   lv_obj_set_style_text_color(p.emoji_btn, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+#endif
   lv_obj_add_event_cb(p.emoji_btn, openEmojiPickerCb, LV_EVENT_CLICKED, &p);
   lv_obj_t* el = lv_label_create(p.emoji_btn);
 #if defined(HAS_TANMATSU)
@@ -40121,6 +40559,14 @@ static void makeChatDetail(LvChatPanel& p) {
   // as the box grows, a circle radius would grow with it, and at four lines the
   // curve cut through the start and end of the first and last lines (#617).
   lv_obj_set_style_radius(p.composer_ta, s_comp_ta_h / 2, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  // E-paper: a black outline around the text box, whatever its state.
+  for (lv_style_selector_t st : { (lv_style_selector_t)LV_PART_MAIN,
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED),
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUS_KEY),
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY) })
+    styleEpaperControlOutline(p.composer_ta, st);
+#endif
   lv_obj_set_style_pad_hor(p.composer_ta, SC(12), LV_PART_MAIN);
   // Keep a few px of vertical slack in the textarea CONTENT so it never sits at
   // exactly one line-height (that made the internal scroll oscillate ±1px per
@@ -40217,8 +40663,22 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
 #endif
   lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_ON_GLOW), LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  // E-paper: the accent fill dithers to noise, so a bare outlined circle with a
+  // black arrow, the same in every state.
+  for (lv_style_selector_t st : { (lv_style_selector_t)LV_PART_MAIN,
+                                  (lv_style_selector_t)(LV_PART_MAIN | LV_STATE_PRESSED) }) {
+    lv_obj_set_style_bg_color(send, lv_color_white(), st);
+    lv_obj_set_style_bg_opa(send, LV_OPA_COVER, st);
+    lv_obj_set_style_bg_grad_dir(send, LV_GRAD_DIR_NONE, st);
+  }
+  styleEpaperControlOutline(send, LV_PART_MAIN);
+  lv_obj_set_style_outline_width(send, 0, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(send, 0, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sl, lv_color_black(), LV_PART_MAIN);
+#endif
   lv_obj_center(sl);
-#if CAP_ROUND_CORNERS
+#if CHAT_COMP_SPLIT
   chatComposerApplyRows(&p);
 #elif CAP_LARGE_SCREEN
   chatComposerAlignSlim(&p);   // centre the one-line box and Send on the chips (slim layout)
@@ -40921,6 +41381,22 @@ static void settingsCatBuild(int cat) {
   s_settings_inline_parent = nullptr;
 }
 
+// The app drawer is a layer_top overlay and a settings page sits on the base screen
+// (under the status bar), so a page opened with the drawer up (holding a control-centre
+// tile) came up behind it and the drawer was drawn over the settings. Hidden while a
+// page is open, shown again when it closes, only while it is still the same drawer.
+static lv_obj_t* s_settings_hid_drawer = nullptr;
+static void settingsHideDrawer() {
+  if (s_settings_hid_drawer || !s_appdrawer_root || lv_obj_has_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_obj_add_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN);
+  s_settings_hid_drawer = s_appdrawer_root;
+}
+static void settingsShowDrawer() {
+  if (s_settings_hid_drawer && s_settings_hid_drawer == s_appdrawer_root)
+    lv_obj_clear_flag(s_settings_hid_drawer, LV_OBJ_FLAG_HIDDEN);
+  s_settings_hid_drawer = nullptr;
+}
+
 // Tear down the open category detail sheet and return to the landing. Safe to
 // call when nothing is open (tab change / key dismiss call it unconditionally).
 static void closeSettingsCategory() {
@@ -40973,6 +41449,7 @@ static void closeSettingsCategory() {
                              // frame, so the clock/icons don't jump up for a tick on the way
                              // back to the landing (the chat overview already does this via
                              // updateGlobalStatusBar's driver).
+  settingsShowDrawer();
 }
 
 // Let the last section card grow to fill the page so a SHORT category (e.g.
@@ -41046,6 +41523,7 @@ static void openSettingsCategory(int cat) {
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(root);
   s_settings_sheet    = root;
+  settingsHideDrawer();   // a layer_top drawer would draw over this base-screen page
 
   lv_obj_t* page = lv_obj_create(root);
   lv_obj_set_pos(page, 0, 0);
@@ -41379,6 +41857,9 @@ static void makeSettings(lv_obj_t* tab) {
     styleGlass(card);
     lv_obj_set_style_pad_all(card, 3, LV_PART_MAIN);
     lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_pad_row(card, 3, LV_PART_MAIN);   // a gap between the outlined rows
+#endif
 
     for (int k = 0; k < g.n; ++k) {
       const int c = g.cats[k];
@@ -41393,6 +41874,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_PRESSED);
       lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN | LV_STATE_FOCUS_KEY);
       lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_FOCUS_KEY);
+#if defined(HAS_TDECK_PRO)
+      // E-paper: the grey card and the pressed/focus fill fall away in the one-bit
+      // reduction, so each row (Device too) gets the black outline the Pro's buttons use.
+      styleEpaperControlOutline(row, LV_PART_MAIN);
+#endif
       lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLL_ON_FOCUS);
       lv_obj_add_event_cb(row, settingsCatOpenCb, LV_EVENT_CLICKED, (void*)(intptr_t)c);
@@ -41421,7 +41907,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_t* chev = lv_label_create(row);
       lv_label_set_text(chev, LV_SYMBOL_RIGHT);
       lv_obj_set_style_text_font(chev, &g_font_14, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+      lv_obj_set_style_text_color(chev, lv_color_black(), LV_PART_MAIN);
+#else
       lv_obj_set_style_text_color(chev, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
+#endif
       lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -8, 0);
       const lv_coord_t text_x = 6 + tile + 10;
       const lv_coord_t avail = gw - 6 - text_x - 8 - SC(14) - 8;   // the card's pad, the chevron
@@ -41433,7 +41923,11 @@ static void makeSettings(lv_obj_t* tab) {
       lv_obj_set_height(val, lv_font_get_line_height(&g_font_12));   // one line: LONG_DOT wraps without a height
       lv_obj_set_style_text_align(val, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
       lv_obj_set_style_text_font(val, &g_font_12, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+      lv_obj_set_style_text_color(val, lv_color_black(), LV_PART_MAIN);   // tertiary grey drops out on e-paper
+#else
       lv_obj_set_style_text_color(val, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
+#endif
       lv_obj_align(val, LV_ALIGN_RIGHT_MID, -(8 + SC(14) + 6), 0);
 
       // A name too long for one line at this text size wraps onto a second line
@@ -42148,6 +42642,24 @@ static uint32_t nodeSigColorHex(const char* s) {
   return lv_color_to32(nc) & 0xFFFFFFu;
 }
 
+// Name of the region a scoped message verified against (#271), for the Info popup
+// and the bubble meta line (#594): the registered region in its slot, else our own
+// scope when it matched our key. nullptr when nothing names it: unscoped, matched
+// no key we hold, or ambiguous. `home` backs the own-scope case; the bubble path
+// calls this per bubble, which is why touchPrefsGetRegionScope serves it from RAM.
+static const char* msgScopeRegionName(const UITask::UIMessage& m, char* home, size_t home_cap) {
+  if (!(m.meta_flags & UITask::MSG_META_HAS_SCOPE)) return nullptr;
+  const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
+  if (rslot == REGION_SLOT_AMBIGUOUS) return nullptr;
+  const char* rname = rslot ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
+  if (rname) return rname;
+  if ((m.meta_flags & UITask::MSG_META_SCOPE_HOME) && home && home_cap) {
+    touchPrefsGetRegionScope(home, (int)home_cap);
+    if (home[0]) return home;
+  }
+  return nullptr;
+}
+
 static void openMessageInfoPopup(int msg_idx) {
   if (!g_lv.task) return;
   UITask::UIMessage m;
@@ -42253,10 +42765,9 @@ static void openMessageInfoPopup(int msg_idx) {
       // name it outright. Fall back to the older my-region / another-region
       // answer when nothing matched, which is still all we can honestly say.
       char region[40];
-      const uint8_t rslot = UITask::metaScopeSlot(m.meta_flags);
-      const char* rname = (rslot && rslot != REGION_SLOT_AMBIGUOUS)
-                            ? the_mesh.regionRegistry().nameForSlot(rslot) : nullptr;
-      if (rslot == REGION_SLOT_AMBIGUOUS) {
+      char home[TOUCH_REGION_SCOPE_MAXLEN];
+      const char* rname = msgScopeRegionName(m, home, sizeof home);
+      if (UITask::metaScopeSlot(m.meta_flags) == REGION_SLOT_AMBIGUOUS) {
         // Several registered regions produced this same 16-bit code. Naming any
         // one of them would be a guess, and a confident wrong region reads worse
         // than an honest "cannot tell". The tag is only 16 bits, so with N keys
@@ -42265,16 +42776,23 @@ static void openMessageInfoPopup(int msg_idx) {
       } else if (rname) {
         snprintf(region, sizeof region, "%s", rname);
       } else if (m.meta_flags & UITask::MSG_META_SCOPE_HOME) {
-        char home[24] = {0};
-        touchPrefsGetRegionScope(home, sizeof home);
-        snprintf(region, sizeof region, "%s", home[0] ? home : TR("my region"));
+        snprintf(region, sizeof region, "%s", TR("my region"));
       } else {
         snprintf(region, sizeof region, "%s", TR("another region"));
       }
+      // This body is a recolor label, and region names are "#tag": unescaped, LVGL
+      // read "#de-mitte" as a colour command and swallowed the name, leaving only
+      // "Scope (0000)" (#594).
+      char region_esc[2 * sizeof region];
+      recolorEscape(region_esc, sizeof region_esc, region);
       // Key is "Scope" with no trailing space: TR() strips icon prefixes, NOT
       // trailing whitespace, so "Scope " would never match its .lang row.
-      blen += snprintf(body + blen, sizeof(body) - blen,
-                       "\n%s  %s (%04X)", TR("Scope"), region, (unsigned)m.in_scope);
+      blen += snprintf(body + blen, sizeof(body) - blen, "\n%s  %s", TR("Scope"), region_esc);
+      // The raw code is RAM-only (UiHistoryMsg does not persist it), so after a reboot
+      // it reads back 0, a value calcTransportCode reserves and never emits. Omit it
+      // then rather than print a "0000" that was never on the air.
+      if (m.in_scope)
+        blen += snprintf(body + blen, sizeof(body) - blen, " (%04X)", (unsigned)m.in_scope);
     }
     // Full inbound route — the repeaters this flood traversed. Resolve each hop's
     // hash to its repeater name when that contact is known. EVERY hop is listed
@@ -43141,7 +43659,7 @@ static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out,
   const size_t len = strlen(src);
   for (size_t i = 0; i < len; ++i) {
     if (chatUtf8Continuation(src[i])) continue;
-    char cand[48];
+    char cand[80];
     snprintf(cand, sizeof(cand), "%s%s", ell, src + i);
     if (chatTextWidth(cand) <= max_w) {
       snprintf(out, out_len, "%s", cand);
@@ -43159,7 +43677,7 @@ static void chatFitLeadingEllipsis(const char* src, lv_coord_t max_w, char* out,
 static constexpr lv_coord_t kChatFootGap = 2;
 
 struct ChatFoot {
-  char     text[64];
+  char     text[96];
   uint32_t fg;
   uint8_t  dots;   // chain length (0 = no chain)
   bool     own;    // your message: lit chain that starts at you
@@ -43174,15 +43692,25 @@ static void chatBuildFoot(const UITask::UIMessage& m, bool channel_mode, ChatFoo
   formatBubbleTs(m.ts, ts, sizeof ts);
   const char* sep = ts[0] ? " \xC2\xB7 " : "";
   if (!m.outgoing) {
+    // Region the message was scoped to, when it resolves to a name (#594), as the
+    // iOS app shows it under each message.
+    char home[TOUCH_REGION_SCOPE_MAXLEN];
+    const char* rname = msgScopeRegionName(m, home, sizeof home);
+    if (rname && rname[0] == '#') ++rname;   // "#de-mitte" reads as "de-mitte"
+    size_t o = 0;
+    if (rname && rname[0]) o = (size_t)snprintf(f.text, sizeof f.text, "%s \xC2\xB7 ", rname);
+    if (o >= sizeof f.text) o = sizeof f.text - 1;
+    char* t = f.text + o;
+    const size_t tn = sizeof f.text - o;
     if ((m.meta_flags & UITask::MSG_META_HAS_RX) && (m.meta_flags & UITask::MSG_META_IS_FLOOD) && m.path_len != 0xFF) {
       const unsigned hops = m.path_len & 0x3F;
       f.dots = (uint8_t)(hops > 6 ? 6 : hops);
-      if (hops == 0) snprintf(f.text, sizeof f.text, "%s%s%s", TR("direct"), sep, ts);
-      else snprintf(f.text, sizeof f.text, "%u %s%s%s", hops, hops == 1 ? TR("hop") : TR("hops"), sep, ts);
+      if (hops == 0) snprintf(t, tn, "%s%s%s", TR("direct"), sep, ts);
+      else snprintf(t, tn, "%u %s%s%s", hops, hops == 1 ? TR("hop") : TR("hops"), sep, ts);
     } else if (m.meta_flags & UITask::MSG_META_HAS_RX) {
-      snprintf(f.text, sizeof f.text, "%s%s%s", TR("routed"), sep, ts);
+      snprintf(t, tn, "%s%s%s", TR("routed"), sep, ts);
     } else {
-      snprintf(f.text, sizeof f.text, "%s", ts);
+      snprintf(t, tn, "%s", ts);
     }
     return;
   }
@@ -45854,6 +46382,13 @@ static void refreshContactsList() {
       const double db = contactDistanceKm(s_ct_sort_self_lat, s_ct_sort_self_lon,
                                           eb->gps_lat / 1.0e6, eb->gps_lon / 1.0e6);
       if (da < db) prim = -1; else if (da > db) prim = 1;
+    } else if (g_contacts_sort == CONTACTS_SORT_HOPS) {
+      // Fewest hops first; a row with no known path (shows no hop count) sinks to
+      // the end whichever way the list is flipped.
+      const bool ua = (ea->out_path_len == OUT_PATH_UNKNOWN), ub = (eb->out_path_len == OUT_PATH_UNKNOWN);
+      if (ua != ub) return ua ? 1 : -1;
+      const uint8_t ha = pathHops(ea->out_path_len), hb = pathHops(eb->out_path_len);
+      if (ha != hb) prim = (ha < hb) ? -1 : 1;
     } else if (g_contacts_sort == CONTACTS_SORT_LAST_HEARD ||
                g_contacts_sort == CONTACTS_SORT_LAST_MSG) {
       // Contacts whose last-heard renders as "?" sink to the end of the time-based
@@ -47579,8 +48114,20 @@ static const unsigned long kLockUnlockHoldMs = 1000;
 static lv_obj_t* s_unlock_popup = nullptr;
 static lv_obj_t* s_unlock_count = nullptr;
 
-// Decode the configured wallpaper (internal SPIFFS path, or an "sd:"-prefixed SD
-// path) into a fresh RGB565 buffer; fall back to the embedded placeholder.
+static fs::FS* backupInternalFs();   // (with the Backups page) the file manager's Internal root
+static fs::FS* backupSdFs();         // and its SD card, mounted on demand; nullptr without one
+
+// The store a saved picture path (lock wallpaper, background) lives on: an "sd:"
+// prefix is the card, anything else internal storage. Same roots the file manager
+// picked it from, so SD_MMC and LittleFS/FFat on the P4 boards too (#691).
+static fs::FS* picturePathFs(const char* path, const char** fp) {
+  if (!strncmp(path, "sd:", 3)) { *fp = path + 3; return backupSdFs(); }
+  *fp = path;
+  return backupInternalFs();
+}
+
+// Decode the configured wallpaper (internal path, or an "sd:"-prefixed SD path)
+// into a fresh RGB565 buffer; fall back to the embedded placeholder.
 // Caller owns the buffer (lvglPsramFree). Returns nullptr only if even the
 // placeholder fails to decode.
 static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
@@ -47588,14 +48135,11 @@ static uint8_t* lockscreenDecodeWallpaper(int* out_w, int* out_h) {
   touchPrefsGetLockWallpaper(path, sizeof path);
   // (The built-in default is handled by lockscreenShow() via the RGB565 embed;
   // this path only runs for user-selected wallpapers.)
-  fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD || defined(TLORA_PAGER)
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }   // mount on demand so the chosen SD wallpaper decodes (T-Deck SD only)
-#endif
+  fs::FS* fsp = picturePathFs(path, &fp);
 
   uint8_t* rgb = nullptr;
-  if (fp && fp[0]) {
+  if (fsp && fp[0]) {
     File f = fsp->open(fp, "r");
     if (f) {
       size_t sz = f.size();
@@ -49012,11 +49556,9 @@ static bool bgImageLoad() {
   {
   char path[TOUCH_LOCK_WALLPAPER_MAXLEN];
   if (touchPrefsGetBackgroundImage(path, sizeof path) <= 0) return false;
-  fs::FS* fsp = &SPIFFS;
   const char* fp = path;
-#if CAP_SD || defined(TLORA_PAGER)
-  if (!strncmp(path, "sd:", 3)) { fsp = &SD; fp = path + 3; fmSdTryMount(); }
-#endif
+  fs::FS* fsp = picturePathFs(path, &fp);
+  if (!fsp) return false;   // on a card that isn't in
   File f = fsp->open(fp, "r");
   if (!f) return false;
   const size_t sz = f.size();
@@ -49455,9 +49997,7 @@ static void backupScan() {
 }
 static void backupPickerClose() {
   popupClose(&s_backup_picker);
-}
-static void backupPickerCloseCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) backupPickerClose();
+  settingsSubPageClose(backupPickerClose);
 }
 // Import a backup file and, on success, show the counts and reboot (never
 // returns). On failure returns false with the "Importing…" overlay removed.
@@ -49548,33 +50088,13 @@ static void openBackupPicker() {
     return;
   }
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_backup_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_backup_picker);
-  lv_obj_set_size(s_backup_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_backup_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_backup_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_backup_picker, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_clear_flag(s_backup_picker, LV_OBJ_FLAG_SCROLLABLE);
-
-  lv_obj_t* title = lv_label_create(s_backup_picker);
-  lv_label_set_text(title, TR("Import settings"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(title, 8, 8);
-
-  lv_obj_t* close = lv_btn_create(s_backup_picker);
-  lv_obj_set_size(close, 30, 26);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 4);
-  styleButton(close);
-  lv_obj_add_event_cb(close, backupPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
+  // Title + Back ride in the status bar, as on the Backups page this opens from.
+  s_backup_picker = settingsSubPageOpen(TR("Import settings"), backupPickerClose);
 
   lv_obj_t* list = lv_obj_create(s_backup_picker);
   lv_obj_remove_style_all(list);
-  lv_obj_set_size(list, sw - 12, sh - STATUSBAR_H - 42);
-  lv_obj_set_pos(list, 6, 36);
+  lv_obj_set_size(list, sw - 12, lv_obj_get_height(s_backup_picker) - 12);
+  lv_obj_set_pos(list, 6, 6);
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
@@ -56581,6 +57101,7 @@ static void openAppDrawer() {
   lv_obj_move_foreground(s_appdrawer_root);
   lv_obj_add_event_cb(s_appdrawer_root, appDrawerDeleteCb, LV_EVENT_DELETE, nullptr);
   appDrawerCoverContent(true);
+  if (s_settings_sheet) { s_settings_hid_drawer = nullptr; settingsHideDrawer(); }   // rebuilt under a settings page: stays behind it
 
   // First tile is "Command" (back to the command centre); the rest are the apps.
   const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
@@ -56768,6 +57289,21 @@ static void statusBarTapCb(lv_event_t* e) {
     else if (g_lv.ch.detail_open) closeChatPanel(&g_lv.ch);
     return;
   }
+#if defined(HELTEC_LORA_V4_R8)
+  // #598: on the Chats overview the R8's lower bar row holds only the ✓ / + / QR
+  // actions. A finger landing just beside one (cap-touch reads a few pixels off
+  // near the panel edge, where a mouse on the web mirror is exact) fell through to
+  // the toggle below and opened the control center instead. Ignore that miss; the
+  // top row still opens the control center as before.
+  if (g_statusbar.inbox_qr && !lv_obj_has_flag(g_statusbar.inbox_qr, LV_OBJ_FLAG_HIDDEN)) {
+    lv_indev_t* in = lv_indev_get_act();
+    if (in) {
+      lv_point_t pt;
+      lv_indev_get_point(in, &pt);
+      if (pt.y >= STATUSBAR_H) return;
+    }
+  }
+#endif
   if (s_cc_root) closeControlCenter(); else openControlCenter();
 }
 
@@ -57231,9 +57767,11 @@ static void buildGlobalStatusBar() {
     // vertical centreline with the clock and connection/battery indicators.
     const lv_coord_t BH = 20, BW = 26, GAP = 3, BX0 = 6;
     const lv_coord_t BY = (STATUSBAR_H - BH) / 2;
-  #elif defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
-    // Original V4 Expansion Kit: partition row 2 into larger, non-overlapping
-    // cells; the former 30x20 actions were too easy to miss or hit beside.
+  #elif defined(HELTEC_V4_EXPANSION_IO_PIN)
+    // V4 Expansion Kit, original and R8: partition row 2 into larger,
+    // non-overlapping cells; the former 30x20 actions were too easy to miss or
+    // hit beside. On the R8 a miss near the top edge landed on the bar itself
+    // and opened the control center instead of the QR share (#598).
     const lv_coord_t BH = 22, BW = 42, GAP = 8, BX0 = 4;
     const lv_coord_t BY = STATUSBAR_H;
 #else
@@ -57254,7 +57792,7 @@ static void buildGlobalStatusBar() {
       lv_obj_set_style_radius(b, 9, LV_PART_MAIN);        // softer corners
         lv_obj_set_style_border_opa(b,
           s_theme_high_contrast ? LV_OPA_COVER : LV_OPA_20, LV_PART_MAIN);
-    #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+    #if defined(HELTEC_V4_EXPANSION_IO_PIN)
       // Three pixels each side still leave two pixels between adjacent hits.
       lv_obj_set_ext_click_area(b, 3);
     #endif
@@ -57830,8 +58368,8 @@ static inline void sbSize(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
     lv_obj_set_size(o, w, h);
 }
 
-#if defined(HAS_THINKNODE_M9)
-static void statusBarPackRight();   // below; puts the GPS glyph back in its row (#627)
+#if !CAP_ROUND_CORNERS
+static void statusBarPackRight();   // below; puts the GPS glyph back in its row on leaving a chat
 #endif
 static void chatHeaderApply(bool chat_open) {
   if (!g_statusbar.chat_avatar) return;
@@ -57880,16 +58418,16 @@ static void chatHeaderApply(bool chat_open) {
 #else
       for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_y(o, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+      if (g_statusbar.gps_icon) {   // back to its packed slot in the row (below)
+        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+        statusBarPackRight();
+      }
 #if defined(HAS_THINKNODE_M9)
-      // The M9 header resized the bar and moved the right-hand glyphs (below): put them back.
+      // The M9 header resized the bar and stepped the battery and layout tag in (below): put them back.
       lv_obj_set_height(g_statusbar.root, statusBarCurH());
       for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_x(o, 0, LV_PART_MAIN);
       if (g_statusbar.layout_label) lv_obj_set_style_translate_y(g_statusbar.layout_label, 0, LV_PART_MAIN);
-      if (g_statusbar.gps_icon) {
-        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
-        statusBarPackRight();
-      }
 #endif
 #endif
       return;
@@ -57974,7 +58512,20 @@ static void chatHeaderApply(bool chat_open) {
 #endif
   const char* clk = lv_label_get_text(g_statusbar.clock);
   const lv_coord_t clk_w = lv_txt_get_width(clk, strlen(clk), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10);
+  lv_coord_t gps_room = 0;
+#if !CAP_ROUND_CORNERS
+  // The GPS glyph joins the clock and battery: just left of the clock, on their line.
+  // Left in its packed slot it sat past the radio glyphs a chat hides (they only go
+  // transparent, so they keep their room), apart from the clock.
+  if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
+    const char* gt = lv_label_get_text(g_statusbar.gps_icon);
+    const lv_coord_t gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    sbAlign(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6)), ymid);
+    sbTranslateY(g_statusbar.gps_icon, right_up);
+    gps_room = gps_w + SBX(6);
+  }
+#endif
+  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room;
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
@@ -58046,17 +58597,16 @@ static void chatHeaderApply(bool chat_open) {
       lv_obj_set_style_translate_y(g_statusbar.layout_label, line_dy, LV_PART_MAIN);
       right_x += lay_w + SBX(6);
     }
-    lv_coord_t gps_w = 0;
-    if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
-      const char* gt = lv_label_get_text(g_statusbar.gps_icon);
-      gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    // The GPS glyph was placed left of the clock above (gps_room); it steps in with the group.
+    if (gps_room) {
       lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -right_x, 0);
       lv_obj_set_style_translate_y(g_statusbar.gps_icon, line_dy, LV_PART_MAIN);
     }
-    // The title stays short of the clock (and the layout code and GPS glyph left of it).
+    // The title stays short of the clock, the layout code and the GPS glyph: text_w
+    // already leaves the clock's and GPS glyph's room, so the corner's step and the
+    // layout code come off here.
     {
-      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (gps_w ? gps_w + SBX(6) : 0)
-                                                    - (lay_w ? lay_w + SBX(6) : 0));
+      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (lay_w ? lay_w + SBX(6) : 0));
       lv_obj_set_width(g_statusbar.left_label, tw);
       lv_obj_set_width(g_statusbar.chat_sub, tw);
       char ttl[sizeof(s_chat_title) + 4];
@@ -64420,8 +64970,10 @@ static void themeStylesBuild() {
   lv_style_set_text_color(&s_ts.kb_key_pr, on_glow);
   lv_style_set_bg_color(&s_ts.kb_key_chk, off_tone);
   // The stock theme's CHECKED key style carries its light-mode text colour (near
-  // black), and a CHECKED style outranks the plain key colour, so set it here too.
+  // black), and a CHECKED style outranks the plain key colour, so set it here too,
+  // with the letter keys' font.
   lv_style_set_text_color(&s_ts.kb_key_chk, text);
+  lv_style_set_text_font(&s_ts.kb_key_chk, &g_font_14);
 
   // Arcs and spinners.
   lv_style_set_arc_color(&s_ts.arc, border);
@@ -64789,9 +65341,7 @@ static void accentPickerClose() {
   if (s_accent_picker) { popupClose(&s_accent_picker); }
   s_accent_hex_ta = s_accent_preview = nullptr;
   s_picker_for_bg = false;
-}
-static void accentPickerCloseCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_CLICKED) accentPickerClose();
+  settingsSubPageClose(accentPickerClose);
 }
 static void accentSaveCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -64829,33 +65379,15 @@ static void openAccentPicker() {
   accentPickerClose();
   s_picker_for_bg = for_bg;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_accent_picker = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_accent_picker);
-  lv_obj_set_size(s_accent_picker, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_accent_picker, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_accent_picker, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_accent_picker, LV_OPA_COVER, LV_PART_MAIN);
+  // Title + Back ride in the status bar, as on the Display page this opens from.
+  s_accent_picker = settingsSubPageOpen(s_picker_for_bg ? TR("Background colour") : TR("Accent colour"), accentPickerClose);
+  lv_obj_add_flag(s_accent_picker, LV_OBJ_FLAG_SCROLLABLE);   // the swatches + hex row can outgrow a short panel
   lv_obj_set_flex_flow(s_accent_picker, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_flex_align(s_accent_picker, LV_FLEX_ALIGN_START,
                         LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_row(s_accent_picker, 4, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(s_accent_picker, 3, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(s_accent_picker, 8, LV_PART_MAIN);
   lv_obj_set_scroll_dir(s_accent_picker, LV_DIR_VER);
-
-  lv_obj_t* title = lv_label_create(s_accent_picker);
-  lv_label_set_text(title, s_picker_for_bg ? TR("Background colour") : TR("Accent colour"));
-  lv_obj_set_style_text_font(title, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-
-  lv_obj_t* close = lv_btn_create(s_accent_picker);
-  lv_obj_add_flag(close, LV_OBJ_FLAG_IGNORE_LAYOUT);
-  lv_obj_set_size(close, 30, 26);
-  lv_obj_align(close, LV_ALIGN_TOP_RIGHT, -6, 2);
-  styleButton(close);
-  lv_obj_add_event_cb(close, accentPickerCloseCb, LV_EVENT_CLICKED, nullptr);
-  lv_obj_t* cl = lv_label_create(close); lv_label_set_text(cl, LV_SYMBOL_CLOSE); tanCloseRed(cl);
-  lv_obj_set_style_text_font(cl, &g_font_12, LV_PART_MAIN); lv_obj_center(cl);
 
   // Swatch grid: tap a colour (far friendlier on a touchscreen than a wheel).
   lv_obj_t* grid = lv_obj_create(s_accent_picker);
@@ -73733,8 +74265,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // same map landed every touch point-mirrored and the setting could not be reached to undo
     // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
     // until a tester confirms it, booting always returns to the known-good portrait, so the
-    // worst case of trying landscape is a reboot.
-    if (s_ui_rotation != LV_DISP_ROT_NONE) {
+    // worst case of trying landscape is a reboot. Portrait 180 is allowed (#701): it is a
+    // plain half turn, and its touch map flips both axes, so it cannot land mirrored.
+    if (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270) {
       s_ui_rotation = LV_DISP_ROT_NONE;
       touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
       // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
@@ -73781,19 +74314,16 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
-  #if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_SENSECAP_INDICATOR)
-    // The panel driver exposes its fixed surface directly (320x240 / 1024x600
-    // landscape, Indicator 480x480).
+  #if defined(HAS_SENSECAP_INDICATOR)
+    // The panel driver exposes its fixed 480x480 surface directly.
     s_ui_rotation = LV_DISP_ROT_NONE;
   #endif
 #if defined(ATTAKY_MESH_SERIES)
-    // Landscape (ROT_90, panel rotation 1) or portrait, from Settings > Display >
-    // Orientation. Landscape is the stored default (see TouchPrefsStore), and the
-    // Mesh Deck build without a keyboard can flip to portrait, which runs at the
-    // panel's DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4.
-    // UI init below turns the panel back to it: the boot logo may have left it landscape.
-    // Only those two: the Orientation button toggles between them.
-    if (s_ui_rotation != LV_DISP_ROT_NONE) s_ui_rotation = LV_DISP_ROT_90;
+    // Any of the four from Settings > Display > Orientation (#698). Landscape
+    // (ROT_90, panel rotation 1) is the stored default (see TouchPrefsStore), and the
+    // Mesh Deck build without a keyboard can pick portrait, which runs at the panel's
+    // DISPLAY_ROTATION=2 with no touch transform, exactly as on the V4. UI init
+    // below turns the panel back to it: the boot logo may have left it landscape.
 #endif
 #if !defined(HAS_TANMATSU)
     // REMOTE mode: render the UI to a virtual 480x800 PORTRAIT display for the web
@@ -73823,6 +74353,13 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #else
     if (s_remote_mode) s_ui_rotation = s_remote_landscape ? LV_DISP_ROT_270 : LV_DISP_ROT_NONE;
 #endif
+#endif
+#if defined(HAS_CROWPANEL_P4_101)
+    // UI landscape (ROT_270) is the panel's own 0, so no software turn for the default.
+    // Remote mode keeps the panel unturned, as it always ran (#701).
+    s_lvgl_base_rot = s_remote_mode ? (uint8_t)LV_DISP_ROT_NONE : (uint8_t)((s_ui_rotation + 1) & 3);
+#elif defined(HAS_TDISPLAY_P4)
+    s_lvgl_base_rot = s_ui_rotation;
 #endif
     // Apply the saved backlight brightness (takes the LEDA pin over from the
     // display's digitalWrite via LEDC PWM). Both touch boards have the LEDA pin.
@@ -73912,8 +74449,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   g_lv.disp_drv.hor_res  = 480;
   g_lv.disp_drv.ver_res  = 480;
 #elif defined(HAS_WIO_TRACKER_L2)
-  g_lv.disp_drv.hor_res  = 320;
-  g_lv.disp_drv.ver_res  = 240;
+  // Native 320x240 landscape (UI rotation 3), or 240x320 in the portraits (#698).
+  g_lv.disp_drv.hor_res  = ui_landscape ? 320 : 240;
+  g_lv.disp_drv.ver_res  = ui_landscape ? 240 : 320;
 #elif defined(HAS_CROWPANEL_35)
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 480 : 320);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 320 : 480);
@@ -73952,13 +74490,14 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Apply the 270° software rotation now that the driver is registered: logical surface
     // becomes 800x480 and lv_disp_get_hor/ver_res report landscape for every layout query.
     lv_disp_set_rotation(lv_disp_get_default(), LV_DISP_ROT_270);
-#elif defined(HAS_TDISPLAY_P4)
-    // Same mechanism, from the saved preference rather than pinned: this panel is
+#elif defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101)
+    // Same mechanism, from the saved preference rather than pinned: these panels are
     // MIPI-DSI too, so there is no MADCTL to rotate and LVGL has to turn each
-    // flushed area into panel coordinates itself. The logical surface becomes
-    // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows.
-    if (ui_landscape) lv_disp_set_rotation(lv_disp_get_default(),
-                                           static_cast<lv_disp_rot_t>(s_ui_rotation));
+    // flushed area into panel coordinates itself. On the T-Display P4 the logical
+    // surface becomes 616x284 (AMOLED) or 584x270 (LCD) in landscape; on the 10.1
+    // it becomes 600x1024 in portrait (#701). Every layout query follows.
+    if (s_lvgl_base_rot != LV_DISP_ROT_NONE) lv_disp_set_rotation(lv_disp_get_default(),
+                                                                  static_cast<lv_disp_rot_t>(s_lvgl_base_rot));
 #endif
 
     // Make the full glyph set the INHERITED default font. The default theme sets
@@ -73987,7 +74526,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       }
     }
 
-    if (ui_landscape) {
+#if defined(HAS_CROWPANEL_P4_101)
+    // No hardware rotation here: the driver maps its points by the LVGL turn (0 in the
+    // default landscape), and lvglTouchRead hands them back in the panel frame (#701).
+    heltecV4CapTouchSetPointRotation(s_lvgl_base_rot);
+#else
+    if (s_ui_rotation != LV_DISP_ROT_NONE) {           // a landscape, or Portrait 180 (#698)
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
 #endif
@@ -73997,7 +74541,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // back to LVGL in the panel frame.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
     }
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES)
+#endif
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES) || defined(HAS_WIO_TRACKER_L2)
     else if (!s_remote_mode) {
       // A file-backed portrait preference may not have been loaded at the boot logo.
       // The logo reads the legacy NVS copy before main.cpp moves prefs to SPIFFS. On
@@ -78047,6 +78592,9 @@ static void sdHealthTick() {
 
 void UITask::loop() {
   unsigned long now = millis();
+#if defined(HAS_WIO_TRACKER_L2)
+  wioL2AudioService();   // amp + codec off once a chime has finished (before any early return)
+#endif
 #if CAP_CONSOLE
   if (s_console_mode) {
 #if CAP_TOUCH
@@ -79417,6 +79965,21 @@ void UITask::loop() {
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   attakyNotificationTick(now);
   {
+    // The keyboard module attached or removed while a field is open: show that field
+    // again, so the on-screen keys go down for the module or come back without it
+    // (kbMirrorActive decides). Not over keys the '#' summoned for this field.
+    static bool s_akb_seen = false;
+    if (attakyKeyboardPresent() != s_akb_seen) {
+      s_akb_seen = attakyKeyboardPresent();
+      deviceRefreshLabels();   // the Device page's "Keyboard:" line
+      LvChatPanel* const kp = s_kb_panel;
+      lv_obj_t* const    kf = s_kb_bind_ta;
+      if ((kp || kf) && !s_osk_forced) {
+        hideKb();
+        if (kp && kp->composer_ta && lv_obj_is_valid(kp->composer_ta)) showKb(kp);
+        else if (kf && lv_obj_is_valid(kf))                             kbMirrorBind(kf);
+      }
+    }
     lv_obj_t* akb_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
     attakyKeyboardPoll(akb_ta != nullptr);
     for (int kbi = 0; akb_ta && kbi < 16; ++kbi) {

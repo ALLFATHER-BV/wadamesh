@@ -871,13 +871,15 @@ void setup() {
     // live in SPIFFS/SD, which aren't mounted yet, so read the NVS boot copy.
     {
       uint8_t r = touchPrefsGetBootUiRotation();
-#if defined(ATTAKY_MESH_SERIES)
-      if (r != 0) r = 1;   // UI init coerces any landscape to ROT_90
-#endif
       if (r == 1)      display.setDisplayRotation(1);
       else if (r == 3) display.setDisplayRotation(3);
-#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(HAS_WIO_TRACKER_L2)
+      else if (r == 2) display.setDisplayRotation(2);  // portrait 180: the display class maps it (#698)
       else             display.setDisplayRotation(0);  // restore saved portrait
+#elif defined(HELTEC_LORA_V4_R8)
+      else if (r == 2) display.setDisplayRotation(2);  // portrait 180: the R8's LovyanGFX portrait is 0 (#701)
+#elif defined(HELTEC_LORA_V4_TFT) || defined(ATTAKY_MESH_SERIES)
+      else if (r == 2) display.setDisplayRotation((DISPLAY_ROTATION + 2) & 3);   // portrait 180 (#698)
 #endif
     }
 #endif
@@ -887,9 +889,21 @@ void setup() {
     // This cannot depend on the mode preference: file-backed prefs are reloaded
     // only after storage mounts, well after this first frame is committed.
     display.startFrame((ColorVal)0xFFFF);
+    // The mesh mark, still: the white-on-black artwork inverted a row at a time,
+    // centred where the LVGL splash draws its mark, the word under it.
+    {
+      const int mx = (display.width()  - WADAMESH_MARK_W) / 2;
+      const int my = (display.height() - WADAMESH_MARK_H) / 2;
+      uint16_t row[WADAMESH_MARK_W];
+      for (int y = 0; y < WADAMESH_MARK_H; ++y) {
+        const uint16_t* src = &WADAMESH_MARK_RGB565[(size_t)y * WADAMESH_MARK_W];
+        for (int x = 0; x < WADAMESH_MARK_W; ++x) row[x] = (uint16_t)~src[x];
+        display.writePixelsRGB565(mx, my + y, WADAMESH_MARK_W, 1, row);
+      }
+    }
     display.setColor((ColorVal)0x0000);
     display.setTextSize(2);
-    display.drawTextCentered(display.width() / 2, display.height() / 2 - 8, "WADAMESH");
+    display.drawTextCentered(display.width() / 2, display.height() / 2 + 71 - 8, "WADAMESH");
     display.endFrame();
 #else
     // Paint the WADAMESH mesh mark the instant the panel is up, so the logo is on

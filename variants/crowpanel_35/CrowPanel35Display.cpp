@@ -98,7 +98,9 @@ void CrowPanel35Display::turnOff() {
 void CrowPanel35Display::clear() { _lcd.fillScreen(0); }
 void CrowPanel35Display::setDisplayRotation(uint8_t rotation) {
   // Keep the saved portrait mode at 0; rotate the panel and touch together by 180 degrees.
-  _lcd.setRotation(rotation == 0 ? 2 : rotation);
+  // The UI's portrait 180 (2) is then the panel's own 0; the landscapes pass through.
+  static const uint8_t kPanelRot[4] = { 2, 1, 0, 3 };
+  _lcd.setRotation(kPanelRot[rotation & 3]);
   setLogicalSize(_lcd.width(), _lcd.height());
 }
 

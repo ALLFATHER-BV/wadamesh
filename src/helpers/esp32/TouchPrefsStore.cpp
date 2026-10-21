@@ -63,6 +63,10 @@ static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between 
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
 #elif defined(HAS_CROWPANEL_50)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 800x480 landscape
+#elif defined(HAS_WIO_TRACKER_L2)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 320x240 landscape, as before it was a setting
+#elif defined(HAS_CROWPANEL_P4_101)
+static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // native 1024x600 landscape, as before it was a setting
 #elif defined(ATTAKY_MESH_SERIES)
 static const uint8_t  DEFAULT_UI_ROTATION      = 1;          // landscape (LV_DISP_ROT_90), as before it was a setting
 #else
@@ -307,6 +311,12 @@ static void cfgLoadOrMigrate() {
         // portrait default) was never seen. Start everyone on landscape once, as before.
         if (stored_version < 68) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
 #endif
+#if defined(HAS_WIO_TRACKER_L2) || defined(HAS_CROWPANEL_P4_101)
+        // v71: the Wio Tracker L2 and the CrowPanel P4 10.1 gain the Orientation setting
+        // (#701), the same story as the Attaky's v68: the UI always ran landscape whatever
+        // was stored (usually 0, which now means portrait). Start everyone on landscape once.
+        if (stored_version < 71) s_cfg.ui_rotation = DEFAULT_UI_ROTATION;
+#endif
 #if defined(TLORA_PAGER)
         // v67 (#591): the Pager gains the T-Deck's keyboard navigation. Its kbd_nav and key
         // bindings were never shown on this board, so the stored values are just the T-Deck
@@ -469,6 +479,12 @@ void touchPrefsBegin() {
   if (s_begun) cfgLoadOrMigrate();
 }
 
+// RAM copy of rgn_scope. The chat view names a message's region per bubble (#594),
+// so this is read on every bubble measure and build; an NVS read each time would
+// stall scrolling. touchPrefsSetRegionScope and touchPrefsReload refresh it.
+static char s_rgn_scope[TOUCH_REGION_SCOPE_MAXLEN];
+static bool s_rgn_scope_cached = false;
+
 // Re-read settings from scratch. Used at boot AFTER SdNvsPrefs::useFile() flips
 // the backend to files: an earlier pref read (the boot-wordmark rotation) had
 // already loaded + cached the cfg blob from legacy NVS, so without this the
@@ -478,6 +494,7 @@ void touchPrefsReload() {
   s_prefs.end();
   s_begun = false;
   s_cfg_loaded = false;
+  s_rgn_scope_cached = false;
   touchPrefsBegin();
 }
 
@@ -673,12 +690,15 @@ static const char* KEY_RGN_SCOPE = "rgn_scope";
 int touchPrefsGetRegionScope(char* out, int out_cap) {
   if (!out || out_cap <= 0) return 0;
   out[0] = '\0';
-  if (!s_begun) touchPrefsBegin();
-  String v = prefsGetStr(KEY_RGN_SCOPE, String(""));
-  int n = (int)v.length();
+  if (!s_rgn_scope_cached) {
+    if (!s_begun) touchPrefsBegin();
+    String v = prefsGetStr(KEY_RGN_SCOPE, String(""));
+    snprintf(s_rgn_scope, sizeof s_rgn_scope, "%s", v.c_str());
+    s_rgn_scope_cached = true;
+  }
+  int n = (int)strlen(s_rgn_scope);
   if (n > out_cap - 1) n = out_cap - 1;
-  if (n > TOUCH_REGION_SCOPE_MAXLEN - 1) n = TOUCH_REGION_SCOPE_MAXLEN - 1;
-  memcpy(out, v.c_str(), (size_t)n);
+  memcpy(out, s_rgn_scope, (size_t)n);
   out[n] = '\0';
   return n;
 }
@@ -691,6 +711,7 @@ bool touchPrefsSetRegionScope(const char* name) {
   bool ok = s_prefs.putString(KEY_RGN_SCOPE, name) > 0;
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
+  s_rgn_scope_cached = false;   // re-read what NVS actually holds on the next get
   return ok;
 }
 

@@ -335,8 +335,20 @@ void serviceDeferredClose() {
 // ---------------------------------------------------------------------------
 // 2) wada.* bindings
 // ---------------------------------------------------------------------------
+// The T-Deck Pro and Max are 1-bit e-paper and the firmware pins them to the
+// light theme, but Lua apps were written against the night palette. Invert each
+// colour as it crosses the host API boundary: an app's dark page ground becomes
+// paper-white and its light ink becomes black, with no per-app changes and no
+// double-inversion (wada.ui.colors stays the logical night palette). This is a
+// compile-time branch, so LCD/AMOLED builds keep the identity mapping exactly.
+#if defined(HAS_TDECK_PRO)
+uint32_t luaInkColor(uint32_t rgb) { return (~rgb) & 0xFFFFFFu; }
+#else
+uint32_t luaInkColor(uint32_t rgb) { return rgb & 0xFFFFFFu; }
+#endif
+
 uint32_t argColor(lua_State* L, int idx, uint32_t def = 0xFFFFFF) {
-  return (uint32_t)luaL_optinteger(L, idx, (lua_Integer)def) & 0xFFFFFF;
+  return luaInkColor((uint32_t)luaL_optinteger(L, idx, (lua_Integer)def));
 }
 
 // LVGL assumes structurally valid UTF-8 and can stop advancing when an app
@@ -453,7 +465,7 @@ int uiCanvas(lua_State* L) {
   if (!buf) return luaL_error(L, "canvas alloc failed");
   lv_obj_t* cv = lv_canvas_create(s_h->body);
   lv_canvas_set_buffer(cv, buf, w, h, LV_IMG_CF_TRUE_COLOR);
-  lv_canvas_fill_bg(cv, lv_color_hex(0x000000), LV_OPA_COVER);
+  lv_canvas_fill_bg(cv, lv_color_hex(luaInkColor(0x000000)), LV_OPA_COVER);
   CanvasUd* ud = (CanvasUd*)lua_newuserdatauv(L, sizeof(CanvasUd), 0);
   ud->gen = s_ui_gen;
   ud->obj = cv; ud->buf = buf; ud->w = w; ud->h = h;
@@ -599,9 +611,15 @@ int uiPanel(lua_State* L) {
   lv_obj_remove_style_all(p);
   lv_obj_set_pos(p, x, y);
   lv_obj_set_size(p, w, h);
-  lv_obj_set_style_bg_color(p, lv_color_hex(argColor(L, 5, luaHostPanelColor())), LV_PART_MAIN);
+  // The implicit panel colour already comes from the live theme (white on
+  // e-paper), so don't send it through luaInkColor() as well; an explicit app
+  // colour does cross the boundary and is inverted there.
+  const uint32_t panel_fill = lua_isnoneornil(L, 5) ? luaHostPanelColor() : argColor(L, 5);
+  lv_obj_set_style_bg_color(p, lv_color_hex(panel_fill), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(p, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(p, lv_color_hex(luaHostBorderColor()), LV_PART_MAIN);
+  // The live day border is light; invert it on e-paper so a white panel keeps a
+  // black outline. Identity on every other display type.
+  lv_obj_set_style_border_color(p, lv_color_hex(luaInkColor(luaHostBorderColor())), LV_PART_MAIN);
   lv_obj_set_style_border_width(p, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(p, (lv_coord_t)luaL_optinteger(L, 6, 8), LV_PART_MAIN);
   lv_obj_clear_flag(p, LV_OBJ_FLAG_SCROLLABLE);
@@ -658,7 +676,9 @@ int chAxis(lua_State* L) {
   int gutter = (int)luaL_optinteger(L, 3, 40);
   lv_obj_set_style_text_font(c->obj, luaHostFontForSize(12), LV_PART_TICKS);
 #if defined(HAS_TDECK_PRO)
-  lv_obj_set_style_text_color(c->obj, lv_color_white(), LV_PART_TICKS);
+  // The e-paper chart ground is white now, so ticks must be black (they used to
+  // be white on the old dark chart).
+  lv_obj_set_style_text_color(c->obj, lv_color_black(), LV_PART_TICKS);
 #else
   lv_obj_set_style_text_color(c->obj, lv_color_hex(0x7A7F87), LV_PART_TICKS);
 #endif
@@ -682,13 +702,20 @@ int uiChart(lua_State* L) {   // wada.ui.chart(w, h, points, color1 [, color2] [
   lv_chart_set_div_line_count(ch, 3, 0);
   // Match the built-in Monitor/Airtime chart styling exactly: panel fill, thin
   // dark border + rounded corners, dim grid lines, no point dots, 2 px series.
+  // E-paper is a light, 1-bit surface: a plain inversion would turn the border
+  // and grid white-on-white, so use explicit white ground with black chrome.
+#if defined(HAS_TDECK_PRO)
+  const uint32_t chart_bg = 0xFFFFFF, chart_border = 0x000000, chart_grid = 0x000000;
+#else
+  const uint32_t chart_bg = 0x15181B, chart_border = 0x18191A, chart_grid = 0x1A1D1F;
+#endif
   lv_obj_set_style_size(ch, 0, LV_PART_INDICATOR);
-  lv_obj_set_style_bg_color(ch, lv_color_hex(0x15181B), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(ch, lv_color_hex(chart_bg), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(ch, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_border_color(ch, lv_color_hex(0x18191A), LV_PART_MAIN);
+  lv_obj_set_style_border_color(ch, lv_color_hex(chart_border), LV_PART_MAIN);
   lv_obj_set_style_border_width(ch, 1, LV_PART_MAIN);
   lv_obj_set_style_radius(ch, 6, LV_PART_MAIN);
-  lv_obj_set_style_line_color(ch, lv_color_hex(0x1A1D1F), LV_PART_MAIN);   // grid
+  lv_obj_set_style_line_color(ch, lv_color_hex(chart_grid), LV_PART_MAIN);   // grid
   lv_obj_set_style_line_width(ch, 2, LV_PART_ITEMS);
   ChartUd* ud = (ChartUd*)lua_newuserdatauv(L, sizeof(ChartUd), 0);
   ud->gen = s_ui_gen;
@@ -771,7 +798,7 @@ lv_obj_t* listRowAt(ListUd* u, int i) {          // i is 1-based, as everywhere 
   return lv_obj_get_child(u->obj, i - 1);
 }
 void listPaintRow(lv_obj_t* row, bool selected) {
-  lv_obj_set_style_bg_color(row, lv_color_hex(0x1A1F25), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(row, lv_color_hex(luaInkColor(0x1A1F25)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
   luaHostSetSelectionGlow(row, selected);
 }
@@ -860,7 +887,7 @@ int uiList(lua_State* L) {
   lv_obj_remove_style_all(c);
   lv_obj_set_pos(c, (lv_coord_t)x, (lv_coord_t)y);
   lv_obj_set_size(c, (lv_coord_t)w, (lv_coord_t)h);
-  lv_obj_set_style_bg_color(c, lv_color_hex(0x0E1216), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(c, lv_color_hex(luaInkColor(0x0E1216)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(c, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_set_style_pad_all(c, 2, LV_PART_MAIN);
   lv_obj_set_style_pad_row(c, 2, LV_PART_MAIN);
@@ -891,7 +918,7 @@ int lsAdd(lua_State* L) {
   lv_label_set_long_mode(lb, LV_LABEL_LONG_DOT);   // a long name truncates instead of reflowing the row
   lv_obj_set_width(lb, LV_PCT(100));
   lv_obj_set_style_text_font(lb, luaHostFontForSize(12), LV_PART_MAIN);
-  lv_obj_set_style_text_color(lb, lv_color_hex(0xE6E9ED), LV_PART_MAIN);
+  lv_obj_set_style_text_color(lb, lv_color_hex(luaInkColor(0xE6E9ED)), LV_PART_MAIN);
   if (lua_isfunction(L, 3)) {
     lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
     lua_pushlightuserdata(L, row);
@@ -918,7 +945,9 @@ int lsColor(lua_State* L) {
   lv_obj_t* row = listRowAt(u, (int)luaL_checkinteger(L, 2));
   if (!row) return 0;
   lv_obj_t* lb = lv_obj_get_child(row, 0);
-  if (lb) lv_obj_set_style_text_color(lb, lv_color_hex((uint32_t)luaL_checkinteger(L, 3)), LV_PART_MAIN);
+  // Keep the old checkinteger() contract: a missing colour is an app error, not
+  // a silent default to white.
+  if (lb) lv_obj_set_style_text_color(lb, lv_color_hex(luaInkColor((uint32_t)luaL_checkinteger(L, 3))), LV_PART_MAIN);
   return 0;
 }
 // Clearing drops the rows' entries from the callback table too. Without that,
@@ -982,8 +1011,14 @@ int uiScroll(lua_State* L) {
     lv_obj_add_flag(s_h->body, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(s_h->body, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(s_h->body, LV_SCROLLBAR_MODE_AUTO);
-    lv_obj_set_style_bg_color(s_h->body, lv_color_hex(0x15B6A6), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_color(s_h->body, lv_color_hex(luaInkColor(0x15B6A6)), LV_PART_SCROLLBAR);
+    // 60% ink over the dark night ground stayed dark; over paper-white it blends
+    // up past the 1-bit threshold and disappears, so keep the e-paper bar solid.
+#if defined(HAS_TDECK_PRO)
+    lv_obj_set_style_bg_opa(s_h->body, LV_OPA_COVER, LV_PART_SCROLLBAR);
+#else
     lv_obj_set_style_bg_opa(s_h->body, LV_OPA_60, LV_PART_SCROLLBAR);
+#endif
     lv_obj_set_style_width(s_h->body, 4, LV_PART_SCROLLBAR);
     lv_obj_set_style_pad_bottom(s_h->body, 10, LV_PART_MAIN);
   } else {
@@ -2901,7 +2936,12 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
   lua_pushcfunction(L, uiTextW);     lua_setfield(L, -2, "text_w");
   lua_pushcfunction(L, uiTextLines); lua_setfield(L, -2, "text_lines");
-  lua_createtable(L, 0, 9);                              // wada.ui.colors (theme)
+  // wada.ui.colors stays the logical night palette. On 1-bit e-paper the host
+  // inverts widget colours at the API boundary (luaInkColor); pre-inverting these
+  // values would invert a second time when an app passes C.text to a widget.
+  // `border` is the exception: it mirrors the live theme, so on e-paper it is
+  // already the light day border and is inverted when an app passes it on.
+  lua_createtable(L, 0, 9);
   lua_pushinteger(L, 0x15B6A6); lua_setfield(L, -2, "accent");
   lua_pushinteger(L, 0xE6E9ED); lua_setfield(L, -2, "text");
   lua_pushinteger(L, 0x7A7F87); lua_setfield(L, -2, "sub");
@@ -3340,10 +3380,12 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
   h->root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(h->root);
   lv_obj_set_size(h->root, lv_disp_get_hor_res(nullptr), lv_disp_get_ver_res(nullptr));
-  // Pure black, the same ground the rest of the firmware paints (COLOR_BG in
-  // UITask.cpp) — an app page must not read as a lighter panel floating over
-  // the UI. Apps that want a raised surface draw one (wada.ui.colors.panel).
-  lv_obj_set_style_bg_color(h->root, lv_color_hex(0x000000), LV_PART_MAIN);
+  // The app's logical ground is black, the same ground the rest of the night
+  // firmware paints (COLOR_BG in UITask.cpp) — an app page must not read as a
+  // lighter panel floating over the UI. luaInkColor() maps it to paper-white on
+  // the 1-bit e-paper boards and leaves it black everywhere else. Apps that want
+  // a raised surface draw one (wada.ui.colors.panel).
+  lv_obj_set_style_bg_color(h->root, lv_color_hex(luaInkColor(0x000000)), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(h->root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(h->root, LV_OBJ_FLAG_SCROLLABLE);
   // A plain lv_obj is CLICKABLE by default, and it has to stay so (it is the

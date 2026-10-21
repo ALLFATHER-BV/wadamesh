@@ -235,7 +235,8 @@ static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
   switch (s_point_rotation) {
     case 1:  sx = (RAW_H - 1) - (int)ry; sy = (int)rx;                 break;  // ROT_90
     case 3:  sx = (int)ry;               sy = (RAW_W - 1) - (int)rx;   break;  // ROT_270
-    default: sx = (int)rx;               sy = (int)ry;                 break;  // portrait / 180
+    case 2:  sx = (RAW_W - 1) - (int)rx; sy = (RAW_H - 1) - (int)ry;   break;  // portrait 180 (#698)
+    default: sx = (int)rx;               sy = (int)ry;                 break;  // portrait
   }
   // Clamp to the space the point now lives in, not the portrait one. Rotating
   // swaps the axes, so a landscape X runs to SCR_H and a landscape Y to SCR_W;

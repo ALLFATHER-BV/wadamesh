@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: sr
-# ver: 27
+# ver: 28
 # name: Српски
 # base: sr
  (device behind)	 (уређај касни)
@@ -2160,3 +2160,14 @@ you	ви
 Flood in / out	Flood улаз / излаз
 Direct in / out	Директни улаз / излаз
 Airtime TX / RX	Време емитовања TX / RX
+Fewest hops	Најмање скокова
+
+# Mesh Deck keyboard module strings
+module attached	модул прикључен
+not attached	није прикључен
+
+# Orientation choices (#698 / #701)
+Portrait	Усправно
+Portrait 180	Усправно 180
+Landscape	Положено
+Landscape 180	Положено 180

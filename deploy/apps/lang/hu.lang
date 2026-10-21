@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 27
+# ver: 28
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -2170,3 +2170,14 @@ you	te
 Flood in / out	Flood be / ki
 Direct in / out	Direkt be / ki
 Airtime TX / RX	Adásidő TX / RX
+Fewest hops	Legkevesebb ugrás
+
+# Mesh Deck keyboard module strings
+module attached	modul csatlakoztatva
+not attached	nincs csatlakoztatva
+
+# Orientation choices (#698 / #701)
+Portrait	Álló
+Portrait 180	Álló 180
+Landscape	Fekvő
+Landscape 180	Fekvő 180

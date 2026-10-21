@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: fr
-# ver: 27
+# ver: 28
 # name: Français
 # base: fr
  (device behind)	 (appareil en retard)
@@ -2159,3 +2159,14 @@ you	vous
 Flood in / out	Flood reçus / émis
 Direct in / out	Direct reçus / émis
 Airtime TX / RX	Temps d'antenne TX / RX
+Fewest hops	Moins de sauts
+
+# Mesh Deck keyboard module strings
+module attached	module branché
+not attached	non branché
+
+# Orientation choices (#698 / #701)
+Portrait	Portrait
+Portrait 180	Portrait 180
+Landscape	Paysage
+Landscape 180	Paysage 180

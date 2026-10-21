@@ -1,0 +1,7 @@
+{
+  "id": "blackjack",
+  "name": "Blackjack",
+  "ver": "1.2.2",
+  "desc": "Casino Blackjack (21) ver 1.2.2 with split, double down, 6-deck shoe, persistent bankroll, pixel-perfect suit pips, and auto-scaling UI.",
+  "icon": "game"
+}

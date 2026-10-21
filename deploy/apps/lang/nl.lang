@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: nl
-# ver: 27
+# ver: 28
 # name: Nederlands
 # base: nl
  (device behind)	(apparaat loopt achter)
@@ -2158,3 +2158,14 @@ you	jij
 Flood in / out	Flood in / uit
 Direct in / out	Direct in / uit
 Airtime TX / RX	Zendtijd TX / RX
+Fewest hops	Minste hops
+
+# Mesh Deck keyboard module strings
+module attached	module aangesloten
+not attached	niet aangesloten
+
+# Orientation choices (#698 / #701)
+Portrait	Staand
+Portrait 180	Staand 180
+Landscape	Liggend
+Landscape 180	Liggend 180

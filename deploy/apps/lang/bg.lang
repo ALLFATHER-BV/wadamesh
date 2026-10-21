@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: bg
-# ver: 27
+# ver: 28
 # name: Български
 # base: bg
  (device behind)	 (устройството изостава)
@@ -2160,3 +2160,14 @@ you	вие
 Flood in / out	Flood вход / изход
 Direct in / out	Директни вход / изход
 Airtime TX / RX	Ефирно време TX / RX
+Fewest hops	Най-малко скокове
+
+# Mesh Deck keyboard module strings
+module attached	модулът е свързан
+not attached	не е свързан
+
+# Orientation choices (#698 / #701)
+Portrait	Портрет
+Portrait 180	Портрет 180
+Landscape	Пейзаж
+Landscape 180	Пейзаж 180

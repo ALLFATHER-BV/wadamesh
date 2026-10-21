@@ -1614,8 +1614,16 @@ int MyMesh::getNextFromHistoryForClient(const char* client_id, uint8_t frame[], 
     }
   }
   if (slot < 0) {
-    if (history_num_clients >= MAX_HISTORY_CLIENTS) return 0;
-    slot = history_num_clients++;
+    if (history_num_clients >= MAX_HISTORY_CLIENTS) {
+      // Full (every browser that ever opened the web client keeps its own cursor): reuse
+      // the cursor that is furthest behind, the client least recently synced, instead of
+      // never syncing a new one again. That client just starts from the oldest kept message.
+      slot = 0;
+      for (int i = 1; i < history_num_clients; i++)
+        if (history_clients[i].last_delivered_seq < history_clients[slot].last_delivered_seq) slot = i;
+    } else {
+      slot = history_num_clients++;
+    }
     strncpy(history_clients[slot].client_id, cid, MAX_CLIENT_ID_LEN);
     history_clients[slot].client_id[MAX_CLIENT_ID_LEN] = '\0';
     history_clients[slot].last_delivered_seq = history_next_seq > (uint32_t)history_count

@@ -30,8 +30,9 @@
     {
       "id": "protreck",
       "name": "ProTreck",
-      "ver": "1.0",
-      "desc": "Outdoor watch: sunrise/sunset + moon phase (ASTRO), chronometer with laps (CHRONO), countdown timer with alarm (TIMER), altimeter with trend graph (ALTI). Swipe left/right to switch modes. Contributed by samuelcoustet.",
+      "ver": "1.2",
+      "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
+      "requires": "sdk_ext",
       "seed": false
     },
     {
@@ -81,9 +82,9 @@
     {
       "id": "tripodometer",
       "name": "Trip Odometer",
-      "ver": "1.0",
-      "desc": "GPS trip computer: distance, time, speed, altitude. Start/Stop to track, Reset to clear. Saves your trip across restarts. Contributed by samuelcoustet.",
-      "requires": "gps",
+      "ver": "1.1",
+      "desc": "GPS trip computer: distance, elapsed time, avg/max speed, min/current altitude, return-to-home bearing. Start/Stop to track, Reset to clear. Saves trip across restarts. Contributed by samuelcoustet.",
+      "requires": "sdk_ext",
       "seed": false
     },
     {
@@ -120,8 +121,16 @@
     {
       "id": "blackjack",
       "name": "Blackjack",
+      "ver": "1.2.2",
+      "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, pixel-perfect suit pips, and auto-scaling UI with double-stacked P4 controls. Contributed by halflive-743.",
+      "icon": "game",
+      "seed": false
+    },
+    {
+      "id": "spaceinvaders",
+      "name": "Space Invaders",
       "ver": "1.0",
-      "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, and T-Deck/T-Display P4 controls. Contributed by halflive-743.",
+      "desc": "Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.",
       "icon": "game",
       "seed": false
     }

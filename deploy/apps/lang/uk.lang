@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: uk
-# ver: 27
+# ver: 28
 # name: Українська
 # base: uk
  (device behind)	 (пристрій відстає)
@@ -2160,3 +2160,14 @@ you	ви
 Flood in / out	Flood вхід / вихід
 Direct in / out	Прямі вхід / вихід
 Airtime TX / RX	Ефірний час TX / RX
+Fewest hops	Найменше хопів
+
+# Mesh Deck keyboard module strings
+module attached	модуль під'єднано
+not attached	не під'єднано
+
+# Orientation choices (#698 / #701)
+Portrait	Портретна
+Portrait 180	Портретна 180
+Landscape	Альбомна
+Landscape 180	Альбомна 180

@@ -151,11 +151,16 @@ static bool gtBusBegin(int attempt) {
 // Hardware reset with the GT911's address strap (Goodix GT911 datasheet, power-on timing):
 //   RST low and INT at the strap level for > 100 us, RST high while INT still holds the level,
 //   keep it > 5 ms so the address latches, then (0x5D) drive INT low for 50 ms, release INT to an
-//   input and allow > 50 ms before the first I2C access.
+//   input and allow > 50 ms before the first I2C access. The datasheet's 50 ms is not enough on
+//   this panel: an owner found its GT911 needs 100-300 ms before the first I2C handshake (Discord),
+//   so every attempt waits CP_TOUCH_SETTLE_MS after the reset.
 // INT low at the RST edge selects 0x5D, INT high selects 0x14. Attempt 1 straps 0x5D (Elecrow's
 // MicroPython driver does exactly this), attempt 2 straps 0x14, attempt 3 only pulses RST and leaves
 // INT to its pull-up R75 (what Elecrow's ESP-IDF BSP effectively does). Whichever address then ACKs
 // is used, so a strap that did not take is harmless.
+#ifndef CP_TOUCH_SETTLE_MS
+  #define CP_TOUCH_SETTLE_MS 300   // reset released -> first I2C access (see above)
+#endif
 static const char* gtHardReset(int attempt) {
   const bool strap_14 = (attempt == 2);
   const bool strap    = (attempt != 3);
@@ -175,7 +180,7 @@ static const char* gtHardReset(int attempt) {
     delay(50);
   }
   pinMode(PIN_TOUCH_INT, INPUT);
-  delay(55);
+  delay(CP_TOUCH_SETTLE_MS);
   return strap ? (strap_14 ? "INT high (0x14)" : "INT low (0x5D)") : "RST only, INT on its pull-up";
 }
 
@@ -262,12 +267,22 @@ bool heltecV4CapTouchBegin() {
   return true;
 }
 
+// Scale to the panel, then turn the point into the frame LVGL shows (#701): s_point_rotation
+// is the LVGL software rotation, the same maps as the T-Display P4's mapRaw (lvglTouchRead in
+// UITask undoes them for LVGL). Swipe detection and the direct readers work in this frame.
 static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
-  int sx = (int)rx, sy = (int)ry;
-  if (s_native_w != SCR_W) sx = sx * SCR_W / s_native_w;
-  if (s_native_h != SCR_H) sy = sy * SCR_H / s_native_h;
-  if (sx < 0) sx = 0; if (sx > SCR_W - 1) sx = SCR_W - 1;
-  if (sy < 0) sy = 0; if (sy > SCR_H - 1) sy = SCR_H - 1;
+  int px = (int)rx, py = (int)ry;
+  if (s_native_w != SCR_W) px = px * SCR_W / s_native_w;
+  if (s_native_h != SCR_H) py = py * SCR_H / s_native_h;
+  if (px < 0) px = 0; if (px > SCR_W - 1) px = SCR_W - 1;
+  if (py < 0) py = 0; if (py > SCR_H - 1) py = SCR_H - 1;
+  int sx, sy;
+  switch (s_point_rotation) {
+    case 1:  sx = (SCR_H - 1) - py; sy = px;               break;  // ROT_90 (600x1024)
+    case 2:  sx = (SCR_W - 1) - px; sy = (SCR_H - 1) - py; break;  // ROT_180
+    case 3:  sx = py;               sy = (SCR_W - 1) - px; break;  // ROT_270 (600x1024)
+    default: sx = px;               sy = py;               break;  // native landscape
+  }
   *ox = (uint16_t)sx;
   *oy = (uint16_t)sy;
 }

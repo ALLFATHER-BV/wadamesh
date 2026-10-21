@@ -95,8 +95,8 @@
 
 #elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0
-  #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
+  #define CAP_ROTATABLE    1   // native 320x240 landscape = UI rotation 3, as on the CrowPanels (#698)
+  #define CAP_LARGE_SCREEN 0   // 320x240
   #define CAP_SD           0   // SD_MMC, not Arduino SD
   #define CAP_FILESYSTEM   1
   #define CAP_GPS          1
@@ -222,7 +222,8 @@
   // header, C6 Wi-Fi/BLE (esp-hosted; Elecrow documents 2.12.3, but V1.0 units have been seen with
   // 2.3.0, which still comes up: main.cpp logs the version), SD_MMC 1-bit. 32 MB PSRAM.
   #define CAP_TOUCH        1   // GT911 capacitive touch
-  #define CAP_ROTATABLE    0   // native 1024x600 landscape; the DSI panel cannot rotate in hardware
+  #define CAP_ROTATABLE    1   // native 1024x600 landscape = UI rotation 3; the DSI panel cannot rotate in
+                               // hardware, so LVGL turns it in software like the T-Display P4 (#701)
   #define CAP_LARGE_SCREEN 1   // large-panel layouts + the UI-size fonts, rendered at native resolution
   #define CAP_SD           0   // card is SD_MMC (slot 0), exposed through CAP_FILESYSTEM like the T-Display P4
   #define CAP_FILESYSTEM   1   // internal LittleFS 'storage' + SD_MMC
@@ -498,7 +499,7 @@
 #endif
 
 // Notification-chime hardware: T-Deck I2S speaker, Pager codec, Heltec V4 / M9 GPIO
-// piezo, T-Display P4 ES8311. Kept in step with the HAS_UI_SOUND definition in
+// piezo, T-Display P4 / T-Deck Max / Wio Tracker L2 ES8311. Kept in step with the HAS_UI_SOUND definition in
 // UITask.cpp, which now derives FROM this rather than duplicating the list.
 //
 // This used to read `#if defined(HAS_UI_SOUND)`, but HAS_UI_SOUND is defined inside
@@ -508,7 +509,8 @@
 // would have compiled sound out everywhere. Every macro tested here is a -D on the
 // compiler command line, so they are all genuinely visible at this point.
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_V4_BUZZER_PIN) || defined(TLORA_PAGER) || \
-    defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX)
+    defined(THINKNODE_M9_BUZZER_PIN) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
+    defined(HAS_WIO_TRACKER_L2)
   #define CAP_SOUND 1
 #else
   #define CAP_SOUND 0
@@ -647,11 +649,15 @@
 // ---- USB Files ---------------------------------------------------------------
 // files.wadamesh.com browses and edits the SD card and internal storage over the
 // USB cable (Web Serial) while the USB Files app is open (UsbFilesSession.h).
-// Prototype boards first: the T-Deck (HW-CDC) and the Heltec V4 TFT (TinyUSB
-// CDC), one of each USB serial driver. Others follow once tested on hardware.
+// Every ESP32-S3 board whose USB socket is the chip's own USB (ARDUINO_USB_CDC_ON_BOOT):
+// UsbFilesSession handles both of its serial drivers (HW-CDC and TinyUSB CDC), proven on
+// the T-Deck and the Heltec V4. Not yet: boards behind a USB-serial bridge chip (M9,
+// CrowPanel 3.5/5.0, Attaky, SenseCAP Indicator: 115200 baud and a UART receive buffer
+// that is fixed once running), the ESP32-P4 builds (IDF), and the T-Deck Pro family incl.
+// the Max (left out from the start; e-paper refresh during a transfer is untested).
 #ifndef CAP_USB_FILES
-  #if (defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)) || \
-      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+  #if defined(ESP32) && ARDUINO_USB_CDC_ON_BOOT && !defined(HAS_TDECK_PRO) && \
+      !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101) && !defined(HAS_TANMATSU)
     #define CAP_USB_FILES 1
   #else
     #define CAP_USB_FILES 0
