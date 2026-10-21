@@ -39,7 +39,7 @@ end
 -- misbehaves for tiny ranges, which crashed the game with few aliens left.
 local function rnd(a, b)
   if b <= a then return a end
-  return math.random(a, b)
+  return math.floor(math.random() * (b - a + 1)) + a
 end
 
 -- drawing helpers: the canvas wants whole numbers
