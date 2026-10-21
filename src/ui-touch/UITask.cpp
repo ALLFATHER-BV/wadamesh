@@ -1343,21 +1343,40 @@ static void uiFitButtonCaption(lv_obj_t* btn) {
   if (lv_obj_get_style_layout(btn, LV_PART_MAIN) != LV_LAYOUT_FLEX) lv_obj_center(lbl);
 }
 
-static void uiFitButtonAsync(void* p) {
-  // Queued fits are cancelled when their button is deleted (below), so the pointer
-  // is live here.
-  lv_obj_t* btn = static_cast<lv_obj_t*>(p);
-  lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
-  uiFitButtonCaption(btn);
+// Buttons waiting for a caption fit, run by ONE lv_async_call for all of them.
+// lv_async_call_cancel() is never used: LVGL 8.3 frees an async call's info when
+// it has run but leaves its timer in the list until the next timer pass if any
+// timer was deleted meanwhile, and a cancel in that window reads the freed info,
+// matches it and frees it again (CORRUPT HEAP, a boot loop on the T-Deck). With
+// one queue nothing is ever cancelled; a deleted button just leaves the list.
+static std::vector<lv_obj_t*> s_fit_pending;
+static bool s_fit_scheduled = false;
+static lv_obj_t* s_fit_running = nullptr;   // its own events must not queue it again
+
+static void uiFitButtonsRun(void*) {
+  s_fit_scheduled = false;
+  std::vector<lv_obj_t*> batch;
+  batch.swap(s_fit_pending);
+  for (lv_obj_t* btn : batch) {
+    if (!btn || !lv_obj_is_valid(btn)) continue;
+    s_fit_running = btn;
+    lv_obj_update_layout(btn);   // a just-built button has no size until its layout runs
+    uiFitButtonCaption(btn);
+    s_fit_running = nullptr;
+  }
 }
 
 // Queues one fit for after the current builder or layout pass, which is when the
 // button's size and caption are final. Restyling inside a size event is not safe,
-// so nothing is measured here. Any fit already queued for the button is replaced,
-// so a button has at most one, however many events arrive first.
+// so nothing is measured here. A button is in the queue at most once.
 static void uiFitButtonQueue(lv_obj_t* btn) {
-  lv_async_call_cancel(uiFitButtonAsync, btn);
-  lv_async_call(uiFitButtonAsync, btn);
+  if (!btn || btn == s_fit_running) return;
+  for (lv_obj_t* q : s_fit_pending) if (q == btn) return;
+  s_fit_pending.push_back(btn);
+  if (!s_fit_scheduled) {
+    s_fit_scheduled = true;
+    lv_async_call(uiFitButtonsRun, nullptr);
+  }
 }
 
 // The button was resized, or a child of it was: its caption label resizes when its
@@ -1367,7 +1386,8 @@ static void uiFitButtonChangeCb(lv_event_t* e) {
   lv_obj_t* btn = lv_event_get_target(e);
   const lv_event_code_t code = lv_event_get_code(e);
   if (code == LV_EVENT_DELETE) {
-    lv_async_call_cancel(uiFitButtonAsync, btn);
+    for (size_t i = 0; i < s_fit_pending.size(); ++i)
+      if (s_fit_pending[i] == btn) { s_fit_pending.erase(s_fit_pending.begin() + i); break; }
     return;
   }
   if (code == LV_EVENT_CHILD_CHANGED) {
