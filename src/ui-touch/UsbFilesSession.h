@@ -76,6 +76,12 @@ class UsbFilesSession {
   bool sendError(uint8_t req_type, uint16_t seq, uint8_t status, const char* msg);
   uint8_t* body() { return _tx + UsbFiles::kHeaderBytes + 1; }
   size_t _chunk = UsbFiles::kMaxChunk;   // file bytes per frame; what the receive queue holds
+  // Link health since the app opened, reported in the HELLO reply ("rx"): the receive
+  // queue granted, requests handled, replies the port took only partly, and bytes the
+  // parser threw away (damage or a lost piece of a frame).
+  size_t _rx_queue = 0;
+  uint32_t _n_frames = 0;
+  uint32_t _n_short_tx = 0;
   size_t bodyCap() const { return UsbFiles::kMaxPayload - 1; }
 
   // Resolve a request path into root + path inside it. Replies with the error

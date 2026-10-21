@@ -116,7 +116,9 @@ class Link:
         end = time.time() + timeout
         out = []
         while time.time() < end and not out:
-            chunk = self.ser.read(4096)
+            # what has arrived, or block for the first byte: read(4096) alone waited out
+            # the 50 ms timeout on every short reply (half of each upload's time)
+            chunk = self.ser.read(max(1, self.ser.in_waiting))
             if chunk:
                 self.buf.extend(chunk)
                 out.extend(self._frames())

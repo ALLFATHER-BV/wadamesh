@@ -154,6 +154,9 @@ bool UsbFilesSession::begin(UsbFilesHost* host) {
   size_t queue = setRxQueue(kRxQueue);
   if (queue && queue < kRxQueue) queue = setRxQueue(1024 + 512);
   _chunk = chunkFor(queue ? queue : kDefaultRxQueue);
+  _rx_queue = queue;
+  _n_frames = 0;
+  _n_short_tx = 0;
   while (Serial.available() > 0) Serial.read();
 
   _tx_len = 0;
@@ -225,6 +228,17 @@ void UsbFilesSession::setName(const char* rel) {
   snprintf(_name, sizeof _name, "%s", baseName(rel));
 }
 
+// Write one whole frame and push it out now. A reply shorter than a USB packet could
+// stay in the HW-CDC's 64-byte FIFO until the next write came along: the page then
+// waited out its 3 s timeout and asked again. Measured on a T-Deck: 1 request in 5
+// with an upload, 4 KB/s instead of 40-70 KB/s, every request received and answered
+// on the device. flush() sends it (TinyUSB: tud_cdc_write_flush).
+static size_t txFrame(const uint8_t* buf, size_t n) {
+  const size_t w = Serial.write(buf, n);
+  Serial.flush();
+  return w;
+}
+
 // ---- the loop ---------------------------------------------------------------
 
 void UsbFilesSession::tick() {
@@ -244,8 +258,10 @@ void UsbFilesSession::tick() {
     if (!any) {
       // Mid-transfer the next request follows within a millisecond or two: wait
       // for it here instead of paying a whole UI loop pass per chunk.
+      // An upload's next 4 KB takes ~4 ms to arrive after our reply, so a 5 ms wait
+      // missed it about half the time and paid a whole UI pass (20-50 ms) per chunk.
       const bool busy = _up || (_host_seen && now - _last_rx_ms < 50);
-      if (!busy || now - last_work >= 5) break;
+      if (!busy || now - last_work >= (_up ? 15u : 5u)) break;
       delay(1);
     }
   }
@@ -285,13 +301,14 @@ void UsbFilesSession::handleFrame() {
   const uint8_t* p = _parser->payload();
   const size_t len = _parser->length();
   if (type & T_REPLY) return;   // not a request
+  ++_n_frames;
   _last_rx_ms = millis();
   _host_seen = true;
 
   // The page repeats a request when our reply got lost. Answer from the cache so
   // a finished upload, delete or rename is not attempted a second time.
   if (type != T_HELLO && _tx_len && seq == _last_seq && type == _last_type) {
-    Serial.write(_tx, _tx_len);
+    txFrame(_tx, _tx_len);
     return;
   }
 
@@ -325,7 +342,9 @@ bool UsbFilesSession::sendReply(uint8_t req_type, uint16_t seq, uint8_t status, 
   _last_type = req_type;
   _last_seq = seq;
   if (!_tx_len) return false;
-  return Serial.write(_tx, _tx_len) == _tx_len;
+  const bool whole = txFrame(_tx, _tx_len) == _tx_len;
+  if (!whole) ++_n_short_tx;
+  return whole;
 }
 
 bool UsbFilesSession::sendError(uint8_t req_type, uint16_t seq, uint8_t status, const char* msg) {
@@ -351,7 +370,7 @@ void UsbFilesSession::sendBeacon(uint8_t type) {
   uint8_t frame[320];
   const size_t n = encodeFrame(frame, sizeof frame, type, 0,
                                reinterpret_cast<const uint8_t*>(json), j.pos);
-  if (n) Serial.write(frame, n);
+  if (n) txFrame(frame, n);
 }
 
 // ---- paths and files ------------------------------------------------------------
@@ -549,6 +568,15 @@ void UsbFilesSession::doHello(uint16_t seq) {
   }
   j.raw(",\"chunk\":");
   j.num(_chunk);
+  j.raw(",\"rx\":{\"queue\":");
+  j.num(_rx_queue);
+  j.raw(",\"frames\":");
+  j.num(_n_frames);
+  j.raw(",\"short_tx\":");
+  j.num(_n_short_tx);
+  j.raw(",\"dropped\":");
+  j.num(_parser ? _parser->droppedBytes() : 0);
+  j.raw("}");
   j.raw(",\"roots\":[");
   bool first = true;
   for (Root r : kRoots) {
