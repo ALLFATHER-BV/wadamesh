@@ -32257,6 +32257,7 @@ static uint32_t  s_appdrawer_badge_sig = 0;
 static bool appDrawerCovered() {
   lv_obj_t* layer = s_appdrawer_root ? lv_obj_get_parent(s_appdrawer_root) : nullptr;
   if (!layer) return false;
+  if (lv_obj_has_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN)) return true;   // behind a settings page (settingsHideDrawer)
   const uint32_t n = lv_obj_get_child_cnt(layer);
   uint32_t idx = 0;
   bool found = false;
@@ -40867,6 +40868,22 @@ static void settingsCatBuild(int cat) {
   s_settings_inline_parent = nullptr;
 }
 
+// The app drawer is a layer_top overlay and a settings page sits on the base screen
+// (under the status bar), so a page opened with the drawer up (holding a control-centre
+// tile) came up behind it and the drawer was drawn over the settings. Hidden while a
+// page is open, shown again when it closes, only while it is still the same drawer.
+static lv_obj_t* s_settings_hid_drawer = nullptr;
+static void settingsHideDrawer() {
+  if (s_settings_hid_drawer || !s_appdrawer_root || lv_obj_has_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_obj_add_flag(s_appdrawer_root, LV_OBJ_FLAG_HIDDEN);
+  s_settings_hid_drawer = s_appdrawer_root;
+}
+static void settingsShowDrawer() {
+  if (s_settings_hid_drawer && s_settings_hid_drawer == s_appdrawer_root)
+    lv_obj_clear_flag(s_settings_hid_drawer, LV_OBJ_FLAG_HIDDEN);
+  s_settings_hid_drawer = nullptr;
+}
+
 // Tear down the open category detail sheet and return to the landing. Safe to
 // call when nothing is open (tab change / key dismiss call it unconditionally).
 static void closeSettingsCategory() {
@@ -40919,6 +40936,7 @@ static void closeSettingsCategory() {
                              // frame, so the clock/icons don't jump up for a tick on the way
                              // back to the landing (the chat overview already does this via
                              // updateGlobalStatusBar's driver).
+  settingsShowDrawer();
 }
 
 // Let the last section card grow to fill the page so a SHORT category (e.g.
@@ -40992,6 +41010,7 @@ static void openSettingsCategory(int cat) {
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(root);
   s_settings_sheet    = root;
+  settingsHideDrawer();   // a layer_top drawer would draw over this base-screen page
 
   lv_obj_t* page = lv_obj_create(root);
   lv_obj_set_pos(page, 0, 0);
@@ -56491,6 +56510,7 @@ static void openAppDrawer() {
   lv_obj_move_foreground(s_appdrawer_root);
   lv_obj_add_event_cb(s_appdrawer_root, appDrawerDeleteCb, LV_EVENT_DELETE, nullptr);
   appDrawerCoverContent(true);
+  if (s_settings_sheet) { s_settings_hid_drawer = nullptr; settingsHideDrawer(); }   // rebuilt under a settings page: stays behind it
 
   // First tile is "Command" (back to the command centre); the rest are the apps.
   const int unread   = g_lv.task ? g_lv.task->getUnreadTotal()        : 0;
