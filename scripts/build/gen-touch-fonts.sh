@@ -414,7 +414,8 @@ generate_fallback_icons() {
 # some translation units and not others. 18/20/24 are the bigger UI-size presets
 # (every board with a text-size setting; the V4 has none, its flash is full).
 # DOC_CAPTURE builds carry them all: they render other boards' sizes and scales for review.
-ui_big="defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE)"
+# WADA_WEB (the browser build, web/) is an 800x480 large-screen board like the CrowPanel 5.0.
+ui_big="defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE) || defined(WADA_WEB)"
 for size in 12 14 16 28; do
   generate_ui "$size"
 done

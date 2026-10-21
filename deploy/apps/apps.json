@@ -4,12 +4,14 @@
       "id": "monitor",
       "name": "RF Monitor",
       "ver": "1.4",
+      "radio": "own",
       "desc": "RSSI, noise, margin and packet-rate tiles, a filled signal chart and the recently heard packets. Tap a packet for who sent it, its route, margin, size and airtime."
     },
     {
       "id": "airtime",
       "name": "Airtime",
       "ver": "1.6",
+      "radio": "own",
       "desc": "How busy the channel is: the live load, average, peak, a filled chart with the duty ceiling and the rx/tx split. Keeps a Home widget with the channel load while it runs."
     },
     {
@@ -51,6 +53,7 @@
       "id": "wardrive",
       "name": "Wardrive",
       "ver": "1.2",
+      "radio": "own",
       "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV, then plots the run back on the map so you can check coverage before driving it again. Reference app for wada.mesh.discover.",
       "requires": "sdk_ext"
     },

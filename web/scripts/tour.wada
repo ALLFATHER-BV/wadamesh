@@ -1,0 +1,57 @@
+# The phase-1 acceptance tour (web/build.sh shots): first boot of a fresh data
+# directory, demo backend. Coordinates are canvas pixels (800x480).
+# Commands: wait MS | tap X Y | hold X Y [MS] | drag X0 Y0 X1 Y1 [MS] | wheel X Y DY | type TEXT | key NAME
+#           | shot NAME | quit
+wait 5000
+shot 01-onboarding
+tap 60 283
+wait 3000
+shot 02-home
+# Chats, then a conversation
+tap 80 456
+wait 1500
+shot 03-chats
+tap 400 152
+wait 1500
+shot 04-conversation
+# the on-screen keyboard, then the host keyboard types and Enter sends
+tap 380 447
+wait 1000
+shot 05-keyboard
+type Hello from the browser!
+key enter
+wait 8000
+shot 06-sent
+# back, Contacts, Settings, Device
+tap 18 30
+wait 1200
+tap 240 456
+wait 1500
+shot 07-contacts
+tap 720 456
+wait 1500
+shot 08-settings
+# the mouse wheel scrolls the page under the pointer (and back up for the next tap)
+wheel 200 300 120
+wheel 200 300 120
+wait 600
+shot 08b-settings-wheel
+wheel 200 300 -600
+wait 600
+tap 400 66
+wait 1500
+shot 09-device
+key esc
+wait 1000
+# Home > Apps > Snake (a Lua app baked into the image)
+tap 400 456
+wait 1200
+tap 695 360
+wait 1500
+shot 10-apps
+tap 398 153
+wait 2500
+drag 300 300 520 300 250
+wait 1500
+shot 11-snake
+quit

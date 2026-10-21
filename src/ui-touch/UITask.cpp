@@ -2,7 +2,11 @@
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
 
-#include "../MyMesh.h"
+#if defined(WADA_WEB)
+  #include "WebMesh.h"     // web/mesh: the MyMesh stand-in (the UI's compile-time mesh contract)
+#else
+  #include "../MyMesh.h"
+#endif
 #include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
@@ -205,7 +209,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
-  #if defined(HAS_TANMATSU)
+  #if defined(WADA_WEB)
+    #include <WebDisplay.h>                  // web/platform: the canvas behind the SDL window
+  #elif defined(HAS_TANMATSU)
     #include <TanmatsuDisplay.h>             // badge-bsp-backed DisplayDriver (P4)
   #elif defined(HAS_TDECK_PRO)
     #include <TDeckProDisplay.h>
@@ -281,7 +287,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
       #endif
     #endif
   #endif
-  #if defined(HAS_TANMATSU)
+  #if defined(WADA_WEB)
+    extern WebDisplay display;
+  #elif defined(HAS_TANMATSU)
     extern TanmatsuDisplay display;
   #elif defined(HAS_TDECK_PRO)
     extern TDeckProDisplay display;
@@ -4556,7 +4564,11 @@ static const char* gpsStatusStr(bool compact = false) {
     }
     if (!compact && n < (int)sizeof s)
       snprintf(s + n, sizeof s - n, "\n%s",
+#if CAP_GPS_RECEIVER
                TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+#else
+               TR("No position yet. Allow this page to use your location when the browser asks."));
+#endif
     return s;
   }
   s_gps_acq_since = 0;
@@ -9567,6 +9579,20 @@ static int s_store_updates = 0;
 static void storeUpdatesKick();
 static void storeUpdatesPoll();
 static void versionCheckService(unsigned long now) {
+#if !CAP_FW_UPDATE_CHECK
+  // No firmware update check on this board (the browser build: a reload is the update).
+  // The Store's update badge still needs the catalog now and then.
+  {
+    static unsigned long s_store_next = 20000;
+    storeUpdatesPoll();
+    if (WiFi.status() == WL_CONNECTED && (long)(now - s_store_next) >= 0) {
+      s_store_next = now + 6UL * 60UL * 60UL * 1000UL;
+      ensureTileFetchTaskRunning();
+      storeUpdatesKick();
+    }
+    return;
+  }
+#endif
 #if defined(MULTI_TRANSPORT_COMPANION)
   if (firmwareReleaseN() < 0) return;   // dev build: nothing to compare against
   storeUpdatesPoll();
@@ -10284,6 +10310,11 @@ static void externalKbdNoteFieldPress(lv_obj_t* ta) {
 }
 // On CLICKED: for such a second tap, summon the keys for this editing session.
 static void externalKbdSecondTap(lv_obj_t* ta) {
+#if CAP_NATIVE_KEYBOARD
+  // The phone's own keyboard is this board's keys (the browser build on a phone): a second
+  // tap reopens it (the page does that), it does not summon the UI's keys on top.
+  if (boardNativeKeyboard()) { s_osk_press_ta = nullptr; return; }
+#endif
   if (ta && ta == s_osk_press_ta) s_osk_forced = true;
   s_osk_press_ta = nullptr;
 }
@@ -11999,10 +12030,12 @@ static void composerSendFromPanel(LvChatPanel* p) {
   if (!g_lv.task || !p || !p->composer_ta) return;
   const char* text = lv_textarea_get_text(p->composer_ta);
   if (!text || !text[0]) return;
-  hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
   for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  // After the copy: hideKb() unfocuses the text box, whose restyle sets its label's
+  // text again (a realloc), which can leave `text` pointing at freed memory.
+  hideKb();
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
@@ -12021,10 +12054,12 @@ static void sendFromPanelCb(lv_event_t* e) {
   if (!p || !p->composer_ta) return;
   const char* text = lv_textarea_get_text(p->composer_ta);
   if (!text || !text[0]) return;
-  hideKb();
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
   for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  // After the copy: hideKb() unfocuses the text box, whose restyle sets its label's
+  // text again (a realloc), which can leave `text` pointing at freed memory.
+  hideKb();
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(p->composer_ta, "");
     refreshChatDetailAsync(*p);
@@ -18270,6 +18305,7 @@ static void buildGpsPage() {
       lv_label_set_text(g_set_modal.gps_status, gpsStatusStr());
     }
   }
+#if CAP_GPS_RECEIVER
   {
     lv_obj_t* c = setCard("Receiver");
 #ifdef GPS_BAUD_RATE
@@ -18309,6 +18345,7 @@ static void buildGpsPage() {
       setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
     });
   }
+#endif  // CAP_GPS_RECEIVER
 #endif  // CAP_GPS
 #if defined(ESP32)
   {
@@ -19895,6 +19932,15 @@ static void bleKbdBuildPage(bool ble_active) {
 #endif  // CAP_BLE_KEYBOARD
 
 static void buildBluetoothSettings() {
+#if !CAP_BT_SETUP
+  {   // the browser build: the page's bar picks the node and the link (CAP_BT_SETUP)
+    lv_obj_t* c = setCard("");
+    setNote(c, "In the browser, the connection is set in the page bar: Connect reaches your node over "
+               "Bluetooth, USB or Wi-Fi.", SET_TONE_INFO);
+    setNote(c, "Your node's own Bluetooth and pairing code are set on the node.");
+    return;
+  }
+#endif
   if (!g_lv.task || !g_lv.task->hasBleCapability()) {
     // No BLE on this board (the T-Display P4: the C6's factory firmware cannot do a
     // BLE companion). An explanation beats a hidden row: people coming from other
@@ -20948,6 +20994,15 @@ static void buildMqttSettings() {
 }
 
 static void buildWifiSettings() {
+#if !CAP_WIFI_SETUP
+  {   // the browser build: online through the computer, the node chosen in the page's bar
+    lv_obj_t* c = setCard("");
+    setNote(c, "In the browser, the connection is set in the page bar: Connect reaches your node over "
+               "Wi-Fi, USB or Bluetooth.", SET_TONE_INFO);
+    setNote(c, "The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.");
+    return;
+  }
+#endif
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   {
     lv_obj_t* c = setCard("");
@@ -34627,7 +34682,11 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 // which need the extended SDK, and the Heltec V4 does not have it -- so the most
 // common board in the mesh offered a prominent Get button for two apps that then
 // refused to do anything, with no warning anywhere (reported on Discord).
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; };
+// `radio` = "own" marks an app that reads the board's own LoRa radio (RF Monitor,
+// Airtime, Wardrive): a separate field because `requires` holds one name, and older
+// firmware ignores a field it does not know (a second name in `requires` would have
+// unhidden Wardrive on the 2 MB V4).
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8]; };
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -35287,6 +35346,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "crowpanel-50"
 #elif defined(HELTEC_LORA_V4_TFT)
 #define WADA_BOARD_ID "heltec-v4-tft"
+#elif defined(WADA_WEB)
+#define WADA_BOARD_ID "web"            // never self-updates (CAP_OTA 0); names its test reports
 #else
 #error "WADA_BOARD_ID: this board has no release artifact name. Add it here AND to scripts/release.sh ENVS, or a self-update fetches another board's firmware and its test reports land under the wrong board."
 #endif
@@ -41678,7 +41739,9 @@ static void settingsCatValue(int c, char* out, size_t cap) {
       break;
 #endif
     case CAT_BLUETOOTH:
+#if CAP_BT_SETUP
       snprintf(out, cap, "%s", bleRequestedOrEnabled() ? TR("On") : TR("Off"));
+#endif
       break;
 #if !defined(HAS_TDECK_PRO)
     case CAT_THEME:   // the mode, and the colour look when there is one
@@ -50220,6 +50283,9 @@ static void doExportBackupFile(const char* fname) {
   lv_obj_del(ov);
   char msg[120]; snprintf(msg, sizeof msg, "Saved %s:%s", where, path);
   g_lv.task->showAlert(msg, 2600);
+#if CAP_FILE_HANDOFF
+  boardHandOffFile(*backupInternalFs(), path, fname);   // and to the computer (a browser download)
+#endif
 }
 
 static void doDeleteBackup() {
@@ -50348,7 +50414,11 @@ static void buildBackupsSettings() {
     }, nullptr, SET_PRIMARY);
     setSwitchRow(c, "Append timestamp", "Off reuses meshcore-backup.json, the file name the MeshCore app uses.",
                  s_backup_append_timestamp, backupAppendTimestampCb);
+#if CAP_FILE_HANDOFF
+    setNote(c, "Downloaded to this computer, and kept in this browser.");
+#else
     setNote(c, "Saved to the SD card when one is in, otherwise to internal storage.");
+#endif
   }
 
   // Restore: every internal and SD backup in a picker, then a confirmation.
@@ -50357,6 +50427,13 @@ static void buildBackupsSettings() {
     setActionRow(c, LV_SYMBOL_DOWNLOAD, "Import backup", nullptr, [](lv_event_t* e) {
       if (lv_event_get_code(e) == LV_EVENT_CLICKED) openBackupPicker();
     });
+#if CAP_FILE_HANDOFF
+    // A backup file from this computer: the browser's picker, then the same confirm +
+    // import as a saved one (UITask::loop picks it up).
+    setActionRow(c, LV_SYMBOL_UPLOAD, "Import from this computer", nullptr, [](lv_event_t* e) {
+      if (lv_event_get_code(e) == LV_EVENT_CLICKED) boardPickFile(".json,application/json");
+    });
+#endif
     setNote(c, "Replaces identity, channels and contacts with the backup's, then restarts.");
   }
 
@@ -50441,6 +50518,9 @@ static int bleKbdLuaCode(int key) {
 
 #if defined(HAS_CARDKB)
 static int cardKbUiKey(int raw) {
+  // A keyboard that already speaks Unicode (the browser's: any script, emoji, the phone's
+  // own keyboard) hands over text as BLE_KEY_TEXT | code point. A CardKB never sets it.
+  if (raw & BLE_KEY_TEXT) return raw;
   switch (raw) {
     case 0x08:
     case 0x7F: return BLE_KEY_BACKSPACE;
@@ -52565,16 +52645,23 @@ static void bleKbdUiTick() {
   static bool s_was_external_connected = false;
   if (external_connected != s_was_external_connected) {
     s_was_external_connected = external_connected;
+    // A phone's own keyboard (CAP_NATIVE_KEYBOARD) only types: no focus ring, no tab
+    // hotkeys and their letters, which belong to a keyboard with keys to navigate by.
+    bool nav_keys = external_connected;
+#if CAP_NATIVE_KEYBOARD
+    if (boardNativeKeyboard()) nav_keys = false;
+#endif
 #if BLE_KBD_OWNS_NAV
-    bleKbdNavEnable(external_connected);
+    bleKbdNavEnable(nav_keys);
 #endif
 #if !CAP_KEYBOARD
     if (external_connected) externalKbdTookOverField();
 #endif
 #if CAP_KEYPAD_NAV
-    s_ble_kbd_hotkeys = external_connected;
+    s_ble_kbd_hotkeys = nav_keys;
     navMenubarKeysSync();
 #endif
+    (void)nav_keys;
   }
 #if CAP_BLE_KEYBOARD
   BleKbd::Device dev = {};
@@ -53514,7 +53601,13 @@ static void openPowerMenu() {
 #endif
   lv_obj_t* card = lv_obj_create(s_power_menu);
   lv_obj_remove_style_all(card);
+#if CAP_USB_FLASH
   lv_obj_set_size(card, card_w, card_h);
+#elif !defined(PIN_USER_BTN) || defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
+  lv_obj_set_size(card, card_w, p_y0 + 2 * p_step + 8);   // Reboot, Cancel (no Download mode)
+#else
+  lv_obj_set_size(card, card_w, p_y0 + 3 * p_step + 8);   // Power off, Reboot, Cancel
+#endif
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 10);
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
@@ -53570,7 +53663,7 @@ static void openPowerMenu() {
   const int p_y = p_y0 + p_step;
 #endif
   mk(TR(LV_SYMBOL_REFRESH "  Reboot"),         powerRebootCb,   0,        p_y);
-#if !defined(HAS_RAK_TAP_V2)
+#if !defined(HAS_RAK_TAP_V2) && CAP_USB_FLASH
   mk(TR(LV_SYMBOL_DOWNLOAD "  Download mode (wait for USB flash)"), powerDownloadCb, 0,        p_y + p_step, true);
   mk(TR("Cancel"), powerCancelCb, 0, p_y + 2 * p_step);
 #else
@@ -54881,6 +54974,7 @@ static void luaStoreParseCatalog() {
         luaJsonField(obj, "ver", c.ver, sizeof c.ver)) {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
       if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
+      if (!luaJsonField(obj, "radio", c.radio, sizeof c.radio)) c.radio[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -55379,7 +55473,7 @@ static void luaStoreRebuildList() {
     };
 
     lv_obj_t* hint = lv_label_create(s_luastore_list);
-#if CAP_BUILTIN_LANGS
+#if CAP_BUILTIN_LANGS && !CAP_STORE_DOWNLOADS
     lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply."));
 #else
     lv_label_set_text(hint, TR("Tap Use to switch - the device reboots to apply. Language files live in /lang on the storage; edit them or add your own."));
@@ -55389,7 +55483,7 @@ static void luaStoreRebuildList() {
     lv_obj_set_width(hint, W - 12);
     lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
 
-#if CAP_BUILTIN_LANGS
+#if CAP_BUILTIN_LANGS && !CAP_STORE_DOWNLOADS
     // All translations ship in the image on this board: a picker, no downloads.
     for (uint8_t l = 0; l < LANG_COUNT; ++l) {
       lv_obj_t* row = langRow(kUiLangNames[l], nullptr);
@@ -55585,7 +55679,8 @@ static void luaStoreRebuildList() {
     const bool cur = inst && strcmp(inst->ver, s_lua_cat[i].ver) == 0;
     if (!inst) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     else if (!cur) lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_STATUS_INFO), LV_PART_MAIN);
-    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap);
+    const bool runnable = luaStoreBoardMeets(s_lua_cat[i].requires_cap) &&
+                          (CAP_RADIO_TOOLS || strcmp(s_lua_cat[i].radio, "own") != 0);
     lv_label_set_text(bl, !runnable ? TR("N/A") : !inst ? TR("Get") : cur ? TR("Remove") : TR("Update"));
     lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
     lv_obj_center(bl);
@@ -55702,7 +55797,7 @@ static void openLuaStorePage() {
     lv_obj_set_pos(bar, 6, 4);
     lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
     static const char* const kStoreTabs[3] = { "Apps", "Built-in", "Languages" };
-#if CAP_BUILTIN_LUA_APPS
+#if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
     // This board ships its apps and languages inside the image, so there is
     // nothing to browse or install — the page is a picker, not a shop.
     const int t_first = 1, t_count = 2;
@@ -55761,7 +55856,7 @@ static void openLuaStorePage() {
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
 
-#if CAP_BUILTIN_LUA_APPS
+#if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
   if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
 #endif
   appPageBeginSlim(TR("Store"), &closeLuaStorePage);   // one-line bar; the tab bar is the page header
@@ -56159,13 +56254,15 @@ static const AppTileDef k_app_tiles[] = {
   { UI_ICON_AT_SIGN,            "Mentions",  APPACT_MENTIONS,  HUE_MSG },
   { UI_ICON_MAP_PIN,            "Map",       APPACT_MAP,       HUE_PLACE },
   { UI_ICON_RADIO,              "Advertise", APPACT_ADVERT,    HUE_RADIO },
+#if CAP_RADIO_TOOLS
   { UI_ICON_SIGNAL,             "Signal",    APPACT_SIGNAL,    HUE_RADIO },
   { UI_ICON_RADAR,              "Discover",  APPACT_DISCOVER,  HUE_RADIO },   // active node-discovery sweep
   { UI_ICON_AUDIO_LINES,        "Spectrum",  APPACT_SPECTRUM,  HUE_RADIO },   // RF spectrum analyzer
+#endif
 #if defined(HAS_TOUCH_UI)
   { UI_ICON_SQUARE_TERMINAL,    "Terminal",  APPACT_TERMINAL,  HUE_SYS },
 #endif
-#if !defined(HAS_TANMATSU)
+#if !defined(HAS_TANMATSU) && CAP_SCREEN_MIRROR
   { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // headless web-resolution UI
   { UI_ICON_CAST,               "VNC",       APPACT_VNC,       HUE_SYS },     // browser screen mirror
 #endif
@@ -74467,6 +74564,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #elif defined(HAS_CROWPANEL_50)
     g_lv.disp_drv.hor_res  = s_remote_mode ? (s_remote_landscape ? 400 : 240) : (ui_landscape ? 800 : 480);
     g_lv.disp_drv.ver_res  = s_remote_mode ? (s_remote_landscape ? 240 : 400) : (ui_landscape ? 480 : 800);
+#elif defined(WADA_WEB)
+    // The web board's canvas (web/platform/WebDisplay.h): picked at boot from the window
+    // (800x480 landscape, or portrait on a phone), already upright; no remote mode.
+    g_lv.disp_drv.hor_res  = WADA_WEB_W;
+    g_lv.disp_drv.ver_res  = WADA_WEB_H;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -78942,6 +79044,16 @@ void UITask::loop() {
   discoveredFlushIfDue(now);   // persist the discovered ring (rate-capped) so it survives reboot
   uiCp("ui:gps");
   gpsSaverTick((uint32_t)now);   // the GPS saver: rest the receiver between position checks
+#if CAP_FILE_HANDOFF
+  {   // a backup the visitor picked on the computer (Settings > Backups): confirm, import
+    char picked[96];
+    if (boardTakePickedFile(picked, sizeof picked)) {
+      char stored[110];
+      snprintf(stored, sizeof stored, "int:%s", picked);
+      confirmBackupImport(stored);
+    }
+  }
+#endif
   trackTick((uint32_t)now);      // Map options > Record track: a GPX point as we move
   updateGpsLocation(now);
   uiCp("ui:timers");   // GPS sync/persist is its own bucket: it can write prefs   // sync + persist node location from GPS once fixed

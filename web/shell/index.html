@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="wadamesh">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<title>wadamesh in your browser</title>
+<meta name="description" content="The real wadamesh touch UI, running in your browser on a demo mesh or your own MeshCore node.">
+<meta name="theme-color" content="#000400">
+<link rel="icon" href="wadamesh-mark.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com" crossorigin>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&display=swap" crossorigin="anonymous">
+<link rel="stylesheet" href="app.css?v=__WADA_BUILD__">
+</head>
+<body>
+<header class="bar">
+  <a class="brand" href="https://wadamesh.com/" title="wadamesh.com">
+    <img src="wadamesh-mark.svg" alt="" width="30" height="20"><span>wadamesh</span>
+  </a>
+  <span id="mode" class="badge" title="A scripted neighbourhood: nothing you send leaves this browser">Demo</span>
+  <span class="spacer"></span>
+  <button id="btn-pair" class="btn" type="button" hidden>Reconnect</button>
+  <button id="btn-connect" class="btn primary" type="button">Connect</button>
+  <button id="btn-reset" class="btn" type="button" title="Reset demo data">Reset<span class="wide"> demo data</span></button>
+  <div class="more">
+    <button id="btn-more" class="btn icon" type="button" aria-label="More" title="More" aria-haspopup="menu" aria-expanded="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg>
+    </button>
+    <div id="more-menu" class="menu" role="menu" hidden>
+      <button id="btn-backup" type="button" role="menuitem">Back up this browser<span>Everything this page keeps for the demo or your node, as one file</span></button>
+      <button id="btn-restore" type="button" role="menuitem">Restore a browser backup<span>Replaces what this page keeps, then restarts</span></button>
+      <button id="btn-reset2" type="button" role="menuitem">Reset demo data<span>The demo starts fresh</span></button>
+    </div>
+  </div>
+  <input id="file-pick" type="file" hidden>
+  <textarea id="ime" autocapitalize="sentences" autocomplete="off" spellcheck="true" enterkeyhint="send"
+            aria-label="Message text" tabindex="-1"></textarea>
+  <button id="btn-full" class="btn icon" type="button" aria-label="Fullscreen" title="Fullscreen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+</header>
+
+<main id="stage">
+  <div id="frame">
+    <canvas id="screen" width="800" height="480" tabindex="0" aria-label="wadamesh device screen"></canvas>
+    <button id="kb-pill" class="btn primary" type="button" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>Keyboard</button>
+    <div id="overlay" role="status">
+      <img src="wadamesh-mark.svg" alt="" width="120" height="80">
+      <p id="status">Loading wadamesh</p>
+      <p id="detail" class="detail"></p>
+    </div>
+  </div>
+</main>
+
+<p class="hint">Mouse or finger = touch. Your keyboard types into the focused field, Enter sends, Esc goes back.
+  Everything stays in this browser.</p>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="connect-dlg" aria-labelledby="connect-title">
+  <form method="dialog">
+    <h2 id="connect-title">Connect your node</h2>
+    <p class="lead">Run this UI on your own MeshCore companion node instead of the demo.
+      Its contacts, channels and messages stay on the node and in this browser.</p>
+    <div class="choices">
+      <button class="choice" type="button" data-kind="web-serial" hidden>
+        <strong>USB cable</strong><span>Plug the node into this computer</span></button>
+      <button class="choice" type="button" data-kind="ble" hidden>
+        <strong>Bluetooth</strong><span>Pair with the node (it may ask for its PIN)</span></button>
+      <div class="choice wifi">
+        <strong>Wi-Fi</strong><span>The node's address on your network (its Wi-Fi on)</span>
+        <div class="row">
+          <input id="ws-host" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+                 placeholder="192.168.1.50" aria-label="Node address">
+          <button class="btn primary" type="button" data-kind="ws">Connect</button>
+        </div>
+      </div>
+    </div>
+    <p id="connect-note" class="note" hidden></p>
+    <div class="actions"><button class="btn" value="cancel">Cancel</button></div>
+  </form>
+</dialog>
+
+<script src="app.js?v=__WADA_BUILD__"></script>
+</body>
+</html>

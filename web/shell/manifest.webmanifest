@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "wadamesh",
+  "short_name": "wadamesh",
+  "description": "The wadamesh touch UI in your browser: a demo mesh, or your own MeshCore node over USB, Bluetooth or Wi-Fi.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#000400",
+  "theme_color": "#000400",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
