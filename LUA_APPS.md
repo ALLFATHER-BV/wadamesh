@@ -37,7 +37,9 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
 - `wada.ui` — the app's root container + widgets: `canvas(w,h)` (draw_rect,
   draw_line, draw_text, draw_circle, fill, blit-from-table), `label`, `chart`
   (the Airtime/Monitor primitive), `button`, `list`. Theme colours provided
-  (`wada.ui.colors`), fonts by size class only (12/14/16 → g_font_*).
+  (`wada.ui.colors`; on the 1-bit T-Deck Pro/Max the host inverts the logical
+  palette at draw time, so `bg` renders paper-white), fonts by size class only
+  (12/14/16 → g_font_*).
 - `wada.input` — events into `on_input`: touch x/y down/up, key codes,
   trackball dirs. (Snake's swipe steering maps here; the existing
   SnakeGame gesture path shows the shape.)
