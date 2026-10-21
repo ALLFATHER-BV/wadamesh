@@ -14753,6 +14753,15 @@ static lv_coord_t setRowText(lv_obj_t* row, const char* title, const char* help,
   return y - y0;
 }
 
+// A tap on something that stands for a switch (its row, a status line under it): flip
+// the switch (the event's user data) and tell its owner, as a tap on the switch would.
+static void setSwitchTapCb(lv_event_t* e) {
+  lv_obj_t* s = static_cast<lv_obj_t*>(lv_event_get_user_data(e));
+  if (!s || !lv_obj_is_valid(s) || lv_obj_has_state(s, LV_STATE_DISABLED)) return;
+  if (lv_obj_has_state(s, LV_STATE_CHECKED)) lv_obj_clear_state(s, LV_STATE_CHECKED);
+  else                                       lv_obj_add_state(s, LV_STATE_CHECKED);
+  lv_event_send(s, LV_EVENT_VALUE_CHANGED, nullptr);
+}
 // A name (and help) on the left, a switch on the right. Returns the switch.
 static lv_obj_t* setSwitchRow(lv_obj_t* card, const char* title, const char* help, bool on,
                               lv_event_cb_t cb, void* ud = nullptr) {
@@ -14764,6 +14773,12 @@ static lv_obj_t* setSwitchRow(lv_obj_t* card, const char* title, const char* hel
   if (on) lv_obj_add_state(sw, LV_STATE_CHECKED);
   if (cb) lv_obj_add_event_cb(sw, cb, LV_EVENT_VALUE_CHANGED, ud);
   setRowText(row, title, help, w - 58, 6);
+  // The switch alone is a small target (about 50x29 on the 320x240 Attaky), and a tap
+  // just under it fell through to the card. A tap anywhere on the row, or a few pixels
+  // past its edge, now flips the switch as if it had been tapped.
+  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(row, SC(8));
+  lv_obj_add_event_cb(row, setSwitchTapCb, LV_EVENT_CLICKED, sw);
   return sw;
 }
 
@@ -17783,7 +17798,7 @@ static void buildGpsPage() {
 #else
   {
     lv_obj_t* c = setCard("");
-    setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
+    lv_obj_t* gps_sw = setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
     // The live fix status, re-texted every tick while the page is open
     // (refreshSettingsSectionSubtitles). Its height is pinned to the tallest text it can
     // hold, so a fix arriving never pushes the rows below it around.
@@ -17793,6 +17808,10 @@ static void buildGpsPage() {
     lv_obj_set_style_text_color(g_set_modal.gps_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_text_font(g_set_modal.gps_status, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_pad_left(g_set_modal.gps_status, 2, LV_PART_MAIN);
+    // The status sits right under the switch, where a slightly low tap lands; it belongs
+    // to the GPS row, so a tap on it flips the switch instead of doing nothing.
+    lv_obj_add_flag(g_set_modal.gps_status, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(g_set_modal.gps_status, setSwitchTapCb, LV_EVENT_CLICKED, gps_sw);
     {
       char probe[200];
       lv_coord_t worst_h = 0;
