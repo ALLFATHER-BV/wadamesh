@@ -2158,3 +2158,7 @@ you	du
 Flood in / out	Flood ein / aus
 Direct in / out	Direkt ein / aus
 Airtime TX / RX	Sendezeit TX / RX
+
+# Mesh Deck keyboard module strings
+module attached	Modul angeschlossen
+not attached	nicht angeschlossen

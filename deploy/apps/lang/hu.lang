@@ -2170,3 +2170,7 @@ you	te
 Flood in / out	Flood be / ki
 Direct in / out	Direkt be / ki
 Airtime TX / RX	Adásidő TX / RX
+
+# Mesh Deck keyboard module strings
+module attached	modul csatlakoztatva
+not attached	nincs csatlakoztatva

@@ -2160,3 +2160,7 @@ you	вие
 Flood in / out	Flood вход / изход
 Direct in / out	Директни вход / изход
 Airtime TX / RX	Ефирно време TX / RX
+
+# Mesh Deck keyboard module strings
+module attached	модулът е свързан
+not attached	не е свързан

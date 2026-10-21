@@ -2158,3 +2158,7 @@ you	jij
 Flood in / out	Flood in / uit
 Direct in / out	Direct in / uit
 Airtime TX / RX	Zendtijd TX / RX
+
+# Mesh Deck keyboard module strings
+module attached	module aangesloten
+not attached	niet aangesloten

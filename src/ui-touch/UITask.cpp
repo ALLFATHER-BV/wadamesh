@@ -3180,6 +3180,15 @@ static inline lv_coord_t m9ChatHeadH() {
   return (lv_coord_t)(3 + lv_font_get_line_height(&g_font_semi_14) + lv_font_get_line_height(&g_font_12) + 2);
 }
 #endif
+// The chat header's foot: where a conversation's message list starts its content on
+// the boards whose header floats over the list (makeChatDetail).
+static inline lv_coord_t chatHeadFootY() {
+#if defined(HAS_THINKNODE_M9)
+  return m9ChatHeadH();
+#else
+  return chatBarH();
+#endif
+}
 static inline lv_coord_t chatScreenH()   { return lv_disp_get_ver_res(nullptr) - chatContentTop(); }
 static inline lv_coord_t chatKbH()       { return chatLandscape() ? (lv_disp_get_ver_res(nullptr) / 2) : CHAT_KB_H; }
 // The message list spans the FULL height under the header down to the screen bottom
@@ -8690,6 +8699,11 @@ static void deviceHardwareText(char* out, size_t cap) {
 #if defined(HAS_TDECK_KEYBOARD)
   if (n > 0 && (size_t)n < cap)
     snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"), deviceKeyboardText());
+#elif defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module comes and goes; the line follows it (refreshed on the change).
+  if (n > 0 && (size_t)n < cap)
+    snprintf(out + n, cap - n, "\n%s  %s", TR("Keyboard:"),
+             attakyKeyboardPresent() ? TR("module attached") : TR("not attached"));
 #endif
 }
 
@@ -10236,6 +10250,12 @@ static void showKb(LvChatPanel* p, bool reveal) {
 // was the typing target before this tap, not because of it.
 static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
 static void externalKbdNoteFieldPress(lv_obj_t* ta) {
+#if defined(HAS_ATTAKY_MESH_KEYBOARD)
+  // The keyboard module summons the keys with its '#'. A tap must not: a settings
+  // field is often bound already when the page opens (Profile's node name), so the
+  // first tap counted as a "second" one and brought the keys up over the module.
+  if (attakyKeyboardPresent()) { s_osk_press_ta = nullptr; return; }
+#endif
   const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
   s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
 }
@@ -40216,12 +40236,13 @@ static void makeChatDetail(LvChatPanel& p) {
   // panel's chat content already starts below its whole header (chatContentTop).
 #if defined(TLORA_PAGER) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || CAP_ROUND_CORNERS
   lv_obj_set_style_pad_top(p.msgs, 6, LV_PART_MAIN);
-#elif defined(HAS_THINKNODE_M9)
-  // Content starts at the conversation header's foot (m9ChatHeadH). Set here, before
-  // any row is placed: the list is virtualised and does not move rows it has laid out.
-  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(m9ChatHeadH() - chatContentTop())), LV_PART_MAIN);
 #else
-  lv_obj_set_style_pad_top(p.msgs, STATUSBAR_H + 6, LV_PART_MAIN);
+  // Every other board's chat header is a double bar floating over the list's top:
+  // content starts at the header's foot (chatHeadFootY). The old 6 px more left a
+  // strip of bare background between the header's shade and the first message (#627).
+  // Set here, before any row is placed: the list is virtualised and does not move
+  // rows it has laid out.
+  lv_obj_set_style_pad_top(p.msgs, LV_MAX((lv_coord_t)0, (lv_coord_t)(chatHeadFootY() - chatContentTop())), LV_PART_MAIN);
 #endif
   // The composer floats over the list's lower edge (transparent row), so reserve a
   // bottom inset == the composer height: the newest bubble rests just above it and
@@ -58233,8 +58254,8 @@ static inline void sbSize(lv_obj_t* o, lv_coord_t w, lv_coord_t h) {
     lv_obj_set_size(o, w, h);
 }
 
-#if defined(HAS_THINKNODE_M9)
-static void statusBarPackRight();   // below; puts the GPS glyph back in its row (#627)
+#if !CAP_ROUND_CORNERS
+static void statusBarPackRight();   // below; puts the GPS glyph back in its row on leaving a chat
 #endif
 static void chatHeaderApply(bool chat_open) {
   if (!g_statusbar.chat_avatar) return;
@@ -58283,16 +58304,16 @@ static void chatHeaderApply(bool chat_open) {
 #else
       for (lv_obj_t* o : { g_statusbar.clock, g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_y(o, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+      if (g_statusbar.gps_icon) {   // back to its packed slot in the row (below)
+        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
+        statusBarPackRight();
+      }
 #if defined(HAS_THINKNODE_M9)
-      // The M9 header resized the bar and moved the right-hand glyphs (below): put them back.
+      // The M9 header resized the bar and stepped the battery and layout tag in (below): put them back.
       lv_obj_set_height(g_statusbar.root, statusBarCurH());
       for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_x(o, 0, LV_PART_MAIN);
       if (g_statusbar.layout_label) lv_obj_set_style_translate_y(g_statusbar.layout_label, 0, LV_PART_MAIN);
-      if (g_statusbar.gps_icon) {
-        lv_obj_set_style_translate_y(g_statusbar.gps_icon, -(lv_coord_t)(s_statusbar_tall ? STATUSBAR_H / 2 : 0), LV_PART_MAIN);
-        statusBarPackRight();
-      }
 #endif
 #endif
       return;
@@ -58377,7 +58398,20 @@ static void chatHeaderApply(bool chat_open) {
 #endif
   const char* clk = lv_label_get_text(g_statusbar.clock);
   const lv_coord_t clk_w = lv_txt_get_width(clk, strlen(clk), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10);
+  lv_coord_t gps_room = 0;
+#if !CAP_ROUND_CORNERS
+  // The GPS glyph joins the clock and battery: just left of the clock, on their line.
+  // Left in its packed slot it sat past the radio glyphs a chat hides (they only go
+  // transparent, so they keep their room), apart from the clock.
+  if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
+    const char* gt = lv_label_get_text(g_statusbar.gps_icon);
+    const lv_coord_t gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    sbAlign(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6)), ymid);
+    sbTranslateY(g_statusbar.gps_icon, right_up);
+    gps_room = gps_w + SBX(6);
+  }
+#endif
+  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room;
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
@@ -58449,17 +58483,16 @@ static void chatHeaderApply(bool chat_open) {
       lv_obj_set_style_translate_y(g_statusbar.layout_label, line_dy, LV_PART_MAIN);
       right_x += lay_w + SBX(6);
     }
-    lv_coord_t gps_w = 0;
-    if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
-      const char* gt = lv_label_get_text(g_statusbar.gps_icon);
-      gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    // The GPS glyph was placed left of the clock above (gps_room); it steps in with the group.
+    if (gps_room) {
       lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -right_x, 0);
       lv_obj_set_style_translate_y(g_statusbar.gps_icon, line_dy, LV_PART_MAIN);
     }
-    // The title stays short of the clock (and the layout code and GPS glyph left of it).
+    // The title stays short of the clock, the layout code and the GPS glyph: text_w
+    // already leaves the clock's and GPS glyph's room, so the corner's step and the
+    // layout code come off here.
     {
-      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (gps_w ? gps_w + SBX(6) : 0)
-                                                    - (lay_w ? lay_w + SBX(6) : 0));
+      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (lay_w ? lay_w + SBX(6) : 0));
       lv_obj_set_width(g_statusbar.left_label, tw);
       lv_obj_set_width(g_statusbar.chat_sub, tw);
       char ttl[sizeof(s_chat_title) + 4];
@@ -79803,6 +79836,21 @@ void UITask::loop() {
 #if defined(HAS_ATTAKY_MESH_KEYBOARD)
   attakyNotificationTick(now);
   {
+    // The keyboard module attached or removed while a field is open: show that field
+    // again, so the on-screen keys go down for the module or come back without it
+    // (kbMirrorActive decides). Not over keys the '#' summoned for this field.
+    static bool s_akb_seen = false;
+    if (attakyKeyboardPresent() != s_akb_seen) {
+      s_akb_seen = attakyKeyboardPresent();
+      deviceRefreshLabels();   // the Device page's "Keyboard:" line
+      LvChatPanel* const kp = s_kb_panel;
+      lv_obj_t* const    kf = s_kb_bind_ta;
+      if ((kp || kf) && !s_osk_forced) {
+        hideKb();
+        if (kp && kp->composer_ta && lv_obj_is_valid(kp->composer_ta)) showKb(kp);
+        else if (kf && lv_obj_is_valid(kf))                             kbMirrorBind(kf);
+      }
+    }
     lv_obj_t* akb_ta = g_lv.keyboard ? lv_keyboard_get_textarea(g_lv.keyboard) : nullptr;
     attakyKeyboardPoll(akb_ta != nullptr);
     for (int kbi = 0; akb_ta && kbi < 16; ++kbi) {
