@@ -3263,7 +3263,8 @@ static bool      s_accent_popups     = true;
 // at boot BEFORE the screens are built so the layout reflows to the rotated
 // resolution. The keyboard-landscape toggle above is transient and layers on
 // top of this; hideKb() reverts to s_ui_rotation (not hard portrait).
-// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270.
+// Stored as the lv_disp_rot_t value: 0 = portrait, 1 = ROT_90, 3 = ROT_270, and on
+// the T-Display P4 also 2 = portrait 180.
 static uint8_t   s_ui_rotation       = 0;
 
 // The rotation the keyboard should use when shown: if the UI is already in a
@@ -3272,6 +3273,11 @@ static uint8_t   s_ui_rotation       = 0;
 static inline uint8_t effectiveKbRotation() {
   const bool ui_landscape =
       (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270);
+#if defined(HAS_TDISPLAY_P4)
+  // Portrait 180 (#698) is a base of its own too: the keyboard shows in it rather
+  // than dropping LVGL back to the unturned portrait while it is up.
+  if (s_ui_rotation == LV_DISP_ROT_180) return s_ui_rotation;
+#endif
   return ui_landscape ? s_ui_rotation : s_kb_rotation;
 }
 
@@ -8011,6 +8017,9 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
       } else if (s_ui_rotation == LV_DISP_ROT_270) {
         p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - y);
         p.y = static_cast<lv_coord_t>(x);
+      } else if (s_ui_rotation == LV_DISP_ROT_180) {   // portrait 180 (#698)
+        p.x = static_cast<lv_coord_t>(dd.hor_res - 1 - x);
+        p.y = static_cast<lv_coord_t>(dd.ver_res - 1 - y);
       }
     }
 #endif
@@ -17098,6 +17107,31 @@ static void rotateScreenCycleCb(lv_event_t* e) {
   rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
 }
 
+#if defined(HAS_TDISPLAY_P4)
+// The T-Display P4 picks from four orientations (#698) instead of the toggle above,
+// each an LVGL rotation (LVGL turns this MIPI panel in software): Portrait,
+// Portrait 180, Landscape (ROT_90, the toggle's landscape) and Landscape 180.
+static const uint8_t kUiRotOrder[4] = { LV_DISP_ROT_NONE, LV_DISP_ROT_180, LV_DISP_ROT_90, LV_DISP_ROT_270 };
+
+static int uiRotationPicked() {
+  const uint8_t cur = touchPrefsGetUiRotation();
+  for (int i = 0; i < 4; ++i) if (kUiRotOrder[i] == cur) return i;
+  return 0;
+}
+
+static void uiRotationPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i > 3 || i == uiRotationPicked()) return;
+  if (!touchPrefsSetUiRotation(kUiRotOrder[i])) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1200);
+    return;
+  }
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+  rebootWithNotice(TR("Rotating\xe2\x80\xa6 restarting to apply it"));
+}
+#endif
+
 // ---- Manual clock offset (Device modal): nudge local time +/- whole hours ----
 // Applied on top of the automatic (NTP / companion / mesh) time, purely at the
 // display layer via the POSIX TZ; the RTC and mesh timestamps stay UTC.
@@ -17686,7 +17720,12 @@ static void buildDisplayPage() {
     setChoiceRow(c, "Text size", "Applies after a restart.", sizes, (int)(sizeof sizes / sizeof sizes[0]),
                  touchPrefsGetUiScale(), uiScalePickCb);
 #endif
-#if CAP_ROTATABLE
+#if defined(HAS_TDISPLAY_P4)
+    {
+      const char* orient[] = { TR("Portrait"), TR("Portrait 180"), TR("Landscape"), TR("Landscape 180") };
+      setChoiceRow(c, "Orientation", "Applies after a restart.", orient, 4, uiRotationPicked(), uiRotationPickCb);
+    }
+#elif CAP_ROTATABLE
     setActionRow(c, UI_ICON_REFRESH_CW, "Orientation", uiRotationLabel(), rotateScreenCycleCb, nullptr,
                  SET_NORMAL, false);
 #endif
@@ -73907,9 +73946,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Same mechanism, from the saved preference rather than pinned: this panel is
     // MIPI-DSI too, so there is no MADCTL to rotate and LVGL has to turn each
     // flushed area into panel coordinates itself. The logical surface becomes
-    // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows.
-    if (ui_landscape) lv_disp_set_rotation(lv_disp_get_default(),
-                                           static_cast<lv_disp_rot_t>(s_ui_rotation));
+    // 616x284 (AMOLED) or 584x270 (LCD) and every layout query follows. Portrait
+    // 180 (#698) turns it the same way, at the portrait size.
+    if (s_ui_rotation != LV_DISP_ROT_NONE) lv_disp_set_rotation(lv_disp_get_default(),
+                                                                static_cast<lv_disp_rot_t>(s_ui_rotation));
 #endif
 
     // Make the full glyph set the INHERITED default font. The default theme sets
@@ -73938,7 +73978,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       }
     }
 
+#if defined(HAS_TDISPLAY_P4)
+    if (s_ui_rotation != LV_DISP_ROT_NONE) {           // a landscape, or Portrait 180 (#698)
+#else
     if (ui_landscape) {
+#endif
 #if !defined(HAS_TDISPLAY_P4)
       applyHardwarePanelRotation(s_ui_rotation);       // rotate the ST7789
 #endif
