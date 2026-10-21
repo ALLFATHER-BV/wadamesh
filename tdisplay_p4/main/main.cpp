@@ -25,6 +25,8 @@
 #include <WiFi.h>
 #include "../../src/helpers/esp32/MultiTransportCompanionInterface.h"
 #include <helpers/esp32/WifiRuntimeStore.h>   // wifiConfig* (runtime Wi-Fi state the loop drives)
+#include <helpers/esp32/WifiCrashGuard.h>   // Wi-Fi off after a crash right after starting it
+#include "i18n.h"
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
 #include "../../src/helpers/esp32/BootTimeSync.h"   // opt-in cold-boot clock sync over saved Wi-Fi (#383)
 #include "esp_hosted.h"
@@ -308,6 +310,7 @@ static void wadameshSetup() {
 
 #if TDP4_C6_HOSTED
   wifiConfigBegin();   // NVS only, no radio — safe this early, and the getters assume it
+  wifi_crash_guard::boot();   // before anything can start Wi-Fi
 #endif
 
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
@@ -510,6 +513,7 @@ extern "C" void app_main(void) {
 
   for (;;) {
     ui_task.loop();
+    if (wifi_crash_guard::tick()) ui_task.showAlert(TR("Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again."), 9000);
 
     // WiFi.* here is the C6WifiShim facade (AT-over-SDIO), so this state machine drives REAL joins:
     // start once the c6_at worker has the AT link up + the user wants Wi-Fi. The 10 s retry branch
@@ -539,7 +543,7 @@ extern "C" void app_main(void) {
     }
     else if (wifi_radio_en != wifi_radio_prev) {
       wifi_radio_prev = wifi_radio_en;
-      if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
+      if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); wifi_crash_guard::stopped(); }
       wifi_started = false;
     }
     if (wifiConfigConsumeApplyRequest()) {
@@ -552,6 +556,7 @@ extern "C" void app_main(void) {
     if (wifi_radio_en) {
       if (!wifi_started) {
         wifi_started = true;
+        wifi_crash_guard::started();
         WiFi.mode(WIFI_STA);
         if (wifiConfigHasRuntime()) {
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];

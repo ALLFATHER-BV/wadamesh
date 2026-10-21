@@ -18,6 +18,8 @@
 #include <WiFi.h>
 #include "../../src/helpers/esp32/MultiTransportCompanionInterface.h"
 #include <helpers/esp32/WifiRuntimeStore.h>
+#include <helpers/esp32/WifiCrashGuard.h>   // Wi-Fi off after a crash right after starting it
+#include "i18n.h"
 #include <helpers/esp32/TouchPrefsStore.h>
 #include "../../src/helpers/esp32/BootTimeSync.h"
 #include "esp_hosted.h"
@@ -170,6 +172,7 @@ static void wadameshSetup() {
   the_mesh.begin(disp != NULL);
 
   wifiConfigBegin();   // NVS only, no radio
+  wifi_crash_guard::boot();   // before anything can start Wi-Fi
 
   serial_interface.begin(Serial, TCP_PORT, WS_PORT);
   serial_interface.setBroadcastResponses(true);
@@ -221,6 +224,7 @@ extern "C" void app_main(void) {
 
   for (;;) {
     ui_task.loop();
+    if (wifi_crash_guard::tick()) ui_task.showAlert(TR("Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again."), 9000);
 
     bool wifi_radio_en = wifiConfigWantsWifi();
     if (!wifi_radio_inited) {
@@ -228,7 +232,7 @@ extern "C" void app_main(void) {
       wifi_radio_prev   = wifi_radio_en;
     } else if (wifi_radio_en != wifi_radio_prev) {
       wifi_radio_prev = wifi_radio_en;
-      if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
+      if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); wifi_crash_guard::stopped(); }
       wifi_started = false;
     }
     if (wifiConfigConsumeApplyRequest()) {
@@ -241,6 +245,7 @@ extern "C" void app_main(void) {
     if (wifi_radio_en) {
       if (!wifi_started) {
         wifi_started = true;
+        wifi_crash_guard::started();
         WiFi.mode(WIFI_STA);
         if (wifiConfigHasRuntime()) {
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];
