@@ -14989,6 +14989,9 @@ static lv_obj_t* setField(lv_obj_t* parent, const char* title, const char* place
   lv_obj_t* ta = lv_textarea_create(col);
   lv_obj_set_size(ta, w, SC(32));
   lv_textarea_set_one_line(ta, true);
+  // Not inherited: inheritance here lands on LV_FONT_DEFAULT, whose Montserrat has no
+  // fallback chain, so anything outside it draws as LVGL's empty box.
+  lv_obj_set_style_text_font(ta, &g_font_14, LV_PART_MAIN);
   if (placeholder && placeholder[0]) taSetPlaceholder(ta, TR(placeholder));
   if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
   attachSettingsTaEvents(ta);
