@@ -62,8 +62,8 @@
 
 #elif defined(HAS_WIO_TRACKER_L2)        // ===== Seeed Wio Tracker L2 (ESP32-S3) =====
   #define CAP_TOUCH        1
-  #define CAP_ROTATABLE    0
-  #define CAP_LARGE_SCREEN 0   // fixed 320x240 landscape
+  #define CAP_ROTATABLE    1   // native 320x240 landscape = UI rotation 3, as on the CrowPanels (#698)
+  #define CAP_LARGE_SCREEN 0   // 320x240
   #define CAP_SD           0   // SD_MMC, not Arduino SD
   #define CAP_FILESYSTEM   1
   #define CAP_GPS          1
@@ -189,7 +189,8 @@
   // header, C6 Wi-Fi/BLE (esp-hosted; Elecrow documents 2.12.3, but V1.0 units have been seen with
   // 2.3.0, which still comes up: main.cpp logs the version), SD_MMC 1-bit. 32 MB PSRAM.
   #define CAP_TOUCH        1   // GT911 capacitive touch
-  #define CAP_ROTATABLE    0   // native 1024x600 landscape; the DSI panel cannot rotate in hardware
+  #define CAP_ROTATABLE    1   // native 1024x600 landscape = UI rotation 3; the DSI panel cannot rotate in
+                               // hardware, so LVGL turns it in software like the T-Display P4 (#701)
   #define CAP_LARGE_SCREEN 1   // large-panel layouts + the UI-size fonts, rendered at native resolution
   #define CAP_SD           0   // card is SD_MMC (slot 0), exposed through CAP_FILESYSTEM like the T-Display P4
   #define CAP_FILESYSTEM   1   // internal LittleFS 'storage' + SD_MMC

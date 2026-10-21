@@ -267,12 +267,22 @@ bool heltecV4CapTouchBegin() {
   return true;
 }
 
+// Scale to the panel, then turn the point into the frame LVGL shows (#701): s_point_rotation
+// is the LVGL software rotation, the same maps as the T-Display P4's mapRaw (lvglTouchRead in
+// UITask undoes them for LVGL). Swipe detection and the direct readers work in this frame.
 static void mapRaw(uint16_t rx, uint16_t ry, uint16_t* ox, uint16_t* oy) {
-  int sx = (int)rx, sy = (int)ry;
-  if (s_native_w != SCR_W) sx = sx * SCR_W / s_native_w;
-  if (s_native_h != SCR_H) sy = sy * SCR_H / s_native_h;
-  if (sx < 0) sx = 0; if (sx > SCR_W - 1) sx = SCR_W - 1;
-  if (sy < 0) sy = 0; if (sy > SCR_H - 1) sy = SCR_H - 1;
+  int px = (int)rx, py = (int)ry;
+  if (s_native_w != SCR_W) px = px * SCR_W / s_native_w;
+  if (s_native_h != SCR_H) py = py * SCR_H / s_native_h;
+  if (px < 0) px = 0; if (px > SCR_W - 1) px = SCR_W - 1;
+  if (py < 0) py = 0; if (py > SCR_H - 1) py = SCR_H - 1;
+  int sx, sy;
+  switch (s_point_rotation) {
+    case 1:  sx = (SCR_H - 1) - py; sy = px;               break;  // ROT_90 (600x1024)
+    case 2:  sx = (SCR_W - 1) - px; sy = (SCR_H - 1) - py; break;  // ROT_180
+    case 3:  sx = py;               sy = (SCR_W - 1) - px; break;  // ROT_270 (600x1024)
+    default: sx = px;               sy = py;               break;  // native landscape
+  }
   *ox = (uint16_t)sx;
   *oy = (uint16_t)sy;
 }

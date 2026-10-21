@@ -281,13 +281,15 @@ void CrowPanel50Display::clear() { _lcd.fillScreen(0); }
 
 // The UI's portrait is 0 and its upright landscape 3 (ROT_270), as on the 3.5.
 // The panel itself is native 800x480 landscape at LovyanGFX rotation 0, so map
-// 3 to that, 1 to landscape turned 180 degrees and 0 to portrait. LovyanGFX
-// rotates the framebuffer writes and the GT911 coordinates together.
+// 3 to that, 1 to landscape turned 180 degrees, 0 to portrait and 2 to portrait
+// turned 180 degrees. LovyanGFX rotates the framebuffer writes and the GT911
+// coordinates together.
 void CrowPanel50Display::setDisplayRotation(uint8_t rotation) {
   uint8_t r;
   switch (rotation) {
     case 3:  r = 0; break;
     case 1:  r = 2; break;
+    case 2:  r = 3; break;
     default: r = 1; break;
   }
   _lcd.setRotation(r);
