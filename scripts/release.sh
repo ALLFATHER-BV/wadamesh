@@ -49,6 +49,10 @@ if [ "$MODE" = "beta" ] && [ -z "${WADA_SKIP_WEB:-}" ]; then
   if command -v emcc >/dev/null && command -v emcmake >/dev/null; then
     echo "web gate: web/build.sh web"
     "$ROOT/web/build.sh" web || { echo "ERROR: the web build is broken (web/build.sh web); WADA_SKIP_WEB=1 skips this gate"; exit 1; }
+    # The native headless tour (same UI, host build): it is what caught the #629 double
+    # free as a crash, without a browser.
+    echo "web gate: web/build.sh smoke"
+    "$ROOT/web/build.sh" smoke || { echo "ERROR: the headless UI tour failed (web/build.sh smoke); WADA_SKIP_WEB=1 skips this gate"; exit 1; }
     if [ -d "$ROOT/web/node_modules/playwright" ]; then
       WEB_SHOTS="$(mktemp -d)"   # keep the tracked web/docs shots out of a release run
       echo "web gate: web/build.sh webtest"
