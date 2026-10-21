@@ -166,7 +166,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include <src/draw/sw/lv_draw_sw.h>   // the software blend: the aurora draws its rows with it
   #include "../helpers/input/HeltecV4CapTouch.h"
   #if CAP_TRACKBALL
-    #include <helpers/input/TDeckTrackball.h>
+    #include "../helpers/input/TDeckTrackball.h"   // QUOTED: this tree's copy (tdeckTrackballSetEnabled), not the lib's older one
   #endif
   #if defined(HAS_TDECK_KEYBOARD)
     #include "../helpers/input/TDeckKeyboard.h"
@@ -17064,7 +17064,11 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   touchPrefsSetLockOnScreenOff(on);
 #endif
   s_lock_on_screen_off = on;
-#if defined(HAS_TDECK_GT911)
+#if CAP_TRACKBALL
+  const char* unlock_hint = !on ? TR("Screen-off just dims")
+                          : tdeckTrackballEnabled() ? TR("Locks when screen off\n(hold the trackball to unlock)")
+                                                    : TR("Locks when screen off\n(press Enter to unlock)");
+#elif defined(HAS_TDECK_GT911)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the trackball to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_THINKNODE_M9)
   // M9 wording is the double-press from #407, which changed the gesture itself;
@@ -17219,10 +17223,14 @@ static void kbdNavToggleCb(lv_event_t* e) {
 // is checked, the others not.
 // The trackball's mode, applied and saved. Settings > Keyboard > Trackball and the
 // hold-to-switch gesture both land here.
+static void tbSetModeFlags(uint8_t mode);
 static void tbApplyMode(uint8_t mode) {
 #if defined(ESP32)
   touchPrefsSetTbMode(mode);
 #endif
+  if (tdeckTrackballEnabled()) tbSetModeFlags(mode);   // switched off: saved for when it is back on
+}
+static void tbSetModeFlags(uint8_t mode) {
   const bool was_nav = s_tb_nav;
   s_tb_nav    = (mode == TB_MODE_NAV);
   s_tb_scroll = (mode == TB_MODE_SCROLL);
@@ -17232,6 +17240,29 @@ static void tbApplyMode(uint8_t mode) {
     navHideFocus();         // leaving the D-pad: drop the focus ring
     if (!s_kbd_nav && s_nav_group) lv_group_remove_all_objs(s_nav_group);   // free the group if keys aren't using it
   }
+}
+
+// Settings > Keyboard > Use the trackball. A damaged ball rolls and clicks by itself:
+// it unlocked the screen, pressed buttons, even picked Reboot in a menu. Off, the
+// driver drops its motion and its click (tdeckTrackballSetEnabled, which the GPIO0
+// read in UITask::loop also checks), so nothing that reads the ball sees it: UI, lock
+// screen, screen wake, Lua apps, holds. The UI then runs as in scroll mode with
+// nothing rolling: no cursor, no D-pad focus ring. Enter unlocks the lock screen
+// while it is off (handleHwKey). On again, the saved mode comes back.
+static void tbSetEnabled(bool on) {
+#if defined(ESP32)
+  touchPrefsSetTrackballOn(on);
+#endif
+  tdeckTrackballSetEnabled(on);
+  s_tb_click_press = s_tb_click_pulse = false;
+  tbSetModeFlags(on ? touchPrefsGetTbMode() : TB_MODE_SCROLL);
+  if (!on && s_tb_cursor) lv_obj_add_flag(s_tb_cursor, LV_OBJ_FLAG_HIDDEN);
+}
+static void trackballOnToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  tbSetEnabled(on);
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Trackball on") : TR("Trackball off"), 1100);
 }
 
 // ---- Trackball mode card ---------------------------------------------------------
@@ -18762,6 +18793,17 @@ static void setNavKeyCards() {
 }
 #endif
 
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+static void p4KbLightPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i >= P4KB_LIGHT_STEPS) return;
+  p4KeyboardSetLightStep((uint8_t)i);
+  touchPrefsSetP4KbLight((uint8_t)i);
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+}
+#endif
+
 static void buildKeyboardPage() {
 #if KB_BL_DIMMABLE
   // Keyboard backlight (#84, the M9 since #664): a live slider plus one-tap presets.
@@ -18789,6 +18831,15 @@ static void buildKeyboardPage() {
                                nullptr, SET_NORMAL, false);
     s_pager_kbbl_lbl = (lv_obj_t*)lv_obj_get_user_data(r);
     setNote(c, "Tap to switch between off, on and auto.");
+  }
+#elif defined(HAS_TDISPLAY_P4_KEYBOARD)
+  {
+    // The clip-on keyboard's own light, apart from the screen's: the same four steps F11
+    // walks through. The screen brightness (Display, Control Center) never changes it.
+    lv_obj_t* c = setCard("Backlight");
+    const char* steps[P4KB_LIGHT_STEPS] = { TR("Off"), TR("Low"), TR("Medium"), TR("Max") };
+    setChoiceRow(c, "Keyboard backlight", "F11 on the keyboard steps through these too.",
+                 steps, P4KB_LIGHT_STEPS, p4KeyboardLightStep(), p4KbLightPickCb);
   }
 #endif
   {
@@ -18866,6 +18917,8 @@ static void buildKeyboardPage() {
 #if CAP_TRACKBALL
   {
     lv_obj_t* c = setCard("Navigation");
+    setSwitchRow(c, "Use the trackball", "Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.",
+                 tdeckTrackballEnabled(), trackballOnToggleCb);
 #if defined(HAS_TDECK_KEYBOARD)   // never the M9: its only input, so nav is always on there
     setSwitchRow(c, "Keyboard navigation", "Letters move the highlight when no text field is focused; they still type in text fields.",
 #if defined(ESP32)
@@ -48634,6 +48687,8 @@ static void lockHintText(char* out, size_t cap) {
   const char* h = TR("hold the wake button to unlock");
 #elif defined(HAS_TDISPLAY_P4)
   const char* h = TR("hold the BOOT button to unlock");
+#elif CAP_TRACKBALL
+  const char* h = tdeckTrackballEnabled() ? TR("hold the trackball to unlock") : TR("press Enter to unlock");
 #else
   const char* h = TR("hold the trackball to unlock");
 #endif
@@ -51273,6 +51328,11 @@ static void handleHwKey(int key) {
       // field. luaAppKey takes every key, so forwarding them here left the
       // field unable to receive any text on a physical keyboard (#571).
       && !s_fm_prompt
+#if CAP_TRACKBALL
+      // Trackball switched off: the keyboard is the only way to wake and unlock, so
+      // while locked or dark the handlers below get the key, not the app.
+      && (tdeckTrackballEnabled() || !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff())))
+#endif
 #if defined(HAS_M9_KEYBOARD)
       // Locked or dark: the lock/wake handlers below must see the key — else
       // ENTER_LONG (this board's only unlock) is eaten by the app and the
@@ -51340,6 +51400,15 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     s_m9_unlock_tap_armed = false;
     if (key == M9_KEY_ENTER_LONG) { g_lv.task->unlockScreen(); return; }
 #endif
+#if CAP_TRACKBALL
+    // Trackball switched off, so no trackball hold: Enter on the LIT lock screen unlocks
+    // (from dark, the first key only lights it, as any key does). Handled whole here, so
+    // the key never reaches the nav keypad and its release cannot click anything.
+    if (!tdeckTrackballEnabled() && !g_lv.task->isScreenOff() && (key == '\r' || key == '\n')) {
+      g_lv.task->unlockScreen();
+      return;
+    }
+#endif
     g_lv.task->lockscreenReveal();
     return;
   }
@@ -51351,6 +51420,11 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   if (g_lv.task && g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
 #else
   // Idle-dimmed (not hard-locked): ignore keys; a touch/click wakes into the UI.
+#if CAP_TRACKBALL
+  // With the trackball switched off a key wakes it too (and is swallowed), so a
+  // T-Deck whose touch is also playing up is not left dark.
+  if (g_lv.task && g_lv.task->isScreenOff() && !tdeckTrackballEnabled()) { g_lv.task->noteUserInput(); return; }
+#endif
   if (g_lv.task && g_lv.task->isScreenOff()) return;
 #if defined(TLORA_PAGER)
   // No touch and no trackball on this board: every OTHER input path that resets the
@@ -53250,7 +53324,12 @@ static void powerOffNow() {
     touchPrefsFlush();                     // and all queued A/B preference snapshots
     // Name the control this board actually has. "Click trackball" was shown on
     // every board that reached here, trackball or not.
-#if defined(HAS_TDECK_GT911)
+#if CAP_TRACKBALL
+    // Trackball switched off: its click is not armed as the wake (a damaged ball would
+    // switch the device back on by itself). The reset button or the power switch wakes it.
+    g_lv.task->showAlert(tdeckTrackballEnabled() ? TR("Powering off\xE2\x80\xA6 click trackball to wake")
+                                                 : TR("Powering off\xE2\x80\xA6 press reset to wake"), 1500);
+#elif defined(HAS_TDECK_GT911)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
 #else
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
@@ -53324,6 +53403,9 @@ static void powerOffNow() {
   rtc_gpio_set_direction(wake, RTC_GPIO_MODE_INPUT_ONLY);
   rtc_gpio_pullup_en(wake);
   rtc_gpio_pulldown_dis(wake);
+#if CAP_TRACKBALL
+  if (tdeckTrackballEnabled())
+#endif
   esp_sleep_enable_ext0_wakeup(wake, 0);   // wake when the button is pressed (LOW)
 #endif
   esp_deep_sleep_start();   // never returns; a press wakes via full reboot
@@ -74460,6 +74542,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Trackball: set up the direction GPIOs/ISRs and orient motion to the UI.
     tdeckTrackballBegin();
     tdeckTrackballSetRotation(s_ui_rotation);
+#if defined(ESP32)
+    tdeckTrackballSetEnabled(touchPrefsGetTrackballOn());   // off: a damaged ball is ignored from the first frame
+#endif
 #endif
 #if defined(HAS_PAGER_KEYBOARD)
     pagerKeyboardBegin();
@@ -74593,8 +74678,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if CAP_TRACKBALL
     {   // the trackball's mode: scroll (default), D-pad UI nav or the soft cursor
       const uint8_t tbm = touchPrefsGetTbMode();
-      s_tb_nav    = (tbm == TB_MODE_NAV);
-      s_tb_scroll = (tbm == TB_MODE_SCROLL);
+      const bool tb_on = tdeckTrackballEnabled();   // off: no D-pad focus ring, no cursor (tbSetEnabled)
+      s_tb_nav    = tb_on && (tbm == TB_MODE_NAV);
+      s_tb_scroll = !tb_on || (tbm == TB_MODE_SCROLL);
     }
 #endif
     s_nav_mbar_keys = touchPrefsGetNavMenubarKeys();   // menubar letter hints: off by default
@@ -78963,6 +79049,11 @@ void UITask::loop() {
     if (WioTrackerL2Io::readWakeButton(pressed)) expanderDown = pressed;
   }
       if (expanderDown) state = LOW;
+#endif
+#if CAP_TRACKBALL
+      // GPIO0 is the trackball's centre click. Switched off, it reads as released, so
+      // no wake, reveal, unlock hold, mode hold or tap can come from it.
+      if (!tdeckTrackballEnabled()) state = HIGH;
 #endif
       return state;
     };

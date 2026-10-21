@@ -32,4 +32,14 @@ bool tdeckTrackballClickHeld();
  */
 void tdeckTrackballSetRotation(uint8_t lvgl_rot);
 
+/**
+ * Switch the whole trackball off or back on (Settings > Keyboard > Trackball), for
+ * a damaged ball that rolls and clicks by itself. Off: the direction interrupts are
+ * detached, tdeckTrackballReadMotion() reports nothing and the centre click reads
+ * as released, so no motion or click reaches anything that reads them. The UI's
+ * GPIO0 read (UITask::loop) checks tdeckTrackballEnabled() the same way.
+ */
+void tdeckTrackballSetEnabled(bool on);
+bool tdeckTrackballEnabled();
+
 #endif
