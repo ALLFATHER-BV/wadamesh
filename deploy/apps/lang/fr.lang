@@ -2170,3 +2170,14 @@ Portrait	Portrait
 Portrait 180	Portrait 180
 Landscape	Paysage
 Landscape 180	Paysage 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Utiliser la boule
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Désactive une boule abîmée qui bouge ou clique toute seule. Tant qu'elle est désactivée, Entrée déverrouille l'écran de verrouillage.
+Trackball on	Boule activée
+Trackball off	Boule désactivée
+press Enter to unlock	appuyez sur Entrée pour déverrouiller
+Locks when screen off\n(press Enter to unlock)	Verrouille écran éteint\n(appuyez sur Entrée pour déverrouiller)
+Powering off… press reset to wake	Extinction… appuyez sur reset pour réveiller
+Low	Low
+F11 on the keyboard steps through these too.	F11 sur le clavier parcourt aussi ces niveaux.

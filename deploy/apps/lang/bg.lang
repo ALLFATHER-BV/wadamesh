@@ -2171,3 +2171,14 @@ Portrait	Портрет
 Portrait 180	Портрет 180
 Landscape	Пейзаж
 Landscape 180	Пейзаж 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Използвай топчето
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Изключва повредено топче, което се движи или щраква само. Докато е изключено, Enter отключва заключения екран.
+Trackball on	Топчето вкл
+Trackball off	Топчето изкл
+press Enter to unlock	натиснете Enter за отключване
+Locks when screen off\n(press Enter to unlock)	Заключва се при изключен екран\n(натиснете Enter за отключване)
+Powering off… press reset to wake	Изключване… натиснете reset за събуждане
+Low	Low
+F11 on the keyboard steps through these too.	Клавишът F11 на клавиатурата също превключва тези нива.

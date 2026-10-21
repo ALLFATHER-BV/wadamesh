@@ -2171,3 +2171,14 @@ Portrait	Усправно
 Portrait 180	Усправно 180
 Landscape	Положено
 Landscape 180	Положено 180
+
+# Trackball off switch (T-Deck) + T-Display P4 keyboard light
+Use the trackball	Користи куглицу
+Turn off a damaged trackball that moves or clicks by itself. While it is off, Enter unlocks the lock screen.	Искључује оштећену куглицу која се сама помера или клика. Док је искључена, Enter откључава закључан екран.
+Trackball on	Куглица укљ
+Trackball off	Куглица искљ
+press Enter to unlock	притисните Enter да откључате
+Locks when screen off\n(press Enter to unlock)	Закључава се кад је екран искључен\n(притисните Enter да откључате)
+Powering off… press reset to wake	Гашење… притисните reset за буђење
+Low	Low
+F11 on the keyboard steps through these too.	Тастер F11 на тастатури такође пролази кроз ове нивое.
