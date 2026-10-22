@@ -403,6 +403,7 @@ Image too large (>4 MB)	Πολύ μεγάλη εικόνα (>4 MB)
 Import	Εισαγωγή
 Import backup	Εισαγωγή αντιγράφου
 Import failed (bad/unreadable JSON)	Αποτυχία εισαγωγής (μη έγκυρο JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Εισαγωγή ρυθμίσεων
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Εισαγωγή αντιγράφου;\nΑντικαθιστά ταυτότητα,\nκανάλια & επαφές,\nμετά επανεκκινεί.
 Import: storage unavailable	Εισαγωγή: μη διαθέσιμος χώρος
@@ -563,6 +564,7 @@ No contact to trace	Καμία επαφή για ιχνηλάτηση
 No contacts have shared\na GPS location yet.	Καμία επαφή δεν έχει\nμοιραστεί θέση GPS ακόμη.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Δεν βρέθηκαν κόμβοι ακόμη.\n\nΟτιδήποτε ακούγεται στον αέρα και δεν είναι στις επαφές σας θα εμφανιστεί εδώ. Όταν η αυτόματη προσθήκη είναι κλειστή, μπορείτε να προσθέσετε κόμβους χειροκίνητα.
 No earlier versions yet	Δεν υπάρχουν προηγούμενες εκδόσεις
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Δεν υπάρχουν τοπικά δεδομένα επέκτασης
 No location for this contact	Καμία τοποθεσία για αυτήν την επαφή
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Χωρίς αποθήκευση χάρτη.\n\nΕισαγάγετε κάρτα SD για πλακίδια\nWi-Fi (ή ξαναφλασάρετε για\nτο tiles partition).

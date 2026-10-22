@@ -403,6 +403,7 @@ Image too large (>4 MB)	Изображение слишком большое (>4
 Import	Импорт
 Import backup	Импорт резервной копии
 Import failed (bad/unreadable JSON)	Сбой импорта (неверный JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Импорт настроек
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Импортировать копию?\nЗаменит личность,\nканалы и контакты,\nзатем перезагрузка.
 Import: storage unavailable	Импорт: хранилище недоступно
@@ -563,6 +564,7 @@ No contact to trace	Нет контакта для трассировки
 No contacts have shared\na GPS location yet.	Контакты ещё не делились\nGPS-местоположением.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Обнаруженных узлов пока нет.\n\nВсё услышанное в эфире, чего нет в контактах, появится здесь. Когда автодобавление выключено, узлы можно добавить в контакты вручную.
 No earlier versions yet	Ранних версий пока нет
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Нет локальных данных расширения
 No location for this contact	Нет местоположения для этого контакта
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Нет хранилища карты.\n\nВставьте SD-карту для кэша\nWi-Fi тайлов (или перепрошейте\nдля раздела tiles).
