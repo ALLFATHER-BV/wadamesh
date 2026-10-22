@@ -548,6 +548,11 @@ bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, defaul
 void    touchPrefsSetSoundDirect(bool on);
 uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
 void    touchPrefsSetSoundVolume(uint8_t vol);
+bool    touchPrefsGetVibrate();                // vibrate on notifications (boards with a motor), default false
+void    touchPrefsSetVibrate(bool on);
+uint8_t touchPrefsGetVibratePattern();         // TOUCH_VIB_* style, default TOUCH_VIB_PULSE
+void    touchPrefsSetVibratePattern(uint8_t pat);
+enum { TOUCH_VIB_PULSE = 0, TOUCH_VIB_GENTLE, TOUCH_VIB_LONG, TOUCH_VIB_HEARTBEAT, TOUCH_VIB_COUNT };
 
 /** Do Not Disturb: silences the incoming-message chime during a daily time
  *  window. Start/end are half-hour slots (0..47, slot = hour*2 + (min>=30)),
