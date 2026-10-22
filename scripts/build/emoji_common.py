@@ -21,6 +21,7 @@ FLAG = (
     "https://raw.githubusercontent.com/googlefonts/noto-emoji/v2.047"
     "/third_party/region-flags/png/{}.png"
 )
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 def _cached(name):
@@ -47,12 +48,17 @@ def fetch(stem):
 def fetch_flag(iso):
     fn = _cached("flag_{}.png".format(iso))
     if os.path.exists(fn) and os.path.getsize(fn) > 0:
-        return fn
+        with open(fn, "rb") as f:
+            if f.read(8) == PNG_SIGNATURE:
+                return fn
+        return None
     try:
         req = urllib.request.Request(
             FLAG.format(iso), headers={"User-Agent": "emoji-gen"}
         )
         data = urllib.request.urlopen(req, timeout=20).read()
+        if not data.startswith(PNG_SIGNATURE):
+            return None
         with open(fn, "wb") as f:
             f.write(data)
         return fn
