@@ -3507,8 +3507,8 @@ static bool terminalHandleVirtualKeyboardReady();
 // mirror sync / redirects below are skipped.
 #if defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
 // Set while the on-screen keys were summoned for this editing session over an
-// external keyboard (the module's '#', or a second tap on a field a Bluetooth
-// keyboard types into); hideKb clears it.
+// external keyboard (the module's '#', or the keyboard cell in a field's
+// long-press edit menu); hideKb clears it.
 static bool s_osk_forced = false;
 #endif
 #if CAP_BLE_KEYBOARD && !CAP_KEYBOARD
@@ -3540,7 +3540,7 @@ static inline bool kbMirrorActive() {
   return false;   // physical keyboard: bind keys straight to the field, never show the on-screen kb
 #elif defined(HAS_ATTAKY_MESH_KEYBOARD) || (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
   // Detachable keyboards are detected at runtime. Keep the on-screen keys down
-  // while one is present unless a second tap summoned them for this field.
+  // while one is present unless the edit menu summoned them for this field (#715).
   return !(externalKeyboardTyping() && !s_osk_forced);
 #else
   return true;
@@ -10293,30 +10293,25 @@ static void showKb(LvChatPanel* p, bool reveal) {
 }
 
 #if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-// Second tap on a field an external keyboard types into: bring the on-screen keys
-// up for it anyway, in case the keyboard is out of reach. A field's PRESSED
-// arrives before LVGL moves the focus, so "already bound" there means the field
-// was the typing target before this tap, not because of it.
-static lv_obj_t* s_osk_press_ta = nullptr;   // compared only, never dereferenced
-static void externalKbdNoteFieldPress(lv_obj_t* ta) {
-#if defined(HAS_ATTAKY_MESH_KEYBOARD)
-  // The keyboard module summons the keys with its '#'. A tap must not: a settings
-  // field is often bound already when the page opens (Profile's node name), so the
-  // first tap counted as a "second" one and brought the keys up over the module.
-  if (attakyKeyboardPresent()) { s_osk_press_ta = nullptr; return; }
-#endif
-  const bool bound = g_lv.keyboard && lv_keyboard_get_textarea(g_lv.keyboard) == ta;
-  s_osk_press_ta = (bound && externalKeyboardTyping() && !s_osk_forced) ? ta : nullptr;
-}
-// On CLICKED: for such a second tap, summon the keys for this editing session.
-static void externalKbdSecondTap(lv_obj_t* ta) {
+// The on-screen keys for a field an external keyboard types into, in case that
+// keyboard is out of reach: the keyboard cell in the field's long-press edit menu
+// (#715). Taps never do it. This used to be a second tap on a field that was
+// already bound, but opening a chat binds its composer, so the FIRST tap on the
+// composer counted as the second and the keys came up under a connected keyboard.
+static inline bool externalKbdKeysOffered() {
 #if CAP_NATIVE_KEYBOARD
-  // The phone's own keyboard is this board's keys (the browser build on a phone): a second
-  // tap reopens it (the page does that), it does not summon the UI's keys on top.
-  if (boardNativeKeyboard()) { s_osk_press_ta = nullptr; return; }
+  // The phone's own keyboard is this board's keys (the browser build on a phone).
+  if (boardNativeKeyboard()) return false;
 #endif
-  if (ta && ta == s_osk_press_ta) s_osk_forced = true;
-  s_osk_press_ta = nullptr;
+  return externalKeyboardTyping() && !s_osk_forced &&
+         g_lv.keyboard && lv_obj_has_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+// Summon them for this editing session (hideKb ends it), the way the Attaky's '#' does.
+static void externalKbdSummonKeys(lv_obj_t* ta) {
+  if (!ta || !lv_obj_is_valid(ta)) return;
+  s_osk_forced = true;
+  if (s_kb_panel && s_kb_panel->composer_ta == ta) showKb(s_kb_panel);
+  else                                             kbMirrorBind(ta);
 }
 #endif
 
@@ -11240,9 +11235,6 @@ static void composerFocusCb(lv_event_t* e) {
     if (act && (lv_indev_get_scroll_obj(act) || lv_indev_get_scroll_dir(act) != LV_DIR_NONE)) return;
   }
   auto* p = static_cast<LvChatPanel*>(lv_event_get_user_data(e));
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(lv_event_get_target(e));
-#endif
 #if CAP_TOUCH && !CAP_KEYBOARD
   // Opening a chat focuses its composer (nav-group rebuild): bind it, but leave
   // the keys down so the conversation is readable. A tap (CLICKED) brings them up.
@@ -13359,9 +13351,6 @@ static void settingsFieldFocusCb(lv_event_t* e) {
   }
   lv_obj_t* ta = lv_event_get_target(e);
   if (!ta) return;
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  if (code == LV_EVENT_CLICKED) externalKbdSecondTap(ta);
-#endif
   s_kb_panel = nullptr;
   kbMirrorBind(ta);
   noteKbActivity();   // focusing/tapping a field lights the auto backlight
@@ -13474,9 +13463,6 @@ static void copyLabelLongPressCb(lv_event_t* e) {
 static void kbActivityPressCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_PRESSED) return;
   noteKbActivity();
-#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
-  externalKbdNoteFieldPress(lv_event_get_target(e));
-#endif
 }
 
 // When a field loses focus (tapping away / another field), dismiss the long-press accent
@@ -13634,7 +13620,7 @@ static void txtMenuHide() {
   s_txtmenu_ta = nullptr;
 }
 
-enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM, TXT_EMOJI };
+enum { TXT_CUT = 0, TXT_COPY, TXT_PASTE, TXT_SELALL, TXT_SYM, TXT_EMOJI, TXT_KEYS };
 
 // A key field takes the key out of whatever was pasted (#526): a copied message
 // carries text around it, and the field's length cap would otherwise keep that
@@ -13666,6 +13652,9 @@ static void txtMenuCellCb(lv_event_t* e) {
   intptr_t act = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
   lv_obj_t* ta = s_txtmenu_ta;
   if (!ta) { txtMenuHide(); return; }
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
+  if (act == TXT_KEYS) { txtMenuHide(); externalKbdSummonKeys(ta); return; }   // the real field, not a mirror
+#endif
   // Mirror-bound field (settings fields while the on-screen keyboard is up):
   // edit the mirror the user is looking at — live-sync propagates to the real
   // field. Editing the real ta directly here would be clobbered by the mirror
@@ -13711,8 +13700,16 @@ static void txtMenuShow(lv_obj_t* ta) {
   txtMenuHide();
   if (!ta) return;
   s_txtmenu_ta = ta;
-  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym", "Emoji" };
-  const int n = 6, ch = 34, gap = 4, pad = 6;
+  static const char* const kLabels[] = { "Cut", "Copy", "Paste", "All", "Sym", "Emoji", LV_SYMBOL_KEYBOARD };
+  // While an external keyboard types, a keyboard cell leads the row: the only way
+  // to bring the on-screen keys up under it (#715).
+  int acts[7];
+  int n = 0;
+#if CAP_EXT_KEYBOARD && !CAP_KEYBOARD
+  if (externalKbdKeysOffered()) acts[n++] = TXT_KEYS;
+#endif
+  for (int a = TXT_CUT; a <= TXT_EMOJI; ++a) acts[n++] = a;
+  const int ch = 34, gap = 4, pad = 6;
   // Fit the row to the panel rather than to a number that happened to work on a
   // 320 px screen: at the old fixed 48 px this was already 268 px wide, so the
   // sixth cell would have hung off a 240 px board entirely.
@@ -13720,7 +13717,7 @@ static void txtMenuShow(lv_obj_t* ta) {
   int cw = 48;
   if (n * cw + (n - 1) * gap + pad * 2 > avail)
     cw = (int)((avail - (n - 1) * gap - pad * 2) / n);
-  if (cw < 30) cw = 30;
+  if (cw < 28) cw = 28;   // seven cells on a 240 px panel
   s_txtmenu = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_txtmenu);
   lv_obj_set_style_bg_color(s_txtmenu, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -13739,9 +13736,9 @@ static void txtMenuShow(lv_obj_t* ta) {
     lv_obj_set_style_radius(c, 5, LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_add_event_cb(c, txtMenuCellCb, LV_EVENT_CLICKED, reinterpret_cast<void*>((intptr_t)i));
+    lv_obj_add_event_cb(c, txtMenuCellCb, LV_EVENT_CLICKED, reinterpret_cast<void*>((intptr_t)acts[i]));
     lv_obj_t* l = lv_label_create(c);
-    lv_label_set_text(l, kLabels[i]);
+    lv_label_set_text(l, kLabels[acts[i]]);
     lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
     lv_obj_center(l);
@@ -52203,7 +52200,7 @@ static void bleKbdDispatch(int key) {
 // ---- External Bluetooth keyboard on a touchscreen-only board -------------------
 // There is no handleHwKey() here: keys go straight into the field the on-screen
 // keyboard is bound to (the field itself while the Bluetooth keyboard types, the
-// edit strip when a second tap summoned the keys), and the keys that only move
+// edit strip when the edit menu summoned the keys), and the keys that only move
 // a focus highlight are left out, since a touchscreen has none.
 static bool popupRegistryAny();
 static bool popupRegistryDismissTop();
