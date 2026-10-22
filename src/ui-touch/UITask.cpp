@@ -208,7 +208,15 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
-  #include "EmojiPack.h"      // optional SD-card pack that extends the baked set
+  #if CAP_EMOJI_PACK
+    #include "EmojiPack.h"    // optional SD-card pack that extends the baked set
+  #else
+    enum : uint8_t {
+      EMOJI_CAT_FACES = 0, EMOJI_CAT_GESTURES = 1, EMOJI_CAT_HEARTS = 2,
+      EMOJI_CAT_SYMBOLS = 3, EMOJI_CAT_OBJECTS = 4, EMOJI_CAT_ANIMALS = 5,
+      EMOJI_CAT_ACTIVITY = 6, EMOJI_CAT_SPECIAL = 7, EMOJI_CAT_FLAGS = 10,
+    };
+  #endif
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(WADA_WEB)
     #include <WebDisplay.h>                  // web/platform: the canvas behind the SDL window
@@ -4363,6 +4371,26 @@ static size_t uiEncodeUtf8(uint32_t cp, char out[4]) {
   return 4;
 }
 
+static size_t uiExpandPackedFlagToken(uint32_t token, char out[32]) {
+  if (token >= 0xF0000u && token < 0xF0000u + 26u * 26u) {
+    const uint32_t pair = token - 0xF0000u;
+    char encoded[4];
+    size_t n = uiEncodeUtf8(0x1F1E6u + pair / 26u, encoded);
+    memcpy(out, encoded, n);
+    n += uiEncodeUtf8(0x1F1E6u + pair % 26u, out + n);
+    return n;
+  }
+  if (token >= 0xF0000u + 26u * 26u && token < 0xF0000u + 26u * 26u + 3u) {
+    static const char* const tags[] = { "gbeng", "gbsct", "gbwls" };
+    const char* tag = tags[token - (0xF0000u + 26u * 26u)];
+    size_t n = uiEncodeUtf8(0x1F3F4u, out);
+    while (*tag) n += uiEncodeUtf8(0xE0061u + (uint32_t)(*tag++ - 'a'), out + n);
+    n += uiEncodeUtf8(0xE007Fu, out + n);
+    return n;
+  }
+  return 0;
+}
+
 static void composerAppendCodepoint(UITask* task, uint32_t cp) {
   char encoded[4];
   const size_t n = uiEncodeUtf8(cp, encoded);
@@ -4401,7 +4429,8 @@ static void composerAppendDisplayText(UITask* task, const char* text) {
  * Copy UTF-8 `in` → `out` (NUL-terminated, capped). Codepoints not in `font` become ASCII '*'.
  * Invalid UTF-8 bytes become '*'.
  */
-static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, size_t out_cap, const char* in) {
+static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, size_t out_cap,
+                                           const char* in, bool pack_flag_tokens = true) {
   if (!out || out_cap == 0) return;
   out[0] = '\0';
   if (!in) return;
@@ -4464,6 +4493,14 @@ static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, siz
       const char* sequence_end = p;
       const uint32_t token = uiPackedFlagTokenAt(cp, p, end, sequence_end);
       if (token) {
+        if (!pack_flag_tokens) {
+          const size_t n = static_cast<size_t>(sequence_end - seq_beg);
+          if (w + n + 1 > out_cap) break;
+          memcpy(out + w, seq_beg, n);
+          w += n;
+          p = sequence_end;
+          continue;
+        }
         char encoded[4];
         const size_t n = uiEncodeUtf8(token, encoded);
         if (w + n + 1 > out_cap) break;
@@ -14794,7 +14831,7 @@ static void saveProfileNameCb(lv_event_t* e) {
   if (_c == LV_EVENT_DEFOCUSED) {
     char cur_vis[40];
     const char* raw = g_lv.task->getNodeNameCstr();
-    copyUtf8ReplacingMissingGlyphs(&g_font_14, cur_vis, sizeof(cur_vis), raw ? raw : "");
+    copyUtf8ReplacingMissingGlyphs(&g_font_14, cur_vis, sizeof(cur_vis), raw ? raw : "", false);
     if (strcmp(name, cur_vis) == 0) return;
   }
   if (g_lv.task->setNodeName(name)) {
@@ -16339,7 +16376,7 @@ static void buildProfileSettings() {
     if (g_lv.task) {
       char nm_vis[40];
       const char* raw = g_lv.task->getNodeNameCstr();
-      copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_vis, sizeof(nm_vis), raw ? raw : "");
+      copyUtf8ReplacingMissingGlyphs(&g_font_14, nm_vis, sizeof(nm_vis), raw ? raw : "", false);
       lv_textarea_set_text(g_set_modal.name_ta, nm_vis);
     }
   }
@@ -65501,7 +65538,11 @@ static void setupShowStep(int step) {
     lv_textarea_set_max_length(s_setup_name_ta, 30);
     if (g_lv.task) {
       const char* cur = g_lv.task->getNodeNameCstr();
-      if (cur && cur[0]) lv_textarea_set_text(s_setup_name_ta, cur);
+      if (cur && cur[0]) {
+        char cur_vis[40];
+        copyUtf8ReplacingMissingGlyphs(&g_font_14, cur_vis, sizeof(cur_vis), cur, false);
+        lv_textarea_set_text(s_setup_name_ta, cur_vis);
+      }
     }
     attachSettingsTaEvents(s_setup_name_ta);
     setupBtn(TR("Back"), setupBackCb, false, 12, btn_y, 72);
@@ -76301,8 +76342,28 @@ void UITask::setGpsPower(bool on) {
 bool UITask::setNodeName(const char* s) {
   if (!_node_prefs) return false;
   if (!s) s = "";
-  // Adverts carry the name: standard Arabic letters, not presentation forms (#582).
-  arabicUnshape(s, _node_prefs->node_name, sizeof(_node_prefs->node_name));
+  char sanitized[sizeof(_node_prefs->node_name)] = {};
+  size_t written = 0;
+  const char* p = s;
+  const char* end = s + strlen(s);
+  while (p < end && written + 1 < sizeof(sanitized)) {
+    const char* codepoint_start = p;
+    uint32_t cp = 0;
+    if (!uiReadUtf8Codepoint(p, end, cp)) {
+      p = codepoint_start + 1;
+      sanitized[written++] = *codepoint_start;
+      continue;
+    }
+    char expanded[32];
+    const size_t expanded_len = uiExpandPackedFlagToken(cp, expanded);
+    const char* source = expanded_len ? expanded : codepoint_start;
+    const size_t n = expanded_len ? expanded_len : static_cast<size_t>(p - codepoint_start);
+    if (written + n + 1 > sizeof(sanitized)) break;
+    memcpy(sanitized + written, source, n);
+    written += n;
+  }
+  // Expand packed flag tokens before normalizing Arabic advert text.
+  arabicUnshape(sanitized, _node_prefs->node_name, sizeof(_node_prefs->node_name));
   // Report the real write result — the "Name saved" toast used to show even
   // when the storage write silently failed.
   return the_mesh.savePrefs();

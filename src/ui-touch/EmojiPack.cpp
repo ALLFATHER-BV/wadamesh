@@ -1,3 +1,5 @@
+#include "device_caps.h"
+#if CAP_EMOJI_PACK
 #include "EmojiPack.h"
 #include <string.h>
 #include <atomic>
@@ -473,3 +475,4 @@ uint8_t emojiPackItemCat(int i)
     const uint32_t n = s_items_n.load(std::memory_order_acquire);
     return (i >= 0 && (uint32_t)i < n) ? s_cats[i] : EMOJI_CAT_EXTRA;
 }
+#endif
