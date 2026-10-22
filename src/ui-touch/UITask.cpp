@@ -1481,6 +1481,8 @@ static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_
                                uint32_t unicode, uint32_t /*unicode_next*/) {
   if (emojiIsZeroAdvanceCodepoint(unicode)) return false;
   const lv_img_dsc_t* d = emojiPackSequenceLookup(unicode);
+  if (!d && unicode == emojiPackFlagToken(0x1F1F1u, 0x1F1F8u))
+    d = emojiGlyphLookup(0x1F1F1u);
   if (!d) d = emojiLookupAny(unicode);
   // Skin-tone modifiers (U+1F3FB-1F3FF) have no baked image: draw them as the
   // invisible zero glyph (the same one U+FE0F maps to), so 👍🏽 shows as 👍 (#673).
@@ -4351,6 +4353,42 @@ static uint32_t uiPackedFlagTokenAt(uint32_t cp, const char* after_cp,
   return 0;
 }
 
+extern "C" uint32_t wada_shape_flag_codepoint(const char* text, uint32_t offset,
+                                              uint32_t cp, uint32_t next) {
+  if (emojiIsRegionalIndicator(cp)) {
+    uint32_t run_start = offset;
+    uint32_t previous = 0;
+    while (run_start >= 4) {
+      const char* look = text + run_start - 4;
+      uint32_t lead = 0;
+      if (!uiReadUtf8Codepoint(look, text + run_start, lead) ||
+          look != text + run_start || !emojiIsRegionalIndicator(lead)) break;
+      if (run_start == offset) previous = lead;
+      run_start -= 4;
+    }
+    const bool second = ((offset - run_start) / 4u) % 2u != 0;
+    const uint32_t lead = second ? previous : cp;
+    const uint32_t trail = second ? cp : next;
+    if (!emojiIsRegionalIndicator(trail)) return cp;
+    const uint32_t token = emojiPackFlagToken(lead, trail);
+    if (emojiPackSequenceLookup(token) ||
+        (lead == 0x1F1F1u && trail == 0x1F1F8u && emojiLookupAny(lead)))
+      return second ? 0x200Du : token;
+    return cp;
+  }
+  if (cp == 0x1F3F4u) {
+    const char* after = text + offset;
+    const char* end = text + strlen(text);
+    uint32_t decoded = 0;
+    if (uiReadUtf8Codepoint(after, end, decoded)) {
+      const char* sequence_end = after;
+      const uint32_t token = uiPackedFlagTokenAt(cp, after, end, sequence_end);
+      if (token) return token;
+    }
+  }
+  return cp;
+}
+
 static size_t uiEncodeUtf8(uint32_t cp, char out[4]) {
   if (cp < 0x80u) { out[0] = static_cast<char>(cp); return 1; }
   if (cp < 0x800u) {
@@ -4487,6 +4525,17 @@ static void copyUtf8ReplacingMissingGlyphs(const lv_font_t* font, char* out, siz
       out[w++] = '*';
       p = seq_beg + 1;
       continue;
+    }
+
+    if (!pack_flag_tokens) {
+      char expanded[32];
+      const size_t n = uiExpandPackedFlagToken(cp, expanded);
+      if (n) {
+        if (w + n + 1 > out_cap) break;
+        memcpy(out + w, expanded, n);
+        w += n;
+        continue;
+      }
     }
 
     if (font) {
@@ -12774,19 +12823,7 @@ static void emojiInsertIndex(int idx) {
   // contents (same trap the Wi-Fi scan picker hit). When not bound, insert
   // straight into the real field.
   lv_obj_t* dest = (kbMirrorActive() && s_kb_bind_ta == ta && s_kb_mirror_ta) ? s_kb_mirror_ta : ta;
-  uint32_t flag_off = 0;
-  const uint32_t flag_lead = _lv_txt_encoded_next(g, &flag_off);
-  const char* sequence_end = g;
-  const uint32_t token = uiPackedFlagTokenAt(flag_lead, g + flag_off,
-                                             g + strlen(g), sequence_end);
-  if (token) {
-    char encoded[5];
-    const size_t n = uiEncodeUtf8(token, encoded);
-    encoded[n] = '\0';
-    lv_textarea_add_text(dest, encoded);
-  } else {
-    lv_textarea_add_text(dest, g);
-  }
+  lv_textarea_add_text(dest, g);
   emojiRememberRecent(g);
   closeEmojiSheet();
 }
@@ -14152,10 +14189,7 @@ static char s_clipboard[CLIPBOARD_MAX] = {0};
 
 static void clipboardSet(const char* text, const char* tag) {
   if (!text) return;
-  size_t n = strlen(text);
-  if (n >= CLIPBOARD_MAX) n = CLIPBOARD_MAX - 1;
-  memcpy(s_clipboard, text, n);
-  s_clipboard[n] = '\0';
+  copyUtf8ReplacingMissingGlyphs(nullptr, s_clipboard, sizeof(s_clipboard), text, false);
   if (g_lv.task) {
     char toast[60];
     snprintf(toast, sizeof(toast), TR("Copied %s"),
