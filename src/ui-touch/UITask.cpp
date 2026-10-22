@@ -1417,7 +1417,11 @@ static void uiFitButtonChangeCb(lv_event_t* e) {
 // shadow them, so pack art can't silently change a glyph the UI already relies on.
 static inline const lv_img_dsc_t* emojiLookupAny(uint32_t cp) {
   if (const lv_img_dsc_t* d = emojiGlyphLookup(cp)) return d;
+#if CAP_EMOJI_PACK
   return emojiPackLookup(cp);
+#else
+  return nullptr;
+#endif
 }
 static bool emojiIsZeroAdvanceCodepoint(uint32_t cp) {
   if (cp == 0x200Du || cp == 0x20E3u ||
@@ -1433,16 +1437,21 @@ static bool emojiIsRegionalIndicator(uint32_t cp) {
 static const lv_img_dsc_t* emojiPickerCompositeGlyph(const char* item) {
   if (!item) return nullptr;
   if (const lv_img_dsc_t* sequence = emojiGlyphSequenceLookup(item)) return sequence;
+#if CAP_EMOJI_PACK
   if (const lv_img_dsc_t* sequence = emojiPackSequenceItemLookup(item)) return sequence;
+#endif
   uint32_t off = 0;
   const uint32_t lead = _lv_txt_encoded_next(item, &off);
   if (emojiIsRegionalIndicator(lead)) {
     const uint32_t trail = _lv_txt_encoded_next(item, &off);
     if (!emojiIsRegionalIndicator(trail)) return nullptr;
+  #if CAP_EMOJI_PACK
     if (const lv_img_dsc_t* d = emojiPackFlagLookup(lead, trail)) return d;
+  #endif
     if (lead == 0x1F1F1 && trail == 0x1F1F8) return emojiGlyphLookup(lead);
     return nullptr;
   }
+#if CAP_EMOJI_PACK
   if (lead == 0x1F3F4) {
     char tag[8] = {};
     size_t n = 0;
@@ -1456,6 +1465,7 @@ static const lv_img_dsc_t* emojiPickerCompositeGlyph(const char* item) {
     if (const lv_img_dsc_t* d = emojiPackSequenceLookup(token)) return d;
     return emojiPackFlagLookup(0x1F1EC, 0x1F1E7);
   }
+#endif
   return nullptr;
 }
 #if LV_USE_IMGFONT
@@ -1480,10 +1490,14 @@ static lv_font_t s_emoji_zero_advance_font[3] = {};
 static bool emojiImgfontPathCb(const lv_font_t* /*font*/, void* img_src, uint16_t /*len*/,
                                uint32_t unicode, uint32_t /*unicode_next*/) {
   if (emojiIsZeroAdvanceCodepoint(unicode)) return false;
+#if CAP_EMOJI_PACK
   const lv_img_dsc_t* d = emojiPackSequenceLookup(unicode);
   if (!d && unicode == emojiPackFlagToken(0x1F1F1u, 0x1F1F8u))
     d = emojiGlyphLookup(0x1F1F1u);
   if (!d) d = emojiLookupAny(unicode);
+#else
+  const lv_img_dsc_t* d = emojiLookupAny(unicode);
+#endif
   // Skin-tone modifiers (U+1F3FB-1F3FF) have no baked image: draw them as the
   // invisible zero glyph (the same one U+FE0F maps to), so 👍🏽 shows as 👍 (#673).
   if (!d && unicode >= 0x1F3FB && unicode <= 0x1F3FF) d = emojiGlyphLookup(0xFE0F);
@@ -4313,6 +4327,7 @@ static size_t uiPreviousGraphemeStartByte(const char* text, size_t end_byte) {
   return cluster_start;
 }
 
+#if CAP_EMOJI_PACK
 static uint32_t uiPackedFlagTokenAt(uint32_t cp, const char* after_cp,
                                     const char* end, const char*& sequence_end) {
   if (emojiIsRegionalIndicator(cp)) {
@@ -4388,6 +4403,15 @@ extern "C" uint32_t wada_shape_flag_codepoint(const char* text, uint32_t offset,
   }
   return cp;
 }
+#else
+static inline uint32_t uiPackedFlagTokenAt(uint32_t, const char*, const char*, const char*&) {
+  return 0;
+}
+
+extern "C" uint32_t wada_shape_flag_codepoint(const char*, uint32_t, uint32_t cp, uint32_t) {
+  return cp;
+}
+#endif
 
 static size_t uiEncodeUtf8(uint32_t cp, char out[4]) {
   if (cp < 0x80u) { out[0] = static_cast<char>(cp); return 1; }
@@ -12482,6 +12506,7 @@ static const char* const k_emoji_items[] = {
 };
 static constexpr int k_emoji_count = (int)(sizeof(k_emoji_items) / sizeof(k_emoji_items[0]));
 
+#if CAP_EMOJI_PACK
 // k_emoji_items is already grouped contiguously by the comments above; these are
 // those groups made machine-readable so an SD pack's items can be interleaved
 // into them instead of all landing at the end. The static_assert fires if a glyph
@@ -12514,6 +12539,7 @@ static const EmojiSpan k_emoji_spans[] = {
                         EMO_N_ACTIVITY + EMO_N_FLAGS,                           EMO_N_SPECIAL  },
 };
 static constexpr int k_emoji_span_count = (int)(sizeof(k_emoji_spans) / sizeof(k_emoji_spans[0]));
+#endif
 
 // Special characters / symbols not easy to reach on a compact keyboard — their OWN picker,
 // separate from emoji. All render via the g_font_16 chain (montserrat ASCII base + extras_font
@@ -12539,7 +12565,9 @@ static constexpr int k_special_count = (int)(sizeof(k_special_items) / sizeof(k_
 static const char* const* s_glyph_items = k_emoji_items;
 static int                 s_glyph_count = k_emoji_count;
 static bool                s_glyph_is_emoji = true;   // false for the special-character set
+static lv_coord_t          s_emoji_cell_px = 38;
 
+#if CAP_EMOJI_PACK
 // Built-ins merged with the SD pack's items, each pack item slotted into its own
 // category group. Built once on first picker open; with no pack the picker keeps
 // pointing straight at k_emoji_items and nothing is allocated.
@@ -12557,7 +12585,6 @@ static int            s_emoji_tab     = 0;       // active category slice
 static bool           s_emoji_tabbed  = false;
 static bool           s_emoji_tab_nav = false;
 static lv_obj_t*      s_emoji_tabrow  = nullptr;
-static lv_coord_t     s_emoji_cell_px = 38;
 static constexpr int  k_emoji_tab_threshold = 200;
 static void emojiSelectTab(int tab);
 static void emojiLoadRecent();
@@ -12805,6 +12832,12 @@ static void emojiFlushRecent(uint32_t now, uint32_t last_input_ms) {
   else
     s_emoji_recent_changed_ms = now;
 }
+#else
+static inline const char* const* emojiPickerItems() { return k_emoji_items; }
+static inline int emojiPickerCount() { return k_emoji_count; }
+static inline void emojiRememberRecent(const char*) {}
+static inline void emojiFlushRecent(uint32_t, uint32_t) {}
+#endif
 
 // Pick-mode: when set, the next chosen glyph is handed to this callback instead
 // of being inserted into a textarea (used by the chat-icon chooser). Dismissing
@@ -12818,13 +12851,17 @@ static void closeEmojiSheet() {
   popupClose(&s_emoji_sheet);
   s_emoji_target_ta = nullptr;
   s_emoji_grid = nullptr;
+#if CAP_EMOJI_PACK
   s_emoji_tabrow = nullptr;
+#endif
   s_emoji_sel = -1;
   s_emoji_painted_sel = -1;
   s_emoji_pick_cb = nullptr;
   s_glyph_items = k_emoji_items;
   s_glyph_count = k_emoji_count;
+#if CAP_EMOJI_PACK
   if (s_emoji_invalidate_pending) emojiInvalidateMergedList();
+#endif
 #if defined(HAS_M9_KEYBOARD)
   if (return_ta && lv_obj_is_valid(return_ta)) {
     s_m9_focus_pending = return_ta;
@@ -12920,6 +12957,7 @@ static void emojiSelectorMove(int rawdx, int rawdy) {
   else if (s_emoji_acc_y <= -kEmojiSelStep) { dr = -1; s_emoji_acc_y = 0; }
   if (dc == 0 && dr == 0) return;    // not enough travel yet
 
+#if CAP_EMOJI_PACK
   if (s_emoji_tabbed && s_emoji_tab_nav) {
     if (dc && s_emoji_group_n > 0) {
       int tab = (s_emoji_tab + dc + s_emoji_group_n) % s_emoji_group_n;
@@ -12937,6 +12975,7 @@ static void emojiSelectorMove(int rawdx, int rawdy) {
     s_emoji_tab_nav = true;
     return;
   }
+#endif
 
   const int cols = s_emoji_cols > 0 ? s_emoji_cols : 1;
   int idx = s_emoji_sel;
@@ -12954,12 +12993,14 @@ static void emojiSelectorMove(int rawdx, int rawdy) {
 // Returns true if it consumed the click (so it isn't also injected as a tap).
 static bool emojiSelectorClick() {
   if (!s_emoji_sheet) return false;
+#if CAP_EMOJI_PACK
   if (s_emoji_tab_nav) {
     s_emoji_tab_nav = false;
     s_emoji_sel = 0;
     emojiPaintSelection();
     return true;
   }
+#endif
   if (s_emoji_sel >= 0) emojiInsertIndex(s_emoji_sel);
   return true;   // swallow the click even if nothing selected yet
 }
@@ -13005,6 +13046,7 @@ static void emojiFillGrid() {
   }
 }
 
+#if CAP_EMOJI_PACK
 static void emojiPaintTabs() {
   if (!s_emoji_tabrow) return;
   const uint32_t n = lv_obj_get_child_cnt(s_emoji_tabrow);
@@ -13094,6 +13136,7 @@ static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w, lv_coord_t y) {
   }
   emojiPaintTabs();
 }
+#endif
 
 // Opened from the composer's emoji button. `ta` is the composer textarea. A null
 // `items` means the emoji set, resolved here so it can pick up the SD pack.
@@ -13104,6 +13147,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   s_glyph_is_emoji = (items == nullptr);
   s_glyph_items = items ? items : emojiPickerItems();
   s_glyph_count = items ? count : emojiPickerCount();
+#if CAP_EMOJI_PACK
   // Past this many cells, building them all at once costs visible seconds and
   // hundreds of KB of widget tree, so switch to one category at a time.
   bool has_flags_group = false;
@@ -13119,6 +13163,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
     s_glyph_count  = g.count;
   }
   s_emoji_tab_nav = false;
+#endif
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   s_emoji_sheet = lv_obj_create(lv_layer_top());
@@ -13191,10 +13236,12 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   // Scrollable grid of glyph buttons, with a category tab row above it when the
   // set is too big to build in one go.
   const lv_coord_t grid_w  = cardw - 16;
+#if CAP_EMOJI_PACK
   if (s_emoji_tabbed) {
     emojiBuildTabRow(card, grid_w, grid_y);
     grid_y += 26;
   }
+#endif
   lv_obj_t* grid = lv_obj_create(card);
   lv_obj_remove_style_all(grid);
   lv_obj_set_size(grid, grid_w, cardh - 16 - grid_y);
@@ -75065,6 +75112,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
       if (s_ui_data_fs && (nc == 0 || cands[0] != s_ui_data_fs)) cands[nc++] = s_ui_data_fs;
 
+    #if CAP_EMOJI_PACK
       static const char* const kPackPaths[2] = { "/emoji/emoji.pack", "/emoji.pack" };
       File ep;
       for (int i = 0; i < nc && !ep; ++i)
@@ -75081,6 +75129,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
         pushDiagLine(msg);
         if (!emojiPackBegin(ep)) pushDiagLine("emoji: pack size/PSRAM rejected");
       }
+#endif
     }
     lv_init();
     initTouchFontFallbacks();
@@ -80447,6 +80496,7 @@ void UITask::loop() {
   rx24Sample(now);   // packets heard per hour, for the lock screen's activity line
   emojiFlushRecent(now, _last_input_ms);
 
+#if CAP_EMOJI_PACK
   // Budgeted slices of the SD emoji pack. A full set is ~850 KB on a 4 MHz card,
   // so it arrives a couple of seconds in; emoji render from the baked set until
   // then. 8 KB is ~16 ms of SPI per tick, small enough not to show as a stutter.
@@ -80463,6 +80513,7 @@ void UITask::loop() {
     }
     pushDiagLine(msg);
   }
+#endif
 
 #if CAP_TOUCH
   // The Tanmatsu has NO CHSC6x cap-touch — input comes from the bsp keypad (LVGL KEYPAD indev).
