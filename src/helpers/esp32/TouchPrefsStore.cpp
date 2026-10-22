@@ -169,6 +169,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
   c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
   c.condense_nav      = 0;      // OFF: bottom nav bar + labelled Home launchers (v66, #592)
+  c.ct_purge_on       = 0;      // OFF: contacts stay until deleted (v72, #719)
+  c.ct_purge_days     = TOUCH_CT_PURGE_DEFAULT_DAYS;
   c.report_done_n     = 0;      // no beta reported on yet
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
@@ -329,6 +331,10 @@ static void cfgLoadOrMigrate() {
         }
 #endif
         if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
+        if (stored_version < 72) {   // v72 new trailing fields: never stored before
+          s_cfg.ct_purge_on = 0;
+          s_cfg.ct_purge_days = TOUCH_CT_PURGE_DEFAULT_DAYS;
+        }
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -1521,6 +1527,30 @@ bool touchPrefsGetCondenseNav() {
 bool touchPrefsSetCondenseNav(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.condense_nav = on ? 1 : 0;
+  return cfgFlush();
+}
+// Remove old contacts (v72, #719): Settings > Contact Management.
+bool touchPrefsGetContactPurge() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.ct_purge_on != 0;
+}
+bool touchPrefsSetContactPurge(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ct_purge_on = on ? 1 : 0;
+  return cfgFlush();
+}
+uint16_t touchPrefsGetContactPurgeDays() {
+  if (!s_begun) touchPrefsBegin();
+  uint16_t d = s_cfg.ct_purge_days;
+  if (d < TOUCH_CT_PURGE_MIN_DAYS) d = TOUCH_CT_PURGE_MIN_DAYS;
+  if (d > TOUCH_CT_PURGE_MAX_DAYS) d = TOUCH_CT_PURGE_MAX_DAYS;
+  return d;
+}
+bool touchPrefsSetContactPurgeDays(uint16_t days) {
+  if (days < TOUCH_CT_PURGE_MIN_DAYS) days = TOUCH_CT_PURGE_MIN_DAYS;
+  if (days > TOUCH_CT_PURGE_MAX_DAYS) days = TOUCH_CT_PURGE_MAX_DAYS;
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ct_purge_days = days;
   return cfgFlush();
 }
 uint8_t touchPrefsGetNavPos() {
