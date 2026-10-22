@@ -313,6 +313,17 @@ bool     touchPrefsSetReportedBeta(uint16_t n);
 // when the UI is built, so a change takes effect after a restart.
 bool     touchPrefsGetCondenseNav();
 bool     touchPrefsSetCondenseNav(bool on);
+
+// Remove old contacts (#719, Settings > Contact Management): while on, contacts not
+// heard from in the given number of days (1..999, default 30) are deleted.
+// Favourites are always kept. Default off.
+constexpr uint16_t TOUCH_CT_PURGE_DEFAULT_DAYS = 30;
+constexpr uint16_t TOUCH_CT_PURGE_MIN_DAYS = 1;
+constexpr uint16_t TOUCH_CT_PURGE_MAX_DAYS = 999;
+bool     touchPrefsGetContactPurge();
+bool     touchPrefsSetContactPurge(bool on);
+uint16_t touchPrefsGetContactPurgeDays();
+bool     touchPrefsSetContactPurgeDays(uint16_t days);
 /** Where the navigation bar sits (Settings > Display > Navigation bar). Stored in the
  *  v66 condense_nav byte, so no schema change: 0 bottom (the default) and 1 right (the
  *  old Condense Nav rail) keep their meaning; 2 top and 3 left are new. Read once when
