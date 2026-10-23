@@ -2750,6 +2750,9 @@ static lv_obj_t* settingsSubPageOpen(const char* title, void (*close_fn)()) {
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);   // modal: presses never reach the page below
+  // Callers size their list from lv_obj_get_height(root); without a layout pass it
+  // still reads 0 here and the list comes out -12 px tall, i.e. a blank page (#727).
+  lv_obj_update_layout(root);
   updateGlobalStatusBar();
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);   // keep "‹ title" tappable
   return root;
