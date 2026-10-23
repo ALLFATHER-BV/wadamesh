@@ -19,6 +19,9 @@
 -- you are asking about. Probing pauses while you are
 -- looking at it: a survey is expected to spend other people's airtime only on a
 -- cadence its user chose, and nobody chose to keep probing while reading a map.
+--
+-- 1.3 makes the start/stop button name the next press: "Stop" while a survey
+-- runs, "Start" when it is idle.
 local ui, sys, mesh, fs, timer = wada.ui, wada.sys, wada.mesh, wada.fs, wada.timer
 local C = ui.colors
 local app = {}
@@ -27,6 +30,9 @@ local app = {}
 -- than to require a floor.
 local clear = ui.clear or function() end
 local tr = sys.tr or function(x) return x end
+-- Button relabelling only works on firmware with the button:set fix, marked by
+-- caps().panel (beta_95; see music). Without it, keep the fixed "Start" label.
+local can_relabel = sys.caps and sys.caps().panel == true
 
 local SWEEP_MS = 20000        -- above the 15 s floor the firmware enforces on probes
 local HARVEST_MS = 4000       -- replies land over the few seconds after a probe
@@ -662,9 +668,12 @@ build_survey = function()
   stat_lbl = ui.label("", 4, y, 12, C.text); stat_lbl:width(W - 10); y = y + LH * 2 + 5
 
   local bw = math.min(96, (W - 20) // 3)
-  ui.button(tr("Start"), 4, y, bw, 32, function()
+  -- Relabel in place; rebuilding the screen would reset the page scroll.
+  local start_btn
+  start_btn = ui.button(tr(running and "Stop" or "Start"), 4, y, bw, 32, function()
     running = not running
     if running then phase, phase_at = "idle", 0 end
+    if can_relabel then start_btn:set(tr(running and "Stop" or "Start")) end
     sys.toast(running and tr("Survey running") or tr("Survey stopped"), 1200)
   end)
   ui.button(tr("Name"), 8 + bw, y, bw, 32, function()
