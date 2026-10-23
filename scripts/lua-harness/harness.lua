@@ -292,6 +292,7 @@ local function build_wada()
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
+                                       panel = cfg.caps.panel or false,
                                        map = cfg.caps.sdk_ext or false,
                                        sd_list = cfg.caps.sd_list or false,
                                        sd_clean = cfg.caps.sd_clean or false,
@@ -581,6 +582,46 @@ scenarios.wardrive_utf8 = function()
     if label.text:find("Ouderkerk☀", 1, true) then found = true end
   end
   assert(found, "emoji-bearing repeater name was not rendered")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- Start/Stop names the next press, relabelled in place: only safe with the
+-- button:set fix (caps().panel, beta_95). The old-firmware case is below.
+scenarios.wardrive_start_stop = function()
+  cfg = {
+    w = 320, h = 196,
+    caps = { sdk_ext = true, keyboard = true, touch = false, compass = false, accel = false,
+             discover = true, panel = true },
+  }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  local b = assert(buttons[1], "Wardrive start/stop button missing")
+  assert(b.text == "Start", "a stopped survey should offer Start, got '" .. b.text .. "'")
+  assert(guarded(BUDGET, b.fn))
+  assert(b.text == "Stop", "a running survey should offer Stop, got '" .. b.text .. "'")
+  assert(guarded(BUDGET, b.fn))
+  assert(b.text == "Start", "a stopped survey should offer Start again, got '" .. b.text .. "'")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+-- Without caps().panel, relabelling would corrupt memory, so the label stays.
+scenarios.wardrive_start_stop_old_firmware = function()
+  cfg = {
+    w = 320, h = 196,
+    caps = { sdk_ext = true, keyboard = true, touch = false, compass = false, accel = false,
+             discover = true, panel = false },
+  }
+  storekv = {}
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  local b = assert(buttons[1], "Wardrive start/stop button missing")
+  assert(guarded(BUDGET, b.fn))
+  assert(b.text == "Start",
+    "firmware without the relabel fix must keep the fixed label, got '" .. b.text .. "'")
+  assert(toasts[#toasts] == "Survey running", "the toast should still report the state")
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
@@ -2383,6 +2424,10 @@ end
 local order = APP_PATH:find("/sdscan/", 1, true)
   and { "sdscan_real_m9", "sdscan_many", "sdscan_m9", "sdscan_layouts", "sdscan_paging_and_full", "sdscan_old_firmware", "sdscan_no_access",
         "sdscan_no_card", "sdscan_remove_fails", "sdscan_portrait", "sdscan_cost" }
+  -- The start/stop relabel is 1.3 behaviour; 1.1 and 1.2 keep the fixed label, so
+  -- they run the utf8 scenario alone as before.
+  or APP_PATH:find("/wardrive/1.3/", 1, true)
+  and { "wardrive_utf8", "wardrive_start_stop", "wardrive_start_stop_old_firmware" }
   or APP_PATH:find("/wardrive/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
