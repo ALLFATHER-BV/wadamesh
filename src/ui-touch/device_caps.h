@@ -279,6 +279,17 @@
   #define CAP_TILES_ON_STORAGE 0
 #endif
 
+// The optional emoji pack and its tab/recent picker need both removable SD and
+// 8 MB PSRAM. Every enabled SD target below has an 8 MB PSRAM board definition;
+// the regular Heltec V4 has only 2 MB and no SD, so both conditions exclude it.
+#if CAP_SD && defined(BOARD_HAS_PSRAM) && \
+    (defined(HAS_CROWPANEL_35) || defined(HAS_TDECK_PRO) || defined(HAS_TDECK_GT911) || \
+     defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8))
+  #define CAP_EMOJI_PACK 1
+#else
+  #define CAP_EMOJI_PACK 0
+#endif
+
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
 // expose it; the Pager, V4-R8, ThinkNode M9, T-Deck and T-Deck Pro / Max add
 // font-only presets because their compact viewports cannot safely take global
