@@ -289,32 +289,46 @@ static bool writeSnapshot(fs::FS* fs, const char* legacy_path, char slot, uint32
 #if defined(TDP4_POKE_TRACE)
   printf("[SDW] %lu core%d prefs %s\n", (unsigned long)millis(), (int)xPortGetCoreID(), path);
 #endif
-  File f;
-  {
-    PrefsIoPhase io(true, "open", path, slot);
-    f = fs->open(path, FILE_WRITE);
-  }
-  if (!f) return false;
-  bool ok = false;
-  {
-    PrefsIoPhase io(true, "write", path, slot);
-    ok = (payload.empty() || f.write(payload.data(), payload.size()) == payload.size()) &&
-         f.write((const uint8_t*)&footer, sizeof(footer)) == sizeof(footer);
-  }
-  {
-    PrefsIoPhase io(true, "flush", path, slot);
-    f.flush();
-  }
-  {
-    PrefsIoPhase io(true, "close", path, slot);
-    f.close();
-  }
-  if (!ok) return false;
+  // Two tries. A slot file that will not take a write (a damaged entry left by an
+  // interrupted write or by another firmware on the card) used to fail every retry,
+  // forever: every change reverted on the next boot, and only a factory reset got the
+  // device out. This is always the slot NOT holding the loaded settings (the writer
+  // picks the other one, and a legacy single file is never the target), so deleting
+  // it and writing it fresh cannot lose them.
+  for (int attempt = 0; attempt < 2; ++attempt) {
+    if (attempt) {
+      Serial.printf("[PREFS] slot %c of %s would not take a write; recreating it\n", slot, legacy_path);
+      PrefsIoPhase io(true, "remove", path, slot);
+      fs->remove(path);
+    }
+    File f;
+    {
+      PrefsIoPhase io(true, "open", path, slot);
+      f = fs->open(path, FILE_WRITE);
+    }
+    if (!f) continue;
+    bool ok = false;
+    {
+      PrefsIoPhase io(true, "write", path, slot);
+      ok = (payload.empty() || f.write(payload.data(), payload.size()) == payload.size()) &&
+           f.write((const uint8_t*)&footer, sizeof(footer)) == sizeof(footer);
+    }
+    {
+      PrefsIoPhase io(true, "flush", path, slot);
+      f.flush();
+    }
+    {
+      PrefsIoPhase io(true, "close", path, slot);
+      f.close();
+    }
+    if (!ok) continue;
 
-  std::vector<SdNvsPrefs::Kv> verify;
-  uint32_t verify_generation = 0;
-  return readSnapshot(fs, path, verify, verify_generation, true, slot) &&
-         verify_generation == generation;
+    std::vector<SdNvsPrefs::Kv> verify;
+    uint32_t verify_generation = 0;
+    if (readSnapshot(fs, path, verify, verify_generation, true, slot) &&
+        verify_generation == generation) return true;
+  }
+  return false;
 }
 
 static bool newerGeneration(uint32_t lhs, uint32_t rhs) {
