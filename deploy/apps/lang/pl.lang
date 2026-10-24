@@ -145,6 +145,7 @@ Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Buffered receive (experimental)
 Built-in	Built-in
 Built-in (default)	Built-in (default)
+Default	Default
 CR	CR
 Calibrate battery (full = 100%)	Calibrate battery (full = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrated: 100%% = %u.%02u V  (long-press to reset)
@@ -2195,4 +2196,3 @@ Powering off… press reset to wake	Powering off… press reset to wake
 Low	Low
 F11 on the keyboard steps through these too.	F11 on the keyboard steps through these too.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	Default

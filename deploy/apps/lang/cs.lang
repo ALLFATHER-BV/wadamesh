@@ -145,6 +145,7 @@ Broker host / IP	Hostitel / IP brokeru
 Buffered receive (experimental)	Vyrovnávací příjem (experimentální)
 Built-in	Vestavěné
 Built-in (default)	Vestavěné (výchozí)
+Default	Výchozí
 CR	CR
 Calibrate battery (full = 100%)	Kalibrovat baterii (plná = 100 %)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibrováno: 100%% = %u.%02u V  (dlouhým stiskem obnovíte výchozí)
@@ -2199,4 +2200,3 @@ Powering off… press reset to wake	Vypínání… probudíte stisknutím reset
 Low	Low
 F11 on the keyboard steps through these too.	Klávesa F11 na klávesnici přepíná tyto úrovně také.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	Výchozí

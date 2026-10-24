@@ -147,6 +147,7 @@ Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
 Built-in	Beépített
 Built-in (default)	Beépített (alapértelmezett)
+Default	Alapértelmezett
 CR	CR
 Calendar	Naptár
 Calibrate battery (full = 100%)	Akkumulátor kalibrálása (full = 100%)
@@ -2193,4 +2194,3 @@ Powering off… press reset to wake	Kikapcsolás… az ébresztéshez nyomja meg
 Low	Low
 F11 on the keyboard steps through these too.	A billentyűzet F11 gombja is végiglépked ezeken.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	Alapértelmezett

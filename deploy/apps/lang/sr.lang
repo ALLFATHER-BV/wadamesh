@@ -147,6 +147,7 @@ Broker host / IP	Хост / IP брокера
 Buffered receive (experimental)	Баферовани пријем (експериментално)
 Built-in	Уграђен
 Built-in (default)	Уграђен (подразумевано)
+Default	Подразумевано
 CR	CR
 Calibrate battery (full = 100%)	Калибриши батерију (пуна = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Калибрисано: 100%% = %u.%02u V  (дуго за ресет)
@@ -2183,4 +2184,3 @@ Powering off… press reset to wake	Гашење… притисните reset �
 Low	Low
 F11 on the keyboard steps through these too.	Тастер F11 на тастатури такође пролази кроз ове нивое.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	Подразумевано

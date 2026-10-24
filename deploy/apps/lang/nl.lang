@@ -147,6 +147,7 @@ Broker host / IP	Broker-host / IP
 Buffered receive (experimental)	Gebufferde ontvangst (experimenteel)
 Built-in	Ingebouwd
 Built-in (default)	Ingebouwd (standaard)
+Default	Standaard
 CR	CR
 Calibrate battery (full = 100%)	Batterij kalibreren (vol = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Gekalibreerd: 100%% = %u.%02u V  (lang indrukken om te resetten)
@@ -2181,4 +2182,3 @@ Powering off… press reset to wake	Uitschakelen… druk op reset om te wekken
 Low	Low
 F11 on the keyboard steps through these too.	F11 op het toetsenbord loopt hier ook doorheen.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	Standaard

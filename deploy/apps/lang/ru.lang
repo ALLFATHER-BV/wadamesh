@@ -147,6 +147,7 @@ Broker host / IP	Хост / IP брокера
 Buffered receive (experimental)	Буферизованный приём (экспериментально)
 Built-in	Встроенный
 Built-in (default)	Встроенный (по умолчанию)
+Default	По умолчанию
 CR	CR
 Calibrate battery (full = 100%)	Калибровать батарею (полная = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Калибровано: 100%% = %u.%02u В  (долгое нажатие — сброс)
@@ -2183,4 +2184,3 @@ Powering off… press reset to wake	Выключение… нажмите reset
 Low	Low
 F11 on the keyboard steps through these too.	Клавиша F11 на клавиатуре тоже переключает эти уровни.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
-Default	По умолчанию
