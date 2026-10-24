@@ -145,6 +145,7 @@ Broker host / IP	Hostitel / IP brokeru
 Buffered receive (experimental)	Vyrovnávací příjem (experimentální)
 Built-in	Vestavěné
 Built-in (default)	Vestavěné (výchozí)
+Default	Výchozí
 CR	CR
 Calibrate battery (full = 100%)	Kalibrovat baterii (plná = 100 %)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibrováno: 100%% = %u.%02u V  (dlouhým stiskem obnovíte výchozí)

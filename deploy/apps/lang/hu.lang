@@ -147,6 +147,7 @@ Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
 Built-in	Beépített
 Built-in (default)	Beépített (alapértelmezett)
+Default	Alapértelmezett
 CR	CR
 Calendar	Naptár
 Calibrate battery (full = 100%)	Akkumulátor kalibrálása (full = 100%)

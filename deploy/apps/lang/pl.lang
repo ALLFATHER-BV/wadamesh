@@ -145,6 +145,7 @@ Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Buffered receive (experimental)
 Built-in	Built-in
 Built-in (default)	Built-in (default)
+Default	Default
 CR	CR
 Calibrate battery (full = 100%)	Calibrate battery (full = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrated: 100%% = %u.%02u V  (long-press to reset)

@@ -147,6 +147,7 @@ Broker host / IP	Хост / IP брокера
 Buffered receive (experimental)	Буферизованный приём (экспериментально)
 Built-in	Встроенный
 Built-in (default)	Встроенный (по умолчанию)
+Default	По умолчанию
 CR	CR
 Calibrate battery (full = 100%)	Калибровать батарею (полная = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Калибровано: 100%% = %u.%02u В  (долгое нажатие — сброс)

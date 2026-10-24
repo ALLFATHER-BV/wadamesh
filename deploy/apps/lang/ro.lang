@@ -147,6 +147,7 @@ Broker host / IP	Gazdă broker / IP
 Buffered receive (experimental)	Recepţie cu buffer (experimental)
 Built-in	Încorporat
 Built-in (default)	Încorporat (implicit)
+Default	Implicit
 CR	CR
 Calibrate battery (full = 100%)	Calibrează bateria (plină = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrat: 100%% = %u.%02u V  (apasă lung pentru resetare)
