@@ -474,7 +474,7 @@
 // hardware gate as CAP_COMPASS: the ThinkNode M9's QMI8658 is the only one
 // driven so far (variants/thinknode_m9/M9Imu.*). Its point is tilt — a 2-axis
 // magnetic heading is wrong by ~1.5 degrees per degree of tilt at mid latitudes.
-#if defined(HAS_M9_IMU)
+#if defined(HAS_M9_IMU) || defined(TLORA_PAGER)   // + the Pager's BHI260AP (variants/lilygo_tlora_pager/PagerImu.*)
   #define CAP_IMU 1
 #else
   #define CAP_IMU 0
