@@ -42216,13 +42216,11 @@ static void chatVirtEnsureMsgIdx() {
   if (s_chat_msg_idx) s_chat_msg_idx_cap = need;
 }
 
-// Search the current thread's message list for the most recent message from
-// `sender_name` that is OLDER than the reply at `current_ring_idx`. Messages
-// in s_chat_virt.msg_idx are oldest-first, so "older" means a lower array
-// index. On success, fills d.reply_text with the quoted text and returns true.
-// Self-replies match our own node name against outgoing messages. Returns
-// false if no older match is found — the caller strips the prefix but skips
-// the mini-bubble.
+// Find the unique older message from `sender_name` for a reply quote.
+// Only succeeds when exactly one match exists in the recent window — a
+// wrong quote in a busy channel is worse than none. Self-replies match
+// our own node name against outgoing messages. Returns false for zero or
+// multiple matches.
 static bool findReplyQuoteText(const char* sender_name, int current_pos,
                                ChatBubbleDisplay& d) {
   if (!sender_name || !sender_name[0] || !g_lv.task || !s_chat_virt.msg_idx) return false;
@@ -42232,13 +42230,11 @@ static bool findReplyQuoteText(const char* sender_name, int current_pos,
   int oldest = current_pos - UITask::REPLY_QUOTE_MAX_BACK;
   if (oldest < 0) oldest = 0;
 
-  // Count matches — only show the quote when the guess is unambiguous (the
-  // sender has exactly one recent message). A wrong quote in a busy channel
-  // is worse than none.
   int match_count = 0;
   int match_idx = -1;
+  UITask::UIMessage om;
+  UITask::UIMessage match_msg;
   for (int i = current_pos - 1; i >= oldest; --i) {
-    UITask::UIMessage om;
     if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[i], om)) continue;
     bool match;
     if (om.outgoing) {
@@ -42249,18 +42245,16 @@ static bool findReplyQuoteText(const char* sender_name, int current_pos,
     if (!match) continue;
     ++match_count;
     match_idx = i;
+    match_msg = om;
     if (match_count > 1) return false;  // ambiguous — no quote
   }
   if (match_count != 1) return false;
 
-  UITask::UIMessage om;
-  if (!g_lv.task->getMessageByIndex(s_chat_virt.msg_idx[match_idx], om)) return false;
-
-  const char* orig_sender = om.outgoing ? me : om.sender;
+  const char* orig_sender = match_msg.outgoing ? me : match_msg.sender;
   // Show the quoted sender through senderShownName() so contact nicknames apply.
   const char* shown_name = senderShownName(orig_sender);
   // Strip any nested @[sender] prefix from the quoted message.
-  const char* quote_text = om.text;
+  const char* quote_text = match_msg.text;
   char rq2[UITask::MAX_SENDER_NAME + 1];
   if (const char* nested = ReplyQuote::parse(quote_text, rq2, sizeof(rq2))) {
     quote_text = nested;
@@ -42323,20 +42317,23 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
       d.show_text   = body;
     }
   }
-  // Detect and strip the @[sender] reply-quote prefix. The mini bubble only
-  // appears if the quoted message is actually found in the thread.
+  // Detect the @[sender] reply-quote prefix. The mini bubble only appears
+  // if the quoted message is actually found in the thread; only then do we
+  // strip the prefix from the body so that a non-resolved @[name] stays in
+  // the text and textMentionsMe still finds it.
   {
     char rq_sender[UITask::MAX_SENDER_NAME + 1];
     const char* body = ReplyQuote::parse(d.show_text, rq_sender, sizeof(rq_sender));
     if (body) {
-      d.show_text = body;
       int pos = logical_i;
       if (pos < 0 && s_chat_virt.msg_idx) {
         for (int i = 0; i < s_chat_virt.n; ++i) {
           if (s_chat_virt.msg_idx[i] == ring_idx) { pos = i; break; }
         }
       }
-      d.has_reply = findReplyQuoteText(rq_sender, pos, d);
+      if ((d.has_reply = findReplyQuoteText(rq_sender, pos, d))) {
+        d.show_text = body;
+      }
     }
   }
   // The label is the sender's nickname when it has one; show_sender (its colour, its
@@ -42628,7 +42625,7 @@ static void chatFootChainDrawCb(lv_event_t* e) {
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
                                           bool thread_is_room, lv_coord_t bubble_max_w,
-                                          int ring_idx, int logical_i = -1) {
+                                          int ring_idx, int logical_i) {
   ChatBubbleDisplay d{};
   chatParseMessageDisplay(m, channel_mode, thread_is_room, ring_idx, d, logical_i);
   const lv_coord_t inner_max_w = bubble_max_w - 2 * kChatBubblePadH;
