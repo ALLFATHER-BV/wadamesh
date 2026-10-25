@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
+#include <climits>         // INT_MAX (glibc does not pull it in transitively, macOS/ESP-IDF do)
 
 #if defined(WADA_WEB)
   #include "WebMesh.h"     // web/mesh: the MyMesh stand-in (the UI's compile-time mesh contract)

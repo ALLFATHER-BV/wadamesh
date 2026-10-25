@@ -25,7 +25,34 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(WADA_WEB)                    // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
+#if defined(WADA_WEB) && defined(WADA_SIM_PAGER)   // ===== T-LoRa Pager simulator (web/, -DWADA_SIM_PAGER=ON) =====
+  // The host build laid out as the Pager, for reviewing and scripting its screens off
+  // the device: the Pager's own capability set (below), with the radio, card and
+  // storage of the web board behind it (web/sim_pager/).
+  #define CAP_TOUCH        0   // keyboard + rotary encoder only, as on the device
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 0   // native 480x222
+  #define CAP_SD           0   // no card in the simulator
+  #define CAP_FILESYSTEM   0
+  #define CAP_GPS          1
+  #define CAP_GPS_RECEIVER 0
+  #define CAP_OTA          0
+  #define CAP_LOCK_SCREEN  1
+  #define CAP_USB_FILES    0
+  #define CAP_RADIO_TOOLS  0
+  #define CAP_SCREEN_MIRROR 0
+  #define CAP_WEB_BROWSER  0
+  #define CAP_WIFI_SETUP   0
+  #define CAP_BT_SETUP     0
+  #define CAP_USB_FLASH    0
+  #define CAP_FILE_HANDOFF 1
+  #define CAP_NATIVE_KEYBOARD 0
+  #define CAP_BUILTIN_LANGS    1
+  #define CAP_BUILTIN_LUA_APPS 1
+  #define CAP_STORE_DOWNLOADS  1
+  #define CAP_FW_UPDATE_CHECK  0
+
+#elif defined(WADA_WEB)                  // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
   // A virtual touch panel whose size the page picks at boot (WEB_BUILD.md "Phones and
   // tablets"): 800x480 landscape on a computer, the large-screen layouts the CrowPanel 5.0
   // and the Tanmatsu ship; on a phone or tablet the size of its screen below the page's

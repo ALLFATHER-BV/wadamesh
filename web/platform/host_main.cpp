@@ -21,6 +21,9 @@
 #include "WebPlatform.h"
 #include "BackendSelect.h"
 #include "wada_host.h"
+#if defined(WADA_SIM_PAGER)
+void simPagerHoldKey(uint8_t c, uint32_t ms);   // web/sim_pager/SimPager.cpp
+#endif
 #include "miniz.h"
 #include <SDL.h>
 #include <string>
@@ -187,6 +190,16 @@ void scriptStep() {
       if (code) webKeyPush(code);
       s_script.wait_until = now + 150; return;
     }
+#if defined(WADA_SIM_PAGER)
+    if (cmd == "holdkey") {   // holdkey C MS: type C and keep its key down for MS (Pager simulator; C = space for the space bar)
+      std::string k; int ms = 1000; in >> k >> ms;
+      if (k == "space") k = " ";   // the stream drops a literal blank
+      if (k == "shift") k = "\x01";   // a modifier alone, held (Shift, Fn)
+      if (k == "fn")    k = "\x02";
+      if (!k.empty()) simPagerHoldKey((uint8_t)k[0], (uint32_t)ms);
+      s_script.wait_until = now + 50; return;
+    }
+#endif
     if (cmd == "wheel") {   // wheel X Y DY: a wheel turn over (X, Y), DY canvas pixels (> 0 = down)
       int x = 0, y = 0, dy = 0; in >> x >> y >> dy;
       webWheel(x, y, dy);

@@ -46,7 +46,11 @@ private:
 WebSerialInterface s_serial;
 }  // namespace
 
+#if defined(WADA_SIM_PAGER)
+TLoraPagerBoard board;   // web/sim_pager/SimPagerBoard.h
+#else
 WebBoard board;
+#endif
 WebRadio radio_driver;
 ClockFloorRTC rtc_clock(s_host_clock);
 WebSensorManager sensors;
