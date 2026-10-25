@@ -196,6 +196,9 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #if defined(HAS_PAGER_KEYBOARD)
     #include "../helpers/input/PagerKeyboard.h"
   #endif
+  #if defined(TLORA_PAGER) && !defined(WADA_WEB)
+    #include <esp_wifi.h>              // esp_wifi_set_ps: deeper modem sleep while the screen is off
+  #endif
   #if defined(TLORA_PAGER)
     #include "PagerHaptics.h"          // DRV2605 vibration motor (variants/lilygo_tlora_pager)
   #endif
@@ -54180,6 +54183,12 @@ static void powerOffNow() {
                                                  : TR("Powering off\xE2\x80\xA6 press reset to wake"), 1500);
 #elif defined(HAS_TDECK_GT911)
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 click trackball to wake"), 1500);
+#elif defined(TLORA_PAGER)
+    // On battery the charger opens its battery switch (a true power-off, see below),
+    // and only the power key brings it back; on USB it stays the BOOT-wake deep sleep.
+    g_lv.task->showAlert(board.externalPowerPresent() == 0
+                           ? TR("Powering off\xE2\x80\xA6 hold the power key to switch on")
+                           : TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
 #else
     g_lv.task->showAlert(TR("Powering off\xE2\x80\xA6 press BOOT to wake"), 1500);
 #endif
@@ -54191,8 +54200,9 @@ static void powerOffNow() {
 #endif
   delay(900);
 #if defined(TLORA_PAGER)
-  // "Power off" is deep sleep on the Pager, so its XL9555 (and SD_EN) remain
-  // alive. Pause new tile work, let any in-flight SD owner finish, unmount FAT,
+  // "Power off" on USB is deep sleep on the Pager (on battery it is ship mode,
+  // further down, with deep sleep as the fallback), so its XL9555 (and SD_EN)
+  // can remain alive. Pause new tile work, let any in-flight SD owner finish, unmount FAT,
   // then remove card power so removal/reinsertion while asleep is truly cold.
   tileBackendSwapTryBegin();
   const uint32_t sd_stop_deadline = millis() + 3000;
@@ -54220,6 +54230,11 @@ static void powerOffNow() {
 #endif
   display.panelSleep(true);
   display.turnOff();
+  // Everything is parked and saved: on battery, open the charger's battery switch.
+  // That is the vendor's power-off (about 26 µA, against about 530 µA asleep) and
+  // it does not return. On USB, or if the charger does not take it, carry on into
+  // the deep sleep below exactly as before.
+  board.enterShipMode();
 #endif
 #if defined(HELTEC_LORA_V4_R8)
   // Park everything before sleeping — without this the SX1262 stayed in RX
@@ -76764,6 +76779,26 @@ static inline void touchScreenBacklight(bool on) {
 // stops listening to the mesh — we just stop burning 240 MHz to render nothing.
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
+#if defined(TLORA_PAGER) && !defined(WADA_WEB)
+// A joined Wi-Fi is the Pager's largest draw after the backlight: with the screen
+// dark and no app connected, let the modem sleep through more beacons (maximum
+// modem sleep: it wakes every listen interval instead of every DTIM). Still
+// associated, so the web client and the app reconnect as before, a beat slower.
+// Waking the screen, or a client connecting, returns it to the normal setting:
+// setCpuForScreen() passes screen changes in, the pager loop calls it with -1
+// about once a second to catch clients coming and going.
+// (Never WIFI_PS_NONE: illegal while Bluetooth runs, see main.cpp.)
+static void pagerWifiPsUpdate(int screen_on) {
+  static bool s_screen_on = true;
+  static int8_t s_applied = -1;          // 1 = MAX_MODEM, 0 = MIN_MODEM, -1 = not set
+  if (screen_on >= 0) s_screen_on = screen_on != 0;
+  if (WiFi.getMode() == WIFI_OFF) { s_applied = -1; return; }
+  const int8_t deep = (!s_screen_on && the_mesh.getProtoNumClients() == 0) ? 1 : 0;
+  if (deep == s_applied) return;
+  if (esp_wifi_set_ps(deep ? WIFI_PS_MAX_MODEM : WIFI_PS_MIN_MODEM) == ESP_OK) s_applied = deep;
+}
+#endif
+
 static void setCpuForScreen(bool screen_on) {
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
   // The P4's Arduino HAL only accepts 360 MHz (240/80 log a "could not be set" error every screen
@@ -76775,6 +76810,9 @@ static void setCpuForScreen(bool screen_on) {
   if (want == s_cur_mhz) return;
   setCpuFrequencyMhz(want);
   s_cur_mhz = want;
+#endif
+#if defined(TLORA_PAGER) && !defined(WADA_WEB)
+  pagerWifiPsUpdate(screen_on);
 #endif
 }
 #else
@@ -80730,6 +80768,12 @@ void UITask::loop() {
   }
 #if defined(TLORA_PAGER)
   pagerHapticsIdleTick();   // vibration motor back to standby once its pattern has run out
+#if !defined(WADA_WEB)
+  {
+    static uint32_t s_wifi_ps_ms = 0;
+    if (now - s_wifi_ps_ms >= 1000) { s_wifi_ps_ms = now; pagerWifiPsUpdate(-1); }
+  }
+#endif
   {
     // The stored charging limits (Settings > Battery > Charging), once, as soon as
     // the loop runs: TLoraPagerBoard::begin() starts at the safe defaults.

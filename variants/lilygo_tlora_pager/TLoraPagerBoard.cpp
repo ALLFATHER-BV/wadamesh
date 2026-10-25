@@ -421,3 +421,17 @@ TLoraPagerBoard::ChargeState TLoraPagerBoard::chargeState() {
   return (ChargeState)((sys_stat_ >> 3) & 0x03);
 }
 
+// REG09: BATFET_DIS is bit 5, BATFET_DLY bit 3 (0 = open at once). The switch
+// stays open until the power key (QON) is pressed or VBUS returns, so this
+// needs no wake source of our own.
+bool TLoraPagerBoard::enterShipMode() {
+  if (!charger_ready_) return false;
+  chg_ms_ = 0;                                   // read the input state fresh
+  if (externalPowerPresent() != 0) return false; // on USB (or unknown): would not switch off
+  Serial.println("[POWER] ship mode");
+  Serial.flush();
+  s_charger.setTurnOffDelay(0);                  // BATFET_DLY off: open at once
+  s_charger.shutdown();                          // BATFET_DIS
+  delay(2000);                                   // power goes away here
+  return false;                                  // still running: the caller falls back
+}

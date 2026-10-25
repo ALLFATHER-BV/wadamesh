@@ -174,6 +174,13 @@ public:
   void setChargeTempMax(int16_t c10);
   void setChargeTempMin(int16_t c10);   // lower limit, 0.1 deg C (default 0)
 
+  // Real power-off: opens the charger's battery switch (BQ25896 ship mode,
+  // BATFET_DIS), which takes the whole board down to the charger's own leakage,
+  // about 26 µA against about 530 µA in deep sleep. Only the power key (the
+  // charger's QON input) or plugging in USB switches it back on. Refused (false)
+  // while USB is connected: VBUS would keep the system powered anyway, and the
+  // caller then falls back to deep sleep. On success it does not return.
+  bool enterShipMode();
 
   ExtensionIOXL9555 io_expander;
   GaugeBQ27220 gauge;
