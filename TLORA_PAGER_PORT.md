@@ -41,11 +41,87 @@ Still open, in priority order:
 2. **USB companion device-profile frame is still untested** (⑦b). Remove the
    temporary `[DISP]` register readback in `ST7796LCDDisplay::begin()` once it
    passes.
-3. Lock-screen wallpaper SD scanning is still T-Deck/M9-only (risk 1h).
+3. ~~Lock-screen wallpaper SD scanning is still T-Deck/M9-only (risk 1h).~~
+   Done (2026-10): Settings > Lock screen shows the Wallpaper row on the
+   pager; the file manager's "Set as wallpaper" already worked here.
 4. `deploy/flasher/` now carries pager cards + manifests for parity, but **no
    deploy script publishes that directory** (`deploy-site.sh` ships
    `deploy/site/` only) and `flasher.wadamesh.com` 301s to the apex. Decide
    whether to wire it into a deploy target or retire it.
+
+### Peripherals brought up (2026-10)
+
+The chips that had power but no driver now do something:
+
+| Chip | What it does now | Where |
+|---|---|---|
+| **DRV2605** haptic driver (0x5A) | Vibrates for message / DM / @mention (own patterns), following the per-kind sound switches, channel mutes and DND but NOT the Sound master switch. Settings > Sound > Vibration: strength (light/medium/strong), a pattern per kind (off, once, twice, three times, long, pulse; each plays when picked) and the key/knob click (off/light/strong). Parked in standby between patterns. Driver: SensorLib `SensorDRV2605`. | `PagerHaptics.*`, `UITask.cpp` |
+| **BQ25896** charger (0x6B) | Charging icon from the charger's input status. The gauge reads the *cell*, which never rises above the charge target, so the shared voltage heuristic could never show charging on this board. Driver: XPowersLib `PowersBQ25896` (its init also turns the charger's I2C watchdog off). Charge limits set to LilyGoLib's for this pack: 704 mA, 4288 mV (chip default is 2 A). Temperature guard: charging switches off outside 0-45 °C pack temperature (gauge reading) and back on 3 °C inside, with a toast and the reason in the battery popup, lock screen and screensaver. Settings > Battery > Charge limits changes the current (256-1536 mA), the charge voltage (4.10-4.35 V) the upper temperature limit (40-55 °C or off) and the lower one (0, 5 or 10 °C, never below freezing); anything past the safe defaults asks first with the risk spelled out, and "Back to safe defaults" resets them all. Not in the settings backup on purpose. | `TLoraPagerBoard::externalPowerPresent()`, `batteryIsCharging()` |
+| **BQ25896** ship mode | Power off on battery opens the battery switch (vendor figure ~26 µA vs ~530 µA deep sleep); the power key (QON) switches it back on. On USB it keeps the BOOT-wake deep sleep. | `TLoraPagerBoard::enterShipMode()`, `powerOffNow()` |
+| **BQ27220** gauge | Battery % from the gauge's StateOfCharge (as on the T-Display P4, #273). Design/full capacity set once to the fitted 1500 mAh pack, as LilyGoLib does; each attempt is recorded in NVS (`pagerhw/gauge_try`) so it is not retried every boot. The battery popup shows the live current/power, mAh and time left/to full, temperature, cycles and health; the 24 h chart adds the 5-min average current (right axis, `mA` chip swaps it for CPU MHz), logged as a sixth column. | `pagerConfigureGauge()`, `batteryPercentFromMv()`, `batteryGaugeBlock()` |
+| **BHI260AP** IMU (0x28) | `wada.sys.accel()` / `caps().accel` for Lua apps. The hub firmware (Klio image, ~120 KB) uploads on the first read, not at boot; the accelerometer stops 3 s after the last read. Axes remapped by the hub (`BOTTOM_LAYER_TOP_LEFT_CORNER`, vendor). | `PagerImu.*`, `luaHostAccel()` |
+
+Battery care and quiet modes (all Pager-only, gated `TLORA_PAGER`):
+
+- **Charge only to 80 %** (Settings > Battery > Battery care, default off):
+  `TLoraPagerBoard::setChargeCare()`; charging stops at 80 % gauge SOC and
+  resumes below 75 %. Temperature guard and battery care share one switch
+  decision (`chargeEnableApply()`). The popup, lock screen and screensaver say
+  "kept at 80 %" while it holds.
+- **Low battery warning** (same card, default on): on battery, a toast and a
+  vibration at 20 % and 10 % (once per discharge, shown at the next wake when
+  the screen was off); at 3 % for three readings in a row a 10 s countdown,
+  then `powerOffNow()` (ship mode). Plugging in cancels it.
+- **Daily use** in the battery popup: mAh drawn today and yesterday, integrated
+  from the 10 s gauge samples (`battDayTick()`), kept in NVS (`bat_day`,
+  `bat_mah`, not in the backup).
+- **Battery capacity** (Settings > Battery > Battery pack, default 1500 mAh):
+  -/+100 mAh, "Apply" writes the gauge's design and full-charge capacity after a
+  confirm (`TLoraPagerBoard::setBatteryCapacity()`, stored as `pagerhw/cap_mah`;
+  boot re-applies it once per target, `cap_try`, replacing the old `gauge_try`).
+- **Time left at your usage**: remaining mAh divided by a running average of the
+  draw on battery (4 h time constant, plain average until then, used after 30 min
+  of battery time, NVS `bat_use`) instead of the gauge's last-minute
+  time-to-empty; popup, lock screen and screensaver. On USB the gauge's figures stay.
+- **Shift + knob**: Shift + turn = brightness, Shift + click = switch the knob to
+  volume; a level pill shows it (`pagerModifierKnob()`). Needs
+  `pagerKeyboardShiftHeld()` (new, additive getter in the shared keyboard driver).
+- **Hold Shift** alone 1.5 s = Quiet now (Do Not Disturb until held again, two
+  buzzes on, one off); also a switch in Settings > Sound > Do Not Disturb.
+- **Hold Fn** alone 2 s = key help, every shortcut on one page.
+- **Quiet when face down** (Settings > Sound > Do Not Disturb, default off):
+  accelerometer read once a second while on; z below -0.8 g for 3 s = screen off
+  and DND, z above -0.5 g ends it. **Still to confirm on hardware**: the sign of
+  z when face down (confirmed 2026-10-25: works).
+- **Wake when picked up** (Settings > Display > Screen, default off): with the
+  screen off the accelerometer is read every 200 ms; it arms only after lying
+  still and flat (|z| > 0.85 g) for 3 s, then needs a movement that settles
+  within 2 s in a reading pose (z > 0.3 g) tilted > 20 degrees from the rest
+  pose. Carried bags never arm it; a swinging bag never settles. Locked: shows
+  the lock screen only. Turning either motion setting on shows "Starting the
+  motion sensor..." before the 1-2 s hub firmware upload.
+
+Power: with the screen dark and no app connected, a joined Wi-Fi drops to
+maximum modem sleep (`esp_wifi_set_ps(WIFI_PS_MAX_MODEM)`, `pagerWifiPsUpdate()`),
+back to the normal minimum modem sleep on wake or when a client connects
+(checked once a second). Measured on the SX1262 unit with the gauge, Wi-Fi
+joined: about 350 mA with the screen on, 65-75 mA with it off.
+
+Still not driven: the **ST25R3916 NFC** reader (needs ST's RFAL stack) and
+the codec's microphone input.
+
+**Hardware-confirmed (2026-10-25, SX1262 unit)**: vibration on message /
+DM / mention with distinguishable patterns; charging icon follows USB; ship
+mode power-off, woken by holding the power key for about 2 s (a 1 s press
+was not enough). The sharp-tick key click was not felt and now uses the
+strong-click effect.
+
+Also confirmed (2026-10-25): the strong-click key feedback, the gauge percent
+after the capacity write, the gauge popup, accent hold, and the current figures
+under Power above. Also confirmed: the 704 mA charge limit (about 700 mA in the popup on a wall
+adapter, CC phase), face-down quiet, and the 1-2 s IMU upload stall (now
+announced). **Still to confirm**: pick-up wake, battery care at 80 %, the
+low-battery warnings, the settable capacity and the usage-based time left.
 
 Risk 11 (keyboard/encoder scroll not repainting) is **accepted as
 workaround-final**: the Alt+turn free-scroll gesture is the intended fix for
