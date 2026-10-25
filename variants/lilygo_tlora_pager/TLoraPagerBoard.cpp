@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <Arduino.h>
 #include "TLoraPagerBoard.h"
+#include "PagerHaptics.h"
 
 void TLoraPagerBoard::begin() {
 
@@ -98,6 +99,9 @@ void TLoraPagerBoard::begin() {
   Wire.beginTransmission(0x18);
   Serial.printf("[BOOT] es8311 %s\n", Wire.endTransmission() == 0 ? "ok" : "PROBE FAILED");
 
+  // DRV2605 vibration motor driver: its rail (DRV_EN) is up from the list above.
+  // Configured once here and left in standby until a pattern plays.
+  if (expander_ok) pagerHapticsBegin();
   gauge.begin(Wire);
 
   esp_reset_reason_t reason = esp_reset_reason();
