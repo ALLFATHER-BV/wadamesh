@@ -73,12 +73,24 @@ public:
 
   uint32_t getCurrentTime() override {
     uint32_t t = AutoDiscoverRTCClock::getCurrentTime();
-    if (t > MAX_PLAUSIBLE_EPOCH) {
-      // Hardware clock is asserting garbage-future: ignore the read entirely and hold at
-      // the last trusted point (or the core's unset seed) until a real source sets us.
-      return (_floor >= MIN_VALID_EPOCH) ? _floor : MIN_VALID_EPOCH;
+    if (t > MAX_PLAUSIBLE_EPOCH || t < _floor) {
+      // The hardware clock is asserting garbage-future, or reads behind the floor
+      // (stopped oscillator, failed I2C read, a write that did not take). The system
+      // clock mirrors every accepted set (pushSystemClock) and keeps running, so use
+      // it when it is ahead of the floor. Without this a T-Display P4 whose PCF8563
+      // misbehaves stayed on the floor/seed forever after a good Wi-Fi sync: the
+      // status bar (system clock) was right while backups were named "nodate" (#746).
+      const uint32_t sys = systemSeconds();
+      if (sys > _floor && sys > MIN_VALID_EPOCH && sys <= MAX_PLAUSIBLE_EPOCH) {
+        _floor = sys;
+        return sys;
+      }
+      if (t > MAX_PLAUSIBLE_EPOCH) {
+        // Hold at the last trusted point (or the core's unset seed) until a real source sets us.
+        return (_floor >= MIN_VALID_EPOCH) ? _floor : MIN_VALID_EPOCH;
+      }
+      return _floor;
     }
-    if (t < _floor) return _floor;
     _floor = t;
     return t;
   }
@@ -117,6 +129,11 @@ public:
     tv.tv_sec  = (time_t)t;
     tv.tv_usec = 0;
     settimeofday(&tv, nullptr);
+  }
+  static uint32_t systemSeconds() {
+    struct timeval tv;
+    if (gettimeofday(&tv, nullptr) != 0 || tv.tv_sec < 0) return 0;
+    return (uint32_t)tv.tv_sec;
   }
 
   // Boot seed. An RTC chip is battery-backed, so it already knows the time while the
