@@ -2520,6 +2520,24 @@ void touchPrefsSetVibratePattern(uint8_t kind, uint8_t p) {
   static const char* const k[3] = { "vib_pm", "vib_pd", "vib_pn" };
   if (kind <= 2) prefsPutUChar(k[kind], p);
 }
+uint16_t touchPrefsGetChargeMa()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUShort("chg_ma", 704); }
+void     touchPrefsSetChargeMa(uint16_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUShort("chg_ma", v); }
+uint16_t touchPrefsGetChargeMv()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUShort("chg_mv", 4288); }
+void     touchPrefsSetChargeMv(uint16_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUShort("chg_mv", v); }
+uint8_t  touchPrefsGetChargeTmax()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_tmax", 45); }
+void     touchPrefsSetChargeTmax(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_tmax", v); }
+uint8_t  touchPrefsGetChargeTmin()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_tmin", 0); }
+void     touchPrefsSetChargeTmin(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_tmin", v); }
+bool touchPrefsGetChargeCare()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_care", 0) != 0; }
+void touchPrefsSetChargeCare(bool on)   { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_care", on ? 1 : 0); }
+bool touchPrefsGetLowBattWarn()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("low_batt", 1) != 0; }
+void touchPrefsSetLowBattWarn(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("low_batt", on ? 1 : 0); }
+uint32_t touchPrefsGetBattDayKey()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_day", 0); }
+void     touchPrefsSetBattDayKey(uint32_t k) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_day", k); }
+uint32_t touchPrefsGetBattDayMah()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_mah", 0xFFFF0000u); }
+void     touchPrefsSetBattDayMah(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_mah", v); }
+uint32_t touchPrefsGetBattUse()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_use", 0); }
+void     touchPrefsSetBattUse(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_use", v); }
 #endif
 bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
 void touchPrefsSetGlanceEnabled(bool on)    { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_en", on ? 1 : 0); }

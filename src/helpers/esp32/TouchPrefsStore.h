@@ -626,6 +626,26 @@ uint8_t touchPrefsGetVibrateStrength();       // 0 light, 1 medium, 2 strong (de
 void    touchPrefsSetVibrateStrength(uint8_t s);
 uint8_t touchPrefsGetVibratePattern(uint8_t kind);   // kind 0 message, 1 DM, 2 @mention -> PagerVibPattern
 void    touchPrefsSetVibratePattern(uint8_t kind, uint8_t pattern);
+// Pager charging (Settings > Battery > Charging). Deliberately not in the backup:
+// a restore must never bring back a limit someone else chose to take a risk with.
+uint16_t touchPrefsGetChargeMa();            // fast-charge current, mA (default 704)
+void     touchPrefsSetChargeMa(uint16_t ma);
+uint16_t touchPrefsGetChargeMv();            // charge voltage, mV (default 4288)
+void     touchPrefsSetChargeMv(uint16_t mv);
+uint8_t  touchPrefsGetChargeTmax();          // stop charging above this, deg C; 0 = guard off (default 45)
+void     touchPrefsSetChargeTmax(uint8_t c);
+uint8_t  touchPrefsGetChargeTmin();          // stop charging below this, deg C (default 0)
+void     touchPrefsSetChargeTmin(uint8_t c);
+bool     touchPrefsGetChargeCare();          // battery care: stop at 80 %, resume below 75 % (default off)
+void     touchPrefsSetChargeCare(bool on);
+bool     touchPrefsGetLowBattWarn();         // warn at 20 / 10 %, switch off at 3 % (default on)
+void     touchPrefsSetLowBattWarn(bool on);
+uint32_t touchPrefsGetBattDayKey();          // local date (YYYYMMDD) the daily mAh count below belongs to
+void     touchPrefsSetBattDayKey(uint32_t key);
+uint32_t touchPrefsGetBattDayMah();          // mAh drawn: today in the low 16 bits, the day before in the high
+void     touchPrefsSetBattDayMah(uint32_t v); // (0xFFFF = not known). Not in the backup: it is this pack's.
+uint32_t touchPrefsGetBattUse();             // average draw on battery: 0.1 mA low 16 bits, minutes seen high
+void     touchPrefsSetBattUse(uint32_t v);
 #endif
 bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
 void    touchPrefsSetGlanceEnabled(bool on);
