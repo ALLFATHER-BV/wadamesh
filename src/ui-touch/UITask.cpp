@@ -2424,6 +2424,43 @@ static void p4PlayNotifySlot(int slot) {
     s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
   }
 }
+
+// Vibration motor (AW86224, P4Haptic.cpp in the variant), on its own throwaway task like the
+// chime so the two play together and neither blocks the loop. The style (Settings > Vibration)
+// picks the beat; the event picks how many times it plays: message 1, DM 2, @-mention 3.
+#include <P4Haptic.h>
+#define HAS_UI_VIBRATE 1
+struct VibStyle { uint16_t on1, gap1, on2, gap; uint8_t gain; };   // on2 == 0: single buzz per beat
+static const VibStyle kVibStyles[TOUCH_VIB_COUNT] = {
+  { 120,  0,   0, 120, P4_HAPTIC_GAIN_DEFAULT },   // Pulse
+  {  60,  0,   0, 140, 0x50 },                     // Gentle: short and softer
+  { 350,  0,   0, 200, P4_HAPTIC_GAIN_DEFAULT },   // Long
+  {  60, 90, 120, 300, 0x50 },                     // Heartbeat: lub-dub, as soft as Gentle
+};
+static volatile bool s_p4_vib_playing = false;
+static volatile int  s_p4_vib_slot    = TOUCH_SND_MSG;
+static volatile int  s_p4_vib_style   = TOUCH_VIB_PULSE;
+static void p4VibrateTaskFn(void*) {
+  const VibStyle& st = kVibStyles[s_p4_vib_style];
+  const int beats = s_p4_vib_slot == TOUCH_SND_MEN ? 3 : s_p4_vib_slot == TOUCH_SND_DM ? 2 : 1;
+  for (int i = 0; i < beats; ++i) {
+    if (i) vTaskDelay(pdMS_TO_TICKS(st.gap));
+    p4HapticBuzz(st.on1, st.gain);
+    if (st.on2) { vTaskDelay(pdMS_TO_TICKS(st.gap1)); p4HapticBuzz(st.on2, st.gain); }
+  }
+  s_p4_vib_playing = false;
+  vTaskDelete(nullptr);
+}
+// `style` < 0: the saved one. Settings passes the tile just picked, for its preview.
+static void uiVibrateSlot(int slot, int style = -1) {
+  if (s_p4_vib_playing) return;                // already buzzing — don't stack tasks
+  s_p4_vib_slot  = slot;
+  s_p4_vib_style = (style >= 0 && style < TOUCH_VIB_COUNT) ? style : touchPrefsGetVibratePattern();
+  s_p4_vib_playing = true;
+  if (xTaskCreate(p4VibrateTaskFn, "vibrate", 3072, nullptr, 3, nullptr) != pdPASS) {
+    s_p4_vib_playing = false;                  // couldn't spawn — skip the buzz
+  }
+}
 #endif
 
 #if defined(HAS_WIO_TRACKER_L2)
@@ -13250,6 +13287,26 @@ static void toggleMessageSoundCb(lv_event_t* e) {
   touchPrefsSetSoundMessages(on);
   if (on && soundPreviewAllowed()) uiSoundPreview();
 }
+#if defined(HAS_UI_VIBRATE)
+// The Pattern choice (its title/help box and its tiles) only shows while Vibrate is on.
+static lv_obj_t* s_vib_pat_head = nullptr;
+static lv_obj_t* s_vib_pat_row  = nullptr;
+static void vibratePatternShow(bool on) {
+  for (lv_obj_t* o : { s_vib_pat_head, s_vib_pat_row }) {
+    if (!o) continue;
+    if (on) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+// Vibrate switch: a buzz on turning it on is the preview.
+static void toggleVibrateCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetVibrate(on);
+  vibratePatternShow(on);
+  if (on) uiVibrateSlot(TOUCH_SND_MSG);
+}
+#endif
 // Direct/DM-sound switch (own on/off + own slot sound).
 static void toggleDirectSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -18641,6 +18698,17 @@ static void setSwatchPick(lv_obj_t* tapped) {
 }
 
 // ---- Settings > Sound ---------------------------------------------------------------
+#if defined(HAS_UI_VIBRATE)
+// Pattern tiles: save the pick and play it once (as a message) so it can be felt.
+static void vibratePatternPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i >= TOUCH_VIB_COUNT) return;
+  touchPrefsSetVibratePattern((uint8_t)i);
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+  uiVibrateSlot(TOUCH_SND_MSG, i);
+}
+#endif
 static void buildSoundPage() {
 #if defined(ATTAKY_MESH_SERIES)
   {
@@ -18693,6 +18761,18 @@ static void buildSoundPage() {
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
 #endif
   }
+#if defined(HAS_UI_VIBRATE)
+  {
+    lv_obj_t* c = setCard("Vibration");
+    setSwitchRow(c, "Vibrate", "Buzz for new messages, even with Sound off. Respects Do Not Disturb.",
+                 touchPrefsGetVibrate(), toggleVibrateCb);
+    const char* pats[TOUCH_VIB_COUNT] = { TR("Pulse"), TR("Gentle"), TR("Long"), TR("Heartbeat") };
+    s_vib_pat_row = setChoiceRow(c, "Pattern", "Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.",
+                                 pats, TOUCH_VIB_COUNT, touchPrefsGetVibratePattern(), vibratePatternPickCb);
+    s_vib_pat_head = lv_obj_get_child(c, (int32_t)lv_obj_get_index(s_vib_pat_row) - 1);   // its title/help box
+    vibratePatternShow(touchPrefsGetVibrate());
+  }
+#endif
   {
     lv_obj_t* c = setCard("Play a sound for");
     setSwitchRow(c, "Messages", nullptr, touchPrefsGetSoundMessages(), toggleMessageSoundCb);
@@ -78418,10 +78498,22 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     const bool is_mention = channel && text && textMentionsMe(text);
     const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    if (!isBuzzerQuiet() && !dndActive()) {   // master Sound switch / Do Not Disturb: either silences everything
-      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
-      else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
+    // Master Sound switch silences the chime only; Do Not Disturb silences chime and vibration.
+    const bool want_sound = !isBuzzerQuiet() && !dndActive();
+#if defined(HAS_UI_VIBRATE)
+    const bool want_vib = touchPrefsGetVibrate() && !dndActive();
+#else
+    const bool want_vib = false;
+#endif
+    if (want_sound || want_vib) {
+      int slot = -1;
+      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) slot = TOUCH_SND_MEN;
+      else if (is_dm) { if (touchPrefsGetSoundDirect()) slot = TOUCH_SND_DM; }
+      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          slot = TOUCH_SND_MSG;
+      if (slot >= 0 && want_sound) uiPlaySlot(slot);
+#if defined(HAS_UI_VIBRATE)
+      if (slot >= 0 && want_vib)   uiVibrateSlot(slot);
+#endif
     }
   }
 #endif

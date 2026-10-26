@@ -2385,6 +2385,23 @@ bool touchPrefsGetSoundDirect() {
   return s_prefs.getUChar("snd_dm", 1) != 0;
 }
 void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
+// Vibration motor (T-Display P4). Independent of the master Sound switch -- that is the point
+// of a "silent but buzz" setting -- but chooses events with the same per-type switches above.
+// Off until turned on: a fresh install should not start buzzing unasked.
+bool touchPrefsGetVibrate() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("vibrate", 0) != 0;
+}
+void touchPrefsSetVibrate(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vibrate", on ? 1 : 0); }
+uint8_t touchPrefsGetVibratePattern() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t p = s_prefs.getUChar("vib_pat", TOUCH_VIB_PULSE);
+  return p < TOUCH_VIB_COUNT ? p : TOUCH_VIB_PULSE;
+}
+void touchPrefsSetVibratePattern(uint8_t pat) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("vib_pat", pat < TOUCH_VIB_COUNT ? pat : TOUCH_VIB_PULSE);
+}
 // Drop incoming text messages whose body is a single character. Mesh spam is
 // overwhelmingly 1-byte payloads (cheapest possible airtime per message), and a
 // 1-character message is never something a person meant to send. Off by default:
@@ -2947,7 +2964,7 @@ static int backupKeys(BkKey* out, int cap) {
   };
   add(KEY_CFG, 'b');
   static const char* const k_u8[] = {
-    "snd_msg", "snd_men", "snd_dm", "snd_vol", "ign_tiny", "dsc_evict", "dsc_hops",
+    "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",

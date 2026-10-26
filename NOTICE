@@ -113,5 +113,16 @@ Camillia-MT (CrowPanel Advance 5.0 display, backlight and touch bring-up)
     GT911 reset in variants/crowpanel_50/CrowPanel50Display.cpp are adapted
     from src/hal/crowpanel_50_display.h and src/hal/hw_crowpanel_50.h.
 
+LilyGo cpp_bus_driver (T-Display P4 vibration motor, AW86224 haptic driver,
+variants/tdisplay_p4/P4Haptic.cpp and P4HapticWaveform.h)
+    Copyright (c) LILYGO
+    GPL-3.0 License (version 3 only; no "or later" grant) —
+    https://github.com/Llgok/cpp_bus_driver
+    The AW86224 register sequence (RAM-mode init, waveform load/verify,
+    playback, stop) is adapted from src/chip/i2c/aw862xx.cpp and re-based onto
+    Arduino Wire; the "12k_041230_235" RAM waveform library is copied verbatim
+    from src/chip/i2c/aw862xx_haptic_waveform_table.inc. Those two files keep
+    upstream's terms (SPDX GPL-3.0-only).
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.
