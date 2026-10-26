@@ -422,6 +422,12 @@
   .cookiebar a{color:var(--teal-ink); cursor:pointer}
   .cookiebar button{background:var(--accent-fill); color:var(--on-accent); border:0; border-radius:8px; padding:8px 16px; font-weight:650; cursor:pointer; font-size:.86rem; flex:none; font-family:inherit}
   /* the way in, straight under the intro */
+  /* WADAMESH-TAK: a community build on WADAMESH */
+  .tak-grid{display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); margin-top:28px}
+  .tak-grid .devtile{cursor:default} .tak-grid .devtile:hover{transform:none; box-shadow:var(--shadow)}
+  .tak-grid .devtile b{display:flex; align-items:center; gap:8px}
+  .tak-grid .devtile svg{width:20px; height:20px; flex:none; color:var(--hue, var(--teal))}
+  .tak-note{color:var(--mut); font-size:.86rem; text-align:center; max-width:640px; margin:18px auto 0}
   .cta-row{margin-top:26px; display:flex; flex-wrap:wrap; justify-content:center; gap:12px}
   .cta{display:inline-flex; align-items:center; gap:10px; padding:13px 26px; border-radius:100px;
     background:var(--accent-fill); color:var(--on-accent); font-weight:700; font-size:1.02rem; text-shadow:none;
@@ -444,6 +450,7 @@
 </style>
 <link rel="stylesheet" href="theme.css?v=2">
 <script src="theme.js?v=2" defer></script>
+<script src="menu.js?v=3" defer></script>
 </head>
 <body>
 
@@ -495,6 +502,10 @@
   <a class="fab" style="--hue:var(--hue-device)" href="beta.html" aria-label="Beta test matrix: which boards have been vouched for" title="Beta test matrix">
     <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span>
     <span class="lb">Test matrix</span>
+  </a>
+  <a class="fab" style="--hue:var(--hue-place)" href="#tak" aria-label="WADAMESH-TAK: the Cascadia Mesh build" title="WADAMESH-TAK">
+    <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg></span>
+    <span class="lb">WADAMESH-TAK</span>
   </a>
 </div>
 </nav>
@@ -878,6 +889,23 @@
   </div>
 </section>
 
+<section id="tak">
+  <div class="wrap">
+    <h2 class="h2">WADAMESH-TAK, built on WADAMESH</h2>
+    <p class="p">A build of WADAMESH by the Cascadia Mesh community, made for teams in the field. It keeps everything WADAMESH does and adds media, team and detection tools on top. It runs on nine of the boards above.</p>
+    <div class="tak-grid">
+      <div class="devtile" style="--hue:var(--hue-msg)"><span class="mk">Photos and voice</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 15-4-4-7 7"/></svg>MediaMesh</b><span class="spec">Pictures and push-to-talk voice go out on a second, faster LoRa preset, so the main mesh stays clear and the device keeps receiving its text.</span></div>
+      <div class="devtile" style="--hue:var(--hue-place)"><span class="mk">For groups in the field</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.2A5 5 0 0 1 21 19"/></svg>Team</b><span class="spec">Live positions of your teammates with roles, SOS and alerts, tactical pins on the map and reports, plus TAK integration.</span></div>
+      <div class="devtile" style="--hue:var(--hue-sys)"><span class="mk">One-time pads</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>OTP messenger</b><span class="spec">Direct messages and channels encrypted with one-time pads, with pad sharing, sync checks, a lock and a panic wipe.</span></div>
+      <div class="devtile" style="--hue:var(--hue-bad)"><span class="mk">Detection</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>Flock You and Drones</b><span class="spec">Spots Flock licence-plate cameras and Raven sensors, and drones by their Remote ID, with a 900 MHz scan for drones without one.</span></div>
+      <div class="devtile" style="--hue:var(--hue-radio)"><span class="mk">Share without a QR code</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h2l3-7 4 14 4-10 3 6 2-3h2"/></svg>Sound link</b><span class="spec">Shares contacts and channels between two devices as sound, so nobody has to scan a code.</span></div>
+      <div class="devtile" style="--hue:var(--hue-device)"><span class="mk">The phone app</span><b><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2" width="10" height="20" rx="2"/><path d="M11 18h2"/></svg>MeshCore Open TAK</b><span class="spec">A companion app for Android, Windows, macOS and Linux, so one team can mix phones and standalone radios.</span></div>
+    </div>
+    <div class="cta-row"><a class="cta" href="https://cascadiamesh.org/mediamesh-flasher/" target="_blank" rel="noopener">Install WADAMESH-TAK</a><a class="cta alt" href="https://cascadiamesh.org/wadamesh-tak-user-guide/" target="_blank" rel="noopener">User guide</a><a class="cta alt" href="https://github.com/jade-on-mesh/wadamesh-tak" target="_blank" rel="noopener">Source on GitHub</a></div>
+    <p class="tak-note">WADAMESH-TAK is made and supported by <a href="https://cascadiamesh.org/" target="_blank" rel="noopener">Cascadia Mesh</a>, with the MediaMesh work by Mike Carper. It installs from their flasher, not from this page; the app is on <a href="https://github.com/jade-on-mesh/meshcore-open-tak" target="_blank" rel="noopener">GitHub</a> with its own <a href="https://cascadiamesh.org/meshcore-open-tak-user-guide/" target="_blank" rel="noopener">guide</a>. Questions go to its channel on our <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a> or to <a href="https://discord.com/invite/m9yarB3p2E" target="_blank" rel="noopener">the Cascadia Mesh Discord</a>.</p>
+  </div>
+</section>
+
 <section id="faq">
   <div class="wrap">
     <h2 class="h2">Questions</h2>
@@ -890,7 +918,7 @@
       <details><summary>Why can't I install from my phone?</summary><div class="a">The firmware goes onto the board over a USB cable, and only Chrome and Edge on a computer let a web page do that. Open wadamesh.com on a computer. A Tanmatsu installs WADAMESH from its own app store.</div></details>
       <details><summary>My board isn't detected</summary><div class="a">Try another cable first: many USB cables only charge. Close anything else using the port, such as a serial monitor or another tab, then put the board in download mode. On a T-Deck, hold the trackball while you tap reset.</div></details>
       <details><summary>Can I go back to the original firmware?</summary><div class="a">Yes, nothing is locked. Flash stock MeshCore the same way from the official <a href="https://flasher.meshcore.io/" target="_blank" rel="noopener">MeshCore web flasher</a>, or your board maker's own firmware.</div></details>
-      <details><summary>What is WADAMESH-TAK?</summary><div class="a"><b>WADAMESH-TAK</b> is a build on top of WADAMESH from the Cascadia Mesh community, made for teams in the field. It adds <b>MediaMesh</b>, which sends photos and voice on a second, faster LoRa preset while the device keeps receiving text from the normal mesh (the MediaMesh work is by Mike Carper), plus one-time-pad messaging, a Team app with live positions, SOS and pins, TAK integration, Flock camera and drone detection, and sharing contacts and channels as sound. It runs on nine of the boards WADAMESH supports and has its own companion app, MeshCore Open TAK. Install it from the <a href="https://cascadiamesh.org/mediamesh-flasher/" target="_blank" rel="noopener">Cascadia Mesh flasher</a>; questions about it go to its channel on our <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a>.</div></details>
+      <details><summary>What is WADAMESH-TAK?</summary><div class="a">A build of WADAMESH by the Cascadia Mesh community for teams in the field, with MediaMesh photos and voice, a Team app, one-time-pad messaging and detection tools. See <a href="#tak">WADAMESH-TAK</a> above; it installs from the <a href="https://cascadiamesh.org/mediamesh-flasher/" target="_blank" rel="noopener">Cascadia Mesh flasher</a>.</div></details>
       <details><summary>Where do I get help?</summary><div class="a">Ask on <a href="https://discord.gg/T8X2UaQ7Sm" target="_blank" rel="noopener">Discord</a>, read the <a href="docs.html">user guide</a>, or <a href="https://github.com/ALLFATHER-BV/wadamesh/issues" target="_blank" rel="noopener">open an issue</a> with your board and what you did.</div></details>
     </div>
   </div>

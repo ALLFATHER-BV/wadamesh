@@ -246,6 +246,7 @@ PAGE = r"""<!doctype html>
 </style>
 <link rel="stylesheet" href="theme.css?v=2">
 <script src="theme.js?v=2" defer></script>
+<script src="menu.js?v=3" defer></script>
 </head>
 <body>
 
