@@ -2195,3 +2195,76 @@ Pulse	Імпульс
 Gentle	М'який
 Long	Довгий
 Heartbeat	Серцебиття
+%d mA · %u:%02u left	%d mA · %u:%02u left
+%d mA · %u:%02u to full	%d mA · %u:%02u to full
+%d.%d °C · %u cycles · health %u%%	%d.%d °C · %u cycles · health %u%%
+%u / %u mAh · %s left	%u / %u mAh · %s left
+%u / %u mAh · %s left at your usage	%u / %u mAh · %s left at your usage
+%u / %u mAh · full in %s	%u / %u mAh · full in %s
+@ mention	@ mention
+A click for each keypress and each turn of the knob.	A click for each keypress and each turn of the knob.
+Apply to the fuel gauge	Apply to the fuel gauge
+Back to 1500 mAh	Back to 1500 mAh
+Back to safe defaults	Back to safe defaults
+Battery at %d%%: charge soon	Battery at %d%%: charge soon
+Battery care	Battery care
+Battery care: kept at 80%, running from USB	Battery care: kept at 80%, running from USB
+Battery empty: switching off in 10 s to protect it. Plug in to cancel.	Battery empty: switching off in 10 s to protect it. Plug in to cancel.
+Battery low: %d%%	Battery low: %d%%
+Battery pack	Battery pack
+Battery temperature OK, charging again	Battery temperature OK, charging again
+Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.	Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.
+Capacity (mAh)	Capacity (mAh)
+Charge current	Charge current
+Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.	Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.
+Charge limits	Charge limits
+Charge only to 80%	Charge only to 80%
+Charge to	Charge to
+Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.	Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.
+Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.	Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.
+Charging %d mA · %d mW	Charging %d mA · %d mW
+Charging back to the safe defaults	Charging back to the safe defaults
+Charging paused: battery too cold	Charging paused: battery too cold
+Charging paused: battery too cold (%d °C)	Charging paused: battery too cold (%d °C)
+Charging paused: battery too hot	Charging paused: battery too hot
+Charging paused: battery too hot (%d °C)	Charging paused: battery too hot (%d °C)
+Charging paused: too cold	Charging paused: too cold
+Charging paused: too hot	Charging paused: too hot
+Charging: switch-off cancelled	Charging: switch-off cancelled
+Drawing %d mA · %d mW	Drawing %d mA · %d mW
+Faster charging heats and wears the battery.	Faster charging heats and wears the battery.
+Fuel gauge not answering	Fuel gauge not answering
+Fuel gauge set. It relearns the pack over the next charges.	Fuel gauge set. It relearns the pack over the next charges.
+It resumes 3 °C below the limit.	It resumes 3 °C below the limit.
+Kept at 80% (battery care)	Kept at 80% (battery care)
+Key click	Key click
+Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.
+Light	Light
+LilyGo fits 1500 mAh. Change it only for a different pack.	LilyGo fits 1500 mAh. Change it only for a different pack.
+Low battery warning	Low battery warning
+Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.	Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.
+Never below freezing. It resumes 3 °C above the limit.	Never below freezing. It resumes 3 °C above the limit.
+Once	Once
+Powering off… hold the power key to switch on	Powering off… hold the power key to switch on
+Quiet when face down	Quiet when face down
+Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.	Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.
+Starting the motion sensor…	Starting the motion sensor…
+Stop charging above	Stop charging above
+Stop charging below	Stop charging below
+Stopping lower gives a little less capacity and a longer battery life.	Stopping lower gives a little less capacity and a longer battery life.
+Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.	Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.
+Strength	Strength
+Strong	Strong
+Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.	Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.
+The defaults are the safe ones for this battery. Anything past them asks first.	The defaults are the safe ones for this battery. Anything past them asks first.
+The fuel gauge did not take the new capacity	The fuel gauge did not take the new capacity
+The fuel gauge is already set to this	The fuel gauge is already set to this
+The percentage comes from the battery's fuel gauge, which learns the pack by itself.	The percentage comes from the battery's fuel gauge, which learns the pack by itself.
+Twice	Twice
+Use anyway	Use anyway
+Used today %d mAh · yesterday %s	Used today %d mAh · yesterday %s
+Wake when picked up	Wake when picked up
+Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.	Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.
+last 5 min charging	last 5 min charging
+last 5 min drawing	last 5 min drawing
+not known	not known
