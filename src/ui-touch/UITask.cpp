@@ -79790,6 +79790,14 @@ void UITask::loop() {
     tdeckKeyboardDiscardModifiers();
   else
     tdeckKeyboardAllowModifiers();
+  // The controller answered the way only an older one does (each byte of the read
+  // repeating the character): save "Older keyboard protocol" so the next boot skips
+  // the probe. A newer controller never sends that reply, so this is not a guess.
+  if (tdeckKeyboardTakeLegacyEvidence() && !touchPrefsGetKbForceLegacy()) {
+    touchPrefsSetKbForceLegacy(true);
+    tdeckKeyboardForceLegacy(true);
+    deviceRefreshLabels();
+  }
   // Drain physical-keyboard presses buffered by the touch task into the field.
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = tdeckKeyboardReadKey();
