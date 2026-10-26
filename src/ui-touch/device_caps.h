@@ -86,10 +86,11 @@
   #define CAP_TOUCH        1
   #define CAP_ROTATABLE    0
   #define CAP_LARGE_SCREEN 1   // 480x480
-  #define CAP_SD           0
+  #define CAP_SD           0   // the microSD slot is wired to the RP2040 co-processor, not the S3
   #define CAP_FILESYSTEM   1
   #define CAP_GPS          0
   #define CAP_OTA          0   // one factory app slot, no in-place update
+  #define CAP_TILE_STORAGE 0   // no tiles partition and no card the map can use (#692)
   #define CAP_LOCK_SCREEN  0
   #define CAP_BATTERY      0   // no battery fitted
 
@@ -251,6 +252,12 @@
   #define CAP_GPS          1
   #define CAP_OTA          1
   #define CAP_LOCK_SCREEN  0
+#endif
+
+// Somewhere to keep map tiles: a tiles partition, or a card the map can fall back to.
+// 0 = the map says this board has none, instead of "reflash the tiles partition".
+#ifndef CAP_TILE_STORAGE
+  #define CAP_TILE_STORAGE 1
 #endif
 
 // Boards without a battery ADC must not advertise battery history/calibration.

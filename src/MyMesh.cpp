@@ -2700,10 +2700,11 @@ static int mc_hexToBytes(const char* hex, uint8_t* out, int max_bytes) {
 
 bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
                             bool replace_channels, bool replace_contacts,
-                            int* out_channels, int* out_contacts) {
+                            int* out_channels, int* out_contacts, bool* out_saved) {
   (void)replace_channels;
   if (out_channels) *out_channels = 0;
   if (out_contacts) *out_contacts = 0;
+  if (out_saved) *out_saved = true;
   // PSRAM-backed doc so a big backup (60 KB+) doesn't exhaust internal RAM.
   struct PsAlloc : ArduinoJson::Allocator {
     void* allocate(size_t n) override { void* p = heap_caps_malloc(n, MALLOC_CAP_SPIRAM); return p ? p : malloc(n); }
@@ -2720,7 +2721,12 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
     const char* nm = root["name"].as<const char*>();
     if (nm && nm[0]) { strncpy(_prefs.node_name, nm, sizeof(_prefs.node_name) - 1); _prefs.node_name[sizeof(_prefs.node_name) - 1] = 0; prefs_dirty = true; }
     const char* pk = root["private_key"].as<const char*>();
-    if (pk && strlen(pk) >= 128) { uint8_t prv[64]; mc_hexToBytes(pk, prv, 64); uiImportPrivKey(prv); }
+    if (pk && strlen(pk) >= 128) {
+      uint8_t prv[64]; mc_hexToBytes(pk, prv, 64);
+      // A valid key that fails to save means the store is unwritable; channels and contacts
+      // live on the same filesystem and are lost with it.
+      if (!uiImportPrivKey(prv) && mesh::LocalIdentity::validatePrivateKey(prv) && out_saved) *out_saved = false;
+    }
   }
   if (sections & 0x02) {  // radio
     JsonObjectConst r = root["radio_settings"].as<JsonObjectConst>();
@@ -2792,7 +2798,7 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
       if (!ps["longitude"].isNull()) { sensors.node_lon = ps["longitude"].as<double>(); prefs_dirty = true; }
     }
   }
-  if (prefs_dirty) savePrefs();
+  if (prefs_dirty && !savePrefs() && out_saved) *out_saved = false;
 
   int nch = 0;
   if (sections & 0x08) {  // channels (overwrite from slot 0)

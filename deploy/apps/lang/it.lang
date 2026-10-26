@@ -404,6 +404,7 @@ Image too large (>4 MB)	Immagine troppo grande (>4 MB)
 Import	Importa
 Import backup	Importa backup
 Import failed (bad/unreadable JSON)	Importazione non riuscita (JSON non valido)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Importa impostazioni
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importare questo backup?\nSostituisce identità,\ncanali e contatti,\npoi riavvia.
 Import: storage unavailable	Importa: archiviazione non disponibile
@@ -563,9 +564,11 @@ No contact to trace	Nessun contatto da tracciare
 No contacts have shared\na GPS location yet.	Nessun contatto ha ancora\ncondiviso una posizione GPS.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Ancora nessun nodo scoperto.\n\nTutto ciò che si sente via radio e non è nei tuoi contatti apparirà qui. Se l'aggiunta automatica è disattivata, puoi aggiungere nodi manualmente.
 No earlier versions yet	Ancora nessuna versione precedente
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Nessun dato di espansione locale
 No location for this contact	Nessuna posizione per questo contatto
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Nessuna archiviazione mappa.\n\nInserisci una scheda SD per i\nriquadri Wi-Fi (o riflasha per\nripristinare la partizione tiles).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Nessuna tessera qui.\n\nConnettiti al Wi-Fi (Impostazioni → Wi-Fi)\nper scaricare quest'area.
 No mapped repeaters in this route	Nessun ripetitore mappato in questa rotta
 No networks found (2.4 GHz only)	Nessuna rete trovata (solo 2.4 GHz)

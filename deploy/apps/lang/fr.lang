@@ -404,6 +404,7 @@ Image too large (>4 MB)	Image trop grande (>4 Mo)
 Import	Importer
 Import backup	Importer la sauvegarde
 Import failed (bad/unreadable JSON)	Échec de l'import (JSON illisible)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Échec de l'importation : stockage interne indisponible. L'identité, les canaux et les contacts n'ont pas été enregistrés.
 Import settings	Importer les réglages
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Importer cette sauvegarde ?\nRemplace l'identité,\nles canaux & contacts,\npuis redémarre.
 Import: storage unavailable	Import : stockage indisponible
@@ -563,9 +564,11 @@ No contact to trace	Aucun contact à tracer
 No contacts have shared\na GPS location yet.	Aucun contact n'a encore\npartagé de position GPS.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Aucun nœud découvert pour l'instant.\n\nTout ce qui est entendu par radio et qui n'est pas dans vos contacts apparaît ici. Si l'ajout auto est désactivé, vous pouvez ajouter des nœuds manuellement.
 No earlier versions yet	Aucune version antérieure
+No internal storage: identity, channels and contacts can't be saved.	Pas de stockage interne : l'identité, les canaux et les contacts ne peuvent pas être enregistrés.
 No local expansion data	Aucune donnée d'extension locale
 No location for this contact	Aucune position pour ce contact
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Pas de stockage carte.\n\nInsérez une carte SD pour les\ntuiles Wi-Fi (ou reflashez pour\nrestaurer la partition des tuiles).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	Pas de stockage de carte ici.\n\nCet appareil n'a ni partition de\ntuiles ni microSD pour la carte.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Aucune tuile ici.\n\nConnectez-vous au Wi-Fi (Réglages → Wi-Fi)\npour télécharger cette zone.
 No mapped repeaters in this route	Aucun répéteur cartographié sur cet itinéraire
 No networks found (2.4 GHz only)	Aucun réseau trouvé (2,4 GHz uniquement)

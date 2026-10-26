@@ -404,6 +404,7 @@ Image too large (>4 MB)	Изображението е твърде голямо 
 Import	Импортирай
 Import backup	Импортиране на резервно копие
 Import failed (bad/unreadable JSON)	Импортът неуспешен (невалиден JSON)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Импорт на настройки
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Да внеса този архив?\nЗаменя самоличност,\nканали и контакти,\nпосле рестартира.
 Import: storage unavailable	Импорт: хранилището е недостъпно
@@ -564,9 +565,11 @@ No contact to trace	Няма контакт за проследяване
 No contacts have shared\na GPS location yet.	Все още няма контакти,\nсподелили GPS местоположение.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Все още няма открити възли.\n\nВсичко чуто в ефира, което не е в контактите ви, ще се появи тук. Когато авто-добавянето е изключено, можете да добавяте възли ръчно.
 No earlier versions yet	Все още няма по-ранни версии
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Няма локални данни за разширение
 No location for this contact	Няма местоположение за този контакт
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Няма хранилище за карта.\n\nПоставете SD карта за кеш на\nWi-Fi плочки (или префлашнете за\nдяла tiles).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Тук няма плочки на картата.\n\nСвържете се с Wi-Fi (Настройки → Wi-Fi),\nза да изтеглите този район.
 No mapped repeaters in this route	Няма картографирани ретранслатори по този маршрут
 No networks found (2.4 GHz only)	Няма намерени мрежи (само 2.4 GHz)

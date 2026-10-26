@@ -243,6 +243,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include <helpers/AdvertDataHelpers.h>
   #include <helpers/sensors/LPPDataHelpers.h>
   #include <helpers/TouchDiagTrace.h>
+  #include <helpers/BufferedFileCommit.h>   // "Save update bin to SD": write after download, retry whole file (#734)
   #if defined(ESP32)
     #include <Preferences.h>
     #include <helpers/esp32/SdNvsPrefs.h>   // NVS-or-SD prefs backend (Launcher-safe)
@@ -31203,6 +31204,11 @@ static void spectrumWindowCb(lv_event_t* e) {
 }
 #endif
 
+// backupImportAndReboot()'s result, defined with the Backups settings page further down.
+// BadFile: unreadable or not JSON. StoreFailed: parsed and applied, but the identity
+// and node prefs could not be written (no internal store, #708), so nothing reboots.
+enum class BackupImport : uint8_t { Rebooting, BadFile, StoreFailed };
+
 #if WADA_WEB_FILE_TRANSFER
 // ============================================================================
 // File Transfer app: authenticated browser access to removable SD storage.
@@ -31239,8 +31245,8 @@ static bool s_file_transfer_restore_upload = false;
 static bool s_file_transfer_backup_download = false;
 // Settings backup helpers, defined with the Backups settings page further down.
 static void backupMakeFilename(char* out, size_t cap, bool probe_storage);
-static bool backupImportAndReboot(fs::FS* fsp, const char* path,
-                                  void (*on_imported)(int nch, int nco));
+static BackupImport backupImportAndReboot(fs::FS* fsp, const char* path,
+                                          void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
 static constexpr uint32_t kMapTileMaxBytes = 256u * 1024u;
 static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
@@ -31555,8 +31561,13 @@ static void fileTransferRestoreApply(fs::FS& storage) {
   }
   snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Restoring settings backup");
   // Reboots on success; fileTransferFail() removes the temp file otherwise.
-  if (!backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported))
-    fileTransferFail("backup could not be imported (bad/unreadable JSON)");
+  switch (backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported)) {
+    case BackupImport::BadFile:
+      fileTransferFail("backup could not be imported (bad/unreadable JSON)"); break;
+    case BackupImport::StoreFailed:
+      fileTransferFail("internal storage unavailable: identity, channels and contacts were not saved"); break;
+    case BackupImport::Rebooting: break;
+  }
 }
 
 // Backup: write a settings backup exactly as Settings -> Backups -> Export does,
@@ -35988,13 +35999,13 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
 //
-// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// This feature is spread over SEVEN #if regions (state+callbacks, this worker,
 // the tile-worker dispatch below, the About button, the settings-close teardown,
-// and the sdHealthTick bail-out). They are character-for-character identical on
-// purpose. A board admitted to some but not all of them still COMPILES — the
-// worker's only caller sits behind the same gate, so nothing link-errors — and
-// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
-// teardown never nulled. Change all six or none.
+// the sdHealthTick bail-out, and sdRuntimeLifecycleBusy). They are character-for-
+// character identical on purpose. A board admitted to some but not all of them
+// still COMPILES (the worker's only caller sits behind the same gate, so nothing
+// link-errors) and then hangs at "Saving to SD… 0%" with a poll timer writing to
+// a label the teardown never nulled. Change all seven or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -36032,6 +36043,71 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
                (unsigned)(freeb / 1048576u));
       http.end(); s_sdfw_state = 3; return;
     }
+  }
+  // Download first, write second (#734), when the whole image fits in PSRAM: the
+  // card is then written after the Wi-Fi burst, like a map tile, and a failed FAT
+  // write (which leaves the file failed for good) can start over from byte 0. See
+  // helpers/BufferedFileCommit.h. Without the PSRAM, stream as before. The 512 KB
+  // margin keeps the rest of the UI (tile decodes, images) fed while the image is held.
+  uint8_t* img = nullptr;
+  if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= (size_t)len + 512u * 1024u)
+    img = (uint8_t*)heap_caps_malloc((size_t)len, MALLOC_CAP_SPIRAM);
+  if (img) {
+    auto* st = http.getStreamPtr();
+    int received = 0;
+    unsigned long last_data = millis();
+    while (received < len) {
+      const int avail = st ? st->available() : 0;
+      if (avail <= 0) {
+        if (!http.connected() || (millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      const int want = (avail < len - received) ? avail : (len - received);
+      const int n = st->read(img + received, (size_t)want);
+      if (n <= 0) {
+        if ((millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+      last_data = millis();
+      received += n;
+      s_sdfw_pct = (int)((uint64_t)received * 85 / (uint64_t)len);   // 85..100 = the SD write
+      vTaskDelay(1);   // feed IDLE (see the streaming loop below)
+    }
+    http.end();
+    if (received != len) {
+      heap_caps_free(img);
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "short read %d/%d", received, len);
+      s_sdfw_state = 3; return;
+    }
+    size_t bsz = 4096;   // internal DMA-capable bounce buffer, never PSRAM (see below)
+    uint8_t* bounce = (uint8_t*)heap_caps_malloc(bsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!bounce) { bsz = 1024; bounce = (uint8_t*)heap_caps_malloc(bsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT); }
+    if (!bounce) {
+      heap_caps_free(img);
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return;
+    }
+    struct SdSink {
+      const char* path; size_t len; File f;
+      bool open() { f = SD.open(path, FILE_WRITE); return (bool)f; }
+      size_t write(const uint8_t* p, size_t n) { return f.write(p, n); }
+      bool close() { const bool full = (size_t)f.size() == len; f.close(); return full; }
+      void discard() { SD.remove(path); }
+      void pause(int attempt) { vTaskDelay(pdMS_TO_TICKS(300 * attempt)); }
+      void progress(size_t done, size_t total) {
+        s_sdfw_pct = 85 + (int)((uint64_t)done * 15 / (uint64_t)total);
+        vTaskDelay(1);
+      }
+    } sink{path, (size_t)len, File()};
+    const bool written = BufferedFileCommit::commit(sink, img, (size_t)len, bounce, bsz, 3);
+    free(bounce);
+    heap_caps_free(img);
+    if (!written) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); s_sdfw_state = 3; return; }
+    strncpy(s_sdfw_msg, path, sizeof s_sdfw_msg - 1); s_sdfw_msg[sizeof s_sdfw_msg - 1] = 0;
+    s_sdfw_pct = 100;
+    s_sdfw_state = 2;
+    return;
   }
   File f = SD.open(path, FILE_WRITE);
   if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
@@ -37523,6 +37599,11 @@ static void renderMapTiles() {
     else
       lv_label_set_text(s_map_status_lbl,
           TR("No map tiles here.\n\nConnect to Wi-Fi (Settings \xe2\x86\x92 Wi-Fi)\nto download this area."));
+#elif !CAP_TILE_STORAGE
+    // No tiles partition by design, and no card the map can use (the Indicator's
+    // microSD hangs off its RP2040): reflashing would not change anything (#692).
+    lv_label_set_text(s_map_status_lbl,
+        TR("No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use."));
 #else
     lv_label_set_text(s_map_status_lbl,
         TR("Map storage error.\nReflash the tiles partition."));
@@ -50563,9 +50644,9 @@ static void backupPickerClose() {
 // Import a backup file and, on success, show the counts and reboot (never
 // returns). On failure returns false with the "Importing…" overlay removed.
 // Shared by the on-device picker and the File Transfer page's Restore button.
-static bool backupImportAndReboot(fs::FS* fsp, const char* path,
-                                  void (*on_imported)(int nch, int nco)) {
-  if (!g_lv.task || !fsp || !path) return false;
+static BackupImport backupImportAndReboot(fs::FS* fsp, const char* path,
+                                          void (*on_imported)(int nch, int nco)) {
+  if (!g_lv.task || !fsp || !path) return BackupImport::BadFile;
   // "Importing…" overlay, painted before the blocking parse + apply.
   lv_obj_t* ov = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(ov);
@@ -50587,12 +50668,15 @@ static bool backupImportAndReboot(fs::FS* fsp, const char* path,
   // per-core idle watchdogs for the duration and only restore them if we bail.
   wdtHeavyBegin();
   int nch = 0, nco = 0;
-  bool ok = f && the_mesh.uiImportBackup(f, 0x3F, true, true, &nch, &nco);   // 0x20 = screen/app prefs
+  bool saved = true;
+  bool ok = f && the_mesh.uiImportBackup(f, 0x3F, true, true, &nch, &nco, &saved);   // 0x20 = screen/app prefs
   if (f) f.close();
-  if (!ok) {
+  if (!ok || !saved) {
+    // !saved: the screen/app prefs (NVS) took, but identity, channels and contacts had
+    // nowhere to go. Rebooting would hide that behind a "restored" message (#708).
     wdtHeavyEnd();
     lv_obj_del(ov);
-    return false;
+    return ok ? BackupImport::StoreFailed : BackupImport::BadFile;
   }
   g_lv.task->persistHistoryNow();   // nests under the guard above (ref-counted)
   if (on_imported) on_imported(nch, nco);
@@ -50608,7 +50692,7 @@ static bool backupImportAndReboot(fs::FS* fsp, const char* path,
   touchPrefsSetClockFloor(rtc_clock.getFloor());
   touchPrefsFlush();
   ESP.restart();
-  return true;
+  return BackupImport::Rebooting;
 }
 // Apply the file stashed in s_backup_chosen, then reboot.
 static void doBackupImportChosen() {
@@ -50618,8 +50702,13 @@ static void doBackupImportChosen() {
   if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
   else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
   if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
-  if (!backupImportAndReboot(fsp, path, nullptr))
-    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
+  switch (backupImportAndReboot(fsp, path, nullptr)) {
+    case BackupImport::BadFile:
+      g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400); break;
+    case BackupImport::StoreFailed:
+      g_lv.task->showAlert(TR("Import failed: internal storage unavailable. Identity, channels and contacts were not saved."), 4000); break;
+    case BackupImport::Rebooting: break;
+  }
 }
 static void confirmBackupImport(const char* stored) {
   if (!stored) return;
@@ -79033,6 +79122,9 @@ static bool sdRuntimeLifecycleBusy() {
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
   busy = busy || s_notify_playing;
 #endif
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  busy = busy || s_sdfw_request || s_sdfw_state == 1;   // "Save update bin to SD" holds a file open (#734)
+#endif
 #if CAP_SD || defined(TLORA_PAGER)
   // Before a lifecycle owner requests a backend pause, keep the conservative
   // queued+active gate used by format/reset paths. Once the pause is asserted,
@@ -79244,7 +79336,10 @@ static void sdHealthTick() {
   }
 #endif
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
+  // Worker downloading a firmware bin to /BINS. The worker clears s_sdfw_request the
+  // moment it picks the job up, so the request flag alone left the whole download
+  // unguarded: a probe or remount here could SD.end() under its open file (#734).
+  if (s_sdfw_request || s_sdfw_state == 1) return;
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is
