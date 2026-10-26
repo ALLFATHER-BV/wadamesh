@@ -24281,6 +24281,15 @@ static int batteryPercentFromMv(uint16_t mv) {
   // fall back to the voltage curve below if it does not answer. Terminal voltage is
   // charger-driven, so the curve read 100% the moment USB was plugged in while the
   // pack was nearly empty, and never quite reached 100% resting on battery (#273).
+  //
+  // Not while the keyboard expansion is attached, though: its battery switch can
+  // put the 21700 pack on the gauge's path, and the gauge's profile is for the
+  // ~1000 mAh internal cell, so its state of charge is meaningless there (it showed
+  // an empty red battery on a healthy pack). Firmware cannot see the switch, so the
+  // keyboard's presence is the signal; the gauge's voltage stays valid either way.
+#if defined(HAS_TDISPLAY_P4_KEYBOARD)
+  if (!p4KeyboardPresent())
+#endif
   {
     const int soc = board.getBattStateOfCharge();
     if (soc >= 0) return soc;
