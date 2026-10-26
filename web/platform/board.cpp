@@ -15,6 +15,7 @@
 #include "WebInput.h"
 #include "BackendSelect.h"
 #include "helpers/esp32/TouchPrefsStore.h"
+#include "helpers/esp32/SdNvsPrefs.h"
 #include "wada_host.h"
 #include <time.h>
 
@@ -74,7 +75,15 @@ void wadaBoardBegin(const WadaBackendChoice& choice) {
   // Storage, then the mesh, then the UI: src/main.cpp's setup() order.
   SPIFFS.begin(true);
   LittleFS.begin(true);
-  rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
+  // Tests (WADA_PREFS_FILE=1): the devices' file-backed settings store, as src/main.cpp
+  // selects it on a board without SD, instead of the host's NVS stand-in. Its A/B slot
+  // files land in <data dir>/spiffs/prefs/ (web/scripts/prefs-slot.sh).
+  if (const char* e = getenv("WADA_PREFS_FILE")) {
+    if (e[0] == '1') { SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs"); touchPrefsReload(); }
+  }
+  // The host clock is synced: a real time source. Tests (WADA_CLOCK_UNSET=1) leave it out,
+  // so the UI runs as a device does before its first sync (rtc_clock.timeIsCurrent() false).
+  if (!getenv("WADA_CLOCK_UNSET")) rtc_clock.setCurrentTime((uint32_t)time(nullptr));
   the_mesh.begin(wadaCreateBackend(choice));   // the demo, or a companion node (BackendSelect.h)
   // A node is set up already: the first-run wizard (name + LoRa region) would rename
   // and re-tune it. It is the demo's welcome only.

@@ -26,6 +26,7 @@ extra_flags() {
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     test_time_zones) echo "-I test/clock_floor_fakes" ;;
+    # Its subject lives in the T-Display P4 IDF component, not in src/.
     test_c6_link_health) echo "-I tdisplay_p4/components/c6_at" ;;
     # The T-LoRa Pager chip drivers, compiled from variants/ against fake chips.
     test_pager_power|test_pager_haptics|test_pager_imu) echo "-I test/pager_hw_fakes" ;;
@@ -33,6 +34,13 @@ extra_flags() {
     # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
     test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
     test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
+    test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
+    test_keyboard_layouts_hw) echo "-I test/kb_layouts_fakes" ;;   # LVGL names only
+    test_clock_floor) echo "-I test/clock_hw_fakes" ;;   # a settable hardware clock
+    test_p4_haptic) echo "-I test/p4_haptic_fakes" ;;       # an AW86224 register model
+    # The real WadaNmeaLocationProvider.h over a fake UART / MicroNMEA; the prefs
+    # header it includes only declares its functions under ESP32.
+    test_gps_baud_probe) echo "-DESP32 -I test/gps_probe_fakes" ;;
     *) echo "" ;;
   esac
 }

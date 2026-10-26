@@ -159,6 +159,9 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
+#include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
+#include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
+#include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
 #endif
@@ -2454,7 +2457,7 @@ static volatile int  s_p4_vib_slot    = TOUCH_SND_MSG;
 static volatile int  s_p4_vib_style   = TOUCH_VIB_PULSE;
 static void p4VibrateTaskFn(void*) {
   const VibStyle& st = kVibStyles[s_p4_vib_style];
-  const int beats = s_p4_vib_slot == TOUCH_SND_MEN ? 3 : s_p4_vib_slot == TOUCH_SND_DM ? 2 : 1;
+  const int beats = NotifyAlert::vibBeats(s_p4_vib_slot);
   for (int i = 0; i < beats; ++i) {
     if (i) vTaskDelay(pdMS_TO_TICKS(st.gap));
     p4HapticBuzz(st.on1, st.gain);
@@ -20895,15 +20898,15 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
 // Wi-Fi lives on its C6.
 #if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
 static uint32_t s_wifi_switch_rejoin_ms = 0;   // when the wait started; 0 = nothing pending
-static const uint32_t WIFI_SWITCH_REJOIN_MS = 4000;
-static void wifiSwitchRejoinService() {
+static void wifiSwitchRejoinService() {   // the decision: WifiSwitchRejoin.h (host-tested)
   if (!s_wifi_switch_rejoin_ms) return;
-  if (!wifiConfigWantsWifi() || !wifiConfigHasRuntime() || WiFi.status() == WL_CONNECTED) {
-    s_wifi_switch_rejoin_ms = 0;   // switched off again, nothing to join, or it joined
-  } else if (WiFi.getMode() == WIFI_MODE_NULL || wifiScanIsActive()) {
-    s_wifi_switch_rejoin_ms = millis();   // the driver is not up yet, or a scan owns it
-  } else if ((uint32_t)(millis() - s_wifi_switch_rejoin_ms) >= WIFI_SWITCH_REJOIN_MS) {
-    s_wifi_switch_rejoin_ms = 0;
+  WifiSwitchRejoin::State st;
+  st.wants       = wifiConfigWantsWifi();
+  st.has_runtime = wifiConfigHasRuntime();
+  st.connected   = WiFi.status() == WL_CONNECTED;
+  st.driver_up   = WiFi.getMode() != WIFI_MODE_NULL;
+  st.scanning    = wifiScanIsActive();
+  if (WifiSwitchRejoin::step(s_wifi_switch_rejoin_ms, millis(), st)) {
     Serial.println("[wifi] switched on, not joined: rejoining on the running driver");
     wifiConfigRequestApply();   // main.cpp: disconnect(false, false) + begin, as after a scan
   }
@@ -36572,59 +36575,21 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   Update.onProgress([](size_t done, size_t total) {
     s_ota_pct = total ? (int)((uint64_t)done * 100 / total) : 0;
   });
-  // Copy by hand, yielding, instead of Update.writeStream(): that reads through
-  // Stream::timedRead, which spins without yielding until http's 20 s timeout, so a
-  // slow start starved IDLE0 on this core-0 worker and the 5 s task watchdog
-  // rebooted the device, "stuck at 0%, then a restart" (#689). Same loop as the SD
-  // download below: wait with vTaskDelay, give up after 15 s without data.
-  //
-  // A connection that drops or stalls part way is picked up where it stopped with a Range
-  // request, up to 3 times, instead of failing with "short read" and starting over (#689:
-  // "after re-trying a few times, device was updated").
+  // Copy by hand, yielding, and resume a dropped download with a Range request (#689):
+  // OtaResume.h has the loop and why (host test: test/test_ota_resume.cpp).
+  struct OtaSys {
+    uint32_t millis() { return ::millis(); }
+    void delayMs(uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
+    void yieldTick() { vTaskDelay(1); }
+    void log(const char* line) { Serial.print(line); }
+  } sys;
   size_t written = 0;
   {
     size_t bufsz = 4096;
     uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!buf) { bufsz = 1024; buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
-    bool write_failed = false;
-    for (int resume = 0; buf && !write_failed; ++resume) {
-      auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
-      unsigned long last_data = millis();
-      while (stream && written < (size_t)len) {
-        const int avail = stream->available();
-        if (avail <= 0) {
-          if (!http.connected() || (millis() - last_data) > 15000) break;
-          vTaskDelay(pdMS_TO_TICKS(10));
-          continue;
-        }
-        const size_t want = ((size_t)avail > bufsz) ? bufsz : (size_t)avail;
-        const int n = stream->read(buf, want);
-        if (n <= 0) {
-          if ((millis() - last_data) > 15000) break;
-          vTaskDelay(pdMS_TO_TICKS(5));
-          continue;
-        }
-        last_data = millis();
-        if (Update.write(buf, (size_t)n) != (size_t)n) { write_failed = true; break; }   // reported below
-        written += (size_t)n;
-        vTaskDelay(1);   // let IDLE0 (and Wi-Fi) run between blocks
-      }
-      http.end();
-      if (written >= (size_t)len || write_failed || resume >= 3) break;
-      Serial.printf("[OTA] stopped at %u/%d, resuming (%d)\n", (unsigned)written, len, resume + 1);
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      if (!http.begin(client, url)) break;
-      char range[40];
-      snprintf(range, sizeof range, "bytes=%u-", (unsigned)written);
-      http.addHeader("Range", range);
-      const int rc = http.GET();
-      // Only a 206 for exactly the rest is safe to append; anything else ends the update.
-      if (rc != 206 || http.getSize() != (int)((size_t)len - written)) {
-        Serial.printf("[OTA] resume -> %d (%d bytes)\n", rc, http.getSize());
-        http.end();
-        break;
-      }
-    }
+    bool write_failed = false;   // reported below (written != len, or Update.end)
+    written = OtaResume::copy(http, client, url, len, Update, buf, bufsz, write_failed, sys);
     if (buf) heap_caps_free(buf);
   }
   if (written != (size_t)len) {
@@ -54366,6 +54331,15 @@ static void bleKbdTouchDelete(lv_obj_t* ta, bool forward) {
 static void bleKbdTouchEnter(lv_obj_t* ta) {
   accentBoxHide();
   mentionBoxHide();
+  // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
+  // OK, as handleHwKey does it on the keyboard boards. The keyboard's READY below only
+  // confirmed the field and left the dialog open, so wada.ui.input never returned.
+  // `ta` is the edit strip while the on-screen keys are up: compare the real field.
+  if (s_fm_prompt_ta && (ta == s_fm_prompt_ta || (ta == s_kb_mirror_ta && s_kb_bind_ta == s_fm_prompt_ta))) {
+    s_nav_ta_editing = false;
+    fmPromptSubmit();
+    return;
+  }
   if (s_editor_ta && ta == s_editor_ta) {           // multiline editor
     lv_textarea_add_char(ta, '\n');
   } else if (cmdLineEnter()) {                       // terminal / admin CLI: run it, keep the field
@@ -80254,26 +80228,28 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // @-mentions get a distinct sound + their own enable, so an operator can mute message
   // sounds but still hear @-mentions. Each respects the per-channel mute flags.
   {
-    const bool is_mention = channel && text && textMentionsMe(text);
-    const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
-    const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    // Master Sound switch silences the chime only; Do Not Disturb silences chime and vibration.
-    const bool want_sound = !isBuzzerQuiet() && !dndActive();
+    // Master Sound switch silences the chime only; Do Not Disturb silences chime and
+    // vibration. The rules: NotifyAlert.h (host-tested).
+    static_assert(NotifyAlert::MSG == TOUCH_SND_MSG && NotifyAlert::DM == TOUCH_SND_DM &&
+                  NotifyAlert::MEN == TOUCH_SND_MEN && NotifyAlert::MUTE_MSG == TOUCH_CHMUTE_MSG &&
+                  NotifyAlert::MUTE_MEN == TOUCH_CHMUTE_MEN, "NotifyAlert.h mirrors the prefs' slots");
+    NotifyAlert::In na{};
+    na.is_mention   = channel && text && textMentionsMe(text);
+    na.is_dm        = (g_last_event == UIEventType::contactMessage);   // private/direct message
+    na.cmute        = channel ? touchPrefsGetChannelMute(thread) : 0;
+    na.snd_mentions = touchPrefsGetSoundMentions();
+    na.snd_direct   = touchPrefsGetSoundDirect();
+    na.snd_messages = touchPrefsGetSoundMessages();
+    na.sound_quiet  = isBuzzerQuiet();
+    na.dnd          = dndActive();
 #if defined(HAS_UI_VIBRATE)
-    const bool want_vib = touchPrefsGetVibrate() && !dndActive();
-#else
-    const bool want_vib = false;
+    na.vibrate_on   = touchPrefsGetVibrate();
 #endif
-    if (want_sound || want_vib) {
-      int slot = -1;
-      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) slot = TOUCH_SND_MEN;
-      else if (is_dm) { if (touchPrefsGetSoundDirect()) slot = TOUCH_SND_DM; }
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          slot = TOUCH_SND_MSG;
-      if (slot >= 0 && want_sound) uiPlaySlot(slot);
+    const NotifyAlert::Out alert = NotifyAlert::decide(na);
+    if (alert.sound) uiPlaySlot(alert.slot);
 #if defined(HAS_UI_VIBRATE)
-      if (slot >= 0 && want_vib)   uiVibrateSlot(slot);
+    if (alert.vib)   uiVibrateSlot(alert.slot);
 #endif
-    }
   }
 #endif
 #if defined(TLORA_PAGER)

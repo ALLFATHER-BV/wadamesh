@@ -7,6 +7,14 @@ local BUDGET, INIT_BUDGET = 100000, 500000
 local clock_ms = 1000
 local toasts, fails, maxinstr = {}, 0, 0
 local dm_sent = {}   -- send_dm call log: { {to, text}, ... }
+local rng_state = 0x2545F491
+local function rng32()   -- xorshift32 in Lua's 32-bit integers (LUA_32BITS wraps)
+  local x = rng_state
+  x = x ~ (x << 13); x = x ~ (x >> 17); x = x ~ (x << 5)
+  rng_state = x
+  return x
+end
+local input_prompt = nil   -- the open wada.ui.input prompt: { cb, max_len, ... }
 local function checkint(v, what) assert(math.tointeger(v) ~= nil, what .. ": not an integer: " .. tostring(v)) end
 local function checkcol(v, what) if v ~= nil then checkint(v, what .. " color") end end
 local function checkstr(v, what) assert(type(v) == "string" or type(v) == "number", what .. ": not a string") end
@@ -285,11 +293,37 @@ local function build_wada()
   wada.sys.keep_awake = function(on) cfg.awake = (on == nil) or on end
   wada.sys.toast = function(msg, ms) checkstr(msg, "toast"); toasts[#toasts + 1] = tostring(msg) end
   wada.sys.board = function() return { w = cfg.w, h = cfg.h, touch = cfg.caps.touch } end
-  wada.sys.random = function(lo, hi) lo = lo or 0; hi = hi or 0; if hi <= lo then return 12345 end return lo end
+  -- sysRandom (882a2046 + LuaRandomRange.h): random() a raw 32-bit value, random(n)
+  -- 1..n, random(lo, hi) lo..hi in either order, the full 32-bit range included.
+  -- Deterministic per scenario (xorshift32), as the device's esp_random is not.
+  wada.sys.random = function(lo, hi)
+    if lo == nil then return rng32() end
+    checkint(lo, "random lo"); lo = math.tointeger(lo)
+    if hi == nil then hi = lo; lo = 1 else checkint(hi, "random hi"); hi = math.tointeger(hi) end
+    if hi < lo then lo, hi = hi, lo end
+    local span = hi - lo + 1               -- wraps like the uint32 span: 0 = all 2^32
+    local r = rng32() & 0x7FFFFFFF
+    if span <= 0 then return lo + r end    -- span >= 2^31: any r below it is in range
+    return lo + r % span
+  end
   wada.sys.epoch = function() return nil end
   wada.sys.datetime = function() return nil end
   wada.sys.beep = function() return false end
+  -- wada.ui.input(title, initial, cb [, max_len]) as uiInput checks it: optional
+  -- strings, a function, max_len an integer clamped to 1..2000 (63 when left out),
+  -- one prompt at a time. The scenario answers with answer_input(text or nil).
+  wada.ui.input = function(title, initial, cb, max_len)
+    if title ~= nil then checkstr(title, "input title") end
+    if initial ~= nil then checkstr(initial, "input initial") end
+    assert(type(cb) == "function", "input: cb must be a function")
+    if max_len == nil then max_len = 63 else checkint(max_len, "input max_len"); max_len = math.tointeger(max_len) end
+    if max_len < 1 then max_len = 1 end
+    if max_len > 2000 then max_len = 2000 end
+    if input_prompt then error("an input prompt is already open") end
+    input_prompt = { cb = cb, max_len = max_len, title = title, initial = initial }
+  end
   wada.sys.caps = function() return { sdk_ext = cfg.caps.sdk_ext, keyboard = cfg.caps.keyboard,
+                                       input = true, input_len = true,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
                                        panel = cfg.caps.panel or false,
@@ -494,6 +528,26 @@ local function tap(app, x, y) send(app, { type = "down", x = x, y = y }); send(a
 local function drag(app, x, y, x2, y2, dir) send(app, { type = "down", x = x, y = y }); send(app, { type = "swipe", dir = dir, x = 0, y = 0 }); send(app, { type = "up", x = x2, y = y2 }) end
 local function enter(app, w, h) tap(app, w // 2, h // 2); key(app, "enter", 13) end
 
+-- The user answers the open wada.ui.input prompt: OK with `text` (the field keeps at
+-- most max_len characters, as lv_textarea_set_max_length does), or cancel with nil.
+local function answer_input(text)
+  local p = assert(input_prompt, "no input prompt is open")
+  input_prompt = nil
+  if text ~= nil then
+    local n, cut = 0, #text
+    for pos = 1, #text do
+      local b = text:byte(pos)
+      if b < 0x80 or b >= 0xC0 then        -- a character starts here
+        n = n + 1
+        if n > p.max_len then cut = pos - 1; break end
+      end
+    end
+    text = text:sub(1, cut)
+  end
+  guarded(BUDGET, p.cb, text)
+  return p
+end
+
 local function label_dump()
   local out = {}
   for _, l in ipairs(labels) do if l.text ~= "" then out[#out + 1] = l.text end end
@@ -510,6 +564,8 @@ local function reset_world()
   audio_state = { state = "stopped", path = "", source = "", format = "", error = nil }
   dm_sent = {}
   audio_log = {}
+  rng_state = 0x2545F491
+  input_prompt = nil
 end
 
 -- simulated magnetometer: Earth field 0.45 G at true heading `deg` (device frame ==
@@ -2413,6 +2469,63 @@ end
 
 -- ---- MapFetch scenarios end --------------------------------------------------
 
+-- ---- inputlen (web/scripts/apps/inputlen.lua): the SDK test app for wada.ui.input's
+-- max_len and wada.sys.random's ranges; the web host build runs it against the real
+-- LuaAppHost.cpp (web/scripts/lua-input.wada), this against the mock.
+local function inputlen_open()
+  cfg = { w = 320, h = 240, caps = { sdk_ext = true, keyboard = true, touch = true } }
+  wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  return app
+end
+local function label_with(prefix)
+  for _, l in ipairs(labels) do if l.text:sub(1, #prefix) == prefix then return l.text end end
+  return nil
+end
+local function button_named(name)
+  for _, b in ipairs(buttons) do if b.text == name then return b end end
+  error("no button " .. name)
+end
+
+scenarios.inputlen_random = function()
+  inputlen_open()
+  print("  " .. tostring(label_with("random")))
+  assert((label_with("random") or ""):find("random OK", 1, true), "random ranges")
+  assert(label_with("caps().input_len = true"), "caps().input_len")
+  button_named("Full").fn()
+  print("  " .. tostring(label_with("full range")))
+  assert((label_with("full range") or ""):find("100/100 integers, (-1,max) gave true", 1, true), "full range")
+  -- the argument checks: a fraction is not an integer (luaL_checkinteger)
+  assert(not pcall(wada.sys.random, 2.5), "random(2.5) must raise")
+  assert(wada.sys.random(3.0) >= 1, "random(3.0) is random(3)")
+end
+
+scenarios.inputlen_input = function()
+  inputlen_open()
+  button_named("Long").fn()
+  assert(input_prompt and input_prompt.max_len == 300, "Long asks for max_len 300")
+  answer_input(("abcdefghij"):rep(24) .. "0123456789")
+  print("  " .. tostring(label_with("max_len 300")))
+  assert(label_with("max_len 300 -> 250 chars, ends '456789'"), "250 typed, 250 back")
+  button_named("Default").fn()
+  assert(input_prompt and input_prompt.max_len == 63, "no max_len = 63")
+  answer_input(("x"):rep(99) .. "Y")
+  print("  " .. tostring(label_with("default")))
+  assert(label_with("default -> 63 chars"), "default caps at 63")
+  button_named("Long").fn()
+  answer_input(nil)
+  assert(label_with("max_len 300 -> nil"), "cancel gives nil")
+  -- one prompt at a time; max_len clamps
+  wada.ui.input("a", "", function() end, 99999)
+  assert(input_prompt.max_len == 2000, "max_len capped at 2000")
+  assert(not pcall(wada.ui.input, "b", "", function() end), "a second prompt must raise")
+  answer_input("ok")
+  wada.ui.input("c", "", function() end, 0)
+  assert(input_prompt.max_len == 1, "max_len at least 1")
+  answer_input(nil)
+end
+
 -- True (and says so) when this app has no scenarios of its own. Returning a
 -- truthy value makes the dispatch below pick an EMPTY list rather than running
 -- someone else's tests against it.
@@ -2440,6 +2553,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_alarm", "protreck_compass", "protreck_deniv", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
+  or APP_PATH:find("/inputlen.lua", 1, true)
+  and { "inputlen_random", "inputlen_input" }
   or APP_PATH:find("/mapfetch/", 1, true)
   and { "mapfetch_tdeck", "mapfetch_no_map", "mapfetch_no_gps", "mapfetch_swipe", "mapfetch_logic", "mapfetch_done", "mapfetch_cost" }
   -- The compass list below is gpscompass's own, NOT a default. An app with no

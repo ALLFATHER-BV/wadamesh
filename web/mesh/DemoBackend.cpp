@@ -236,7 +236,22 @@ public:
 
   int requestStatus(const ContactInfo& c) override {
     if (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) return MSG_SEND_FAILED;
+    if (silentTelemetry()) Serial.printf("[demo] status request to %s at %u ms\n", c.name, (unsigned)millis());
     queue(Pending::Status, c.id.pub_key, 0, 900 + (uint32_t)random(800));
+    return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
+  }
+  // Telemetry is not part of the demo: the request fails at once (the default). For
+  // tests, WADA_DEMO_SILENT_TELEMETRY=1 makes it a request that goes out and whose
+  // reply is lost on the air, so the UI's single-flight request slot stays taken
+  // until its expiry (src/helpers/UiRequestSlot.h; web/scripts/ui-slot-expiry.wada).
+  static bool silentTelemetry() {
+    const char* e = getenv("WADA_DEMO_SILENT_TELEMETRY");
+    return e && e[0] == '1';
+  }
+  int requestTelemetry(const ContactInfo& c) override {
+    if (!silentTelemetry() || (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM && c.type != ADV_TYPE_SENSOR))
+      return MSG_SEND_FAILED;
+    Serial.printf("[demo] telemetry request to %s at %u ms: no reply will come\n", c.name, (unsigned)millis());
     return c.out_path_len == OUT_PATH_UNKNOWN ? MSG_SEND_SENT_FLOOD : MSG_SEND_SENT_DIRECT;
   }
   // Repeater / room admin (the repeater admin app): any password is the admin's, an
