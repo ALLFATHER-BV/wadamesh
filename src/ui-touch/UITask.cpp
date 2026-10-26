@@ -8655,7 +8655,7 @@ enum {
                      // system info / diagnostics (was "About", at the bottom; #596)
   CAT_PROFILE,       // identity / name / advert location / QR / export-import
   CAT_RADIO,         // radio params + experimental
-  CAT_AUTOADD,       // auto-add contacts (own page; also linked from the Contacts tab)
+  CAT_AUTOADD,       // Contact Management: auto-add + old-contact removal (own page; also linked from the Contacts tab)
   CAT_WIFI,          // Wi-Fi config + saved slots
   CAT_BLUETOOTH,     // BLE enable + pairing code
   CAT_GPS,           // GPS toggle + fix status + serial baud (hardware)
@@ -8693,7 +8693,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Device",        UI_ICON_INFO },
   { "Profile",       UI_ICON_USER },
   { "Radio & Mesh",  UI_ICON_RADIO_TOWER },
-  { "Auto-add",      UI_ICON_USER_PLUS },
+  { "Contact Management", UI_ICON_USER_PLUS },
   { "Wi-Fi",         UI_ICON_WIFI },
   { "Bluetooth",     UI_ICON_BLUETOOTH },
   { "GPS",           UI_ICON_SATELLITE },
@@ -16331,12 +16331,39 @@ static void buildRadioSettings() {
   }
 }
 
-// New-contact toast toggle (Auto-add page). Persists immediately like the
+// New-contact toast toggle (Contact Management page). Persists immediately like the
 // auto-add switches; default ON. Diag-log line + tab badge are unaffected — this
 // only gates the low-key chip in UITask::notify().
 static void toggleNewContactToastCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetNewContactToast(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+
+// Remove old contacts (#719). The switch saves on toggle and the days field on
+// blur; either one asks contactPurgeService() for a pass straight away.
+static void contactPurgeRequestSoon();
+static lv_obj_t* s_ct_purge_days_ta = nullptr;
+static void ctPurgeDaysDeleteCb(lv_event_t*) { s_ct_purge_days_ta = nullptr; }
+static void ctPurgeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetContactPurge(on);
+  if (on) contactPurgeRequestSoon();
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Auto-delete: on") : TR("Auto-delete: off"), 1100);
+}
+static void ctPurgeDaysSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
+  if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED || !s_ct_purge_days_ta) return;
+  kbMirrorSyncToReal();
+  int d = atoi(lv_textarea_get_text(s_ct_purge_days_ta));
+  if (d < TOUCH_CT_PURGE_MIN_DAYS) d = TOUCH_CT_PURGE_MIN_DAYS;
+  if (d > TOUCH_CT_PURGE_MAX_DAYS) d = TOUCH_CT_PURGE_MAX_DAYS;
+  char b[8]; snprintf(b, sizeof b, "%d", d);
+  lv_textarea_set_text(s_ct_purge_days_ta, b);
+  if (d == (int)touchPrefsGetContactPurgeDays()) return;
+  touchPrefsSetContactPurgeDays((uint16_t)d);
+  if (touchPrefsGetContactPurge()) contactPurgeRequestSoon();
+  if (g_lv.task) { char msg[40]; snprintf(msg, sizeof msg, TR("Delete after %d days"), d); g_lv.task->showAlert(msg, 1100); }
 }
 
 static void buildAutoAddSettings() {
@@ -16374,6 +16401,20 @@ static void buildAutoAddSettings() {
     g_set_modal.auto_overwrite_sw = setSwitchRow(c, "Overwrite oldest non-favorite",
                                                  "A new node replaces the oldest contact. Favourites are never replaced.",
                                                  prefs && (prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST), autoAddSwitchCb);
+  }
+
+  // #719: contacts not heard from in a while go by themselves. Favourites stay.
+  {
+    lv_obj_t* c = setCard("Remove old contacts");
+    setSwitchRow(c, "Auto-delete old contacts",
+                 "Deletes contacts not heard from in the number of days below. Favourites are never deleted.",
+                 touchPrefsGetContactPurge(), ctPurgeToggleCb);
+    s_ct_purge_days_ta = setNumFieldRow(c, "Days", "Not heard from for this many days, 1 to 999.", 3);
+    lv_obj_add_event_cb(s_ct_purge_days_ta, ctPurgeDaysSaveCb, LV_EVENT_DEFOCUSED, nullptr);   // saves on blur
+    lv_obj_add_event_cb(s_ct_purge_days_ta, ctPurgeDaysDeleteCb, LV_EVENT_DELETE, nullptr);
+    char db[8];
+    snprintf(db, sizeof db, "%u", (unsigned)touchPrefsGetContactPurgeDays());
+    lv_textarea_set_text(s_ct_purge_days_ta, db);
   }
 
   // A UI pref rather than an auto-add bit, so it has its own callback.
@@ -33245,7 +33286,7 @@ static void contactsOverflowAddCb(lv_event_t* e) {
 static void contactsOverflowAutoAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeContactsOverflowSheet();
-  openSettingsCategory(CAT_AUTOADD);   // jump straight to the dedicated Auto-add page
+  openSettingsCategory(CAT_AUTOADD);   // jump straight to the Contact Management page
 }
 static void contactsOverflowBlockedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -33269,7 +33310,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel. The Pager also has spare horizontal
-  // room, so give its longest action ("Auto-add settings") enough width at
+  // room, so give its longest action ("Contact Management") enough width at
   // the larger text presets; compact boards retain the historical width.
   // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
   // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
@@ -33278,7 +33319,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
 #else
   const int card_w = PCW(200);
 #endif
-  const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
+  const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Contact Management / Blocked) off-screen at Large scale
   const int rows = 5;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
@@ -33335,7 +33376,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   mk(TR(LV_SYMBOL_EYE_OPEN "  Search"), contactsOverflowSearchCb, 0);
   mk(TR(LV_SYMBOL_LIST     "  Discovered"), contactsOverflowFoundCb, 0);
   mk(TR(LV_SYMBOL_PLUS     "  Add contact"), contactsOverflowAddCb, 0);
-  mk(TR(LV_SYMBOL_DOWNLOAD "  Auto-add settings"), contactsOverflowAutoAddCb, 0);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Contact Management"), contactsOverflowAutoAddCb, 0);
   mk(TR(LV_SYMBOL_CLOSE    "  Blocked list"), contactsOverflowBlockedCb, 0);
 }
 
@@ -33600,6 +33641,93 @@ static void ctDeleteServiceTick(){
     if(g_lv.task) g_lv.task->onThreadsChanged();   // nudge web clients to refetch
   }
 }
+
+// ---- Remove old contacts (#719, Settings > Contact Management) ----------------
+// While the switch is on, a pass runs a few minutes after boot and then hourly:
+// contacts not heard from in N days are deleted, a few per loop tick like the
+// bulk delete above, then /contacts3 is rewritten once. Kept: favourites (either
+// star), the contact whose chat is open, and anything whose age is unknown.
+// Passes only run on a clock that is known to be right (wallClockIsCurrent()).
+// lastmod is our clock when we last heard the contact, but before the clock is
+// synced it runs from the saved floor and can lag by however long the device
+// was off. So a contact counts as stale only when its advert timestamp (its own
+// clock) is past the cutoff too: one heard recently on a lagging clock is kept.
+static constexpr uint32_t kCtPurgeFirstMs = 3UL * 60UL * 1000UL;    // let the clock sync after boot
+static constexpr uint32_t kCtPurgeEveryMs = 60UL * 60UL * 1000UL;
+static constexpr uint32_t kCtPurgeMinEpoch = 1700000000UL;         // older: recorded on an unset clock
+static uint32_t s_ctp_due_ms = kCtPurgeFirstMs;
+static uint8_t (*s_ctp_keys)[PUB_KEY_SIZE] = nullptr;
+static int s_ctp_total = 0, s_ctp_done = 0;
+
+static void contactPurgeRequestSoon() { s_ctp_due_ms = millis() + 2000UL; }
+
+static bool contactPurgeIsStale(const ContactInfo& c, uint32_t cutoff) {
+  if (c.type == ADV_TYPE_NONE || !c.name[0] || c.isFav()) return false;
+  if (c.lastmod < kCtPurgeMinEpoch || c.lastmod >= cutoff) return false;
+  return c.last_advert_timestamp < cutoff;
+}
+
+// Snapshot the stale keys (deleting shifts indices). Returns how many.
+static int contactPurgeCollect(uint32_t now) {
+  const uint32_t age = (uint32_t)touchPrefsGetContactPurgeDays() * 86400UL;
+  if (now <= age) return 0;
+  const uint32_t cutoff = now - age;
+  const int cnt = the_mesh.getNumContacts();
+  if (cnt <= 0) return 0;
+#if defined(ESP32)
+  uint8_t fav_buf[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];
+  const int fav_count = touchPrefsCopyFavorites(fav_buf);
+#endif
+  ContactInfo open_dm;
+  const bool dm_open = g_lv.dm.detail_open && g_lv.task && g_lv.task->lookupActiveContact(open_dm);
+  int n = 0;
+  ContactInfo c;
+  for (int i = 0; i < cnt; ++i) {
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !contactPurgeIsStale(c, cutoff)) continue;
+#if defined(ESP32)
+    if (touchPrefsFavoritesSnapshotContains(fav_buf, fav_count, c.id.pub_key)) continue;
+#endif
+    if (dm_open && memcmp(open_dm.id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0) continue;
+    if (!s_ctp_keys) {
+      s_ctp_keys = (uint8_t(*)[PUB_KEY_SIZE])psAlloc((size_t)cnt * PUB_KEY_SIZE);
+      if (!s_ctp_keys) return 0;
+    }
+    memcpy(s_ctp_keys[n++], c.id.pub_key, PUB_KEY_SIZE);
+  }
+  return n;
+}
+
+static void contactPurgeService() {
+  if (s_ctp_keys && s_ctp_total > 0) {
+    if (s_ctd_active) return;   // a manual bulk delete owns the list right now
+    const int BATCH = 8;
+    for (int b = 0; b < BATCH && s_ctp_done < s_ctp_total; ++b)
+      the_mesh.uiRemoveContactNoSave(s_ctp_keys[s_ctp_done++]);   // by key: shift-safe
+    if (s_ctp_done < s_ctp_total) return;
+    const int total = s_ctp_total;
+    the_mesh.uiPersistContacts();   // one /contacts3 rewrite for the whole pass
+    heap_caps_free(s_ctp_keys); s_ctp_keys = nullptr;
+    s_ctp_total = s_ctp_done = 0;
+    s_ct_list_force = true;
+    g_lv.dirty_contacts = true;
+    g_lv.dirty_threads = true;
+    if (g_lv.task) {
+      g_lv.task->onThreadsChanged();
+      char msg[48]; snprintf(msg, sizeof msg, TR("Removed %d old contact(s)"), total);
+      g_lv.task->showAlert(msg, 1600);
+    }
+    return;
+  }
+  const uint32_t ms = millis();
+  if ((int32_t)(ms - s_ctp_due_ms) < 0) return;
+  s_ctp_due_ms = ms + kCtPurgeEveryMs;
+  if (!touchPrefsGetContactPurge() || s_ctd_active || !wallClockIsCurrent()) return;
+  mesh::RTCClock* rtc = the_mesh.getRTCClock();
+  if (!rtc) return;
+  s_ctp_total = contactPurgeCollect(rtc->getCurrentTime());
+  s_ctp_done = 0;
+  if (s_ctp_total == 0 && s_ctp_keys) { heap_caps_free(s_ctp_keys); s_ctp_keys = nullptr; }
+}
 static int ctSelKeyCmp(const void* a, const void* b){ return memcmp(a, b, 6); }
 static void ctDoDelete(){
   if(!g_lv.task || s_ctd_active || s_ct_sel_n<=0) return;
@@ -33818,7 +33946,7 @@ static void contactsMoreCb(lv_event_t* e) {
   const ActItem items[] = {
     { UI_ICON_USER_PLUS,   TR("Add contact"),       []{ openAddContactModalCb(ctClickEvent()); },  false },
     { UI_ICON_LIST_CHECKS, TR("Select to delete"),  []{ ctSetSelectMode(true); },                   false },
-    { LV_SYMBOL_SETTINGS,  TR("Auto-add settings"), []{ openSettingsCategory(CAT_AUTOADD); },       false },
+    { LV_SYMBOL_SETTINGS,  TR("Contact Management"), []{ openSettingsCategory(CAT_AUTOADD); },      false },
     { UI_ICON_BAN,         TR("Blocked users"),     []{ openBlockedUsersModal(); },                 false },
   };
   openActionList(TR("Contacts"), items, (int)(sizeof items / sizeof items[0]));
@@ -78622,7 +78750,7 @@ void UITask::notify(UIEventType t) {
   // Background traffic (also reflected in the tab badges): show a subtle, low-key
   // chip rather than the prominent centre alert toast, so it's less intrusive.
   // New-contact discovery can be spammy in a busy mesh, so its chip is opt-out in
-  // Settings -> Auto-add; when suppressed we still log the diag line + tab badge.
+  // Settings -> Contact Management; when suppressed we still log the diag line + tab badge.
   const bool toast = (t != UIEventType::newContactMessage) || touchPrefsGetNewContactToast();
   if (toast) {
     strncpy(_alert, msg, sizeof(_alert) - 1);
@@ -80553,6 +80681,7 @@ void UITask::loop() {
 #endif
   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
   ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
+  contactPurgeService();      // Settings > Contact Management: remove old contacts (#719)
 
   // Accidental tab-switch guard: while content is actively being scrolled (and
   // for a short grace period after the scroll ends), make the bottom tab bar
