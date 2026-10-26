@@ -16396,6 +16396,7 @@ static void toggleNewContactToastCb(lv_event_t* e) {
   touchPrefsSetNewContactToast(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
 
+#if CAP_CONTACT_PURGE
 // Remove old contacts (#719). The switch saves on toggle and the days field on
 // blur; either one asks contactPurgeService() for a pass straight away.
 static void contactPurgeRequestSoon();
@@ -16422,6 +16423,7 @@ static void ctPurgeDaysSaveCb(lv_event_t* e) {
   if (touchPrefsGetContactPurge()) contactPurgeRequestSoon();
   if (g_lv.task) { char msg[40]; snprintf(msg, sizeof msg, TR("Delete after %d days"), d); g_lv.task->showAlert(msg, 1100); }
 }
+#endif   // CAP_CONTACT_PURGE
 
 static void buildAutoAddSettings() {
   NodePrefs* prefs = the_mesh.getNodePrefs();
@@ -16460,6 +16462,7 @@ static void buildAutoAddSettings() {
                                                  prefs && (prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST), autoAddSwitchCb);
   }
 
+#if CAP_CONTACT_PURGE
   // #719: contacts not heard from in a while go by themselves. Favourites stay.
   {
     lv_obj_t* c = setCard("Remove old contacts");
@@ -16473,6 +16476,7 @@ static void buildAutoAddSettings() {
     snprintf(db, sizeof db, "%u", (unsigned)touchPrefsGetContactPurgeDays());
     lv_textarea_set_text(s_ct_purge_days_ta, db);
   }
+#endif
 
   // A UI pref rather than an auto-add bit, so it has its own callback.
   {
@@ -33722,6 +33726,7 @@ static void ctDeleteServiceTick(){
   }
 }
 
+#if CAP_CONTACT_PURGE
 // ---- Remove old contacts (#719, Settings > Contact Management) ----------------
 // While the switch is on, a pass runs a few minutes after boot and then hourly:
 // contacts not heard from in N days are deleted, a few per loop tick like the
@@ -33808,6 +33813,7 @@ static void contactPurgeService() {
   s_ctp_done = 0;
   if (s_ctp_total == 0 && s_ctp_keys) { heap_caps_free(s_ctp_keys); s_ctp_keys = nullptr; }
 }
+#endif   // CAP_CONTACT_PURGE
 static int ctSelKeyCmp(const void* a, const void* b){ return memcmp(a, b, 6); }
 static void ctDoDelete(){
   if(!g_lv.task || s_ctd_active || s_ct_sel_n<=0) return;
@@ -48492,6 +48498,20 @@ static uint32_t rx24Sum() {
   return s;
 }
 
+// The long day and month names (lock screen, Home widgets), written out so every
+// name stays a literal the translation tooling can see.
+[[maybe_unused]] static const char* lockDayName(int wd) {
+  const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
+                               TR("Thursday"), TR("Friday"), TR("Saturday") };
+  return day[wd % 7];
+}
+[[maybe_unused]] static const char* lockMonthName(int m) {
+  const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
+                                TR("May"), TR("June"), TR("July"), TR("August"),
+                                TR("September"), TR("October"), TR("November"), TR("December") };
+  return mon[m % 12];
+}
+
 #if CAP_LOCK_SCREEN
 // ---- Lock screen -------------------------------------------------------------
 // A full-screen overlay shown while the device is hard-locked, as in the
@@ -48606,19 +48626,6 @@ static const lv_font_t* lockClockFont() {
 
 static void lockscreenUpdateActivity();
 
-// The lock screen's date names, written out so every name stays a literal the
-// translation tooling can see.
-static const char* lockDayName(int wd) {
-  const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
-                               TR("Thursday"), TR("Friday"), TR("Saturday") };
-  return day[wd % 7];
-}
-static const char* lockMonthName(int m) {
-  const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
-                                TR("May"), TR("June"), TR("July"), TR("August"),
-                                TR("September"), TR("October"), TR("November"), TR("December") };
-  return mon[m % 12];
-}
 // Width the date line may take; a date wider than this goes on two lines, the day
 // name over the rest ("WEDNESDAY" / "23 SEPTEMBER"), as at Large or Huge text on the
 // T-Deck Pro, where one line ran into both edges. Set when the screen is built.
@@ -48627,6 +48634,7 @@ static lv_coord_t lockDateW(const char* t) {
   return lv_txt_get_width(t, (uint32_t)strlen(t), &g_font_semi_12, 1, LV_TEXT_FLAG_NONE);
 }
 // The widest date there can be, upper-cased as shown: does any need two lines?
+#if CAP_DATE_WRAP
 static bool lockDateMayWrap(lv_coord_t avail) {
   char u[48];
   lv_coord_t wd = 0, wm = 0;
@@ -48634,6 +48642,7 @@ static bool lockDateMayWrap(lv_coord_t avail) {
   for (int i = 0; i < 12; ++i) { uiUpperUtf8(u, sizeof u, lockMonthName(i)); wm = LV_MAX(wm, lockDateW(u)); }
   return wd + lockDateW(" 30 ") + wm > avail;
 }
+#endif
 
 static void lockscreenUpdateClock() {
   if (!s_lock_clock) return;
@@ -49293,8 +49302,12 @@ static void lockscreenShow() {
   const lv_coord_t mark_h  = SC(30);
   const lv_coord_t mark_w  = (lv_coord_t)(mark_h * 174 / 110);
   const lv_coord_t clk_h   = lv_font_get_line_height(fclk);
+#if !CAP_DATE_WRAP
+  const bool date_wrap = false;   // the longest date fits on one line (device_caps.h)
+#else
   s_lock_date_avail = (lv_coord_t)(sw - 2 * SC(12));
   const bool date_wrap = lockDateMayWrap(s_lock_date_avail);
+#endif
   const lv_coord_t date_h  = lv_font_get_line_height(&g_font_semi_12) * (date_wrap ? 2 : 1);
   const lv_coord_t cap_h   = lv_font_get_line_height(&g_font_12);
   const lv_coord_t spark_h = SC(18);
@@ -50540,6 +50553,7 @@ static void backupChosenCb(lv_event_t* e) {
   backupPickerClose();
   confirmBackupImport(stored);
 }
+#if CAP_BACKUP_DATE_LABELS
 // The local time stamped into "meshcore-backup-YYYYMMDD-HHMMSS.json" by
 // backupMakeFilename(); false for every other name (the MeshCore app's fixed
 // meshcore-backup.json, nodate-N, or a .json someone copied onto the card).
@@ -50606,6 +50620,9 @@ static char (*backupListLabelsNew())[64] {
   if (lbl) backupListLabels(lbl);
   return lbl;
 }
+#else
+static char (*backupListLabelsNew())[64] { return nullptr; }   // the file names (device_caps.h)
+#endif
 static void openBackupPicker() {
   backupScan();
   backupPickerClose();
@@ -61052,17 +61069,10 @@ static const char* hwMonShort(int m) {
                                 TR("Jul"), TR("Aug"), TR("Sep"), TR("Oct"), TR("Nov"), TR("Dec") };
   return mon[m % 12];
 }
-static const char* hwDayLong(int wd) {
-  const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
-                               TR("Thursday"), TR("Friday"), TR("Saturday") };
-  return day[wd % 7];
-}
-static const char* hwMonLong(int m) {
-  const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
-                                TR("May"), TR("June"), TR("July"), TR("August"),
-                                TR("September"), TR("October"), TR("November"), TR("December") };
-  return mon[m % 12];
-}
+// The lock screen's tables (lockDayName / lockMonthName): one copy of the names in
+// the image instead of two (the Tanmatsu's AppFS size ceiling).
+static inline const char* hwDayLong(int wd) { return lockDayName(wd); }
+static inline const char* hwMonLong(int m)  { return lockMonthName(m); }
 
 // ---- Arrange ------------------------------------------------------------------------
 // Hold a widget (or an empty cell) or use Settings > Display > Home. A header takes
@@ -80773,7 +80783,9 @@ void UITask::loop() {
 #endif
   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
   ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
+#if CAP_CONTACT_PURGE
   contactPurgeService();      // Settings > Contact Management: remove old contacts (#719)
+#endif
 
   // Accidental tab-switch guard: while content is actively being scrolled (and
   // for a short grace period after the scroll ends), make the bottom tab bar

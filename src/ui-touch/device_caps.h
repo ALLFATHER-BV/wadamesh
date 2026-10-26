@@ -741,3 +741,39 @@
 #ifndef CAP_FW_UPDATE_CHECK
   #define CAP_FW_UPDATE_CHECK 1
 #endif
+
+// Settings > Contact Management: delete contacts not heard from in N days (#719).
+// Off on the Tanmatsu only: its application.bin must stay within the 50 x 64 KB
+// pages AppFS maps (3,276,800 B), and the merge batch of 2026-10-26 took it over.
+// The prefs field and its getters stay on every board (the schema is shared);
+// only the page card and the hourly pass are left out.
+#ifndef CAP_CONTACT_PURGE
+  #if defined(HAS_TANMATSU)
+    #define CAP_CONTACT_PURGE 0
+  #else
+    #define CAP_CONTACT_PURGE 1
+  #endif
+#endif
+
+// The two-line date of the lock screen and the Constellation screensaver (#742):
+// a portrait or narrow panel at Large / Huge text wraps the day name over the rest.
+// Off on the Tanmatsu, whose fixed 800 x 480 landscape panel always fits the date
+// on one line, so the check is only image size its AppFS ceiling has no room for.
+#ifndef CAP_DATE_WRAP
+  #if defined(HAS_TANMATSU)
+    #define CAP_DATE_WRAP 0
+  #else
+    #define CAP_DATE_WRAP 1
+  #endif
+#endif
+
+// Backups listed by their date, or "Default", instead of the file name (#739).
+// Off on the Tanmatsu for the same AppFS ceiling: it lists the file names, as
+// before. About 1 KB of code.
+#ifndef CAP_BACKUP_DATE_LABELS
+  #if defined(HAS_TANMATSU)
+    #define CAP_BACKUP_DATE_LABELS 0
+  #else
+    #define CAP_BACKUP_DATE_LABELS 1
+  #endif
+#endif

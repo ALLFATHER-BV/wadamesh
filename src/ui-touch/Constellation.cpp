@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Constellation.h"
+#include "device_caps.h"   // CAP_DATE_WRAP
 
 #include <initializer_list>
 #include <math.h>
@@ -234,9 +235,17 @@ const lv_font_t* strong() { return s_th.strong ? s_th.strong : small(); }
 // Large or Huge text on a portrait panel: the status face is taller than the Normal one,
 // so the lines at the bottom (or top) edge get more room.
 bool bigText() {
+#if !CAP_DATE_WRAP
+  return false;   // a landscape-only panel (device_caps.h)
+#else
   return s_portrait && lv_font_get_line_height(small()) > lv_font_get_line_height(&lv_font_montserrat_12);
+#endif
 }
+#if !CAP_DATE_WRAP
+constexpr int s_date_lines = 1;   // never wrapped there (setDate)
+#else
 int s_date_lines = 1;   // 2 when the date is wrapped (setDate)
+#endif
 
 // Recency to opacity. A node heard in the last ten minutes is solid; one not
 // heard for six hours is a ghost. This is the part that makes a quiet night
@@ -1128,6 +1137,9 @@ void placeClock(bool shown) {
 // The date, on two lines when one does not fit across the screen (Large or Huge text
 // on a portrait panel): "SUN" over "12 JUN", or "CLOCK NOT SET" over the uptime.
 void setDate(const char* date) {
+#if !CAP_DATE_WRAP
+  lv_label_set_text(s_date, date);   // always one line there (device_caps.h)
+#else
   char b[48];
   snprintf(b, sizeof b, "%s", date);
   int lines = 1;
@@ -1147,6 +1159,7 @@ void setDate(const char* date) {
     s_date_lines = lines;
     placeHud();
   }
+#endif
 }
 
 void hudOpaExec(void* var, int32_t v) {
@@ -1320,7 +1333,9 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   lv_obj_set_style_text_letter_space(s_clock, -K1(1), 0);
   s_date  = text(s_scene, small(), s_th.sub);
   lv_obj_set_style_text_letter_space(s_date, K1(1), 0);
+#if CAP_DATE_WRAP
   if (s_portrait) lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);   // a wrapped date (setDate)
+#endif
 
   s_unread = row(s_scene, K(3));
   {
