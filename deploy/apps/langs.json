@@ -3,72 +3,77 @@
     {
       "code": "bg",
       "name": "Български",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "de",
       "name": "Deutsch",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "el",
       "name": "Ελληνικά",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "es",
       "name": "Español",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "fr",
       "name": "Français",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "hu",
       "name": "Magyar",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "it",
       "name": "Italiano",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "nl",
       "name": "Nederlands",
-      "ver": "29"
+      "ver": "30"
+    },
+    {
+      "code": "pl",
+      "name": "Polski",
+      "ver": "30"
     },
     {
       "code": "pt-br",
       "name": "Português (BR)",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "ro",
       "name": "Română",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "cs",
       "name": "Čeština",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "ru",
       "name": "Русский",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "sr",
       "name": "Српски",
-      "ver": "29"
+      "ver": "30"
     },
     {
       "code": "uk",
       "name": "Українська",
-      "ver": "29"
+      "ver": "30"
     }
   ]
 }

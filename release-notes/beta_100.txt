@@ -1,0 +1,47 @@
+# beta_100 - Pager hardware (vibration, fuel gauge, ship mode, motion), PMTiles maps, contact auto-delete, GPS Auto speed, many fixes. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards, apps.
+
+Test build, on top of beta_99. The stable build stays beta_85.
+
+# --- New ---
+Maps from one file: put a raster PMTiles archive in /maps on the SD card and pick it under Map options. Vector and JPEG archives are refused with the reason in the picker, and "Zoom: map levels only" keeps the map inside the levels the file has (#759 by kremers).
+Contacts can delete themselves when not heard from in a chosen number of days (Settings, Contact Management, off by default). Favourites and the chat that is open are never deleted, and nothing goes while the clock is not set (#731 by oumike, asked for in #719).
+Contacts has a Rooms filter (#740 by oumike, asked for by green.six).
+Backups are listed by their date, or "Default", instead of the file name (#741 by oumike), and on the P4 boards the date follows your time zone after a Wi-Fi sync (#756 by oumike).
+GPS speed: the T-Deck and the ThinkNode M9 find their GPS's serial speed by themselves. Settings, GPS, Serial speed has a new Auto choice, the default; a speed you pick is used as it is.
+Screensaver: "Keep north up" stops the slow turn of the picture, so north stays at the top (#706, asked for by i-TomCZ).
+Lua apps: wada.ui.input takes an optional 4th argument, the longest text it accepts (up to 2000 characters, 63 without it), and caps().input_len says the device has it (asked for by rock.paper.scissors_).
+Polish (Polski) is new in the Store's languages, translated by tom73god.
+
+# --- Fixes ---
+A repeater's status, neighbours and access list stayed empty in the admin app after a telemetry poll or a Home sensor widget asked a node that never answered: that request held the device's single request slot until a reboot. It now lets go after 45 seconds (reported by enthusiastric).
+Updating from the device picks a dropped or stalled download up where it stopped, up to 3 times, instead of failing with "short read" (#689, reported by Hixsten).
+Import backup showed an empty page with two or more backups, and the time zone and Wi-Fi scan pages could open blank: the page was measured before it was laid out (#738 by oumike; #757, #760, reported by Ender436 and Kb1hux).
+Wi-Fi after a lost link: the device's retry no longer races the Wi-Fi chip's own reconnect and no longer clears the saved network, it slows down after a minute so an absent network is not searched all night, and waking the screen tries once at once (#685, reported by william-stearns and stephen-62).
+Wi-Fi switched on from the Home widget or the control center joins straight away, not only after opening Settings, Wi-Fi.
+Time zone: Settings, Clock & time keeps the "By hand" field in the zone you just picked, so Set clock after a zone change no longer moves the clock by the difference, and the CrowPanel P4 10.1 no longer resets the zone to UTC on a Wi-Fi time sync (#699, reported by zomgugoff).
+Avatars never go blank: a name starting with a flag or joined emoji took an invisible character as its icon, and Initials now skip emoji and take whole letters, so "ãna" shows ÃN (#674, reported by neoemit).
+T-Deck: an older keyboard that sent a burst like "QERUOXV$ ZNMFJ" for one Q is recognised, switched to the older keyboard setting and remembered.
+T-Deck: with Italian, Spanish or Romanian selected, Sym+W/E/R type 1 2 3 again; the accented letters come from the accent box after the base letter (#747, reported by QuakeRadio).
+Save update bin to SD downloads the file first and then writes it to the card, retrying the whole file, and the SD health check keeps off the card meanwhile (#734, reported by Jess-39).
+A wallpaper in internal /lock/ survives a reboot: the start-up cleanup of old map tiles deleted every picture on internal storage.
+Lua apps: wada.ui.input returns the text when Enter is pressed (the second Enter used to land on Cancel), and wada.sys.random(n) gives 1 to n, and random(1, 1) gives 1 instead of a huge number.
+Settings that fail to save to an SD slot file recreate the file and try again (#744 by oumike, #743).
+A restore that cannot save identity, channels and contacts says so instead of restarting into an empty store (#708, reported by zomgugoff, built on #709 by oumike).
+
+# --- Boards ---
+T-LoRa Pager: the vibration motor buzzes for messages, with patterns and strength in Settings, Sound (#748 by MrYoshii).
+T-LoRa Pager: the charger and fuel gauge show real charge, current and time to full or empty, with battery care (stop at 80%), a temperature guard and low-battery warnings that switch off safely at 3% (#749 by MrYoshii).
+T-LoRa Pager: Power off is a real power-off (ship mode) when not on USB; hold the power key or plug in USB to start it again. Wi-Fi uses modem sleep while the screen is off (#750 by MrYoshii).
+T-LoRa Pager: the motion sensor turns notifications quiet while the Pager lies face down, can wake the screen when you pick it up (opt-in), and Lua apps can read it (#751 by MrYoshii).
+T-LoRa Pager: the lock screen can have a wallpaper (#752 by MrYoshii).
+ThinkNode M9: a slow key press that flickers on release types one letter, not two; the same letter again is only taken after a moment that follows your typing pace (#671, reported by neoemit).
+T-Display P4: vibrates on new messages with the AW86224 motor, off by default and quiet under Do Not Disturb (#730 by ItsNix).
+T-Display P4: with the keyboard attached the battery percentage comes from the voltage, since the gauge is set up for the small internal cell (#722 by oumike, #721).
+T-Display P4 under Launcher: an SD card Launcher left in SPI mode is power-cycled and mounted again at start-up (#708, built on #709 by oumike).
+T-Deck Pro: Settings, the header and the lock screen fit the 240 px e-paper panel (#742 by oumike).
+SenseCAP Indicator: the map says the board has no map storage instead of asking to reflash a partition it does not have (#692, reported by skykingisepic).
+
+# --- Apps (in the Store now) ---
+Space Invaders 1.1 no longer crashes with a few aliens left (#729 by JackCortines). Wardrive 1.3: the start and stop button names what the next press does (#735 by SebRut).
