@@ -1209,6 +1209,32 @@ bool touchPrefsSetMapStyle(uint8_t style) {
   s_cfg.map_style = style;
   return cfgFlush();
 }
+
+static const char* KEY_MAP_PMT = "map_pmt";
+
+int touchPrefsGetMapPmTiles(char* out, int out_cap) {
+  if (!out || out_cap <= 0) return 0;
+  out[0] = '\0';
+  if (!s_begun) touchPrefsBegin();
+  String v = prefsGetStr(KEY_MAP_PMT, String(""));
+  int n = (int)v.length();
+  if (n > out_cap - 1) n = out_cap - 1;
+  if (n > TOUCH_MAP_PMTILES_MAXLEN - 1) n = TOUCH_MAP_PMTILES_MAXLEN - 1;
+  memcpy(out, v.c_str(), (size_t)n);
+  out[n] = '\0';
+  return n;
+}
+
+bool touchPrefsSetMapPmTiles(const char* name) {
+  if (!name || !name[0]) return false;
+  if (!s_begun) touchPrefsBegin();
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) return false;
+  const bool ok = s_prefs.putString(KEY_MAP_PMT, name) > 0;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
 bool touchPrefsGetAppGridLarge() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.app_grid_large != 0;
