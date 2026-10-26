@@ -19,6 +19,7 @@
 #include "device_caps.h"
 #include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
 #include "Utf8Text.h"
+#include "LuaRandomRange.h"   // wada.sys.random(lo, hi), host-tested
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -1279,8 +1280,9 @@ int sysRandom(lua_State* L) {
   if (lua_isnoneornil(L, 1)) { lua_pushinteger(L, (lua_Integer)esp_random()); return 1; }
   lua_Integer lo = luaL_checkinteger(L, 1), hi;
   if (lua_isnoneornil(L, 2)) { hi = lo; lo = 1; } else hi = luaL_checkinteger(L, 2);
-  if (hi < lo) { const lua_Integer t = lo; lo = hi; hi = t; }
-  lua_pushinteger(L, lo + (lua_Integer)(esp_random() % (uint32_t)(hi - lo + 1)));
+  // The range math (either order, no overflow at the ends): LuaRandomRange.h.
+  static_assert(sizeof(lua_Integer) == sizeof(int32_t), "LUA_32BITS: lua_Integer is 32-bit");
+  lua_pushinteger(L, (lua_Integer)luaRandomRange((int32_t)lo, (int32_t)hi, esp_random()));
   return 1;
 }
 // wada.sys.tr(s) -- translate through the same table the UI uses.
