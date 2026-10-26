@@ -12798,7 +12798,13 @@ static int emojiPickerCount() {
 }
 // The pack lands a few seconds into the session, after the list may already have
 // been built without it.
+static bool s_emoji_invalidate_pending = false;
 static void emojiInvalidateMergedList() {
+  if (emojiSheetIsOpen()) {
+    s_emoji_invalidate_pending = true;
+    return;
+  }
+  s_emoji_invalidate_pending = false;
   if (s_emoji_merged) { free(s_emoji_merged); s_emoji_merged = nullptr; }
   s_emoji_merged_count = 0;
   s_emoji_merge_done   = false;
@@ -12876,6 +12882,9 @@ static void closeEmojiSheet() {
   s_emoji_sel = -1;
   s_emoji_painted_sel = -1;
   s_emoji_pick_cb = nullptr;
+  s_glyph_items = k_emoji_items;
+  s_glyph_count = k_emoji_count;
+  if (s_emoji_invalidate_pending) emojiInvalidateMergedList();
 #if defined(HAS_M9_KEYBOARD)
   if (return_ta && lv_obj_is_valid(return_ta)) {
     s_m9_focus_pending = return_ta;
