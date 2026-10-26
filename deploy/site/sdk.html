@@ -526,7 +526,7 @@ end</code></pre>
           <tr><td>wada.sys.millis()</td><td>Milliseconds since boot.</td></tr>
           <tr><td>wada.sys.board()</td><td><code>{w, h, touch, keyboard, trackball, gps}</code>: size and capabilities.</td></tr>
           <tr><td>wada.sys.toast(msg)</td><td>Brief on-screen message.</td></tr>
-          <tr><td>wada.sys.random(n)</td><td>Integer in 1..n.</td></tr>
+          <tr><td>wada.sys.random(n)<br>wada.sys.random(lo, hi)</td><td>Integer in 1..n, or in lo..hi (both ends included). From hardware randomness, so there is nothing to seed.</td></tr>
           <tr><td>wada.sys.epoch()</td><td>Unix time in seconds, or <code>nil</code> when the clock has not been set yet (no GPS fix and no NTP). Always handle the <code>nil</code>.</td></tr>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
           <tr><td>wada.ui.emoji(cb)</td><td>Open the emoji picker and call <code>cb(glyph)</code> with the chosen emoji as a UTF-8 string, or <code>cb(nil)</code> if it was dismissed. For an app that draws its own text entry and keeps the buffer itself; if you use <code>wada.ui.input()</code> you do not need this, the picker is already on its long-press menu.</td></tr>

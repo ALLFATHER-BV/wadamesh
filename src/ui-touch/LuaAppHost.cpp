@@ -1273,8 +1273,13 @@ int sysKeepAwake(lua_State* L) {
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
-  lua_Integer lo = luaL_optinteger(L, 1, 0), hi = luaL_optinteger(L, 2, 0);
-  if (hi <= lo) { lua_pushinteger(L, (lua_Integer)esp_random()); return 1; }
+  // random() = a raw 32-bit value, random(n) = 1..n (as documented), random(lo, hi) =
+  // lo..hi. An empty range used to return the raw value too, so random(1, 1) at the end
+  // of a shuffle gave a huge index, and random(n) never returned 1..n at all.
+  if (lua_isnoneornil(L, 1)) { lua_pushinteger(L, (lua_Integer)esp_random()); return 1; }
+  lua_Integer lo = luaL_checkinteger(L, 1), hi;
+  if (lua_isnoneornil(L, 2)) { hi = lo; lo = 1; } else hi = luaL_checkinteger(L, 2);
+  if (hi < lo) { const lua_Integer t = lo; lo = hi; hi = t; }
   lua_pushinteger(L, lo + (lua_Integer)(esp_random() % (uint32_t)(hi - lo + 1)));
   return 1;
 }
