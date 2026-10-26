@@ -660,6 +660,10 @@ uint32_t touchPrefsGetBattDayMah();          // mAh drawn: today in the low 16 b
 void     touchPrefsSetBattDayMah(uint32_t v); // (0xFFFF = not known). Not in the backup: it is this pack's.
 uint32_t touchPrefsGetBattUse();             // average draw on battery: 0.1 mA low 16 bits, minutes seen high
 void     touchPrefsSetBattUse(uint32_t v);
+bool     touchPrefsGetFaceDownQuiet();       // lying face down: screen off, no sound or vibration (default off)
+void     touchPrefsSetFaceDownQuiet(bool on);
+bool     touchPrefsGetPickupWake();          // lifting it off a table lights the screen (default off)
+void     touchPrefsSetPickupWake(bool on);
 #endif
 bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
 void    touchPrefsSetGlanceEnabled(bool on);

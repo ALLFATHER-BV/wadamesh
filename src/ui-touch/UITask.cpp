@@ -201,6 +201,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #endif
   #if defined(TLORA_PAGER)
     #include "PagerHaptics.h"          // DRV2605 vibration motor (variants/lilygo_tlora_pager)
+    #include "PagerImu.h"              // BHI260AP accelerometer, wada.sys.accel() (luaHostAccel)
   #endif
   #if defined(HAS_PAGER_ENCODER)
     #include <helpers/input/PagerEncoder.h>
@@ -13173,7 +13174,18 @@ static void toggleGpsCb(lv_event_t* e) {   // GPS on/off switch (VALUE_CHANGED)
 // start/end window (30-min slots, may wrap past midnight). Unconditional (not
 // board-gated) so both the sound chokepoint and the status-bar icon code can call
 // it on every board. Silently inactive if the RTC hasn't been set yet.
+#if defined(TLORA_PAGER)
+// Two more ways to be quiet on the Pager, on top of the timed window: "Quiet now"
+// (hold Shift: on until held again, not kept over a restart) and lying face down
+// (Settings > Sound, off by default). Either one counts as Do Not Disturb.
+static bool s_quiet_manual = false;
+static bool s_face_down    = false;
+static uint32_t s_pager_input_seq = 0;   // moves on with every key, chord, turn and click
+#endif
 static bool dndActive() {
+#if defined(TLORA_PAGER)
+  if (s_quiet_manual || s_face_down) return true;
+#endif
   if (!touchPrefsGetDndEnabled()) return false;
   if (!wallClockIsCurrent()) return false;
   time_t now_t = time(nullptr);
@@ -13186,6 +13198,18 @@ static bool dndActive() {
   return (start <= end) ? (t >= start && t < end) : (t >= start || t < end);
 }
 
+#if defined(TLORA_PAGER)
+static void pagerFaceDownSettingChanged(bool on);
+static void pagerPickupSettingChanged(bool on);
+static void pickupToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  pagerPickupSettingChanged(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+static void faceDownToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  pagerFaceDownSettingChanged(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // Do Not Disturb master switch (under the Sound settings section). Stays silent
 // on toggle (no preview chime) since the whole point of DND is not making noise.
 static void toggleDndCb(lv_event_t* e) {
@@ -18415,6 +18439,11 @@ static void buildDisplayPage() {
     setSwitchRow(c, "Message LED", "Flashes on a new message and breathes while any are unread.",
                  touchPrefsGetMsgLed(), msgLedToggleCb);
 #endif
+#if defined(TLORA_PAGER)
+    setSwitchRow(c, "Wake when picked up", "Lifting the Pager off the table turns the screen on (a locked Pager shows "
+                 "its lock screen). Only after it lay still, so it stays dark in a bag or pocket.",
+                 touchPrefsGetPickupWake(), pickupToggleCb);
+#endif
   }
 
   // Layout: the text size, which way up, where the navigation bar sits, the launcher.
@@ -18879,6 +18908,11 @@ static void buildSoundPage() {
     dndStartLabelRefresh();
     s_dnd_end_lbl = setStepperRow(c, "Until", nullptr, "-30m", "+30m", dndEndMinusCb, dndEndPlusCb, nullptr, nullptr);
     dndEndLabelRefresh();
+#if defined(TLORA_PAGER)
+    setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the Pager stays silent "
+                 "(no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.",
+                 touchPrefsGetFaceDownQuiet(), faceDownToggleCb);
+#endif
   }
 #else
   {
@@ -48885,6 +48919,125 @@ static void pagerLowBatteryTick(uint32_t now) {
   else                          g_lv.task->showAlert(msg, 5000);
 }
 
+// ---- Motion: face down = quiet, pick up = wake (Pager) ---------------------------
+// Both off by default (Settings > Sound > Do Not Disturb; Settings > Display > Screen).
+// Face down: lying face down for 3 s turns the screen off and keeps the Pager
+// quiet (no sound, no vibration, no glance), as Do Not Disturb; picking it up
+// ends it. Pick up: lifting it off a table lights the screen (a locked Pager
+// only shows its lock screen). The accelerometer is read only while one of
+// them is on: once a second with the screen on, five times a second with it off
+// and pick-up on (a lift is over in half a second).
+//
+// Pick-up is meant not to go off in a bag or pocket. It only arms after the
+// Pager has lain still and flat (screen up or down, as on a table) for 3 s;
+// then it needs a real movement, and the Pager must come to rest within 2 s
+// in a reading position (screen facing up or towards you) tilted at least 20
+// degrees from how it lay. A bag that is carried never lies still enough to arm
+// it, and one that is picked up keeps swinging instead of settling. Waking it
+// that way disarms it until it has lain still again.
+static int8_t s_face_pref = -1;          // the face-down setting, cached; -1 = not read yet
+static int8_t s_pickup_pref = -1;        // the pick-up setting, likewise
+static void pagerMotionWarmup() {
+  // The first read of a boot uploads the sensor hub's firmware (1-2 s, the loop
+  // stands still meanwhile): say so before it happens, so it does not look hung.
+  if (pagerImuStarted()) return;
+  if (g_lv.task) g_lv.task->showAlert(TR("Starting the motion sensor\xE2\x80\xA6"), 2500);
+  lv_refr_now(nullptr);
+  float x, y, z;
+  pagerImuRead(&x, &y, &z);
+}
+static void pagerMotionTick(uint32_t now) {
+  static uint32_t s_ms = 0, s_since = 0;
+  // Pick-up state.
+  static float    s_px = 0, s_py = 0, s_pz = 0;   // last sample
+  static bool     s_have_prev = false;
+  static uint32_t s_still_since = 0;             // when the readings stopped changing
+  static float    s_rx = 0, s_ry = 0, s_rz = 0;  // the pose it rested in
+  static bool     s_armed = false;               // lay still and flat long enough
+  static uint32_t s_moved_at = 0;                // a lift began, 0 = none under way
+  static uint32_t s_settle_since = 0;
+  if (s_face_pref < 0)   s_face_pref   = touchPrefsGetFaceDownQuiet() ? 1 : 0;
+  if (s_pickup_pref < 0) s_pickup_pref = touchPrefsGetPickupWake() ? 1 : 0;
+  const bool off = !g_lv.task || g_lv.task->isScreenOff();
+  const bool want_face = s_face_pref > 0;
+  const bool want_pick = s_pickup_pref > 0 && off;
+  if (!want_face && s_face_down) { s_face_down = false; updateGlobalStatusBar(); }
+  if ((!want_face && !want_pick) || now < 15000) {   // not in the first seconds after boot
+    s_since = 0; s_have_prev = false; s_armed = false; s_moved_at = 0; s_still_since = 0;
+    return;
+  }
+  if (now - s_ms < (want_pick ? 200u : 1000u)) return;
+  s_ms = now;
+  pagerMotionWarmup();
+  float x, y, z;
+  if (!pagerImuRead(&x, &y, &z)) return;
+
+  // ---- face down
+  if (want_face) {
+    if (!s_face_down) {
+      if (z < -0.8f) {
+        if (!s_since) s_since = now;
+        else if (now - s_since >= 3000) {
+          s_face_down = true;
+          s_since = 0;
+          Serial.printf("[MOTION] face down: quiet\n");
+          pagerHapticsClick(1);         // a light tick: noticed
+          if (g_lv.task && !g_lv.task->isScreenOff()) g_lv.task->sleepScreen();
+          updateGlobalStatusBar();
+        }
+      } else {
+        s_since = 0;
+      }
+    } else if (z > -0.5f) {
+      s_face_down = false;
+      updateGlobalStatusBar();
+    }
+  }
+
+  // ---- pick up (screen off only)
+  if (!want_pick) { s_have_prev = false; s_armed = false; s_moved_at = 0; s_still_since = 0; return; }
+  const float dx = x - s_px, dy = y - s_py, dz = z - s_pz;
+  const float d = s_have_prev ? sqrtf(dx * dx + dy * dy + dz * dz) : 1.0f;   // change since 200 ms ago, g
+  s_px = x; s_py = y; s_pz = z; s_have_prev = true;
+  const float mag = sqrtf(x * x + y * y + z * z);
+  const bool still = d < 0.03f && mag > 0.9f && mag < 1.1f;
+  if (still) { if (!s_still_since) s_still_since = now; }
+  else       s_still_since = 0;
+
+  if (!s_moved_at) {
+    if (s_still_since && now - s_still_since >= 3000 && fabsf(z) > 0.85f) {   // flat on a table
+      s_armed = true;
+      s_rx = x; s_ry = y; s_rz = z;
+    }
+    if (s_armed && d > 0.08f) { s_moved_at = now; s_settle_since = 0; }
+    return;
+  }
+  // A lift is under way: does it end in a reading position within 2 s?
+  if (now - s_moved_at > 2000) { s_moved_at = 0; s_armed = false; return; }   // kept moving: a bag
+  if (d < 0.05f && mag > 0.85f && mag < 1.15f) { if (!s_settle_since) s_settle_since = now; }
+  else s_settle_since = 0;
+  if (!s_settle_since || now - s_settle_since < 400) return;
+  const float cosang = (x * s_rx + y * s_ry + z * s_rz) / (mag * sqrtf(s_rx * s_rx + s_ry * s_ry + s_rz * s_rz));
+  const bool reading_pose = z / mag > 0.3f;          // screen up or towards you
+  s_moved_at = 0;
+  s_armed = false;                                  // until it has lain still again
+  if (!reading_pose || cosang > 0.94f) return;      // put back down, or barely tilted
+  if (!g_lv.task || !g_lv.task->isScreenOff()) return;
+  Serial.printf("[MOTION] picked up: screen on\n");
+  if (g_lv.task->isManualLock()) g_lv.task->lockscreenReveal();
+  else                           g_lv.task->wakeScreen();
+}
+static void pagerFaceDownSettingChanged(bool on) {
+  touchPrefsSetFaceDownQuiet(on);
+  s_face_pref = on ? 1 : 0;
+  if (on) pagerMotionWarmup();
+  if (!on && s_face_down) { s_face_down = false; updateGlobalStatusBar(); }
+}
+static void pagerPickupSettingChanged(bool on) {
+  touchPrefsSetPickupWake(on);
+  s_pickup_pref = on ? 1 : 0;
+  if (on) pagerMotionWarmup();
+}
 #endif
 static void updatePagerEncoder(unsigned long now) {
 #if defined(TLORA_PAGER)
@@ -72444,19 +72597,17 @@ bool luaHostGps(double* lat, double* lon, int* sats, int* alt_m, uint32_t* fix_t
 }
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
-#if CAP_COMPASS
-// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
-// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
-// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
-// reads are short and the bus (Wire) has no other task on it.
 #if CAP_IMU
 // wada.sys.accel(). Acceleration in g, sensor frame, as the chip reports it —
 // the mapping to the device's own axes is the consumer's, for the same reason
-// as the magnetometer: it is not documented for this board and had to be
-// measured.
+// as the magnetometer: it is not documented for the M9 and had to be measured.
+// (The Pager's sensor hub applies LilyGo's own remap for that board.) Outside
+// the CAP_COMPASS block: the Pager has an accelerometer and no magnetometer.
 bool luaHostAccel(float* x, float* y, float* z) {
 #if defined(HAS_M9_IMU)
   return m9ImuRead(x, y, z);
+#elif defined(TLORA_PAGER)
+  return pagerImuRead(x, y, z);
 #else
   (void)x; (void)y; (void)z;
   return false;
@@ -72464,6 +72615,11 @@ bool luaHostAccel(float* x, float* y, float* z) {
 }
 #endif  // CAP_IMU
 
+#if CAP_COMPASS
+// wada.sys.compass(). Raw field vector from the board's magnetometer; the only
+// one wired so far is the M9's QMC6309 (variants/thinknode_m9/M9Compass.*).
+// Runs on the UI thread like every other luaHost* bridge; the driver's I2C
+// reads are short and the bus (Wire) has no other task on it.
 bool luaHostCompass(float* x, float* y, float* z, bool* overflow) {
 #if defined(HAS_M9_COMPASS)
   return m9CompassRead(x, y, z, overflow);
@@ -81368,6 +81524,7 @@ void UITask::loop() {
   }
 #if defined(TLORA_PAGER)
   pagerHapticsIdleTick();   // vibration motor back to standby once its pattern has run out
+  pagerImuIdleTick();       // and the accelerometer off once no app is reading it
 #if !defined(WADA_WEB)
   {
     static uint32_t s_wifi_ps_ms = 0;
@@ -81391,6 +81548,7 @@ void UITask::loop() {
     }
   }
   pagerLowBatteryTick(now);
+  pagerMotionTick(now);
 #endif
 #elif defined(HAS_M9_KEYBOARD)
   // Own the stall buckets for everything a keypress triggers. The "ui:input"
