@@ -157,6 +157,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
+#include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
 #endif
@@ -20619,15 +20620,15 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
 // Wi-Fi lives on its C6.
 #if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
 static uint32_t s_wifi_switch_rejoin_ms = 0;   // when the wait started; 0 = nothing pending
-static const uint32_t WIFI_SWITCH_REJOIN_MS = 4000;
-static void wifiSwitchRejoinService() {
+static void wifiSwitchRejoinService() {   // the decision: WifiSwitchRejoin.h (host-tested)
   if (!s_wifi_switch_rejoin_ms) return;
-  if (!wifiConfigWantsWifi() || !wifiConfigHasRuntime() || WiFi.status() == WL_CONNECTED) {
-    s_wifi_switch_rejoin_ms = 0;   // switched off again, nothing to join, or it joined
-  } else if (WiFi.getMode() == WIFI_MODE_NULL || wifiScanIsActive()) {
-    s_wifi_switch_rejoin_ms = millis();   // the driver is not up yet, or a scan owns it
-  } else if ((uint32_t)(millis() - s_wifi_switch_rejoin_ms) >= WIFI_SWITCH_REJOIN_MS) {
-    s_wifi_switch_rejoin_ms = 0;
+  WifiSwitchRejoin::State st;
+  st.wants       = wifiConfigWantsWifi();
+  st.has_runtime = wifiConfigHasRuntime();
+  st.connected   = WiFi.status() == WL_CONNECTED;
+  st.driver_up   = WiFi.getMode() != WIFI_MODE_NULL;
+  st.scanning    = wifiScanIsActive();
+  if (WifiSwitchRejoin::step(s_wifi_switch_rejoin_ms, millis(), st)) {
     Serial.println("[wifi] switched on, not joined: rejoining on the running driver");
     wifiConfigRequestApply();   // main.cpp: disconnect(false, false) + begin, as after a scan
   }
