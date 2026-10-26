@@ -503,10 +503,19 @@
 // hardware gate as CAP_COMPASS: the ThinkNode M9's QMI8658 is the only one
 // driven so far (variants/thinknode_m9/M9Imu.*). Its point is tilt — a 2-axis
 // magnetic heading is wrong by ~1.5 degrees per degree of tilt at mid latitudes.
-#if defined(HAS_M9_IMU)
+#if defined(HAS_M9_IMU) || defined(TLORA_PAGER)   // + the Pager's BHI260AP (variants/lilygo_tlora_pager/PagerImu.*)
   #define CAP_IMU 1
 #else
   #define CAP_IMU 0
+#endif
+
+// The constellation screensaver's optional note left of the battery
+// (CstStatus::batt_note). Only the Pager fills it, from its fuel gauge, so only
+// the Pager carries the label (the Tanmatsu has no flash to spare for an empty one).
+#if defined(TLORA_PAGER)
+  #define CAP_CST_BATT_NOTE 1
+#else
+  #define CAP_CST_BATT_NOTE 0
 #endif
 
 #if defined(HAS_CC_BRIGHTNESS)

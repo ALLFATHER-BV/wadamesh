@@ -1,6 +1,41 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <Arduino.h>
 #include "TLoraPagerBoard.h"
+#include <Preferences.h>
+#include "PagerHaptics.h"
+#define XPOWERS_CHIP_BQ25896
+#include <XPowersLib.h>   // PowersBQ25896: the charger
+
+// One board, one charger; kept out of the header so nothing else that includes
+// TLoraPagerBoard.h (PagerGps, the UI) needs XPowersLib on its include path.
+static PowersBQ25896 s_charger;
+
+// The pack LilyGo fits (3.7 V / 1500 mAh). The BQ27220 leaves the factory set up
+// for 3000 mAh, and its state of charge is only as good as that figure.
+#define PAGER_GAUGE_DESIGN_MAH 1500
+
+// The capacity the gauge is set to: the fitted pack (1500 mAh) unless the user
+// set another in Settings > Battery (NVS "pagerhw/cap_mah"). The gauge sits on
+// the battery, so the setting outlives reflashes and power-off; boot only writes
+// it when the gauge reads something else. Each target is tried once ("cap_try"),
+// so a gauge that refuses the write (sealed with a custom key) or reads back
+// something else is not put through config-update mode on every boot.
+static uint16_t pagerCapTarget(Preferences& p) {
+  const uint16_t v = p.getUShort("cap_mah", PAGER_GAUGE_DESIGN_MAH);
+  return (v >= 300 && v <= 20000) ? v : PAGER_GAUGE_DESIGN_MAH;
+}
+static void pagerConfigureGauge(GaugeBQ27220& gauge) {
+  if (!gauge.refresh()) return;                 // not answering: try next boot
+  Preferences p;
+  if (!p.begin("pagerhw", false)) return;
+  const uint16_t want = pagerCapTarget(p);
+  if (gauge.getDesignCapacity() != want && p.getUShort("cap_try", 0) != want) {
+    const bool ok = gauge.setNewCapacity(want, want);
+    Serial.printf("[BOOT] bq27220 capacity -> %u mAh %s\n", (unsigned)want, ok ? "ok" : "FAILED");
+    p.putUShort("cap_try", want);
+  }
+  p.end();
+}
 
 void TLoraPagerBoard::begin() {
 
@@ -98,7 +133,29 @@ void TLoraPagerBoard::begin() {
   Wire.beginTransmission(0x18);
   Serial.printf("[BOOT] es8311 %s\n", Wire.endTransmission() == 0 ? "ok" : "PROBE FAILED");
 
+  // DRV2605 vibration motor driver: its rail (DRV_EN) is up from the list above.
+  // Configured once here and left in standby until a pattern plays.
+  if (expander_ok) pagerHapticsBegin();
+
   gauge.begin(Wire);
+  pagerConfigureGauge(gauge);
+
+  // BQ25896 charger. XPowersLib's init checks the chip id and switches the I2C
+  // watchdog off, so what is set here stays set (with the watchdog on, every
+  // expiry put the chip back to its defaults). The chip default charge current is
+  // 2 A, too much for the 1500 mAh pack: use LilyGoLib's figures for this board,
+  // 704 mA (under C/2) up to 4288 mV.
+  charger_ready_ = s_charger.init(Wire, SDA, SCL, PAGER_BQ25896_ADDR);
+  if (charger_ready_) {
+    s_charger.setChargeTargetVoltage(4288);
+    s_charger.setChargerConstantCurr(704);
+    // CHG_CONFIG survives an ESP reset: a reboot while the temperature guard
+    // had charging off must not leave it off. The guard re-checks within 2 s.
+    s_charger.enableCharge();
+    const int stat = s_charger.readRegister(0x0B);
+    if (stat >= 0) sys_stat_ = (uint8_t)stat;
+  }
+  Serial.printf("[BOOT] bq25896 %s\n", charger_ready_ ? "ok" : "PROBE FAILED");
 
   esp_reset_reason_t reason = esp_reset_reason();
   if (reason == ESP_RST_DEEPSLEEP) {
@@ -187,4 +244,194 @@ void TLoraPagerBoard::setAmpEnabled(bool on) {
   if (xSemaphoreTake(expander_mutex_, pdMS_TO_TICKS(50)) != pdTRUE) return;
   io_expander.digitalWrite(PAGER_EXPAND_AMP_EN, on ? HIGH : LOW);
   xSemaphoreGive(expander_mutex_);
+}
+
+// One gauge refresh (the BQ27220's whole register block, about 6 ms over 100 kHz
+// I2C) serves every battery caller for 2 s: the status bar alone asks 4 times a
+// second, and a pack moves slowly. Short enough that plugging the charger in
+// still shows at once (the UI publishes a charge flip immediately).
+void TLoraPagerBoard::refreshGauge() {
+  const uint32_t now = millis();
+  if (batt_ms_ && now - batt_ms_ < 2000) return;
+  batt_ms_ = now ? now : 1;
+  if (!gauge.refresh()) {                        // keep the last good voltage/SOC, but do
+    gauge_info_.valid = false;                   // not show stale currents as live
+    return;
+  }
+  const uint16_t mv = gauge.getVoltage();
+  if (mv >= 2500 && mv <= 4600) batt_mv_ = mv;
+  const uint16_t soc = gauge.getStateOfCharge();
+  if (soc <= 100) batt_soc_ = (int)soc;
+  GaugeInfo g;
+  g.valid         = true;
+  g.current_ma    = gauge.getCurrent();
+  g.power_mw      = gauge.getAveragePower();
+  g.remaining_mah = gauge.getRemainingCapacity();
+  g.full_mah      = gauge.getFullChargeCapacity();
+  g.to_empty_min  = gauge.getTimeToEmpty();
+  g.to_full_min   = gauge.getTimeToFull();
+  g.temp_c10      = (int16_t)(gauge.getTemperature() * 10.0f);
+  g.cycles        = gauge.getCycleCount();
+  g.health_pct    = gauge.getStateOfHealth();
+  gauge_info_ = g;
+  chargeThermalCheck(g.temp_c10);
+  chargeCareCheck(batt_soc_);
+}
+
+// Charging only between 0 and 45 °C pack temperature (the usual Li-ion window;
+// LilyGo's sheet allows up to 60 °C, which ages a cell fast). The BQ25896 has
+// its own NTC input, but nothing in this firmware relies on it being wired, so
+// the gauge's reading decides: charging switches off outside the window and
+// back on 3 °C inside it, so it does not flap at the edge. The power path is
+// untouched: on USB the board keeps running from VBUS either way.
+// Both limits can be changed in Settings > Battery > Charge limits: the upper
+// one (or the guard switched off) with a warning, the lower one only upwards
+// from 0 deg C, which is the safe direction.
+#define PAGER_CHG_TEMP_HYST_C10   30
+void TLoraPagerBoard::chargeThermalCheck(int16_t t) {
+  if (!charger_ready_) return;
+  int8_t want = charge_temp_block_;
+  if (chg_tmax_c10_ <= 0) {
+    want = 0;                                    // guard off: charge whatever the temperature
+  } else {
+    if (t < -400 || t > 1000) return;            // not a plausible reading: change nothing
+    if (charge_temp_block_ == 0) {
+      if (t > chg_tmax_c10_)               want = 1;
+      else if (t < chg_tmin_c10_) want = -1;
+    } else if (t <= chg_tmax_c10_ - PAGER_CHG_TEMP_HYST_C10 &&
+               t >= chg_tmin_c10_ + PAGER_CHG_TEMP_HYST_C10) {
+      want = 0;
+    }
+  }
+  if (want == charge_temp_block_) return;
+  charge_temp_block_ = want;
+  Serial.printf("[POWER] temperature guard: %s (pack %d.%d C)\n",
+                want > 0 ? "too hot" : want < 0 ? "too cold" : "ok",
+                t / 10, (t < 0 ? -t : t) % 10);
+  chargeEnableApply();
+}
+
+// Battery care: with it on, charging stops once the gauge reports 80 % and only
+// starts again below 75 %, so the pack does not sit at 100 % on the charger all
+// day (the main thing that ages a Li-ion cell besides heat). Like the
+// temperature guard it only gates charging; the board still runs from USB.
+#define PAGER_CARE_STOP_PCT    80
+#define PAGER_CARE_RESUME_PCT  75
+void TLoraPagerBoard::chargeCareCheck(int soc) {
+  bool want = care_hold_;
+  if (!care_on_)                         want = false;
+  else if (soc < 0 || soc > 100)         return;      // no reading yet: change nothing
+  else if (!care_hold_ && soc >= PAGER_CARE_STOP_PCT)  want = true;
+  else if (care_hold_ && soc < PAGER_CARE_RESUME_PCT)  want = false;
+  if (want == care_hold_) return;
+  care_hold_ = want;
+  Serial.printf("[POWER] battery care: %s at %d %%\n", want ? "holding" : "charging", soc);
+  chargeEnableApply();
+}
+
+// The one place that switches the charger: on only when neither the temperature
+// guard nor battery care holds it off.
+void TLoraPagerBoard::chargeEnableApply() {
+  if (!charger_ready_) return;
+  const bool on = charge_temp_block_ == 0 && !care_hold_;
+  if (on == chg_enabled_) return;
+  chg_enabled_ = on;
+  if (on) s_charger.enableCharge();
+  else    s_charger.disableCharge();
+  chg_ms_ = 0;                                   // re-read the charge status next time
+  Serial.printf("[POWER] charging %s\n", on ? "on" : "off");
+}
+
+void TLoraPagerBoard::setChargeCare(bool on) {
+  care_on_ = on;
+  chargeCareCheck(batt_soc_);
+}
+
+bool TLoraPagerBoard::setBatteryCapacity(uint16_t mah) {
+  if (mah < 300 || mah > 20000) return false;
+  Preferences p;
+  if (!p.begin("pagerhw", false)) return false;
+  p.putUShort("cap_mah", mah);
+  bool ok = false;
+  if (gauge.refresh()) {
+    if (gauge.getDesignCapacity() == mah) {
+      ok = true;
+    } else {
+      gauge.setNewCapacity(mah, mah);           // design and full charge: the gauge relearns from there
+      p.putUShort("cap_try", mah);
+      ok = gauge.refresh() && gauge.getDesignCapacity() == mah;
+    }
+  }
+  p.end();
+  batt_ms_ = 0;                                  // the next battery call reads the gauge afresh
+  Serial.printf("[POWER] battery capacity %u mAh %s\n", (unsigned)mah, ok ? "ok" : "NOT TAKEN");
+  return ok;
+}
+
+uint16_t TLoraPagerBoard::batteryCapacitySetting() {
+  Preferences p;
+  if (!p.begin("pagerhw", true)) return PAGER_GAUGE_DESIGN_MAH;
+  const uint16_t v = pagerCapTarget(p);
+  p.end();
+  return v;
+}
+
+void TLoraPagerBoard::setChargeLimits(uint16_t ma, uint16_t mv) {
+  if (!charger_ready_) return;
+  ma = (uint16_t)(ma / 64 * 64);                 // the BQ25896's steps: 64 mA, 16 mV
+  mv = (uint16_t)(mv / 16 * 16);
+  if (ma < 64) ma = 64;
+  if (mv < 3840) mv = 3840;
+  s_charger.setChargerConstantCurr(ma);
+  s_charger.setChargeTargetVoltage(mv);
+  Serial.printf("[POWER] charge limits %u mA, %u mV\n", (unsigned)ma, (unsigned)mv);
+}
+
+void TLoraPagerBoard::setChargeTempMin(int16_t c10) {
+  chg_tmin_c10_ = c10 > 0 ? c10 : 0;             // never below freezing
+  chargeThermalCheck(gauge_info_.valid ? gauge_info_.temp_c10 : (int16_t)250);
+}
+
+void TLoraPagerBoard::setChargeTempMax(int16_t c10) {
+  chg_tmax_c10_ = c10 > 0 ? c10 : 0;
+  chargeThermalCheck(gauge_info_.valid ? gauge_info_.temp_c10 : (int16_t)250);   // re-decide now
+}
+
+// REG0B (system status): VBUS_STAT[7:5] (000 no input, 001 USB host, 010
+// adapter, 111 OTG), CHRG_STAT[4:3], PG_STAT[2] (input power good).
+int TLoraPagerBoard::externalPowerPresent() {
+  if (!charger_ready_) return -1;
+  const uint32_t now = millis();
+  if (!chg_ms_ || now - chg_ms_ >= 1000) {
+    chg_ms_ = now ? now : 1;
+    const int r = s_charger.readRegister(0x0B);
+    if (r >= 0) {
+      const uint8_t stat = (uint8_t)r;
+      sys_stat_ = stat;
+      const uint8_t vbus = (stat >> 5) & 0x07;
+      const bool pg = (stat & 0x04) != 0;
+      ext_pwr_ = (pg || (vbus != 0 && vbus != 7)) ? 1 : 0;   // OTG = we are the source
+    }
+  }
+  return ext_pwr_;
+}
+
+TLoraPagerBoard::ChargeState TLoraPagerBoard::chargeState() {
+  if (externalPowerPresent() < 0) return ChargeState::Unknown;
+  return (ChargeState)((sys_stat_ >> 3) & 0x03);
+}
+
+// REG09: BATFET_DIS is bit 5, BATFET_DLY bit 3 (0 = open at once). The switch
+// stays open until the power key (QON) is pressed or VBUS returns, so this
+// needs no wake source of our own.
+bool TLoraPagerBoard::enterShipMode() {
+  if (!charger_ready_) return false;
+  chg_ms_ = 0;                                   // read the input state fresh
+  if (externalPowerPresent() != 0) return false; // on USB (or unknown): would not switch off
+  Serial.println("[POWER] ship mode");
+  Serial.flush();
+  s_charger.setTurnOffDelay(0);                  // BATFET_DLY off: open at once
+  s_charger.shutdown();                          // BATFET_DIS
+  delay(2000);                                   // power goes away here
+  return false;                                  // still running: the caller falls back
 }

@@ -2383,10 +2383,15 @@ bool touchPrefsGetSoundDirect() {
 void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
 // Vibration motor (T-Display P4). Independent of the master Sound switch -- that is the point
 // of a "silent but buzz" setting -- but chooses events with the same per-type switches above.
-// Off until turned on: a fresh install should not start buzzing unasked.
+// Off until turned on: a fresh install should not start buzzing unasked. The Pager
+// (DRV2605) is the exception: buzzing for messages is what a pager is for.
 bool touchPrefsGetVibrate() {
   if (!s_begun) touchPrefsBegin();
+#if defined(TLORA_PAGER)
+  return s_prefs.getUChar("vibrate", 1) != 0;
+#else
   return s_prefs.getUChar("vibrate", 0) != 0;
+#endif
 }
 void touchPrefsSetVibrate(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vibrate", on ? 1 : 0); }
 uint8_t touchPrefsGetVibratePattern() {
@@ -2539,6 +2544,53 @@ bool touchPrefsGetLockPreviews() { if (!s_begun) touchPrefsBegin(); return s_pre
 void touchPrefsSetLockPreviews(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_prev", on ? 1 : 0); }
 bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }
 void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
+#if defined(TLORA_PAGER)   // the Pager's DRV2605 vibration motor
+bool touchPrefsGetVibrateInput()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("vib_in", 0) != 0; }
+void touchPrefsSetVibrateInput(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_in", on ? 1 : 0); }
+// vib_in: 0 off, 1 strong (what the old on/off switch stored), 2 light.
+uint8_t touchPrefsGetVibrateKeyLevel() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("vib_in", 0);
+  return v == 1 ? 2 : v == 2 ? 1 : 0;
+}
+void touchPrefsSetVibrateKeyLevel(uint8_t l) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_in", l >= 2 ? 1 : l == 1 ? 2 : 0); }
+uint8_t touchPrefsGetVibrateStrength() { if (!s_begun) touchPrefsBegin(); const uint8_t v = s_prefs.getUChar("vib_str", 2); return v > 2 ? 2 : v; }
+void touchPrefsSetVibrateStrength(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_str", v > 2 ? 2 : v); }
+uint8_t touchPrefsGetVibratePattern(uint8_t kind) {
+  if (!s_begun) touchPrefsBegin();
+  static const char* const k[3] = { "vib_pm", "vib_pd", "vib_pn" };
+  static const uint8_t dflt[3] = { 1, 2, 3 };   // once, twice, three times: what it always did
+  if (kind > 2) kind = 0;
+  return s_prefs.getUChar(k[kind], dflt[kind]);
+}
+void touchPrefsSetVibratePattern(uint8_t kind, uint8_t p) {
+  if (!s_begun) touchPrefsBegin();
+  static const char* const k[3] = { "vib_pm", "vib_pd", "vib_pn" };
+  if (kind <= 2) prefsPutUChar(k[kind], p);
+}
+uint16_t touchPrefsGetChargeMa()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUShort("chg_ma", 704); }
+void     touchPrefsSetChargeMa(uint16_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUShort("chg_ma", v); }
+uint16_t touchPrefsGetChargeMv()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUShort("chg_mv", 4288); }
+void     touchPrefsSetChargeMv(uint16_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUShort("chg_mv", v); }
+uint8_t  touchPrefsGetChargeTmax()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_tmax", 45); }
+void     touchPrefsSetChargeTmax(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_tmax", v); }
+uint8_t  touchPrefsGetChargeTmin()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_tmin", 0); }
+void     touchPrefsSetChargeTmin(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_tmin", v); }
+bool touchPrefsGetChargeCare()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_care", 0) != 0; }
+void touchPrefsSetChargeCare(bool on)   { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_care", on ? 1 : 0); }
+bool touchPrefsGetLowBattWarn()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("low_batt", 1) != 0; }
+void touchPrefsSetLowBattWarn(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("low_batt", on ? 1 : 0); }
+uint32_t touchPrefsGetBattDayKey()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_day", 0); }
+void     touchPrefsSetBattDayKey(uint32_t k) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_day", k); }
+uint32_t touchPrefsGetBattDayMah()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_mah", 0xFFFF0000u); }
+void     touchPrefsSetBattDayMah(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_mah", v); }
+uint32_t touchPrefsGetBattUse()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_use", 0); }
+void     touchPrefsSetBattUse(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_use", v); }
+bool touchPrefsGetFaceDownQuiet()       { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("face_down", 0) != 0; }
+void touchPrefsSetFaceDownQuiet(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("face_down", on ? 1 : 0); }
+bool touchPrefsGetPickupWake()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("pick_wake", 0) != 0; }
+void touchPrefsSetPickupWake(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("pick_wake", on ? 1 : 0); }
+#endif
 bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
 void touchPrefsSetGlanceEnabled(bool on)    { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_en", on ? 1 : 0); }
 uint8_t touchPrefsGetChatIcons() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chat_icons", 0) ? 1 : 0; }
@@ -2985,6 +3037,10 @@ static int backupKeys(BkKey* out, int cap) {
     "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
+#if defined(TLORA_PAGER)
+    "vib_in", "vib_str", "vib_pm", "vib_pd", "vib_pn",   // the Pager's vibration settings ("vibrate" is above)
+    "chg_care", "low_batt", "face_down", "pick_wake",             // the Pager's battery care and quiet modes
+#endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
     "glass",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };
@@ -3015,7 +3071,11 @@ static int backupKeys(BkKey* out, int cap) {
   }
   return n;
 }
-static constexpr int kBackupKeyCap = 160;
+// Room for every key backupKeys() lists. add() drops whatever does not fit, without a
+// word, and the Wi-Fi slots come last: on 2026-10-26 the list was 158 keys on most
+// boards and 167 on the Pager (its vibration, battery care and motion keys), so a
+// Pager backup lost its last saved Wi-Fi slots. Keep well clear of the count.
+static constexpr int kBackupKeyCap = 192;
 static constexpr size_t kBackupBlobMax = 2048;
 
 static void bkPrintJsonStr(Print& out, const char* s) {

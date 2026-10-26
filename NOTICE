@@ -73,8 +73,15 @@ Adafruit GFX / ST7735_ST7789 (T-Deck / Heltec V4 display backend)
 chsc6x (Heltec V4 CHSC6x cap-touch driver)
     Quency-D — https://github.com/Quency-D/chsc6x
 
-SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364 drivers)
+SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364/DRV2605/BHI260AP drivers)
     Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
+    It bundles Bosch Sensortec's BHY2 SensorAPI (Copyright (c) 2023 Bosch
+    Sensortec GmbH, BSD-3-Clause) and the Bosch BHI260AP "Klio" firmware image
+    as distributed with SensorLib, which wadamesh uploads to the Pager's sensor
+    hub at first use.
+
+XPowersLib (T-LoRa Pager BQ25896 charger driver)
+    Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/XPowersLib
 
 ES8311 register sequence and clock-divider coefficients (T-LoRa Pager audio
 codec driver, variants/lilygo_tlora_pager/Es8311Codec.cpp; T-Display P4 audio
