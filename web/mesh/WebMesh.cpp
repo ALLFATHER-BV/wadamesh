@@ -149,6 +149,8 @@ void MyMesh::begin(MeshBackend* backend) {
 
 void MyMesh::loop() {
   const uint32_t now = millis();
+  // src/MyMesh.h uiRequestTick: a request nobody answered frees the slot after 45 s.
+  if (_ui_pending_kind != UiReqKind::None && (uint32_t)(now - _ui_pending_at) >= 45000u) cancelUIPingPending();
   if (_backend) _backend->loop(now);
   if (now - _pos_sync_ms >= 5000) { _pos_sync_ms = now; syncAdvertPosition(now); }
 }
@@ -776,6 +778,7 @@ int MyMesh::uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind)
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     _ui_pending_kind = kind;
     memcpy(_ui_pending_key, recipient.id.pub_key, PUB_KEY_SIZE);
+    _ui_pending_at = millis();
   }
   return r;
 }
@@ -787,6 +790,7 @@ int MyMesh::uiStraightRequest(ContactInfo& recipient, UiReqKind kind) {
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     _ui_pending_kind = kind;
     memcpy(_ui_pending_key, recipient.id.pub_key, PUB_KEY_SIZE);
+    _ui_pending_at = millis();
   }
   return r;
 }
@@ -798,6 +802,7 @@ int MyMesh::uiSendBinaryRequest(ContactInfo& recipient, const uint8_t* payload, 
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     _ui_pending_kind = UiReqKind::Binary;
     memcpy(_ui_pending_key, recipient.id.pub_key, PUB_KEY_SIZE);
+    _ui_pending_at = millis();
   }
   return r;
 }
@@ -821,6 +826,7 @@ int MyMesh::sendRegionsRequestForUI(const uint8_t pub_key[PUB_KEY_SIZE], uint32_
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     _ui_pending_kind = UiReqKind::Regions;
     memcpy(_ui_pending_key, pub_key, PUB_KEY_SIZE);
+    _ui_pending_at = millis();
   }
   return r;
 }

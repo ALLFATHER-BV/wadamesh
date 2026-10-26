@@ -357,6 +357,7 @@ private:
   UiReqKind _ui_pending_kind = UiReqKind::None;
   UiLoginInfo _ui_last_login = {};
   uint8_t   _ui_pending_key[PUB_KEY_SIZE] = {0};
+  uint32_t  _ui_pending_at = 0;
   uint32_t  _ui_trace_tag = 0;
 
   uint32_t _n_sent_flood = 0, _n_sent_direct = 0, _n_recv_flood = 0, _n_recv_direct = 0;
