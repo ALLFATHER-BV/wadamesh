@@ -1,0 +1,50 @@
+# UI request slot expiry (cec1431c), web host build, demo backend.
+# Run: WADA_DEMO_SILENT_TELEMETRY=1 WADA_DATA_DIR=<fresh dir> web/build-host/wadamesh-host \
+#        --headless --script web/scripts/ui-slot-expiry.wada --shots <dir>
+# The contact sheet's Telemetry (no SD on this build, so no telemetry window and no
+# deadline of its own) takes the single-flight UI request slot for Hilltop Repeater
+# and, with WADA_DEMO_SILENT_TELEMETRY=1, never gets a reply. The repeater admin app
+# then logs in and queues STATUS behind the slot: Status stays "-" (the beta_99
+# Discord report) until the slot expires 45 s after the telemetry ask, then the
+# queued STATUS goes out and Status fills. Expect on stderr:
+#   [demo] telemetry request to Hilltop Repeater at T ms
+#   [web] UI request slot (kind 2) unanswered for 450xx ms: freed
+#   [demo] status request to Hilltop Repeater at ~T+45000 ms
+# Shots: s1 (logged in, Status "-"), s2 (~40 s after the ask, still "-"),
+# s3 (after the expiry, Status filled).
+wait 5000
+tap 60 283
+wait 3000
+# Contacts > Hilltop Repeater > Telemetry
+tap 240 456
+wait 1500
+tap 300 150
+wait 1200
+tap 550 148
+wait 1500
+# Hilltop Repeater > Admin, log in with any password (the demo's admin)
+tap 300 150
+wait 1200
+tap 265 316
+wait 1500
+type secret
+wait 300
+tap 196 301
+wait 5000
+shot s1-logged-in-status-blank
+wait 8000
+tap 600 400
+wait 8000
+tap 600 400
+wait 8000
+tap 600 400
+shot s2-40s-after-ask-still-blank
+wait 8000
+tap 600 400
+wait 8000
+tap 600 400
+wait 8000
+tap 600 400
+wait 2000
+shot s3-after-expiry-status-filled
+quit

@@ -4,6 +4,7 @@
 #include <Mesh.h>
 #include <helpers/AdvertDataHelpers.h>
 #include <helpers/MeshTouchTxTrace.h>
+#include "helpers/UiRequestSlot.h"
 #include "AbstractUITask.h"
 
 // Node-discovery control packet (standard MeshCore — matches examples/simple_repeater
@@ -597,8 +598,8 @@ public:
     // sender keeps a deadline (telemetry auto-poll, the Home sensor widget). One
     // unanswered request then held it until reboot: the admin app's status,
     // neighbours and access list never went out. Nothing waits longer than 45 s.
-    if (_ui_pending_status && (uint32_t)(now - _ui_pending_at) >= UI_REQ_SLOT_MAX_MS) cancelUIPingPending();
-    if (_ui_login_then && (uint32_t)(now - _ui_login_then_at) >= UI_REQ_SLOT_MAX_MS) {
+    if (_ui_pending_status && UiRequestSlot::expired(now, _ui_pending_at)) cancelUIPingPending();
+    if (_ui_login_then && UiRequestSlot::expired(now, _ui_login_then_at)) {
       _ui_login_then = 0;
       _ui_login_then_kind = UiReqKind::None;
     }
@@ -1466,8 +1467,7 @@ private:
    *  matching by pubkey alone misroutes the login OK as the REQ reply.
    *  Compare tag in onContactResponse to keep the two streams separate. */
   uint32_t _ui_pending_tag = 0;
-  uint32_t _ui_pending_at = 0;   // millis() when the slot was taken (uiRequestTick expiry)
-  static constexpr uint32_t UI_REQ_SLOT_MAX_MS = 45000;
+  uint32_t _ui_pending_at = 0;   // millis() when the slot was taken (UiRequestSlot::expired)
   UiLoginInfo _ui_last_login = {};   // uiLastLoginInfo()
   /** Deferred guest-login-then-request arm: holds the first 4 bytes of the
    *  recipient pub_key (0 = none) plus which REQ to send, set by

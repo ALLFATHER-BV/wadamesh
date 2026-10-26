@@ -7,6 +7,7 @@
 #include <Utils.h>
 #include <helpers/TxtDataHelpers.h>
 #include "helpers/esp32/TouchPrefsStore.h"
+#include "helpers/UiRequestSlot.h"
 #include <ArduinoJson.h>
 #include <math.h>
 
@@ -150,7 +151,11 @@ void MyMesh::begin(MeshBackend* backend) {
 void MyMesh::loop() {
   const uint32_t now = millis();
   // src/MyMesh.h uiRequestTick: a request nobody answered frees the slot after 45 s.
-  if (_ui_pending_kind != UiReqKind::None && (uint32_t)(now - _ui_pending_at) >= 45000u) cancelUIPingPending();
+  if (_ui_pending_kind != UiReqKind::None && UiRequestSlot::expired(now, _ui_pending_at)) {
+    Serial.printf("[web] UI request slot (kind %u) unanswered for %u ms: freed\n",
+                  (unsigned)_ui_pending_kind, (unsigned)(now - _ui_pending_at));
+    cancelUIPingPending();
+  }
   if (_backend) _backend->loop(now);
   if (now - _pos_sync_ms >= 5000) { _pos_sync_ms = now; syncAdvertPosition(now); }
 }
