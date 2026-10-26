@@ -21,6 +21,7 @@
 
 #include <lvgl.h>
 #include <stdint.h>
+#include "device_caps.h"   // CAP_CST_BATT_NOTE
 
 enum CstKind : uint8_t { CST_COMPANION = 0, CST_REPEATER = 1, CST_ROOM = 2 };
 
@@ -45,8 +46,10 @@ struct CstStatus {
   char info[56];         // after the count: "nodes · heard 12 s ago"
   int  batt;             // battery percent, -1 when there is no reading
   bool charging;
+#if CAP_CST_BATT_NOTE
   char batt_note[40];    // optional text left of the battery ("478 mA · 0:47 to full");
                          // empty draws nothing (only the Pager fills it, from its gauge)
+#endif
   bool north_up;         // positions are true bearings: draw the N marker
 };
 

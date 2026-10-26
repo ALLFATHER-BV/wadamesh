@@ -491,6 +491,15 @@
   #define CAP_IMU 0
 #endif
 
+// The constellation screensaver's optional note left of the battery
+// (CstStatus::batt_note). Only the Pager fills it, from its fuel gauge, so only
+// the Pager carries the label (the Tanmatsu has no flash to spare for an empty one).
+#if defined(TLORA_PAGER)
+  #define CAP_CST_BATT_NOTE 1
+#else
+  #define CAP_CST_BATT_NOTE 0
+#endif
+
 #if defined(HAS_CC_BRIGHTNESS)
   #define CAP_BACKLIGHT 1
 #else
