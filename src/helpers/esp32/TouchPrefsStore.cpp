@@ -169,6 +169,8 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.beta_updates      = 0;      // OFF: stable update channel (opt-in to beta/test firmware)
   c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
   c.condense_nav      = 0;      // OFF: bottom nav bar + labelled Home launchers (v66, #592)
+  c.ct_purge_on       = 0;      // OFF: contacts stay until deleted (v72, #719)
+  c.ct_purge_days     = TOUCH_CT_PURGE_DEFAULT_DAYS;
   c.report_done_n     = 0;      // no beta reported on yet
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
@@ -329,6 +331,10 @@ static void cfgLoadOrMigrate() {
         }
 #endif
         if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
+        if (stored_version < 72) {   // v72 new trailing fields: never stored before
+          s_cfg.ct_purge_on = 0;
+          s_cfg.ct_purge_days = TOUCH_CT_PURGE_DEFAULT_DAYS;
+        }
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -1523,6 +1529,30 @@ bool touchPrefsSetCondenseNav(bool on) {
   s_cfg.condense_nav = on ? 1 : 0;
   return cfgFlush();
 }
+// Remove old contacts (v72, #719): Settings > Contact Management.
+bool touchPrefsGetContactPurge() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.ct_purge_on != 0;
+}
+bool touchPrefsSetContactPurge(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ct_purge_on = on ? 1 : 0;
+  return cfgFlush();
+}
+uint16_t touchPrefsGetContactPurgeDays() {
+  if (!s_begun) touchPrefsBegin();
+  uint16_t d = s_cfg.ct_purge_days;
+  if (d < TOUCH_CT_PURGE_MIN_DAYS) d = TOUCH_CT_PURGE_MIN_DAYS;
+  if (d > TOUCH_CT_PURGE_MAX_DAYS) d = TOUCH_CT_PURGE_MAX_DAYS;
+  return d;
+}
+bool touchPrefsSetContactPurgeDays(uint16_t days) {
+  if (days < TOUCH_CT_PURGE_MIN_DAYS) days = TOUCH_CT_PURGE_MIN_DAYS;
+  if (days > TOUCH_CT_PURGE_MAX_DAYS) days = TOUCH_CT_PURGE_MAX_DAYS;
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.ct_purge_days = days;
+  return cfgFlush();
+}
 uint8_t touchPrefsGetNavPos() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.condense_nav <= TOUCH_NAV_LEFT ? s_cfg.condense_nav : TOUCH_NAV_BOTTOM;
@@ -2355,6 +2385,23 @@ bool touchPrefsGetSoundDirect() {
   return s_prefs.getUChar("snd_dm", 1) != 0;
 }
 void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
+// Vibration motor (T-Display P4). Independent of the master Sound switch -- that is the point
+// of a "silent but buzz" setting -- but chooses events with the same per-type switches above.
+// Off until turned on: a fresh install should not start buzzing unasked.
+bool touchPrefsGetVibrate() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("vibrate", 0) != 0;
+}
+void touchPrefsSetVibrate(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vibrate", on ? 1 : 0); }
+uint8_t touchPrefsGetVibratePattern() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t p = s_prefs.getUChar("vib_pat", TOUCH_VIB_PULSE);
+  return p < TOUCH_VIB_COUNT ? p : TOUCH_VIB_PULSE;
+}
+void touchPrefsSetVibratePattern(uint8_t pat) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("vib_pat", pat < TOUCH_VIB_COUNT ? pat : TOUCH_VIB_PULSE);
+}
 // Drop incoming text messages whose body is a single character. Mesh spam is
 // overwhelmingly 1-byte payloads (cheapest possible airtime per message), and a
 // 1-character message is never something a person meant to send. Off by default:
@@ -2937,7 +2984,7 @@ static int backupKeys(BkKey* out, int cap) {
   };
   add(KEY_CFG, 'b');
   static const char* const k_u8[] = {
-    "snd_msg", "snd_men", "snd_dm", "snd_vol", "ign_tiny", "dsc_evict", "dsc_hops",
+    "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",

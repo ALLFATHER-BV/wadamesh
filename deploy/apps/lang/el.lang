@@ -147,6 +147,7 @@ Broker host / IP	Host / IP του broker
 Buffered receive (experimental)	Λήψη με buffer (πειραματικό)
 Built-in	Ενσωματωμένο
 Built-in (default)	Ενσωματωμένο (προεπιλογή)
+Default	Προεπιλογή
 CR	CR
 Calibrate battery (full = 100%)	Βαθμονόμηση μπαταρίας (πλήρης = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Βαθμονομήθηκε: 100%% = %u.%02u V  (παρατεταμένο για επαναφορά)
@@ -2184,3 +2185,13 @@ F11 on the keyboard steps through these too.	Το F11 στο πληκτρολό�
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Auto	Αυτόματα
 Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.
+Rooms	Rooms
+Auto-delete: on	Αυτόματη διαγραφή: ενεργή
+Auto-delete: off	Αυτόματη διαγραφή: ανενεργή
+Contact Management	Διαχείριση επαφών
+Delete after %d days	Διαγραφή μετά από %d ημέρες
+Removed %d old contact(s)	Αφαιρέθηκαν %d παλιές επαφές
+Pulse	Παλμός
+Gentle	Απαλό
+Long	Μακρύ
+Heartbeat	Καρδιακός παλμός

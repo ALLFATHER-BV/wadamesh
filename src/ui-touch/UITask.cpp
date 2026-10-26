@@ -1112,6 +1112,25 @@ static lv_font_t g_font_semi_12;
 static lv_font_t g_font_semi_14;
 static lv_font_t g_font_semi_16;
 static lv_font_t g_font_badge;
+#if defined(HAS_TDECK_PRO)
+// The status bar keeps the Normal faces at every Text size: the 240 px e-paper bar has
+// no room for the Large / Huge ones beside the clock and icons. Same glyph chains as
+// g_font_NN (accents, icons, emoji); built at the end of initTouchFontFallbacks.
+static lv_font_t s_sb_font_12, s_sb_font_14, s_sb_font_16;
+static lv_font_t s_sb_semi_12, s_sb_semi_14, s_sb_semi_16;
+#endif
+// The face the status bar draws for a UI font: itself, except on the T-Deck Pro (above).
+static inline const lv_font_t* sbFixed(const lv_font_t* f) {
+#if defined(HAS_TDECK_PRO)
+  if (f == &g_font_12) return &s_sb_font_12;
+  if (f == &g_font_14) return &s_sb_font_14;
+  if (f == &g_font_16) return &s_sb_font_16;
+  if (f == &g_font_semi_12) return &s_sb_semi_12;
+  if (f == &g_font_semi_14) return &s_sb_semi_14;
+  if (f == &g_font_semi_16) return &s_sb_semi_16;
+#endif
+  return f;
+}
 
 // The last font of every text chain (#673): a '*' for any codepoint no other font
 // has, so a missing glyph looks the same in every label instead of '*' where the
@@ -1740,6 +1759,19 @@ static void initTouchFontFallbacks() {
     *semi[i] = *semi_src[i];
     semi[i]->fallback = medium[i];
   }
+#if defined(HAS_TDECK_PRO)
+  {
+    const lv_font_t* normal[3] = { &lv_font_montserrat_12, &lv_font_montserrat_14, &lv_font_montserrat_16 };
+    lv_font_t* sb[3]   = { &s_sb_font_12, &s_sb_font_14, &s_sb_font_16 };
+    lv_font_t* sb_s[3] = { &s_sb_semi_12, &s_sb_semi_14, &s_sb_semi_16 };
+    for (int i = 0; i < 3; ++i) {
+      *sb[i] = *normal[i];
+      sb[i]->fallback = medium[i]->fallback;   // the same chain behind the face, icons spliced in
+      *sb_s[i] = *semi_src[i];
+      sb_s[i]->fallback = sb[i];
+    }
+  }
+#endif
   g_font_badge = ui_badge_11;
   g_font_badge.fallback = &g_font_12;
 }
@@ -2392,6 +2424,43 @@ static void p4PlayNotifySlot(int slot) {
     s_p4_snd_playing = false;                  // couldn't spawn — skip the chime
   }
 }
+
+// Vibration motor (AW86224, P4Haptic.cpp in the variant), on its own throwaway task like the
+// chime so the two play together and neither blocks the loop. The style (Settings > Vibration)
+// picks the beat; the event picks how many times it plays: message 1, DM 2, @-mention 3.
+#include <P4Haptic.h>
+#define HAS_UI_VIBRATE 1
+struct VibStyle { uint16_t on1, gap1, on2, gap; uint8_t gain; };   // on2 == 0: single buzz per beat
+static const VibStyle kVibStyles[TOUCH_VIB_COUNT] = {
+  { 120,  0,   0, 120, P4_HAPTIC_GAIN_DEFAULT },   // Pulse
+  {  60,  0,   0, 140, 0x50 },                     // Gentle: short and softer
+  { 350,  0,   0, 200, P4_HAPTIC_GAIN_DEFAULT },   // Long
+  {  60, 90, 120, 300, 0x50 },                     // Heartbeat: lub-dub, as soft as Gentle
+};
+static volatile bool s_p4_vib_playing = false;
+static volatile int  s_p4_vib_slot    = TOUCH_SND_MSG;
+static volatile int  s_p4_vib_style   = TOUCH_VIB_PULSE;
+static void p4VibrateTaskFn(void*) {
+  const VibStyle& st = kVibStyles[s_p4_vib_style];
+  const int beats = s_p4_vib_slot == TOUCH_SND_MEN ? 3 : s_p4_vib_slot == TOUCH_SND_DM ? 2 : 1;
+  for (int i = 0; i < beats; ++i) {
+    if (i) vTaskDelay(pdMS_TO_TICKS(st.gap));
+    p4HapticBuzz(st.on1, st.gain);
+    if (st.on2) { vTaskDelay(pdMS_TO_TICKS(st.gap1)); p4HapticBuzz(st.on2, st.gain); }
+  }
+  s_p4_vib_playing = false;
+  vTaskDelete(nullptr);
+}
+// `style` < 0: the saved one. Settings passes the tile just picked, for its preview.
+static void uiVibrateSlot(int slot, int style = -1) {
+  if (s_p4_vib_playing) return;                // already buzzing — don't stack tasks
+  s_p4_vib_slot  = slot;
+  s_p4_vib_style = (style >= 0 && style < TOUCH_VIB_COUNT) ? style : touchPrefsGetVibratePattern();
+  s_p4_vib_playing = true;
+  if (xTaskCreate(p4VibrateTaskFn, "vibrate", 3072, nullptr, 3, nullptr) != pdPASS) {
+    s_p4_vib_playing = false;                  // couldn't spawn — skip the buzz
+  }
+}
 #endif
 
 #if defined(HAS_WIO_TRACKER_L2)
@@ -2621,6 +2690,7 @@ static void pinChangeCb(lv_event_t* e);
 // taps to go Back — see statusBarTapCb), and the extra room is free for future
 // per-page header content. updateGlobalStatusBar enlarges the back label while tall.
 static bool s_statusbar_tall = false;
+static int  s_settings_open_cat = -1;   // which settings category is open, -1 none (also About-label teardown)
 // Generic "app page" hook so full-screen tool pages (RF Monitor, Spectrum) get the SAME
 // tall status-bar + back-chevron treatment as settings detail pages — NOT a second header
 // bar. When s_apppage_title is set, updateGlobalStatusBar goes tall and paints "‹ <title>"
@@ -2642,6 +2712,11 @@ static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t
 static void r8ResizeContentBelowStatusBar(lv_coord_t top);
 #endif
 static void statusBarSetTall(bool tall) {
+#if defined(HAS_TDECK_PRO)
+  // Settings pages keep the bar one row: "‹" at the top left, level with the clock
+  // and icons. The 240 px panel had room for only "‹ Lock…" in the tall bar's title.
+  if (s_settings_open_cat >= 0) tall = false;
+#endif
   s_statusbar_tall = tall;
   if (g_statusbar.root) lv_obj_set_height(g_statusbar.root, statusBarCurH());
 #if defined(HELTEC_LORA_V4_R8)
@@ -2750,6 +2825,9 @@ static lv_obj_t* settingsSubPageOpen(const char* title, void (*close_fn)()) {
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, LV_PART_MAIN);
   lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);   // modal: presses never reach the page below
+  // Callers size their list from lv_obj_get_height(root); without a layout pass it
+  // still reads 0 here and the list comes out -12 px tall, i.e. a blank page (#727).
+  lv_obj_update_layout(root);
   updateGlobalStatusBar();
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);   // keep "‹ title" tappable
   return root;
@@ -3339,7 +3417,7 @@ struct LvUiState {
   LvChatPanel dm;          // Chats tab list + DM overlay
   LvChatPanel ch;          // channel thread overlay only (no tab list)
   lv_obj_t* contacts_list;
-  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites
+  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites 4=has location 5=direct 6=rooms
   // Per-session text-search filter applied on top of the category filter.
   // Empty = no text filter. Set/cleared by the magnifier sheet.
   char      contacts_search[24];
@@ -5327,6 +5405,14 @@ static void styleButton(lv_obj_t* obj) {
   styleLookPress(obj);
 }
 
+// The e-paper panel draws the primary button as the plain one (stylePrimary skips the
+// glow fill there), so its ink stays the plain text, not COLOR_ON_GLOW: that is white
+// under the T-Deck Pro's black accent, and read as white on white (Export backup).
+#if defined(HAS_TDECK_PRO)
+static constexpr bool kPrimaryGlowFill = false;
+#else
+static constexpr bool kPrimaryGlowFill = true;
+#endif
 static void stylePrimary(lv_obj_t* obj) {
   styleButton(obj);
 #if !defined(HAS_TDECK_PRO)
@@ -5917,7 +6003,8 @@ static void openEmojiPickerForComposer(lv_obj_t* ta);   // □ emoji picker (Tan
 // nav. The settings code far below uses these in full; here they're just shared state.
 static lv_obj_t* s_settings_sheet    = nullptr;  // open detail sheet; null = on the landing
 static lv_obj_t* s_settings_page     = nullptr;  // the sheet's scrolling page (null with the sheet)
-static int       s_settings_open_cat = -1;       // which category is open (for About-label teardown)
+// s_settings_open_cat (which category is open) is declared with the status bar state,
+// which reads it too.
 static bool      s_settings_from_cc  = false;    // settings sheet opened via a control-center long-press
 // The Wi-Fi join / details / hidden sheet floats on the BASE layer (lv_scr_act) ABOVE the
 // settings category page — SAME layering as s_settings_sheet, and SAME reason it's declared up
@@ -8605,7 +8692,7 @@ enum {
                      // system info / diagnostics (was "About", at the bottom; #596)
   CAT_PROFILE,       // identity / name / advert location / QR / export-import
   CAT_RADIO,         // radio params + experimental
-  CAT_AUTOADD,       // auto-add contacts (own page; also linked from the Contacts tab)
+  CAT_AUTOADD,       // Contact Management: auto-add + old-contact removal (own page; also linked from the Contacts tab)
   CAT_WIFI,          // Wi-Fi config + saved slots
   CAT_BLUETOOTH,     // BLE enable + pairing code
   CAT_GPS,           // GPS toggle + fix status + serial baud (hardware)
@@ -8643,7 +8730,7 @@ static const SettingsCatDef kSettingsCats[CAT_COUNT] = {
   { "Device",        UI_ICON_INFO },
   { "Profile",       UI_ICON_USER },
   { "Radio & Mesh",  UI_ICON_RADIO_TOWER },
-  { "Auto-add",      UI_ICON_USER_PLUS },
+  { "Contact Management", UI_ICON_USER_PLUS },
   { "Wi-Fi",         UI_ICON_WIFI },
   { "Bluetooth",     UI_ICON_BLUETOOTH },
   { "GPS",           UI_ICON_SATELLITE },
@@ -13200,6 +13287,26 @@ static void toggleMessageSoundCb(lv_event_t* e) {
   touchPrefsSetSoundMessages(on);
   if (on && soundPreviewAllowed()) uiSoundPreview();
 }
+#if defined(HAS_UI_VIBRATE)
+// The Pattern choice (its title/help box and its tiles) only shows while Vibrate is on.
+static lv_obj_t* s_vib_pat_head = nullptr;
+static lv_obj_t* s_vib_pat_row  = nullptr;
+static void vibratePatternShow(bool on) {
+  for (lv_obj_t* o : { s_vib_pat_head, s_vib_pat_row }) {
+    if (!o) continue;
+    if (on) lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+// Vibrate switch: a buzz on turning it on is the preview.
+static void toggleVibrateCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetVibrate(on);
+  vibratePatternShow(on);
+  if (on) uiVibrateSlot(TOUCH_SND_MSG);
+}
+#endif
 // Direct/DM-sound switch (own on/off + own slot sound).
 static void toggleDirectSoundCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
@@ -14432,7 +14539,8 @@ static void openAdvertPage() {
   // button. The root already starts below the bar.
   const int top = 8;
 #else
-  const int top = STATUSBAR_H + 8;   // clear the tall bar's second row, which overlaps the root
+  const int top = statusBarCurH() - STATUSBAR_H + 8;   // clear the tall bar's second row, which overlaps the root
+                                                      // (none on a T-Deck Pro settings page: one row)
 #endif
 #if CAP_TOUCH
   // Match the floating Home affordance used by Terminal and Files. Aligning to
@@ -14558,6 +14666,7 @@ static void openAdvertPage() {
   lv_obj_set_width(fdd, SC(120));
   lv_obj_align(fdd, LV_ALIGN_TOP_RIGHT, -4, y);
   styleDropdown(fdd);
+  lv_obj_set_user_data(fdd, (void*)"Flood every");   // picker page title on the T-Deck Pro
   lv_dropdown_set_selected(fdd, advertDdIdx(kAutoFloodHrs, (int)(sizeof(kAutoFloodHrs)/sizeof(kAutoFloodHrs[0])), touchPrefsGetFloodAdvHrs()));
   lv_obj_add_event_cb(fdd, advertAutoFloodCb, LV_EVENT_VALUE_CHANGED, nullptr);
   y += SC(44);
@@ -14572,6 +14681,7 @@ static void openAdvertPage() {
   lv_obj_set_width(ldd, SC(120));
   lv_obj_align(ldd, LV_ALIGN_TOP_RIGHT, -4, y);
   styleDropdown(ldd);
+  lv_obj_set_user_data(ldd, (void*)"Local every");
   lv_dropdown_set_selected(ldd, advertDdIdx(kAutoLocalMin, 6, touchPrefsGetLocalAdvMin()));
   lv_obj_add_event_cb(ldd, advertAutoLocalCb, LV_EVENT_VALUE_CHANGED, nullptr);
   y += SC(46);
@@ -15264,9 +15374,11 @@ static void setTileStyle(lv_obj_t* b, bool on, bool enabled) {
 
 // A few options as tiles under the row's name: tile i carries i as its user data, and
 // setChoicePick() moves the ring. Tiles share the row evenly, two to a line when the
-// labels would not fit. Labels arrive translated. Returns the tile row.
+// labels would not fit; `stacked` puts each on a full-width line of its own. Labels
+// arrive translated. Returns the tile row.
 static lv_obj_t* setChoiceRow(lv_obj_t* card, const char* title, const char* help,
-                              const char* const* opts, int n, int picked, lv_event_cb_t cb) {
+                              const char* const* opts, int n, int picked, lv_event_cb_t cb,
+                              bool stacked = false) {
   const lv_coord_t w = s_settings_content_w;
   if ((title && title[0]) || (help && help[0])) {
     lv_obj_t* head = setBox(card);
@@ -15277,7 +15389,7 @@ static lv_obj_t* setChoiceRow(lv_obj_t* card, const char* title, const char* hel
   lv_coord_t widest = 0;
   for (int i = 0; i < n; ++i)
     widest = LV_MAX(widest, lv_txt_get_width(opts[i], (uint32_t)strlen(opts[i]), &g_font_14, 0, LV_TEXT_FLAG_NONE));
-  int per = n;
+  int per = stacked ? 1 : n;
   while (per > 1 && (w - (per - 1) * gap) / per < widest + SC(16)) per = per > 2 ? (per + 1) / 2 : 1;
   const lv_coord_t tw = (w - (per - 1) * gap) / per;
   lv_obj_t* row = setBox(card);
@@ -15334,7 +15446,8 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   lv_obj_t* b = lv_btn_create(card);
   if (kind == SET_PRIMARY) stylePrimary(b);
   else                     styleButton(b);
-  setDisabledLook(b, kind == SET_PRIMARY ? COLOR_GLOW : COLOR_CONTROL);
+  const bool glow = kind == SET_PRIMARY && kPrimaryGlowFill;   // filled with the glow, so its ink
+  setDisabledLook(b, glow ? COLOR_GLOW : COLOR_CONTROL);
   lv_obj_set_size(b, w, SC(38));
   lv_obj_set_style_pad_hor(b, SC(10), LV_PART_MAIN);
   lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
@@ -15342,7 +15455,7 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   lv_obj_set_style_pad_column(b, SC(9), LV_PART_MAIN);
   if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
   const uint32_t ink = kind == SET_DANGER ? COLOR_STATUS_DANGER_TEXT
-                     : kind == SET_PRIMARY ? COLOR_ON_GLOW : COLOR_TEXT;
+                     : glow ? COLOR_ON_GLOW : COLOR_TEXT;
   if (icon && icon[0]) {
     lv_obj_t* il = lv_label_create(b);
     setIconLabel(il, icon);
@@ -15358,7 +15471,7 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   lv_obj_t* vl = lv_label_create(b);
   lv_label_set_text(vl, value ? value : "");
   lv_obj_set_style_text_font(vl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(vl, lv_color_hex(kind == SET_PRIMARY ? COLOR_ON_GLOW : COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_text_color(vl, lv_color_hex(glow ? COLOR_ON_GLOW : COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(vl, LV_LABEL_LONG_DOT);
   {
     // The name keeps its own width where it can and the value gives way ("Tim..."
@@ -15374,7 +15487,7 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   if (chevron) {
     lv_obj_t* cl = lv_label_create(b);
     setIconLabel(cl, UI_ICON_CHEVRON_RIGHT);
-    lv_obj_set_style_text_color(cl, lv_color_hex(kind == SET_PRIMARY ? COLOR_ON_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
+    lv_obj_set_style_text_color(cl, lv_color_hex(glow ? COLOR_ON_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
   }
   return b;
 }
@@ -15402,7 +15515,8 @@ static lv_obj_t* setButton(lv_obj_t* card, const char* icon, const char* title, 
   if (kind == SET_PRIMARY)     stylePrimary(b);
   else if (kind == SET_DANGER) styleDanger(b);
   else                         styleButton(b);
-  setDisabledLook(b, kind == SET_PRIMARY ? COLOR_GLOW : COLOR_CONTROL);
+  const bool glow = kind == SET_PRIMARY && kPrimaryGlowFill;   // filled with the glow, so its ink
+  setDisabledLook(b, glow ? COLOR_GLOW : COLOR_CONTROL);
   lv_obj_set_size(b, s_settings_content_w, SC(36));
   if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
   lv_obj_t* row = setBox(b);
@@ -15412,7 +15526,7 @@ static lv_obj_t* setButton(lv_obj_t* card, const char* icon, const char* title, 
   lv_obj_set_style_pad_column(row, SC(7), LV_PART_MAIN);
   lv_obj_set_style_max_width(row, s_settings_content_w - SC(16), LV_PART_MAIN);
   lv_obj_center(row);
-  const uint32_t ink = kind == SET_PRIMARY ? COLOR_ON_GLOW : kind == SET_DANGER ? COLOR_STATUS_DANGER_TEXT : COLOR_TEXT;
+  const uint32_t ink = glow ? COLOR_ON_GLOW : kind == SET_DANGER ? COLOR_STATUS_DANGER_TEXT : COLOR_TEXT;
   if (icon && icon[0]) {
     lv_obj_t* il = lv_label_create(row);
     setIconLabel(il, icon);
@@ -15517,6 +15631,7 @@ static lv_obj_t* setDropdownRow(lv_obj_t* card, const char* title, const char* h
   if (lv_obj_t* list = lv_dropdown_get_list(dd)) lv_obj_set_style_text_font(list, &g_font_14, LV_PART_MAIN);
   if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);   // open the list on top of the bar
+  lv_obj_set_user_data(dd, (void*)title);   // the T-Deck Pro's picker page title (openDropdownPicker)
   return dd;
 }
 
@@ -15735,8 +15850,81 @@ static const int      kGpsBaudCount  = (int)(sizeof(kGpsBaudOpts) / sizeof(kGpsB
 // everything) so the first option(s) get clipped. Run after the list is open &
 // positioned (post-CLICKED) to cap its height to the area below the status bar
 // and nudge it back on-screen. Wire onto every settings dropdown.
+#if defined(HAS_TDECK_PRO)
+// On the e-paper panel a dropdown opens a page of its own, like the Time zone picker,
+// instead of LVGL's list: a full-height list is what the fixed page up/down buttons
+// scroll, where the small list hid under them and dragging it redraws the panel at
+// every step. One button per option, the current one filled; the status bar's "‹"
+// goes back without a change. Outside Settings the bar also shows a title: the name
+// the dropdown was given as user data (setDropdownRow does that), else "Select".
+static lv_obj_t* s_dd_picker    = nullptr;   // the page (singleton)
+static lv_obj_t* s_dd_picker_dd = nullptr;   // the dropdown it picks for
+
+static void ddPickerClose() {
+  if (s_dd_picker) popupClose(&s_dd_picker);
+  s_dd_picker_dd = nullptr;
+  settingsSubPageClose(ddPickerClose);
+}
+static void ddPickerSelectCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  lv_obj_t* dd = s_dd_picker_dd;
+  const uint16_t idx = (uint16_t)(uintptr_t)lv_event_get_user_data(e);
+  ddPickerClose();   // first: a handler below may rebuild the page the dropdown is on
+  if (!dd || !lv_obj_is_valid(dd) || lv_dropdown_get_selected(dd) == idx) return;
+  lv_dropdown_set_selected(dd, idx);
+  lv_event_send(dd, LV_EVENT_VALUE_CHANGED, nullptr);   // the dropdown's own handlers apply it
+}
+static void openDropdownPicker(lv_obj_t* dd) {
+  ddPickerClose();
+  const char* title = (const char*)lv_obj_get_user_data(dd);
+  s_dd_picker = settingsSubPageOpen(TR(title && title[0] ? title : "Select"), ddPickerClose);
+  s_dd_picker_dd = dd;
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+
+  lv_obj_t* list = lv_obj_create(s_dd_picker);
+  lv_obj_remove_style_all(list);
+  lv_obj_set_size(list, sw - 12, lv_obj_get_height(s_dd_picker) - 12);
+  lv_obj_set_pos(list, 6, 6);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+
+  // Options are one string, one per line, already translated by whoever set them.
+  const char* p = lv_dropdown_get_options(dd);
+  const uint16_t cur = lv_dropdown_get_selected(dd);
+  for (uint16_t i = 0; p && *p; ++i) {
+    const char* nl = strchr(p, '\n');
+    const int len = nl ? (int)(nl - p) : (int)strlen(p);
+    lv_obj_t* row = lv_btn_create(list);
+    lv_obj_set_size(row, sw - 16, SC(40));
+    styleButton(row);
+    if (i == cur) lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_text_color(row,
+      lv_color_hex(i == cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_add_event_cb(row, ddPickerSelectCb, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
+    lv_obj_t* lbl = lv_label_create(row);
+    char text[96]; snprintf(text, sizeof text, "%.*s", len, p);
+    lv_label_set_text(lbl, text);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(lbl, sw - 32);
+    lv_obj_set_style_text_align(lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(lbl);
+    p = nl ? nl + 1 : p + len;
+  }
+  lv_obj_move_foreground(s_dd_picker);
+}
+#endif
+
 static void clampDropdownListCb(lv_event_t* e) {
   lv_obj_t* dd = lv_event_get_target(e);
+#if defined(HAS_TDECK_PRO)
+  // The tap that got here (RELEASED) already opened LVGL's list; nothing has been
+  // drawn yet, so swap it for the page before the panel refreshes.
+  lv_dropdown_close(dd);
+  openDropdownPicker(dd);
+  return;
+#endif
   lv_obj_t* list = lv_dropdown_get_list(dd);
   if (!list || lv_obj_has_flag(list, LV_OBJ_FLAG_HIDDEN)) return;   // closed/just-closed
   // The open list is created on lv_scr_act, which sits BELOW the status bar (lv_layer_top),
@@ -16057,7 +16245,13 @@ static void buildRadioSettings() {
     lv_obj_t* r2 = setFieldRow(c);
     g_set_modal.sf_ta      = setField(r2, "SF", "SF", 2, setFieldW(4));
     g_set_modal.cr_ta      = setField(r2, "CR", "CR", 2, setFieldW(4));
+#if defined(HAS_TDECK_PRO)
+    // A quarter of the 240 px panel: "TX dBm" wrapped to two lines there and pushed
+    // its field below SF, CR and AF.
+    g_set_modal.tx_ta      = setField(r2, "TX", "TX", 4, setFieldW(4));
+#else
     g_set_modal.tx_ta      = setField(r2, "TX dBm", "TX", 4, setFieldW(4));
+#endif
     g_set_modal.airtime_ta = setField(r2, "AF", "AF", 6, setFieldW(4));
     if (prefs) {
       char buf[24];
@@ -16117,9 +16311,14 @@ static void buildRadioSettings() {
     uint8_t phm = prefs ? prefs->path_hash_mode : 0;
     if (phm > 2) phm = 0;
     const char* sizes[] = { TR("1 byte"), TR("2 bytes"), TR("3 bytes") };
+#if defined(HAS_TDECK_PRO)
+    const bool stack_sizes = true;    // the 240 px panel: one full-width button per line
+#else
+    const bool stack_sizes = false;
+#endif
     setChoiceRow(c, "Multi-byte routing (path hash)",
                  "More bytes tell repeaters apart in a big mesh. Repeaters older than MeshCore 1.14 drop 2 and 3 byte packets.",
-                 sizes, 3, phm, pathHashPickCb);
+                 sizes, 3, phm, pathHashPickCb, stack_sizes);
     // The node-wide region floods are tagged with (#tag key = SHA256 of the name; blank
     // is unscoped, the default). Each channel can override it in its own settings.
     g_set_modal.region_ta = setField(c, "Region scope (#tag, blank = none)", "#region", TOUCH_REGION_SCOPE_MAXLEN - 1);
@@ -16189,13 +16388,42 @@ static void buildRadioSettings() {
   }
 }
 
-// New-contact toast toggle (Auto-add page). Persists immediately like the
+// New-contact toast toggle (Contact Management page). Persists immediately like the
 // auto-add switches; default ON. Diag-log line + tab badge are unaffected — this
 // only gates the low-key chip in UITask::notify().
 static void toggleNewContactToastCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetNewContactToast(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
+
+#if CAP_CONTACT_PURGE
+// Remove old contacts (#719). The switch saves on toggle and the days field on
+// blur; either one asks contactPurgeService() for a pass straight away.
+static void contactPurgeRequestSoon();
+static lv_obj_t* s_ct_purge_days_ta = nullptr;
+static void ctPurgeDaysDeleteCb(lv_event_t*) { s_ct_purge_days_ta = nullptr; }
+static void ctPurgeToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetContactPurge(on);
+  if (on) contactPurgeRequestSoon();
+  if (g_lv.task) g_lv.task->showAlert(on ? TR("Auto-delete: on") : TR("Auto-delete: off"), 1100);
+}
+static void ctPurgeDaysSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
+  if (lv_event_get_code(e) != LV_EVENT_DEFOCUSED || !s_ct_purge_days_ta) return;
+  kbMirrorSyncToReal();
+  int d = atoi(lv_textarea_get_text(s_ct_purge_days_ta));
+  if (d < TOUCH_CT_PURGE_MIN_DAYS) d = TOUCH_CT_PURGE_MIN_DAYS;
+  if (d > TOUCH_CT_PURGE_MAX_DAYS) d = TOUCH_CT_PURGE_MAX_DAYS;
+  char b[8]; snprintf(b, sizeof b, "%d", d);
+  lv_textarea_set_text(s_ct_purge_days_ta, b);
+  if (d == (int)touchPrefsGetContactPurgeDays()) return;
+  touchPrefsSetContactPurgeDays((uint16_t)d);
+  if (touchPrefsGetContactPurge()) contactPurgeRequestSoon();
+  if (g_lv.task) { char msg[40]; snprintf(msg, sizeof msg, TR("Delete after %d days"), d); g_lv.task->showAlert(msg, 1100); }
+}
+#endif   // CAP_CONTACT_PURGE
 
 static void buildAutoAddSettings() {
   NodePrefs* prefs = the_mesh.getNodePrefs();
@@ -16233,6 +16461,22 @@ static void buildAutoAddSettings() {
                                                  "A new node replaces the oldest contact. Favourites are never replaced.",
                                                  prefs && (prefs->autoadd_config & AUTO_ADD_OVERWRITE_OLDEST), autoAddSwitchCb);
   }
+
+#if CAP_CONTACT_PURGE
+  // #719: contacts not heard from in a while go by themselves. Favourites stay.
+  {
+    lv_obj_t* c = setCard("Remove old contacts");
+    setSwitchRow(c, "Auto-delete old contacts",
+                 "Deletes contacts not heard from in the number of days below. Favourites are never deleted.",
+                 touchPrefsGetContactPurge(), ctPurgeToggleCb);
+    s_ct_purge_days_ta = setNumFieldRow(c, "Days", "Not heard from for this many days, 1 to 999.", 3);
+    lv_obj_add_event_cb(s_ct_purge_days_ta, ctPurgeDaysSaveCb, LV_EVENT_DEFOCUSED, nullptr);   // saves on blur
+    lv_obj_add_event_cb(s_ct_purge_days_ta, ctPurgeDaysDeleteCb, LV_EVENT_DELETE, nullptr);
+    char db[8];
+    snprintf(db, sizeof db, "%u", (unsigned)touchPrefsGetContactPurgeDays());
+    lv_textarea_set_text(s_ct_purge_days_ta, db);
+  }
+#endif
 
   // A UI pref rather than an auto-add bit, so it has its own callback.
   {
@@ -18467,6 +18711,17 @@ static void setSwatchPick(lv_obj_t* tapped) {
 }
 
 // ---- Settings > Sound ---------------------------------------------------------------
+#if defined(HAS_UI_VIBRATE)
+// Pattern tiles: save the pick and play it once (as a message) so it can be felt.
+static void vibratePatternPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int i = setChoiceIndex(e);
+  if (i < 0 || i >= TOUCH_VIB_COUNT) return;
+  touchPrefsSetVibratePattern((uint8_t)i);
+  setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+  uiVibrateSlot(TOUCH_SND_MSG, i);
+}
+#endif
 static void buildSoundPage() {
 #if defined(ATTAKY_MESH_SERIES)
   {
@@ -18519,6 +18774,18 @@ static void buildSoundPage() {
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());
 #endif
   }
+#if defined(HAS_UI_VIBRATE)
+  {
+    lv_obj_t* c = setCard("Vibration");
+    setSwitchRow(c, "Vibrate", "Buzz for new messages, even with Sound off. Respects Do Not Disturb.",
+                 touchPrefsGetVibrate(), toggleVibrateCb);
+    const char* pats[TOUCH_VIB_COUNT] = { TR("Pulse"), TR("Gentle"), TR("Long"), TR("Heartbeat") };
+    s_vib_pat_row = setChoiceRow(c, "Pattern", "Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.",
+                                 pats, TOUCH_VIB_COUNT, touchPrefsGetVibratePattern(), vibratePatternPickCb);
+    s_vib_pat_head = lv_obj_get_child(c, (int32_t)lv_obj_get_index(s_vib_pat_row) - 1);   // its title/help box
+    vibratePatternShow(touchPrefsGetVibrate());
+  }
+#endif
   {
     lv_obj_t* c = setCard("Play a sound for");
     setSwitchRow(c, "Messages", nullptr, touchPrefsGetSoundMessages(), toggleMessageSoundCb);
@@ -20625,7 +20892,7 @@ static lv_obj_t* wifiSheetOpenFullscreen(const char* title) {
   lv_obj_set_style_pad_all(body, 12, LV_PART_MAIN);
   // Clear the tall bar's glass lower row (it overlays the top of this sheet,
   // same as prepSettingsPage's inset on the category pages).
-  lv_obj_set_style_pad_top(body, STATUSBAR_H + 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(body, statusBarCurH() - STATUSBAR_H + 8, LV_PART_MAIN);   // T-Deck Pro: one row
   // Generous bottom padding so the last field/button can scroll clear of the
   // on-screen keyboard (attachSettingsTaEvents scrolls the focused field into view).
   lv_obj_set_style_pad_bottom(body, SC(64), LV_PART_MAIN);
@@ -30047,7 +30314,7 @@ static void openDiscoverPage() {
   s_apppage_close = closeDiscoverPage;
   statusBarSetTall(true);
   updateGlobalStatusBar();
-  const int top = STATUSBAR_H + 8;
+  const int top = statusBarCurH() - STATUSBAR_H + 8;   // below the tall bar's lower row, if it has one
 
   s_discover_status = lv_label_create(s_discover_root);
   lv_label_set_text(s_discover_status, TR("Scanning\xE2\x80\xA6"));
@@ -32468,7 +32735,7 @@ static void openSpectrumPage() {
   s_apppage_close = closeSpectrumPage;
   statusBarSetTall(true);
   updateGlobalStatusBar();
-  const int top = STATUSBAR_H + 8;
+  const int top = statusBarCurH() - STATUSBAR_H + 8;   // below the tall bar's lower row, if it has one
   // Top of the spectrum itself (RBW/span line, chart, waterfall). The peak readout
   // stays on the `top` line. On the narrow P4 portrait panel the right-aligned peak ran
   // over the RBW/span line, and the tall panel has room to spare, so the spectrum
@@ -33164,7 +33431,7 @@ static void contactsOverflowAddCb(lv_event_t* e) {
 static void contactsOverflowAutoAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   closeContactsOverflowSheet();
-  openSettingsCategory(CAT_AUTOADD);   // jump straight to the dedicated Auto-add page
+  openSettingsCategory(CAT_AUTOADD);   // jump straight to the Contact Management page
 }
 static void contactsOverflowBlockedCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -33188,7 +33455,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   lv_obj_add_event_cb(s_contacts_overflow_root, contactsOverflowDismissCb, LV_EVENT_CLICKED, nullptr);
 
   // Bigger on the 800-px Tanmatsu panel. The Pager also has spare horizontal
-  // room, so give its longest action ("Auto-add settings") enough width at
+  // room, so give its longest action ("Contact Management") enough width at
   // the larger text presets; compact boards retain the historical width.
   // Compact rows so all five buttons + title fit the T-Deck's short 240px landscape
   // screen (the 5th "Blocked list" item pushed the old 36px rows off-screen). #72.
@@ -33197,7 +33464,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
 #else
   const int card_w = PCW(200);
 #endif
-  const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Auto-add / Blocked) off-screen at Large scale
+  const int btn_h = SC(30), btn_gap = SC(4), title_h = SC(22), padding = SC(8);  // SC not PSC: the 1.7x boost clipped the lower rows (Contact Management / Blocked) off-screen at Large scale
   const int rows = 5;
   int card_h = 2 * padding + title_h + rows * btn_h + (rows - 1) * btn_gap;  // reserve BOTH pad_all paddings (top+bottom) or the last row clips
   if (card_h > sh - STATUSBAR_H - 8) card_h = sh - STATUSBAR_H - 8;   // never taller than the visible area
@@ -33254,7 +33521,7 @@ static void openContactsOverflowSheetCb(lv_event_t* e) {
   mk(TR(LV_SYMBOL_EYE_OPEN "  Search"), contactsOverflowSearchCb, 0);
   mk(TR(LV_SYMBOL_LIST     "  Discovered"), contactsOverflowFoundCb, 0);
   mk(TR(LV_SYMBOL_PLUS     "  Add contact"), contactsOverflowAddCb, 0);
-  mk(TR(LV_SYMBOL_DOWNLOAD "  Auto-add settings"), contactsOverflowAutoAddCb, 0);
+  mk(TR(LV_SYMBOL_DOWNLOAD "  Contact Management"), contactsOverflowAutoAddCb, 0);
   mk(TR(LV_SYMBOL_CLOSE    "  Blocked list"), contactsOverflowBlockedCb, 0);
 }
 
@@ -33281,12 +33548,12 @@ static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal m
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
 static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = {};
-static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btns[7] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
 static const char* contactsFilterShortLabel() {
   switch (g_lv.contacts_filter) {
-    case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir";
+    case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir"; case 6u: return "Room";
     default: return "All";
   }
 }
@@ -33320,6 +33587,7 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if (pathHops(c.out_path_len) != 0) return false; break;                  // 0-hop / direct neighbors only
+    case 6u: if (c.type != ADV_TYPE_ROOM) return false; break;             // room servers
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
@@ -33518,6 +33786,95 @@ static void ctDeleteServiceTick(){
     if(g_lv.task) g_lv.task->onThreadsChanged();   // nudge web clients to refetch
   }
 }
+
+#if CAP_CONTACT_PURGE
+// ---- Remove old contacts (#719, Settings > Contact Management) ----------------
+// While the switch is on, a pass runs a few minutes after boot and then hourly:
+// contacts not heard from in N days are deleted, a few per loop tick like the
+// bulk delete above, then /contacts3 is rewritten once. Kept: favourites (either
+// star), the contact whose chat is open, and anything whose age is unknown.
+// Passes only run on a clock that is known to be right (wallClockIsCurrent()).
+// lastmod is our clock when we last heard the contact, but before the clock is
+// synced it runs from the saved floor and can lag by however long the device
+// was off. So a contact counts as stale only when its advert timestamp (its own
+// clock) is past the cutoff too: one heard recently on a lagging clock is kept.
+static constexpr uint32_t kCtPurgeFirstMs = 3UL * 60UL * 1000UL;    // let the clock sync after boot
+static constexpr uint32_t kCtPurgeEveryMs = 60UL * 60UL * 1000UL;
+static constexpr uint32_t kCtPurgeMinEpoch = 1700000000UL;         // older: recorded on an unset clock
+static uint32_t s_ctp_due_ms = kCtPurgeFirstMs;
+static uint8_t (*s_ctp_keys)[PUB_KEY_SIZE] = nullptr;
+static int s_ctp_total = 0, s_ctp_done = 0;
+
+static void contactPurgeRequestSoon() { s_ctp_due_ms = millis() + 2000UL; }
+
+static bool contactPurgeIsStale(const ContactInfo& c, uint32_t cutoff) {
+  if (c.type == ADV_TYPE_NONE || !c.name[0] || c.isFav()) return false;
+  if (c.lastmod < kCtPurgeMinEpoch || c.lastmod >= cutoff) return false;
+  return c.last_advert_timestamp < cutoff;
+}
+
+// Snapshot the stale keys (deleting shifts indices). Returns how many.
+static int contactPurgeCollect(uint32_t now) {
+  const uint32_t age = (uint32_t)touchPrefsGetContactPurgeDays() * 86400UL;
+  if (now <= age) return 0;
+  const uint32_t cutoff = now - age;
+  const int cnt = the_mesh.getNumContacts();
+  if (cnt <= 0) return 0;
+#if defined(ESP32)
+  uint8_t fav_buf[TOUCH_FAVORITES_MAX * TOUCH_FAVORITE_KEY_BYTES];
+  const int fav_count = touchPrefsCopyFavorites(fav_buf);
+#endif
+  ContactInfo open_dm;
+  const bool dm_open = g_lv.dm.detail_open && g_lv.task && g_lv.task->lookupActiveContact(open_dm);
+  int n = 0;
+  ContactInfo c;
+  for (int i = 0; i < cnt; ++i) {
+    if (!the_mesh.getContactByIdx((uint32_t)i, c) || !contactPurgeIsStale(c, cutoff)) continue;
+#if defined(ESP32)
+    if (touchPrefsFavoritesSnapshotContains(fav_buf, fav_count, c.id.pub_key)) continue;
+#endif
+    if (dm_open && memcmp(open_dm.id.pub_key, c.id.pub_key, PUB_KEY_SIZE) == 0) continue;
+    if (!s_ctp_keys) {
+      s_ctp_keys = (uint8_t(*)[PUB_KEY_SIZE])psAlloc((size_t)cnt * PUB_KEY_SIZE);
+      if (!s_ctp_keys) return 0;
+    }
+    memcpy(s_ctp_keys[n++], c.id.pub_key, PUB_KEY_SIZE);
+  }
+  return n;
+}
+
+static void contactPurgeService() {
+  if (s_ctp_keys && s_ctp_total > 0) {
+    if (s_ctd_active) return;   // a manual bulk delete owns the list right now
+    const int BATCH = 8;
+    for (int b = 0; b < BATCH && s_ctp_done < s_ctp_total; ++b)
+      the_mesh.uiRemoveContactNoSave(s_ctp_keys[s_ctp_done++]);   // by key: shift-safe
+    if (s_ctp_done < s_ctp_total) return;
+    const int total = s_ctp_total;
+    the_mesh.uiPersistContacts();   // one /contacts3 rewrite for the whole pass
+    heap_caps_free(s_ctp_keys); s_ctp_keys = nullptr;
+    s_ctp_total = s_ctp_done = 0;
+    s_ct_list_force = true;
+    g_lv.dirty_contacts = true;
+    g_lv.dirty_threads = true;
+    if (g_lv.task) {
+      g_lv.task->onThreadsChanged();
+      char msg[48]; snprintf(msg, sizeof msg, TR("Removed %d old contact(s)"), total);
+      g_lv.task->showAlert(msg, 1600);
+    }
+    return;
+  }
+  const uint32_t ms = millis();
+  if ((int32_t)(ms - s_ctp_due_ms) < 0) return;
+  s_ctp_due_ms = ms + kCtPurgeEveryMs;
+  if (!touchPrefsGetContactPurge() || s_ctd_active || !wallClockIsCurrent()) return;
+  mesh::RTCClock* rtc = the_mesh.getRTCClock();
+  if (!rtc) return;
+  s_ctp_total = contactPurgeCollect(rtc->getCurrentTime());
+  s_ctp_done = 0;
+  if (s_ctp_total == 0 && s_ctp_keys) { heap_caps_free(s_ctp_keys); s_ctp_keys = nullptr; }
+}
+#endif   // CAP_CONTACT_PURGE
 static int ctSelKeyCmp(const void* a, const void* b){ return memcmp(a, b, 6); }
 static void ctDoDelete(){
   if(!g_lv.task || s_ctd_active || s_ct_sel_n<=0) return;
@@ -33574,7 +33931,7 @@ static void ctPaintOpt(lv_obj_t* b, bool active){
 }
 static void ctSheetRepaint(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) ctPaintOpt(s_ct_sort_btns[i], g_contacts_sort==(uint8_t)i);
-  for(int i=0;i<6;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
+  for(int i=0;i<7;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
 }
 // Repaint the Sort sheet rows: highlight the active mode and show its direction
 // arrow (▼ = the mode's natural order, ▲ = reversed). Labels are pulled from
@@ -33669,7 +34026,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
   return card;
 }
 static void openContactsSortSheet(){
-  for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
+  for(int i=0;i<7;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet(TR("Sort by"));
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
@@ -33714,6 +34071,7 @@ static void openContactsFilterSheet(){
   lv_obj_t* card = ctOpenOptionSheet("Filter");
   s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
+  s_ct_filter_btns[6] = ctSheetOption(card, TR("Rooms"),          ctFilterOptCb, 6, g_lv.contacts_filter==6);   // listed by type, value stays 6
   s_ct_filter_btns[2] = ctSheetOption(card, TR("Peers"),          ctFilterOptCb, 2, g_lv.contacts_filter==2);
   s_ct_filter_btns[3] = ctSheetOption(card, TR("Favorites"),      ctFilterOptCb, 3, g_lv.contacts_filter==3);
   s_ct_filter_btns[4] = ctSheetOption(card, TR("Has location"),   ctFilterOptCb, 4, g_lv.contacts_filter==4);
@@ -33735,7 +34093,7 @@ static void contactsMoreCb(lv_event_t* e) {
   const ActItem items[] = {
     { UI_ICON_USER_PLUS,   TR("Add contact"),       []{ openAddContactModalCb(ctClickEvent()); },  false },
     { UI_ICON_LIST_CHECKS, TR("Select to delete"),  []{ ctSetSelectMode(true); },                   false },
-    { LV_SYMBOL_SETTINGS,  TR("Auto-add settings"), []{ openSettingsCategory(CAT_AUTOADD); },       false },
+    { LV_SYMBOL_SETTINGS,  TR("Contact Management"), []{ openSettingsCategory(CAT_AUTOADD); },      false },
     { UI_ICON_BAN,         TR("Blocked users"),     []{ openBlockedUsersModal(); },                 false },
   };
   openActionList(TR("Contacts"), items, (int)(sizeof items / sizeof items[0]));
@@ -41671,6 +42029,9 @@ static void openSettingsCategory(int cat) {
 #if defined(HELTEC_LORA_V4_R8)
   const lv_coord_t settings_top = statusBarCurH();
   const lv_coord_t settings_pad_top = 8;
+#elif defined(HAS_TDECK_PRO)
+  const lv_coord_t settings_top = STATUSBAR_H;      // the bar stays one row here (statusBarSetTall)
+  const lv_coord_t settings_pad_top = 8;
 #else
   const lv_coord_t settings_top = STATUSBAR_H;
   const lv_coord_t settings_pad_top = STATUSBAR_H + 8;
@@ -48219,6 +48580,20 @@ static uint32_t rx24Sum() {
   return s;
 }
 
+// The long day and month names (lock screen, Home widgets), written out so every
+// name stays a literal the translation tooling can see.
+[[maybe_unused]] static const char* lockDayName(int wd) {
+  const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
+                               TR("Thursday"), TR("Friday"), TR("Saturday") };
+  return day[wd % 7];
+}
+[[maybe_unused]] static const char* lockMonthName(int m) {
+  const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
+                                TR("May"), TR("June"), TR("July"), TR("August"),
+                                TR("September"), TR("October"), TR("November"), TR("December") };
+  return mon[m % 12];
+}
+
 #if CAP_LOCK_SCREEN
 // ---- Lock screen -------------------------------------------------------------
 // A full-screen overlay shown while the device is hard-locked, as in the
@@ -48333,6 +48708,24 @@ static const lv_font_t* lockClockFont() {
 
 static void lockscreenUpdateActivity();
 
+// Width the date line may take; a date wider than this goes on two lines, the day
+// name over the rest ("WEDNESDAY" / "23 SEPTEMBER"), as at Large or Huge text on the
+// T-Deck Pro, where one line ran into both edges. Set when the screen is built.
+static lv_coord_t s_lock_date_avail = 0;
+static lv_coord_t lockDateW(const char* t) {
+  return lv_txt_get_width(t, (uint32_t)strlen(t), &g_font_semi_12, 1, LV_TEXT_FLAG_NONE);
+}
+// The widest date there can be, upper-cased as shown: does any need two lines?
+#if CAP_DATE_WRAP
+static bool lockDateMayWrap(lv_coord_t avail) {
+  char u[48];
+  lv_coord_t wd = 0, wm = 0;
+  for (int i = 0; i < 7; ++i)  { uiUpperUtf8(u, sizeof u, lockDayName(i));   wd = LV_MAX(wd, lockDateW(u)); }
+  for (int i = 0; i < 12; ++i) { uiUpperUtf8(u, sizeof u, lockMonthName(i)); wm = LV_MAX(wm, lockDateW(u)); }
+  return wd + lockDateW(" 30 ") + wm > avail;
+}
+#endif
+
 static void lockscreenUpdateClock() {
   if (!s_lock_clock) return;
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
@@ -48365,15 +48758,12 @@ static void lockscreenUpdateClock() {
   if (s_lock_date) {
     char d[64];
     if (current) {
-      // Written out so every name stays a literal the translation tooling can see.
-      const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
-                                   TR("Thursday"), TR("Friday"), TR("Saturday") };
-      const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
-                                    TR("May"), TR("June"), TR("July"), TR("August"),
-                                    TR("September"), TR("October"), TR("November"), TR("December") };
       char raw[64];
-      snprintf(raw, sizeof raw, "%s %d %s", day[v.tm_wday % 7], v.tm_mday, mon[v.tm_mon % 12]);
+      snprintf(raw, sizeof raw, "%s %d %s", lockDayName(v.tm_wday), v.tm_mday, lockMonthName(v.tm_mon));
       uiUpperUtf8(d, sizeof d, raw);
+      if (s_lock_date_avail > 0 && lockDateW(d) > s_lock_date_avail) {
+        if (char* sp = strchr(d, ' ')) *sp = '\n';   // the day name over the rest
+      }
     } else {
       uiUpperUtf8(d, sizeof d, TR("Clock not set"));
     }
@@ -48994,7 +49384,13 @@ static void lockscreenShow() {
   const lv_coord_t mark_h  = SC(30);
   const lv_coord_t mark_w  = (lv_coord_t)(mark_h * 174 / 110);
   const lv_coord_t clk_h   = lv_font_get_line_height(fclk);
-  const lv_coord_t date_h  = lv_font_get_line_height(&g_font_semi_12);
+#if !CAP_DATE_WRAP
+  const bool date_wrap = false;   // the longest date fits on one line (device_caps.h)
+#else
+  s_lock_date_avail = (lv_coord_t)(sw - 2 * SC(12));
+  const bool date_wrap = lockDateMayWrap(s_lock_date_avail);
+#endif
+  const lv_coord_t date_h  = lv_font_get_line_height(&g_font_semi_12) * (date_wrap ? 2 : 1);
   const lv_coord_t cap_h   = lv_font_get_line_height(&g_font_12);
   const lv_coord_t spark_h = SC(18);
   const lv_coord_t card_h  = lockCardH(), card_gap = SC(4);
@@ -49015,6 +49411,7 @@ static void lockscreenShow() {
   const lv_coord_t row_h   = LV_MAX(hint_sz.y, lv_font_get_line_height(&ui_icons_16));
   const lv_coord_t top = 6, bottom = 6;
   lv_coord_t g_mark = SC(8), g_date = SC(3), g_cap = SC(10), g_spark = SC(3), g_cards = SC(10);
+  if (date_wrap) g_cap += SC(4);   // the mesh line a little further below a two-line date
   // The activity line, captioned "MESH · 24 H" on the left and the count on the
   // right. Bigger text widens it towards the margins; when the two still cannot
   // share a line they stack, centred.
@@ -49060,6 +49457,7 @@ static void lockscreenShow() {
   lv_obj_set_style_text_font(s_lock_date, &g_font_semi_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_lock_date, lv_color_hex(k.sub), LV_PART_MAIN);
   lv_obj_set_style_text_letter_space(s_lock_date, 1, LV_PART_MAIN);
+  lv_obj_set_style_text_align(s_lock_date, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);   // a two-line date
   lv_obj_align(s_lock_date, LV_ALIGN_TOP_MID, 0, y);
   y += date_h + g_cap;
 
@@ -50237,6 +50635,76 @@ static void backupChosenCb(lv_event_t* e) {
   backupPickerClose();
   confirmBackupImport(stored);
 }
+#if CAP_BACKUP_DATE_LABELS
+// The local time stamped into "meshcore-backup-YYYYMMDD-HHMMSS.json" by
+// backupMakeFilename(); false for every other name (the MeshCore app's fixed
+// meshcore-backup.json, nodate-N, or a .json someone copied onto the card).
+static bool backupNameStamp(const char* stored, struct tm* out) {
+  const char* base = strrchr(stored, '/'); base = base ? base + 1 : stored;
+  int y, mo, d, h, mi, s, n = 0;
+  if (sscanf(base, "meshcore-backup-%4d%2d%2d-%2d%2d%2d.json%n", &y, &mo, &d, &h, &mi, &s, &n) != 6
+      || n == 0 || base[n]) return false;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return false;
+  memset(out, 0, sizeof *out);
+  out->tm_year = y - 1900; out->tm_mon = mo - 1; out->tm_mday = d;
+  out->tm_hour = h; out->tm_min = mi; out->tm_sec = s;
+  return true;
+}
+// Backup row labels for the Import picker and the Saved backups list (#739): the
+// backup's date ("2026-06-12"), or "Default" when its name has none. Rows that
+// would still read the same gain, in turn, the time, where the file is
+// (SD / Internal), then a running number, so every row stays tellable apart.
+static void backupListLabels(char (*lbl)[64]) {
+  const int n = s_backup_count;
+  bool dated[kBackupMax], dup[kBackupMax];
+  struct tm st;
+  auto markDups = [&]() {
+    bool any = false;
+    for (int i = 0; i < n; ++i) {
+      dup[i] = false;
+      for (int j = 0; j < n && !dup[i]; ++j) dup[i] = (j != i && !strcmp(lbl[i], lbl[j]));
+      any |= dup[i];
+    }
+    return any;
+  };
+  auto append = [&](int i, const char* more) {
+    const size_t len = strlen(lbl[i]);
+    snprintf(lbl[i] + len, 64 - len, " \xC2\xB7 %s", more);
+  };
+  for (int i = 0; i < n; ++i) {
+    dated[i] = backupNameStamp(s_backup_paths[i], &st);
+    if (dated[i]) snprintf(lbl[i], 64, "%04d-%02d-%02d", st.tm_year + 1900, st.tm_mon + 1, st.tm_mday);
+    else          snprintf(lbl[i], 64, "%s", TR("Default"));
+  }
+  if (!markDups()) return;
+  for (int i = 0; i < n; ++i)
+    if (dup[i] && dated[i] && backupNameStamp(s_backup_paths[i], &st)) {
+      char hm[12]; fmtClockHM(hm, sizeof hm, &st); append(i, hm);
+    }
+  if (!markDups()) return;
+  for (int i = 0; i < n; ++i)
+    if (dup[i]) append(i, !strncmp(s_backup_paths[i], "sd:", 3) ? "SD" : TR("Internal"));
+  if (!markDups()) return;
+  int nth[kBackupMax];
+  for (int i = 0; i < n; ++i) {
+    nth[i] = 1;
+    for (int j = 0; j < i; ++j) if (!strcmp(lbl[i], lbl[j])) ++nth[i];
+  }
+  for (int i = 0; i < n; ++i)
+    if (nth[i] > 1) { const size_t len = strlen(lbl[i]); snprintf(lbl[i] + len, 64 - len, " %d", nth[i]); }
+}
+// Labels for the s_backup_count rows backupScan() just found; nullptr on OOM, and
+// the caller then shows s_backup_disp (the file names). Free with heap_caps_free;
+// short-lived, so off internal DRAM like the scan buffers (lv_label_set_text copies).
+static char (*backupListLabelsNew())[64] {
+  char (*lbl)[64] = (char(*)[64]) heap_caps_malloc(kBackupMax * 64, MALLOC_CAP_SPIRAM);
+  if (!lbl) lbl = (char(*)[64]) heap_caps_malloc(kBackupMax * 64, MALLOC_CAP_8BIT);
+  if (lbl) backupListLabels(lbl);
+  return lbl;
+}
+#else
+static char (*backupListLabelsNew())[64] { return nullptr; }   // the file names (device_caps.h)
+#endif
 static void openBackupPicker() {
   backupScan();
   backupPickerClose();
@@ -50260,6 +50728,7 @@ static void openBackupPicker() {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
+  char (*lbl)[64] = backupListLabelsNew();
   for (int i = 0; i < s_backup_count; ++i) {
     lv_obj_t* b = lv_btn_create(list);
     lv_obj_set_width(b, lv_pct(100));
@@ -50268,11 +50737,12 @@ static void openBackupPicker() {
     lv_obj_add_event_cb(b, backupChosenCb, LV_EVENT_CLICKED, s_backup_paths[i]);
     lv_obj_t* l = lv_label_create(b);
     useChainedFont(l);
-    lv_label_set_text(l, s_backup_disp[i]);
+    lv_label_set_text(l, lbl ? lbl[i] : s_backup_disp[i]);   // OOM: the file names, as before
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     lv_obj_set_width(l, lv_pct(94));
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 4, 0);
   }
+  heap_caps_free(lbl);
 }
 
 // ---- Backups manager (Settings -> Backups) ----------------------------------
@@ -50524,12 +50994,13 @@ static void buildBackupsSettings() {
     lv_obj_t* c = setCard("Saved backups");
     backupScan();
     if (s_backup_count == 0) setNote(c, "No backups yet. Use Export backup above to create one.");
+    char (*lbl)[64] = backupListLabelsNew();   // same names as the Import picker
     for (int i = 0; i < s_backup_count; ++i) {
       const lv_coord_t w = s_settings_content_w, bw = SC(40);
       lv_obj_t* row = setBox(c);
       lv_obj_set_size(row, w, SC(34));
       lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, s_backup_disp[i]);
+      lv_label_set_text(nm, lbl ? lbl[i] : s_backup_disp[i]);
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
       lv_obj_set_size(nm, w - bw - SC(10), lv_font_get_line_height(&g_font_14));
       lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
@@ -50545,6 +51016,7 @@ static void buildBackupsSettings() {
       lv_obj_set_style_text_color(dl, lv_color_hex(COLOR_STATUS_DANGER_TEXT), LV_PART_MAIN);
       lv_obj_center(dl);
     }
+    heap_caps_free(lbl);
   }
 
   {
@@ -58031,7 +58503,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.left_label = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.left_label, TR("WADAMESH"));
   lv_obj_set_style_text_color(g_statusbar.left_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.left_label, &g_font_semi_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.left_label, sbFixed(&g_font_semi_14), LV_PART_MAIN);
   lv_obj_align(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
 #if defined(TLORA_PAGER)
   // Keep the large-text title out of the clock/status cluster. Individual home
@@ -58054,7 +58526,7 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.chat_back, uiChromeFont(), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 6, 0);
 #else
-  lv_obj_set_style_text_font(g_statusbar.chat_back, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.chat_back, sbFixed(&g_font_16), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, 12, 0);   // breathing room from the edge
 #endif
   lv_obj_add_flag(g_statusbar.chat_back, LV_OBJ_FLAG_HIDDEN);
@@ -58070,7 +58542,7 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_font(g_statusbar.chan_gear, uiChromeFont(), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 30, 0);
 #else
-  lv_obj_set_style_text_font(g_statusbar.chan_gear, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.chan_gear, sbFixed(&g_font_16), LV_PART_MAIN);
   lv_obj_align(g_statusbar.chan_gear, LV_ALIGN_LEFT_MID, 44, 0);   // gap after the back chevron
 #endif
   lv_obj_add_flag(g_statusbar.chan_gear, LV_OBJ_FLAG_CLICKABLE);
@@ -58104,7 +58576,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.chat_sub = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.chat_sub, "");
   lv_label_set_long_mode(g_statusbar.chat_sub, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_text_font(g_statusbar.chat_sub, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.chat_sub, sbFixed(&g_font_12), LV_PART_MAIN);
   lv_obj_set_style_text_color(g_statusbar.chat_sub, lv_color_hex(COLOR_TERTIARY), LV_PART_MAIN);
   lv_obj_add_flag(g_statusbar.chat_sub, LV_OBJ_FLAG_HIDDEN);
 
@@ -58113,13 +58585,13 @@ static void buildGlobalStatusBar() {
   g_statusbar.batt_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.batt_icon, LV_SYMBOL_BATTERY_2);
   lv_obj_set_style_text_color(g_statusbar.batt_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.batt_icon, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.batt_icon, sbFixed(&g_font_16), LV_PART_MAIN);
   lv_obj_align(g_statusbar.batt_icon, LV_ALIGN_RIGHT_MID, -2, 0);
 
   g_statusbar.batt_pct = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.batt_pct, "?");
   lv_obj_set_style_text_color(g_statusbar.batt_pct, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.batt_pct, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.batt_pct, sbFixed(&g_font_12), LV_PART_MAIN);
   lv_obj_align(g_statusbar.batt_pct, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
                -32,
@@ -58152,7 +58624,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.clock = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.clock, "--:--");
   lv_obj_set_style_text_color(g_statusbar.clock, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.clock, &g_font_semi_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.clock, sbFixed(&g_font_semi_12), LV_PART_MAIN);
   // The SemiBold line box keeps a pixel more above its figures than the icons
   // beside it, so the centred clock read a row low. Two pixels of box below the
   // text lift it one row wherever the bar centres it (the tall chat bar too).
@@ -58175,7 +58647,7 @@ static void buildGlobalStatusBar() {
   lv_obj_set_style_text_color(g_statusbar.conn_icon, lv_color_hex(COLOR_LINK), LV_PART_MAIN);
   // One step up from the 12 px text: the Wi-Fi arcs only fill the lower part of
   // their square, so at 12 px it read smaller than the glyphs beside it.
-  lv_obj_set_style_text_font(g_statusbar.conn_icon, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.conn_icon, sbFixed(&g_font_14), LV_PART_MAIN);
   lv_obj_align(g_statusbar.conn_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
                -104,
@@ -58188,7 +58660,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.ble_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.ble_icon, "");
   lv_obj_set_style_text_color(g_statusbar.ble_icon, lv_color_hex(COLOR_LINK), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.ble_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.ble_icon, sbFixed(&g_font_12), LV_PART_MAIN);
   // A 15 px line box centres half a pixel lower on the bar than the 16 and
   // 17 px boxes beside it, and the tall Bluetooth rune rounds down another half:
   // it sat a full row below the Wi-Fi, bars and battery. Lift it one row (the
@@ -58222,7 +58694,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.sleep_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.sleep_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.sleep_icon, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.sleep_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.sleep_icon, sbFixed(&g_font_12), LV_PART_MAIN);
   lv_obj_align(g_statusbar.sleep_icon, LV_ALIGN_RIGHT_MID, -SBX(144), 0);
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_HIDDEN);     // hidden until feature is on
   lv_obj_add_flag(g_statusbar.sleep_icon, LV_OBJ_FLAG_CLICKABLE);
@@ -58239,7 +58711,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.dnd_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.dnd_icon, TOUCH_SYM_MOON);
   lv_obj_set_style_text_color(g_statusbar.dnd_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.dnd_icon, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.dnd_icon, sbFixed(&g_font_12), LV_PART_MAIN);
   lv_obj_align(g_statusbar.dnd_icon, LV_ALIGN_RIGHT_MID,
 #if defined(TLORA_PAGER)
                -164,
@@ -58276,7 +58748,7 @@ static void buildGlobalStatusBar() {
   // of both the left-zone title and the right-side icon cluster.
   g_statusbar.async_icon = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.async_icon, LV_SYMBOL_REFRESH);
-  lv_obj_set_style_text_font(g_statusbar.async_icon, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.async_icon, sbFixed(&g_font_14), LV_PART_MAIN);
   lv_obj_set_style_text_color(g_statusbar.async_icon, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_align(g_statusbar.async_icon, LV_ALIGN_CENTER, 0, 0);
   lv_obj_add_flag(g_statusbar.async_icon, LV_OBJ_FLAG_HIDDEN);   // shown only while a request is in flight
@@ -58326,7 +58798,7 @@ static void buildGlobalStatusBar() {
   g_statusbar.layout_label = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.layout_label, "");
   lv_obj_set_style_text_color(g_statusbar.layout_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.layout_label, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_font(g_statusbar.layout_label, sbFixed(&g_font_12), LV_PART_MAIN);
   lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182, 0);   // follows the clock's shift
   lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
 
@@ -58548,6 +59020,7 @@ static inline void sbTextColor(lv_obj_t* o, lv_color_t c) {
   if (o && lv_obj_get_style_text_color(o, LV_PART_MAIN).full != c.full) lv_obj_set_style_text_color(o, c, LV_PART_MAIN);
 }
 static inline void sbFont(lv_obj_t* o, const lv_font_t* f, lv_style_selector_t sel) {
+  f = sbFixed(f);
   if (o && lv_obj_get_style_text_font(o, sel) != f) lv_obj_set_style_text_font(o, f, sel);
 }
 static inline void sbAlign(lv_obj_t* o, lv_align_t a, lv_coord_t x, lv_coord_t y) {
@@ -58699,7 +59172,7 @@ static void chatHeaderApply(bool chat_open) {
   const lv_coord_t head_bot = statusBarPackRound(keep_links, false, pct_w);
 #else
   const char* pct = g_statusbar.batt_pct ? lv_label_get_text(g_statusbar.batt_pct) : "";
-  const lv_coord_t pct_w = (pct && pct[0]) ? lv_txt_get_width(pct, strlen(pct), &g_font_12, 0, LV_TEXT_FLAG_NONE) + SBX(22) : SBX(20);
+  const lv_coord_t pct_w = (pct && pct[0]) ? lv_txt_get_width(pct, strlen(pct), sbFixed(&g_font_12), 0, LV_TEXT_FLAG_NONE) + SBX(22) : SBX(20);
 #endif
 #if CAP_ROUND_CORNERS
   // The clock's digits sit on the same bottom line as the icons beside it.
@@ -58728,15 +59201,15 @@ static void chatHeaderApply(bool chat_open) {
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
-  const lv_coord_t title_h = lv_font_get_line_height(&g_font_semi_14);
-  const lv_coord_t sub_h = lv_font_get_line_height(&g_font_12);
+  const lv_coord_t title_h = lv_font_get_line_height(sbFixed(&g_font_semi_14));
+  const lv_coord_t sub_h = lv_font_get_line_height(sbFixed(&g_font_12));
   sbTranslateY(g_statusbar.left_label, 0);
   sbSize(g_statusbar.left_label, LV_MAX((lv_coord_t)40, text_w), title_h);
   if (lv_label_get_long_mode(g_statusbar.left_label) != LV_LABEL_LONG_CLIP)
     lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_CLIP);
   {
     char ttl[sizeof(s_chat_title) + 4];
-    uiFitTrailingDots(s_chat_title, &g_font_semi_14, LV_MAX((lv_coord_t)40, text_w), ttl, sizeof ttl);
+    uiFitTrailingDots(s_chat_title, sbFixed(&g_font_semi_14), LV_MAX((lv_coord_t)40, text_w), ttl, sizeof ttl);
     if (strcmp(lv_label_get_text(g_statusbar.left_label), ttl) != 0) lv_label_set_text(g_statusbar.left_label, ttl);
   }
   const lv_coord_t top = (bar_h - title_h - sub_h) / 2 + ymid;
@@ -58809,7 +59282,7 @@ static void chatHeaderApply(bool chat_open) {
       lv_obj_set_width(g_statusbar.left_label, tw);
       lv_obj_set_width(g_statusbar.chat_sub, tw);
       char ttl[sizeof(s_chat_title) + 4];
-      uiFitTrailingDots(s_chat_title, &g_font_semi_14, tw, ttl, sizeof ttl);
+      uiFitTrailingDots(s_chat_title, sbFixed(&g_font_semi_14), tw, ttl, sizeof ttl);
       if (strcmp(lv_label_get_text(g_statusbar.left_label), ttl) != 0) lv_label_set_text(g_statusbar.left_label, ttl);
     }
     lv_obj_set_height(g_statusbar.chat_head, head_h);
@@ -58969,7 +59442,12 @@ static void updateGlobalStatusBar() {
     // The Chats overview stays one row: its actions live in the page's own header now.
     const bool want_tall = (s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim) || chat_open;
 #endif
-    if (want_tall != s_statusbar_tall) statusBarSetTall(want_tall);
+#if defined(HAS_TDECK_PRO)
+    const bool want_tall_eff = want_tall && s_settings_open_cat < 0;   // see statusBarSetTall
+#else
+    const bool want_tall_eff = want_tall;
+#endif
+    if (want_tall_eff != s_statusbar_tall) statusBarSetTall(want_tall_eff);
 #if CAP_ROUND_CORNERS
     // One row everywhere except an open chat, whose title + subtitle header is taller.
     if (chat_open != s_round_chat_bar) {
@@ -59192,6 +59670,13 @@ static void updateGlobalStatusBar() {
     snprintf(ttl, sizeof ttl, "%s", app_page_title);
 #endif
     char sbuf[72];
+#if defined(HAS_TDECK_PRO)
+    if (s_settings_open_cat >= 0) {
+      // Settings on the 240 px panel: just the back chevron at the top left, on the
+      // bar's one row with the clock and icons. No room for the page title.
+      snprintf(sbuf, sizeof sbuf, "#%06X %s#", (unsigned)(COLOR_ACCENT & 0xFFFFFF), LV_SYMBOL_LEFT);
+    } else
+#endif
     snprintf(sbuf, sizeof sbuf, "#%06X %s#  %s", (unsigned)(COLOR_ACCENT & 0xFFFFFF),
              LV_SYMBOL_LEFT, ttl);
     if (strcmp(lv_label_get_text(g_statusbar.left_label), sbuf) != 0) setLabelIfChanged(g_statusbar.left_label, sbuf);
@@ -59238,7 +59723,13 @@ static void updateGlobalStatusBar() {
     // The OSM credit is longer than the usual left-zone text, so render it in the
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
+#if defined(HAS_TDECK_PRO)
+    // Only at Normal text size. The bar itself keeps its Normal faces at every size
+    // (sbFixed), but above Normal the name is left off it.
+    const bool home_name = tab == HOME_TAB_INDEX && !touchPrefsGetHideNodeName() && touchPrefsGetUiScale() == 0;
+#else
     const bool home_name = tab == HOME_TAB_INDEX && !touchPrefsGetHideNodeName();
+#endif
     sbFont(g_statusbar.left_label,
 #if defined(TLORA_PAGER)
                                tab == MAP_TAB_INDEX ? pagerMapFont() : &g_font_14,
@@ -59271,7 +59762,7 @@ static void updateGlobalStatusBar() {
         lv_area_t ca;
         lv_obj_get_coords(g_statusbar.clock, &ca);
         const lv_coord_t room = ca.x1 - lv_obj_get_x(g_statusbar.root) - 6 - SC(6);
-        if (lv_txt_get_width(credit, strlen(credit), &g_font_12, 0, LV_TEXT_FLAG_NONE) > room)
+        if (lv_txt_get_width(credit, strlen(credit), sbFixed(&g_font_12), 0, LV_TEXT_FLAG_NONE) > room)
           sbFont(g_statusbar.left_label, &lv_font_montserrat_12, LV_PART_MAIN);
       }
 #endif
@@ -60671,17 +61162,10 @@ static const char* hwMonShort(int m) {
                                 TR("Jul"), TR("Aug"), TR("Sep"), TR("Oct"), TR("Nov"), TR("Dec") };
   return mon[m % 12];
 }
-static const char* hwDayLong(int wd) {
-  const char* const day[7] = { TR("Sunday"), TR("Monday"), TR("Tuesday"), TR("Wednesday"),
-                               TR("Thursday"), TR("Friday"), TR("Saturday") };
-  return day[wd % 7];
-}
-static const char* hwMonLong(int m) {
-  const char* const mon[12] = { TR("January"), TR("February"), TR("March"), TR("April"),
-                                TR("May"), TR("June"), TR("July"), TR("August"),
-                                TR("September"), TR("October"), TR("November"), TR("December") };
-  return mon[m % 12];
-}
+// The lock screen's tables (lockDayName / lockMonthName): one copy of the names in
+// the image instead of two (the Tanmatsu's AppFS size ceiling).
+static inline const char* hwDayLong(int wd) { return lockDayName(wd); }
+static inline const char* hwMonLong(int m)  { return lockMonthName(m); }
 
 // ---- Arrange ------------------------------------------------------------------------
 // Hold a widget (or an empty cell) or use Settings > Display > Home. A header takes
@@ -67455,6 +67939,7 @@ static void openChannelScopeModal(int slot, const char* name) {
   }
   lv_dropdown_set_options(region_picker, options);
   styleDropdown(region_picker);
+  lv_obj_set_user_data(region_picker, (void*)"Known regions");   // picker page title on the T-Deck Pro
   lv_obj_add_event_cb(region_picker, chanScopeRegionPickCb, LV_EVENT_VALUE_CHANGED, nullptr);
   if (registry.count() == 0) lv_obj_add_state(region_picker, LV_STATE_DISABLED);
 #endif
@@ -74332,7 +74817,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW;   // top safe-area + one row (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+    // (Not the T-Deck Pro: its bar keeps the Normal faces at every size, see sbFixed.)
     // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
     // needs two extra pixels to avoid clipping regular one-row status text.
     const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
@@ -78116,10 +78602,22 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     const bool is_mention = channel && text && textMentionsMe(text);
     const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
     const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    if (!isBuzzerQuiet() && !dndActive()) {   // master Sound switch / Do Not Disturb: either silences everything
-      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) uiPlaySlot(TOUCH_SND_MEN);
-      else if (is_dm) { if (touchPrefsGetSoundDirect()) uiPlaySlot(TOUCH_SND_DM); }
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          uiPlaySlot(TOUCH_SND_MSG);
+    // Master Sound switch silences the chime only; Do Not Disturb silences chime and vibration.
+    const bool want_sound = !isBuzzerQuiet() && !dndActive();
+#if defined(HAS_UI_VIBRATE)
+    const bool want_vib = touchPrefsGetVibrate() && !dndActive();
+#else
+    const bool want_vib = false;
+#endif
+    if (want_sound || want_vib) {
+      int slot = -1;
+      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) slot = TOUCH_SND_MEN;
+      else if (is_dm) { if (touchPrefsGetSoundDirect()) slot = TOUCH_SND_DM; }
+      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          slot = TOUCH_SND_MSG;
+      if (slot >= 0 && want_sound) uiPlaySlot(slot);
+#if defined(HAS_UI_VIBRATE)
+      if (slot >= 0 && want_vib)   uiVibrateSlot(slot);
+#endif
     }
   }
 #endif
@@ -78448,7 +78946,7 @@ void UITask::notify(UIEventType t) {
   // Background traffic (also reflected in the tab badges): show a subtle, low-key
   // chip rather than the prominent centre alert toast, so it's less intrusive.
   // New-contact discovery can be spammy in a busy mesh, so its chip is opt-out in
-  // Settings -> Auto-add; when suppressed we still log the diag line + tab badge.
+  // Settings -> Contact Management; when suppressed we still log the diag line + tab badge.
   const bool toast = (t != UIEventType::newContactMessage) || touchPrefsGetNewContactToast();
   if (toast) {
     strncpy(_alert, msg, sizeof(_alert) - 1);
@@ -80387,6 +80885,9 @@ void UITask::loop() {
 #endif
   wifiScanService();          // draw Wi-Fi scan results when the worker finishes
   ctDeleteServiceTick();      // chunked contacts bulk-delete (advances the progress bar)
+#if CAP_CONTACT_PURGE
+  contactPurgeService();      // Settings > Contact Management: remove old contacts (#719)
+#endif
 
   // Accidental tab-switch guard: while content is actively being scrolled (and
   // for a short grace period after the scroll ends), make the bottom tab bar
@@ -80707,6 +81208,9 @@ static const PopupEnt k_popup_registry[] = {
 #endif
   { P_OPEN(s_accent_picker),         []{ accentPickerClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_tz_picker),             []{ tzPickerClose(); },              PF_COUNT },
+#if defined(HAS_TDECK_PRO)
+  { P_OPEN(s_dd_picker),             []{ ddPickerClose(); },              PF_COUNT },
+#endif
   { P_OPEN(s_chanscope_modal),       []{ chanScopeClose(); },             PF_COUNT | PF_SWIPE },
   { P_OPEN(s_blocked_modal),         []{ blockedModalClose(); },          PF_COUNT | PF_SWIPE },
   { P_OPEN(s_regions_modal),         []{ regionsModalClose(); },          PF_COUNT },   // was in no registry at all (#449)

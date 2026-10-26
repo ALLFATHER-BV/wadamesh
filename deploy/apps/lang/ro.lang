@@ -147,6 +147,7 @@ Broker host / IP	Gazdă broker / IP
 Buffered receive (experimental)	Recepţie cu buffer (experimental)
 Built-in	Încorporat
 Built-in (default)	Încorporat (implicit)
+Default	Implicit
 CR	CR
 Calibrate battery (full = 100%)	Calibrează bateria (plină = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Calibrat: 100%% = %u.%02u V  (apasă lung pentru resetare)
@@ -2185,3 +2186,13 @@ F11 on the keyboard steps through these too.	Tasta F11 de pe tastatură trece ș
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Auto	Auto
 Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.
+Rooms	Rooms
+Auto-delete: on	Ştergere automată: pornită
+Auto-delete: off	Ştergere automată: oprită
+Contact Management	Gestionare contacte
+Delete after %d days	Şterge după %d zile
+Removed %d old contact(s)	%d contacte vechi eliminate
+Pulse	Puls
+Gentle	Blând
+Long	Lung
+Heartbeat	Bătăi de inimă

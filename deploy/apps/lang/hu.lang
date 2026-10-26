@@ -147,6 +147,7 @@ Broker host / IP	Broker host / IP
 Buffered receive (experimental)	Pufferelt fogadás (kísérleti)
 Built-in	Beépített
 Built-in (default)	Beépített (alapértelmezett)
+Default	Alapértelmezett
 CR	CR
 Calendar	Naptár
 Calibrate battery (full = 100%)	Akkumulátor kalibrálása (full = 100%)
@@ -2194,3 +2195,13 @@ F11 on the keyboard steps through these too.	A billentyűzet F11 gombja is végi
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Auto	Auto
 Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.
+Rooms	Rooms
+Auto-delete: on	Automatikus törlés: be
+Auto-delete: off	Automatikus törlés: ki
+Contact Management	Névjegykezelés
+Delete after %d days	Törlés %d nap után
+Removed %d old contact(s)	%d régi névjegy törölve
+Pulse	Pulzus
+Gentle	Gyengéd
+Long	Hosszú
+Heartbeat	Szívverés

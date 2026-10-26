@@ -361,7 +361,7 @@ which is why the console needed far fewer new commands than the UI has screens.
 | Battery | `batt` | **done** |
 | Wi-Fi | `wifi` (state only) | partial |
 | Bluetooth | none | gap |
-| Auto-add | none | gap |
+| Contact Management | none | gap |
 | Display / Keyboard / Sound / Lock screen | none | not meaningful without the UI |
 | Quick replies | none | gap |
 | Backups | none | gap |

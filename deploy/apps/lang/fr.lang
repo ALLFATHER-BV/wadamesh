@@ -147,6 +147,7 @@ Broker host / IP	Hôte / IP du broker
 Buffered receive (experimental)	Réception tamponnée (expérimental)
 Built-in	Intégré
 Built-in (default)	Intégré (par défaut)
+Default	Par défaut
 CR	CR
 Calibrate battery (full = 100%)	Étalonner la batterie (plein = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Étalonné : 100%% = %u.%02u V  (appui long pour réinitialiser)
@@ -2183,3 +2184,13 @@ F11 on the keyboard steps through these too.	F11 sur le clavier parcourt aussi c
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Auto	Auto
 Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto essaie les vitesses courantes jusqu'à ce que le GPS réponde et garde celle qui fonctionne. Choisir une vitesse seulement si Auto n'en trouve pas. S'applique après un redémarrage.
+Rooms	Rooms
+Auto-delete: on	Suppression auto : activée
+Auto-delete: off	Suppression auto : désactivée
+Contact Management	Gestion des contacts
+Delete after %d days	Supprimer après %d jours
+Removed %d old contact(s)	%d ancien(s) contact(s) supprimé(s)
+Pulse	Impulsion
+Gentle	Doux
+Long	Long
+Heartbeat	Battement de cœur

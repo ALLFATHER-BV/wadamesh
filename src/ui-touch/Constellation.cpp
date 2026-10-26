@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "Constellation.h"
+#include "device_caps.h"   // CAP_DATE_WRAP
 
 #include <initializer_list>
 #include <math.h>
@@ -231,6 +232,20 @@ lv_obj_t* row(lv_obj_t* parent, lv_coord_t gap) {
 
 const lv_font_t* small() { return s_th.small ? s_th.small : LV_FONT_DEFAULT; }
 const lv_font_t* strong() { return s_th.strong ? s_th.strong : small(); }
+// Large or Huge text on a portrait panel: the status face is taller than the Normal one,
+// so the lines at the bottom (or top) edge get more room.
+bool bigText() {
+#if !CAP_DATE_WRAP
+  return false;   // a landscape-only panel (device_caps.h)
+#else
+  return s_portrait && lv_font_get_line_height(small()) > lv_font_get_line_height(&lv_font_montserrat_12);
+#endif
+}
+#if !CAP_DATE_WRAP
+constexpr int s_date_lines = 1;   // never wrapped there (setDate)
+#else
+int s_date_lines = 1;   // 2 when the date is wrapped (setDate)
+#endif
 
 // Recency to opacity. A node heard in the last ten minutes is solid; one not
 // heard for six hours is a ghost. This is the part that makes a quiet night
@@ -1033,18 +1048,21 @@ void reserveHud() {
   const lv_coord_t g = K(4);
   boxTake({ (lv_coord_t)(s_cx - K(14)), (lv_coord_t)(s_cy - K(14)), (lv_coord_t)(s_cx + K(14)), (lv_coord_t)(s_cy + K(14)) });
   boxTake(s_north_box);   // the N, wherever the turn has it
-  const lv_coord_t clock_block = K(14) + ch + K(7) + lh + g;
+  const lv_coord_t clock_block = K(14) + ch + K(7) + lh * s_date_lines + g;
   if (s_portrait) {
     const bool top = (s_hud & 1) == 0;
     const lv_coord_t x0 = s_w / 2 - cw / 2 - g, x1 = s_w / 2 + cw / 2 + g;
+    // The unread count and the mesh line, as placeHud stacks them.
+    const lv_coord_t band_bot = bigText() ? K(12) + 2 * lh + g : K(30) + lh + g;
+    const lv_coord_t band_top = bigText() ? K(22) + 2 * lh + g : K(30) + lh + g;
     if (top) {
       boxTake({ x0, 0, x1, clock_block });
       boxTake({ (lv_coord_t)(s_w - K(70)), 0, s_w, (lv_coord_t)(K(6) + lh + g) });
-      boxTake({ 0, (lv_coord_t)(s_h - K(30) - lh - g), s_w, s_h });
+      boxTake({ 0, (lv_coord_t)(s_h - band_bot), s_w, s_h });
     } else {
       boxTake({ x0, (lv_coord_t)(s_h - clock_block), x1, s_h });
       boxTake({ (lv_coord_t)(s_w - K(70)), (lv_coord_t)(s_h - K(6) - lh - g), s_w, s_h });
-      boxTake({ 0, 0, s_w, (lv_coord_t)(K(30) + lh + g) });
+      boxTake({ 0, 0, s_w, band_top });
     }
   } else {
     const bool right = s_hud == 1 || s_hud == 2, bottom = s_hud >= 2;
@@ -1074,18 +1092,21 @@ void placeHud() {
   else               lv_obj_add_flag(s_clock, LV_OBJ_FLAG_HIDDEN);
   const lv_coord_t stack = s_clock_shown ? clock_h + K(7) : 0;   // the date under the clock
   if (s_portrait) {
+    // Large / Huge text: the mesh line sits lower, and the unread count a full line
+    // above it, where the Normal offsets left the taller lines overlapping.
+    const bool big = bigText();
     if ((s_hud & 1) == 0) {
       lv_obj_align(s_clock, LV_ALIGN_TOP_MID, 0, K(14));
       lv_obj_align(s_date, LV_ALIGN_TOP_MID, 0, K(14) + stack);
       lv_obj_align(s_batt, LV_ALIGN_TOP_RIGHT, -K(10), K(6));
-      lv_obj_align(s_unread, LV_ALIGN_BOTTOM_MID, 0, -K(30));
-      lv_obj_align(s_info, LV_ALIGN_BOTTOM_MID, 0, -K(12));
+      lv_obj_align(s_unread, LV_ALIGN_BOTTOM_MID, 0, big ? -(K(6) + lh + K(6)) : -K(30));
+      lv_obj_align(s_info, LV_ALIGN_BOTTOM_MID, 0, big ? -K(6) : -K(12));
     } else {
       lv_obj_align(s_date, LV_ALIGN_BOTTOM_MID, 0, -K(14));
-      lv_obj_align(s_clock, LV_ALIGN_BOTTOM_MID, 0, -(K(14) + lh + K(7)));
+      lv_obj_align(s_clock, LV_ALIGN_BOTTOM_MID, 0, -(K(14) + lh * s_date_lines + K(7)));
       lv_obj_align(s_batt, LV_ALIGN_BOTTOM_RIGHT, -K(10), -K(6));
       lv_obj_align(s_unread, LV_ALIGN_TOP_MID, 0, K(12));
-      lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, K(12) + lh + K(6));
+      lv_obj_align(s_info, LV_ALIGN_TOP_MID, 0, K(12) + lh + (big ? K(10) : K(6)));
     }
     return;
   }
@@ -1103,7 +1124,7 @@ void placeHud() {
     lv_obj_align(s_batt, far_bot, -sx * K(14), -K(10));
   } else {
     lv_obj_align(s_date, near_bot, sx * K(15), -K(12));
-    lv_obj_align(s_clock, near_bot, sx * K(14), -(K(12) + lh + K(7)));
+    lv_obj_align(s_clock, near_bot, sx * K(14), -(K(12) + lh * s_date_lines + K(7)));
     lv_obj_align(s_unread, far_bot, -sx * K(14), -K(12));
     lv_obj_align(s_info, near_top, sx * K(14), K(10));
     lv_obj_align(s_batt, far_top, -sx * K(14), K(10));
@@ -1112,6 +1133,33 @@ void placeHud() {
 void placeClock(bool shown) {
   s_clock_shown = shown;
   placeHud();
+}
+// The date, on two lines when one does not fit across the screen (Large or Huge text
+// on a portrait panel): "SUN" over "12 JUN", or "CLOCK NOT SET" over the uptime.
+void setDate(const char* date) {
+#if !CAP_DATE_WRAP
+  lv_label_set_text(s_date, date);   // always one line there (device_caps.h)
+#else
+  char b[48];
+  snprintf(b, sizeof b, "%s", date);
+  int lines = 1;
+  if (lv_txt_get_width(b, (uint32_t)strlen(b), small(), K1(1), LV_TEXT_FLAG_NONE) > s_w - 2 * K(10)) {
+    char* cut = strstr(b, " \xC2\xB7 ");   // " · "
+    if (cut) {
+      *cut = '\n';
+      memmove(cut + 1, cut + 4, strlen(cut + 4) + 1);
+    } else {
+      cut = strchr(b, ' ');
+      if (cut) *cut = '\n';
+    }
+    if (cut) lines = 2;
+  }
+  lv_label_set_text(s_date, b);
+  if (lines != s_date_lines) {
+    s_date_lines = lines;
+    placeHud();
+  }
+#endif
 }
 
 void hudOpaExec(void* var, int32_t v) {
@@ -1285,6 +1333,9 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   lv_obj_set_style_text_letter_space(s_clock, -K1(1), 0);
   s_date  = text(s_scene, small(), s_th.sub);
   lv_obj_set_style_text_letter_space(s_date, K1(1), 0);
+#if CAP_DATE_WRAP
+  if (s_portrait) lv_obj_set_style_text_align(s_date, LV_TEXT_ALIGN_CENTER, 0);   // a wrapped date (setDate)
+#endif
 
   s_unread = row(s_scene, K(3));
   {
@@ -1452,7 +1503,7 @@ void cstSetStatus(const CstStatus& s) {
   const bool all = !s_st_set;
   if (all || strcmp(s.clock, s_st.clock) != 0) lv_label_set_text(s_clock, s.clock);
   if (all || s.clock_ok != s_st.clock_ok) placeClock(s.clock_ok);
-  if (all || strcmp(s.date, s_st.date) != 0) lv_label_set_text(s_date, s.date);
+  if (all || strcmp(s.date, s_st.date) != 0) setDate(s.date);
   if (all || s.unread != s_st.unread || strcmp(s.unread_word, s_st.unread_word) != 0) {
     if (s.unread > 0) {
       char b[8];

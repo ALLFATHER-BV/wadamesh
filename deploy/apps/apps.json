@@ -52,7 +52,7 @@
     {
       "id": "wardrive",
       "name": "Wardrive",
-      "ver": "1.2",
+      "ver": "1.3",
       "radio": "own",
       "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV, then plots the run back on the map so you can check coverage before driving it again. Reference app for wada.mesh.discover.",
       "requires": "sdk_ext"
@@ -129,7 +129,7 @@
     {
       "id": "spaceinvaders",
       "name": "Space Invaders",
-      "ver": "1.0",
+      "ver": "1.1",
       "desc": "Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.",
       "icon": "game",
       "seed": false
