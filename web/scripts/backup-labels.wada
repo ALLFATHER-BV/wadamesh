@@ -1,0 +1,23 @@
+# #741: backups named by date, or "Default". Seed the data dir first (SPIFFS root =
+# internal backups):
+#   mkdir -p "$WADA_DATA_DIR/spiffs"; for n in meshcore-backup-20260612-101500 \
+#     meshcore-backup-20260612-183000 meshcore-backup-20261020-090000 meshcore-backup mybackup; do
+#     echo '{}' > "$WADA_DATA_DIR/spiffs/$n.json"; done
+#   web/build-host/wadamesh-host --headless --script web/scripts/backup-labels.wada --shots <dir>
+# Expect in backups-saved: 2026-10-20 | 2026-06-12 · 18:30 | 2026-06-12 · 10:15 (same day:
+# the time is added) | Default · Internal | Default · Internal 2 (no date in the name).
+wait 5000
+tap 60 283
+wait 3000
+tap 720 456
+wait 1500
+wheel 400 300 400
+wait 800
+wheel 400 300 400
+wait 800
+tap 600 335
+wait 1500
+wheel 400 300 400
+wait 800
+shot backups-saved
+quit
