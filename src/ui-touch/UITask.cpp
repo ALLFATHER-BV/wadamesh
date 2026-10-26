@@ -20340,6 +20340,39 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
   return true;
 }
 
+#if defined(ESP32)
+// The Wi-Fi switches (Home "Switches" widget, control centre, Settings > Wi-Fi). Turning
+// the radio on from cold starts the driver and joins at once in main.cpp, and that first
+// join does not always take on the S3 boards; the 10 s retry after it erases the AP and
+// stays "disconnected". The Settings > Wi-Fi page hid this: opening it scans, and a scan
+// ends with a fresh apply on the running driver, which joins. So every switch gets that
+// apply too: once STA has been up for a few seconds without a link, ask for one rejoin
+// (wifiSwitchRejoinService). The Pager has its own ordered cold start; the Tanmatsu's
+// Wi-Fi lives on its C6.
+#if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
+static uint32_t s_wifi_switch_rejoin_ms = 0;   // when the wait started; 0 = nothing pending
+static const uint32_t WIFI_SWITCH_REJOIN_MS = 4000;
+static void wifiSwitchRejoinService() {
+  if (!s_wifi_switch_rejoin_ms) return;
+  if (!wifiConfigWantsWifi() || !wifiConfigHasRuntime() || WiFi.status() == WL_CONNECTED) {
+    s_wifi_switch_rejoin_ms = 0;   // switched off again, nothing to join, or it joined
+  } else if (WiFi.getMode() == WIFI_MODE_NULL || wifiScanIsActive()) {
+    s_wifi_switch_rejoin_ms = millis();   // the driver is not up yet, or a scan owns it
+  } else if ((uint32_t)(millis() - s_wifi_switch_rejoin_ms) >= WIFI_SWITCH_REJOIN_MS) {
+    s_wifi_switch_rejoin_ms = 0;
+    Serial.println("[wifi] switched on, not joined: rejoining on the running driver");
+    wifiConfigRequestApply();   // main.cpp: disconnect(false, false) + begin, as after a scan
+  }
+}
+#endif
+static void wifiRadioSwitch(bool on) {
+  wifiConfigSetRadioEnabled(on);
+#if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
+  s_wifi_switch_rejoin_ms = on ? millis() : 0;
+#endif
+}
+#endif
+
 // "Scan" button -> open the popup + queue a scan on the core-0 worker. If Wi-Fi
 // is off, prepare the radio first, then let the main loop initialize it before
 // the worker lists networks.
@@ -20387,6 +20420,9 @@ static void wifiKickScan() {
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
 static void wifiScanMainService() {
+#if !defined(TLORA_PAGER)
+  wifiSwitchRejoinService();
+#endif
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
     if (WiFi.status() == WL_CONNECTED) {
@@ -20509,7 +20545,7 @@ static void wifiRadioToggleCb(lv_event_t* e) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   if (on && !wifiPrepareEnable(lv_event_get_target(e))) return;
-  wifiConfigSetRadioEnabled(on);
+  wifiRadioSwitch(on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi on") : TR("Wi-Fi off"), 800);
   refreshStatusLabels();
 #endif
@@ -53256,7 +53292,7 @@ static void ccWifiCb(lv_event_t* e) {
   // releases NimBLE so Wi-Fi can claim its allocation first.
   const bool on = wifiConfigGetRadioEnabled();
   if (!on && !wifiPrepareEnable()) { openControlCenter(); return; }
-  wifiConfigSetRadioEnabled(!on);
+  wifiRadioSwitch(!on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi off") : TR("Wi-Fi on"), 800);
   openControlCenter();
 #endif
@@ -62158,7 +62194,7 @@ static void hwToggleFlip(uint8_t id) {
     case HWT_WIFI: {
       const bool on = wifiConfigGetRadioEnabled();
       if (!on && !wifiPrepareEnable()) return;
-      wifiConfigSetRadioEnabled(!on);
+      wifiRadioSwitch(!on);   // the same path as the Settings switch, rejoin included
       break;
     }
     case HWT_BT:
