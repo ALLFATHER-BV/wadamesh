@@ -39,7 +39,7 @@ WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/d
 WADA_FW_DATE="$(date '+%-d %b %Y')"
 IDF_ARGS=(-B build/tanmatsu \
   -DDEVICE=tanmatsu \
-  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh" \
+  -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh;sdkconfigs/wadamesh_tanmatsu" \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4)
 

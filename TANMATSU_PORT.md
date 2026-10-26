@@ -40,7 +40,7 @@ wiring carry over.
 
 IDF-app build lives in **`tanmatsu/`** (badge.team Makefile + project-local IDF **v5.5.1**
 in `tanmatsu/esp-idf`, gitignored). Build via **`./tanmatsu/build.sh <target>`** (wraps
-`idf.py -DDEVICE=tanmatsu -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh" -DIDF_TARGET=esp32p4`).
+`idf.py -DDEVICE=tanmatsu -DSDKCONFIG_DEFAULTS="sdkconfigs/general;sdkconfigs/tanmatsu;sdkconfigs/wadamesh;sdkconfigs/wadamesh_tanmatsu" -DIDF_TARGET=esp32p4`).
 Toolchain: PlatformIO already had the riscv32-esp P4 toolchain; IDF cloned via the Makefile
 + `idf_tools.py install cmake ninja` (the targeted `install.sh esp32p4` skips those).
 
