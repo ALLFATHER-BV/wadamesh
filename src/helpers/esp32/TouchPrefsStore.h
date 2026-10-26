@@ -777,7 +777,13 @@ bool touchPrefsSetSetupDone(bool done);
  *  override lets the user match their hardware without a rebuild. Read at GPS
  *  init; `fallback` is the compile-time default. Applied on reboot. */
 uint32_t touchPrefsGetGpsBaud(uint32_t fallback);
-bool     touchPrefsSetGpsBaud(uint32_t baud);
+bool     touchPrefsSetGpsBaud(uint32_t baud);   // 0 = no choice ("Auto")
+/** Whether the user picked a speed (touchPrefsSetGpsBaud with a non-zero baud). */
+bool     touchPrefsGpsBaudChosen();
+/** The speed the probe locked on while nothing was picked (CAP_GPS_BAUD_FIND
+ *  boards). touchPrefsGetGpsBaud returns it when there is no choice, so the next
+ *  start opens the UART at the right speed. Written only when it changes. */
+void     touchPrefsSetGpsBaudFound(uint32_t baud);
 
 /** Mesh signal auto-discover probe. When ON (default), the firmware periodically
  *  sends a flood advert so nearby repeaters re-broadcast it and we can measure

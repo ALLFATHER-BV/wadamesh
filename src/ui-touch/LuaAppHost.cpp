@@ -73,7 +73,8 @@ extern void luaHostDiscoverClear();
 extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
                               int* type, int* rssi, float* snr, float* their_snr, int* hops,
                               uint32_t* first_ms_ago, uint32_t* last_ms_ago, int* heard);
-extern void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*));
+extern void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*),
+                              uint32_t max_len);
 extern void luaHostEmojiPick(void (*cb)(const char*));
 extern void luaHostTextPromptDismiss();
 extern void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
@@ -1090,6 +1091,7 @@ int sysCaps(lua_State* L) {
   // an app can degrade instead of erroring on firmware that predates them.
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "discover");   // wada.mesh.discover
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "input");      // wada.ui.input
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "input_len");  // wada.ui.input's max_len
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "rx_identity");// rx_log pubkey/src/dst
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
@@ -2728,7 +2730,7 @@ void netDeliver(lv_timer_t* t) {
   serviceDeferredClose();
 }
 
-// ---- wada.ui.input(title, initial, cb) --------------------------------------
+// ---- wada.ui.input(title, initial, cb [, max_len]) ---------------------------
 // One modal text field, using the same dialog and on-screen keyboard the rest of
 // the firmware uses -- so it behaves identically on a touchscreen, on the
 // Tanmatsu's physical keyboard and on a trackball board, which an app drawing
@@ -2736,7 +2738,9 @@ void netDeliver(lv_timer_t* t) {
 //
 // cb(text) on OK, cb(nil) on cancel or on the dialog being closed any other way.
 // Exactly one call, always: an app that disabled itself while waiting for input
-// will always get the chance to re-enable.
+// will always get the chance to re-enable. max_len is in characters: 63 when left
+// out (what every app before it got), at most kInputMaxLen. The text lives in the
+// LVGL field only while the dialog is open, so a long one costs nothing after.
 void promptDeliver(const char* text) {
   if (!s_h || !s_h->L || s_h->prompt_cb == LUA_NOREF) return;
   lua_State* L = s_h->L;
@@ -2781,13 +2785,17 @@ int uiInput(lua_State* L) {
   const char* title_raw = luaL_optlstring(L, 1, "", &title_length);
   const char* initial_raw = luaL_optlstring(L, 2, "", &initial_length);
   luaL_checktype(L, 3, LUA_TFUNCTION);
+  static const lua_Integer kInputDefaultLen = 63, kInputMaxLen = 2000;
+  lua_Integer max_len = luaL_optinteger(L, 4, kInputDefaultLen);
+  if (max_len < 1) max_len = 1;
+  if (max_len > kInputMaxLen) max_len = kInputMaxLen;
   if (!s_h) return luaL_error(L, "no app");
   if (s_h->prompt_cb != LUA_NOREF) return luaL_error(L, "an input prompt is already open");
   const char* title = safeUiText(title_raw, title_length, nullptr, 0);
   const char* initial = safeUiText(initial_raw, initial_length, nullptr, 1);
   lua_pushvalue(L, 3);
   s_h->prompt_cb = luaL_ref(L, LUA_REGISTRYINDEX);
-  luaHostTextPrompt(title, initial, promptDeliver);
+  luaHostTextPrompt(title, initial, promptDeliver, (uint32_t)max_len);
   return 0;
 }
 

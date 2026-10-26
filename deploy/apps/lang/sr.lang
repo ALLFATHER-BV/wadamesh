@@ -1690,7 +1690,6 @@ Text console	Text console
 Text size	Text size
 Text size saved, restarting to apply it…	Text size saved, restarting to apply it…
 The MQTT bridge is not in this build.	The MQTT bridge is not in this build.
-The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.	The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.
 The arrows and Enter always work. These letters are extra: tap a row, then press a key.	The arrows and Enter always work. These letters are extra: tap a row, then press a key.
 The tab keys, over the navigation bar's icons.	The tab keys, over the navigation bar's icons.
 The touchscreen ignores taps until you unlock.	The touchscreen ignores taps until you unlock.
@@ -2183,3 +2182,5 @@ Powering off… press reset to wake	Гашење… притисните reset �
 Low	Low
 F11 on the keyboard steps through these too.	Тастер F11 на тастатури такође пролази кроз ове нивое.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
+Auto	Ауто
+Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.

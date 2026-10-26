@@ -18245,8 +18245,14 @@ static void buildDisplayPage() {
 static void gpsBaudPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int i = setChoiceIndex(e);
+#if CAP_GPS_BAUD_FIND
+  // Tile 0 is Auto: no choice, so the probe finds the speed (0 clears the choice).
+  if (i < 0 || i > kGpsBaudCount) return;
+  touchPrefsSetGpsBaud(i == 0 ? 0 : kGpsBaudOpts[i - 1]);
+#else
   if (i < 0 || i >= kGpsBaudCount) return;
   touchPrefsSetGpsBaud(kGpsBaudOpts[i]);
+#endif
   setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
   if (g_lv.task) g_lv.task->showAlert(TR("Applies after a restart."), 1600);
 }
@@ -18315,15 +18321,18 @@ static void buildGpsPage() {
 #endif
     int picked = 0;
     for (int i = 0; i < kGpsBaudCount; i++) if (kGpsBaudOpts[i] == cur) { picked = i; break; }
+#if CAP_GPS_BAUD_FIND
+    const char* bauds[] = { TR("Auto"), "9600", "19200", "38400", "57600", "115200" };
+    setChoiceRow(c, "Serial speed", "Auto tries the common speeds until the GPS answers and keeps the one that "
+                 "works. Pick a speed only if Auto does not find it. Applies after a restart.",
+                 bauds, kGpsBaudCount + 1, touchPrefsGpsBaudChosen() ? picked + 1 : 0, gpsBaudPickCb);
+#elif CAP_GPS_BAUD_AUTO
     const char* bauds[] = { "9600", "19200", "38400", "57600", "115200" };
-#if CAP_GPS_BAUD_AUTO
     setChoiceRow(c, "Serial speed", "Found automatically: when the GPS does not answer at this speed, the device "
                  "tries the others and keeps the one that works. This is where it starts.",
                  bauds, kGpsBaudCount, picked, gpsBaudPickCb);
-#elif defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)
-    setChoiceRow(c, "Serial speed", "The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.",
-                 bauds, kGpsBaudCount, picked, gpsBaudPickCb);
 #else
+    const char* bauds[] = { "9600", "19200", "38400", "57600", "115200" };
     setChoiceRow(c, "Serial speed", "The speed your GPS module talks at. Applies after a restart.",
                  bauds, kGpsBaudCount, picked, gpsBaudPickCb);
 #endif
@@ -20331,6 +20340,39 @@ static bool wifiPrepareEnable(lv_obj_t* switch_to_revert = nullptr) {
   return true;
 }
 
+#if defined(ESP32)
+// The Wi-Fi switches (Home "Switches" widget, control centre, Settings > Wi-Fi). Turning
+// the radio on from cold starts the driver and joins at once in main.cpp, and that first
+// join does not always take on the S3 boards; the 10 s retry after it erases the AP and
+// stays "disconnected". The Settings > Wi-Fi page hid this: opening it scans, and a scan
+// ends with a fresh apply on the running driver, which joins. So every switch gets that
+// apply too: once STA has been up for a few seconds without a link, ask for one rejoin
+// (wifiSwitchRejoinService). The Pager has its own ordered cold start; the Tanmatsu's
+// Wi-Fi lives on its C6.
+#if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
+static uint32_t s_wifi_switch_rejoin_ms = 0;   // when the wait started; 0 = nothing pending
+static const uint32_t WIFI_SWITCH_REJOIN_MS = 4000;
+static void wifiSwitchRejoinService() {
+  if (!s_wifi_switch_rejoin_ms) return;
+  if (!wifiConfigWantsWifi() || !wifiConfigHasRuntime() || WiFi.status() == WL_CONNECTED) {
+    s_wifi_switch_rejoin_ms = 0;   // switched off again, nothing to join, or it joined
+  } else if (WiFi.getMode() == WIFI_MODE_NULL || wifiScanIsActive()) {
+    s_wifi_switch_rejoin_ms = millis();   // the driver is not up yet, or a scan owns it
+  } else if ((uint32_t)(millis() - s_wifi_switch_rejoin_ms) >= WIFI_SWITCH_REJOIN_MS) {
+    s_wifi_switch_rejoin_ms = 0;
+    Serial.println("[wifi] switched on, not joined: rejoining on the running driver");
+    wifiConfigRequestApply();   // main.cpp: disconnect(false, false) + begin, as after a scan
+  }
+}
+#endif
+static void wifiRadioSwitch(bool on) {
+  wifiConfigSetRadioEnabled(on);
+#if !defined(TLORA_PAGER) && !defined(HAS_TANMATSU)
+  s_wifi_switch_rejoin_ms = on ? millis() : 0;
+#endif
+}
+#endif
+
 // "Scan" button -> open the popup + queue a scan on the core-0 worker. If Wi-Fi
 // is off, prepare the radio first, then let the main loop initialize it before
 // the worker lists networks.
@@ -20378,6 +20420,9 @@ static void wifiKickScan() {
 // never eraseap, which wedges this radio). Drop the link, let the disassoc settle,
 // then kick the worker; wifiScanService rejoins once results land.
 static void wifiScanMainService() {
+#if !defined(TLORA_PAGER)
+  wifiSwitchRejoinService();
+#endif
   if (s_wifiscan_drop_req) {
     s_wifiscan_drop_req = false;
     if (WiFi.status() == WL_CONNECTED) {
@@ -20500,7 +20545,7 @@ static void wifiRadioToggleCb(lv_event_t* e) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   if (on && !wifiPrepareEnable(lv_event_get_target(e))) return;
-  wifiConfigSetRadioEnabled(on);
+  wifiRadioSwitch(on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi on") : TR("Wi-Fi off"), 800);
   refreshStatusLabels();
 #endif
@@ -26926,13 +26971,14 @@ static void fmPromptClose() {
   if (!s_fm_prompt_ok) luaHostTextPromptCancel();
 #endif
 }
-static void fmPromptOkCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+// OK, from the button or from Enter in the field (handleHwKey). The text is copied
+// whole before the dialog goes: a wada.ui.input field can hold up to 2000 characters.
+static void fmPromptSubmit() {
   if (!s_fm_prompt_ta) { fmPromptClose(); return; }
   kbMirrorSyncToReal();
-  char buf[80];
   const char* t = lv_textarea_get_text(s_fm_prompt_ta);
-  snprintf(buf, sizeof buf, "%s", t ? t : "");
+  char* buf = strdup(t ? t : "");
+  if (!buf) { fmPromptClose(); return; }
   void (*cb)(const char*) = s_fm_prompt_cb;
   // Empty text is a cancel, not a delivery, unless the caller asked for it.
   const bool deliver = cb && (buf[0] || s_fm_prompt_allow_empty);
@@ -26940,12 +26986,18 @@ static void fmPromptOkCb(lv_event_t* e) {
   fmPromptClose();
   s_fm_prompt_ok = false;
   if (deliver) cb(buf);
+  free(buf);
+}
+static void fmPromptOkCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  fmPromptSubmit();
 }
 static void fmPromptCancelCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   fmPromptClose();
 }
-static void fmTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+static void fmTextPrompt(const char* title, const char* initial, void (*cb)(const char*),
+                         uint32_t max_len = 63) {
   fmPromptClose();
   s_fm_prompt_cb = cb;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -26979,7 +27031,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_align(s_fm_prompt_ta, LV_ALIGN_TOP_MID, 0, 24);
   styleCard(s_fm_prompt_ta);
   lv_textarea_set_one_line(s_fm_prompt_ta, true);
-  lv_textarea_set_max_length(s_fm_prompt_ta, 63);
+  lv_textarea_set_max_length(s_fm_prompt_ta, max_len);
   lv_obj_set_style_text_font(s_fm_prompt_ta, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_prompt_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   if (initial) lv_textarea_set_text(s_fm_prompt_ta, initial);
@@ -51982,6 +52034,17 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
+    // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
+    // OK. Through the generic path below it moved the focus to the next control, which
+    // is Cancel, so a second Enter cancelled and wada.ui.input handed the app nil.
+    if (s_fm_prompt_ta && ta == s_fm_prompt_ta) {
+#if CAP_KEYPAD_NAV
+      s_nav_ta_editing = false;
+#endif
+      fmPromptSubmit();
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
@@ -53277,7 +53340,7 @@ static void ccWifiCb(lv_event_t* e) {
   // releases NimBLE so Wi-Fi can claim its allocation first.
   const bool on = wifiConfigGetRadioEnabled();
   if (!on && !wifiPrepareEnable()) { openControlCenter(); return; }
-  wifiConfigSetRadioEnabled(!on);
+  wifiRadioSwitch(!on);
   if (g_lv.task) g_lv.task->showAlert(on ? TR("Wi-Fi off") : TR("Wi-Fi on"), 800);
   openControlCenter();
 #endif
@@ -62179,7 +62242,7 @@ static void hwToggleFlip(uint8_t id) {
     case HWT_WIFI: {
       const bool on = wifiConfigGetRadioEnabled();
       if (!on && !wifiPrepareEnable()) return;
-      wifiConfigSetRadioEnabled(!on);
+      wifiRadioSwitch(!on);   // the same path as the Settings switch, rejoin included
       break;
     }
     case HWT_BT:
@@ -71392,12 +71455,13 @@ void luaHostEmojiPick(void (*cb)(const char*)) {
   openEmojiPickerPick(luaEmojiDeliver, TR("Emoji"));   // resets pick state as it opens
   s_lua_emoji_cb = cb;                                 // arm AFTER, like the text prompt
 }
-void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*),
+                       uint32_t max_len) {
   luaHostTextPromptCancel();              // a second prompt cancels the first
   // Register the callback AFTER the dialog exists. fmTextPrompt opens with its
   // own fmPromptClose(), which reports a cancel to whatever is pending -- so
   // setting cb first made every prompt fire cb(nil) before the user saw it.
-  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver);
+  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver, max_len);
   s_lua_prompt_cb = cb;
 }
 #endif
@@ -79820,6 +79884,14 @@ void UITask::loop() {
     tdeckKeyboardDiscardModifiers();
   else
     tdeckKeyboardAllowModifiers();
+  // The controller answered the way only an older one does (each byte of the read
+  // repeating the character): save "Older keyboard protocol" so the next boot skips
+  // the probe. A newer controller never sends that reply, so this is not a guess.
+  if (tdeckKeyboardTakeLegacyEvidence() && !touchPrefsGetKbForceLegacy()) {
+    touchPrefsSetKbForceLegacy(true);
+    tdeckKeyboardForceLegacy(true);
+    deviceRefreshLabels();
+  }
   // Drain physical-keyboard presses buffered by the touch task into the field.
   for (int kbi = 0; kbi < 12; ++kbi) {
     int key = tdeckKeyboardReadKey();

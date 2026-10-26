@@ -28,6 +28,10 @@ void tdeckKeyboardForceLegacy(bool on);
 enum : uint8_t { TDECK_KB_PROBING = 0, TDECK_KB_RAW = 1, TDECK_KB_LEGACY = 2 };
 uint8_t tdeckKeyboardDetectedMode();
 
+/** True once (then false) after the controller sent the reply only an older
+ *  controller sends, so the UI can save "Older keyboard protocol". UI thread. */
+bool tdeckKeyboardTakeLegacyEvidence();
+
 /** Read one key over I2C and push it into the ring. CORE-0 ONLY (touch task). */
 void tdeckKeyboardPoll();
 

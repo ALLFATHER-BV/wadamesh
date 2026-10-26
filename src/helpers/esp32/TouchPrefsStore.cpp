@@ -2885,11 +2885,31 @@ bool touchPrefsSetSetupDone(bool done) {
   return ok;
 }
 
+// The speed the GPS probe last locked on while the user had not picked one. Its own
+// key, outside the settings blob, so an older firmware never reads it as a choice.
+static const char* LK_GPS_BAUD_FOUND = "gps_bd_fd";
+static bool gpsBaudSane(uint32_t baud) { return baud >= 4800 && baud <= 921600; }
+
 uint32_t touchPrefsGetGpsBaud(uint32_t fallback) {
   if (!s_begun) touchPrefsBegin();
-  // 0 = never set -> caller's compile-time default. A real configured baud is
-  // always non-zero, so this preserves the old "absent key -> fallback" result.
-  return s_cfg.gps_baud != 0 ? s_cfg.gps_baud : fallback;
+  // 0 = never set -> the speed the probe found, else the caller's compile-time
+  // default. A real configured baud is always non-zero, so this preserves the
+  // old "absent key -> fallback" result where nothing was ever found.
+  if (s_cfg.gps_baud != 0) return s_cfg.gps_baud;
+  const uint32_t found = s_prefs.isKey(LK_GPS_BAUD_FOUND) ? s_prefs.getUInt(LK_GPS_BAUD_FOUND, 0) : 0;
+  return gpsBaudSane(found) ? found : fallback;
+}
+
+bool touchPrefsGpsBaudChosen() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.gps_baud != 0;
+}
+
+void touchPrefsSetGpsBaudFound(uint32_t baud) {
+  if (!s_begun) touchPrefsBegin();
+  if (!gpsBaudSane(baud)) return;
+  if (s_prefs.isKey(LK_GPS_BAUD_FOUND) && s_prefs.getUInt(LK_GPS_BAUD_FOUND, 0) == baud) return;
+  prefsPutUInt(LK_GPS_BAUD_FOUND, baud);
 }
 
 bool touchPrefsSetGpsBaud(uint32_t baud) {

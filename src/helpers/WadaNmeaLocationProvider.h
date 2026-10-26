@@ -54,6 +54,10 @@ class WadaNmeaLocationProvider : public LocationProvider {
   uint32_t _active_baud = 0;
   uint32_t _probe_deadline_ms = 0;
   bool _stream_locked = false;
+  // Probe only while the user has not picked a speed, and keep what it finds apart
+  // from that choice (CAP_GPS_BAUD_FIND boards). Off: the probe always runs and the
+  // speed it finds becomes the setting (CAP_GPS_BAUD_AUTO boards).
+  bool _keep_choice = false;
   bool _ubx_standby = false;      // rest in software standby (setUbxStandby)
   uint8_t _wake_tries = 0;
   uint32_t _wake_check_ms = 0;    // when begin() looks for the stream again (0: not waiting)
@@ -119,8 +123,10 @@ class WadaNmeaLocationProvider : public LocationProvider {
     if (!_probe_serial || _stream_locked) return;
     _stream_locked = true;
     _probe_deadline_ms = 0;
-    if (touchPrefsGetGpsBaud(_probe_default_baud) != _active_baud)
-      (void)touchPrefsSetGpsBaud(_active_baud);
+    if (touchPrefsGetGpsBaud(_probe_default_baud) == _active_baud) return;
+    // One write per change of receiver, from the loop task (a valid sentence, not input).
+    if (_keep_choice) touchPrefsSetGpsBaudFound(_active_baud);
+    else              (void)touchPrefsSetGpsBaud(_active_baud);
   }
 
 public:
@@ -151,8 +157,9 @@ public:
 
   WadaNmeaLocationProvider(HardwareSerial& ser, mesh::RTCClock* clock,
                            int pin_reset, int pin_en, int serial_rx, int serial_tx,
-                           uint32_t default_baud)
+                           uint32_t default_baud, bool keep_choice = false)
       : WadaNmeaLocationProvider(static_cast<Stream&>(ser), clock, pin_reset, pin_en) {
+    _keep_choice = keep_choice;
     _probe_serial = &ser;
     _probe_rx = (int8_t)serial_rx;
     _probe_tx = (int8_t)serial_tx;
@@ -195,8 +202,10 @@ public:
     if (_probe_serial) {
       _active_baud = touchPrefsGetGpsBaud(_probe_default_baud);
       _probe_cursor = 0;
-      _stream_locked = false;
-      _probe_deadline_ms = millis() + BAUD_PROBE_START_MS;
+      // A speed the user picked is used as it is: no probe, nothing saved.
+      const bool probe = !(_keep_choice && touchPrefsGpsBaudChosen());
+      _stream_locked = !probe;
+      _probe_deadline_ms = probe ? millis() + BAUD_PROBE_START_MS : 0;
       nudgeReceiver();
     }
     ubxGnss(true);

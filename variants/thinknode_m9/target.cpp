@@ -37,7 +37,11 @@ ClockFloorRTC rtc_clock(
 // Wadamesh's own provider rather than the core's MicroNMEALocationProvider:
 // identical behaviour, plus the RMC speed/course the core keeps private (see
 // src/helpers/WadaNmeaLocationProvider.h for why it is a copy, not a subclass).
-WadaNmeaLocationProvider gps(Serial1, &rtc_clock);
+// With the UART probe: M9 receivers ship at 115200 or 9600 depending on the
+// revision, so the speed is found while the user has not picked one in Settings
+// (CAP_GPS_BAUD_FIND). The ESP receives on PIN_GPS_TX (the core's naming).
+WadaNmeaLocationProvider gps(Serial1, &rtc_clock, GPS_RESET, GPS_EN,
+                             PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE, true /*keep_choice*/);
 EnvironmentSensorManager sensors(gps);
 
 #ifdef DISPLAY_CLASS

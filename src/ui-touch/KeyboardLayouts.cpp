@@ -874,8 +874,10 @@ static const char* hw_nl_upper[26] = {
 static const char* hw_nl_digits[10]       = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static const char* hw_nl_digits_shift[10] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 
-/* Spanish stays close to US QWERTY; use the number row to expose n-tilde on
- * compact hardware where the semicolon key is absent. */
+/* Spanish stays close to US QWERTY. The digits stay digits (#747): n-tilde comes
+ * from the accent box after an 'n', like every other accented Latin letter, and on
+ * the T-Deck the only digits there are the Sym layer's, so a remap took them away
+ * (and '!' with them, through the shifted-symbol fallback below). */
 static const char* hw_es_lower[26] = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -886,10 +888,12 @@ static const char* hw_es_upper[26] = {
     "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
     "U", "V", "W", "X", "Y", "Z"
 };
-static const char* hw_es_digits[10]       = { nullptr, "ñ", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-static const char* hw_es_digits_shift[10] = { nullptr, "Ñ", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_es_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
+static const char* hw_es_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
-/* Italian uses the number row to surface the common accented vowels directly. */
+/* Italian keeps the digits (#747: Sym+W/E/R typed à è ì instead of 1 2 3, and
+ * '!' '@' '#' turned into À È Ì through the shifted-symbol fallback). The accented
+ * vowels come from the accent box after the vowel, as for Spanish and Romanian. */
 static const char* hw_it_lower[26] = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -900,11 +904,11 @@ static const char* hw_it_upper[26] = {
     "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
     "U", "V", "W", "X", "Y", "Z"
 };
-static const char* hw_it_digits[10]       = { nullptr, "à", "è", "ì", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
-static const char* hw_it_digits_shift[10] = { nullptr, "À", "È", "Ì", nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static const char* hw_it_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
+static const char* hw_it_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
-/* Romanian keeps the standard alpha matrix; the number row surfaces the five
- * special letters on compact hardware (same trick as Italian's accented vowels). */
+/* Romanian keeps the standard alpha matrix and the digits (#747, as Italian): the
+ * five special letters come from the accent box after a, i, s or t. */
 static const char* hw_ro_lower[26] = {
     "a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
     "k", "l", "m", "n", "o", "p", "q", "r", "s", "t",
@@ -915,8 +919,8 @@ static const char* hw_ro_upper[26] = {
     "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T",
     "U", "V", "W", "X", "Y", "Z"
 };
-static const char* hw_ro_digits[10]       = { nullptr, "ă", "â", "î", "ş", "ţ", nullptr, nullptr, nullptr, nullptr };
-static const char* hw_ro_digits_shift[10] = { nullptr, "Ă", "Â", "Î", "Ş", "Ţ", nullptr, nullptr, nullptr, nullptr };
+static const char* hw_ro_digits[10]       = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
+static const char* hw_ro_digits_shift[10] = { nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr };
 
 /* Latvian keeps the standard a..z alpha matrix (identical to English, matching
  * the on-screen deck above); the number row surfaces the eight macron/cedilla

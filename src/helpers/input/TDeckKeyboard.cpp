@@ -79,12 +79,27 @@ static void processRawFrame(const uint8_t frame[TDeckKeyboardState::COLS], uint3
 // in byte 0 with padding after it. A real matrix frame puts one bit per pressed
 // key in that key's own column, so three or more bits in byte 0 with every other
 // column empty is not something the hardware can report.
-static bool looksLikeAscii(const uint8_t frame[TDeckKeyboardState::COLS]) {
-  for (size_t col = 1; col < TDeckKeyboardState::COLS; ++col) if (frame[col]) return false;
+//
+// Some older controllers do not pad: they repeat the character for every byte of
+// the read, so a 'q' (0x71) arrives as 71 71 71 71 71. Read as columns that is
+// rows 0, 4, 5 and 6 held in all five columns, and one press typed a burst like
+// "QERUOXV$ ZNMFJ". Twenty keys held at once is not something a hand does, so
+// columns equal to byte 0 count as the same reply.
+static bool looksLikeAscii(const uint8_t frame[TDeckKeyboardState::COLS], bool* repeated = nullptr) {
+  size_t reps = 0;
+  for (size_t col = 1; col < TDeckKeyboardState::COLS; ++col) {
+    if (!frame[col]) continue;
+    if (frame[col] != frame[0]) return false;
+    ++reps;
+  }
   if (frame[0] < 0x20 || frame[0] > 0x7E) return false;   // must be a printable character
   int bits = 0;
   for (int b = 0; b < 8; ++b) if (frame[0] & (1u << b)) ++bits;
-  return bits > 2;
+  // The same byte in all five columns is a repeat even for ' ', '0' or '!' (five or
+  // ten keys at once); a partial repeat needs the three-bit test like a padded reply.
+  if (bits <= 2 && reps < TDeckKeyboardState::COLS - 1) return false;
+  if (repeated) *repeated = reps > 0;
+  return true;
 }
 
 // Verified against the real tables rather than assumed:
@@ -95,6 +110,26 @@ static bool looksLikeAscii(const uint8_t frame[TDeckKeyboardState::COLS]) {
 //     {q, w, a, space} held at once and nothing else. The printable-range test
 //     above removes q+w+a (0x0B); what remains are combinations including space,
 //     which is a fumble rather than typing, and costs a reboot to undo.
+
+// Bits set across a frame. A raw frame where a whole hand's worth of keys went down
+// in one poll is a controller answering in a format we do not read, not typing.
+static int frameBits(const uint8_t frame[TDeckKeyboardState::COLS]) {
+  int bits = 0;
+  for (size_t col = 0; col < TDeckKeyboardState::COLS; ++col)
+    for (int b = 0; b < 8; ++b) if (frame[col] & (1u << b)) ++bits;
+  return bits;
+}
+static const int kBurstBits = 8;
+
+// Set on core 0 when a controller showed the repeated-character reply, which only an
+// older controller sends. The UI thread takes it once and saves the older protocol,
+// so the next boot skips the probe (tdeckKeyboardTakeLegacyEvidence).
+static volatile bool s_legacy_evidence = false;
+bool tdeckKeyboardTakeLegacyEvidence() {
+  if (!s_legacy_evidence) return false;
+  s_legacy_evidence = false;
+  return true;
+}
 
 static void processLegacyKey(uint8_t key) {
   portENTER_CRITICAL(&s_keyboard_mux);
@@ -204,6 +239,22 @@ void tdeckKeyboardPoll() {
     for (size_t col = 0; col < sizeof frame && shape_ok; ++col)
       if (frame[col] & 0x80) shape_ok = false;
 
+    bool repeated = false;
+    if (shape_ok && looksLikeAscii(frame, &repeated) && repeated) {
+      keyboardCommand(0x04);
+      s_mode = KeyboardMode::Legacy;
+      s_legacy_evidence = true;
+      Serial.printf("[keyboard] T-Deck legacy mode: controller repeated a character "
+                    "(0x%02X) across the frame\n", frame[0]);
+      processLegacyKey(frame[0]);
+      return;
+    }
+    if (shape_ok && frameBits(frame) >= kBurstBits) {   // see the raw branch below
+      keyboardCommand(0x04);
+      s_mode = KeyboardMode::Legacy;
+      Serial.println("[keyboard] T-Deck legacy mode: probe frame held too many keys at once");
+      return;
+    }
     if (shape_ok) {
       bool cols1plus = false;
       for (size_t col = 1; col < sizeof frame; ++col) if (frame[col]) cols1plus = true;
@@ -255,12 +306,24 @@ void tdeckKeyboardPoll() {
     // in byte 0 with three or four bits set, which no single key press can
     // produce. Demote on the spot and deliver the character, so the worst case
     // is one odd keystroke rather than a keyboard that types nonsense forever.
-    if (looksLikeAscii(frame)) {
+    bool repeated = false;
+    if (looksLikeAscii(frame, &repeated)) {
       keyboardCommand(0x04);
       s_mode = KeyboardMode::Legacy;
+      if (repeated) s_legacy_evidence = true;
       Serial.printf("[keyboard] T-Deck legacy mode: raw guess withdrawn, controller sent a "
-                    "character (0x%02X)\n", frame[0]);
+                    "character (0x%02X)%s\n", frame[0], repeated ? ", repeated" : "");
       processLegacyKey(frame[0]);
+      return;
+    }
+    // Any other reply that reads as eight or more keys at once: drop it and use the
+    // older protocol for this session. Losing modifier latching is the cost of being
+    // wrong; typing garbage is the cost of not doing it. Not saved, as the shape is
+    // not one we have seen from a real controller.
+    if (frameBits(frame) >= kBurstBits) {
+      keyboardCommand(0x04);
+      s_mode = KeyboardMode::Legacy;
+      Serial.println("[keyboard] T-Deck legacy mode: raw frame held too many keys at once");
       return;
     }
     processRawFrame(frame, millis());

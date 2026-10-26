@@ -1708,7 +1708,6 @@ Text console	Konsola tekstowa
 Text size	Rozmiar tekstu
 Text size saved, restarting to apply it…	Rozmiar tekstu został zapisany, uruchamiam ponownie, aby go zastosować…
 The MQTT bridge is not in this build.	W tej wersji nie ma mostka MQTT.
-The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.	T-Deck Plus wykorzystuje 38400, T-Deck 1.0 9600. Obowiązuje po ponownym uruchomieniu.
 The arrows and Enter always work. These letters are extra: tap a row, then press a key.	Strzałki i Enter zawsze działają. Te litery są dodatkowe: dotknij wiersza, a następnie naciśnij klawisz.
 The tab keys, over the navigation bar's icons.	Klawisze tabulatora nad ikonami paska nawigacyjnego.
 The touchscreen ignores taps until you unlock.	Ekran dotykowy ignoruje dotknięcia, dopóki nie odblokujesz.
@@ -2196,3 +2195,5 @@ Powering off… press reset to wake	Wyłączanie… naciśnij reset, aby obudzi�
 Low	Niski
 F11 on the keyboard steps through these too.	F11 na klawiaturze również przechodzi przez te czynności.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi zostało wyłączone, ponieważ urządzenie uległo awarii, gdy było włączone. Włącz tę opcję w Ustawieniach > Wi-Fi, aby spróbować ponownie.
+Auto	Auto
+Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.
