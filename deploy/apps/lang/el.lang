@@ -2185,3 +2185,12 @@ Low	Low
 F11 on the keyboard steps through these too.	Το F11 στο πληκτρολόγιο εναλλάσσει επίσης αυτά τα επίπεδα.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Rooms	Rooms
+Auto-delete: on	Αυτόματη διαγραφή: ενεργή
+Auto-delete: off	Αυτόματη διαγραφή: ανενεργή
+Contact Management	Διαχείριση επαφών
+Delete after %d days	Διαγραφή μετά από %d ημέρες
+Removed %d old contact(s)	Αφαιρέθηκαν %d παλιές επαφές
+Pulse	Παλμός
+Gentle	Απαλό
+Long	Μακρύ
+Heartbeat	Καρδιακός παλμός

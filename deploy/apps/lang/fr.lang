@@ -2184,3 +2184,12 @@ Low	Low
 F11 on the keyboard steps through these too.	F11 sur le clavier parcourt aussi ces niveaux.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Rooms	Rooms
+Auto-delete: on	Suppression auto : activée
+Auto-delete: off	Suppression auto : désactivée
+Contact Management	Gestion des contacts
+Delete after %d days	Supprimer après %d jours
+Removed %d old contact(s)	%d ancien(s) contact(s) supprimé(s)
+Pulse	Impulsion
+Gentle	Doux
+Long	Long
+Heartbeat	Battement de cœur

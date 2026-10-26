@@ -2195,3 +2195,12 @@ Low	Low
 F11 on the keyboard steps through these too.	A billentyűzet F11 gombja is végiglépked ezeken.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Rooms	Rooms
+Auto-delete: on	Automatikus törlés: be
+Auto-delete: off	Automatikus törlés: ki
+Contact Management	Névjegykezelés
+Delete after %d days	Törlés %d nap után
+Removed %d old contact(s)	%d régi névjegy törölve
+Pulse	Pulzus
+Gentle	Gyengéd
+Long	Hosszú
+Heartbeat	Szívverés

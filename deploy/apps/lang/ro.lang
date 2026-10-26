@@ -2186,3 +2186,12 @@ Low	Low
 F11 on the keyboard steps through these too.	Tasta F11 de pe tastatură trece și ea prin aceste niveluri.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Rooms	Rooms
+Auto-delete: on	Ştergere automată: pornită
+Auto-delete: off	Ştergere automată: oprită
+Contact Management	Gestionare contacte
+Delete after %d days	Şterge după %d zile
+Removed %d old contact(s)	%d contacte vechi eliminate
+Pulse	Puls
+Gentle	Blând
+Long	Lung
+Heartbeat	Bătăi de inimă

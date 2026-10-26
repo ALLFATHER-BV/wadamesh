@@ -2201,3 +2201,12 @@ Low	Low
 F11 on the keyboard steps through these too.	Klávesa F11 na klávesnici přepíná tyto úrovně také.
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Rooms	Rooms
+Auto-delete: on	Automatické mazání: zapnuto
+Auto-delete: off	Automatické mazání: vypnuto
+Contact Management	Správa kontaktů
+Delete after %d days	Smazat po %d dnech
+Removed %d old contact(s)	Odstraněno starých kontaktů: %d
+Pulse	Puls
+Gentle	Jemný
+Long	Dlouhý
+Heartbeat	Tep srdce
