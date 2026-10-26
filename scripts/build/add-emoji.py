@@ -13,31 +13,31 @@ from PIL import Image
 from emoji_common import PX, ROOT, fetch, fetch_flag, to_rgb565a8
 
 OUTDIR = os.path.join(ROOT, "src", "ui-touch")
-OUTC = os.path.join(OUTDIR, "emoji_data.c")
-OUTH = os.path.join(OUTDIR, "emoji_data.h")
+OUTC   = os.path.join(OUTDIR, "emoji_data.c")
+OUTH   = os.path.join(OUTDIR, "emoji_data.h")
 
 # Single-codepoint emoji: (codepoint, noto-filename-stem)
 SINGLE = [
-    (0x26BD, "26bd"),  # soccer ball   âš½
-    (0x1F3C8, "1f3c8"),  # american football  ðŸ
-    (0x1F5FF, "1f5ff"),  # moai  ðŸ—¿
+    (0x26BD,  "26bd"),    # soccer ball   âš½
+    (0x1F3C8, "1f3c8"),   # american football  ðŸ
+    (0x1F5FF, "1f5ff"),   # moai  ðŸ—¿
     # objects/food listed in the picker (k_emoji_items) but never baked -> they
     # rendered as the notdef box on-device (the beta_38 "emoji tofu"). Bake them.
-    (0x2614, "2614"),  # umbrella with rain
-    (0x2615, "2615"),  # hot beverage
-    (0x1F355, "1f355"),  # pizza
-    (0x1F382, "1f382"),  # birthday cake
-    (0x1F680, "1f680"),  # rocket
-    (0x1F4F7, "1f4f7"),  # camera
-    (0x1F4F1, "1f4f1"),  # mobile phone
-    (0x1F4BB, "1f4bb"),  # laptop
-    (0x1F310, "1f310"),  # globe with meridians (Web app icon)
-    (0x1F4C5, "1f4c5"),  # calendar
-    (0x1F4E1, "1f4e1"),  # satellite antenna
-    (0x1F4E7, "1f4e7"),  # e-mail
-    (0x1F3E0, "1f3e0"),  # house
-    (0x1F697, "1f697"),  # car
-    (0x231A, "231a"),  # watch (sat between car + bulb in the picker, still tofu)
+    (0x2614,  "2614"),    # umbrella with rain
+    (0x2615,  "2615"),    # hot beverage
+    (0x1F355, "1f355"),   # pizza
+    (0x1F382, "1f382"),   # birthday cake
+    (0x1F680, "1f680"),   # rocket
+    (0x1F4F7, "1f4f7"),   # camera
+    (0x1F4F1, "1f4f1"),   # mobile phone
+    (0x1F4BB, "1f4bb"),   # laptop
+    (0x1F310, "1f310"),   # globe with meridians (Web app icon)
+    (0x1F4C5, "1f4c5"),   # calendar
+    (0x1F4E1, "1f4e1"),   # satellite antenna
+    (0x1F4E7, "1f4e7"),   # e-mail
+    (0x1F3E0, "1f3e0"),   # house
+    (0x1F697, "1f697"),   # car
+    (0x231A,  "231a"),    # watch (sat between car + bulb in the picker, still tofu)
 ]
 # ZWJ sequences baked as ONE combined image, keyed on the lead codepoint, with the
 # trailing visible symbol(s) mapped to the zero-width glyph. Keep the full codepoint
@@ -45,12 +45,8 @@ SINGLE = [
 # platform text shaping. (Noto drops FE0F selectors from png filenames.)
 SEQ = [
     # (key_cp, noto-stem, [extra cps -> zero], full codepoint sequence)
-    (
-        0x1F3F3,
-        "1f3f3_200d_26a7",
-        [0x26A7],
-        [0x1F3F3, 0xFE0F, 0x200D, 0x26A7, 0xFE0F],
-    ),  # transgender flag
+    (0x1F3F3, "1f3f3_200d_26a7", [0x26A7],
+     [0x1F3F3, 0xFE0F, 0x200D, 0x26A7, 0xFE0F]),  # transgender flag
 ]
 
 
@@ -62,13 +58,13 @@ SEQ = [
 # is safe — and the picker currently has no other flag using these indicators.
 FLAGS = [
     # (lead_cp, trail_cp, ISO-3166-alpha-2)
-    (0x1F1F1, 0x1F1F8, "LS"),  # Lesotho
+    (0x1F1F1, 0x1F1F8, "LS"),   # Lesotho
 ]
 
 
 # ---- bake the new glyphs ----
-new_defs = []  # (cp, ename, bytes)
-new_entries = []  # (cp, ref)
+new_defs    = []   # (cp, ename, bytes)
+new_entries = []   # (cp, ref)
 sequence_entries = []  # (UTF-8 bytes, composite glyph key)
 for cp, stem in SINGLE:
     fn = fetch(stem)
@@ -82,9 +78,7 @@ for key_cp, stem, zeros, sequence in SEQ:
         sys.exit("FAILED to fetch combined {} for U+{:X}".format(stem, key_cp))
     new_defs.append((key_cp, "e_{:x}".format(key_cp), to_rgb565a8(Image.open(fn))))
     new_entries.append((key_cp, "d_{:x}".format(key_cp)))
-    sequence_entries.append(
-        ("".join(chr(cp) for cp in sequence).encode("utf-8"), key_cp)
-    )
+    sequence_entries.append(("".join(chr(cp) for cp in sequence).encode("utf-8"), key_cp))
     for z in zeros:
         new_entries.append((z, "d_zero"))
 
@@ -100,14 +94,14 @@ for lead_cp, trail_cp, iso in FLAGS:
 src = open(OUTC).read()
 TYPE_MARK = "\ntypedef struct { uint32_t cp;"
 FUNC_MARK = "const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp) {"
-head = src[: src.index(TYPE_MARK)]  # header + includes + all glyph defs
-if "#include <string.h>" not in head:
-    head = head.replace(
-        '#include "emoji_data.h"', '#include "emoji_data.h"\n#include <string.h>', 1
-    )
+head = src[:src.index(TYPE_MARK)]                 # header + includes + all glyph defs
+head = re.sub(r"(?m)^#include <string.h>\n", "", head)
+head = head.replace(
+    '#include "emoji_data.h"', '#include "emoji_data.h"\n#include <string.h>', 1
+)
 func_start = src.index(FUNC_MARK)
 func_end = src.find("\nconst lv_img_dsc_t* emojiGlyphSequenceLookup", func_start)
-func = src[func_start : func_end if func_end >= 0 else len(src)]  # binary-search getter
+func = src[func_start:func_end if func_end >= 0 else len(src)]  # binary-search getter
 
 # Idempotency: on a RE-RUN, `head` still holds the e_/d_ glyph defs spliced in by a
 # PRIOR run (they live before the typedef), so blindly re-appending new_defs would
@@ -119,12 +113,10 @@ for _cp, _ename, _data in new_defs:
     head = re.sub(r"static const lv_img_dsc_t d_" + _hx + r" = [^;]*;\n", "", head)
 
 # Existing lookup entries (includes the FE0F/FE0E/200D -> d_zero rows).
-existing = [
-    (int(cp, 16), ref)
-    for cp, ref in re.findall(r"\{\s*(0x[0-9A-Fa-f]+)u,\s*&(\w+)\s*\}", src)
-]
+existing = [(int(cp, 16), ref) for cp, ref in
+            re.findall(r"\{\s*(0x[0-9A-Fa-f]+)u,\s*&(\w+)\s*\}", src)]
 bycp = {cp: ref for cp, ref in existing}
-for cp, ref in new_entries:  # new cps win; never demote a real glyph to zero
+for cp, ref in new_entries:                       # new cps win; never demote a real glyph to zero
     if not (ref == "d_zero" and bycp.get(cp, "d_zero") != "d_zero"):
         bycp[cp] = ref
 entries = sorted(bycp.items())
@@ -133,16 +125,9 @@ count = sum(1 for _, ref in entries if ref != "d_zero")
 # New glyph array + dsc definitions (appended after the existing ones).
 defs = []
 for cp, ename, data in new_defs:
-    defs.append(
-        "static const uint8_t {}[] = {{{}}};".format(
-            ename, ",".join(str(b) for b in data)
-        )
-    )
-    defs.append(
-        "static const lv_img_dsc_t d_{:x} = {{ {{ LV_IMG_CF_TRUE_COLOR_ALPHA, 0, 0, {}, {} }}, sizeof({}), {} }};".format(
-            cp, PX, PX, ename, ename
-        )
-    )
+    defs.append("static const uint8_t {}[] = {{{}}};".format(ename, ",".join(str(b) for b in data)))
+    defs.append("static const lv_img_dsc_t d_{:x} = {{ {{ LV_IMG_CF_TRUE_COLOR_ALPHA, 0, 0, {}, {} }}, sizeof({}), {} }};"
+                .format(cp, PX, PX, ename, ename))
 
 out = []
 out.append(head.rstrip("\n"))
@@ -177,9 +162,7 @@ open(OUTC, "w").write("\n".join(out))
 
 # ---- header comment count ----
 h = open(OUTH).read()
-h = re.sub(
-    r"// \d+ Noto colour emoji", "// {} Noto colour emoji".format(count), h, count=1
-)
+h = re.sub(r"// \d+ Noto colour emoji", "// {} Noto colour emoji".format(count), h, count=1)
 if "emojiGlyphSequenceLookup" not in h:
     h = h.replace(
         "const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp);",
@@ -190,8 +173,5 @@ if "emojiGlyphSequenceLookup" not in h:
     )
 open(OUTH, "w").write(h)
 
-print(
-    "added {} glyphs -> {} total ({} lookup rows incl zero-width)".format(
-        len(new_defs), count, len(entries)
-    )
-)
+print("added {} glyphs -> {} total ({} lookup rows incl zero-width)".format(
+    len(new_defs), count, len(entries)))
