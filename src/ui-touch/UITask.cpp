@@ -8324,6 +8324,9 @@ static void ssaverSetEnabled(bool on);        // Settings > Display (bridge abov
 static void ssaverSetBatterySecs(uint8_t secs);
 static void ssaverSetAlwaysOnPower(bool on);
 static void ssaverRequestPreview();
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverSetNorthLock(bool on);
+#endif
 #endif
 
 #if !defined(HAS_TANMATSU)
@@ -17376,11 +17379,11 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
 // screensaver off, so the main switch greys them out. Only the main switch's
 // callback reads these, and it can only fire while the sheet that set them is
 // open; lv_obj_is_valid is the belt to that.
-struct SsaverRowRefs { lv_obj_t* batt; lv_obj_t* pwr; lv_obj_t* preview; };
-static SsaverRowRefs s_ssaver_rows = { nullptr, nullptr, nullptr };
+struct SsaverRowRefs { lv_obj_t* batt; lv_obj_t* pwr; lv_obj_t* preview; lv_obj_t* north; };
+static SsaverRowRefs s_ssaver_rows = { nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ssaver_batt_value = nullptr;   // "15 sec" over the battery slider
 static void ssaverRowsEnable(bool on) {
-  lv_obj_t* const objs[3] = { s_ssaver_rows.batt, s_ssaver_rows.pwr, s_ssaver_rows.preview };
+  lv_obj_t* const objs[4] = { s_ssaver_rows.batt, s_ssaver_rows.pwr, s_ssaver_rows.preview, s_ssaver_rows.north };
   for (lv_obj_t* o : objs) {
     if (!o || !lv_obj_is_valid(o)) continue;
     if (on) lv_obj_clear_state(o, LV_STATE_DISABLED);
@@ -17397,6 +17400,12 @@ static void ssaverPowerToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   ssaverSetAlwaysOnPower(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverNorthToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  ssaverSetNorthLock(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // The battery time slider: 0..12 steps of 5 s.
 static void ssaverBattFormat(unsigned secs, char* out, size_t cap) {
   if (secs == 0)       snprintf(out, cap, "%s", TR("Off"));
@@ -18427,6 +18436,16 @@ static void buildDisplayPage() {
                                       ssaverBattChangedCb, ssaverBattReleasedCb, TR("Off"), "1 min",
                                       &s_ssaver_batt_value);
     s_ssaver_rows.pwr = setSwitchRow(c, "Always on when connected to power", nullptr, ss_pwr, ssaverPowerToggleCb);
+#if CAP_SSAVER_NORTH_LOCK
+#if defined(ESP32)
+    const bool ss_north = touchPrefsGetScreensaverNorthUp();
+#else
+    const bool ss_north = false;
+#endif
+    s_ssaver_rows.north = setSwitchRow(c, "Keep north up",
+                                       "The mesh stays put instead of slowly turning around you.",
+                                       ss_north, ssaverNorthToggleCb);
+#endif
     s_ssaver_rows.preview = setButton(c, UI_ICON_EYE, "Preview screensaver", ssaverPreviewCb);
     ssaverRowsEnable(ss_on);
   }
@@ -76599,6 +76618,9 @@ static bool     s_ssaver_cfg_loaded   = false;
 static bool     s_ssaver_enabled      = true;
 static uint32_t s_ssaver_batt_ms      = 15000;   // how long it shows on battery (0 = never)
 static bool     s_ssaver_pwr_always   = true;    // stays while external power is connected
+#if CAP_SSAVER_NORTH_LOCK
+static bool     s_ssaver_north_lock   = false;   // Keep north up: no slow turn (#706)
+#endif
 static uint32_t s_ssaver_start_ms     = 0;
 static bool     s_ssaver_seen_power   = false;   // on external power at some point while showing
 static bool     s_ssaver_preview_req  = false;
@@ -76633,6 +76655,9 @@ static void ssaverLoadCfg() {
   s_ssaver_enabled    = touchPrefsGetScreensaver();
   s_ssaver_batt_ms    = (uint32_t)touchPrefsGetScreensaverBatterySecs() * 1000u;
   s_ssaver_pwr_always = touchPrefsGetScreensaverAlwaysOnPower();
+#if CAP_SSAVER_NORTH_LOCK
+  s_ssaver_north_lock = touchPrefsGetScreensaverNorthUp();
+#endif
 #endif
 }
 static void ssaverSetEnabled(bool on) {
@@ -76657,6 +76682,15 @@ static void ssaverSetAlwaysOnPower(bool on) {
 #endif
 }
 static void ssaverRequestPreview() { s_ssaver_preview_req = true; }
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverSetNorthLock(bool on) {
+  ssaverLoadCfg();
+  s_ssaver_north_lock = on;
+#if defined(ESP32)
+  touchPrefsSetScreensaverNorthUp(on);
+#endif
+}
+#endif
 
 #if CAP_BATTERY
 static bool ssaverCharging() { return batteryIsCharging(batteryMvSmoothed()); }
@@ -76900,6 +76934,9 @@ static void ssaverStart(uint32_t now, bool preview) {
   th.ter = COLOR_TERTIARY;
   th.small = &g_font_12;
   th.strong = &g_font_semi_12;
+#if CAP_SSAVER_NORTH_LOCK
+  th.north_lock = s_ssaver_north_lock;
+#endif
   if (s_look_rainbow) {   // every node in its own hue, in the look's strength (as lookRainbow)
     th.node_sat = lookNeon() ? 100 : lookPastel() ? 36 : s_theme_day ? 80 : 72;
     th.node_val = lookNeon() || lookPastel() ? 100 : s_theme_day ? 72 : 96;
