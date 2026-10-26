@@ -75317,8 +75317,8 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   // name() against "/tiles" and so freed nothing. Walk the tree via a dir
   // queue (descends into a synthesized "tiles/" dir), list every file so we
   // can see ground truth in the Settings diag, and delete any image file
-  // (*.jpg / *.png) — no legitimate SPIFFS file is an image, so identity /
-  // contacts3 / channels2 / new_prefs / chat history are never touched.
+  // (*.jpg / *.png) outside /lock/ (wallpapers) and /apps/ (Lua app files), so
+  // identity / contacts3 / channels2 / new_prefs / chat history are never touched.
   // Only where SPIFFS is actually mounted: the P4 boards keep their data on LittleFS/FFat and never
   // mount it, so walking it there only logged "open(): File system is not mounted".
   // (totalBytes() is esp_spiffs_info, which fails silently when nothing is mounted.)
@@ -75363,8 +75363,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
                 ++listed;
               }
               size_t L = strlen(fp);
-              bool is_img = (L > 4) && (strcasecmp(fp + L - 4, ".jpg") == 0 ||
-                                        strcasecmp(fp + L - 4, ".png") == 0);
+              // Not the user's own pictures: lock-screen wallpapers live in /lock/ (the picker
+              // lists them there) and Lua apps keep their files under /apps/. Deleting those
+              // here lost an internal wallpaper on every reboot and re-seeded the placeholder.
+              const bool user_img = !strncmp(fp, "/lock/", 6) || !strncmp(fp, "/apps/", 6);
+              bool is_img = !user_img && (L > 4) && (strcasecmp(fp + L - 4, ".jpg") == 0 ||
+                                                     strcasecmp(fp + L - 4, ".png") == 0);
               if (is_img && nv < VCAP) {
                 strncpy(victims[nv], fp, PATHLEN - 1); victims[nv][PATHLEN - 1] = '\0';
                 ++nv;
