@@ -2198,3 +2198,12 @@ Long	Lang
 Heartbeat	Hartslag
 Keep north up	Noorden boven
 The mesh stays put instead of slowly turning around you.	Het netwerk blijft stilstaan in plaats van langzaam rond je te draaien.
+Map file	Kaartbestand
+Folder tiles only	Alleen tegels uit mappen
+rename the file to the folder name	geef het bestand de naam van de map
+not a PNG raster archive	geen PNG-rasterarchief
+file incomplete, copy it again	bestand onvolledig, kopieer het opnieuw
+not a PMTiles v3 file	geen PMTiles v3-bestand
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Geen kaartbestanden gevonden. Kopieer een PNG-archief naar\n/maps/<naam>/<naam>.pmtiles
+Zoom: map levels only	Zoom: alleen kaartniveaus
+No map levels found on the SD card	Geen kaartniveaus gevonden op de SD-kaart

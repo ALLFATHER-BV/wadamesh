@@ -2200,3 +2200,12 @@ Long	Longo
 Heartbeat	Batimento
 Keep north up	Norte para cima
 The mesh stays put instead of slowly turning around you.	A rede fica parada em vez de girar devagar ao seu redor.
+Map file	Arquivo de mapa
+Folder tiles only	Só tiles de pastas
+rename the file to the folder name	renomeie o arquivo com o nome da pasta
+not a PNG raster archive	não é um arquivo raster PNG
+file incomplete, copy it again	arquivo incompleto, copie de novo
+not a PMTiles v3 file	não é um arquivo PMTiles v3
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Nenhum arquivo de mapa encontrado. Copie um arquivo PNG para\n/maps/<nome>/<nome>.pmtiles
+Zoom: map levels only	Zoom: só níveis do mapa
+No map levels found on the SD card	Nenhum nível de mapa encontrado no cartão SD

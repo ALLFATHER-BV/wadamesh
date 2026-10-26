@@ -2200,3 +2200,12 @@ Long	Μακρύ
 Heartbeat	Καρδιακός παλμός
 Keep north up	Keep north up
 The mesh stays put instead of slowly turning around you.	The mesh stays put instead of slowly turning around you.
+Map file	Map file
+Folder tiles only	Folder tiles only
+rename the file to the folder name	rename the file to the folder name
+not a PNG raster archive	not a PNG raster archive
+file incomplete, copy it again	file incomplete, copy it again
+not a PMTiles v3 file	not a PMTiles v3 file
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles
+Zoom: map levels only	Zoom: map levels only
+No map levels found on the SD card	No map levels found on the SD card

@@ -26,6 +26,8 @@ extra_flags() {
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
+    # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
+    test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
     *) echo "" ;;
   esac
 }
@@ -36,6 +38,9 @@ skip_reason() {
   case "$1" in
     test_minimp3_decoder)
       echo "takes an .mp3 path on argv; it is a decoder harness, not a unit test" ;;
+    test_pmtiles)
+      # Only a fresh checkout lacks it; web/build.sh (or web/fetch-deps.sh) fetches it.
+      [ -f web/third_party/miniz/miniz_tinfl.c ] || echo "needs web/third_party/miniz: run web/fetch-deps.sh" ;;
     test_reader_content)
       # Fixing this means lifting ReaderContent out of UITask.cpp, which is a
       # refactor of a 60k-line file, not a test change. Left failing-by-design

@@ -181,6 +181,13 @@ bool touchPrefsSetMapShowLinks(bool on);
 uint8_t touchPrefsGetMapStyle();
 bool    touchPrefsSetMapStyle(uint8_t style);
 
+/** microSD PMTiles archive shown on the map, by name: "<name>" selects
+ *  /maps/<name>/<name>.pmtiles, "-" means folder tiles only, unset = automatic
+ *  (the "osm" archive if present, else the first one found). */
+constexpr int TOUCH_MAP_PMTILES_MAXLEN = 32;
+int  touchPrefsGetMapPmTiles(char* out, int out_cap);
+bool touchPrefsSetMapPmTiles(const char* name);
+
 /* App drawer: large grid (one fewer column → bigger icons + labels, for low vision).
  * Default false = the compact grid (T-Deck 4 cols / Heltec V4 3 cols). */
 bool touchPrefsGetAppGridLarge();

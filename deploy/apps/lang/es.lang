@@ -2200,3 +2200,12 @@ Long	Largo
 Heartbeat	Latido
 Keep north up	Norte arriba
 The mesh stays put instead of slowly turning around you.	La red se queda quieta en lugar de girar despacio a tu alrededor.
+Map file	Archivo de mapa
+Folder tiles only	Solo teselas de carpetas
+rename the file to the folder name	renombra el archivo como la carpeta
+not a PNG raster archive	no es un archivo ráster PNG
+file incomplete, copy it again	archivo incompleto, cópialo de nuevo
+not a PMTiles v3 file	no es un archivo PMTiles v3
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	No se encontraron archivos de mapa. Copia un archivo PNG en\n/maps/<nombre>/<nombre>.pmtiles
+Zoom: map levels only	Zoom: solo niveles del mapa
+No map levels found on the SD card	No hay niveles de mapa en la tarjeta SD

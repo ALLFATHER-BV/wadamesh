@@ -275,6 +275,17 @@
   #define CAP_MICROSD 0
 #endif
 
+// Offline maps from PMTiles PNG archives on the card (Map options -> Map file) and
+// the "Zoom: map levels only" limit. Off on the Tanmatsu: its AppFS image has well
+// under 1 KB left, and this is ~11 KB of reader + UI.
+#ifndef CAP_MAP_PMTILES
+  #if CAP_MICROSD && !defined(HAS_TANMATSU)
+    #define CAP_MAP_PMTILES 1
+  #else
+    #define CAP_MAP_PMTILES 0
+  #endif
+#endif
+
 // No dedicated "tiles" LittleFS partition in the board's own partition table, and no free flash to
 // add one without moving partitions that hold user data (16 MB maps: 2 x 4 MB OTA + 8000 KB storage
 // + coredump fill the chip). The Wi-Fi map tile cache then goes to the microSD when one is mounted,
