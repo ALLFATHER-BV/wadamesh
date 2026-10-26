@@ -6,6 +6,7 @@
 // direct neighbours, a room, stale ghosts, names with emoji in them.
 //
 //   render <width> <height> <out.bmp> [ping]
+//   (env CST_UPTIME_MS=<ms since boot>, CST_NORTH_LOCK=1: see main)
 #include "lvgl.h"
 #include "../../src/ui-touch/Constellation.h"
 
@@ -82,6 +83,10 @@ int main(int argc, char** argv) {
 
   CstTheme th = {0x000000, 0x15B6A6, 0x19D6C2, 0xE6EBED, 0x8A969C, 0x5C686E,
                  &lv_font_montserrat_12, &ui_semibold_12};
+  // CST_UPTIME_MS: how long the device has been up, which sets how far the slow turn
+  // has gone (it follows the time since boot). CST_NORTH_LOCK=1: Keep north up (#706).
+  if (const char* up = getenv("CST_UPTIME_MS")) lv_tick_inc((uint32_t)strtoul(up, nullptr, 10));
+  th.north_lock = getenv("CST_NORTH_LOCK") && getenv("CST_NORTH_LOCK")[0] == '1';
   cstShow(lv_layer_top(), th);
 
   // Index:            0 repeater (direct)        1 repeater (via 0)

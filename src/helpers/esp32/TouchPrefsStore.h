@@ -627,6 +627,9 @@ uint8_t touchPrefsGetScreensaverBatterySecs();
 void    touchPrefsSetScreensaverBatterySecs(uint8_t secs);
 bool    touchPrefsGetScreensaverAlwaysOnPower();
 void    touchPrefsSetScreensaverAlwaysOnPower(bool on);
+// Keep north up (#706): the Constellation does not turn. Standalone key, default off.
+bool    touchPrefsGetScreensaverNorthUp();
+void    touchPrefsSetScreensaverNorthUp(bool on);
 bool    touchPrefsGetLockPreviews();           // message text on the lock screen's unread cards (default true)
 void    touchPrefsSetLockPreviews(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)

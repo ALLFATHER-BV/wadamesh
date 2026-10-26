@@ -778,6 +778,17 @@
   #endif
 #endif
 
+// Settings > Display > Screensaver > "Keep north up" (#706): the Constellation stops
+// its slow turn, so north stays at the top. Off on the Tanmatsu for the AppFS ceiling
+// (see CAP_CONTACT_PURGE): its screensaver keeps turning, as before.
+#ifndef CAP_SSAVER_NORTH_LOCK
+  #if CAP_SCREENSAVER && !defined(HAS_TANMATSU)
+    #define CAP_SSAVER_NORTH_LOCK 1
+  #else
+    #define CAP_SSAVER_NORTH_LOCK 0
+  #endif
+#endif
+
 // Backups listed by their date, or "Default", instead of the file name (#739).
 // Off on the Tanmatsu for the same AppFS ceiling: it lists the file names, as
 // before. About 1 KB of code.

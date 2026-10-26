@@ -2537,6 +2537,8 @@ uint8_t touchPrefsGetScreensaverBatterySecs() {
 void touchPrefsSetScreensaverBatterySecs(uint8_t secs) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_bat", secs > 60 ? 60 : secs); }
 bool touchPrefsGetScreensaverAlwaysOnPower() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver_pwr", 1) != 0; }
 void touchPrefsSetScreensaverAlwaysOnPower(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_pwr", on ? 1 : 0); }
+bool touchPrefsGetScreensaverNorthUp() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ssaver_north", 0) != 0; }
+void touchPrefsSetScreensaverNorthUp(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ssaver_north", on ? 1 : 0); }
 bool touchPrefsGetLockPreviews() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("lock_prev", 1) != 0; }
 void touchPrefsSetLockPreviews(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_prev", on ? 1 : 0); }
 bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }

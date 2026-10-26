@@ -208,6 +208,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "KeyboardLayouts.h"
   #include "i18n.h"
   #include "emoji_data.h"     // baked Noto colour-emoji glyphs (emojiGlyphLookup)
+  #include "AvatarText.h"     // initials and the name's emoji for avatars (pure, host-tested)
   #include "qr_icon.h"        // baked recolour-able QR glyph (qr_icon_dsc) for the Chats Share button
   #if defined(WADA_WEB)
     #include <WebDisplay.h>                  // web/platform: the canvas behind the SDL window
@@ -4239,6 +4240,11 @@ static bool uiFontHasGlyph(const lv_font_t* font, uint32_t cp) {
   lv_font_glyph_dsc_t dsc{};
   return lv_font_get_glyph_dsc(font, &dsc, cp, 0);
 }
+// A real glyph somewhere in the chain, not the '*' its last font stands in with (#673).
+static bool uiFontDrawsGlyph(uint32_t cp, void* font) {
+  lv_font_glyph_dsc_t dsc{};
+  return lv_font_get_glyph_dsc((const lv_font_t*)font, &dsc, cp, 0) && !dsc.is_placeholder;
+}
 
 /**
  * Copy UTF-8 `in` → `out` (NUL-terminated, capped). Codepoints not in `font` become ASCII '*'.
@@ -5019,19 +5025,7 @@ static void taSetPlaceholder(lv_obj_t* ta, const char* txt) {
 // Uppercase for section labels, in UTF-8: ASCII, Latin-1, Latin Extended-A, Greek
 // and Cyrillic, which covers every language the firmware ships. Anything else
 // (Arabic has no case) is copied as it is.
-static uint32_t uiUpperCp(uint32_t c) {
-  if (c >= 'a' && c <= 'z') return c - 0x20;
-  if ((c >= 0xE0 && c <= 0xFE && c != 0xF7)) return c - 0x20;
-  if (c >= 0x100 && c <= 0x17F) {
-    if ((c >= 0x139 && c <= 0x148) || (c >= 0x179 && c <= 0x17E)) return (c & 1) ? c : c - 1;
-    if (c == 0x131 || c == 0x138 || c == 0x149 || c == 0x17F) return c;
-    return (c & 1) ? c - 1 : c;
-  }
-  if (c >= 0x3B1 && c <= 0x3C9) return c == 0x3C2 ? 0x3A3 : c - 0x20;
-  if (c >= 0x430 && c <= 0x44F) return c - 0x20;
-  if (c >= 0x450 && c <= 0x45F) return c - 0x50;
-  return c;
-}
+static inline uint32_t uiUpperCp(uint32_t c) { return AvatarText::upper(c); }
 static void uiUpperUtf8(char* dst, size_t cap, const char* src) {
   size_t o = 0;
   uint32_t i = 0;
@@ -5172,19 +5166,11 @@ static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool 
     lv_obj_set_style_border_width(av, 0, LV_PART_MAIN);
     const uint32_t ink = 0xE6EBED;
 #endif
-    char ini[12];
-    int o = 0, glyphs = 0;
-    const char* q = name ? name : "";
-    while (*q == '#' || *q == ' ') ++q;
-    while (*q && glyphs < 2 && o < 8) {
-      const uint8_t c = (uint8_t)*q;
-      const int len = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
-      for (int k = 0; k < len && *q; ++k) ini[o++] = *q++;
-      ++glyphs;
-    }
-    ini[o] = '\0';
-    for (char* u = ini; *u; ++u) if ((uint8_t)*u < 0x80) *u = (char)toupper((unsigned char)*u);
     const lv_font_t* f = size >= 36 ? &g_font_16 : size >= 26 ? &g_font_semi_14 : &g_font_semi_12;
+    // The first two letters or digits, in capitals, skipping emoji, symbols and
+    // accents the font cannot draw (#674): never blank, "?" at worst.
+    char ini[12];
+    AvatarText::initials(name, ini, sizeof ini, uiFontDrawsGlyph, (void*)f);
     // g_font_* grow with the UI size while the disc may not, so "PU" can spill past
     // it at Large / Huge. Step down until the letters sit inside: 3/4 of the
     // diameter keeps the text box's corners within the circle.
@@ -5193,12 +5179,12 @@ static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool 
       const int from = f == &g_font_16 ? 0 : f == &g_font_semi_14 ? 1 : 2;
       for (int i = from; i < 3; ++i) {
         f = steps[i];
-        if (lv_txt_get_width(ini[0] ? ini : "?", (uint32_t)strlen(ini[0] ? ini : "?"), f, 0, LV_TEXT_FLAG_NONE)
+        if (lv_txt_get_width(ini, (uint32_t)strlen(ini), f, 0, LV_TEXT_FLAG_NONE)
             <= size * 3 / 4) break;
       }
     }
     char txt[16];
-    copyUtf8ReplacingMissingGlyphs(f, txt, sizeof txt, ini[0] ? ini : "?");
+    copyUtf8ReplacingMissingGlyphs(f, txt, sizeof txt, ini);
     lv_obj_t* l = lv_label_create(av);
     lv_label_set_text(l, txt);
     lv_obj_set_style_text_font(l, f, LV_PART_MAIN);
@@ -5241,19 +5227,29 @@ static lv_obj_t* makeGlyphAvatar(lv_obj_t* parent, const char* name, GlyphShape 
 // place of the glyph or the initials: the baked colour emoji, centred in the same
 // tile or ball, at its native 16 px in the list's 24-28 px tiles and in proportion
 // on larger ones. No emoji, or one the set does not carry, puts the plain look back.
+// The emoji table maps the invisible joiners (U+200D, U+FE0E/FE0F) to an empty
+// 2 x 2 image so text never shows them; as an icon that image is a blank tile (#674).
+static bool emojiIconVisible(uint32_t cp, void*) {
+  const lv_img_dsc_t* d = emojiGlyphLookup(cp);
+  return d && d->header.w > 2;
+}
 static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8) {
   if (!av) return;
   const lv_img_dsc_t* eg = nullptr;
+  uint32_t lead = 0;
   if (utf8 && utf8[0]) {
     uint32_t off = 0;
-    eg = emojiGlyphLookup(_lv_txt_encoded_next(utf8, &off));   // ZWJ glyphs are keyed on their lead codepoint
+    lead = _lv_txt_encoded_next(utf8, &off);
+    if (emojiIconVisible(lead, nullptr)) eg = emojiGlyphLookup(lead);   // ZWJ glyphs are keyed on their lead codepoint
   }
   avatarApply(av, name);
   if (!eg) {
     // A text symbol from the picker's last rows (a star, a heart, a currency sign):
     // no colour glyph, so it is drawn as text in the colour the initials had (#647).
     // Before this the pick was saved and announced but the plain avatar stayed.
+    // One the font cannot draw, or a joiner, keeps the plain look instead of a blank.
     if (!utf8 || !utf8[0] || (uint8_t)utf8[0] < 0x80) return;
+    if (emojiGlyphLookup(lead) || !uiFontDrawsGlyph(lead, (void*)&g_font_16)) return;
     lv_obj_t* first = lv_obj_get_child(av, 0);
     const lv_color_t ink = first ? lv_obj_get_style_text_color(first, LV_PART_MAIN)
                                  : lv_color_hex(COLOR_TEXT);
@@ -5286,20 +5282,7 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
 // A contact's chat icon when none was picked: the first emoji in its name that has a
 // glyph (#640). Copies that character into out; false when the name has none.
 static bool nameFirstEmoji(const char* name, char* out, size_t cap) {
-  if (!name || !out || cap < 5) return false;
-  uint32_t i = 0;
-  while (name[i]) {
-    const uint32_t at = i;
-    const uint32_t cp = _lv_txt_encoded_next(name, &i);
-    if (cp == 0 || i == at) break;
-    if (cp < 0x2000 || !emojiGlyphLookup(cp)) continue;
-    const size_t n = (size_t)(i - at);
-    if (n >= cap) return false;
-    memcpy(out, name + at, n);
-    out[n] = 0;
-    return true;
-  }
-  return false;
+  return AvatarText::firstEmoji(name, out, cap, emojiIconVisible, nullptr);
 }
 
 // E-paper badges: a filled pill thresholds to solid black on the Pro, and its small
@@ -8341,6 +8324,9 @@ static void ssaverSetEnabled(bool on);        // Settings > Display (bridge abov
 static void ssaverSetBatterySecs(uint8_t secs);
 static void ssaverSetAlwaysOnPower(bool on);
 static void ssaverRequestPreview();
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverSetNorthLock(bool on);
+#endif
 #endif
 
 #if !defined(HAS_TANMATSU)
@@ -17393,11 +17379,11 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
 // screensaver off, so the main switch greys them out. Only the main switch's
 // callback reads these, and it can only fire while the sheet that set them is
 // open; lv_obj_is_valid is the belt to that.
-struct SsaverRowRefs { lv_obj_t* batt; lv_obj_t* pwr; lv_obj_t* preview; };
-static SsaverRowRefs s_ssaver_rows = { nullptr, nullptr, nullptr };
+struct SsaverRowRefs { lv_obj_t* batt; lv_obj_t* pwr; lv_obj_t* preview; lv_obj_t* north; };
+static SsaverRowRefs s_ssaver_rows = { nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ssaver_batt_value = nullptr;   // "15 sec" over the battery slider
 static void ssaverRowsEnable(bool on) {
-  lv_obj_t* const objs[3] = { s_ssaver_rows.batt, s_ssaver_rows.pwr, s_ssaver_rows.preview };
+  lv_obj_t* const objs[4] = { s_ssaver_rows.batt, s_ssaver_rows.pwr, s_ssaver_rows.preview, s_ssaver_rows.north };
   for (lv_obj_t* o : objs) {
     if (!o || !lv_obj_is_valid(o)) continue;
     if (on) lv_obj_clear_state(o, LV_STATE_DISABLED);
@@ -17414,6 +17400,12 @@ static void ssaverPowerToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   ssaverSetAlwaysOnPower(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverNorthToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  ssaverSetNorthLock(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // The battery time slider: 0..12 steps of 5 s.
 static void ssaverBattFormat(unsigned secs, char* out, size_t cap) {
   if (secs == 0)       snprintf(out, cap, "%s", TR("Off"));
@@ -18444,6 +18436,16 @@ static void buildDisplayPage() {
                                       ssaverBattChangedCb, ssaverBattReleasedCb, TR("Off"), "1 min",
                                       &s_ssaver_batt_value);
     s_ssaver_rows.pwr = setSwitchRow(c, "Always on when connected to power", nullptr, ss_pwr, ssaverPowerToggleCb);
+#if CAP_SSAVER_NORTH_LOCK
+#if defined(ESP32)
+    const bool ss_north = touchPrefsGetScreensaverNorthUp();
+#else
+    const bool ss_north = false;
+#endif
+    s_ssaver_rows.north = setSwitchRow(c, "Keep north up",
+                                       "The mesh stays put instead of slowly turning around you.",
+                                       ss_north, ssaverNorthToggleCb);
+#endif
     s_ssaver_rows.preview = setButton(c, UI_ICON_EYE, "Preview screensaver", ssaverPreviewCb);
     ssaverRowsEnable(ss_on);
   }
@@ -76616,6 +76618,9 @@ static bool     s_ssaver_cfg_loaded   = false;
 static bool     s_ssaver_enabled      = true;
 static uint32_t s_ssaver_batt_ms      = 15000;   // how long it shows on battery (0 = never)
 static bool     s_ssaver_pwr_always   = true;    // stays while external power is connected
+#if CAP_SSAVER_NORTH_LOCK
+static bool     s_ssaver_north_lock   = false;   // Keep north up: no slow turn (#706)
+#endif
 static uint32_t s_ssaver_start_ms     = 0;
 static bool     s_ssaver_seen_power   = false;   // on external power at some point while showing
 static bool     s_ssaver_preview_req  = false;
@@ -76650,6 +76655,9 @@ static void ssaverLoadCfg() {
   s_ssaver_enabled    = touchPrefsGetScreensaver();
   s_ssaver_batt_ms    = (uint32_t)touchPrefsGetScreensaverBatterySecs() * 1000u;
   s_ssaver_pwr_always = touchPrefsGetScreensaverAlwaysOnPower();
+#if CAP_SSAVER_NORTH_LOCK
+  s_ssaver_north_lock = touchPrefsGetScreensaverNorthUp();
+#endif
 #endif
 }
 static void ssaverSetEnabled(bool on) {
@@ -76674,6 +76682,15 @@ static void ssaverSetAlwaysOnPower(bool on) {
 #endif
 }
 static void ssaverRequestPreview() { s_ssaver_preview_req = true; }
+#if CAP_SSAVER_NORTH_LOCK
+static void ssaverSetNorthLock(bool on) {
+  ssaverLoadCfg();
+  s_ssaver_north_lock = on;
+#if defined(ESP32)
+  touchPrefsSetScreensaverNorthUp(on);
+#endif
+}
+#endif
 
 #if CAP_BATTERY
 static bool ssaverCharging() { return batteryIsCharging(batteryMvSmoothed()); }
@@ -76917,6 +76934,9 @@ static void ssaverStart(uint32_t now, bool preview) {
   th.ter = COLOR_TERTIARY;
   th.small = &g_font_12;
   th.strong = &g_font_semi_12;
+#if CAP_SSAVER_NORTH_LOCK
+  th.north_lock = s_ssaver_north_lock;
+#endif
   if (s_look_rainbow) {   // every node in its own hue, in the look's strength (as lookRainbow)
     th.node_sat = lookNeon() ? 100 : lookPastel() ? 36 : s_theme_day ? 80 : 72;
     th.node_val = lookNeon() || lookPastel() ? 100 : s_theme_day ? 72 : 96;
@@ -82692,6 +82712,8 @@ static void docNickAudit() {
           "first emoji found in a name");
     check(!nameFirstEmoji("Plain name", eb, sizeof eb), "no emoji, no icon");
     check(!nameFirstEmoji("\xC2\xA9 corp", eb, sizeof eb), "a (c) sign is not an icon");
+    check(!nameFirstEmoji("\xF0\x9F\x87\xB5\xF0\x9F\x87\xB9\xF0\x9F\x8F\x9D\xEF\xB8\x8F Trist\xC3\xA3o", eb, sizeof eb),
+          "a variation selector is not an icon (#674)");
   }
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
   // #626: the way back from a wallpaper of your own.

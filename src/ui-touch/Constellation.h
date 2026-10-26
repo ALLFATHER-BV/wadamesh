@@ -62,6 +62,9 @@ struct CstTheme {
   // them all in the glow.
   uint8_t node_sat = 0;
   uint8_t node_val = 0;
+  // Keep north up (#706): no slow turn, so north stays at the top. The drift, the
+  // pulse and the status changing corners still keep pixels moving.
+  bool north_lock = false;
 };
 
 void cstShow(lv_obj_t* parent, const CstTheme& theme);  // build; no-op when shown

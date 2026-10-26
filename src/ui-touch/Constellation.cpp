@@ -291,6 +291,9 @@ void layout() {
 void applyTurn(uint32_t now) {
   s_turn_step = now / kTurnStepMs;
   s_rot = (float)(s_turn_step % kTurnSteps) * (360.0f / (float)kTurnSteps);
+#if CAP_SSAVER_NORTH_LOCK
+  if (s_th.north_lock) s_rot = 0.0f;   // north stays up (#706); the drift below still moves
+#endif
   const float t = (float)(now % 1380000u) * (6.2831853f / 1380000.0f);   // across: 23 minutes
   const float u = (float)(now % 1020000u) * (6.2831853f / 1020000.0f);   // up and down: 17 minutes
   s_cx = s_cx0 + (lv_coord_t)lroundf((float)K(5) * sinf(t));

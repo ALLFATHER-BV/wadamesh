@@ -24,6 +24,7 @@
 #include <array>
 #include <string>
 #include <math.h>
+#include <stdlib.h>
 #include "WebLocation.h"
 
 namespace {
@@ -131,6 +132,26 @@ public:
       c.gps_lat = absCoord(_home_lat, d.dlat);
       c.gps_lon = absCoord(_home_lon, d.dlon);
       ev.beContact(c, false, 0);
+    }
+    // WADA_DEMO_CONTACTS="name|name|...": extra chat contacts for a scripted run, so a
+    // headless test can show a name the cast does not have (accents, emoji).
+    if (const char* extra = getenv("WADA_DEMO_CONTACTS")) {
+      const std::string all(extra);
+      size_t at = 0;
+      while (at <= all.size()) {
+        size_t bar = all.find('|', at);
+        if (bar == std::string::npos) bar = all.size();
+        const std::string nm = all.substr(at, bar - at);
+        at = bar + 1;
+        if (nm.empty()) continue;
+        ContactInfo c{};
+        demoKey(nm.c_str(), c.id.pub_key);
+        StrHelper::strncpy(c.name, nm.c_str(), sizeof(c.name));
+        c.type = ADV_TYPE_CHAT;
+        c.out_path_len = 0;
+        c.last_advert_timestamp = c.lastmod = now - 60;
+        ev.beContact(c, false, 0);
+      }
     }
     addChannel(0, "Public", nullptr);
     addChannel(1, "#emergency", "#emergency");
