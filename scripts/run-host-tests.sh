@@ -25,6 +25,9 @@ extra_flags() {
     # Its subject is a board variant header, not shared src/.
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
+    # The real WadaNmeaLocationProvider.h over a fake UART / MicroNMEA; the prefs
+    # header it includes only declares its functions under ESP32.
+    test_gps_baud_probe) echo "-DESP32 -I test/gps_probe_fakes" ;;
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
     # Its subject lives in the T-Display P4 IDF component, not in src/.
     test_c6_link_health) echo "-I tdisplay_p4/components/c6_at" ;;

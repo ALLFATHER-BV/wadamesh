@@ -1,5 +1,6 @@
 #include "TouchPrefsStore.h"
 #include "TouchPrefsSchema.h"
+#include "GpsBaudPrefs.h"
 
 #if defined(ESP32)
 
@@ -2934,8 +2935,8 @@ bool touchPrefsSetSetupDone(bool done) {
 
 // The speed the GPS probe last locked on while the user had not picked one. Its own
 // key, outside the settings blob, so an older firmware never reads it as a choice.
+// The rules are in GpsBaudPrefs.h (host-tested with the probe).
 static const char* LK_GPS_BAUD_FOUND = "gps_bd_fd";
-static bool gpsBaudSane(uint32_t baud) { return baud >= 4800 && baud <= 921600; }
 
 uint32_t touchPrefsGetGpsBaud(uint32_t fallback) {
   if (!s_begun) touchPrefsBegin();
@@ -2944,7 +2945,7 @@ uint32_t touchPrefsGetGpsBaud(uint32_t fallback) {
   // old "absent key -> fallback" result where nothing was ever found.
   if (s_cfg.gps_baud != 0) return s_cfg.gps_baud;
   const uint32_t found = s_prefs.isKey(LK_GPS_BAUD_FOUND) ? s_prefs.getUInt(LK_GPS_BAUD_FOUND, 0) : 0;
-  return gpsBaudSane(found) ? found : fallback;
+  return GpsBaudPrefs::effective(0, found, fallback);
 }
 
 bool touchPrefsGpsBaudChosen() {
@@ -2954,8 +2955,9 @@ bool touchPrefsGpsBaudChosen() {
 
 void touchPrefsSetGpsBaudFound(uint32_t baud) {
   if (!s_begun) touchPrefsBegin();
-  if (!gpsBaudSane(baud)) return;
-  if (s_prefs.isKey(LK_GPS_BAUD_FOUND) && s_prefs.getUInt(LK_GPS_BAUD_FOUND, 0) == baud) return;
+  if (!GpsBaudPrefs::sane(baud)) return;
+  const bool have = s_prefs.isKey(LK_GPS_BAUD_FOUND);
+  if (!GpsBaudPrefs::foundNeedsWrite(baud, have, have ? s_prefs.getUInt(LK_GPS_BAUD_FOUND, 0) : 0)) return;
   prefsPutUInt(LK_GPS_BAUD_FOUND, baud);
 }
 
