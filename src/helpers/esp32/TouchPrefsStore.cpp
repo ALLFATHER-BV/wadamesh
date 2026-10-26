@@ -3073,7 +3073,11 @@ static int backupKeys(BkKey* out, int cap) {
   }
   return n;
 }
-static constexpr int kBackupKeyCap = 160;
+// Room for every key backupKeys() lists. add() drops whatever does not fit, without a
+// word, and the Wi-Fi slots come last: on 2026-10-26 the list was 158 keys on most
+// boards and 167 on the Pager (its vibration, battery care and motion keys), so a
+// Pager backup lost its last saved Wi-Fi slots. Keep well clear of the count.
+static constexpr int kBackupKeyCap = 192;
 static constexpr size_t kBackupBlobMax = 2048;
 
 static void bkPrintJsonStr(Print& out, const char* s) {
