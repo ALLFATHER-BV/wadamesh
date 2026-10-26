@@ -1,0 +1,18 @@
+# Tanmatsu-only overlay, applied after sdkconfigs/wadamesh by tanmatsu/build.sh. Not used by
+# the T-Display P4 or CrowPanel P4 builds (they share sdkconfigs/general + wadamesh, and their
+# serial console is readable, so they keep the full assertion and error-name text).
+#
+# Size: the launcher maps at most 50 x 64 KB of an AppFS app (appfsBlMmap), so
+# application.bin must stay <= 3,276,800 B. Neither option below changes what the app does.
+
+# Silent assertions (88,832 B, measured): a failed assert() / IDF assert still aborts and the
+# panic still prints the backtrace, but without the "file:line, function, expression" text.
+# On the Tanmatsu nobody sees that text (no coredump, and opening the console resets the P4);
+# addr2line on the panic PC gives the same file and line.
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+
+# No esp_err_t name table (7,872 B, measured): esp_err_to_name() is only used by IDF and
+# Arduino log lines (no caller in our code), which then print "UNKNOWN ERROR" with the
+# numeric code (esp_err_to_name_r: "UNKNOWN ERROR 0x105(261)") instead of the name. The UI
+# never shows it.
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
