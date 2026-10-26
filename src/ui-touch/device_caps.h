@@ -409,6 +409,17 @@
   #define CAP_GPS_BAUD_AUTO 0
 #endif
 
+// The same probe, but only while the user has not picked a speed (Settings > GPS >
+// Serial speed > Auto, the default): the T-Deck Plus GPS talks 38400 or 9600
+// depending on the unit, newer ThinkNode M9s 115200. The speed it locks on is kept
+// apart from the user's choice (touchPrefsSetGpsBaudFound), and a picked speed is
+// used as it is, never probed past.
+#if (defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)) || defined(HAS_THINKNODE_M9)
+  #define CAP_GPS_BAUD_FIND 1
+#else
+  #define CAP_GPS_BAUD_FIND 0
+#endif
+
 // A switchable LoRa antenna: an on-board antenna plus an external socket, picked at
 // run time (T-Display P4: SKY13453 on XL9535 IO1). Gates the Radio settings antenna
 // rows, the "Always use the external antenna" boot option and the control panel

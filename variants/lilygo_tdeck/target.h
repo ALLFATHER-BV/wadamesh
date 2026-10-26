@@ -13,7 +13,7 @@
   #include <helpers/ui/MomentaryButton.h>
 #endif
 #include "helpers/sensors/EnvironmentSensorManager.h"
-#include "helpers/sensors/MicroNMEALocationProvider.h"
+#include "../../src/helpers/WadaNmeaLocationProvider.h"   // the core provider plus the baud probe
 
 extern TDeckBoard board;
 extern WRAPPER_CLASS radio_driver;

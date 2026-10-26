@@ -28,7 +28,12 @@ ESP32RTCClock fallback_clock;
 // without the module behaves exactly as before.
 HardwareRtcClock     hw_rtc(fallback_clock);
 ClockFloorRTC        rtc_clock(hw_rtc);
-MicroNMEALocationProvider gps(Serial1, &rtc_clock);
+// Wadamesh's provider for its UART probe: T-Deck Plus receivers talk 38400 or 9600
+// depending on the unit, so the speed is found while the user has not picked one in
+// Settings (CAP_GPS_BAUD_FIND). No enable or reset line on this board; the ESP
+// receives on PIN_GPS_TX (the core's naming).
+WadaNmeaLocationProvider gps(Serial1, &rtc_clock, -1 /*reset*/, -1 /*enable*/,
+                             PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE, true /*keep_choice*/);
 EnvironmentSensorManager sensors(gps);
 
 #ifdef DISPLAY_CLASS

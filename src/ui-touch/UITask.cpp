@@ -18245,8 +18245,14 @@ static void buildDisplayPage() {
 static void gpsBaudPickCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int i = setChoiceIndex(e);
+#if CAP_GPS_BAUD_FIND
+  // Tile 0 is Auto: no choice, so the probe finds the speed (0 clears the choice).
+  if (i < 0 || i > kGpsBaudCount) return;
+  touchPrefsSetGpsBaud(i == 0 ? 0 : kGpsBaudOpts[i - 1]);
+#else
   if (i < 0 || i >= kGpsBaudCount) return;
   touchPrefsSetGpsBaud(kGpsBaudOpts[i]);
+#endif
   setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
   if (g_lv.task) g_lv.task->showAlert(TR("Applies after a restart."), 1600);
 }
@@ -18315,15 +18321,18 @@ static void buildGpsPage() {
 #endif
     int picked = 0;
     for (int i = 0; i < kGpsBaudCount; i++) if (kGpsBaudOpts[i] == cur) { picked = i; break; }
+#if CAP_GPS_BAUD_FIND
+    const char* bauds[] = { TR("Auto"), "9600", "19200", "38400", "57600", "115200" };
+    setChoiceRow(c, "Serial speed", "Auto tries the common speeds until the GPS answers and keeps the one that "
+                 "works. Pick a speed only if Auto does not find it. Applies after a restart.",
+                 bauds, kGpsBaudCount + 1, touchPrefsGpsBaudChosen() ? picked + 1 : 0, gpsBaudPickCb);
+#elif CAP_GPS_BAUD_AUTO
     const char* bauds[] = { "9600", "19200", "38400", "57600", "115200" };
-#if CAP_GPS_BAUD_AUTO
     setChoiceRow(c, "Serial speed", "Found automatically: when the GPS does not answer at this speed, the device "
                  "tries the others and keeps the one that works. This is where it starts.",
                  bauds, kGpsBaudCount, picked, gpsBaudPickCb);
-#elif defined(HAS_TDECK_GT911) && !defined(HAS_TDECK_PRO)
-    setChoiceRow(c, "Serial speed", "The T-Deck Plus uses 38400, the T-Deck 1.0 9600. Applies after a restart.",
-                 bauds, kGpsBaudCount, picked, gpsBaudPickCb);
 #else
+    const char* bauds[] = { "9600", "19200", "38400", "57600", "115200" };
     setChoiceRow(c, "Serial speed", "The speed your GPS module talks at. Applies after a restart.",
                  bauds, kGpsBaudCount, picked, gpsBaudPickCb);
 #endif
