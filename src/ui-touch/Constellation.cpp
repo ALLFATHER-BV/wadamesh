@@ -51,6 +51,7 @@ lv_obj_t* s_info_n   = nullptr;
 lv_obj_t* s_info_t   = nullptr;
 lv_obj_t* s_batt     = nullptr;   // [bolt] 86% [battery]
 lv_obj_t* s_batt_chg = nullptr;
+lv_obj_t* s_batt_n   = nullptr;   // CstStatus::batt_note, hidden while empty
 lv_obj_t* s_batt_l   = nullptr;
 lv_obj_t* s_batt_i   = nullptr;
 lv_obj_t* s_halo     = nullptr;
@@ -1362,6 +1363,9 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   s_info_t = text(s_info, small(), s_th.sub);
 
   s_batt     = row(s_scene, K(4));
+  s_batt_n   = text(s_batt, small(), s_th.sub);
+  lv_obj_set_style_pad_right(s_batt_n, K(2), LV_PART_MAIN);
+  lv_obj_add_flag(s_batt_n, LV_OBJ_FLAG_HIDDEN);
   s_batt_chg = text(s_batt, small(), s_th.glow);
   lv_label_set_text(s_batt_chg, LV_SYMBOL_CHARGE);
   s_batt_l   = text(s_batt, small(), s_th.sub);
@@ -1404,7 +1408,7 @@ void cstHide() {
   s_core = s_core_glow = s_self_ring = nullptr;
   s_unread = s_unread_n = s_unread_w = nullptr;
   s_info = s_info_n = s_info_t = nullptr;
-  s_batt = s_batt_chg = s_batt_l = s_batt_i = nullptr;
+  s_batt = s_batt_chg = s_batt_l = s_batt_i = s_batt_n = nullptr;
   for (int i = 0; i < kPings; ++i) s_ping[i] = nullptr;
   for (int i = 0; i < kDots; ++i) s_dot[i] = nullptr;
   s_n = 0;
@@ -1546,6 +1550,11 @@ void cstSetStatus(const CstStatus& s) {
       lv_obj_set_user_data(s_batt_i, (void*)(intptr_t)(s.charging ? 1000 + (s.batt < 0 ? 100 : s.batt) : s.batt));
       lv_obj_invalidate(s_batt_i);
     }
+  }
+  if (all || strcmp(s.batt_note, s_st.batt_note) != 0) {
+    lv_label_set_text(s_batt_n, s.batt_note);
+    if (s.batt_note[0]) lv_obj_clear_flag(s_batt_n, LV_OBJ_FLAG_HIDDEN);
+    else                lv_obj_add_flag(s_batt_n, LV_OBJ_FLAG_HIDDEN);
   }
   if (all || s.north_up != s_st.north_up) {
     if (s.north_up) lv_obj_clear_flag(s_north, LV_OBJ_FLAG_HIDDEN);

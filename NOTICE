@@ -76,6 +76,9 @@ chsc6x (Heltec V4 CHSC6x cap-touch driver)
 SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364/DRV2605 drivers)
     Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
 
+XPowersLib (T-LoRa Pager BQ25896 charger driver)
+    Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/XPowersLib
+
 ES8311 register sequence and clock-divider coefficients (T-LoRa Pager audio
 codec driver, variants/lilygo_tlora_pager/Es8311Codec.cpp; T-Display P4 audio
 driver, variants/tdisplay_p4/P4Audio.cpp)
