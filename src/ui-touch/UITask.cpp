@@ -52754,6 +52754,15 @@ static void bleKbdTouchDelete(lv_obj_t* ta, bool forward) {
 static void bleKbdTouchEnter(lv_obj_t* ta) {
   accentBoxHide();
   mentionBoxHide();
+  // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
+  // OK, as handleHwKey does it on the keyboard boards. The keyboard's READY below only
+  // confirmed the field and left the dialog open, so wada.ui.input never returned.
+  // `ta` is the edit strip while the on-screen keys are up: compare the real field.
+  if (s_fm_prompt_ta && (ta == s_fm_prompt_ta || (ta == s_kb_mirror_ta && s_kb_bind_ta == s_fm_prompt_ta))) {
+    s_nav_ta_editing = false;
+    fmPromptSubmit();
+    return;
+  }
   if (s_editor_ta && ta == s_editor_ta) {           // multiline editor
     lv_textarea_add_char(ta, '\n');
   } else if (cmdLineEnter()) {                       // terminal / admin CLI: run it, keep the field
