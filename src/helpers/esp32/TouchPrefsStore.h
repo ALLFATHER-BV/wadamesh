@@ -559,7 +559,7 @@ bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, defaul
 void    touchPrefsSetSoundDirect(bool on);
 uint8_t touchPrefsGetSoundVolume();            // 0..100, default 70
 void    touchPrefsSetSoundVolume(uint8_t vol);
-bool    touchPrefsGetVibrate();                // vibrate on notifications (boards with a motor), default false
+bool    touchPrefsGetVibrate();                // vibrate on notifications (boards with a motor), default false (Pager: true)
 void    touchPrefsSetVibrate(bool on);
 uint8_t touchPrefsGetVibratePattern();         // TOUCH_VIB_* style, default TOUCH_VIB_PULSE
 void    touchPrefsSetVibratePattern(uint8_t pat);
@@ -631,6 +631,16 @@ bool    touchPrefsGetLockPreviews();           // message text on the lock scree
 void    touchPrefsSetLockPreviews(bool on);
 bool    touchPrefsGetGlanceWhenLocked();       // "at a glance" also fires while manually/idle locked, not just unlocked+dimmed (default false)
 void    touchPrefsSetGlanceWhenLocked(bool on);
+#if defined(TLORA_PAGER)
+bool    touchPrefsGetVibrateInput();          // Pager: a click per key / knob detent (default false)
+void    touchPrefsSetVibrateInput(bool on);
+uint8_t touchPrefsGetVibrateKeyLevel();       // 0 off, 1 light, 2 strong (the vib_in key; its old "on" = strong)
+void    touchPrefsSetVibrateKeyLevel(uint8_t level);
+uint8_t touchPrefsGetVibrateStrength();       // 0 light, 1 medium, 2 strong (default 2)
+void    touchPrefsSetVibrateStrength(uint8_t s);
+uint8_t touchPrefsGetVibratePattern(uint8_t kind);   // kind 0 message, 1 DM, 2 @mention -> PagerVibPattern
+void    touchPrefsSetVibratePattern(uint8_t kind, uint8_t pattern);
+#endif
 bool    touchPrefsGetGlanceEnabled();          // master "at a glance" feature toggle (default true)
 void    touchPrefsSetGlanceEnabled(bool on);
 

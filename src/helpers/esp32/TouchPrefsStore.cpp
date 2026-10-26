@@ -2387,10 +2387,15 @@ bool touchPrefsGetSoundDirect() {
 void touchPrefsSetSoundDirect(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("snd_dm", on ? 1 : 0); }
 // Vibration motor (T-Display P4). Independent of the master Sound switch -- that is the point
 // of a "silent but buzz" setting -- but chooses events with the same per-type switches above.
-// Off until turned on: a fresh install should not start buzzing unasked.
+// Off until turned on: a fresh install should not start buzzing unasked. The Pager
+// (DRV2605) is the exception: buzzing for messages is what a pager is for.
 bool touchPrefsGetVibrate() {
   if (!s_begun) touchPrefsBegin();
+#if defined(TLORA_PAGER)
+  return s_prefs.getUChar("vibrate", 1) != 0;
+#else
   return s_prefs.getUChar("vibrate", 0) != 0;
+#endif
 }
 void touchPrefsSetVibrate(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vibrate", on ? 1 : 0); }
 uint8_t touchPrefsGetVibratePattern() {
@@ -2541,6 +2546,31 @@ bool touchPrefsGetLockPreviews() { if (!s_begun) touchPrefsBegin(); return s_pre
 void touchPrefsSetLockPreviews(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("lock_prev", on ? 1 : 0); }
 bool touchPrefsGetGlanceWhenLocked() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_lck", 0) != 0; }
 void touchPrefsSetGlanceWhenLocked(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_lck", on ? 1 : 0); }
+#if defined(TLORA_PAGER)   // the Pager's DRV2605 vibration motor
+bool touchPrefsGetVibrateInput()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("vib_in", 0) != 0; }
+void touchPrefsSetVibrateInput(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_in", on ? 1 : 0); }
+// vib_in: 0 off, 1 strong (what the old on/off switch stored), 2 light.
+uint8_t touchPrefsGetVibrateKeyLevel() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("vib_in", 0);
+  return v == 1 ? 2 : v == 2 ? 1 : 0;
+}
+void touchPrefsSetVibrateKeyLevel(uint8_t l) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_in", l >= 2 ? 1 : l == 1 ? 2 : 0); }
+uint8_t touchPrefsGetVibrateStrength() { if (!s_begun) touchPrefsBegin(); const uint8_t v = s_prefs.getUChar("vib_str", 2); return v > 2 ? 2 : v; }
+void touchPrefsSetVibrateStrength(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("vib_str", v > 2 ? 2 : v); }
+uint8_t touchPrefsGetVibratePattern(uint8_t kind) {
+  if (!s_begun) touchPrefsBegin();
+  static const char* const k[3] = { "vib_pm", "vib_pd", "vib_pn" };
+  static const uint8_t dflt[3] = { 1, 2, 3 };   // once, twice, three times: what it always did
+  if (kind > 2) kind = 0;
+  return s_prefs.getUChar(k[kind], dflt[kind]);
+}
+void touchPrefsSetVibratePattern(uint8_t kind, uint8_t p) {
+  if (!s_begun) touchPrefsBegin();
+  static const char* const k[3] = { "vib_pm", "vib_pd", "vib_pn" };
+  if (kind <= 2) prefsPutUChar(k[kind], p);
+}
+#endif
 bool touchPrefsGetGlanceEnabled()   { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glance_en", 1) != 0; }
 void touchPrefsSetGlanceEnabled(bool on)    { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glance_en", on ? 1 : 0); }
 uint8_t touchPrefsGetChatIcons() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chat_icons", 0) ? 1 : 0; }
@@ -2987,6 +3017,9 @@ static int backupKeys(BkKey* out, int cap) {
     "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
+#if defined(TLORA_PAGER)
+    "vib_in", "vib_str", "vib_pm", "vib_pd", "vib_pn",   // the Pager's vibration settings ("vibrate" is above)
+#endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
     "glass",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };

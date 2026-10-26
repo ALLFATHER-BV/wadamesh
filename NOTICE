@@ -73,7 +73,7 @@ Adafruit GFX / ST7735_ST7789 (T-Deck / Heltec V4 display backend)
 chsc6x (Heltec V4 CHSC6x cap-touch driver)
     Quency-D — https://github.com/Quency-D/chsc6x
 
-SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364 drivers)
+SensorLib (T-LoRa Pager XL9555/BQ27220/AW9364/DRV2605 drivers)
     Copyright (c) Lewis He — MIT License — https://github.com/lewisxhe/SensorLib
 
 ES8311 register sequence and clock-divider coefficients (T-LoRa Pager audio
