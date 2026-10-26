@@ -47,6 +47,7 @@ const lv_img_dsc_t *emojiPackFlagLookup(uint32_t lead, uint32_t trail);
 uint32_t emojiPackFlagToken(uint32_t lead, uint32_t trail);
 uint32_t emojiPackTagFlagToken(const char *tag);
 const lv_img_dsc_t *emojiPackSequenceLookup(uint32_t token);
+const lv_img_dsc_t *emojiPackSequenceItemLookup(const char *utf8);
 
 int emojiPackItemCount();
 const char *emojiPackItem(int i); // NUL-terminated UTF-8, may be a multi-codepoint sequence

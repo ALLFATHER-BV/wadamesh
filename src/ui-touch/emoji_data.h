@@ -3,11 +3,14 @@
 #pragma once
 #include "lvgl.h"
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
-// Returns the baked image for `cp`, or NULL if we have no glyph for it.
-const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp);
-extern const uint16_t kEmojiGlyphCount;
+    // Returns the baked image for `cp`, or NULL if we have no glyph for it.
+    const lv_img_dsc_t *emojiGlyphLookup(uint32_t cp);
+    // Returns a baked composite image for an exact UTF-8 emoji sequence, or NULL.
+    const lv_img_dsc_t *emojiGlyphSequenceLookup(const char *utf8);
+    extern const uint16_t kEmojiGlyphCount;
 #ifdef __cplusplus
 }
 #endif

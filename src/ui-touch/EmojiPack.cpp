@@ -431,6 +431,32 @@ const lv_img_dsc_t *emojiPackSequenceLookup(uint32_t token)
     return emojiPackLookupKey(token);
 }
 
+const lv_img_dsc_t *emojiPackSequenceItemLookup(const char *utf8)
+{
+    if (!utf8 || !strstr(utf8, "\xE2\x80\x8D"))
+        return nullptr;
+    const uint32_t n = s_items_n.load(std::memory_order_acquire);
+    for (uint32_t i = 0; i < n; ++i)
+    {
+        if (strcmp(utf8, s_items[i]) != 0)
+            continue;
+        const uint8_t lead = (uint8_t)utf8[0];
+        uint32_t cp;
+        if (lead < 0x80)
+            cp = lead;
+        else if (lead < 0xE0)
+            cp = ((uint32_t)(lead & 0x1F) << 6) | ((uint8_t)utf8[1] & 0x3F);
+        else if (lead < 0xF0)
+            cp = ((uint32_t)(lead & 0x0F) << 12) | (((uint8_t)utf8[1] & 0x3F) << 6) |
+                 ((uint8_t)utf8[2] & 0x3F);
+        else
+            cp = ((uint32_t)(lead & 0x07) << 18) | (((uint8_t)utf8[1] & 0x3F) << 12) |
+                 (((uint8_t)utf8[2] & 0x3F) << 6) | ((uint8_t)utf8[3] & 0x3F);
+        return emojiPackLookupKey(cp);
+    }
+    return nullptr;
+}
+
 const lv_img_dsc_t *emojiPackFlagLookup(uint32_t lead, uint32_t trail)
 {
     return emojiPackSequenceLookup(emojiPackFlagToken(lead, trail));
