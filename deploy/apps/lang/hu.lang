@@ -575,6 +575,7 @@ No internal storage: identity, channels and contacts can't be saved.	No internal
 No local expansion data	Nincsenek helyi bővítési adatok
 No location for this contact	Nincs hely ehhez a névjegyhez
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Nincs térképtárhely.\n\nHelyezzen be egy SD-kártyát a Wi-Fi csempék gyorsítótárazásához (vagy flashelje újra a csempék partíciójának visszaállításához).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Nincsenek térképszeletek itt.\n\nCsatlakozzon Wi-Fi-hez (Beállítások → Wi-Fi)\na terület letöltéséhez.
 No mapped repeaters in this route	Nincsenek leképezett ismétlők ezen az útvonalon
 No networks found (2.4 GHz only)	Nem található hálózat (csak 2,4 GHz)

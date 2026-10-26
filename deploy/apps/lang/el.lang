@@ -569,6 +569,7 @@ No internal storage: identity, channels and contacts can't be saved.	No internal
 No local expansion data	Δεν υπάρχουν τοπικά δεδομένα επέκτασης
 No location for this contact	Καμία τοποθεσία για αυτήν την επαφή
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Χωρίς αποθήκευση χάρτη.\n\nΕισαγάγετε κάρτα SD για πλακίδια\nWi-Fi (ή ξαναφλασάρετε για\nτο tiles partition).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Δεν υπάρχουν πλακίδια εδώ.\n\nΣυνδεθείτε στο Wi-Fi (Ρυθμίσεις → Wi-Fi)\nγια λήψη αυτής της περιοχής.
 No mapped repeaters in this route	Δεν υπάρχουν χαρτογραφημένοι αναμεταδότες σε αυτή τη διαδρομή
 No networks found (2.4 GHz only)	Δεν βρέθηκαν δίκτυα (μόνο 2.4 GHz)

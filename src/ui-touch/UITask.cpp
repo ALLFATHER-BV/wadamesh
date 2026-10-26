@@ -37597,6 +37597,11 @@ static void renderMapTiles() {
     else
       lv_label_set_text(s_map_status_lbl,
           TR("No map tiles here.\n\nConnect to Wi-Fi (Settings \xe2\x86\x92 Wi-Fi)\nto download this area."));
+#elif !CAP_TILE_STORAGE
+    // No tiles partition by design, and no card the map can use (the Indicator's
+    // microSD hangs off its RP2040): reflashing would not change anything (#692).
+    lv_label_set_text(s_map_status_lbl,
+        TR("No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use."));
 #else
     lv_label_set_text(s_map_status_lbl,
         TR("Map storage error.\nReflash the tiles partition."));

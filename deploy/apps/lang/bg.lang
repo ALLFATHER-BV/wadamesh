@@ -569,6 +569,7 @@ No internal storage: identity, channels and contacts can't be saved.	No internal
 No local expansion data	Няма локални данни за разширение
 No location for this contact	Няма местоположение за този контакт
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Няма хранилище за карта.\n\nПоставете SD карта за кеш на\nWi-Fi плочки (или префлашнете за\nдяла tiles).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Тук няма плочки на картата.\n\nСвържете се с Wi-Fi (Настройки → Wi-Fi),\nза да изтеглите този район.
 No mapped repeaters in this route	Няма картографирани ретранслатори по този маршрут
 No networks found (2.4 GHz only)	Няма намерени мрежи (само 2.4 GHz)

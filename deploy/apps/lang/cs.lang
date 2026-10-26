@@ -566,6 +566,7 @@ No internal storage: identity, channels and contacts can't be saved.	No internal
 No local expansion data	Žádná lokální data rozšíření
 No location for this contact	Pro tento kontakt není žádná poloha
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Žádné úložiště map.\n\nVložte SD kartu pro ukládání\nWi-Fi dlaždic (nebo znovu nahrajte\noddíl dlaždic).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Zde nejsou žádné mapové dlaždice.\n\nPřipojte se k Wi-Fi (Nastavení → Wi-Fi)\npro stažení této oblasti.
 No mapped repeaters in this route	Na této trase nejsou žádné zmapované opakovače
 No networks found (2.4 GHz only)	Nenalezena žádná síť (pouze 2,4 GHz)

@@ -568,6 +568,7 @@ No internal storage: identity, channels and contacts can't be saved.	Kein intern
 No local expansion data	Keine lokalen Erweiterungsdaten
 No location for this contact	Kein Standort für diesen Kontakt
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Kein Kartenspeicher.\n\nSD-Karte einlegen, um WLAN-Kacheln\nzu cachen (oder neu flashen, um die\nTiles-Partition wiederherzustellen).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	Kein Kartenspeicher auf diesem Gerät.\n\nEs hat keine Tiles-Partition und\nkeine microSD für die Karte.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Hier keine Kartenkacheln.\n\nMit Wi-Fi verbinden (Einstellungen → Wi-Fi),\num dieses Gebiet zu laden.
 No mapped repeaters in this route	Keine kartierten Repeater auf dieser Route
 No networks found (2.4 GHz only)	Keine Netzwerke gefunden (nur 2,4 GHz)

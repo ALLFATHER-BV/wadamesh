@@ -568,6 +568,7 @@ No internal storage: identity, channels and contacts can't be saved.	Geen intern
 No local expansion data	Geen lokale uitbreidingsdata
 No location for this contact	Geen locatie voor dit contact
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Geen kaartopslag.\n\nPlaats een SD-kaart om wifi-tegels\nte cachen (of flash opnieuw om\nde tiles-partitie te herstellen).
+No map storage on this board.\n\nIt has no tiles partition and\nno microSD the map can use.	Geen kaartopslag op dit toestel.\n\nHet heeft geen tiles-partitie en\ngeen microSD voor de kaart.
 No map tiles here.\n\nConnect to Wi-Fi (Settings → Wi-Fi)\nto download this area.	Hier geen kaarttegels.\n\nMaak verbinding met Wi-Fi (Instellingen → Wi-Fi)\nom dit gebied te downloaden.
 No mapped repeaters in this route	Geen repeaters op de kaart in deze route
 No networks found (2.4 GHz only)	Geen netwerken gevonden (alleen 2.4 GHz)
