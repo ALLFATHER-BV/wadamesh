@@ -12651,10 +12651,12 @@ static void emojiLoadRecent();
 static constexpr uint8_t EMOJI_CAT_RECENT = 254;
 static constexpr int k_emoji_recent_limit = 18;
 static constexpr int k_emoji_recent_slot_bytes = 33;
-static char s_emoji_recent[k_emoji_recent_limit][k_emoji_recent_slot_bytes] = {};
+static char (*s_emoji_recent)[k_emoji_recent_slot_bytes] = nullptr;
 static int s_emoji_recent_count = 0;
 static bool s_emoji_recent_loaded = false;
 static bool s_emoji_recent_visible = false;
+static bool s_emoji_recent_dirty = false;
+static uint32_t s_emoji_recent_changed_ms = 0;
 
 // Tab order: Unicode's own emoji groups, in their order. Hearts have no tab of
 // their own — they are part of Smileys & Emotion. "Chars" is ours, holding the
@@ -12714,7 +12716,8 @@ static bool emojiRecentItemAvailable(const char* item) {
   }
   for (int i = 0, n = emojiPackItemCount(); i < n; ++i) {
     const char* pack_item = emojiPackItem(i);
-    if (pack_item && strcmp(item, pack_item) == 0 && emojiPackItemDrawable(pack_item)) return true;
+    if (emojiPackItemCat(i) != EMOJI_CAT_SPECIAL && pack_item &&
+      strcmp(item, pack_item) == 0 && emojiPackItemDrawable(pack_item)) return true;
   }
   return false;
 }
@@ -12813,6 +12816,13 @@ static void emojiInvalidateMergedList() {
 
 static bool emojiRecentStringValid(const char* item) {
   if (!item || !item[0]) return false;
+  for (const char* special : k_special_items)
+    if (strcmp(item, special) == 0) return false;
+  for (const EmojiSpan& span : k_emoji_spans) {
+    if (span.cat != EMOJI_CAT_SPECIAL) continue;
+    for (int index = 0; index < span.count; ++index)
+      if (strcmp(item, k_emoji_items[span.first + index]) == 0) return false;
+  }
   const char* p = item;
   const char* end = item + strlen(item);
   uint32_t cp = 0;
@@ -12822,6 +12832,12 @@ static bool emojiRecentStringValid(const char* item) {
 
 static void emojiLoadRecent() {
   if (s_emoji_recent_loaded) return;
+  if (!s_emoji_recent) {
+    s_emoji_recent = static_cast<char (*)[k_emoji_recent_slot_bytes]>(
+        heap_caps_calloc(k_emoji_recent_limit, k_emoji_recent_slot_bytes,
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!s_emoji_recent) return;
+  }
   s_emoji_recent_loaded = true;
   uint8_t blob[1 + k_emoji_recent_limit * k_emoji_recent_slot_bytes] = {};
   const size_t n = touchPrefsGetBlob("emoji_recent", blob, sizeof(blob));
@@ -12837,10 +12853,11 @@ static void emojiLoadRecent() {
 }
 
 static void emojiRememberRecent(const char* item) {
-  if (!emojiRecentStringValid(item)) return;
+  if (!s_glyph_is_emoji || !emojiRecentStringValid(item) || !emojiRecentItemAvailable(item)) return;
   const size_t len = strlen(item);
   if (len >= k_emoji_recent_slot_bytes) return;
   emojiLoadRecent();
+  if (!s_emoji_recent) return;
   if (s_emoji_recent_count > 0 && strcmp(s_emoji_recent[0], item) == 0) return;
 
   int found = -1;
@@ -12858,12 +12875,22 @@ static void emojiRememberRecent(const char* item) {
   memset(s_emoji_recent[0], 0, k_emoji_recent_slot_bytes);
   memcpy(s_emoji_recent[0], item, len);
 
+  s_emoji_recent_dirty = true;
+  s_emoji_recent_changed_ms = millis();
+  emojiInvalidateMergedList();
+}
+
+static void emojiFlushRecent(uint32_t now, uint32_t last_input_ms) {
+  if (!s_emoji_recent_dirty || emojiSheetIsOpen() ||
+      now - s_emoji_recent_changed_ms < 2000u || now - last_input_ms < 2000u) return;
   uint8_t blob[1 + k_emoji_recent_limit * k_emoji_recent_slot_bytes] = {};
   blob[0] = (uint8_t)s_emoji_recent_count;
   for (int i = 0; i < s_emoji_recent_count; ++i)
     memcpy(blob + 1 + i * k_emoji_recent_slot_bytes, s_emoji_recent[i], k_emoji_recent_slot_bytes);
-  touchPrefsSetBlob("emoji_recent", blob, 1 + s_emoji_recent_count * k_emoji_recent_slot_bytes);
-  emojiInvalidateMergedList();
+  if (touchPrefsSetBlob("emoji_recent", blob, 1 + s_emoji_recent_count * k_emoji_recent_slot_bytes))
+    s_emoji_recent_dirty = false;
+  else
+    s_emoji_recent_changed_ms = now;
 }
 
 // Pick-mode: when set, the next chosen glyph is handed to this callback instead
@@ -82660,6 +82687,7 @@ void UITask::loop() {
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
   rx24Sample(now);   // packets heard per hour, for the lock screen's activity line
+  emojiFlushRecent(now, _last_input_ms);
 
   // Budgeted slices of the SD emoji pack. A full set is ~850 KB on a 4 MHz card,
   // so it arrives a couple of seconds in; emoji render from the baked set until
