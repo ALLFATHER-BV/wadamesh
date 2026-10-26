@@ -297,6 +297,7 @@ int main() {
     FakeClient c; bool wf = true;
     const size_t w = OtaResume::copy(r.http, c, "u", (int)img.size(), r.upd, (uint8_t*)nullptr, 4096, wf, r.sys);
     assert(w == 0 && !wf && r.upd.data.empty());
+    assert(!r.http.open && r.http.ends == 1);   // the connection is ended, not left open
   }
 
   printf("test_ota_resume: ok\n");

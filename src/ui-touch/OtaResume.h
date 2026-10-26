@@ -32,6 +32,9 @@ size_t copy(Http& http, Client& client, const char* url, int len, Updater& upd,
             uint8_t* buf, size_t bufsz, bool& write_failed, Sys& sys) {
   size_t written = 0;
   write_failed = false;
+  // No buffer (both mallocs failed): end the connection all the same. The worker reuses
+  // this HTTPClient for the next job, and before the resume loop http.end() always ran.
+  if (!buf) { http.end(); return 0; }
   for (int resume = 0; buf && !write_failed; ++resume) {
     auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
     uint32_t last_data = sys.millis();
