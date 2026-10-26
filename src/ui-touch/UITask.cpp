@@ -242,6 +242,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include <helpers/AdvertDataHelpers.h>
   #include <helpers/sensors/LPPDataHelpers.h>
   #include <helpers/TouchDiagTrace.h>
+  #include <helpers/BufferedFileCommit.h>   // "Save update bin to SD": write after download, retry whole file (#734)
   #if defined(ESP32)
     #include <Preferences.h>
     #include <helpers/esp32/SdNvsPrefs.h>   // NVS-or-SD prefs backend (Launcher-safe)
@@ -35986,13 +35987,13 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
 // the no-A/B-slot counterpart to otaWorkerRun above. Same immutable versioned
 // URL, same worker, but the bytes go to SD instead of the spare OTA slot.
 //
-// This feature is spread over SIX #if regions (state+callbacks, this worker,
+// This feature is spread over SEVEN #if regions (state+callbacks, this worker,
 // the tile-worker dispatch below, the About button, the settings-close teardown,
-// and the sdHealthTick bail-out). They are character-for-character identical on
-// purpose. A board admitted to some but not all of them still COMPILES — the
-// worker's only caller sits behind the same gate, so nothing link-errors — and
-// then hangs at "Saving to SD… 0%" with a poll timer writing to a label the
-// teardown never nulled. Change all six or none.
+// the sdHealthTick bail-out, and sdRuntimeLifecycleBusy). They are character-for-
+// character identical on purpose. A board admitted to some but not all of them
+// still COMPILES (the worker's only caller sits behind the same gate, so nothing
+// link-errors) and then hangs at "Saving to SD… 0%" with a poll timer writing to
+// a label the teardown never nulled. Change all seven or none.
 static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
@@ -36030,6 +36031,71 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
                (unsigned)(freeb / 1048576u));
       http.end(); s_sdfw_state = 3; return;
     }
+  }
+  // Download first, write second (#734), when the whole image fits in PSRAM: the
+  // card is then written after the Wi-Fi burst, like a map tile, and a failed FAT
+  // write (which leaves the file failed for good) can start over from byte 0. See
+  // helpers/BufferedFileCommit.h. Without the PSRAM, stream as before. The 512 KB
+  // margin keeps the rest of the UI (tile decodes, images) fed while the image is held.
+  uint8_t* img = nullptr;
+  if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) >= (size_t)len + 512u * 1024u)
+    img = (uint8_t*)heap_caps_malloc((size_t)len, MALLOC_CAP_SPIRAM);
+  if (img) {
+    auto* st = http.getStreamPtr();
+    int received = 0;
+    unsigned long last_data = millis();
+    while (received < len) {
+      const int avail = st ? st->available() : 0;
+      if (avail <= 0) {
+        if (!http.connected() || (millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      const int want = (avail < len - received) ? avail : (len - received);
+      const int n = st->read(img + received, (size_t)want);
+      if (n <= 0) {
+        if ((millis() - last_data) > 15000) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
+        continue;
+      }
+      last_data = millis();
+      received += n;
+      s_sdfw_pct = (int)((uint64_t)received * 85 / (uint64_t)len);   // 85..100 = the SD write
+      vTaskDelay(1);   // feed IDLE (see the streaming loop below)
+    }
+    http.end();
+    if (received != len) {
+      heap_caps_free(img);
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "short read %d/%d", received, len);
+      s_sdfw_state = 3; return;
+    }
+    size_t bsz = 4096;   // internal DMA-capable bounce buffer, never PSRAM (see below)
+    uint8_t* bounce = (uint8_t*)heap_caps_malloc(bsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!bounce) { bsz = 1024; bounce = (uint8_t*)heap_caps_malloc(bsz, MALLOC_CAP_DMA | MALLOC_CAP_8BIT); }
+    if (!bounce) {
+      heap_caps_free(img);
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return;
+    }
+    struct SdSink {
+      const char* path; size_t len; File f;
+      bool open() { f = SD.open(path, FILE_WRITE); return (bool)f; }
+      size_t write(const uint8_t* p, size_t n) { return f.write(p, n); }
+      bool close() { const bool full = (size_t)f.size() == len; f.close(); return full; }
+      void discard() { SD.remove(path); }
+      void pause(int attempt) { vTaskDelay(pdMS_TO_TICKS(300 * attempt)); }
+      void progress(size_t done, size_t total) {
+        s_sdfw_pct = 85 + (int)((uint64_t)done * 15 / (uint64_t)total);
+        vTaskDelay(1);
+      }
+    } sink{path, (size_t)len, File()};
+    const bool written = BufferedFileCommit::commit(sink, img, (size_t)len, bounce, bsz, 3);
+    free(bounce);
+    heap_caps_free(img);
+    if (!written) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); s_sdfw_state = 3; return; }
+    strncpy(s_sdfw_msg, path, sizeof s_sdfw_msg - 1); s_sdfw_msg[sizeof s_sdfw_msg - 1] = 0;
+    s_sdfw_pct = 100;
+    s_sdfw_state = 2;
+    return;
   }
   File f = SD.open(path, FILE_WRITE);
   if (!f) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD open failed"); http.end(); s_sdfw_state = 3; return; }
@@ -79013,6 +79079,9 @@ static bool sdRuntimeLifecycleBusy() {
 #if defined(HAS_TDECK_GT911) || defined(TLORA_PAGER) || defined(HAS_TDECK_MAX)
   busy = busy || s_notify_playing;
 #endif
+#if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
+  busy = busy || s_sdfw_request || s_sdfw_state == 1;   // "Save update bin to SD" holds a file open (#734)
+#endif
 #if CAP_SD || defined(TLORA_PAGER)
   // Before a lifecycle owner requests a backend pause, keep the conservative
   // queued+active gate used by format/reset paths. Once the pause is asserted,
@@ -79224,7 +79293,10 @@ static void sdHealthTick() {
   }
 #endif
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
-  if (s_sdfw_request) return;     // worker streaming a firmware download to /BINS
+  // Worker downloading a firmware bin to /BINS. The worker clears s_sdfw_request the
+  // moment it picks the job up, so the request flag alone left the whole download
+  // unguarded: a probe or remount here could SD.end() under its open file (#734).
+  if (s_sdfw_request || s_sdfw_state == 1) return;
 #endif
   // Probe when some SD user flagged a failure (rate-limited to 1/5 s), and
   // also on a slow 30 s background cadence — a card yanked while nothing is
