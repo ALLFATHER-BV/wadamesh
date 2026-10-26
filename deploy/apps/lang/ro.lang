@@ -404,6 +404,7 @@ Image too large (>4 MB)	Imagine prea mare (>4 MB)
 Import	Importă
 Import backup	Importă backup
 Import failed (bad/unreadable JSON)	Import eşuat (JSON invalid/ilizibil)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Import failed: internal storage unavailable. Identity, channels and contacts were not saved.
 Import settings	Importă setările
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	Imporţi acest backup?\nÎnlocuieşte identitatea,\ncanalele şi contactele,\napoi reporneşte.
 Import: storage unavailable	Import: stocare indisponibilă
@@ -564,6 +565,7 @@ No contact to trace	Niciun contact de trasat
 No contacts have shared\na GPS location yet.	Niciun contact nu a partajat\nîncă o locaţie GPS.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Niciun nod descoperit încă.\n\nTot ce se aude prin eter şi nu e în contactele tale apare aici. Când auto-adăugarea e oprită, poţi adăuga manual noduri la contacte.
 No earlier versions yet	Nicio versiune anterioară încă
+No internal storage: identity, channels and contacts can't be saved.	No internal storage: identity, channels and contacts can't be saved.
 No local expansion data	Fără date locale de extensie
 No location for this contact	Fără locaţie pentru acest contact
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Fără stocare pentru hartă.\n\nIntrodu un card SD pentru dalele\nWi-Fi (sau rescrie partiţia\nde dale ca s-o refaci).

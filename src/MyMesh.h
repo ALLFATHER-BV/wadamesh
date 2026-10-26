@@ -227,10 +227,13 @@ public:
    *  bit0=identity(name+key) bit1=radio bit2=position bit3=channels bit4=contacts
    *  bit5=screen/app preferences + Wi-Fi (touch builds; "app_settings" in the file).
    *  `replace_*` clears existing channels/contacts first. Returns false on a
-   *  malformed document. Fills counts (channels/contacts applied) if non-null. */
+   *  malformed document. Fills counts (channels/contacts applied) if non-null.
+   *  `out_saved` (if non-null) goes false when the identity or node prefs could not
+   *  be written -- no internal store mounted (#708) -- so the caller can say so
+   *  instead of reporting a restore that will be gone after the reboot. */
   bool uiImportBackup(Stream& in, uint8_t sections,
                       bool replace_channels, bool replace_contacts,
-                      int* out_channels, int* out_contacts);
+                      int* out_channels, int* out_contacts, bool* out_saved = nullptr);
   /** Factory reset: wipe ALL persistent data — formats the internal filesystem
    *  (identity, contacts, channels, saved messages, exported backups) and erases
    *  NVS (Wi-Fi credentials + every setting). The caller MUST reboot immediately

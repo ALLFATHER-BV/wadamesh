@@ -138,7 +138,8 @@ public:
                      uint8_t* path, size_t path_cap);
   void uiExportBackup(Print& out, double node_lat, double node_lon);   // the device's file, without the private key
   bool uiImportBackup(Stream& in, uint8_t sections, bool replace_channels, bool replace_contacts,
-                      int* out_channels, int* out_contacts);       // settings, channels, contacts (no key)
+                      int* out_channels, int* out_contacts,         // settings, channels, contacts (no key)
+                      bool* out_saved = nullptr);                   // false: prefs not written (#708)
   bool uiFactoryReset();                                // wipes the host data dir's SPIFFS
 
   // ---- channels -----------------------------------------------------------------

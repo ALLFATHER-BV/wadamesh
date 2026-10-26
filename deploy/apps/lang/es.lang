@@ -404,6 +404,7 @@ Image too large (>4 MB)	Imagen demasiado grande (>4 MB)
 Import	Importar
 Import backup	Importar copia de seguridad
 Import failed (bad/unreadable JSON)	Error de importación (JSON no válido)
+Import failed: internal storage unavailable. Identity, channels and contacts were not saved.	Error al importar: almacenamiento interno no disponible. No se guardaron la identidad, los canales ni los contactos.
 Import settings	Importar ajustes
 Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots.	¿Importar esta copia?\nReemplaza identidad,\ncanales y contactos,\nluego reinicia.
 Import: storage unavailable	Importar: almacenamiento no disponible
@@ -564,6 +565,7 @@ No contact to trace	Sin contacto para rastrear
 No contacts have shared\na GPS location yet.	Ningún contacto ha compartido\nuna ubicación GPS aún.
 No discovered nodes yet.\n\nAnything heard over the air that isn't in your contacts will show up here. When auto-add is off, you can manually add nodes to your contacts.	Aún no hay nodos descubiertos.\n\nTodo lo que se oiga por radio y no esté en tus contactos aparecerá aquí. Si el auto-añadir está desactivado, puedes añadir nodos manualmente a tus contactos.
 No earlier versions yet	Aún no hay versiones anteriores
+No internal storage: identity, channels and contacts can't be saved.	Sin almacenamiento interno: no se pueden guardar la identidad, los canales ni los contactos.
 No local expansion data	Sin datos de expansión local
 No location for this contact	Sin ubicación para este contacto
 No map storage.\n\nInsert an SD card to cache\nWi-Fi tiles (or reflash to\nrestore the tiles partition).	Sin almacenamiento de mapa.\n\nInserta una tarjeta SD para teselas\nWi-Fi (o reinstala para restaurar\nla partición de teselas).

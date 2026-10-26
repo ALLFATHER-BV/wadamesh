@@ -511,10 +511,11 @@ static int hexToBytes(const char* hx, uint8_t* out, int max_bytes) {
 // the companion protocol. The demo replays its own cast and channels at every start, so
 // there an import keeps the name, settings and app preferences.
 bool MyMesh::uiImportBackup(Stream& in, uint8_t sections, bool replace_channels, bool replace_contacts,
-                            int* out_channels, int* out_contacts) {
+                            int* out_channels, int* out_contacts, bool* out_saved) {
   (void)replace_channels;
   if (out_channels) *out_channels = 0;
   if (out_contacts) *out_contacts = 0;
+  if (out_saved) *out_saved = true;
   JsonDocument doc;
   if (deserializeJson(doc, in)) return false;
   JsonObjectConst root = doc.as<JsonObjectConst>();
@@ -582,7 +583,7 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections, bool replace_channels,
       if (!ps["longitude"].isNull()) { sensors.node_lon = ps["longitude"].as<double>(); dirty = true; }
     }
   }
-  if (dirty) savePrefs();
+  if (dirty && !savePrefs() && out_saved) *out_saved = false;   // as src/MyMesh.cpp (#708)
   int nch = 0;
   if (sections & 0x08) {
     JsonArrayConst ch = root["channels"].as<JsonArrayConst>();

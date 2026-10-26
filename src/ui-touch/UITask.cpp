@@ -31202,6 +31202,11 @@ static void spectrumWindowCb(lv_event_t* e) {
 }
 #endif
 
+// backupImportAndReboot()'s result, defined with the Backups settings page further down.
+// BadFile: unreadable or not JSON. StoreFailed: parsed and applied, but the identity
+// and node prefs could not be written (no internal store, #708), so nothing reboots.
+enum class BackupImport : uint8_t { Rebooting, BadFile, StoreFailed };
+
 #if WADA_WEB_FILE_TRANSFER
 // ============================================================================
 // File Transfer app: authenticated browser access to removable SD storage.
@@ -31238,8 +31243,8 @@ static bool s_file_transfer_restore_upload = false;
 static bool s_file_transfer_backup_download = false;
 // Settings backup helpers, defined with the Backups settings page further down.
 static void backupMakeFilename(char* out, size_t cap, bool probe_storage);
-static bool backupImportAndReboot(fs::FS* fsp, const char* path,
-                                  void (*on_imported)(int nch, int nco));
+static BackupImport backupImportAndReboot(fs::FS* fsp, const char* path,
+                                          void (*on_imported)(int nch, int nco));
 static constexpr uint32_t kFileTransferMaxBytes = 512u * 1024u * 1024u;
 static constexpr uint32_t kMapTileMaxBytes = 256u * 1024u;
 static constexpr uint32_t kFileTransferIdleMs = 10u * 60u * 1000u;
@@ -31554,8 +31559,13 @@ static void fileTransferRestoreApply(fs::FS& storage) {
   }
   snprintf(s_file_transfer_result, sizeof s_file_transfer_result, "%s", "Restoring settings backup");
   // Reboots on success; fileTransferFail() removes the temp file otherwise.
-  if (!backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported))
-    fileTransferFail("backup could not be imported (bad/unreadable JSON)");
+  switch (backupImportAndReboot(&storage, kFileTransferTemp, fileTransferRestoreImported)) {
+    case BackupImport::BadFile:
+      fileTransferFail("backup could not be imported (bad/unreadable JSON)"); break;
+    case BackupImport::StoreFailed:
+      fileTransferFail("internal storage unavailable: identity, channels and contacts were not saved"); break;
+    case BackupImport::Rebooting: break;
+  }
 }
 
 // Backup: write a settings backup exactly as Settings -> Backups -> Export does,
@@ -50627,9 +50637,9 @@ static void backupPickerClose() {
 // Import a backup file and, on success, show the counts and reboot (never
 // returns). On failure returns false with the "Importing…" overlay removed.
 // Shared by the on-device picker and the File Transfer page's Restore button.
-static bool backupImportAndReboot(fs::FS* fsp, const char* path,
-                                  void (*on_imported)(int nch, int nco)) {
-  if (!g_lv.task || !fsp || !path) return false;
+static BackupImport backupImportAndReboot(fs::FS* fsp, const char* path,
+                                          void (*on_imported)(int nch, int nco)) {
+  if (!g_lv.task || !fsp || !path) return BackupImport::BadFile;
   // "Importing…" overlay, painted before the blocking parse + apply.
   lv_obj_t* ov = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(ov);
@@ -50651,12 +50661,15 @@ static bool backupImportAndReboot(fs::FS* fsp, const char* path,
   // per-core idle watchdogs for the duration and only restore them if we bail.
   wdtHeavyBegin();
   int nch = 0, nco = 0;
-  bool ok = f && the_mesh.uiImportBackup(f, 0x3F, true, true, &nch, &nco);   // 0x20 = screen/app prefs
+  bool saved = true;
+  bool ok = f && the_mesh.uiImportBackup(f, 0x3F, true, true, &nch, &nco, &saved);   // 0x20 = screen/app prefs
   if (f) f.close();
-  if (!ok) {
+  if (!ok || !saved) {
+    // !saved: the screen/app prefs (NVS) took, but identity, channels and contacts had
+    // nowhere to go. Rebooting would hide that behind a "restored" message (#708).
     wdtHeavyEnd();
     lv_obj_del(ov);
-    return false;
+    return ok ? BackupImport::StoreFailed : BackupImport::BadFile;
   }
   g_lv.task->persistHistoryNow();   // nests under the guard above (ref-counted)
   if (on_imported) on_imported(nch, nco);
@@ -50672,7 +50685,7 @@ static bool backupImportAndReboot(fs::FS* fsp, const char* path,
   touchPrefsSetClockFloor(rtc_clock.getFloor());
   touchPrefsFlush();
   ESP.restart();
-  return true;
+  return BackupImport::Rebooting;
 }
 // Apply the file stashed in s_backup_chosen, then reboot.
 static void doBackupImportChosen() {
@@ -50682,8 +50695,13 @@ static void doBackupImportChosen() {
   if (!strncmp(path, "int:", 4)) { fsp = backupInternalFs(); path += 4; }
   else if (!strncmp(path, "sd:", 3)) { fsp = backupSdFs(); path += 3; }
   if (!fsp) { g_lv.task->showAlert(TR("Import: storage unavailable"), 2000); return; }
-  if (!backupImportAndReboot(fsp, path, nullptr))
-    g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400);
+  switch (backupImportAndReboot(fsp, path, nullptr)) {
+    case BackupImport::BadFile:
+      g_lv.task->showAlert(TR("Import failed (bad/unreadable JSON)"), 2400); break;
+    case BackupImport::StoreFailed:
+      g_lv.task->showAlert(TR("Import failed: internal storage unavailable. Identity, channels and contacts were not saved."), 4000); break;
+    case BackupImport::Rebooting: break;
+  }
 }
 static void confirmBackupImport(const char* stored) {
   if (!stored) return;

@@ -28,6 +28,7 @@
 #include <helpers/esp32/WifiCrashGuard.h>   // Wi-Fi off after a crash right after starting it
 #include "i18n.h"
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
+#include "../../src/ui-touch/i18n.h"          // TR() for the missing-store boot alert (#708)
 #include "../../src/helpers/esp32/BootTimeSync.h"   // opt-in cold-boot clock sync over saved Wi-Fi (#383)
 #include "esp_hosted.h"
 #include "esp_netif.h"
@@ -143,6 +144,34 @@ static void migrateFsDir(fs::FS &src, const char *sdir, fs::FS &dst, const char 
   d.close();
 }
 
+// #708: Launcher (bmorcelli/Launcher) reads this card in SPI mode before it boots us, and an SD
+// card that has entered SPI mode stays there until it truly loses power -- it then ignores the
+// native-mode CMD0 every SD_MMC mount starts with, so all four rungs fail and the card only comes
+// back after a reboot that skips Launcher. Xl9535::begin() already drops SD_EN for ~1 s, but the
+// card evidently rides that out (the six SD lines have pull-ups and the IO pads sit on the
+// on-chip LDO that Launcher left enabled, so it is likely fed through its pin ESD diodes --
+// unverified). Cut the slot properly: power off, every SD line driven LOW with pull-ups off so
+// nothing back-feeds the card, then power back on. Only run after a failed first mount.
+static void sdSlotPowerCycle() {
+  static const gpio_num_t kSdPins[] = { GPIO_NUM_43, GPIO_NUM_44, GPIO_NUM_39,
+                                        GPIO_NUM_40, GPIO_NUM_41, GPIO_NUM_42 };
+  xl9535.write(Xl9535::IO_SD_EN, true);            // slot power OFF (active-low)
+  for (gpio_num_t p : kSdPins) {
+    gpio_reset_pin(p);
+    gpio_pullup_dis(p);
+    gpio_set_direction(p, GPIO_MODE_OUTPUT);
+    gpio_set_level(p, 0);
+  }
+  delay(300);                                       // let the card's supply discharge
+  for (gpio_num_t p : kSdPins) {
+    gpio_set_direction(p, GPIO_MODE_INPUT);
+    if (p != GPIO_NUM_43) gpio_pullup_en(p);        // same pull-ups as before the first mount
+  }
+  xl9535.write(Xl9535::IO_SD_EN, false);           // slot power ON
+  delay(50);
+  printf("[storage] SD slot power-cycled (#708)\n");
+}
+
 static void wadameshSetup() {
   Serial.begin(115200);
   delay(150);
@@ -178,7 +207,22 @@ static void wadameshSetup() {
   // formatOnFail=true: the first boot of this build finds FAT data in the partition, fails the
   // littlefs mount, and formats it — the deliberate one-way conversion (store contents come back
   // from the SD card via the v4 migration below).
-  g_fs_ok = LittleFS.begin(true, "/lfs", 10, "storage");
+  // #708: installed through Launcher, the partition table is Launcher's, not ours. From the
+  // -merged.bin it carries a 448 KB 'storage' (Launcher's default FAT size, not our 8 MB); from
+  // the app-only .bin there is no 'storage' at all, and identity, channels and contacts have
+  // nowhere to live. Say which -- the mount failure alone does not.
+  const esp_partition_t* store_part =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "storage");
+  if (store_part) {
+    printf("[storage] 'storage' partition @0x%06lx, %lu KB\n",
+           (unsigned long)store_part->address, (unsigned long)(store_part->size / 1024));
+    g_fs_ok = LittleFS.begin(true, "/lfs", 10, "storage");
+  } else {
+    // Deliberately no fallback onto another data partition: under Launcher that belongs to a
+    // different app, and formatOnFail would wipe it.
+    printf("[storage] no 'storage' partition (installed through Launcher from the app-only .bin?) "
+           "-- identity, channels and contacts cannot be saved\n");
+  }
   printf("[storage] LittleFS(storage) = %s\n", g_fs_ok ? "OK" : "FAILED");
   if (g_fs_ok) { LittleFS.mkdir("/identity"); LittleFS.mkdir("/bl"); }
   // The slot's VDD is gated by the XL9535's SD_EN (IO15), ACTIVE-LOW — powerOnSequence() drives it
@@ -218,14 +262,20 @@ static void wadameshSetup() {
     };
     sdMountDiagBegin();
     uint32_t mounted_hz = 0;
-    for (auto &t : tries) {
+    bool cycled = false;
+    for (size_t i = 0; i < sizeof tries / sizeof tries[0]; ) {
+      const auto &t = tries[i];
       const bool begin_ok = SD_MMC.begin("/sdcard", t.onebit, false, t.khz);
       g_sd_ok = begin_ok && SD_MMC.cardType() != CARD_NONE;
       sdMountDiagAttempt((uint32_t)t.khz * 1000u, begin_ok, g_sd_ok);
       printf("[storage] SD_MMC try %s -> %s\n", t.tag, g_sd_ok ? "OK" : "fail");
       if (g_sd_ok) { mounted_hz = (uint32_t)t.khz * 1000u; break; }
       SD_MMC.end();
+      // #708: a card left in SPI mode fails every rung the same way; one real power cycle
+      // before the derates, then the primary rung again.
+      if (!cycled) { cycled = true; sdSlotPowerCycle(); continue; }
       delay(120);
+      i++;
     }
     sdMountDiagSetMounted(g_sd_ok, mounted_hz);
   }
@@ -390,6 +440,8 @@ static void wadameshSetup() {
   ui_task.begin(disp, &sensors, the_mesh.getNodePrefs());
   board.onBootComplete();
   printf("[BOOT] setup done\n");
+  // #708: without the internal store, everything the user sets up is gone at the next boot.
+  if (!g_fs_ok) ui_task.showAlert(TR("No internal storage: identity, channels and contacts can't be saved."), 10000);
 
 #ifdef TDP4_C6_FLASH_HELPER
   // C6-FLASH HELPER BUILD: the P4 must NOT touch the C6 so it can be held in ROM download mode and
