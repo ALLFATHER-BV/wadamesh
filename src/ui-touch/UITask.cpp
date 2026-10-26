@@ -3342,7 +3342,7 @@ struct LvUiState {
   LvChatPanel dm;          // Chats tab list + DM overlay
   LvChatPanel ch;          // channel thread overlay only (no tab list)
   lv_obj_t* contacts_list;
-  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites
+  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites 4=has location 5=direct 6=rooms
   // Per-session text-search filter applied on top of the category filter.
   // Empty = no text filter. Set/cleared by the magnifier sheet.
   char      contacts_search[24];
@@ -33223,12 +33223,12 @@ static lv_obj_t* s_ct_normal_bar  = nullptr; // header toolbar shown in normal m
 static lv_obj_t* s_ct_select_bar  = nullptr; // header toolbar shown in select mode
 static lv_obj_t* s_ct_del_btn     = nullptr; // "Delete (N)" button in the select bar
 static lv_obj_t* s_ct_sort_btns[CONTACTS_SORT_COUNT] = {};
-static lv_obj_t* s_ct_filter_btns[6] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
+static lv_obj_t* s_ct_filter_btns[7] = { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 static lv_obj_t* s_ct_filter_btn_lbl = nullptr;   // header Filter button label (shows the active filter)
 static lv_obj_t* s_ct_disc_badge     = nullptr;   // count badge on the header Discovered button
 static const char* contactsFilterShortLabel() {
   switch (g_lv.contacts_filter) {
-    case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir";
+    case 1u: return "RPT";  case 2u: return "Peer"; case 3u: return "Fav"; case 4u: return "Loc"; case 5u: return "Dir"; case 6u: return "Room";
     default: return "All";
   }
 }
@@ -33262,6 +33262,7 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if (pathHops(c.out_path_len) != 0) return false; break;                  // 0-hop / direct neighbors only
+    case 6u: if (c.type != ADV_TYPE_ROOM) return false; break;             // room servers
     default: break;                                                        // 0 = all
   }
   if(needle && needle[0]){
@@ -33516,7 +33517,7 @@ static void ctPaintOpt(lv_obj_t* b, bool active){
 }
 static void ctSheetRepaint(){
   for(int i=0;i<CONTACTS_SORT_COUNT;++i) ctPaintOpt(s_ct_sort_btns[i], g_contacts_sort==(uint8_t)i);
-  for(int i=0;i<6;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
+  for(int i=0;i<7;++i) ctPaintOpt(s_ct_filter_btns[i], g_lv.contacts_filter==(uint8_t)i);
 }
 // Repaint the Sort sheet rows: highlight the active mode and show its direction
 // arrow (▼ = the mode's natural order, ▲ = reversed). Labels are pulled from
@@ -33611,7 +33612,7 @@ static lv_obj_t* ctOpenOptionSheet(const char* title){
   return card;
 }
 static void openContactsSortSheet(){
-  for(int i=0;i<6;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
+  for(int i=0;i<7;++i) s_ct_filter_btns[i]=nullptr;   // the filter sheet's buttons are gone now
   lv_obj_t* card = ctOpenOptionSheet(TR("Sort by"));
   // active=false here; ctSortRowsRepaint() below sets the real highlight + arrow.
   s_ct_sort_btns[0] = ctSheetOption(card, contactsSortOptName(CONTACTS_SORT_AZ),         ctSortOptCb, CONTACTS_SORT_AZ,         false);
@@ -33656,6 +33657,7 @@ static void openContactsFilterSheet(){
   lv_obj_t* card = ctOpenOptionSheet("Filter");
   s_ct_filter_btns[0] = ctSheetOption(card, "All",            ctFilterOptCb, 0, g_lv.contacts_filter==0);
   s_ct_filter_btns[1] = ctSheetOption(card, "Repeaters",      ctFilterOptCb, 1, g_lv.contacts_filter==1);
+  s_ct_filter_btns[6] = ctSheetOption(card, TR("Rooms"),          ctFilterOptCb, 6, g_lv.contacts_filter==6);   // listed by type, value stays 6
   s_ct_filter_btns[2] = ctSheetOption(card, TR("Peers"),          ctFilterOptCb, 2, g_lv.contacts_filter==2);
   s_ct_filter_btns[3] = ctSheetOption(card, TR("Favorites"),      ctFilterOptCb, 3, g_lv.contacts_filter==3);
   s_ct_filter_btns[4] = ctSheetOption(card, TR("Has location"),   ctFilterOptCb, 4, g_lv.contacts_filter==4);
