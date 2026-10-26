@@ -306,8 +306,11 @@ local function build_wada()
     if span <= 0 then return lo + r end    -- span >= 2^31: any r below it is in range
     return lo + r % span
   end
-  wada.sys.epoch = function() return nil end
-  wada.sys.datetime = function() return nil end
+  -- cfg.epoch is UTC seconds; cfg.datetime is the local civil table the
+  -- firmware would derive from it. Both nil = no clock, the same state as the
+  -- device before a GPS/NTP/mesh time sync.
+  wada.sys.epoch = function() return cfg.epoch end
+  wada.sys.datetime = function() return cfg.datetime end
   wada.sys.beep = function() return false end
   -- wada.ui.input(title, initial, cb [, max_len]) as uiInput checks it: optional
   -- strings, a function, max_len an integer clamped to 1..2000 (63 when left out),
@@ -2369,6 +2372,138 @@ scenarios.protreck_deniv = function()
   if app.on_close then guarded(BUDGET, app.on_close) end
 end
 
+scenarios.protreck_astro_local = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792411200,                 -- 2026-10-19 12:00 UTC
+          datetime = { year = 2026, month = 10, day = 19, hour = 14, min = 0, sec = 0, wday = 1 } }
+  cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("14:00"), "status bar must show local time")
+  assert(pt_has_text("UTC+2"), "status bar must show the local UTC offset")
+  assert(pt_has_text("SUN"), "local sun section must not be labelled UTC")
+  assert(pt_has_text("Rise 08:27"), "local sunrise (Paris, UTC+2)")
+  assert(pt_has_text("Set  18:43"), "local sunset (Paris, UTC+2)")
+  assert(pt_has_text("Twl  07:49"), "local civil twilight (Paris, UTC+2)")
+  print("  astro local: local clock + rise/set/twilight OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_astro_old_fw = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792411200 }
+  cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  wada.sys.datetime = nil   -- simulate a host where datetime() is unavailable
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("12:00"), "UTC time must still be shown")
+  assert(pt_has_text("UTC"), "fallback must label the time UTC")
+  assert(pt_has_text("SUN (UTC)"), "fallback sun heading must say UTC")
+  assert(pt_has_text("Rise 06:27"), "UTC sunrise on old firmware")
+  assert(pt_has_text("Set  16:43"), "UTC sunset on old firmware")
+  assert(pt_has_text("Twl  05:49"), "UTC civil twilight on old firmware")
+  print("  astro old fw: UTC fallback OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_astro_east = function()
+  -- UTC+13 and the local date is already tomorrow; the event hours must land
+  -- on that local day.
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792436400,                 -- 2026-10-19 19:00 UTC
+          datetime = { year = 2026, month = 10, day = 20, hour = 8, min = 0, sec = 0, wday = 2 } }
+  cfg.gps = function() return { lat = -36.85, lon = 174.76, sats = 8, alt_m = 20, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("08:00"), "local time must be shown")
+  assert(pt_has_text("UTC+13"), "UTC+13 offset must be shown")
+  assert(pt_has_text("Rise 06:30"), "Auckland sunrise in UTC+13")
+  assert(pt_has_text("Set  19:40"), "Auckland sunset in UTC+13")
+  assert(pt_has_text("Twl  05:59"), "Auckland civil twilight in UTC+13")
+  print("  astro east: UTC+13 / next-day offset OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_astro_west = function()
+  -- UTC date is already tomorrow while the local date is still today; the
+  -- status bar must follow the local clock and the times must be local.
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792483200,                 -- 2026-10-20 08:00 UTC
+          datetime = { year = 2026, month = 10, day = 19, hour = 22, min = 0, sec = 0, wday = 1 } }
+  cfg.gps = function() return { lat = 21.30, lon = -157.86, sats = 7, alt_m = 10, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("22:00"), "local time must be shown")
+  assert(pt_has_text("UTC-10"), "UTC-10 offset must be shown")
+  assert(pt_has_text("Rise 06:33"), "Honolulu sunrise in UTC-10")
+  assert(pt_has_text("Set  17:58"), "Honolulu sunset in UTC-10")
+  assert(pt_has_text("Twl  06:07"), "Honolulu civil twilight in UTC-10")
+  print("  astro west: UTC-10 / previous-day offset OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_astro_half_hour = function()
+  -- India is UTC+5:30; the status bar must not round it to a whole hour.
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792411200,
+          datetime = { year = 2026, month = 10, day = 19, hour = 17, min = 30, sec = 0, wday = 1 } }
+  cfg.gps = function() return { lat = 28.61, lon = 77.21, sats = 8, alt_m = 216, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("17:30"), "local time must be shown")
+  assert(pt_has_text("UTC+5:30"), "half-hour offset must be shown exactly")
+  print("  astro half-hour: UTC+5:30 OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_astro_tz_change = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true },
+          epoch = 1792411200,
+          datetime = { year = 2026, month = 10, day = 19, hour = 14, min = 0, sec = 0, wday = 1 } }
+  cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("Rise 08:27"), "UTC+2 sunrise")
+  -- The sun times are cached in UTC; the next draw must re-read the offset.
+  cfg.datetime = { year = 2026, month = 10, day = 19, hour = 13, min = 0, sec = 0, wday = 1 }
+  drawlog.text = {}
+  tick(app, 1)
+  assert(pt_has_text("13:00"), "clock must follow the new zone")
+  assert(pt_has_text("UTC+1"), "offset must follow the new zone")
+  assert(pt_has_text("Rise 07:27"), "UTC+1 sunrise after the zone change")
+  assert(pt_has_text("Set  17:43"), "UTC+1 sunset after the zone change")
+  assert(pt_has_text("Twl  06:49"), "UTC+1 civil twilight after the zone change")
+  assert(not pt_has_text("Rise 08:27"), "the stale UTC+2 sunrise must be gone")
+  print("  astro tz change: offset re-read at draw time OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.protreck_no_clock = function()
+  cfg = { w = 320, h = 240, caps = { touch = true, keyboard = false, sdk_ext = true } }
+  cfg.gps = function() return { lat = 48.85, lon = 2.35, sats = 8, alt_m = 35, speed_kmh = 0, course = 0 } end
+  storekv = {}; wada = build_wada()
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  tick(app, 1)
+  assert(pt_has_text("--:--"), "status bar must show no clock")
+  assert(pt_has_text("No clock"), "ASTRO must distinguish no clock from no GPS")
+  assert(not pt_has_text("No GPS"), "GPS is present, so it must not say No GPS")
+  print("  astro: no clock message OK")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
 -- ---- MapFetch scenarios -----------------------------------------------------
 
 local function mapfetch_open(w, h, gps_lat, gps_lon, map_tiles)
@@ -2549,8 +2684,15 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or APP_PATH:find("/tripodometer/", 1, true)
   and { "trip_v4", "trip_tdeck", "trip_moving", "trip_persist", "trip_reset", "trip_cost" }
-  or APP_PATH:find("/protreck/", 1, true)
+  -- The ASTRO local-time scenarios target 1.3+; 1.2 is the published version
+  -- and keeps its original list.
+  or APP_PATH:find("/protreck/1.2/", 1, true)
   and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti", "protreck_alarm", "protreck_compass", "protreck_deniv", "protreck_cost" }
+  or APP_PATH:find("/protreck/", 1, true)
+  and { "protreck_tdeck", "protreck_v4", "protreck_no_gps", "protreck_chrono", "protreck_timer", "protreck_alti",
+        "protreck_alarm", "protreck_compass", "protreck_deniv", "protreck_astro_local", "protreck_astro_old_fw",
+        "protreck_astro_east", "protreck_astro_west", "protreck_astro_half_hour", "protreck_astro_tz_change",
+        "protreck_no_clock", "protreck_cost" }
   or APP_PATH:find("/ping/", 1, true)
   and { "ping_tdeck", "ping_v4", "ping_no_contacts", "ping_round_trip", "ping_auto_reply", "ping_cost" }
   or APP_PATH:find("/inputlen.lua", 1, true)
