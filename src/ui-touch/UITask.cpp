@@ -158,6 +158,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
+#include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
 #endif
@@ -2444,7 +2445,7 @@ static volatile int  s_p4_vib_slot    = TOUCH_SND_MSG;
 static volatile int  s_p4_vib_style   = TOUCH_VIB_PULSE;
 static void p4VibrateTaskFn(void*) {
   const VibStyle& st = kVibStyles[s_p4_vib_style];
-  const int beats = s_p4_vib_slot == TOUCH_SND_MEN ? 3 : s_p4_vib_slot == TOUCH_SND_DM ? 2 : 1;
+  const int beats = NotifyAlert::vibBeats(s_p4_vib_slot);
   for (int i = 0; i < beats; ++i) {
     if (i) vTaskDelay(pdMS_TO_TICKS(st.gap));
     p4HapticBuzz(st.on1, st.gain);
@@ -78572,26 +78573,28 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // @-mentions get a distinct sound + their own enable, so an operator can mute message
   // sounds but still hear @-mentions. Each respects the per-channel mute flags.
   {
-    const bool is_mention = channel && text && textMentionsMe(text);
-    const bool is_dm = (g_last_event == UIEventType::contactMessage);   // private/direct message
-    const uint8_t cmute = channel ? touchPrefsGetChannelMute(thread) : 0;
-    // Master Sound switch silences the chime only; Do Not Disturb silences chime and vibration.
-    const bool want_sound = !isBuzzerQuiet() && !dndActive();
+    // Master Sound switch silences the chime only; Do Not Disturb silences chime and
+    // vibration. The rules: NotifyAlert.h (host-tested).
+    static_assert(NotifyAlert::MSG == TOUCH_SND_MSG && NotifyAlert::DM == TOUCH_SND_DM &&
+                  NotifyAlert::MEN == TOUCH_SND_MEN && NotifyAlert::MUTE_MSG == TOUCH_CHMUTE_MSG &&
+                  NotifyAlert::MUTE_MEN == TOUCH_CHMUTE_MEN, "NotifyAlert.h mirrors the prefs' slots");
+    NotifyAlert::In na{};
+    na.is_mention   = channel && text && textMentionsMe(text);
+    na.is_dm        = (g_last_event == UIEventType::contactMessage);   // private/direct message
+    na.cmute        = channel ? touchPrefsGetChannelMute(thread) : 0;
+    na.snd_mentions = touchPrefsGetSoundMentions();
+    na.snd_direct   = touchPrefsGetSoundDirect();
+    na.snd_messages = touchPrefsGetSoundMessages();
+    na.sound_quiet  = isBuzzerQuiet();
+    na.dnd          = dndActive();
 #if defined(HAS_UI_VIBRATE)
-    const bool want_vib = touchPrefsGetVibrate() && !dndActive();
-#else
-    const bool want_vib = false;
+    na.vibrate_on   = touchPrefsGetVibrate();
 #endif
-    if (want_sound || want_vib) {
-      int slot = -1;
-      if (is_mention && touchPrefsGetSoundMentions() && !(cmute & TOUCH_CHMUTE_MEN)) slot = TOUCH_SND_MEN;
-      else if (is_dm) { if (touchPrefsGetSoundDirect()) slot = TOUCH_SND_DM; }
-      else if (touchPrefsGetSoundMessages() && !(cmute & TOUCH_CHMUTE_MSG))          slot = TOUCH_SND_MSG;
-      if (slot >= 0 && want_sound) uiPlaySlot(slot);
+    const NotifyAlert::Out alert = NotifyAlert::decide(na);
+    if (alert.sound) uiPlaySlot(alert.slot);
 #if defined(HAS_UI_VIBRATE)
-      if (slot >= 0 && want_vib)   uiVibrateSlot(slot);
+    if (alert.vib)   uiVibrateSlot(alert.slot);
 #endif
-    }
   }
 #endif
 #if defined(HAS_TOUCH_UI)
