@@ -43,6 +43,21 @@ IDF_ARGS=(-B build/tanmatsu \
   -DWADA_FW_TAG="$WADA_FW_TAG" -DWADA_FW_DATE="$WADA_FW_DATE" \
   -DIDF_TARGET=esp32p4)
 
+# An existing sdkconfig keeps its old values: SDKCONFIG_DEFAULTS only apply when it is
+# generated. If a setting from the Tanmatsu overlay is missing, regenerate it from the
+# defaults (what a fresh clone gets), or a release built here would miss the size savings
+# that keep application.bin under the launcher's 50-page limit.
+if [ -f sdkconfig ]; then
+  while IFS= read -r line; do
+    case "$line" in CONFIG_*=n) want="# ${line%=n} is not set" ;; CONFIG_*=*) want="$line" ;; *) continue ;; esac
+    if ! grep -qxF "$want" sdkconfig; then
+      echo "[build.sh] sdkconfig lacks '$want': regenerating it from sdkconfigs/"
+      rm -f sdkconfig
+      break
+    fi
+  done < sdkconfigs/wadamesh_tanmatsu
+fi
+
 # A fresh clone has no managed_components yet. Configure once to download them,
 # then apply the compatibility patches below before the first compilation.
 if [ ! -f managed_components/espressif__libsodium/CMakeLists.txt ]; then
