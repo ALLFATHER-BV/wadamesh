@@ -27,6 +27,7 @@ extra_flags() {
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
     test_keyboard_layouts_hw) echo "-I test/kb_layouts_fakes" ;;   # LVGL names only
+    test_clock_floor) echo "-I test/clock_floor_fakes" ;;   # a settable hardware clock
     # The real WadaNmeaLocationProvider.h over a fake UART / MicroNMEA; the prefs
     # header it includes only declares its functions under ESP32.
     test_gps_baud_probe) echo "-DESP32 -I test/gps_probe_fakes" ;;
