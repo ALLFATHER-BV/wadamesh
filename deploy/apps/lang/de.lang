@@ -2193,3 +2193,12 @@ Pulse	Puls
 Gentle	Sanft
 Long	Lang
 Heartbeat	Herzschlag
+Map file	Kartendatei
+Folder tiles only	Nur Kacheln aus Ordnern
+rename the file to the folder name	Datei wie den Ordner benennen
+not a PNG raster archive	kein PNG-Rasterarchiv
+file incomplete, copy it again	Datei unvollständig, bitte neu kopieren
+not a PMTiles v3 file	keine PMTiles-v3-Datei
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Keine Kartendateien gefunden. Kopiere ein PNG-Archiv nach\n/maps/<name>/<name>.pmtiles
+Zoom: map levels only	Zoom: nur Kartenstufen
+No map levels found on the SD card	Keine Kartenstufen auf der SD-Karte gefunden

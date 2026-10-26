@@ -2194,3 +2194,12 @@ Pulse	Impulsion
 Gentle	Doux
 Long	Long
 Heartbeat	Battement de cœur
+Map file	Fichier de carte
+Folder tiles only	Tuiles des dossiers seulement
+rename the file to the folder name	renommez le fichier comme le dossier
+not a PNG raster archive	pas une archive raster PNG
+file incomplete, copy it again	fichier incomplet, recopiez-le
+not a PMTiles v3 file	pas un fichier PMTiles v3
+No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Aucun fichier de carte trouvé. Copiez une archive PNG dans\n/maps/<nom>/<nom>.pmtiles
+Zoom: map levels only	Zoom : niveaux de la carte seulement
+No map levels found on the SD card	Aucun niveau de carte trouvé sur la carte SD
