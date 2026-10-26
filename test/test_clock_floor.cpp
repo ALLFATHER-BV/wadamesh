@@ -69,6 +69,26 @@ int main() {
   { Rig r; r.hw().hw = FUTURE_2043; g_sys = 0;
     assert(r.clk.getCurrentTime() == MIN && r.clk.getFloor() == 0); }
 
+  // The #746 story: Wi-Fi sync lands, the chip write does not take, the chip stays on
+  // its stale reading. Every later read follows the running system clock (the backup
+  // name gets its date), and never goes backward.
+  {
+    Rig r;
+    r.hw().hw = MIN;                 // the stale seed the chip came back with
+    r.hw().hw_write_takes = false;
+    g_sys = MIN; g_sys_sets = 0;
+    r.clk.setCurrentTime(NOW);       // the sync: system clock set, chip write lost
+    assert(g_sys == (long)NOW && g_sys_sets == 1 && r.hw().hw == MIN);
+    assert(r.clk.timeIsCurrent());
+    uint32_t last = 0;
+    for (int i = 0; i < 100; ++i) {
+      g_sys += 37;                   // time passes on the system clock only
+      const uint32_t t = r.clk.getCurrentTime();
+      assert(t == (uint32_t)g_sys && t >= last);
+      last = t;
+    }
+  }
+
   // A healthy chip whose write takes: after a set it reads the new time and is used.
   {
     Rig r; r.hw().hw = MIN; g_sys = MIN;

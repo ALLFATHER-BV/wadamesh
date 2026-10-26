@@ -100,6 +100,12 @@ public:
     AutoDiscoverRTCClock::setCurrentTime(time);
     pushSystemClock(time);
     if (_floor > time + TRUSTED_BACK_CAP) _floor = time;
+    // An accepted set is real time: lift the floor to it. A hardware clock whose write
+    // did not take then reads below the floor, and getCurrentTime() follows the system
+    // clock this set started (#746). Without it a chip stuck at the seed (or frozen at
+    // the floor) read exactly AT the floor, never below it, and kept the stale time
+    // after a good Wi-Fi sync.
+    else if (time > _floor) _floor = time;
     // Every caller of this is a real time source (NTP, GPS, companion, CLI,
     // accepted mesh time) — the boot-time hardware adoption goes through the
     // board adapter's own software clock instead, precisely so it does not
