@@ -156,6 +156,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
+#include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
 #endif
@@ -35913,59 +35914,21 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
   Update.onProgress([](size_t done, size_t total) {
     s_ota_pct = total ? (int)((uint64_t)done * 100 / total) : 0;
   });
-  // Copy by hand, yielding, instead of Update.writeStream(): that reads through
-  // Stream::timedRead, which spins without yielding until http's 20 s timeout, so a
-  // slow start starved IDLE0 on this core-0 worker and the 5 s task watchdog
-  // rebooted the device, "stuck at 0%, then a restart" (#689). Same loop as the SD
-  // download below: wait with vTaskDelay, give up after 15 s without data.
-  //
-  // A connection that drops or stalls part way is picked up where it stopped with a Range
-  // request, up to 3 times, instead of failing with "short read" and starting over (#689:
-  // "after re-trying a few times, device was updated").
+  // Copy by hand, yielding, and resume a dropped download with a Range request (#689):
+  // OtaResume.h has the loop and why (host test: test/test_ota_resume.cpp).
+  struct OtaSys {
+    uint32_t millis() { return ::millis(); }
+    void delayMs(uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
+    void yieldTick() { vTaskDelay(1); }
+    void log(const char* line) { Serial.print(line); }
+  } sys;
   size_t written = 0;
   {
     size_t bufsz = 4096;
     uint8_t* buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!buf) { bufsz = 1024; buf = (uint8_t*)heap_caps_malloc(bufsz, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT); }
-    bool write_failed = false;
-    for (int resume = 0; buf && !write_failed; ++resume) {
-      auto* stream = http.getStreamPtr();   // NetworkClient* on arduino 3.x (P4: C6Client behind it)
-      unsigned long last_data = millis();
-      while (stream && written < (size_t)len) {
-        const int avail = stream->available();
-        if (avail <= 0) {
-          if (!http.connected() || (millis() - last_data) > 15000) break;
-          vTaskDelay(pdMS_TO_TICKS(10));
-          continue;
-        }
-        const size_t want = ((size_t)avail > bufsz) ? bufsz : (size_t)avail;
-        const int n = stream->read(buf, want);
-        if (n <= 0) {
-          if ((millis() - last_data) > 15000) break;
-          vTaskDelay(pdMS_TO_TICKS(5));
-          continue;
-        }
-        last_data = millis();
-        if (Update.write(buf, (size_t)n) != (size_t)n) { write_failed = true; break; }   // reported below
-        written += (size_t)n;
-        vTaskDelay(1);   // let IDLE0 (and Wi-Fi) run between blocks
-      }
-      http.end();
-      if (written >= (size_t)len || write_failed || resume >= 3) break;
-      Serial.printf("[OTA] stopped at %u/%d, resuming (%d)\n", (unsigned)written, len, resume + 1);
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      if (!http.begin(client, url)) break;
-      char range[40];
-      snprintf(range, sizeof range, "bytes=%u-", (unsigned)written);
-      http.addHeader("Range", range);
-      const int rc = http.GET();
-      // Only a 206 for exactly the rest is safe to append; anything else ends the update.
-      if (rc != 206 || http.getSize() != (int)((size_t)len - written)) {
-        Serial.printf("[OTA] resume -> %d (%d bytes)\n", rc, http.getSize());
-        http.end();
-        break;
-      }
-    }
+    bool write_failed = false;   // reported below (written != len, or Update.end)
+    written = OtaResume::copy(http, client, url, len, Update, buf, bufsz, write_failed, sys);
     if (buf) heap_caps_free(buf);
   }
   if (written != (size_t)len) {
