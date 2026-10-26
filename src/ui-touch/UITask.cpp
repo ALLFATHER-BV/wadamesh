@@ -12466,6 +12466,7 @@ static lv_obj_t*    s_emoji_sheet = nullptr;
 static lv_obj_t*    s_emoji_target_ta = nullptr;   // textarea to insert into
 static lv_obj_t*    s_emoji_grid  = nullptr;       // the scrollable button grid
 static int          s_emoji_sel   = -1;            // hardware-highlighted index (-1 = none)
+static int          s_emoji_painted_sel = -1;
 static int          s_emoji_cols  = 1;             // grid columns (computed at open)
 
 static bool emojiSheetIsOpen() { return s_emoji_sheet != nullptr; }
@@ -12824,6 +12825,7 @@ static void closeEmojiSheet() {
   s_emoji_grid = nullptr;
   s_emoji_tabrow = nullptr;
   s_emoji_sel = -1;
+  s_emoji_painted_sel = -1;
   s_emoji_pick_cb = nullptr;
 #if defined(HAS_M9_KEYBOARD)
   if (return_ta && lv_obj_is_valid(return_ta)) {
@@ -12888,22 +12890,22 @@ static void openEmojiPickerPick(void (*cb)(const char* utf8), const char* title)
   s_emoji_pick_cb = cb;                                            // arm AFTER the open (the closer clears it)
 }
 
-// Paint the hardware-selected cell highlighted and the rest normal, and keep
-// the selection scrolled into view. No-op when nothing is selected (touch-only).
+// Update only the previous and current hardware-selected cells.
 static void emojiPaintSelection() {
   if (!s_emoji_grid) return;
   const uint32_t n = lv_obj_get_child_cnt(s_emoji_grid);
-  for (uint32_t i = 0; i < n; ++i) {
-    lv_obj_t* b = lv_obj_get_child(s_emoji_grid, i);
-    if (!b) continue;
-    const bool sel = ((int)i == s_emoji_sel);
-    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
-    lv_obj_set_style_border_width(b, 0, LV_PART_MAIN);
-    setSelectionGlow(b, sel, LV_PART_MAIN);
+  if (s_emoji_painted_sel == s_emoji_sel) return;
+  if (s_emoji_painted_sel >= 0 && s_emoji_painted_sel < (int)n) {
+    setSelectionGlow(lv_obj_get_child(s_emoji_grid, (uint32_t)s_emoji_painted_sel),
+                     false, LV_PART_MAIN);
   }
+  s_emoji_painted_sel = s_emoji_sel;
   if (s_emoji_sel >= 0 && s_emoji_sel < (int)n) {
     lv_obj_t* b = lv_obj_get_child(s_emoji_grid, (uint32_t)s_emoji_sel);
-    if (b) lv_obj_scroll_to_view(b, LV_ANIM_ON);
+    if (b) {
+      setSelectionGlow(b, true, LV_PART_MAIN);
+      lv_obj_scroll_to_view(b, LV_ANIM_OFF);
+    }
   }
 }
 
@@ -12979,7 +12981,11 @@ static bool emojiSelectorClick() {
 // Fill (or refill) the grid from the current s_glyph_items slice.
 static void emojiFillGrid() {
   if (!s_emoji_grid) return;
+  static const lv_style_prop_t no_transition_props[] = { (lv_style_prop_t)0 };
+  static lv_style_transition_dsc_t no_transition;
+  lv_style_transition_dsc_init(&no_transition, no_transition_props, nullptr, 0, 0, nullptr);
   lv_obj_clean(s_emoji_grid);
+  s_emoji_painted_sel = -1;
   lv_obj_scroll_to_y(s_emoji_grid, 0, LV_ANIM_OFF);
   for (int i = 0; i < s_glyph_count; ++i) {
     lv_obj_t* b = lv_btn_create(s_emoji_grid);
@@ -12987,36 +12993,24 @@ static void emojiFillGrid() {
     styleButton(b);
     lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_CONTROL), LV_PART_MAIN);
     lv_obj_set_style_pad_all(b, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_width(b, 0, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_transform_height(b, 0, LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_transition(b, &no_transition, LV_PART_MAIN);
     lv_obj_add_event_cb(b, emojiPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
     if (s_glyph_is_emoji) {
-      if (const lv_img_dsc_t* flag = emojiPickerCompositeGlyph(s_glyph_items[i])) {
-        lv_obj_t* im = lv_img_create(b);
-        lv_img_set_src(im, flag);
-        lv_img_set_antialias(im, false);
-        lv_img_set_pivot(im, flag->header.w / 2, flag->header.h / 2);
-        lv_img_set_zoom(im, 320);
-        lv_obj_center(im);
-        continue;
+      const lv_img_dsc_t* ed = emojiPickerCompositeGlyph(s_glyph_items[i]);
+      if (!ed) {
+        uint32_t goff = 0;
+        ed = emojiLookupAny(_lv_txt_encoded_next(s_glyph_items[i], &goff));
       }
-    }
-#if CAP_LARGE_SCREEN && LV_USE_IMGFONT
-    // Baked colour-emoji → draw it as a zoomed image (1.7× ≈ 70% bigger than the 16 px
-    // font glyph). Special chars (no emoji dsc) fall through to the text label below.
-    if (s_glyph_is_emoji) {
-      uint32_t goff = 0;
-      const lv_img_dsc_t* ed = emojiLookupAny(_lv_txt_encoded_next(s_glyph_items[i], &goff));
       if (ed) {
         lv_obj_t* im = lv_img_create(b);
         lv_img_set_src(im, ed);
-        lv_img_set_antialias(im, true);
-        if (ed->header.w && ed->header.h)
-          lv_img_set_pivot(im, ed->header.w / 2, ed->header.h / 2);
-        lv_img_set_zoom(im, 435);              // 256 = 1×, 435 ≈ 1.7×
+        lv_img_set_antialias(im, false);
         lv_obj_center(im);
         continue;
       }
     }
-#endif
     lv_obj_t* l = lv_label_create(b);
     lv_label_set_text(l, s_glyph_items[i]);
     lv_obj_set_style_text_font(l, &g_font_16, LV_PART_MAIN);
@@ -13228,8 +13222,7 @@ static void openEmojiPicker(lv_obj_t* ta, const char* const* items = nullptr,
   lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLL_CHAIN);
   lv_obj_clear_flag(grid, LV_OBJ_FLAG_GESTURE_BUBBLE);
   s_emoji_grid = grid;
-  // Emoji cells render the baked colour glyph as a ZOOMED image (70% bigger than the 16 px
-  // font glyph) and get a bigger cell; special-character cells stay text labels.
+  // Keep touch targets roomy while drawing emoji at their native image size.
 #if CAP_LARGE_SCREEN
   s_emoji_cell_px = s_glyph_is_emoji ? 48 : 38;
 #else
