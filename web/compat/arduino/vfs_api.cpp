@@ -491,12 +491,26 @@ boolean VFSFileImpl::isDirectory(void)
     return _isDirectory;
 }
 
+// Host only: a POSIX readdir() lists "." and "..", which no ESP32 VFS (SPIFFS, LittleFS, FAT)
+// ever returns. The firmware's directory walkers (the boot SPIFFS image purge among them) then
+// descended "/.." out of the data directory and deleted *.png / *.jpg files around it. Skip both,
+// as the device file systems do.
+static struct dirent* readdirNoDots(DIR* d)
+{
+    struct dirent* e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.' && (e->d_name[1] == '\0' || (e->d_name[1] == '.' && e->d_name[2] == '\0'))) continue;
+        return e;
+    }
+    return NULL;
+}
+
 FileImplPtr VFSFileImpl::openNextFile(const char* mode)
 {
     if(!_isDirectory || !_d) {
         return FileImplPtr();
     }
-    struct dirent *file = readdir(_d);
+    struct dirent *file = readdirNoDots(_d);
     if(file == NULL) {
         return FileImplPtr();
     }
@@ -540,7 +554,7 @@ String VFSFileImpl::getNextFileName()
     if (!_isDirectory || !_d) {
         return "";
     }
-    struct dirent *file = readdir(_d);
+    struct dirent *file = readdirNoDots(_d);
     if (file == NULL) {
         return "";
     }
@@ -561,7 +575,7 @@ String VFSFileImpl::getNextFileName(bool *isDir)
     if (!_isDirectory || !_d) {
         return "";
     }
-    struct dirent *file = readdir(_d);
+    struct dirent *file = readdirNoDots(_d);
     if (file == NULL) {
         return "";
     }
