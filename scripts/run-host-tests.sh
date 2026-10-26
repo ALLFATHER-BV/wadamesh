@@ -26,7 +26,26 @@ extra_flags() {
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
+    test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
     *) echo "" ;;
+  esac
+}
+
+# Libraries a test links, placed after its source so GNU ld resolves them too.
+link_flags() {
+  case "$1" in
+    test_emoji_deflated) echo "-lz" ;;
+    *) echo "" ;;
+  esac
+}
+
+# Generated inputs a test compiles against (written under $OUT, never into the tree).
+prep() {
+  case "$1" in
+    test_emoji_deflated)
+      mkdir -p "$OUT/gen" &&
+        python3 scripts/build/gen-emoji-deflated.py src/ui-touch/emoji_data.c "$OUT/gen/emoji_deflated.h" ;;
+    *) true ;;
   esac
 }
 
@@ -53,7 +72,8 @@ for t in test/test_*.cpp; do
     printf 'SKIP  %-34s %s\n' "$n" "$reason"; skip=$((skip+1)); continue
   fi
   # shellcheck disable=SC2046
-  if ! $CXX $STD -I src $(extra_flags "$n") -o "$OUT/$n" "$t" > "$OUT/$n.build" 2>&1; then
+  if ! { prep "$n" && $CXX $STD -I src $(extra_flags "$n") -o "$OUT/$n" "$t" $(link_flags "$n"); } \
+       > "$OUT/$n.build" 2>&1; then
     printf 'BUILD %-34s %s\n' "$n" "see $OUT/$n.build"
     grep -m2 -E 'error:|Undefined' "$OUT/$n.build" | sed 's/^/        /'
     failed="$failed $n"; fail=$((fail+1)); continue

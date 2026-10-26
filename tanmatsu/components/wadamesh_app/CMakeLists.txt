@@ -9,6 +9,10 @@ set(APP "${REPO}/src")
 file(GLOB_RECURSE APP_SRCS "${APP}/*.cpp" "${APP}/*.c" "${REPO}/variants/tanmatsu/*.cpp")
 list(FILTER APP_SRCS EXCLUDE REGEX "/main\\.cpp$")
 list(FILTER APP_SRCS EXCLUDE REGEX "/helpers/input/(HeltecV4CapTouch|TDeckKeyboard|TDeckTouch|TDeckTrackball)\\.cpp$")
+# The colour emoji ship deflated here (variants/tanmatsu/emoji_deflated.cpp, ~105 KB smaller):
+# the launcher maps at most 50 x 64 KB of an AppFS app. emoji_data.c stays the source; its
+# images are deflated into the build directory below.
+list(FILTER APP_SRCS EXCLUDE REGEX "/ui-touch/emoji_data\\.c$")
 
 # Vendored Lua 5.4 VM (lib/lua) — the Lua app host (LUA_APPS.md). Plain C, RISC-V clean.
 file(GLOB LUA_SRCS "${REPO}/lib/lua/src/*.c")
@@ -27,6 +31,22 @@ idf_component_register(
   # sections, so the size impact is nil.
   WHOLE_ARCHIVE
 )
+# emoji_deflated.h: generated from emoji_data.c on every change, never committed. The script
+# verifies the round trip before it writes, so a bad blob fails the build, not the device.
+idf_build_get_property(_python PYTHON)
+set(_emoji_src "${APP}/ui-touch/emoji_data.c")
+set(_emoji_gen "${REPO}/scripts/build/gen-emoji-deflated.py")
+set(_emoji_h "${CMAKE_CURRENT_BINARY_DIR}/emoji_deflated/emoji_deflated.h")
+add_custom_command(OUTPUT "${_emoji_h}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/emoji_deflated"
+  COMMAND ${_python} "${_emoji_gen}" "${_emoji_src}" "${_emoji_h}"
+  DEPENDS "${_emoji_src}" "${_emoji_gen}"
+  VERBATIM)
+add_custom_target(wadamesh_emoji_deflated DEPENDS "${_emoji_h}")
+add_dependencies(${COMPONENT_LIB} wadamesh_emoji_deflated)
+target_include_directories(${COMPONENT_LIB} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/emoji_deflated")
+target_compile_definitions(${COMPONENT_LIB} PRIVATE WADA_EMOJI_DEFLATED=1)
+
 # our own code, but huge + LVGL-heavy — keep the first port building; don't -Werror on warnings.
 target_compile_options(${COMPONENT_LIB} PRIVATE -w
   -include "${REPO}/variants/tanmatsu/tanmatsu_compat.h")   # adcAttachPin() shim (arduino 3.x dropped it)
