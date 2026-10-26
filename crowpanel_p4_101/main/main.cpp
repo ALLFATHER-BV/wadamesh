@@ -25,6 +25,7 @@
 #include "esp_hosted.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include <esp_sntp.h>                // completion status for the Wi-Fi time sync
 #include "driver/gpio.h"
 #include "lvgl.h"
 
@@ -268,8 +269,18 @@ extern "C" void app_main(void) {
         if (!modem_sleep_set) { WiFi.setSleep(true); modem_sleep_set = true; crowpanelC6ReportOnce("Wi-Fi connected"); }
         serial_interface.startTcpServer(true);
         if (!sntp_pushed) {
-          if (!sntp_kicked) { configTime(0, 0, "pool.ntp.org", "time.nist.gov"); sntp_kicked = true; }
-          const uint32_t e = (uint32_t)time(nullptr);
+          // The user's zone, not configTime(0, 0, ...): that set TZ to UTC, so every displayed
+          // time read in UTC from the first Wi-Fi join until the zone was picked again (#699).
+          if (!sntp_kicked) {
+            char tz[48]; touchPrefsBuildLocalTz(tz, sizeof tz);
+            esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+            configTzTime(tz, "pool.ntp.org", "time.nist.gov");
+            sntp_kicked = true;
+          }
+          // Only a COMPLETED sync is network time. Before that time() is whatever the clock
+          // was seeded with at boot, and pushing it marked a stale clock as synced.
+          const uint32_t e = (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED)
+                             ? (uint32_t)time(nullptr) : 0;
           if (e > 1700000000) { rtc_clock.setCurrentTime(e); sntp_pushed = true; printf("[TIME] SNTP -> rtc %lu\n", (unsigned long)e); }
         }
       }

@@ -17,6 +17,7 @@
 #include "helpers/esp32/SdNvsPrefs.h"        // route prefs to file storage (SD/SPIFFS), off NVS
                                              // (quoted: use wadamesh's src/ copy, not the lib's stale one)
 #include "helpers/esp32/BootTimeSync.h"      // opt-in cold-boot clock sync over saved Wi-Fi (#383)
+#include "helpers/WifiRejoinPolicy.h"         // when the loop rejoins a dropped/failed Wi-Fi link (#685)
 #include "ui-touch/i18n.h"                    // translated Pager transport-state alerts
 #include "wadamesh_mark_rgb.h"               // anti-aliased mesh-mark (RGB565) for the pre-LVGL boot screen
 #include "ui-touch/TouchSleep.h"             // idle light-sleep controller (loopEnd called at end of loop())
@@ -1824,9 +1825,17 @@ void loop() {
 #endif
   static bool wifi_started = false;
   static uint32_t last_wifi_retry_ms = 0;
-  static const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
   static bool wifi_radio_prev = true;
   static bool wifi_radio_inited = false;
+  static WifiRejoinPolicy wifi_rejoin;   // retry timing: grace on link loss, back-off, wake kick
+#ifdef DISPLAY_CLASS
+  static bool wifi_screen_was_off = false;
+  {   // the screen coming back on asks for one prompt rejoin if the link is down (#685)
+    const bool off = ui_task.isScreenOff();
+    if (wifi_screen_was_off && !off) wifi_rejoin.noteWake();
+    wifi_screen_was_off = off;
+  }
+#endif
   /* Run the saved Wi-Fi state machine whenever its radio preference is on.
    * Pager setup separately guarantees that Wi-Fi claims its coexistence
    * resources before a cold BLE start. */
@@ -2000,6 +2009,7 @@ void loop() {
           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
         }
         last_wifi_retry_ms = millis();
+        wifi_rejoin.noteAttempt(last_wifi_retry_ms);
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
       } else if (wifi_mode_ready) {
         wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
@@ -2021,12 +2031,19 @@ void loop() {
 #endif
       }
     }
-    // Automatic WiFi recovery for TCP mode: retry connection periodically if link drops.
-    // Suppressed while a scan runs on the worker: WiFi.disconnect()+begin() here would
-    // abort the in-flight sweep (the scan-while-connected "0 networks" bug).
-    if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED && !wifiScanIsActive()) {
+    // Automatic WiFi recovery for TCP mode: rejoin when the link is down. WHEN is
+    // WifiRejoinPolicy's call (unit-tested in test/test_wifi_rejoin_policy.cpp): a link
+    // that just dropped is left to the driver's own reconnect for a grace window first
+    // (this used to fire on the very pass that saw the drop, racing Arduino's
+    // auto-reconnect for the same association), nothing runs while a scan owns the radio
+    // (disconnect()+begin() would abort the in-flight sweep, the scan-while-connected
+    // "0 networks" bug), repeated failures back off, and waking the screen asks for one
+    // prompt attempt.
+    {
+      const WifiRejoinPolicy::Inputs rejoin_in = {
+        true, wifiConfigHasRuntime(), WiFi.status() == WL_CONNECTED, wifiScanIsActive() };
       uint32_t now = millis();
-      if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
+      if (wifi_rejoin.shouldRejoin(rejoin_in, now)) {
         last_wifi_retry_ms = now;
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
         s_pager_ble_after_wifi = wifiConfigGetBleEnabled();
@@ -2056,9 +2073,12 @@ void loop() {
         wifiConfigGetPwd(pwd, sizeof(pwd));
         if (strlen(ssid) > 0) {
           // A bare begin() on a supplicant wedged after a silent drop (AP reboot /
-          // beacon loss) can be a no-op — clear its state first so this forces a
-          // fresh association. Backs up setAutoReconnect(true) for the stuck case.
-          WiFi.disconnect(false, true);
+          // beacon loss) can be a no-op, so leave the BSS first to force a fresh
+          // association. Without erasing the stored network: disconnect(false, true)
+          // here was the retry that stayed "disconnected", while the same disconnect
+          // without the erase plus begin (what an apply after a scan runs) joins (#685).
+          WiFi.disconnect(false, false);
+          delay(50);
           WiFi.begin(ssid, pwd[0] ? pwd : nullptr);
         }
       }

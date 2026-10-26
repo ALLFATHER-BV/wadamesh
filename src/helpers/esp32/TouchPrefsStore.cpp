@@ -1,5 +1,6 @@
 #include "TouchPrefsStore.h"
 #include "TouchPrefsSchema.h"
+#include "../TimeZones.h"     // the picker's zones and their POSIX TZ strings (#699)
 
 #if defined(ESP32)
 
@@ -839,34 +840,13 @@ bool touchPrefsSetTimeOffsetHours(int hours) {
   s_cfg.time_offs = (int8_t)hours;
   return cfgFlush();
 }
-// Curated time zones, each with the correct POSIX DST rules for that region, so
-// non-European users get the right time year-round instead of the CET base + EU
-// DST dates. Index 0 (Europe/CET) is the default and matches the old behaviour.
-struct TzZone { const char* label; const char* posix; };
-static const TzZone TZ_ZONES[] = {
-  { "Europe (CET/CEST)",   "CET-1CEST,M3.5.0,M10.5.0/3" },
-  { "UK (GMT/BST)",        "GMT0BST,M3.5.0/1,M10.5.0" },
-  { "UTC",                 "UTC0" },
-  { "US Eastern",          "EST5EDT,M3.2.0,M11.1.0" },
-  { "US Central",          "CST6CDT,M3.2.0,M11.1.0" },
-  { "US Mountain",         "MST7MDT,M3.2.0,M11.1.0" },
-  { "US Arizona (no DST)", "MST7" },
-  { "US Pacific",          "PST8PDT,M3.2.0,M11.1.0" },
-  { "US Alaska",           "AKST9AKDT,M3.2.0,M11.1.0" },
-  { "US Hawaii",           "HST10" },
-  { "Canada Atlantic",     "AST4ADT,M3.2.0,M11.1.0" },
-  { "Brazil (Brasilia)",   "<-03>3" },
-  { "India (IST)",         "IST-5:30" },
-  { "China (CST)",         "CST-8" },
-  { "Japan (JST)",         "JST-9" },
-  { "Sydney (AEST/AEDT)",  "AEST-10AEDT,M10.1.0,M4.1.0/3" },
-};
-static const int TZ_ZONE_N = (int)(sizeof(TZ_ZONES) / sizeof(TZ_ZONES[0]));
+// The zones and their POSIX strings live in helpers/TimeZones.h (unit-tested on the host).
+static const int TZ_ZONE_N = TimeZones::ZONE_N;
 
 int touchPrefsTimezoneCount() { return TZ_ZONE_N + 1; }   // +1 = "Custom (UTC offset)"
 
 const char* touchPrefsTimezoneLabel(int idx) {
-  if (idx >= 0 && idx < TZ_ZONE_N) return TZ_ZONES[idx].label;
+  if (idx >= 0 && idx < TZ_ZONE_N) return TimeZones::ZONES[idx].label;
   if (idx == TZ_ZONE_N)            return "Custom (UTC offset)";
   return "";
 }
@@ -892,17 +872,7 @@ void touchPrefsSetTimezone(uint8_t idx) {
 
 void touchPrefsBuildLocalTz(char* out, int out_cap) {
   if (!out || out_cap <= 0) return;
-  const uint8_t z = touchPrefsGetTimezone();
-  if (z < (uint8_t)TZ_ZONE_N) {
-    snprintf(out, out_cap, "%s", TZ_ZONES[z].posix);
-    return;
-  }
-  // "Custom (UTC offset)": a fixed offset, no DST. POSIX std-offset is the
-  // negation of the UTC offset (it's the time to ADD to local to reach UTC), so
-  // UTC-7 -> "<-07>7", UTC+2 -> "<+02>-2".
-  const int off = touchPrefsGetTimeOffsetHours();
-  if (off == 0) { snprintf(out, out_cap, "UTC0"); return; }
-  snprintf(out, out_cap, "<%+03d>%d", off, -off);
+  TimeZones::buildPosix(touchPrefsGetTimezone(), touchPrefsGetTimeOffsetHours(), out, out_cap);
 }
 
 uint32_t touchPrefsGetLockTextColor() {

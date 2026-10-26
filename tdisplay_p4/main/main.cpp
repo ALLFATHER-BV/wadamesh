@@ -30,6 +30,10 @@
 #include <helpers/esp32/TouchPrefsStore.h>    // touchPrefsBuildLocalTz + WIFI_CONFIG_* sizes
 #include "../../src/ui-touch/i18n.h"          // TR() for the missing-store boot alert (#708)
 #include "../../src/helpers/esp32/BootTimeSync.h"   // opt-in cold-boot clock sync over saved Wi-Fi (#383)
+#include "../../src/helpers/WifiRejoinPolicy.h"     // when the loop rejoins a dropped/failed Wi-Fi link (#685)
+// Defined in this tree's src/helpers/esp32/WifiRuntimeStore.cpp. The <helpers/esp32/WifiRuntimeStore.h>
+// above resolves to the core's vendored copy, which predates it, so declare it here.
+bool wifiScanIsActive();
 #include "esp_hosted.h"
 #include "esp_netif.h"
 #include "esp_event.h"
@@ -561,12 +565,18 @@ extern "C" void app_main(void) {
   // (excluded from this build), identical to the Tanmatsu.
   bool     wifi_started = false, wifi_radio_prev = true, wifi_radio_inited = false;
   bool     sntp_kicked = false, sntp_pushed = false, modem_sleep_set = false;
-  uint32_t last_wifi_retry_ms = 0, sntp_kick_ms = 0;
-  const uint32_t WIFI_RETRY_INTERVAL_MS = 10000;
+  uint32_t sntp_kick_ms = 0;
+  WifiRejoinPolicy wifi_rejoin;      // retry timing: grace on link loss, back-off, wake kick (#685)
+  bool wifi_screen_was_off = false;
 
   for (;;) {
     ui_task.loop();
     if (wifi_crash_guard::tick()) ui_task.showAlert(TR("Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again."), 9000);
+    {   // the screen coming back on asks for one prompt rejoin if the link is down (#685)
+      const bool off = ui_task.isScreenOff();
+      if (wifi_screen_was_off && !off) wifi_rejoin.noteWake();
+      wifi_screen_was_off = off;
+    }
 
     // WiFi.* here is the C6WifiShim facade (AT-over-SDIO), so this state machine drives REAL joins:
     // start once the c6_at worker has the AT link up + the user wants Wi-Fi. The 10 s retry branch
@@ -604,7 +614,7 @@ extern "C" void app_main(void) {
         if (!wifi_radio_en) { WiFi.disconnect(true); delay(50); WiFi.mode(WIFI_OFF); }
         else                { WiFi.disconnect(false, false); delay(50); }
       }
-      wifi_started = false; last_wifi_retry_ms = 0;
+      wifi_started = false;
     }
     if (wifi_radio_en) {
       if (!wifi_started) {
@@ -614,22 +624,29 @@ extern "C" void app_main(void) {
         if (wifiConfigHasRuntime()) {
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];
           wifiConfigGetSsid(ssid, sizeof(ssid)); wifiConfigGetPwd(pwd, sizeof(pwd));
-          if (strlen(ssid) > 0) { WiFi.begin(ssid, pwd[0] ? pwd : nullptr); last_wifi_retry_ms = millis(); }
+          if (strlen(ssid) > 0) { WiFi.begin(ssid, pwd[0] ? pwd : nullptr); wifi_rejoin.noteAttempt(millis()); }
         }
       }
-      if (wifiConfigHasRuntime() && WiFi.status() != WL_CONNECTED) {
-        uint32_t now = millis();
+      {
+        // When to rejoin is WifiRejoinPolicy's call (src/helpers, unit-tested on the host): a
+        // link that just dropped is left to the C6's own reconnect for a grace window first
+        // (this used to fire on the very pass that saw the drop), repeated failures back off,
+        // and waking the screen asks for one prompt attempt.
+        // A running scan owns the radio too: a disconnect + begin would abort the sweep.
+        bool radio_busy = wifiScanIsActive();
 #if !TDP4_C6_HOSTED
         // A join already pending or running on the C6 (or a C6 reset in progress, which rejoins
         // on its own) owns the association. Retrying now would only stack a second CWJAP behind
-        // it, so restart the 10 s window instead.
-        if (c6at_join_busy() || c6at_is_recovering()) last_wifi_retry_ms = now;
+        // it, so the window restarts instead.
+        radio_busy = radio_busy || c6at_join_busy() || c6at_is_recovering();
 #endif
-        if ((uint32_t)(now - last_wifi_retry_ms) >= WIFI_RETRY_INTERVAL_MS) {
-          last_wifi_retry_ms = now;
+        const WifiRejoinPolicy::Inputs rejoin_in = {
+          true, wifiConfigHasRuntime(), WiFi.status() == WL_CONNECTED, radio_busy };
+        if (wifi_rejoin.shouldRejoin(rejoin_in, millis())) {
           char ssid[WIFI_CONFIG_SSID_MAX], pwd[WIFI_CONFIG_PWD_MAX];
           wifiConfigGetSsid(ssid, sizeof(ssid)); wifiConfigGetPwd(pwd, sizeof(pwd));
-          if (strlen(ssid) > 0) { WiFi.disconnect(false, true); WiFi.begin(ssid, pwd[0] ? pwd : nullptr); }
+          // Leave the BSS without erasing the stored network, then join (#685).
+          if (strlen(ssid) > 0) { WiFi.disconnect(false, false); delay(50); WiFi.begin(ssid, pwd[0] ? pwd : nullptr); }
         }
       }
       if (WiFi.status() == WL_CONNECTED) {

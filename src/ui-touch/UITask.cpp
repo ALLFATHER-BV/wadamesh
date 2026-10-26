@@ -17834,11 +17834,16 @@ static void uiRotationPickCb(lv_event_t* e) {
 // display layer via the POSIX TZ; the RTC and mesh timestamps stay UTC.
 static lv_obj_t* s_time_offset_lbl = nullptr;   // current offset readout (modal is a singleton)
 
+static void clockSetFieldRefresh();      // below: the "By hand" field follows the zone (#699)
 static void applyTimeOffsetNow() {
   char tz[48];
   touchPrefsBuildLocalTz(tz, sizeof tz);   // rebuilds from the saved offset
   setenv("TZ", tz, 1);
   tzset();                                  // every later localtime_r() reflects it
+  // The Clock page's "By hand (local time)" field was filled in the OLD zone. Left as it
+  // was, "Set clock" right after a zone change read those digits in the new zone and put
+  // the clock off by the difference (#699).
+  clockSetFieldRefresh();
 }
 static void timeOffsetLabelRefresh() {
   if (!s_time_offset_lbl) return;
@@ -18292,6 +18297,18 @@ static void themeModeRestart(uint8_t mode) {
 }
 
 static lv_obj_t* s_clockset_ta = nullptr;   // manual clock entry (#105)
+
+// Fill the manual entry with the clock's reading in the zone in force now.
+static void clockSetFieldRefresh() {
+  if (!s_clockset_ta || !lv_obj_is_valid(s_clockset_ta)) return;
+  const time_t now = (time_t)the_mesh.getRTCClock()->getCurrentTime();
+  struct tm lv_now;
+  localtime_r(&now, &lv_now);
+  char pre[20];
+  snprintf(pre, sizeof pre, "%04d-%02d-%02d %02d:%02d", lv_now.tm_year + 1900, lv_now.tm_mon + 1,
+           lv_now.tm_mday, lv_now.tm_hour, lv_now.tm_min);
+  lv_textarea_set_text(s_clockset_ta, pre);
+}
 
 // Set the clock by hand. Until now the only ways to get the time were GPS, a
 // companion app, or a network, so a device used purely offline had no way at all
@@ -18850,15 +18867,7 @@ static void buildClockPage() {
     // By hand, for a device with no GPS fix, no network and no phone (#105). Prefilled
     // with the clock's reading, so a correction is an edit of a digit or two.
     s_clockset_ta = setField(c, "By hand (local time)", "YYYY-MM-DD HH:MM", 16);
-    {
-      const time_t now = (time_t)the_mesh.getRTCClock()->getCurrentTime();
-      struct tm lv_now;
-      localtime_r(&now, &lv_now);
-      char pre[20];
-      snprintf(pre, sizeof pre, "%04d-%02d-%02d %02d:%02d", lv_now.tm_year + 1900, lv_now.tm_mon + 1,
-               lv_now.tm_mday, lv_now.tm_hour, lv_now.tm_min);
-      lv_textarea_set_text(s_clockset_ta, pre);
-    }
+    clockSetFieldRefresh();
     setButton(c, nullptr, "Set clock", clockSetManualCb);
   }
 #if CAP_BOOT_TIME_SYNC
