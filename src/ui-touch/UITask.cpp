@@ -26962,13 +26962,14 @@ static void fmPromptClose() {
   if (!s_fm_prompt_ok) luaHostTextPromptCancel();
 #endif
 }
-static void fmPromptOkCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+// OK, from the button or from Enter in the field (handleHwKey). The text is copied
+// whole before the dialog goes: a wada.ui.input field can hold up to 2000 characters.
+static void fmPromptSubmit() {
   if (!s_fm_prompt_ta) { fmPromptClose(); return; }
   kbMirrorSyncToReal();
-  char buf[80];
   const char* t = lv_textarea_get_text(s_fm_prompt_ta);
-  snprintf(buf, sizeof buf, "%s", t ? t : "");
+  char* buf = strdup(t ? t : "");
+  if (!buf) { fmPromptClose(); return; }
   void (*cb)(const char*) = s_fm_prompt_cb;
   // Empty text is a cancel, not a delivery, unless the caller asked for it.
   const bool deliver = cb && (buf[0] || s_fm_prompt_allow_empty);
@@ -26976,12 +26977,18 @@ static void fmPromptOkCb(lv_event_t* e) {
   fmPromptClose();
   s_fm_prompt_ok = false;
   if (deliver) cb(buf);
+  free(buf);
+}
+static void fmPromptOkCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  fmPromptSubmit();
 }
 static void fmPromptCancelCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   fmPromptClose();
 }
-static void fmTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+static void fmTextPrompt(const char* title, const char* initial, void (*cb)(const char*),
+                         uint32_t max_len = 63) {
   fmPromptClose();
   s_fm_prompt_cb = cb;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -27015,7 +27022,7 @@ static void fmTextPrompt(const char* title, const char* initial, void (*cb)(cons
   lv_obj_align(s_fm_prompt_ta, LV_ALIGN_TOP_MID, 0, 24);
   styleCard(s_fm_prompt_ta);
   lv_textarea_set_one_line(s_fm_prompt_ta, true);
-  lv_textarea_set_max_length(s_fm_prompt_ta, 63);
+  lv_textarea_set_max_length(s_fm_prompt_ta, max_len);
   lv_obj_set_style_text_font(s_fm_prompt_ta, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_fm_prompt_ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   if (initial) lv_textarea_set_text(s_fm_prompt_ta, initial);
@@ -51997,6 +52004,17 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // goes through hideKb(); this covers the physical-keyboard Enter.
     accentBoxHide();
     mentionBoxHide();
+    // The one-field text dialog (rename, new folder, nickname, wada.ui.input): Enter is
+    // OK. Through the generic path below it moved the focus to the next control, which
+    // is Cancel, so a second Enter cancelled and wada.ui.input handed the app nil.
+    if (s_fm_prompt_ta && ta == s_fm_prompt_ta) {
+#if CAP_KEYPAD_NAV
+      s_nav_ta_editing = false;
+#endif
+      fmPromptSubmit();
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return;
+    }
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
     if (s_editor_ta && ta == s_editor_ta) {
       lv_textarea_add_char(ta, '\n');   // multiline editor: Enter inserts a newline
@@ -71407,12 +71425,13 @@ void luaHostEmojiPick(void (*cb)(const char*)) {
   openEmojiPickerPick(luaEmojiDeliver, TR("Emoji"));   // resets pick state as it opens
   s_lua_emoji_cb = cb;                                 // arm AFTER, like the text prompt
 }
-void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*)) {
+void luaHostTextPrompt(const char* title, const char* initial, void (*cb)(const char*),
+                       uint32_t max_len) {
   luaHostTextPromptCancel();              // a second prompt cancels the first
   // Register the callback AFTER the dialog exists. fmTextPrompt opens with its
   // own fmPromptClose(), which reports a cancel to whatever is pending -- so
   // setting cb first made every prompt fire cb(nil) before the user saw it.
-  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver);
+  fmTextPrompt(title && *title ? title : TR("Enter text"), initial, luaPromptDeliver, max_len);
   s_lua_prompt_cb = cb;
 }
 #endif
