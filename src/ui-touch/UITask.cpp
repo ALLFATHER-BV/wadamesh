@@ -51,13 +51,8 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   // operator's Profile / Radio settings.
   #include <LittleFS.h>
   #include <esp_heap_caps.h>
-  #if CAP_MICROSD
-    #if __has_include("rom/miniz.h")
-      #include "rom/miniz.h"   // the ROM's tinfl (IDF 4.x, and the web build's stand-in)
-    #else
-      #include "miniz.h"       // IDF 5.x (P4 boards) moved it to esp_rom/include
-    #endif
-    #include "PmTiles.h"
+  #if CAP_MAP_PMTILES
+    #include "PmTiles.h"   // PNG raster archives on the card (Map options -> Map file)
   #endif
   #include <esp_system.h>
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
@@ -36851,7 +36846,7 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
   return (uint8_t*)rgb;
 }
 
-#if CAP_MICROSD
+#if CAP_MAP_PMTILES
 // PMTiles PNG raster archives, Meshtastic MUI layout: any /maps/<name>/<name>.pmtiles
 // (archive named after its style directory). Map options -> Map file picks which one
 // is drawn; the choice persists by name (touchPrefsGet/SetMapPmTiles). The card is
@@ -36878,17 +36873,15 @@ static PmTilesProblem* s_pmtiles_problems = nullptr;   // PSRAM, filled by pmTil
 static int s_pmtiles_problem_count = 0;
 static int  s_pmtiles_sel = -1;               // index into s_pmtiles; -1 = folder tiles only
 static bool s_pmtiles_scanned = false;
-static uint64_t s_pmtiles_dir_offsets[4] = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
-static PmTiles::Directory s_pmtiles_dirs[4];
+static PmTiles::DirCache s_pmtiles_dirs;      // decoded directories of the selected archive
+static bool s_pmtiles_bad_logged = false;     // a corrupt directory is logged once, not per tile
 static bool     s_map_zoom_fit = false;
 static uint32_t s_map_zoom_levels = 0;
 static bool     s_map_zoom_levels_scanned = false;
 
 static void pmTilesDropDirectories() {
-  for (int i = 0; i < 4; ++i) {
-    s_pmtiles_dir_offsets[i] = UINT64_MAX;
-    s_pmtiles_dirs[i].clear();
-  }
+  s_pmtiles_dirs.clear();
+  s_pmtiles_bad_logged = false;
 }
 
 static void resetPmTilesArchiveCache() {
@@ -36914,83 +36907,9 @@ static bool pmTilesReadRange(File& file, uint64_t offset, uint8_t* dst, size_t l
   return true;
 }
 
-static uint8_t* pmTilesGunzip(const uint8_t* input, size_t length, size_t& output_length) {
-  output_length = 0;
-  if (!input || length < 18 || input[0] != 0x1F || input[1] != 0x8B ||
-      input[2] != 8 || (input[3] & 0xE0) != 0)
-    return nullptr;
-
-  const size_t trailer = length - 8;
-  size_t data_offset = 10;
-  const uint8_t flags = input[3];
-  if (flags & 0x04) {
-    if (data_offset + 2 > trailer) return nullptr;
-    const size_t extra_length = static_cast<size_t>(input[data_offset]) |
-                                (static_cast<size_t>(input[data_offset + 1]) << 8);
-    data_offset += 2;
-    if (extra_length > trailer - data_offset) return nullptr;
-    data_offset += extra_length;
-  }
-  for (const uint8_t flag : {static_cast<uint8_t>(0x08), static_cast<uint8_t>(0x10)}) {
-    if ((flags & flag) == 0) continue;
-    while (data_offset < trailer && input[data_offset++] != 0) {}
-    if (data_offset > trailer || input[data_offset - 1] != 0) return nullptr;
-  }
-  if (flags & 0x02) {
-    if (data_offset + 2 > trailer) return nullptr;
-    data_offset += 2;
-  }
-  if (data_offset >= trailer) return nullptr;
-
-  const size_t expected_length =
-      static_cast<size_t>(input[length - 4]) |
-      (static_cast<size_t>(input[length - 3]) << 8) |
-      (static_cast<size_t>(input[length - 2]) << 16) |
-      (static_cast<size_t>(input[length - 1]) << 24);
-  if (expected_length == 0 || expected_length > 1024u * 1024u) return nullptr;
-
-  uint8_t* output = (uint8_t*)lvglPsramAlloc(expected_length);
-  if (!output) return nullptr;
-  tinfl_decompressor* state = (tinfl_decompressor*)heap_caps_malloc(
-      sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!state) state = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_8BIT);
-  if (!state) {
-    lvglPsramFree(output);
-    return nullptr;
-  }
-  tinfl_init(state);
-  size_t compressed_length = trailer - data_offset;
-  size_t decompressed_length = expected_length;
-  const tinfl_status status = tinfl_decompress(
-      state, input + data_offset, &compressed_length, output, output, &decompressed_length,
-      TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
-  heap_caps_free(state);
-  uint32_t crc = UINT32_MAX;
-  if (status == TINFL_STATUS_DONE && decompressed_length == expected_length) {
-    for (size_t i = 0; i < decompressed_length; ++i) {
-      crc ^= output[i];
-      for (unsigned bit = 0; bit < 8; ++bit)
-        crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-    }
-    crc ^= UINT32_MAX;
-  }
-  const uint32_t expected_crc =
-      static_cast<uint32_t>(input[length - 8]) |
-      (static_cast<uint32_t>(input[length - 7]) << 8) |
-      (static_cast<uint32_t>(input[length - 6]) << 16) |
-      (static_cast<uint32_t>(input[length - 5]) << 24);
-  if (status != TINFL_STATUS_DONE || decompressed_length != expected_length ||
-      crc != expected_crc) {
-    lvglPsramFree(output);
-    return nullptr;
-  }
-  output_length = decompressed_length;
-  return output;
-}
-
-// Header check for one candidate archive: PMTiles v3, PNG (or untyped) tiles,
-// uncompressed, gzip directories, and every section inside the file (a copy that
-// was cut short fails the last check).
+// Header check for one candidate archive (PmTiles::checkArchive): PMTiles v3,
+// PNG (or untyped) uncompressed tiles, gzip or plain directories, and every
+// section inside the file (a copy that was cut short fails the last check).
 static PmTilesProbeResult pmTilesProbe(fs::FS* fs, const char* path, PmTiles::Header& header) {
   File file = fs->open(path, FILE_READ);
   if (!file) return kPmProbeMissing;
@@ -37002,22 +36921,15 @@ static PmTilesProbeResult pmTilesProbe(fs::FS* fs, const char* path, PmTiles::He
   const bool header_read = pmTilesReadRange(file, 0, raw, sizeof(raw));
   const uint64_t size = file.size();
   file.close();
-  PmTilesProbeResult result = kPmProbeOk;
-  if (!header_read || !PmTiles::parseHeader(raw, sizeof(raw), header))
-    result = kPmProbeNotV3;
-  else if ((header.tile_type != PmTiles::kTileTypePng &&
-            header.tile_type != PmTiles::kTileTypeUnknown) ||
-           (header.tile_compression != PmTiles::kCompressionNone &&
-            header.tile_compression != PmTiles::kCompressionUnknown) ||
-           header.internal_compression != PmTiles::kCompressionGzip)
-    result = kPmProbeNotPng;
-  else if (header.root_dir_offset + header.root_dir_bytes < header.root_dir_offset ||
-           header.root_dir_offset + header.root_dir_bytes > size ||
-           header.leaf_dirs_offset + header.leaf_dirs_bytes < header.leaf_dirs_offset ||
-           header.leaf_dirs_offset + header.leaf_dirs_bytes > size ||
-           header.tile_data_offset + header.tile_data_bytes < header.tile_data_offset ||
-           header.tile_data_offset + header.tile_data_bytes > size)
-    result = kPmProbeTruncated;
+  PmTilesProbeResult result = kPmProbeNotV3;   // also a file shorter than the header
+  if (header_read) {
+    switch (PmTiles::checkArchive(raw, sizeof(raw), size, header)) {
+      case PmTiles::kCheckOk:        result = kPmProbeOk; break;
+      case PmTiles::kCheckNotPng:    result = kPmProbeNotPng; break;
+      case PmTiles::kCheckTruncated: result = kPmProbeTruncated; break;
+      default: break;
+    }
+  }
   if (result != kPmProbeOk)
     Serial.printf("[PMTILES] Rejected %s (reason %u, %lu bytes)\n", path,
                   (unsigned)result, (unsigned long)size);
@@ -37125,69 +37037,23 @@ static void pmTilesSelect(int index) {
   touchPrefsSetMapPmTiles(index < 0 ? "-" : s_pmtiles[index].name);
 }
 
-static bool pmTilesReadDirectory(File& file, uint64_t offset, uint64_t length,
-                                 int cache_index, PmTiles::Directory*& entries) {
-  if (cache_index < 0 || cache_index >= 4 || length == 0 ||
-      length > 1024u * 1024u || offset > UINT32_MAX ||
-      offset + length < offset || offset + length > UINT32_MAX)
-    return false;
-  if (s_pmtiles_dir_offsets[cache_index] != offset ||
-      s_pmtiles_dirs[cache_index].empty()) {
-    uint8_t* compressed = (uint8_t*)lvglPsramAlloc(static_cast<size_t>(length));
-    if (!compressed) return false;
-    const bool read_ok = pmTilesReadRange(file, offset, compressed, static_cast<size_t>(length));
-    size_t decompressed_length = 0;
-    uint8_t* decompressed = read_ok
-        ? pmTilesGunzip(compressed, static_cast<size_t>(length), decompressed_length)
-        : nullptr;
-    lvglPsramFree(compressed);
-    if (!decompressed) {
-      Serial.printf("[PMTILES] Failed to decompress directory at %lu\n",
-                    static_cast<unsigned long>(offset));
-      return false;
-    }
-    const bool parsed = PmTiles::parseDirectory(decompressed, decompressed_length,
-                                                s_pmtiles_dirs[cache_index]);
-    lvglPsramFree(decompressed);
-    if (!parsed) {
-      s_pmtiles_dirs[cache_index].clear();
-      Serial.printf("[PMTILES] Invalid directory at %lu\n",
-                    static_cast<unsigned long>(offset));
-      return false;
-    }
-    s_pmtiles_dir_offsets[cache_index] = offset;
-  }
-  entries = &s_pmtiles_dirs[cache_index];
-  return true;
+static bool pmTilesFileRead(void* ctx, uint64_t offset, uint8_t* dst, size_t length) {
+  return pmTilesReadRange(*static_cast<File*>(ctx), offset, dst, length);
 }
 
-static bool pmTilesFindTile(File& file, const PmTiles::Header& header,
-                            uint8_t z, int32_t x, int32_t y, PmTiles::Entry& tile) {
-  if (z < header.min_zoom || z > header.max_zoom || x < 0 || y < 0) return false;
-  const uint64_t tile_id = PmTiles::zxyToTileId(z, static_cast<uint32_t>(x),
-                                                static_cast<uint32_t>(y));
-  if (tile_id == UINT64_MAX) return false;
-
-  // Sections were bounds-checked against the file size in pmTilesProbe, so an
-  // entry inside its section can't overflow the absolute offset.
-  uint64_t dir_offset = header.root_dir_offset;
-  uint64_t dir_length = header.root_dir_bytes;
-  for (int depth = 0; depth < 4; ++depth) {
-    PmTiles::Directory* entries = nullptr;
-    if (!pmTilesReadDirectory(file, dir_offset, dir_length, depth, entries) || !entries ||
-        !PmTiles::findTile(*entries, tile_id, tile))
-      return false;
-    if (tile.run_length != 0) {
-      return tile.offset <= header.tile_data_bytes &&
-             tile.length <= header.tile_data_bytes - tile.offset;
-    }
-    if (tile.length == 0 || tile.offset > header.leaf_dirs_bytes ||
-        tile.length > header.leaf_dirs_bytes - tile.offset)
-      return false;
-    dir_offset = header.leaf_dirs_offset + tile.offset;
-    dir_length = tile.length;
+// Where the selected archive keeps z/x/y (absolute offset + length in the file).
+// The directory walk is PmTiles::locateTile, covered by test/test_pmtiles.cpp.
+static bool pmTilesFindTile(File& file, const PmTilesArchive* archive, uint8_t z, int32_t x,
+                            int32_t y, uint64_t& offset, uint32_t& length) {
+  if (x < 0 || y < 0) return false;
+  const PmTiles::Lookup r = PmTiles::locateTile(archive->header, pmTilesFileRead, &file,
+                                                s_pmtiles_dirs, z, static_cast<uint32_t>(x),
+                                                static_cast<uint32_t>(y), offset, length);
+  if (r == PmTiles::kCorrupt && !s_pmtiles_bad_logged) {
+    s_pmtiles_bad_logged = true;
+    Serial.printf("[PMTILES] %s: corrupt directory, its tiles are skipped\n", archive->path);
   }
-  return false;
+  return r == PmTiles::kFound;
 }
 
 // Opens the selected archive. If it vanished since the scan, drop it for this
@@ -37208,8 +37074,9 @@ static bool pmTilesHasTile(uint8_t z, int32_t x, int32_t y) {
   const PmTilesArchive* archive = nullptr;
   File file = pmTilesOpenActive(archive);
   if (!file) return false;
-  PmTiles::Entry tile{};
-  const bool found = pmTilesFindTile(file, archive->header, z, x, y, tile) && tile.length != 0;
+  uint64_t offset = 0;
+  uint32_t length = 0;
+  const bool found = pmTilesFindTile(file, archive, z, x, y, offset, length);
   file.close();
   return found;
 }
@@ -37219,28 +37086,27 @@ static bool loadPmTilesTile(uint8_t z, int32_t x, int32_t y,
   const PmTilesArchive* archive = nullptr;
   File file = pmTilesOpenActive(archive);
   if (!file) return false;
-  PmTiles::Entry tile{};
-  if (!pmTilesFindTile(file, archive->header, z, x, y, tile) || tile.length == 0 ||
-      tile.length > 256u * 1024u) {
+  uint64_t offset = 0;
+  uint32_t length = 0;
+  static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  if (!pmTilesFindTile(file, archive, z, x, y, offset, length) ||
+      length < sizeof(png_signature) || length > 256u * 1024u) {   // the folder loader's cap
     file.close();
     return false;
   }
-  const uint64_t data_offset = archive->header.tile_data_offset + tile.offset;
-  uint8_t* data = (uint8_t*)lvglPsramAlloc(tile.length);
+  uint8_t* data = (uint8_t*)lvglPsramAlloc(length);
   if (!data) {
     file.close();
     return false;
   }
-  const bool read_ok = pmTilesReadRange(file, data_offset, data, tile.length);
+  const bool read_ok = pmTilesReadRange(file, offset, data, length);
   file.close();
-  static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  if (!read_ok || tile.length < sizeof(png_signature) ||
-      memcmp(data, png_signature, sizeof(png_signature)) != 0) {
+  if (!read_ok || memcmp(data, png_signature, sizeof(png_signature)) != 0) {
     lvglPsramFree(data);
     return false;
   }
   *out_data = data;
-  *out_len = tile.length;
+  *out_len = length;
   return true;
 }
 #endif
@@ -37284,9 +37150,11 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
     if (!mapSdStorageMounted()) return false;
     markSdIo();                          // SD read activity -> status-bar LED
+#if CAP_MAP_PMTILES
     // PNG raster archives are read-only. Missing archive entries continue
     // through the existing directory packs and writable tile cache below.
     if (loadPmTilesTile(z, x, y, out_data, out_len)) return true;
+#endif
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
     char ppath[56];
@@ -37431,7 +37299,9 @@ static void freeMapTiles() {
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
 #if CAP_MICROSD
+#if CAP_MAP_PMTILES
   resetPmTilesArchiveCache();
+#endif
   // A fetch snapshots its paths but still dereferences the global backend for
   // every filesystem operation of the request, so the pointer may only move at
   // a worker request boundary. The ownership handshake pauses dequeueing there;
@@ -37523,7 +37393,9 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
   if (s_tiles_from_sd && s_tile_fs == map_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (mapSdReadBlocked()) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!mapSdStorageMounted()) return false;       // never ladder from the zoom guard (see loadTileJpeg)
+#if CAP_MAP_PMTILES
     if (pmTilesHasTile(z, static_cast<int32_t>(x), static_cast<int32_t>(y))) return true;
+#endif
     char p[56];
     // Both directory spellings, upper first: our own card bootstrap creates "/MAPS"
     // while this only ever probed "/maps" (#286). Must stay in step with the loader in
@@ -37562,7 +37434,7 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
 }
 #endif  // ESP32
 
-#if defined(ESP32) && CAP_MICROSD
+#if defined(ESP32) && CAP_MAP_PMTILES
 // Which zoom levels the SD map holds. With a PMTiles archive selected that is
 // its header range alone: /tiles is also where Wi-Fi downloads land, so its
 // level folders usually span almost every zoom and would void the limit (a
@@ -37625,6 +37497,7 @@ static uint8_t mapZoomNearestLevel(uint32_t levels, int z) {
   return (uint8_t)z;
 }
 
+#if CAP_MAP_PMTILES
 // Keep s_map_zoom on a level the map holds and the slider spanning only those
 // levels. Runs at the top of renderMapTiles, so every path that moves the zoom
 // (buttons, slider, contact jumps, route overview, restore) goes through it.
@@ -37648,6 +37521,7 @@ static void mapZoomFitApply() {
   }
   if (moved) lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
 }
+#endif
 
 // Probe the pack for the highest zoom level that has a tile near `lat,lon`.
 // Used as an auto-fallback so a missing top zoom (e.g. the operator packed
@@ -37674,7 +37548,9 @@ static uint8_t bestAvailableZoom(double lat, double lon) {
 // runs on tab activation or pan/zoom (not on every refresh tick).
 static void renderMapTiles() {
   if (!s_map_canvas) return;
+#if CAP_MAP_PMTILES
   mapZoomFitApply();
+#endif
 
   // Fall back to placeholder when no usable GPS center.
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {
@@ -39195,7 +39071,9 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
-static void openMapOptions();   // fwd — the SD toggle rebuilds the popup
+#if CAP_MAP_PMTILES
+static void openMapOptions();   // fwd: the SD toggle rebuilds the popup
+#endif
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   // Pause at a request boundary before repointing the cache. A queued backlog is
@@ -39239,13 +39117,16 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
   tileBackendSwapFinish();       // queued requests resume against the selected backend
-  openMapOptions();              // rebuild: "Zoom: map levels only" only shows with SD tiles
+#if CAP_MAP_PMTILES
+  openMapOptions();              // rebuild: the Map file + zoom rows only show with SD tiles
+#endif
   if (g_lv.task) {
     if (on && !s_tiles_from_sd) g_lv.task->showAlert(TR("SD card unavailable"), 1600);
     else g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
   }
 }
 
+#if CAP_MAP_PMTILES
 // "Map file" row caption: the archive in use, without touching the card when
 // it isn't mounted (the saved choice is shown then).
 static void mapPmTilesCaption(char* out, size_t cap) {
@@ -39389,6 +39270,7 @@ static void mapOptZoomFitCb(lv_event_t* e) {
   if (s_map_zoom_fit && !mapZoomFitLevels() && g_lv.task)
     g_lv.task->showAlert(TR("No map levels found on the SD card"), 1600);
 }
+#endif  // CAP_MAP_PMTILES
 #endif
 
 // "Reload tiles" — delete the currently-visible tiles from the LittleFS cache
@@ -39605,8 +39487,10 @@ static void openMapOptions() {
     lv_obj_add_event_cb(sw_sd, mapOptTilesSdCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += 40;
   }
-  // Row: which /maps/<name>/<name>.pmtiles archive the SD source draws.
-  {
+#if CAP_MAP_PMTILES
+  // Rows for SD tiles only: which /maps/<name>/<name>.pmtiles archive is drawn,
+  // and the zoom limit to the levels the SD map holds (PMTiles range / z folders).
+  if (s_tiles_from_sd) {
     char cap[TOUCH_MAP_PMTILES_MAXLEN + 48];
     mapPmTilesCaption(cap, sizeof cap);
     lv_obj_t* b = lv_btn_create(card);
@@ -39623,8 +39507,6 @@ static void openMapOptions() {
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
     y += 44;
   }
-  // Row: limit zoom to the levels in the SD map (PMTiles range / z folders).
-  // Only meaningful for SD tiles, so only shown with them.
   if (s_tiles_from_sd) {
     // The detected range rides along, so a surprising one (an archive whose
     // header starts at z1, or folder tiles instead of the archive) is visible.
@@ -39646,6 +39528,7 @@ static void openMapOptions() {
     lv_obj_add_event_cb(sw_fit, mapOptZoomFitCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += 40;
   }
+#endif  // CAP_MAP_PMTILES
 #endif
 
   // Row: Topographic map (OpenTopoMap) — opt-in alternate tile style; default OSM.
@@ -40687,7 +40570,7 @@ static void onMapTabActivated() {
   memset(s_tile_fetch_dedup, 0, sizeof(s_tile_fetch_dedup));
   s_tile_fetch_dedup_head = 0;
 #endif
-#if defined(ESP32) && CAP_MICROSD
+#if defined(ESP32) && CAP_MAP_PMTILES
   s_map_zoom_levels_scanned = false;   // level folders may have been added (Transfer app, downloads)
 #endif
   // Nine tile reads + JPEG decodes block this callback for ~2.5 s on the first
@@ -75066,7 +74949,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
   { uint8_t v = 0; s_map_fav_only = touchPrefsGetBlob("map_fav", &v, 1) == 1 && v; }   // map options: Favorites only
-#if CAP_MICROSD
+#if CAP_MAP_PMTILES
   { uint8_t v = 0; s_map_zoom_fit = touchPrefsGetBlob("map_zfit", &v, 1) == 1 && v; }  // map options: map zoom levels only
 #endif
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)

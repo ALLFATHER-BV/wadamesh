@@ -3,6 +3,19 @@
 #include <cstring>
 #include <limits>
 
+// The ROM's tinfl on the S3 (no flash cost); the IDF 5.x P4 boards moved the
+// header to esp_rom/include; the web build and the host test use upstream
+// miniz, which has the same API.
+#if __has_include("rom/miniz.h")
+  #include "rom/miniz.h"
+  #define PMTILES_HAVE_TINFL 1
+#elif __has_include("miniz.h")
+  #include "miniz.h"
+  #define PMTILES_HAVE_TINFL 1
+#else
+  #define PMTILES_HAVE_TINFL 0
+#endif
+
 namespace PmTiles {
 namespace {
 
@@ -10,6 +23,11 @@ uint64_t readU64(const uint8_t* bytes) {
   uint64_t value = 0;
   for (unsigned i = 0; i < 8; ++i) value |= static_cast<uint64_t>(bytes[i]) << (i * 8);
   return value;
+}
+
+uint32_t readU32(const uint8_t* bytes) {
+  return static_cast<uint32_t>(bytes[0]) | (static_cast<uint32_t>(bytes[1]) << 8) |
+         (static_cast<uint32_t>(bytes[2]) << 16) | (static_cast<uint32_t>(bytes[3]) << 24);
 }
 
 bool readVarint(const uint8_t*& cursor, const uint8_t* end, uint64_t& value) {
@@ -36,7 +54,32 @@ void rotate(uint32_t n, uint32_t& x, uint32_t& y, uint32_t rx, uint32_t ry) {
   }
 }
 
+// [offset, offset + length) lies inside [0, limit).
+bool inside(uint64_t offset, uint64_t length, uint64_t limit) {
+  return offset <= limit && length <= limit - offset;
+}
+
 }  // namespace
+
+void* allocBuffer(size_t bytes) {
+  if (bytes == 0) return nullptr;
+#if defined(ESP32)
+  void* p = heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!p && bytes <= 16u * 1024u) p = heap_caps_malloc(bytes, MALLOC_CAP_8BIT);
+  return p;
+#else
+  return std::malloc(bytes);
+#endif
+}
+
+void freeBuffer(void* p) {
+  if (!p) return;
+#if defined(ESP32)
+  heap_caps_free(p);
+#else
+  std::free(p);
+#endif
+}
 
 bool parseHeader(const uint8_t* bytes, size_t length, Header& header) {
   if (!bytes || length < kHeaderBytes || std::memcmp(bytes, "PMTiles", 7) != 0 || bytes[7] != 3)
@@ -63,8 +106,8 @@ bool parseDirectory(const uint8_t* bytes, size_t length, Directory& entries) {
   const uint8_t* cursor = bytes;
   const uint8_t* const end = bytes + length;
   uint64_t count = 0;
-  if (!readVarint(cursor, end, count) || count > length / 4 ||
-      count > std::numeric_limits<size_t>::max())
+  // Every entry takes at least one byte in each of its four columns.
+  if (!readVarint(cursor, end, count) || count > length / 4 || count > kMaxDirectoryEntries)
     return false;
 
   if (!entries.resize(static_cast<size_t>(count))) return false;
@@ -132,6 +175,156 @@ uint64_t zxyToTileId(uint8_t zoom, uint32_t x, uint32_t y) {
     --bit;
   }
   return tile_id;
+}
+
+Check checkArchive(const uint8_t* raw, size_t raw_len, uint64_t file_size, Header& header) {
+  if (!parseHeader(raw, raw_len, header)) return kCheckNotV3;
+  if ((header.tile_type != kTileTypePng && header.tile_type != kTileTypeUnknown) ||
+      (header.tile_compression != kCompressionNone &&
+       header.tile_compression != kCompressionUnknown) ||
+      (header.internal_compression != kCompressionGzip &&
+       header.internal_compression != kCompressionNone))
+    return kCheckNotPng;
+  if (!inside(header.root_dir_offset, header.root_dir_bytes, file_size) ||
+      !inside(header.leaf_dirs_offset, header.leaf_dirs_bytes, file_size) ||
+      !inside(header.tile_data_offset, header.tile_data_bytes, file_size))
+    return kCheckTruncated;
+  return kCheckOk;
+}
+
+uint8_t* gunzip(const uint8_t* input, size_t length, size_t& output_length) {
+  output_length = 0;
+#if PMTILES_HAVE_TINFL
+  if (!input || length < 18 || input[0] != 0x1F || input[1] != 0x8B ||
+      input[2] != 8 || (input[3] & 0xE0) != 0)
+    return nullptr;
+
+  const size_t trailer = length - 8;
+  size_t data_offset = 10;
+  const uint8_t flags = input[3];
+  if (flags & 0x04) {   // FEXTRA
+    if (data_offset + 2 > trailer) return nullptr;
+    const size_t extra_length = static_cast<size_t>(input[data_offset]) |
+                                (static_cast<size_t>(input[data_offset + 1]) << 8);
+    data_offset += 2;
+    if (extra_length > trailer - data_offset) return nullptr;
+    data_offset += extra_length;
+  }
+  static const uint8_t kStringFields[2] = {0x08, 0x10};   // FNAME, FCOMMENT
+  for (const uint8_t flag : kStringFields) {
+    if ((flags & flag) == 0) continue;
+    while (data_offset < trailer && input[data_offset++] != 0) {}
+    if (data_offset > trailer || input[data_offset - 1] != 0) return nullptr;
+  }
+  if (flags & 0x02) {   // FHCRC
+    if (data_offset + 2 > trailer) return nullptr;
+    data_offset += 2;
+  }
+  if (data_offset >= trailer) return nullptr;
+
+  const size_t expected_length = readU32(input + length - 4);
+  if (expected_length == 0 || expected_length > kMaxDirectoryBytes) return nullptr;
+
+  uint8_t* output = static_cast<uint8_t*>(allocBuffer(expected_length));
+  if (!output) return nullptr;
+  // ~11 KB of state: never on a task stack.
+  tinfl_decompressor* state = static_cast<tinfl_decompressor*>(allocBuffer(sizeof(tinfl_decompressor)));
+  if (!state) {
+    freeBuffer(output);
+    return nullptr;
+  }
+  tinfl_init(state);
+  size_t compressed_length = trailer - data_offset;
+  size_t decompressed_length = expected_length;
+  const tinfl_status status = tinfl_decompress(
+      state, input + data_offset, &compressed_length, output, output, &decompressed_length,
+      TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  freeBuffer(state);
+  bool ok = status == TINFL_STATUS_DONE && decompressed_length == expected_length;
+  if (ok) {
+    uint32_t crc = UINT32_MAX;
+    for (size_t i = 0; i < decompressed_length; ++i) {
+      crc ^= output[i];
+      for (unsigned bit = 0; bit < 8; ++bit)
+        crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    ok = (crc ^ UINT32_MAX) == readU32(input + length - 8);
+  }
+  if (!ok) {
+    freeBuffer(output);
+    return nullptr;
+  }
+  output_length = decompressed_length;
+  return output;
+#else
+  (void)input;
+  (void)length;
+  return nullptr;
+#endif
+}
+
+namespace {
+
+Lookup readDirectory(const Header& header, ReadFn read, void* ctx, uint64_t offset,
+                     uint64_t length, Directory& out) {
+  if (length == 0 || length > kMaxDirectoryBytes) return kCorrupt;
+  uint8_t* raw = static_cast<uint8_t*>(allocBuffer(static_cast<size_t>(length)));
+  if (!raw) return kReadError;
+  if (!read(ctx, offset, raw, static_cast<size_t>(length))) {
+    freeBuffer(raw);
+    return kReadError;
+  }
+  const uint8_t* bytes = raw;
+  size_t bytes_length = static_cast<size_t>(length);
+  uint8_t* inflated = nullptr;
+  if (header.internal_compression == kCompressionGzip) {
+    inflated = gunzip(raw, bytes_length, bytes_length);
+    freeBuffer(raw);
+    raw = nullptr;
+    if (!inflated) return kCorrupt;
+    bytes = inflated;
+  }
+  const bool parsed = parseDirectory(bytes, bytes_length, out);
+  freeBuffer(raw);
+  freeBuffer(inflated);
+  if (!parsed) out.clear();
+  return parsed ? kFound : kCorrupt;
+}
+
+}  // namespace
+
+Lookup locateTile(const Header& header, ReadFn read, void* ctx, DirCache& cache,
+                  uint8_t z, uint32_t x, uint32_t y,
+                  uint64_t& tile_offset, uint32_t& tile_length) {
+  if (z < header.min_zoom || z > header.max_zoom) return kAbsent;
+  const uint64_t tile_id = zxyToTileId(z, x, y);
+  if (tile_id == UINT64_MAX) return kAbsent;
+
+  // checkArchive put every section inside the file, so an entry inside its
+  // section can't overflow the absolute offset.
+  uint64_t dir_offset = header.root_dir_offset;
+  uint64_t dir_length = header.root_dir_bytes;
+  for (int depth = 0; depth < kMaxDepth; ++depth) {
+    Directory& dir = cache.dirs_[depth];
+    if (cache.offset_[depth] != dir_offset || dir.empty()) {
+      cache.offset_[depth] = UINT64_MAX;
+      const Lookup r = readDirectory(header, read, ctx, dir_offset, dir_length, dir);
+      if (r != kFound) return r;
+      cache.offset_[depth] = dir_offset;
+    }
+    Entry entry{};
+    if (!findTile(dir, tile_id, entry)) return kAbsent;
+    if (entry.run_length != 0) {
+      if (!inside(entry.offset, entry.length, header.tile_data_bytes)) return kCorrupt;
+      tile_offset = header.tile_data_offset + entry.offset;
+      tile_length = entry.length;
+      return kFound;
+    }
+    if (!inside(entry.offset, entry.length, header.leaf_dirs_bytes)) return kCorrupt;
+    dir_offset = header.leaf_dirs_offset + entry.offset;
+    dir_length = entry.length;
+  }
+  return kCorrupt;   // deeper than any writer nests leaves: a loop
 }
 
 }  // namespace PmTiles
