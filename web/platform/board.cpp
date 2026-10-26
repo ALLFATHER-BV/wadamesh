@@ -81,7 +81,9 @@ void wadaBoardBegin(const WadaBackendChoice& choice) {
   if (const char* e = getenv("WADA_PREFS_FILE")) {
     if (e[0] == '1') { SdNvsPrefs::useFile((fs::FS*)&SPIFFS, "/prefs"); touchPrefsReload(); }
   }
-  rtc_clock.setCurrentTime((uint32_t)time(nullptr));   // the host clock is synced: a real time source
+  // The host clock is synced: a real time source. Tests (WADA_CLOCK_UNSET=1) leave it out,
+  // so the UI runs as a device does before its first sync (rtc_clock.timeIsCurrent() false).
+  if (!getenv("WADA_CLOCK_UNSET")) rtc_clock.setCurrentTime((uint32_t)time(nullptr));
   the_mesh.begin(wadaCreateBackend(choice));   // the demo, or a companion node (BackendSelect.h)
   // A node is set up already: the first-run wizard (name + LoRa region) would rename
   // and re-tune it. It is the demo's welcome only.
