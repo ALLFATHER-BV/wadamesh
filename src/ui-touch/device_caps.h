@@ -276,10 +276,9 @@
 #endif
 
 // Offline maps from PMTiles PNG archives on the card (Map options -> Map file) and
-// the "Zoom: map levels only" limit. Off on the Tanmatsu: its AppFS image has well
-// under 1 KB left, and this is ~11 KB of reader + UI.
+// the "Zoom: map levels only" limit. ~11 KB of reader + UI, on every board with a card.
 #ifndef CAP_MAP_PMTILES
-  #if CAP_MICROSD && !defined(HAS_TANMATSU)
+  #if CAP_MICROSD
     #define CAP_MAP_PMTILES 1
   #else
     #define CAP_MAP_PMTILES 0
@@ -781,16 +780,10 @@
 #endif
 
 // Settings > Contact Management: delete contacts not heard from in N days (#719).
-// Off on the Tanmatsu only: its application.bin must stay within the 50 x 64 KB
-// pages AppFS maps (3,276,800 B), and the merge batch of 2026-10-26 took it over.
-// The prefs field and its getters stay on every board (the schema is shared);
-// only the page card and the hourly pass are left out.
+// On every board; the Tanmatsu got room for it back when its image shrank by
+// ~195 KB (silent asserts, deflated emoji), see sdkconfigs/wadamesh_tanmatsu.
 #ifndef CAP_CONTACT_PURGE
-  #if defined(HAS_TANMATSU)
-    #define CAP_CONTACT_PURGE 0
-  #else
-    #define CAP_CONTACT_PURGE 1
-  #endif
+  #define CAP_CONTACT_PURGE 1
 #endif
 
 // The two-line date of the lock screen and the Constellation screensaver (#742):
@@ -806,10 +799,9 @@
 #endif
 
 // Settings > Display > Screensaver > "Keep north up" (#706): the Constellation stops
-// its slow turn, so north stays at the top. Off on the Tanmatsu for the AppFS ceiling
-// (see CAP_CONTACT_PURGE): its screensaver keeps turning, as before.
+// its slow turn, so north stays at the top.
 #ifndef CAP_SSAVER_NORTH_LOCK
-  #if CAP_SCREENSAVER && !defined(HAS_TANMATSU)
+  #if CAP_SCREENSAVER
     #define CAP_SSAVER_NORTH_LOCK 1
   #else
     #define CAP_SSAVER_NORTH_LOCK 0
@@ -817,12 +809,6 @@
 #endif
 
 // Backups listed by their date, or "Default", instead of the file name (#739).
-// Off on the Tanmatsu for the same AppFS ceiling: it lists the file names, as
-// before. About 1 KB of code.
 #ifndef CAP_BACKUP_DATE_LABELS
-  #if defined(HAS_TANMATSU)
-    #define CAP_BACKUP_DATE_LABELS 0
-  #else
-    #define CAP_BACKUP_DATE_LABELS 1
-  #endif
+  #define CAP_BACKUP_DATE_LABELS 1
 #endif
