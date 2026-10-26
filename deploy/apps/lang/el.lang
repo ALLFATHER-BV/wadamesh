@@ -147,6 +147,7 @@ Broker host / IP	Host / IP του broker
 Buffered receive (experimental)	Λήψη με buffer (πειραματικό)
 Built-in	Ενσωματωμένο
 Built-in (default)	Ενσωματωμένο (προεπιλογή)
+Default	Προεπιλογή
 CR	CR
 Calibrate battery (full = 100%)	Βαθμονόμηση μπαταρίας (πλήρης = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Βαθμονομήθηκε: 100%% = %u.%02u V  (παρατεταμένο για επαναφορά)

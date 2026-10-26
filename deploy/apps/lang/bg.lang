@@ -147,6 +147,7 @@ Broker host / IP	Хост / IP на брокера
 Buffered receive (experimental)	Буфериран прием (експериментално)
 Built-in	Вграден
 Built-in (default)	Вграден (по подразбиране)
+Default	По подразбиране
 CR	CR
 Calibrate battery (full = 100%)	Калибрирай батерията (пълна = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Калибрирано: 100%% = %u.%02u V  (задръжте за нулиране)

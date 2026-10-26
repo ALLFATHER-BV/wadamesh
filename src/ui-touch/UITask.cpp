@@ -50158,6 +50158,72 @@ static void backupChosenCb(lv_event_t* e) {
   backupPickerClose();
   confirmBackupImport(stored);
 }
+// The local time stamped into "meshcore-backup-YYYYMMDD-HHMMSS.json" by
+// backupMakeFilename(); false for every other name (the MeshCore app's fixed
+// meshcore-backup.json, nodate-N, or a .json someone copied onto the card).
+static bool backupNameStamp(const char* stored, struct tm* out) {
+  const char* base = strrchr(stored, '/'); base = base ? base + 1 : stored;
+  int y, mo, d, h, mi, s, n = 0;
+  if (sscanf(base, "meshcore-backup-%4d%2d%2d-%2d%2d%2d.json%n", &y, &mo, &d, &h, &mi, &s, &n) != 6
+      || n == 0 || base[n]) return false;
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60) return false;
+  memset(out, 0, sizeof *out);
+  out->tm_year = y - 1900; out->tm_mon = mo - 1; out->tm_mday = d;
+  out->tm_hour = h; out->tm_min = mi; out->tm_sec = s;
+  return true;
+}
+// Backup row labels for the Import picker and the Saved backups list (#739): the
+// backup's date ("2026-06-12"), or "Default" when its name has none. Rows that
+// would still read the same gain, in turn, the time, where the file is
+// (SD / Internal), then a running number, so every row stays tellable apart.
+static void backupListLabels(char (*lbl)[64]) {
+  const int n = s_backup_count;
+  bool dated[kBackupMax], dup[kBackupMax];
+  struct tm st;
+  auto markDups = [&]() {
+    bool any = false;
+    for (int i = 0; i < n; ++i) {
+      dup[i] = false;
+      for (int j = 0; j < n && !dup[i]; ++j) dup[i] = (j != i && !strcmp(lbl[i], lbl[j]));
+      any |= dup[i];
+    }
+    return any;
+  };
+  auto append = [&](int i, const char* more) {
+    const size_t len = strlen(lbl[i]);
+    snprintf(lbl[i] + len, 64 - len, " \xC2\xB7 %s", more);
+  };
+  for (int i = 0; i < n; ++i) {
+    dated[i] = backupNameStamp(s_backup_paths[i], &st);
+    if (dated[i]) snprintf(lbl[i], 64, "%04d-%02d-%02d", st.tm_year + 1900, st.tm_mon + 1, st.tm_mday);
+    else          snprintf(lbl[i], 64, "%s", TR("Default"));
+  }
+  if (!markDups()) return;
+  for (int i = 0; i < n; ++i)
+    if (dup[i] && dated[i] && backupNameStamp(s_backup_paths[i], &st)) {
+      char hm[12]; fmtClockHM(hm, sizeof hm, &st); append(i, hm);
+    }
+  if (!markDups()) return;
+  for (int i = 0; i < n; ++i)
+    if (dup[i]) append(i, !strncmp(s_backup_paths[i], "sd:", 3) ? "SD" : TR("Internal"));
+  if (!markDups()) return;
+  int nth[kBackupMax];
+  for (int i = 0; i < n; ++i) {
+    nth[i] = 1;
+    for (int j = 0; j < i; ++j) if (!strcmp(lbl[i], lbl[j])) ++nth[i];
+  }
+  for (int i = 0; i < n; ++i)
+    if (nth[i] > 1) { const size_t len = strlen(lbl[i]); snprintf(lbl[i] + len, 64 - len, " %d", nth[i]); }
+}
+// Labels for the s_backup_count rows backupScan() just found; nullptr on OOM, and
+// the caller then shows s_backup_disp (the file names). Free with heap_caps_free;
+// short-lived, so off internal DRAM like the scan buffers (lv_label_set_text copies).
+static char (*backupListLabelsNew())[64] {
+  char (*lbl)[64] = (char(*)[64]) heap_caps_malloc(kBackupMax * 64, MALLOC_CAP_SPIRAM);
+  if (!lbl) lbl = (char(*)[64]) heap_caps_malloc(kBackupMax * 64, MALLOC_CAP_8BIT);
+  if (lbl) backupListLabels(lbl);
+  return lbl;
+}
 static void openBackupPicker() {
   backupScan();
   backupPickerClose();
@@ -50181,6 +50247,7 @@ static void openBackupPicker() {
   lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
+  char (*lbl)[64] = backupListLabelsNew();
   for (int i = 0; i < s_backup_count; ++i) {
     lv_obj_t* b = lv_btn_create(list);
     lv_obj_set_width(b, lv_pct(100));
@@ -50189,11 +50256,12 @@ static void openBackupPicker() {
     lv_obj_add_event_cb(b, backupChosenCb, LV_EVENT_CLICKED, s_backup_paths[i]);
     lv_obj_t* l = lv_label_create(b);
     useChainedFont(l);
-    lv_label_set_text(l, s_backup_disp[i]);
+    lv_label_set_text(l, lbl ? lbl[i] : s_backup_disp[i]);   // OOM: the file names, as before
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
     lv_obj_set_width(l, lv_pct(94));
     lv_obj_align(l, LV_ALIGN_LEFT_MID, 4, 0);
   }
+  heap_caps_free(lbl);
 }
 
 // ---- Backups manager (Settings -> Backups) ----------------------------------
@@ -50445,12 +50513,13 @@ static void buildBackupsSettings() {
     lv_obj_t* c = setCard("Saved backups");
     backupScan();
     if (s_backup_count == 0) setNote(c, "No backups yet. Use Export backup above to create one.");
+    char (*lbl)[64] = backupListLabelsNew();   // same names as the Import picker
     for (int i = 0; i < s_backup_count; ++i) {
       const lv_coord_t w = s_settings_content_w, bw = SC(40);
       lv_obj_t* row = setBox(c);
       lv_obj_set_size(row, w, SC(34));
       lv_obj_t* nm = lv_label_create(row);
-      lv_label_set_text(nm, s_backup_disp[i]);
+      lv_label_set_text(nm, lbl ? lbl[i] : s_backup_disp[i]);
       lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
       lv_obj_set_size(nm, w - bw - SC(10), lv_font_get_line_height(&g_font_14));
       lv_obj_set_style_text_font(nm, &g_font_14, LV_PART_MAIN);
@@ -50466,6 +50535,7 @@ static void buildBackupsSettings() {
       lv_obj_set_style_text_color(dl, lv_color_hex(COLOR_STATUS_DANGER_TEXT), LV_PART_MAIN);
       lv_obj_center(dl);
     }
+    heap_caps_free(lbl);
   }
 
   {

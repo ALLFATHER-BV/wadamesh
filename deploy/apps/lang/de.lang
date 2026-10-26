@@ -147,6 +147,7 @@ Broker host / IP	Broker-Host / IP
 Buffered receive (experimental)	Gepufferter Empfang (experimentell)
 Built-in	Integriert
 Built-in (default)	Integriert (Standard)
+Default	Standard
 CR	CR
 Calibrate battery (full = 100%)	Batterie kalibrieren (voll = 100%)
 Calibrated: 100%% = %u.%02u V  (long-press to reset)	Kalibriert: 100%% = %u.%02u V  (lang drücken zum Zurücksetzen)
