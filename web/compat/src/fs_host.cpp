@@ -80,9 +80,22 @@ public:
     return std::make_shared<TouchingFileImpl>(std::move(f));
   }
   bool rename(const char* from, const char* to) override { bool ok = VFSImpl::rename(from, to); wadaHostFsTouched(); return ok; }
-  bool remove(const char* path) override { bool ok = VFSImpl::remove(path); wadaHostFsTouched(); return ok; }
+  // A ".." segment never names anything on a device partition; here it would reach
+  // the host's files outside the data dir, so a destructive call refuses it.
+  static bool escapes(const char* p) {
+    for (const char* s = p; s && (s = strstr(s, "..")) != nullptr; s += 2)
+      if ((s == p || s[-1] == '/') && (s[2] == '/' || s[2] == '\0')) return true;
+    return false;
+  }
+  bool remove(const char* path) override {
+    if (escapes(path)) return false;
+    bool ok = VFSImpl::remove(path); wadaHostFsTouched(); return ok;
+  }
   bool mkdir(const char* path) override { bool ok = VFSImpl::mkdir(path); wadaHostFsTouched(); return ok; }
-  bool rmdir(const char* path) override { bool ok = VFSImpl::rmdir(path); wadaHostFsTouched(); return ok; }
+  bool rmdir(const char* path) override {
+    if (escapes(path)) return false;
+    bool ok = VFSImpl::rmdir(path); wadaHostFsTouched(); return ok;
+  }
 };
 size_t duBytes(const std::string& dir) {
   size_t total = 0;
