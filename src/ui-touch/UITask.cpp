@@ -51,6 +51,14 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   // operator's Profile / Radio settings.
   #include <LittleFS.h>
   #include <esp_heap_caps.h>
+  #if CAP_MICROSD
+    #if __has_include("rom/miniz.h")
+      #include "rom/miniz.h"   // the ROM's tinfl (IDF 4.x, and the web build's stand-in)
+    #else
+      #include "miniz.h"       // IDF 5.x (P4 boards) moved it to esp_rom/include
+    #endif
+    #include "PmTiles.h"
+  #endif
   #include <esp_system.h>
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
@@ -36402,6 +36410,400 @@ static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w
   *out_w = (int)w; *out_h = (int)h;
   return (uint8_t*)rgb;
 }
+
+#if CAP_MICROSD
+// PMTiles PNG raster archives, Meshtastic MUI layout: any /maps/<name>/<name>.pmtiles
+// (archive named after its style directory). Map options -> Map file picks which one
+// is drawn; the choice persists by name (touchPrefsGet/SetMapPmTiles). The card is
+// rescanned lazily after every storage change and whenever the picker opens.
+struct PmTilesArchive {
+  char name[TOUCH_MAP_PMTILES_MAXLEN];
+  char path[2 * TOUCH_MAP_PMTILES_MAXLEN + 16];   // /maps/<name>/<name>.pmtiles
+  PmTiles::Header header;
+};
+static constexpr int kPmTilesMax = 16;
+static PmTilesArchive* s_pmtiles = nullptr;   // kPmTilesMax entries, PSRAM, sorted by name
+static int  s_pmtiles_count = 0;
+// Folders under /maps that hold a .pmtiles we could not use, so the picker can say
+// why instead of just leaving them out.
+enum PmTilesProbeResult : uint8_t {
+  kPmProbeOk, kPmProbeMissing, kPmProbeNotV3, kPmProbeNotPng, kPmProbeTruncated, kPmProbeMisnamed
+};
+struct PmTilesProblem {
+  char name[TOUCH_MAP_PMTILES_MAXLEN];
+  PmTilesProbeResult result;
+};
+static constexpr int kPmTilesProblemsMax = 6;
+static PmTilesProblem* s_pmtiles_problems = nullptr;   // PSRAM, filled by pmTilesScan
+static int s_pmtiles_problem_count = 0;
+static int  s_pmtiles_sel = -1;               // index into s_pmtiles; -1 = folder tiles only
+static bool s_pmtiles_scanned = false;
+static uint64_t s_pmtiles_dir_offsets[4] = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX};
+static PmTiles::Directory s_pmtiles_dirs[4];
+static bool     s_map_zoom_fit = false;
+static uint32_t s_map_zoom_levels = 0;
+static bool     s_map_zoom_levels_scanned = false;
+
+static void pmTilesDropDirectories() {
+  for (int i = 0; i < 4; ++i) {
+    s_pmtiles_dir_offsets[i] = UINT64_MAX;
+    s_pmtiles_dirs[i].clear();
+  }
+}
+
+static void resetPmTilesArchiveCache() {
+  s_pmtiles_scanned = false;
+  s_pmtiles_count = 0;
+  s_pmtiles_problem_count = 0;
+  s_pmtiles_sel = -1;
+  s_map_zoom_levels_scanned = false;
+  pmTilesDropDirectories();
+}
+
+static bool pmTilesReadRange(File& file, uint64_t offset, uint8_t* dst, size_t length) {
+  if (!dst || offset > UINT32_MAX || length > UINT32_MAX ||
+      offset + length < offset || offset + length > UINT32_MAX ||
+      !file.seek(static_cast<uint32_t>(offset)))
+    return false;
+  size_t read = 0;
+  while (read < length) {
+    const int n = file.read(dst + read, length - read);
+    if (n <= 0) return false;
+    read += static_cast<size_t>(n);
+  }
+  return true;
+}
+
+static uint8_t* pmTilesGunzip(const uint8_t* input, size_t length, size_t& output_length) {
+  output_length = 0;
+  if (!input || length < 18 || input[0] != 0x1F || input[1] != 0x8B ||
+      input[2] != 8 || (input[3] & 0xE0) != 0)
+    return nullptr;
+
+  const size_t trailer = length - 8;
+  size_t data_offset = 10;
+  const uint8_t flags = input[3];
+  if (flags & 0x04) {
+    if (data_offset + 2 > trailer) return nullptr;
+    const size_t extra_length = static_cast<size_t>(input[data_offset]) |
+                                (static_cast<size_t>(input[data_offset + 1]) << 8);
+    data_offset += 2;
+    if (extra_length > trailer - data_offset) return nullptr;
+    data_offset += extra_length;
+  }
+  for (const uint8_t flag : {static_cast<uint8_t>(0x08), static_cast<uint8_t>(0x10)}) {
+    if ((flags & flag) == 0) continue;
+    while (data_offset < trailer && input[data_offset++] != 0) {}
+    if (data_offset > trailer || input[data_offset - 1] != 0) return nullptr;
+  }
+  if (flags & 0x02) {
+    if (data_offset + 2 > trailer) return nullptr;
+    data_offset += 2;
+  }
+  if (data_offset >= trailer) return nullptr;
+
+  const size_t expected_length =
+      static_cast<size_t>(input[length - 4]) |
+      (static_cast<size_t>(input[length - 3]) << 8) |
+      (static_cast<size_t>(input[length - 2]) << 16) |
+      (static_cast<size_t>(input[length - 1]) << 24);
+  if (expected_length == 0 || expected_length > 1024u * 1024u) return nullptr;
+
+  uint8_t* output = (uint8_t*)lvglPsramAlloc(expected_length);
+  if (!output) return nullptr;
+  tinfl_decompressor* state = (tinfl_decompressor*)heap_caps_malloc(
+      sizeof(tinfl_decompressor), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!state) state = (tinfl_decompressor*)heap_caps_malloc(sizeof(tinfl_decompressor), MALLOC_CAP_8BIT);
+  if (!state) {
+    lvglPsramFree(output);
+    return nullptr;
+  }
+  tinfl_init(state);
+  size_t compressed_length = trailer - data_offset;
+  size_t decompressed_length = expected_length;
+  const tinfl_status status = tinfl_decompress(
+      state, input + data_offset, &compressed_length, output, output, &decompressed_length,
+      TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
+  heap_caps_free(state);
+  uint32_t crc = UINT32_MAX;
+  if (status == TINFL_STATUS_DONE && decompressed_length == expected_length) {
+    for (size_t i = 0; i < decompressed_length; ++i) {
+      crc ^= output[i];
+      for (unsigned bit = 0; bit < 8; ++bit)
+        crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+    }
+    crc ^= UINT32_MAX;
+  }
+  const uint32_t expected_crc =
+      static_cast<uint32_t>(input[length - 8]) |
+      (static_cast<uint32_t>(input[length - 7]) << 8) |
+      (static_cast<uint32_t>(input[length - 6]) << 16) |
+      (static_cast<uint32_t>(input[length - 5]) << 24);
+  if (status != TINFL_STATUS_DONE || decompressed_length != expected_length ||
+      crc != expected_crc) {
+    lvglPsramFree(output);
+    return nullptr;
+  }
+  output_length = decompressed_length;
+  return output;
+}
+
+// Header check for one candidate archive: PMTiles v3, PNG (or untyped) tiles,
+// uncompressed, gzip directories, and every section inside the file (a copy that
+// was cut short fails the last check).
+static PmTilesProbeResult pmTilesProbe(fs::FS* fs, const char* path, PmTiles::Header& header) {
+  File file = fs->open(path, FILE_READ);
+  if (!file) return kPmProbeMissing;
+  if (file.isDirectory()) {
+    file.close();
+    return kPmProbeMissing;
+  }
+  uint8_t raw[PmTiles::kHeaderBytes];
+  const bool header_read = pmTilesReadRange(file, 0, raw, sizeof(raw));
+  const uint64_t size = file.size();
+  file.close();
+  PmTilesProbeResult result = kPmProbeOk;
+  if (!header_read || !PmTiles::parseHeader(raw, sizeof(raw), header))
+    result = kPmProbeNotV3;
+  else if ((header.tile_type != PmTiles::kTileTypePng &&
+            header.tile_type != PmTiles::kTileTypeUnknown) ||
+           (header.tile_compression != PmTiles::kCompressionNone &&
+            header.tile_compression != PmTiles::kCompressionUnknown) ||
+           header.internal_compression != PmTiles::kCompressionGzip)
+    result = kPmProbeNotPng;
+  else if (header.root_dir_offset + header.root_dir_bytes < header.root_dir_offset ||
+           header.root_dir_offset + header.root_dir_bytes > size ||
+           header.leaf_dirs_offset + header.leaf_dirs_bytes < header.leaf_dirs_offset ||
+           header.leaf_dirs_offset + header.leaf_dirs_bytes > size ||
+           header.tile_data_offset + header.tile_data_bytes < header.tile_data_offset ||
+           header.tile_data_offset + header.tile_data_bytes > size)
+    result = kPmProbeTruncated;
+  if (result != kPmProbeOk)
+    Serial.printf("[PMTILES] Rejected %s (reason %u, %lu bytes)\n", path,
+                  (unsigned)result, (unsigned long)size);
+  return result;
+}
+
+// True when <dir> holds some other *.pmtiles (skipping macOS "._" shadows), i.e.
+// the archive is there but not named after its folder. Names only, no opens.
+static bool pmTilesDirHasOtherArchive(fs::FS* fs, const char* dir_path) {
+  File dir = fs->open(dir_path);
+  if (!dir || !dir.isDirectory()) return false;
+  bool found = false;
+  for (int n = 0; n < 64 && !found; ++n) {   // a z/x/y tree's zoom folders come first; stay bounded
+    bool is_dir = false;
+    String path = dir.getNextFileName(&is_dir);
+    if (!path.length()) break;
+    const char* base = strrchr(path.c_str(), '/');
+    base = base ? base + 1 : path.c_str();
+    const size_t len = strlen(base);
+    found = !is_dir && base[0] != '.' && len > 8 && strcasecmp(base + len - 8, ".pmtiles") == 0;
+  }
+  dir.close();
+  return found;
+}
+
+// List /maps/*/<dir>.pmtiles and resolve the saved choice against it. Only the
+// top level of /maps is walked, by name (getNextFileName opens nothing, and one
+// entry openNextFile can't open would end the walk early).
+static void pmTilesScan() {
+  resetPmTilesArchiveCache();
+  s_pmtiles_scanned = true;
+  if (!s_pmtiles) s_pmtiles = (PmTilesArchive*)psAlloc(sizeof(PmTilesArchive) * kPmTilesMax);
+  if (!s_pmtiles_problems)
+    s_pmtiles_problems = (PmTilesProblem*)psAlloc(sizeof(PmTilesProblem) * kPmTilesProblemsMax);
+  if (!s_pmtiles || !s_pmtiles_problems) return;
+  fs::FS* const fs = mapSdStorage();
+  // Both spellings, upper first (see the /MAPS note in loadTileJpeg). Whichever
+  // opens first is the directory; walking the other would list it again.
+  static const char* const kRoots[2] = { "/MAPS", "/maps" };
+  for (const char* root : kRoots) {
+    File dir = fs->open(root);
+    if (!dir || !dir.isDirectory()) continue;
+    while (s_pmtiles_count < kPmTilesMax) {
+      bool is_dir = false;
+      String entry = dir.getNextFileName(&is_dir);
+      if (!entry.length()) break;
+      const char* base = strrchr(entry.c_str(), '/');
+      base = base ? base + 1 : entry.c_str();
+      if (!is_dir || base[0] == '\0' || base[0] == '.' ||
+          strlen(base) >= TOUCH_MAP_PMTILES_MAXLEN)
+        continue;
+      PmTilesArchive& a = s_pmtiles[s_pmtiles_count];
+      snprintf(a.path, sizeof(a.path), "%s/%s/%s.pmtiles", root, base, base);
+      PmTilesProbeResult result = pmTilesProbe(fs, a.path, a.header);
+      if (result == kPmProbeOk) {
+        strlcpy(a.name, base, sizeof(a.name));
+        ++s_pmtiles_count;
+        continue;
+      }
+      if (result == kPmProbeMissing) {
+        char sub[sizeof(a.path)];
+        snprintf(sub, sizeof(sub), "%s/%s", root, base);
+        if (!pmTilesDirHasOtherArchive(fs, sub)) continue;   // a plain tile folder
+        result = kPmProbeMisnamed;
+      }
+      if (s_pmtiles_problem_count < kPmTilesProblemsMax) {
+        PmTilesProblem& p = s_pmtiles_problems[s_pmtiles_problem_count++];
+        strlcpy(p.name, base, sizeof(p.name));
+        p.result = result;
+      }
+    }
+    dir.close();
+    break;
+  }
+  std::sort(s_pmtiles, s_pmtiles + s_pmtiles_count,
+            [](const PmTilesArchive& l, const PmTilesArchive& r) { return strcasecmp(l.name, r.name) < 0; });
+
+  // Saved name -> that archive; "-" -> none; unset or no longer on the card ->
+  // "osm" if present, else the first. A missing choice is not overwritten, so
+  // the card that has it brings it back.
+  char want[TOUCH_MAP_PMTILES_MAXLEN];
+  touchPrefsGetMapPmTiles(want, sizeof(want));
+  if (strcmp(want, "-") == 0) return;
+  for (int i = 0; i < s_pmtiles_count; ++i)
+    if (want[0] && strcasecmp(s_pmtiles[i].name, want) == 0) s_pmtiles_sel = i;
+  for (int i = 0; i < s_pmtiles_count && s_pmtiles_sel < 0; ++i)
+    if (strcasecmp(s_pmtiles[i].name, "osm") == 0) s_pmtiles_sel = i;
+  if (s_pmtiles_sel < 0 && s_pmtiles_count > 0) s_pmtiles_sel = 0;
+  for (int i = 0; i < s_pmtiles_count; ++i)
+    Serial.printf("[PMTILES] %c %s (z%u-%u)\n", i == s_pmtiles_sel ? '*' : ' ',
+                  s_pmtiles[i].path, s_pmtiles[i].header.min_zoom, s_pmtiles[i].header.max_zoom);
+}
+
+static const PmTilesArchive* pmTilesActive() {
+  if (!s_pmtiles_scanned) pmTilesScan();
+  return s_pmtiles_sel >= 0 ? &s_pmtiles[s_pmtiles_sel] : nullptr;
+}
+
+// Switch the drawn archive (-1 = folder tiles only) and remember it by name.
+static void pmTilesSelect(int index) {
+  if (index < -1 || index >= s_pmtiles_count) return;
+  s_pmtiles_sel = index;
+  s_map_zoom_levels_scanned = false;   // the archive's level range came with it
+  pmTilesDropDirectories();   // cached directories belong to the previous archive
+  touchPrefsSetMapPmTiles(index < 0 ? "-" : s_pmtiles[index].name);
+}
+
+static bool pmTilesReadDirectory(File& file, uint64_t offset, uint64_t length,
+                                 int cache_index, PmTiles::Directory*& entries) {
+  if (cache_index < 0 || cache_index >= 4 || length == 0 ||
+      length > 1024u * 1024u || offset > UINT32_MAX ||
+      offset + length < offset || offset + length > UINT32_MAX)
+    return false;
+  if (s_pmtiles_dir_offsets[cache_index] != offset ||
+      s_pmtiles_dirs[cache_index].empty()) {
+    uint8_t* compressed = (uint8_t*)lvglPsramAlloc(static_cast<size_t>(length));
+    if (!compressed) return false;
+    const bool read_ok = pmTilesReadRange(file, offset, compressed, static_cast<size_t>(length));
+    size_t decompressed_length = 0;
+    uint8_t* decompressed = read_ok
+        ? pmTilesGunzip(compressed, static_cast<size_t>(length), decompressed_length)
+        : nullptr;
+    lvglPsramFree(compressed);
+    if (!decompressed) {
+      Serial.printf("[PMTILES] Failed to decompress directory at %lu\n",
+                    static_cast<unsigned long>(offset));
+      return false;
+    }
+    const bool parsed = PmTiles::parseDirectory(decompressed, decompressed_length,
+                                                s_pmtiles_dirs[cache_index]);
+    lvglPsramFree(decompressed);
+    if (!parsed) {
+      s_pmtiles_dirs[cache_index].clear();
+      Serial.printf("[PMTILES] Invalid directory at %lu\n",
+                    static_cast<unsigned long>(offset));
+      return false;
+    }
+    s_pmtiles_dir_offsets[cache_index] = offset;
+  }
+  entries = &s_pmtiles_dirs[cache_index];
+  return true;
+}
+
+static bool pmTilesFindTile(File& file, const PmTiles::Header& header,
+                            uint8_t z, int32_t x, int32_t y, PmTiles::Entry& tile) {
+  if (z < header.min_zoom || z > header.max_zoom || x < 0 || y < 0) return false;
+  const uint64_t tile_id = PmTiles::zxyToTileId(z, static_cast<uint32_t>(x),
+                                                static_cast<uint32_t>(y));
+  if (tile_id == UINT64_MAX) return false;
+
+  // Sections were bounds-checked against the file size in pmTilesProbe, so an
+  // entry inside its section can't overflow the absolute offset.
+  uint64_t dir_offset = header.root_dir_offset;
+  uint64_t dir_length = header.root_dir_bytes;
+  for (int depth = 0; depth < 4; ++depth) {
+    PmTiles::Directory* entries = nullptr;
+    if (!pmTilesReadDirectory(file, dir_offset, dir_length, depth, entries) || !entries ||
+        !PmTiles::findTile(*entries, tile_id, tile))
+      return false;
+    if (tile.run_length != 0) {
+      return tile.offset <= header.tile_data_bytes &&
+             tile.length <= header.tile_data_bytes - tile.offset;
+    }
+    if (tile.length == 0 || tile.offset > header.leaf_dirs_bytes ||
+        tile.length > header.leaf_dirs_bytes - tile.offset)
+      return false;
+    dir_offset = header.leaf_dirs_offset + tile.offset;
+    dir_length = tile.length;
+  }
+  return false;
+}
+
+// Opens the selected archive. If it vanished since the scan, drop it for this
+// mount (the saved choice stays) instead of retrying the open for every tile.
+static File pmTilesOpenActive(const PmTilesArchive*& archive) {
+  archive = pmTilesActive();
+  if (!archive) return File();
+  File file = mapSdStorage()->open(archive->path, FILE_READ);
+  if (!file) {
+    s_pmtiles_sel = -1;
+    pmTilesDropDirectories();
+    archive = nullptr;
+  }
+  return file;
+}
+
+static bool pmTilesHasTile(uint8_t z, int32_t x, int32_t y) {
+  const PmTilesArchive* archive = nullptr;
+  File file = pmTilesOpenActive(archive);
+  if (!file) return false;
+  PmTiles::Entry tile{};
+  const bool found = pmTilesFindTile(file, archive->header, z, x, y, tile) && tile.length != 0;
+  file.close();
+  return found;
+}
+
+static bool loadPmTilesTile(uint8_t z, int32_t x, int32_t y,
+                            uint8_t** out_data, size_t* out_len) {
+  const PmTilesArchive* archive = nullptr;
+  File file = pmTilesOpenActive(archive);
+  if (!file) return false;
+  PmTiles::Entry tile{};
+  if (!pmTilesFindTile(file, archive->header, z, x, y, tile) || tile.length == 0 ||
+      tile.length > 256u * 1024u) {
+    file.close();
+    return false;
+  }
+  const uint64_t data_offset = archive->header.tile_data_offset + tile.offset;
+  uint8_t* data = (uint8_t*)lvglPsramAlloc(tile.length);
+  if (!data) {
+    file.close();
+    return false;
+  }
+  const bool read_ok = pmTilesReadRange(file, data_offset, data, tile.length);
+  file.close();
+  static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  if (!read_ok || tile.length < sizeof(png_signature) ||
+      memcmp(data, png_signature, sizeof(png_signature)) != 0) {
+    lvglPsramFree(data);
+    return false;
+  }
+  *out_data = data;
+  *out_len = tile.length;
+  return true;
+}
+#endif
 #endif
 
 // Read /tiles/<z>/<x>/<y>.{jpg,png} from the tiles LittleFS partition
@@ -36442,6 +36844,9 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
     // watch, the FM poll, and the SD-tiles toggle (mapOptTilesSdCb mounts).
     if (!mapSdStorageMounted()) return false;
     markSdIo();                          // SD read activity -> status-bar LED
+    // PNG raster archives are read-only. Missing archive entries continue
+    // through the existing directory packs and writable tile cache below.
+    if (loadPmTilesTile(z, x, y, out_data, out_len)) return true;
     // Prefer the Meshtastic/MeshCore standard layout /maps/osm/{z}/{x}/{y}.png
     // (decoded via lodepng); fall back to the legacy /tiles/{z}/{x}/{y}.jpg.
     char ppath[56];
@@ -36586,6 +36991,7 @@ static void freeMapTiles() {
 //   * re-renders immediately when the map is the visible tab
 static void mapNoteStorageChanged() {
 #if CAP_MICROSD
+  resetPmTilesArchiveCache();
   // A fetch snapshots its paths but still dereferences the global backend for
   // every filesystem operation of the request, so the pointer may only move at
   // a worker request boundary. The ownership handshake pauses dequeueing there;
@@ -36677,6 +37083,7 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
   if (s_tiles_from_sd && s_tile_fs == map_sd && s_map_style == 0) {   // topo isn't on SD packs — probe the online cache below
     if (mapSdReadBlocked()) return false;   // card suspected dead — skip the five per-tile probes (sdHealthTick arbitrates)
     if (!mapSdStorageMounted()) return false;       // never ladder from the zoom guard (see loadTileJpeg)
+    if (pmTilesHasTile(z, static_cast<int32_t>(x), static_cast<int32_t>(y))) return true;
     char p[56];
     // Both directory spellings, upper first: our own card bootstrap creates "/MAPS"
     // while this only ever probed "/maps" (#286). Must stay in step with the loader in
@@ -36693,7 +37100,7 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
     if (map_sd->exists(p)) return true;
     snprintf(p, sizeof p, "/tiles/%u/%ld/%ld.jpg", (unsigned)z, x, y);
     if (map_sd->exists(p)) return true;
-    mapSdReadFailed();   // all five missing: either past the pack edge (cheap, silent) or the card died
+    mapSdReadFailed();   // all sources missing: either past the pack edge or the card died
     return false;
   }
 #endif
@@ -36714,6 +37121,93 @@ static bool tileExistsAt(uint8_t z, long x, long y) {
   return false;
 }
 #endif  // ESP32
+
+#if defined(ESP32) && CAP_MICROSD
+// Which zoom levels the SD map holds. With a PMTiles archive selected that is
+// its header range alone: /tiles is also where Wi-Fi downloads land, so its
+// level folders usually span almost every zoom and would void the limit (a
+// z10-19 archive next to a z1-18 download cache must still stop at z10).
+// Folder tiles only: every numeric level folder of the z/x/y trees loadTileJpeg
+// reads (/maps/osm, /tiles). Folder names only, no per-tile probes.
+static void mapSdZoomLevelsScan() {
+  s_map_zoom_levels = 0;
+  s_map_zoom_levels_scanned = true;
+  const uint32_t supported = ((1u << (k_map_zoom_max + 1)) - 1) & ~((1u << k_map_zoom_min) - 1);
+  if (const PmTilesArchive* a = pmTilesActive()) {
+    for (int z = a->header.min_zoom; z <= a->header.max_zoom && z < 32; ++z)
+      s_map_zoom_levels |= 1u << z;
+    s_map_zoom_levels &= supported;
+    Serial.printf("[MAP] Zoom levels of %s: 0x%08lx\n", a->name, (unsigned long)s_map_zoom_levels);
+    return;
+  }
+  fs::FS* const fs = mapSdStorage();
+  for (const char* root : { "/MAPS/osm", "/maps/osm", "/tiles" }) {
+    File dir = fs->open(root);
+    if (!dir || !dir.isDirectory()) continue;
+    for (int n = 0; n < 64; ++n) {   // level folders only; stay bounded on a cluttered root
+      bool is_dir = false;
+      String path = dir.getNextFileName(&is_dir);
+      if (!path.length()) break;
+      if (!is_dir) continue;
+      const char* base = strrchr(path.c_str(), '/');
+      base = base ? base + 1 : path.c_str();
+      char* end = nullptr;
+      const long z = strtol(base, &end, 10);
+      if (end != base && *end == '\0' && z >= 0 && z < 32) s_map_zoom_levels |= 1u << z;
+    }
+    dir.close();
+  }
+  s_map_zoom_levels &= supported;
+  Serial.printf("[MAP] Zoom levels of the tile folders: 0x%08lx\n", (unsigned long)s_map_zoom_levels);
+}
+
+// The levels the SD map holds, or 0 when unknown: the tiles don't come from the
+// card (server, or the online topo style), the card can't be read, or it holds
+// no recognisable levels.
+static uint32_t mapSdZoomLevels() {
+  if (!s_tiles_from_sd || s_tile_fs != mapSdStorage() || s_map_style != 0) return 0;
+  if (mapSdReadBlocked() || !mapSdStorageMounted()) return 0;
+  if (!s_map_zoom_levels_scanned) mapSdZoomLevelsScan();
+  return s_map_zoom_levels;
+}
+// The levels the zoom controls may use, or 0 for no limit (option off too).
+static uint32_t mapZoomFitLevels() { return s_map_zoom_fit ? mapSdZoomLevels() : 0; }
+#else
+static uint32_t mapZoomFitLevels() { return 0; }
+#endif
+
+// Nearest level in `levels` to z; a tie goes to the wider view.
+static uint8_t mapZoomNearestLevel(uint32_t levels, int z) {
+  for (int d = 0; d < 32; ++d) {
+    if (z - d >= 0 && ((levels >> (z - d)) & 1u)) return (uint8_t)(z - d);
+    if (z + d < 32 && ((levels >> (z + d)) & 1u)) return (uint8_t)(z + d);
+  }
+  return (uint8_t)z;
+}
+
+// Keep s_map_zoom on a level the map holds and the slider spanning only those
+// levels. Runs at the top of renderMapTiles, so every path that moves the zoom
+// (buttons, slider, contact jumps, route overview, restore) goes through it.
+static void mapZoomFitApply() {
+  const uint32_t levels = mapZoomFitLevels();
+  int lo = k_map_zoom_min, hi = k_map_zoom_max;
+  bool moved = false;
+  if (levels) {
+    lo = __builtin_ctz(levels);
+    hi = 31 - __builtin_clz(levels);
+    if (!((levels >> s_map_zoom) & 1u)) {
+      s_map_zoom = mapZoomNearestLevel(levels, s_map_zoom);
+      moved = true;
+    }
+  }
+  if (!s_map_zoom_slider) return;
+  if (lv_slider_get_min_value(s_map_zoom_slider) != lo ||
+      lv_slider_get_max_value(s_map_zoom_slider) != hi) {
+    lv_slider_set_range(s_map_zoom_slider, lo, hi);
+    moved = true;
+  }
+  if (moved) lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+}
 
 // Probe the pack for the highest zoom level that has a tile near `lat,lon`.
 // Used as an auto-fallback so a missing top zoom (e.g. the operator packed
@@ -36740,6 +37234,7 @@ static uint8_t bestAvailableZoom(double lat, double lon) {
 // runs on tab activation or pan/zoom (not on every refresh tick).
 static void renderMapTiles() {
   if (!s_map_canvas) return;
+  mapZoomFitApply();
 
   // Fall back to placeholder when no usable GPS center.
   if (s_map_center_lat == 0.0 && s_map_center_lon == 0.0) {
@@ -38260,6 +38755,7 @@ static void mapOptZoomButtonsCb(lv_event_t* e) {
 // Map tile source toggle (in the map options popup): ON = tiles live on the microSD
 // card — read the user's SD library AND cache Wi-Fi-fetched gaps there (#20), so the
 // library grows and downloads survive; OFF = tile server + internal LittleFS cache.
+static void openMapOptions();   // fwd — the SD toggle rebuilds the popup
 static void mapOptTilesSdCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   // Pause at a request boundary before repointing the cache. A queued backlog is
@@ -38303,10 +38799,155 @@ static void mapOptTilesSdCb(lv_event_t* e) {
   freeMapTiles();                // drop stale tile widgets → reload from the new source
   renderMapTiles();
   tileBackendSwapFinish();       // queued requests resume against the selected backend
+  openMapOptions();              // rebuild: "Zoom: map levels only" only shows with SD tiles
   if (g_lv.task) {
     if (on && !s_tiles_from_sd) g_lv.task->showAlert(TR("SD card unavailable"), 1600);
     else g_lv.task->showAlert(on ? TR("Map tiles: microSD") : TR("Map tiles: server"), 1400);
   }
+}
+
+// "Map file" row caption: the archive in use, without touching the card when
+// it isn't mounted (the saved choice is shown then).
+static void mapPmTilesCaption(char* out, size_t cap) {
+  const char* name = nullptr;
+  char saved[TOUCH_MAP_PMTILES_MAXLEN];
+  if (mapSdStorageMounted() && !mapSdReadBlocked()) {
+    const PmTilesArchive* a = pmTilesActive();
+    name = a ? a->name : TR("Folder tiles only");
+  } else {
+    touchPrefsGetMapPmTiles(saved, sizeof(saved));
+    name = !saved[0] ? TR("Auto") : strcmp(saved, "-") == 0 ? TR("Folder tiles only") : saved;
+  }
+  snprintf(out, cap, LV_SYMBOL_DIRECTORY "  %s: %s", TR("Map file"), name);
+}
+
+static void mapPmTilesPickCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const int index = (int)(intptr_t)lv_event_get_user_data(e);
+  closeMapOptions();
+  if (index >= s_pmtiles_count) return;   // card changed under the open picker
+  pmTilesSelect(index);
+  // Land inside the new archive's zoom range (nearest end), even with "Zoom: map
+  // levels only" off: a z10-19 archive picked at z8 would otherwise open blank.
+  if (index >= 0 && s_tiles_from_sd && s_map_style == 0) {
+    const PmTiles::Header& h = s_pmtiles[index].header;
+    const uint8_t lo = h.min_zoom > k_map_zoom_min ? h.min_zoom : k_map_zoom_min;
+    const uint8_t hi = h.max_zoom < k_map_zoom_max ? h.max_zoom : k_map_zoom_max;
+    if (lo <= hi && (s_map_zoom < lo || s_map_zoom > hi)) {
+      s_map_zoom = s_map_zoom < lo ? lo : hi;
+      touchPrefsSetMapZoom(s_map_zoom);
+      if (s_map_zoom_slider) lv_slider_set_value(s_map_zoom_slider, s_map_zoom, LV_ANIM_OFF);
+    }
+  }
+  freeMapTiles();        // drop tiles decoded from the previous archive
+  renderMapTiles();
+  renderMapMarkers();
+  refreshMapInfoLabel();
+  if (g_lv.task) {
+    char m[64];
+    snprintf(m, sizeof m, "%s: %s", TR("Map file"),
+             index < 0 ? TR("Folder tiles only") : s_pmtiles[index].name);
+    g_lv.task->showAlert(m, 1400);
+  }
+}
+
+// Picker for the PMTiles archive: rescans /maps (so a file copied onto a card that
+// stayed mounted shows up) and lists every <name>/<name>.pmtiles plus the plain
+// folder layout. Shares the options popup's root, so the same dismiss path closes it.
+static void mapOptPmTilesCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  closeMapOptions();
+  if (!mapSdStorageReady()) {
+    if (g_lv.task) g_lv.task->showAlert(TR("SD card unavailable"), 1600);
+    return;
+  }
+  pmTilesScan();
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_map_opts_root = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_map_opts_root);
+  lv_obj_set_size(s_map_opts_root, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_map_opts_root, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_map_opts_root, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_map_opts_root, LV_OPA_50, LV_PART_MAIN);
+  lv_obj_clear_flag(s_map_opts_root, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_map_opts_root, mapOptionsDismissCb, LV_EVENT_CLICKED, nullptr);
+
+  const lv_coord_t cardw = sw - 24;
+  lv_obj_t* card = lv_obj_create(s_map_opts_root);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, cardw, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);
+  lv_obj_align(card, LV_ALIGN_TOP_MID, 0, 8);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(card, 6, LV_PART_MAIN);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(card, LV_DIR_VER);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Map file"));
+  lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+
+  auto add_row = [&](const char* text, int index) {
+    const bool cur = index == s_pmtiles_sel;
+    lv_obj_t* row = lv_btn_create(card);
+    lv_obj_set_size(row, cardw - 24, 38);
+    styleButton(row);
+    if (cur) lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_add_event_cb(row, mapPmTilesPickCb, LV_EVENT_CLICKED, (void*)(intptr_t)index);
+    lv_obj_t* l = lv_label_create(row);
+    lv_label_set_text(l, text);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(l, cardw - 24 - 16);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+  };
+  for (int i = 0; i < s_pmtiles_count; ++i) add_row(s_pmtiles[i].name, i);
+  add_row(TR("Folder tiles only"), -1);
+  for (int i = 0; i < s_pmtiles_problem_count; ++i) {
+    const PmTilesProblem& p = s_pmtiles_problems[i];
+    const char* why =
+        p.result == kPmProbeMisnamed  ? TR("rename the file to the folder name") :
+        p.result == kPmProbeNotPng    ? TR("not a PNG raster archive") :
+        p.result == kPmProbeTruncated ? TR("file incomplete, copy it again") :
+                                        TR("not a PMTiles v3 file");
+    char text[TOUCH_MAP_PMTILES_MAXLEN + 64];
+    snprintf(text, sizeof text, "%s: %s", p.name, why);
+    lv_obj_t* l = lv_label_create(card);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(l, cardw - 24);
+    lv_label_set_text(l, text);
+    lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lightSurfaceTextColor(0x8A929B), LV_PART_MAIN);
+  }
+  if (s_pmtiles_count == 0 && s_pmtiles_problem_count == 0) {
+    lv_obj_t* hint = lv_label_create(card);
+    lv_label_set_long_mode(hint, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(hint, cardw - 24);
+    lv_label_set_text(hint, TR("No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles"));
+    lv_obj_set_style_text_font(hint, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(hint, lightSurfaceTextColor(0x8A929B), LV_PART_MAIN);
+  }
+  addCloseXBadge(card, mapOptionsDismissCb);
+}
+
+static void mapOptZoomFitCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_map_zoom_fit = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  const uint8_t v = s_map_zoom_fit ? 1 : 0;
+  touchPrefsSetBlob("map_zfit", &v, 1);
+  s_map_zoom_levels_scanned = false;   // pick up packs copied since the last scan
+  renderMapTiles();                    // clamps the zoom + slider range
+  renderMapMarkers();
+  refreshMapInfoLabel();
+  if (s_map_zoom_fit && !mapZoomFitLevels() && g_lv.task)
+    g_lv.task->showAlert(TR("No map levels found on the SD card"), 1600);
 }
 #endif
 
@@ -38522,6 +39163,47 @@ static void openMapOptions() {
     lv_obj_align(sw_sd, LV_ALIGN_TOP_RIGHT, 0, y);
     if (s_tiles_from_sd) lv_obj_add_state(sw_sd, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw_sd, mapOptTilesSdCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    y += 40;
+  }
+  // Row: which /maps/<name>/<name>.pmtiles archive the SD source draws.
+  {
+    char cap[TOUCH_MAP_PMTILES_MAXLEN + 48];
+    mapPmTilesCaption(cap, sizeof cap);
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, cardw - 24, 38);
+    lv_obj_set_pos(b, 0, y);
+    styleButton(b);
+    lv_obj_add_event_cb(b, mapOptPmTilesCb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* l = lv_label_create(b);
+    lv_label_set_text(l, cap);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(l, cardw - 24 - 16);
+    lv_obj_set_style_text_font(l, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_align(l, LV_ALIGN_LEFT_MID, 8, 0);
+    y += 44;
+  }
+  // Row: limit zoom to the levels in the SD map (PMTiles range / z folders).
+  // Only meaningful for SD tiles, so only shown with them.
+  if (s_tiles_from_sd) {
+    // The detected range rides along, so a surprising one (an archive whose
+    // header starts at z1, or folder tiles instead of the archive) is visible.
+    char zcap[64];
+    const uint32_t levels = mapSdZoomLevels();
+    if (levels)
+      snprintf(zcap, sizeof zcap, "%s (z%d-%d)", TR("Zoom: map levels only"),
+               __builtin_ctz(levels), 31 - __builtin_clz(levels));
+    else
+      strlcpy(zcap, TR("Zoom: map levels only"), sizeof zcap);
+    lv_obj_t* zl = lv_label_create(card);
+    lv_label_set_text(zl, zcap);
+    lv_obj_set_style_text_color(zl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_font(zl, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_pos(zl, 2, y + 4);
+    lv_obj_t* sw_fit = lv_switch_create(card);
+    lv_obj_align(sw_fit, LV_ALIGN_TOP_RIGHT, 0, y);
+    if (s_map_zoom_fit) lv_obj_add_state(sw_fit, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw_fit, mapOptZoomFitCb, LV_EVENT_VALUE_CHANGED, nullptr);
     y += 40;
   }
 #endif
@@ -39381,7 +40063,12 @@ static void mapZoomStep(bool zoom_in) {
   if (!zoom_in && s_map_zoom <= k_map_zoom_min) return;
 #if defined(ESP32)
   uint8_t want = 0;
-  if (zoom_in) {
+  if (const uint32_t levels = mapZoomFitLevels()) {
+    // Only the map's own levels: no tile probes, no Wi-Fi fill-in.
+    for (int z = (int)s_map_zoom + (zoom_in ? 1 : -1);
+         z >= (int)k_map_zoom_min && z <= (int)k_map_zoom_max; z += zoom_in ? 1 : -1)
+      if ((levels >> z) & 1u) { want = (uint8_t)z; break; }
+  } else if (zoom_in) {
     for (uint8_t z = s_map_zoom + 1; z <= k_map_zoom_max; ++z) {
       if (mapZoomReachable(z)) { want = z; break; }
     }
@@ -39430,7 +40117,8 @@ static bool navMapZoomIfActive(bool zoom_in) {
 // readout, and releasing applies + persists the chosen level.
 static void mapZoomSliderCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
-  const int z = (int)lv_slider_get_value(lv_event_get_target(e));
+  int z = (int)lv_slider_get_value(lv_event_get_target(e));
+  if (const uint32_t levels = mapZoomFitLevels()) z = mapZoomNearestLevel(levels, z);   // where release will land
   if (s_map_zoom_val) lv_label_set_text_fmt(s_map_zoom_val, TR("zoom %d"), z);   // live target level while dragging
 }
 static void mapZoomSliderReleaseCb(lv_event_t* e) {
@@ -39438,6 +40126,10 @@ static void mapZoomSliderReleaseCb(lv_event_t* e) {
   int z = (int)lv_slider_get_value(lv_event_get_target(e));
   if (z < (int)k_map_zoom_min) z = k_map_zoom_min;
   if (z > (int)k_map_zoom_max) z = k_map_zoom_max;
+  if (const uint32_t levels = mapZoomFitLevels()) {
+    z = mapZoomNearestLevel(levels, z);   // snap off a level the map doesn't have
+    lv_slider_set_value(lv_event_get_target(e), z, LV_ANIM_OFF);
+  }
   if ((uint8_t)z == s_map_zoom) return;
   s_map_zoom = (uint8_t)z;
 #if defined(ESP32)
@@ -39554,6 +40246,9 @@ static void onMapTabActivated() {
   // that showed "downloading" once would never re-attempt on re-open.
   memset(s_tile_fetch_dedup, 0, sizeof(s_tile_fetch_dedup));
   s_tile_fetch_dedup_head = 0;
+#endif
+#if defined(ESP32) && CAP_MICROSD
+  s_map_zoom_levels_scanned = false;   // level folders may have been added (Transfer app, downloads)
 #endif
   // Nine tile reads + JPEG decodes block this callback for ~2.5 s on the first
   // open after boot (measured: [STALL] ui:lvgl 2597ms, M9_PORT.md). Show the
@@ -73792,6 +74487,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
   s_map_tile_debug    = touchPrefsGetMapTileDebug();      // developer: tile-pipeline diagnostic overlay
   s_map_show_contacts = touchPrefsGetMapShowContacts();
   { uint8_t v = 0; s_map_fav_only = touchPrefsGetBlob("map_fav", &v, 1) == 1 && v; }   // map options: Favorites only
+#if CAP_MICROSD
+  { uint8_t v = 0; s_map_zoom_fit = touchPrefsGetBlob("map_zfit", &v, 1) == 1 && v; }  // map options: map zoom levels only
+#endif
   s_map_show_links    = touchPrefsGetMapShowLinks();      // dotted self->contact link lines (PR #61)
   s_map_style         = touchPrefsGetMapStyle();          // 0=OpenStreetMap (default), 1=OpenTopoMap
   { const uint8_t pz = touchPrefsGetMapZoom();    // restore the last user-set map zoom
