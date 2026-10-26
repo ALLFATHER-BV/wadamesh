@@ -156,8 +156,8 @@
 <button type="button" class="chip" data-f="outdoors">Navigation and outdoors <span>4</span></button>
 <button type="button" class="chip" data-f="messaging">Messaging and safety <span>2</span></button>
 <button type="button" class="chip" data-f="media">Media <span>1</span></button>
-<button type="button" class="chip" data-f="games">Games <span>5</span></button>
-<button type="button" class="chip" data-f="tools">Tools <span>3</span></button>
+<button type="button" class="chip" data-f="games">Games <span>6</span></button>
+<button type="button" class="chip" data-f="tools">Tools <span>2</span></button>
   </nav>
 
 <section class="cat" data-cat="radio"><h2>Radio tools</h2><div class="grid">
@@ -177,7 +177,7 @@
 </details></article>
 <article class="app" id="wardrive" data-cat="radio" style="--hue:var(--hue-radio)">
 <div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg></div>
-<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg></span><div><h3>Wardrive <span class="ver">v1.2</span></h3><p class="tl">Survey your coverage while you drive or walk.</p></div></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/></svg></span><div><h3>Wardrive <span class="ver">v1.3</span></h3><p class="tl">Survey your coverage while you drive or walk.</p></div></div>
 <p class="runs most">Every board but the 2 MB Heltec V4</p>
 <details><summary>More about Wardrive</summary><p>Every 20 seconds it sends a discovery probe that every node in earshot answers, and logs each reply with your GPS position, altitude and both directions of the link: how well you heard them and how well they heard you. The run goes to a CSV you can take off the device, and it plots back on the map so you can check coverage before you drive it again.</p>
 <ul><li>Both link directions per node</li><li>CSV log with position and altitude</li><li>Run plotted on the map</li></ul>
@@ -282,6 +282,14 @@
 <details><summary>More about Blackjack</summary><p>Twenty-one against the dealer from a six-deck shoe. Hit, stand, double down and split, set your bet before each hand, and your bankroll is still there the next time you open the app. Play it by touch, on the keyboard (H, S, D, P) or with the trackball, and the table scales to the screen, the T-Display P4 included.</p>
 <ul><li>Split and double down</li><li>Bankroll kept between sessions</li><li>Touch, keyboard or trackball</li></ul>
 </details></article>
+<article class="app" id="spaceinvaders" data-cat="games" style="--hue:var(--hue-bad)">
+<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></svg></div>
+<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></svg></span><div><h3>Space Invaders <span class="ver">v1.1</span></h3><p class="tl">The classic alien shooter, with your high score kept.</p></div></div>
+<p class="runs every">Every board</p>
+<p class="by">By <a href="https://github.com/JackCortines" target="_blank" rel="noopener">JackCortines</a></p>
+<details><summary>More about Space Invaders</summary><p>Shoot the descending rows before they land, hide behind the shields and hit the bonus UFO for extra points. Each cleared wave comes back faster. Move with swipes or the arrow keys and fire with a swipe up, a tap in the middle or the up key; your high score is kept between games.</p>
+<ul><li>Shields and a bonus UFO</li><li>High score kept</li><li>Touch and keyboard controls</li></ul>
+</details></article>
 </div></section>
 <section class="cat" data-cat="tools"><h2>Tools</h2><div class="grid">
 <article class="app" id="sdktest" data-cat="tools" style="--hue:var(--hue-sys)">
@@ -297,12 +305,6 @@
 <p class="runs most">Boards with an SD card</p>
 <details><summary>More about SD Scan</summary><p>Written for the SD-card worm some ThinkNode M9 cards shipped with: a hidden autorun file and Windows programs disguised as shortcuts. They cannot run on a radio, but they run on the first Windows PC the card goes into. The firmware decides what counts as a threat, so the app can remove those files and nothing else: never map tiles, backups or chat history.</p>
 <ul><li>Firmware decides what is a threat</li><li>Cannot delete your own files</li><li>Asks before removing anything</li></ul>
-</details></article>
-<article class="app" id="spaceinvaders" data-cat="tools" style="--hue:var(--hue-sys)">
-<div class="shot poster"><svg class="pg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></svg></div>
-<div class="head"><span class="ico"><svg class="g" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="11" rx="4"/><path d="M7 11v3M5.5 12.5h3"/><circle cx="16" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></svg></span><div><h3>Space Invaders <span class="ver">v1.0</span></h3><p class="tl">Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.</p></div></div>
-<p class="runs every">Every board</p>
-<details><summary>More about Space Invaders</summary><p>Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.</p>
 </details></article>
 </div></section>
 

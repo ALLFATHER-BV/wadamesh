@@ -228,6 +228,18 @@
         "Every capability flag on one screen",
         "Some buttons transmit"
       ]
+    },
+    "spaceinvaders": {
+      "category": "games",
+      "glyph": "game",
+      "tagline": "The classic alien shooter, with your high score kept.",
+      "about": "Shoot the descending rows before they land, hide behind the shields and hit the bonus UFO for extra points. Each cleared wave comes back faster. Move with swipes or the arrow keys and fire with a swipe up, a tap in the middle or the up key; your high score is kept between games.",
+      "highlights": [
+        "Shields and a bonus UFO",
+        "High score kept",
+        "Touch and keyboard controls"
+      ],
+      "credit": "JackCortines"
     }
   }
 }
