@@ -26,6 +26,7 @@ DRY=""
 
 # The changelog page (what the firmware's text browser opens when there is no home page on
 # the SD card, #622) is generated from release-notes/ so it always matches the builds.
+git -C "$ROOT" fetch -q --tags origin 2>/dev/null || true   # a release tag made on GitHub (gh release create) must be known here
 python3 "$ROOT/scripts/build/gen-changelog.py"
 # The app store page lists the Store catalog (deploy/apps/apps.json) with the write-ups in
 # deploy/site/apps-info.json, so a new app version shows up there at the next site deploy.

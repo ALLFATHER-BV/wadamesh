@@ -13,6 +13,7 @@ Usage: python3 scripts/build/gen-changelog.py [out.html]
 import html
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,11 +21,27 @@ NOTES = os.path.join(ROOT, "release-notes")
 OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "deploy", "site", "changelog.html")
 
 
+def released_tags():
+    """The beta_N tags that exist, or None when git cannot say (then every note is listed).
+    Notes are written before a build is cut; deploy-site.sh runs this on every site deploy,
+    so without this check a draft beta_N.txt went live on the changelog before its release."""
+    try:
+        out = subprocess.run(["git", "-C", ROOT, "tag", "-l", "beta_*"], capture_output=True,
+                             text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return set(out.split())
+
+
 def builds():
     found = []
+    tags = released_tags()
     for name in os.listdir(NOTES):
         m = re.fullmatch(r"beta_(\d+)\.txt", name)
         if m:
+            if tags is not None and "beta_%s" % m.group(1) not in tags:
+                print("changelog: skipping %s, beta_%s is not tagged yet" % (name, m.group(1)), file=sys.stderr)
+                continue
             found.append((int(m.group(1)), name))
     for num, name in sorted(found, reverse=True):
         with open(os.path.join(NOTES, name), encoding="utf-8") as f:
