@@ -170,6 +170,7 @@ static void cfgSetDefaults(TouchCfg& c) {
   c.report_ping       = 0;      // OFF: no anonymous install count until asked for (v64)
   c.condense_nav      = 0;      // OFF: bottom nav bar + labelled Home launchers (v66, #592)
   c.report_done_n     = 0;      // no beta reported on yet
+  c.spell_check       = 1;      // ON: spell suggestions over the composer (v72)
   c.boot_advert       = 0;      // OFF: no automatic advert on boot — opt-in (#76)
   c.console_mode      = 0;      // OFF: boot into the graphical UI (CONSOLE_MODE.md)
   c.console_monitor   = 1;      // ON: the console shows messages as they arrive
@@ -329,6 +330,7 @@ static void cfgLoadOrMigrate() {
         }
 #endif
         if (stored_version < 66) s_cfg.condense_nav = 0;   // v66 new trailing field: never stored before
+        if (stored_version < 72) s_cfg.spell_check = 1;   // v72 trailing field: suggestions on
         if (stored_version < 29 && s_cfg.ui_scale == 0) s_cfg.ui_scale = 1;   // bump old 100% default -> Large (150%)
         if (stored_version < 30) s_cfg.boot_advert = 0;   // #76 new trailing field: advert-on-boot off by default
         // v51 new trailing field. Anything older than 51 never stored it, so it
@@ -931,6 +933,17 @@ bool touchPrefsGetAccentPopups() {
 bool touchPrefsSetAccentPopups(bool on) {
   if (!s_begun) touchPrefsBegin();
   s_cfg.kb_accent = on ? 1 : 0;
+  return cfgFlush();
+}
+
+// Spell suggestions over the compose field (English). Default ON.
+bool touchPrefsGetSpellCheck() {
+  if (!s_begun) touchPrefsBegin();
+  return s_cfg.spell_check != 0;
+}
+bool touchPrefsSetSpellCheck(bool on) {
+  if (!s_begun) touchPrefsBegin();
+  s_cfg.spell_check = on ? 1 : 0;
   return cfgFlush();
 }
 

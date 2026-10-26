@@ -113,5 +113,12 @@ Camillia-MT (CrowPanel Advance 5.0 display, backlight and touch bring-up)
     GT911 reset in variants/crowpanel_50/CrowPanel50Display.cpp are adapted
     from src/hal/crowpanel_50_display.h and src/hal/hw_crowpanel_50.h.
 
+English word list for compose spell suggestions (dict/en.txt, compiled into
+src/ui-touch/spell_dict_en.h)
+    Hermit Dave — FrequencyWords, en_50k (OpenSubtitles 2018)
+    CC-BY-SA-4.0 — https://github.com/hermitdave/FrequencyWords
+    Cleaned and extended (mesh vocabulary, contractions) by
+    scripts/build/build_spell_wordlist.py; the list stays under CC-BY-SA-4.0.
+
 This list is not exhaustive and is expanded as dependencies are vendored or
 added.

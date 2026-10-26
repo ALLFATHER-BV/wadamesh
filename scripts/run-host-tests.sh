@@ -26,6 +26,7 @@ extra_flags() {
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
+    test_spell) echo "src/ui-touch/spell.cpp" ;;
     *) echo "" ;;
   esac
 }
