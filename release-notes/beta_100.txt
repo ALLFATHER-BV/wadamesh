@@ -26,7 +26,7 @@ T-Deck: an older keyboard that sent a burst like "QERUOXV$ ZNMFJ" for one Q is r
 T-Deck: with Italian, Spanish or Romanian selected, Sym+W/E/R type 1 2 3 again; the accented letters come from the accent box after the base letter (#747, reported by QuakeRadio).
 Save update bin to SD downloads the file first and then writes it to the card, retrying the whole file, and the SD health check keeps off the card meanwhile (#734, reported by Jess-39).
 A wallpaper in internal /lock/ survives a reboot: the start-up cleanup of old map tiles deleted every picture on internal storage.
-Lua apps: wada.ui.input returns the text when Enter is pressed (the second Enter used to land on Cancel), and wada.sys.random(n) gives 1 to n, and random(1, 1) gives 1 instead of a huge number.
+Lua apps: wada.ui.input returns the text when Enter is pressed, also from an external keyboard on a touch board (the second Enter used to land on Cancel), wada.sys.random(n) gives 1 to n, random(1, 1) gives 1 instead of a huge number, and a random over the full number range no longer restarts the device.
 Settings that fail to save to an SD slot file recreate the file and try again (#744 by oumike, #743).
 A restore that cannot save identity, channels and contacts says so instead of restarting into an empty store (#708, reported by zomgugoff, built on #709 by oumike).
 
