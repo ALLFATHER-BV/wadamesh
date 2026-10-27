@@ -75,7 +75,13 @@ PY
 # --delete mirrors the repo: the store is generated content, the repo is the source
 # of truth, and stale versioned dirs left on the server are how a device ends up
 # offered a language file nothing points at any more.
-rsync -avz $DRY --delete "$SRC" "$DEST:$DEST_PATH/"
+# Publish from a staging copy whose .lang files are slimmed for the device's download
+# buffer (scripts/build/pack-lang.py); the repo keeps the complete files for translators.
+STAGE="$(mktemp -d)"
+trap 'rm -rf "$STAGE"' EXIT
+rsync -a "$SRC" "$STAGE/"
+python3 "$ROOT/scripts/build/pack-lang.py" "$STAGE" "$ROOT" | tail -3
+rsync -avz $DRY --delete "$STAGE/" "$DEST:$DEST_PATH/"
 
 if [ -z "$DRY" ]; then
   echo
