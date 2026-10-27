@@ -35832,6 +35832,9 @@ int luaStoreHttpReq(WiFiClient& client, HTTPClient& http, const char* url,
   // progress-based 4 s grace (30 s absolute cap), and a short read FAILS
   // instead of handing back a truncated buffer.
   const int want = http.getSize();          // -1 when the server sent no length
+  // A body the buffer cannot hold would only be cut short and reported as a failed
+  // connection; say what it is instead (-2), before reading any of it.
+  if (want > 0 && (size_t)want >= cap) { http.end(); return -2; }
   auto* st = http.getStreamPtr();
   size_t total = 0;
   const unsigned long t0 = millis();
@@ -36098,8 +36101,13 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   // get a language (#274, reported on a pager: /apps healthy and populated, /lang empty
   // forever). Step down rather than give up, and fall back to internal heap, the same
   // ladder the reader uses for its own big buffer.
-  size_t kCap = 128 * 1024;
+  // The language files grew past 128 KB in v30 (every one of them), and a file the
+  // buffer cannot hold never downloads. Ask for room for a full file first; the Store
+  // also serves slimmed files (scripts/build/pack-lang.py), so the smaller steps fit too.
+  size_t kCap = 256 * 1024;
   char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!buf) { kCap = 192 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
+  if (!buf) { kCap = 128 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
   if (!buf) { kCap =  96 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
   if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
   if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_8BIT); }
@@ -36115,7 +36123,7 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   // -1 is "no 200, or the body stopped short of Content-Length". A language file is ~60 KB
   // where an app is a few KB, so a link that drops mid-transfer fails here while app
   // installs keep succeeding — indistinguishable from the memory case without saying so.
-  if (n <= 16) s_langdl_err = (n < 0) ? "Server or connection failed" : "Empty reply";
+  if (n <= 16) s_langdl_err = (n == -2) ? "Language file too large for free memory" : (n < 0) ? "Server or connection failed" : "Empty reply";
   if (n > 16) {
     // Write to a TEMP file, verify every byte landed, then rename over the real
     // one. A truncated direct write used to leave a file whose '# ver:' header
