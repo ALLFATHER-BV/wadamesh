@@ -36088,6 +36088,62 @@ static bool langVerifyInstall(fs::FS* fs, const char* tmp, const char* path, siz
 // ver the URL is the immutable /apps/lang/<ver>/<code>.lang copy — the flat path
 // sits behind a day-long edge cache, which would happily serve a stale file
 // right after a translation update (the exact trap the flasher once hit).
+// Stream a language file straight into `tmp`, 4 KB at a time through an internal
+// (DMA-capable) bounce buffer. Returns the bytes written, -1 for no 2xx / a stall /
+// a short body, -3 when the card or flash stopped taking writes, -5 without memory.
+//
+// It used to read the whole file into ONE contiguous buffer first (128 KB, down to
+// 96 and 72 KB when the Store page had fragmented PSRAM). Every v30 language was
+// larger than that on the 2 MB V4 and on any board low on PSRAM, so no language could
+// be downloaded at all and the device blamed the server. Streaming needs 4 KB.
+static int langStreamToFile(WiFiClient& client, HTTPClient& http, const char* url,
+                            fs::FS* fs, const char* tmp) {
+  uint8_t* chunk = (uint8_t*)heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!chunk) return -5;
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) { heap_caps_free(chunk); return -1; }
+  const int code = http.GET();
+  if (code < 200 || code > 299) { http.end(); heap_caps_free(chunk); return -1; }
+  const int want = http.getSize();          // -1 when the server sent no length
+  File f = fs->open(tmp, "w");
+  if (!f) { http.end(); heap_caps_free(chunk); return -3; }
+  auto* st = http.getStreamPtr();
+  size_t total = 0;
+  bool write_failed = false;
+  unsigned long last_progress = millis();
+  while (!write_failed && (millis() - last_progress) < 6000) {
+    if (want > 0 && total >= (size_t)want) break;
+    const int avail = st ? st->available() : 0;
+    if (avail <= 0) {
+      if (want <= 0 && (!st || (!st->connected() && !st->available()))) break;
+      vTaskDelay(pdMS_TO_TICKS(5));
+      continue;
+    }
+    const int rd = st->read(chunk, (size_t)avail < 4096 ? (size_t)avail : 4096);
+    if (rd <= 0) { vTaskDelay(pdMS_TO_TICKS(5)); continue; }
+    last_progress = millis();
+    size_t done = 0;
+    int stalls = 0;
+    while (done < (size_t)rd) {             // the card can take less than asked for
+      const size_t w = f.write(chunk + done, (size_t)rd - done);
+      if (!w) { if (++stalls > 3) { write_failed = true; break; } vTaskDelay(pdMS_TO_TICKS(50)); continue; }
+      stalls = 0;
+      done += w;
+    }
+    total += done;
+    vTaskDelay(1);                          // let IDLE0 and Wi-Fi run between chunks
+  }
+  f.close();
+  http.end();
+  heap_caps_free(chunk);
+  if (write_failed) return -3;
+  if (want > 0 && total < (size_t)want) return -1;   // truncated = failure, not data
+  return (int)total;
+}
+
 static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
                                        const char* code, const char* ver) {
   fs::FS* fs = luaHostAppFs();
@@ -36095,92 +36151,50 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
   char dir[48];
   luaHostAppPath(dir, sizeof dir, "/lang");
   fs->mkdir(dir);
-  // A full 700+ row language is ~60 KB, so 128 KB was the comfortable size. But it is a
-  // CONTIGUOUS PSRAM request made while the Store page is up, and app downloads ask for
-  // only 64 KB — which is exactly why a device can install apps all day and never once
-  // get a language (#274, reported on a pager: /apps healthy and populated, /lang empty
-  // forever). Step down rather than give up, and fall back to internal heap, the same
-  // ladder the reader uses for its own big buffer.
-  // The language files grew past 128 KB in v30 (every one of them), and a file the
-  // buffer cannot hold never downloads. Ask for room for a full file first; the Store
-  // also serves slimmed files (scripts/build/pack-lang.py), so the smaller steps fit too.
-  size_t kCap = 256 * 1024;
-  char* buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  if (!buf) { kCap = 192 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-  if (!buf) { kCap = 128 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-  if (!buf) { kCap =  96 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }
-  if (!buf) { kCap =  72 * 1024; buf = (char*)heap_caps_malloc(kCap, MALLOC_CAP_8BIT); }
-  if (!buf) { s_langdl_err = "Not enough memory"; return false; }
   char url[112];
   if (ver && ver[0])
     snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s/%s.lang", ver, code);
   else
     snprintf(url, sizeof url, "http://firmware.wadamesh.com/apps/lang/%s.lang", code);
-  int n = luaStoreHttpGet(client, http, url, buf, kCap);
-  bool ok = false;
-  bool opened = false;
-  // -1 is "no 200, or the body stopped short of Content-Length". A language file is ~60 KB
-  // where an app is a few KB, so a link that drops mid-transfer fails here while app
-  // installs keep succeeding — indistinguishable from the memory case without saying so.
-  if (n <= 16) s_langdl_err = (n == -2) ? "Language file too large for free memory" : (n < 0) ? "Server or connection failed" : "Empty reply";
-  if (n > 16) {
-    // Write to a TEMP file, verify every byte landed, then rename over the real
-    // one. A truncated direct write used to leave a file whose '# ver:' header
-    // (at the TOP) already claimed the new version while the appended rows (at
-    // the END) were gone — "v4 installed", no Update offered, translations
-    // missing. Now a failed write changes nothing and Update stays available.
-    char rel[32], path[64], tmp[64];
-    snprintf(rel, sizeof rel, "/lang/%s.tmp", code);
-    luaHostAppPath(tmp, sizeof tmp, rel);
-    snprintf(rel, sizeof rel, "/lang/%s.lang", code);
-    luaHostAppPath(path, sizeof path, rel);
-    File f = fs->open(tmp, "w");
-    opened = (bool)f;
-    if (f) {
-      langWriteAll(f, (const uint8_t*)buf, (size_t)n);
-      f.close();
-      ok = langVerifyInstall(fs, tmp, path, (size_t)n);
-    }
-    if (!ok && opened) {
-      fs->remove(tmp);
-      // The write dies at the first cluster boundary while app installs to
-      // /apps succeed — the signature of a FAT chain corrupted under today's
-      // mid-write hard resets, localized to /lang. Prove it with an identical
-      // control write in /apps, then rebuild /lang from scratch and retry.
-      char ctl[64];
-      luaHostAppPath(ctl, sizeof ctl, "/apps/langtest.tmp");
-      size_t wr2 = 0;
-      File cf = fs->open(ctl, "w");
-      if (cf) { wr2 = langWriteAll(cf, (const uint8_t*)buf, (size_t)n); cf.close(); }
-      fs->remove(ctl);
-      if (wr2 == (size_t)n) {
-        // Healthy elsewhere -> nuke and recreate the /lang directory.
-        char ldir[48];
-        luaHostAppPath(ldir, sizeof ldir, "/lang");
-        File d = fs->open(ldir);
-        if (d && d.isDirectory()) {
-          File e;
-          while ((e = d.openNextFile())) {
-            char victim[80];
-            const char* nm = e.name();
-            e.close();
-            if (nm[0] == '/') snprintf(victim, sizeof victim, "%s", nm);
-            else snprintf(victim, sizeof victim, "%s/%s", ldir, nm);
-            fs->remove(victim);
-          }
-        }
-        if (d) d.close();
-        fs->rmdir(ldir);
-        fs->mkdir(ldir);
-        File rf = fs->open(tmp, "w");
-        if (rf) { langWriteAll(rf, (const uint8_t*)buf, (size_t)n); rf.close(); }
-        ok = langVerifyInstall(fs, tmp, path, (size_t)n);
-        if (!ok) fs->remove(tmp);
+  // Written to a TEMP file and renamed over the real one only once every byte is there:
+  // a truncated direct write used to leave a file whose '# ver:' header (at the TOP)
+  // already claimed the new version while the rows at the END were missing.
+  char rel[32], path[64], tmp[64];
+  snprintf(rel, sizeof rel, "/lang/%s.tmp", code);
+  luaHostAppPath(tmp, sizeof tmp, rel);
+  snprintf(rel, sizeof rel, "/lang/%s.lang", code);
+  luaHostAppPath(path, sizeof path, rel);
+  int n = langStreamToFile(client, http, url, fs, tmp);
+  if (n == -3) {
+    // The write dies part way while app installs to /apps succeed: the signature of a
+    // FAT chain corrupted under a mid-write hard reset, localized to /lang. Rebuild the
+    // /lang directory from scratch and fetch once more.
+    fs->remove(tmp);
+    File d = fs->open(dir);
+    if (d && d.isDirectory()) {
+      File e;
+      while ((e = d.openNextFile())) {
+        char victim[80];
+        const char* nm = e.name();
+        e.close();
+        if (nm[0] == '/') snprintf(victim, sizeof victim, "%s", nm);
+        else snprintf(victim, sizeof victim, "%s/%s", dir, nm);
+        fs->remove(victim);
       }
     }
+    if (d) d.close();
+    fs->rmdir(dir);
+    fs->mkdir(dir);
+    n = langStreamToFile(client, http, url, fs, tmp);
   }
-  heap_caps_free(buf);
+  if (n <= 16) {
+    fs->remove(tmp);
+    s_langdl_err = (n == -5) ? "Not enough memory" : (n == -3) ? "Could not write to storage"
+                 : (n < 0) ? "Server or connection failed" : "Empty reply";
+    return false;
+  }
+  const bool ok = langVerifyInstall(fs, tmp, path, (size_t)n);
+  if (!ok) { fs->remove(tmp); s_langdl_err = "Could not write to storage"; }
   return ok;
 }
 
