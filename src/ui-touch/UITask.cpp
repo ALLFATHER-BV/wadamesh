@@ -66425,7 +66425,17 @@ static void splashRemove() {
 
 static void splashTapDismissCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  splashRemove();
+  // This runs inside the splash root's own CLICKED event: hide it now and free it on
+  // the next pass (lv_obj_del_async), never a synchronous delete of the event target.
+  // splashRemove() stays synchronous for its other callers (the T-Deck Pro lock paints
+  // right after it and must not catch the logo).
+  if (s_splash_timer) { lv_timer_del(s_splash_timer); s_splash_timer = nullptr; }
+  showUnder(s_splash_under);
+  if (!s_splash_root) return;
+  lv_obj_add_flag(s_splash_root, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_del_async(s_splash_root);
+  s_splash_root = nullptr;
+  s_splash_mark = s_splash_wm = s_splash_sub = nullptr;
 }
 
 static float splashClamp01(float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; }
@@ -82683,7 +82693,11 @@ void UITask::loop() {
                         || s_los_busy;
     static bool     s_async_shown = false;
     static uint32_t s_async_blink = 0;
-    if (active) {
+    if (active && CAP_EPAPER) {
+      // E-paper: a steady glyph. Each blink toggle is a panel update (~0.65 s of the
+      // loop), so blinking every 350 ms kept the panel refreshing for a whole ping.
+      if (!s_async_shown) { s_async_shown = true; lv_obj_clear_flag(g_statusbar.async_icon, LV_OBJ_FLAG_HIDDEN); }
+    } else if (active) {
       if ((uint32_t)(now - s_async_blink) >= 350u) {
         s_async_blink = (uint32_t)now;
         s_async_shown = !s_async_shown;
