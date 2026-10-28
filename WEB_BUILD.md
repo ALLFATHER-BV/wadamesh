@@ -593,6 +593,22 @@ loop, mesh loop). `host_main.cpp` is the native front end (SDL2 events, the
 scripted tour, present); `web_main.cpp` is the browser one (phase 2 below). Options: `--headless` (no window,
 for CI), `--script FILE` (wait / tap / hold / drag / type / key / shot / quit;
 `web/scripts/tour.wada` is the acceptance tour), `--shots DIR`, `--scale N`.
+`key NAME [COUNT]` takes enter, esc, bs, tab, up, down, left, right, a single
+character, or a raw byte as `0x82`; COUNT pushes it that many times at once, the
+way a busy device drains several queued keys before it renders.
+
+**ThinkNode M9 flavour.** `cmake -S web -B web/build-host-m9 -DWADA_HOST_BOARD=m9`
+builds the same app with the M9's key path (`HAS_M9_KEYBOARD`: the d-pad, the
+function keys, the Back ladder) in place of the external keyboard, so M9
+navigation can be scripted headless. Run it with `--size 320x240`. The host keys
+arrive as the controller's bytes (`platform/WebM9Keyboard.cpp`): the arrows and
+Enter as they are, Esc as BACK, and a script sends the others raw (`key 0x81`
+MSG, `0x82` HOME, `0x83` @, `0x84` ADV, `0x85` MAP, `0x88` triangle, `0x90` CTRL,
+`0xA3` held OK). The rest of the board stays the web board (its caps, no SD).
+
+The demo backend takes `WADA_DEMO_CHATTER_MS=N` (a line on Public every N ms, so
+messages arrive at known times) and `WADA_DEMO_CHATTER_BURST=N` (the first N lines
+20 ms apart, a long history).
 
 ## Phase 2: the browser build
 

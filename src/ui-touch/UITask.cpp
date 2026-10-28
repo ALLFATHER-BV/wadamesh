@@ -3548,7 +3548,7 @@ static bool           s_tb_nav         = false;
 static lv_indev_drv_t s_nav_keypad_drv;
 #endif
 
-#if defined(HAS_THINKNODE_M9)
+#if defined(HAS_THINKNODE_M9) || (defined(WADA_WEB) && defined(HAS_M9_KEYBOARD))   // (or the host's M9 flavour)
 // Keyboard-only device (no touch, no trackball): nav is always on, same as Tanmatsu above.
 // Unlike Tanmatsu (which registers its KEYPAD indev as the PRIMARY one, driven by navPump()
 // reading bsp-input), the M9 takes the CAP_KEYPAD_NAV "secondary indev" path the T-Deck's
@@ -18242,7 +18242,7 @@ static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
 // Keyboards whose backlight takes a level, not just on/off: the T-Deck's C3 keyboard
 // and the ThinkNode M9's controller (duty register 0x02, #664).
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   #define KB_BL_DIMMABLE 1
 #else
   #define KB_BL_DIMMABLE 0
@@ -41004,7 +41004,7 @@ static void mapCanvasEventCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
 // Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager / the M9's Map-key
 // pan mode, all on the Map tab). Mirrors the drag-release math in
 // mapCanvasEventCb: synthesize a pixel delta of ~1/4 the visible span in the
@@ -54825,7 +54825,7 @@ static void bleKbdUiTick() {
     bleKbdDispatch(key);
   }
 #endif  // CAP_BLE_KEYBOARD
-#if defined(HAS_CARDKB)
+#if defined(HAS_CARDKB) && !defined(HAS_M9_KEYBOARD)   // (the host's M9 flavour reads them as M9 keys)
   for (int i = 0; i < 16; ++i) {
     const int raw = cardKbReadKey();
     if (!raw) break;
@@ -76970,7 +76970,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TANMATSU) || defined(HAS_M9_KEYBOARD) || defined(HAS_TDECK_PRO)
     // Pro/Max have touch, but no trackball and no keyboard-navigation setting;
     // keep their physical keyboard usable as the setup and touch-failure fallback.
     s_kbd_nav = true;
@@ -82349,7 +82349,9 @@ void UITask::loop() {
       else s_kb_bl_retry_ms = now + 250;
     }
   }
+#if CAP_LOCK_SCREEN   // (always on the M9; the host's M9 flavour has no lock screen)
   serviceLockscreen();
+#endif
   serviceLockingCountdown(now);
 #endif
 #if CAP_EXT_KEYBOARD
