@@ -1739,7 +1739,13 @@ int mpGc(lua_State* L) { return mpClose(L); }
 // Names only. The channel secret is never handed to Lua, so an app can post to a
 // channel the user already has but can neither derive one nor pass it on.
 int meshChannels(lua_State* L) {
-  static char names[MAX_GROUP_CHANNELS][32];
+  // PSRAM first (1.3 KB off internal .bss, #763), allocated on the first call.
+  static char (*names)[32] = [] {
+    void* p = heap_caps_malloc(MAX_GROUP_CHANNELS * 32, MALLOC_CAP_SPIRAM);
+    if (!p) p = heap_caps_malloc(MAX_GROUP_CHANNELS * 32, MALLOC_CAP_8BIT);
+    return (char(*)[32])p;
+  }();
+  if (!names) { lua_createtable(L, 0, 0); return 1; }
   const int n = luaHostMeshChannelNames(names, MAX_GROUP_CHANNELS);
   lua_createtable(L, n, 0);
   for (int i = 0; i < n; i++) {
