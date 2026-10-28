@@ -3432,7 +3432,7 @@ struct LvUiState {
   LvChatPanel dm;          // Chats tab list + DM overlay
   LvChatPanel ch;          // channel thread overlay only (no tab list)
   lv_obj_t* contacts_list;
-  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites 4=has location 5=direct 6=rooms
+  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (not a repeater or room) 3=favorites 4=has location 5=direct 6=rooms
   // Per-session text-search filter applied on top of the category filter.
   // Empty = no text filter. Set/cleared by the magnifier sheet.
   char      contacts_search[24];
@@ -34266,7 +34266,7 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
   const bool is_rep = (c.type == ADV_TYPE_REPEATER);
   switch(g_lv.contacts_filter){
     case 1u: if(!is_rep) return false; break;                              // repeaters
-    case 2u: if(is_rep)  return false; break;                              // peers
+    case 2u: if(is_rep || c.type == ADV_TYPE_ROOM) return false; break;   // peers: rooms have their own filter (6)
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if (pathHops(c.out_path_len) != 0) return false; break;                  // 0-hop / direct neighbors only
