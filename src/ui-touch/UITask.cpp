@@ -50681,6 +50681,13 @@ static void updatePagerModifierHolds(uint32_t now) {
 }
 #endif
 
+// Process the keypad transitions queued so far right now (same read path LVGL's
+// own input timer runs), so focus reflects every step already pushed.
+static void pagerNavApplyQueued() {
+  if (s_nav_indev && s_nav_indev->driver && s_nav_indev->driver->read_timer)
+    lv_indev_read_timer_cb(s_nav_indev->driver->read_timer);
+}
+
 static void updatePagerEncoder(unsigned long now) {
 #if defined(TLORA_PAGER)
   s_hold_pct_wheel = -1;   // set again at the bottom while the knob is held towards Back
@@ -50828,15 +50835,25 @@ static void updatePagerEncoder(unsigned long now) {
     // top-bar items / back into the bubbles (pagerChatComposerNav), and the
     // edge bubble of a still-loading history scrolls the list instead of
     // stepping focus out (pagerEncoderChatEdgeScroll).
+    //
+    // Several detents can arrive in one pass (a quick turn while a frame was
+    // drawing). Each check above reads the CURRENT focus, but a queued NEXT/PREV
+    // only moves it when LVGL next reads the keypad, so the 2nd..nth detent
+    // judged a stale focus: past the last bubble they skipped the edge handling,
+    // ran on into the composer and top-bar items and wrapped to the top (#643,
+    // "quick wheel scrolling moves the highlighter to the gear icon"). Hand each
+    // step to LVGL before judging the next one.
     for (; delta > 0; delta--) {
       if (!pagerMapZoomTurn(false) && !navInfoModalScroll(false) && !pagerEncoderScrollOversizedFocused(false) &&
           !pagerChatComposerNav(false) && !pagerEncoderChatEdgeScroll(false) && !pagerEncoderEdgeScroll(false))
         navPushTap(LV_KEY_NEXT);
+      if (delta > 1) pagerNavApplyQueued();
     }
     for (; delta < 0; delta++) {
       if (!pagerMapZoomTurn(true) && !navInfoModalScroll(true) && !pagerEncoderScrollOversizedFocused(true) &&
           !pagerChatComposerNav(true) && !pagerEncoderChatEdgeScroll(true) && !pagerEncoderEdgeScroll(true))
         navPushTap(LV_KEY_PREV);
+      if (delta < -1) pagerNavApplyQueued();
     }
   }
 
