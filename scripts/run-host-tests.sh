@@ -41,6 +41,8 @@ extra_flags() {
     # The real WadaNmeaLocationProvider.h over a fake UART / MicroNMEA; the prefs
     # header it includes only declares its functions under ESP32.
     test_gps_baud_probe) echo "-DESP32 -I test/gps_probe_fakes" ;;
+    # Same provider; a receiver that reports the true UTC time (its own MicroNMEA/RTClib/UART).
+    test_gps_time_sync) echo "-DESP32 -I test/gps_time_fakes -I test/gps_probe_fakes" ;;
     *) echo "" ;;
   esac
 }

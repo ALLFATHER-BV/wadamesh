@@ -14428,9 +14428,24 @@ static void saveExperimentalCb(lv_event_t* e) {
   refreshStatusLabels();   // applies instantly on toggle (no Save button)
 }
 
+// Set by src/main.cpp on the S3 boards (its Wi-Fi loop owns SNTP); null where nothing
+// restarts SNTP for us (the P4 IDF builds, the web host), which keep the plain copy.
+void (*g_sntp_resync_hook)() = nullptr;
+
 static void syncClockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const bool ok = g_lv.task->setDeviceTimeFromSystemClock();
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // On most boards the "system" clock IS the device clock, so the copy above changes
+  // nothing unless SNTP had already moved it. With Wi-Fi up, ask the time server now
+  // instead; the Wi-Fi loop writes the answer through (RTC chip included) and says
+  // "Clock synced" when it lands.
+  if (g_sntp_resync_hook && WiFi.status() == WL_CONNECTED) {
+    g_sntp_resync_hook();
+    g_lv.task->showAlert(TR("Asking the time server"), 1500);
+    return;
+  }
+#endif
   g_lv.task->showAlert(ok ? TR("Clock synced") : TR("No system time yet"), 900);
 }
 
@@ -17963,21 +17978,27 @@ static void openTimezonePicker() {
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
+  // Rows are in the picker's own (west to east) order; each carries its zone's
+  // permanent id, which is what gets saved.
   const int cur = (int)touchPrefsGetTimezone();
   const int n   = touchPrefsTimezoneCount();
+  lv_obj_t* cur_row = nullptr;
   for (int i = 0; i < n; ++i) {
+    const int id = touchPrefsTimezoneAt(i);
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_set_size(row, sw - 16, SC(40));
     styleButton(row);
-    if (i == cur) lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    if (id == cur) { lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN); cur_row = row; }
     lv_obj_set_style_text_color(row,
-      lv_color_hex(i == cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_add_event_cb(row, tzPickerSelectCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+      lv_color_hex(id == cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_add_event_cb(row, tzPickerSelectCb, LV_EVENT_CLICKED, (void*)(intptr_t)id);
     lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, touchPrefsTimezoneLabel(i));
+    lv_label_set_text(lbl, touchPrefsTimezoneLabel(id));
     lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
     lv_obj_center(lbl);
   }
+  // The list is long now (40+ zones): open it on the current one.
+  if (cur_row) lv_obj_scroll_to_view(cur_row, LV_ANIM_OFF);
   lv_obj_move_foreground(s_tz_picker);
 }
 static void openTimezoneCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) openTimezonePicker(); }
@@ -77730,7 +77751,17 @@ void UITask::toggleGPS() {
 }
 
 void UITask::setGpsPower(bool on) {
-  if (_sensors) _sensors->setSettingValue("gps", on ? "1" : "0");
+  if (!_sensors) return;
+  _sensors->setSettingValue("gps", on ? "1" : "0");
+  // The GPS saver's wake. The parser still holds the fix, date and time from before the rest,
+  // and the provider's 30-minute clock re-sync would take that stale time as current, putting
+  // the clock back by the length of the rest. syncTime() drops the old sentence (so only fresh
+  // satellite time can set the clock) and asks for a sync from the first fresh fix. Our own
+  // provider also clears itself in begin(); this covers the core one (V4 and others) too.
+  if (on) {
+    LocationProvider* lp = _sensors->getLocationProvider();
+    if (lp) lp->syncTime();
+  }
 }
 
 bool UITask::setNodeName(const char* s) {

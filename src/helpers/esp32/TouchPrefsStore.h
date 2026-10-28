@@ -810,15 +810,18 @@ int  touchPrefsGetTimeOffsetHours();
 bool touchPrefsSetTimeOffsetHours(int hours);
 
 /** Time-zone picker. A curated list of named zones, each carrying the correct
- *  POSIX TZ string WITH that region's DST rules — so non-European users get the
+ *  POSIX TZ string WITH that region's DST rules, so non-European users get the
  *  right time year-round instead of being stuck on the CET base + EU DST dates.
- *  Default 0 == "Europe (CET/CEST)" (unchanged behaviour). The LAST index is
+ *  Zones are identified by a PERMANENT id (helpers/TimeZones.h: the saved value);
+ *  the picker shows them in its own order, row -> id via touchPrefsTimezoneAt().
+ *  Default id 0 == "Europe (CET/CEST)" (unchanged behaviour). Id 16 is
  *  "Custom (UTC offset)", which uses touchPrefsGetTimeOffsetHours() as a fixed,
  *  no-DST offset. touchPrefsBuildLocalTz() resolves the selected zone. */
-int         touchPrefsTimezoneCount();           // number of pickable entries
-const char* touchPrefsTimezoneLabel(int idx);    // display label for the picker
-uint8_t     touchPrefsGetTimezone();             // selected index (default 0)
-void        touchPrefsSetTimezone(uint8_t idx);
+int         touchPrefsTimezoneCount();           // number of picker rows
+int         touchPrefsTimezoneAt(int row);       // picker row -> zone id
+const char* touchPrefsTimezoneLabel(int id);     // display label of a zone id
+uint8_t     touchPrefsGetTimezone();             // selected zone id (default 0)
+void        touchPrefsSetTimezone(uint8_t id);
 
 /** Build the POSIX TZ string for local-time display from the selected time zone
  *  (touchPrefsGetTimezone), or a fixed UTC offset for the "Custom" entry. Used by
