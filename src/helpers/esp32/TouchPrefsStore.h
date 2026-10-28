@@ -789,6 +789,14 @@ uint32_t touchPrefsGetBackgroundColor();
 void     touchPrefsSetBackgroundColor(uint32_t rgb);
 int      touchPrefsGetBackgroundImage(char* out, int out_cap);   // "sd:/path" or an internal path
 bool     touchPrefsSetBackgroundImage(const char* path);
+// How strongly a picture of your own is toned down behind the text: the Theme's
+// background picture (darkened by night, lightened by day) and the lock-screen wallpaper
+// (a black veil). TOUCH_DIM_STRONG, the default, is the look before the setting existed.
+enum : uint8_t { TOUCH_DIM_OFF = 0, TOUCH_DIM_LIGHT = 1, TOUCH_DIM_MEDIUM = 2, TOUCH_DIM_STRONG = 3 };
+uint8_t  touchPrefsGetBackgroundDim();
+void     touchPrefsSetBackgroundDim(uint8_t level);
+uint8_t  touchPrefsGetLockDim();
+void     touchPrefsSetLockDim(uint8_t level);
 
 /** Tanmatsu message-notification LED: flash the envelope-icon LED on a new message and breathe it
  *  softly while there are unread messages. Default ON. Tanmatsu-only (no such LED on T-Deck/V4). */

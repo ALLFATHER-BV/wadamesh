@@ -57,6 +57,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #if CAP_MAP_OVERZOOM
     #include "MapOverzoom.h"   // stand-in tiles from an ancestor when one is missing offline
   #endif
+  #include "PictureDim.h"      // Picture dimming / Wallpaper dimming steps
   #include <esp_system.h>
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
@@ -19307,6 +19308,19 @@ static void buildLockPage() {
     // The way back from a picture of your own (#626).
     s_lockwall_default_row = strcmp(cur, touchPrefsDefaultLockWallpaper()) != 0
         ? setActionRow(c, LV_SYMBOL_REFRESH, "Default wallpaper", nullptr, lockwallDefaultCb) : nullptr;
+#if !defined(HAS_TDECK_PRO)   // e-paper shows its picture as it is
+    {
+      // The veil over a picture of your own (the built-in wallpaper has none). Takes
+      // effect the next time the lock screen shows; Strong is the look from before.
+      const char* steps[] = { TR("Off"), TR("Light"), TR("Medium"), TR("Strong") };
+      setChoiceRow(c, "Wallpaper dimming", nullptr, steps, 4, touchPrefsGetLockDim(), [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        const int level = setChoiceIndex(e);
+        touchPrefsSetLockDim((uint8_t)level);
+        setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), level);
+      });
+    }
+#endif
 #if !defined(HAS_TDECK_PRO) && !defined(TLORA_PAGER)   // the Pager keeps a white clock (lockscreenShow)
     setSwatchRow(c, "Text colour", kLockColors, (int)(sizeof(kLockColors) / sizeof(kLockColors[0])),
                  touchPrefsGetLockTextColor(), lockColorPickCb);
@@ -51018,8 +51032,9 @@ static void lockscreenShow() {
     // A light black veil, and light ink on it whatever the theme, the way a phone
     // lock screen treats a photo. The theme's own background at 150/255 made a
     // picture milky on the Day themes and cloudy on Night (#652).
+    // How dark: Settings > Lock screen > Wallpaper dimming (Strong, the default, is 105).
     lv_obj_set_style_bg_color(dim, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(dim, (lv_opa_t)105, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dim, (lv_opa_t)PictureDim::lockVeil(touchPrefsGetLockDim()), LV_PART_MAIN);
 #if defined(TLORA_PAGER)
     const uint32_t wclk = 0xFFFFFF;
 #else
@@ -51754,8 +51769,10 @@ static void bgTheme() {
 #if CAP_BG_IMAGE
 // A picture behind every screen: decoded once at boot, cut to cover the screen (the
 // scale that fills both sides, centred, sampled between pixels) and dimmed by night or
-// lifted by day so everything in front stays readable.
-static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, int W, int H, bool day) {
+// lifted by day so everything in front stays readable, as far as Settings > Theme >
+// Picture dimming asks (PictureDim::bgPixel; Strong, the default, is the original look).
+static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, int W, int H, bool day,
+                       uint8_t dim) {
   const int32_t k = LV_MIN(((int32_t)iw << 16) / W, ((int32_t)ih << 16) / H);   // source px per screen px
   const int32_t ox = (((int32_t)iw << 16) - k * W) / 2, oy = (((int32_t)ih << 16) - k * H) / 2;
   for (int y = 0; y < H; ++y) {
@@ -51779,19 +51796,7 @@ static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, in
         const int bot = (int)((p10 >> sh) & 255) * (256 - fx) + (int)((p11 >> sh) & 255) * fx;
         c[k3] = (top * (256 - fy) + bot * fy) >> 16;
       }
-      int luma;
-      if (!day) {   // dimmed, and the brightest parts held down
-        for (int k3 = 0; k3 < 3; ++k3) c[k3] = c[k3] * 107 >> 8;
-        luma = (c[0] * 54 + c[1] * 183 + c[2] * 19) >> 8;
-        if (luma > 64) for (int k3 = 0; k3 < 3; ++k3) c[k3] = c[k3] * 64 / luma;
-      } else {      // lifted toward white, the darkest parts held up
-        for (int k3 = 0; k3 < 3; ++k3) c[k3] += (255 - c[k3]) * 153 >> 8;
-        luma = (c[0] * 54 + c[1] * 183 + c[2] * 19) >> 8;
-        if (luma < 200) {
-          const int f = (200 - luma) * 256 / (255 - luma);
-          for (int k3 = 0; k3 < 3; ++k3) c[k3] += (255 - c[k3]) * f >> 8;
-        }
-      }
+      PictureDim::bgPixel(c, day, dim);
       out[(size_t)y * W + x] = lv_color_make((uint8_t)c[0], (uint8_t)c[1], (uint8_t)c[2]);
     }
   }
@@ -51826,7 +51831,7 @@ static bool bgImageLoad() {
 fit:
 #endif
   lv_color_t* out = (iw > 0 && ih > 0) ? (lv_color_t*)psAlloc((size_t)W * H * sizeof(lv_color_t)) : nullptr;
-  if (out) bgImageFit((const lv_color_t*)rgb, iw, ih, out, W, H, s_theme_day);
+  if (out) bgImageFit((const lv_color_t*)rgb, iw, ih, out, W, H, s_theme_day, touchPrefsGetBackgroundDim());
   lvglPsramFree(rgb);
   if (!out) return false;
   s_bg_img = out; s_bg_w = W; s_bg_h = H;
@@ -67678,6 +67683,7 @@ struct ThemeChoice {
   uint8_t mode; uint32_t accent; bool more; uint8_t style; bool rainbow;
   uint8_t bg_kind; uint32_t bg_col; char bg_img[TOUCH_LOCK_WALLPAPER_MAXLEN];   // Background
   bool glass;                                                                    // Glass tiles
+  uint8_t bg_dim;                                                                // Picture dimming (TOUCH_DIM_*)
 };
 static ThemeChoice s_theme_saved = {}, s_theme_pend = {};
 static constexpr int kThemeColorN = (int)(sizeof(kThemeColors) / sizeof(kThemeColors[0]));
@@ -67699,6 +67705,7 @@ struct ThemePageUi {
   lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
   lv_obj_t* bg[5]; lv_obj_t* bg_sw[5]; lv_obj_t* bg_col_btn; lv_obj_t* bg_col_dot;
   lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note; lv_obj_t* glass_sw;
+  lv_obj_t* bg_dim_box; lv_obj_t* bg_dim_row;   // Picture dimming, under the picture's button
   lv_obj_t* icons[2]; lv_obj_t* icons_av[2];
   lv_obj_t* apply; lv_obj_t* apply_lbl;   // Apply and restart, on the preview box
   lv_obj_t* mini;                         // the bar that keeps it in reach once the box scrolls away
@@ -67934,7 +67941,8 @@ static bool themePendingDiffers() {
   const ThemeChoice& b = s_theme_saved;
   return a.mode != b.mode || a.accent != b.accent || a.more != b.more ||
          a.style != b.style || a.rainbow != b.rainbow || a.bg_kind != b.bg_kind ||
-         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass;
+         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass ||
+         a.bg_dim != b.bg_dim;
 }
 // MORE COLORS! as the pending choice has it: Taste the rainbow brings it along, and
 // high contrast keeps its own fixed colours.
@@ -68344,6 +68352,11 @@ static void themePageRepaint() {
       base = base ? base + 1 : (strncmp(s_theme_pend.bg_img, "sd:", 3) ? s_theme_pend.bg_img : s_theme_pend.bg_img + 3);
       lv_label_set_text(s_tp.bg_img_lbl, base && base[0] ? base : TR("Choose an image"));
     }
+    if (s_tp.bg_dim_box) {   // only with a picture to dim
+      if (!hc && s_theme_pend.bg_kind == TOUCH_BG_IMAGE) lv_obj_clear_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_HIDDEN);
+      setChoicePick(s_tp.bg_dim_row, s_theme_pend.bg_dim);
+    }
     // Glass tiles: nothing to see through in high contrast or on the plain theme.
     themeSwitchSet(s_tp.glass_sw, s_theme_pend.glass, !hc && s_theme_pend.bg_kind != TOUCH_BG_NONE);
     if (s_tp.bg_note) {
@@ -68458,6 +68471,11 @@ static void themeGlassCb(lv_event_t* e) {
 static void themeBgImageCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED && !themeModeIsHc(s_theme_pend.mode)) themeBgPickImage();
 }
+static void themeBgDimCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || themeModeIsHc(s_theme_pend.mode)) return;
+  s_theme_pend.bg_dim = (uint8_t)setChoiceIndex(e);
+  themePageRepaint();
+}
 static void themeBubblesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -68494,6 +68512,7 @@ static void themeApplyCb(lv_event_t* e) {
   touchPrefsSetBackgroundColor(s_theme_pend.bg_col);
   touchPrefsSetBackgroundImage(s_theme_pend.bg_img);
   touchPrefsSetGlassTiles(s_theme_pend.glass);
+  touchPrefsSetBackgroundDim(s_theme_pend.bg_dim);
 #endif
   s_theme_saved = s_theme_pend;
   lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
@@ -68693,6 +68712,7 @@ static void buildThemeSettings() {
   s_theme_saved.bg_col  = touchPrefsGetBackgroundColor();
   touchPrefsGetBackgroundImage(s_theme_saved.bg_img, sizeof s_theme_saved.bg_img);
   s_theme_saved.glass   = touchPrefsGetGlassTiles();
+  s_theme_saved.bg_dim  = touchPrefsGetBackgroundDim();
   s_theme_pend = s_theme_saved;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t card_w = sw - 22;   // as createSettingsModal's cards
@@ -68944,6 +68964,20 @@ static void buildThemeSettings() {
     lv_obj_set_style_text_font(ic, &ui_icons_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(ic, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_move_to_index(ic, 0);
+    // Picture dimming: how far the picture is toned down behind the text. Strong, the
+    // default, is the look from before the setting; Off shows the picture as it is.
+    {
+      s_tp.bg_dim_box = lv_obj_create(c);
+      lv_obj_remove_style_all(s_tp.bg_dim_box);
+      lv_obj_clear_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(s_tp.bg_dim_box, cw, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(s_tp.bg_dim_box, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_style_pad_row(s_tp.bg_dim_box, SC(6), LV_PART_MAIN);
+      const char* steps[] = { TR("Off"), TR("Light"), TR("Medium"), TR("Strong") };
+      s_tp.bg_dim_row = setChoiceRow(s_tp.bg_dim_box, "Picture dimming",
+                                     "Darker with Night, lighter with Day, so the text on it stays readable.",
+                                     steps, 4, s_theme_pend.bg_dim, themeBgDimCb);
+    }
 #endif
     // Glass tiles (default on): Home widgets, cards and the control panel's tiles let the
     // background through. Off draws them in the solid panel colour, the pre-aurora look.

@@ -2281,3 +2281,6 @@ Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, s
 last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
+Picture dimming	Assombrissement de l'image
+Wallpaper dimming	Assombrissement du fond d'écran
+Darker with Night, lighter with Day, so the text on it stays readable.	Plus sombre en Nuit, plus claire en Jour, pour que le texte reste lisible.

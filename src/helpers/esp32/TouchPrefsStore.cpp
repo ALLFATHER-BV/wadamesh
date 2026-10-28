@@ -2654,6 +2654,22 @@ bool touchPrefsSetBackgroundImage(const char* path) {
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return ok;
 }
+// Absent until chosen: TOUCH_DIM_STRONG, the dimming every picture had before.
+static uint8_t prefsDimLevel(const char* key) {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar(key, TOUCH_DIM_STRONG);
+  return v > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : v;
+}
+uint8_t touchPrefsGetBackgroundDim() { return prefsDimLevel("bg_dim"); }
+void touchPrefsSetBackgroundDim(uint8_t level) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("bg_dim", level > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : level);
+}
+uint8_t touchPrefsGetLockDim() { return prefsDimLevel("lock_dim"); }
+void touchPrefsSetLockDim(uint8_t level) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("lock_dim", level > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : level);
+}
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
@@ -3044,7 +3060,7 @@ static int backupKeys(BkKey* out, int cap) {
     "chg_care", "low_batt", "face_down", "pick_wake",             // the Pager's battery care and quiet modes
 #endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
-    "glass",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
+    "glass", "bg_dim", "lock_dim",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');
