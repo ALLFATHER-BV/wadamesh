@@ -78895,7 +78895,20 @@ static void gpsSaverTick(uint32_t now) {
     return;
   }
   const bool saver = touchPrefsGetGpsSaver() || touchSleep::enabled();
-  if (!saver || gpsWantedLive()) {   // plain GPS: awake whenever it is switched on
+#if defined(TLORA_PAGER)
+  // Leaving the map (or the GPS page, Discover) kept the receiver awake only while it
+  // was on screen: with a fix already held for half a minute it went to rest the
+  // moment the map closed, which looked like the fix being lost. Stay awake for
+  // three minutes after the last look instead.
+  static uint32_t s_live_until = 0;
+  bool live = gpsWantedLive();
+  if (live) { s_live_until = now + 180000u; if (!s_live_until) s_live_until = 1; }
+  else if (s_live_until && (int32_t)(now - s_live_until) < 0) live = true;
+  else s_live_until = 0;
+#else
+  const bool live = gpsWantedLive();
+#endif
+  if (!saver || live) {   // plain GPS: awake whenever it is switched on
     if (!s_gps_hw_on) { g_lv.task->setGpsPower(true); s_gps_hw_on = true; s_gps_phase_at = now; s_gps_fix_since = 0; }
     s_gps_wake_at = 0;
     return;
@@ -78904,8 +78917,20 @@ static void gpsSaverTick(uint32_t now) {
     // A fix only counts once the receiver has had a few seconds to report afresh (the
     // parser still holds the one from before the rest).
     if (!s_gps_fix_since && now - s_gps_phase_at > 5000 && g_lv.task->getGpsFix()) s_gps_fix_since = now ? now : 1;
+#if defined(TLORA_PAGER)
+    // Two minutes with a fix, not thirty seconds: the orbits of the satellites in
+    // view arrive over that time, and with them stored the next waking is a hot
+    // start of a few seconds. Until the first fix since boot (a cold start, which
+    // under a poor sky takes several minutes) it searches for ten minutes before
+    // resting, later for three.
+    static bool s_had_fix = false;
+    if (s_gps_fix_since) s_had_fix = true;
+    const bool settled = s_gps_fix_since && now - s_gps_fix_since >= 120000;
+    const bool gave_up = !s_gps_fix_since && now - s_gps_phase_at >= (s_had_fix ? 180000u : 600000u);
+#else
     const bool settled = s_gps_fix_since && now - s_gps_fix_since >= 30000;
     const bool gave_up = !s_gps_fix_since && now - s_gps_phase_at >= 180000;
+#endif
     if (settled || gave_up) {
       g_lv.task->setGpsPower(false);
       s_gps_hw_on = false;
