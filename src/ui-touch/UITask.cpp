@@ -157,10 +157,13 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
+#include "UsbFilesPaint.h"      // host-tested: how often the USB Files screen repaints (e-paper)
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
+#include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
+#include "ScreenIdleClock.h"   // host-tested: the screen timeout waits for the boot splash (#762)
 #include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
@@ -20848,28 +20851,32 @@ static void wifiScanOpenAndKick() {
 
 // Mirror of the BLE-enable guard: bringing esp_wifi up needs ~50 KB free internal
 // heap, and with BLE already holding its share on a tight board the init fails
-// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. Pager
-// uses the live main-loop BLE handoff; the preflight remains for other boards.
+// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. The
+// decision itself is WifiColdStartGate.h (host-tested). The Pager's main loop
+// orders the start (it pauses Bluetooth traffic, keeping NimBLE resident, lets
+// esp_wifi allocate, then resumes) and reports a failed allocation itself; the
+// preflight remains for the other boards, whose loop has no such fallback.
 enum class WifiEnableGate : uint8_t { Ready, LowMemory };
 
 static WifiEnableGate wifiEnableGate() {
 #if defined(ESP32)
-  // Once esp_wifi is initialized, a live off/on toggle does not need its large
-  // one-time DMA allocation. Apply the reserve only to a cold start.
-  if (WiFi.getMode() != WIFI_MODE_NULL) return WifiEnableGate::Ready;
 #if defined(TLORA_PAGER)
-  // The main loop releases NimBLE, allocates Wi-Fi, then recreates NimBLE live.
-  // Let that path make the authoritative allocation attempt and report failure.
-  return WifiEnableGate::Ready;
+  const bool ordered_by_main_loop = true;
 #else
+  const bool ordered_by_main_loop = false;
+#endif
   const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   const size_t freeh = heap_caps_get_free_size(internal_caps);
   const size_t maxblk = heap_caps_get_largest_free_block(internal_caps);
-  if (freeh >= 50u * 1024u && maxblk >= 20u * 1024u) return WifiEnableGate::Ready;
-  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u\n",
-                (unsigned)freeh, (unsigned)maxblk);
+  // Once esp_wifi is initialized, a live off/on toggle does not need its large
+  // one-time allocation: the reserve applies only to a cold start.
+  if (WifiColdStartGate::decide(WiFi.getMode() != WIFI_MODE_NULL, ordered_by_main_loop,
+                                freeh, maxblk) == WifiColdStartGate::Decision::Ready)
+    return WifiEnableGate::Ready;
+  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u (needs %u / %u)\n",
+                (unsigned)freeh, (unsigned)maxblk,
+                (unsigned)WifiColdStartGate::kMinFree, (unsigned)WifiColdStartGate::kMinBlock);
   return WifiEnableGate::LowMemory;
-#endif
 #else
   return WifiEnableGate::Ready;
 #endif
@@ -58225,7 +58232,11 @@ class UiUsbFilesHost : public UsbFilesHost {
 #endif
   }
   void describe(char* out, size_t cap) override {
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_MAX)
+    static const char* kBoard = "LilyGo T-Deck Max";
+#elif defined(HAS_TDECK_PRO)
+    static const char* kBoard = "LilyGo T-Deck Pro";
+#elif defined(HAS_TDECK_GT911)
     static const char* kBoard = "LilyGo T-Deck";
 #elif defined(HELTEC_LORA_V4_TFT)
     static const char* kBoard = "Heltec V4 TFT";
@@ -58255,6 +58266,10 @@ static UiUsbFilesHost  s_usbfiles_host;
 // should not carry for an app that is closed nearly all the time.
 static UsbFilesSession* s_usbfiles = nullptr;
 
+// What the status line and bar last showed: on e-paper the repaint is paced
+// (UsbFilesPaint.h, host-tested); an LCD repaints every tick as before.
+static UsbFilesPaint::Shown s_usbfiles_shown;
+
 static void usbFilesRefresh() {
   if (!s_usbfiles_status || !s_usbfiles) return;
   UsbFilesSession& ses = *s_usbfiles;
@@ -58277,10 +58292,13 @@ static void usbFilesRefresh() {
   } else {
     snprintf(buf, sizeof buf, "%s", TR("Waiting for the computer"));
   }
+  const int8_t bar = UsbFilesPaint::barValue(CAP_EPAPER, moving, done, total);
+  if (!UsbFilesPaint::shouldPaint(CAP_EPAPER, moving, buf, bar, millis(), s_usbfiles_shown))
+    return;
   lv_label_set_text(s_usbfiles_status, buf);
   if (s_usbfiles_bar) {
-    if (moving && total > 0) {
-      lv_bar_set_value(s_usbfiles_bar, (int32_t)((uint64_t)done * 100 / total), LV_ANIM_OFF);
+    if (bar >= 0) {
+      lv_bar_set_value(s_usbfiles_bar, bar, LV_ANIM_OFF);
       lv_obj_clear_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
@@ -58361,6 +58379,7 @@ static void openUsbFilesPage() {
   text(TR("3. Click Connect and choose this device."), &g_font_12, COLOR_SUB);
 
   s_usbfiles_status = text("", &g_font_14, COLOR_TEXT);
+  s_usbfiles_shown = UsbFilesPaint::Shown();   // a fresh screen: the first refresh paints
   s_usbfiles_bar = lv_bar_create(s_usbfiles_root);
   lv_obj_set_size(s_usbfiles_bar, width, 8);
   lv_bar_set_range(s_usbfiles_bar, 0, 100);
@@ -76478,8 +76497,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // DMA buffers, the Pager's pushColors), so it needs no DMA-capable RAM, and the
       // internal RAM it used to take pays for the faster LVGL build (perf_lvgl.py). Measured
       // on the T-Deck with the frame benchmark (2026-10-09), the same pixels. The V4 keeps
-      // its internal 240x24 band (2 MB of quad PSRAM is too little and too slow), and so does
-      // e-paper, which waits on the panel, not on drawing.
+      // its internal 240x24 band (2 MB of quad PSRAM is too little and too slow).
       bool band_psram = false;
 #if defined(DOC_CAPTURE) && defined(BENCH_BAND_W)
       const int draw_band_w = BENCH_BAND_W;   // perf benchmark builds only
@@ -76496,6 +76514,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 320;
 #endif
       g_draw_buf_px = 12800;
+      band_psram = true;
+#elif CAP_EPAPER
+      // E-paper (T-Deck Pro, Max): the same 240x24 band, in PSRAM. The flush only copies
+      // it with the CPU into the driver's PSRAM canvas and 1-bit buffer
+      // (TDeckProDisplay::writePixelsRGB565), so it never needed DMA-capable RAM, and
+      // the panel, not the drawing, is what a frame waits on. In internal RAM it held
+      // 11.5 KB that a Wi-Fi cold start next to Bluetooth was short by (#763).
+      const int draw_band_w = 240;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
       band_psram = true;
 #elif defined(HAS_CROWPANEL_50)
       // 20 full rows of the 800-px panel in internal RAM, as Camillia-MT runs it: the
@@ -78728,6 +78755,10 @@ void UITask::lockScreen() {
   // frame; the fixed lock content itself has nothing to page-scroll.
   epaperScrollControlsSync(true);
   setCpuForScreen(true);
+  // The boot splash sits on lv_layer_sys above everything, the lock view too: a lock
+  // while it is up (BOOT pressed during the boot) would commit the splash to the glass
+  // as the "locked" frame and leave the logo there (#762). Take it down first.
+  splashRemove();
   lockscreenShow();
   lv_refr_now(nullptr);
   display.serviceRefresh(true);
@@ -81665,8 +81696,12 @@ void UITask::loop() {
   // be a few ms AFTER `now` (sampled at the top of loop()). An unsigned compare
   // then made (now - _last_input_ms) underflow to ~4.29e9 and fire the timeout on
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
-  if (_screen_timeout_ms > 0 && !_screen_off &&
-      (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
+  // The clock stands still while the boot splash is up: a boot slower than the
+  // timeout locked the T-Deck Pro on its first pass with the splash still on the
+  // glass (#762). ScreenIdleClock.h, host-tested.
+  ScreenIdleClock::holdWhileSplash(_last_input_ms, (uint32_t)now, s_splash_root != nullptr);
+  if (!_screen_off &&
+      ScreenIdleClock::due((uint32_t)now, (uint32_t)_last_input_ms, _screen_timeout_ms)) {
 #if CAP_SCREENSAVER
     if (!_manual_lock && ssaverAllowed(s_glance_lit_ms != 0)) {
       // The Constellation instead of a dark screen. To input it IS the dark
@@ -82624,7 +82659,10 @@ void UITask::loop() {
   // microSD activity LED: lit for k_sd_io_led_ms after the last SD access
   // (markSdIo). Edge-triggered — LVGL is only touched when the lit/dark state
   // flips, so an idle device costs one comparison per loop and nothing else.
-  if (g_statusbar.sd_icon) {
+  // Not on e-paper: a 180 ms blink is two panel updates of ~0.65 s each, so a
+  // stream of card writes (USB Files, the Transfer app) kept the panel refreshing
+  // and the loop blocked for the whole transfer. It stays hidden there.
+  if (g_statusbar.sd_icon && !CAP_EPAPER) {
     static int8_t s_sd_led = -1;   // -1 = unset -> forces the initial sync
     const bool lit = (g_sd_io_ms != 0) &&
                      ((uint32_t)(now - g_sd_io_ms) < k_sd_io_led_ms);
