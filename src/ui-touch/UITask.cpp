@@ -47934,6 +47934,42 @@ static void refreshChatList(LvChatPanel& p) {
 
   const lv_coord_t saved_scroll = lv_obj_get_scroll_y(p.list_cont);
   lv_indev_reset(nullptr, nullptr);   // #27: abort any scroll-throw before freeing these rows (UAF on flood)
+#if CAP_KEYPAD_NAV
+  // The keypad cursor sits on one of these rows: lv_obj_clean() deletes it, LVGL hands
+  // focus on through the group as each row goes, and it ends on the header's "..."
+  // button, which navMaybeRebuild() then keeps because it survived. With a message
+  // every second the cursor left the chat and Enter opened the menu. Detach the group
+  // first (as the chat virtualization does) and put the cursor back on the same thread
+  // by its id, not its slot: the new message can reorder the rows.
+  int  nav_thread = -1, nav_slot = -1;
+  bool nav_detached = false;
+  if (s_nav_group) {
+    lv_obj_t* f = lv_group_get_focused(s_nav_group);
+    if (f && lv_obj_get_parent(f) == p.list_cont && lv_obj_has_flag(f, NAV_THREAD_ROW_FLAG)) {
+      const intptr_t encoded = reinterpret_cast<intptr_t>(lv_obj_get_user_data(f));
+      if (encoded > 0) nav_thread = static_cast<int>(encoded - 1);
+      for (uint32_t c = 0, k = 0; c < lv_obj_get_child_cnt(p.list_cont); ++c) {
+        lv_obj_t* o = lv_obj_get_child(p.list_cont, c);
+        if (!lv_obj_has_flag(o, NAV_THREAD_ROW_FLAG)) continue;
+        if (o == f) { nav_slot = (int)k; break; }
+        ++k;
+      }
+      nav_detached = navDetachBeforeTreeMutation();
+    }
+  }
+  lv_obj_t* nav_row = nullptr;        // the same thread's new row
+  lv_obj_t* nav_slot_row = nullptr;   // or, when it left the list, the row now in its place
+  auto navResume = [&]() {
+    if (!nav_detached) return;
+    s_nav_focus_hint = nav_row ? nav_row : nav_slot_row;
+    navMarkDirty();
+    navMaybeRebuild();
+    // Follow the cursor if the thread moved; the scroll stays put for touch (no cursor).
+    lv_obj_t* f = lv_group_get_focused(s_nav_group);
+    if (s_nav_show && f && lv_obj_get_parent(f) == p.list_cont)
+      lv_obj_scroll_to_view_recursive(f, LV_ANIM_OFF);
+  };
+#endif
   lv_obj_clean(p.list_cont);
 
   if (count <= 0) {
@@ -47941,6 +47977,9 @@ static void refreshChatList(LvChatPanel& p) {
     lv_obj_t* l = lv_list_add_text(p.list_cont, empty);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_pad_all(l, 20, LV_PART_MAIN);
+#if CAP_KEYPAD_NAV
+    navResume();
+#endif
     return;
   }
 
@@ -48152,6 +48191,10 @@ static void refreshChatList(LvChatPanel& p) {
     p.ctx_store[i].channel = ch;
     lv_obj_add_flag(btn, NAV_THREAD_ROW_FLAG);
     lv_obj_set_user_data(btn, reinterpret_cast<void*>(static_cast<intptr_t>(idxs[i] + 1)));
+#if CAP_KEYPAD_NAV
+    if (nav_thread >= 0 && idxs[i] == nav_thread) nav_row = btn;
+    if (nav_slot >= 0 && shown - 1 <= nav_slot) nav_slot_row = btn;
+#endif
     lv_obj_add_event_cb(btn, threadSelectCb,    LV_EVENT_CLICKED,      &p.ctx_store[i]);
 #if defined(HAS_TDECK_PRO)
     lv_obj_add_event_cb(btn, threadLongPressCb, LV_EVENT_PRESSED,      &p.ctx_store[i]);
@@ -48171,6 +48214,9 @@ static void refreshChatList(LvChatPanel& p) {
   // Put the scroll back where it was so a data-driven rebuild doesn't snap to the top.
   lv_obj_update_layout(p.list_cont);
   lv_obj_scroll_to_y(p.list_cont, saved_scroll, LV_ANIM_OFF);
+#if CAP_KEYPAD_NAV
+  navResume();
+#endif
 }
 
 // Format a duration in seconds as a short badge like "12s" / "13m" / "2h" /
