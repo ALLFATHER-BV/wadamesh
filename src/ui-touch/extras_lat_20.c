@@ -1,9 +1,4 @@
-#include "device_caps.h"
-// Was HAS_TANMATSU-only (Large/Huge UI-scale accented-Latin fallback); the T-Deck
-// now also builds this for the "at a glance" notification's 20 px message body
-// (see atGlanceEnsureFont() in UITask.cpp) -- an experiment to see whether a
-// smaller-than-28px glance body is still legible on that panel.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE) || defined(WADA_WEB)
 
 /*******************************************************************************
  * Size: 20 px
@@ -2087,6 +2082,48 @@ static LV_ATTRIBUTE_LARGE_CONST const uint8_t glyph_bitmap[] = {
     0x8f, 0x40, 0xe, 0xd5, 0x10, 0xe, 0x5a, 0x50,
     0xf, 0xff, 0xc8,
 
+    /* U+0218 "Ș" */
+    0x0, 0x9b, 0x3b, 0xfb, 0x1c, 0x40, 0x2c, 0x93,
+    0x3e, 0x8c, 0x0, 0x41, 0x9b, 0x75, 0x9b, 0xd1,
+    0x60, 0x4, 0xf, 0x20, 0x8, 0x5d, 0x80, 0x33,
+    0x80, 0x7f, 0x50, 0x5b, 0x88, 0x7, 0xcd, 0x1,
+    0x1d, 0xb2, 0x80, 0x1c, 0xfd, 0x2a, 0x6d, 0x7c,
+    0x80, 0x18, 0x5a, 0xbb, 0x14, 0x6c, 0x80, 0x3e,
+    0x3a, 0x70, 0x50, 0x10, 0xf, 0xbc, 0x3c, 0x32,
+    0xcc, 0x3, 0x1c, 0x86, 0x3, 0xa6, 0x7e, 0x63,
+    0xb0, 0x59, 0x2, 0xb1, 0x88, 0xcc, 0xb, 0x72,
+    0x1, 0x1c, 0xef, 0xfb, 0xa9, 0x0, 0x3f, 0xf8,
+    0xed, 0xe8, 0x1, 0xfc, 0x40, 0x20, 0x1f, 0xcc,
+    0xa, 0x1, 0xfe, 0xa0, 0xe,
+
+    /* U+0219 "ș" */
+    0x0, 0x2e, 0x77, 0xf5, 0x28, 0x2, 0x68, 0xc9,
+    0xd, 0x60, 0x5, 0x87, 0xb2, 0xf7, 0x5c, 0x6,
+    0x6, 0x20, 0x11, 0x18, 0x11, 0x58, 0xc6, 0x1,
+    0xde, 0x66, 0x9c, 0xfb, 0x30, 0x1, 0x67, 0x5c,
+    0x22, 0x30, 0x80, 0x21, 0x47, 0xb6, 0x4, 0x9,
+    0x30, 0xc, 0x40, 0x6a, 0xd9, 0xd7, 0x6e, 0x43,
+    0x55, 0x52, 0x82, 0x29, 0x46, 0x0, 0x16, 0xbb,
+    0xfb, 0x1c, 0x3, 0xff, 0x89, 0xb8, 0x1, 0xf8,
+    0x44, 0x1, 0xf9, 0x54, 0x1, 0xfb, 0xe4, 0x3,
+    0x0,
+
+    /* U+021A "Ț" */
+    0xef, 0xff, 0xf5, 0x29, 0x9c, 0x40, 0x3, 0x3c,
+    0x57, 0x99, 0x78, 0x16, 0x66, 0x80, 0xf, 0xff,
+    0xf8, 0x7, 0xff, 0xc4, 0xbf, 0x40, 0x3f, 0xf9,
+    0x5d, 0x40, 0x1f, 0xe3, 0x10, 0xf, 0xf3, 0x68,
+    0x7, 0xfb, 0x58, 0x3, 0x80,
+
+    /* U+021B "ț" */
+    0x0, 0x3c, 0x0, 0x7a, 0x5c, 0x3, 0xff, 0x81,
+    0x7e, 0x21, 0xff, 0xe, 0x28, 0x1, 0x56, 0x17,
+    0xa1, 0xa, 0xa8, 0x3, 0xff, 0xbe, 0x40, 0x80,
+    0x1d, 0x41, 0x76, 0xd7, 0x0, 0x34, 0x12, 0x1,
+    0x0, 0x4f, 0xbf, 0xaa, 0x1, 0xff, 0xc0, 0xcd,
+    0x0, 0xf3, 0x10, 0x7, 0x89, 0x80, 0x3d, 0xb6,
+    0x0,
+
     /* U+201E "„" */
     0x6, 0xa1, 0x8, 0x90, 0x4, 0xac, 0x9b, 0xb2,
     0x82, 0x87, 0x99, 0x3, 0x7, 0x82, 0x82, 0x89,
@@ -2293,14 +2330,20 @@ static const lv_font_fmt_txt_glyph_dsc_t glyph_dsc[] = {
     {.bitmap_index = 12535, .adv_w = 210, .box_w = 13, .box_h = 18, .ofs_x = 0, .ofs_y = 0},
     {.bitmap_index = 12614, .adv_w = 167, .box_w = 10, .box_h = 15, .ofs_x = 0, .ofs_y = 0},
     {.bitmap_index = 12674, .adv_w = 98, .box_w = 8, .box_h = 15, .ofs_x = 0, .ofs_y = 0},
-    {.bitmap_index = 12701, .adv_w = 133, .box_w = 8, .box_h = 6, .ofs_x = 0, .ofs_y = -3}
+    {.bitmap_index = 12701, .adv_w = 199, .box_w = 12, .box_h = 20, .ofs_x = 0, .ofs_y = -6},
+    {.bitmap_index = 12794, .adv_w = 160, .box_w = 10, .box_h = 17, .ofs_x = 0, .ofs_y = -6},
+    {.bitmap_index = 12867, .adv_w = 188, .box_w = 12, .box_h = 20, .ofs_x = 0, .ofs_y = -6},
+    {.bitmap_index = 12904, .adv_w = 132, .box_w = 8, .box_h = 20, .ofs_x = 0, .ofs_y = -6},
+    {.bitmap_index = 12953, .adv_w = 133, .box_w = 8, .box_h = 6, .ofs_x = 0, .ofs_y = -3}
 };
 
 /*---------------------
  *  CHARACTER MAPPING
  *--------------------*/
 
-
+static const uint16_t unicode_list_1[] = {
+    0x0, 0x1, 0x2, 0x3, 0x1e06
+};
 
 /*Collect the unicode lists and glyph_id offsets*/
 static const lv_font_fmt_txt_cmap_t cmaps[] =
@@ -2310,8 +2353,8 @@ static const lv_font_fmt_txt_cmap_t cmaps[] =
         .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
     },
     {
-        .range_start = 8222, .range_length = 1, .glyph_id_start = 193,
-        .unicode_list = NULL, .glyph_id_ofs_list = NULL, .list_length = 0, .type = LV_FONT_FMT_TXT_CMAP_FORMAT0_TINY
+        .range_start = 536, .range_length = 7687, .glyph_id_start = 193,
+        .unicode_list = unicode_list_1, .glyph_id_ofs_list = NULL, .list_length = 5, .type = LV_FONT_FMT_TXT_CMAP_SPARSE_TINY
     }
 };
 
@@ -2347,7 +2390,7 @@ static const uint8_t kern_left_class_mapping[] =
     31, 6, 13, 6, 13, 6, 13, 6,
     13, 6, 13, 6, 33, 34, 16, 7,
     16, 7, 35, 36, 35, 36, 35, 36,
-    0, 37
+    0, 28, 29, 30, 37, 38
 };
 
 /*Map glyph_ids to kern right classes*/
@@ -2377,7 +2420,7 @@ static const uint8_t kern_right_class_mapping[] =
     25, 4, 14, 4, 14, 4, 14, 4,
     14, 4, 14, 4, 14, 26, 15, 5,
     15, 5, 27, 28, 27, 28, 27, 28,
-    0, 29
+    0, 22, 23, 24, 25, 29
 };
 
 /*Kern values between classes*/
@@ -2514,10 +2557,13 @@ static const int8_t kern_class_values[] =
     0, 0, 0, -4, 0, -3, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 1,
     0, 0, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, -6, 0, 0, 0, 0,
+    -3, 0, -3, 0, 0, 0, 0, 0,
+    6, 0, 0, 0, -4, 0, 0, 0,
+    3, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, -2, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0,
-    -2, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0
+    0, 0, 0, 0, 0, 0
 };
 
 
@@ -2527,7 +2573,7 @@ static const lv_font_fmt_txt_kern_classes_t kern_classes =
     .class_pair_values   = kern_class_values,
     .left_class_mapping  = kern_left_class_mapping,
     .right_class_mapping = kern_right_class_mapping,
-    .left_class_cnt      = 37,
+    .left_class_cnt      = 38,
     .right_class_cnt     = 29,
 };
 
@@ -2594,4 +2640,4 @@ lv_font_t extras_lat_20 = {
 #endif /*#if EXTRAS_LAT_20*/
 
 
-#endif /* HAS_TANMATSU || HAS_TDECK_GT911 || HAS_THINKNODE_M9 */
+#endif /* defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE) || defined(WADA_WEB) */

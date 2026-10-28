@@ -2285,3 +2285,22 @@ not known	not known
 Picture dimming	Atenuación de la imagen
 Wallpaper dimming	Atenuación del fondo de pantalla
 Darker with Night, lighter with Day, so the text on it stays readable.	Más oscura con Noche, más clara con Día, para que el texto siga legible.
+Asking the time server	Consultando el servidor de hora
+Auto-delete old contacts	Borrar contactos antiguos automáticamente
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibra con los mensajes nuevos, incluso con el sonido apagado. Respeta No molestar.
+Connections	Conexiones
+Days	Días
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Borra los contactos que no se han oído en el número de días de abajo. Los favoritos nunca se borran.
+Downloaded to this computer, and kept in this browser.	Descargado en este ordenador y guardado en este navegador.
+Import from this computer	Importar desde este ordenador
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	En el navegador, la conexión se elige en la barra de la página: Conectar llega a tu nodo por Bluetooth, USB o Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	En el navegador, la conexión se elige en la barra de la página: Conectar llega a tu nodo por Wi-Fi, USB o Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Aún sin posición. Permite que esta página use tu ubicación cuando el navegador lo pregunte.
+Not heard from for this many days, 1 to 999.	Sin oírse durante estos días, de 1 a 999.
+Pattern	Patrón
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Suena una vez para un mensaje, dos para un DM y tres para una @ mención. Toca uno para sentirlo.
+Remove old contacts	Quitar contactos antiguos
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	El mapa se descarga por la red de este ordenador. El Wi-Fi de tu nodo se configura en el nodo.
+Vibrate	Vibrar
+Vibration	Vibración
+Your node's own Bluetooth and pairing code are set on the node.	El Bluetooth y el código de emparejamiento de tu nodo se configuran en el nodo.

@@ -2283,3 +2283,22 @@ not known	not known
 Picture dimming	Bild abdunkeln
 Wallpaper dimming	Hintergrundbild abdunkeln
 Darker with Night, lighter with Day, so the text on it stays readable.	Bei Nacht dunkler, bei Tag heller, damit der Text darauf lesbar bleibt.
+Asking the time server	Frage den Zeitserver
+Auto-delete old contacts	Alte Kontakte automatisch löschen
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibriert bei neuen Nachrichten, auch wenn der Ton aus ist. Beachtet Nicht stören.
+Connections	Verbindungen
+Days	Tage
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Löscht Kontakte, die seit der unten angegebenen Anzahl Tage nicht gehört wurden. Favoriten werden nie gelöscht.
+Downloaded to this computer, and kept in this browser.	Auf diesen Computer heruntergeladen und in diesem Browser gespeichert.
+Import from this computer	Von diesem Computer importieren
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	Im Browser wird die Verbindung in der Seitenleiste oben eingestellt: Verbinden erreicht deinen Node über Bluetooth, USB oder Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	Im Browser wird die Verbindung in der Seitenleiste oben eingestellt: Verbinden erreicht deinen Node über Wi-Fi, USB oder Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Noch keine Position. Erlaube dieser Seite deinen Standort, wenn der Browser fragt.
+Not heard from for this many days, 1 to 999.	So viele Tage nicht gehört, 1 bis 999.
+Pattern	Muster
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Einmal bei einer Nachricht, zweimal bei einer DM, dreimal bei einer @-Erwähnung. Tippe eines an, um es zu spüren.
+Remove old contacts	Alte Kontakte entfernen
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	Die Karte lädt über das Netzwerk dieses Computers. Das Wi-Fi deines Nodes wird am Node eingestellt.
+Vibrate	Vibrieren
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Bluetooth und Kopplungscode deines Nodes werden am Node eingestellt.

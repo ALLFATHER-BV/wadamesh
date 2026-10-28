@@ -1086,11 +1086,13 @@ extern "C" const lv_font_t extras_16;
 // montserrat_28 was picked over 24 because only 12/14/16/28 are actually built
 // into this project's vendored LVGL config (LV_FONT_MONTSERRAT_24 isn't enabled).
 extern "C" const lv_font_t extras_lat_28;
-// extras_lat_20 was HAS_TANMATSU-only too (Large/Huge UI-scale fallback); the
-// T-Deck now also builds it, for its 20px at-glance body experiment (see
-// atGlanceEnsureFont()) -- extras_lat_20.c's own gate was widened to match.
-#if defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
+// Accented Latin at the bigger UI faces (18/20/24 px), built on exactly the boards
+// that carry those faces (the $ui_big gate in gen-touch-fonts.sh, which covers every
+// CAP_UI_SIZE board and DOC_CAPTURE). 20 px is also the T-Deck / M9 at-a-glance body.
+#if CAP_UI_SIZE || defined(DOC_CAPTURE)
+extern "C" const lv_font_t extras_lat_18;
 extern "C" const lv_font_t extras_lat_20;
+extern "C" const lv_font_t extras_lat_24;
 #endif
 #if defined(TLORA_PAGER)
 // Full multilingual fallbacks at the Pager's accessible text sizes. These keep
@@ -1098,13 +1100,6 @@ extern "C" const lv_font_t extras_lat_20;
 // the enlarged Montserrat primary instead of dropping back to 12/14/16 px.
 extern "C" const lv_font_t extras_20;
 extern "C" const lv_font_t extras_24;
-#endif
-#if defined(HAS_TANMATSU)
-// Compressed Latin-accent fonts at the scaled sizes so umlauts etc. match their
-// neighbours at Large/Huge UI scale (issue #129). Room for these was made by
-// storing the extras fonts compressed (LV_USE_FONT_COMPRESSED) — nothing lost,
-// net binary SMALLER, so the P4 app-load ceiling is respected.
-extern "C" const lv_font_t extras_lat_24;
 #endif
 static lv_font_t g_font_12;
 static lv_font_t g_font_14;
@@ -1544,6 +1539,64 @@ static inline const lv_font_t* chatMessageFont() {
 #endif
 }
 
+#if CAP_UI_SIZE || defined(DOC_CAPTURE)
+// The bigger text sizes swap an 18/20/24/28 px Montserrat into g_font_12/14/16, and that
+// face is ASCII only: every accented letter comes from the fallback chain. That chain
+// used to stay at 12/14/16 px (only the Tanmatsu spliced a matching size, #129), so at
+// Large/Huge, and on the large screens and the browser build, "Urządzenie" drew its ą
+// visibly smaller than the word around it (Polish, Czech, Hungarian, Romanian). Give
+// each slot the extras at its primary's own size: the full extras where one exists at
+// that size, otherwise the Latin-only extras_lat_NN in front of the biggest full one
+// (Greek, Cyrillic, Arabic).
+static int uiFacePx(const lv_font_t* f) {
+  static const struct { const lv_font_t* face; int px; } k[] = {
+    { &lv_font_montserrat_12, 12 }, { &lv_font_montserrat_14, 14 }, { &lv_font_montserrat_16, 16 },
+    { &lv_font_montserrat_18, 18 }, { &lv_font_montserrat_20, 20 }, { &lv_font_montserrat_24, 24 },
+#if CAP_LARGE_SCREEN || defined(DOC_CAPTURE)
+    { &lv_font_montserrat_28, 28 },   // as for extras_lat_28 below: only these reach 28 px
+#endif
+  };
+  for (const auto& e : k) if (f->dsc == e.face->dsc) return e.px;   // g_font_NN are struct copies
+  return 0;
+}
+static void sizeMatchTextFallbacks(lv_font_t* const prim[3], const lv_font_t* extras[3],
+                                   lv_font_t* tail, lv_font_t* missing) {
+  static lv_font_t s_lat[3];
+  for (int i = 0; i < 3; ++i) {
+    const lv_font_t* full = nullptr;
+    const lv_font_t* lat  = nullptr;
+    switch (uiFacePx(prim[i])) {
+      case 12: full = &extras_12; break;
+      case 14: full = &extras_14; break;
+      case 16: full = &extras_16; break;
+#if defined(TLORA_PAGER)
+      // The Pager carries full extras at 20/24 and is at ~98% flash: its 18 px face keeps
+      // the 20 px extras it had (a touch larger, never smaller) instead of linking another.
+      case 18: full = &extras_20; break;
+      case 20: full = &extras_20; break;
+      case 24: full = &extras_24; break;
+#else
+      case 18: lat = &extras_lat_18; break;
+      case 20: lat = &extras_lat_20; break;
+      case 24: lat = &extras_lat_24; break;
+#endif
+#if CAP_LARGE_SCREEN || defined(DOC_CAPTURE)
+      // Only the large-screen Huge preset reaches 28 px. Referencing it elsewhere would
+      // link 25 KB the T-Deck / M9 / Pager never draw (their presets stop at 24).
+      case 28: lat = &extras_lat_28; break;
+#endif
+      default: break;   // a face this table does not know: leave the chain as it was
+    }
+    if (full) { extras[i] = full; continue; }
+    if (!lat) continue;
+    const lv_font_t* rest = extras[i]->line_height < extras_16.line_height ? &extras_16 : extras[i];
+    s_lat[i] = *lat;
+    s_lat[i].fallback = withMissingGlyph(&tail[i], rest, &missing[i], prim[i]);
+    extras[i] = &s_lat[i];   // already ends in '*': the callers skip wrapping it again
+  }
+}
+#endif
+
 static void initTouchFontFallbacks() {
 #if defined(TLORA_PAGER)
   // The Pager is wide but only 222 px tall. Grow the semantic text roles while
@@ -1652,24 +1705,11 @@ static void initTouchFontFallbacks() {
 #endif
   lv_font_t*       prim[3]   = { &g_font_12, &g_font_14, &g_font_16 };
   static lv_font_t s_tail[3], s_missing[3];   // each chain ends extras -> '*' (#673)
-#if defined(HAS_TANMATSU)
-  // At Large/Huge scale the primaries become Montserrat 20/24/28 (ASCII-only),
-  // so accents dropped to the 16 px fallback and looked tiny. Splice the
-  // size-matched Latin-accent font per slot; tail is extras_16 so non-Latin
-  // still resolves. g_font sizes: Large(140) 16/20/24, Huge(170) 20/24/28.
-  static lv_font_t s_acc_scaled[3];
-  const lv_font_t* acc[3] = { nullptr, nullptr, nullptr };
-  if (s_ui_fscale == 140)      { acc[1] = &extras_lat_20; acc[2] = &extras_lat_24; }
-  else if (s_ui_fscale == 170) { acc[0] = &extras_lat_20; acc[1] = &extras_lat_24; acc[2] = &extras_lat_28; }
-  for (int i = 0; i < 3; ++i) {
-    if (!acc[i]) continue;
-    s_acc_scaled[i] = *acc[i];
-    s_acc_scaled[i].fallback = withMissingGlyph(&s_tail[i], &extras_16, &s_missing[i], prim[i]);
-    extras[i] = &s_acc_scaled[i];
-  }
+#if CAP_UI_SIZE || defined(DOC_CAPTURE)
+  sizeMatchTextFallbacks(prim, extras, s_tail, s_missing);   // accents at the primary's size
 #endif
   for (int i = 0; i < 3; ++i) {
-    if (extras[i]->fallback) continue;   // already ends in '*' (Tanmatsu accent slot)
+    if (extras[i]->fallback) continue;   // already ends in '*' (a size-matched Latin slot)
     extras[i] = withMissingGlyph(&s_tail[i], extras[i], &s_missing[i], prim[i]);
   }
   for (int i = 0; i < 3; ++i) s_text_tail[i] = extras[i];
@@ -1699,8 +1739,12 @@ static void initTouchFontFallbacks() {
     static lv_font_t s_tail[3], s_missing[3];   // each chain ends extras -> '*' (#673)
     lv_font_t* prim[3] = { &g_font_12, &g_font_14, &g_font_16 };
     const lv_font_t* extras[3] = { &extras_12, &extras_14, &extras_16 };
+#if CAP_UI_SIZE || defined(DOC_CAPTURE)
+    sizeMatchTextFallbacks(prim, extras, s_tail, s_missing);
+#endif
     for (int i = 0; i < 3; ++i) {
-      s_text_tail[i] = withMissingGlyph(&s_tail[i], extras[i], &s_missing[i], prim[i]);
+      s_text_tail[i] = extras[i]->fallback ? extras[i]
+                                           : withMissingGlyph(&s_tail[i], extras[i], &s_missing[i], prim[i]);
       prim[i]->fallback = s_text_tail[i];
     }
   }
@@ -3439,7 +3483,7 @@ struct LvUiState {
   LvChatPanel dm;          // Chats tab list + DM overlay
   LvChatPanel ch;          // channel thread overlay only (no tab list)
   lv_obj_t* contacts_list;
-  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (non-repeater) 3=favorites 4=has location 5=direct 6=rooms
+  uint8_t   contacts_filter;  // 0=all 1=repeaters 2=peers (not a repeater or room) 3=favorites 4=has location 5=direct 6=rooms
   // Per-session text-search filter applied on top of the category filter.
   // Empty = no text filter. Set/cleared by the magnifier sheet.
   char      contacts_search[24];
@@ -14435,9 +14479,24 @@ static void saveExperimentalCb(lv_event_t* e) {
   refreshStatusLabels();   // applies instantly on toggle (no Save button)
 }
 
+// Set by src/main.cpp on the S3 boards (its Wi-Fi loop owns SNTP); null where nothing
+// restarts SNTP for us (the P4 IDF builds, the web host), which keep the plain copy.
+void (*g_sntp_resync_hook)() = nullptr;
+
 static void syncClockCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !g_lv.task) return;
   const bool ok = g_lv.task->setDeviceTimeFromSystemClock();
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  // On most boards the "system" clock IS the device clock, so the copy above changes
+  // nothing unless SNTP had already moved it. With Wi-Fi up, ask the time server now
+  // instead; the Wi-Fi loop writes the answer through (RTC chip included) and says
+  // "Clock synced" when it lands.
+  if (g_sntp_resync_hook && WiFi.status() == WL_CONNECTED) {
+    g_sntp_resync_hook();
+    g_lv.task->showAlert(TR("Asking the time server"), 1500);
+    return;
+  }
+#endif
   g_lv.task->showAlert(ok ? TR("Clock synced") : TR("No system time yet"), 900);
 }
 
@@ -17970,21 +18029,27 @@ static void openTimezonePicker() {
   lv_obj_set_style_pad_row(list, 6, LV_PART_MAIN);
   lv_obj_set_scroll_dir(list, LV_DIR_VER);
 
+  // Rows are in the picker's own (west to east) order; each carries its zone's
+  // permanent id, which is what gets saved.
   const int cur = (int)touchPrefsGetTimezone();
   const int n   = touchPrefsTimezoneCount();
+  lv_obj_t* cur_row = nullptr;
   for (int i = 0; i < n; ++i) {
+    const int id = touchPrefsTimezoneAt(i);
     lv_obj_t* row = lv_btn_create(list);
     lv_obj_set_size(row, sw - 16, SC(40));
     styleButton(row);
-    if (i == cur) lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    if (id == cur) { lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN); cur_row = row; }
     lv_obj_set_style_text_color(row,
-      lv_color_hex(i == cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
-    lv_obj_add_event_cb(row, tzPickerSelectCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+      lv_color_hex(id == cur ? COLOR_ON_ACCENT : COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_add_event_cb(row, tzPickerSelectCb, LV_EVENT_CLICKED, (void*)(intptr_t)id);
     lv_obj_t* lbl = lv_label_create(row);
-    lv_label_set_text(lbl, touchPrefsTimezoneLabel(i));
+    lv_label_set_text(lbl, touchPrefsTimezoneLabel(id));
     lv_obj_set_style_text_font(lbl, &g_font_14, LV_PART_MAIN);
     lv_obj_center(lbl);
   }
+  // The list is long now (40+ zones): open it on the current one.
+  if (cur_row) lv_obj_scroll_to_view(cur_row, LV_ANIM_OFF);
   lv_obj_move_foreground(s_tz_picker);
 }
 static void openTimezoneCb(lv_event_t* e) { if (lv_event_get_code(e) == LV_EVENT_CLICKED) openTimezonePicker(); }
@@ -34269,7 +34334,7 @@ static bool ctPassesFilter(const ContactInfo& c, bool is_fav, int fav_count, con
   const bool is_rep = (c.type == ADV_TYPE_REPEATER);
   switch(g_lv.contacts_filter){
     case 1u: if(!is_rep) return false; break;                              // repeaters
-    case 2u: if(is_rep)  return false; break;                              // peers
+    case 2u: if(is_rep || c.type == ADV_TYPE_ROOM) return false; break;   // peers: rooms have their own filter (6)
     case 3u: if(fav_count>0 && !is_fav) return false; break;               // favorites
     case 4u: if(!(c.gps_lat!=0 || c.gps_lon!=0)) return false; break;      // has location
     case 5u: if (pathHops(c.out_path_len) != 0) return false; break;                  // 0-hop / direct neighbors only
@@ -77944,7 +78009,17 @@ void UITask::toggleGPS() {
 }
 
 void UITask::setGpsPower(bool on) {
-  if (_sensors) _sensors->setSettingValue("gps", on ? "1" : "0");
+  if (!_sensors) return;
+  _sensors->setSettingValue("gps", on ? "1" : "0");
+  // The GPS saver's wake. The parser still holds the fix, date and time from before the rest,
+  // and the provider's 30-minute clock re-sync would take that stale time as current, putting
+  // the clock back by the length of the rest. syncTime() drops the old sentence (so only fresh
+  // satellite time can set the clock) and asks for a sync from the first fresh fix. Our own
+  // provider also clears itself in begin(); this covers the core one (V4 and others) too.
+  if (on) {
+    LocationProvider* lp = _sensors->getLocationProvider();
+    if (lp) lp->syncTime();
+  }
 }
 
 bool UITask::setNodeName(const char* s) {

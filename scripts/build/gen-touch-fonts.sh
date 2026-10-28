@@ -205,6 +205,7 @@ generate_extras() {
     --font "$montserrat" \
     -r 0x00C0-0x00FF \
     -r 0x0100-0x017F \
+    -r 0x0218-0x021B \
     -r 0x0400-0x04FF \
     --symbols "$symbols_fallback" \
     --font "$noto_sans" \
@@ -237,6 +238,7 @@ generate_latin_extras() {
     --font "$montserrat" \
     -r 0x00C0-0x00FF \
     -r 0x0100-0x017F \
+    -r 0x0218-0x021B \
     --symbols "„" \
     --lv-font-name "extras_lat_${size}" \
     -o "$raw"
@@ -338,7 +340,7 @@ generate_semibold() {
   local output="$stage/src/ui-touch/ui_semibold_${size}.c"
 
   "${font_conv[@]}" --bpp 4 --size "$size" --format lvgl \
-    --font "$montserrat_semibold" -r 0x20-0x7E,0xA0-0x17F,0x2022,0x2026 \
+    --font "$montserrat_semibold" -r 0x20-0x7E,0xA0-0x17F,0x218-0x21B,0x2022,0x2026 \
     --lv-font-name "ui_semibold_${size}" -o "$raw"
   normalise "$raw" "$output" "Montserrat SemiBold v7.222"
 }
@@ -441,13 +443,17 @@ done
 for size in 20 24; do
   generate_extras "$size" "defined(TLORA_PAGER)" "TLORA_PAGER"
 done
-# At-a-glance uses 20 px on T-Deck/M9 and 28 px across boards; the 24 px face
-# remains the Tanmatsu Large/Huge UI fallback.
-generate_latin_extras 20 \
-  "defined(HAS_TANMATSU) || defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)" \
-  "HAS_TANMATSU || HAS_TDECK_GT911 || HAS_THINKNODE_M9" 1 \
-  "// Was HAS_TANMATSU-only (Large/Huge UI-scale accented-Latin fallback); the T-Deck|// now also builds this for the \"at a glance\" notification's 20 px message body|// (see atGlanceEnsureFont() in UITask.cpp) -- an experiment to see whether a|// smaller-than-28px glance body is still legible on that panel."
-generate_latin_extras 24 "defined(HAS_TANMATSU)" "HAS_TANMATSU" 1
+# Accented Latin (Latin-1, Latin Extended-A, Romanian comma-below) at the bigger UI
+# faces, on exactly the boards that carry those faces ($ui_big). The 18/20/24 px
+# Montserrat above is ASCII only, so without a size-matched fallback every accented
+# letter at a bigger text size came from the 12/14/16 px extras and drew visibly
+# smaller than its word (Polish "Urządzenie", Czech, Hungarian, Romanian Settings).
+# initTouchFontFallbacks() in UITask.cpp splices the one matching the primary's size.
+# The 20 px face is also the T-Deck / M9 at-a-glance body (atGlanceEnsureFont());
+# 28 px is every board's at-a-glance body, so that one has no guard.
+generate_latin_extras 18 "$ui_big"
+generate_latin_extras 20 "$ui_big"
+generate_latin_extras 24 "$ui_big"
 generate_latin_extras 28 "" "" 1 \
   "// Was HAS_TANMATSU-only (only consumer used to be the Tanmatsu's Large/Huge UI-scale|// accented-Latin fallback); now compiled on every board too for the \"at a glance\"|// notification's 28 px message body (see atGlanceEnsureFont() in UITask.cpp), which|// needs accented Latin / em-dash / ellipsis glyph coverage at that size on any board."
 for size in 14 28; do
@@ -485,6 +491,7 @@ files=(
   src/ui-touch/extras_font_16.c
   src/ui-touch/extras_font_20.c
   src/ui-touch/extras_font_24.c
+  src/ui-touch/extras_lat_18.c
   src/ui-touch/extras_lat_20.c
   src/ui-touch/extras_lat_24.c
   src/ui-touch/extras_lat_28.c

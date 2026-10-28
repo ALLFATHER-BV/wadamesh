@@ -2283,3 +2283,22 @@ not known	not known
 Picture dimming	Afbeelding dimmen
 Wallpaper dimming	Achtergrond dimmen
 Darker with Night, lighter with Day, so the text on it stays readable.	Donkerder bij Nacht, lichter bij Dag, zodat de tekst erop leesbaar blijft.
+Asking the time server	Tijdserver wordt gevraagd
+Auto-delete old contacts	Oude contacten automatisch verwijderen
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Trilt bij nieuwe berichten, ook met het geluid uit. Houdt rekening met Niet storen.
+Connections	Verbindingen
+Days	Dagen
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Verwijdert contacten die het aantal dagen hieronder niet gehoord zijn. Favorieten worden nooit verwijderd.
+Downloaded to this computer, and kept in this browser.	Gedownload naar deze computer en bewaard in deze browser.
+Import from this computer	Importeren van deze computer
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	In de browser stel je de verbinding in via de balk bovenaan: Verbinden bereikt je node via Bluetooth, USB of Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	In de browser stel je de verbinding in via de balk bovenaan: Verbinden bereikt je node via Wi-Fi, USB of Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Nog geen positie. Sta deze pagina toe je locatie te gebruiken als de browser het vraagt.
+Not heard from for this many days, 1 to 999.	Zoveel dagen niet gehoord, 1 tot 999.
+Pattern	Patroon
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Speelt één keer voor een bericht, twee keer voor een DM, drie keer voor een @-vermelding. Tik er een aan om het te voelen.
+Remove old contacts	Oude contacten verwijderen
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	De kaart downloadt via het netwerk van deze computer. De Wi-Fi van je node stel je op de node in.
+Vibrate	Trillen
+Vibration	Trilling
+Your node's own Bluetooth and pairing code are set on the node.	Bluetooth en de koppelcode van je node stel je op de node in.

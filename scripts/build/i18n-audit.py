@@ -97,7 +97,10 @@ def source_keys():
     # correct at runtime, invisible to a TR("literal") scan, so untranslatable.
     for f in _sources():
         src = strip_comments(open(f, encoding='utf-8').read())
-        for m in re.finditer(r'for\s*\(\s*(?:const\s+)?auto\s*&?\s*(\w+)\s*:\s*(\w+)\s*\)', src):
+        # Any element type, not just `auto`: `for (const SettingsGroupDef& g : kSettingsGroups)
+        # ... TR(g.title)` was missed, so the Settings group heading "Connections" never got
+        # a row in any language.
+        for m in re.finditer(r'for\s*\(\s*(?:const\s+)?[A-Za-z_][\w:]*\s*[&*]?\s*(\w+)\s*:\s*(\w+)\s*\)', src):
             var, tbl = m.group(1), m.group(2)
             brace = src.find('{', m.end())
             if brace < 0 or brace - m.end() > 8:   # single-statement body, no block

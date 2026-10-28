@@ -2285,3 +2285,22 @@ not known	not known
 Picture dimming	Σκίαση εικόνας
 Wallpaper dimming	Σκίαση ταπετσαρίας
 Darker with Night, lighter with Day, so the text on it stays readable.	Πιο σκούρα με Νύχτα, πιο φωτεινή με Ημέρα, για να διαβάζεται το κείμενο.
+Asking the time server	Asking the time server
+Auto-delete old contacts	Auto-delete old contacts
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Buzz for new messages, even with Sound off. Respects Do Not Disturb.
+Connections	Connections
+Days	Days
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Deletes contacts not heard from in the number of days below. Favourites are never deleted.
+Downloaded to this computer, and kept in this browser.	Downloaded to this computer, and kept in this browser.
+Import from this computer	Import from this computer
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	No position yet. Allow this page to use your location when the browser asks.
+Not heard from for this many days, 1 to 999.	Not heard from for this many days, 1 to 999.
+Pattern	Pattern
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.
+Remove old contacts	Remove old contacts
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.
+Vibrate	Vibrate
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Your node's own Bluetooth and pairing code are set on the node.
