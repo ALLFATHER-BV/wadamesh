@@ -2282,3 +2282,6 @@ Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, s
 last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
+Picture dimming	Затъмняване на картината
+Wallpaper dimming	Затъмняване на тапета
+Darker with Night, lighter with Day, so the text on it stays readable.	По-тъмно с Нощ, по-светло с Ден, за да се чете текстът върху нея.

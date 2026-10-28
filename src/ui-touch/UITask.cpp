@@ -54,6 +54,10 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #if CAP_MAP_PMTILES
     #include "PmTiles.h"   // PNG raster archives on the card (Map options -> Map file)
   #endif
+  #if CAP_MAP_OVERZOOM
+    #include "MapOverzoom.h"   // stand-in tiles from an ancestor when one is missing offline
+  #endif
+  #include "PictureDim.h"      // Picture dimming / Wallpaper dimming steps
   #include <esp_system.h>
   #include <esp_sleep.h>   // esp_deep_sleep_start / ext0 wakeup for the power-off menu
   #include <driver/rtc_io.h>   // rtc_gpio_pullup_en — hold the wake pin's level in deep sleep
@@ -19307,6 +19311,19 @@ static void buildLockPage() {
     // The way back from a picture of your own (#626).
     s_lockwall_default_row = strcmp(cur, touchPrefsDefaultLockWallpaper()) != 0
         ? setActionRow(c, LV_SYMBOL_REFRESH, "Default wallpaper", nullptr, lockwallDefaultCb) : nullptr;
+#if !defined(HAS_TDECK_PRO)   // e-paper shows its picture as it is
+    {
+      // The veil over a picture of your own (the built-in wallpaper has none). Takes
+      // effect the next time the lock screen shows; Strong is the look from before.
+      const char* steps[] = { TR("Off"), TR("Light"), TR("Medium"), TR("Strong") };
+      setChoiceRow(c, "Wallpaper dimming", nullptr, steps, 4, touchPrefsGetLockDim(), [](lv_event_t* e) {
+        if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+        const int level = setChoiceIndex(e);
+        touchPrefsSetLockDim((uint8_t)level);
+        setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), level);
+      });
+    }
+#endif
 #if !defined(HAS_TDECK_PRO) && !defined(TLORA_PAGER)   // the Pager keeps a white clock (lockscreenShow)
     setSwatchRow(c, "Text colour", kLockColors, (int)(sizeof(kLockColors) / sizeof(kLockColors[0])),
                  touchPrefsGetLockTextColor(), lockColorPickCb);
@@ -35396,6 +35413,7 @@ struct MapTile {
   lv_img_dsc_t dsc;
   lv_obj_t* img;
   bool      in_use;      // true = slot's (z,x,y) is valid; false = empty slot
+  uint8_t   ovz;         // 0: the tile itself; k: a stand-in cut from the ancestor k levels up
 };
 
 static MapTile* s_map_tiles = (MapTile*)psAlloc(sizeof(MapTile) * k_map_visible_tiles_max);   // PSRAM (1.1 KB off internal .bss)
@@ -37999,9 +38017,73 @@ static bool loadTileJpeg(uint8_t z, int32_t x, int32_t y,
 #endif
 }
 
+#if CAP_MAP_OVERZOOM
+// Ancestors already found missing (MapOverzoom::MissRing), so pans and re-renders do not
+// ask the card or the cache for the same absent file again. freeMapTiles() clears it
+// (every source change goes through there), and so does a finished download. 16 holds
+// every ancestor of a 3x3 grid (at most 4 per level); PSRAM, zeroed = empty.
+typedef MapOverzoom::MissRing<16> MapOvzMissRing;
+static MapOvzMissRing* s_map_ovz_miss = (MapOvzMissRing*)psAlloc(sizeof(MapOvzMissRing));
+#if defined(MULTI_TRANSPORT_COMPANION)
+static uint16_t s_map_ovz_miss_ok = 0;   // s_tile_fetch_ok when the ring was last known good
+#endif
+// Can a download still bring a tile that is not on storage? Then the map waits for it,
+// as before, rather than drawing a stand-in the arriving tile would have to replace.
+static bool mapTileFetchCanFill() {
+#if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
+  return WiFi.status() == WL_CONNECTED;
+#else
+  return false;
+#endif
+}
+// Draw z/x/y from its nearest ancestor (up to MapOverzoom::kMaxDepth levels up) into
+// `buf`, a 256x256 tile buffer: the ancestor is decoded there, its covering square
+// copied out and blown back up over it. Returns the depth used (1..3), or 0 when no
+// ancestor is there either (buf then holds nothing useful).
+static int mapOverzoomInto(uint8_t z, int32_t x, int32_t y, uint8_t* buf, size_t cap) {
+  constexpr int T = MapOverzoom::kTile;
+  if (!buf || cap < (size_t)T * T * sizeof(lv_color_t)) return 0;
+#if defined(MULTI_TRANSPORT_COMPANION)
+  if (!s_map_ovz_miss) return 0;
+  if (s_map_ovz_miss_ok != s_tile_fetch_ok) { s_map_ovz_miss->clear(); s_map_ovz_miss_ok = s_tile_fetch_ok; }
+#endif
+  for (int k = 1; k <= MapOverzoom::kMaxDepth; ++k) {
+    MapOverzoom::Source src;
+    if (!MapOverzoom::ancestor(z, x, y, k, src)) break;
+    if (src.z < k_map_zoom_min) break;
+    if (s_map_ovz_miss->has(src.z, src.x, src.y)) continue;
+    uint8_t* enc = nullptr;
+    size_t elen = 0;
+    if (!loadTileJpeg(src.z, src.x, src.y, &enc, &elen, nullptr) || !enc) {
+      s_map_ovz_miss->add(src.z, src.x, src.y);
+      continue;
+    }
+    int dw = 0, dh = 0;
+    uint8_t* rgb = (elen >= 4 && enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G')
+                     ? decodePngToRgb565(enc, elen, &dw, &dh, buf, cap)
+                     : decodeJpegScaledToRgb565(enc, elen, &dw, &dh, T, buf, cap);
+    lvglPsramFree(enc);
+    if (!rgb || dw != T || dh != T) {   // only a full 256 px tile has the geometry to cut
+      s_map_ovz_miss->add(src.z, src.x, src.y);
+      continue;
+    }
+    lv_color_t* sq = (lv_color_t*)lvglPsramAlloc((size_t)MapOverzoom::cropPixels(k) * sizeof(lv_color_t));
+    if (!sq) return 0;   // out of memory this pass: no stand-in, the next render retries
+    MapOverzoom::crop((const lv_color_t*)buf, src, sq);
+    MapOverzoom::upscale((const lv_color_t*)sq, src.side, (lv_color_t*)buf);
+    lvglPsramFree(sq);
+    return k;
+  }
+  return 0;
+}
+#endif
+
 // Free everything currently in the tile cache.
 static void freeMapTiles() {
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) freeMapTileSlot(s_map_tiles[_ti]);
+#if CAP_MAP_OVERZOOM
+  if (s_map_ovz_miss) s_map_ovz_miss->clear();
+#endif
 }
 
 // The tile storage changed underneath us: a card was remounted (wedge recovery,
@@ -38369,12 +38451,22 @@ static void renderMapTiles() {
   // that trailing pass is now a cheap no-visual-change refresh.
   renderMapMarkers();
 
+#if CAP_MAP_OVERZOOM
+  // Offline (no download can bring a missing tile): a gap is filled from its nearest
+  // ancestor instead (mapOverzoomInto). Online the map waits for the real tile, as before.
+  const bool fetch_can_fill = mapTileFetchCanFill();
+#endif
+
   // Pass 1 — keep matching slots, RELEASE non-matching ones (keep their 128 KB
   // buffer for reuse below — see releaseMapTileSlot; freeing per-render is what
   // fragmented PSRAM).
   for (int _ti = 0; _ti < k_map_visible_tiles_max; ++_ti) { MapTile& t = s_map_tiles[_ti];
     if (!t.in_use) continue;
     if (t.z != s_map_zoom) { releaseMapTileSlot(t); continue; }
+#if CAP_MAP_OVERZOOM
+    // A stand-in while Wi-Fi is back: drop it so pass 2 loads or queues the real tile.
+    if (t.ovz && fetch_can_fill) { releaseMapTileSlot(t); continue; }
+#endif
     bool kept = false;
     for (int i = 0; i < n_wanted; ++i) {
       if (!wanted[i].placed && wanted[i].tx == t.x && wanted[i].ty == t.y) {
@@ -38437,6 +38529,9 @@ static void renderMapTiles() {
     uint8_t* jpeg = nullptr;
     size_t   jlen = 0;
     bool repairable_cache = false;
+    int dw = 0, dh = 0;
+    uint8_t* rgb = nullptr;
+    uint8_t  ovz = 0;
     if (!loadTileJpeg(s_map_zoom, wanted[i].tx, wanted[i].ty,
                       &jpeg, &jlen, &repairable_cache)) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
@@ -38445,18 +38540,27 @@ static void renderMapTiles() {
       // pass will queue again.
       queueTileForFetch(s_map_zoom, wanted[i].tx, wanted[i].ty);
 #endif
-      ++n_missing;
+      ++n_missing;   // a stand-in still counts: the tile itself is not there ("Wi-Fi off, gaps")
+#if CAP_MAP_OVERZOOM
+      if (!fetch_can_fill)
+        ovz = (uint8_t)mapOverzoomInto(s_map_zoom, wanted[i].tx, wanted[i].ty, dst->rgb565, kTileBufBytes);
+      if (!ovz) continue;
+      rgb = dst->rgb565;
+      dw = dh = 256;
+#else
       continue;
+#endif
     }
-    int dw = 0, dh = 0;
     // Decode straight INTO the slot's persistent 128 KB buffer (dst->rgb565) — no
     // per-tile malloc, so PSRAM never fragments. PNG (0x89 'P' 'N' 'G') → lodepng
     // (LVGL's lv_png is broken here); else the DIRECT tjpgd path (streams MCUs into
     // the buffer through a shared 4 KB work pool). 256 px cap == native tile size.
-    uint8_t* rgb = (jlen >= 4 && jpeg[0] == 0x89 && jpeg[1] == 'P' && jpeg[2] == 'N' && jpeg[3] == 'G')
-                     ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
-                     : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
-    lvglPsramFree(jpeg);
+    if (!ovz) {
+      rgb = (jlen >= 4 && jpeg[0] == 0x89 && jpeg[1] == 'P' && jpeg[2] == 'N' && jpeg[3] == 'G')
+              ? decodePngToRgb565(jpeg, jlen, &dw, &dh, dst->rgb565, kTileBufBytes)
+              : decodeJpegScaledToRgb565(jpeg, jlen, &dw, &dh, 256, dst->rgb565, kTileBufBytes);
+      lvglPsramFree(jpeg);
+    }
     if (!rgb) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       if (repairable_cache) {
@@ -38483,6 +38587,7 @@ static void renderMapTiles() {
     TDeckProDisplay::prepareMapTileRGB565((uint16_t*)rgb, dw, dh);
 #endif
     dst->z = s_map_zoom; dst->x = wanted[i].tx; dst->y = wanted[i].ty;
+    dst->ovz = ovz;
     dst->rgb565 = rgb;   // == the slot's persistent buffer (decoded in place)
     dst->w = dw; dst->h = dh;
     memset(&dst->dsc, 0, sizeof(dst->dsc));
@@ -38716,6 +38821,7 @@ struct AppMapTile {
   lv_img_dsc_t dsc;
   lv_obj_t* img = nullptr;
   bool     in_use = false;
+  bool     ovz = false;          // a stand-in cut from an ancestor (mapOverzoomInto)
 };
 struct AppMapView {
   lv_obj_t* cont   = nullptr;   // clips to the app's requested rectangle
@@ -38906,11 +39012,17 @@ void luaHostMapRender(void* vp) {
   }
   const int nw = nc < kAppMapTilesMax ? nc : kAppMapTilesMax;
   Want* wanted = cand;
+#if CAP_MAP_OVERZOOM
+  const bool fetch_can_fill = mapTileFetchCanFill();   // offline: gaps from an ancestor, as on the map tab
+#endif
 
   for (int i = 0; i < kAppMapTilesMax; i++) {           // keep matches, free the rest
     AppMapTile& t = v->pool[i];
     if (!t.in_use) continue;
     bool keep = false;
+#if CAP_MAP_OVERZOOM
+    if (t.ovz && fetch_can_fill) { appMapFreeTile(t); continue; }   // Wi-Fi is back: get the real one
+#endif
     for (int k = 0; k < nw; k++) {
       if (t.z == v->zoom && t.x == wanted[k].tx && t.y == wanted[k].ty) {
         keep = true; wanted[k].placed = true;
@@ -38929,19 +39041,33 @@ void luaHostMapRender(void* vp) {
     for (int i = 0; i < kAppMapTilesMax; i++) if (!v->pool[i].in_use) { dst = &v->pool[i]; break; }
     if (!dst) break;
     uint8_t* enc = nullptr; size_t elen = 0; bool repairable = false;
+    int dw = 0, dh = 0;
+    uint8_t* rgb = nullptr;
+    bool ovz = false;
     if (!loadTileJpeg(v->zoom, wanted[k].tx, wanted[k].ty, &enc, &elen, &repairable) || !enc) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
       queueTileForFetch(v->zoom, wanted[k].tx, wanted[k].ty);   // fills in if Wi-Fi is up
 #endif
+#if CAP_MAP_OVERZOOM
+      if (fetch_can_fill) continue;
+      if (!dst->rgb) dst->rgb = (uint8_t*)lvglPsramAlloc(kAppMapTileBytes);
+      if (!dst->rgb) break;
+      if (!mapOverzoomInto(v->zoom, wanted[k].tx, wanted[k].ty, dst->rgb, kAppMapTileBytes)) continue;
+      rgb = dst->rgb;
+      dw = dh = 256;
+      ovz = true;
+#else
       continue;
+#endif
     }
-    if (!dst->rgb) dst->rgb = (uint8_t*)lvglPsramAlloc(kAppMapTileBytes);
-    if (!dst->rgb) { lvglPsramFree(enc); break; }
-    int dw = 0, dh = 0;
-    uint8_t* rgb = (elen >= 4 && enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G')
-                     ? decodePngToRgb565(enc, elen, &dw, &dh, dst->rgb, kAppMapTileBytes)
-                     : decodeJpegScaledToRgb565(enc, elen, &dw, &dh, 256, dst->rgb, kAppMapTileBytes);
-    lvglPsramFree(enc);
+    if (!ovz) {
+      if (!dst->rgb) dst->rgb = (uint8_t*)lvglPsramAlloc(kAppMapTileBytes);
+      if (!dst->rgb) { lvglPsramFree(enc); break; }
+      rgb = (elen >= 4 && enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G')
+              ? decodePngToRgb565(enc, elen, &dw, &dh, dst->rgb, kAppMapTileBytes)
+              : decodeJpegScaledToRgb565(enc, elen, &dw, &dh, 256, dst->rgb, kAppMapTileBytes);
+      lvglPsramFree(enc);
+    }
     if (!rgb) continue;
     if (s_map_night) {   // follow the user's map setting rather than inventing a second one
       uint16_t* px = (uint16_t*)rgb;
@@ -38952,6 +39078,7 @@ void luaHostMapRender(void* vp) {
     TDeckProDisplay::prepareMapTileRGB565((uint16_t*)rgb, dw, dh);
 #endif
     dst->z = v->zoom; dst->x = wanted[k].tx; dst->y = wanted[k].ty;
+    dst->ovz = ovz;
     dst->w = dw; dst->h = dh;
     memset(&dst->dsc, 0, sizeof(dst->dsc));
     dst->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
@@ -41073,6 +41200,22 @@ static bool mapZoomReachable(uint8_t z) {
 #endif
   return false;
 }
+#if CAP_MAP_OVERZOOM
+// Can level z be shown offline from an ancestor (renderMapTiles' stand-ins)? The centre
+// tile's parent, grandparent or great-grandparent must be on storage.
+static bool mapZoomOverzoomable(uint8_t z) {
+  if (!mapTileSourceReady() || mapTileFetchCanFill()) return false;
+  double wx, wy;
+  latLonToWorldPx(s_map_center_lat, s_map_center_lon, z, &wx, &wy);
+  const int32_t tx = (int32_t)floor(wx / 256.0), ty = (int32_t)floor(wy / 256.0);
+  for (int k = 1; k <= MapOverzoom::kMaxDepth; ++k) {
+    MapOverzoom::Source src;
+    if (!MapOverzoom::ancestor(z, tx, ty, k, src) || src.z < k_map_zoom_min) break;
+    if (tileExistsAt(src.z, (long)src.x, (long)src.y)) return true;
+  }
+  return false;
+}
+#endif
 #endif
 // One zoom step, shared by the +/- buttons and the keyboard-nav scroll keys.
 // Skips levels the current tile source can't show (same walk the buttons did).
@@ -41120,8 +41263,17 @@ static void mapZoomStep(bool zoom_in) {
     for (uint8_t z = s_map_zoom + 1; z <= k_map_zoom_max; ++z) {
       if (mapZoomReachable(z)) { want = z; break; }
     }
+#if CAP_MAP_OVERZOOM
+    // Past the deepest level on storage, offline: up to three more, drawn enlarged.
+    if (!want && mapZoomOverzoomable(s_map_zoom + 1)) want = s_map_zoom + 1;
+#endif
   } else {
-    for (uint8_t z = s_map_zoom - 1; z >= k_map_zoom_min; --z) {
+#if CAP_MAP_OVERZOOM
+    // Out of an enlarged level one step at a time (the level under it is enlarged
+    // from the same ancestor, or is that ancestor), not straight back to the pack.
+    if (!mapZoomReachable(s_map_zoom) && mapZoomOverzoomable(s_map_zoom)) want = s_map_zoom - 1;
+#endif
+    for (uint8_t z = s_map_zoom - 1; !want && z >= k_map_zoom_min; --z) {
       if (mapZoomReachable(z)) { want = z; break; }
       if (z == k_map_zoom_min) break;   // guard: z is unsigned, don't wrap below min
     }
@@ -50892,8 +51044,9 @@ static void lockscreenShow() {
     // A light black veil, and light ink on it whatever the theme, the way a phone
     // lock screen treats a photo. The theme's own background at 150/255 made a
     // picture milky on the Day themes and cloudy on Night (#652).
+    // How dark: Settings > Lock screen > Wallpaper dimming (Strong, the default, is 105).
     lv_obj_set_style_bg_color(dim, lv_color_black(), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(dim, (lv_opa_t)105, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(dim, (lv_opa_t)PictureDim::lockVeil(touchPrefsGetLockDim()), LV_PART_MAIN);
 #if defined(TLORA_PAGER)
     const uint32_t wclk = 0xFFFFFF;
 #else
@@ -51628,8 +51781,10 @@ static void bgTheme() {
 #if CAP_BG_IMAGE
 // A picture behind every screen: decoded once at boot, cut to cover the screen (the
 // scale that fills both sides, centred, sampled between pixels) and dimmed by night or
-// lifted by day so everything in front stays readable.
-static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, int W, int H, bool day) {
+// lifted by day so everything in front stays readable, as far as Settings > Theme >
+// Picture dimming asks (PictureDim::bgPixel; Strong, the default, is the original look).
+static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, int W, int H, bool day,
+                       uint8_t dim) {
   const int32_t k = LV_MIN(((int32_t)iw << 16) / W, ((int32_t)ih << 16) / H);   // source px per screen px
   const int32_t ox = (((int32_t)iw << 16) - k * W) / 2, oy = (((int32_t)ih << 16) - k * H) / 2;
   for (int y = 0; y < H; ++y) {
@@ -51653,19 +51808,7 @@ static void bgImageFit(const lv_color_t* in, int iw, int ih, lv_color_t* out, in
         const int bot = (int)((p10 >> sh) & 255) * (256 - fx) + (int)((p11 >> sh) & 255) * fx;
         c[k3] = (top * (256 - fy) + bot * fy) >> 16;
       }
-      int luma;
-      if (!day) {   // dimmed, and the brightest parts held down
-        for (int k3 = 0; k3 < 3; ++k3) c[k3] = c[k3] * 107 >> 8;
-        luma = (c[0] * 54 + c[1] * 183 + c[2] * 19) >> 8;
-        if (luma > 64) for (int k3 = 0; k3 < 3; ++k3) c[k3] = c[k3] * 64 / luma;
-      } else {      // lifted toward white, the darkest parts held up
-        for (int k3 = 0; k3 < 3; ++k3) c[k3] += (255 - c[k3]) * 153 >> 8;
-        luma = (c[0] * 54 + c[1] * 183 + c[2] * 19) >> 8;
-        if (luma < 200) {
-          const int f = (200 - luma) * 256 / (255 - luma);
-          for (int k3 = 0; k3 < 3; ++k3) c[k3] += (255 - c[k3]) * f >> 8;
-        }
-      }
+      PictureDim::bgPixel(c, day, dim);
       out[(size_t)y * W + x] = lv_color_make((uint8_t)c[0], (uint8_t)c[1], (uint8_t)c[2]);
     }
   }
@@ -51700,7 +51843,7 @@ static bool bgImageLoad() {
 fit:
 #endif
   lv_color_t* out = (iw > 0 && ih > 0) ? (lv_color_t*)psAlloc((size_t)W * H * sizeof(lv_color_t)) : nullptr;
-  if (out) bgImageFit((const lv_color_t*)rgb, iw, ih, out, W, H, s_theme_day);
+  if (out) bgImageFit((const lv_color_t*)rgb, iw, ih, out, W, H, s_theme_day, touchPrefsGetBackgroundDim());
   lvglPsramFree(rgb);
   if (!out) return false;
   s_bg_img = out; s_bg_w = W; s_bg_h = H;
@@ -67574,6 +67717,7 @@ struct ThemeChoice {
   uint8_t mode; uint32_t accent; bool more; uint8_t style; bool rainbow;
   uint8_t bg_kind; uint32_t bg_col; char bg_img[TOUCH_LOCK_WALLPAPER_MAXLEN];   // Background
   bool glass;                                                                    // Glass tiles
+  uint8_t bg_dim;                                                                // Picture dimming (TOUCH_DIM_*)
 };
 static ThemeChoice s_theme_saved = {}, s_theme_pend = {};
 static constexpr int kThemeColorN = (int)(sizeof(kThemeColors) / sizeof(kThemeColors[0]));
@@ -67595,6 +67739,7 @@ struct ThemePageUi {
   lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
   lv_obj_t* bg[5]; lv_obj_t* bg_sw[5]; lv_obj_t* bg_col_btn; lv_obj_t* bg_col_dot;
   lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note; lv_obj_t* glass_sw;
+  lv_obj_t* bg_dim_box; lv_obj_t* bg_dim_row;   // Picture dimming, under the picture's button
   lv_obj_t* icons[2]; lv_obj_t* icons_av[2];
   lv_obj_t* apply; lv_obj_t* apply_lbl;   // Apply and restart, on the preview box
   lv_obj_t* mini;                         // the bar that keeps it in reach once the box scrolls away
@@ -67830,7 +67975,8 @@ static bool themePendingDiffers() {
   const ThemeChoice& b = s_theme_saved;
   return a.mode != b.mode || a.accent != b.accent || a.more != b.more ||
          a.style != b.style || a.rainbow != b.rainbow || a.bg_kind != b.bg_kind ||
-         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass;
+         a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass ||
+         a.bg_dim != b.bg_dim;
 }
 // MORE COLORS! as the pending choice has it: Taste the rainbow brings it along, and
 // high contrast keeps its own fixed colours.
@@ -68240,6 +68386,11 @@ static void themePageRepaint() {
       base = base ? base + 1 : (strncmp(s_theme_pend.bg_img, "sd:", 3) ? s_theme_pend.bg_img : s_theme_pend.bg_img + 3);
       lv_label_set_text(s_tp.bg_img_lbl, base && base[0] ? base : TR("Choose an image"));
     }
+    if (s_tp.bg_dim_box) {   // only with a picture to dim
+      if (!hc && s_theme_pend.bg_kind == TOUCH_BG_IMAGE) lv_obj_clear_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_HIDDEN);
+      else lv_obj_add_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_HIDDEN);
+      setChoicePick(s_tp.bg_dim_row, s_theme_pend.bg_dim);
+    }
     // Glass tiles: nothing to see through in high contrast or on the plain theme.
     themeSwitchSet(s_tp.glass_sw, s_theme_pend.glass, !hc && s_theme_pend.bg_kind != TOUCH_BG_NONE);
     if (s_tp.bg_note) {
@@ -68354,6 +68505,11 @@ static void themeGlassCb(lv_event_t* e) {
 static void themeBgImageCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_CLICKED && !themeModeIsHc(s_theme_pend.mode)) themeBgPickImage();
 }
+static void themeBgDimCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || themeModeIsHc(s_theme_pend.mode)) return;
+  s_theme_pend.bg_dim = (uint8_t)setChoiceIndex(e);
+  themePageRepaint();
+}
 static void themeBubblesCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -68390,6 +68546,7 @@ static void themeApplyCb(lv_event_t* e) {
   touchPrefsSetBackgroundColor(s_theme_pend.bg_col);
   touchPrefsSetBackgroundImage(s_theme_pend.bg_img);
   touchPrefsSetGlassTiles(s_theme_pend.glass);
+  touchPrefsSetBackgroundDim(s_theme_pend.bg_dim);
 #endif
   s_theme_saved = s_theme_pend;
   lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
@@ -68589,6 +68746,7 @@ static void buildThemeSettings() {
   s_theme_saved.bg_col  = touchPrefsGetBackgroundColor();
   touchPrefsGetBackgroundImage(s_theme_saved.bg_img, sizeof s_theme_saved.bg_img);
   s_theme_saved.glass   = touchPrefsGetGlassTiles();
+  s_theme_saved.bg_dim  = touchPrefsGetBackgroundDim();
   s_theme_pend = s_theme_saved;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t card_w = sw - 22;   // as createSettingsModal's cards
@@ -68840,6 +68998,20 @@ static void buildThemeSettings() {
     lv_obj_set_style_text_font(ic, &ui_icons_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(ic, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_move_to_index(ic, 0);
+    // Picture dimming: how far the picture is toned down behind the text. Strong, the
+    // default, is the look from before the setting; Off shows the picture as it is.
+    {
+      s_tp.bg_dim_box = lv_obj_create(c);
+      lv_obj_remove_style_all(s_tp.bg_dim_box);
+      lv_obj_clear_flag(s_tp.bg_dim_box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(s_tp.bg_dim_box, cw, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(s_tp.bg_dim_box, LV_FLEX_FLOW_COLUMN);
+      lv_obj_set_style_pad_row(s_tp.bg_dim_box, SC(6), LV_PART_MAIN);
+      const char* steps[] = { TR("Off"), TR("Light"), TR("Medium"), TR("Strong") };
+      s_tp.bg_dim_row = setChoiceRow(s_tp.bg_dim_box, "Picture dimming",
+                                     "Darker with Night, lighter with Day, so the text on it stays readable.",
+                                     steps, 4, s_theme_pend.bg_dim, themeBgDimCb);
+    }
 #endif
     // Glass tiles (default on): Home widgets, cards and the control panel's tiles let the
     // background through. Off draws them in the solid panel colour, the pre-aurora look.
