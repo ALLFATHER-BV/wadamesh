@@ -113,6 +113,15 @@ walks back to the input. Press **OK** on either button to open its picker.
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.
 
+## Long pages
+
+Text and charts are not stops for the highlight. When the next control in the
+direction you press is further away than the screen shows (a long description,
+the telemetry chart), **Up** and **Down** first scroll the page a step at a
+time, and the highlight moves on once the control is in reach, so nothing
+between two buttons is skipped. With no control left in that direction, the
+press scrolls the page.
+
 The Create/Join channel forms use the same **#** action beside every text
 field. Right moves from the field to **#**; Left returns to editing the field.
 Password fields use the same control, including Wi-Fi, MQTT, and repeater login.

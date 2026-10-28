@@ -6699,6 +6699,50 @@ static bool navInfoModalScroll(bool up) {
   return true;
 }
 
+// Text and charts are not focus stops, so an Up/Down press that went straight to the
+// next control scrolled right past whatever lay between: a long description or a
+// history chart was never on screen for a keypad user. Two cases scroll the page one
+// step instead and keep the cursor where it is:
+//  - the next control is in the same scrolling page but starts more than a page step
+//    beyond what it shows (the press that brings it within a step moves the cursor,
+//    and navFocusCb scrolls it fully into view);
+//  - the next control is OUTSIDE the page (a header, a button bar) while the page still
+//    has more than a third of its height to show that way (a note above the first row).
+// Not in a chat's message list, which is virtualized and walks its rows by index.
+static lv_obj_t* navScrollPageWithRoom(lv_obj_t* from, bool up) {
+  for (lv_obj_t* p = from ? lv_obj_get_parent(from) : nullptr; p; p = lv_obj_get_parent(p)) {
+    if (!lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) continue;
+    if ((up ? lv_obj_get_scroll_top(p) : lv_obj_get_scroll_bottom(p)) > 0) return p;
+  }
+  return nullptr;
+}
+static bool navObjInside(lv_obj_t* o, lv_obj_t* ancestor) {
+  for (; o; o = lv_obj_get_parent(o)) if (o == ancestor) return true;
+  return false;
+}
+static bool navPageStepBeforeFocus(lv_obj_t* cur, lv_obj_t* best, bool up) {
+  LvChatPanel* chat = navOpenChatPanel();
+  lv_obj_t* msgs = chat ? chat->msgs : nullptr;
+  if (lv_obj_t* page = navScrollPageWithRoom(cur, up); page && page != msgs && !navObjInside(best, page)) {
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(page) : lv_obj_get_scroll_bottom(page);
+    if (room <= lv_obj_get_height(page) / 3) return false;
+    navScrollBy(page, up);
+    return true;
+  }
+  lv_obj_t* page = navScrollPageWithRoom(best, up);
+  if (!page || page == msgs || lv_obj_has_flag(best, LV_OBJ_FLAG_FLOATING) || !navObjInside(cur, page)) return false;
+  lv_area_t pa, ba;
+  lv_obj_get_coords(page, &pa);
+  lv_obj_get_coords(best, &ba);
+  const lv_coord_t vis_top = pa.y1 + lv_obj_get_style_pad_top(page, LV_PART_MAIN);
+  const lv_coord_t vis_bot = pa.y2 - lv_obj_get_style_pad_bottom(page, LV_PART_MAIN);
+  const lv_coord_t step = lv_obj_get_height(page) * 2 / 3;   // navScrollBy's page step
+  const lv_coord_t beyond = up ? (vis_top - ba.y2) : (ba.y1 - vis_bot);
+  if (beyond <= step) return false;
+  navScrollBy(page, up);
+  return true;
+}
+
 // Returns true when the press was consumed without moving focus (an info page
 // scrolled, or the Web page's own Up/Down took it: a link already on screen, or a
 // page scroll), so a caller's "focus did not move: scroll" fallback must not
@@ -6811,6 +6855,11 @@ static bool navMoveDir(int dir) {
   const NavRect cur_rect = { a.x1, a.y1, a.x2, a.y2 };
   const int pick = navSpatialPick(cur_rect, s_pick_rect, pick_n, dir);
   lv_obj_t* best = pick >= 0 ? s_pick_obj[pick] : nullptr;
+  if (best && (dir == NAV_UP || dir == NAV_DOWN) && navPageStepBeforeFocus(cur, best, dir == NAV_UP)) {
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return true;   // the page moved, the cursor did not: no second scroll from the caller
+  }
   if (best) {
     if (dir == NAV_UP && g_set_modal.kind == SettingsModalKind::Discovered &&
         g_set_modal.root && lv_obj_is_valid(g_set_modal.root) &&
