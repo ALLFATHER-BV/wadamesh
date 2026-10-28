@@ -180,13 +180,19 @@ public:
         File f = SPIFFS.open(k_seed_marker, "w");
         if (f) { f.print("1"); f.close(); }
       }
-      _next_chatter = now_ms + 45000;
+      // WADA_DEMO_CHATTER_MS=N: a Public line every N ms (the first after N), so a
+      // headless script can have messages arrive at known times (navigation tests).
+      // WADA_DEMO_CHATTER_BURST=N: the first N lines 20 ms apart (a long channel history).
+      if (const char* ev = getenv("WADA_DEMO_CHATTER_MS")) _chatter_every = (uint32_t)strtoul(ev, nullptr, 10);
+      if (const char* ev = getenv("WADA_DEMO_CHATTER_BURST")) _chatter_burst = (uint32_t)strtoul(ev, nullptr, 10);
+      _next_chatter = now_ms + (_chatter_burst ? 20u : _chatter_every ? _chatter_every : 45000);
       _next_advert = now_ms + 20000;
     }
     if (_seeded && (int32_t)(now_ms - _next_chatter) >= 0) {
       const char* line = k_public_chatter[_chatter_i++ % (sizeof k_public_chatter / sizeof *k_public_chatter)];
       _ev->beChannelMessage(0, 0, line, 1 + (uint8_t)random(3), (int8_t)(4 * (random(12) - 3)), (int8_t)(-60 - random(45)));
-      _next_chatter = now_ms + 60000 + (uint32_t)random(30000);
+      _next_chatter = now_ms + (_chatter_burst ? (_chatter_burst--, 20u)
+                                : _chatter_every ? _chatter_every : 60000 + (uint32_t)random(30000));
     }
     if (_seeded && (int32_t)(now_ms - _next_advert) >= 0) {
       const DemoContact& d = k_contacts[_advert_i++ % 5];   // the active five re-advert
@@ -486,7 +492,7 @@ private:
 
   MeshBackendEvents* _ev = nullptr;
   bool _started = false, _seeded = false;
-  uint32_t _t0 = 0, _next_chatter = 0, _next_advert = 0;
+  uint32_t _t0 = 0, _next_chatter = 0, _next_advert = 0, _chatter_every = 0, _chatter_burst = 0;
   unsigned _chatter_i = 0, _advert_i = 0, _reply_i = 0;
   std::vector<Pending> _pending;
   std::vector<std::array<uint8_t, PUB_KEY_SIZE>> _logged_in;

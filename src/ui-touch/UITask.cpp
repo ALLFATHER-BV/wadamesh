@@ -159,6 +159,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
+#include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
 #include "UsbFilesPaint.h"      // host-tested: how often the USB Files screen repaints (e-paper)
@@ -3599,7 +3600,7 @@ static bool           s_tb_nav         = false;
 static lv_indev_drv_t s_nav_keypad_drv;
 #endif
 
-#if defined(HAS_THINKNODE_M9)
+#if defined(HAS_THINKNODE_M9) || (defined(WADA_WEB) && defined(HAS_M9_KEYBOARD))   // (or the host's M9 flavour)
 // Keyboard-only device (no touch, no trackball): nav is always on, same as Tanmatsu above.
 // Unlike Tanmatsu (which registers its KEYPAD indev as the PRIMARY one, driven by navPump()
 // reading bsp-input), the M9 takes the CAP_KEYPAD_NAV "secondary indev" path the T-Deck's
@@ -6625,7 +6626,6 @@ static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Sel
 // 2D spatial focus move: jump to the nearest focusable element in the given physical
 // direction (not just next/prev in the linear list). Scores candidates in that
 // half-plane by primary-axis distance + a cross-axis penalty (prefers aligned + close).
-enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
 static bool navIsStoreTab(lv_obj_t* o) {
   for (lv_obj_t* tab : s_nav_store_tabs) if (o && o == tab) return true;
   return false;
@@ -6652,27 +6652,24 @@ static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (navIsStoreTab(o) && !navIsStoreTab(cur)) return false;
   if (navIsStoreTab(cur) && !navIsStoreTab(o)) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
+  // A message row scrolled out of the list's own view (under the floating composer, or
+  // up under the header) is no target from OUTSIDE the list: Down from a composer button
+  // went up into the row hidden behind the composer (#764). From a row inside the list
+  // the next row stays reachable and is scrolled into view as before.
+  if (LvChatPanel* cp = navOpenChatPanel();
+      cp && cp->msgs && lv_obj_get_parent(o) == cp->msgs && lv_obj_get_parent(cur) != cp->msgs) {
+    lv_area_t ma, oa;
+    lv_obj_get_coords(cp->msgs, &ma);
+    lv_obj_get_coords(o, &oa);
+    const lv_coord_t top = ma.y1 + lv_obj_get_style_pad_top(cp->msgs, LV_PART_MAIN);
+    const lv_coord_t bot = ma.y2 - lv_obj_get_style_pad_bottom(cp->msgs, LV_PART_MAIN);
+    if (oa.y2 <= top || oa.y1 >= bot) return false;
+  }
   return true;
 }
-// Geometry of candidate `b` relative to the focused rect `a`: true when it lies in `dir`,
-// with the gaps navMoveDir ranks by. Direction uses the CENTRE delta (which side the
-// candidate is on); the gaps are rect-to-rect, not centre-to-centre — `primary` is the gap
-// along the pressed axis (how far past the current edge it sits) so the element IMMEDIATELY
-// in that direction wins, and `cross` is the off-axis gap, 0 whenever the rects line up on
-// that axis (a full-width row below a right-aligned switch still counts as "straight down").
+// Geometry of candidate `b` relative to the focused rect `a` (NavSpatial.h has the rules).
 static bool navDirMetrics(const lv_area_t& a, const lv_area_t& b, int dir, long* primary, long* cross) {
-  const int dx = (b.x1 + b.x2) / 2 - (a.x1 + a.x2) / 2;
-  const int dy = (b.y1 + b.y2) / 2 - (a.y1 + a.y2) / 2;
-  long hgap = b.x1 - a.x2; if (a.x1 - b.x2 > hgap) hgap = a.x1 - b.x2; if (hgap < 0) hgap = 0;
-  long vgap = b.y1 - a.y2; if (a.y1 - b.y2 > vgap) vgap = a.y1 - b.y2; if (vgap < 0) vgap = 0;
-  bool ok;
-  switch (dir) {
-    case NAV_UP:    ok = dy < 0; *primary = vgap; *cross = hgap; break;
-    case NAV_DOWN:  ok = dy > 0; *primary = vgap; *cross = hgap; break;
-    case NAV_LEFT:  ok = dx < 0; *primary = hgap; *cross = vgap; break;
-    default:        ok = dx > 0; *primary = hgap; *cross = vgap; break;  // NAV_RIGHT
-  }
-  return ok;
+  return navSpatialMetrics(NavRect{ a.x1, a.y1, a.x2, a.y2 }, NavRect{ b.x1, b.y1, b.x2, b.y2 }, dir, primary, cross);
 }
 #if defined(HAS_THINKNODE_M9)
 static bool m9ControlCenterMove(lv_obj_t* current, int dir) {
@@ -6753,6 +6750,50 @@ static bool navInfoModalScroll(bool up) {
   return true;
 }
 
+// Text and charts are not focus stops, so an Up/Down press that went straight to the
+// next control scrolled right past whatever lay between: a long description or a
+// history chart was never on screen for a keypad user. Two cases scroll the page one
+// step instead and keep the cursor where it is:
+//  - the next control is in the same scrolling page but starts more than a page step
+//    beyond what it shows (the press that brings it within a step moves the cursor,
+//    and navFocusCb scrolls it fully into view);
+//  - the next control is OUTSIDE the page (a header, a button bar) while the page still
+//    has more than a third of its height to show that way (a note above the first row).
+// Not in a chat's message list, which is virtualized and walks its rows by index.
+static lv_obj_t* navScrollPageWithRoom(lv_obj_t* from, bool up) {
+  for (lv_obj_t* p = from ? lv_obj_get_parent(from) : nullptr; p; p = lv_obj_get_parent(p)) {
+    if (!lv_obj_has_flag(p, LV_OBJ_FLAG_SCROLLABLE)) continue;
+    if ((up ? lv_obj_get_scroll_top(p) : lv_obj_get_scroll_bottom(p)) > 0) return p;
+  }
+  return nullptr;
+}
+static bool navObjInside(lv_obj_t* o, lv_obj_t* ancestor) {
+  for (; o; o = lv_obj_get_parent(o)) if (o == ancestor) return true;
+  return false;
+}
+static bool navPageStepBeforeFocus(lv_obj_t* cur, lv_obj_t* best, bool up) {
+  LvChatPanel* chat = navOpenChatPanel();
+  lv_obj_t* msgs = chat ? chat->msgs : nullptr;
+  if (lv_obj_t* page = navScrollPageWithRoom(cur, up); page && page != msgs && !navObjInside(best, page)) {
+    const lv_coord_t room = up ? lv_obj_get_scroll_top(page) : lv_obj_get_scroll_bottom(page);
+    if (room <= lv_obj_get_height(page) / 3) return false;
+    navScrollBy(page, up);
+    return true;
+  }
+  lv_obj_t* page = navScrollPageWithRoom(best, up);
+  if (!page || page == msgs || lv_obj_has_flag(best, LV_OBJ_FLAG_FLOATING) || !navObjInside(cur, page)) return false;
+  lv_area_t pa, ba;
+  lv_obj_get_coords(page, &pa);
+  lv_obj_get_coords(best, &ba);
+  const lv_coord_t vis_top = pa.y1 + lv_obj_get_style_pad_top(page, LV_PART_MAIN);
+  const lv_coord_t vis_bot = pa.y2 - lv_obj_get_style_pad_bottom(page, LV_PART_MAIN);
+  const lv_coord_t step = lv_obj_get_height(page) * 2 / 3;   // navScrollBy's page step
+  const lv_coord_t beyond = up ? (vis_top - ba.y2) : (ba.y1 - vis_bot);
+  if (beyond <= step) return false;
+  navScrollBy(page, up);
+  return true;
+}
+
 // Returns true when the press was consumed without moving focus (an info page
 // scrolled, or the Web page's own Up/Down took it: a link already on screen, or a
 // page scroll), so a caller's "focus did not move: scroll" fallback must not
@@ -6822,6 +6863,10 @@ static bool navMoveDir(int dir) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   if (readerNavMove(cur, dir)) return true;
 #endif
+  // Rank laid-out geometry. Objects created since the last display refresh (a chat's
+  // rows, re-rendered after a message arrived) still carry their pre-layout coords
+  // (zero size at the content origin) until LVGL's next pass, and were ranked there.
+  lv_obj_update_layout(cur);
   lv_area_t a; lv_obj_get_coords(cur, &a);
   // The Discovered header is fixed immediately above its scrolling list. When a
   // row sits at the viewport top, Close can be physically nearer than the prior
@@ -6844,56 +6889,27 @@ static bool navMoveDir(int dir) {
       }
     }
   }
-  // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
-  // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
-  // never jump over an intervening focusable: on Send advert, DOWN from the Flood button
-  // used to land on the "Flood every" dropdown two rows down (wide, so perfectly aligned)
-  // instead of the "On boot" switch right below it (narrow + right-aligned, so its cross
-  // penalty out-weighed a whole extra row of distance).
-  long bandLo = 0, bandHi = 0;
-  bool haveBand = false;
-  long nearPrimary = 0x7FFFFFFFL, nearCross = 0x7FFFFFFFL;
+  // The ranking itself is NavSpatial.h's navSpatialPick (host-tested): the nearest
+  // candidate's row/column band, then alignment within it. Collect what may take focus.
+  static lv_obj_t* s_pick_obj[kNavMax];
+  static NavRect   s_pick_rect[kNavMax];
+  int pick_n = 0;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
     if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
-    long primary, cross;
-    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
-    if (primary > nearPrimary || (primary == nearPrimary && cross >= nearCross)) continue;
-    nearPrimary = primary; nearCross = cross;
-    const bool vert = (dir == NAV_UP || dir == NAV_DOWN);
-    bandLo = vert ? b.y1 : b.x1;
-    bandHi = vert ? b.y2 : b.x2;
-    haveBand = true;
+    s_pick_obj[pick_n] = o;
+    s_pick_rect[pick_n] = { b.x1, b.y1, b.x2, b.y2 };
+    ++pick_n;
   }
-  lv_obj_t* best = nullptr;
-  long bestScore = 0x7FFFFFFFL;
-  for (int i = 0; i < n; i++) {
-    lv_obj_t* o = s_nav_objs[i];
-    if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
-    if (!navDirCandidate(o, cur, dir)) continue;
-    lv_area_t b; lv_obj_get_coords(o, &b);
-    long primary, cross;
-    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
-    // Out of band = entirely past the nearest candidate in the pressed direction, i.e. a
-    // further row/column. Candidates that merely overlap the band (a taller neighbour, a
-    // switch beside a button) stay in the running and are ranked by the score below.
-    if (haveBand) {
-      bool past;
-      switch (dir) {
-        case NAV_UP:    past = b.y2 <  bandLo; break;
-        case NAV_DOWN:  past = b.y1 >  bandHi; break;
-        case NAV_LEFT:  past = b.x2 <  bandLo; break;
-        default:        past = b.x1 >  bandHi; break;  // NAV_RIGHT
-      }
-      if (past) continue;
-    }
-    // Column/row alignment dominates: a candidate directly in line (cross == 0) beats a
-    // nearer-but-sideways one, so DOWN from a right-column button lands on the button below
-    // it, not a box off to the left. Among in-line candidates the closest (smallest gap) wins.
-    const long score = primary + 8 * cross;
-    if (score < bestScore) { bestScore = score; best = o; }
+  const NavRect cur_rect = { a.x1, a.y1, a.x2, a.y2 };
+  const int pick = navSpatialPick(cur_rect, s_pick_rect, pick_n, dir);
+  lv_obj_t* best = pick >= 0 ? s_pick_obj[pick] : nullptr;
+  if (best && (dir == NAV_UP || dir == NAV_DOWN) && navPageStepBeforeFocus(cur, best, dir == NAV_UP)) {
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return true;   // the page moved, the cursor did not: no second scroll from the caller
   }
   if (best) {
     if (dir == NAV_UP && g_set_modal.kind == SettingsModalKind::Discovered &&
@@ -18314,7 +18330,7 @@ static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
 // Keyboards whose backlight takes a level, not just on/off: the T-Deck's C3 keyboard
 // and the ThinkNode M9's controller (duty register 0x02, #664).
-#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
   #define KB_BL_DIMMABLE 1
 #else
   #define KB_BL_DIMMABLE 0
@@ -41216,7 +41232,7 @@ static void mapCanvasEventCb(lv_event_t* e) {
   refreshMapInfoLabel();
 }
 
-#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_M9_KEYBOARD)
 // Keyboard pan (Ctrl+Arrow on Tanmatsu / WAXD on the pager / the M9's Map-key
 // pan mode, all on the Map tab). Mirrors the drag-release math in
 // mapCanvasEventCb: synthesize a pixel delta of ~1/4 the visible span in the
@@ -46340,12 +46356,15 @@ static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
   const lv_coord_t kContentW = s_chat_virt.content_w;
   lv_obj_t* div = lv_obj_create(p->msgs);
   lv_obj_remove_style_all(div);
-  lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+  // Decoration only: not CLICKABLE (lv_obj's default), or the keypad cursor stopped on
+  // the rule as if it were a message, and Up/Down from it lost the message order.
+  lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(div, LV_OBJ_FLAG_FLOATING);
   lv_obj_set_size(div, kContentW, kChatDividerH);
   lv_obj_set_pos(div, 0, vp_y);
   lv_obj_t* dline = lv_obj_create(div);
   lv_obj_remove_style_all(dline);
+  lv_obj_clear_flag(dline, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(dline, kContentW, 1);
   lv_obj_set_pos(dline, 0, 8);
   // Where the unread part starts: a quiet rule in the lit tone with "NEW" centred on it.
@@ -47534,6 +47553,14 @@ static void chatVirtApplyPendingScroll(LvChatPanel* p) {
   const bool to_bottom = s_chat_virt.pending_scroll_bottom;
   s_chat_virt.pending_scroll = false;
   s_chat_virt.pending_scroll_bottom = false;
+  // Grow the scroll extent to the current layout FIRST. lv_obj_scroll_to_y is bounded by
+  // the extent LVGL last laid out, and the spacer that carries it was only resized after
+  // this scroll (in the render): a message that had just arrived was cut off, so the list
+  // stopped its height short of the bottom and the newest message sat under the floating
+  // composer, "at the bottom" no longer held for the next arrival, and a keypad cursor
+  // sent down there landed on a row the composer hid (#764).
+  chatVirtRefreshScrollArea(p);
+  lv_obj_update_layout(p->msgs);
   lv_coord_t y = to_bottom ? chatVirtBottomScrollY(p) : s_chat_virt.pending_scroll_y;
   if (y < 0) y = 0;
   lv_obj_scroll_to_y(p->msgs, y, LV_ANIM_OFF);
@@ -47585,6 +47612,48 @@ static void chatVirtJumpToLatest(LvChatPanel* p) {
 }
 
 static bool chatSeenByUser();   // fwd: screen on, unlocked, not just a glance (defined with the glance state)
+
+#if CAP_KEYPAD_NAV
+// The message the keyboard cursor is on in an open chat (its logical index), or -1:
+// the M9 / Pager target that is still waiting for its row to be rendered, else the
+// focused row. Only while the cursor is showing, so touch use is never affected.
+static int chatKeypadFocusIndex(LvChatPanel* p) {
+  if (!p || !p->msgs || !s_nav_group || !s_nav_show || s_chat_virt.panel != p) return -1;
+#if defined(TLORA_PAGER)
+  if (s_pager_chat_focus_i >= 0) return s_pager_chat_focus_i;
+#elif defined(HAS_M9_KEYBOARD)
+  if (s_m9_chat_focus_i >= 0) return s_m9_chat_focus_i;
+#endif
+  lv_obj_t* f = lv_group_get_focused(s_nav_group);
+  if (!f || !lv_obj_is_valid(f) || lv_obj_get_parent(f) != p->msgs) return -1;
+  const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(f));
+  return ud >= 0 ? static_cast<int>(ud) : -1;
+}
+
+// A refresh (a message arriving, a delivery tick) re-renders the list at its own
+// scroll target: the newest message when the list was at the bottom, else where it
+// was. When the keyboard cursor is on a message, that target must still show it:
+// following new messages to the bottom scrolled a cursor near the bottom up out of
+// view, and the refresh's scroll replaced the one a d-pad press had just queued to
+// reveal the next message, so the cursor landed on a row hidden under the composer
+// and the next Down went to the text field (#764). Returns the target, moved only as
+// far as it takes to show that message (its top when it is taller than the list).
+static lv_coord_t chatRefreshKeepCursorVisible(LvChatPanel& p, lv_coord_t scroll_target, int focus_i) {
+  if (focus_i < 0 || focus_i >= s_chat_virt.n || !s_chat_virt.offsets) return scroll_target;
+  const int32_t max_top = chatVirtMaxVirtTop(&p);
+  const int32_t view_h  = static_cast<int32_t>(chatVirtMsgsViewH(&p));
+  int32_t top = (scroll_target == LV_COORD_MAX) ? max_top : chatVirtLvToVirt(scroll_target);
+  const int32_t lo = s_chat_virt.offsets[focus_i];
+  const int32_t hi = chatVirtMsgVirtBottom(focus_i);
+  int32_t want = top;
+  if (hi > want + view_h) want = hi - view_h;   // below the view: bring its bottom in
+  if (lo < want) want = lo;                     // above it (or taller than it): its top
+  if (want < 0) want = 0;
+  if (want > max_top) want = max_top;
+  if (want == top) return scroll_target;
+  return chatVirtVirtToLv(want);
+}
+#endif  // CAP_KEYPAD_NAV
 
 static void refreshChatDetail(LvChatPanel& p) {
   if (!g_lv.task || !p.msgs) return;
@@ -47709,6 +47778,10 @@ static void refreshChatDetail(LvChatPanel& p) {
   } else if (was_at_bottom) {
     scroll_target = LV_COORD_MAX;
   }
+#if CAP_KEYPAD_NAV
+  if (!s_chat_just_opened)
+    scroll_target = chatRefreshKeepCursorVisible(p, scroll_target, chatKeypadFocusIndex(&p));
+#endif
 
   chatVirtResetInputForMsgs(&p);
   chatVirtCancelRenderTimer();
@@ -53336,8 +53409,14 @@ static bool m9HandleNavKey(int key) {
       // MSG / MAP are lateral jumps and deliberately keep pushing.
       m9NavClear();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
-    case M9_KEY_LEFT_MESSAGE:
+    case M9_KEY_LEFT_MESSAGE: {
       if (s_setup_root) return true;
+      // Already on the chat list with nothing over it: MSG again goes on to Contacts
+      // (#765), as MAP on the map toggles pan and HOME on Home the app drawer. The
+      // M9 has no Contacts key, and its letters type rather than switch tabs. Read
+      // BEFORE anything is closed, so a press that only peels a popup stays on Chats.
+      const bool to_contacts = getActiveTab() == CHAT_INBOX_TAB_INDEX && !anyPopupOpen() &&
+                               !s_apppage_close && !navOpenChatPanel();
       s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
       // Blocker check BEFORE the app page is destroyed — same order as
       // SUB_MESSAGE / SUB_MAP below. navGoToMainTab now refuses to switch while
@@ -53347,8 +53426,9 @@ static bool m9HandleNavKey(int key) {
       if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
-      else                                      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      else                                      navGoToMainTab(to_contacts ? CONTACTS_TAB_INDEX : CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    }
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
       s_m9_map_pan = false;   // the overlay covers the map: arrows must drive the list, not pan under it
@@ -55054,7 +55134,7 @@ static void bleKbdUiTick() {
     bleKbdDispatch(key);
   }
 #endif  // CAP_BLE_KEYBOARD
-#if defined(HAS_CARDKB)
+#if defined(HAS_CARDKB) && !defined(HAS_M9_KEYBOARD)   // (the host's M9 flavour reads them as M9 keys)
   for (int i = 0; i < 16; ++i) {
     const int raw = cardKbReadKey();
     if (!raw) break;
@@ -71398,6 +71478,12 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   const int chart_x = 30, chart_rpad = 30, chart_h = 108;
   lv_obj_t* chart = nullptr;
   if (n > 0) {
+    // Below the 32 px row of the Request / gear / X buttons, not reaching up into it.
+    // A chart that overlapped that row (it started at 26) counted as the nearest thing
+    // left of the gear and of the X, so the keypad cursor went gear -> chart and never
+    // reached Request until the history was cleared and the chart was gone.
+    constexpr int kBadgeRowH = 32;
+    if (y + 4 < kBadgeRowH + 4) y = kBadgeRowH;
     chart = lv_chart_create(card);
     lv_obj_set_size(chart, cardw - 20 - chart_x - chart_rpad, chart_h);
     lv_obj_set_pos(chart, chart_x, y + 4);
@@ -77258,7 +77344,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     if (lv_indev_t* kp = lv_indev_drv_register(&s_nav_keypad_drv)) lv_indev_set_group(kp, s_nav_group);
     else pushDiagLine("LVGL nav keypad indev failed");
 #if defined(ESP32)
-#if defined(HAS_TANMATSU) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_PRO)
+#if defined(HAS_TANMATSU) || defined(HAS_M9_KEYBOARD) || defined(HAS_TDECK_PRO)
     // Pro/Max have touch, but no trackball and no keyboard-navigation setting;
     // keep their physical keyboard usable as the setup and touch-failure fallback.
     s_kbd_nav = true;
@@ -82655,7 +82741,9 @@ void UITask::loop() {
       else s_kb_bl_retry_ms = now + 250;
     }
   }
+#if CAP_LOCK_SCREEN   // (always on the M9; the host's M9 flavour has no lock screen)
   serviceLockscreen();
+#endif
   serviceLockingCountdown(now);
 #endif
 #if CAP_EXT_KEYBOARD

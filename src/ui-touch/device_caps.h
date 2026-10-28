@@ -364,7 +364,9 @@
 // Touchscreen-only boards that take a Bluetooth, CardKB or clip-on keyboard join
 // too: the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
+    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD) || (defined(WADA_WEB) && defined(HAS_M9_KEYBOARD))
+  // (The last term is the M9 flavour of the host build, web/CMakeLists.txt WADA_HOST_BOARD=m9:
+  // the ThinkNode M9's key path on the web board, for scripted navigation tests.)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0

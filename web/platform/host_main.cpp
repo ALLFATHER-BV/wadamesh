@@ -183,8 +183,13 @@ void scriptStep() {
       std::string k; in >> k;
       const uint8_t code = k == "enter" ? 0x0D : k == "esc" ? 0x1B : k == "bs" ? 0x08 : k == "tab" ? 0x09
                          : k == "left" ? 0xB4 : k == "up" ? 0xB5 : k == "down" ? 0xB6 : k == "right" ? 0xB7
+                         : k.size() > 2 && k[0] == '0' && (k[1] == 'x' || k[1] == 'X')
+                             ? (uint8_t)strtoul(k.c_str() + 2, nullptr, 16)   // a raw key byte (M9 function keys)
                          : (uint8_t)(k.empty() ? 0 : k[0]);
-      if (code) webKeyPush(code);
+      // An optional count pushes the key that many times at once: the device drains
+      // several queued keys in one loop pass, before the UI renders (a fast d-pad).
+      int count = 1; in >> count; if (count < 1) count = 1;
+      for (int i = 0; code && i < count; ++i) webKeyPush(code);
       s_script.wait_until = now + 150; return;
     }
     if (cmd == "wheel") {   // wheel X Y DY: a wheel turn over (X, Y), DY canvas pixels (> 0 = down)
