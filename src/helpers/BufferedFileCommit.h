@@ -25,11 +25,41 @@
 //   void   discard();                               // remove a partial file
 //   void   pause(int next_attempt);                 // back off before a retry
 //   void   progress(size_t done, size_t total);     // after each chunk
+// FsSink below is that Sink over an Arduino fs::FS (the production one).
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 namespace BufferedFileCommit {
+
+// Close a file just written and check how many bytes really landed, by opening it
+// again. Never ask the still-open File: on arduino-esp32 File::size() of a file that
+// has been written is stat(path), and FAT writes a file's size into its directory
+// entry only on sync/close, so a fresh file reads 0 bytes until it is closed (plus
+// up to 4 KB of stdio buffer that has not reached FatFs at all). Comparing that
+// against the image length failed every attempt on every card (#734, beta_100).
+// The reopen also catches a tail that failed in the final flush inside close().
+template <class FsT, class FileT>
+bool closeAndCheckSize(FsT& fs, FileT& f, const char* path, size_t want) {
+  f.close();
+  FileT r = fs.open(path, "r");
+  const bool full = r && !r.isDirectory() && (size_t)r.size() == want;
+  if (r) r.close();
+  return full;
+}
+
+// The Sink over an Arduino-style FS (fs::FS + fs::File, or a host fake with the same
+// calls). Hooks supplies pause(int) and progress(size_t, size_t).
+template <class FsT, class FileT, class Hooks>
+struct FsSink {
+  FsT& fs; const char* path; size_t len; Hooks& hooks; FileT f;
+  bool   open() { f = fs.open(path, "w"); return (bool)f; }
+  size_t write(const uint8_t* p, size_t n) { return f.write(p, n); }
+  bool   close() { return closeAndCheckSize(fs, f, path, len); }
+  void   discard() { fs.remove(path); }
+  void   pause(int attempt) { hooks.pause(attempt); }
+  void   progress(size_t done, size_t total) { hooks.progress(done, total); }
+};
 
 template <class Sink>
 bool commit(Sink& sink, const uint8_t* data, size_t len,
