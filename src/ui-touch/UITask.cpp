@@ -53181,8 +53181,14 @@ static bool m9HandleNavKey(int key) {
       // MSG / MAP are lateral jumps and deliberately keep pushing.
       m9NavClear();
       s_nav_show = true; if (g_lv.task) g_lv.task->noteUserInput(); return true;
-    case M9_KEY_LEFT_MESSAGE:
+    case M9_KEY_LEFT_MESSAGE: {
       if (s_setup_root) return true;
+      // Already on the chat list with nothing over it: MSG again goes on to Contacts
+      // (#765), as MAP on the map toggles pan and HOME on Home the app drawer. The
+      // M9 has no Contacts key, and its letters type rather than switch tabs. Read
+      // BEFORE anything is closed, so a press that only peels a popup stays on Chats.
+      const bool to_contacts = getActiveTab() == CHAT_INBOX_TAB_INDEX && !anyPopupOpen() &&
+                               !s_apppage_close && !navOpenChatPanel();
       s_m9_map_pan = false;   // leaving the Map: same stale-pan clear as HOME
       // Blocker check BEFORE the app page is destroyed — same order as
       // SUB_MESSAGE / SUB_MAP below. navGoToMainTab now refuses to switch while
@@ -53192,8 +53198,9 @@ static bool m9HandleNavKey(int key) {
       if (!m9DismissShortcutPopups()) { if (g_lv.task) g_lv.task->noteUserInput(); return true; }
       if (s_apppage_close) s_apppage_close();   // close an open app page — else the jump lands invisibly beneath it
       if (LvChatPanel* cp = navOpenChatPanel()) closeChatPanel(cp);
-      else                                      navGoToMainTab(CHAT_INBOX_TAB_INDEX);
+      else                                      navGoToMainTab(to_contacts ? CONTACTS_TAB_INDEX : CHAT_INBOX_TAB_INDEX);
       if (g_lv.task) g_lv.task->noteUserInput(); return true;
+    }
     case M9_KEY_SUB_MESSAGE:
       if (s_setup_root) return true;
       s_m9_map_pan = false;   // the overlay covers the map: arrows must drive the list, not pan under it

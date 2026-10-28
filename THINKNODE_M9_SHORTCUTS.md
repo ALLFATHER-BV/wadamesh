@@ -49,7 +49,7 @@ under a running operation.
 
 | Key | Press | Hold |
 |---|---|---|
-| **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first) | None |
+| **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first); on the chat list, open **Contacts** | None |
 | **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail). **Double-press** to open the launcher settings (what Home opens, icon size) | None |
 | **@ (Mentions)** | Open the Mentions screen | None |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
