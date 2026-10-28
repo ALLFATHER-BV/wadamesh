@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <string>
+#include <vector>
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
@@ -69,12 +70,80 @@ private:
   FileImplPtr _f;
 };
 
+// A directory read the SPIFFS way. SPIFFS has no folders: listing it hands back every
+// file, with "/lock/a.jpg" as one name, and the firmware's file manager builds its
+// virtual folders from those names. The host keeps such files in real folders (see
+// SPIFFS.h), and a plain readdir() handed the folder itself back as an entry, which
+// the file manager showed as a 0 B file. This walks the tree and returns the files.
+class SpiffsDirImpl : public FileImpl {
+public:
+  SpiffsDirImpl(VFSImpl* fs, FileImplPtr dir) : _fs(fs), _dir(std::move(dir)) { rewindDirectory(); }
+  ~SpiffsDirImpl() override { closeAll(); }
+  size_t write(const uint8_t*, size_t) override { return 0; }
+  size_t read(uint8_t*, size_t) override { return 0; }
+  void flush() override {}
+  bool seek(uint32_t, SeekMode) override { return false; }
+  size_t position() const override { return 0; }
+  size_t size() const override { return 0; }
+  bool setBufferSize(size_t) override { return false; }
+  void close() override { closeAll(); _dir->close(); }
+  time_t getLastWrite() override { return _dir->getLastWrite(); }
+  const char* path() const override { return _dir->path(); }
+  const char* name() const override { return _dir->name(); }
+  boolean isDirectory(void) override { return true; }
+  boolean seekDir(long) override { return false; }
+  FileImplPtr openNextFile(const char* mode) override {
+    std::string rel;
+    if (!next(rel)) return FileImplPtr();
+    return _fs->open(rel.c_str(), mode ? mode : "r", false);
+  }
+  String getNextFileName(void) override { std::string rel; return next(rel) ? String(rel.c_str()) : String(""); }
+  String getNextFileName(bool* isDir) override { if (isDir) *isDir = false; return getNextFileName(); }
+  void rewindDirectory(void) override {
+    closeAll();
+    const char* p = _dir->path();
+    push(p && *p ? p : "/");
+  }
+  operator bool() override { return (bool)*_dir; }
+private:
+  struct Level { std::string rel; DIR* d; };
+  void push(const std::string& rel) {
+    const char* mp = _fs->mountpoint();
+    if (!mp) return;
+    DIR* d = opendir((std::string(mp) + rel).c_str());
+    if (d) _stack.push_back({ rel, d });
+  }
+  void closeAll() { for (auto& l : _stack) closedir(l.d); _stack.clear(); }
+  bool next(std::string& out) {
+    while (!_stack.empty()) {
+      Level& top = _stack.back();
+      dirent* e = readdir(top.d);
+      if (!e) { closedir(top.d); _stack.pop_back(); continue; }
+      if (e->d_name[0] == '.' && (!e->d_name[1] || (e->d_name[1] == '.' && !e->d_name[2]))) continue;
+      std::string rel = top.rel + (top.rel.empty() || top.rel.back() != '/' ? "/" : "") + e->d_name;
+      struct stat st;
+      if (stat((std::string(_fs->mountpoint()) + rel).c_str(), &st) != 0) continue;
+      if (S_ISDIR(st.st_mode)) { push(rel); continue; }
+      if (!S_ISREG(st.st_mode)) continue;
+      out = rel;
+      return true;
+    }
+    return false;
+  }
+  VFSImpl* _fs;
+  FileImplPtr _dir;
+  std::vector<Level> _stack;
+};
+
 // SPIFFS/LittleFS semantics on top of real folders: a write never fails for want of a folder.
 class FlatVFSImpl : public VFSImpl {
 public:
+  explicit FlatVFSImpl(bool spiffs_listing = false) : _spiffs_listing(spiffs_listing) {}
   FileImplPtr open(const char* path, const char* mode, const bool create) override {
     const bool writes = mode && mode[0] != 'r';
     FileImplPtr f = VFSImpl::open(path, mode, create || writes);
+    if (!writes && f && _spiffs_listing && f->isDirectory())
+      return std::make_shared<SpiffsDirImpl>(this, std::move(f));
     if (!writes || !f) return f;
     wadaHostFsTouched();
     return std::make_shared<TouchingFileImpl>(std::move(f));
@@ -96,6 +165,8 @@ public:
     if (escapes(path)) return false;
     bool ok = VFSImpl::rmdir(path); wadaHostFsTouched(); return ok;
   }
+private:
+  bool _spiffs_listing;
 };
 size_t duBytes(const std::string& dir) {
   size_t total = 0;
@@ -141,7 +212,7 @@ bool mountVolume(FS& fs, VFSImpl& impl, HostVolume& v, const char* sub) {
 // Constructed on first use: an FS object in another translation unit (UITask.cpp's own
 // LittleFSFS for the tiles partition) is built during static initialisation, possibly
 // before this file's globals, and would copy an empty pointer (every open then fails).
-std::shared_ptr<FlatVFSImpl>& spiffsImpl() { static auto p = std::make_shared<FlatVFSImpl>(); return p; }
+std::shared_ptr<FlatVFSImpl>& spiffsImpl() { static auto p = std::make_shared<FlatVFSImpl>(true); return p; }
 std::shared_ptr<FlatVFSImpl>& lfsImpl() { static auto p = std::make_shared<FlatVFSImpl>(); return p; }
 HostVolume g_spiffs_vol, g_lfs_vol;
 }  // namespace
