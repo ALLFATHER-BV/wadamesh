@@ -41513,6 +41513,9 @@ static void mapZoomPreview() {
     if (!t.in_use || !t.img) continue;
     const int d = (int)s_map_zoom - (int)t.z;
     if (d > 2 || d < -2) { lv_obj_add_flag(t.img, LV_OBJ_FLAG_HIDDEN); continue; }   // too far off to help
+    // Back within reach (the knob turned out and in again before the render): show it
+    // again, or a tile kept at this zoom by renderMapTiles' pass 1 stays blank.
+    lv_obj_clear_flag(t.img, LV_OBJ_FLAG_HIDDEN);
     const uint32_t zoom = d >= 0 ? (256u << d) : (256u >> -d);
     lv_img_set_antialias(t.img, false);   // a preview: speed over smoothness
     lv_img_set_pivot(t.img, (lv_coord_t)(cx - lv_obj_get_x(t.img)), (lv_coord_t)(cy - lv_obj_get_y(t.img)));
