@@ -6634,7 +6634,16 @@ static void navFocusCb(lv_group_t* g) {
     // objects are being deleted (lv_obj_clean -> lv_group_remove_obj ->
     // lv_group_refocus); walking the stops then read freed rows and crashed
     // (Wi-Fi scan list refreshing while turning the knob).
-    if (s_nav_count > 0 && f == s_nav_objs[0] && lv_indev_get_act() != nullptr) navScrollStopsTop();
+    // Not in an open chat: its first stop is the back arrow in the fixed top bar,
+    // and "the top" of the message list is the OLDEST message. A fast knob turn
+    // that ran onto the back arrow threw the whole history to its start (#643).
+    if (s_nav_count > 0 && f == s_nav_objs[0] && lv_indev_get_act() != nullptr) {
+      LvChatPanel* cp = navOpenChatPanel();
+      bool in_chat = false;
+      for (lv_obj_t* o = f; cp && cp->overlay && o; o = lv_obj_get_parent(o))
+        if (o == cp->overlay) { in_chat = true; break; }
+      if (!in_chat) navScrollStopsTop();
+    }
 #endif
   }
 }
@@ -50051,8 +50060,14 @@ static bool pagerEncoderChatEdgeScroll(bool up) {
   // steps, and the render's re-aim lands focus on the accumulated message.
   // The timestamp expires a stale target so a render that never fires (e.g.
   // the scroll had no room) can't permanently swallow encoder nav.
+  // A window render (scheduled, or queued behind the frame) or the scroll that
+  // asks for it is still on its way. On the device the history comes off the
+  // card, which can outlast the 600 ms below; while it is pending, focus can sit
+  // off the list, and a step from there walked out to the top bar (#643).
+  const bool render_pending = (s_chat_virt_render_panel == cp) || s_chat_virt_render_async_busy ||
+                              lv_anim_get(cp->msgs, nullptr) != nullptr;
   if (s_pager_chat_focus_i >= 0) {
-    if (millis() - s_pager_chat_focus_ms > 600) {
+    if (millis() - s_pager_chat_focus_ms > (render_pending ? 2000u : 600u)) {
       s_pager_chat_focus_i = -1;   // stale — fall through to normal handling
     } else {
       int t = s_pager_chat_focus_i + (up ? -1 : +1);
@@ -50065,7 +50080,13 @@ static bool pagerEncoderChatEdgeScroll(bool up) {
     }
   }
   lv_obj_t* foc = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-  if (!foc || lv_obj_get_parent(foc) != cp->msgs) return false;   // focus isn't on a bubble
+  if (!foc || lv_obj_get_parent(foc) != cp->msgs) {
+    // Focus isn't on a bubble. Normally that's the composer or the top bar and
+    // the step is theirs; but mid-render it is a transient survivor of the row
+    // clear, so hold the detent until the rows are back.
+    const bool in_composer = foc && cp->composer_row && lv_obj_get_parent(foc) == cp->composer_row;
+    return render_pending && !in_composer;
+  }
   // Edge test: any other nav-collectable sibling (clickable, visible, not
   // NAV_SKIP — navCollect's own harvest rule) on the turn side? Then the
   // normal focus step stays inside the list and no clamp is needed. The virt
