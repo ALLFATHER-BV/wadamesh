@@ -162,6 +162,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
 #include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
+#include "ScreenIdleClock.h"   // host-tested: the screen timeout waits for the boot splash (#762)
 #include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
@@ -78736,6 +78737,10 @@ void UITask::lockScreen() {
   // frame; the fixed lock content itself has nothing to page-scroll.
   epaperScrollControlsSync(true);
   setCpuForScreen(true);
+  // The boot splash sits on lv_layer_sys above everything, the lock view too: a lock
+  // while it is up (BOOT pressed during the boot) would commit the splash to the glass
+  // as the "locked" frame and leave the logo there (#762). Take it down first.
+  splashRemove();
   lockscreenShow();
   lv_refr_now(nullptr);
   display.serviceRefresh(true);
@@ -81673,8 +81678,12 @@ void UITask::loop() {
   // be a few ms AFTER `now` (sampled at the top of loop()). An unsigned compare
   // then made (now - _last_input_ms) underflow to ~4.29e9 and fire the timeout on
   // every click. Signed keeps a slightly-ahead stamp negative (= "just had input").
-  if (_screen_timeout_ms > 0 && !_screen_off &&
-      (int32_t)(now - _last_input_ms) >= (int32_t)_screen_timeout_ms) {
+  // The clock stands still while the boot splash is up: a boot slower than the
+  // timeout locked the T-Deck Pro on its first pass with the splash still on the
+  // glass (#762). ScreenIdleClock.h, host-tested.
+  ScreenIdleClock::holdWhileSplash(_last_input_ms, (uint32_t)now, s_splash_root != nullptr);
+  if (!_screen_off &&
+      ScreenIdleClock::due((uint32_t)now, (uint32_t)_last_input_ms, _screen_timeout_ms)) {
 #if CAP_SCREENSAVER
     if (!_manual_lock && ssaverAllowed(s_glance_lit_ms != 0)) {
       // The Constellation instead of a dark screen. To input it IS the dark
