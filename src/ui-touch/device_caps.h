@@ -285,6 +285,14 @@
   #endif
 #endif
 
+// Map overzoom: a tile no offline source holds, while no download can bring it (Wi-Fi
+// down), is drawn from its nearest ancestor up to 3 levels up, cut out and scaled 2x to
+// 8x, instead of leaving a hole. It decodes into the slot's own pool buffer and needs one
+// transient crop copy of at most 32 KB, so the 2 MB V4 can afford it like every board.
+#ifndef CAP_MAP_OVERZOOM
+  #define CAP_MAP_OVERZOOM 1
+#endif
+
 // No dedicated "tiles" LittleFS partition in the board's own partition table, and no free flash to
 // add one without moving partitions that hold user data (16 MB maps: 2 x 4 MB OTA + 8000 KB storage
 // + coredump fill the chip). The Wi-Fi map tile cache then goes to the microSD when one is mounted,
