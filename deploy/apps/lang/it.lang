@@ -2282,3 +2282,21 @@ last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
 Asking the time server	Interrogo il server dell'ora
+Auto-delete old contacts	Elimina automaticamente i contatti vecchi
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibra per i nuovi messaggi, anche con il suono spento. Rispetta Non disturbare.
+Connections	Connessioni
+Days	Giorni
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Elimina i contatti non sentiti per il numero di giorni indicato sotto. I preferiti non vengono mai eliminati.
+Downloaded to this computer, and kept in this browser.	Scaricato su questo computer e conservato in questo browser.
+Import from this computer	Importa da questo computer
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	Nel browser la connessione si imposta nella barra della pagina: Connetti raggiunge il tuo nodo via Bluetooth, USB o Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	Nel browser la connessione si imposta nella barra della pagina: Connetti raggiunge il tuo nodo via Wi-Fi, USB o Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Ancora nessuna posizione. Consenti a questa pagina di usare la tua posizione quando il browser lo chiede.
+Not heard from for this many days, 1 to 999.	Non sentito da questo numero di giorni, da 1 a 999.
+Pattern	Schema
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Una volta per un messaggio, due per un DM, tre per una @ menzione. Toccane uno per sentirlo.
+Remove old contacts	Rimuovi i contatti vecchi
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	La mappa si scarica tramite la rete di questo computer. Il Wi-Fi del tuo nodo si imposta sul nodo.
+Vibrate	Vibra
+Vibration	Vibrazione
+Your node's own Bluetooth and pairing code are set on the node.	Il Bluetooth e il codice di abbinamento del tuo nodo si impostano sul nodo.

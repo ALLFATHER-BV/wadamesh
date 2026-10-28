@@ -2282,3 +2282,21 @@ last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
 Asking the time server	Interrogation du serveur de temps
+Auto-delete old contacts	Supprimer automatiquement les anciens contacts
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibre pour les nouveaux messages, même avec le son coupé. Respecte Ne pas déranger.
+Connections	Connexions
+Days	Jours
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Supprime les contacts non entendus depuis le nombre de jours ci-dessous. Les favoris ne sont jamais supprimés.
+Downloaded to this computer, and kept in this browser.	Téléchargé sur cet ordinateur et conservé dans ce navigateur.
+Import from this computer	Importer depuis cet ordinateur
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	Dans le navigateur, la connexion se règle dans la barre de la page : Connecter joint votre nœud par Bluetooth, USB ou Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	Dans le navigateur, la connexion se règle dans la barre de la page : Connecter joint votre nœud par Wi-Fi, USB ou Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Pas encore de position. Autorisez cette page à utiliser votre position quand le navigateur le demande.
+Not heard from for this many days, 1 to 999.	Non entendu depuis ce nombre de jours, de 1 à 999.
+Pattern	Motif
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Une fois pour un message, deux fois pour un DM, trois fois pour une @ mention. Touchez-en un pour le ressentir.
+Remove old contacts	Supprimer les anciens contacts
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	La carte se télécharge par le réseau de cet ordinateur. Le Wi-Fi de votre nœud se règle sur le nœud.
+Vibrate	Vibrer
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Le Bluetooth et le code d'appairage de votre nœud se règlent sur le nœud.

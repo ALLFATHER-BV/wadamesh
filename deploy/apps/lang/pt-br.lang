@@ -2283,3 +2283,21 @@ last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
 Asking the time server	Consultando o servidor de hora
+Auto-delete old contacts	Apagar contatos antigos automaticamente
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibra com mensagens novas, mesmo com o som desligado. Respeita o Não perturbe.
+Connections	Conexões
+Days	Dias
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Apaga contatos que não são ouvidos há o número de dias abaixo. Favoritos nunca são apagados.
+Downloaded to this computer, and kept in this browser.	Baixado neste computador e guardado neste navegador.
+Import from this computer	Importar deste computador
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	No navegador, a conexão é definida na barra da página: Conectar alcança seu nó por Bluetooth, USB ou Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	No navegador, a conexão é definida na barra da página: Conectar alcança seu nó por Wi-Fi, USB ou Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Ainda sem posição. Permita que esta página use sua localização quando o navegador perguntar.
+Not heard from for this many days, 1 to 999.	Sem ser ouvido há tantos dias, de 1 a 999.
+Pattern	Padrão
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Toca uma vez para uma mensagem, duas para uma DM e três para uma @ menção. Toque em um para sentir.
+Remove old contacts	Remover contatos antigos
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	O mapa é baixado pela rede deste computador. O Wi-Fi do seu nó é configurado no nó.
+Vibrate	Vibrar
+Vibration	Vibração
+Your node's own Bluetooth and pairing code are set on the node.	O Bluetooth e o código de pareamento do seu nó são configurados no nó.

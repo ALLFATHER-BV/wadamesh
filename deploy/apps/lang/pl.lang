@@ -2296,3 +2296,21 @@ last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
 Asking the time server	Pytam serwer czasu
+Auto-delete old contacts	Automatycznie usuwaj stare kontakty
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Wibruje przy nowych wiadomościach, nawet przy wyłączonym dźwięku. Respektuje Nie przeszkadzać.
+Connections	Połączenia
+Days	Dni
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Usuwa kontakty, których nie słychać od podanej niżej liczby dni. Ulubione nigdy nie są usuwane.
+Downloaded to this computer, and kept in this browser.	Pobrano na ten komputer i zapisano w tej przeglądarce.
+Import from this computer	Importuj z tego komputera
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	W przeglądarce połączenie ustawia się na pasku strony: Połącz łączy z węzłem przez Bluetooth, USB lub Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	W przeglądarce połączenie ustawia się na pasku strony: Połącz łączy z węzłem przez Wi-Fi, USB lub Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Brak pozycji. Pozwól tej stronie użyć lokalizacji, gdy przeglądarka zapyta.
+Not heard from for this many days, 1 to 999.	Nie słyszany od tylu dni, od 1 do 999.
+Pattern	Wzór
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Raz dla wiadomości, dwa razy dla DM, trzy razy dla @ wzmianki. Dotknij jednego, aby go poczuć.
+Remove old contacts	Usuń stare kontakty
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	Mapa pobiera się przez sieć tego komputera. Wi-Fi węzła ustawia się na węźle.
+Vibrate	Wibracja
+Vibration	Wibracje
+Your node's own Bluetooth and pairing code are set on the node.	Bluetooth i kod parowania węzła ustawia się na węźle.
