@@ -155,6 +155,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
+#include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
@@ -6574,7 +6575,6 @@ static const char* const kNavDirNames[8] = { "Up", "Down", "Left", "Right", "Sel
 // 2D spatial focus move: jump to the nearest focusable element in the given physical
 // direction (not just next/prev in the linear list). Scores candidates in that
 // half-plane by primary-axis distance + a cross-axis penalty (prefers aligned + close).
-enum NavDir { NAV_UP, NAV_DOWN, NAV_LEFT, NAV_RIGHT };
 static bool navIsStoreTab(lv_obj_t* o) {
   for (lv_obj_t* tab : s_nav_store_tabs) if (o && o == tab) return true;
   return false;
@@ -6616,25 +6616,9 @@ static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   }
   return true;
 }
-// Geometry of candidate `b` relative to the focused rect `a`: true when it lies in `dir`,
-// with the gaps navMoveDir ranks by. Direction uses the CENTRE delta (which side the
-// candidate is on); the gaps are rect-to-rect, not centre-to-centre — `primary` is the gap
-// along the pressed axis (how far past the current edge it sits) so the element IMMEDIATELY
-// in that direction wins, and `cross` is the off-axis gap, 0 whenever the rects line up on
-// that axis (a full-width row below a right-aligned switch still counts as "straight down").
+// Geometry of candidate `b` relative to the focused rect `a` (NavSpatial.h has the rules).
 static bool navDirMetrics(const lv_area_t& a, const lv_area_t& b, int dir, long* primary, long* cross) {
-  const int dx = (b.x1 + b.x2) / 2 - (a.x1 + a.x2) / 2;
-  const int dy = (b.y1 + b.y2) / 2 - (a.y1 + a.y2) / 2;
-  long hgap = b.x1 - a.x2; if (a.x1 - b.x2 > hgap) hgap = a.x1 - b.x2; if (hgap < 0) hgap = 0;
-  long vgap = b.y1 - a.y2; if (a.y1 - b.y2 > vgap) vgap = a.y1 - b.y2; if (vgap < 0) vgap = 0;
-  bool ok;
-  switch (dir) {
-    case NAV_UP:    ok = dy < 0; *primary = vgap; *cross = hgap; break;
-    case NAV_DOWN:  ok = dy > 0; *primary = vgap; *cross = hgap; break;
-    case NAV_LEFT:  ok = dx < 0; *primary = hgap; *cross = vgap; break;
-    default:        ok = dx > 0; *primary = hgap; *cross = vgap; break;  // NAV_RIGHT
-  }
-  return ok;
+  return navSpatialMetrics(NavRect{ a.x1, a.y1, a.x2, a.y2 }, NavRect{ b.x1, b.y1, b.x2, b.y2 }, dir, primary, cross);
 }
 #if defined(HAS_THINKNODE_M9)
 static bool m9ControlCenterMove(lv_obj_t* current, int dir) {
@@ -6810,57 +6794,23 @@ static bool navMoveDir(int dir) {
       }
     }
   }
-  // Pass 1: find the NEAREST candidate along the pressed axis and take its extent as the
-  // row (or column) band. Pass 2 ranks only what sits inside that band, so a press can
-  // never jump over an intervening focusable: on Send advert, DOWN from the Flood button
-  // used to land on the "Flood every" dropdown two rows down (wide, so perfectly aligned)
-  // instead of the "On boot" switch right below it (narrow + right-aligned, so its cross
-  // penalty out-weighed a whole extra row of distance).
-  long bandLo = 0, bandHi = 0;
-  bool haveBand = false;
-  long nearPrimary = 0x7FFFFFFFL, nearCross = 0x7FFFFFFFL;
+  // The ranking itself is NavSpatial.h's navSpatialPick (host-tested): the nearest
+  // candidate's row/column band, then alignment within it. Collect what may take focus.
+  static lv_obj_t* s_pick_obj[kNavMax];
+  static NavRect   s_pick_rect[kNavMax];
+  int pick_n = 0;
   for (int i = 0; i < n; i++) {
     lv_obj_t* o = s_nav_objs[i];
     if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
     if (!navDirCandidate(o, cur, dir)) continue;
     lv_area_t b; lv_obj_get_coords(o, &b);
-    long primary, cross;
-    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
-    if (primary > nearPrimary || (primary == nearPrimary && cross >= nearCross)) continue;
-    nearPrimary = primary; nearCross = cross;
-    const bool vert = (dir == NAV_UP || dir == NAV_DOWN);
-    bandLo = vert ? b.y1 : b.x1;
-    bandHi = vert ? b.y2 : b.x2;
-    haveBand = true;
+    s_pick_obj[pick_n] = o;
+    s_pick_rect[pick_n] = { b.x1, b.y1, b.x2, b.y2 };
+    ++pick_n;
   }
-  lv_obj_t* best = nullptr;
-  long bestScore = 0x7FFFFFFFL;
-  for (int i = 0; i < n; i++) {
-    lv_obj_t* o = s_nav_objs[i];
-    if (preferred_region && navSettingsModalRegionFor(o) != preferred_region) continue;
-    if (!navDirCandidate(o, cur, dir)) continue;
-    lv_area_t b; lv_obj_get_coords(o, &b);
-    long primary, cross;
-    if (!navDirMetrics(a, b, dir, &primary, &cross)) continue;
-    // Out of band = entirely past the nearest candidate in the pressed direction, i.e. a
-    // further row/column. Candidates that merely overlap the band (a taller neighbour, a
-    // switch beside a button) stay in the running and are ranked by the score below.
-    if (haveBand) {
-      bool past;
-      switch (dir) {
-        case NAV_UP:    past = b.y2 <  bandLo; break;
-        case NAV_DOWN:  past = b.y1 >  bandHi; break;
-        case NAV_LEFT:  past = b.x2 <  bandLo; break;
-        default:        past = b.x1 >  bandHi; break;  // NAV_RIGHT
-      }
-      if (past) continue;
-    }
-    // Column/row alignment dominates: a candidate directly in line (cross == 0) beats a
-    // nearer-but-sideways one, so DOWN from a right-column button lands on the button below
-    // it, not a box off to the left. Among in-line candidates the closest (smallest gap) wins.
-    const long score = primary + 8 * cross;
-    if (score < bestScore) { bestScore = score; best = o; }
-  }
+  const NavRect cur_rect = { a.x1, a.y1, a.x2, a.y2 };
+  const int pick = navSpatialPick(cur_rect, s_pick_rect, pick_n, dir);
+  lv_obj_t* best = pick >= 0 ? s_pick_obj[pick] : nullptr;
   if (best) {
     if (dir == NAV_UP && g_set_modal.kind == SettingsModalKind::Discovered &&
         g_set_modal.root && lv_obj_is_valid(g_set_modal.root) &&
@@ -71199,6 +71149,12 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
   const int chart_x = 30, chart_rpad = 30, chart_h = 108;
   lv_obj_t* chart = nullptr;
   if (n > 0) {
+    // Below the 32 px row of the Request / gear / X buttons, not reaching up into it.
+    // A chart that overlapped that row (it started at 26) counted as the nearest thing
+    // left of the gear and of the X, so the keypad cursor went gear -> chart and never
+    // reached Request until the history was cleared and the chart was gone.
+    constexpr int kBadgeRowH = 32;
+    if (y + 4 < kBadgeRowH + 4) y = kBadgeRowH;
     chart = lv_chart_create(card);
     lv_obj_set_size(chart, cardw - 20 - chart_x - chart_rpad, chart_h);
     lv_obj_set_pos(chart, chart_x, y + 4);
