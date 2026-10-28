@@ -49496,9 +49496,15 @@ static void updateTrackball(unsigned long now) {
 #if defined(HAS_PAGER_ENCODER)
 static bool pagerSliderEditCancel();
 #endif
+#if defined(TLORA_PAGER)
+static bool themeBackOffersApply();   // Theme page section, below
+#endif
 static void pagerNavGoBack() {
 #if defined(HAS_PAGER_ENCODER)
   if (pagerSliderEditCancel()) return;           // editing a slider: Back undoes the edit, nothing else
+#endif
+#if defined(TLORA_PAGER)
+  if (themeBackOffersApply()) return;            // Theme page with an unapplied look: offer Apply once
 #endif
   if (anyPopupOpen() || s_map_pick_active)       hwKeyDismissTopPopup();   // pick mode: a flags=0 registry row
   else if (s_apppage_close)                      s_apppage_close();
@@ -69427,8 +69433,13 @@ static void themeIconsCb(lv_event_t* e) {
   contactsListForceRefresh();
   themePageRepaint();
 }
+static void themeApplyCommit(lv_obj_t* btn);
 static void themeApplyCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !themePendingDiffers()) return;
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  themeApplyCommit(lv_event_get_target(e));
+}
+static void themeApplyCommit(lv_obj_t* btn) {
+  if (!themePendingDiffers()) return;
 #if defined(ESP32)
   if (s_theme_pend.mode != s_theme_saved.mode && !touchPrefsSetThemeMode(s_theme_pend.mode)) {
     if (g_lv.task) g_lv.task->showAlert(TR("Theme save failed"), 1600);
@@ -69445,11 +69456,37 @@ static void themeApplyCb(lv_event_t* e) {
   touchPrefsSetBackgroundDim(s_theme_pend.bg_dim);
 #endif
   s_theme_saved = s_theme_pend;
-  lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
+  if (btn) lv_obj_add_flag(btn, LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
   rebootWithNotice(TR("Applying the theme, restarting\xE2\x80\xA6"));
 }
+#if defined(TLORA_PAGER)
+// Back on the Theme page with a look picked but not applied: the Apply button sits at
+// the top of the page (or in the bar over it), a long knob walk away from the rows
+// below, so Back offers it once. Declining keeps the page; the next Back leaves it.
+static bool s_theme_back_asked = false;
+static void themeBackApply() { themeApplyCommit(nullptr); }
+static bool themeBackOffersApply() {
+  if (!s_tp.page || s_theme_back_asked || !themePendingDiffers()) return false;
+  // Only from the page itself (it is a settings sheet, so a popup to the registry);
+  // anything opened over it (a picker, a dialog) takes the Back first.
+  bool on_page = false;
+  lv_obj_t* f = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
+  for (lv_obj_t* o = f; o; o = lv_obj_get_parent(o))
+    if (o == s_tp.page || o == s_tp.mini) { on_page = true; break; }
+  if (!on_page) return false;
+  s_theme_back_asked = true;
+  showConfirm(TR("Apply the new look? The Pager restarts to apply it."), TR("Apply and restart"),
+              themeBackApply, false, true);
+  return true;
+}
+#endif
 static void themePageDeleteCb(lv_event_t* e) {
-  if (lv_event_get_code(e) == LV_EVENT_DELETE) s_tp = {};
+  if (lv_event_get_code(e) == LV_EVENT_DELETE) {
+    s_tp = {};
+#if defined(TLORA_PAGER)
+    s_theme_back_asked = false;
+#endif
+  }
 }
 
 #if !defined(HAS_TDECK_PRO)
