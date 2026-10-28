@@ -6034,7 +6034,8 @@ struct NavTip {
   const char* key_hint;   // a line for the keyboard only ("Hold Enter: settings")
   bool        own_hold;   // holding it already does something: no generic touch card
 };
-static NavTip      s_nav_tips[64];
+constexpr int     k_nav_tips_max = 64;
+static NavTip*     s_nav_tips = (NavTip*)psAlloc(sizeof(NavTip) * k_nav_tips_max);   // PSRAM (1.3 KB off internal .bss, #763)
 static lv_obj_t*   s_nav_tip_box   = nullptr;
 static lv_obj_t*   s_nav_tip_title = nullptr;
 static lv_obj_t*   s_nav_tip_hint  = nullptr;
@@ -6047,7 +6048,7 @@ static bool        s_nav_tip_touch = false;   // the card on screen is a finger'
 
 static const NavTip* navTipFind(lv_obj_t* obj) {
   if (!obj) return nullptr;
-  for (const NavTip& t : s_nav_tips) if (t.obj == obj) return &t;
+  for (int i = 0; i < k_nav_tips_max; ++i) if (s_nav_tips[i].obj == obj) return &s_nav_tips[i];
   return nullptr;
 }
 static void navTipHide() {
@@ -6154,7 +6155,8 @@ static void navTipLongPressCb(lv_event_t* e) {
 static void navTipDeletedCb(lv_event_t* e) {
   lv_obj_t* o = lv_event_get_target(e);
   if (o == s_nav_tip_for) navTipHide();
-  for (NavTip& t : s_nav_tips) if (t.obj == o) t = NavTip{ nullptr, nullptr, nullptr, nullptr, false };
+  for (int i = 0; i < k_nav_tips_max; ++i)
+    if (s_nav_tips[i].obj == o) s_nav_tips[i] = NavTip{ nullptr, nullptr, nullptr, nullptr, false };
 }
 // Strings must outlive the control: literals or TR() results. A slider is always
 // own_hold (holding it is how a finger drags it).
@@ -6162,9 +6164,9 @@ static void navSetTip(lv_obj_t* obj, const char* title, const char* hint = nullp
                       const char* key_hint = nullptr, bool own_hold = false) {
   if (!obj || !title) return;
   NavTip* slot = nullptr;
-  for (NavTip& t : s_nav_tips) if (t.obj == obj) { slot = &t; break; }
+  for (int i = 0; i < k_nav_tips_max; ++i) if (s_nav_tips[i].obj == obj) { slot = &s_nav_tips[i]; break; }
   if (!slot) {
-    for (NavTip& t : s_nav_tips) if (!t.obj) { slot = &t; break; }
+    for (int i = 0; i < k_nav_tips_max; ++i) if (!s_nav_tips[i].obj) { slot = &s_nav_tips[i]; break; }
     if (!slot) return;   // full: this control goes without a card
     lv_obj_add_event_cb(obj, navTipDeletedCb, LV_EVENT_DELETE, nullptr);
     lv_obj_add_event_cb(obj, navTipLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
@@ -30792,8 +30794,12 @@ static bool discoverRowsReady() {
 static void discoverBuildFeed() {
   if (!s_discover_feed) return;
   const uint32_t now = millis();
-  static MyMesh::DiscoverHit hits[MyMesh::DISCOVER_MAX];
-  static uint8_t idx[MyMesh::DISCOVER_MAX];
+  // Lazy-PSRAM (~6.5 KB off internal DRAM .bss, #763): allocated on the first feed build.
+  static const int k_buf_sz = 3200;
+  static MyMesh::DiscoverHit* hits = (MyMesh::DiscoverHit*)psAlloc(sizeof(MyMesh::DiscoverHit) * MyMesh::DISCOVER_MAX);
+  static uint8_t* idx = (uint8_t*)psAlloc(MyMesh::DISCOVER_MAX);
+  static char* buf = (char*)psAlloc(k_buf_sz);
+  if (!hits || !idx || !buf) return;   // null only under extreme OOM
   uint8_t m = 0;
   uint8_t n = the_mesh.discoverCount();
   for (uint8_t i = 0; i < n && m < MyMesh::DISCOVER_MAX; i++) {
@@ -30803,11 +30809,10 @@ static void discoverBuildFeed() {
     for (uint8_t b = (uint8_t)(a + 1); b < m; b++)
       if (hits[idx[b]].our_rssi > hits[idx[a]].our_rssi) { uint8_t t = idx[a]; idx[a] = idx[b]; idx[b] = t; }
 
-  static char buf[3200];
   int q = 0, rpt = 0, comp = 0;
   const int MAXROWS = DISC_MAXROWS;
   s_disc_row_n = 0;
-  for (uint8_t k = 0; k < m && k < MAXROWS && q < (int)sizeof(buf) - 112; k++) {
+  for (uint8_t k = 0; k < m && k < MAXROWS && q < k_buf_sz - 112; k++) {
     const MyMesh::DiscoverHit& h = hits[idx[k]];
     if (h.node_type == ADV_TYPE_REPEATER) rpt++;
     else if (h.node_type == ADV_TYPE_CHAT) comp++;
@@ -30846,12 +30851,12 @@ static void discoverBuildFeed() {
     char disp[15], disp_esc[30];
     copyUtf8ReplacingMissingGlyphs(&g_font_12, disp, sizeof disp, name);
     recolorEscape(disp_esc, sizeof disp_esc, disp);
-    q += snprintf(buf + q, sizeof(buf) - q,
+    q += snprintf(buf + q, (size_t)(k_buf_sz - q),
       "#%06X %s#  %s  %ddBm %.1f%s%s  \xC2\xB7 %s\n",
       (unsigned)discTypeColor(h.node_type), disp_esc, discTypeShort(h.node_type),
       (int)h.our_rssi, (double)h.our_snr_q4 / 4.0, direct, dist_seg, ago);
   }
-  if (q == 0) snprintf(buf, sizeof buf, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
+  if (q == 0) snprintf(buf, k_buf_sz, TR("#7A7F87 Scanning\xE2\x80\xA6 nothing has answered yet#"));
   else if (buf[q - 1] == '\n') buf[q - 1] = '\0';
   normalizeLightSurfaceRecolor(buf);
   lv_label_set_text(s_discover_feed, buf);
@@ -38972,7 +38977,8 @@ constexpr int k_map_links_max = 32;
 // drawn. The status label reports the shortfall instead of hiding it.
 static int s_map_markers_drawn = 0;
 static int s_map_markers_wanted = 0;
-static MapMarker s_map_markers[k_map_markers_max] = {};
+// PSRAM (2 KB off internal .bss, #763); psAlloc zero-fills, as `= {}` did.
+static MapMarker* s_map_markers = (MapMarker*)psAlloc(sizeof(MapMarker) * k_map_markers_max);
 // Effective dot limit: the user's setting (Map settings), clamped to the array. 0 in
 // the setting means "no limit", i.e. everything in view up to the firmware ceiling.
 static int mapMarkerCap() {
@@ -39096,7 +39102,8 @@ static void freeMapMarkers() {
     lv_obj_del(s_map_location_marker);
     s_map_location_marker = nullptr;
   }
-  for (auto& m : s_map_markers) {
+  for (int i = 0; i < k_map_markers_max; ++i) {
+    MapMarker& m = s_map_markers[i];
     if (m.obj) { lv_obj_del(m.obj); m.obj = nullptr; }
     m.mesh_idx = -2;   // "slot empty" sentinel
   }
@@ -40957,7 +40964,8 @@ static void mapCanvasEventCb(lv_event_t* e) {
     int hits[k_map_markers_max];
     int n_hits = 0;
     const int R2 = 16 * 16;
-    for (auto& m : s_map_markers) {
+    for (int i = 0; i < k_map_markers_max; ++i) {
+      MapMarker& m = s_map_markers[i];
       if (!m.obj) continue;
       lv_area_t a;
       lv_obj_get_coords(m.obj, &a);
@@ -60518,7 +60526,8 @@ static void statusBarLayoutOneRow() {
 static void chatHeaderSubtitle(char* out, size_t cap) {
   out[0] = '\0';
   if (!g_lv.task || !g_lv.task->hasActiveThread()) return;
-  static int idx[512];
+  static int* idx = (int*)psAlloc(sizeof(int) * 512);   // Lazy-PSRAM (2 KB off internal .bss, #763)
+  if (!idx) return;
   const int n = g_lv.task->getActiveThreadMessageCount(idx, 512, true);
   const bool ch = g_lv.task->activeThreadIsChannel();
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
@@ -64995,8 +65004,11 @@ static void hwLuaUpdate(int i) {
   uint32_t h = hwHash(2166136261u, (uint32_t)(uint16_t)s.bar);
   for (int p = 0; p < s.spark_n; ++p) h = hwHash(h, (uint32_t)(uint16_t)s.spark[p]);
   if (h == w.memo2) return;
+  // The figure keeps a pointer: a copy of its own. Lazy-PSRAM (~1 KB off internal .bss, #763).
+  static int16_t (*spark)[LUA_WIDGET_SPARK_MAX] =
+      (int16_t(*)[LUA_WIDGET_SPARK_MAX])psAlloc(sizeof(int16_t) * kHwMax * LUA_WIDGET_SPARK_MAX);
+  if (!spark) return;   // null only under extreme OOM; memo2 stays unset, so it retries
   w.memo2 = h;
-  static int16_t spark[kHwMax][LUA_WIDGET_SPARK_MAX];   // the figure keeps a pointer: a copy of its own
   HwFig* f = hwF(i, 1);
   memcpy(spark[i], s.spark, sizeof(int16_t) * s.spark_n);
   f->a = spark[i]; f->n = s.spark_n; f->lo = 0; f->hi = 0; f->none = INT16_MIN;
@@ -71082,12 +71094,15 @@ static void openTelemetryWindow(const uint8_t* key6, const char* name, int state
 
   // ---- Read the per-node log into the chosen display window ----
   static const int k_max = 300;
-  static uint16_t mvs[k_max]; static int16_t t10s[k_max]; static int16_t hums[k_max];
+  // Lazy-PSRAM (1.8 KB off internal .bss, #763): allocated once, when a window first opens.
+  static uint16_t* mvs  = (uint16_t*)psAlloc(sizeof(uint16_t) * k_max);
+  static int16_t*  t10s = (int16_t*)psAlloc(sizeof(int16_t) * k_max);
+  static int16_t*  hums = (int16_t*)psAlloc(sizeof(int16_t) * k_max);
   int n = 0;
   const uint32_t now = wallClockIsCurrent() ? (uint32_t)time(nullptr) : 0;
   const uint32_t age_lo = (uint32_t)s_telem_win_now_h  * 3600u;
   const uint32_t age_hi = (uint32_t)s_telem_win_past_h * 3600u;
-  if (SD.cardType() != CARD_NONE) {
+  if (mvs && t10s && hums && SD.cardType() != CARD_NONE) {   // null only under extreme OOM -> n stays 0
     markSdIo();
     char path[40]; telemetryNodePath(s_telem_node, path, sizeof path);
     File rf = SD.open(path, FILE_READ);
@@ -84184,7 +84199,10 @@ static void vtEnsure() {
   s_vt_indev = lv_indev_drv_register(&drv);
 }
 static lv_obj_t* vtTipObj(const char* title) {
-  for (const NavTip& t : s_nav_tips) if (t.obj && t.title && !strcmp(t.title, title)) return t.obj;
+  for (int i = 0; i < k_nav_tips_max; ++i) {
+    const NavTip& t = s_nav_tips[i];
+    if (t.obj && t.title && !strcmp(t.title, title)) return t.obj;
+  }
   return nullptr;
 }
 static void vtPress(lv_obj_t* o) {
