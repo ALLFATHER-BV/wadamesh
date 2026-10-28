@@ -406,10 +406,21 @@
   #define CAP_ROUND_CORNERS 0
 #endif
 
+// An e-paper panel (the T-Deck Pro and Max, both HAS_TDECK_PRO). LVGL draws into a
+// band that the driver copies, with the CPU, into its own PSRAM canvas, and every change
+// on screen costs a panel update that blocks the loop for about 0.65 s (a full one for
+// longer). So: the band needs no DMA-capable RAM, and anything that repaints often
+// (progress, activity lights) has to be paced or left out.
+#if defined(HAS_TDECK_PRO)
+  #define CAP_EPAPER 1
+#else
+  #define CAP_EPAPER 0
+#endif
+
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
 // cannot show that, and refreshing it to try would wear the panel, so the T-Deck
 // Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.
-#if defined(HAS_TDECK_PRO)
+#if CAP_EPAPER
   #define CAP_SCREENSAVER 0
 #else
   #define CAP_SCREENSAVER 1

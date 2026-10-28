@@ -161,6 +161,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
+#include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
 #include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
@@ -20848,28 +20849,32 @@ static void wifiScanOpenAndKick() {
 
 // Mirror of the BLE-enable guard: bringing esp_wifi up needs ~50 KB free internal
 // heap, and with BLE already holding its share on a tight board the init fails
-// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. Pager
-// uses the live main-loop BLE handoff; the preflight remains for other boards.
+// DEEP in the Wi-Fi state machine (main.cpp) where nothing reports it. The
+// decision itself is WifiColdStartGate.h (host-tested). The Pager's main loop
+// orders the start (it pauses Bluetooth traffic, keeping NimBLE resident, lets
+// esp_wifi allocate, then resumes) and reports a failed allocation itself; the
+// preflight remains for the other boards, whose loop has no such fallback.
 enum class WifiEnableGate : uint8_t { Ready, LowMemory };
 
 static WifiEnableGate wifiEnableGate() {
 #if defined(ESP32)
-  // Once esp_wifi is initialized, a live off/on toggle does not need its large
-  // one-time DMA allocation. Apply the reserve only to a cold start.
-  if (WiFi.getMode() != WIFI_MODE_NULL) return WifiEnableGate::Ready;
 #if defined(TLORA_PAGER)
-  // The main loop releases NimBLE, allocates Wi-Fi, then recreates NimBLE live.
-  // Let that path make the authoritative allocation attempt and report failure.
-  return WifiEnableGate::Ready;
+  const bool ordered_by_main_loop = true;
 #else
+  const bool ordered_by_main_loop = false;
+#endif
   const uint32_t internal_caps = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
   const size_t freeh = heap_caps_get_free_size(internal_caps);
   const size_t maxblk = heap_caps_get_largest_free_block(internal_caps);
-  if (freeh >= 50u * 1024u && maxblk >= 20u * 1024u) return WifiEnableGate::Ready;
-  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u\n",
-                (unsigned)freeh, (unsigned)maxblk);
+  // Once esp_wifi is initialized, a live off/on toggle does not need its large
+  // one-time allocation: the reserve applies only to a cold start.
+  if (WifiColdStartGate::decide(WiFi.getMode() != WIFI_MODE_NULL, ordered_by_main_loop,
+                                freeh, maxblk) == WifiColdStartGate::Decision::Ready)
+    return WifiEnableGate::Ready;
+  Serial.printf("[wifi] cold start refused: free=%u maxblk=%u (needs %u / %u)\n",
+                (unsigned)freeh, (unsigned)maxblk,
+                (unsigned)WifiColdStartGate::kMinFree, (unsigned)WifiColdStartGate::kMinBlock);
   return WifiEnableGate::LowMemory;
-#endif
 #else
   return WifiEnableGate::Ready;
 #endif
@@ -76473,8 +76478,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // DMA buffers, the Pager's pushColors), so it needs no DMA-capable RAM, and the
       // internal RAM it used to take pays for the faster LVGL build (perf_lvgl.py). Measured
       // on the T-Deck with the frame benchmark (2026-10-09), the same pixels. The V4 keeps
-      // its internal 240x24 band (2 MB of quad PSRAM is too little and too slow), and so does
-      // e-paper, which waits on the panel, not on drawing.
+      // its internal 240x24 band (2 MB of quad PSRAM is too little and too slow).
       bool band_psram = false;
 #if defined(DOC_CAPTURE) && defined(BENCH_BAND_W)
       const int draw_band_w = BENCH_BAND_W;   // perf benchmark builds only
@@ -76491,6 +76495,15 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       const int draw_band_w = 320;
 #endif
       g_draw_buf_px = 12800;
+      band_psram = true;
+#elif CAP_EPAPER
+      // E-paper (T-Deck Pro, Max): the same 240x24 band, in PSRAM. The flush only copies
+      // it with the CPU into the driver's PSRAM canvas and 1-bit buffer
+      // (TDeckProDisplay::writePixelsRGB565), so it never needed DMA-capable RAM, and
+      // the panel, not the drawing, is what a frame waits on. In internal RAM it held
+      // 11.5 KB that a Wi-Fi cold start next to Bluetooth was short by (#763).
+      const int draw_band_w = 240;
+      g_draw_buf_px = draw_band_w * LV_DRAW_BUF_LINES;
       band_psram = true;
 #elif defined(HAS_CROWPANEL_50)
       // 20 full rows of the 800-px panel in internal RAM, as Camillia-MT runs it: the
