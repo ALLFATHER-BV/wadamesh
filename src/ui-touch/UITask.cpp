@@ -157,6 +157,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
 #include "UsbFilesSession.h"    // USB Files: files.wadamesh.com over the USB cable
+#include "UsbFilesPaint.h"      // host-tested: how often the USB Files screen repaints (e-paper)
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
@@ -58226,7 +58227,11 @@ class UiUsbFilesHost : public UsbFilesHost {
 #endif
   }
   void describe(char* out, size_t cap) override {
-#if defined(HAS_TDECK_GT911)
+#if defined(HAS_TDECK_MAX)
+    static const char* kBoard = "LilyGo T-Deck Max";
+#elif defined(HAS_TDECK_PRO)
+    static const char* kBoard = "LilyGo T-Deck Pro";
+#elif defined(HAS_TDECK_GT911)
     static const char* kBoard = "LilyGo T-Deck";
 #elif defined(HELTEC_LORA_V4_TFT)
     static const char* kBoard = "Heltec V4 TFT";
@@ -58256,6 +58261,10 @@ static UiUsbFilesHost  s_usbfiles_host;
 // should not carry for an app that is closed nearly all the time.
 static UsbFilesSession* s_usbfiles = nullptr;
 
+// What the status line and bar last showed: on e-paper the repaint is paced
+// (UsbFilesPaint.h, host-tested); an LCD repaints every tick as before.
+static UsbFilesPaint::Shown s_usbfiles_shown;
+
 static void usbFilesRefresh() {
   if (!s_usbfiles_status || !s_usbfiles) return;
   UsbFilesSession& ses = *s_usbfiles;
@@ -58278,10 +58287,13 @@ static void usbFilesRefresh() {
   } else {
     snprintf(buf, sizeof buf, "%s", TR("Waiting for the computer"));
   }
+  const int8_t bar = UsbFilesPaint::barValue(CAP_EPAPER, moving, done, total);
+  if (!UsbFilesPaint::shouldPaint(CAP_EPAPER, moving, buf, bar, millis(), s_usbfiles_shown))
+    return;
   lv_label_set_text(s_usbfiles_status, buf);
   if (s_usbfiles_bar) {
-    if (moving && total > 0) {
-      lv_bar_set_value(s_usbfiles_bar, (int32_t)((uint64_t)done * 100 / total), LV_ANIM_OFF);
+    if (bar >= 0) {
+      lv_bar_set_value(s_usbfiles_bar, bar, LV_ANIM_OFF);
       lv_obj_clear_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
     } else {
       lv_obj_add_flag(s_usbfiles_bar, LV_OBJ_FLAG_HIDDEN);
@@ -58362,6 +58374,7 @@ static void openUsbFilesPage() {
   text(TR("3. Click Connect and choose this device."), &g_font_12, COLOR_SUB);
 
   s_usbfiles_status = text("", &g_font_14, COLOR_TEXT);
+  s_usbfiles_shown = UsbFilesPaint::Shown();   // a fresh screen: the first refresh paints
   s_usbfiles_bar = lv_bar_create(s_usbfiles_root);
   lv_obj_set_size(s_usbfiles_bar, width, 8);
   lv_bar_set_range(s_usbfiles_bar, 0, 100);
@@ -82641,7 +82654,10 @@ void UITask::loop() {
   // microSD activity LED: lit for k_sd_io_led_ms after the last SD access
   // (markSdIo). Edge-triggered — LVGL is only touched when the lit/dark state
   // flips, so an idle device costs one comparison per loop and nothing else.
-  if (g_statusbar.sd_icon) {
+  // Not on e-paper: a 180 ms blink is two panel updates of ~0.65 s each, so a
+  // stream of card writes (USB Files, the Transfer app) kept the panel refreshing
+  // and the loop blocked for the whole transfer. It stays hidden there.
+  if (g_statusbar.sd_icon && !CAP_EPAPER) {
     static int8_t s_sd_led = -1;   // -1 = unset -> forces the initial sync
     const bool lit = (g_sd_io_ms != 0) &&
                      ((uint32_t)(now - g_sd_io_ms) < k_sd_io_led_ms);
