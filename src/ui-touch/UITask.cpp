@@ -9292,13 +9292,24 @@ static void otaStatusText(const char* t) {
 // Reflect the latest check result in the gear badge + the About status line.
 static void otaButtonRefreshState();   // defined below; greys the Install button when current
 
+// The Pager hides the bottom menu on the Map (applyMapChrome); the badges that sit
+// on its icons go with it.
+static bool tabBarHiddenNow() {
+#if defined(TLORA_PAGER)
+  lv_obj_t* bar = g_lv.tabview ? lv_tabview_get_tab_btns(g_lv.tabview) : nullptr;
+  return bar && lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN);
+#else
+  return false;
+#endif
+}
+
 static void versionCheckUpdateUi() {
   // Two badges: the bottom-bar gear (get the user into Settings) and the About
   // sub-tab (the actual update info lives there).
   lv_obj_t* badges[2] = { s_update_badge, s_update_subtab_badge };
   for (lv_obj_t* bd : badges) {
     if (!bd) continue;
-    if (s_update_available) lv_obj_clear_flag(bd, LV_OBJ_FLAG_HIDDEN);
+    if (s_update_available && !(bd == s_update_badge && tabBarHiddenNow())) lv_obj_clear_flag(bd, LV_OBJ_FLAG_HIDDEN);
     else                    lv_obj_add_flag(bd, LV_OBJ_FLAG_HIDDEN);
   }
   otaButtonRefreshState();   // enable/grey the OTA button to match the result
@@ -41919,6 +41930,22 @@ static void applyMapChrome(bool on) {
     if (g_statusbar.sleep_icon)  lv_obj_set_style_text_color(g_statusbar.sleep_icon, fg_sub, LV_PART_MAIN);
 #endif
   }
+#if defined(TLORA_PAGER)
+  // The Pager drives the map from the keyboard (W/A/S/D pan) and reaches the other
+  // tabs by their letters or Back, so the bottom menu only covers tiles here.
+  if (g_lv.tabview) {
+    if (lv_obj_t* btns = lv_tabview_get_tab_btns(g_lv.tabview)) {
+      if (on) lv_obj_add_flag(btns, LV_OBJ_FLAG_HIDDEN);
+      else    lv_obj_clear_flag(btns, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (on) {
+      if (s_chat_unread_badge) lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+      if (s_update_badge)      lv_obj_add_flag(s_update_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      versionCheckUpdateUi();   // the badges come back with the bar (the unread one on the next refresh)
+    }
+  }
+#endif
   // ---- Tab bar (bottom menu) — translucent so the map shows through ----
   // The Condense Nav rail stays solid on the map (#592), so it keeps its normal look.
   if (g_lv.tabview && !s_nav_rail) {
@@ -54765,7 +54792,13 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     // navOnMainPage gate lives in tabForKey). Do this before Map panning so S
     // can leave Map for Settings. If the requested tab is already active, let
     // the key continue: A on Map remains the west-pan control.
-    const int pager_tab = tabForKey(key);
+    int pager_tab = tabForKey(key);
+    // On the Map, W/A/S/D (and X) pan it: S there is south, not the Settings
+    // mnemonic, and A is west. The other tab letters still jump; Back leaves.
+    const bool map_pan_key = getActiveTab() == MAP_TAB_INDEX &&
+        (key == 'w' || key == 'W' || key == 'a' || key == 'A' || key == 's' || key == 'S' ||
+         key == 'd' || key == 'D' || key == 'x' || key == 'X');
+    if (map_pan_key) pager_tab = -1;
     // Home and Settings: a tap or a hold, settled in updatePagerTabHold().
     if (pager_tab == HOME_TAB_INDEX || pager_tab == SETTINGS_TAB_INDEX) {
       pagerTabHoldArm(pager_tab);
@@ -54798,16 +54831,14 @@ if (g_lv.task && g_lv.task->isManualLock()) {
         return;
       }
     }
-    // Map pan: W/A/X/D moves the map around on the Map tab (no touch/trackball
+    // Map pan: W/A/S/D moves the map around on the Map tab (no touch/trackball
     // to drag it), reusing the same mapNudge() step/re-render Tanmatsu's
-    // Ctrl+Arrow already uses. X replaces S because S is now the Settings
-    // mnemonic. W=north A=west X=south D=east.
-    if ((key == 'w' || key == 'W' || key == 'a' || key == 'A' ||
-         key == 'x' || key == 'X' || key == 'd' || key == 'D') &&
-        getActiveTab() == MAP_TAB_INDEX) {
+    // Ctrl+Arrow already uses. W=north A=west S=south D=east; X stays south
+    // too (it was the south key while S left the Map for Settings).
+    if (map_pan_key) {
       switch (key) {
         case 'w': case 'W': mapNudge(0); break;
-        case 'x': case 'X': mapNudge(1); break;
+        case 's': case 'S': case 'x': case 'X': mapNudge(1); break;
         case 'a': case 'A': mapNudge(2); break;
         case 'd': case 'D': mapNudge(3); break;
       }
@@ -83193,7 +83224,7 @@ void UITask::loop() {
     // Unread-count badge over the Chats tab icon (bottom bar).
     if (s_chat_unread_badge) {
       const int u = getUnreadTotal();
-      if (u > 0) {
+      if (u > 0 && !tabBarHiddenNow()) {
         char b[8]; if (u > 99) snprintf(b, sizeof b, "99+"); else snprintf(b, sizeof b, "%d", u);
         lv_label_set_text(s_chat_unread_badge, b);
         lv_obj_clear_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
