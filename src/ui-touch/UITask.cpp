@@ -36293,6 +36293,9 @@ static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
 // (\n, \t, \\ escapes; # lines are headers), sorts, and hands the table to
 // i18n. Allocations live for the session — switching languages reboots.
 static bool s_langfile_tried = false;
+// The active language file's own "# name:" ("Polski"), so Settings can name a language the
+// Store added: kUiLangNames only knows the built-in ones and showed "English" for those.
+static char s_langfile_name[40] = "";
 static void uiLangFileBootLoad() {
   if (s_langfile_tried) return;
   char code[12];
@@ -36349,6 +36352,11 @@ static void uiLangFileBootLoad() {
       // leading '#' instead silently dropped every key that starts with LVGL
       // recolor markup ("#7A7F87 Wardrive: …#") — those could never translate.
       char* tab = strchr(p, '\t');
+      if (!tab && !s_langfile_name[0] && strncmp(p, "# name:", 7) == 0) {
+        const char* v = p + 7;
+        while (*v == ' ') ++v;
+        snprintf(s_langfile_name, sizeof s_langfile_name, "%s", v);
+      }
       if (tab) {
         *tab = 0;
         auto unesc = [](char* s) {           // \n \t \\ -> the real bytes, in place
@@ -36366,7 +36374,7 @@ static void uiLangFileBootLoad() {
     }
     p = nl ? nl + 1 : nullptr;
   }
-  if (!n) { heap_caps_free(pairs); heap_caps_free(buf); return; }
+  if (!n) { s_langfile_name[0] = 0; heap_caps_free(pairs); heap_caps_free(buf); return; }
   qsort(pairs, n, sizeof(I18nPair), [](const void* a, const void* b) {
     return strcmp(((const I18nPair*)a)->key, ((const I18nPair*)b)->key);
   });
@@ -43717,7 +43725,8 @@ static void settingsCatValue(int c, char* out, size_t cap) {
 #endif
     case CAT_LANGUAGE: {
       const uint8_t l = i18nGetLang();
-      if (l < LANG_COUNT) snprintf(out, cap, "%s", kUiLangNames[l]);
+      if (s_langfile_name[0])  snprintf(out, cap, "%s", s_langfile_name);   // a language file is active
+      else if (l < LANG_COUNT) snprintf(out, cap, "%s", kUiLangNames[l]);
       break;
     }
 #if CAP_BATTERY
