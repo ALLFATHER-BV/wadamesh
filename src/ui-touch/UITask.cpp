@@ -6601,6 +6601,19 @@ static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (navIsStoreTab(o) && !navIsStoreTab(cur)) return false;
   if (navIsStoreTab(cur) && !navIsStoreTab(o)) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
+  // A message row scrolled out of the list's own view (under the floating composer, or
+  // up under the header) is no target from OUTSIDE the list: Down from a composer button
+  // went up into the row hidden behind the composer (#764). From a row inside the list
+  // the next row stays reachable and is scrolled into view as before.
+  if (LvChatPanel* cp = navOpenChatPanel();
+      cp && cp->msgs && lv_obj_get_parent(o) == cp->msgs && lv_obj_get_parent(cur) != cp->msgs) {
+    lv_area_t ma, oa;
+    lv_obj_get_coords(cp->msgs, &ma);
+    lv_obj_get_coords(o, &oa);
+    const lv_coord_t top = ma.y1 + lv_obj_get_style_pad_top(cp->msgs, LV_PART_MAIN);
+    const lv_coord_t bot = ma.y2 - lv_obj_get_style_pad_bottom(cp->msgs, LV_PART_MAIN);
+    if (oa.y2 <= top || oa.y1 >= bot) return false;
+  }
   return true;
 }
 // Geometry of candidate `b` relative to the focused rect `a`: true when it lies in `dir`,
@@ -6771,6 +6784,10 @@ static bool navMoveDir(int dir) {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
   if (readerNavMove(cur, dir)) return true;
 #endif
+  // Rank laid-out geometry. Objects created since the last display refresh (a chat's
+  // rows, re-rendered after a message arrived) still carry their pre-layout coords
+  // (zero size at the content origin) until LVGL's next pass, and were ranked there.
+  lv_obj_update_layout(cur);
   lv_area_t a; lv_obj_get_coords(cur, &a);
   // The Discovered header is fixed immediately above its scrolling list. When a
   // row sits at the viewport top, Close can be physically nearer than the prior
@@ -46102,12 +46119,15 @@ static void chatVirtCreateDivider(LvChatPanel* p, lv_coord_t vp_y) {
   const lv_coord_t kContentW = s_chat_virt.content_w;
   lv_obj_t* div = lv_obj_create(p->msgs);
   lv_obj_remove_style_all(div);
-  lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE);
+  // Decoration only: not CLICKABLE (lv_obj's default), or the keypad cursor stopped on
+  // the rule as if it were a message, and Up/Down from it lost the message order.
+  lv_obj_clear_flag(div, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(div, LV_OBJ_FLAG_FLOATING);
   lv_obj_set_size(div, kContentW, kChatDividerH);
   lv_obj_set_pos(div, 0, vp_y);
   lv_obj_t* dline = lv_obj_create(div);
   lv_obj_remove_style_all(dline);
+  lv_obj_clear_flag(dline, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_size(dline, kContentW, 1);
   lv_obj_set_pos(dline, 0, 8);
   // Where the unread part starts: a quiet rule in the lit tone with "NEW" centred on it.
@@ -47296,6 +47316,14 @@ static void chatVirtApplyPendingScroll(LvChatPanel* p) {
   const bool to_bottom = s_chat_virt.pending_scroll_bottom;
   s_chat_virt.pending_scroll = false;
   s_chat_virt.pending_scroll_bottom = false;
+  // Grow the scroll extent to the current layout FIRST. lv_obj_scroll_to_y is bounded by
+  // the extent LVGL last laid out, and the spacer that carries it was only resized after
+  // this scroll (in the render): a message that had just arrived was cut off, so the list
+  // stopped its height short of the bottom and the newest message sat under the floating
+  // composer, "at the bottom" no longer held for the next arrival, and a keypad cursor
+  // sent down there landed on a row the composer hid (#764).
+  chatVirtRefreshScrollArea(p);
+  lv_obj_update_layout(p->msgs);
   lv_coord_t y = to_bottom ? chatVirtBottomScrollY(p) : s_chat_virt.pending_scroll_y;
   if (y < 0) y = 0;
   lv_obj_scroll_to_y(p->msgs, y, LV_ANIM_OFF);
@@ -47347,6 +47375,48 @@ static void chatVirtJumpToLatest(LvChatPanel* p) {
 }
 
 static bool chatSeenByUser();   // fwd: screen on, unlocked, not just a glance (defined with the glance state)
+
+#if CAP_KEYPAD_NAV
+// The message the keyboard cursor is on in an open chat (its logical index), or -1:
+// the M9 / Pager target that is still waiting for its row to be rendered, else the
+// focused row. Only while the cursor is showing, so touch use is never affected.
+static int chatKeypadFocusIndex(LvChatPanel* p) {
+  if (!p || !p->msgs || !s_nav_group || !s_nav_show || s_chat_virt.panel != p) return -1;
+#if defined(TLORA_PAGER)
+  if (s_pager_chat_focus_i >= 0) return s_pager_chat_focus_i;
+#elif defined(HAS_M9_KEYBOARD)
+  if (s_m9_chat_focus_i >= 0) return s_m9_chat_focus_i;
+#endif
+  lv_obj_t* f = lv_group_get_focused(s_nav_group);
+  if (!f || !lv_obj_is_valid(f) || lv_obj_get_parent(f) != p->msgs) return -1;
+  const intptr_t ud = reinterpret_cast<intptr_t>(lv_obj_get_user_data(f));
+  return ud >= 0 ? static_cast<int>(ud) : -1;
+}
+
+// A refresh (a message arriving, a delivery tick) re-renders the list at its own
+// scroll target: the newest message when the list was at the bottom, else where it
+// was. When the keyboard cursor is on a message, that target must still show it:
+// following new messages to the bottom scrolled a cursor near the bottom up out of
+// view, and the refresh's scroll replaced the one a d-pad press had just queued to
+// reveal the next message, so the cursor landed on a row hidden under the composer
+// and the next Down went to the text field (#764). Returns the target, moved only as
+// far as it takes to show that message (its top when it is taller than the list).
+static lv_coord_t chatRefreshKeepCursorVisible(LvChatPanel& p, lv_coord_t scroll_target, int focus_i) {
+  if (focus_i < 0 || focus_i >= s_chat_virt.n || !s_chat_virt.offsets) return scroll_target;
+  const int32_t max_top = chatVirtMaxVirtTop(&p);
+  const int32_t view_h  = static_cast<int32_t>(chatVirtMsgsViewH(&p));
+  int32_t top = (scroll_target == LV_COORD_MAX) ? max_top : chatVirtLvToVirt(scroll_target);
+  const int32_t lo = s_chat_virt.offsets[focus_i];
+  const int32_t hi = chatVirtMsgVirtBottom(focus_i);
+  int32_t want = top;
+  if (hi > want + view_h) want = hi - view_h;   // below the view: bring its bottom in
+  if (lo < want) want = lo;                     // above it (or taller than it): its top
+  if (want < 0) want = 0;
+  if (want > max_top) want = max_top;
+  if (want == top) return scroll_target;
+  return chatVirtVirtToLv(want);
+}
+#endif  // CAP_KEYPAD_NAV
 
 static void refreshChatDetail(LvChatPanel& p) {
   if (!g_lv.task || !p.msgs) return;
@@ -47471,6 +47541,10 @@ static void refreshChatDetail(LvChatPanel& p) {
   } else if (was_at_bottom) {
     scroll_target = LV_COORD_MAX;
   }
+#if CAP_KEYPAD_NAV
+  if (!s_chat_just_opened)
+    scroll_target = chatRefreshKeepCursorVisible(p, scroll_target, chatKeypadFocusIndex(&p));
+#endif
 
   chatVirtResetInputForMsgs(&p);
   chatVirtCancelRenderTimer();
