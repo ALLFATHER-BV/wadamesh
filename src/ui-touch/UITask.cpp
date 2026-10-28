@@ -50442,7 +50442,20 @@ static lv_obj_t*   s_ql_hint  = nullptr;
 static lv_timer_t* s_ql_timer = nullptr;
 static uint8_t     s_ql_mode  = 0;         // 0 brightness, 1 volume
 static bool        s_ql_bright_dirty = false, s_ql_vol_dirty = false;
+static int         s_ql_vol   = -1;        // the level being turned, -1 = read the pref
+static lv_timer_t* s_ql_vol_timer = nullptr;
 static lv_obj_t*   s_keyhelp  = nullptr;   // the key help overlay, while up
+
+// Volume is saved when the turning pauses, not on every detent (an NVS write on the UI
+// thread per click). The chime reads the saved level, so the preview plays after it.
+static void pagerQuickLevelVolCommit(bool preview) {
+  if (s_ql_vol_timer) { lv_timer_del(s_ql_vol_timer); s_ql_vol_timer = nullptr; }
+  if (!s_ql_vol_dirty || s_ql_vol < 0) return;
+  touchPrefsSetSoundVolume((uint8_t)s_ql_vol);
+  s_ql_vol_dirty = false;
+  if (preview && soundPreviewAllowed(false)) uiPlayNotify();   // hear the new level
+}
+static void pagerQuickLevelVolTimerCb(lv_timer_t*) { s_ql_vol_timer = nullptr; pagerQuickLevelVolCommit(true); }
 
 static void pagerQuickLevelClose() {
   if (s_ql_timer) { lv_timer_del(s_ql_timer); s_ql_timer = nullptr; }
@@ -50450,7 +50463,9 @@ static void pagerQuickLevelClose() {
   s_ql_title = s_ql_value = s_ql_bar = s_ql_hint = nullptr;
   // Saved once at the end, not on every detent.
   if (s_ql_bright_dirty) touchPrefsSetBrightness(pagerBrightnessNow());
+  pagerQuickLevelVolCommit(false);
   s_ql_bright_dirty = s_ql_vol_dirty = false;
+  s_ql_vol = -1;
   s_ql_mode = 0;
 }
 static void pagerQuickLevelTimerCb(lv_timer_t*) { s_ql_timer = nullptr; pagerQuickLevelClose(); }
@@ -50502,7 +50517,7 @@ static void pagerQuickLevelRefresh() {
     lv_label_set_text_fmt(s_ql_title, LV_SYMBOL_IMAGE "  %s", TR("Brightness"));
     hint = TR("Shift + click: volume");
   } else {
-    v = touchPrefsGetSoundVolume();
+    v = s_ql_vol >= 0 ? s_ql_vol : touchPrefsGetSoundVolume();
     lv_label_set_text_fmt(s_ql_title, "%s  %s", v ? LV_SYMBOL_VOLUME_MAX : LV_SYMBOL_MUTE, TR("Volume"));
     hint = (g_lv.task && g_lv.task->isBuzzerQuiet()) ? TR("Sound is off")
          : dndActive()                               ? TR("Do Not Disturb is on")
@@ -50524,10 +50539,12 @@ static void pagerQuickLevelStep(int delta) {
     applyBrightness((uint8_t)v);
     s_ql_bright_dirty = true;
   } else {
-    int v = (int)touchPrefsGetSoundVolume() + delta * 5;
+    int v = (s_ql_vol >= 0 ? s_ql_vol : (int)touchPrefsGetSoundVolume()) + delta * 5;
     if (v < 0) v = 0; if (v > 100) v = 100;
-    touchPrefsSetSoundVolume((uint8_t)v);
-    if (soundPreviewAllowed(false)) uiPlayNotify();   // hear the new level
+    s_ql_vol = v;
+    s_ql_vol_dirty = true;
+    if (s_ql_vol_timer) lv_timer_reset(s_ql_vol_timer);
+    else { s_ql_vol_timer = lv_timer_create(pagerQuickLevelVolTimerCb, 250, nullptr); lv_timer_set_repeat_count(s_ql_vol_timer, 1); }
   }
   pagerQuickLevelRefresh();
 }
