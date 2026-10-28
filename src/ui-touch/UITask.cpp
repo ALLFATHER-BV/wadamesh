@@ -36721,18 +36721,18 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
       heap_caps_free(img);
       snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "out of memory"); s_sdfw_state = 3; return;
     }
-    struct SdSink {
-      const char* path; size_t len; File f;
-      bool open() { f = SD.open(path, FILE_WRITE); return (bool)f; }
-      size_t write(const uint8_t* p, size_t n) { return f.write(p, n); }
-      bool close() { const bool full = (size_t)f.size() == len; f.close(); return full; }
-      void discard() { SD.remove(path); }
+    // FsSink checks each attempt by reopening the closed file. beta_100 asked the
+    // still-open File for its size(), which on arduino-esp32 is stat(path): FAT has
+    // not written the size into the directory entry yet, so it read 0 and every
+    // attempt on every card "failed" at 100% (#734). See closeAndCheckSize.
+    struct SdHooks {
       void pause(int attempt) { vTaskDelay(pdMS_TO_TICKS(300 * attempt)); }
       void progress(size_t done, size_t total) {
         s_sdfw_pct = 85 + (int)((uint64_t)done * 15 / (uint64_t)total);
         vTaskDelay(1);
       }
-    } sink{path, (size_t)len, File()};
+    } hooks;
+    BufferedFileCommit::FsSink<decltype(SD), File, SdHooks> sink{SD, path, (size_t)len, hooks, File()};
     const bool written = BufferedFileCommit::commit(sink, img, (size_t)len, bounce, bsz, 3);
     free(bounce);
     heap_caps_free(img);
@@ -36788,8 +36788,9 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
       stalls = 0;
       put += (int)w;
     }
-    if (put != n) {
-      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed"); ok = false; break;
+    if (put != n) {   // the offset tells this streamed path apart from the buffered one
+      snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed at %d KB", received / 1024);
+      ok = false; break;
     }
     received += n;
     s_sdfw_pct = (int)((uint64_t)received * 100 / (uint64_t)len);
@@ -36800,8 +36801,12 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
     vTaskDelay(1);
   }
   free(buf);
-  f.close();
+  // Judge the file by what is on the card after close (the final flush happens there).
+  const bool landed = BufferedFileCommit::closeAndCheckSize(SD, f, path, (size_t)len);
   http.end();
+  if (ok && received == len && !landed) {
+    snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "SD write failed (short file)"); ok = false;
+  }
   if (!ok || received != len) {
     SD.remove(path);                     // never leave a truncated bin for the Launcher
     if (!s_sdfw_msg[0]) snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "short read %d/%d", received, len);
