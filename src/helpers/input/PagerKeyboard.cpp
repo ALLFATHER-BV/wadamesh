@@ -170,6 +170,8 @@ bool pagerKeyboardBackspaceHeld() { return s_state.backspaceHeld(); }
 
 bool pagerKeyboardSpaceHeld() { return s_state.spaceHeld(); }
 
+bool pagerKeyboardShiftHeld() { return s_state.shiftHeld(); }
+
 bool pagerKeyboardLetterHeld() { return s_state.letterHeld(); }
 
 bool pagerKeyboardConsumeAltShiftChord() {
