@@ -2366,3 +2366,11 @@ This help	This help
 Turn the knob • click to insert	Turn the knob • click to insert
 Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
 W A S D,  Q / E	W A S D,  Q / E
+30 sec	30 sec
+Asleep: tap screen or 🤍 to wake	Asleep: tap screen or 🤍 to wake
+File Transfer	File Transfer
+Peak %d dBm @ %.1f MHz	Peak %d dBm @ %.1f MHz
+Peak -- dBm	Peak -- dBm
+Receiving %s\n%lu / %lu bytes	Receiving %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Sending %s\n%lu / %lu bytes
+peak %d @ %.1f	peak %d @ %.1f
