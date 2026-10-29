@@ -3902,7 +3902,11 @@ static void loadDiscovered() {
       e.ci.type         = *p++;
       e.ci.flags        = *p++;
       e.path_len        = *p++;
-      e.ci.out_path_len = e.path_len;
+      // The record keeps the advert's hop count, not its path bytes, so there is no route
+      // to restore. Copying path_len here gave a contact added after a restart a "known"
+      // route of zero bytes, and its DMs went direct to hops no repeater matches (#768).
+      // Unknown, as a live entry has: the first send floods and the route is learnt.
+      e.ci.out_path_len = OUT_PATH_UNKNOWN;
       e.in_contacts     = (*p++ != 0);
       e.last_advert_ts  = discGetU32(p);
       e.ci.last_advert_timestamp = e.last_advert_ts;
