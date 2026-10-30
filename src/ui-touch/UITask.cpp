@@ -1819,7 +1819,12 @@ static void initTouchFontFallbacks() {
   // faces into g_font_NN, and a 14 px SemiBold beside 20 px body text would read as
   // smaller, not heavier, so there the role takes the scaled Medium face instead.
   const bool scaled_ui = g_font_14.line_height > lv_font_montserrat_14.line_height;
+#if defined(HAS_TDECK_PRO)
+  // One weight on the e-paper: its UI faces are already SemiBold (epd_font_NN.c, #767).
+  const lv_font_t* semi_src[3] = { &lv_font_montserrat_12, &lv_font_montserrat_14, &lv_font_montserrat_16 };
+#else
   const lv_font_t* semi_src[3] = { &ui_semibold_12, &ui_semibold_14, &ui_semibold_16 };
+#endif
   lv_font_t* semi[3] = { &g_font_semi_12, &g_font_semi_14, &g_font_semi_16 };
   lv_font_t* medium[3] = { &g_font_12, &g_font_14, &g_font_16 };
   for (int i = 0; i < 3; ++i) {
@@ -15655,6 +15660,16 @@ static void setDisabledLook(lv_obj_t* b, uint32_t face) {
 // A full-width action: an icon, the name, an optional value, and a chevron when it opens
 // a page or a sheet. SET_DANGER reads red; SET_PRIMARY is the page's one main action.
 // Returns the row; the value label (if any) is setActionValue(). Its name as given.
+// A settings button's title face. The T-Deck Pro's 240 px e-paper panel uses one smaller
+// face for every button so they read alike, and wraps a title that still does not fit
+// rather than cutting it short ("System..." for System Information, #767).
+#if defined(HAS_TDECK_PRO)
+static constexpr bool kSetBtnWrap = true;
+static const lv_font_t* setBtnFont(bool primary) { return primary ? &g_font_semi_12 : &g_font_12; }
+#else
+static constexpr bool kSetBtnWrap = false;
+static const lv_font_t* setBtnFont(bool primary) { return primary ? &g_font_semi_14 : &g_font_14; }
+#endif
 static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* text, const char* value,
                                  lv_event_cb_t cb, void* ud = nullptr, uint8_t kind = SET_NORMAL,
                                  bool chevron = true) {
@@ -15664,7 +15679,13 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   else                     styleButton(b);
   const bool glow = kind == SET_PRIMARY && kPrimaryGlowFill;   // filled with the glow, so its ink
   setDisabledLook(b, glow ? COLOR_GLOW : COLOR_CONTROL);
-  lv_obj_set_size(b, w, SC(38));
+  if (kSetBtnWrap) {   // grows to a wrapped title's two lines
+    lv_obj_set_size(b, w, LV_SIZE_CONTENT);
+    lv_obj_set_style_min_height(b, SC(38), LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(b, SC(6), LV_PART_MAIN);
+  } else {
+    lv_obj_set_size(b, w, SC(38));
+  }
   lv_obj_set_style_pad_hor(b, SC(10), LV_PART_MAIN);
   lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -15679,11 +15700,12 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   }
   lv_obj_t* tl = lv_label_create(b);
   lv_label_set_text(tl, text);
-  lv_obj_set_style_text_font(tl, kind == SET_PRIMARY ? &g_font_semi_14 : &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_font(tl, setBtnFont(kind == SET_PRIMARY), LV_PART_MAIN);
   lv_obj_set_style_text_color(tl, lv_color_hex(ink), LV_PART_MAIN);
-  lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
+  lv_label_set_long_mode(tl, kSetBtnWrap ? LV_LABEL_LONG_WRAP : LV_LABEL_LONG_DOT);
   lv_obj_set_flex_grow(tl, 1);
-  lv_obj_set_height(tl, lv_font_get_line_height(kind == SET_PRIMARY ? &g_font_semi_14 : &g_font_14));
+  if (kSetBtnWrap) lv_obj_set_height(tl, LV_SIZE_CONTENT);
+  else             lv_obj_set_height(tl, lv_font_get_line_height(setBtnFont(kind == SET_PRIMARY)));
   lv_obj_t* vl = lv_label_create(b);
   lv_label_set_text(vl, value ? value : "");
   lv_obj_set_style_text_font(vl, &g_font_12, LV_PART_MAIN);
@@ -15692,7 +15714,7 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
   {
     // The name keeps its own width where it can and the value gives way ("Tim..."
     // beside a whole time zone at the bigger text sizes); the value keeps a third.
-    const lv_font_t* nf = kind == SET_PRIMARY ? &g_font_semi_14 : &g_font_14;
+    const lv_font_t* nf = setBtnFont(kind == SET_PRIMARY);
     const lv_coord_t icon_w = lv_font_get_line_height(&ui_icons_16);
     const lv_coord_t fixed = 2 * SC(10) + SC(9) + ((icon && icon[0]) ? icon_w + SC(9) : 0) + (chevron ? icon_w + SC(9) : 0);
     const lv_coord_t name_w = lv_txt_get_width(text, strlen(text), nf, 0, LV_TEXT_FLAG_NONE);
@@ -15705,6 +15727,25 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
     setIconLabel(cl, UI_ICON_CHEVRON_RIGHT);
     lv_obj_set_style_text_color(cl, lv_color_hex(glow ? COLOR_ON_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
   }
+#if defined(EPD_DIRTY_LOG)
+  // Diagnostic (#767): each row's laid-out children, logged once the page settles.
+  lv_timer_t* t = lv_timer_create([](lv_timer_t* tm) {
+    lv_obj_t* row = (lv_obj_t*)tm->user_data;
+    if (lv_obj_is_valid(row)) {
+      lv_area_t a; lv_obj_get_coords(row, &a);
+      Serial.printf("[ROW] btn x=%d..%d w=%d content_w=%d\n", a.x1, a.x2, (int)lv_obj_get_width(row),
+                    (int)lv_obj_get_content_width(row));
+      for (uint32_t k = 0; k < lv_obj_get_child_cnt(row); ++k) {
+        lv_obj_t* ch = lv_obj_get_child(row, k);
+        lv_obj_get_coords(ch, &a);
+        Serial.printf("[ROW]   #%u x=%d..%d w=%d hidden=%d \"%s\"\n", (unsigned)k, a.x1, a.x2, (int)lv_obj_get_width(ch),
+                      lv_obj_has_flag(ch, LV_OBJ_FLAG_HIDDEN) ? 1 : 0, lv_label_get_text(ch));
+      }
+    }
+    lv_timer_del(tm);
+  }, 800, b);
+  (void)t;
+#endif
   return b;
 }
 // The same, its name passed through TR(): the English literal goes in. The raw one
@@ -15733,7 +15774,13 @@ static lv_obj_t* setButton(lv_obj_t* card, const char* icon, const char* title, 
   else                         styleButton(b);
   const bool glow = kind == SET_PRIMARY && kPrimaryGlowFill;   // filled with the glow, so its ink
   setDisabledLook(b, glow ? COLOR_GLOW : COLOR_CONTROL);
-  lv_obj_set_size(b, s_settings_content_w, SC(36));
+  if (kSetBtnWrap) {   // grows to a wrapped title's two lines
+    lv_obj_set_size(b, s_settings_content_w, LV_SIZE_CONTENT);
+    lv_obj_set_style_min_height(b, SC(36), LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(b, SC(6), LV_PART_MAIN);
+  } else {
+    lv_obj_set_size(b, s_settings_content_w, SC(36));
+  }
   if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, ud);
   lv_obj_t* row = setBox(b);
   lv_obj_set_size(row, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -15750,10 +15797,21 @@ static lv_obj_t* setButton(lv_obj_t* card, const char* icon, const char* title, 
   }
   lv_obj_t* tl = lv_label_create(row);
   lv_label_set_text(tl, TR(title));
-  lv_obj_set_style_text_font(tl, kind == SET_PRIMARY ? &g_font_semi_14 : &g_font_14, LV_PART_MAIN);
+  const lv_font_t* tf = setBtnFont(kind == SET_PRIMARY);
+  lv_obj_set_style_text_font(tl, tf, LV_PART_MAIN);
   lv_obj_set_style_text_color(tl, lv_color_hex(ink), LV_PART_MAIN);
-  lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
-  lv_obj_set_style_max_width(tl, s_settings_content_w - SC(48), LV_PART_MAIN);
+  const lv_coord_t tmax = s_settings_content_w - SC(48);
+  if (kSetBtnWrap) {
+    // A wrapping label needs a set width: the title's own, up to the room there is.
+    const char* t = lv_label_get_text(tl);
+    const lv_coord_t tw = lv_txt_get_width(t, strlen(t), tf, 0, LV_TEXT_FLAG_NONE);
+    lv_label_set_long_mode(tl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(tl, LV_MIN(tw, tmax));
+    lv_obj_set_style_text_align(tl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  } else {
+    lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_max_width(tl, tmax, LV_PART_MAIN);
+  }
   return b;
 }
 
@@ -17921,6 +17979,7 @@ static void pagerKbdNavToggleCb(lv_event_t* e) {
 
 // Hide the device/profile name in the status bar and park the clock on the left
 // where the name used to be. Applies immediately via updateGlobalStatusBar().
+#if !defined(HAS_TDECK_PRO)
 static void hideNameToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool hide = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -17930,6 +17989,7 @@ static void hideNameToggleCb(lv_event_t* e) {
   updateGlobalStatusBar();   // hide/show the name + reposition the clock now
   if (g_lv.task) g_lv.task->showAlert(hide ? TR("Device name hidden") : TR("Device name shown"), 1000);
 }
+#endif
 
 // Compact chat toggle (wyvern.red): IRC-style dense rows instead of bubbles. An
 // open chat re-renders immediately so the switch gives instant feedback.
@@ -18736,7 +18796,9 @@ static void buildDisplayPage() {
   {
     lv_obj_t* c = setCard("Status bar & units");
 #if defined(ESP32)
+#if !defined(HAS_TDECK_PRO)   // the Pro's bar never shows it (#767)
     setSwitchRow(c, "Hide device name", "Keeps your node's name off the status bar.", touchPrefsGetHideNodeName(), hideNameToggleCb);
+#endif
     setSwitchRow(c, "Distance in miles", nullptr, touchPrefsGetUseMiles(), useMilesToggleCb);
     setSwitchRow(c, "Temperature in Fahrenheit", nullptr, tempF(), tempFToggleCb);
 #endif
@@ -43028,7 +43090,11 @@ static int append_settings_section(lv_obj_t* tab, int y, const char* title, lv_e
   lv_obj_align(tit, LV_ALIGN_TOP_LEFT, 14, 8);
 
   lv_obj_t* sub = lv_label_create(row);
+#if defined(HAS_TDECK_PRO)
+  lv_label_set_long_mode(sub, LV_LABEL_LONG_DOT);   // e-paper: no marquee (#767)
+#else
   lv_label_set_long_mode(sub, LV_LABEL_LONG_SCROLL_CIRCULAR);
+#endif
   lv_obj_set_width(sub, row_w - 48);
   lv_obj_set_height(sub, 18);
   lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
@@ -60329,6 +60395,27 @@ static const char* luaAppIconGlyph(const char* name) {
   return LV_SYMBOL_PLAY;
 }
 
+#if defined(HAS_TDECK_PRO)
+// The node's name, centred at the top of Home and the app drawer: the e-paper status
+// bar has no room for it beside the clock (#767). Returns the band's height.
+static const char* proNodeName() {
+  const char* nm = g_lv.task ? g_lv.task->getNodeNameCstr() : nullptr;
+  return (nm && nm[0]) ? nm : "WADAMESH";
+}
+static int proNameBandH() { return SC(4) + lv_font_get_line_height(&g_font_semi_14) + SC(4); }
+static lv_obj_t* proNameBand(lv_obj_t* parent, int w) {
+  lv_obj_t* l = lv_label_create(parent);
+  lv_obj_set_style_text_font(l, &g_font_semi_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  lv_obj_set_size(l, w - 2 * SC(8), lv_font_get_line_height(&g_font_semi_14));
+  lv_obj_set_pos(l, SC(8), SC(4));
+  lv_label_set_text(l, proNodeName());
+  return l;
+}
+#endif
+
 static void openAppDrawer() {
   closeAppDrawer();
   const lv_coord_t sw = tabContentW();   // stops at the Condense Nav rail, which stays visible
@@ -60427,7 +60514,12 @@ static void openAppDrawer() {
   // rows fit the 320x240 boards exactly; the rest scrolls. (The old layout
   // stretched rows to fill the height, which made a short list look sparse and a
   // long one cramped.)
+#if defined(HAS_TDECK_PRO)
+  proNameBand(s_appdrawer_root, sw);
+  const int pad = 8, gap = 4, top = proNameBandH();
+#else
   const int pad = 8, gap = 4, top = 4;
+#endif
   const int grid_w = sw - 2 * pad;
   {
     // Bigger text takes columns away until every built-in app's name fits whole
@@ -61882,6 +61974,15 @@ static void chatHeaderApply(bool chat_open) {
 // the keyboard-layout tag. updateGlobalStatusBar runs it only when one of them
 // appears, goes or changes width. The round one-row bar has its own (statusBarLayoutOneRow).
 static uint32_t s_sb_pack_sig = 0;   // what the last pack saw; the clock's overlap guard follows it
+#if defined(HAS_TDECK_PRO)
+// The Pro's bar shows no node name (#767), so off Home the clock takes the left-hand
+// corner (the icons keep their places). Home keeps it centred.
+static bool sbProClockLeft() {
+  if (s_chat_title[0] && !s_apppage_title && s_settings_open_cat < 0) return false;   // the chat header places it
+  return getActiveTab() != HOME_TAB_INDEX || s_home_drawer_mode || s_appdrawer_root ||
+         s_settings_open_cat >= 0 || s_apppage_title;
+}
+#endif
 static void statusBarPackRight() {
   if (!g_statusbar.root) return;
   lv_obj_update_layout(g_statusbar.root);   // label widths for their current text
@@ -62161,7 +62262,19 @@ static void updateGlobalStatusBar() {
     if (!chat_hdr) sbAlign(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
 #endif
   } else {
+#if defined(HAS_TDECK_PRO)
+    // The clock holds the left corner off Home: the left zone (the unread count) follows it.
+    lv_coord_t lx = 6;
+    if (sbProClockLeft() && !s_statusbar_tall && g_statusbar.clock &&
+        !lv_obj_has_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN)) {
+      const char* t = lv_label_get_text(g_statusbar.clock);
+      lx += lv_txt_get_width(t, strlen(t), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0,
+                             LV_TEXT_FLAG_NONE) + SC(8);
+    }
+    sbAlign(g_statusbar.left_label, LV_ALIGN_LEFT_MID, lx, 0);
+#else
     sbAlign(g_statusbar.left_label, LV_ALIGN_LEFT_MID, 6, 0);
+#endif
 #if defined(TLORA_PAGER)
     sbWidth(g_statusbar.left_label, 200);
     sbLongMode(g_statusbar.left_label, LV_LABEL_LONG_DOT);
@@ -62308,9 +62421,9 @@ static void updateGlobalStatusBar() {
     // smaller font — otherwise on the narrow V4 portrait bar its end ("…Map")
     // runs into the Wi-Fi icon. Restore the normal font on other tabs.
 #if defined(HAS_TDECK_PRO)
-    // Only at Normal text size. The bar itself keeps its Normal faces at every size
-    // (sbFixed), but above Normal the name is left off it.
-    const bool home_name = tab == HOME_TAB_INDEX && !touchPrefsGetHideNodeName() && touchPrefsGetUiScale() == 0;
+    // Never on the e-paper bar: there is no room for it beside the clock, and the
+    // marquee that fitted it in was a panel update every step (#767).
+    const bool home_name = false;
 #else
     const bool home_name = tab == HOME_TAB_INDEX && !touchPrefsGetHideNodeName();
 #endif
@@ -62656,6 +62769,16 @@ static void updateGlobalStatusBar() {
     mixText(g_statusbar.ble_icon);   // Bluetooth vs the wider keyboard glyph
     mixText(g_statusbar.gps_icon);   // crosshair vs pin
     static uint32_t s_clk_sig = 0;
+#if defined(HAS_TDECK_PRO)
+    mix(sbProClockLeft());
+    if (sbProClockLeft()) {
+      if (sig != s_clk_sig && visible(g_statusbar.clock)) {
+        s_clk_sig = sig;
+        lv_obj_align(g_statusbar.clock, LV_ALIGN_LEFT_MID, 6, 0);
+        if (g_statusbar.async_icon) lv_obj_align(g_statusbar.async_icon, LV_ALIGN_CENTER, 0, 0);   // its own centre slot
+      }
+    } else
+#endif
     if (sig != s_clk_sig && visible(g_statusbar.clock)) {
       s_clk_sig = sig;
 #if CAP_ROUND_CORNERS
@@ -67017,6 +67140,9 @@ static void hwRadarTimerCb(lv_timer_t*) {
 }
 #endif
 
+#if defined(HAS_TDECK_PRO)
+static lv_obj_t* s_hw_name = nullptr;   // the name band over the grid (#767)
+#endif
 static void hwRebuild() {
   if (!s_hw_tab || !hwData()) return;
   if (!s_hw_loaded) hwLoad();
@@ -67025,6 +67151,9 @@ static void hwRebuild() {
     lv_obj_del_async(s_hw_grid);
     s_hw_grid = nullptr;
   }
+#if defined(HAS_TDECK_PRO)
+  s_hw_name = nullptr;   // went with the grid
+#endif
   for (int k = 0; k < kHwMax; ++k) hwI(k) = HwInst();
   s_hw_done_btn = nullptr;
   int aw = tabContentW(), ah = tabContentH();
@@ -67032,7 +67161,11 @@ static void hwRebuild() {
   const int mw = lv_obj_get_content_width(s_hw_tab), mh = lv_obj_get_content_height(s_hw_tab);
   if (mw > 0 && mw < aw) aw = mw;
   if (mh > 0 && mh < ah) ah = mh;   // the round panel's bar takes more than the formula says
+#if defined(HAS_TDECK_PRO)
+  const int head = s_hw_arrange ? LV_MAX((int)SC(30), (int)(hwLh(&g_font_semi_14) + hwLh(&g_font_12) + SC(4))) : proNameBandH();
+#else
   const int head = s_hw_arrange ? LV_MAX((int)SC(30), (int)(hwLh(&g_font_semi_14) + hwLh(&g_font_12) + SC(4))) : 0;
+#endif
   hwGeomFor(s_hw_geom, aw, ah, head);
   if (s_hw.cols != s_hw_geom.cols || s_hw.rows != s_hw_geom.rows) {   // another text size since
     const HwLayout src = s_hw;
@@ -67062,6 +67195,9 @@ static void hwRebuild() {
     }
     if (!focus) focus = s_hw_done_btn;
   } else {
+#if defined(HAS_TDECK_PRO)
+    s_hw_name = proNameBand(s_hw_grid, aw);
+#endif
     hwHeardCompute();
     for (int i = 0; i < s_hw.n; ++i) {
       const HwRec& r = s_hw.w[i];
@@ -67135,6 +67271,9 @@ static void homeWidgetsTick() {
     }
     if (!s_hw_focus_tries) s_hw_focus_obj = nullptr;
   }
+#endif
+#if defined(HAS_TDECK_PRO)
+  if (s_hw_name) setLabelIfChanged(s_hw_name, proNodeName());   // a rename; redraws only then
 #endif
   if (!s_hwd || !hwHomeVisible() || s_hw_arrange) return;
   static uint32_t heard_next = 0;

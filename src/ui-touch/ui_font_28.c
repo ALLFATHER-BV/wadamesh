@@ -1,3 +1,5 @@
+#if !defined(HAS_TDECK_PRO)
+
 /*******************************************************************************
  * Size: 28 px
  * Bpp: 4
@@ -4632,3 +4634,6 @@ lv_font_t lv_font_montserrat_28 = {
 
 
 #endif /*#if WADA_UI_FONT_28_BODY*/
+
+
+#endif /* !defined(HAS_TDECK_PRO) */
