@@ -421,7 +421,7 @@ public:
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
     if (contactNeedsGuestLogin(recipient)) {
       uint32_t login_est = 0;
-      sendLogin(recipient, "", login_est);
+      sendLoginForUI(recipient, "", login_est);
     }
     return sendStatusPingForUI(recipient);
   }
@@ -431,7 +431,7 @@ public:
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
     if (contactNeedsGuestLogin(recipient)) {
       uint32_t login_est = 0;
-      sendLogin(recipient, "", login_est);
+      sendLoginForUI(recipient, "", login_est);
     }
     return sendTelemetryRequestForUI(recipient);
   }
@@ -492,7 +492,7 @@ public:
   int uiSendRequestViaGuestLogin(ContactInfo& recipient, UiReqKind kind) {
     uiResetPathForLogin(recipient);
     uint32_t login_est = 0;
-    int r = sendLogin(recipient, "", login_est);
+    int r = sendLoginForUI(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
       memcpy(&_ui_login_then, recipient.id.pub_key, 4);
       _ui_login_then_kind = kind;
@@ -512,13 +512,22 @@ public:
    *  use the legacy-compatible one-byte path hash: older room/repeater
    *  firmware silently drops packets using the optional wider hashes. */
   static constexpr uint8_t UI_LOGIN_FLOOD_HASH_SIZE = 1;
+  /** sendLogin() with a flood at UI_LOGIN_FLOOD_HASH_SIZE. Every login the touch UI
+   *  sends goes through here. The guest logins in front of Ping and Telemetry used
+   *  to flood at the configured hash size, so on a 2- or 3-byte mesh an older
+   *  repeater could drop them and Ping end in "No reply" where Admin, at 1 byte,
+   *  logs in (#780). */
+  int sendLoginForUI(ContactInfo& recipient, const char* password, uint32_t& est) {
+    const uint8_t previous_hash_override = _flood_path_hash_size_override;
+    _flood_path_hash_size_override = UI_LOGIN_FLOOD_HASH_SIZE;
+    int r = sendLogin(recipient, password, est);
+    _flood_path_hash_size_override = previous_hash_override;
+    return r;
+  }
   int uiSendAdminLogin(ContactInfo& recipient, const char* password) {
     uiResetPathForLogin(recipient);
     uint32_t est = 0;
-    const uint8_t previous_hash_override = _flood_path_hash_size_override;
-    _flood_path_hash_size_override = UI_LOGIN_FLOOD_HASH_SIZE;
-    int r = sendLogin(recipient, password ? password : "", est);
-    _flood_path_hash_size_override = previous_hash_override;
+    int r = sendLoginForUI(recipient, password ? password : "", est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
       // BaseChatMesh::sendLogin() only transmits; MyMesh owns this response matcher.
       memcpy(&pending_login, recipient.id.pub_key, 4);
