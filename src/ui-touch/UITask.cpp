@@ -170,6 +170,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
 #include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
 #include "ScreenIdleClock.h"   // host-tested: the screen timeout waits for the boot splash (#762)
+#include "LockedPaperRefresh.h" // host-tested: how often a retained e-paper lock frame is repainted
 #include "NotifyAlert.h"       // host-tested: what a new message sounds and buzzes (#730)
 #if defined(DOC_CAPTURE)
 extern int g_cst_debug;          // Constellation.cpp: profiling knob for capture builds
@@ -51104,6 +51105,9 @@ static lv_obj_t*    s_lock_batt_chg  = nullptr;
 static lv_obj_t*    s_lock_batt_lbl  = nullptr;
 static lv_obj_t*    s_lock_batt_icon = nullptr;
 static int          s_lock_batt_key  = -1;        // last level drawn (redraw guard; +1000 = charging)
+#if defined(HAS_TDECK_PRO)
+static LockedPaperRefresh::State s_lock_paper;    // periodic repaint of the retained frame (LockedPaperRefresh.h)
+#endif
 #if defined(TLORA_PAGER)
 static lv_obj_t*    s_lock_batt_gauge = nullptr;  // "480 mA · 1:20 to full", left of the bolt
 #endif
@@ -52105,6 +52109,9 @@ static void lockscreenShow() {
   s_lock_unread_ok = false;
   s_lock_heard_key = 0xFFFFFFFFu;
   s_lock_batt_key = -1;
+#if defined(HAS_TDECK_PRO)
+  LockedPaperRefresh::reset(s_lock_paper);
+#endif
   rx24Sample(millis());
   lockscreenUpdateClock();
   lockscreenUpdateActivity();
@@ -52126,6 +52133,10 @@ static void lockscreenHide() {
   s_lock_clock_min = -1;
   s_lock_clock_current = -1;
   s_lock_unread_ok = false;
+#if defined(HAS_TDECK_PRO)
+  LockedPaperRefresh::reset(s_lock_paper);   // tear the repaint clock down with the overlay:
+                                             // the next show() re-arms it on its first dark pass
+#endif
   g_lv.dirty_timeline = true;   // an open chat is in view again: mark what arrived as read
   // Give the status bar back the fill of the page under it: see-through over the
   // map and under a tall bar's glass, solid everywhere else. (A plain "solid"
@@ -52142,6 +52153,19 @@ static void lockscreenHide() {
 // while locked shows up.
 static void serviceLockscreen() {
   if (!s_lock_root || !s_lock_clock) return;
+  const uint32_t now = millis();
+#if defined(HAS_TDECK_PRO)
+  // E-paper keeps its last frame with the power off, so the retained lock view
+  // would otherwise freeze at the moment the device locked: an old clock and
+  // whatever unread cards existed then. While the screen is dark, skip the 1 Hz
+  // work below and repaint the frame only every few minutes instead. The CPU
+  // stays on the screen-off 80 MHz floor for it: only a few labels change and
+  // the panel does the slow part, so there is no reason to raise it (as
+  // lockScreen() does for its full build) and eat into the battery saver.
+  const bool paper_off = g_lv.task && g_lv.task->isScreenOff();
+  const bool paper_repaint = LockedPaperRefresh::due(s_lock_paper, now, paper_off);
+  if (paper_off && !paper_repaint) return;
+#endif
   mesh::RTCClock* rtc = the_mesh.getRTCClock();
   uint32_t t = rtc ? rtc->getCurrentTime() : 0;
   int mm = 0;
@@ -52153,15 +52177,27 @@ static void serviceLockscreen() {
   }
   if (mm != s_lock_clock_min || (current ? 1 : 0) != s_lock_clock_current)
     lockscreenUpdateClock();
-  unsigned long now = millis();
   if (now - s_lock_unread_ms >= 1000) {
     s_lock_unread_ms = now;
     lockscreenUpdateUnread();
     lockscreenUpdateBattery();
-#if !defined(HAS_TDECK_PRO)
+    // The activity line (packets heard + sparkline) rides the same repaint as the
+    // rest: every second while the locked screen is lit, and on the due pass while
+    // it is dark. Its guard inside skips the redraw when nothing changed, so a due
+    // pass that finds the same numbers adds nothing to the committed frame.
+    // rx24Sample() runs every UI pass, so the counts here are live even while dark.
+#if defined(HAS_TDECK_PRO)
+    if (!paper_off || paper_repaint) lockscreenUpdateActivity();
+#else
     lockscreenUpdateActivity();
 #endif
   }
+#if defined(HAS_TDECK_PRO)
+  if (paper_repaint) {
+    lv_refr_now(nullptr);            // draw the updated labels into the canvas...
+    display.refreshWhileAsleep();    // ...and commit them to the retained frame, panel powered back off after
+  }
+#endif
 }
 #endif  // CAP_LOCK_SCREEN
 
@@ -79900,7 +79936,10 @@ void UITask::lockScreen() {
   splashRemove();
   lockscreenShow();
   lv_refr_now(nullptr);
-  display.serviceRefresh(true);
+  // refreshWhileAsleep, not serviceRefresh: backing out of a PIN unlock (pinPadFinish)
+  // re-locks when the panel is already asleep, where a bare serviceRefresh no-ops and
+  // would leave the pad on the glass until the next periodic repaint.
+  display.refreshWhileAsleep();
   touchScreenBacklight(false);
   setCpuForScreen(false);
   _screen_off = true;
@@ -80075,7 +80114,14 @@ static void pinPadFinish(bool ok) {
   s_pin_done = nullptr;
   if (s_pin_tick) { lv_timer_del(s_pin_tick); s_pin_tick = nullptr; }
   if (s_pin_row) lv_anim_del(s_pin_row, nullptr);   // (a null var would match every animation)
-  if (s_pin_root) lv_obj_del_async(s_pin_root);      // often from inside its own pad's event
+  if (s_pin_root) {
+    // The delete is deferred to the next timer pass (often we are inside the pad's
+    // own event), but a re-lock below paints the retained e-paper frame right now.
+    // Hide the pad first, as splashTapDismissCb does, so that frame is the lock
+    // screen and not the pad still sitting on lv_layer_sys.
+    lv_obj_add_flag(s_pin_root, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_del_async(s_pin_root);
+  }
   s_pin_root = s_pin_title = s_pin_msg = s_pin_row = s_pin_kp = nullptr;
   for (lv_obj_t*& b : s_pin_box) b = nullptr;
   s_pin_warn = s_pin_warn_btn[0] = s_pin_warn_btn[1] = nullptr;
@@ -83377,6 +83423,14 @@ void UITask::loop() {
     } else if (any) {
       g_lv.task->wakeScreen();
     }
+#endif
+#if defined(HAS_TDECK_PRO)
+    // Service the lock screen while dark too (the lit branch below already does).
+    // On e-paper this is the ONLY tick the periodic repaint of the retained frame
+    // has: it advances the LockedPaperRefresh clock and fires the repaint when it
+    // comes due. A no-op when not locked (no overlay exists). The panel itself
+    // only gets driven when that repaint is due, so dark idle passes stay cheap.
+    serviceLockscreen();
 #endif
   } else {
     for (int kbi = 0; kbi < 12; ++kbi) {
