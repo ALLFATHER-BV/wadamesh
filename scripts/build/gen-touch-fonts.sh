@@ -332,6 +332,42 @@ generate_ui() {
     "$guard_expr" "$guard_label"
 }
 
+# The T-Deck Pro's black-and-white e-paper: the same faces under the same names,
+# cut from SemiBold at 1 bpp. Anti-aliased edges are thresholded to black or white
+# on that panel, which left thin Medium strokes ragged and uneven; a 1 bpp SemiBold
+# draws exactly what the font file holds, one stroke width throughout (#767). It
+# carries the accented Latin too, so names match the text around them.
+generate_ui_epd() {
+  local size=$1
+  local text_raw="$work_dir/epd_text_${size}.c"
+  local raw="$work_dir/epd_font_${size}.c"
+  local output="$stage/src/ui-touch/epd_font_${size}.c"
+  local text_ranges=0x20-0x7F,0xA0-0x17F,0x218-0x21B,0x2022,0x2026
+  local metrics icons arg
+  local -a ranges
+
+  # Line metrics from the ASCII alone, as the Medium faces take theirs: the accented
+  # capitals would make every line, and so every row, a pixel taller.
+  "${font_conv[@]}" --no-compress --no-prefilter --bpp 1 --size "$size" --format lvgl \
+    --font "$montserrat_semibold" -r 0x20-0x7F,0xB0,0x2022 \
+    --lv-font-name "lv_font_montserrat_${size}" -o "$text_raw"
+  metrics=$(python3 "$lucide_py" metrics "$text_raw")
+  ranges=()
+  while IFS= read -r arg; do ranges+=("$arg"); done < <(python3 "$lucide_py" ranges "$lucide_cp" lv_symbols)
+  icons=$(python3 "$lucide_py" count "$lucide_cp" lv_symbols)
+  "${font_conv[@]}" --no-compress --no-prefilter --bpp 1 --size "$size" --format lvgl \
+    --font "$montserrat_semibold" -r "$text_ranges" \
+    --font "$lucide" "${ranges[@]}" \
+    --lv-font-name "lv_font_montserrat_${size}" -o "$raw"
+  # shellcheck disable=SC2086
+  python3 "$lucide_py" patch "$raw" "$icons" $metrics
+  perl -pi -e "s/\\bLV_FONT_MONTSERRAT_${size}\\b/WADA_UI_FONT_${size}_BODY/g" "$raw"
+
+  normalise "$raw" "$output" \
+    "Montserrat SemiBold v7.222 at 1 bpp, Lucide 1.52.0 on the LV_SYMBOL codepoints" \
+    "defined(HAS_TDECK_PRO)" "HAS_TDECK_PRO"
+}
+
 # A heavier cut for names, titles and figures. Latin with the accents European
 # names use; anything else falls through to the Medium chain at run time.
 generate_semibold() {
@@ -418,12 +454,17 @@ generate_fallback_icons() {
 # DOC_CAPTURE builds carry them all: they render other boards' sizes and scales for review.
 # WADA_WEB (the browser build, web/) is an 800x480 large-screen board like the CrowPanel 5.0.
 ui_big="defined(HAS_TANMATSU) || defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || defined(HAS_CROWPANEL_50) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_SENSECAP_INDICATOR) || defined(DOC_CAPTURE) || defined(WADA_WEB)"
+# The T-Deck Pro takes its own cut of every UI face (generate_ui_epd).
+ui_big_medium=${ui_big/ || defined(HAS_TDECK_PRO)/}
 for size in 12 14 16 28; do
-  generate_ui "$size"
+  generate_ui "$size" "!defined(HAS_TDECK_PRO)"
 done
-generate_ui 18 "$ui_big"
-generate_ui 20 "$ui_big"
-generate_ui 24 "$ui_big"
+generate_ui 18 "$ui_big_medium"
+generate_ui 20 "$ui_big_medium"
+generate_ui 24 "$ui_big_medium"
+for size in 12 14 16 18 20 24 28; do
+  generate_ui_epd "$size"
+done
 for size in 12 14 16; do
   generate_semibold "$size"
 done
@@ -474,6 +515,13 @@ files=(
   src/ui-touch/ui_font_20.c
   src/ui-touch/ui_font_24.c
   src/ui-touch/ui_font_28.c
+  src/ui-touch/epd_font_12.c
+  src/ui-touch/epd_font_14.c
+  src/ui-touch/epd_font_16.c
+  src/ui-touch/epd_font_18.c
+  src/ui-touch/epd_font_20.c
+  src/ui-touch/epd_font_24.c
+  src/ui-touch/epd_font_28.c
   src/ui-touch/ui_semibold_12.c
   src/ui-touch/ui_semibold_14.c
   src/ui-touch/ui_semibold_16.c

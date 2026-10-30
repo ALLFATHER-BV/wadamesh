@@ -233,6 +233,24 @@ void TDeckProDisplay::serviceRefresh(bool force) {
     return;
   }
 
+#if defined(EPD_DIRTY_LOG)
+  // Diagnostic (#767): which pixels changed since the last update, as a box.
+  if (_sent_valid) {
+    int x0 = WIDTH, x1 = -1, y0 = HEIGHT, y1 = -1;
+    for (int y = 0; y < HEIGHT; ++y) {
+      const uint8_t* a = _mono + (size_t)y * (WIDTH / 8);
+      const uint8_t* b = _sent + (size_t)y * (WIDTH / 8);
+      for (int bx = 0; bx < WIDTH / 8; ++bx) {
+        if (a[bx] == b[bx]) continue;
+        if (y < y0) y0 = y;
+        y1 = y;
+        if (bx * 8 < x0) x0 = bx * 8;
+        if (bx * 8 + 7 > x1) x1 = bx * 8 + 7;
+      }
+    }
+    Serial.printf("[EPD] %s dirty x=%d..%d y=%d..%d\n", full ? "full" : "part", x0, x1, y0, y1);
+  }
+#endif
   digitalWrite(P_LORA_NSS, HIGH);
   digitalWrite(PIN_SD_CS, HIGH);
   digitalWrite(PIN_TFT_CS, HIGH);

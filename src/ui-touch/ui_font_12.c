@@ -1,3 +1,5 @@
+#if !defined(HAS_TDECK_PRO)
+
 /*******************************************************************************
  * Size: 12 px
  * Bpp: 4
@@ -1838,3 +1840,6 @@ lv_font_t lv_font_montserrat_12 = {
 
 
 #endif /*#if WADA_UI_FONT_12_BODY*/
+
+
+#endif /* !defined(HAS_TDECK_PRO) */
