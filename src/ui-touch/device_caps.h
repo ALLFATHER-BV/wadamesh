@@ -641,6 +641,22 @@
   #endif
 #endif
 
+// ---- Lua apps over HTTPS (wada.net.request with an https:// url) -------------
+// Same heap limit as the Reader: the handshake needs ~30 KB of internal heap, so
+// it follows CAP_WEB_BROWSER. Unlike the Reader the chain IS verified (ISRG roots,
+// UITask.cpp kLuaTlsRoots), because an app sends a password or a bearer token.
+// Off on the P4 boards: TLS runs on the C6 there and setCACert is a no-op, so the
+// chain is not checked before a password goes out. Off on the 2 MB Heltec V4: it
+// cannot fit the handshake (the V4-R8, 8 MB, keeps it).
+#ifndef CAP_LUA_HTTPS
+  #if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || \
+      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+    #define CAP_LUA_HTTPS 0
+  #else
+    #define CAP_LUA_HTTPS CAP_WEB_BROWSER
+  #endif
+#endif
+
 // ---- Radio tools + screen mirror ----------------------------------------------
 // The drawer's Signal / Discover / Spectrum tiles drive the board's OWN LoRa radio,
 // and Remote / VNC serve this screen to a browser. Every radio board has both; a

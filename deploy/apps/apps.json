@@ -133,6 +133,15 @@
       "desc": "Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.",
       "icon": "game",
       "seed": false
+    },
+    {
+      "id": "cyberspace",
+      "name": "Cyberspace",
+      "ver": "1.0",
+      "requires": "https",
+      "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_102 or later.",
+      "icon": "message",
+      "seed": false
     }
   ]
 }

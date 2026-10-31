@@ -14,12 +14,14 @@
 #include <esp_heap_caps.h>
 #include <FS.h>
 #include <time.h>
+#include <strings.h>   // strcasecmp: wada.net.request header names
 #include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 #include "device_caps.h"
 #include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
 #include "Utf8Text.h"
 #include "LuaRandomRange.h"   // wada.sys.random(lo, hi), host-tested
+#include "LuaJson.h"          // wada.json, host-tested (test/test_lua_json.cpp)
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -149,6 +151,14 @@ extern bool luaHostAccel(float* x_g, float* y_g, float* z_g);   // sensor frame,
 extern int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap);
 extern int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf, size_t cap,
                                   const void* body, size_t body_len, const char* ctype);
+// wada.net.request: any method + headers, returns bytes read (status in *status).
+extern int luaStoreHttpRequestOpaque(void* client, void* http, const char* method, const char* url,
+                                     const char* hdrs, const void* body, size_t body_len,
+                                     char* buf, size_t cap, int* status);
+#if CAP_LUA_HTTPS
+// Starts the one-shot TLS task; it calls luaNetWorkerService with a verifying client.
+extern bool luaNetSpawnTls();
+#endif
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -227,6 +237,7 @@ struct Host {
   int         ref_app   = LUA_NOREF; // the table the chunk returned
   int         ref_btncb = LUA_NOREF; // { [btn lightuserdata] = fn } button callbacks
   bool        store_dirty = false;
+  uint32_t    store_flush_ms = 0;     // last store write, for the at-most-every-2-s flush
   uint32_t    fs_last_write_ms = 0;   // wada.fs write rate limit (#222 lesson)
   uint32_t    mesh_last_send_ms = 0;  // wada.mesh.send airtime rate limit
   uint32_t    mesh_last_probe_ms = 0; // wada.mesh.discover airtime rate limit (separate: a
@@ -330,8 +341,17 @@ bool guardedCall(Host* h, int nargs) {
   return true;
 }
 
+void storeFlush();
+
 void serviceDeferredClose() {
-  if (s_h && s_h->want_close && !s_h->in_lua) luaAppDismiss();
+  if (s_h && s_h->want_close && !s_h->in_lua) { luaAppDismiss(); return; }
+  // Save the store soon after it changes, not only on close: a reboot, a flash
+  // or a power-off with the app open used to lose everything set since launch
+  // (a sign-in, a high score). At most every 2 s, so a chatty app costs little.
+  if (s_h && s_h->store_dirty && !s_h->in_lua && millis() - s_h->store_flush_ms >= 2000) {
+    s_h->store_flush_ms = millis();
+    storeFlush();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +528,28 @@ int lbSet(lua_State* L) {
   const char* text = luaL_checklstring(L, 2, &length);
   lv_obj_t* l = labelTarget(u->obj);
   if (l) lv_label_set_text(l, safeUiText(text, length));
+  return 0;
+}
+// The gap this closes: a label could only be read. Chat lines, feed items and
+// log rows had no way to be picked, so "reply to this message" needed a button
+// per line. Making the label clickable also makes it a cursor stop on boards
+// with no touch (the firmware's nav collects every clickable). It bubbles its
+// events, so a press on it still reaches on_input as "down"/"up", and a drag
+// that starts on it still scrolls the page (LVGL sends no click after a scroll).
+void pressKindCb(lv_event_t* e);   // with the button dispatch, below
+int lbOnPress(lua_State* L) {
+  WidgetUd* u = checkLabel(L);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  if (!u->obj || !s_h) return 0;
+  lv_obj_add_flag(u->obj, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(u->obj, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
+  lua_pushlightuserdata(L, u->obj);
+  lua_pushvalue(L, 2);
+  lua_rawset(L, -3);
+  lua_pop(L, 1);
+  lv_obj_add_event_cb(u->obj, pressKindCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(u->obj, pressKindCb, LV_EVENT_LONG_PRESSED, nullptr);
   return 0;
 }
 int lbPos(lua_State* L) {
@@ -743,6 +785,26 @@ void btnEventCb(lv_event_t* e) {
   lua_remove(L, -2);
   if (lua_isfunction(L, -1)) guardedCall(s_h, 0);
   else lua_pop(L, 1);
+  serviceDeferredClose();
+}
+
+// label:on_press(fn) -- fn("click") on a tap or on Enter at the cursor,
+// fn("long") on a long press. The callback shares the button table, so
+// ui.clear drops it with the label.
+void pressKindCb(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if ((code != LV_EVENT_CLICKED && code != LV_EVENT_LONG_PRESSED) || !s_h || !s_h->L) return;
+  lua_State* L = s_h->L;
+  lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
+  lua_pushlightuserdata(L, lv_event_get_current_target(e));
+  lua_rawget(L, -2);
+  lua_remove(L, -2);
+  if (lua_isfunction(L, -1)) {
+    lua_pushstring(L, code == LV_EVENT_LONG_PRESSED ? "long" : "click");
+    guardedCall(s_h, 1);
+  } else {
+    lua_pop(L, 1);
+  }
   serviceDeferredClose();
 }
 
@@ -1103,7 +1165,10 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "widget");     // wada.widget (a Home widget)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "panel");      // wada.ui.panel, ui.label bold, size 24
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "press");      // label:on_press (tap, long press, cursor)
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_events"); // app.on_audio
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "request");    // wada.net.request + wada.json
+  lua_pushboolean(L, CAP_LUA_HTTPS);    lua_setfield(L, -2, "https");      // request() to an https:// url
 #if defined(HAS_TDECK_PRO)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "epaper");     // T-Deck Pro / Max: redraw sparingly
 #else
@@ -1751,10 +1816,14 @@ int meshChannels(lua_State* L) {
 #endif
 
 int storeGet(lua_State* L) {
+  // Settle the argument count first: once the store table is pushed, slot 2 is
+  // that table whenever no default was given, and a missing key used to hand it
+  // back instead of nil.
+  lua_settop(L, 2);
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   lua_pushvalue(L, 1);
   lua_rawget(L, -2);
-  if (lua_isnil(L, -1) && !lua_isnoneornil(L, 2)) { lua_pop(L, 1); lua_pushvalue(L, 2); }
+  if (lua_isnil(L, -1)) { lua_pop(L, 1); lua_pushvalue(L, 2); }
   return 1;
 }
 int storeSet(lua_State* L) {
@@ -2250,7 +2319,11 @@ void storeFlush() {
       char lbuf[192];
       int m = snprintf(lbuf, sizeof lbuf, "%s=%s\n", lua_tostring(L, -2), luaL_tolstring(L, -1, nullptr));
       lua_pop(L, 1);   // luaL_tolstring's copy
-      if (m > 0 && written + (size_t)m <= kStoreMax) { f.write((const uint8_t*)lbuf, m); written += m; }
+      // snprintf reports the length it WANTED: a line longer than lbuf is skipped,
+      // not written from past the end of the buffer (and read back cut short).
+      if (m > 0 && (size_t)m < sizeof lbuf && written + (size_t)m <= kStoreMax) {
+        f.write((const uint8_t*)lbuf, m); written += m;
+      }
     }
     lua_pop(L, 1);
   }
@@ -2707,7 +2780,12 @@ int meshDiscoverClear(lua_State* L) { (void)L; luaHostDiscoverClear(); return 0;
 
 // ---- wada.net: one in-flight async http_get per app ----
 constexpr size_t kNetCapMax = 32 * 1024;
-char     s_net_url[160];
+constexpr size_t kNetHdrMax = 3 * 1024;   // a bearer JWT alone is over 1 KB
+char     s_net_url[320];
+char     s_net_method[8] = "";      // set = wada.net.request (real status); "" = http_get/post
+char*    s_net_hdrs = nullptr;      // request(): "Name: value\n" lines, PSRAM
+int      s_net_status = 0;          // request(): the HTTP status the server sent
+volatile bool s_net_tls = false;       // request(): on the TLS task, not the tile worker
 char*    s_net_buf = nullptr;
 size_t   s_net_cap = 0;
 char*    s_net_body = nullptr;      // POST payload (null = GET), PSRAM
@@ -2725,12 +2803,16 @@ void netDeliver(lv_timer_t* t) {
   s_net_done = false;
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  if (s_net_hdrs) { heap_caps_free(s_net_hdrs); s_net_hdrs = nullptr; }
   if (!s_h || !s_h->L || s_net_cb == LUA_NOREF) { s_net_cb = LUA_NOREF; return; }
   lua_State* L = s_h->L;
   lua_rawgeti(L, LUA_REGISTRYINDEX, s_net_cb);
   luaL_unref(L, LUA_REGISTRYINDEX, s_net_cb);
   s_net_cb = LUA_NOREF;
-  lua_pushinteger(L, s_net_result >= 0 ? 200 : -1);
+  // request() reports what the server said (a 401 is something to act on, not a
+  // failed connection); http_get/post keep their 200-or--1 contract.
+  if (s_net_method[0]) lua_pushinteger(L, s_net_result >= 0 ? s_net_status : s_net_result);
+  else                 lua_pushinteger(L, s_net_result >= 0 ? 200 : -1);
   if (s_net_result >= 0 && s_net_buf) lua_pushlstring(L, s_net_buf, (size_t)s_net_result);
   else                                lua_pushnil(L);
   guardedCall(s_h, 2);
@@ -2840,6 +2922,8 @@ int netHttpPost(lua_State* L) {
   memcpy(s_net_body, body, blen);
   s_net_body_len = blen;
   snprintf(s_net_ctype, sizeof s_net_ctype, "%s", ctype);
+  s_net_method[0] = 0;
+  s_net_tls = false;
   snprintf(s_net_url, sizeof s_net_url, "%s", url);
   lua_pushvalue(L, argi);
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -2864,11 +2948,143 @@ int netHttpGet(lua_State* L) {
     if (!s_net_buf) return luaL_error(L, "no memory for the fetch buffer");
   }
   if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  s_net_method[0] = 0;
+  s_net_tls = false;
   snprintf(s_net_url, sizeof s_net_url, "%s", url);
   lua_pushvalue(L, 2);
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   s_net_done = false;
   s_net_pending = true;
+  if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
+  return 0;
+}
+
+// wada.net.request{url=, method=, headers=, body=, max=}, cb) -> cb(status, body)
+//
+// For a real web API: any method, request headers (Authorization: Bearer ...),
+// the server's actual status code, and https:// where CAP_LUA_HTTPS. The body
+// comes back for every status, because an API's error reply says what went
+// wrong. status < 0 is no answer at all: -1 could not connect / no Wi-Fi, -2 the
+// reply was larger than `max` (default 16 KB, at most 32 KB).
+//
+// https runs on its own short-lived task (luaNetSpawnTls, UITask.cpp): the tile
+// worker's 8 KB stack is sized for plain HTTP and a TLS handshake overflows it.
+// The certificate chain is verified against the ISRG roots (Let's Encrypt),
+// not skipped as the Reader does, since what goes over it is a credential.
+// One request at a time, shared with http_get/http_post.
+static bool netHeaderNameOk(const char* k, size_t n) {
+  if (n == 0 || n > 40) return false;
+  for (size_t i = 0; i < n; i++) {
+    const char c = k[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+  }
+  // Framing headers belong to HTTPClient; letting an app set them would let it
+  // desynchronise the request it is making.
+  return strcasecmp(k, "Host") != 0 && strcasecmp(k, "Content-Length") != 0 &&
+         strcasecmp(k, "Transfer-Encoding") != 0 && strcasecmp(k, "Connection") != 0;
+}
+
+int netRequest(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  if (!s_h) return luaL_error(L, "no app");
+  if (s_net_pending || s_net_cb != LUA_NOREF) return luaL_error(L, "a fetch is already running");
+
+  lua_getfield(L, 1, "url");
+  const char* url = luaL_optstring(L, -1, nullptr);
+  if (!url) return luaL_error(L, "request: url is required");
+  const bool https = strncmp(url, "https://", 8) == 0;
+  if (!https && strncmp(url, "http://", 7) != 0) return luaL_error(L, "request: http:// or https:// urls only");
+  if (https && !CAP_LUA_HTTPS) return luaL_error(L, "request: https is not available on this board");
+  if (strlen(url) >= sizeof(s_net_url)) return luaL_error(L, "request: url too long");
+
+  lua_getfield(L, 1, "method");
+  const char* method = luaL_optstring(L, -1, "GET");
+  static const char* const kMethods[] = { "GET", "POST", "PUT", "PATCH", "DELETE" };
+  bool known = false;
+  for (const char* m : kMethods) if (strcmp(method, m) == 0) known = true;
+  if (!known) return luaL_error(L, "request: method must be GET, POST, PUT, PATCH or DELETE");
+
+  lua_getfield(L, 1, "body");
+  size_t blen = 0;
+  const char* body = lua_isnil(L, -1) ? nullptr : luaL_checklstring(L, -1, &blen);
+  if (blen > kNetCapMax) return luaL_error(L, "request: body too long");
+
+  lua_getfield(L, 1, "max");
+  size_t maxb = (size_t)luaL_optinteger(L, -1, 16 * 1024);
+  if (maxb < 64) maxb = 64;
+  if (maxb > kNetCapMax) maxb = kNetCapMax;
+
+  // Headers: validated and flattened here, on the UI thread, into one PSRAM
+  // block the worker reads; the Lua strings could be collected before it runs.
+  char* hdrs = (char*)heap_caps_malloc(kNetHdrMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!hdrs) return luaL_error(L, "no memory for the headers");
+  size_t hn = 0;
+  bool has_ctype = false;
+  const char* bad = nullptr;
+  lua_getfield(L, 1, "headers");
+  if (lua_istable(L, -1)) {
+    const int ht = lua_gettop(L);
+    lua_pushnil(L);
+    while (!bad && lua_next(L, ht)) {
+      size_t kn = 0, vn = 0;
+      const char* k = lua_type(L, -2) == LUA_TSTRING ? lua_tolstring(L, -2, &kn) : nullptr;
+      const char* v = lua_type(L, -1) == LUA_TSTRING ? lua_tolstring(L, -1, &vn) : nullptr;
+      if (!k || !netHeaderNameOk(k, kn)) bad = "request: bad header name";
+      else if (!v || memchr(v, '\r', vn) || memchr(v, '\n', vn) || strlen(v) != vn) bad = "request: bad header value";
+      else if (hn + kn + vn + 4 > kNetHdrMax) bad = "request: headers too long";
+      else {
+        if (strcasecmp(k, "Content-Type") == 0) has_ctype = true;
+        memcpy(hdrs + hn, k, kn); hn += kn;
+        hdrs[hn++] = ':'; hdrs[hn++] = ' ';
+        memcpy(hdrs + hn, v, vn); hn += vn;
+        hdrs[hn++] = '\n';
+      }
+      lua_pop(L, 1);
+    }
+    if (bad) lua_pop(L, 1);   // the key lua_next left behind
+  } else if (!lua_isnil(L, -1)) {
+    bad = "request: headers must be a table";
+  }
+  static const char kJson[] = "Content-Type: application/json\n";
+  if (!bad && body && !has_ctype) {
+    if (hn + sizeof kJson > kNetHdrMax) bad = "request: headers too long";
+    else { memcpy(hdrs + hn, kJson, sizeof kJson - 1); hn += sizeof kJson - 1; }
+  }
+  if (bad) { heap_caps_free(hdrs); return luaL_error(L, "%s", bad); }
+  hdrs[hn] = 0;
+
+  if (!s_net_buf || s_net_cap < maxb + 1) {
+    if (s_net_buf) heap_caps_free(s_net_buf);
+    s_net_buf = (char*)heap_caps_malloc(maxb + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_net_cap = s_net_buf ? maxb + 1 : 0;
+    if (!s_net_buf) { heap_caps_free(hdrs); return luaL_error(L, "no memory for the reply buffer"); }
+  }
+  if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  if (body && blen) {
+    s_net_body = (char*)heap_caps_malloc(blen, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_net_body) { heap_caps_free(hdrs); return luaL_error(L, "no memory for the body"); }
+    memcpy(s_net_body, body, blen);
+    s_net_body_len = blen;
+  }
+  if (s_net_hdrs) heap_caps_free(s_net_hdrs);
+  s_net_hdrs = hdrs;
+  snprintf(s_net_method, sizeof s_net_method, "%s", method);
+  snprintf(s_net_url, sizeof s_net_url, "%s", url);
+  s_net_status = 0;
+  s_net_tls = https;
+  lua_pushvalue(L, 2);
+  s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+  s_net_done = false;
+  s_net_pending = true;
+#if CAP_LUA_HTTPS
+  if (https && !luaNetSpawnTls()) {
+    s_net_pending = false;
+    luaL_unref(L, LUA_REGISTRYINDEX, s_net_cb);
+    s_net_cb = LUA_NOREF;
+    return luaL_error(L, "request: could not start the TLS task (low memory)");
+  }
+#endif
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }
@@ -3093,7 +3309,13 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.net
   lua_pushcfunction(L, netHttpGet);  lua_setfield(L, -2, "http_get");
   lua_pushcfunction(L, netHttpPost); lua_setfield(L, -2, "http_post");
+  lua_pushcfunction(L, netRequest);  lua_setfield(L, -2, "request");
   lua_setfield(L, -2, "net");
+
+  lua_newtable(L);                                       // wada.json (in C: see LuaJson.h)
+  lua_pushcfunction(L, luajson::decode); lua_setfield(L, -2, "decode");
+  lua_pushcfunction(L, luajson::encode); lua_setfield(L, -2, "encode");
+  lua_setfield(L, -2, "json");
 
   lua_setglobal(L, "wada");
 
@@ -3172,6 +3394,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, lbColor); lua_setfield(L, -2, "color");
   lua_pushcfunction(L, lbWidth); lua_setfield(L, -2, "width");
   lua_pushcfunction(L, lbBg);    lua_setfield(L, -2, "bg");
+  lua_pushcfunction(L, lbOnPress); lua_setfield(L, -2, "on_press");
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 }
@@ -3327,6 +3550,7 @@ void hostTeardown() {
   if (!s_net_pending) {
     if (s_net_buf)  { heap_caps_free(s_net_buf);  s_net_buf  = nullptr; s_net_cap = 0; }
     if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+    if (s_net_hdrs) { heap_caps_free(s_net_hdrs); s_net_hdrs = nullptr; }
   }
   if (h->L) {
     // best-effort on_close + store flush before the state dies
@@ -3526,7 +3750,8 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 }
 
 // ---- net worker entry points (UITask's tile/net worker calls these) --------
-bool luaNetWorkerPending() { return s_net_pending; }
+// The tile worker never takes an https request: that one is on the TLS task.
+bool luaNetWorkerPending() { return s_net_pending && !s_net_tls; }
 void luaNetWorkerService(void* client, void* http) {
   // s_net_pending stays TRUE for the whole request and is cleared at the end,
   // not here. It is the only thing telling the UI thread that the worker may
@@ -3537,6 +3762,9 @@ void luaNetWorkerService(void* client, void* http) {
   // across the call cannot re-enter, and http_get/http_post keep rejecting a
   // second fetch while it is set -- which is what we want anyway.
   if (!s_net_buf)            s_net_result = -1;
+  else if (s_net_method[0])  s_net_result = luaStoreHttpRequestOpaque(client, http, s_net_method, s_net_url,
+                                                                      s_net_hdrs, s_net_body, s_net_body_len,
+                                                                      s_net_buf, s_net_cap, &s_net_status);
   else if (s_net_body)       s_net_result = luaStoreHttpPostOpaque(client, http, s_net_url, s_net_buf,
                                                                    s_net_cap, s_net_body, s_net_body_len,
                                                                    s_net_ctype);
