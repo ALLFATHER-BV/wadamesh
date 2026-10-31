@@ -36114,6 +36114,150 @@ int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf,
                          url, buf, cap, (const uint8_t*)body, body_len, ctype);
 }
 
+// wada.net.request's side of the bridge: any method, the app's headers, the
+// server's status for whatever it answered, and the body for every status (an
+// API explains a 401 or a 429 in it). Read through writeToStream rather than the
+// raw stream luaStoreHttpReq uses, because API hosts (Vercel among them) answer
+// chunked and the raw stream would hand the app the chunk-size lines too.
+// Returns bytes read, -1 no answer, -2 larger than the buffer.
+class LuaReqSink final : public Stream {
+ public:
+  LuaReqSink(char* buf, size_t cap) : buf_(buf), cap_(cap) {}
+  using Print::write;
+  size_t write(uint8_t b) override { return write(&b, 1); }
+  size_t write(const uint8_t* d, size_t n) override {
+    if (n > cap_ - len_) { full_ = true; return 0; }   // short write: writeToStream stops
+    memcpy(buf_ + len_, d, n);
+    len_ += n;
+    return n;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+  size_t len() const { return len_; }
+  bool full() const { return full_; }
+ private:
+  char* buf_;
+  size_t cap_, len_ = 0;
+  bool full_ = false;
+};
+
+int luaStoreHttpRequest(WiFiClient& client, HTTPClient& http, const char* method, const char* url,
+                        const char* hdrs, const uint8_t* body, size_t body_len,
+                        char* buf, size_t cap, int* status) {
+  http.setReuse(false);
+  http.setConnectTimeout(8000);
+  http.setTimeout(12000);
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);   // an app sees a 3xx and decides
+  http.setUserAgent("wadamesh-touch");
+  if (!http.begin(client, url)) return -1;
+  http.addHeader("Accept-Encoding", "identity");
+  // hdrs: "Name: value\n" lines, validated by netRequest (no CR/LF inside).
+  for (const char* p = hdrs; p && *p;) {
+    const char* nl = strchr(p, '\n');
+    const char* colon = strchr(p, ':');
+    if (!nl || !colon || colon > nl) break;
+    String name(p, colon - p), value(colon + 2, nl - colon - 2);
+    http.addHeader(name, value);
+    p = nl + 1;
+  }
+  const int code = http.sendRequest(method, (uint8_t*)body, body_len);
+  if (code <= 0) { http.end(); return -1; }
+  *status = code;
+  const int want = http.getSize();
+  if (want > 0 && (size_t)want >= cap) { http.end(); return -2; }
+  LuaReqSink sink(buf, cap - 1);
+  if (want != 0) {
+    const int r = http.writeToStream(&sink);
+    if (sink.full()) { http.end(); return -2; }
+    if (r < 0 && sink.len() == 0) { http.end(); return -1; }
+  }
+  http.end();
+  buf[sink.len()] = 0;
+  return (int)sink.len();
+}
+
+int luaStoreHttpRequestOpaque(void* client, void* http, const char* method, const char* url,
+                              const char* hdrs, const void* body, size_t body_len,
+                              char* buf, size_t cap, int* status) {
+  return luaStoreHttpRequest(*static_cast<WiFiClient*>(client), *static_cast<HTTPClient*>(http),
+                             method, url, hdrs, (const uint8_t*)body, body_len, buf, cap, status);
+}
+
+#if CAP_LUA_HTTPS
+// Trust anchors for wada.net.request over https: ISRG Root X1 (RSA) and X2
+// (ECDSA), Let's Encrypt's roots, exported from the macOS system root store
+// (X1 sha256 96:BC:EC:06:...:08:C6, X2 69:72:9B:8E:...:14:70). The Arduino core
+// has the IDF certificate bundle switched on but not embedded, so a pinned set
+// is what verifying costs here. A host on another CA fails with status -1; add
+// its root here rather than falling back to setInsecure(). On the T-Display P4
+// TLS runs on the C6 and setCACert is a no-op there (C6Socket.h).
+static const char kLuaTlsRoots[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "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\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICGzCCAaGgAwIBAgIQQdKd0XLq7qeAwSxs6S+HUjAKBggqhkjOPQQDAzBPMQsw\n"
+    "CQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJuZXQgU2VjdXJpdHkgUmVzZWFyY2gg\n"
+    "R3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBYMjAeFw0yMDA5MDQwMDAwMDBaFw00\n"
+    "MDA5MTcxNjAwMDBaME8xCzAJBgNVBAYTAlVTMSkwJwYDVQQKEyBJbnRlcm5ldCBT\n"
+    "ZWN1cml0eSBSZXNlYXJjaCBHcm91cDEVMBMGA1UEAxMMSVNSRyBSb290IFgyMHYw\n"
+    "EAYHKoZIzj0CAQYFK4EEACIDYgAEzZvVn4CDCuwJSvMWSj5cz3es3mcFDR0HttwW\n"
+    "+1qLFNvicWDEukWVEYmO6gbf9yoWHKS5xcUy4APgHoIYOIvXRdgKam7mAHf7AlF9\n"
+    "ItgKbppbd9/w+kHsOdx1ymgHDB/qo0IwQDAOBgNVHQ8BAf8EBAMCAQYwDwYDVR0T\n"
+    "AQH/BAUwAwEB/zAdBgNVHQ4EFgQUfEKWrt5LSDv6kviejM9ti6lyN5UwCgYIKoZI\n"
+    "zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n"
+    "tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n"
+    "/q4AaOeMSQ+2b1tbFfLn\n"
+    "-----END CERTIFICATE-----\n";
+
+// The handshake needs a deeper stack than the tile worker's 8 KB (sized for plain
+// HTTP), so each https request gets this one-shot task, as the Reader does.
+static void luaNetTlsTaskFn(void*) {
+  extern void luaNetWorkerService(void* client, void* http);
+  {
+    WiFiClientSecure scli;
+    scli.setCACert(kLuaTlsRoots);
+    HTTPClient http;
+    luaNetWorkerService(static_cast<WiFiClient*>(&scli), &http);
+  }
+  vTaskDelete(nullptr);
+}
+
+bool luaNetSpawnTls() {
+  return xTaskCreatePinnedToCore(luaNetTlsTaskFn, "lua-tls", 16384, nullptr, 1, nullptr, 0) == pdPASS;
+}
+#endif
+
 static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
   if (!s_luacat_buf)
     s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -58134,6 +58278,7 @@ static bool luaStoreBoardMeets(const char* req) {
   if (!strcmp(req, "sdk_ext")) return CAP_LUA_SDK_EXT != 0;
   if (!strcmp(req, "sd"))      return CAP_SD != 0;
   if (!strcmp(req, "audio"))   return CAP_LUA_AUDIO != 0;   // a speaker that plays files (Music)
+  if (!strcmp(req, "https"))   return CAP_LUA_HTTPS != 0;   // wada.net.request to an https:// API
   return true;
 }
 
