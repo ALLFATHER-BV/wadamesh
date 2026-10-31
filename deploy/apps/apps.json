@@ -30,8 +30,8 @@
     {
       "id": "protreck",
       "name": "ProTreck",
-      "ver": "1.2",
-      "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
+      "ver": "1.3",
+      "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms + local sun times), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
       "requires": "sdk_ext",
       "seed": false
     },
