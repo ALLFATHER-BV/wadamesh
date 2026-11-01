@@ -29,7 +29,6 @@ bool WebFileTransfer::setEnabled(bool enabled) {
   if (!enabled) {
     _enabled = false;
     __sync_synchronize();
-    g_web_auth.disarm();
     _clients = 0;
     discardTraffic();
     return true;

@@ -22,6 +22,7 @@ void WebMirror::begin(size_t ring_bytes) {
 void WebMirror::setEnabled(bool en) {
   _enabled = en;
   if (en) {
+    g_web_auth.ensure();
     _need_full = true;         // next connect wants a full frame
   } else {
     _tail = _head;             // drain the ring so nothing stale lingers
@@ -136,7 +137,7 @@ void WebMirror::termBegin() {
 }
 
 void WebMirror::setTerminalOn(bool on) {
-  if (on) termBegin();
+  if (on) { termBegin(); g_web_auth.ensure(); }
   _term_on = on;
   if (!on) { _tr_tail = _tr_head; _tc_tail = _tc_head; _td_tail = _td_head; }   // drain rings on disable
 }

@@ -43,6 +43,15 @@ void MultiTransportCompanionInterface::begin(Stream& usb_serial, uint16_t tcp_po
   _last_reply_target = REPLY_TARGET_USB;
 }
 
+// The web port only listens while a browser feature (VNC, Remote UI, Remote terminal,
+// File Transfer) is on; otherwise anyone on the Wi-Fi could poke at the device.
+static bool webUiWanted() {
+#if WADA_WEB_FILE_TRANSFER
+  if (g_web_file_transfer.enabled()) return true;
+#endif
+  return g_web_mirror.wanted();
+}
+
 void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // ESP-AT allows ONE listening port, so the router server (_p4_srv) owns it and dispatches
@@ -52,7 +61,7 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
     _p4_srv.begin(_tcp_port);
     _tcp_started = true;
   }
-  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected) {
+  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected && webUiWanted()) {
     _ws_started = true;   // enables tickHandshake + the mirror stream task; _ws itself stays listen-less
     printf("[WS] P4 router: web UI shares TCP:%u (first-byte dispatch)\n", (unsigned)_tcp_port);
   }
@@ -62,7 +71,7 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
     _tcp_started = true;
   }
   // Plain WebSocket: start only when Wi-Fi has an address (caller defers TCP/WS start after splash).
-  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected) {
+  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected && webUiWanted()) {
     _ws.begin(_ws_port);
     _ws_started = true;
   }
@@ -140,6 +149,10 @@ void MultiTransportCompanionInterface::tickWebSocketHandshake() {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
 #endif
+  if (!webUiWanted()) {    // last browser feature switched off: close the port, retire the code
+    stopWsServer();
+    g_web_auth.disarm();
+  }
   if (_ws_started) {
     _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)
     if (!_mirror_task) {   // spawn the core-0 streamer once, on first tick after the WS server is up
@@ -149,11 +162,15 @@ void MultiTransportCompanionInterface::tickWebSocketHandshake() {
   }
 }
 
-void MultiTransportCompanionInterface::stopTcpServer() {
+void MultiTransportCompanionInterface::stopWsServer() {
   if (_ws_started) {
     _ws.stop();
     _ws_started = false;
   }
+}
+
+void MultiTransportCompanionInterface::stopTcpServer() {
+  stopWsServer();
   if (_tcp_started) {
     _tcp.stop();
     _tcp_started = false;

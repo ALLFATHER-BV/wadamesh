@@ -23,6 +23,7 @@ public:
   void begin(size_t ring_bytes = 0);   // lazily allocate the PSRAM display ring (0 = default size)
   void setEnabled(bool en);        // user opt-in (Settings > Wi-Fi toggle)
   bool enabled() const { return _enabled; }
+  bool wanted() const { return _enabled || _term_on; }   // any browser feature on: the web port should listen
 
   void setScreenSize(int w, int h) { _scr_w = (uint16_t)w; _scr_h = (uint16_t)h; }
   uint16_t screenW() const { return _scr_w; }
