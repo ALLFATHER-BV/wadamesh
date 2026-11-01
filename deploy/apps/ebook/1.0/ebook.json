@@ -1,0 +1,1 @@
+{"id":"ebook","name":"Ebook","ver":"1.0","desc":"Reads .epub books from the app's folder (text only), with chapters, text sizes and a remembered place. Books must be stored uncompressed: repack them with scripts/ebook-prep.py.","icon":"list","requires":"sdk_ext"}
