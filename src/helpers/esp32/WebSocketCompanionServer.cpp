@@ -1133,7 +1133,9 @@ void WebSocketCompanionServer::drainMirrorInput(int idx, WebMirror& m) {
   WSClientState* c = &_clients[idx];
   WiFiClient* cl = &c->client;
   int guard = 0;
-  while (cl->available() && guard++ < 1024) {
+  // Before auth, take the next frame only once the previous AUTH reply has been sent, so a
+  // correct code is never acknowledged into a full tx buffer (the reply would be dropped).
+  while (cl->available() && guard++ < 1024 && (c->authed || c->tx_len == 0)) {
     switch (c->ws_state) {
       case WS_STATE_HEADER_0: {
         uint8_t b = (uint8_t)cl->read();
@@ -1210,7 +1212,7 @@ void WebSocketCompanionServer::drainTermInput(int idx, WebMirror& m) {
   WSClientState* c = &_clients[idx];
   WiFiClient* cl = &c->client;
   int guard = 0;
-  while (cl->available() && guard++ < 2048) {
+  while (cl->available() && guard++ < 2048 && (c->authed || c->tx_len == 0)) {   // as drainMirrorInput
     switch (c->ws_state) {
       case WS_STATE_HEADER_0: { uint8_t b = (uint8_t)cl->read(); c->ws_opcode = b & 0x0F; c->ws_state = WS_STATE_HEADER_1; break; }
       case WS_STATE_HEADER_1: {
