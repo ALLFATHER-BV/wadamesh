@@ -6,6 +6,7 @@
 #include <esp_heap_caps.h>
 #include <stdlib.h>
 #include <string.h>
+#include "WebAuthCode.h"
 
 WebFileTransfer g_web_file_transfer;
 
@@ -24,55 +25,23 @@ bool WebFileTransfer::begin() {
   return _inbound != nullptr && _outbound != nullptr;
 }
 
-bool WebFileTransfer::setEnabled(bool enabled, uint32_t code) {
+bool WebFileTransfer::setEnabled(bool enabled) {
   if (!enabled) {
     _enabled = false;
     __sync_synchronize();
-    _code = 0;
+    g_web_auth.disarm();
     _clients = 0;
-    _auth_failures = 0;
-    _auth_blocked_until_ms = 0;
     discardTraffic();
     return true;
   }
-  if (!begin() || code < 100000 || code > 999999) return false;
+  if (!begin()) return false;
   discardTraffic();
-  _code = code;
+  g_web_auth.ensure();
   _clients = 0;
-  _auth_failures = 0;
-  _auth_blocked_until_ms = 0;
   _last_activity_ms = millis();
   __sync_synchronize();
   _enabled = true;
   return true;
-}
-
-bool WebFileTransfer::matchesCode(const uint8_t* text, size_t len) const {
-  if (!_enabled || !text || len != 6) return false;
-  uint32_t value = 0;
-  for (size_t i = 0; i < len; ++i) {
-    if (text[i] < '0' || text[i] > '9') return false;
-    value = value * 10u + static_cast<uint32_t>(text[i] - '0');
-  }
-  return value == _code;
-}
-
-bool WebFileTransfer::authAllowed() const {
-  return _auth_blocked_until_ms == 0 ||
-         static_cast<int32_t>(millis() - _auth_blocked_until_ms) >= 0;
-}
-
-void WebFileTransfer::noteAuthFailure() {
-  if (++_auth_failures >= 3) {
-    _auth_failures = 0;
-    _auth_blocked_until_ms = millis() + 30000u;
-  }
-}
-
-void WebFileTransfer::noteAuthSuccess() {
-  _auth_failures = 0;
-  _auth_blocked_until_ms = 0;
-  touch();
 }
 
 void WebFileTransfer::touch() {

@@ -32966,9 +32966,8 @@ static void openFileTransferPage() {
     g_lv.task->enableTcp();
     s_file_transfer_started_tcp = true;
   }
-  const uint32_t code = 100000u + esp_random() % 900000u;
   s_file_transfer_result[0] = '\0';
-  if (!g_web_file_transfer.setEnabled(true, code)) {
+  if (!g_web_file_transfer.setEnabled(true)) {
     if (s_file_transfer_started_tcp && g_lv.task) g_lv.task->disableTcp();
     s_file_transfer_started_tcp = false;
     if (g_lv.task) g_lv.task->showAlert(TR("File Transfer: low memory"), 1800);
@@ -33036,7 +33035,7 @@ static void openFileTransferPage() {
   lv_obj_set_style_text_color(code_caption, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
 
   lv_obj_t* code_label = lv_label_create(s_file_transfer_root);
-  lv_label_set_text_fmt(code_label, "%06lu", static_cast<unsigned long>(code));
+  lv_label_set_text_fmt(code_label, "%06lu", static_cast<unsigned long>(g_web_auth.code()));
   lv_obj_set_style_text_font(code_label, &lv_font_montserrat_28, LV_PART_MAIN);
   lv_obj_set_style_text_color(code_label, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
 

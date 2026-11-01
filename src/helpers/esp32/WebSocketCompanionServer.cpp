@@ -1298,18 +1298,19 @@ void WebSocketCompanionServer::drainFileInput(int idx) {
         if (c->ws_payload_len > WebFileTransfer::MAX_INBOUND_BYTES) {
           if (c->tx_len == 0) sendFileReply(idx, "ERR frame too large");
         } else if (!c->files_authed) {
-          const bool allowed = g_web_file_transfer.authAllowed();
+          const bool allowed = g_web_auth.allowed();
           const bool auth = allowed && c->ws_opcode == 0x01 && c->files_rx_len == 11 &&
                             memcmp(c->files_rx_buf, "AUTH ", 5) == 0 &&
-                            g_web_file_transfer.matchesCode(c->files_rx_buf + 5, 6);
+                            g_web_auth.matches(c->files_rx_buf + 5, 6);
           if (auth) {
             c->files_authed = true;
             c->files_auth_failures = 0;
-            g_web_file_transfer.noteAuthSuccess();
+            g_web_auth.noteSuccess();
+            g_web_file_transfer.touch();
             if (c->tx_len == 0) sendFileReply(idx, "AUTH OK");
           } else {
             c->files_auth_failures++;
-            if (allowed) g_web_file_transfer.noteAuthFailure();
+            if (allowed) g_web_auth.noteFailure();
             if (c->tx_len == 0)
               sendFileReply(idx, allowed ? "ERR invalid code" : "ERR try again in 30 seconds");
             if (c->files_auth_failures >= 3) c->files_close_after_tx = true;

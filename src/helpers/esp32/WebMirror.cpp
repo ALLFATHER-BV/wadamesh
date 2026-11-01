@@ -4,6 +4,7 @@
 #include <string.h>
 
 WebMirror g_web_mirror;
+WebAuthCode g_web_auth;
 
 #ifndef WEB_MIRROR_RING_BYTES
 #define WEB_MIRROR_RING_BYTES  (384 * 1024)   // PSRAM; holds several banded frames
