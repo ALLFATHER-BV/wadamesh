@@ -5627,6 +5627,14 @@ static bool s_remote_landscape = false;   // remote orientation: true=800x480 la
 #define RMT_GUARD_MAGIC 0x52454D54u   // 'REMT'
 RTC_NOINIT_ATTR static uint32_t s_rmt_boot_guard;
 
+// e.g. "Code 482915" (an example, not a real value): the one code a browser must enter for VNC, Remote UI, the Remote terminal
+// and File Transfer. Empty while no web feature is on.
+static const char* webCodeText(char* buf, size_t n) {
+  const uint32_t c = g_web_auth.code();
+  if (c) snprintf(buf, n, "Code %06lu", (unsigned long)c); else buf[0] = 0;
+  return buf;
+}
+
 #if !defined(HAS_TANMATSU)
 #define WADAMESH_MARK_DEFINE        // the one copy of the pixels (main.cpp's boot screen uses it too)
 #include "../wadamesh_mark_rgb.h"   // anti-aliased mesh mark (RGB565), same artwork as the boot splash
@@ -5660,6 +5668,9 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
       display.drawTextCentered(panel_x + panel_w / 2, 48, "Open in browser:");
       display.setColor((ColorVal)0x07E0);
       display.drawTextCentered(panel_x + panel_w / 2, 66, url);
+      char code[16];
+      display.setColor((ColorVal)0xFFE0);
+      display.drawTextCentered(panel_x + panel_w / 2, 82, webCodeText(code, sizeof code));
     } else {
       display.setColor((ColorVal)0xFD20);
       display.drawTextCentered(panel_x + panel_w / 2, 58, "Connecting to Wi-Fi...");
@@ -5688,6 +5699,9 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
       display.drawTextCentered(W / 2, 166, "Open in browser:");
       display.setColor((ColorVal)0x07E0);
       display.drawTextCentered(W / 2, 184, url);
+      char code[16];
+      display.setColor((ColorVal)0xFFE0);
+      display.drawTextCentered(W / 2, 202, webCodeText(code, sizeof code));
     } else {
       display.setColor((ColorVal)0xFD20);
       display.drawTextCentered(W / 2, 176, "Connecting to Wi-Fi...");
@@ -5722,6 +5736,9 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
     display.drawTextCentered(W / 2, 500, "Open this address in a browser");
     display.setColor((ColorVal)0x07E0);
     display.drawTextCentered(W / 2, 548, u);
+    char code[16];
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(W / 2, 596, webCodeText(code, sizeof code));
   } else {
     display.setColor((ColorVal)0xFD20);
     display.drawTextCentered(W / 2, 520, "Connecting to Wi-Fi...");
@@ -5750,7 +5767,10 @@ static void drawRemotePlaceholder(bool exit_armed = false) {
     display.setColor((ColorVal)0xFFFF);
     display.drawTextCentered(W / 2, y, "Open this address in a browser");
     display.setColor((ColorVal)0x07E0);
-    display.drawTextCentered(W / 2, y + 20, u);
+    display.drawTextCentered(W / 2, y + 14, u);
+    char code[16];
+    display.setColor((ColorVal)0xFFE0);
+    display.drawTextCentered(W / 2, y + 30, webCodeText(code, sizeof code));
   } else {
     display.setColor((ColorVal)0xFD20);
     display.drawTextCentered(W / 2, y, "Connecting to Wi-Fi...");
@@ -33077,7 +33097,10 @@ static void vncRefresh() {
   if (s_vnc_url_lbl) {
     if (wifi) {
       char u[64];
-      snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR "/", WiFi.localIP().toString().c_str());
+      char code[16];
+      webCodeText(code, sizeof code);
+      snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR "/%s%s", WiFi.localIP().toString().c_str(),
+               (on && code[0]) ? "\n" : "", on ? code : "");
       lv_label_set_text(s_vnc_url_lbl, u);
       lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(on ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
     } else {
@@ -33221,9 +33244,18 @@ static void openVncPage() {
 // ============================================================================
 static lv_obj_t* s_remote_root = nullptr;
 static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
+static lv_obj_t* s_remote_ipval  = nullptr;   // its address label (URL + the web code)
+
+static void remoteAddrText(char* u, size_t n) {
+  char code[16];
+  webCodeText(code, sizeof code);
+  snprintf(u, n, "http://%s:" WEB_UI_PORT_STR "%s%s", WiFi.localIP().toString().c_str(),
+           code[0] ? "\n" : "", code);
+}
 
 static void closeRemotePage() {
   s_remote_ipcard = nullptr;
+  s_remote_ipval = nullptr;
   if (s_remote_root) { popupClose(&s_remote_root); }
   if (s_apppage_close == closeRemotePage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
@@ -33289,11 +33321,16 @@ static void webTerminalToggleCb(lv_event_t* e) {
     if (on || touchPrefsGetRemoteMode()) lv_obj_clear_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
     else                                 lv_obj_add_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
   }
+  if (s_remote_ipval && WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[64]; remoteAddrText(u, sizeof u);
+    lv_label_set_text(s_remote_ipval, u);
+  }
   if (!g_lv.task) return;
   if (on) {
-    char msg[96];
+    char msg[112], code[16];
     if (WiFi.status() == WL_CONNECTED)
-      snprintf(msg, sizeof msg, "Terminal on: http://%s:" WEB_UI_PORT_STR "/", WiFi.localIP().toString().c_str());
+      snprintf(msg, sizeof msg, "Terminal on: http://%s:" WEB_UI_PORT_STR "/ - %s",
+               WiFi.localIP().toString().c_str(), webCodeText(code, sizeof code));
     else
       snprintf(msg, sizeof msg, "%s", "Terminal on (connect Wi-Fi to reach it)");
     g_lv.task->showAlert(msg, 3200);
@@ -33362,7 +33399,7 @@ static void openRemotePage() {
   lv_obj_set_width(ipval, cw - 20);
   lv_obj_set_style_text_font(ipval, &g_font_16, LV_PART_MAIN);
   if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
-    char u[48]; snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR, WiFi.localIP().toString().c_str());
+    char u[64]; remoteAddrText(u, sizeof u);
     lv_label_set_text(ipval, u);
     lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   } else {
@@ -33370,6 +33407,7 @@ static void openRemotePage() {
     lv_obj_set_style_text_color(ipval, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   }
   s_remote_ipcard = ipcard;
+  s_remote_ipval = ipval;
   // Only show the address once a mode is actually serving it — hide it while both are off.
   if (!(touchPrefsGetWebTerminal() || on)) lv_obj_add_flag(ipcard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* intro = lv_label_create(s_remote_root);
