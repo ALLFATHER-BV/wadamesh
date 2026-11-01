@@ -145,14 +145,19 @@ static void wsMirrorStreamTask(void* arg) {
   }
 }
 
+// Called from the handshake tick (every board's loop) and, for the Arduino main.cpp, also while
+// Wi-Fi is off, when the tick doesn't run. Keeps a code from an earlier session from coming back
+// when a feature is switched on again later.
+void MultiTransportCompanionInterface::retireWebCodeIfIdle() {
+  if (!webUiWanted()) g_web_auth.disarm();
+}
+
 void MultiTransportCompanionInterface::tickWebSocketHandshake() {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
 #endif
-  if (!webUiWanted()) {    // last browser feature switched off: close the port, retire the code
-    stopWsServer();
-    g_web_auth.disarm();
-  }
+  if (!webUiWanted()) stopWsServer();   // last browser feature switched off: close the port
+  retireWebCodeIfIdle();
   if (_ws_started) {
     _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)
     if (!_mirror_task) {   // spawn the core-0 streamer once, on first tick after the WS server is up
