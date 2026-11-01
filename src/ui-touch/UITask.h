@@ -48,6 +48,7 @@ public:
   static const int MAX_SENDER_NAME = 31;
   static const int MAX_MSG_TEXT = 160;   // full LoRa text length (was 96 -> cut long msgs ~3 lines)
   static const int MAX_UI_PATH = 32;  // inbound-route bytes/message for the Info popup (covers deep + multi-byte-hash routes)
+  static const int REPLY_QUOTE_MAX_BACK = 10;  // only quote a message if the original is within this many newer messages
 
   // Outgoing-DM delivery state. None for incoming + channel messages.
   enum : uint8_t {
