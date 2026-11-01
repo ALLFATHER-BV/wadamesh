@@ -2649,11 +2649,24 @@ local function eb_wrap(str, width, sz)
   return n
 end
 
+-- The firmware's storeGet reads the default from stack slot 2, which is the store
+-- table once it has been pushed, so store.get(key) of a missing key returns that
+-- TABLE rather than nil (beta_101). Reproduce it: the app must not trust the result.
+local function eb_wada()
+  wada = build_wada()
+  wada.ui.text_lines = eb_wrap
+  local get = wada.store.get
+  wada.store.get = function(k, d)
+    local v = get(k, d)
+    if v == nil then return storekv end
+    return v
+  end
+end
+
 local function eb_start(w, h, files, caps, name)
   cfg = { w = w, h = h, caps = caps or { touch = true, keyboard = true, sdk_ext = true } }
   storekv = {}
-  wada = build_wada()
-  wada.ui.text_lines = eb_wrap
+  eb_wada()
   if files then fsfiles[name or "book.epub"] = files end
 end
 
@@ -2764,8 +2777,7 @@ scenarios.ebook_resume = function()
   local where, st = eb_page(), eb_status()
   app.on_close()
   -- a fresh run of the app picks the book up where it was left
-  wada = build_wada()
-  wada.ui.text_lines = eb_wrap
+  eb_wada()
   fsfiles["book.epub"] = zip_build(files)
   app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))

@@ -28,7 +28,8 @@ local SECT_TEXT = 12000      -- paragraph bytes per section: bounds Lua heap use
 local WIN = 6000             -- raw bytes read per window
 local MAX_BOOKS = 100
 local PAGE_ROWS = 25         -- chapter rows per page: each row is a real button
-local MAX_POS = 10           -- remembered reading positions (wada.store holds 2 KB)
+local MAX_POS = 10           -- remembered reading positions
+local POS_BYTES = 180        -- the store reloads a line of at most 191 bytes, "pos=" included
 
 local W, H
 local size = 14
@@ -118,9 +119,17 @@ local function human(n)
 end
 
 -- ---- reading positions (wada.store, flushed when the app closes) -------------
+-- store.get of a missing key returns the store's own table on some firmware
+-- (beta_101), not nil, so only a string or number counts as a stored value.
+local function kv(key)
+  local v = store.get(key)
+  if type(v) == "string" or type(v) == "number" then return v end
+  return nil
+end
+
 local function load_positions()
   positions, pos_order = {}, {}
-  for rec in (store.get("pos") or ""):gmatch("[^;]+") do
+  for rec in tostring(kv("pos") or ""):gmatch("[^;]+") do
     local name, sp, off, p, o = rec:match("^([^|]+)|(%d+)|(%d+)|(%d+)|(%d+)$")
     if name then
       positions[name] = { tonumber(sp), tonumber(off), tonumber(p), tonumber(o) }
@@ -130,11 +139,14 @@ local function load_positions()
 end
 
 local function save_positions()
-  local out = {}
+  local out, len = {}, 0
   for i = 1, math.min(#pos_order, MAX_POS) do
     local n = pos_order[i]
     local r = positions[n]
-    out[#out + 1] = string.format("%s|%d|%d|%d|%d", n, r[1], r[2], r[3], r[4])
+    local rec = string.format("%s|%d|%d|%d|%d", n, r[1], r[2], r[3], r[4])
+    len = len + #rec + 1
+    if len > POS_BYTES then break end
+    out[#out + 1] = rec
   end
   store.set("pos", table.concat(out, ";"))
 end
@@ -828,11 +840,11 @@ function app.on_open(w, h)
     ui.label(tr("Ebook needs a newer firmware"), M, M, 14, C.bad):width(w - 2 * M)
     return
   end
-  local sz = tonumber(store.get("sz"))
+  local sz = tonumber(kv("sz"))
   for _, v in ipairs(SIZES) do if v == sz then size = sz end end
   load_positions()
-  local last = store.get("last")
-  if last and fs.read(last, 0, 0) then open_book(last) else show_library() end
+  local last = kv("last")
+  if last and fs.read(tostring(last), 0, 0) then open_book(last) else show_library() end
   timer.every(40)
 end
 
