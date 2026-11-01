@@ -16,6 +16,7 @@
 
 #define TCP_WRITE_TIMEOUT_MS   120
 #define WS_WEDGED_DROP_MS      10000
+#define WS_AUTH_TIMEOUT_MS     30000        // a browser socket must send the right code within this, or it is dropped (frees the slot)
 #define WS_MIRROR_WRITE_TIMEOUT_MS 250   // mirror bands are bigger than companion frames — a little more headroom before we treat the frame as unrecoverable
 #define WS_MAGIC               "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 #define WS_MIRROR_TXBUF        33000        // max popped mirror frame (band <= 32000 + header)
@@ -1481,10 +1482,12 @@ void WebSocketCompanionServer::serviceMirror(WebMirror& m) {
 #endif
   for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
     WSClientState* c = &_clients[i];
-    if (!c->in_use || !c->handshake_done || !(c->is_mirror || c->is_term)) continue;
-    // Drop a browser whose feature was switched off, or that is done failing to authenticate.
+    if (!c->in_use || !c->handshake_done || !(c->is_mirror || c->is_term || c->is_files)) continue;
+    // Drop a browser whose feature was switched off, that is done failing to authenticate,
+    // or that never authenticated (it would hold one of the few client slots forever).
     if ((c->is_mirror && !m.enabled()) || (c->is_term && !m.terminalOn()) ||
-        (c->close_after_tx && c->tx_len == 0)) {
+        (c->close_after_tx && c->tx_len == 0) ||
+        (!c->authed && (uint32_t)(millis() - c->accept_ms) > WS_AUTH_TIMEOUT_MS)) {
       disconnectClient(i);
     } else if (c->is_mirror && !c->authed && c->client.connected()) {
       drainClientTx(i);                      // flush the AUTH reply; terminal clients do this below
