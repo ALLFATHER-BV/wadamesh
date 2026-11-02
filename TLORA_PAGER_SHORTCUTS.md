@@ -196,8 +196,17 @@ Space-hold gesture above; for that, hold Backspace.
 ## Accented characters
 
 Typing a letter that has accent variants (all vowels, plus `n c s y t z l r`,
-both cases) pops up a small row of alternatives above the field. To pick one
-without touch:
+both cases) pops up a small row of alternatives above the field. The quickest
+way to pick one is to **hold the letter**, as on a phone keyboard:
+
+- After about half a second the first variant lights up, and the highlight
+  steps on every half second while you keep holding.
+- **Let go** to type the lit variant. A quick tap still types the plain letter.
+- The variant you picked last for a letter lights up first next time, so `ü`
+  is one hold away after the first. With the UI in German the umlauts and `ß`
+  come first from the start.
+
+Or step through them with the knob:
 
 1. **Fn (Alt) + Space**: jumps focus into the popup.
 2. **Turn the encoder**: cycles through the variants.

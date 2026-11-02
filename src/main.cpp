@@ -5,6 +5,8 @@
   #include <new>               // placement-new for the PSRAM-resident the_mesh
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
   #include <esp_sntp.h>        // completion status for normal + cold-boot time sync
+  #include "helpers/esp32/SntpClockPush.h"   // every SNTP result -> the mesh clock (and its RTC chip)
+static SntpClockPush s_sntp_push;
 #endif
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
 #include <Preferences.h>
@@ -1519,6 +1521,13 @@ void setup() {
   Serial.println("[BOOT] wifiConfig ok");
 
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
+  // Settings > Clock > "Sync clock from system" with Wi-Fi up: restart SNTP from the
+  // Wi-Fi loop below and report its result (SntpClockPush::rekick). The hook lives in
+  // UITask.cpp so the boards that never compile this file (P4 IDF) link without it.
+  {
+    extern void (*g_sntp_resync_hook)();
+    g_sntp_resync_hook = [] { s_sntp_push.rekick = true; };
+  }
   /* Cold-boot clock acquisition over SAVED Wi-Fi (#383, BootTimeSync.h).
    *
    * HERE, and nowhere later, on purpose: after wifiConfigBegin() (so the saved
@@ -2083,10 +2092,10 @@ void loop() {
         }
       }
     }
-    /* SNTP: kick off when Wi-Fi associates; once system time syncs, push it
-     * into the mesh RTC so timestamps on messages are accurate. */
-    static bool sntp_kicked = false;
-    static bool sntp_pushed = false;
+    /* SNTP: kick off when Wi-Fi associates; every time system time syncs (the
+     * first result and SNTP's own hourly re-syncs), push it into the mesh RTC so
+     * timestamps on messages are accurate and an RTC chip gets it too
+     * (SntpClockPush.h has why "first result only" was not enough). */
     if (WiFi.status() == WL_CONNECTED) {
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
       wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Connected);
@@ -2131,7 +2140,7 @@ void loop() {
         WiFi.setSleep(true);
         modem_sleep_set = true;
       }
-      if (!sntp_kicked) {
+      if (s_sntp_push.wantKick()) {
         /* Brussels timezone with DST rules baked in (POSIX "CET-1CEST,...").
          * On touch builds the base is shifted by the user's manual hour offset
          * (Settings -> Device -> Time offset) so localtime() matches what they
@@ -2144,18 +2153,21 @@ void loop() {
         strncpy(_tz, "CET-1CEST,M3.5.0,M10.5.0/3", sizeof _tz);
         _tz[sizeof _tz - 1] = '\0';
 #endif
-  esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
+        esp_sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
         configTzTime(_tz, "pool.ntp.org", "time.google.com");
-        sntp_kicked = true;
-      } else if (!sntp_pushed &&
-     esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-        time_t t = time(nullptr);
-        if (t > (time_t)ClockFloorRTC::MIN_VALID_EPOCH &&
-            t <= (time_t)ClockFloorRTC::MAX_PLAUSIBLE_EPOCH) {
+      } else {
+        // get_sync_status() reads AND resets: COMPLETED comes back once per sync.
+        const bool completed = esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED;
+        const time_t t = time(nullptr);
+        bool report = false;
+        if (s_sntp_push.shouldPush(completed, (uint32_t)t, ClockFloorRTC::MIN_VALID_EPOCH,
+                                   ClockFloorRTC::MAX_PLAUSIBLE_EPOCH, &report)) {
           /* Mesh RTC stores UTC seconds (protocol-facing); display layer
            * converts to local via localtime_r() using the TZ from configTzTime. */
           rtc_clock.setCurrentTime((uint32_t)t);
-          sntp_pushed = true;
+#if defined(HAS_TOUCH_UI)
+          if (report) ui_task.showAlert(TR("Clock synced"), 1200);   // answers "Sync clock from system"
+#endif
         }
       }
     } else {
@@ -2164,7 +2176,7 @@ void loop() {
         wifiConfigSetPagerWifiBlePhase(PagerWifiBlePhase::Idle);
 #endif
       // Link dropped: allow re-sync on next reconnect.
-      if (sntp_kicked && !sntp_pushed) sntp_kicked = false;
+      s_sntp_push.linkDown();
     }
 #if defined(TLORA_PAGER) && defined(BLE_PIN_CODE)
     if (s_pager_wifi_ble_deadline_ms != 0 &&

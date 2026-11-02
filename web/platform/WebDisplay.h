@@ -24,6 +24,7 @@ public:
   bool isOn() override { return _on; }
   void turnOn() override { _on = true; }
   void turnOff() override { _on = false; }
+  void panelSleep(bool) {}   // the Pager's ST7796 sleep-in (T-LoRa Pager simulator)
   void clear() override;
   void startFrame(ColorVal bkg = UIColor::window_bkg) override { (void)bkg; }
   void setTextSize(int sz) override { (void)sz; }

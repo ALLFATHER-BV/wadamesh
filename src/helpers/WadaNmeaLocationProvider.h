@@ -193,6 +193,14 @@ public:
 
   void begin() override {
     claim();
+    // Whatever the parser holds is from before the receiver stopped: its fix flag, its date
+    // and its time of day. Left in place, loop() saw "valid for > 2 s" at once and, with the
+    // 30-minute re-sync due (it always is after a long enough rest), set the clock to the
+    // moment the receiver went to rest. With the GPS saver resting it 2 to 30 minutes at a
+    // time, that is the clock running behind by up to half an hour (Discord, ThinkNode M9).
+    // A cleared parser needs three seconds of FRESH valid sentences before it sets the clock.
+    nmea.clear();
+    time_valid = 0;
     // What waited in the UART while the receiver rested is old news, and it would read as
     // the stream being back before the receiver has woken.
     if (_ubx_standby) while (_gps_serial->available()) _gps_serial->read();

@@ -172,6 +172,7 @@ class PagerKeyboardState {
   }
   bool backspaceHeld() const { return backspace_held_; }
   bool spaceHeld() const { return space_held_; }
+  bool shiftHeld() const { return shift_held_; }
   bool consumeAltShiftChord() {
     const bool pending = alt_shift_chord_pending_;
     alt_shift_chord_pending_ = false;

@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: pl
-# ver: 30
+# ver: 31
 # name: Polski
 # base: pl
 # translators: tom73god (Discord)
@@ -2295,3 +2295,74 @@ Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, s
 last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
+Picture dimming	Przyciemnienie obrazu
+Wallpaper dimming	Przyciemnienie tapety
+Darker with Night, lighter with Day, so the text on it stays readable.	Ciemniejszy w trybie Noc, jaśniejszy w trybie Dzień, aby tekst był czytelny.
+Asking the time server	Pytam serwer czasu
+Auto-delete old contacts	Automatycznie usuwaj stare kontakty
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Wibruje przy nowych wiadomościach, nawet przy wyłączonym dźwięku. Respektuje Nie przeszkadzać.
+Connections	Połączenia
+Days	Dni
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Usuwa kontakty, których nie słychać od podanej niżej liczby dni. Ulubione nigdy nie są usuwane.
+Downloaded to this computer, and kept in this browser.	Pobrano na ten komputer i zapisano w tej przeglądarce.
+Import from this computer	Importuj z tego komputera
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	W przeglądarce połączenie ustawia się na pasku strony: Połącz łączy z węzłem przez Bluetooth, USB lub Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	W przeglądarce połączenie ustawia się na pasku strony: Połącz łączy z węzłem przez Wi-Fi, USB lub Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Brak pozycji. Pozwól tej stronie użyć lokalizacji, gdy przeglądarka zapyta.
+Not heard from for this many days, 1 to 999.	Nie słyszany od tylu dni, od 1 do 999.
+Pattern	Wzór
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Raz dla wiadomości, dwa razy dla DM, trzy razy dla @ wzmianki. Dotknij jednego, aby go poczuć.
+Remove old contacts	Usuń stare kontakty
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	Mapa pobiera się przez sieć tego komputera. Wi-Fi węzła ustawia się na węźle.
+Vibrate	Wibracja
+Vibration	Wibracje
+Your node's own Bluetooth and pairing code are set on the node.	Bluetooth i kod parowania węzła ustawia się na węźle.
+Accents and umlauts	Accents and umlauts
+Back (deletes while typing)	Back (deletes while typing)
+Back from a text field; unlock	Back from a text field; unlock
+Backspace	Backspace
+Caps Lock while typing	Caps Lock while typing
+Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.	Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.
+Edit in Settings > Quick replies	Edit in Settings > Quick replies
+Fn + Backspace	Fn + Backspace
+Fn + Enter	Fn + Enter
+Fn + Shift	Fn + Shift
+Fn + click	Fn + click
+Fn + turn	Fn + turn
+Hold Backspace	Hold Backspace
+Hold Enter	Hold Enter
+Hold Fn	Hold Fn
+Hold H / Hold S	Hold H / Hold S
+Hold Shift	Hold Shift
+Hold Space	Hold Space
+Hold a letter	Hold a letter
+Hold knob	Hold knob
+In a chat: jump to new messages	In a chat: jump to new messages
+Keys and shortcuts	Keys and shortcuts
+Keys and the knob do nothing until you hold Backspace.	Keys and the knob do nothing until you hold Backspace.
+Knob	Knob
+Launcher options / Control panel	Launcher options / Control panel
+Lock the screen	Lock the screen
+M  C  H  A  S	M  C  H  A  S
+More actions (like a long press)	More actions (like a long press)
+Move, click to select	Move, click to select
+Moving aurora stays still while Battery saver is on (Settings > Battery).	Moving aurora stays still while Battery saver is on (Settings > Battery).
+N	N
+Next tab, or scroll inside a screen	Next tab, or scroll inside a screen
+Pan the map; adjust a slider	Pan the map; adjust a slider
+Quiet now	Quiet now
+Quiet now (Do Not Disturb) on / off	Quiet now (Do Not Disturb) on / off
+Quiet now: off	Quiet now: off
+Quiet now: on (hold Shift again to end)	Quiet now: on (hold Shift again to end)
+Screen brightness	Screen brightness
+Shift + click	Shift + click
+Shift + click: brightness	Shift + click: brightness
+Shift + click: volume	Shift + click: volume
+Shift + turn	Shift + turn
+Special characters while typing	Special characters while typing
+Switch the knob to volume	Switch the knob to volume
+Tabs (Settings > Keyboard)	Tabs (Settings > Keyboard)
+This help	This help
+Turn the knob • click to insert	Turn the knob • click to insert
+Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
+W A S D,  Q / E	W A S D,  Q / E

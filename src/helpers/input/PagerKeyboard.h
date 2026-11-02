@@ -68,6 +68,11 @@ bool pagerKeyboardBackspaceHeld();
  *  "lock screen" gesture). */
 bool pagerKeyboardSpaceHeld();
 
+/** True while Shift is physically held on its own (raw state; Shift pressed
+ *  with Alt held is the Alt+Shift chord and does not set it). Typing is
+ *  unaffected; the T-LoRa Pager UI uses it as a modifier for the knob. */
+bool pagerKeyboardShiftHeld();
+
 /** True while the key behind the last character pushed to the ring is still
  *  physically down (raw state). The press already pushed its character; this
  *  only tells a tap from a hold (UITask's Home and Settings shortcuts). */

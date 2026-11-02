@@ -163,6 +163,9 @@
     <a href="#control">Control panel</a>
     <a href="#size">Text size, trackball &amp; tooltips</a>
     <a href="#pager">T-LoRa Pager</a>
+    <a href="#m9">ThinkNode M9</a>
+    <a href="#tdeck-keys">T-Deck keyboard</a>
+    <a href="#tanmatsu">Tanmatsu</a>
     <a href="#theme">Colours &amp; theme</a>
     <div class="grp">Finding nodes</div>
     <a href="#discover">Discover &amp; wardriving</a>
@@ -419,6 +422,7 @@
           <p>The trackball works in one of two ways. In <b>Scroll</b>, the default, rolling it moves the screen: lists, pages and conversations. In <b>Cursor</b> it moves a pointer that clicks what it is over. <b>Hold the trackball still for about half a second</b> to switch between them; a card in the middle of the screen shows which one you are in. <b>Settings &rarr; Keyboard &rarr; Trackball</b> sets it too, and also offers <b>Navigate</b> (experimental), which moves a highlight from item to item.</p>
           <h3>Tooltips and the cursor</h3>
           <p>When you get around with keys (the trackball's Navigate mode, a Bluetooth keyboard, or a board without a touchscreen), the selected control has an <b>amber</b> outline, so it stands out on any background. Icon buttons say what they are: rest on one for a moment and a small card names it, sometimes with a line on what it does. On touch, <b>hold</b> an icon button to see the same card; lifting your finger then never taps it.</p>
+          <p>Text and charts are not stops for the cursor, so when the next control is further away than the screen shows, Up and Down first scroll the page a step at a time, and the cursor moves on once the control is in reach. Nothing between two buttons is skipped.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/trackball_scroll.png?v=92" alt="The trackball switched to Scroll"></div><div class="cap">Hold the trackball: Scroll</div></div>
       </div>
@@ -441,6 +445,54 @@
         </ul>
         <p>Each tab remembers where you were. Contacts opens on the first contact, a chat opens on its first unread message, and <b>Power off</b> asks first, so one stray click never switches the Pager off.</p>
         <p><b>Battery.</b> The GPS rests in standby between position checks and is switched off completely when GPS is off, the display panel sleeps with the screen off, and the speaker amplifier only runs while a sound plays. Power off puts the radio to sleep and switches off the GPS, the panel and the keyboard light; press BOOT to wake it.</p>
+      </div>
+    </section>
+
+    <section class="doc" id="m9">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/></svg></span> ThinkNode M9</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>The ThinkNode M9 has no touchscreen: the d-pad, the keys around it and the keyboard drive everything. The arrows move the amber cursor and <b>OK</b>, the centre of the d-pad, selects. The full guide is in <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/THINKNODE_M9_SHORTCUTS.md">THINKNODE_M9_SHORTCUTS.md</a>; these are the keys:</p>
+        <ul>
+          <li><b>MSG</b> opens Chats. In a conversation it goes back to the chat list, and on the chat list it opens <b>Contacts</b>.</li>
+          <li><b>HOME</b> goes Home, and on Home switches between the app drawer and your widgets. It also closes an open app. <b>Press it twice quickly</b> for the launcher options.</li>
+          <li><b>@</b> opens Mentions. <b>ADV</b> opens Send advert; <b>hold ADV</b> to switch GPS on or off.</li>
+          <li><b>MAP</b> opens the map. Press it again on the map and the arrows pan it, until you press MAP or BACK.</li>
+          <li><b>BACK</b> closes what is on top, one layer per press, then walks back through the screens you came from, and ends on Home.</li>
+          <li><b>CTRL</b> opens the control panel. <b>Holding OK</b> on a tile opens its settings.</li>
+          <li>The <b>triangle</b> key does what holding does on a touchscreen, like a right click: on a message it opens the message's actions, on a chat in the list that chat's menu. Holding OK does the same.</li>
+          <li><b>Space</b>, when you are not typing, locks the screen after a one-second countdown; any other key cancels it. Press OK twice, or hold it, to unlock.</li>
+          <li>In a conversation Up and Down go from message to message. When newer messages are below, Right selects the arrow at the edge and OK jumps to the newest.</li>
+        </ul>
+        <p>Start typing in a conversation and the text field takes the letters. Left and Right move the caret, and at either end of the text they move on to the next control.</p>
+      </div>
+    </section>
+
+    <section class="doc" id="tdeck-keys">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span> T-Deck keyboard</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>On the T-Deck you mostly tap and roll the trackball, but the keyboard has shortcuts of its own:</p>
+        <ul>
+          <li><b>Space</b>, when you are not typing, locks the screen after a one-second countdown; another key or a tap cancels it. Click the trackball to unlock, or press Enter when the trackball is switched off.</li>
+          <li>With a popup open and nothing being typed, <b>Backspace</b>, <b>Enter</b>, <b>P</b>, <b>Q</b> or <b>A</b> closes it.</li>
+          <li><b>Double-tap Space</b> while typing to switch to the next keyboard layout you turned on.</li>
+          <li><b>Settings &rarr; Keyboard &rarr; Keyboard navigation</b> lets the letters move the amber cursor whenever no text field is selected: <b>W</b> up, <b>Z</b> down, <b>A</b> left, <b>D</b> right, <b>S</b> selects, <b>Q</b> goes back, <b>F</b> and <b>C</b> scroll, and <b>E</b>, <b>R</b>, <b>T</b>, <b>U</b>, <b>I</b> jump to Chats, Contacts, Home, Map and Settings. The same page lets you pick other keys for each. In a text field the letters still type.</li>
+          <li>The trackball's <b>Navigate</b> mode moves the same cursor (see <a href="#size">the T-Deck trackball</a>).</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="doc" id="tanmatsu">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></span> Tanmatsu</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>The Tanmatsu has no touchscreen either: the arrow keys move the amber cursor and <b>Enter</b> selects. Enter on a message opens its actions.</p>
+        <ul>
+          <li>The coloured keys jump to the five screens: orange &#9651; Chats, yellow &#9633; Contacts, green &#9675; Home, blue &#9827; Map, purple &#9671; Settings. In a conversation &#9651; opens quick replies, &#9633; the emoji, &#9675; the channel's settings and &#9671; jumps to the newest message.</li>
+          <li><b>Hold &#9675;</b>, or press <b>Vol+</b>, for the control panel.</li>
+          <li>The red <b>&#10005;</b> (or Esc) stops typing first, then closes what is on top, then the open conversation. <b>Hold &#10005;</b> for the power menu.</li>
+          <li><b>Vol&minus;</b> switches the screen off, or locks it when you use a PIN or lock on screen off, and switches it back on.</li>
+          <li><b>Ctrl+Up</b> and <b>Ctrl+Down</b> scroll a page. On the map <b>Ctrl</b> and the arrows pan it.</li>
+          <li>On a selected text field just start typing. <b>Settings &rarr; Keyboard &rarr; Navigation keys</b> adds letters to move with (W, X, A, D, S to select, F and V to scroll).</li>
+        </ul>
       </div>
     </section>
 

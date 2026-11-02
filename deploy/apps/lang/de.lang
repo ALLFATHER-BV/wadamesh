@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: de
-# ver: 30
+# ver: 31
 # name: Deutsch
 # base: de
  (device behind)	 (Gerät geht nach)
@@ -1217,7 +1217,7 @@ Colour	Colour
 Connected. Start typing.	Connected. Start typing.
 Could not connect. Is the keyboard in pairing mode?	Could not connect. Is the keyboard in pairing mode?
 Disc.	Disc.
-Do Not Disturb is on	Do Not Disturb is on
+Do Not Disturb is on	Nicht stören ist an
 Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.	Esc always goes back. If your keyboard's Esc key types a character instead, tap the button, then press that key. Press Esc to undo.
 Exact position to those contacts	Exact position to those contacts
 Forget	Forget
@@ -1251,7 +1251,7 @@ Requests left	Requests left
 Review run	Review run
 Run review	Run review
 Search again	Search again
-Sound is off	Sound is off
+Sound is off	Ton ist aus
 Start	Start
 Survey running	Survey running
 Survey stopped	Survey stopped
@@ -2207,76 +2207,149 @@ not a PMTiles v3 file	keine PMTiles-v3-Datei
 No map files found. Copy a PNG archive to\n/maps/<name>/<name>.pmtiles	Keine Kartendateien gefunden. Kopiere ein PNG-Archiv nach\n/maps/<name>/<name>.pmtiles
 Zoom: map levels only	Zoom: nur Kartenstufen
 No map levels found on the SD card	Keine Kartenstufen auf der SD-Karte gefunden
-%d mA · %u:%02u left	%d mA · %u:%02u left
-%d mA · %u:%02u to full	%d mA · %u:%02u to full
-%d.%d °C · %u cycles · health %u%%	%d.%d °C · %u cycles · health %u%%
-%u / %u mAh · %s left	%u / %u mAh · %s left
-%u / %u mAh · %s left at your usage	%u / %u mAh · %s left at your usage
-%u / %u mAh · full in %s	%u / %u mAh · full in %s
-@ mention	@ mention
-A click for each keypress and each turn of the knob.	A click for each keypress and each turn of the knob.
-Apply to the fuel gauge	Apply to the fuel gauge
-Back to 1500 mAh	Back to 1500 mAh
-Back to safe defaults	Back to safe defaults
-Battery at %d%%: charge soon	Battery at %d%%: charge soon
-Battery care	Battery care
-Battery care: kept at 80%, running from USB	Battery care: kept at 80%, running from USB
-Battery empty: switching off in 10 s to protect it. Plug in to cancel.	Battery empty: switching off in 10 s to protect it. Plug in to cancel.
-Battery low: %d%%	Battery low: %d%%
-Battery pack	Battery pack
-Battery temperature OK, charging again	Battery temperature OK, charging again
-Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.	Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.
-Capacity (mAh)	Capacity (mAh)
-Charge current	Charge current
-Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.	Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.
-Charge limits	Charge limits
-Charge only to 80%	Charge only to 80%
-Charge to	Charge to
-Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.	Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.
-Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.	Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.
-Charging %d mA · %d mW	Charging %d mA · %d mW
-Charging back to the safe defaults	Charging back to the safe defaults
-Charging paused: battery too cold	Charging paused: battery too cold
-Charging paused: battery too cold (%d °C)	Charging paused: battery too cold (%d °C)
-Charging paused: battery too hot	Charging paused: battery too hot
-Charging paused: battery too hot (%d °C)	Charging paused: battery too hot (%d °C)
-Charging paused: too cold	Charging paused: too cold
-Charging paused: too hot	Charging paused: too hot
-Charging: switch-off cancelled	Charging: switch-off cancelled
-Drawing %d mA · %d mW	Drawing %d mA · %d mW
-Faster charging heats and wears the battery.	Faster charging heats and wears the battery.
-Fuel gauge not answering	Fuel gauge not answering
-Fuel gauge set. It relearns the pack over the next charges.	Fuel gauge set. It relearns the pack over the next charges.
-It resumes 3 °C below the limit.	It resumes 3 °C below the limit.
-Kept at 80% (battery care)	Kept at 80% (battery care)
-Key click	Key click
-Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.
-Light	Light
-LilyGo fits 1500 mAh. Change it only for a different pack.	LilyGo fits 1500 mAh. Change it only for a different pack.
-Low battery warning	Low battery warning
-Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.	Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.
-Never below freezing. It resumes 3 °C above the limit.	Never below freezing. It resumes 3 °C above the limit.
-Once	Once
-Powering off… hold the power key to switch on	Powering off… hold the power key to switch on
-Quiet when face down	Quiet when face down
-Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.	Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.
-Starting the motion sensor…	Starting the motion sensor…
-Stop charging above	Stop charging above
-Stop charging below	Stop charging below
-Stopping lower gives a little less capacity and a longer battery life.	Stopping lower gives a little less capacity and a longer battery life.
-Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.	Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.
-Strength	Strength
-Strong	Strong
-Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.	Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.
-The defaults are the safe ones for this battery. Anything past them asks first.	The defaults are the safe ones for this battery. Anything past them asks first.
-The fuel gauge did not take the new capacity	The fuel gauge did not take the new capacity
-The fuel gauge is already set to this	The fuel gauge is already set to this
-The percentage comes from the battery's fuel gauge, which learns the pack by itself.	The percentage comes from the battery's fuel gauge, which learns the pack by itself.
-Twice	Twice
-Use anyway	Use anyway
-Used today %d mAh · yesterday %s	Used today %d mAh · yesterday %s
-Wake when picked up	Wake when picked up
-Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.	Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.
-last 5 min charging	last 5 min charging
-last 5 min drawing	last 5 min drawing
-not known	not known
+%d mA · %u:%02u left	%d mA · noch %u:%02u
+%d mA · %u:%02u to full	%d mA · voll in %u:%02u
+%d.%d °C · %u cycles · health %u%%	%d.%d °C · %u Zyklen · Zustand %u%%
+%u / %u mAh · %s left	%u / %u mAh · noch %s
+%u / %u mAh · %s left at your usage	%u / %u mAh · noch %s bei deiner Nutzung
+%u / %u mAh · full in %s	%u / %u mAh · voll in %s
+@ mention	@-Erwähnung
+A click for each keypress and each turn of the knob.	Ein Klick bei jedem Tastendruck und jedem Dreh am Rad.
+Apply to the fuel gauge	In den Akku-Chip übernehmen
+Back to 1500 mAh	Zurück auf 1500 mAh
+Back to safe defaults	Zurück zu den sicheren Standardwerten
+Battery at %d%%: charge soon	Akku bei %d%%: bald laden
+Battery care	Akkuschonung
+Battery care: kept at 80%, running from USB	Akkuschonung: hält 80%, läuft über USB
+Battery empty: switching off in 10 s to protect it. Plug in to cancel.	Akku leer: Abschalten in 10 s zum Schutz. Anstecken bricht ab.
+Battery low: %d%%	Akku schwach: %d%%
+Battery pack	Akku
+Battery temperature OK, charging again	Akkutemperatur OK, lädt wieder
+Buzzes for the same messages as the sound below, even with Sound off. Do Not Disturb and muted channels stay still.	Vibriert bei denselben Nachrichten wie der Ton unten, auch wenn der Ton aus ist. Nicht stören und stummgeschaltete Kanäle bleiben still.
+Capacity (mAh)	Kapazität (mAh)
+Charge current	Ladestrom
+Charge faster than 750 mA?\nLilyGo advises against it for this battery: it heats the cell and wears it out, and a damaged LiPo can swell or catch fire. Only where you can keep an eye on it.	Schneller als 750 mA laden?\nLilyGo rät bei diesem Akku davon ab: Die Zelle wird warm und altert schnell, und ein beschädigter LiPo kann sich aufblähen oder Feuer fangen. Nur unter Aufsicht.
+Charge limits	Ladegrenzen
+Charge only to 80%	Laden nur bis 80%
+Charge to	Laden bis
+Charge to 4.35 V?\nOnly for high-voltage (LiHV) cells. It overcharges a normal LiPo, which can then swell, fail or catch fire.	Bis 4,35 V laden?\nNur für Hochvolt-Zellen (LiHV). Ein normaler LiPo wird damit überladen und kann sich aufblähen, ausfallen oder Feuer fangen.
+Charge up to this temperature?\nAbove 45 °C a LiPo wears out fast while charging, and the risk of swelling or fire goes up.	Bis zu dieser Temperatur laden?\nÜber 45 °C altert ein LiPo beim Laden schnell, und das Risiko für Aufblähen oder Feuer steigt.
+Charging %d mA · %d mW	Lädt %d mA · %d mW
+Charging back to the safe defaults	Laden wieder auf sicheren Standardwerten
+Charging paused: battery too cold	Laden pausiert: Akku zu kalt
+Charging paused: battery too cold (%d °C)	Laden pausiert: Akku zu kalt (%d °C)
+Charging paused: battery too hot	Laden pausiert: Akku zu heiß
+Charging paused: battery too hot (%d °C)	Laden pausiert: Akku zu heiß (%d °C)
+Charging paused: too cold	Laden pausiert: zu kalt
+Charging paused: too hot	Laden pausiert: zu heiß
+Charging: switch-off cancelled	Lädt: Abschalten abgebrochen
+Drawing %d mA · %d mW	Verbraucht %d mA · %d mW
+Faster charging heats and wears the battery.	Schnelleres Laden erwärmt den Akku und lässt ihn schneller altern.
+Fuel gauge not answering	Akku-Messchip antwortet nicht
+Fuel gauge set. It relearns the pack over the next charges.	Akku-Chip gesetzt. Er lernt den Akku über die nächsten Ladungen neu.
+It resumes 3 °C below the limit.	Es geht 3 °C unter der Grenze wieder los.
+Kept at 80% (battery care)	Hält 80% (Akkuschonung)
+Key click	Tastenklick
+Lifting the Pager off the table turns the screen on (a locked Pager shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Hebst du den Pager vom Tisch, geht der Bildschirm an (gesperrt zeigt er den Sperrbildschirm). Nur wenn er vorher ruhig lag, damit er in Tasche oder Hosentasche dunkel bleibt.
+Light	Leicht
+LilyGo fits 1500 mAh. Change it only for a different pack.	LilyGo verbaut 1500 mAh. Nur für einen anderen Akku ändern.
+Low battery warning	Warnung bei leerem Akku
+Lying face down, the screen goes off and the Pager stays silent (no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.	Mit dem Bildschirm nach unten geht er aus und der Pager bleibt still (kein Ton, keine Vibration). Aufheben beendet es. Hält den Bewegungssensor an, etwas mehr Stromverbrauch.
+Never below freezing. It resumes 3 °C above the limit.	Nie unter dem Gefrierpunkt. Es geht 3 °C über der Grenze wieder los.
+Once	Einmal
+Powering off… hold the power key to switch on	Schaltet aus… Ein/Aus-Taste halten zum Einschalten
+Quiet when face down	Ruhig, wenn umgedreht
+Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.	Akku auf %u mAh setzen?\nNur wenn dieser Akku verbaut ist. Prozent und Restzeit werden neu berechnet und pendeln sich über die nächste volle Ladung ein.
+Starting the motion sensor…	Bewegungssensor startet…
+Stop charging above	Laden stoppen über
+Stop charging below	Laden stoppen unter
+Stopping lower gives a little less capacity and a longer battery life.	Früher aufhören gibt etwas weniger Kapazität und eine längere Akku-Lebensdauer.
+Stops charging at 80%, starts again below 75%. Kept off a full charge, the pack lasts noticeably longer; turn it off before a long day away from power.	Lädt bis 80%, weiter erst unter 75%. Nicht dauernd voll geladen hält der Akku deutlich länger; vor einem langen Tag ohne Steckdose ausschalten.
+Strength	Stärke
+Strong	Stark
+Switch the temperature guard off?\nThe Pager then charges a hot or frozen battery. Charging below 0 °C damages the cell inside and can cause a short later; charging it hot risks swelling and fire.	Temperaturschutz ausschalten?\nDer Pager lädt dann auch einen heißen oder gefrorenen Akku. Laden unter 0 °C schädigt die Zelle innen und kann später einen Kurzschluss verursachen; heiß laden riskiert Aufblähen und Feuer.
+The defaults are the safe ones for this battery. Anything past them asks first.	Die Standardwerte sind die sicheren für diesen Akku. Alles darüber hinaus fragt vorher nach.
+The fuel gauge did not take the new capacity	Der Akku-Chip hat die neue Kapazität nicht übernommen
+The fuel gauge is already set to this	Der Akku-Chip ist schon so eingestellt
+The percentage comes from the battery's fuel gauge, which learns the pack by itself.	Der Prozentwert kommt vom Messchip im Akku, der den Akku selbst einlernt.
+Twice	Zweimal
+Use anyway	Trotzdem verwenden
+Used today %d mAh · yesterday %s	Verbraucht heute %d mAh · gestern %s
+Wake when picked up	Beim Hochheben aufwecken
+Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, so the battery is never run flat.	Warnt mit Vibration bei 20%, nochmal bei 10%, und schaltet sich bei 3%, damit der Akku nie ganz leer wird, selbst aus.
+last 5 min charging	letzte 5 Min. Laden
+last 5 min drawing	letzte 5 Min. Verbrauch
+not known	unbekannt
+Picture dimming	Bild abdunkeln
+Wallpaper dimming	Hintergrundbild abdunkeln
+Darker with Night, lighter with Day, so the text on it stays readable.	Bei Nacht dunkler, bei Tag heller, damit der Text darauf lesbar bleibt.
+Asking the time server	Frage den Zeitserver
+Auto-delete old contacts	Alte Kontakte automatisch löschen
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibriert bei neuen Nachrichten, auch wenn der Ton aus ist. Beachtet Nicht stören.
+Connections	Verbindungen
+Days	Tage
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Löscht Kontakte, die seit der unten angegebenen Anzahl Tage nicht gehört wurden. Favoriten werden nie gelöscht.
+Downloaded to this computer, and kept in this browser.	Auf diesen Computer heruntergeladen und in diesem Browser gespeichert.
+Import from this computer	Von diesem Computer importieren
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	Im Browser wird die Verbindung in der Seitenleiste oben eingestellt: Verbinden erreicht deinen Node über Bluetooth, USB oder Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	Im Browser wird die Verbindung in der Seitenleiste oben eingestellt: Verbinden erreicht deinen Node über Wi-Fi, USB oder Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Noch keine Position. Erlaube dieser Seite deinen Standort, wenn der Browser fragt.
+Not heard from for this many days, 1 to 999.	So viele Tage nicht gehört, 1 bis 999.
+Pattern	Muster
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Einmal bei einer Nachricht, zweimal bei einer DM, dreimal bei einer @-Erwähnung. Tippe eines an, um es zu spüren.
+Remove old contacts	Alte Kontakte entfernen
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	Die Karte lädt über das Netzwerk dieses Computers. Das Wi-Fi deines Nodes wird am Node eingestellt.
+Vibrate	Vibrieren
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Bluetooth und Kopplungscode deines Nodes werden am Node eingestellt.
+Edit in Settings > Quick replies	Ändern unter Einstellungen > Schnellantworten
+Turn the knob • click to insert	Rad drehen • Klick zum Einfügen
+Vibrate on keys	Vibrieren bei Tasten
+A short click for each keypress and each turn of the knob.	Ein kurzes Klicken bei jedem Tastendruck und jedem Dreh am Rad.
+Keys and the knob do nothing until you hold Backspace.	Tasten und Rad tun nichts, bis du Backspace hältst.
+Moving aurora stays still while Battery saver is on (Settings > Battery).	Die bewegte Aurora bleibt stehen, solange der Energiesparmodus an ist (Einstellungen > Akku).
+Shift + click: volume	Shift + Klick: Lautstärke
+Shift + click: brightness	Shift + Klick: Helligkeit
+Keys and shortcuts	Tasten und Kürzel
+Turn to scroll, click or any key to close.	Drehen zum Scrollen, Klick oder beliebige Taste schließt.
+Knob	Rad
+Move, click to select	Bewegen, Klick wählt aus
+Hold knob	Rad halten
+Fn + turn	Fn + drehen
+Next tab, or scroll inside a screen	Nächster Tab, oder in einem Fenster scrollen
+Shift + turn	Shift + drehen
+Screen brightness	Bildschirmhelligkeit
+Shift + click	Shift + Klick
+Switch the knob to volume	Rad auf Lautstärke umschalten
+Hold Shift	Shift halten
+Quiet now (Do Not Disturb) on / off	Jetzt ruhig (Nicht stören) ein / aus
+Hold Fn	Fn halten
+This help	Diese Hilfe
+Back (deletes while typing)	Zurück (löscht beim Tippen)
+Hold Backspace	Backspace halten
+Back from a text field; unlock	Zurück aus einem Textfeld; entsperren
+Hold Space	Leertaste halten
+Lock the screen	Bildschirm sperren
+Hold Enter	Enter halten
+More actions (like a long press)	Weitere Aktionen (wie langes Drücken)
+Tabs (Settings > Keyboard)	Tabs (Einstellungen > Tastatur)
+Hold H / Hold S	H halten / S halten
+Launcher options / Control panel	Launcher-Optionen / Kontrollzentrum
+Hold a letter	Buchstaben halten
+Accents and umlauts	Akzente und Umlaute
+Fn + Shift	Fn + Shift
+Caps Lock while typing	Feststelltaste beim Tippen
+Fn + Backspace	Fn + Backspace
+Fn + Enter	Fn + Enter
+Fn + click	Fn + Klick
+Special characters while typing	Sonderzeichen beim Tippen
+In a chat: jump to new messages	Im Chat: zu neuen Nachrichten springen
+W A S D,  Q / E	W A S D,  Q / E
+Pan the map; adjust a slider	Karte verschieben; Schieberegler stellen
+Quiet now: on (hold Shift again to end)	Jetzt ruhig: an (Shift erneut halten zum Beenden)
+Quiet now: off	Jetzt ruhig: aus
+Quiet now	Jetzt ruhig
+Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.	Nicht stören, bis du es ausschaltest. Shift halten macht dasselbe von überall.
+Backspace	Backspace
+M  C  H  A  S	M  C  H  A  S
+N	N

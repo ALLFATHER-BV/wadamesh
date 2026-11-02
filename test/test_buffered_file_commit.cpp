@@ -4,8 +4,16 @@
 // The fake file behaves like a FAT file on a flaky card: a write can be short, and
 // once a write fails the file stays failed (FatFs keeps the error on the file object)
 // until it is closed and opened again.
+//
+// The second half drives FsSink (the production Sink) over a fake fs::FS/fs::File that
+// copies arduino-esp32 2.0.17's VFSFileImpl rules: a 4 KB stdio buffer in front of
+// FatFs, size() of a written file = stat(path) = the DIRECTORY ENTRY, which FAT only
+// updates on close. beta_100 asked the open file for its size and read 0 every time.
 #include <assert.h>
 #include <stdio.h>
+#include <map>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "helpers/BufferedFileCommit.h"
@@ -56,6 +64,107 @@ static std::vector<uint8_t> payload(size_t n) {
   std::vector<uint8_t> v(n);
   for (size_t i = 0; i < n; ++i) v[i] = (uint8_t)(i * 31u + 7u);
   return v;
+}
+
+// ---- fake arduino-esp32 FS (VFSFileImpl over FatFs, see the header comment) ----
+struct FakeVfs {
+  struct Entry { std::vector<uint8_t> data; size_t dir_size = 0; };  // data = FIL contents
+  std::map<std::string, Entry> files;
+  size_t fail_tail_at_close = 0;   // >0: the final flush in close() loses this many bytes
+  int opens_w = 0, removes = 0;
+};
+struct FakeImpl {
+  FakeVfs* vfs; std::string path; bool writing; std::vector<uint8_t> stdio_buf;
+  bool written = false; size_t stat_size = 0; bool open = true;
+  size_t write(const uint8_t* p, size_t n) {          // fwrite into a 4096-byte FILE buffer
+    written = true;
+    auto& e = vfs->files[path];
+    for (size_t i = 0; i < n; ++i) {
+      stdio_buf.push_back(p[i]);
+      if (stdio_buf.size() == 4096) { e.data.insert(e.data.end(), stdio_buf.begin(), stdio_buf.end()); stdio_buf.clear(); }
+    }
+    return n;
+  }
+  size_t size() {                                     // VFSFileImpl::size(): stat(path) once written
+    if (written) { stat_size = vfs->files[path].dir_size; written = false; }
+    return stat_size;
+  }
+  void close() {                                      // fclose: flush, f_close writes the dir entry
+    if (!open) return;
+    open = false;
+    if (!writing) return;
+    auto& e = vfs->files[path];
+    size_t keep = stdio_buf.size();
+    if (vfs->fail_tail_at_close) { keep = keep > vfs->fail_tail_at_close ? keep - vfs->fail_tail_at_close : 0; vfs->fail_tail_at_close = 0; }
+    e.data.insert(e.data.end(), stdio_buf.begin(), stdio_buf.begin() + keep);
+    stdio_buf.clear();
+    e.dir_size = e.data.size();
+  }
+};
+struct FakeFile {
+  std::shared_ptr<FakeImpl> p;
+  explicit operator bool() const { return p && p->open; }
+  size_t write(const uint8_t* b, size_t n) { return p ? p->write(b, n) : 0; }
+  size_t size() { return p ? p->size() : 0; }
+  bool isDirectory() const { return false; }
+  void close() { if (p) p->close(); }
+};
+struct FakeFs {
+  FakeVfs& v;
+  FakeFile open(const char* path, const char* mode) {
+    FakeFile f;
+    const bool w = mode[0] == 'w';
+    if (w) { ++v.opens_w; v.files[path] = FakeVfs::Entry(); }      // FA_CREATE_ALWAYS: size 0
+    else if (!v.files.count(path)) return f;
+    f.p = std::make_shared<FakeImpl>();
+    f.p->vfs = &v; f.p->path = path; f.p->writing = w;
+    f.p->stat_size = v.files[path].dir_size;                         // stat at open
+    return f;
+  }
+  bool remove(const char* path) { ++v.removes; return v.files.erase(path) > 0; }
+};
+struct Hooks {
+  int pauses = 0; size_t last = 0;
+  void pause(int) { ++pauses; }
+  void progress(size_t d, size_t) { last = d; }
+};
+
+static void arduinoFsCases() {
+  const std::vector<uint8_t> img = payload(3212345);   // about a wadamesh app bin
+  uint8_t bounce[4096];
+  const char* path = "/BINS/wadamesh-beta_100-beta.bin";
+  {  // the beta_100 check, reproduced: the open file reports 0 bytes, not the image size
+    FakeVfs v; FakeFs fs{v};
+    FakeFile f = fs.open(path, "w");
+    assert(f.write(img.data(), img.size()) == img.size());
+    assert(f.size() == 0);                 // directory entry not written yet
+    f.close();
+    FakeFile r = fs.open(path, "r");
+    assert(r && r.size() == img.size());   // after close it is
+  }
+  {  // FsSink: one attempt, the card holds the exact image
+    FakeVfs v; FakeFs fs{v}; Hooks h;
+    BufferedFileCommit::FsSink<FakeFs, FakeFile, Hooks> sink{fs, path, img.size(), h, FakeFile()};
+    assert(BufferedFileCommit::commit(sink, img.data(), img.size(), bounce, sizeof bounce, 3));
+    assert(v.opens_w == 1 && h.pauses == 0 && h.last == img.size());
+    assert(v.files[path].data == img);
+  }
+  {  // the tail is lost in close()'s final flush: caught, retried from byte 0
+    FakeVfs v; FakeFs fs{v}; Hooks h; v.fail_tail_at_close = 100;
+    BufferedFileCommit::FsSink<FakeFs, FakeFile, Hooks> sink{fs, path, img.size(), h, FakeFile()};
+    assert(BufferedFileCommit::commit(sink, img.data(), img.size(), bounce, sizeof bounce, 3));
+    assert(v.opens_w == 2 && v.removes == 1 && h.pauses == 1);
+    assert(v.files[path].data == img);
+  }
+  {  // closeAndCheckSize on a short file says so (the streamed path uses it too)
+    FakeVfs v; FakeFs fs{v};
+    FakeFile f = fs.open(path, "w");
+    f.write(img.data(), 5000);
+    assert(!BufferedFileCommit::closeAndCheckSize(fs, f, path, img.size()));
+    FakeFile g = fs.open(path, "w");
+    g.write(img.data(), 5000);
+    assert(BufferedFileCommit::closeAndCheckSize(fs, g, path, 5000));
+  }
 }
 
 int main() {
@@ -113,6 +222,7 @@ int main() {
     assert(!BufferedFileCommit::commit(c, img.data(), img.size(), bounce, sizeof bounce, 0));
     assert(c.opens == 0);
   }
+  arduinoFsCases();
   printf("buffered_file_commit: all passed\n");
   return 0;
 }

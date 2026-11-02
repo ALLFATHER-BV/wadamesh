@@ -38,6 +38,12 @@ PagerGps gps(Serial1, &rtc_clock, PIN_GPS_TX, PIN_GPS_RX, GPS_BAUD_RATE);
 EnvironmentSensorManager sensors(gps);
 
 void tloraPagerGpsPowerDown() { gps.powerDown(); }
+// The GPS's cold-start hint: the position the node last stored (0,0 = none yet).
+static bool pagerGpsAidPos(double* lat, double* lon) {
+  *lat = sensors.node_lat;
+  *lon = sensors.node_lon;
+  return true;
+}
 
 #ifdef DISPLAY_CLASS
   DISPLAY_CLASS display;
@@ -46,6 +52,7 @@ void tloraPagerGpsPowerDown() { gps.powerDown(); }
 
 bool radio_init() {
   fallback_clock.begin();
+  gps.setAidSource(pagerGpsAidPos, [] { return rtc_clock.timeIsCurrent(); });
 
   // rtc_clock.begin(Wire) — the core's AutoDiscoverRTCClock probe — is still
   // intentionally NOT called. Its probe is a bare I2C ACK at 0x51, so it would

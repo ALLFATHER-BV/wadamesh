@@ -272,9 +272,9 @@ static void cfgLoadOrMigrate() {
         // v2->v3: a manual hour offset used to mean "CET base + offset". Preserve
         // that under the new zone picker by mapping such users onto the Custom
         // (UTC-offset) zone, so their clock doesn't jump to CET. 0xFE is resolved
-        // to the real Custom index on the first touchPrefsGetTimezone() call (the
-        // zone count isn't known here). offset 0 stays zone 0 (Europe) = unchanged.
-        if (stored_version < 3 && s_cfg.time_offs != 0) s_cfg.tz_zone = 0xFE;
+        // to the Custom id on the first touchPrefsGetTimezone() call (and written
+        // back then). offset 0 stays zone 0 (Europe) = unchanged.
+        if (stored_version < 3 && s_cfg.time_offs != 0) s_cfg.tz_zone = TimeZones::STORED_MIGRATE_TO_CUSTOM;
         // v18: keyboard navigation is now OFF by default (it was force-enabled at v15, but it
         // complicated the touch UX more than it helped). Reset existing installs to off ONCE so
         // they match the new default; the user's later explicit on/off then persists (fires only
@@ -829,51 +829,40 @@ bool touchPrefsSetSoundFile(int slot, const char* path) {
 
 int touchPrefsGetTimeOffsetHours() {
   if (!s_begun) touchPrefsBegin();
-  int v = (int)s_cfg.time_offs;
-  if (v < -23) v = -23;
-  if (v >  23) v =  23;
-  return v;
+  return TimeZones::clampOffsetHours((int)s_cfg.time_offs);
 }
 bool touchPrefsSetTimeOffsetHours(int hours) {
-  if (hours < -23) hours = -23;
-  if (hours >  23) hours =  23;
+  hours = TimeZones::clampOffsetHours(hours);
   if (!s_begun) touchPrefsBegin();
   s_cfg.time_offs = (int8_t)hours;
   return cfgFlush();
 }
-// The zones and their POSIX strings live in helpers/TimeZones.h (unit-tested on the host).
-static const int TZ_ZONE_N = TimeZones::ZONE_N;
-
-int touchPrefsTimezoneCount() { return TZ_ZONE_N + 1; }   // +1 = "Custom (UTC offset)"
-
-const char* touchPrefsTimezoneLabel(int idx) {
-  if (idx >= 0 && idx < TZ_ZONE_N) return TimeZones::ZONES[idx].label;
-  if (idx == TZ_ZONE_N)            return "Custom (UTC offset)";
-  return "";
-}
+// The zones, their permanent ids and their POSIX strings live in helpers/TimeZones.h
+// (unit-tested on the host, including this stored-bytes -> TZ path).
+int touchPrefsTimezoneCount() { return TimeZones::COUNT; }
+int touchPrefsTimezoneAt(int row) { return TimeZones::idAt(row); }
+const char* touchPrefsTimezoneLabel(int id) { return TimeZones::label(id); }
 
 uint8_t touchPrefsGetTimezone() {
   if (!s_begun) touchPrefsBegin();
-  uint8_t z = s_cfg.tz_zone;
-  if (z == 0xFE) {   // v2->v3 migration sentinel: had a manual offset -> Custom zone
-    z = (uint8_t)(touchPrefsTimezoneCount() - 1);
-    s_cfg.tz_zone = z;
+  if (s_cfg.tz_zone == TimeZones::STORED_MIGRATE_TO_CUSTOM) {   // v2->v3: had a manual offset
+    s_cfg.tz_zone = (uint8_t)TimeZones::CUSTOM;
     cfgFlush();
   }
-  if (z >= (uint8_t)touchPrefsTimezoneCount()) z = 0;   // stale/garbage -> default
-  return z;
+  return (uint8_t)TimeZones::resolveStored(s_cfg.tz_zone);   // stale/garbage -> default
 }
 
-void touchPrefsSetTimezone(uint8_t idx) {
+void touchPrefsSetTimezone(uint8_t id) {
   if (!s_begun) touchPrefsBegin();
-  if (idx >= (uint8_t)touchPrefsTimezoneCount()) idx = 0;
-  s_cfg.tz_zone = idx;
+  s_cfg.tz_zone = (uint8_t)TimeZones::resolveStored(id);
   cfgFlush();
 }
 
 void touchPrefsBuildLocalTz(char* out, int out_cap) {
   if (!out || out_cap <= 0) return;
-  TimeZones::buildPosix(touchPrefsGetTimezone(), touchPrefsGetTimeOffsetHours(), out, out_cap);
+  if (!s_begun) touchPrefsBegin();
+  (void)touchPrefsGetTimezone();   // resolves the one-time migration sentinel first
+  TimeZones::buildFromStored(s_cfg.tz_zone, s_cfg.time_offs, out, out_cap);
 }
 
 uint32_t touchPrefsGetLockTextColor() {
@@ -2654,6 +2643,22 @@ bool touchPrefsSetBackgroundImage(const char* path) {
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return ok;
 }
+// Absent until chosen: TOUCH_DIM_STRONG, the dimming every picture had before.
+static uint8_t prefsDimLevel(const char* key) {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar(key, TOUCH_DIM_STRONG);
+  return v > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : v;
+}
+uint8_t touchPrefsGetBackgroundDim() { return prefsDimLevel("bg_dim"); }
+void touchPrefsSetBackgroundDim(uint8_t level) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("bg_dim", level > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : level);
+}
+uint8_t touchPrefsGetLockDim() { return prefsDimLevel("lock_dim"); }
+void touchPrefsSetLockDim(uint8_t level) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("lock_dim", level > TOUCH_DIM_STRONG ? TOUCH_DIM_STRONG : level);
+}
 
 #if defined(HAS_TANMATSU)   // only the Tanmatsu has the message LED — keep S3 (T-Deck/V4) bins unchanged
 bool touchPrefsGetMsgLed() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("msg_led", 1) != 0; }   // default ON
@@ -3044,7 +3049,7 @@ static int backupKeys(BkKey* out, int cap) {
     "chg_care", "low_batt", "face_down", "pick_wake",             // the Pager's battery care and quiet modes
 #endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
-    "glass",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
+    "glass", "bg_dim", "lock_dim",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');

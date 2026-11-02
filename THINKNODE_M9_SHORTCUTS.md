@@ -49,7 +49,7 @@ under a running operation.
 
 | Key | Press | Hold |
 |---|---|---|
-| **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first) | None |
+| **MSG** | Jump to the Chats tab; inside a conversation, return to the chat list (closes an open app first); on the chat list, open **Contacts** | None |
 | **HOME** | Peel one layer off an open app; on the Home tab, toggle the app drawer; otherwise jump Home (and clear the Back trail). **Double-press** to open the launcher settings (what Home opens, icon size) | None |
 | **@ (Mentions)** | Open the Mentions screen | None |
 | **ADV** | Open the Send Advert page | **Toggle GPS on/off** |
@@ -112,6 +112,15 @@ walks back to the input. Press **OK** on either button to open its picker.
 
 In the symbol grid, use all four arrows to move the highlight and **OK** to
 insert the selected character.
+
+## Long pages
+
+Text and charts are not stops for the highlight. When the next control in the
+direction you press is further away than the screen shows (a long description,
+the telemetry chart), **Up** and **Down** first scroll the page a step at a
+time, and the highlight moves on once the control is in reach, so nothing
+between two buttons is skipped. With no control left in that direction, the
+press scrolls the page.
 
 The Create/Join channel forms use the same **#** action beside every text
 field. Right moves from the field to **#**; Left returns to editing the field.

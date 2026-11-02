@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: fr
-# ver: 30
+# ver: 31
 # name: Français
 # base: fr
  (device behind)	 (appareil en retard)
@@ -2281,3 +2281,74 @@ Warns with a vibration at 20%, again at 10%, and switches the Pager off at 3%, s
 last 5 min charging	last 5 min charging
 last 5 min drawing	last 5 min drawing
 not known	not known
+Picture dimming	Assombrissement de l'image
+Wallpaper dimming	Assombrissement du fond d'écran
+Darker with Night, lighter with Day, so the text on it stays readable.	Plus sombre en Nuit, plus claire en Jour, pour que le texte reste lisible.
+Asking the time server	Interrogation du serveur de temps
+Auto-delete old contacts	Supprimer automatiquement les anciens contacts
+Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Vibre pour les nouveaux messages, même avec le son coupé. Respecte Ne pas déranger.
+Connections	Connexions
+Days	Jours
+Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Supprime les contacts non entendus depuis le nombre de jours ci-dessous. Les favoris ne sont jamais supprimés.
+Downloaded to this computer, and kept in this browser.	Téléchargé sur cet ordinateur et conservé dans ce navigateur.
+Import from this computer	Importer depuis cet ordinateur
+In the browser, the connection is set in the page bar: Connect reaches your node over Bluetooth, USB or Wi-Fi.	Dans le navigateur, la connexion se règle dans la barre de la page : Connecter joint votre nœud par Bluetooth, USB ou Wi-Fi.
+In the browser, the connection is set in the page bar: Connect reaches your node over Wi-Fi, USB or Bluetooth.	Dans le navigateur, la connexion se règle dans la barre de la page : Connecter joint votre nœud par Wi-Fi, USB ou Bluetooth.
+No position yet. Allow this page to use your location when the browser asks.	Pas encore de position. Autorisez cette page à utiliser votre position quand le navigateur le demande.
+Not heard from for this many days, 1 to 999.	Non entendu depuis ce nombre de jours, de 1 à 999.
+Pattern	Motif
+Plays once for a message, twice for a DM, three times for an @ mention. Tap one to feel it.	Une fois pour un message, deux fois pour un DM, trois fois pour une @ mention. Touchez-en un pour le ressentir.
+Remove old contacts	Supprimer les anciens contacts
+The map downloads through this computer's own network. Your node's Wi-Fi is set on the node.	La carte se télécharge par le réseau de cet ordinateur. Le Wi-Fi de votre nœud se règle sur le nœud.
+Vibrate	Vibrer
+Vibration	Vibration
+Your node's own Bluetooth and pairing code are set on the node.	Le Bluetooth et le code d'appairage de votre nœud se règlent sur le nœud.
+Accents and umlauts	Accents and umlauts
+Back (deletes while typing)	Back (deletes while typing)
+Back from a text field; unlock	Back from a text field; unlock
+Backspace	Backspace
+Caps Lock while typing	Caps Lock while typing
+Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.	Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.
+Edit in Settings > Quick replies	Edit in Settings > Quick replies
+Fn + Backspace	Fn + Backspace
+Fn + Enter	Fn + Enter
+Fn + Shift	Fn + Shift
+Fn + click	Fn + click
+Fn + turn	Fn + turn
+Hold Backspace	Hold Backspace
+Hold Enter	Hold Enter
+Hold Fn	Hold Fn
+Hold H / Hold S	Hold H / Hold S
+Hold Shift	Hold Shift
+Hold Space	Hold Space
+Hold a letter	Hold a letter
+Hold knob	Hold knob
+In a chat: jump to new messages	In a chat: jump to new messages
+Keys and shortcuts	Keys and shortcuts
+Keys and the knob do nothing until you hold Backspace.	Keys and the knob do nothing until you hold Backspace.
+Knob	Knob
+Launcher options / Control panel	Launcher options / Control panel
+Lock the screen	Lock the screen
+M  C  H  A  S	M  C  H  A  S
+More actions (like a long press)	More actions (like a long press)
+Move, click to select	Move, click to select
+Moving aurora stays still while Battery saver is on (Settings > Battery).	Moving aurora stays still while Battery saver is on (Settings > Battery).
+N	N
+Next tab, or scroll inside a screen	Next tab, or scroll inside a screen
+Pan the map; adjust a slider	Pan the map; adjust a slider
+Quiet now	Quiet now
+Quiet now (Do Not Disturb) on / off	Quiet now (Do Not Disturb) on / off
+Quiet now: off	Quiet now: off
+Quiet now: on (hold Shift again to end)	Quiet now: on (hold Shift again to end)
+Screen brightness	Screen brightness
+Shift + click	Shift + click
+Shift + click: brightness	Shift + click: brightness
+Shift + click: volume	Shift + click: volume
+Shift + turn	Shift + turn
+Special characters while typing	Special characters while typing
+Switch the knob to volume	Switch the knob to volume
+Tabs (Settings > Keyboard)	Tabs (Settings > Keyboard)
+This help	This help
+Turn the knob • click to insert	Turn the knob • click to insert
+Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
+W A S D,  Q / E	W A S D,  Q / E

@@ -21,6 +21,9 @@
 #include "WebPlatform.h"
 #include "BackendSelect.h"
 #include "wada_host.h"
+#if defined(WADA_SIM_PAGER)
+void simPagerHoldKey(uint8_t c, uint32_t ms);   // web/sim_pager/SimPager.cpp
+#endif
 #include "miniz.h"
 #include <SDL.h>
 #include <string>
@@ -183,10 +186,25 @@ void scriptStep() {
       std::string k; in >> k;
       const uint8_t code = k == "enter" ? 0x0D : k == "esc" ? 0x1B : k == "bs" ? 0x08 : k == "tab" ? 0x09
                          : k == "left" ? 0xB4 : k == "up" ? 0xB5 : k == "down" ? 0xB6 : k == "right" ? 0xB7
+                         : k.size() > 2 && k[0] == '0' && (k[1] == 'x' || k[1] == 'X')
+                             ? (uint8_t)strtoul(k.c_str() + 2, nullptr, 16)   // a raw key byte (M9 function keys)
                          : (uint8_t)(k.empty() ? 0 : k[0]);
-      if (code) webKeyPush(code);
+      // An optional count pushes the key that many times at once: the device drains
+      // several queued keys in one loop pass, before the UI renders (a fast d-pad).
+      int count = 1; in >> count; if (count < 1) count = 1;
+      for (int i = 0; code && i < count; ++i) webKeyPush(code);
       s_script.wait_until = now + 150; return;
     }
+#if defined(WADA_SIM_PAGER)
+    if (cmd == "holdkey") {   // holdkey C MS: type C and keep its key down for MS (Pager simulator; C = space for the space bar)
+      std::string k; int ms = 1000; in >> k >> ms;
+      if (k == "space") k = " ";   // the stream drops a literal blank
+      if (k == "shift") k = "\x01";   // a modifier alone, held (Shift, Fn)
+      if (k == "fn")    k = "\x02";
+      if (!k.empty()) simPagerHoldKey((uint8_t)k[0], (uint32_t)ms);
+      s_script.wait_until = now + 50; return;
+    }
+#endif
     if (cmd == "wheel") {   // wheel X Y DY: a wheel turn over (X, Y), DY canvas pixels (> 0 = down)
       int x = 0, y = 0, dy = 0; in >> x >> y >> dy;
       webWheel(x, y, dy);

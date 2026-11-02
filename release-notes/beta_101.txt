@@ -1,0 +1,33 @@
+# beta_101 - T-LoRa Pager UI, language downloads, SD bin saves, M9 keypad fixes, offline map fill, time zones, dimming. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards, apps.
+
+Test build, on top of beta_100. The stable build stays beta_85.
+
+# --- New ---
+Offline maps fill the gaps: when a tile is missing and Wi-Fi is not connected, the map cuts the matching square out of the tile one to three zoom levels up and scales it into the gap, so you see a blocky but correct map instead of an empty square, and the zoom buttons go up to three levels past what you have saved (asked for by benanderson).
+Time zones: 25 more in the list, from Central Africa, South, East and West Africa, Egypt and Moscow to India's neighbours, Singapore, Perth, Korea, Adelaide, New Zealand, Argentina, Mexico City and Newfoundland. The list now runs west to east, and a Custom offset you already set stays as it is (asked for by gadgeteerza).
+Picture and wallpaper dimming are adjustable: Settings, Theme, Background, Picture dimming, and Settings, Lock screen, Wallpaper dimming, each Off, Light, Medium or Strong. Strong is the default and the look you have today (asked for by zomgugoff and benanderson).
+
+# --- Fixes ---
+Languages from the Store download on every board again: the file is saved as it arrives instead of being held in one big block of memory first, which the 2 MB Heltec V4 and boards low on memory could not spare once the language files grew (reported by 161ct006). A file that is truly too large now says so instead of blaming the server.
+Save update bin to SD works again: every download reached 100% and then failed with "SD write failed" on every board and card, because the size check ran on the still-open file, which the card's file system reports as 0 bytes until it is closed. The file is now closed, opened again and checked on the card (#734, reported by Jess-39 and william-stearns).
+The clock no longer falls back by half an hour with GPS battery saving on: after a rest the GPS still held its last report from before the rest, and the 30-minute clock sync took that old time. Every internet time sync now also reaches the clock chip on boards that have one (the ThinkNode M9), and with Wi-Fi on "Sync clock" asks the time server right away (reported by gadgeteerza).
+Accented letters are the size of the text around them at the Large and Huge text sizes (Polish, Czech, Hungarian and more were drawn smaller), and Romanian ș and ț are drawn instead of an empty box.
+Settings, Language names a language added from the Store (Polish showed as English).
+Contacts: Peers lists people only, now that rooms have their own filter (asked for by benanderson).
+Nineteen settings and messages that had no translation row, "Connections" among them, now translate.
+Keypad navigation scrolls past text and charts: Up and Down move the page a step at a time when the next control is further away than the screen shows, so a long description or a chart between two buttons is on screen before the cursor moves on (asked for by benanderson and zomgugoff).
+Keypad navigation: when a new message rebuilt the chat list, the cursor fell off the rebuilt row onto the "..." button, so OK opened the Chats menu instead of the chat. The cursor now stays on the same chat (ThinkNode M9, T-Deck trackball, T-LoRa Pager, Tanmatsu).
+Telemetry: the Request button is reachable with the keys while a history chart shows; the chart reached up into the button row and took the cursor instead (reported by benanderson).
+
+# --- Boards ---
+T-LoRa Pager: the UI fits the 480x222 panel with a one-row status bar, Shift + knob sets brightness or volume, holding Shift turns on Quiet now, holding Fn shows every shortcut, holding a letter picks its accent, the map zooms on the knob without going black, and Home shows the latest chat (#753 by MrYoshii).
+T-LoRa Pager: the GPS gets the last position and the time, when the clock is known to be right, at power-up for a faster first fix, and stays awake three minutes after the map closes (#758 by MrYoshii).
+T-LoRa Pager: the new Pager strings are in German (#755 by MrYoshii).
+T-Deck Pro: Wi-Fi starts with Bluetooth on: the e-paper draw buffer moved out of the scarce internal memory, which leaves about 11 KB more for Wi-Fi (#763, reported by oumike).
+T-Deck Pro: a boot that took 30 seconds or more ended on the logo, because the screen timeout counted the boot as idle time and locked the e-paper with the logo still on top. The timeout now waits for the logo to go, and a lock always takes it down first (#762, reported by oz1kfy).
+T-Deck Pro and Max: USB Files (files.wadamesh.com over the USB cable) works on them too, with the e-paper updated only every few seconds while files move, and the SD activity light stays off on e-paper (asked for by Ender436).
+ThinkNode M9: the d-pad cursor no longer lands on a message hidden under the text field when messages arrive: the list grew after it scrolled, so the newest message sat under the text field and the next Down went to it (#764, reported by mrickey).
+ThinkNode M9: MSG on the chat list opens Contacts, and MSG from Contacts goes back to Chats (#765, asked for by Eddie-Feher-at-TT).
+The docs page has key guides for the ThinkNode M9, the T-Deck keyboard and the Tanmatsu.

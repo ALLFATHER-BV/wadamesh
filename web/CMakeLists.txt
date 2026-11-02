@@ -181,6 +181,26 @@ set(WADA_APP_DEFS
   NDEBUG
 )
 
+# WADA_HOST_BOARD=m9: the same host app with the ThinkNode M9's key path compiled in
+# (HAS_M9_KEYBOARD: the d-pad, function keys and the M9 Back ladder in handleHwKey)
+# instead of the external-keyboard path, so M9 navigation can be scripted headless.
+# platform/WebM9Keyboard.cpp feeds the host keys in as the controller's bytes; run it
+# with --size 320x240. Off by default: the web board is what ships.
+set(WADA_HOST_BOARD "" CACHE STRING "host build flavour: empty = the web board, m9 = ThinkNode M9 keys")
+if(WADA_HOST_BOARD STREQUAL "m9")
+  list(APPEND WADA_APP_DEFS HAS_M9_KEYBOARD=1)   # the key path only; HAS_THINKNODE_M9 is the hardware
+endif()
+
+# T-LoRa Pager simulator (-DWADA_SIM_PAGER=ON): the host build laid out as the Pager —
+# 480x222, no touch, the keyboard + rotary encoder as the only input, the Pager's own
+# UI branches (TLORA_PAGER) — so its screens can be reviewed and scripted off-device.
+# The Pager's hardware calls land on stubs (sim_pager/SimPager.cpp).
+option(WADA_SIM_PAGER "build the host app as a T-LoRa Pager simulator" OFF)
+if(WADA_SIM_PAGER)
+  list(APPEND WADA_APP_DEFS WADA_SIM_PAGER=1 TLORA_PAGER=1 HAS_PAGER_KEYBOARD=1 HAS_PAGER_ENCODER=1)
+  list(REMOVE_ITEM WADA_APP_DEFS HAS_CARDKB=1)   # keys arrive through the Pager keyboard's queue
+endif()
+
 if(EMSCRIPTEN)
   set(SDL2_LIBS "")   # the page is the window: no SDL in the browser build
 else()
@@ -191,12 +211,18 @@ endif()
 add_executable(wadamesh-host ${APP_SRCS} ${WEB_SRCS})
 target_include_directories(wadamesh-host PRIVATE
   ${WEB}/mesh ${WEB}/platform     # <target.h> + the MyMesh stand-in
+  $<$<STREQUAL:${WADA_HOST_BOARD},m9>:${REPO}/variants/thinknode_m9>   # <M9Keyboard.h>
   ${WADA_COMPAT_INC}
   ${SRC} ${UI} ${REPO}/include
   ${CORE}
   ${TP}/ArduinoJson/src)
 target_compile_definitions(wadamesh-host PRIVATE ${WADA_APP_DEFS} ${WADA_VERSION_DEFS})
 target_link_libraries(wadamesh-host PRIVATE wada_core wada_lvgl wada_lua wada_thirdparty ${SDL2_LIBS})
+if(WADA_SIM_PAGER)
+  # The stubs come first so <driver/i2s.h>, "Es8311Codec.h", ... resolve to them.
+  target_include_directories(wadamesh-host BEFORE PRIVATE ${WEB}/sim_pager)
+  target_sources(wadamesh-host PRIVATE ${WEB}/sim_pager/SimPager.cpp ${SRC}/helpers/HardwareRtcClock.cpp ${SRC}/helpers/esp32/WebFileTransfer.cpp)
+endif()
 # The UI is warning-clean under the firmware's GCC flags, not under clang -Wall; keep
 # the host build readable. Errors are what matter here (they are the drift alarm).
 target_compile_options(wadamesh-host PRIVATE -w -fno-strict-aliasing)

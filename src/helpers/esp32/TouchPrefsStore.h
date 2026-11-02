@@ -789,6 +789,14 @@ uint32_t touchPrefsGetBackgroundColor();
 void     touchPrefsSetBackgroundColor(uint32_t rgb);
 int      touchPrefsGetBackgroundImage(char* out, int out_cap);   // "sd:/path" or an internal path
 bool     touchPrefsSetBackgroundImage(const char* path);
+// How strongly a picture of your own is toned down behind the text: the Theme's
+// background picture (darkened by night, lightened by day) and the lock-screen wallpaper
+// (a black veil). TOUCH_DIM_STRONG, the default, is the look before the setting existed.
+enum : uint8_t { TOUCH_DIM_OFF = 0, TOUCH_DIM_LIGHT = 1, TOUCH_DIM_MEDIUM = 2, TOUCH_DIM_STRONG = 3 };
+uint8_t  touchPrefsGetBackgroundDim();
+void     touchPrefsSetBackgroundDim(uint8_t level);
+uint8_t  touchPrefsGetLockDim();
+void     touchPrefsSetLockDim(uint8_t level);
 
 /** Tanmatsu message-notification LED: flash the envelope-icon LED on a new message and breathe it
  *  softly while there are unread messages. Default ON. Tanmatsu-only (no such LED on T-Deck/V4). */
@@ -810,15 +818,18 @@ int  touchPrefsGetTimeOffsetHours();
 bool touchPrefsSetTimeOffsetHours(int hours);
 
 /** Time-zone picker. A curated list of named zones, each carrying the correct
- *  POSIX TZ string WITH that region's DST rules — so non-European users get the
+ *  POSIX TZ string WITH that region's DST rules, so non-European users get the
  *  right time year-round instead of being stuck on the CET base + EU DST dates.
- *  Default 0 == "Europe (CET/CEST)" (unchanged behaviour). The LAST index is
+ *  Zones are identified by a PERMANENT id (helpers/TimeZones.h: the saved value);
+ *  the picker shows them in its own order, row -> id via touchPrefsTimezoneAt().
+ *  Default id 0 == "Europe (CET/CEST)" (unchanged behaviour). Id 16 is
  *  "Custom (UTC offset)", which uses touchPrefsGetTimeOffsetHours() as a fixed,
  *  no-DST offset. touchPrefsBuildLocalTz() resolves the selected zone. */
-int         touchPrefsTimezoneCount();           // number of pickable entries
-const char* touchPrefsTimezoneLabel(int idx);    // display label for the picker
-uint8_t     touchPrefsGetTimezone();             // selected index (default 0)
-void        touchPrefsSetTimezone(uint8_t idx);
+int         touchPrefsTimezoneCount();           // number of picker rows
+int         touchPrefsTimezoneAt(int row);       // picker row -> zone id
+const char* touchPrefsTimezoneLabel(int id);     // display label of a zone id
+uint8_t     touchPrefsGetTimezone();             // selected zone id (default 0)
+void        touchPrefsSetTimezone(uint8_t id);
 
 /** Build the POSIX TZ string for local-time display from the selected time zone
  *  (touchPrefsGetTimezone), or a fixed UTC offset for the "Custom" entry. Used by

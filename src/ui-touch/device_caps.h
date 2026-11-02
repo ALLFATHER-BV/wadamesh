@@ -25,7 +25,34 @@
 // =============================================================================
 
 // ---- Per-board structural capabilities (factored out of the device names) ----
-#if defined(WADA_WEB)                    // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
+#if defined(WADA_WEB) && defined(WADA_SIM_PAGER)   // ===== T-LoRa Pager simulator (web/, -DWADA_SIM_PAGER=ON) =====
+  // The host build laid out as the Pager, for reviewing and scripting its screens off
+  // the device: the Pager's own capability set (below), with the radio, card and
+  // storage of the web board behind it (web/sim_pager/).
+  #define CAP_TOUCH        0   // keyboard + rotary encoder only, as on the device
+  #define CAP_ROTATABLE    0
+  #define CAP_LARGE_SCREEN 0   // native 480x222
+  #define CAP_SD           0   // no card in the simulator
+  #define CAP_FILESYSTEM   0
+  #define CAP_GPS          1
+  #define CAP_GPS_RECEIVER 0
+  #define CAP_OTA          0
+  #define CAP_LOCK_SCREEN  1
+  #define CAP_USB_FILES    0
+  #define CAP_RADIO_TOOLS  0
+  #define CAP_SCREEN_MIRROR 0
+  #define CAP_WEB_BROWSER  0
+  #define CAP_WIFI_SETUP   0
+  #define CAP_BT_SETUP     0
+  #define CAP_USB_FLASH    0
+  #define CAP_FILE_HANDOFF 1
+  #define CAP_NATIVE_KEYBOARD 0
+  #define CAP_BUILTIN_LANGS    1
+  #define CAP_BUILTIN_LUA_APPS 1
+  #define CAP_STORE_DOWNLOADS  1
+  #define CAP_FW_UPDATE_CHECK  0
+
+#elif defined(WADA_WEB)                  // ===== Browser / desktop host build (web/, WEB_BUILD.md) =====
   // A virtual touch panel whose size the page picks at boot (WEB_BUILD.md "Phones and
   // tablets"): 800x480 landscape on a computer, the large-screen layouts the CrowPanel 5.0
   // and the Tanmatsu ship; on a phone or tablet the size of its screen below the page's
@@ -285,6 +312,14 @@
   #endif
 #endif
 
+// Map overzoom: a tile no offline source holds, while no download can bring it (Wi-Fi
+// down), is drawn from its nearest ancestor up to 3 levels up, cut out and scaled 2x to
+// 8x, instead of leaving a hole. It decodes into the slot's own pool buffer and needs one
+// transient crop copy of at most 32 KB, so the 2 MB V4 can afford it like every board.
+#ifndef CAP_MAP_OVERZOOM
+  #define CAP_MAP_OVERZOOM 1
+#endif
+
 // No dedicated "tiles" LittleFS partition in the board's own partition table, and no free flash to
 // add one without moving partitions that hold user data (16 MB maps: 2 x 4 MB OTA + 8000 KB storage
 // + coredump fill the chip). The Wi-Fi map tile cache then goes to the microSD when one is mounted,
@@ -356,7 +391,9 @@
 // Touchscreen-only boards that take a Bluetooth, CardKB or clip-on keyboard join
 // too: the group stays empty (and invisible) until a keyboard connects.
 #if defined(HAS_TANMATSU) || defined(HAS_TDECK_TRACKBALL) || defined(HAS_TDECK_PRO) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(ATTAKY_MESH_SERIES) || \
-    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD)
+    (CAP_EXT_KEYBOARD && !CAP_KEYBOARD) || (defined(WADA_WEB) && defined(HAS_M9_KEYBOARD))
+  // (The last term is the M9 flavour of the host build, web/CMakeLists.txt WADA_HOST_BOARD=m9:
+  // the ThinkNode M9's key path on the web board, for scripted navigation tests.)
   #define CAP_KEYPAD_NAV 1
 #else
   #define CAP_KEYPAD_NAV 0
@@ -406,10 +443,21 @@
   #define CAP_ROUND_CORNERS 0
 #endif
 
+// An e-paper panel (the T-Deck Pro and Max, both HAS_TDECK_PRO). LVGL draws into a
+// band that the driver copies, with the CPU, into its own PSRAM canvas, and every change
+// on screen costs a panel update that blocks the loop for about 0.65 s (a full one for
+// longer). So: the band needs no DMA-capable RAM, and anything that repaints often
+// (progress, activity lights) has to be paced or left out.
+#if defined(HAS_TDECK_PRO)
+  #define CAP_EPAPER 1
+#else
+  #define CAP_EPAPER 0
+#endif
+
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
 // cannot show that, and refreshing it to try would wear the panel, so the T-Deck
 // Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.
-#if defined(HAS_TDECK_PRO)
+#if CAP_EPAPER
   #define CAP_SCREENSAVER 0
 #else
   #define CAP_SCREENSAVER 1
@@ -688,12 +736,14 @@
 // USB cable (Web Serial) while the USB Files app is open (UsbFilesSession.h).
 // Every ESP32-S3 board whose USB socket is the chip's own USB (ARDUINO_USB_CDC_ON_BOOT):
 // UsbFilesSession handles both of its serial drivers (HW-CDC and TinyUSB CDC), proven on
-// the T-Deck and the Heltec V4. Not yet: boards behind a USB-serial bridge chip (M9,
-// CrowPanel 3.5/5.0, Attaky, SenseCAP Indicator: 115200 baud and a UART receive buffer
-// that is fixed once running), the ESP32-P4 builds (IDF), and the T-Deck Pro family incl.
-// the Max (left out from the start; e-paper refresh during a transfer is untested).
+// the T-Deck and the Heltec V4. The T-Deck Pro and Max run the T-Deck's HW-CDC; on their
+// e-paper the screen repaints paced (UsbFilesPaint.h) and the SD activity light stays
+// off, so a transfer does not keep the panel refreshing and the loop blocked. Not yet:
+// boards behind a USB-serial bridge chip (M9, CrowPanel 3.5/5.0, Attaky, SenseCAP
+// Indicator: 115200 baud and a UART receive buffer that is fixed once running) and the
+// ESP32-P4 builds (IDF).
 #ifndef CAP_USB_FILES
-  #if defined(ESP32) && ARDUINO_USB_CDC_ON_BOOT && !defined(HAS_TDECK_PRO) && \
+  #if defined(ESP32) && ARDUINO_USB_CDC_ON_BOOT && \
       !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101) && !defined(HAS_TANMATSU)
     #define CAP_USB_FILES 1
   #else
