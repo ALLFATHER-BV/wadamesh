@@ -43,6 +43,7 @@ extra_flags() {
     test_gps_baud_probe) echo "-DESP32 -I test/gps_probe_fakes" ;;
     # Same provider; a receiver that reports the true UTC time (its own MicroNMEA/RTClib/UART).
     test_gps_time_sync) echo "-DESP32 -I test/gps_time_fakes -I test/gps_probe_fakes" ;;
+    test_spell) echo "src/ui-touch/spell.cpp" ;;
     *) echo "" ;;
   esac
 }
