@@ -159,6 +159,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "ReactionCodec.h"       // host-tested emoji reactions from MeshCore Open / One (#791)
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
 #include "SdThreat.h"           // SD-card malware rules: the mount-time warning + wada.sd.remove
@@ -76749,6 +76750,17 @@ void UITask::backspaceComposerChar() {
   _compose_buf[i] = '\0';
 }
 
+// A sent bubble keeps the timestamp the packet carried, not the system clock that
+// appendMessage stamped a moment earlier: the two differ (mesh RTC vs time(nullptr),
+// plus the +1 uniqueness bump below), and a reaction from MeshCore Open or One (#791)
+// names its target by a hash OF that on-air timestamp, so a bubble a second off is a
+// reaction that never finds its message. Same sanity window as the incoming
+// sender-time stamp in newMsgImpl: a board whose RTC reads garbage keeps the clock
+// time, as before.
+static void stampSentTs(UITask::UIMessage* ring, int slot, uint32_t ts) {
+  if (ring && slot >= 0 && ts > 1700000000 && ts < 2000000000) ring[slot].ts = ts;
+}
+
 bool UITask::sendComposerToActiveThread(const char* override_text) {
   static uint32_t s_last_ui_tx_ts = 0;
   static uint8_t s_ui_tx_attempt = 4;
@@ -76805,8 +76817,12 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
       showAlert(TR("Send failed"), 1200);
       return false;
     }
-    appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, true, true, false,
-                  0, DELIV_NONE, 0, 0, 0, 0, nullptr, 0, the_mesh.uiLastSentFp());
+    {
+      const int slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head]
+      if (appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, true, true, false,
+                        0, DELIV_NONE, 0, 0, 0, 0, nullptr, 0, the_mesh.uiLastSentFp()) >= 0)
+        stampSentTs(_ui_msgs, slot, ts);
+    }
     if (!override_text) resetComposer();   // a resend must not wipe a half-typed draft
     showAlert(TR("Sent"), 900);
     return true;
@@ -76896,8 +76912,12 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   // Register the ACK hash so when the recipient acks the DM, processAck
   // matches it and fires UITask::onMessageAcked → bubble flips to ✓✓.
   the_mesh.uiRegisterExpectedAck(expected_ack, recipient.id.pub_key);
-  appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, false, true, false,
-                expected_ack, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, the_mesh.uiLastSentFp());
+  {
+    const int slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head]
+    if (appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, false, true, false,
+                      expected_ack, DELIV_SENT, 0, 0, 0, 0, nullptr, 0, the_mesh.uiLastSentFp()) >= 0)
+      stampSentTs(_ui_msgs, slot, ts);
+  }
   if (!override_text) resetComposer();   // a resend must not wipe a half-typed draft
   showAlert(TR("Sent"), 900);
   return true;
@@ -81332,6 +81352,40 @@ static void atGlanceShow(const GlanceMsg& m, bool fade_in) {
 #endif
 }
 
+// The readable line for an incoming emoji reaction (#791). Walks the ring newest
+// first for a message in the same thread that hashes to the reaction: its send
+// time (the sender's embedded timestamp, which newMsgImpl stores on incoming
+// bubbles and sendComposerToActiveThread on outgoing ones), its sender name in a
+// channel, and its text. Bounded: a reaction answers something recent, and the
+// MeshCore One hash is a SHA-256 per candidate.
+void UITask::reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
+                          char* out, size_t cap) const {
+  const UIMessage* hit = nullptr;
+  const bool matchable = r.kind == ReactionCodec::MCO_V3 || r.kind == ReactionCodec::MC1;
+  if (matchable && _ui_msgs && _ui_msg_cap > 0) {
+    static const int kMaxScan = 2000, kMaxInThread = 64;
+    int in_thread = 0;
+    for (int i = 0; i < _ui_msg_count && i < kMaxScan && in_thread < kMaxInThread; ++i) {
+      const UIMessage& m = _ui_msgs[(_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap];
+      if (m.channel != channel || strncmp(m.thread, thread, MAX_THREAD_NAME) != 0) continue;
+      ++in_thread;
+      if (ReactionCodec::matches(r, m.ts, channel ? m.sender : nullptr, m.text)) { hit = &m; break; }
+    }
+  }
+  if (!hit) {
+    snprintf(out, cap, "%s %s", r.emoji, TR("reacted"));
+    return;
+  }
+  // The start of the target, on one line, cut on a character boundary.
+  char quote[40];
+  const size_t n = ReactionCodec::utf8Prefix(hit->text, 28);
+  memcpy(quote, hit->text, n);
+  quote[n] = '\0';
+  for (char* q = quote; *q; ++q) if (*q == '\n' || *q == '\r' || *q == '\t') *q = ' ';
+  snprintf(out, cap, "%s %s \"%s%s\"", r.emoji, TR("reacted to"), quote,
+           hit->text[n] ? "\u2026" : "");
+}
+
 // Shared core for newMsg / newMsgFromPubWithMeta. Bundles the channel-vs-DM
 // sender parsing + thread routing in one place so the meta-aware path doesn't
 // drift from the plain path. `meta_flags` is 0 (no RX metadata) when called
@@ -81419,6 +81473,23 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
     luaAppMessage(kind, channel ? thread : "", sender, body);
   }
 #endif
+
+  // Emoji reactions from other MeshCore clients (#791). MeshCore has no reaction
+  // packet: MeshCore Open sends "r:<hash>:<index>" and MeshCore One
+  // "@[target]<emoji>\n<hash>" as plain text, which used to land as a raw bubble.
+  // Store and show a readable line instead, naming the message reacted to when a
+  // recent one in this thread hashes to it. After the Lua hook on purpose, so an
+  // app still sees the wire text and can parse it itself; before the chime and the
+  // glance, so those show the readable line too. Room posts (no channel, sender
+  // override) are left alone: neither client defines reactions there.
+  char reaction_text[MAX_MSG_TEXT + 1];
+  if (!have_sender_override) {
+    ReactionCodec::Reaction rx;
+    if (ReactionCodec::parse(body, channel, &rx)) {
+      reactionLine(thread, channel, rx, reaction_text, sizeof reaction_text);
+      body = reaction_text;
+    }
+  }
 
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   // Notification chime (T-Deck I2S speaker / Heltec V4 piezo / Tanmatsu I2S codec).
