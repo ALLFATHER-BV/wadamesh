@@ -10,7 +10,7 @@
 -- budget): the zip directory, the OPF, the table of contents, then one "section" of
 -- a chapter at a time (about 12 KB of text), which is paginated with
 -- wada.ui.text_lines so the firmware's own font metrics decide where a line breaks.
--- Text only: images show as [image].
+-- Text only for now: an image shows as a [image: its alt text] line.
 --
 -- Input: touch taps the left/right thirds or swipes left/right; a trackball or D-pad
 -- swipes up/down (and left/right); keyboard arrows, space, n/p; a jog wheel or
@@ -258,6 +258,20 @@ local BLOCK = {
   dt = 1, dl = 1, figure = 1, figcaption = 1, aside = 1, header = 1, footer = 1, nav = 1, body = 1,
 }
 local SKIP = { head = 1, style = 1, script = 1, title = 1, svg = 1 }
+local ALT_MAX = 100   -- bytes of alt text kept in a placeholder
+
+-- "[image: alt text]", or "[image]" when the book gives no description.
+local function placeholder(tag)
+  local alt = decode(attrs(tag).alt or "")
+  alt = alt:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  if #alt > ALT_MAX then
+    local cut = ALT_MAX
+    while cut > 1 and cont(alt:byte(cut + 1)) do cut = cut - 1 end
+    alt = alt:sub(1, cut) .. "\xE2\x80\xA6"
+  end
+  if alt == "" then return "[" .. tr("image") .. "]" end
+  return "[" .. tr("image") .. ": " .. alt .. "]"
+end
 
 -- A section ends at a block boundary once it holds SECT_TEXT bytes ("armed"), but only
 -- if more text follows: the next paragraph to arrive sets L.cut, and the section
@@ -293,18 +307,25 @@ local function ld_tag(L, tag)
   if not name then return end
   name = name:lower():gsub("^.*:", "")
   local selfclose = tag:byte(#tag) == 47
-  if name == "body" and not closing then L.skip = 0 end
+  if name == "body" and not closing then L.skip, L.svg = 0, 0 end
   if SKIP[name] then
     if closing then
       if L.skip > 0 then L.skip = L.skip - 1 end
-    elseif not selfclose then L.skip = L.skip + 1 end
+      if name == "svg" and L.svg > 0 then L.svg = L.svg - 1 end
+    elseif not selfclose then
+      L.skip = L.skip + 1
+      if name == "svg" then L.svg = L.svg + 1 end
+    end
     return
   end
-  if L.skip > 0 then return end
+  -- an <image> inside <svg> is how many books wrap their cover; the svg's text stays hidden
+  if L.skip > 0 and not (name == "image" and L.skip == L.svg) then return end
   if name == "br" then L.tb[#L.tb + 1] = "\n"
   elseif name == "img" or name == "image" then
-    ld_flush(L)
-    ld_push(L, "[image]", "p")
+    if not closing then
+      ld_flush(L)
+      ld_push(L, placeholder(tag), "i")
+    end
   elseif BLOCK[name] then
     local pushed = ld_flush(L)
     if closing then
@@ -378,7 +399,7 @@ end
 
 local function ld_new(Z, e, start)
   return { Z = Z, e = e, start = start, fo = start, bo = start, buf = "", bp = 1, eof = false,
-           tb = {}, paras = {}, kinds = {}, bytes = 0, kind = "p", skip = 0, cut = false, arm = false, armed = false }
+           tb = {}, paras = {}, kinds = {}, bytes = 0, kind = "p", skip = 0, svg = 0, cut = false, arm = false, armed = false }
 end
 
 -- ---- pagination ---------------------------------------------------------------

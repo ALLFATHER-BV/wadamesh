@@ -2582,8 +2582,12 @@ local function eb_book(opts)
     local p, m = eb_para(i, 40 + i * 9)
     c1[#c1 + 1] = '<p class="x">' .. m .. "</p>\n"; add(p)
   end
-  c1[#c1 + 1] = '<ul><li>first item</li><li>second<br/>item</li></ul><p><img src="a.png" alt="x"/></p>'
-  add("\xE2\x80\xA2 first item"); add("\xE2\x80\xA2 second\nitem"); add("[image]")
+  c1[#c1 + 1] = '<ul><li>first item</li><li>second<br/>item</li></ul><p><img src="a.png" alt="  A map&#8217;s\n legend  "/></p>' ..
+    '<div><svg xmlns="http://www.w3.org/2000/svg"><title>hidden</title><image xlink:href="cover.png" width="1" height="1"/></svg></div>' ..
+    '<p>before<img src="b.png"/>after</p><p><img src="c.png" alt="' .. ("long "):rep(40) .. '"/></p>'
+  add("\xE2\x80\xA2 first item"); add("\xE2\x80\xA2 second\nitem"); add("[image:Amap\xE2\x80\x99slegend]")
+  add("[image]"); add("before"); add("[image]"); add("after")
+  add("[image:" .. ("long"):rep(20) .. "\xE2\x80\xA6]")   -- 100 bytes of a longer alt, then an ellipsis
   c1[#c1 + 1] = "</body></html>"
   local c2 = { '<html><body><h2 id="t">Chapter Two</h2>' }
   add("Chapter Two")

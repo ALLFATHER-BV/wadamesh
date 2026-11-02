@@ -245,7 +245,7 @@
       "category": "media",
       "glyph": "search",
       "tagline": "Read .epub books off the card or the device.",
-      "about": "Open an .epub from the app's own folder and read it a page at a time, with a chapter list, three text sizes, and your place kept for the last ten books. Text only: pictures show as [image]. Turn pages with a tap on either side of the screen, a swipe, a trackball or D-pad, the arrow keys, or the on-screen buttons that a jog wheel steps through. Books must be stored uncompressed inside the .epub, because the app has no way to unpack them; scripts/ebook-prep.py in the repository converts any .epub and shortens its name to what the app folder accepts.",
+      "about": "Open an .epub from the app's own folder and read it a page at a time, with a chapter list, three text sizes, and your place kept for the last ten books. Text only: a picture shows as an [image: description] line. Turn pages with a tap on either side of the screen, a swipe, a trackball or D-pad, the arrow keys, or the on-screen buttons that a jog wheel steps through. Books must be stored uncompressed inside the .epub, because the app has no way to unpack them; scripts/ebook-prep.py in the repository converts any .epub and shortens its name to what the app folder accepts.",
       "highlights": [
         "Chapters, three text sizes, remembered place",
         "Touch, trackball, jog wheel and keyboard",
