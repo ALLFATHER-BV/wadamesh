@@ -5258,8 +5258,9 @@ static void avatarApplyLook(lv_obj_t* av, const char* name, bool initials, bool 
     const uint32_t ink = 0xE6EBED;
 #endif
     const lv_font_t* f = size >= 36 ? &g_font_16 : size >= 26 ? &g_font_semi_14 : &g_font_semi_12;
-    // The first two letters or digits, in capitals, skipping emoji, symbols and
-    // accents the font cannot draw (#674): never blank, "?" at worst.
+    // The first letter of the first and the last word, in capitals (#785; the first
+    // two letters for a one-word name), skipping emoji, symbols and accents the font
+    // cannot draw (#674): never blank, "?" at worst.
     char ini[12];
     AvatarText::initials(name, ini, sizeof ini, uiFontDrawsGlyph, (void*)f);
     // g_font_* grow with the UI size while the disc may not, so "PU" can spill past

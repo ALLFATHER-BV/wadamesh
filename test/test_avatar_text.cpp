@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Avatar text (#674): the initials and the emoji icon taken from a name.
+// Avatar text (#674, #785): the initials and the emoji icon taken from a name.
 // Build: g++ -std=c++17 -I src -o /tmp/test_avatar_text test/test_avatar_text.cpp
 #include <assert.h>
 #include <stdio.h>
@@ -61,12 +61,32 @@ int main() {
   assert(ini("Jo""a\xCC\x83o") == "JO");                    // a + combining tilde
   assert(ini("\xC3\x89mile") == "\xC3\x89M");               // "Émile" -> "ÉM"
   assert(ini("Zo\xC3\xAB") == "ZO");
-  assert(ini(kTristaoEdc) == "TR");                         // was the two flag halves
-  assert(ini(kTristaoMobile) == "TR");
+  assert(ini(kTristaoEdc) == "TE");                         // was the two flag halves (#674)
+  assert(ini(kTristaoMobile) == "TM");                      // the emoji word holds no letter
   assert(ini("#hiking") == "HI");
-  assert(ini("  [base] camp") == "BA");
-  assert(ini("42 Node") == "42");
+  assert(ini("  [base] camp") == "BC");
+  assert(ini("42 Node") == "4N");
   assert(ini("\xD0\xB4\xD0\xB8\xD0\xBC\xD0\xB0", wideFont) == "\xD0\x94\xD0\x98");   // Cyrillic "дима" -> "ДИ"
+  // #785: the first letter of the first word and of the LAST word, not the first two.
+  assert(ini("Eddie Smith") == "ES");
+  assert(ini("john paul jones") == "JJ");
+  assert(ini("Eddie-Base") == "EB");
+  assert(ini("kd2abc_mobile") == "KM");
+  assert(ini("Home/Roof Node") == "HN");
+  assert(ini("  Eddie   Smith  ") == "ES");                 // runs of spaces, edges
+  assert(ini("\xC3\xA9mile Zola") == "\xC3\x89Z");           // "émile Zola" -> "ÉZ"
+  assert(ini("Joa\xCC\x83o Silva") == "JS");                 // the combining tilde is no break
+  assert(ini("Base \xF0\x9F\x91\x8D") == "BA");               // emoji-only word: one word left
+  assert(ini("\xF0\x9F\x91\x8D Base Camp") == "BC");
+  assert(ini("[Eddie] (Smith)") == "ES");                   // brackets are skipped, not words
+  assert(ini("Eddie #2") == "E2");
+  assert(ini("\xD0\x94\xD0\xB8\xD0\xBC\xD0\xB0 \xD0\x9F\xD0\xB5\xD1\x82\xD1\x80\xD0\xBE\xD0\xB2", wideFont)
+         == "\xD0\x94\xD0\x9F");                              // "Дима Петров" -> "ДП"
+  // A word whose letters the font cannot draw is passed over, like an emoji word.
+  assert(ini("Eddie \xD0\x94\xD0\xB8\xD0\xBC\xD0\xB0", latinFont) == "ED");
+  // One word: the first two letters, as before.
+  assert(ini("Eddie") == "ED");
+  assert(ini("E") == "E");
   // A font without the accented capital: its plain letter.
   assert(ini("\xC3\xA3na", asciiFont) == "AN");
   // Nothing to draw: "?", never blank.
@@ -83,5 +103,5 @@ int main() {
   assert(AvatarText::upper('a') == 'A' && AvatarText::upper(0xE3) == 0xC3 && AvatarText::upper(0xF7) == 0xF7);
   assert(AvatarText::upper(0x101) == 0x100 && AvatarText::upper(0x3C2) == 0x3A3 && AvatarText::upper(0x451) == 0x401);
 
-  puts("avatar text: emoji icon skips joiners, initials are whole letters, never blank PASS");
+  puts("avatar text: emoji icon skips joiners, initials are first + last word, never blank PASS");
 }
