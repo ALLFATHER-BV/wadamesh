@@ -2815,6 +2815,133 @@ scenarios.ebook_input = function()
   app.on_close()
 end
 
+-- Pictures: placeholders everywhere, and the three Images modes when the firmware has
+-- wada.ui.image (mocked here; it is not released yet).
+local function eb_pic_book()
+  local pic = "\137PNG-pretend-image-bytes"
+  local ch = '<html><body><h1>One</h1><p>Intro text.</p><p><img src="pic.png" alt="A diagram"/></p>' ..
+    '<p>Between words.</p><p><img src="missing.png" alt="Gone"/></p><p>The end.</p></body></html>'
+  local files = {
+    { "mimetype", "application/epub+zip" },
+    { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' },
+    { "OEBPS/ch1.xhtml", ch }, { "OEBPS/pic.png", pic },
+    { "OEBPS/content.opf", '<package><metadata><dc:title>Pics</dc:title></metadata><manifest>' ..
+      '<item id="a" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>' ..
+      '<spine><itemref idref="a"/></spine></package>' },
+  }
+  return zip_build(files), pic
+end
+
+local function eb_images_start(with_api, result)
+  local zipped, pic = eb_pic_book()
+  eb_start(320, 240, zipped)
+  local calls = { n = 0, removed = 0 }
+  if with_api then
+    wada.ui.image = function(file, off, len, x, y, w, h)
+      for _, v in ipairs({ off, len, x, y, w, h }) do checkint(v, "ui.image arg") end
+      calls.n = calls.n + 1
+      calls[#calls + 1] = { file = file, off = off, len = len, x = x, y = y, w = w, h = h }
+      if result == "fail" then return nil, "unsupported" end
+      return { remove = function() calls.removed = calls.removed + 1 end }
+    end
+  end
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  return app, calls, zipped, pic
+end
+
+local function eb_set_images(app, want)   -- cycle the menu row until it reads `want`
+  key(app, "m")
+  for _ = 1, 3 do
+    local row = assert(eb_row("Images:"), "Images row: " .. label_dump())
+    if row.text:find(want, 1, true) then break end
+    assert(guarded(BUDGET, row.fn))
+  end
+  assert(eb_row("Images: " .. want), "Images row reads " .. want)
+  assert(guarded(BUDGET, eb_row("Continue").fn))
+  return eb_wait(app)
+end
+
+scenarios.ebook_images = function()
+  -- no wada.ui.image (every firmware today): a placeholder line, no menu row, taps on it do nothing
+  local app, calls = eb_images_start(false)
+  local p = eb_page()
+  assert(p:find("[image: A diagram]", 1, true) and p:find("[image: Gone]", 1, true), "placeholders with alt text: " .. p)
+  tap(app, 160, 4 + 2 * 18 + 1)
+  assert(not eb_row("Continue") and eb_page() == p, "a tap on a placeholder does nothing")
+  key(app, "i"); assert(eb_page() == p and calls.n == 0, "the i key does nothing")
+  tap(app, 160, 5); assert(eb_row("Continue"), "a centre tap elsewhere still opens the menu")
+  assert(not eb_row("Images"), "no Images row without wada.ui.image")
+  app.on_close()
+
+  -- with it: the default is "never" (the placeholder only), then "always" and "on tap"
+  app, calls = eb_images_start(true)
+  p = eb_page()
+  assert(p:find("[image: A diagram]", 1, true), "default shows placeholders")
+  tap(app, 160, 4 + 2 * 18 + 1)
+  assert(not eb_row("Continue") and calls.n == 0, "never: a tap on a placeholder does nothing")
+  key(app, "m"); assert(eb_row("Images: never"), "default mode: " .. label_dump())
+  assert(not eb_row("View image"), "no View image row in never mode")
+
+  -- always: the picture gets a page of its own, the others stay text
+  eb_set_images(app, "always")
+  assert(storekv.img == "always", "mode stored")
+  local seen, texts = nil, {}
+  for _ = 1, 8 do
+    local pg = eb_page()
+    if calls.n > 0 and not seen then seen = #texts + 1 end
+    texts[#texts + 1] = pg
+    local before = #toasts
+    key(app, "right"); tick(app, 3, 40)
+    if #toasts > before then break end
+  end
+  assert(seen, "an image page was drawn")
+  local c = calls[1]
+  assert(c.file == "book.epub" and c.x == 4 and c.y == 4 and c.w == 312 and c.h == 194, "image box: " .. c.x .. "," .. c.y .. " " .. c.w .. "x" .. c.h)
+  local _, zpic = eb_pic_book()
+  local zipped = fsfiles["book.epub"]
+  assert(zipped:sub(c.off + 1, c.off + c.len) == zpic, "offset and length address the picture bytes in the zip")
+  assert(texts[seen] == "", "an image page has no text")
+  assert(texts[seen - 1] and not texts[seen - 1]:find("image", 1, true), "text before it is on its own page")
+  assert(texts[seen + 1] and texts[seen + 1]:find("Between words.", 1, true), "text after it follows")
+  assert(calls.removed >= 1, "the picture is removed when the page turns")
+  assert(texts[seen + 1]:find("[image: Gone]", 1, true), "a picture the book lacks stays a placeholder")
+
+  -- a firmware that refuses the picture: the placeholder text shows instead
+  app, calls = eb_images_start(true, "fail")
+  eb_set_images(app, "always")
+  local shown = false
+  for _ = 1, 6 do
+    if eb_page():find("[image: A diagram]", 1, true) then shown = true; break end
+    key(app, "right"); tick(app, 3, 40)
+  end
+  assert(shown and calls.n >= 1, "a refused picture falls back to its placeholder")
+
+  -- on tap: the placeholder opens the picture fit to the screen; any tap or key comes back
+  app, calls = eb_images_start(true)
+  p = eb_set_images(app, "on tap")
+  local before = #calls
+  tap(app, 160, 4 + 2 * 18 + 1)
+  assert(#calls == before + 1, "a tap on the placeholder shows the picture")
+  c = calls[#calls]
+  assert(c.x == 0 and c.y == 0 and c.w == 320 and c.h == 240, "fit to the whole screen")
+  tap(app, 160, 100); assert(eb_wait(app) == p, "a tap goes back to the same page")
+  tap(app, 30, 4 + 2 * 18 + 1); assert(#calls == before + 1 and eb_page() ~= nil and not eb_row("Continue"), "the left third turns pages, it does not open the picture")
+  eb_set_images(app, "on tap")
+  key(app, "i"); assert(#calls == before + 2, "the i key shows the picture")
+  key(app, "enter"); assert(eb_wait(app) == p, "any key goes back")
+  key(app, "m")
+  assert(guarded(BUDGET, assert(eb_row("View image")).fn)); assert(#calls == before + 3, "the menu row shows the picture")
+  tap(app, 160, 100); eb_wait(app)
+  -- a picture the book does not contain: a note, and back on the page
+  local tb = #toasts
+  tap(app, 160, 4 + 4 * 18 + 1)
+  assert(toasts[#toasts] == "Cannot show this image" and #toasts == tb + 1, "a missing picture says so")
+  assert(eb_wait(app) == p, "and the page is back")
+  app.on_close()
+  assert(storekv.img == "tap", "mode stored: " .. tostring(storekv.img))
+end
+
 scenarios.ebook_errors = function()
   -- empty folder: a hint, and a README that creates the folder on first run
   eb_start(320, 240, nil)
@@ -2909,7 +3036,7 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
   or APP_PATH:find("/ebook/", 1, true)
-  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_errors", "ebook_cost" }
+  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_errors", "ebook_cost" }
   or APP_PATH:find("/breakout/", 1, true)
   and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or APP_PATH:find("/tripodometer/", 1, true)

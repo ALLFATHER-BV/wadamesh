@@ -10,7 +10,17 @@
 -- budget): the zip directory, the OPF, the table of contents, then one "section" of
 -- a chapter at a time (about 12 KB of text), which is paginated with
 -- wada.ui.text_lines so the firmware's own font metrics decide where a line breaks.
--- Text only for now: an image shows as a [image: its alt text] line.
+-- Images: a book's pictures show as an [image: alt text] line. When the firmware has
+-- wada.ui.image (not yet released) the Images menu row chooses between "never" (that
+-- line only), "on tap" (tap the line, or the menu's View image row, to see the picture
+-- fit to the screen; any tap or key returns) and "always" (a picture gets a page of its
+-- own). Without wada.ui.image the app behaves as "never" and the row is not shown.
+--
+-- The call this app expects (proposed; the code that uses it is in draw_image):
+--   local img, err = wada.ui.image(file, offset, length, x, y, w, h)
+--     decodes the PNG/JPEG/BMP stored in app file `file` at bytes [offset, offset+length)
+--     and draws it inside the box x,y,w,h, scaled down to fit, aspect kept, centred.
+--     Returns a widget handle (img:remove() takes it off the screen), or nil, reason.
 --
 -- Input: touch taps the left/right thirds or swipes left/right; a trackball or D-pad
 -- swipes up/down (and left/right); keyboard arrows, space, n/p; a jog wheel or
@@ -29,6 +39,12 @@ local WIN = 6000             -- raw bytes read per window
 local MAX_BOOKS = 100
 local PAGE_ROWS = 25         -- chapter rows per page: each row is a real button
 local MAX_POS = 10           -- remembered reading positions
+local HAS_IMG = type(ui.image) == "function"
+local MAX_IMGS = 300         -- picture entries kept from the zip directory (each costs heap)
+local IMG_EXT = { png = 1, jpg = 1, jpeg = 1, bmp = 1 }   -- what the firmware can decode
+local IMG_MODES = { "always", "tap", "never" }
+local IMG_NAMES = { always = "always", tap = "on tap", never = "never" }
+local DEFAULT_IMAGES = "never"   -- becomes "tap" once firmware with wada.ui.image ships
 local POS_BYTES = 180        -- the store reloads a line of at most 191 bytes, "pos=" included
 
 local W, H
@@ -44,9 +60,12 @@ local pos_order = {}             -- most recent first
 local pred = {}                  -- pred[sp][nxt] = off: section starts already seen, to step backwards
 local touch_moved = false
 local chap_page = 1
-local sec_dirty = false          -- text size changed: repaginate when the page is shown again
+local sec_dirty = false          -- text size or image mode changed: repaginate when the page is shown again
+local img_mode = DEFAULT_IMAGES
+local inline_img                 -- the picture widget on an image page
 
-local function clear() if ui.clear then ui.clear() end end
+local function clear() inline_img = nil; if ui.clear then ui.clear() end end
+local function images() return HAS_IMG and img_mode or "never" end
 local function lines(s) return ui.text_lines(s, W - 2 * M, size) end
 local function set_task(fn) task = fn end
 
@@ -181,7 +200,7 @@ local function zip_open(name)
   local _, _, _, _, cnt, cdsize, cdoff = string.unpack("<I4I2I2I2I2I4I4", tail, pos)
   if cdoff < 0 or cdsize < 0 or cdoff + cdsize > total then return nil, tr("Not an epub") end
   return { name = name, total = total, cnt = cnt, cdoff = cdoff, cdsize = cdsize,
-           rd = 0, buf = "", bp = 1, i = 1, ents = {} }
+           rd = 0, buf = "", bp = 1, i = 1, ents = {}, nimg = 0 }
 end
 
 local ZIP_KEEP = { xhtml = 1, html = 1, htm = 1, xml = 1, opf = 1, ncx = 1, txt = 1 }
@@ -211,7 +230,11 @@ local function zip_step(Z)
       if sig ~= 0x02014B50 then return nil, tr("Not an epub") end
       local name = Z.buf:sub(Z.bp + 46, Z.bp + 45 + nlen)
       local ext = name:match("%.(%w+)$")
-      if ext and ZIP_KEEP[ext:lower()] then Z.ents[name] = { m = method, c = csize, u = usize, h = lho } end
+      local x = ext and ext:lower()
+      if x and (ZIP_KEEP[x] or (HAS_IMG and IMG_EXT[x] and Z.nimg < MAX_IMGS)) then
+        if IMG_EXT[x] then Z.nimg = Z.nimg + 1 end
+        Z.ents[name] = { m = method, c = csize, u = usize, h = lho }
+      end
       Z.bp = Z.bp + need
       Z.i = Z.i + 1
     end
@@ -261,8 +284,8 @@ local SKIP = { head = 1, style = 1, script = 1, title = 1, svg = 1 }
 local ALT_MAX = 100   -- bytes of alt text kept in a placeholder
 
 -- "[image: alt text]", or "[image]" when the book gives no description.
-local function placeholder(tag)
-  local alt = decode(attrs(tag).alt or "")
+local function placeholder(a)
+  local alt = decode(a.alt or "")
   alt = alt:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
   if #alt > ALT_MAX then
     local cut = ALT_MAX
@@ -276,10 +299,11 @@ end
 -- A section ends at a block boundary once it holds SECT_TEXT bytes ("armed"), but only
 -- if more text follows: the next paragraph to arrive sets L.cut, and the section
 -- stops at the remembered mark (that paragraph is parsed again in the next section).
-local function ld_push(L, s, kind)
+local function ld_push(L, s, kind, img)
   if L.armed then L.cut = true; return end
   local n = #L.paras + 1
   L.paras[n], L.kinds[n] = s, kind
+  if img then L.imgs[n] = img end
   L.bytes = L.bytes + #s
 end
 
@@ -324,7 +348,9 @@ local function ld_tag(L, tag)
   elseif name == "img" or name == "image" then
     if not closing then
       ld_flush(L)
-      ld_push(L, placeholder(tag), "i")
+      local a = attrs(tag)
+      local src = a.src or a["xlink:href"] or a.href
+      ld_push(L, placeholder(a), "i", src and resolve(L.dir, src) or nil)
     end
   elseif BLOCK[name] then
     local pushed = ld_flush(L)
@@ -391,14 +417,14 @@ local function ld_step(L)
   if fin and not L.cut then ld_flush(L) end
   if L.cut or fin then
     if #L.paras == 0 then L.paras[1], L.kinds[1] = tr("(empty)"), "p" end
-    L.sec = { paras = L.paras, kinds = L.kinds, off = L.start, nxt = L.cut and L.mark or nil }
+    L.sec = { paras = L.paras, kinds = L.kinds, imgs = L.imgs, off = L.start, nxt = L.cut and L.mark or nil }
     return true
   end
   return false
 end
 
-local function ld_new(Z, e, start)
-  return { Z = Z, e = e, start = start, fo = start, bo = start, buf = "", bp = 1, eof = false,
+local function ld_new(Z, e, start, dir)
+  return { Z = Z, e = e, dir = dir, imgs = {}, start = start, fo = start, bo = start, buf = "", bp = 1, eof = false,
            tb = {}, paras = {}, kinds = {}, bytes = 0, kind = "p", skip = 0, svg = 0, cut = false, arm = false, armed = false }
 end
 
@@ -428,10 +454,21 @@ local function fit(s, p, o, left)
   return lo
 end
 
+-- Can paragraph p be shown as a picture? Only a stored (uncompressed) entry can be read.
+local function img_ok(s, p)
+  local e = s.imgs[p] and book and book.Z.ents[s.imgs[p]]
+  return e ~= nil and e.m == 0
+end
+
 -- Where the page that starts at (p, o) ends: returns the start of the next page.
-local function build_page(s, p, o)
+-- With `always`, a picture takes a page to itself.
+local function build_page(s, p, o, always)
   local left, first = maxl, true
   while p <= #s.paras do
+    if always and img_ok(s, p) then
+      if first then p, o = p + 1, 1 end
+      break
+    end
     local n = lines(seg(s, p, o, #s.paras[p]))
     if n <= left then
       left, p, o, first = left - n, p + 1, 1, false
@@ -468,6 +505,24 @@ local function page_str(s, i)
   return table.concat(out, "\n")
 end
 
+-- The picture whose placeholder is on page i: the one at screen row y, or the first
+-- when y is nil. Returns its zip path.
+local function page_image(s, i, y)
+  local p, o = s.pp[i], s.po[i]
+  local ep, eo = s.pp[i + 1], s.po[i + 1]
+  if not ep then ep, eo = #s.paras + 1, 1 end
+  local row, lh = 0, ui.text_h(size)
+  for q = p, math.min(ep, #s.paras) do
+    local so = q == p and o or 1
+    local se = q == ep and eo - 1 or #s.paras[q]
+    if se >= so then
+      local n = lines(seg(s, q, so, se))
+      if s.imgs[q] and (y == nil or (y >= M + row * lh and y < M + (row + n) * lh)) then return s.imgs[q] end
+      row = row + n
+    end
+  end
+end
+
 local function find_page(s, p, o)
   local at = 1
   for i = 1, #s.pp do
@@ -477,12 +532,25 @@ local function find_page(s, p, o)
 end
 
 -- ---- screens --------------------------------------------------------------------
-local show_library, show_menu, show_chapters, show_reading, show_error
+local show_library, show_menu, show_chapters, show_reading, show_error, show_image
+
+-- Draw a picture from the open book, or nil if it cannot be (missing, compressed,
+-- or no wada.ui.image). Never raises: a book must stay readable.
+local function draw_image(path, x, y, w, h)
+  local e = HAS_IMG and book and book.Z.ents[path]
+  local d = e and e.m == 0 and entry_start(book.Z, e)
+  if not d then return nil end
+  local ok, handle = pcall(ui.image, book.Z.name, d, e.u, x, y, w, h)
+  return ok and handle or nil
+end
 
 local function show_page()
   if screen ~= "reading" or not text_lbl then return end
   if not (sec and sec.pp and sec.pp[page]) then return end
-  text_lbl:set(page_str(sec, page))
+  if inline_img then inline_img:remove(); inline_img = nil end
+  local whole = sec.always and sec.po[page] == 1 and img_ok(sec, sec.pp[page]) and sec.imgs[sec.pp[page]]
+  if whole then inline_img = draw_image(whole, M, M, W - 2 * M, foot_y - 2 * M) end
+  text_lbl:set(inline_img and "" or page_str(sec, page))
   local span = (sec.nxt or sec.eu) - sec.off
   local pct = (sec.off + (page - 1) * (span // #sec.pp)) // ((sec.eu // 100) + 1)
   if pct > 99 then pct = 99 end
@@ -494,6 +562,7 @@ end
 -- Paginate the section a few pages per tick, then call done(). The page list is
 -- swapped in only at the end, so the section on screen stays usable meanwhile.
 local function paginate(s, done)
+  local always = images() == "always"
   local p, o = 1, 1
   local pp, po = {}, {}
   set_task(function()
@@ -501,12 +570,12 @@ local function paginate(s, done)
       if p > #s.paras then
         set_task(nil)
         if #pp == 0 then pp[1], po[1] = 1, 1 end
-        s.pp, s.po = pp, po
+        s.pp, s.po, s.always = pp, po, always
         done()
         return
       end
       pp[#pp + 1], po[#po + 1] = p, o
-      local p2, o2 = build_page(s, p, o)
+      local p2, o2 = build_page(s, p, o, always)
       if p2 == p and o2 == o then p2, o2 = p + 1, 1 end   -- always advance
       p, o = p2, o2
     end
@@ -522,7 +591,8 @@ local function goto_section(sp, off, want, stop, at)
   if not e then show_error(tr("A chapter is missing from this book")); return end
   if e.m ~= 0 then show_error(tr("This book is compressed. Repack it with scripts/ebook-prep.py")); return end
   if screen == "reading" and text_lbl then text_lbl:set(tr("Loading...")); stat_lbl:set("") end
-  local L = ld_new(book.Z, e, off)
+  local dir = dirname(item.path)
+  local L = ld_new(book.Z, e, off, dir)
   book.sp = sp
   set_task(function()
     if not ld_step(L) then return end
@@ -532,8 +602,8 @@ local function goto_section(sp, off, want, stop, at)
       pred[sp] = pred[sp] or {}
       pred[sp][s.nxt] = s.off
     end
-    if want == "last" and s.nxt then L = ld_new(book.Z, e, s.nxt); return end
-    if want == "before" and s.nxt and s.nxt ~= stop then L = ld_new(book.Z, e, s.nxt); return end
+    if want == "last" and s.nxt then L = ld_new(book.Z, e, s.nxt, dir); return end
+    if want == "before" and s.nxt and s.nxt ~= stop then L = ld_new(book.Z, e, s.nxt, dir); return end
     set_task(nil)
     paginate(s, function()
       sec = s
@@ -593,6 +663,17 @@ function show_reading()
     relayout()
   elseif sec and sec.pp then
     show_page()
+  end
+end
+
+-- One picture, fit to the screen; any tap or key goes back to the page.
+function show_image(path)
+  clear()
+  screen = "image"
+  text_lbl, stat_lbl = nil, nil
+  if not draw_image(path, 0, 0, W, H) then
+    show_reading()
+    sys.toast(tr("Cannot show this image"), 1500)
   end
 end
 
@@ -797,6 +878,7 @@ function show_library()
 end
 
 local function size_label() return tr("Text size") .. ": " .. size end
+local function images_label() return tr("Images") .. ": " .. tr(IMG_NAMES[img_mode]) end
 
 function show_menu()
   remember()
@@ -811,8 +893,10 @@ function show_menu()
     y = y + ui.text_h(12) + 2
   end
   local list = ui.list(M, y + 4, W - 2 * M, H - y - 2 * M - 4)
-  local size_row
+  local size_row, img_row
   list:add(SYM_LEFT .. "  " .. tr("Continue reading"), function() show_reading() end)
+  local pic = images() == "tap" and sec and sec.pp and sec.pp[page] and page_image(sec, page)
+  if pic then list:add(tr("View image"), function() show_image(pic) end) end
   list:add(tr("Chapters"), function() chap_page = (book.sp - 1) // PAGE_ROWS + 1; show_chapters() end)
   size_row = list:add(size_label(), function()
     for i, v in ipairs(SIZES) do
@@ -822,6 +906,16 @@ function show_menu()
     list:set(size_row, size_label())
     sec_dirty = true
   end)
+  if HAS_IMG then
+    img_row = list:add(images_label(), function()
+      for i, v in ipairs(IMG_MODES) do
+        if v == img_mode then img_mode = IMG_MODES[i % #IMG_MODES + 1]; break end
+      end
+      store.set("img", img_mode)
+      list:set(img_row, images_label())
+      sec_dirty = true
+    end)
+  end
   list:add(tr("Books"), function() show_library() end)
 end
 
@@ -863,6 +957,8 @@ function app.on_open(w, h)
   end
   local sz = tonumber(kv("sz"))
   for _, v in ipairs(SIZES) do if v == sz then size = sz end end
+  local im = kv("img")
+  for _, v in ipairs(IMG_MODES) do if v == im then img_mode = im end end
   load_positions()
   local last = kv("last")
   if last and fs.read(tostring(last), 0, 0) then open_book(last) else show_library() end
@@ -874,8 +970,12 @@ function app.on_tick()
 end
 
 function app.on_input(ev)
-  if screen ~= "reading" then return end
   local t = ev.type
+  if screen == "image" then
+    if t == "up" or t == "key" then show_reading() end
+    return
+  end
+  if screen ~= "reading" then return end
   if t == "down" then touch_moved = false
   elseif t == "swipe" then
     touch_moved = true
@@ -887,11 +987,19 @@ function app.on_input(ev)
     local x = ev.x or W // 2
     if x < W // 3 then prev_page()
     elseif x > W - W // 3 then next_page()
-    else show_menu() end
+    else
+      -- a tap on a picture's placeholder views it ("on tap") or does nothing ("never")
+      local pic = images() ~= "always" and sec and sec.pp and page_image(sec, page, ev.y or 0)
+      if not pic then show_menu()
+      elseif images() == "tap" then show_image(pic) end
+    end
   elseif t == "key" then
     local k = ev.key
     if k == "right" or k == "down" or k == " " or k == "n" then next_page()
     elseif k == "left" or k == "up" or k == "p" or k == "backspace" then prev_page()
+    elseif k == "i" and images() == "tap" and sec and sec.pp then
+      local pic = page_image(sec, page)
+      if pic then show_image(pic) end
     elseif k == "enter" or k == "m" then show_menu()
     elseif k == "c" and book then chap_page = (book.sp - 1) // PAGE_ROWS + 1; show_chapters() end
   end
