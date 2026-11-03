@@ -2820,7 +2820,7 @@ end
 local function eb_pic_book()
   local pic = "\137PNG-pretend-image-bytes"
   local ch = '<html><body><h1>One</h1><p>Intro text.</p><p><img src="pic.png" alt="A diagram"/></p>' ..
-    '<p>Between words.</p><p><img src="missing.png" alt="Gone"/></p><p>The end.</p></body></html>'
+    '<p>Between words.</p><p><img src="missing.png" alt="Gone"/></p><p>The end.</p><p>Lead<img src="pic.png" alt="Inline"/>trail</p></body></html>'
   local files = {
     { "mimetype", "application/epub+zip" },
     { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' },
@@ -2864,9 +2864,15 @@ end
 
 scenarios.ebook_images = function()
   -- no wada.ui.image (every firmware today): a placeholder line, no menu row, taps on it do nothing
+  local W_ = 320 - 2 * 4   -- the text width the app uses
   local app, calls = eb_images_start(false)
   local p = eb_page()
   assert(p:find("[image: A diagram]", 1, true) and p:find("[image: Gone]", 1, true), "placeholders with alt text: " .. p)
+  -- a placeholder is centred on a line of its own, even when it sits mid-sentence
+  local pad = p:match("\n( *)%[image: A diagram%]")
+  local want = (W_ - wada.ui.text_w("[image: A diagram]", 14)) // 2 // wada.ui.text_w(" ", 14)
+  assert(pad and #pad == want and want > 0, "centred placeholder: " .. tostring(pad and #pad) .. " spaces, wanted " .. want)
+  assert(p:find("Lead\n *%[image: Inline%]\n *trail"), "an image inside a paragraph gets its own line: " .. p)
   tap(app, 160, 4 + 2 * 18 + 1)
   assert(not eb_row("Continue") and eb_page() == p, "a tap on a placeholder does nothing")
   key(app, "i"); assert(eb_page() == p and calls.n == 0, "the i key does nothing")

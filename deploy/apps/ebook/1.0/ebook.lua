@@ -429,9 +429,21 @@ local function ld_new(Z, e, start, dir)
 end
 
 -- ---- pagination ---------------------------------------------------------------
+-- A placeholder that fits on one line is centred with leading spaces (the page is one
+-- left-aligned label, so spaces are the only way to place a single line).
+local function centred(t)
+  local room, sp = W - 2 * M - ui.text_w(t, size), ui.text_w(" ", size)
+  if room <= 0 or sp <= 0 then return t end
+  return string.rep(" ", room // 2 // sp) .. t
+end
+
 local function seg(s, p, o, e)    -- text of paragraph p from byte o to byte e
   local t = s.paras[p]:sub(o, e)
-  if o == 1 and s.kinds[p] == "p" then t = INDENT .. t end
+  if o == 1 then
+    local k = s.kinds[p]
+    if k == "p" then t = INDENT .. t
+    elseif k == "i" and e >= #s.paras[p] then t = centred(t) end
+  end
   return t
 end
 
