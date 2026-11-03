@@ -66,7 +66,10 @@ local inline_img                 -- the picture widget on an image page
 
 local function clear() inline_img = nil; if ui.clear then ui.clear() end end
 local function images() return HAS_IMG and img_mode or "never" end
-local function lines(s) return ui.text_lines(s, W - 2 * M, size) end
+-- text_lines does not count the empty line after a trailing newline, but it is drawn.
+local function lines(s)
+  return ui.text_lines(s, W - 2 * M, size) + (s:byte(-1) == 10 and 1 or 0)
+end
 local function set_task(fn) task = fn end
 
 -- ---- small helpers ----------------------------------------------------------
@@ -429,21 +432,14 @@ local function ld_new(Z, e, start, dir)
 end
 
 -- ---- pagination ---------------------------------------------------------------
--- A placeholder that fits on one line is centred with leading spaces (the page is one
--- left-aligned label, so spaces are the only way to place a single line).
-local function centred(t)
-  local room, sp = W - 2 * M - ui.text_w(t, size), ui.text_w(" ", size)
-  if room <= 0 or sp <= 0 then return t end
-  return string.rep(" ", room // 2 // sp) .. t
-end
-
 local function seg(s, p, o, e)    -- text of paragraph p from byte o to byte e
   local t = s.paras[p]:sub(o, e)
   if o == 1 then
     local k = s.kinds[p]
     if k == "p" then t = INDENT .. t
-    elseif k == "i" and e >= #s.paras[p] then t = centred(t) end
+    elseif k == "i" then t = "\n" .. t end   -- a blank line above a picture's placeholder
   end
+  if s.kinds[p] == "i" and e >= #s.paras[p] then t = t .. "\n" end   -- and below it
   return t
 end
 

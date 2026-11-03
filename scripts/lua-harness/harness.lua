@@ -2637,7 +2637,9 @@ local function eb_wrap(str, width, sz)
   local c0 = eb_cost and eb_cost.n
   local per = math.max(1, math.floor(width / (((sz or 14) + 4) * 0.48)))
   local n = 0
-  for part in (tostring(str) .. "\n"):gmatch("(.-)\n") do
+  str = tostring(str)
+  if #str > 0 and str:byte(-1) == 10 then str = str:sub(1, -2) end   -- like the firmware, no line for a trailing newline
+  for part in (str .. "\n"):gmatch("(.-)\n") do
     local lines, cur = 1, #part:match("^ *")
     for word in part:gmatch("%S+") do
       local wl = 0
@@ -2864,16 +2866,16 @@ end
 
 scenarios.ebook_images = function()
   -- no wada.ui.image (every firmware today): a placeholder line, no menu row, taps on it do nothing
-  local W_ = 320 - 2 * 4   -- the text width the app uses
   local app, calls = eb_images_start(false)
   local p = eb_page()
   assert(p:find("<image: A diagram>", 1, true) and p:find("<image: Gone>", 1, true), "placeholders with alt text: " .. p)
-  -- a placeholder is centred on a line of its own, even when it sits mid-sentence
-  local pad = p:match("\n( *)%<image: A diagram%>")
-  local want = (W_ - wada.ui.text_w("<image: A diagram>", 14)) // 2 // wada.ui.text_w(" ", 14)
-  assert(pad and #pad == want and want > 0, "centred placeholder: " .. tostring(pad and #pad) .. " spaces, wanted " .. want)
-  assert(p:find("Lead\n *%<image: Inline%>\n *trail"), "an image inside a paragraph gets its own line: " .. p)
-  tap(app, 160, 4 + 2 * 18 + 1)
+  -- a placeholder sits on a line of its own with a blank line above and below, even mid-sentence
+  assert(p:find("\n\n<image: A diagram>\n\n", 1, true), "blank lines around a placeholder: " .. p)
+  key(app, "right")
+  local p2 = eb_page()
+  assert(p2:find("Lead\n\n<image: Inline>\n\n", 1, true) and p2:find("\n\n *trail"), "an image inside a paragraph gets its own line: " .. p2)
+  key(app, "left"); assert(eb_page() == p, "back on the first page")
+  tap(app, 160, 4 + 3 * 18 + 1)
   assert(not eb_row("Continue") and eb_page() == p, "a tap on a placeholder does nothing")
   key(app, "i"); assert(eb_page() == p and calls.n == 0, "the i key does nothing")
   tap(app, 160, 5); assert(eb_row("Continue"), "a centre tap elsewhere still opens the menu")
@@ -2884,7 +2886,7 @@ scenarios.ebook_images = function()
   app, calls = eb_images_start(true)
   p = eb_page()
   assert(p:find("<image: A diagram>", 1, true), "default shows placeholders")
-  tap(app, 160, 4 + 2 * 18 + 1)
+  tap(app, 160, 4 + 3 * 18 + 1)
   assert(not eb_row("Continue") and calls.n == 0, "never: a tap on a placeholder does nothing")
   key(app, "m"); assert(eb_row("Images: never"), "default mode: " .. label_dump())
   assert(not eb_row("View image"), "no View image row in never mode")
@@ -2927,12 +2929,12 @@ scenarios.ebook_images = function()
   app, calls = eb_images_start(true)
   p = eb_set_images(app, "on tap")
   local before = #calls
-  tap(app, 160, 4 + 2 * 18 + 1)
+  tap(app, 160, 4 + 3 * 18 + 1)
   assert(#calls == before + 1, "a tap on the placeholder shows the picture")
   c = calls[#calls]
   assert(c.x == 0 and c.y == 0 and c.w == 320 and c.h == 240, "fit to the whole screen")
   tap(app, 160, 100); assert(eb_wait(app) == p, "a tap goes back to the same page")
-  tap(app, 30, 4 + 2 * 18 + 1); assert(#calls == before + 1 and eb_page() ~= nil and not eb_row("Continue"), "the left third turns pages, it does not open the picture")
+  tap(app, 30, 4 + 3 * 18 + 1); assert(#calls == before + 1 and eb_page() ~= nil and not eb_row("Continue"), "the left third turns pages, it does not open the picture")
   eb_set_images(app, "on tap")
   key(app, "i"); assert(#calls == before + 2, "the i key shows the picture")
   key(app, "enter"); assert(eb_wait(app) == p, "any key goes back")
@@ -2941,7 +2943,7 @@ scenarios.ebook_images = function()
   tap(app, 160, 100); eb_wait(app)
   -- a picture the book does not contain: a note, and back on the page
   local tb = #toasts
-  tap(app, 160, 4 + 4 * 18 + 1)
+  tap(app, 160, 4 + 7 * 18 + 1)
   assert(toasts[#toasts] == "Cannot show this image" and #toasts == tb + 1, "a missing picture says so")
   assert(eb_wait(app) == p, "and the page is back")
   app.on_close()
