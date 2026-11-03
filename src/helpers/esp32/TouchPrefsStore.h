@@ -769,6 +769,11 @@ uint8_t touchPrefsGetColorStyle();
 void    touchPrefsSetColorStyle(uint8_t style);
 bool    touchPrefsGetRainbow();
 void    touchPrefsSetRainbow(bool on);
+// Settings > Theme > Colour > Mute colours and animations (default OFF, at next boot):
+// no animations or boot splash, a muted palette, no background, glass or see-through
+// layers. The looks above keep their saved values and return when it is turned off.
+bool    touchPrefsGetMuted();
+void    touchPrefsSetMuted(bool on);
 // Settings > Theme > Glass tiles: Home widgets, cards and control panel tiles are frosted
 // glass over the background (default ON, today's look); off = opaque panel-colour fills.
 bool    touchPrefsGetGlassTiles();
