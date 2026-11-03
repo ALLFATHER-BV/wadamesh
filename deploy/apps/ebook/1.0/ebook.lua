@@ -432,14 +432,25 @@ local function ld_new(Z, e, start, dir)
 end
 
 -- ---- pagination ---------------------------------------------------------------
+-- A placeholder that fits on one line is centred with leading spaces (the page is one
+-- left-aligned label, so spaces are the only way to place a single line). Centred, it
+-- sits under the middle third of the screen, the only place a tap opens a picture.
+local function centred(t)
+  local room, sp = W - 2 * M - ui.text_w(t, size), ui.text_w(" ", size)
+  if room <= 0 or sp <= 0 then return t end
+  return string.rep(" ", room // 2 // sp) .. t
+end
+
 local function seg(s, p, o, e)    -- text of paragraph p from byte o to byte e
   local t = s.paras[p]:sub(o, e)
   if o == 1 then
     local k = s.kinds[p]
     if k == "p" then t = INDENT .. t
-    elseif k == "i" then t = "\n" .. t end   -- a blank line above a picture's placeholder
-  end
-  if s.kinds[p] == "i" and e >= #s.paras[p] then t = t .. "\n" end   -- and below it
+    elseif k == "i" then   -- a blank line above a picture's placeholder, and below it
+      if e >= #s.paras[p] then t = centred(t) .. "\n" end
+      t = "\n" .. t
+    end
+  elseif s.kinds[p] == "i" and e >= #s.paras[p] then t = t .. "\n" end
   return t
 end
 
