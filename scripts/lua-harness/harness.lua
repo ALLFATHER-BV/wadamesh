@@ -2585,9 +2585,9 @@ local function eb_book(opts)
   c1[#c1 + 1] = '<ul><li>first item</li><li>second<br/>item</li></ul><p><img src="a.png" alt="  A map&#8217;s\n legend  "/></p>' ..
     '<div><svg xmlns="http://www.w3.org/2000/svg"><title>hidden</title><image xlink:href="cover.png" width="1" height="1"/></svg></div>' ..
     '<p>before<img src="b.png"/>after</p><p><img src="c.png" alt="' .. ("long "):rep(40) .. '"/></p>'
-  add("\xE2\x80\xA2 first item"); add("\xE2\x80\xA2 second\nitem"); add("[image:Amap\xE2\x80\x99slegend]")
-  add("[image]"); add("before"); add("[image]"); add("after")
-  add("[image:" .. ("long"):rep(20) .. "\xE2\x80\xA6]")   -- 100 bytes of a longer alt, then an ellipsis
+  add("\xE2\x80\xA2 first item"); add("\xE2\x80\xA2 second\nitem"); add("<image:Amap\xE2\x80\x99slegend>")
+  add("<image>"); add("before"); add("<image>"); add("after")
+  add("<image:" .. ("long"):rep(20) .. "\xE2\x80\xA6>")   -- 100 bytes of a longer alt, then an ellipsis
   c1[#c1 + 1] = "</body></html>"
   local c2 = { '<html><body><h2 id="t">Chapter Two</h2>' }
   add("Chapter Two")
@@ -2867,12 +2867,12 @@ scenarios.ebook_images = function()
   local W_ = 320 - 2 * 4   -- the text width the app uses
   local app, calls = eb_images_start(false)
   local p = eb_page()
-  assert(p:find("[image: A diagram]", 1, true) and p:find("[image: Gone]", 1, true), "placeholders with alt text: " .. p)
+  assert(p:find("<image: A diagram>", 1, true) and p:find("<image: Gone>", 1, true), "placeholders with alt text: " .. p)
   -- a placeholder is centred on a line of its own, even when it sits mid-sentence
-  local pad = p:match("\n( *)%[image: A diagram%]")
-  local want = (W_ - wada.ui.text_w("[image: A diagram]", 14)) // 2 // wada.ui.text_w(" ", 14)
+  local pad = p:match("\n( *)%<image: A diagram%>")
+  local want = (W_ - wada.ui.text_w("<image: A diagram>", 14)) // 2 // wada.ui.text_w(" ", 14)
   assert(pad and #pad == want and want > 0, "centred placeholder: " .. tostring(pad and #pad) .. " spaces, wanted " .. want)
-  assert(p:find("Lead\n *%[image: Inline%]\n *trail"), "an image inside a paragraph gets its own line: " .. p)
+  assert(p:find("Lead\n *%<image: Inline%>\n *trail"), "an image inside a paragraph gets its own line: " .. p)
   tap(app, 160, 4 + 2 * 18 + 1)
   assert(not eb_row("Continue") and eb_page() == p, "a tap on a placeholder does nothing")
   key(app, "i"); assert(eb_page() == p and calls.n == 0, "the i key does nothing")
@@ -2883,7 +2883,7 @@ scenarios.ebook_images = function()
   -- with it: the default is "never" (the placeholder only), then "always" and "on tap"
   app, calls = eb_images_start(true)
   p = eb_page()
-  assert(p:find("[image: A diagram]", 1, true), "default shows placeholders")
+  assert(p:find("<image: A diagram>", 1, true), "default shows placeholders")
   tap(app, 160, 4 + 2 * 18 + 1)
   assert(not eb_row("Continue") and calls.n == 0, "never: a tap on a placeholder does nothing")
   key(app, "m"); assert(eb_row("Images: never"), "default mode: " .. label_dump())
@@ -2911,14 +2911,14 @@ scenarios.ebook_images = function()
   assert(texts[seen - 1] and not texts[seen - 1]:find("image", 1, true), "text before it is on its own page")
   assert(texts[seen + 1] and texts[seen + 1]:find("Between words.", 1, true), "text after it follows")
   assert(calls.removed >= 1, "the picture is removed when the page turns")
-  assert(texts[seen + 1]:find("[image: Gone]", 1, true), "a picture the book lacks stays a placeholder")
+  assert(texts[seen + 1]:find("<image: Gone>", 1, true), "a picture the book lacks stays a placeholder")
 
   -- a firmware that refuses the picture: the placeholder text shows instead
   app, calls = eb_images_start(true, "fail")
   eb_set_images(app, "always")
   local shown = false
   for _ = 1, 6 do
-    if eb_page():find("[image: A diagram]", 1, true) then shown = true; break end
+    if eb_page():find("<image: A diagram>", 1, true) then shown = true; break end
     key(app, "right"); tick(app, 3, 40)
   end
   assert(shown and calls.n >= 1, "a refused picture falls back to its placeholder")

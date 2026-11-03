@@ -10,7 +10,7 @@
 -- budget): the zip directory, the OPF, the table of contents, then one "section" of
 -- a chapter at a time (about 12 KB of text), which is paginated with
 -- wada.ui.text_lines so the firmware's own font metrics decide where a line breaks.
--- Images: a book's pictures show as an [image: alt text] line. When the firmware has
+-- Images: a book's pictures show as an <image: alt text> line. When the firmware has
 -- wada.ui.image (not yet released) the Images menu row chooses between "never" (that
 -- line only), "on tap" (tap the line, or the menu's View image row, to see the picture
 -- fit to the screen; any tap or key returns) and "always" (a picture gets a page of its
@@ -283,7 +283,7 @@ local BLOCK = {
 local SKIP = { head = 1, style = 1, script = 1, title = 1, svg = 1 }
 local ALT_MAX = 100   -- bytes of alt text kept in a placeholder
 
--- "[image: alt text]", or "[image]" when the book gives no description.
+-- "<image: alt text>", or "<image>" when the book gives no description.
 local function placeholder(a)
   local alt = decode(a.alt or "")
   alt = alt:gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
@@ -292,8 +292,8 @@ local function placeholder(a)
     while cut > 1 and cont(alt:byte(cut + 1)) do cut = cut - 1 end
     alt = alt:sub(1, cut) .. "\xE2\x80\xA6"
   end
-  if alt == "" then return "[" .. tr("image") .. "]" end
-  return "[" .. tr("image") .. ": " .. alt .. "]"
+  if alt == "" then return "<" .. tr("image") .. ">" end
+  return "<" .. tr("image") .. ": " .. alt .. ">"
 end
 
 -- A section ends at a block boundary once it holds SECT_TEXT bytes ("armed"), but only
