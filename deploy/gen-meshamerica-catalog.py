@@ -38,6 +38,9 @@ ICON = "https://wadamesh.com/wadamesh-icon-512.png"
 # "What's new" — one user-facing line per non-blank, non-# line of the notes file.
 notes = ""
 nf = os.path.join(REPO, "release-notes", "%s.txt" % TAG)
+# The catalog is stable-only, so a promoted tag's cumulative notes win over its test-build ones.
+if os.path.exists(os.path.join(REPO, "release-notes", "%s-stable.txt" % TAG)):
+    nf = os.path.join(REPO, "release-notes", "%s-stable.txt" % TAG)
 if os.path.exists(nf):
     notes = "\n".join(l.strip() for l in open(nf, encoding="utf-8")
                       if l.strip() and not l.strip().startswith("#"))
