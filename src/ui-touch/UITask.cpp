@@ -68460,9 +68460,32 @@ static void themeTokensFor(uint8_t mode, uint32_t accent, bool more, uint8_t sty
   lookAdjust(t, day, more && !hc, style);
 }
 
-// Mute colours: a slate accent in place of the picked one, and every hue pulled most
+// Mute colours: the tone's accent in place of the picked one, and every hue pulled most
 // of the way to grey. Status colours keep enough of theirs to still read as state.
-static constexpr uint32_t kMutedAccent = 0x5F6B73;
+// The tones (picked under the switch): an accent, and for the whole screen a ramp from
+// the tone's darkest to its lightest that every colour's lightness is laid on. Slate
+// has no ramp: it is the muted palette itself, already grey-blue.
+struct MuteTone { const char* name; uint32_t accent, dark, light; };
+static const MuteTone kMuteTones[TOUCH_MUTE_TONE_N] = {
+  { "Slate", 0x5F6B73, 0x000000, 0x000000 },
+  { "Sepia", 0x8A6E4B, 0x15100A, 0xF2E6CF },
+  { "Grey",  0x6A6A6A, 0x0B0B0B, 0xEEEEEE },
+  { "Sage",  0x5F735F, 0x0C110C, 0xE4ECDF },
+  { "Dusk",  0x6E5C74, 0x110D14, 0xECE2EE },
+};
+static uint8_t s_mute_tone  = TOUCH_MUTE_TONE_SLATE;   // at boot, with s_ui_muted
+static bool    s_mute_whole = true;                    // the tone on the whole screen, not just the accent
+static inline const MuteTone& muteTone(uint8_t t) { return kMuteTones[t < TOUCH_MUTE_TONE_N ? t : 0]; }
+static inline bool muteToneRamp(uint8_t t, bool whole) { return whole && muteTone(t).light != 0; }
+static inline uint32_t muteToneMap(uint32_t c, const MuteTone& t) {
+  return rgbMix(t.dark, t.light, (uint8_t)accentLuma(c));
+}
+// What still means something (state, sections, links) keeps a little of its own colour,
+// danger the most.
+static constexpr uint8_t kToneKeep = 90, kToneKeepDanger = 140;
+static inline uint32_t muteToneSignal(uint32_t c, const MuteTone& t, uint8_t keep = kToneKeep) {
+  return rgbMix(muteToneMap(c, t), c, keep);
+}
 static constexpr uint8_t kMuteHue = 190, kMuteInfo = 150, kMuteWarn = 110, kMuteDanger = 90,
                          kMuteSent = 200, kMuteMention = 170;
 static uint32_t mutedHue(uint32_t c) { return rgbDesat(c, kMuteHue); }
@@ -68481,14 +68504,43 @@ static void applyMutedLook() {
   COLOR_MENTION_BG = COLOR_CHAT_MENTION_BG = rgbDesat(COLOR_CHAT_MENTION_BG, kMuteMention);
   themeStylesInvalidate();
 }
+// The tone over the whole screen, after the muted look: every surface and text on its
+// ramp. The accent family (accent, glow, primary buttons) already is the tone's.
+static void applyMuteTone() {
+  if (!muteToneRamp(s_mute_tone, s_mute_whole)) return;
+  const MuteTone& t = muteTone(s_mute_tone);
+  for (uint32_t* c : { &COLOR_BG, &COLOR_PANEL, &COLOR_TEXT, &COLOR_SUB, &COLOR_SENT_BG, &COLOR_RECV_BG,
+                       &COLOR_MENTION_BG, &COLOR_BORDER, &COLOR_FIELD, &COLOR_CONTROL, &COLOR_CONTROL_DISABLED,
+                       &COLOR_CONTROL_PRESSED, &COLOR_ACCENT_SURFACE, &COLOR_ACCENT_BORDER, &COLOR_CHART_GRID,
+                       &COLOR_CHART_TICK, &COLOR_RAISED, &COLOR_SECONDARY_ACTION, &COLOR_TRACK, &COLOR_CHART_BG,
+                       &COLOR_TERTIARY, &COLOR_HAIR, &COLOR_ON_ACCENT, &COLOR_ON_STATUS_DANGER,
+                       &COLOR_ON_STATUS_INFO, &COLOR_CHAT_TEXT, &COLOR_CHAT_META, &COLOR_CHAT_SENT_BG,
+                       &COLOR_CHAT_RECV_BG, &COLOR_CHAT_MENTION_BG })
+    *c = muteToneMap(*c, t);
+  for (uint32_t* c : { &COLOR_MENTION, &COLOR_CHAT_LINK, &COLOR_STATUS_INFO, &COLOR_STATUS_WARN,
+                       &COLOR_STATUS_WARN_TEXT, &COLOR_STATUS_OK_TEXT, &COLOR_LINK })
+    *c = muteToneSignal(*c, t);
+  for (uint32_t& h : COLOR_HUE) h = muteToneSignal(h, t);
+  for (uint32_t* c : { &COLOR_STATUS_DANGER, &COLOR_STATUS_DANGER_PRESSED, &COLOR_STATUS_DANGER_TEXT })
+    *c = muteToneSignal(*c, t, kToneKeepDanger);
+  themeStylesInvalidate();
+}
 // The same on the Theme page's palette copy, for its preview.
-static void themeTokensMute(ThemeTokens& t) {
+static void themeTokensMute(ThemeTokens& t, uint8_t tone, bool whole) {
   for (uint32_t& h : t.hue) h = mutedHue(h);
   t.link = mutedHue(t.link);
   t.info = rgbDesat(t.info, kMuteInfo);
   t.warn = rgbDesat(t.warn, kMuteWarn);
   t.sent_bg = rgbDesat(t.sent_bg, kMuteSent);
   t.mention_bg = rgbDesat(t.mention_bg, kMuteMention);
+  if (!muteToneRamp(tone, whole)) return;
+  const MuteTone& m = muteTone(tone);
+  for (uint32_t* c : { &t.bg, &t.panel, &t.control, &t.control_pressed, &t.field, &t.border, &t.raised,
+                       &t.hair, &t.track, &t.text, &t.sub, &t.tertiary, &t.secondary_action, &t.sent_bg,
+                       &t.recv_bg, &t.mention_bg })
+    *c = muteToneMap(*c, m);
+  for (uint32_t* c : { &t.info, &t.warn, &t.ok, &t.link }) *c = muteToneSignal(*c, m);
+  for (uint32_t& h : t.hue) h = muteToneSignal(h, m);
 }
 
 // Everything colour, in boot order: the mode, the accent, then the look.
@@ -68521,11 +68573,14 @@ static void applyBootTheme() {
   return;
 #else
   s_ui_muted = touchPrefsGetMuted();
+  s_mute_tone = touchPrefsGetMuteTone();
+  s_mute_whole = touchPrefsGetMuteTint();
   applyThemeMode(touchPrefsGetThemeMode());
   if (s_ui_muted && !s_theme_high_contrast) {   // high contrast keeps its own colours
-    applyAccent(kMutedAccent);
+    applyAccent(muteTone(s_mute_tone).accent);
     applyColorLook(false, TOUCH_LOOK_REGULAR, false);
     applyMutedLook();
+    applyMuteTone();
   } else {
     applyAccent(touchPrefsGetAccentColor());
     applyColorLook(touchPrefsGetMoreColors(), touchPrefsGetColorStyle(), touchPrefsGetRainbow());
@@ -68679,6 +68734,7 @@ struct ThemeChoice {
   bool glass;                                                                    // Glass tiles
   uint8_t bg_dim;                                                                // Picture dimming (TOUCH_DIM_*)
   bool mute;                                                                     // Mute colours and animations
+  uint8_t mute_tone; bool mute_whole;                                            // ...its tone, and where it goes
 };
 static ThemeChoice s_theme_saved = {}, s_theme_pend = {};
 static constexpr int kThemeColorN = (int)(sizeof(kThemeColors) / sizeof(kThemeColors[0]));
@@ -68697,7 +68753,8 @@ struct ThemePageUi {
   lv_obj_t* mode_dot[2]; lv_obj_t* mode_ic[2]; lv_obj_t* mode_lbl[2];
   lv_obj_t* hc_sw;
   lv_obj_t* swatch[kThemeColorN]; lv_obj_t* custom; lv_obj_t* custom_dot; lv_obj_t* accent_note;
-  lv_obj_t* mute_sw; lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
+  lv_obj_t* mute_sw; lv_obj_t* tone_box; lv_obj_t* tone[TOUCH_MUTE_TONE_N]; lv_obj_t* tone_dot[TOUCH_MUTE_TONE_N][2];
+  lv_obj_t* tint_sw; lv_obj_t* more_sw; lv_obj_t* style[3]; lv_obj_t* style_dot[3][3]; lv_obj_t* rainbow_sw; lv_obj_t* colour_note;
   lv_obj_t* bg[5]; lv_obj_t* bg_sw[5]; lv_obj_t* bg_col_btn; lv_obj_t* bg_col_dot;
   lv_obj_t* bg_img_btn; lv_obj_t* bg_img_lbl; lv_obj_t* bg_note; lv_obj_t* glass_sw;
   lv_obj_t* bg_dim_box; lv_obj_t* bg_dim_row;   // Picture dimming, under the picture's button
@@ -68937,18 +68994,20 @@ static bool themePendingDiffers() {
   return a.mode != b.mode || a.accent != b.accent || a.more != b.more ||
          a.style != b.style || a.rainbow != b.rainbow || a.bg_kind != b.bg_kind ||
          a.bg_col != b.bg_col || strcmp(a.bg_img, b.bg_img) != 0 || a.glass != b.glass ||
-         a.bg_dim != b.bg_dim || a.mute != b.mute;
+         a.bg_dim != b.bg_dim || a.mute != b.mute ||
+         (a.mute && (a.mute_tone != b.mute_tone || a.mute_whole != b.mute_whole));
 }
 // Mute colours and animations fixes the accent, the look and the background (high
 // contrast fixes them too); the page keeps the other choices for when it is off.
 static bool themeLooksLocked() { return s_theme_pend.mute || themeModeIsHc(s_theme_pend.mode); }
 static uint32_t themePendAccent() {
-  return s_theme_pend.mute && !themeModeIsHc(s_theme_pend.mode) ? kMutedAccent : s_theme_pend.accent;
+  return s_theme_pend.mute && !themeModeIsHc(s_theme_pend.mode) ? muteTone(s_theme_pend.mute_tone).accent
+                                                                  : s_theme_pend.accent;
 }
 // The palette copy for the preview in the pending look, muted when that is picked.
 static void themeTokensPend(uint8_t mode, bool more, uint8_t style, ThemeTokens& t) {
   themeTokensFor(mode, themePendAccent(), more, style, t);
-  if (s_theme_pend.mute && !themeModeIsHc(mode)) themeTokensMute(t);
+  if (s_theme_pend.mute && !themeModeIsHc(mode)) themeTokensMute(t, s_theme_pend.mute_tone, s_theme_pend.mute_whole);
 }
 // MORE COLORS! as the pending choice has it: Taste the rainbow brings it along, and
 // high contrast keeps its own fixed colours.
@@ -69314,6 +69373,23 @@ static void themePageRepaint() {
   }
 
   themeSwitchSet(s_tp.mute_sw, mute, true);
+  if (s_tp.tone_box) {   // the tones, only while muted (high contrast keeps its own)
+    if (mute && !hc) lv_obj_clear_flag(s_tp.tone_box, LV_OBJ_FLAG_HIDDEN);
+    else             lv_obj_add_flag(s_tp.tone_box, LV_OBJ_FLAG_HIDDEN);
+    for (int i = 0; i < TOUCH_MUTE_TONE_N; ++i) {
+      if (!s_tp.tone[i]) continue;
+      themeChoiceStyle(s_tp.tone[i], s_theme_pend.mute_tone == i, true);
+      ThemeTokens tt;
+      themeTokensFor(mode, muteTone((uint8_t)i).accent, false, TOUCH_LOOK_REGULAR, tt);
+      themeTokensMute(tt, (uint8_t)i, true);
+      const uint32_t dots[2] = { tt.bg, tt.glow };
+      for (int k = 0; k < 2; ++k) {
+        lv_obj_set_style_bg_color(s_tp.tone_dot[i][k], lv_color_hex(dots[k]), LV_PART_MAIN);
+        lv_obj_set_style_border_color(s_tp.tone_dot[i][k], lv_color_hex(tt.border), LV_PART_MAIN);
+      }
+    }
+    themeSwitchSet(s_tp.tint_sw, s_theme_pend.mute_whole, true);
+  }
   themeSwitchSet(s_tp.more_sw, more, !locked);
   for (int i = 0; i < 3; ++i) {
     if (!s_tp.style[i]) continue;
@@ -69425,6 +69501,16 @@ static void themeMuteCb(lv_event_t* e) {
   s_theme_pend.mute = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   themePageRepaint();
 }
+static void themeToneCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_theme_pend.mute_tone = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  themePageRepaint();
+}
+static void themeTintCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  s_theme_pend.mute_whole = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  themePageRepaint();
+}
 static void themeMoreCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
@@ -69533,6 +69619,8 @@ static void themeApplyCb(lv_event_t* e) {
   touchPrefsSetGlassTiles(s_theme_pend.glass);
   touchPrefsSetBackgroundDim(s_theme_pend.bg_dim);
   touchPrefsSetMuted(s_theme_pend.mute);
+  touchPrefsSetMuteTone(s_theme_pend.mute_tone);
+  touchPrefsSetMuteTint(s_theme_pend.mute_whole);
 #endif
   s_theme_saved = s_theme_pend;
   lv_obj_add_flag(lv_event_get_target(e), LV_OBJ_FLAG_HIDDEN);   // one tap; the restart follows
@@ -69734,6 +69822,8 @@ static void buildThemeSettings() {
   s_theme_saved.glass   = touchPrefsGetGlassTiles();
   s_theme_saved.bg_dim  = touchPrefsGetBackgroundDim();
   s_theme_saved.mute    = touchPrefsGetMuted();
+  s_theme_saved.mute_tone  = touchPrefsGetMuteTone();
+  s_theme_saved.mute_whole = touchPrefsGetMuteTint();
   s_theme_pend = s_theme_saved;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t card_w = sw - 22;   // as createSettingsModal's cards
@@ -69884,6 +69974,41 @@ static void buildThemeSettings() {
                                   "Nothing moves, no boot animation, quiet colours and solid panels. "
                                   "Your other colour choices come back when it is off.",
                                   s_theme_pend.mute, themeMuteCb);
+    // Its tones, under it while it is on: each tile shows the tone's ground and accent.
+    s_tp.tone_box = lv_obj_create(c);
+    lv_obj_remove_style_all(s_tp.tone_box);
+    lv_obj_clear_flag(s_tp.tone_box, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_size(s_tp.tone_box, cw, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(s_tp.tone_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_tp.tone_box, SC(10), LV_PART_MAIN);
+    {
+      lv_obj_t* tr = lv_obj_create(s_tp.tone_box);
+      lv_obj_remove_style_all(tr);
+      lv_obj_clear_flag(tr, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(tr, cw, LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(tr, LV_FLEX_FLOW_ROW);
+      lv_obj_set_style_pad_column(tr, SC(4), LV_PART_MAIN);
+      const lv_coord_t tw = (cw - (TOUCH_MUTE_TONE_N - 1) * SC(4)) / TOUCH_MUTE_TONE_N;
+      for (int i = 0; i < TOUCH_MUTE_TONE_N; ++i) {
+        lv_obj_t* b = themeChoiceTile(tr, tw, TR(kMuteTones[i].name), themeToneCb, (uintptr_t)i);
+        lv_obj_set_style_pad_hor(b, SC(2), LV_PART_MAIN);
+        lv_obj_t* pic = lv_obj_get_child(b, 0);
+        lv_obj_set_style_pad_column(pic, 0, LV_PART_MAIN);
+        for (int k = 0; k < 2; ++k) {
+          lv_obj_t* d = lv_obj_create(pic);
+          lv_obj_remove_style_all(d);
+          lv_obj_clear_flag(d, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+          lv_obj_set_size(d, SC(11), SC(11));
+          lv_obj_set_style_bg_opa(d, LV_OPA_COVER, LV_PART_MAIN);
+          lv_obj_set_style_border_width(d, 1, LV_PART_MAIN);
+          s_tp.tone_dot[i][k] = d;
+        }
+        s_tp.tone[i] = b;
+      }
+    }
+    s_tp.tint_sw = themeSwitchRow(s_tp.tone_box, cw, "Tone the whole screen",
+                                  "Off: only the accent takes the tone.",
+                                  s_theme_pend.mute_whole, themeTintCb);
     s_tp.more_sw = themeSwitchRow(c, cw, "MORE COLORS!",
                                   "A colour for every section, coloured status icons, names and glyphs in their own hue.",
                                   themePendMore(), themeMoreCb);
@@ -84919,6 +85044,8 @@ static void docLookAudit() {
     s_theme_pend = s_theme_saved;
     s_theme_pend.mute = true;
     themePageRepaint(); auditShot("look_theme_pending_mute");
+    s_theme_pend.mute_tone = TOUCH_MUTE_TONE_SEPIA;
+    themePageRepaint(); auditShot("look_theme_pending_mute_sepia");
     s_theme_pend = s_theme_saved;
     themePageRepaint();
   }

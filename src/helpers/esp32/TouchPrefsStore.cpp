@@ -2597,6 +2597,17 @@ bool touchPrefsGetRainbow() { if (!s_begun) touchPrefsBegin(); return s_prefs.ge
 void touchPrefsSetRainbow(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("col_rb", on ? 1 : 0); }
 bool touchPrefsGetMuted() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ui_mute", 0) != 0; }
 void touchPrefsSetMuted(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ui_mute", on ? 1 : 0); }
+uint8_t touchPrefsGetMuteTone() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("ui_mute_tn", TOUCH_MUTE_TONE_SLATE);
+  return v < TOUCH_MUTE_TONE_N ? v : TOUCH_MUTE_TONE_SLATE;
+}
+void touchPrefsSetMuteTone(uint8_t tone) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUChar("ui_mute_tn", tone < TOUCH_MUTE_TONE_N ? tone : TOUCH_MUTE_TONE_SLATE);
+}
+bool touchPrefsGetMuteTint() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ui_mute_wh", 1) != 0; }
+void touchPrefsSetMuteTint(bool whole) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ui_mute_wh", whole ? 1 : 0); }
 bool touchPrefsGetGlassTiles() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("glass", 1) != 0; }
 void touchPrefsSetGlassTiles(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("glass", on ? 1 : 0); }
 bool touchPrefsGetAntExtAlways() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ant_ext", 0) == 1; }
