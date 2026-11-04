@@ -748,7 +748,7 @@ void sweepTimerCb(lv_timer_t*) {
 // image; s_static itself stays hidden, so LVGL never walks it during a frame.
 // Without the memory for it, the scene is simply drawn live.
 void staticCache() {
-  if (!s_static || !s_static_img) return;
+  if (!s_static || !s_static_img || s_th.calm) return;   // calm draws no mesh at all
   if (!s_static_buf)
     s_static_buf = static_cast<lv_color_t*>(lv_mem_alloc(sizeof(lv_color_t) * (size_t)s_w * (size_t)s_h));
   lv_disp_t* disp = lv_obj_get_disp(s_static);
@@ -1299,9 +1299,9 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_start(&a);
-  } else {   // you, held still part way through the pulse; no breath going out
-    corePulseExec(s_core, 700);
-    lv_obj_add_flag(s_halo, LV_OBJ_FLAG_HIDDEN);
+  } else {   // the plain face: only the status, on the bare background
+    for (lv_obj_t* o : { s_static, s_static_img, s_flow_obj, s_self_ring, s_halo, s_core_glow, s_core })
+      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
 
   for (int i = 0; i < kPings; ++i) {
@@ -1364,7 +1364,7 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(dot, C(s_th.glow), 0);
     lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(dot, K(6), 0);
+    lv_obj_set_style_shadow_width(dot, s_th.calm ? 0 : K(6), 0);
     lv_obj_set_style_shadow_color(dot, C(s_th.glow), 0);
     lv_obj_set_style_shadow_opa(dot, 150, 0);
     lv_obj_add_flag(slot, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // the glow reaches past the slot
@@ -1579,7 +1579,7 @@ void cstSetStatus(const CstStatus& s) {
   }
 #endif
   if (all || s.north_up != s_st.north_up) {
-    if (s.north_up) lv_obj_clear_flag(s_north, LV_OBJ_FLAG_HIDDEN);
+    if (s.north_up && !s_th.calm) lv_obj_clear_flag(s_north, LV_OBJ_FLAG_HIDDEN);
     else            lv_obj_add_flag(s_north, LV_OBJ_FLAG_HIDDEN);
     staticCache();
   }
@@ -1629,11 +1629,10 @@ void cstTick(uint32_t now_ms) {
   // Burn-in: the mesh takes its next step round and drifts (applyTurn), and the
   // status moves to another corner every two minutes (a fade out, a whole move, a
   // fade in). The sweep keeps every part of the mesh changing in between.
-  if (now_ms / kTurnStepMs != s_turn_step) {
+  if (!s_th.calm && now_ms / kTurnStepMs != s_turn_step) {   // calm has no mesh to turn
     applyTurn(now_ms);
     ringsBuild();
     if (s_self_ring) lv_obj_set_pos(s_self_ring, s_cx - K(15) / 2, s_cy - K(15) / 2);
-    if (s_th.calm && s_core) corePulseExec(s_core, 700);   // no pulse to follow the drift
     rebuildScene();
   }
   if (!s_hud_ms) { s_hud_ms = now_ms ? now_ms : 1; return; }

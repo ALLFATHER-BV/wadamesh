@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
                  &lv_font_montserrat_12, &ui_semibold_12};
   // CST_UPTIME_MS: how long the device has been up, which sets how far the slow turn
   // has gone (it follows the time since boot). CST_NORTH_LOCK=1: Keep north up (#706).
-// CST_CALM=1: nothing moves.
+// CST_CALM=1: the plain face (no mesh, nothing moves).
   if (const char* up = getenv("CST_UPTIME_MS")) lv_tick_inc((uint32_t)strtoul(up, nullptr, 10));
   th.north_lock = getenv("CST_NORTH_LOCK") && getenv("CST_NORTH_LOCK")[0] == '1';
   th.calm = getenv("CST_CALM") && getenv("CST_CALM")[0] == '1';   // Mute colours and animations (#798)

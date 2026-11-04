@@ -70,9 +70,9 @@ struct CstTheme {
   // Keep north up (#706): no slow turn, so north stays at the top. The drift, the
   // pulse and the status changing corners still keep pixels moving.
   bool north_lock = false;
-  // Mute colours and animations: nothing moves but the slow burn-in steps (the turn,
-  // the drift and the status changing corners, without its fade). No pulse, sweep,
-  // pings or packets, and the light on the routes stands still.
+  // Mute colours and animations: a plain face. No mesh, rings, glow, pulse, sweep,
+  // pings or packets: only the status on the bare background, which still changes
+  // corners every two minutes (without its fade) for burn-in.
   bool calm = false;
 };
 
