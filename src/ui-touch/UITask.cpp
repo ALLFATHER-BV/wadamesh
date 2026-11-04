@@ -15727,25 +15727,6 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
     setIconLabel(cl, UI_ICON_CHEVRON_RIGHT);
     lv_obj_set_style_text_color(cl, lv_color_hex(glow ? COLOR_ON_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
   }
-#if defined(EPD_DIRTY_LOG)
-  // Diagnostic (#767): each row's laid-out children, logged once the page settles.
-  lv_timer_t* t = lv_timer_create([](lv_timer_t* tm) {
-    lv_obj_t* row = (lv_obj_t*)tm->user_data;
-    if (lv_obj_is_valid(row)) {
-      lv_area_t a; lv_obj_get_coords(row, &a);
-      Serial.printf("[ROW] btn x=%d..%d w=%d content_w=%d\n", a.x1, a.x2, (int)lv_obj_get_width(row),
-                    (int)lv_obj_get_content_width(row));
-      for (uint32_t k = 0; k < lv_obj_get_child_cnt(row); ++k) {
-        lv_obj_t* ch = lv_obj_get_child(row, k);
-        lv_obj_get_coords(ch, &a);
-        Serial.printf("[ROW]   #%u x=%d..%d w=%d hidden=%d \"%s\"\n", (unsigned)k, a.x1, a.x2, (int)lv_obj_get_width(ch),
-                      lv_obj_has_flag(ch, LV_OBJ_FLAG_HIDDEN) ? 1 : 0, lv_label_get_text(ch));
-      }
-    }
-    lv_timer_del(tm);
-  }, 800, b);
-  (void)t;
-#endif
   return b;
 }
 // The same, its name passed through TR(): the English literal goes in. The raw one
@@ -18434,7 +18415,7 @@ static void openExpansionCardCb(lv_event_t* e) {
 }
 #endif  // HAS_EXPANSION_KIT
 
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)   // no wallpaper on e-paper (#767)
 // Lock-screen settings live in the Device modal but the picker implementation
 // needs the SD-mount state (declared further down), so split: the small bits
 // the modal body uses directly are here; the picker is defined below.
@@ -19534,7 +19515,7 @@ static void lockColorPickCb(lv_event_t* e) {
 }
 #endif
 static void buildLockPage() {
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)   // no wallpaper on e-paper (#767)
   {
     lv_obj_t* c = setCard("Look");
     char cur[TOUCH_LOCK_WALLPAPER_MAXLEN], disp[64];
@@ -28860,7 +28841,7 @@ static void fmSetWallpaperCb(lv_event_t* e) {
   }
 #endif
   touchPrefsSetLockWallpaper(pref);
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)   // boards that declare s_lockwall_btn_lbl
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)   // boards that declare s_lockwall_btn_lbl
   if (s_lockwall_btn_lbl && lv_obj_is_valid(s_lockwall_btn_lbl)) {   // update the settings button if still around
     char disp[64]; lockwallDisplayName(pref, disp, sizeof disp);
     lv_label_set_text(s_lockwall_btn_lbl, disp);
@@ -29062,7 +29043,7 @@ static void fmOpenImage(const char* name) {
   lv_obj_t* fll = lv_label_create(full); lv_label_set_text(fll, TR("Full"));
   lv_obj_set_style_text_font(fll, &g_font_12, LV_PART_MAIN); lv_obj_center(fll);
 
-#if CAP_LOCK_SCREEN
+#if CAP_LOCK_SCREEN && !defined(HAS_TDECK_PRO)   // e-paper keeps its plain lock screen (#767)
   // "Set as lock wallpaper" — bottom-left, windowed chrome only.
   lv_obj_t* wall = lv_btn_create(s_fm_img_root);
   lv_obj_set_height(wall, 30);
@@ -51849,7 +51830,12 @@ static void lockscreenShow() {
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
   char wpath[TOUCH_LOCK_WALLPAPER_MAXLEN];
+#if defined(HAS_TDECK_PRO)
+  // E-paper keeps the built-in black-on-white view; a picture saved before #767 is ignored.
+  snprintf(wpath, sizeof wpath, "%s", "/lock/placeholder.jpg");
+#else
   touchPrefsGetLockWallpaper(wpath, sizeof wpath);
+#endif
   // The default view is drawn from parts. A chosen wallpaper (anything but the
   // built-in placeholder) goes behind them, dimmed.
   const bool native = !strcmp(wpath, "/lock/placeholder.jpg");
@@ -52871,7 +52857,7 @@ static void openSoundPickerCb(lv_event_t* e) {
 #endif  // CAP_SOUND_FILES
 
 // ---- Lock-screen wallpaper picker (lists JPEGs in internal /lock/ + SD) ----
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)   // wallpaper picker — SD/SPIFFS-backed, board-agnostic
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9) || defined(TLORA_PAGER)   // wallpaper picker — SD/SPIFFS-backed; none on e-paper (#767)
 static lv_obj_t* s_lockwall_picker = nullptr;
 static char s_lockwall_paths[24][TOUCH_LOCK_WALLPAPER_MAXLEN];
 static int  s_lockwall_count = 0;
@@ -83334,10 +83320,10 @@ void UITask::loop() {
       const int u = getUnreadTotal();
       if (u > 0) {
         char b[8]; if (u > 99) snprintf(b, sizeof b, "99+"); else snprintf(b, sizeof b, "%d", u);
-        lv_label_set_text(s_chat_unread_badge, b);
-        lv_obj_clear_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+        setLabelIfChanged(s_chat_unread_badge, b);
+        sbShow(s_chat_unread_badge, true);
       } else {
-        lv_obj_add_flag(s_chat_unread_badge, LV_OBJ_FLAG_HIDDEN);
+        sbShow(s_chat_unread_badge, false);
       }
     }
 #if defined(HAS_TANMATSU)
@@ -83350,10 +83336,10 @@ void UITask::loop() {
         char b[8];
         if (dc >= DISCOVERED_MAX) snprintf(b, sizeof b, "%d!", dc);   // ring full
         else                      snprintf(b, sizeof b, "%d", dc > 99 ? 99 : dc);
-        lv_label_set_text(s_ct_disc_badge, b);
-        lv_obj_clear_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
+        setLabelIfChanged(s_ct_disc_badge, b);
+        sbShow(s_ct_disc_badge, true);
       } else {
-        lv_obj_add_flag(s_ct_disc_badge, LV_OBJ_FLAG_HIDDEN);
+        sbShow(s_ct_disc_badge, false);
       }
     }
     _next_refresh = now + UI_REFRESH_MS;
@@ -84244,7 +84230,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_telem_config_root),     []{ telemetryConfigClose(); },       PF_COUNT },   // sits on the telemetry window
   { P_OPEN(s_telemetry_root),        []{ telemetryClose(); },             PF_COUNT },
 #endif
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   { P_OPEN(s_lockwall_picker),       []{ lockwallPickerClose(); },        PF_COUNT },
 #endif
   { P_OPEN(s_accent_picker),         []{ accentPickerClose(); },          PF_COUNT | PF_SWIPE },
@@ -85736,7 +85722,7 @@ static void docNickAudit() {
     check(!nameFirstEmoji("\xF0\x9F\x87\xB5\xF0\x9F\x87\xB9\xF0\x9F\x8F\x9D\xEF\xB8\x8F Trist\xC3\xA3o", eb, sizeof eb),
           "a variation selector is not an icon (#674)");
   }
-#if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9)
+#if defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9)
   // #626: the way back from a wallpaper of your own.
   {
     char was[TOUCH_LOCK_WALLPAPER_MAXLEN];
@@ -86151,7 +86137,7 @@ static void docAuditFocus() {
   s_update_available = upd_was;
   versionCheckUpdateUi();
   navGoToMainTab(HOME_TAB_INDEX); docSettle(6);
-#if CAP_LOCK_SCREEN && (defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HAS_THINKNODE_M9))   // the wallpaper picker's boards
+#if CAP_LOCK_SCREEN && (defined(HAS_TDECK_GT911) || defined(HAS_THINKNODE_M9))   // the wallpaper picker's boards
   // The lock screen over a chosen wallpaper: the first JPEG the picker finds that
   // is not the built-in placeholder. The setting is put back afterwards.
   {
