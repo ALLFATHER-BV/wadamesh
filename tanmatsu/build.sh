@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Reusable wadamesh/Tanmatsu build wrapper: activates the project-local ESP-IDF 5.5.1
 # and runs idf.py with our device/target/sdkconfig params.
-#   ./build.sh build        # compile
-#   ./build.sh flash -p ... # flash over USB (dev)
+#   ./build.sh build        # compile the AppFS app (launcher / app store)
+#   ./build.sh standalone   # + bootloader + standalone table -> build/tanmatsu/wadamesh-tanmatsu-merged.bin
+#   ./build.sh standalone-flash -p /dev/cu.usbmodemXXXX [--erase]
+#                           # write that merged image at 0x0. REPLACES the launcher.
 #   ./build.sh menuconfig
+#
+# Never `./build.sh flash`: idf.py writes the launcher's 16M.csv table plus the app
+# into a 2 MB OTA slot it does not fit. Use tools/tan_flash.sh (AppFS) or standalone-flash.
 set -e
 
 # Keep the baked-in translation + Lua app tables in step with deploy/apps/.
@@ -106,5 +111,56 @@ fi
 if [ "$#" -eq 1 ] && [ "$1" = build ]; then
   exec idf.py "${IDF_ARGS[@]}" gen_project_binary
 fi
+
+# Standalone (web flasher) image: the SAME application.bin as the AppFS build, booted
+# by the stock IDF bootloader from partition_tables/wadamesh_standalone.csv instead of
+# by the launcher. The app finds its data by partition label ('locfd') and the table
+# is at 0x8000 either way, so nothing in the app changes between the two.
+STANDALONE_BIN="build/tanmatsu/wadamesh-tanmatsu-merged.bin"
+build_standalone() {
+  local B=build/tanmatsu PT=build/tanmatsu/standalone/partition-table.bin
+  idf.py "${IDF_ARGS[@]}" gen_project_binary bootloader
+  mkdir -p "$B/standalone"
+  python "$IDF_PATH/components/partition_table/gen_esp32part.py" --quiet --flash-size 16MB \
+    partition_tables/wadamesh_standalone.csv "$PT"
+  python "$IDF_PATH/components/partition_table/check_sizes.py" --offset 0x8000 \
+    partition --type app "$PT" "$B/application.bin"
+  # No otadata/nvs parts: merge_bin pads the 0x9000-0x20000 gap with 0xFF, so the
+  # launcher's otadata and NVS are erased and the bootloader starts ota_0. 'locfd'
+  # lies past the end of the image and is left alone.
+  python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_size 16MB --flash_freq 80m \
+    -o "$STANDALONE_BIN" \
+    0x2000 "$B/bootloader/bootloader.bin" \
+    0x8000 "$PT" \
+    0x20000 "$B/application.bin" >/dev/null
+  echo "[build.sh] standalone image: tanmatsu/$STANDALONE_BIN ($(wc -c < "$STANDALONE_BIN" | tr -d ' ') bytes)"
+}
+
+case "${1:-}" in
+  standalone)
+    [ "$#" -eq 1 ] || { echo "usage: ./build.sh standalone" >&2; exit 2; }
+    build_standalone
+    exit 0 ;;
+  standalone-flash)
+    shift
+    port=""; erase=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -p|--port) port="${2:-}"; shift ;;
+        --erase)   erase=1 ;;
+        *) echo "usage: ./build.sh standalone-flash -p PORT [--erase]" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    # The Tanmatsu shows two USB serial ports (P4 and C6) whose names swap between
+    # replugs, so never let esptool pick one.
+    [ -n "$port" ] || { echo "standalone-flash needs -p PORT (the ESP32-P4 port, not the C6)" >&2; exit 2; }
+    build_standalone
+    echo "[build.sh] flashing the standalone image to $port: this REPLACES the badge.team launcher"
+    if [ "$erase" = 1 ]; then
+      python -m esptool --chip esp32p4 -p "$port" erase_flash
+    fi
+    exec python -m esptool --chip esp32p4 -p "$port" write_flash 0x0 "$STANDALONE_BIN" ;;
+esac
 
 exec idf.py "${IDF_ARGS[@]}" "$@"

@@ -1,0 +1,16 @@
+# Tanmatsu, wadamesh STANDALONE (web flasher) 16 MB partition table.
+# Used only by `./build.sh standalone`. This table REPLACES the badge.team launcher:
+# its ota_0/ota_1 slots are 2 MB, too small for wadamesh (~3.2 MB), so ours are 6 MB.
+# The AppFS/app-store build keeps partition_tables/16M.csv and is unaffected.
+#
+# nvs/otadata/phy and the 'locfd' FAT keep the launcher table's offsets and sizes, so
+# identity, contacts and chats from an AppFS install survive the switch (and the way
+# back, when the launcher is reflashed). The app slots cover the old ota_0/ota_1/appfs
+# area exactly; installed AppFS apps are overwritten.
+# Name,   Type, SubType, Offset,   Size,  Flags
+nvs,      data, nvs,     0x19000,  16K,
+otadata,  data, ota,     0x1D000,  8K,
+phy_init, data, phy,     0x1F000,  4K,
+ota_0,    app,  ota_0,   0x20000,  6M,
+ota_1,    app,  ota_1,   0x620000, 6M,
+locfd,    data, fat,     0xC20000, 3968K,
