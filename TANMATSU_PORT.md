@@ -23,7 +23,9 @@ launcher; a running app owns the screen + input via `badge-bsp` and returns to t
 launcher on exit (docs.tanmatsu.cloud → AppFS).
 
 ⇒ The Tanmatsu target is an **ESP-IDF app**, NOT the pioarduino/Arduino *standalone*
-flash (that would overwrite the launcher). The PlatformIO route in the old plan is
+flash (that would overwrite the launcher). (Update, #806: there is now also an
+opt-in standalone image for the web flasher, `tanmatsu/build.sh standalone`; see
+"Standalone web-flash image" below. The app-store/AppFS build stays the primary path.) The PlatformIO route in the old plan is
 **dropped**; the "IDF subproject" that was the fallback is now the **primary path** —
 because the whole app model is IDF-native.
 
@@ -233,3 +235,19 @@ build_flags =
 - LoRa component: https://github.com/Nicolai-Electronics/esp32-component-tanmatsu-lora (`include/lora.h`, v0.3.0)
 - Precedent board: pioarduino `m5stack-tab5-p4` (P4 + MIPI + C6)
 - `mesh::Radio` base: monorepo `src/Dispatcher.h`; example backend `src/helpers/esp32/ESPNOWRadio.h`
+
+## Standalone web-flash image (#806)
+
+`tanmatsu/build.sh standalone` wraps the same `application.bin` in a full-flash image,
+`build/tanmatsu/wadamesh-tanmatsu-merged.bin` (bootloader @0x2000, partition table
+@0x8000, app @0x20000), using `partition_tables/wadamesh_standalone.csv`: two 6 MB OTA
+slots (the 3.2 MB app does not fit the launcher table's 2 MB `ota_0`) and `locfd` at the
+same 0xC20000 offset as the launcher table, so WADAMESH data survives switching. It
+**replaces the launcher**; restore it from https://recovery.tanmatsu.cloud/.
+
+- Release: `scripts/build/p4-release.sh` builds it into `out/p4_<tag>/`, and
+  `scripts/release.sh` (beta) publishes it; `gen-flasher-meta.py` emits
+  `manifest-tanmatsu.json` (beta channel only, like the other P4 boards).
+- Local: `scripts/build-upload-monitor.sh --tanmatsu` (needs `PORT=` = the P4 port),
+  `scripts/build-all-targets.sh` target `tanmatsu_standalone`.
+- `CAP_OTA` stays 0: on-device OTA is not wired for the standalone layout yet.
