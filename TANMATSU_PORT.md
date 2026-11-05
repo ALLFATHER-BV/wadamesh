@@ -248,6 +248,7 @@ same 0xC20000 offset as the launcher table, so WADAMESH data survives switching.
 - Release: `scripts/build/p4-release.sh` builds it into `out/p4_<tag>/`, and
   `scripts/release.sh` (beta) publishes it; `gen-flasher-meta.py` emits
   `manifest-tanmatsu.json` (beta channel only, like the other P4 boards).
-- Local: `scripts/build-upload-monitor.sh --tanmatsu` (needs `PORT=` = the P4 port),
+- Local: `scripts/build-upload-monitor.sh --tanmatsu` (tries each USB port, P4 then C6,
+  unless `PORT=` is set; esptool aborts on the C6 before writing),
   `scripts/build-all-targets.sh` target `tanmatsu_standalone`.
 - `CAP_OTA` stays 0: on-device OTA is not wired for the standalone layout yet.

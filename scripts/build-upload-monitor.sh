@@ -92,19 +92,22 @@ run_p4() {
 }
 
 # run_tanmatsu <actions...>: fullclean | build | flash | monitor, in that order.
-# Flashing writes the merged standalone image at 0x0, so it needs PORT: the Tanmatsu
-# has two USB serial ports (P4 and C6) and auto-detect could pick the C6.
+# The Tanmatsu has two USB serial ports (P4 and C6). Without PORT, standalone-flash
+# tries each and records the one that worked (the P4); monitor reuses it.
 run_tanmatsu() {
-  local action erase=()
+  local action erase=() port_args=()
   [ "$ERASE_FIRST" = true ] && erase=(--erase)
+  [ -n "${PORT:-}" ] && port_args=(-p "$PORT")
   for action in "$@"; do
     echo "[IDF] $(env_label "$TANMATSU_ENV"): $action"
     case "$action" in
       # Not idf.py fullclean: it rejects the intentionally patched managed components.
       fullclean) rm -rf "$ROOT/tanmatsu/build/tanmatsu" || return 1 ;;
       build)     "$TANMATSU_BUILD" standalone || return 1 ;;
-      flash)     "$TANMATSU_BUILD" standalone-flash -p "$PORT" ${erase+"${erase[@]}"} || return 1 ;;
-      monitor)   "$TANMATSU_BUILD" -p "$PORT" monitor || return 1 ;;
+      flash)
+        "$TANMATSU_BUILD" standalone-flash ${port_args+"${port_args[@]}"} ${erase+"${erase[@]}"} || return 1
+        [ -n "${PORT:-}" ] || PORT="$(cat "$ROOT/tanmatsu/build/tanmatsu/standalone/port" 2>/dev/null)" ;;
+      monitor)   "$TANMATSU_BUILD" ${PORT:+-p "$PORT"} monitor || return 1 ;;
     esac
   done
 }
@@ -165,7 +168,7 @@ Devices:
   --tdisplay-p4-lcd          LilyGo T-Display P4, HI8561 LCD + SX1262 (ESP-IDF)
   --tdisplay-p4-lcd-lr2021   LilyGo T-Display P4, HI8561 LCD + LR2021 (ESP-IDF)
   --tanmatsu                 Tanmatsu standalone image (ESP-IDF). REPLACES the
-                             badge.team launcher; needs PORT=<ESP32-P4 port>
+                             badge.team launcher; tries each USB port (P4/C6)
 
 Options:
   --erase, -E             Erase flash before upload
@@ -179,7 +182,8 @@ Options:
 With no device flag, an interactive shell prompts for a target. A non-interactive
 upload defaults to --tdeck. Set PIO=/path/to/pio to override the CLI executable.
 For the T-Display P4, set PORT=/dev/cu.usbmodemXXXX to pick the serial port
-(idf.py auto-detects otherwise). The Tanmatsu requires PORT.
+(idf.py auto-detects otherwise). Without PORT the Tanmatsu tries each USB serial
+port in turn, since it shows two (ESP32-P4 and ESP32-C6).
 EOF
 }
 
@@ -445,15 +449,11 @@ fi
 
 if is_tanmatsu_env "$ENV_NAME"; then
   need_p4_toolchain
-  if [ -z "${PORT:-}" ]; then
-    echo "The Tanmatsu needs PORT=/dev/cu.usbmodemXXXX (its ESP32-P4 port, not the C6)." >&2
-    exit 2
-  fi
   t_actions=()
   [ "$FULLCLEAN" = true ] && t_actions+=(fullclean)
-  t_actions+=(build flash)
+  t_actions+=(flash)  # standalone-flash builds first
   start="$(date +%s)"
-  run_tanmatsu "${t_actions[@]}"
+  run_tanmatsu "${t_actions[@]}" || exit 1
   end="$(date +%s)"
   echo "[IDF] Build/flash completed in $(format_duration "$((end - start))")."
   run_tanmatsu monitor
