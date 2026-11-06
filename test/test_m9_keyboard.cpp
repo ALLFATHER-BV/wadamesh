@@ -153,6 +153,7 @@ static std::string typeText(const char* text, uint32_t iki, uint32_t hold, uint3
 }
 // Like typeText, with a thinking pause of `pause` ms before each word after the first,
 // the way people actually type a message: quick inside a word, slower between words.
+// A pause shorter than a keystroke is no pause, and a run of spaces gets none.
 static std::string typeWords(const char* text, uint32_t iki, uint32_t pause, uint32_t hold, uint32_t chatter) {
   resetDriver();
   Wire1.device = 0x6c;
@@ -160,7 +161,7 @@ static std::string typeWords(const char* text, uint32_t iki, uint32_t pause, uin
   ControllerSim sim;
   uint32_t t = 7;
   for (const char* p = text; *p; ++p) {
-    if (p != text && p[-1] == ' ') t += pause - iki;
+    if (p != text && p[-1] == ' ' && *p != ' ' && pause > iki) t += pause - iki;
     sim.strokes.push_back({(uint8_t)*p, t, hold, chatter});
     t += iki;
   }
