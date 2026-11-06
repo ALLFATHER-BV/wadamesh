@@ -7629,6 +7629,7 @@ static void navPump() {
           navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down); break;   // on a field, Enter advances
         case BSP_INPUT_NAVIGATION_KEY_F1:    // red ✕ — tap = close topmost; HOLD = power menu (opens mid-hold, see navPump top)
           if (down) { if (!s_f1_down_ms) { s_f1_down_ms = millis(); s_f1_fired = false; } break; }
+          if (!s_f1_down_ms) break;   // a release whose press woke the screen (swallowed above): not a tap
           { const bool fired = s_f1_fired; s_f1_down_ms = 0; s_f1_fired = false;
             if (fired) break;                                                              // power menu already opened while held
             if (s_nav_ta_editing) { s_nav_ta_editing = false; break; }                     // editing a field: ✕ stops typing first (cursor off → navigate)
@@ -7658,7 +7659,8 @@ static void navPump() {
           LvChatPanel* cp = navOpenChatPanel();
           if (cp && cp->channel_mode) { if (down) openActiveChatSettings(); break; }
           if (down) { if (!s_f4_down_ms) { s_f4_down_ms = millis(); s_f4_fired = false; } }
-          else { const bool fired = s_f4_fired; s_f4_down_ms = 0; s_f4_fired = false;
+          else if (s_f4_down_ms) {   // no press seen = the press woke the screen (swallowed above): not a tap
+                 const bool fired = s_f4_fired; s_f4_down_ms = 0; s_f4_fired = false;
                  if (!fired) homeKeyActivate();   // tap: Home / toggle app drawer (control center already opened mid-hold if held)
                }
           break;
