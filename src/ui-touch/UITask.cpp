@@ -191,6 +191,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     #include "../helpers/input/TDeckKeyboard.h"
   #elif defined(HAS_M9_KEYBOARD)
     #include <M9Keyboard.h>
+    #include <M9KeyGuard.h>   // kM9DoubleSpaceMs
   #endif
   #if defined(HAS_CARDKB)
     #include "../helpers/input/CardKbKeyboard.h"
@@ -54498,10 +54499,16 @@ static bool pagerChatJumpToNew() {
 }
 #endif
 
+// When the last SPACE came, for the double-tap language switch below. Any other key
+// clears it, so only two spaces in a row switch: a one-letter word typed quickly
+// (" a ") is not a double tap.
+static unsigned long s_hw_last_space_ms = 0;
+
 // Route a physical-keyboard character into the textarea currently being edited
 // — the on-screen keyboard's target, which is the chat composer directly or the
 // settings mirror textarea. No field open -> the key is ignored.
 static void handleHwKey(int key) {
+  if (key != ' ') s_hw_last_space_ms = 0;
   if (!g_lv.keyboard) return;
 #if defined(TLORA_PAGER)
   if (s_pager_tabhold_tab >= 0) pagerTabHoldTap();   // a next key settles a waiting Home/Settings shortcut as a tap, in order
@@ -55030,11 +55037,17 @@ if (g_lv.task && g_lv.task->isManualLock()) {
   } else if (key == ' ') {
     // Double-tap SPACE within 250 ms toggles between English and the
     // configured secondary keyboard. If no secondary is set, it behaves
-    // as a normal space.
-    static unsigned long s_last_space_ms = 0;
+    // as a normal space. The M9's same-key guard drops a second space
+    // inside its own window (up to 250 ms), so that board allows the
+    // second tap longer (kM9DoubleSpaceMs, M9KeyGuard.h).
+#if defined(HAS_M9_KEYBOARD)
+    static constexpr unsigned long kDoubleSpaceMs = kM9DoubleSpaceMs;
+#else
+    static constexpr unsigned long kDoubleSpaceMs = 250;
+#endif
     unsigned long now = millis();
-    bool toggle = (now - s_last_space_ms) < 250;
-    s_last_space_ms = now;
+    bool toggle = s_hw_last_space_ms && (now - s_hw_last_space_ms) < kDoubleSpaceMs;
+    s_hw_last_space_ms = now;
     if (toggle && keyboardLayoutsAnySecondary()) {
       // Remove the just-inserted first space before cycling.
       lv_textarea_del_char(ta);

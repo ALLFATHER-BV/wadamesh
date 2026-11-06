@@ -215,8 +215,29 @@ static void checkChatter() {
   assert(p.pace_ms == 300);
 }
 
+// Double-tap SPACE switches the keyboard language when both spaces arrive within
+// kM9DoubleSpaceMs (handleHwKey). On beta_100 that limit was 250 ms, and the guard
+// dropped a second space inside its own window, also 250 ms right after boot, so the
+// shortcut could never fire.
+static void checkDoubleSpace() {
+  static_assert(kM9DoubleSpaceMs > kM9GuardMaxMs, "a second space must be able to get past the guard");
+  for (uint32_t gap : {260u, 300u, 350u, 420u}) {
+    for (uint32_t pace : {0u, 150u, 300u, 900u}) {   // 0 = right after boot
+      M9KeyGuard g;
+      g.pace_ms = pace;
+      assert(m9KeyGuardAccept(g, ' ', 10000));
+      assert(m9KeyGuardAccept(g, ' ', 10000 + gap));   // the second tap gets through...
+      assert(gap < kM9DoubleSpaceMs);                  // ...in time to switch
+    }
+  }
+  // One slow space press that chatters as it comes up is still one space, so it can
+  // neither type two spaces nor switch the language.
+  assert(typeText("a b", 450, 180, 10, true) == "a b");
+}
+
 int main() {
   checkChatter();
+  checkDoubleSpace();
   checkController(0x6c, false);
   checkController(0x6c, true);
   checkController(0x6d, false);
