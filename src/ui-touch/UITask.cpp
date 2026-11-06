@@ -7342,6 +7342,21 @@ static void mentionBoxHide();
 static void navArrowAction(uint32_t key) {
   lv_obj_t* ta_focused = navFocusedTextarea();
   lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
+  // Chat composer: ←/→ move the caret, but at the start/end of the text they leave the
+  // field for the neighbouring control (→ = the emoji button), and typing stops.
+  if (ta && (ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta) &&
+      (key == BSP_INPUT_NAVIGATION_KEY_LEFT || key == BSP_INPUT_NAVIGATION_KEY_RIGHT)) {
+    const uint32_t pos = lv_textarea_get_cursor_pos(ta);
+    const bool at_edge = (key == BSP_INPUT_NAVIGATION_KEY_LEFT) ? pos == 0
+                       : pos >= (uint32_t)_lv_txt_get_encoded_length(lv_textarea_get_text(ta));
+    if (at_edge) {
+      s_nav_rep_key = 0;   // a held arrow stops here rather than repeating on past the next control
+      s_nav_ta_editing = false;
+      s_nav_show = true;
+      navMoveDir(key == BSP_INPUT_NAVIGATION_KEY_LEFT ? NAV_LEFT : NAV_RIGHT);
+      return;
+    }
+  }
   switch (key) {
     case BSP_INPUT_NAVIGATION_KEY_UP:    navMoveDir(NAV_UP);   break;   // 2D spatial: element above
     case BSP_INPUT_NAVIGATION_KEY_DOWN:  navMoveDir(NAV_DOWN); break;   // …below
