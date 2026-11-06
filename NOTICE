@@ -64,6 +64,12 @@ minimp3 (bundled in lib/minimp3)
 AsyncElegantOTA (vendored in arch/esp32/AsyncElegantOTA)
     Copyright (c) Ayush Sharma — MIT License
 
+ESP-IDF FatFs component (vendored in arch/esp32/fatfs_exfat, built with exFAT)
+    FatFs: Copyright (c) ChaN — FatFs license (BSD-style) — http://elm-chan.org/fsw/ff/
+    ESP-IDF glue: Copyright (c) Espressif Systems — Apache License 2.0
+    Copied unchanged from ESP-IDF v4.4.7 components/fatfs, except FF_FS_EXFAT and
+    FF_USE_LFN in src/ffconf.h.
+
 TFT_eSPI (T-LoRa Pager display backend)
     Copyright (c) Bodmer — MIT / FreeBSD License — https://github.com/Bodmer/TFT_eSPI
 
