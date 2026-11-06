@@ -36580,6 +36580,11 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
   // "done, 0 items" event the Arduino layer latches. Wait for the real completion;
   // reject a 0 that came back < 4 s (spurious) and re-scan. (Tanmatsu-only — the S3
   // native path below is the original, known-good single pass.)
+  // The caller's 8 s cap is too short: measured on device, a sweep took 8.8 s
+  // (Scan start 54.30 -> "Scan Done, 17 items" 63.07), so the cap expired first, the
+  // timeout was read as "genuinely empty", and the 17 results were thrown away.
+  // Wait at least 15 s; the caller's 60 s scan-gate guard still bounds the whole thing.
+  const uint32_t tm_cap_ms = cap_ms < 15000UL ? 15000UL : cap_ms;
   for (int attempt = 0; attempt < 5; ++attempt) {
     WiFi.scanDelete();
     const uint32_t t0 = millis();
@@ -36587,11 +36592,12 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
     s_swd_kick = kick;
     if (kick == WIFI_SCAN_FAILED) { s_swd_st = WIFI_SCAN_FAILED; s_swd_dur = millis() - t0; vTaskDelay(pdMS_TO_TICKS(300)); continue; }
     int16_t st;
-    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < cap_ms)
+    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < tm_cap_ms)
       vTaskDelay(pdMS_TO_TICKS(100));
     const uint32_t dur = millis() - t0;
     s_swd_st = st; s_swd_dur = dur;
     if (st > 0) return st;
+    if (st == WIFI_SCAN_RUNNING) return 0;       // still sweeping past the cap: don't re-kick over it
     if (dur >= 4000) return 0;                   // genuine empty after a full sweep
     vTaskDelay(pdMS_TO_TICKS(200));              // spurious fast-0 -> rescan
   }
