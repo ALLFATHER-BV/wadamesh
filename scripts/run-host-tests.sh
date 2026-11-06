@@ -33,6 +33,8 @@ extra_flags() {
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
     # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
     test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
+    # The firmware's own FatFs (exFAT on) under the archive reader, compiled as C.
+    test_pmtiles_card) echo "-I test/fatfs_fakes -I arch/esp32/fatfs_exfat/src -I src/ui-touch -DCAP_MAP_PMTILES=1 -x c arch/esp32/fatfs_exfat/src/ff.c arch/esp32/fatfs_exfat/src/ffunicode.c -x none src/ui-touch/PmTilesCard.cpp" ;;
     test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
     test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
     test_keyboard_layouts_hw) echo "-I test/kb_layouts_fakes" ;;   # LVGL names only
