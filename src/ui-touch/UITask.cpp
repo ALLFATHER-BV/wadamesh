@@ -7359,6 +7359,28 @@ static void navArrowAction(uint32_t key) {
   }
 }
 
+// Enter in a non-empty chat composer sends, as on the other keyboards (handleHwKey),
+// and the composer stays focused for the next message. With Enter-to-send off it adds
+// a newline. Returns false when `ta` is not a chat composer.
+static void refreshChatDetailAsync(LvChatPanel& p);
+static bool navComposerEnter(lv_obj_t* ta) {
+  LvChatPanel* p = (ta == g_lv.ch.composer_ta) ? &g_lv.ch
+                 : (ta == g_lv.dm.composer_ta) ? &g_lv.dm : nullptr;
+  if (!p || !g_lv.task) return false;
+  if (!touchPrefsGetEnterSends()) { lv_textarea_add_char(ta, '\n'); return true; }
+  const char* text = lv_textarea_get_text(ta);
+  if (!text || !text[0]) return true;
+  g_lv.task->setComposerMode(true);
+  g_lv.task->composerReset();
+  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  if (g_lv.task->composerSend()) {
+    lv_textarea_set_text(ta, "");
+    refreshChatDetailAsync(*p);
+    g_lv.dirty_threads = true;
+  }
+  return true;
+}
+
 static void navPump() {
   if (!s_nav_queue && (bsp_input_get_queue(&s_nav_queue) != ESP_OK || !s_nav_queue)) return;
   // Fire-on-hold: trigger the F1/F4 long-press action the MOMENT the threshold passes while the
@@ -7585,6 +7607,10 @@ static void navPump() {
             (void*)lv_group_get_focused(s_nav_group), (void*)s_nav_first, (void*)s_nav_last, (void*)s_nav_tabbar);
           if (!ta && down) navMarkEntered(lv_group_get_focused(s_nav_group));
           if (!ta && down && navEnterBubble()) break;   // Enter on a chat bubble = the long-press menu
+          if (ta && (ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta)) {   // non-empty composer: send, don't advance
+            if (down) navComposerEnter(ta);             // the release arrives here too: act on the press only
+            break;
+          }
           navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down); break;   // on a field, Enter advances
         case BSP_INPUT_NAVIGATION_KEY_F1:    // red ✕ — tap = close topmost; HOLD = power menu (opens mid-hold, see navPump top)
           if (down) { if (!s_f1_down_ms) { s_f1_down_ms = millis(); s_f1_fired = false; } break; }
@@ -7651,10 +7677,10 @@ static void navPump() {
         }
         else if (c == '\r' || c == '\n') {
           // Enter on an EMPTY composer drops back to navigate mode (cursor off) so the letter-nav
-          // keys work again; anywhere else it advances to the next widget.
+          // keys work again; a non-empty one sends; anywhere else it advances to the next widget.
           if ((ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta) && !lv_textarea_get_text(ta)[0])
             s_nav_ta_editing = false;
-          else navPushTap(LV_KEY_NEXT);
+          else if (!navComposerEnter(ta)) navPushTap(LV_KEY_NEXT);
         }
         else if ((uint8_t)c >= 32) {
           // Double-tap SPACE within 250 ms switches to the configured secondary
