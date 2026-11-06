@@ -55035,11 +55035,12 @@ if (g_lv.task && g_lv.task->isManualLock()) {
     }
     accentBoxHide();
   } else if (key == ' ') {
-    // Double-tap SPACE within 250 ms toggles between English and the
-    // configured secondary keyboard. If no secondary is set, it behaves
-    // as a normal space. The M9's same-key guard drops a second space
-    // inside its own window (up to 250 ms), so that board allows the
-    // second tap longer (kM9DoubleSpaceMs, M9KeyGuard.h).
+    // Double-tap SPACE within kDoubleSpaceMs toggles between English and
+    // the configured secondary keyboard. If no secondary is set, it behaves
+    // as a normal space. The limit is 250 ms, except on the M9: its same-key
+    // guard drops a second space inside its own window (up to 250 ms), so
+    // that board allows the second tap longer (kM9DoubleSpaceMs, 450 ms,
+    // M9KeyGuard.h).
 #if defined(HAS_M9_KEYBOARD)
     static constexpr unsigned long kDoubleSpaceMs = kM9DoubleSpaceMs;
 #else
