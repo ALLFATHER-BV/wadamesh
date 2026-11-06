@@ -67725,6 +67725,23 @@ static void setupFillRegionList();      // fwd: built by the region step + recol
 static lv_obj_t* setupBtn(const char* txt, lv_event_cb_t cb, bool primary,
                           lv_coord_t x, lv_coord_t y, lv_coord_t w) {
   lv_obj_t* b = lv_btn_create(s_setup_root);
+#if defined(HAS_TANMATSU)
+  // The widths the steps pass (Back = 72) are sized for the small panels, but the
+  // Tanmatsu scales g_font_14 up, so "Back" no longer fit and the caption fitter
+  // (#418) cut it to "B...". There is room to spare on this panel: grow the button
+  // to its caption plus padding. A right-half button keeps its right edge.
+  {
+    lv_point_t ts;
+    lv_txt_get_size(&ts, TR(txt), &g_font_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const lv_coord_t need = ts.x + lv_obj_get_style_pad_left(b, LV_PART_MAIN) +
+                            lv_obj_get_style_pad_right(b, LV_PART_MAIN) + 8;   // theme padding + slack
+    if (need > w) {
+      const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+      if (x + w / 2 > sw / 2) x -= need - w;   // right-anchored (Next / Finish)
+      w = need;
+    }
+  }
+#endif
   lv_obj_set_size(b, w, kSetupBtnH);
   lv_obj_set_pos(b, x, y);
   styleButton(b);
