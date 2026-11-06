@@ -83946,7 +83946,10 @@ void UITask::loop() {
   webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
 #endif
 #if defined(HAS_TANMATSU)
-  if (s_nav_entered_obj) {
+  // Wait until LVGL has read Enter's release: the keypad indev delivers CLICKED on release
+  // to whatever is focused THEN, so jumping while the key is still down (its release still
+  // queued, or not yet pressed-up) handed the click to Next instead of the chosen option.
+  if (s_nav_entered_obj && !s_nav_last_pressed && s_nav_fifo_tail == s_nav_fifo_head) {
     lv_obj_t* ent = s_nav_entered_obj; s_nav_entered_obj = nullptr;
     // WIZARD ONLY: after Enter on an option, jump to the primary action so the next Enter confirms.
     // In the main app this drifted focus to the last collected item (the Send-advert button), so it's
