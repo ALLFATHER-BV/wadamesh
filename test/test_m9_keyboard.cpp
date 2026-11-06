@@ -151,6 +151,23 @@ static std::string typeText(const char* text, uint32_t iki, uint32_t hold, uint3
   sim.run(Wire1, testMillis, t + 400, typed, real, oldRule);
   return typed;
 }
+// Like typeText, with a thinking pause of `pause` ms before each word after the first,
+// the way people actually type a message: quick inside a word, slower between words.
+static std::string typeWords(const char* text, uint32_t iki, uint32_t pause, uint32_t hold, uint32_t chatter) {
+  resetDriver();
+  Wire1.device = 0x6c;
+  m9KeyboardBegin();
+  ControllerSim sim;
+  uint32_t t = 7;
+  for (const char* p = text; *p; ++p) {
+    if (p != text && p[-1] == ' ') t += pause - iki;
+    sim.strokes.push_back({(uint8_t)*p, t, hold, chatter});
+    t += iki;
+  }
+  std::string typed;
+  sim.run(Wire1, testMillis, t + 400, typed, true, oldRule);
+  return typed;
+}
 static std::string typeKeys(const std::vector<uint8_t>& keys, uint32_t iki, uint32_t hold, uint32_t chatter) {
   resetDriver();
   Wire1.device = 0x6c;
@@ -184,6 +201,16 @@ static void checkChatter() {
   assert(typeText("bookkeeper", 170, 70, 0, true) == "bookkeeper");
   // Moderate pace.
   assert(typeText("aardvark scissors", 300, 120, 10, true) == "aardvark scissors");
+  // Pauses between words are not the typing pace. A typist at 200 ms a key with a 1 s
+  // pause before each word: on beta_100 the pauses pushed the pace, and the window, up
+  // to the 250 ms ceiling, so a letter doubled at the same 200 ms was dropped
+  // ("hello al, se you son"). With and without chatter, at several paces.
+  for (uint32_t iki : {180u, 200u, 220u, 250u}) {
+    for (uint32_t pause : {600u, 1000u, 1400u}) {
+      assert(typeWords("hello all, see you soon", iki, pause, 90, 0) == "hello all, see you soon");
+      assert(typeWords("hello all, see you soon", iki, pause, 90, 10) == "hello all, see you soon");
+    }
+  }
   // Arrows tapped quickly keep every tap (stepping down a list), as before.
   const std::string downs = typeKeys({M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN}, 110, 50, 0);
   assert(downs.size() == 5);
@@ -213,6 +240,19 @@ static void checkChatter() {
   assert(p.pace_ms == 0);
   assert(m9KeyGuardAccept(p, 'c', 5300));
   assert(p.pace_ms == 300);
+  // A gap over twice the pace counts as twice the pace: a 1.2 s pause at a 200 ms pace
+  // moves it to 250, not 450.
+  M9KeyGuard q;
+  q.last_key = 'a'; q.last_ms = 0; q.pace_ms = 200;
+  assert(m9KeyGuardAccept(q, 'b', 1200));
+  assert(q.pace_ms == 250);
+  // A writer who really slows down still raises the pace within a few keys.
+  M9KeyGuard r;
+  r.last_key = 'a'; r.last_ms = 0; r.pace_ms = 150;
+  uint32_t t = 0;
+  const char* slow = "bcdefgh";
+  for (const char* c = slow; *c; ++c) { t += 600; assert(m9KeyGuardAccept(r, (uint8_t)*c, t)); }
+  assert(m9KeyGuardWindow(r) == kM9GuardMaxMs);
 }
 
 int main() {
