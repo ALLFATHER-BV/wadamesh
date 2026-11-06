@@ -4547,12 +4547,20 @@ static float meshPresetAirtimeFactor(uint8_t pct) {
   return af > 9.0f ? 9.0f : af;
 }
 
+// The TX power a preset actually ends up at on this board. Presets ask for 22 dBm, but
+// setRadioParams() clamps to MAX_LORA_TX_POWER (20 on the Tanmatsu), so comparing the
+// stored power against the raw 22 never matched: pick a preset, leave the page, come
+// back, and it said "Custom (manual)".
+static int8_t meshPresetTxDbm(const MeshRadioPreset& p) {
+  return p.tx_dbm > (int)MAX_LORA_TX_POWER ? (int8_t)MAX_LORA_TX_POWER : p.tx_dbm;
+}
+
 static bool meshRadioPresetMatches(const MeshRadioPreset& p, const NodePrefs* prefs) {
   if (std::fabs(prefs->freq - p.freq_mhz) > 0.002) return false;
   if (std::fabs(prefs->bw - p.bw_khz) > 0.02) return false;
   if (prefs->sf != p.sf) return false;
   if (prefs->cr != p.cr) return false;
-  if (prefs->tx_power_dbm != p.tx_dbm) return false;
+  if (prefs->tx_power_dbm != meshPresetTxDbm(p)) return false;
   const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
   const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
   const double cur    = static_cast<double>(prefs->airtime_factor);
@@ -4639,7 +4647,7 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.sf_ta, buf);
   snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(p.cr));
   lv_textarea_set_text(g_set_modal.cr_ta, buf);
-  snprintf(buf, sizeof(buf), "%d", static_cast<int>(p.tx_dbm));
+  snprintf(buf, sizeof(buf), "%d", static_cast<int>(meshPresetTxDbm(p)));   // already clamped: no "TX max" alert
   lv_textarea_set_text(g_set_modal.tx_ta, buf);
   // #161: MeshCore's airtime_factor is a TX pacing multiplier -- the core's Dispatcher runs at
   // duty = 1/(1+af). A 10% duty limit therefore needs af = 9, NOT 0.10: the old pct/100 write
