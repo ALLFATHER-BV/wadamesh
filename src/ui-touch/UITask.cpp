@@ -2560,43 +2560,84 @@ static void l2PlayNotifySlot(int slot) {
 #else
   #define UI_BUZZER_PIN THINKNODE_M9_BUZZER_PIN
 #endif
-// Simple piezo buzzer, GPIO-driven via Arduino tone()/noTone() (Heltec V4 expansion kit,
-// or the ThinkNode M9's onboard buzzer/BUZZER_EN). Plays a short two-note chime via LEDC
-// on a throwaway task so the ~210 ms doesn't stall the UI thread.
+// Simple piezo buzzer on a GPIO (Heltec V4 expansion kit, or the ThinkNode M9's onboard
+// buzzer/BUZZER_EN). Plays a short three-note chime on a throwaway task so its
+// 0.4-0.5 s doesn't stall the UI thread. The Heltec V4 drives it with Arduino tone()/noTone(); the
+// M9 drives it from LEDC so the duty cycle can follow the Volume setting (see below).
+//
+// "Loud alerts" shifts the same chime into the piezo's resonant band: output near
+// mechanical resonance (around 4 kHz on typical parts) is far higher than at the
+// 1-2.6 kHz used otherwise. Same three-note shape, so it still reads as the same
+// chime rather than a different alert (#388).
+struct V4Note { uint16_t hz_soft, hz_loud, ms; };
+static const V4Note kV4ChimeMention[] = { {1500, 3400, 110}, {2000, 3900, 110}, {2600, 4200, 170} };
+static const V4Note kV4ChimeMessage[] = { {1000, 3200, 160}, {1500, 3700, 160}, {2000, 4100, 200} };
 static volatile bool s_v4_beep_playing = false;
 static volatile bool s_v4_mention = false;
+static volatile bool s_v4_loud = false;
+#if defined(THINKNODE_M9_BUZZER_PIN)
+// M9: tone() is a fixed 50% square wave, so the piezo had no volume. LEDC lets the
+// duty follow the Volume setting instead: a lower duty puts less energy into the
+// piezo per cycle. 100% volume = 50% duty (128/255), the same drive tone() gave, so
+// full volume sounds as it did before; the curve is squared so the low end of the
+// stepper still has usable quiet steps. Channel 4 shares LEDC timer 2 only with
+// channel 5, which nothing uses; 6/7 are the backlights and tone() uses channel 0.
+static volatile uint32_t s_v4_duty = 128;
+constexpr uint8_t kM9BuzzCh = 4;
+static uint32_t m9BuzzerDutyForVolume(uint32_t vol) {
+  const uint32_t duty = (128u * vol * vol + 5000u) / 10000u;
+  return duty < 1 ? 1 : duty;
+}
+#endif
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
-  // "Loud alerts" shifts the same chime into the piezo's resonant band. A bare
-  // piezo on a GPIO has no volume control -- tone() is a fixed-duty square wave,
-  // so amplitude is whatever the part does at that pitch -- but output near
-  // mechanical resonance (around 4 kHz on typical parts) is far higher than at
-  // the 1-2.6 kHz used here. Same three-note shape, so it still reads as the
-  // same chime rather than a different alert (#388).
-#if defined(ESP32)
-  const bool loud = touchPrefsGetLoudAlerts();
-#else
-  const bool loud = false;
+  const V4Note* chime = s_v4_mention ? kV4ChimeMention : kV4ChimeMessage;
+  const bool loud = s_v4_loud;
+#if defined(THINKNODE_M9_BUZZER_PIN)
+  const uint32_t duty = s_v4_duty;
+  ledcSetup(kM9BuzzCh, 2000, 8);
+  ledcAttachPin(UI_BUZZER_PIN, kM9BuzzCh);
 #endif
-  if (s_v4_mention) {
-    tone(UI_BUZZER_PIN, loud ? 3400 : 1500);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(UI_BUZZER_PIN, loud ? 3900 : 2000);  vTaskDelay(pdMS_TO_TICKS(110));
-    tone(UI_BUZZER_PIN, loud ? 4200 : 2600);  vTaskDelay(pdMS_TO_TICKS(170));
-  } else {
-    tone(UI_BUZZER_PIN, loud ? 3200 : 1000);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(UI_BUZZER_PIN, loud ? 3700 : 1500);  vTaskDelay(pdMS_TO_TICKS(160));
-    tone(UI_BUZZER_PIN, loud ? 4100 : 2000);  vTaskDelay(pdMS_TO_TICKS(200));
+  for (int i = 0; i < 3; ++i) {
+    const uint32_t hz = loud ? chime[i].hz_loud : chime[i].hz_soft;
+#if defined(THINKNODE_M9_BUZZER_PIN)
+    ledcChangeFrequency(kM9BuzzCh, hz, 8);
+    ledcWrite(kM9BuzzCh, duty);
+#else
+    tone(UI_BUZZER_PIN, hz);
+#endif
+    vTaskDelay(pdMS_TO_TICKS(chime[i].ms));
   }
+#if defined(THINKNODE_M9_BUZZER_PIN)
+  ledcWrite(kM9BuzzCh, 0);
+  ledcDetachPin(UI_BUZZER_PIN);
+#else
   noTone(UI_BUZZER_PIN);
+#endif
   pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
+// Called on the UI/mesh loop (settings previews and newMsgImpl's chime). The prefs are
+// read here, not in the task: the shared Preferences handle is closed and reopened by
+// every pref write (prefsPutUChar), so a read from another task could race a Volume
+// press and get the default back.
 static void v4BuzzerBeep(bool mention) {
   if (s_v4_beep_playing) return;
+#if defined(ESP32)
+  s_v4_loud = touchPrefsGetLoudAlerts();
+#endif
+#if defined(THINKNODE_M9_BUZZER_PIN)
+  const uint32_t vol = touchPrefsGetSoundVolume();
+  if (vol == 0) return;                 // 0% = silent: no task at all
+  s_v4_duty = m9BuzzerDutyForVolume(vol);
+  constexpr uint32_t kBeepStack = 3072; // LEDC driver setup runs in the task
+#else
+  constexpr uint32_t kBeepStack = 2048;
+#endif
   s_v4_mention = mention;
   s_v4_beep_playing = true;
-  if (xTaskCreate(v4BeepTaskFn, "v4beep", 2048, nullptr, 3, nullptr) != pdPASS)
+  if (xTaskCreate(v4BeepTaskFn, "v4beep", kBeepStack, nullptr, 3, nullptr) != pdPASS)
     s_v4_beep_playing = false;
 }
 #endif
@@ -13425,8 +13466,9 @@ static inline void uiSoundPreview() {
 #endif
 }
 // Message-sound switch (under the master Sound switch). VALUE_CHANGED; previews.
-// "Loud alerts": the piezo has no volume control, so this raises the chime's
-// pitch into its resonant band instead, where the same drive is much louder.
+// "Loud alerts": raises the chime's pitch into the piezo's resonant band, where the
+// same drive is much louder. On the Heltec V4 that is the only loudness control;
+// the M9 also has a Volume row that scales its LEDC duty.
 // Buzzer boards only -- the Tanmatsu drives a codec and has real volume (#388).
 #if defined(HAS_UI_SOUND)
 static void toggleLoudAlertsCb(lv_event_t* e) {
@@ -13510,7 +13552,7 @@ static void toggleMentionSoundCb(lv_event_t* e) {
   }
 }
 #if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
-    defined(HAS_WIO_TRACKER_L2)
+    defined(HAS_WIO_TRACKER_L2) || defined(THINKNODE_M9_BUZZER_PIN)
 // Volume +/- step buttons (user_data = step, e.g. +10 / -10). Clamps 0..100,
 // updates the readout, previews. Simpler + more reliable than a drag slider.
 static lv_obj_t* s_vol_val_lbl = nullptr;
@@ -19045,7 +19087,7 @@ static void buildSoundPage() {
                  toggleLoudAlertsCb);
 #endif
 #if defined(HAS_TDECK_GT911) || defined(HAS_TANMATSU) || defined(TLORA_PAGER) || defined(HAS_TDISPLAY_P4) || defined(HAS_TDECK_MAX) || \
-    defined(HAS_WIO_TRACKER_L2)
+    defined(HAS_WIO_TRACKER_L2) || defined(THINKNODE_M9_BUZZER_PIN)
     s_vol_val_lbl = setStepperRow(c, "Volume", nullptr, LV_SYMBOL_MINUS, LV_SYMBOL_PLUS,
                                   volumeStepCb, volumeStepCb, (void*)(intptr_t)-10, (void*)(intptr_t)10);
     lv_label_set_text_fmt(s_vol_val_lbl, "%d%%", (int)touchPrefsGetSoundVolume());

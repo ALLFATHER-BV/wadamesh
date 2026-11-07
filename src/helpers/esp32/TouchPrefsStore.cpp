@@ -2690,6 +2690,11 @@ uint8_t touchPrefsGetSoundVolume() {
   // percentage than the T-Deck's I2S amp/Tanmatsu's ES8156 — 70% clips into
   // uncomfortable territory, so this board gets a quieter first-boot default.
   uint8_t v = s_prefs.getUChar("snd_vol", 50);
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+  // The M9 piezo had no volume before; 100% is the drive it always had, so an
+  // M9 that never set a volume keeps sounding the way it did. Same macro as the
+  // LEDC chime and the Volume row in UITask.cpp.
+  uint8_t v = s_prefs.getUChar("snd_vol", 100);
 #else
   uint8_t v = s_prefs.getUChar("snd_vol", 70);
 #endif

@@ -97,10 +97,10 @@ struct __attribute__((packed)) Config {
   // trust decision from reconnecting to a saved secured one.
   uint8_t  boot_wifi_time;   // sync the clock from a saved Wi-Fi network after a cold boot
   uint8_t  boot_wifi_open;   // ...and allow saved OPEN networks to be used for it
-  // A bare piezo on a GPIO has no amplitude control -- tone() is a fixed-duty
-  // square wave -- so the only lever on loudness is frequency: a piezo is far
-  // louder near its mechanical resonance, typically around 4 kHz, than at the
-  // 1-2.6 kHz the chime uses. This shifts the same chime up into that band (#388).
+  // A piezo is far louder near its mechanical resonance, typically around 4 kHz,
+  // than at the 1-2.6 kHz the chime uses. This shifts the same chime up into that
+  // band (#388). On the Heltec V4 it is the only loudness lever (tone() is a
+  // fixed-duty square wave); the M9 also scales its LEDC duty from snd_vol.
   uint8_t  loud_alerts;      // play the notification chime at the piezo's resonant pitch
   uint8_t  theme_mode;       // v56: 0 Night, 1 Day, 2 Day HC, 3 Night HC (#544)
   // v57 (#399): displace the position put in our OWN adverts, in metres, 0 = off.
