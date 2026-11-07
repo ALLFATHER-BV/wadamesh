@@ -6848,6 +6848,33 @@ static bool navPageStepBeforeFocus(lv_obj_t* cur, lv_obj_t* best, bool up) {
   return true;
 }
 
+// Tags the button cluster of a settings stepper row (setStepperRow) via its user
+// data; every LV_OBJ_FLAG_USER_n is already spoken for.
+static const char s_stepper_cluster_tag = 0;
+// Set by the T-Deck trackball's D-pad mode around its navMoveDir call. A roll is
+// sampled to its dominant axis every 110 ms, so a slightly sideways roll past a
+// stepper row must keep moving focus, never change the setting.
+static bool s_nav_trackball_step = false;
+// cur is the "-" or "+" of a stepper row: focus the button for that direction and
+// press it with an Enter tap through the nav keypad, the same path OK takes, so a
+// disabled button stays inert and the button shows its pressed state. Returns false
+// for anything else, including a trackball roll, so navigation proceeds as usual.
+static bool navStepperPress(lv_obj_t* cur, bool plus) {
+  if (s_nav_trackball_step || !cur) return false;
+  lv_obj_t* cl = lv_obj_get_parent(cur);
+  if (!cl || lv_obj_get_user_data(cl) != (void*)&s_stepper_cluster_tag) return false;
+  const uint32_t n = lv_obj_get_child_cnt(cl);   // "-", value label, "+"
+  if (n < 2) return false;
+  lv_obj_t* const minus = lv_obj_get_child(cl, 0);
+  lv_obj_t* const plus_btn = lv_obj_get_child(cl, (int32_t)n - 1);
+  if (cur != minus && cur != plus_btn) return false;   // another control in the row
+  lv_obj_t* target = plus ? plus_btn : minus;
+  if (!target || !lv_obj_is_valid(target) || lv_obj_get_group(target) != s_nav_group) return false;
+  if (target != cur) lv_group_focus_obj(target);
+  navPushTap(LV_KEY_ENTER);
+  return true;
+}
+
 // Returns true when the press was consumed without moving focus (an info page
 // scrolled, or the Web page's own Up/Down took it: a link already on screen, or a
 // page scroll), so a caller's "focus did not move: scroll" fallback must not
@@ -6907,6 +6934,17 @@ static bool navMoveDir(int dir) {
   if ((dir == NAV_LEFT || dir == NAV_RIGHT) && lv_obj_check_type(cur, &lv_slider_class)) {
     navSliderNudge(cur, dir == NAV_RIGHT ? +1 : -1);
     lv_event_send(cur, LV_EVENT_RELEASED, nullptr);
+    s_nav_show = true;
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return false;
+  }
+  // A settings stepper row (setStepperRow: "-" value "+") works the same way: with
+  // either button focused, LEFT presses "-" and RIGHT presses "+" (keys only; a
+  // trackball roll still moves focus), and UP/DOWN leave the row. Spatial ranking
+  // used to send LEFT from "+" to the switch on the row
+  // above and RIGHT to the next row's button, so a keypad user had to climb back
+  // to reach "-" again.
+  if ((dir == NAV_LEFT || dir == NAV_RIGHT) && navStepperPress(cur, dir == NAV_RIGHT)) {
     s_nav_show = true;
     if (g_lv.task) g_lv.task->noteUserInput();
     return false;
@@ -18893,6 +18931,7 @@ static lv_obj_t* setStepperRow(lv_obj_t* card, const char* title, const char* he
   lv_obj_t* row = setBox(card);
   lv_obj_set_size(row, w, LV_SIZE_CONTENT);
   lv_obj_t* cl = setBox(stacked ? card : row);
+  lv_obj_set_user_data(cl, (void*)&s_stepper_cluster_tag);   // navMoveDir: LEFT/RIGHT press - / +
   lv_obj_set_size(cl, cluster_w, bh);
   lv_obj_set_flex_flow(cl, LV_FLEX_FLOW_ROW);
   lv_obj_set_flex_align(cl, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -49391,8 +49430,10 @@ static void updateTrackball(unsigned long now) {
       if ((unsigned long)(now - s_tb_nav_step_ms) >= 110) {
         s_tb_nav_step_ms = now;
         const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+        s_nav_trackball_step = true;   // a roll moves focus only, never presses a stepper
         if (adx >= ady) navMoveDir(dx > 0 ? NAV_RIGHT : NAV_LEFT);
         else            navMoveDir(dy > 0 ? NAV_DOWN  : NAV_UP);
+        s_nav_trackball_step = false;
         if (g_lv.task) g_lv.task->noteUserInput();
       }
     }
