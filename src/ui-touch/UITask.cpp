@@ -61893,13 +61893,18 @@ static void chatHeaderApply(bool chat_open) {
     const lv_coord_t row_h = STATUSBAR_H;
     const lv_coord_t hor = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN);
     const lv_coord_t av = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
-    const lv_coord_t gap = 6, margin = 8;
+    const lv_coord_t gap = 6;
     const lv_font_t* tf = sbFixed(&g_font_semi_14);
     const lv_coord_t title_h = lv_font_get_line_height(tf);
     sbFont(g_statusbar.chat_sub, &g_font_semi_14, LV_PART_MAIN);
     sbTextColor(g_statusbar.chat_sub, lv_color_hex(COLOR_TEXT));
+    // The back arrow's zone, kept clear on both sides so the group stays centred.
+    const char* bt = lv_label_get_text(g_statusbar.chat_back);
+    const lv_coord_t back_w = lv_txt_get_width(bt, strlen(bt), lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN),
+                                               0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t back_zone = LV_MAX((lv_coord_t)40, x_back + back_w + 16);
     char ttl[sizeof(s_chat_title) + 4];
-    uiFitTrailingDots(s_chat_title, tf, hor - 2 * margin - av - gap, ttl, sizeof ttl);
+    uiFitTrailingDots(s_chat_title, tf, hor - 2 * back_zone - av - gap, ttl, sizeof ttl);
     const lv_coord_t name_w = lv_txt_get_width(ttl, strlen(ttl), tf, 0, LV_TEXT_FLAG_NONE) + 2;
     const lv_coord_t x0 = (hor - (av + gap + name_w)) / 2;
     sbTranslateY(g_statusbar.chat_avatar, 0);
@@ -61910,10 +61915,11 @@ static void chatHeaderApply(bool chat_open) {
       lv_label_set_long_mode(g_statusbar.chat_sub, LV_LABEL_LONG_CLIP);
     if (strcmp(lv_label_get_text(g_statusbar.chat_sub), ttl) != 0) lv_label_set_text(g_statusbar.chat_sub, ttl);
     sbAlign(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x0 + av + gap, row_h + (row_h - title_h) / 2);
-    // The second row is the hit area for chat settings.
+    // The second row right of the back arrow is the hit area for chat settings. Over
+    // the arrow it took the tap meant for the bar (which closes the chat).
     sbTranslateY(g_statusbar.chat_head, 0);
-    sbSize(g_statusbar.chat_head, hor, row_h);
-    sbAlign(g_statusbar.chat_head, LV_ALIGN_TOP_LEFT, 0, row_h);
+    sbSize(g_statusbar.chat_head, hor - back_zone, row_h);
+    sbAlign(g_statusbar.chat_head, LV_ALIGN_TOP_LEFT, back_zone, row_h);
   }
 #else
   // Title on the upper half, subtitle under it.
