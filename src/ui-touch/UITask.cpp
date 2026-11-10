@@ -574,6 +574,10 @@ static void pushDiagLine(const char* message) { (void)message; }
 static void pushDiagLine(const char* message);   // real def near the diag log
 #endif
 
+// Tags the button cluster of a settings stepper row (setStepperRow) via its user
+// data; every LV_OBJ_FLAG_USER_n is already spoken for.
+static const char s_stepper_cluster_tag = 0;
+
 // ============================================================
 // LVGL TOUCH UI — Heltec V4 TFT Cap-Touch only
 // ============================================================
@@ -6964,9 +6968,6 @@ static bool navPageStepBeforeFocus(lv_obj_t* cur, lv_obj_t* best, bool up) {
   return true;
 }
 
-// Tags the button cluster of a settings stepper row (setStepperRow) via its user
-// data; every LV_OBJ_FLAG_USER_n is already spoken for.
-static const char s_stepper_cluster_tag = 0;
 // Set by the T-Deck trackball's D-pad mode around its navMoveDir call. A roll is
 // sampled to its dominant axis every 110 ms, so a slightly sideways roll past a
 // stepper row must keep moving focus, never change the setting.
