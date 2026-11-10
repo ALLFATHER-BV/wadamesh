@@ -402,6 +402,9 @@ local function build_wada()
   end
   wada.fs.read = function(name, off, want)
     checkstr(name, "fs.read name")
+    -- fsSafeName: a name outside [A-Za-z0-9._-], over 32 characters or with a
+    -- leading dot is unreadable (nil) even if it is in the folder.
+    if not tostring(name):match("^[%w%._%-]+$") or #name > 32 or name:sub(1, 1) == "." then return nil end
     local d = fsfiles[name]
     if d == nil then return nil end
     off = off or 0
@@ -410,6 +413,7 @@ local function build_wada()
     if off >= total then return "", total end
     want = want or (total - off)
     if want < 0 then return nil end
+    if want > 32768 then want = 32768 end   -- kFsMaxFile: one read never returns more
     return d:sub(off + 1, off + want), total
   end
   wada.fs.list = function()
@@ -2526,6 +2530,502 @@ scenarios.inputlen_input = function()
   answer_input(nil)
 end
 
+-- ---- Ebook (deploy/apps/ebook) ------------------------------------------------
+-- The app reads an .epub through wada.fs, so the scenarios build real zip files
+-- (stored entries, as scripts/ebook-prep.py writes them) in the mock folder.
+
+local function zip_build(files, method)
+  local out, cd, off = {}, {}, 0
+  for _, f in ipairs(files) do
+    local name, data = f[1], f[2]
+    local m = f[3] or method or 0
+    local lh = string.pack("<I4I2I2I2I2I2I4I4I4I2I2", 0x04034B50, 20, 0, m, 0, 0x21, 0, #data, #data, #name, 3) ..
+               name .. "xyz"
+    out[#out + 1] = lh .. data
+    cd[#cd + 1] = string.pack("<I4I2I2I2I2I2I2I4I4I4I2I2I2I2I2I4I4", 0x02014B50, 20, 20, 0, m, 0, 0x21, 0,
+                              #data, #data, #name, 0, 0, 0, 0, 0, off) .. name
+    off = off + #lh + #data
+  end
+  local cds = table.concat(cd)
+  return table.concat(out) .. cds ..
+         string.pack("<I4I2I2I2I2I4I4I2", 0x06054B50, 0, 0, #files, #files, #cds, off, 0)
+end
+
+local EB_WORDS = { "the", "river", "lantern", "quietly", "across", "winter", "harbour", "remembered", "a", "small",
+                   "boat", "und", "caf\xC3\xA9", "voyage", "of", "long", "shadows", "and", "salt", "wind" }
+
+-- n deterministic words; `esc` returns the markup form of the same text
+local function eb_para(seed, n)
+  local plain, markup = {}, {}
+  local x = seed
+  for i = 1, n do
+    x = (x * 1103515245 + 12345) % 2147483648
+    local w = EB_WORDS[(x >> 8) % #EB_WORDS + 1]
+    if i % 11 == 0 then plain[#plain + 1] = "R&D"; markup[#markup + 1] = "R&amp;D"
+    elseif i % 13 == 0 then plain[#plain + 1] = "it\xE2\x80\x99s"; markup[#markup + 1] = "it&#8217;s"
+    elseif i % 17 == 0 then plain[#plain + 1] = "\xE2\x80\x94" .. w; markup[#markup + 1] = "&mdash;<em>" .. w .. "</em>"
+    else plain[#plain + 1] = w; markup[#markup + 1] = (i % 5 == 0) and ("<i>" .. w .. "</i>") or w end
+  end
+  return table.concat(plain, " "), table.concat(markup, " ")
+end
+
+-- Returns the file list and the whitespace-free text the whole book should show.
+local function eb_book(opts)
+  opts = opts or {}
+  local big = opts.big or 70
+  local expect = {}
+  local function add(s) expect[#expect + 1] = s end
+  local c1 = { '<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>No show</title>',
+               "<style>p { color: red }</style></head><body><!-- a comment > with a bracket --><h1>Chapter One</h1>" }
+  add("Chapter One")
+  for i = 1, 6 do
+    local p, m = eb_para(i, 40 + i * 9)
+    c1[#c1 + 1] = '<p class="x">' .. m .. "</p>\n"; add(p)
+  end
+  c1[#c1 + 1] = '<ul><li>first item</li><li>second<br/>item</li></ul><p><img src="a.png" alt="  A map&#8217;s\n legend  "/></p>' ..
+    '<div><svg xmlns="http://www.w3.org/2000/svg"><title>hidden</title><image xlink:href="cover.png" width="1" height="1"/></svg></div>' ..
+    '<p>before<img src="b.png"/>after</p><p><img src="c.png" alt="' .. ("long "):rep(40) .. '"/></p>'
+  add("\xE2\x80\xA2 first item"); add("\xE2\x80\xA2 second\nitem"); add("<image:Amap\xE2\x80\x99slegend>")
+  add("<image>"); add("before"); add("<image>"); add("after")
+  add("<image:" .. ("long"):rep(20) .. "\xE2\x80\xA6>")   -- 100 bytes of a longer alt, then an ellipsis
+  c1[#c1 + 1] = "</body></html>"
+  local c2 = { '<html><body><h2 id="t">Chapter Two</h2>' }
+  add("Chapter Two")
+  for i = 1, big do
+    local p, m = eb_para(100 + i, 60 + (i % 7) * 20)
+    c2[#c2 + 1] = "<p>" .. m .. "</p>\n"; add(p)
+  end
+  c2[#c2 + 1] = "</body></html>"
+  local c3 = '<html><body><h1>Last</h1><p>The end &amp; more.</p></body></html>'
+  add("Last"); add("The end & more.")
+  local files = {
+    { "mimetype", "application/epub+zip" },
+    { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' },
+    { "OEBPS/ch1.xhtml", table.concat(c1) }, { "OEBPS/ch2.xhtml", table.concat(c2) }, { "OEBPS/ch3.xhtml", c3 },
+    { "OEBPS/cover.png", ("\0"):rep(300) },
+  }
+  local manifest = '<item id="a" href="ch1.xhtml" media-type="application/xhtml+xml"/>' ..
+    '<item id="b" href="ch2.xhtml" media-type="application/xhtml+xml"/>' ..
+    '<item id="c" href="ch%33.xhtml" media-type="application/xhtml+xml"/>' ..
+    '<item id="cover" href="cover.png" media-type="image/png"/>'
+  local spine = '<itemref idref="a"/><itemref idref="b"/><itemref idref="c" linear="yes"/>'
+  if opts.ncx then
+    files[#files + 1] = { "OEBPS/toc.ncx", '<ncx><navMap><navPoint><navLabel><text>Alpha &amp; Omega</text></navLabel>' ..
+      '<content src="ch1.xhtml"/></navPoint><navPoint><navLabel><text>Bravo</text></navLabel>' ..
+      '<content src="ch2.xhtml#t"/></navPoint></navMap></ncx>' }
+    manifest = manifest .. '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
+    spine = '<spine toc="ncx">' .. spine .. "</spine>"
+  else
+    files[#files + 1] = { "OEBPS/nav.xhtml", '<html><body><nav epub:type="toc"><ol>' ..
+      '<li><a href="ch1.xhtml">First <b>Part</b></a></li><li><a href="ch2.xhtml#t">Second</a></li></ol></nav>' ..
+      '<nav epub:type="landmarks"><a href="ch3.xhtml">Nope</a></nav></body></html>' }
+    manifest = manifest .. '<item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
+    spine = "<spine>" .. spine .. "</spine>"
+  end
+  files[#files + 1] = { "OEBPS/content.opf", '<package><metadata><dc:title>The Test Book</dc:title>' ..
+    "<dc:creator>A. Writer</dc:creator></metadata><manifest>" .. manifest .. "</manifest>" .. spine .. "</package>" }
+  return files, table.concat(expect, "\n"):gsub("%s+", "")
+end
+
+-- Word-wrapping text_lines (the firmware wraps at word breaks; the default mock only
+-- estimates), still monotonic in the length of the text.
+-- The real one is C; this one is Lua, so the cost probe subtracts the instructions
+-- it spends (eb_cost.n counts every hook tick, eb_cost.mock the ones inside here).
+local eb_cost = nil
+local function eb_wrap(str, width, sz)
+  checkstr(str, "text_lines"); checkint(width, "text_lines width")
+  local c0 = eb_cost and eb_cost.n
+  local per = math.max(1, math.floor(width / (((sz or 14) + 4) * 0.48)))
+  local n = 0
+  str = tostring(str)
+  if #str > 0 and str:byte(-1) == 10 then str = str:sub(1, -2) end   -- like the firmware, no line for a trailing newline
+  for part in (str .. "\n"):gmatch("(.-)\n") do
+    local lines, cur = 1, #part:match("^ *")
+    for word in part:gmatch("%S+") do
+      local wl = 0
+      for _ in word:gmatch("[%z\1-\127\194-\244]") do wl = wl + 1 end
+      if cur == 0 then cur = wl
+      elseif cur + 1 + wl <= per then cur = cur + 1 + wl
+      else lines, cur = lines + 1, wl end
+      while cur > per do lines, cur = lines + 1, cur - per end
+    end
+    n = n + lines
+  end
+  if c0 then eb_cost.mock = eb_cost.mock + (eb_cost.n - c0) end
+  return n
+end
+
+-- The firmware's storeGet reads the default from stack slot 2, which is the store
+-- table once it has been pushed, so store.get(key) of a missing key returns that
+-- TABLE rather than nil (beta_101). Reproduce it: the app must not trust the result.
+local function eb_wada()
+  wada = build_wada()
+  wada.ui.text_lines = eb_wrap
+  local get = wada.store.get
+  wada.store.get = function(k, d)
+    local v = get(k, d)
+    if v == nil then return storekv end
+    return v
+  end
+end
+
+local function eb_start(w, h, files, caps, name)
+  cfg = { w = w, h = h, caps = caps or { touch = true, keyboard = true, sdk_ext = true } }
+  storekv = {}
+  eb_wada()
+  if files then fsfiles[name or "book.epub"] = files end
+end
+
+local function eb_page()
+  for _, l in ipairs(labels) do if l.x == 4 and l.y == 4 and l.w then return l.text end end
+  return nil
+end
+
+local function eb_status()
+  for _, l in ipairs(labels) do if l.text:match("^%d+/%d+  %d+%%$") then return l.text end end
+end
+
+-- Tick until a page (not a progress message) is showing.
+local function eb_wait(app)
+  for _ = 1, 3000 do
+    local t = eb_page()
+    if t and t ~= "Opening..." and t ~= "Loading..." then return t end
+    tick(app, 1, 40)
+  end
+  error("the page never appeared (last: " .. tostring(eb_page()) .. ")")
+end
+
+local function eb_row(label)
+  for _, l in ipairs(lists) do
+    for _, r in ipairs(l.rows) do if r.text:find(label, 1, true) then return r end end
+  end
+end
+
+local function eb_open_from_library(app, label)
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  local row = assert(eb_row(label), "no library row " .. label .. ": " .. label_dump())
+  assert(guarded(BUDGET, row.fn))
+  return eb_wait(app)
+end
+
+local function eb_next(app) key(app, "right"); tick(app, 1, 40) end
+
+scenarios.ebook_book = function()
+  local files, expect = eb_book()
+  eb_start(320, 240, zip_build(files))
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  assert(label_dump():find("1/3", 1, true), "status shows chapter 1 of 3: " .. label_dump())
+  -- forward through the whole book, collecting every page
+  local pages, seen = { eb_page() }, 1
+  while true do
+    local before = #toasts
+    key(app, "right")
+    local t = eb_wait(app)
+    if #toasts > before then assert(toasts[#toasts] == "End of book"); break end
+    pages[#pages + 1] = t
+    assert(#t > 0 and valid_utf8(t), "page " .. #pages .. " is empty or cuts a character")
+    assert(#pages < 2000, "never reaches the end")
+  end
+  assert(eb_status():match("^3/3  100%%$"), "100% at the end: " .. tostring(eb_status()))
+  local got = table.concat(pages, "\n"):gsub("%s+", "")
+  assert(got == expect, "text lost or repeated across pages/sections\n got " .. #got .. " bytes, expected " .. #expect)
+  print(string.format("  %d pages, %d bytes of text, all present once", #pages, #got))
+  assert(#pages > 20, "the big chapter should span many pages")
+  -- and backward: the same pages in reverse, across section and chapter edges
+  for i = #pages - 1, 1, -1 do
+    key(app, "left")
+    local t = eb_wait(app)
+    assert(t == pages[i], "page " .. i .. " differs going backward:\n" .. t .. "\n--- vs ---\n" .. pages[i])
+  end
+  local before = #toasts
+  key(app, "left")
+  assert(toasts[#toasts] == "Start of book" and #toasts == before + 1, "start of book toast")
+  if app.on_close then guarded(BUDGET, app.on_close) end
+end
+
+scenarios.ebook_toc_and_menu = function()
+  for _, ncx in ipairs({ false, true }) do
+    local files = eb_book({ ncx = ncx })
+    eb_start(320, 240, zip_build(files))
+    local app = load_app()
+    eb_open_from_library(app, "book")
+    key(app, "enter")   -- menu
+    assert(label_dump():find("The Test Book", 1, true) and label_dump():find("A. Writer", 1, true), "title/author: " .. label_dump())
+    assert(guarded(BUDGET, eb_row("Chapters").fn))
+    assert(eb_row(ncx and "1.  Alpha & Omega" or "1.  First Part"), "chapter 1 title: " .. label_dump())
+    assert(eb_row(ncx and "2.  Bravo" or "2.  Second"), "chapter 2 title (fragment stripped)")
+    assert(eb_row("3.  Section 3"), "an untitled chapter gets a number")
+    assert(guarded(BUDGET, eb_row("2.  ").fn))
+    local t = eb_wait(app)
+    assert(t:find("Chapter Two", 1, true), "chapter 2 opens at its start: " .. t:sub(1, 60))
+    assert(eb_status():match("^2/3"), "status after jump: " .. eb_status())
+    -- the menu's size row cycles 12 -> 14 -> 16 and the page is repaginated at the same spot
+    key(app, "m")
+    local row = eb_row("Text size: 14")
+    assert(row, "default size 14")
+    assert(guarded(BUDGET, row.fn))
+    assert(eb_row("Text size: 16") and storekv.sz == 16, "size row relabelled and stored")
+    assert(guarded(BUDGET, eb_row("Continue").fn))
+    local t2 = eb_wait(app)
+    assert(t2 ~= nil and #t2 > 0, "repaginated page shows")
+    app.on_close()
+    assert(storekv.pos and storekv.pos:find("book.epub|", 1, true), "position stored: " .. tostring(storekv.pos))
+  end
+end
+
+scenarios.ebook_resume = function()
+  local files = eb_book()
+  eb_start(320, 240, zip_build(files))
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  for _ = 1, 30 do eb_next(app); eb_wait(app) end   -- into the big chapter, past a section edge
+  local where, st = eb_page(), eb_status()
+  app.on_close()
+  -- a fresh run of the app picks the book up where it was left
+  eb_wada()
+  fsfiles["book.epub"] = zip_build(files)
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(eb_wait(app) == where, "resumes on the same page")
+  assert(eb_status() == st, "and the same status")
+  app.on_close()
+end
+
+scenarios.ebook_input = function()
+  local files = eb_book()
+  -- touch only (a T-Deck Max / phone-like board): taps on the thirds, swipes
+  eb_start(240, 320, zip_build(files), { touch = true, keyboard = false, sdk_ext = true, epaper = true })
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  local p1 = eb_page()
+  tap(app, 200, 100); local p2 = eb_wait(app)
+  assert(p2 ~= p1, "tap on the right third: next page")
+  tap(app, 20, 100); assert(eb_wait(app) == p1, "tap on the left third: previous page")
+  swipe(app, "left"); assert(eb_wait(app) == p2, "swipe left (finger moved left): next")
+  swipe(app, "right"); assert(eb_wait(app) == p1, "swipe right: previous")
+  swipe(app, "down"); assert(eb_wait(app) == p2, "trackball down: next")
+  swipe(app, "up"); assert(eb_wait(app) == p1, "trackball up: previous")
+  drag(app, 100, 100, 20, 100, "left"); assert(eb_wait(app) == p2, "a drag turns once, and its release is not a tap")
+  tap(app, 200, 315); assert(eb_wait(app) == p2, "a tap in the button row is ignored")
+  -- the footer buttons (what a jog wheel or encoder activates): next is created first
+  assert(buttons[1].text == "\xEF\x81\x94", "the next button gets default focus")
+  assert(guarded(BUDGET, buttons[1].fn)); assert(eb_wait(app) ~= p2, "next button")
+  assert(guarded(BUDGET, buttons[2].fn)); assert(eb_wait(app) == p2, "prev button")
+  tap(app, 120, 100)
+  assert(eb_row("Continue"), "centre tap opens the menu")
+  app.on_close()
+end
+
+-- Pictures: placeholders everywhere, and the three Images modes when the firmware has
+-- wada.ui.image (mocked here; it is not released yet).
+local function eb_pic_book()
+  local pic = "\137PNG-pretend-image-bytes"
+  local ch = '<html><body><h1>One</h1><p>Intro text.</p><p><img src="pic.png" alt="A diagram"/></p>' ..
+    '<p>Between words.</p><p><img src="missing.png" alt="Gone"/></p><p>The end.</p><p>Lead<img src="pic.png" alt="Inline"/>trail</p></body></html>'
+  local files = {
+    { "mimetype", "application/epub+zip" },
+    { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' },
+    { "OEBPS/ch1.xhtml", ch }, { "OEBPS/pic.png", pic },
+    { "OEBPS/content.opf", '<package><metadata><dc:title>Pics</dc:title></metadata><manifest>' ..
+      '<item id="a" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>' ..
+      '<spine><itemref idref="a"/></spine></package>' },
+  }
+  return zip_build(files), pic
+end
+
+local function eb_images_start(with_api, result)
+  local zipped, pic = eb_pic_book()
+  eb_start(320, 240, zipped)
+  local calls = { n = 0, removed = 0 }
+  if with_api then
+    wada.ui.image = function(file, off, len, x, y, w, h)
+      for _, v in ipairs({ off, len, x, y, w, h }) do checkint(v, "ui.image arg") end
+      calls.n = calls.n + 1
+      calls[#calls + 1] = { file = file, off = off, len = len, x = x, y = y, w = w, h = h }
+      if result == "fail" then return nil, "unsupported" end
+      return { remove = function() calls.removed = calls.removed + 1 end }
+    end
+  end
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  return app, calls, zipped, pic
+end
+
+local function eb_set_images(app, want)   -- cycle the menu row until it reads `want`
+  key(app, "m")
+  for _ = 1, 3 do
+    local row = assert(eb_row("Images:"), "Images row: " .. label_dump())
+    if row.text:find(want, 1, true) then break end
+    assert(guarded(BUDGET, row.fn))
+  end
+  assert(eb_row("Images: " .. want), "Images row reads " .. want)
+  assert(guarded(BUDGET, eb_row("Continue").fn))
+  return eb_wait(app)
+end
+
+scenarios.ebook_images = function()
+  -- no wada.ui.image (every firmware today): a placeholder line, no menu row, taps on it do nothing
+  local app, calls = eb_images_start(false)
+  local p = eb_page()
+  assert(p:find("<image: A diagram>", 1, true) and p:find("<image: Gone>", 1, true), "placeholders with alt text: " .. p)
+  -- a placeholder sits on a line of its own with a blank line above and below, even mid-sentence
+  local pad = p:match("\n\n( *)<image: A diagram>\n\n")
+  local want = (320 - 2 * 4 - wada.ui.text_w("<image: A diagram>", 14)) // 2 // wada.ui.text_w(" ", 14)
+  assert(pad and #pad == want and want > 0, "centred with blank lines around it: " .. tostring(pad and #pad) .. " spaces, wanted " .. want)
+  key(app, "right")
+  local p2 = eb_page()
+  assert(p2:find("Lead\n\n *<image: Inline>\n\n") and p2:find("\n\n *trail"), "an image inside a paragraph gets its own line: " .. p2)
+  key(app, "left"); assert(eb_page() == p, "back on the first page")
+  tap(app, 160, 4 + 3 * 18 + 1)
+  assert(not eb_row("Continue") and eb_page() == p, "a tap on a placeholder does nothing")
+  key(app, "i"); assert(eb_page() == p and calls.n == 0, "the i key does nothing")
+  tap(app, 160, 5); assert(eb_row("Continue"), "a centre tap elsewhere still opens the menu")
+  assert(not eb_row("Images"), "no Images row without wada.ui.image")
+  app.on_close()
+
+  -- with it: the default is "never" (the placeholder only), then "always" and "on tap"
+  app, calls = eb_images_start(true)
+  p = eb_page()
+  assert(p:find("<image: A diagram>", 1, true), "default shows placeholders")
+  tap(app, 160, 4 + 3 * 18 + 1)
+  assert(not eb_row("Continue") and calls.n == 0, "never: a tap on a placeholder does nothing")
+  key(app, "m"); assert(eb_row("Images: never"), "default mode: " .. label_dump())
+  assert(not eb_row("View image"), "no View image row in never mode")
+
+  -- always: the picture gets a page of its own, the others stay text
+  eb_set_images(app, "always")
+  assert(storekv.img == "always", "mode stored")
+  local seen, texts = nil, {}
+  for _ = 1, 8 do
+    local pg = eb_page()
+    if calls.n > 0 and not seen then seen = #texts + 1 end
+    texts[#texts + 1] = pg
+    local before = #toasts
+    key(app, "right"); tick(app, 3, 40)
+    if #toasts > before then break end
+  end
+  assert(seen, "an image page was drawn")
+  local c = calls[1]
+  assert(c.file == "book.epub" and c.x == 4 and c.y == 4 and c.w == 312 and c.h == 194, "image box: " .. c.x .. "," .. c.y .. " " .. c.w .. "x" .. c.h)
+  local _, zpic = eb_pic_book()
+  local zipped = fsfiles["book.epub"]
+  assert(zipped:sub(c.off + 1, c.off + c.len) == zpic, "offset and length address the picture bytes in the zip")
+  assert(texts[seen] == "", "an image page has no text")
+  assert(texts[seen - 1] and not texts[seen - 1]:find("image", 1, true), "text before it is on its own page")
+  assert(texts[seen + 1] and texts[seen + 1]:find("Between words.", 1, true), "text after it follows")
+  assert(calls.removed >= 1, "the picture is removed when the page turns")
+  assert(texts[seen + 1]:find("<image: Gone>", 1, true), "a picture the book lacks stays a placeholder")
+
+  -- a firmware that refuses the picture: the placeholder text shows instead
+  app, calls = eb_images_start(true, "fail")
+  eb_set_images(app, "always")
+  local shown = false
+  for _ = 1, 6 do
+    if eb_page():find("<image: A diagram>", 1, true) then shown = true; break end
+    key(app, "right"); tick(app, 3, 40)
+  end
+  assert(shown and calls.n >= 1, "a refused picture falls back to its placeholder")
+
+  -- on tap: the placeholder opens the picture fit to the screen; any tap or key comes back
+  app, calls = eb_images_start(true)
+  p = eb_set_images(app, "on tap")
+  local before = #calls
+  tap(app, 160, 4 + 3 * 18 + 1)
+  assert(#calls == before + 1, "a tap on the placeholder shows the picture")
+  c = calls[#calls]
+  assert(c.x == 0 and c.y == 0 and c.w == 320 and c.h == 240, "fit to the whole screen")
+  tap(app, 160, 100); assert(eb_wait(app) == p, "a tap goes back to the same page")
+  tap(app, 30, 4 + 3 * 18 + 1); assert(#calls == before + 1 and eb_page() ~= nil and not eb_row("Continue"), "the left third turns pages, it does not open the picture")
+  eb_set_images(app, "on tap")
+  key(app, "i"); assert(#calls == before + 2, "the i key shows the picture")
+  key(app, "enter"); assert(eb_wait(app) == p, "any key goes back")
+  key(app, "m")
+  assert(guarded(BUDGET, assert(eb_row("View image")).fn)); assert(#calls == before + 3, "the menu row shows the picture")
+  tap(app, 160, 100); eb_wait(app)
+  -- a picture the book does not contain: a note, and back on the page
+  local tb = #toasts
+  tap(app, 160, 4 + 7 * 18 + 1)
+  assert(toasts[#toasts] == "Cannot show this image" and #toasts == tb + 1, "a missing picture says so")
+  assert(eb_wait(app) == p, "and the page is back")
+  app.on_close()
+  assert(storekv.img == "tap", "mode stored: " .. tostring(storekv.img))
+end
+
+scenarios.ebook_errors = function()
+  -- empty folder: a hint, and a README that creates the folder on first run
+  eb_start(320, 240, nil)
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(label_dump():find("No books", 1, true), "empty library hint: " .. label_dump())
+  assert(fsfiles["README.txt"] and fsfiles["README.txt"]:find("ebook%-prep"), "README written")
+  -- a compressed book says how to fix it
+  local files = eb_book()
+  eb_start(320, 240, zip_build(files, 8))
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(guarded(BUDGET, eb_row("book").fn))
+  for _ = 1, 200 do tick(app, 1, 40) end
+  assert(label_dump():find("ebook-prep.py", 1, true), "compressed message: " .. label_dump())
+  -- not a zip at all, a truncated zip, and a name over 32 characters (unreadable)
+  for _, junk in ipairs({ "this is not a zip file, just text that is long enough", zip_build(files):sub(1, 400) }) do
+    eb_start(320, 240, junk)
+    app = load_app()
+    assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+    assert(guarded(BUDGET, eb_row("book").fn))
+    for _ = 1, 200 do tick(app, 1, 40) end
+    assert(label_dump():find("Cannot open this book", 1, true), "bad file: " .. label_dump())
+    assert(eb_row("") == nil and #buttons == 1, "an error screen offers a way back")
+    assert(guarded(BUDGET, buttons[1].fn))
+    assert(label_dump():find("Books", 1, true), "back to the library")
+  end
+  -- old firmware: no ui.clear
+  eb_start(320, 240, zip_build(files))
+  wada.ui.clear = nil
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(label_dump():find("newer firmware", 1, true), "gated: " .. label_dump())
+end
+
+scenarios.ebook_cost = function()
+  -- a tag-dense chapter (one tag per few characters) and a long unbroken text run
+  local dense = { "<html><body>" }
+  for i = 1, 600 do dense[#dense + 1] = "<p><b>a</b><i>b</i><span>c</span> word" .. i .. "<br/>x</p>" end
+  dense[#dense + 1] = "<p>" .. ("lorem ipsum "):rep(900) .. "</p><p>" .. ("z"):rep(7000) .. "</p></body></html>"
+  local files = eb_book()
+  files[3] = { "OEBPS/ch1.xhtml", table.concat(dense) }
+  eb_start(320, 240, zip_build(files))
+  local app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(guarded(BUDGET, eb_row("book").fn))
+  local worst = 0
+  local function probe(fn, ...)
+    eb_cost = { n = 0, mock = 0 }
+    debug.sethook(function() eb_cost.n = eb_cost.n + 100; if eb_cost.n > 200 * BUDGET then error("callback never returns", 0) end end, "", 100)
+    local ok, err = pcall(fn, ...)
+    debug.sethook()
+    local n = eb_cost.n - eb_cost.mock
+    eb_cost = nil
+    assert(ok, err)
+    if n > worst then worst = n end
+  end
+  local steps = 0
+  for _ = 1, 8000 do
+    clock_ms = clock_ms + 40
+    probe(app.on_tick, 40)
+    steps = steps + 1
+    local t = eb_page()
+    if t and t ~= "Opening..." and t ~= "Loading..." then
+      probe(app.on_input, { type = "key", key = "right" })
+      if #toasts > 0 then break end
+    end
+  end
+  assert(#toasts > 0 and toasts[#toasts] == "End of book", "never reached the end of the dense book")
+  print(string.format("  worst callback ~%d instructions (budget %d), %d ticks", worst, BUDGET, steps))
+  assert(worst < BUDGET / 4, "callback too expensive: " .. worst .. " > " .. BUDGET / 4)
+  app.on_close()
+end
+
 -- True (and says so) when this app has no scenarios of its own. Returning a
 -- truthy value makes the dispatch below pick an EMPTY list rather than running
 -- someone else's tests against it.
@@ -2545,6 +3045,8 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   and { "wardrive_utf8" }
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
+  or APP_PATH:find("/ebook/", 1, true)
+  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_errors", "ebook_cost" }
   or APP_PATH:find("/breakout/", 1, true)
   and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or APP_PATH:find("/tripodometer/", 1, true)
