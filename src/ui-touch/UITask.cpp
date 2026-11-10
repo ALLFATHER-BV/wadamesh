@@ -159,6 +159,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
 #include "ChannelSenderSplit.h"  // host-tested "SenderName: body" split for channel/room posts
+#include "TakTexts.h"            // host-tested MeshCore Open TAK / MediaMesh text rules
 #include "ReactionCodec.h"       // host-tested emoji reactions from MeshCore Open / One (#791)
 #include "PasteHexKey.h"        // host-tested key extraction for pasted key fields (#526)
 #include "NavSpatial.h"         // host-tested keypad spatial step (navMoveDir)
@@ -16219,6 +16220,14 @@ static void buildProfileSettings() {
   }
 }
 
+static void hideTakTextsChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED || !g_lv.task) return;
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  touchPrefsSetHideTakTexts(on);
+  g_lv.task->showAlert(on ? TR("MediaMesh and TAK texts will be hidden")
+                          : TR("MediaMesh and TAK texts will be shown"), 1600);
+}
+
 // Single-character spam filter. A lot of mesh spam is a 1-byte payload — the cheapest
 // message there is — and it still costs every receiver a notification and a chime.
 static void ignoreTinyMsgsChangedCb(lv_event_t* e) {
@@ -16731,6 +16740,9 @@ static void buildRadioSettings() {
     setSwitchRow(c, "Ignore 1-character messages",
                  "Most mesh spam is a single character, because it is the cheapest message to send. Dropped silently: no chat entry, no notification, no sound.",
                  touchPrefsGetIgnoreTinyMsgs(), ignoreTinyMsgsChangedCb);
+    setSwitchRow(c, "Hide MediaMesh and TAK texts",
+                 "Apps like MeshCore Open TAK send photos, voice and team tracking as text. Messages between apps are dropped, and the rest become a short label such as Photo. A connected phone app still gets everything.",
+                 touchPrefsGetHideTakTexts(), hideTakTextsChangedCb);
   }
 
   // Position on request (#266): encrypted to the contact that asked, never broadcast.
@@ -82229,6 +82241,14 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
       ? (parsed_sender[0] ? parsed_sender : (from_name && from_name[0] ? from_name : "node"))
       : (from_name && from_name[0] ? from_name : "node"));
 
+  // MeshCore Open TAK and Wadamesh TAK carry media and tracking as ordinary texts
+  // with machine-readable headers (Settings > Radio & Mesh, off by default). Only
+  // what this screen shows is filtered: MyMesh has already queued the frame for a
+  // connected app, which needs it. Room posts are outside those formats.
+  const taktext::Kind tak_kind = (!have_sender_override && touchPrefsGetHideTakTexts())
+                                     ? taktext::classify(body, !channel) : taktext::kNone;
+  if (tak_kind == taktext::kControl) return;   // before the chime, so it stays silent
+
 #if defined(ESP32)
   // Blocked-by-name sender: a channel/room bot we have no pubkey to target via
   // the prefix ignore-list (room posts carry only a display name). Drop the post
@@ -82299,6 +82319,19 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // app still sees the wire text and can parse it itself; before the chime and the
   // glance, so those show the readable line too. Room posts (no channel, sender
   // override) are left alone: neither client defines reactions there.
+  // Same place and reason for the short line that stands in for a TAK photo, voice
+  // clip or encrypted text this device cannot open. A caption is kept.
+  char tak_text[MAX_MSG_TEXT + 1];
+  if (tak_kind != taktext::kNone) {
+    const char* label = tak_kind == taktext::kPhoto ? TR("Photo")
+                      : tak_kind == taktext::kVoice ? TR("Voice message")
+                      : tak_kind == taktext::kTalk  ? TR("Push-to-talk")
+                                                    : TR("Encrypted message");
+    const char* cap = tak_kind == taktext::kEncrypted ? "" : taktext::caption(body);
+    snprintf(tak_text, sizeof tak_text, cap[0] ? "%s: %s" : "%s%s", label, cap);
+    body = tak_text;
+  }
+
   char reaction_text[MAX_MSG_TEXT + 1];
   if (!have_sender_override) {
     ReactionCodec::Reaction rx;

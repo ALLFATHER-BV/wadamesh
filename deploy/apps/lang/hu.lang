@@ -2407,3 +2407,11 @@ View image	Kép megtekintése
 image	kép
 reacted	reagált
 reacted to	reagált erre:
+Hide MediaMesh and TAK texts	MediaMesh és TAK szövegek elrejtése
+Apps like MeshCore Open TAK send photos, voice and team tracking as text. Messages between apps are dropped, and the rest become a short label such as Photo. A connected phone app still gets everything.	Az olyan alkalmazások, mint a MeshCore Open TAK, szövegként küldenek fotókat, hangot és csapatkövetést. Az alkalmazások közötti üzenetek eldobásra kerülnek, a többi rövid címkévé válik, például Fotó. A csatlakoztatott telefonos alkalmazás továbbra is mindent megkap.
+MediaMesh and TAK texts will be hidden	A MediaMesh és TAK szövegek rejtve lesznek
+MediaMesh and TAK texts will be shown	A MediaMesh és TAK szövegek láthatók lesznek
+Photo	Fotó
+Voice message	Hangüzenet
+Push-to-talk	Push-to-talk
+Encrypted message	Titkosított üzenet

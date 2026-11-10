@@ -561,6 +561,8 @@ uint16_t touchPrefsGetMapMarkerCap();
 void     touchPrefsSetMapMarkerCap(uint16_t n);
 bool    touchPrefsGetIgnoreTinyMsgs();
 void    touchPrefsSetIgnoreTinyMsgs(bool on);
+bool    touchPrefsGetHideTakTexts();
+void    touchPrefsSetHideTakTexts(bool on);
 void    touchPrefsSetSoundMentions(bool on);
 bool    touchPrefsGetSoundDirect();            // direct/DM chime on/off, default true
 void    touchPrefsSetSoundDirect(bool on);

@@ -2397,3 +2397,11 @@ View image	Прикажи слику
 image	слика
 reacted	реаговао/ла
 reacted to	реаговао/ла на
+Hide MediaMesh and TAK texts	Сакриј MediaMesh и TAK текстове
+Apps like MeshCore Open TAK send photos, voice and team tracking as text. Messages between apps are dropped, and the rest become a short label such as Photo. A connected phone app still gets everything.	Апликације као MeshCore Open TAK шаљу фотографије, глас и праћење тима као текст. Поруке између апликација се одбацују, а остале постају кратка ознака, на пример Фотографија. Повезана апликација на телефону и даље добија све.
+MediaMesh and TAK texts will be hidden	MediaMesh и TAK текстови ће бити сакривени
+MediaMesh and TAK texts will be shown	MediaMesh и TAK текстови ће бити приказани
+Photo	Фотографија
+Voice message	Гласовна порука
+Push-to-talk	Push-to-talk
+Encrypted message	Шифрована порука

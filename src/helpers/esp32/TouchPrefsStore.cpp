@@ -2402,6 +2402,12 @@ bool touchPrefsGetIgnoreTinyMsgs() {
   return s_prefs.getUChar("ign_tiny", 0) != 0;
 }
 void touchPrefsSetIgnoreTinyMsgs(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ign_tiny", on ? 1 : 0); }
+// Off by default for the same reason: it changes what other people's messages look like.
+bool touchPrefsGetHideTakTexts() {
+  if (!s_begun) touchPrefsBegin();
+  return s_prefs.getUChar("hide_tak", 0) != 0;
+}
+void touchPrefsSetHideTakTexts(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("hide_tak", on ? 1 : 0); }
 uint8_t touchPrefsGetP4KbLight(uint8_t def) {
   if (!s_begun) touchPrefsBegin();
   return s_prefs.getUChar("p4kb_light", def);
@@ -3059,7 +3065,7 @@ static int backupKeys(BkKey* out, int cap) {
   };
   add(KEY_CFG, 'b');
   static const char* const k_u8[] = {
-    "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "dsc_evict", "dsc_hops",
+    "snd_msg", "snd_men", "snd_dm", "snd_vol", "vibrate", "vib_pat", "ign_tiny", "hide_tak", "dsc_evict", "dsc_hops",
     "ent_send", "clk_12h", "nav_mbk", "tb_rev", "tb_edgesc", "lock_off", "glance_lck",
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
 #if defined(TLORA_PAGER)
