@@ -17215,10 +17215,12 @@ static void sysInfoTextLive(char* buf, size_t cap) {
     else
       snprintf(stat, sizeof stat, "none this session");
     p += snprintf(buf + p, cap - p,
-                  "Chat store\n  %s   %d seg / %u KB%s\n  last save: %s\n\n",
+                  "Chat store\n  %s   %d seg / %u KB%s\n  in memory %d of %d, keep %u per chat\n  last save: %s\n\n",
                   uiDataFsIsSdCard() ? "SD /meshcomod" : "Internal flash",
                   s_seg_count, (unsigned)(s_seg_total_bytes / 1024u),
                   s_seg_store_ready ? "" : "  (migration pending!)",
+                  g_lv.task ? g_lv.task->uiMsgCount() : 0, g_lv.task ? g_lv.task->uiMsgCap() : 0,
+                  (unsigned)touchPrefsGetHistPerChat(),
                   stat);
   }
 #endif
@@ -22381,9 +22383,10 @@ static unsigned long s_ui_ping_deadline_ms = 0;
 static char s_ui_ping_target_name[24] = {0};
 // A repeater with no guest access refuses the login behind Ping and never answers. A trace
 // needs no login, so a repeater that stayed silent gets one before "No reply" (#780).
-static uint8_t s_ui_ping_trace_key[PUB_KEY_SIZE];
+static ContactInfo s_ui_ping_trace_c;     // as it was at Ping time: the login below forgets its path
+static uint32_t s_ui_ping_trace_tag = 0;
 static bool    s_ui_ping_trace_due = false;
-static constexpr unsigned long UI_PING_TRACE_TIMEOUT_MS = 10000;
+static constexpr unsigned long UI_PING_TRACE_TIMEOUT_MS = 20000;
 
 // ---- Telemetry window state (window + auto-poll defined further down) ----
 enum { TELEM_IN_PROGRESS = 0, TELEM_RECEIVED, TELEM_FAILED, TELEM_HISTORY };
@@ -22409,6 +22412,7 @@ static void actionSheetPingCb(lv_event_t* e) {
   /* Wait for the guest LOGIN response before sending STATUS. Besides avoiding
    * the first-contact ACL race, the interactive login re-discovers the path so
    * older repeaters can return LOGIN_OK before the request is sent. */
+  const ContactInfo before_login = c;
   int r = the_mesh.uiSendRequestAfterGuestLogin(c, MyMesh::UiReqKind::Status);
   if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
     copyUtf8ReplacingMissingGlyphs(&g_font_14, s_ui_ping_target_name,
@@ -22416,7 +22420,7 @@ static void actionSheetPingCb(lv_event_t* e) {
                                     c.name[0] ? contactShownName(c.id.pub_key, c.name) : "repeater");
     s_ui_ping_deadline_ms = millis() + UI_PING_TIMEOUT_MS;
     s_ui_ping_trace_due = c.type == ADV_TYPE_REPEATER;
-    memcpy(s_ui_ping_trace_key, c.id.pub_key, PUB_KEY_SIZE);
+    s_ui_ping_trace_c = before_login;
     g_lv.task->showAlert(r == MSG_SEND_SENT_DIRECT
                          ? TR("Pinged (direct) — waiting…")
                          : TR("Pinged (flood) — waiting…"), 1400);
@@ -75361,6 +75365,47 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
            label);
   showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
 }
+// A Lua ping's trace: onTracePingResult parks the answer here for the app's timer,
+// because it runs inside packet reception, where app code must not.
+static uint32_t s_lua_ping_tag = 0;
+static bool     s_lua_ping_done = false;
+static int8_t   s_lua_ping_their = 0, s_lua_ping_ours = 0, s_lua_ping_extra[63];
+static uint8_t  s_lua_ping_extra_n = 0;
+
+// `who` is a contact name, or the 8-hex public key prefix contacts() reports.
+uint32_t luaHostMeshPing(const char* who, const char** err) {
+  if (!who || !*who) { *err = "no such contact"; return 0; }
+  if (s_lua_ping_tag || s_ui_ping_deadline_ms != 0 || s_trace_route_pending) { *err = "radio busy"; return 0; }
+  ContactInfo* by = nullptr;
+  const uint32_t n = the_mesh.getNumContacts();
+  for (uint32_t i = 0; i < n && !by; ++i) {
+    ContactInfo c;
+    if (!the_mesh.getContactByIdx(i, c)) continue;
+    char hex[12];
+    luaPubkeyHex(c.id.pub_key, 4, hex, sizeof hex);
+    if (strcmp(c.name, who) == 0 || strcmp(hex, who) == 0)
+      by = the_mesh.lookupContactByPubKey(c.id.pub_key, PUB_KEY_SIZE);
+  }
+  if (!by) { *err = "no such contact"; return 0; }
+  if (by->type != ADV_TYPE_REPEATER) { *err = "not a repeater"; return 0; }   // only repeaters answer a trace
+  const uint32_t tag = the_mesh.uiSendTraceRoute(*by);
+  if (!tag) { *err = "radio busy"; return 0; }
+  s_lua_ping_tag = tag;
+  s_lua_ping_done = false;
+  return tag;
+}
+bool luaHostPingTakeResult(int8_t* their_snr, int8_t* our_snr, uint8_t* extra_hops, int8_t* extra) {
+  if (!s_lua_ping_done) return false;
+  *their_snr = s_lua_ping_their;
+  *our_snr = s_lua_ping_ours;
+  *extra_hops = s_lua_ping_extra_n;
+  memcpy(extra, s_lua_ping_extra, s_lua_ping_extra_n);
+  s_lua_ping_tag = 0;
+  s_lua_ping_done = false;
+  return true;
+}
+void luaHostPingCancel() { s_lua_ping_tag = 0; s_lua_ping_done = false; }
+
 // type_filter is a bitmask over ADV_TYPE_*; 0 means every node type.
 // Returns the scan tag (non-zero) if the probe went out.
 uint32_t luaHostMeshDiscover(int type_filter) {
@@ -77400,10 +77445,29 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
 #endif
 }
 
+bool UITask::hidesIncomingText(const char* text, bool channel) {
+  if (!text || !touchPrefsGetHideTakTexts()) return false;
+  char name[MAX_SENDER_NAME + 1];
+  const char* body = channel ? ChannelSenderSplit::split(text, name, sizeof name) : text;
+  return taktext::classify(body, !channel) == taktext::kControl;
+}
+
 void UITask::onTracePingResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
                                uint8_t extra_hops, const int8_t* extra_snrs) {
-  (void)tag;
-  s_ui_ping_deadline_ms = 0;   // the trace behind a Ping that got no login reply (#780)
+#if CAP_LUA_SDK_EXT
+  if (tag && tag == s_lua_ping_tag) {   // an app asked: no toast, its on_ping reports it
+    s_lua_ping_their = their_snr;
+    s_lua_ping_ours = our_snr;
+    s_lua_ping_extra_n = extra_snrs ? (extra_hops < sizeof s_lua_ping_extra ? extra_hops : sizeof s_lua_ping_extra) : 0;
+    if (s_lua_ping_extra_n) memcpy(s_lua_ping_extra, extra_snrs, s_lua_ping_extra_n);
+    s_lua_ping_done = true;
+    return;
+  }
+#endif
+  if (tag && tag == s_ui_ping_trace_tag) {   // the trace behind a Ping that got no login reply (#780)
+    s_ui_ping_trace_tag = 0;
+    s_ui_ping_deadline_ms = 0;
+  }
   // SNR values come from the wire as int8_t * 4. Convert to floating-point
   // dB just for display so a user reading "-3.25 dB" understands the scale
   // (negative SNR is below the noise floor — typical for chirp-spread LoRa).
@@ -82244,10 +82308,11 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // MeshCore Open TAK and Wadamesh TAK carry media and tracking as ordinary texts
   // with machine-readable headers (Settings > Radio & Mesh, off by default). Only
   // what this screen shows is filtered: MyMesh has already queued the frame for a
-  // connected app, which needs it. Room posts are outside those formats.
+  // connected phone, which needs it. Room posts are outside those formats. The
+  // messages between apps normally stop earlier, at hidesIncomingText().
   const taktext::Kind tak_kind = (!have_sender_override && touchPrefsGetHideTakTexts())
                                      ? taktext::classify(body, !channel) : taktext::kNone;
-  if (tak_kind == taktext::kControl) return;   // before the chime, so it stays silent
+  if (tak_kind == taktext::kControl) return;
 
 #if defined(ESP32)
   // Blocked-by-name sender: a channel/room bot we have no pubkey to target via
@@ -83431,9 +83496,14 @@ void UITask::loop() {
     s_ui_ping_deadline_ms = 0;
     the_mesh.cancelUIDeferredLogin();
     the_mesh.cancelUIPingPending();
-    ContactInfo* trace_c = s_ui_ping_trace_due ? the_mesh.lookupContactByPubKey(s_ui_ping_trace_key, PUB_KEY_SIZE) : nullptr;
+    if (s_ui_ping_trace_tag) { s_ui_ping_trace_tag = 0; s_trace_route_pending = false; }   // its trace went unanswered
+    const uint32_t trace_tag = s_ui_ping_trace_due ? the_mesh.uiSendTraceRoute(s_ui_ping_trace_c) : 0;
     s_ui_ping_trace_due = false;
-    if (trace_c && the_mesh.uiSendTraceRoute(*trace_c)) {
+    if (trace_tag) {
+      s_ui_ping_trace_tag = trace_tag;
+      // More than one hop has a reading per hop: the card shows them, the toast only two.
+      s_trace_route_pending = s_ui_ping_trace_c.out_path_len != OUT_PATH_UNKNOWN &&
+                              (s_ui_ping_trace_c.out_path_len & 63) != 0;
       s_ui_ping_deadline_ms = millis() + UI_PING_TRACE_TIMEOUT_MS;
       showAlert(TR("No login reply, tracing instead\xE2\x80\xA6"), 2000);
     } else {

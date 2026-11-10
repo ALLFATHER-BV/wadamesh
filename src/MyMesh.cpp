@@ -3277,6 +3277,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 #ifdef DISPLAY_CLASS
   // we only want to show text messages on display, not cli data
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
+  if (txt_type == TXT_TYPE_PLAIN && _ui && _ui->hidesIncomingText(text, false)) should_display = false;
   if (should_display && _ui) {
     /* notify BEFORE newMsgFromPub: UITask::newMsg keys on g_last_event to
      * decide channel-thread vs DM-thread. Previously this fired only when
@@ -3535,8 +3536,9 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
    * to decide whether the message lands in a channel thread or a DM thread.
    * Used to only fire when the serial client was disconnected, which meant
    * channel messages got appended as DMs whenever TCP/BLE was up. */
-  if (_ui) _ui->notify(UIEventType::channelMessage);
-  if (_ui) {
+  const bool ui_shows = _ui && !_ui->hidesIncomingText(text, true);
+  if (ui_shows) _ui->notify(UIEventType::channelMessage);
+  if (ui_shows) {
     const int8_t snr_q4 = (int8_t)(pkt->getSNR() * 4);
     const int8_t rssi   = (int8_t)(_radio->getLastRSSI());
     const bool   is_flood = pkt->isRouteFlood();

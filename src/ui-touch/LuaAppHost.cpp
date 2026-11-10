@@ -113,6 +113,10 @@ extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 extern uint32_t luaHostLastSentFp();
 extern uint8_t  luaHostRepeatsForFp(uint32_t fp);
 extern uint8_t  luaHostRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t cap);
+#define LUA_PING_MAX_HOPS 63
+extern uint32_t luaHostMeshPing(const char* who, const char** err);
+extern bool luaHostPingTakeResult(int8_t* their_snr, int8_t* our_snr, uint8_t* extra_hops, int8_t* extra);
+extern void luaHostPingCancel();
 extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
 extern int  luaHostMeshChannelNames(char out[][32], int max_n);
 extern int  luaHostDmSendPerm(const char* app_id);
@@ -1103,6 +1107,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "paths");      // repeater hashes in packets, messages, repeats()
+  lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "ping");       // wada.mesh.ping + app.on_ping
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
@@ -1664,6 +1669,80 @@ int meshDiscover(lua_State* L) {
   const uint32_t tag = luaHostMeshDiscover(types);
   if (!tag) { lua_pushboolean(L, 0); lua_pushstring(L, "radio busy"); return 2; }
   s_h->mesh_last_probe_ms = now;
+  lua_pushinteger(L, (lua_Integer)tag);
+  return 1;
+}
+
+// wada.mesh.ping(name_or_pubkey) -> tag | nil, reason
+//
+// A trace to one repeater along its known route, so it needs no login and works
+// on repeaters without guest access. The answer arrives in app.on_ping. Gated
+// like discover(), because it transmits and costs a reply from every hop on the
+// way. One at a time per device: the mesh layer tracks a single trace tag.
+static constexpr uint32_t kMeshPingTimeoutMs = 20000;   // the trace goes there and back
+static lv_timer_t* s_ping_poll = nullptr;
+static uint32_t    s_ping_tag = 0;
+static uint32_t    s_ping_sent_ms = 0;
+
+static void pingPollCb(lv_timer_t* t) {
+  (void)t;
+  if (!s_h || !s_h->L) return;
+  int8_t their = 0, ours = 0, extra[LUA_PING_MAX_HOPS];
+  uint8_t extra_n = 0;
+  const bool got = luaHostPingTakeResult(&their, &ours, &extra_n, extra);
+  const uint32_t rtt = millis() - s_ping_sent_ms;
+  if (!got && rtt < kMeshPingTimeoutMs) return;
+
+  const uint32_t tag = s_ping_tag;
+  s_ping_tag = 0;
+  lv_timer_del(s_ping_poll);
+  s_ping_poll = nullptr;
+  if (!got) luaHostPingCancel();
+  if (!pushCallback(s_h, "on_ping")) return;
+  lua_State* L = s_h->L;
+  lua_createtable(L, 0, 7);
+  lua_pushinteger(L, (lua_Integer)tag); lua_setfield(L, -2, "tag");
+  lua_pushboolean(L, got);              lua_setfield(L, -2, "ok");
+  if (got) {
+    lua_pushinteger(L, (lua_Integer)rtt);       lua_setfield(L, -2, "rtt_ms");
+    lua_pushnumber(L, (double)ours / 4.0);      lua_setfield(L, -2, "snr");
+    // The route runs out, through the repeater, and back, so its reading is the middle one.
+    const int mid = extra_n / 2;
+    lua_pushnumber(L, (double)(mid ? extra[mid - 1] : their) / 4.0); lua_setfield(L, -2, "their_snr");
+    lua_pushinteger(L, 1 + (int)extra_n);       lua_setfield(L, -2, "hops");
+    lua_createtable(L, 1 + extra_n, 0);         // SNR at each node along the route, in order
+    lua_pushnumber(L, (double)their / 4.0);     lua_rawseti(L, -2, 1);
+    for (int i = 0; i < extra_n; i++) { lua_pushnumber(L, (double)extra[i] / 4.0); lua_rawseti(L, -2, i + 2); }
+    lua_setfield(L, -2, "hop_snr");
+  } else {
+    lua_pushstring(L, "no reply"); lua_setfield(L, -2, "err");
+  }
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+
+int meshPing(lua_State* L) {
+  const char* who = luaL_checkstring(L, 1);
+  if (!s_h) { lua_pushnil(L); lua_pushstring(L, "no app"); return 2; }
+  const int perm = luaHostProbePerm(s_h->id);
+  if (perm != 1) {
+    if (perm == 0) luaHostRequestProbePerm(s_h->id, s_h->id);   // ask once, never in a loop
+    lua_pushnil(L);
+    lua_pushstring(L, perm == 0 ? "permission requested" : "permission denied");
+    return 2;
+  }
+  const uint32_t now = millis();
+  if (s_h->mesh_last_probe_ms && (uint32_t)(now - s_h->mesh_last_probe_ms) < kMeshProbeMinGapMs) {
+    lua_pushnil(L); lua_pushstring(L, "too fast"); return 2;
+  }
+  if (s_ping_poll) { lua_pushnil(L); lua_pushstring(L, "radio busy"); return 2; }
+  const char* err = nullptr;
+  const uint32_t tag = luaHostMeshPing(who, &err);
+  if (!tag) { lua_pushnil(L); lua_pushstring(L, err ? err : "radio busy"); return 2; }
+  s_h->mesh_last_probe_ms = now;
+  s_ping_tag = tag;
+  s_ping_sent_ms = now;
+  s_ping_poll = lv_timer_create(pingPollCb, 100, nullptr);
   lua_pushinteger(L, (lua_Integer)tag);
   return 1;
 }
@@ -3128,6 +3207,7 @@ void openWada(lua_State* L) {
 #if CAP_LUA_SDK_EXT
   lua_pushcfunction(L, meshSend);     lua_setfield(L, -2, "send");      // consent-gated (channels)
   lua_pushcfunction(L, meshRepeats);  lua_setfield(L, -2, "repeats");   // repeaters heard rebroadcasting a send
+  lua_pushcfunction(L, meshPing);     lua_setfield(L, -2, "ping");      // consent-gated (transmits)
   lua_pushcfunction(L, meshSendDm);   lua_setfield(L, -2, "send_dm");   // consent-gated (DMs + rooms)
   lua_pushcfunction(L, meshChannels); lua_setfield(L, -2, "channels");  // names only, no secrets
   lua_pushcfunction(L, meshDiscover); lua_setfield(L, -2, "discover");  // consent-gated (transmits)
@@ -3363,6 +3443,9 @@ void hostTeardown() {
   if (h->L && h->prompt_cb != LUA_NOREF) luaL_unref(h->L, LUA_REGISTRYINDEX, h->prompt_cb);
   h->prompt_cb = LUA_NOREF;
   if (s_pkt_poll) { lv_timer_del(s_pkt_poll); s_pkt_poll = nullptr; }
+#if CAP_LUA_SDK_EXT
+  if (s_ping_poll) { lv_timer_del(s_ping_poll); s_ping_poll = nullptr; s_ping_tag = 0; luaHostPingCancel(); }
+#endif
 #if CAP_LUA_AUDIO
   if (s_audio_poll) { lv_timer_del(s_audio_poll); s_audio_poll = nullptr; }
 #endif

@@ -67,5 +67,6 @@ inline void luaAppPress() {}
 inline bool luaAppKey(int) { return false; }
 inline bool luaAppHasOnInput() { return false; }
 inline bool luaAppScroll(bool) { return false; }
-inline void luaAppMessage(const char*, const char*, const char*, const char*) {}
+inline void luaAppMessage(const char*, const char*, const char*, const char*, int = -1,
+                          const uint8_t* = nullptr, uint8_t = 0, uint8_t = 1) {}
 #endif

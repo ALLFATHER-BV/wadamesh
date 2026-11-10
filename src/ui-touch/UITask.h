@@ -293,6 +293,9 @@ public:
   /** Trace-ping reply landed: open a modal with the bidirectional SNR
    *  numbers. Called by MyMesh::onTraceRecv when the trace's tag matches
    *  the one we issued from the contact action sheet's Trace Ping button. */
+  bool hidesIncomingText(const char* text, bool channel) override;
+  int  uiMsgCount() const { return _ui_msg_count; }   // System info
+  int  uiMsgCap() const { return _ui_msg_cap; }
   void onTracePingResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
                          uint8_t extra_hops, const int8_t* extra_snrs) override;
 private:

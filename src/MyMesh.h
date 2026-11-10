@@ -966,7 +966,9 @@ public:
    *  probes the immediate neighbour). The result arrives via the same
    *  onTracePingResult callback, but with one SNR reading per hop. Falls back
    *  to a single-hop trace when the path to `c` is unknown (flood-routed
-   *  contact — there's no fixed path to walk). Returns the tag, 0 on failure. */
+   *  contact — there's no fixed path to walk). A trace ends at whoever hears its
+   *  last forwarder, so a known path goes out, through `c`, and back the same way
+   *  or the answer would never reach us. Returns the tag, 0 on failure. */
   uint32_t uiSendTraceRoute(const ContactInfo& c) {
     // out_path_len packs the hop count with the hash size of that stored path (Packet.h).
     const bool have_path = c.out_path_len != OUT_PATH_UNKNOWN && mesh::Packet::isValidPathLen(c.out_path_len);
@@ -978,6 +980,8 @@ public:
     uint8_t flags;
     if (hops) flags = path_hash == 1 ? 0 : 1;
     else { flags = (uint8_t)(_prefs.path_hash_mode & 0x03); if (flags > 2) flags = 0; }
+    const uint8_t hop_sz = (uint8_t)(1 << flags);
+    if (hops && (2u * hops + 1u) * hop_sz > MAX_PATH_SIZE) return 0;   // too long to go there and back
     uint32_t tag = 0;
     getRNG()->random((uint8_t*)&tag, sizeof(tag));
     if (tag == 0) tag = 1;
@@ -985,14 +989,17 @@ public:
     mesh::Packet* pkt = createTrace(tag, 0, flags);
     if (!pkt) { _ui_trace_ping_tag = 0; return 0; }
     if (hops) {
-      const uint8_t hop_sz = (uint8_t)(1 << flags);
       uint8_t route[MAX_PATH_SIZE];
       uint8_t n = 0;
-      for (uint8_t i = 0; i < hops && n + hop_sz <= sizeof route; ++i, n += hop_sz)
+      for (uint8_t i = 0; i < hops; ++i, n += hop_sz)
         memcpy(&route[n], &c.out_path[i * path_hash], hop_sz);
+      memcpy(&route[n], c.id.pub_key, hop_sz);
+      n += hop_sz;
+      for (uint8_t i = hops; i > 0; --i, n += hop_sz)
+        memcpy(&route[n], &c.out_path[(i - 1) * path_hash], hop_sz);
       sendDirect(pkt, route, n);
     } else {
-      sendDirect(pkt, c.id.pub_key, (uint8_t)(1 << flags));   // unknown path: single hop
+      sendDirect(pkt, c.id.pub_key, hop_sz);   // unknown path: single hop
     }
     return tag;
   }
