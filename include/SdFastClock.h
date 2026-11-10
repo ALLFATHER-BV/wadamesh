@@ -10,7 +10,8 @@
 // and compared byte-for-byte after the raise (SPI-mode SD has no data CRC by default, so a
 // bare "mount succeeded" would not catch a marginal clock). Any mismatch or failure drops
 // straight back to the clock that just worked. Boards that do not define SD_SPI_FAST_HZ
-// (or set it <= 4 MHz) get a no-op — nothing changes for the T-Deck/M9/Pager ladders.
+// (or set it <= 4 MHz) get a no-op — nothing changes for the T-Deck/M9 ladders. The
+// T-LoRa Pager sets it too (its boot mount in main.cpp calls this after the 4 MHz mount).
 //
 // Returns the operating clock after the call (cur_hz if the raise was refused or failed),
 // or 0 if the card could not be re-mounted at all (the caller treats that as unmounted).
