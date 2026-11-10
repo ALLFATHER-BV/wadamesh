@@ -1282,7 +1282,8 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
     function showNotes(tag){ notesEl.innerHTML = notes[tag] ? md(notes[tag])
       : '<p>Release notes on <a href="https://github.com/ALLFATHER-BV/wadamesh/releases/tag/'+tag+'" target="_blank" rel="noopener">GitHub</a>.</p>'; }
     function blobManifest(tag, board){ const m = { name:'wadamesh '+tag, version:tag, new_install_prompt_erase:true,
-      builds:[{ chipFamily:'ESP32-S3', parts:[{ path:'https://firmware.wadamesh.com/releases/'+((window.WM&&window.WM.arch)||'TOUCH')+'/'+tag+'/wadamesh-'+board+'-merged.bin', offset:0 }] }] };
+      // Older builds come from the BETA archive whichever channel is picked: every beta_N is there, while TOUCH only holds the promoted ones.
+      builds:[{ chipFamily:'ESP32-S3', parts:[{ path:'https://firmware.wadamesh.com/releases/BETA/'+tag+'/wadamesh-'+board+'-merged.bin', offset:0 }] }] };
       return URL.createObjectURL(new Blob([JSON.stringify(m)], {type:'application/json'})); }
     function apply(){ const tag = sel.value, isLatest = sel.selectedIndex === 0;
       if (isLatest){ if(btnH) btnH.setAttribute('manifest', latestH()); if(btnT) btnT.setAttribute('manifest', latestT()); activeEl.hidden = true; }
@@ -1291,10 +1292,10 @@ We use no tracking, analytics, or advertising cookies. Our CDN and security prov
       showNotes(tag); }
     // GitHub API gives version list + notes in one CORS-enabled call (the firmware
     // host listing has no CORS); bins are still pulled from the firmware host.
-    fetch('https://api.github.com/repos/ALLFATHER-BV/wadamesh/releases?per_page=12').then(r=>r.ok?r.json():[]).then(rs=>{
+    fetch('https://api.github.com/repos/ALLFATHER-BV/wadamesh/releases?per_page=40').then(r=>r.ok?r.json():[]).then(rs=>{
       const rels = (Array.isArray(rs)?rs:[]).filter(r=>r&&/^beta_\d+$/.test(r.tag_name||''));
       rels.forEach(r=>{ notes[r.tag_name]=r.body||''; });
-      const tags = rels.map(r=>r.tag_name).sort((a,b)=>num(b)-num(a)).slice(0,4);
+      const tags = rels.map(r=>r.tag_name).sort((a,b)=>num(b)-num(a)).slice(0,25);
       if (!tags.length){ if(wrap) wrap.hidden = true; return; }
       sel.innerHTML = tags.map((t,i)=>'<option value="'+t+'">'+t+(i===0?' (latest)':'')+'</option>').join('');
       showNotes(tags[0]);
