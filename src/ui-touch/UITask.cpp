@@ -66733,7 +66733,11 @@ static void hwRadarBuild(int i) {
 }
 static void hwRadarUpdate(int i) {
   HwInst& w = hwI(i);
-  if (!w.t_ms || millis() - w.t_ms > 5000u) { hwRadarNodes(); w.t_ms = millis() ? millis() : 1; }
+  if (!w.t_ms || millis() - w.t_ms > 5000u) {
+    hwRadarNodes();
+    w.t_ms = millis() ? millis() : 1;
+    if (s_ui_muted) lv_obj_invalidate(w.fig);   // no sweep timer to redraw the dots
+  }
   char n[24];
   snprintf(n, sizeof n, s_hw_radar_n == 1 ? TR("1 node") : TR("%d nodes"), s_hw_radar_n);
   setLabelIfChanged(w.l[1], s_hw_radar_geo ? "" : TR("by hops"));
@@ -82155,7 +82159,7 @@ static void atGlanceShow(const GlanceMsg& m, bool fade_in) {
 // bubbles and sendComposerToActiveThread on outgoing ones), its sender name in a
 // channel, and its text. Bounded: a reaction answers something recent, and the
 // MeshCore One hash is a SHA-256 per candidate.
-void UITask::reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
+bool UITask::reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
                           char* out, size_t cap) const {
   const UIMessage* hit = nullptr;
   const bool matchable = r.kind == ReactionCodec::MCO_V3 || r.kind == ReactionCodec::MC1;
@@ -82171,7 +82175,7 @@ void UITask::reactionLine(const char* thread, bool channel, const ReactionCodec:
   }
   if (!hit) {
     snprintf(out, cap, "%s %s", r.emoji, TR("reacted"));
-    return;
+    return false;
   }
   // The start of the target, on one line, cut on a character boundary.
   char quote[40];
@@ -82181,6 +82185,7 @@ void UITask::reactionLine(const char* thread, bool channel, const ReactionCodec:
   for (char* q = quote; *q; ++q) if (*q == '\n' || *q == '\r' || *q == '\t') *q = ' ';
   snprintf(out, cap, "%s %s \"%s%s\"", r.emoji, TR("reacted to"), quote,
            hit->text[n] ? "\u2026" : "");
+  return true;
 }
 
 // Shared core for newMsg / newMsgFromPubWithMeta. Bundles the channel-vs-DM
@@ -82283,8 +82288,10 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   if (!have_sender_override) {
     ReactionCodec::Reaction rx;
     if (ReactionCodec::parse(body, channel, &rx)) {
-      reactionLine(thread, channel, rx, reaction_text, sizeof reaction_text);
-      body = reaction_text;
+      // A DM from MeshCore One is only an emoji, a newline and eight letters, which a person
+      // can type too ("\xF0\x9F\x8E\x89\nbirthday"): that form needs a message it answers.
+      const bool hit = reactionLine(thread, channel, rx, reaction_text, sizeof reaction_text);
+      if (hit || channel || rx.kind != ReactionCodec::MC1) body = reaction_text;
     }
   }
 

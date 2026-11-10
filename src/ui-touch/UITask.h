@@ -283,7 +283,7 @@ private:
   // An emoji reaction from MeshCore Open / MeshCore One (#791) as the line its bubble
   // shows: "<emoji> reacted to "<start of the target>"" when a recent message in the
   // thread hashes to it, "<emoji> reacted" otherwise. See UITask.cpp.
-  void reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
+  bool reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
                     char* out, size_t cap) const;
 public:
   /** Match an arriving ACK (4-byte hash) against the last few outgoing DMs
