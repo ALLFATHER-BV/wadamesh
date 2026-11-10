@@ -330,7 +330,10 @@ public:
       // A sentence from inside this last window, not any byte: the tail of what a stopping
       // receiver sent is still in the UART when the start goes out.
       if (_last_valid_ms && millis() - _last_valid_ms < WAKE_CHECK_MS) {
-        _wake_check_ms = 0;
+        // Flowing, but keep watching: a receiver still finishing an earlier stop goes on
+        // sending for a moment after the start, then falls silent for good.
+        _wake_tries = 0;
+        _wake_check_ms = millis() + WAKE_SLOW_MS;
       } else {
         const bool fast = _wake_tries < WAKE_FAST_TRIES;
         if (fast) _wake_tries++;

@@ -205,6 +205,17 @@ int main() {
     b.run(120000);
     assert(b.uart.starts_heard == heard);
   }
+  // ---- a receiver that sends on for a moment after the start, then stops: still recovered ----
+  {
+    resetNvs();
+    Board b(38400, 38400);
+    b.run(5000);
+    b.uart.stopped = true;                     // the earlier stop lands after sentences flowed
+    const uint32_t n = b.gps->validSentences();
+    b.run(40000);
+    assert(!b.uart.stopped);
+    assert(b.gps->validSentences() > n);
+  }
   // ---- a start that goes out with stale sentences still in the UART is still repeated ----
   {
     resetNvs();
