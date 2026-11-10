@@ -12,6 +12,9 @@
 // a 2 x 2 empty image so text never shows them; so the icon was that empty image.
 // The initials took the first two code points whatever they were, so the same name
 // showed flag halves the font does not have.
+//
+// #785: the initials were the first two letters ("Eddie Smith" -> "ED"); they are
+// now the first letter of the first word and of the last word ("ES").
 
 #include <stddef.h>
 #include <stdint.h>
@@ -84,33 +87,73 @@ inline uint32_t baseLetter(uint32_t c) {
 
 typedef bool (*HasGlyph)(uint32_t cp, void* ctx);
 
-// The Initials look's letters: the first two letters or digits in the name, in
-// capitals. One the font cannot draw becomes its plain letter (A for A-tilde) when
-// the font has that, else is left out for the next. Writes "?" when the name has
-// none at all, so the ball is never blank. Returns the bytes written.
+// Splits a name into words: whitespace and the separators people put between the
+// parts of a node name ("Eddie-Base", "kd2abc_mobile", "Home/Roof"). A combining
+// accent or an emoji is NOT a separator: "Joa" + combining tilde + "o" is one word,
+// and an emoji only counts as a word if it stands apart, and then holds no letter.
+inline bool isWordBreak(uint32_t c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0xA0 || c == 0x3000 ||
+         c == '-' || c == '_' || c == '.' || c == '/' || c == '|' || c == ',' || c == ';' ||
+         c == ':' || c == '+' || c == '&';
+}
+
+// A letter as the font can draw it, in capitals: the capital, else the letter as
+// written, else its plain letter (A for A-tilde). 0 when none of those is drawable.
+inline uint32_t drawable(uint32_t c, HasGlyph has, void* ctx) {
+  uint32_t pick = upper(c);
+  if (!has || has(pick, ctx)) return pick;
+  if (has(c, ctx)) return c;
+  const uint32_t b = baseLetter(pick);
+  return (b && has(b, ctx)) ? b : 0;
+}
+
+// The Initials look's letters (#785): the first letter of the first word and the
+// first letter of the last word, in capitals ("Eddie Smith" -> "ES", "Tristao Mobile
+// (man emoji)" -> "TM"; a word without a drawable letter does not count). A name of
+// one word keeps the first two letters or digits ("#hiking" -> "HI"), which also
+// covers scripts written without spaces. A letter the font cannot draw becomes its
+// plain letter when the font has that, else is passed over for the next one. Writes
+// "?" when the name has none at all, so the ball is never blank. Returns the bytes
+// written.
 inline size_t initials(const char* name, char* out, size_t cap, HasGlyph has, void* ctx) {
   if (!out || cap < 2) return 0;
-  size_t o = 0;
-  int got = 0;
   const size_t len = name ? strlen(name) : 0;
-  for (size_t i = 0; i < len && got < 2;) {
+
+  // One pass: the first drawable letter of the first word that has one, and of the
+  // last such word after it.
+  uint32_t first = 0, last = 0;
+  bool in_word = false, word_done = false;   // word_done: this word's letter is taken
+  for (size_t i = 0; i < len;) {
     const uint32_t c = next(name, len, i);
-    if (!isLetter(c)) continue;
-    uint32_t pick = upper(c);
-    if (has && !has(pick, ctx)) {
-      if (has(c, ctx)) pick = c;
-      else {
-        const uint32_t b = baseLetter(pick);
-        if (!b || !has(b, ctx)) continue;
-        pick = b;
-      }
+    if (isWordBreak(c)) { in_word = false; continue; }
+    if (!in_word) { in_word = true; word_done = false; }
+    if (word_done || !isLetter(c)) continue;
+    const uint32_t d = drawable(c, has, ctx);
+    if (!d) continue;
+    word_done = true;
+    if (!first) first = d; else last = d;
+  }
+
+  uint32_t picks[2] = { first, last };
+  int n_picks = first ? (last ? 2 : 1) : 0;
+  if (n_picks == 1) {
+    // One word: its first two letters, as before.
+    n_picks = 0;
+    for (size_t i = 0; i < len && n_picks < 2;) {
+      const uint32_t c = next(name, len, i);
+      if (!isLetter(c)) continue;
+      const uint32_t d = drawable(c, has, ctx);
+      if (d) picks[n_picks++] = d;
     }
+  }
+
+  size_t o = 0;
+  for (int k = 0; k < n_picks; ++k) {
     char enc[4];
-    const size_t n = encode(pick, enc);
+    const size_t n = encode(picks[k], enc);
     if (o + n + 1 > cap) break;
     memcpy(out + o, enc, n);
     o += n;
-    ++got;
   }
   if (!o) out[o++] = '?';
   out[o] = 0;
