@@ -4784,7 +4784,7 @@ static uint32_t s_gps_wake_at = 0;       // while resting: millis() of the next 
 // settings page, and a two-line version pushed the whole dropdown taller). The settings page asks
 // for the full text, where there is room to explain what is happening.
 static const char* gpsStatusStr(bool compact = false) {
-  static char s[200];
+  static char s[320];   // three lines while searching, and some languages need two bytes a letter
   if (!g_lv.task || !g_lv.task->getGPSState()) {
     s_gps_acq_since = 0;
     snprintf(s, sizeof s, TR("GPS: off"));
@@ -19056,13 +19056,22 @@ static void buildGpsPage() {
     lv_obj_add_flag(g_set_modal.gps_status, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(g_set_modal.gps_status, setSwitchTapCb, LV_EVENT_CLICKED, gps_sw);
     {
-      char probe[200];
+      char probe[320];
       lv_coord_t worst_h = 0;
       lv_point_t sz;
       snprintf(probe, sizeof probe, "%s 00m00s\n%s", TR("GPS: searching"),
                TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
       lv_txt_get_size(&sz, probe, &g_font_12, 0, 0, s_settings_content_w - 2, LV_TEXT_FLAG_NONE);
       worst_h = sz.y;
+#if CAP_GPS_BAUD_FIND
+      // While searching these boards also say whether the receiver is talking (#778).
+      for (const char* line : {TR("Receiver is talking at"), TR("No data from the receiver")}) {
+        snprintf(probe, sizeof probe, "%s 00m00s\n%s 115200\n%s", TR("GPS: searching"), line,
+                 TR("No position yet. A cold start needs a clear view of the sky and can take several minutes."));
+        lv_txt_get_size(&sz, probe, &g_font_12, 0, 0, s_settings_content_w - 2, LV_TEXT_FLAG_NONE);
+        if (sz.y > worst_h) worst_h = sz.y;
+      }
+#endif
       snprintf(probe, sizeof probe, "%s \xc2\xb7 00 sats \xc2\xb7 0000 m\n00.00000, 000.00000", TR("GPS: fix"));
       lv_txt_get_size(&sz, probe, &g_font_12, 0, 0, s_settings_content_w - 2, LV_TEXT_FLAG_NONE);
       if (sz.y > worst_h) worst_h = sz.y;
