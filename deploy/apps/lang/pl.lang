@@ -2418,3 +2418,11 @@ Photo	Zdjęcie
 Voice message	Wiadomość głosowa
 Push-to-talk	Push-to-talk
 Encrypted message	Zaszyfrowana wiadomość
+30 sec	30 sec
+Asleep: tap screen or 🤍 to wake	Asleep: tap screen or 🤍 to wake
+File Transfer	File Transfer
+Peak %d dBm @ %.1f MHz	Peak %d dBm @ %.1f MHz
+Peak -- dBm	Peak -- dBm
+Receiving %s\n%lu / %lu bytes	Receiving %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Sending %s\n%lu / %lu bytes
+peak %d @ %.1f	peak %d @ %.1f

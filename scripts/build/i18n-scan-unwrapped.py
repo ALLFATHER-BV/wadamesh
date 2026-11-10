@@ -115,7 +115,7 @@ HELPER_CALLS = {
 }
 
 # Brand and pure-technical tokens that are identical in every language.
-SKIP_TEXT = {'WADAMESH', 'CPU', 'PSK', 'TX 0  /  RX 0', 'Sig --', 'OK'}
+SKIP_TEXT = {'WADAMESH', 'CPU', 'PSK', 'TX 0  /  RX 0', 'Sig --', 'OK', 'Esc'}   # Esc: a key-cap name
 
 # ---- wide mode -------------------------------------------------------------
 # Naming the functions that take UI text has the same blind spot as grepping
