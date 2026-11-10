@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Reusable wadamesh/Tanmatsu build wrapper: activates the project-local ESP-IDF 5.5.1
 # and runs idf.py with our device/target/sdkconfig params.
-#   ./build.sh build        # compile
-#   ./build.sh flash -p ... # flash over USB (dev)
+#   ./build.sh build        # compile the AppFS app (launcher / app store)
+#   ./build.sh standalone   # + bootloader + standalone table -> build/tanmatsu/wadamesh-tanmatsu-merged.bin
+#   ./build.sh standalone-flash [-p /dev/cu.usbmodemXXXX] [--erase]
+#                           # write that merged image at 0x0. REPLACES the launcher.
+#                           # Without -p, tries each USB serial port (P4, then C6).
 #   ./build.sh menuconfig
+#
+# Never `./build.sh flash`: idf.py writes the launcher's 16M.csv table plus the app
+# into a 2 MB OTA slot it does not fit. Use tools/tan_flash.sh (AppFS) or standalone-flash.
 set -e
 
 # Keep the baked-in translation + Lua app tables in step with deploy/apps/.
@@ -106,5 +112,74 @@ fi
 if [ "$#" -eq 1 ] && [ "$1" = build ]; then
   exec idf.py "${IDF_ARGS[@]}" gen_project_binary
 fi
+
+# Standalone (web flasher) image: the SAME application.bin as the AppFS build, booted
+# by the stock IDF bootloader from partition_tables/wadamesh_standalone.csv instead of
+# by the launcher. The app finds its data by partition label ('locfd') and the table
+# is at 0x8000 either way, so nothing in the app changes between the two.
+STANDALONE_BIN="build/tanmatsu/wadamesh-tanmatsu-merged.bin"
+# Port the last standalone-flash succeeded on (the P4), for build-upload-monitor.sh.
+STANDALONE_PORT_FILE="build/tanmatsu/standalone/port"
+build_standalone() {
+  local B=build/tanmatsu PT=build/tanmatsu/standalone/partition-table.bin
+  idf.py "${IDF_ARGS[@]}" gen_project_binary bootloader
+  mkdir -p "$B/standalone"
+  python "$IDF_PATH/components/partition_table/gen_esp32part.py" --quiet --flash-size 16MB \
+    partition_tables/wadamesh_standalone.csv "$PT"
+  python "$IDF_PATH/components/partition_table/check_sizes.py" --offset 0x8000 \
+    partition --type app "$PT" "$B/application.bin"
+  # No otadata/nvs parts: merge_bin pads the 0x9000-0x20000 gap with 0xFF, so the
+  # launcher's otadata and NVS are erased and the bootloader starts ota_0. 'locfd'
+  # lies past the end of the image and is left alone.
+  python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_size 16MB --flash_freq 80m \
+    -o "$STANDALONE_BIN" \
+    0x2000 "$B/bootloader/bootloader.bin" \
+    0x8000 "$PT" \
+    0x20000 "$B/application.bin" >/dev/null
+  echo "[build.sh] standalone image: tanmatsu/$STANDALONE_BIN ($(wc -c < "$STANDALONE_BIN" | tr -d ' ') bytes)"
+}
+
+case "${1:-}" in
+  standalone)
+    [ "$#" -eq 1 ] || { echo "usage: ./build.sh standalone" >&2; exit 2; }
+    build_standalone
+    exit 0 ;;
+  standalone-flash)
+    shift
+    port=""; erase=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -p|--port) port="${2:-}"; shift ;;
+        --erase)   erase=1 ;;
+        *) echo "usage: ./build.sh standalone-flash [-p PORT] [--erase]" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    # The Tanmatsu shows two USB serial ports, the ESP32-P4 and its ESP32-C6 radio, and
+    # their names swap between replugs. Trying the C6 is harmless: with --chip esp32p4,
+    # esptool aborts on the chip mismatch before writing. So without -p, try each port
+    # and keep the first that works (recorded in $STANDALONE_PORT_FILE for monitoring).
+    ports=()
+    if [ -n "$port" ]; then
+      ports=("$port")
+    else
+      for p in /dev/cu.usbmodem* /dev/ttyACM*; do [ -e "$p" ] && ports+=("$p"); done
+      [ "${#ports[@]}" -gt 0 ] || { echo "[build.sh] no USB serial ports found. Is the Tanmatsu connected?" >&2; exit 1; }
+    fi
+    # Build once up front so a compile error fails once, not once per port.
+    build_standalone
+    rm -f "$STANDALONE_PORT_FILE"
+    for p in "${ports[@]}"; do
+      echo "[build.sh] flashing the standalone image to $p: this REPLACES the badge.team launcher"
+      if { [ "$erase" = 0 ] || python -m esptool --chip esp32p4 -p "$p" erase_flash; } &&
+         python -m esptool --chip esp32p4 -p "$p" write_flash 0x0 "$STANDALONE_BIN"; then
+        echo "$p" > "$STANDALONE_PORT_FILE"
+        exit 0
+      fi
+      echo "[build.sh] flashing failed on $p." >&2
+    done
+    echo "[build.sh] flashing failed on every port: ${ports[*]}" >&2
+    exit 1 ;;
+esac
 
 exec idf.py "${IDF_ARGS[@]}" "$@"

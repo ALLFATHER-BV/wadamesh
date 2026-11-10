@@ -4627,12 +4627,20 @@ static float meshPresetAirtimeFactor(uint8_t pct) {
   return af > 9.0f ? 9.0f : af;
 }
 
+// The TX power a preset actually ends up at on this board. Presets ask for 22 dBm, but
+// setRadioParams() clamps to MAX_LORA_TX_POWER (20 on the Tanmatsu), so comparing the
+// stored power against the raw 22 never matched: pick a preset, leave the page, come
+// back, and it said "Custom (manual)".
+static int8_t meshPresetTxDbm(const MeshRadioPreset& p) {
+  return p.tx_dbm > (int)MAX_LORA_TX_POWER ? (int8_t)MAX_LORA_TX_POWER : p.tx_dbm;
+}
+
 static bool meshRadioPresetMatches(const MeshRadioPreset& p, const NodePrefs* prefs) {
   if (std::fabs(prefs->freq - p.freq_mhz) > 0.002) return false;
   if (std::fabs(prefs->bw - p.bw_khz) > 0.02) return false;
   if (prefs->sf != p.sf) return false;
   if (prefs->cr != p.cr) return false;
-  if (prefs->tx_power_dbm != p.tx_dbm) return false;
+  if (prefs->tx_power_dbm != meshPresetTxDbm(p)) return false;
   const double exp_af = (double)meshPresetAirtimeFactor(p.airtime_limit_pct);
   const double old_af = static_cast<double>(p.airtime_limit_pct) / 100.0;   // pre-#161 buggy write
   const double cur    = static_cast<double>(prefs->airtime_factor);
@@ -4719,7 +4727,7 @@ static void applyMeshRadioPresetFields(unsigned preset_idx) {
   lv_textarea_set_text(g_set_modal.sf_ta, buf);
   snprintf(buf, sizeof(buf), "%u", static_cast<unsigned>(p.cr));
   lv_textarea_set_text(g_set_modal.cr_ta, buf);
-  snprintf(buf, sizeof(buf), "%d", static_cast<int>(p.tx_dbm));
+  snprintf(buf, sizeof(buf), "%d", static_cast<int>(meshPresetTxDbm(p)));   // already clamped: no "TX max" alert
   lv_textarea_set_text(g_set_modal.tx_ta, buf);
   // #161: MeshCore's airtime_factor is a TX pacing multiplier -- the core's Dispatcher runs at
   // duty = 1/(1+af). A 10% duty limit therefore needs af = 9, NOT 0.10: the old pct/100 write
@@ -7490,6 +7498,21 @@ static void mentionBoxHide();
 static void navArrowAction(uint32_t key) {
   lv_obj_t* ta_focused = navFocusedTextarea();
   lv_obj_t* ta = (ta_focused && (!s_kbd_nav || s_nav_ta_editing)) ? ta_focused : nullptr;
+  // Chat composer: ←/→ move the caret, but at the start/end of the text they leave the
+  // field for the neighbouring control (→ = the emoji button), and typing stops.
+  if (ta && (ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta) &&
+      (key == BSP_INPUT_NAVIGATION_KEY_LEFT || key == BSP_INPUT_NAVIGATION_KEY_RIGHT)) {
+    const uint32_t pos = lv_textarea_get_cursor_pos(ta);
+    const bool at_edge = (key == BSP_INPUT_NAVIGATION_KEY_LEFT) ? pos == 0
+                       : pos >= (uint32_t)_lv_txt_get_encoded_length(lv_textarea_get_text(ta));
+    if (at_edge) {
+      s_nav_rep_key = 0;   // a held arrow stops here rather than repeating on past the next control
+      s_nav_ta_editing = false;
+      s_nav_show = true;
+      navMoveDir(key == BSP_INPUT_NAVIGATION_KEY_LEFT ? NAV_LEFT : NAV_RIGHT);
+      return;
+    }
+  }
   switch (key) {
     case BSP_INPUT_NAVIGATION_KEY_UP:    navMoveDir(NAV_UP);   break;   // 2D spatial: element above
     case BSP_INPUT_NAVIGATION_KEY_DOWN:  navMoveDir(NAV_DOWN); break;   // …below
@@ -7505,6 +7528,28 @@ static void navArrowAction(uint32_t key) {
       break;
     default: break;
   }
+}
+
+// Enter in a non-empty chat composer sends, as on the other keyboards (handleHwKey),
+// and the composer stays focused for the next message. With Enter-to-send off it adds
+// a newline. Returns false when `ta` is not a chat composer.
+static void refreshChatDetailAsync(LvChatPanel& p);
+static bool navComposerEnter(lv_obj_t* ta) {
+  LvChatPanel* p = (ta == g_lv.ch.composer_ta) ? &g_lv.ch
+                 : (ta == g_lv.dm.composer_ta) ? &g_lv.dm : nullptr;
+  if (!p || !g_lv.task) return false;
+  if (!touchPrefsGetEnterSends()) { lv_textarea_add_char(ta, '\n'); return true; }
+  const char* text = lv_textarea_get_text(ta);
+  if (!text || !text[0]) return true;
+  g_lv.task->setComposerMode(true);
+  g_lv.task->composerReset();
+  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  if (g_lv.task->composerSend()) {
+    lv_textarea_set_text(ta, "");
+    refreshChatDetailAsync(*p);
+    g_lv.dirty_threads = true;
+  }
+  return true;
 }
 
 static void navPump() {
@@ -7733,9 +7778,14 @@ static void navPump() {
             (void*)lv_group_get_focused(s_nav_group), (void*)s_nav_first, (void*)s_nav_last, (void*)s_nav_tabbar);
           if (!ta && down) navMarkEntered(lv_group_get_focused(s_nav_group));
           if (!ta && down && navEnterBubble()) break;   // Enter on a chat bubble = the long-press menu
+          if (ta && (ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta)) {   // non-empty composer: send, don't advance
+            if (down) navComposerEnter(ta);             // the release arrives here too: act on the press only
+            break;
+          }
           navFifoPush(ta ? LV_KEY_NEXT : LV_KEY_ENTER, down); break;   // on a field, Enter advances
         case BSP_INPUT_NAVIGATION_KEY_F1:    // red ✕ — tap = close topmost; HOLD = power menu (opens mid-hold, see navPump top)
           if (down) { if (!s_f1_down_ms) { s_f1_down_ms = millis(); s_f1_fired = false; } break; }
+          if (!s_f1_down_ms) break;   // a release whose press woke the screen (swallowed above): not a tap
           { const bool fired = s_f1_fired; s_f1_down_ms = 0; s_f1_fired = false;
             if (fired) break;                                                              // power menu already opened while held
             if (s_nav_ta_editing) { s_nav_ta_editing = false; break; }                     // editing a field: ✕ stops typing first (cursor off → navigate)
@@ -7765,7 +7815,8 @@ static void navPump() {
           LvChatPanel* cp = navOpenChatPanel();
           if (cp && cp->channel_mode) { if (down) openActiveChatSettings(); break; }
           if (down) { if (!s_f4_down_ms) { s_f4_down_ms = millis(); s_f4_fired = false; } }
-          else { const bool fired = s_f4_fired; s_f4_down_ms = 0; s_f4_fired = false;
+          else if (s_f4_down_ms) {   // no press seen = the press woke the screen (swallowed above): not a tap
+                 const bool fired = s_f4_fired; s_f4_down_ms = 0; s_f4_fired = false;
                  if (!fired) homeKeyActivate();   // tap: Home / toggle app drawer (control center already opened mid-hold if held)
                }
           break;
@@ -7799,10 +7850,10 @@ static void navPump() {
         }
         else if (c == '\r' || c == '\n') {
           // Enter on an EMPTY composer drops back to navigate mode (cursor off) so the letter-nav
-          // keys work again; anywhere else it advances to the next widget.
+          // keys work again; a non-empty one sends; anywhere else it advances to the next widget.
           if ((ta == g_lv.ch.composer_ta || ta == g_lv.dm.composer_ta) && !lv_textarea_get_text(ta)[0])
             s_nav_ta_editing = false;
-          else navPushTap(LV_KEY_NEXT);
+          else if (!navComposerEnter(ta)) navPushTap(LV_KEY_NEXT);
         }
         else if ((uint8_t)c >= 32) {
           // Double-tap SPACE within 250 ms switches to the configured secondary
@@ -36866,6 +36917,11 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
   // "done, 0 items" event the Arduino layer latches. Wait for the real completion;
   // reject a 0 that came back < 4 s (spurious) and re-scan. (Tanmatsu-only — the S3
   // native path below is the original, known-good single pass.)
+  // The caller's 8 s cap is too short: measured on device, a sweep took 8.8 s
+  // (Scan start 54.30 -> "Scan Done, 17 items" 63.07), so the cap expired first, the
+  // timeout was read as "genuinely empty", and the 17 results were thrown away.
+  // Wait at least 15 s; the caller's 60 s scan-gate guard still bounds the whole thing.
+  const uint32_t tm_cap_ms = cap_ms < 15000UL ? 15000UL : cap_ms;
   for (int attempt = 0; attempt < 5; ++attempt) {
     WiFi.scanDelete();
     const uint32_t t0 = millis();
@@ -36873,11 +36929,12 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
     s_swd_kick = kick;
     if (kick == WIFI_SCAN_FAILED) { s_swd_st = WIFI_SCAN_FAILED; s_swd_dur = millis() - t0; vTaskDelay(pdMS_TO_TICKS(300)); continue; }
     int16_t st;
-    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < cap_ms)
+    while ((st = WiFi.scanComplete()) == WIFI_SCAN_RUNNING && (millis() - t0) < tm_cap_ms)
       vTaskDelay(pdMS_TO_TICKS(100));
     const uint32_t dur = millis() - t0;
     s_swd_st = st; s_swd_dur = dur;
     if (st > 0) return st;
+    if (st == WIFI_SCAN_RUNNING) return 0;       // still sweeping past the cap: don't re-kick over it
     if (dur >= 4000) return 0;                   // genuine empty after a full sweep
     vTaskDelay(pdMS_TO_TICKS(200));              // spurious fast-0 -> rescan
   }
@@ -68287,6 +68344,23 @@ static void setupFillRegionList();      // fwd: built by the region step + recol
 static lv_obj_t* setupBtn(const char* txt, lv_event_cb_t cb, bool primary,
                           lv_coord_t x, lv_coord_t y, lv_coord_t w) {
   lv_obj_t* b = lv_btn_create(s_setup_root);
+#if defined(HAS_TANMATSU)
+  // The widths the steps pass (Back = 72) are sized for the small panels, but the
+  // Tanmatsu scales g_font_14 up, so "Back" no longer fit and the caption fitter
+  // (#418) cut it to "B...". There is room to spare on this panel: grow the button
+  // to its caption plus padding. A right-half button keeps its right edge.
+  {
+    lv_point_t ts;
+    lv_txt_get_size(&ts, TR(txt), &g_font_14, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const lv_coord_t need = ts.x + lv_obj_get_style_pad_left(b, LV_PART_MAIN) +
+                            lv_obj_get_style_pad_right(b, LV_PART_MAIN) + 8;   // theme padding + slack
+    if (need > w) {
+      const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+      if (x + w / 2 > sw / 2) x -= need - w;   // right-anchored (Next / Finish)
+      w = need;
+    }
+  }
+#endif
   lv_obj_set_size(b, w, kSetupBtnH);
   lv_obj_set_pos(b, x, y);
   styleButton(b);
@@ -84906,7 +84980,10 @@ void UITask::loop() {
   webMirrorTick();   // coalesced, rate-capped, backpressure-gated send of the dirty region
 #endif
 #if defined(HAS_TANMATSU)
-  if (s_nav_entered_obj) {
+  // Wait until LVGL has read Enter's release: the keypad indev delivers CLICKED on release
+  // to whatever is focused THEN, so jumping while the key is still down (its release still
+  // queued, or not yet pressed-up) handed the click to Next instead of the chosen option.
+  if (s_nav_entered_obj && !s_nav_last_pressed && s_nav_fifo_tail == s_nav_fifo_head) {
     lv_obj_t* ent = s_nav_entered_obj; s_nav_entered_obj = nullptr;
     // WIZARD ONLY: after Enter on an option, jump to the primary action so the next Enter confirms.
     // In the main app this drifted focus to the last collected item (the Send-advert button), so it's

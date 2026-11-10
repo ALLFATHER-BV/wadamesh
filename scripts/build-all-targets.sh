@@ -7,14 +7,15 @@
 # are standalone ESP-IDF apps with their own build.sh wrappers, and release.sh
 # says so in a comment while building only the PlatformIO half. So a change that
 # broke an IDF-only board was invisible until someone cut a release by hand. This
-# builds every target (all four T-Display P4 panel/radio combinations), keeps going after a failure,
-# and prints one table at the end.
+# builds every target (all four T-Display P4 panel/radio combinations, and the Tanmatsu
+# as both its app-store AppFS app and its standalone web-flasher image), keeps going
+# after a failure, and prints one table at the end.
 #
 # Usage:
 #   scripts/build-all-targets.sh                 # everything it can build here
 #   scripts/build-all-targets.sh --list          # show the targets, build nothing
 #   scripts/build-all-targets.sh --pio           # PlatformIO boards only
-#   scripts/build-all-targets.sh --idf           # Tanmatsu + all four T-Display P4 variants only
+#   scripts/build-all-targets.sh --idf           # Tanmatsu (app + standalone) + all four T-Display P4 variants only
 #   scripts/build-all-targets.sh --fail-fast     # stop at the first failure
 #   scripts/build-all-targets.sh -- -v           # pass the rest through to pio run
 #
@@ -43,7 +44,7 @@ while [ $# -gt 0 ]; do
     --idf)       DO_PIO=0 ;;
     --fail-fast) FAIL_FAST=1 ;;
     --)          shift; PASSTHRU=("$@"); break ;;
-    -h|--help)   sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)   sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)           echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
   esac
   shift
@@ -59,7 +60,7 @@ while IFS= read -r e; do PIO_ENVS+=("$e"); done < <(sed -n 's/^\[env:\(.*\)\]$/\
 # both. Absent toolchain = SKIP, not failure: a laptop with only PlatformIO
 # installed should still be able to run this and get the PlatformIO boards checked.
 # P4 targets cross the two panel SKUs with both supported radio modules.
-IDF_DIRS=(tanmatsu tdisplay_p4 tdisplay_p4_lr2021 tdisplay_p4_lcd tdisplay_p4_lcd_lr2021)
+IDF_DIRS=(tanmatsu tanmatsu_standalone tdisplay_p4 tdisplay_p4_lr2021 tdisplay_p4_lcd tdisplay_p4_lcd_lr2021)
 idf_available() { [ -f "$ROOT/tanmatsu/esp-idf/export.sh" ]; }
 
 # P4 panel and radio selectors are read at CMake configure time. Each combination
@@ -70,6 +71,7 @@ idf_build() {
     tdisplay_p4_lr2021)     env -u WADA_P4_LCD WADA_P4_LR2021=1 "$ROOT/tdisplay_p4/build.sh" reconfigure build ;;
     tdisplay_p4_lcd)        env -u WADA_P4_LR2021 WADA_P4_LCD=1 "$ROOT/tdisplay_p4/build.sh" reconfigure build ;;
     tdisplay_p4_lcd_lr2021) WADA_P4_LCD=1 WADA_P4_LR2021=1 "$ROOT/tdisplay_p4/build.sh" reconfigure build ;;
+    tanmatsu_standalone)    "$ROOT/tanmatsu/build.sh" standalone ;;   # web-flasher image (replaces the launcher)
     *)                      "$ROOT/$1/build.sh" build ;;
   esac
 }

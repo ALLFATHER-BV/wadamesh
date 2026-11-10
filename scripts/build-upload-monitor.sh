@@ -29,6 +29,11 @@ P4_LR2021_ENV="tdisplay_p4_lr2021"
 P4_LCD_ENV="tdisplay_p4_lcd"
 P4_LCD_LR2021_ENV="tdisplay_p4_lcd_lr2021"
 P4_BUILD="$ROOT/tdisplay_p4/build.sh"
+# The Tanmatsu is an ESP-IDF app too (tanmatsu/build.sh). This handle is its STANDALONE
+# image, the one the web flasher installs: it replaces the badge.team launcher. The
+# app-store (AppFS) install is tanmatsu/tools/tan_flash.sh, not this script.
+TANMATSU_ENV="tanmatsu_standalone"
+TANMATSU_BUILD="$ROOT/tanmatsu/build.sh"
 
 PIO="${PIO:-$(command -v pio || true)}"
 ENV_NAME=""
@@ -39,6 +44,7 @@ JUST_BUILD=false
 
 has_env() {
   is_p4_env "$1" && return 0
+  is_tanmatsu_env "$1" && return 0
   grep -q "^\[env:$1\]$" platformio.ini
 }
 
@@ -48,6 +54,11 @@ is_p4_env() {
     *) return 1 ;;
   esac
 }
+
+is_tanmatsu_env() { [ "$1" = "$TANMATSU_ENV" ]; }
+
+# Any board built by an ESP-IDF wrapper rather than PlatformIO.
+is_idf_env() { is_p4_env "$1" || is_tanmatsu_env "$1"; }
 
 # The P4 reuses the Tanmatsu's project-local ESP-IDF (see tdisplay_p4/build.sh).
 p4_toolchain_ready() {
@@ -80,6 +91,27 @@ run_p4() {
   "${variant_env[@]}" "$P4_BUILD" ${port_args+"${port_args[@]}"} reconfigure "$@"
 }
 
+# run_tanmatsu <actions...>: fullclean | build | flash | monitor, in that order.
+# The Tanmatsu has two USB serial ports (P4 and C6). Without PORT, standalone-flash
+# tries each and records the one that worked (the P4); monitor reuses it.
+run_tanmatsu() {
+  local action erase=() port_args=()
+  [ "$ERASE_FIRST" = true ] && erase=(--erase)
+  [ -n "${PORT:-}" ] && port_args=(-p "$PORT")
+  for action in "$@"; do
+    echo "[IDF] $(env_label "$TANMATSU_ENV"): $action"
+    case "$action" in
+      # Not idf.py fullclean: it rejects the intentionally patched managed components.
+      fullclean) rm -rf "$ROOT/tanmatsu/build/tanmatsu" || return 1 ;;
+      build)     "$TANMATSU_BUILD" standalone || return 1 ;;
+      flash)
+        "$TANMATSU_BUILD" standalone-flash ${port_args+"${port_args[@]}"} ${erase+"${erase[@]}"} || return 1
+        [ -n "${PORT:-}" ] || PORT="$(cat "$ROOT/tanmatsu/build/tanmatsu/standalone/port" 2>/dev/null)" ;;
+      monitor)   "$TANMATSU_BUILD" ${PORT:+-p "$PORT"} monitor || return 1 ;;
+    esac
+  done
+}
+
 all_envs() {
   sed -n 's/^\[env:\(.*\)\]$/\1/p' platformio.ini |
     grep -v '^LilyGo_TDeck_Pro_companion_radio_touch$'
@@ -106,6 +138,7 @@ env_label() {
     "$P4_LR2021_ENV")       echo "LilyGo T-Display P4 (AMOLED, LR2021)" ;;
     "$P4_LCD_ENV")          echo "LilyGo T-Display P4 (LCD, SX1262)" ;;
     "$P4_LCD_LR2021_ENV")   echo "LilyGo T-Display P4 (LCD, LR2021)" ;;
+    "$TANMATSU_ENV")        echo "Nicolai Electronics Tanmatsu (standalone, replaces launcher)" ;;
     *)                     echo "$1" ;;
   esac
 }
@@ -134,20 +167,23 @@ Devices:
   --tdisplay-p4-lr2021       LilyGo T-Display P4, AMOLED + LR2021 (ESP-IDF)
   --tdisplay-p4-lcd          LilyGo T-Display P4, HI8561 LCD + SX1262 (ESP-IDF)
   --tdisplay-p4-lcd-lr2021   LilyGo T-Display P4, HI8561 LCD + LR2021 (ESP-IDF)
+  --tanmatsu                 Tanmatsu standalone image (ESP-IDF). REPLACES the
+                             badge.team launcher; tries each USB port (P4/C6)
 
 Options:
   --erase, -E             Erase flash before upload
   --fullclean, -F         Run PlatformIO fullclean first
   --just-build, -B        Build only; do not upload or monitor
                           With no device, build every PlatformIO environment
-                          plus all four T-Display P4 variants (skipped if ESP-IDF is
-                          not installed)
+                          plus all four T-Display P4 variants and the Tanmatsu
+                          standalone image (skipped if ESP-IDF is not installed)
   --help, -h              Show this help
 
 With no device flag, an interactive shell prompts for a target. A non-interactive
 upload defaults to --tdeck. Set PIO=/path/to/pio to override the CLI executable.
 For the T-Display P4, set PORT=/dev/cu.usbmodemXXXX to pick the serial port
-(idf.py auto-detects otherwise).
+(idf.py auto-detects otherwise). Without PORT the Tanmatsu tries each USB serial
+port in turn, since it shows two (ESP32-P4 and ESP32-C6).
 EOF
 }
 
@@ -186,6 +222,7 @@ prompt_for_device() {
     "$P4_LR2021_ENV"
     "$P4_LCD_ENV"
     "$P4_LCD_LR2021_ENV"
+    "$TANMATSU_ENV"
   )
   local available=()
   local env_name
@@ -268,6 +305,7 @@ while [ $# -gt 0 ]; do
     --tdisplay-p4-lr2021) select_env "$P4_LR2021_ENV" ;;
     --tdisplay-p4-lcd) select_env "$P4_LCD_ENV" ;;
     --tdisplay-p4-lcd-lr2021) select_env "$P4_LCD_LR2021_ENV" ;;
+    --tanmatsu)     select_env "$TANMATSU_ENV" ;;
     --erase|-E)     ERASE_FIRST=true ;;
     --fullclean|-F) FULLCLEAN=true ;;
     --just-build|-B) JUST_BUILD=true ;;
@@ -308,12 +346,12 @@ if [ "$JUST_BUILD" = true ]; then
     while IFS= read -r env_name; do
       [ -n "$env_name" ] && build_envs+=("$env_name")
     done < <(all_envs)
-    build_envs+=("$P4_ENV" "$P4_LR2021_ENV" "$P4_LCD_ENV" "$P4_LCD_LR2021_ENV")
+    build_envs+=("$P4_ENV" "$P4_LR2021_ENV" "$P4_LCD_ENV" "$P4_LCD_LR2021_ENV" "$TANMATSU_ENV")
   fi
   for env_name in "${build_envs[@]}"; do
-    is_p4_env "$env_name" || { need_pio; break; }
+    is_idf_env "$env_name" || { need_pio; break; }
   done
-  if [ "$ENV_EXPLICIT" = true ] && is_p4_env "$ENV_NAME"; then
+  if [ "$ENV_EXPLICIT" = true ] && is_idf_env "$ENV_NAME"; then
     need_p4_toolchain
   fi
   if [ "${#build_envs[@]}" -eq 0 ]; then
@@ -331,6 +369,26 @@ if [ "$JUST_BUILD" = true ]; then
     echo "[PIO] Building $(env_label "$ENV_NAME") ($ENV_NAME)"
     echo "===================================================================="
     env_start="$(date +%s)"
+    if is_tanmatsu_env "$ENV_NAME"; then
+      if ! p4_toolchain_ready; then
+        results+=("skip  $ENV_NAME  (ESP-IDF not installed)")
+        continue
+      fi
+      t_actions=(build)
+      [ "$FULLCLEAN" = true ] && t_actions=(fullclean build)
+      if run_tanmatsu "${t_actions[@]}"; then
+        env_end="$(date +%s)"
+        size_note=""
+        bin_path="tanmatsu/build/tanmatsu/application.bin"
+        [ -f "$bin_path" ] && size_note="  $(( $(wc -c < "$bin_path") / 1024 )) KB"
+        results+=("ok    $ENV_NAME  $(format_duration "$((env_end - env_start))")$size_note")
+      else
+        env_end="$(date +%s)"
+        results+=("FAIL  $ENV_NAME  $(format_duration "$((env_end - env_start))")")
+        failed=$((failed + 1))
+      fi
+      continue
+    fi
     if is_p4_env "$ENV_NAME"; then
       if ! p4_toolchain_ready; then
         results+=("skip  $ENV_NAME  (ESP-IDF not installed)")
@@ -387,6 +445,19 @@ fi
 
 if [ "$ENV_EXPLICIT" = false ]; then
   prompt_for_device
+fi
+
+if is_tanmatsu_env "$ENV_NAME"; then
+  need_p4_toolchain
+  t_actions=()
+  [ "$FULLCLEAN" = true ] && t_actions+=(fullclean)
+  t_actions+=(flash)  # standalone-flash builds first
+  start="$(date +%s)"
+  run_tanmatsu "${t_actions[@]}" || exit 1
+  end="$(date +%s)"
+  echo "[IDF] Build/flash completed in $(format_duration "$((end - start))")."
+  run_tanmatsu monitor
+  exit $?
 fi
 
 if is_p4_env "$ENV_NAME"; then
