@@ -74824,7 +74824,7 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
 }
 int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                    int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
-                   uint32_t* at_ms) {
+                   uint32_t* at_ms, uint8_t* path, uint8_t* path_bytes, uint8_t* path_hash_sz) {
   MyMesh::UiRxRec r;
   if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
   if (at_ms) *at_ms = r.ms;   // the record's own timestamp: a stable delivery key
@@ -74840,6 +74840,12 @@ int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr,
   // destination and source hashes an addressed frame carries. Encoded to the
   // width the frame actually justifies, so 8 hex chars always means a key.
   if (org_hex && org_cap) luaPubkeyHex(r.org, r.org_kind == 1 ? 4 : 2, org_hex, org_cap);
+  if (path && path_bytes && path_hash_sz) {
+    static_assert(MyMesh::UI_RXLOG_PATH_MAX == 16, "the buffers in LuaAppHost.cpp are LUA_RX_PATH_MAX");
+    memcpy(path, r.path, r.path_bytes);
+    *path_bytes = r.path_bytes;
+    *path_hash_sz = r.path_hash_sz;
+  }
   return 1;
 }
 void luaHostRadioStats(float* rssi, float* noise, uint32_t* rx_air_s, uint32_t* tx_air_s,
@@ -75117,6 +75123,9 @@ lv_coord_t luaHostAppBarH() { return statusBarCurH(); }
 
 uint32_t luaHostLastSentFp() { return the_mesh.uiLastSentFp(); }
 uint8_t  luaHostRepeatsForFp(uint32_t fp) { return fp ? the_mesh.uiRepeatsForFp(fp) : 0; }
+uint8_t  luaHostRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t cap) {
+  return the_mesh.uiRepeatHop(fp, idx, out, cap);
+}
 #endif  // CAP_LUA_SDK_EXT || CAP_CONSOLE
 
 #if CAP_LUA_SDK_EXT || CAP_CONSOLE   // console mode needs it on the V4 too
@@ -82273,7 +82282,12 @@ void UITask::newMsgImpl(uint8_t path_len, const char* from_name, const char* tex
   // LUA_PERM_DM_READ. "kind" lets an app tell them apart rather than inferring it.
   if (luaAppIsOpen()) {
     const char* kind = channel ? "channel" : (have_sender_override ? "room" : "dm");
-    luaAppMessage(kind, channel ? thread : "", sender, body);
+    // path_len is the packed wire byte: hop count below, bytes per hash above.
+    uint8_t hop_path[32], hop_bytes = 0;
+    const bool flood = (meta_flags & MSG_META_IS_FLOOD) != 0;
+    if (flood) hop_bytes = the_mesh.lastRxPath(hop_path, sizeof hop_path);
+    luaAppMessage(kind, channel ? thread : "", sender, body, flood ? (path_len & 0x3F) : -1,
+                  hop_path, hop_bytes, (uint8_t)((path_len >> 6) + 1));
   }
 #endif
 

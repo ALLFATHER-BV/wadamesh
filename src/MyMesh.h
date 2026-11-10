@@ -720,6 +720,7 @@ public:
   // / hop count / length + signal, so the Monitor page can show a live "what am
   // I hearing" feed without a core hook. Newest-first via uiRxLogGet (i=0 = most
   // recent). Board-independent — populated on every board, not just touch.
+  static const int UI_RXLOG_PATH_MAX = 16;
   struct UiRxRec {
     uint32_t ms;        // millis() at RX
     int8_t   rssi;      // dBm
@@ -738,6 +739,12 @@ public:
     //            2 = org[0] is the destination hash, org[1] the source hash
     uint8_t  org_kind;
     uint8_t  org[4];
+    // The repeaters a FLOOD passed through, first one first. Whole hops only and
+    // capped, so a long path keeps its true count in `hops` and its start here. A
+    // direct frame's path is the route still ahead of it, so it is not kept.
+    uint8_t  path_bytes;
+    uint8_t  path_hash_sz;
+    uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
   UiRxRec  _ui_rxlog[UI_RXLOG_MAX];
@@ -753,12 +760,19 @@ public:
   // Record a reception into the ring (called from logRxRaw).
   void uiRxLogPush(uint32_t ms, int8_t rssi, int8_t snr_q4,
                    uint8_t ptype, uint8_t route, uint8_t hops, uint8_t len,
-                   uint8_t org_kind = 0, const uint8_t* org = nullptr) {
+                   uint8_t org_kind = 0, const uint8_t* org = nullptr,
+                   const uint8_t* path = nullptr, uint8_t path_bytes = 0, uint8_t path_hash_sz = 1) {
     UiRxRec& r = _ui_rxlog[_ui_rxlog_head];
     r.ms = ms; r.rssi = rssi; r.snr_q4 = snr_q4;
     r.ptype = ptype; r.route = route; r.hops = hops; r.len = len;
     r.org_kind = org ? org_kind : 0;
     if (r.org_kind) memcpy(r.org, org, 4); else memset(r.org, 0, 4);
+    if (!path || path_hash_sz == 0 || path_hash_sz > 4) path_bytes = 0;
+    if (path_bytes > UI_RXLOG_PATH_MAX)
+      path_bytes = (uint8_t)(UI_RXLOG_PATH_MAX / path_hash_sz * path_hash_sz);
+    r.path_bytes = path_bytes;
+    r.path_hash_sz = path_hash_sz;
+    if (path_bytes) memcpy(r.path, path, path_bytes);
     _ui_rxlog_head = (uint8_t)((_ui_rxlog_head + 1) % UI_RXLOG_MAX);
     if (_ui_rxlog_cnt < UI_RXLOG_MAX) _ui_rxlog_cnt++;
   }

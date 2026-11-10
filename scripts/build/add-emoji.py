@@ -18,7 +18,7 @@ OUTDIR = os.path.join(ROOT, "src", "ui-touch")
 OUTC   = os.path.join(OUTDIR, "emoji_data.c")
 OUTH   = os.path.join(OUTDIR, "emoji_data.h")
 CACHE  = os.path.join(ROOT, "data", "emoji-cache")
-BASE   = "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/png/128/emoji_u{}.png"
+BASE   = "https://raw.githubusercontent.com/googlefonts/noto-emoji/main/2D/png/128/emoji_u{}.png"
 os.makedirs(CACHE, exist_ok=True)
 
 # Single-codepoint emoji: (codepoint, noto-filename-stem)
@@ -43,6 +43,15 @@ SINGLE = [
     (0x1F3E0, "1f3e0"),   # house
     (0x1F697, "1f697"),   # car
     (0x231A,  "231a"),    # watch (sat between car + bulb in the picker, still tofu)
+    # a popular channel bot's status markers (Discord, jadestarwatcher)
+    (0x1F9CA, "1f9ca"),   # ice cube
+    (0x1F534, "1f534"),   # red circle
+    (0x1F7E1, "1f7e1"),   # yellow circle
+    (0x1F7E2, "1f7e2"),   # green circle
+    (0x1F535, "1f535"),   # blue circle
+    (0x1F698, "1f698"),   # oncoming car
+    (0x1F97E, "1f97e"),   # hiking boot
+    (0x1F6A8, "1f6a8"),   # police car light
 ]
 # ZWJ sequences baked as ONE combined image, keyed on the lead codepoint, with the
 # trailing visible symbol(s) mapped to the zero-width glyph so the whole UTF-8

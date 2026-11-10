@@ -1049,6 +1049,14 @@ void MyMesh::beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len)
   r.len = (uint8_t)(len > 255 ? 255 : len);
   r.org_kind = org_kind;
   memcpy(r.org, org, 4);
+  r.path_hash_sz = v.hash_sz;
+  r.path_bytes = 0;
+  if (v.route == ROUTE_TYPE_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_FLOOD) {
+    int n = (int)v.hops * (int)v.hash_sz;
+    if (n > UI_RXLOG_PATH_MAX) n = UI_RXLOG_PATH_MAX / v.hash_sz * v.hash_sz;
+    r.path_bytes = (uint8_t)n;
+    if (n) memcpy(r.path, &raw[v.path_off], n);
+  }
   _rxlog_head = (uint8_t)((_rxlog_head + 1) % UI_RXLOG_MAX);
   if (_rxlog_cnt < UI_RXLOG_MAX) _rxlog_cnt++;
 

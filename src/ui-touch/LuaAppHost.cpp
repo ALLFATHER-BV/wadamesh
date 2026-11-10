@@ -69,9 +69,11 @@ extern void luaHostLockScreen();
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
+#define LUA_RX_PATH_MAX 16   // MyMesh::UI_RXLOG_PATH_MAX
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                            int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
-                           uint32_t* at_ms = nullptr);
+                           uint32_t* at_ms = nullptr, uint8_t* path = nullptr,
+                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr);
 extern int  luaHostDiscoverCount();
 extern void luaHostDiscoverClear();
 extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
@@ -110,6 +112,7 @@ extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); //
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 extern uint32_t luaHostLastSentFp();
 extern uint8_t  luaHostRepeatsForFp(uint32_t fp);
+extern uint8_t  luaHostRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t cap);
 extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
 extern int  luaHostMeshChannelNames(char out[][32], int max_n);
 extern int  luaHostDmSendPerm(const char* app_id);
@@ -1099,6 +1102,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "rx_identity");// rx_log pubkey/src/dst
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "paths");      // repeater hashes in packets, messages, repeats()
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
@@ -1437,6 +1441,25 @@ int timerHandleStop(lua_State* L) {
   return 0;
 }
 
+// A repeater path as Lua sees it: one lowercase hex string per hop, first repeater
+// first, the same spelling rx_log's src and dst use so an app can compare them.
+void pushPathHops(lua_State* L, const uint8_t* path, uint8_t bytes, uint8_t hash_sz) {
+  static const char* H = "0123456789abcdef";
+  if (!path || hash_sz == 0 || hash_sz > 4) bytes = 0;
+  const int n = bytes ? bytes / hash_sz : 0;
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    char hex[9];
+    for (int b = 0; b < hash_sz; b++) {
+      const uint8_t v = path[i * hash_sz + b];
+      hex[b * 2]     = H[v >> 4];
+      hex[b * 2 + 1] = H[v & 0x0F];
+    }
+    lua_pushlstring(L, hex, (size_t)hash_sz * 2);
+    lua_rawseti(L, -2, i + 1);
+  }
+}
+
 // Store: a Lua table mirrored to /apps/<id>.sav as "k=v" lines (strings and
 // numbers only). Loaded at launch, flushed on dismiss when dirty — tiny, rare,
 // and off the hot path (touch_perf: never spam flash from the UI thread).
@@ -1558,10 +1581,22 @@ int meshSend(lua_State* L) {
 // send as repeats arrive, so an app polls it rather than reading it once. Only
 // meaningful for a channel send: a direct message is not flooded, so it has no
 // repeats to hear, and 0 is returned for an unknown or expired fingerprint.
+// The second value lists the repeaters heard, first heard first and deduplicated.
+// The firmware keeps only the first few, so the count can exceed the list.
 int meshRepeats(lua_State* L) {
-  const lua_Integer fp = luaL_checkinteger(L, 1);
-  lua_pushinteger(L, (lua_Integer)luaHostRepeatsForFp((uint32_t)fp));
-  return 1;
+  const uint32_t fp = (uint32_t)luaL_checkinteger(L, 1);
+  lua_pushinteger(L, (lua_Integer)luaHostRepeatsForFp(fp));
+  lua_newtable(L);
+  uint8_t hop[4];
+  for (uint8_t i = 0; i < 16; i++) {
+    const uint8_t sz = luaHostRepeatHop(fp, i, hop, sizeof hop);
+    if (!sz) break;
+    pushPathHops(L, hop, sz, sz);
+    lua_rawgeti(L, -1, 1);
+    lua_remove(L, -2);
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 2;
 }
 
 // wada.mesh.send_dm(to, text) -> ok, err
@@ -2512,6 +2547,9 @@ int meshContacts(lua_State* L) {
 }
 // wada.mesh.rx_log() -> newest-first list of frames the radio actually received.
 //
+// `path` is set on floods only (route 0 or 1): the repeaters the frame has passed
+// through. A direct frame's path is the route still ahead of it, not its history.
+//
 // `pubkey` is set ONLY on an advert (type 4), where the frame really does carry
 // the sender's public key -- that is the entry a coverage survey wants, since an
 // advert both identifies a node and proves it was audible from here. Addressed
@@ -2521,10 +2559,12 @@ int meshContacts(lua_State* L) {
 int meshRxLog(lua_State* L) {
   lua_newtable(L);
   uint32_t ms_ago; int ptype, rssi, hops, route, flen, org_kind; float snr; char org[12];
+  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz;
   for (int i = 0, out = 0; i < 64; i++) {
     if (!luaHostRxLogAt(i, &ms_ago, &ptype, &rssi, &snr, &hops,
-                        &route, &flen, &org_kind, org, sizeof org)) break;
-    lua_createtable(L, 0, 9);
+                        &route, &flen, &org_kind, org, sizeof org,
+                        nullptr, path, &path_bytes, &path_sz)) break;
+    lua_createtable(L, 0, 10);
     lua_pushinteger(L, (lua_Integer)ms_ago); lua_setfield(L, -2, "ago_ms");
     lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
     lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
@@ -2538,6 +2578,7 @@ int meshRxLog(lua_State* L) {
       lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
       lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
     }
+    if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
     lua_rawseti(L, -2, ++out);
   }
   return 1;
@@ -2562,8 +2603,9 @@ uint32_t    s_pkt_last_ms = 0;      // newest record timestamp already delivered
 bool        s_pkt_primed = false;
 
 void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float snr, int hops,
-                     int route, int flen, int org_kind, const char* org) {
-  lua_createtable(L, 0, 9);
+                     int route, int flen, int org_kind, const char* org,
+                     const uint8_t* path, uint8_t path_bytes, uint8_t path_sz) {
+  lua_createtable(L, 0, 10);
   lua_pushinteger(L, (lua_Integer)ago_ms); lua_setfield(L, -2, "ago_ms");
   lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
   lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
@@ -2577,6 +2619,7 @@ void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float s
     lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
     lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
   }
+  if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
 }
 
 #if CAP_LUA_AUDIO
@@ -2613,14 +2656,16 @@ void packetPollCb(lv_timer_t* t) {
   if (!s_h || !s_h->L) return;
   // Snapshot the ring newest-first, then deliver oldest-first so an app sees
   // arrival order. 16 is the ring depth; reading past it just stops.
-  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12]; };
+  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
+               uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz; };
   Rec recs[16];
   int n = 0;
   uint32_t newest = s_pkt_last_ms;
   for (int i = 0; i < 16; i++) {
     Rec r;
     if (!luaHostRxLogAt(i, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
-                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at)) break;
+                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
+                        r.path, &r.path_bytes, &r.path_sz)) break;
     // millis() wraps at 49 days; compare as a signed delta so the wrap does not
     // silently stop delivery for the rest of the session.
     if ((int32_t)(r.at - s_pkt_last_ms) <= 0) break;   // already delivered, and so is everything older
@@ -2633,7 +2678,8 @@ void packetPollCb(lv_timer_t* t) {
     if (!s_h || !s_h->L) return;
     if (!pushCallback(s_h, "on_packet")) return;
     pushPacketTable(s_h->L, recs[i].ago, recs[i].ptype, recs[i].rssi, recs[i].snr, recs[i].hops,
-                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org);
+                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org,
+                    recs[i].path, recs[i].path_bytes, recs[i].path_sz);
     guardedCall(s_h, 1);
     serviceDeferredClose();
   }
@@ -3218,18 +3264,23 @@ lv_obj_t* luaHostAppBody() { return s_h ? s_h->body : nullptr; }
 // semi-public and rides LUA_PERM_READ; direct messages and room posts are private
 // and need LUA_PERM_DM_READ, which is never auto-prompted (it would fire on someone
 // else's traffic arriving) and is granted only from Settings > App permissions.
-static void deliverMessage(const char* kind, const char* channel, const char* sender, const char* text) {
+static void deliverMessage(const char* kind, const char* channel, const char* sender, const char* text,
+                           int hops, const uint8_t* path, uint8_t path_bytes, uint8_t path_hash_sz) {
   if (!s_h || !s_h->L) return;
   const bool is_channel = (kind && strcmp(kind, "channel") == 0);
   if (is_channel) { if (!luaHostReadPerm(s_h->id))   return; }
   else            { if (!luaHostDmReadPerm(s_h->id)) return; }
   if (!pushCallback(s_h, "on_message")) return;
   lua_State* L = s_h->L;
-  lua_createtable(L, 0, 4);
+  lua_createtable(L, 0, 6);
   lua_pushstring(L, kind    ? kind    : ""); lua_setfield(L, -2, "kind");
   lua_pushstring(L, channel ? channel : ""); lua_setfield(L, -2, "channel");
   lua_pushstring(L, sender  ? sender  : ""); lua_setfield(L, -2, "sender");
   lua_pushstring(L, text    ? text    : ""); lua_setfield(L, -2, "text");
+  if (hops >= 0) {   // a flood; a direct message has no repeater list to report
+    lua_pushinteger(L, hops); lua_setfield(L, -2, "hops");
+    pushPathHops(L, path, path_bytes, path_hash_sz); lua_setfield(L, -2, "path");
+  }
   guardedCall(s_h, 1);
   serviceDeferredClose();
 }
@@ -3242,8 +3293,9 @@ bool luaAppKey(int key) {
 }
 
 #if CAP_LUA_SDK_EXT
-void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text) {
-  deliverMessage(kind, channel, sender, text);
+void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text,
+                   int hops, const uint8_t* path, uint8_t path_bytes, uint8_t path_hash_sz) {
+  deliverMessage(kind, channel, sender, text, hops, path, path_bytes, path_hash_sz);
 }
 #endif
 

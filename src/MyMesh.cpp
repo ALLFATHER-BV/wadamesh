@@ -2349,6 +2349,8 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // source hash. Anything else is anonymous on the wire and stays that way
   // here -- see UiRxRec::org_kind.
   uint8_t org_kind = 0, org[4] = {0, 0, 0, 0};
+  const uint8_t* flood_path = nullptr;   // repeaters this flood passed through
+  uint8_t flood_path_bytes = 0, flood_path_sz = 1;
   if (len > 0) {
     rt = raw[0] & 0x03;
     const bool xp = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
@@ -2361,6 +2363,11 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     const uint8_t plb = (ps < len) ? raw[ps] : 0;
     hops = (uint8_t)(plb & 0x3F);
     const int payload = ps + 1 + (int)hops * (int)(((plb >> 6) & 0x03) + 1);
+    if ((rt == ROUTE_TYPE_FLOOD || rt == ROUTE_TYPE_TRANSPORT_FLOOD) && payload <= len) {
+      flood_path = &raw[ps + 1];
+      flood_path_bytes = (uint8_t)(payload - ps - 1);
+      flood_path_sz = (uint8_t)(((plb >> 6) & 0x03) + 1);
+    }
     switch ((raw[0] >> 2) & 0x0F) {
       case PAYLOAD_TYPE_ADVERT:
         if (payload + 32 <= len) { org_kind = 1; memcpy(org, &raw[payload], 4); }
@@ -2388,7 +2395,8 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   if (len > 0) {
     uiRxLogPush(now_ms, (int8_t)rssi, snr_q4,
                 (uint8_t)((raw[0] >> 2) & 0x0F), rt, hops,
-                (uint8_t)(len > 255 ? 255 : len), org_kind, org);
+                (uint8_t)(len > 255 ? 255 : len), org_kind, org,
+                flood_path, flood_path_bytes, flood_path_sz);
   }
 #if defined(DISPLAY_CLASS)
   // Diagnostic: log EVERY received frame so we can prove what reaches the
