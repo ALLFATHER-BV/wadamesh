@@ -44,6 +44,12 @@ public:
 #endif
   bool getTouchPoint(uint16_t& x, uint16_t& y);
   void serviceRefresh(bool force = false);
+  // Commit a new frame even while the panel is powered off (the locked e-paper
+  // screen's periodic repaint, see LockedPaperRefresh.h). serviceRefresh powers
+  // the panel back down at the end of every commit, so this only drives the
+  // panel for the frame it sends. The front-light stays out: serviceRefresh
+  // re-applies the saved brightness only while the display is on.
+  void refreshWhileAsleep();
   void setBusyHook(BusyHook hook) { _busy_hook = hook; }
 
 private:

@@ -223,6 +223,8 @@ void TDeckProDisplay::requestRefresh(bool full) {
 }
 
 void TDeckProDisplay::serviceRefresh(bool force) {
+  // _sleeping gates the panel off while the screen is dark; the deliberate
+  // exception is refreshWhileAsleep(), the lock screen's periodic repaint.
   if (!_refresh_pending || _sleeping || !_mono) return;
   const uint32_t now = millis();
   if (!force && _last_refresh_ms && now - _last_refresh_ms < 250) return;
@@ -246,11 +248,27 @@ void TDeckProDisplay::serviceRefresh(bool force) {
 
   memcpy(_sent, _mono, MONO_BYTES);
   _sent_valid = true;
-  writeBrightness(_brightness);
+  // Re-apply the saved brightness only while the display is on. turnOff() zeros
+  // the pin but keeps _brightness (the Pro restores it at the user level on
+  // wake; the Max keeps its front-light decoupled at 0), so a repaint done
+  // while the panel is off must not light the front-light.
+  if (_is_on) writeBrightness(_brightness);
   _last_refresh_ms = millis();
   _refresh_pending = false;
   _full_refresh_pending = false;
   _partial_refreshes = full ? 0 : (uint8_t)(_partial_refreshes + 1);
+}
+
+void TDeckProDisplay::refreshWhileAsleep() {
+  // A dark screen keeps _sleeping set so ordinary LVGL traffic cannot drive the
+  // panel; the lock screen's periodic repaint is the deliberate exception.
+  // GxEPD2 powers the panel up itself when it refreshes and serviceRefresh()
+  // puts it back to sleep after the commit, so _sleeping is only released for
+  // this one frame.
+  if (!_sleeping) { serviceRefresh(true); return; }   // lit already: the normal path
+  _sleeping = false;
+  serviceRefresh(true);
+  _sleeping = true;
 }
 
 void TDeckProDisplay::busyCallback(const void*) {
