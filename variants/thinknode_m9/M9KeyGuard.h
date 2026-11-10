@@ -78,3 +78,12 @@ inline bool m9KeyGuardAccept(M9KeyGuard& g, uint8_t key, uint32_t now_ms) {
   g.last_ms  = now_ms;
   return true;
 }
+
+// Double-tap SPACE (switch the keyboard language, handleHwKey in UITask.cpp). The
+// guard above drops a second space that comes inside its window, which can be as
+// long as kM9GuardMaxMs, so on this board the second tap has to be allowed to come
+// later than that or the shortcut can never fire: with the 250 ms the other boards
+// use, both limits were 250 ms right after boot and the language never changed
+// (beta_100). A chatter repeat of one space comes inside the window and is still
+// dropped, so it cannot switch the language on its own.
+static constexpr uint32_t kM9DoubleSpaceMs = kM9GuardMaxMs + 200;
