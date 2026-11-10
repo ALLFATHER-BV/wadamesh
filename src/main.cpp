@@ -2212,6 +2212,7 @@ void loop() {
 #ifdef DISPLAY_CLASS
   { uint32_t _wfdt = millis() - _wf0; if (_wfdt >= 200) stallLog("wifi-sm", _wfdt); }
 #endif
+  serial_interface.retireWebCodeIfIdle();   // the tick below only runs with Wi-Fi up
   // Defer TCP and WebSocket until after splash dismisses so the_mesh.loop() never blocks on accept() before ui_task.loop() runs.
   static const uint32_t TCP_DEFER_MS = 5000;   // 5 s: don't start TCP/WS until version screen has dismissed
   /* Only start TCP / WS when WiFi was actually brought up. In BLE-only mode

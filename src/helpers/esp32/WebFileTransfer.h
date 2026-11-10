@@ -14,13 +14,8 @@ public:
   static constexpr size_t MAX_OUTBOUND_BYTES = 2053; // type + LE32 offset + 2 KiB
 
   bool begin();
-  bool setEnabled(bool enabled, uint32_t code = 0);
+  bool setEnabled(bool enabled);
   bool enabled() const { return _enabled; }
-  uint32_t code() const { return _code; }
-  bool matchesCode(const uint8_t* text, size_t len) const;
-  bool authAllowed() const;
-  void noteAuthFailure();
-  void noteAuthSuccess();
 
   bool pushInbound(uint8_t opcode, const uint8_t* data, size_t len);
   size_t popInbound(uint8_t* opcode, uint8_t* dst, size_t max_len);
@@ -59,11 +54,8 @@ private:
   portMUX_TYPE _outbound_mux = portMUX_INITIALIZER_UNLOCKED;
 
   volatile bool _enabled = false;
-  volatile uint32_t _code = 0;
   volatile int _clients = 0;
   volatile uint32_t _last_activity_ms = 0;
-  volatile uint32_t _auth_blocked_until_ms = 0;
-  volatile uint8_t _auth_failures = 0;
 };
 
 extern WebFileTransfer g_web_file_transfer;

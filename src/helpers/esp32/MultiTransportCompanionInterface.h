@@ -32,6 +32,8 @@ public:
   void begin(Stream& usb_serial, uint16_t tcp_port = TCP_COMPANION_DEFAULT_PORT, uint16_t ws_port = 0);
   // Pass wifi_connected so the WebSocket server starts only after Wi-Fi has an address.
   void startTcpServer(bool wifi_connected = true);  // idempotent; no-op if TCP disabled
+  void stopWsServer();    // close the web port (and its browser sessions); TCP is untouched
+  void retireWebCodeIfIdle();   // drop the shared browser code once no web feature is on
   void stopTcpServer();   // stop TCP server and disconnect clients; prevents startTcpServer until enableTcp()
 
 #ifdef BLE_PIN_CODE
