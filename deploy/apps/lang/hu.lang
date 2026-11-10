@@ -2373,3 +2373,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d könyv
+A chapter is missing from this book	Hiányzik egy fejezet ebből a könyvből
+Apply the new look? The Pager restarts to apply it.	Alkalmazod az új kinézetet? A Pager újraindul.
+Back to book	Vissza a könyvhöz
+Books	Könyvek
+Cannot open this book	A könyv nem nyitható meg
+Cannot read this file	A fájl nem olvasható
+Cannot show this image	A kép nem jeleníthető meg
+Chapters	Fejezetek
+Continue reading	Olvasás folytatása
+Earlier chapters	Korábbi fejezetek
+Ebook needs a newer firmware	Az e-könyvhöz újabb firmware kell
+End of book	A könyv vége
+External LoRa antenna	Külső LoRa antenna
+Images	Képek
+Later chapters	Későbbi fejezetek
+No books. Add .epub files to this app's folder.	Nincs könyv. Tegyél .epub fájlokat az alkalmazás mappájába.
+No data from the receiver	Nincs adat a vevőtől
+No login reply, tracing instead…	Nincs válasz a belépésre, nyomkövetés helyette…
+No readable chapters	Nincs olvasható fejezet
+Not an epub	Nem epub
+Opening...	Megnyitás...
+Receiver is talking at	A vevő sebessége:
+Section	Szakasz
+Start of book	A könyv eleje
+The book index is too large	A könyv indexe túl nagy
+This book is compressed. Repack it with scripts/ebook-prep.py	A könyv tömörített. Csomagold újra: scripts/ebook-prep.py
+Use external	Külső használata
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	A külső antennát használod?\nCsak csatlakoztatott antennával: üres csatlakozóba sugározva a rádió tönkremehet.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	A beépített antenna helyett a külső csatlakozót használja. Csak csatlakoztatott antennával.
+View image	Kép megtekintése
+image	kép
+reacted	reagált
+reacted to	reagált erre:

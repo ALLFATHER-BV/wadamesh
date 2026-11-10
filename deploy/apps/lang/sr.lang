@@ -2363,3 +2363,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d књига
+A chapter is missing from this book	У овој књизи недостаје поглавље
+Apply the new look? The Pager restarts to apply it.	Применити нови изглед? Pager се рестартује.
+Back to book	Назад на књигу
+Books	Књиге
+Cannot open this book	Књига се не може отворити
+Cannot read this file	Датотека се не може прочитати
+Cannot show this image	Слика се не може приказати
+Chapters	Поглавља
+Continue reading	Настави читање
+Earlier chapters	Претходна поглавља
+Ebook needs a newer firmware	Е-књига захтева новији фирмвер
+End of book	Крај књиге
+External LoRa antenna	Спољна LoRa антена
+Images	Слике
+Later chapters	Каснија поглавља
+No books. Add .epub files to this app's folder.	Нема књига. Додај .epub датотеке у фасциклу апликације.
+No data from the receiver	Нема података од пријемника
+No login reply, tracing instead…	Нема одговора на пријаву, прати се траса…
+No readable chapters	Нема читљивих поглавља
+Not an epub	Није epub
+Opening...	Отварање...
+Receiver is talking at	Пријемник говори брзином
+Section	Одељак
+Start of book	Почетак књиге
+The book index is too large	Индекс књиге је превелик
+This book is compressed. Repack it with scripts/ebook-prep.py	Књига је компримована. Препакуј је помоћу scripts/ebook-prep.py
+Use external	Користи спољну
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Користити спољну антену?\nСамо са прикљученом антеном: емитовање у празно гнездо може уништити радио.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Користи спољно гнездо уместо уграђене антене. Само са прикљученом антеном.
+View image	Прикажи слику
+image	слика
+reacted	реаговао/ла
+reacted to	реаговао/ла на

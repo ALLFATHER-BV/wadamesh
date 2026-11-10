@@ -2361,3 +2361,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d boek(en)
+A chapter is missing from this book	Er ontbreekt een hoofdstuk in dit boek
+Apply the new look? The Pager restarts to apply it.	Nieuwe look toepassen? De Pager herstart.
+Back to book	Terug naar boek
+Books	Boeken
+Cannot open this book	Kan dit boek niet openen
+Cannot read this file	Kan dit bestand niet lezen
+Cannot show this image	Kan deze afbeelding niet tonen
+Chapters	Hoofdstukken
+Continue reading	Verder lezen
+Earlier chapters	Eerdere hoofdstukken
+Ebook needs a newer firmware	Ebook vraagt nieuwere firmware
+End of book	Einde van boek
+External LoRa antenna	Externe LoRa-antenne
+Images	Afbeeldingen
+Later chapters	Latere hoofdstukken
+No books. Add .epub files to this app's folder.	Geen boeken. Voeg .epub-bestanden toe aan de map van deze app.
+No data from the receiver	Geen gegevens van de ontvanger
+No login reply, tracing instead…	Geen inlogantwoord, traceren in plaats daarvan…
+No readable chapters	Geen leesbare hoofdstukken
+Not an epub	Geen epub
+Opening...	Openen...
+Receiver is talking at	Ontvanger praat op
+Section	Sectie
+Start of book	Begin van boek
+The book index is too large	De boekindex is te groot
+This book is compressed. Repack it with scripts/ebook-prep.py	Dit boek is gecomprimeerd. Verpak het opnieuw met scripts/ebook-prep.py
+Use external	Extern gebruiken
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Externe antenne gebruiken?\nAlleen met een aangesloten antenne: zenden op een lege aansluiting kan de radio vernietigen.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Gebruikt de externe aansluiting in plaats van de ingebouwde antenne. Alleen met een aangesloten antenne.
+View image	Afbeelding bekijken
+image	afbeelding
+reacted	reageerde
+reacted to	reageerde op

@@ -2364,3 +2364,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d cărți
+A chapter is missing from this book	Lipsește un capitol din această carte
+Apply the new look? The Pager restarts to apply it.	Aplici noul aspect? Pager-ul repornește.
+Back to book	Înapoi la carte
+Books	Cărți
+Cannot open this book	Nu se poate deschide cartea
+Cannot read this file	Nu se poate citi fișierul
+Cannot show this image	Nu se poate afișa imaginea
+Chapters	Capitole
+Continue reading	Continuă lectura
+Earlier chapters	Capitole anterioare
+Ebook needs a newer firmware	Ebook-ul necesită firmware mai nou
+End of book	Sfârșitul cărții
+External LoRa antenna	Antenă LoRa externă
+Images	Imagini
+Later chapters	Capitole următoare
+No books. Add .epub files to this app's folder.	Nicio carte. Adaugă fișiere .epub în folderul aplicației.
+No data from the receiver	Nicio dată de la receptor
+No login reply, tracing instead…	Fără răspuns la autentificare, se face trasare…
+No readable chapters	Niciun capitol lizibil
+Not an epub	Nu este epub
+Opening...	Se deschide...
+Receiver is talking at	Receptorul comunică la
+Section	Secțiune
+Start of book	Începutul cărții
+The book index is too large	Indexul cărții este prea mare
+This book is compressed. Repack it with scripts/ebook-prep.py	Cartea este comprimată. Reambaleaz-o cu scripts/ebook-prep.py
+Use external	Folosește externa
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Folosești antena externă?\nDoar cu antenă conectată: emisia într-o mufă goală poate distruge radioul.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Folosește mufa externă în loc de antena integrată. Doar cu antenă conectată.
+View image	Vezi imaginea
+image	imagine
+reacted	a reacționat
+reacted to	a reacționat la

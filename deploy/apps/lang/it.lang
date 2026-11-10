@@ -2362,3 +2362,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d libri
+A chapter is missing from this book	Manca un capitolo in questo libro
+Apply the new look? The Pager restarts to apply it.	Applicare il nuovo aspetto? Il Pager si riavvia.
+Back to book	Torna al libro
+Books	Libri
+Cannot open this book	Impossibile aprire questo libro
+Cannot read this file	Impossibile leggere questo file
+Cannot show this image	Impossibile mostrare questa immagine
+Chapters	Capitoli
+Continue reading	Continua a leggere
+Earlier chapters	Capitoli precedenti
+Ebook needs a newer firmware	L'ebook richiede un firmware più recente
+End of book	Fine del libro
+External LoRa antenna	Antenna LoRa esterna
+Images	Immagini
+Later chapters	Capitoli successivi
+No books. Add .epub files to this app's folder.	Nessun libro. Aggiungi file .epub alla cartella dell'app.
+No data from the receiver	Nessun dato dal ricevitore
+No login reply, tracing instead…	Nessuna risposta al login, traccio invece…
+No readable chapters	Nessun capitolo leggibile
+Not an epub	Non è un epub
+Opening...	Apertura...
+Receiver is talking at	Il ricevitore parla a
+Section	Sezione
+Start of book	Inizio del libro
+The book index is too large	L'indice del libro è troppo grande
+This book is compressed. Repack it with scripts/ebook-prep.py	Questo libro è compresso. Riconfezionalo con scripts/ebook-prep.py
+Use external	Usa l'esterna
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Usare l'antenna esterna?\nSolo con un'antenna collegata: trasmettere su una presa vuota può distruggere la radio.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Usa la presa esterna invece dell'antenna integrata. Solo con un'antenna collegata.
+View image	Vedi immagine
+image	immagine
+reacted	ha reagito
+reacted to	ha reagito a

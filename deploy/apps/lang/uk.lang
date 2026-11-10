@@ -2363,3 +2363,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	Книг: %d
+A chapter is missing from this book	У цій книзі бракує розділу
+Apply the new look? The Pager restarts to apply it.	Застосувати новий вигляд? Pager перезапуститься.
+Back to book	Назад до книги
+Books	Книги
+Cannot open this book	Не вдається відкрити книгу
+Cannot read this file	Не вдається прочитати файл
+Cannot show this image	Не вдається показати зображення
+Chapters	Розділи
+Continue reading	Продовжити читання
+Earlier chapters	Попередні розділи
+Ebook needs a newer firmware	Для e-book потрібна новіша прошивка
+End of book	Кінець книги
+External LoRa antenna	Зовнішня антена LoRa
+Images	Зображення
+Later chapters	Наступні розділи
+No books. Add .epub files to this app's folder.	Немає книг. Додайте файли .epub до теки застосунку.
+No data from the receiver	Немає даних від приймача
+No login reply, tracing instead…	Немає відповіді на вхід, трасування…
+No readable chapters	Немає читабельних розділів
+Not an epub	Не epub
+Opening...	Відкриття...
+Receiver is talking at	Приймач працює зі швидкістю
+Section	Секція
+Start of book	Початок книги
+The book index is too large	Індекс книги завеликий
+This book is compressed. Repack it with scripts/ebook-prep.py	Книга стиснута. Перепакуйте її через scripts/ebook-prep.py
+Use external	Зовнішня
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Використати зовнішню антену?\nЛише з підключеною антеною: передача в порожнє гніздо може знищити радіо.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Використовує зовнішнє гніздо замість вбудованої антени. Лише з підключеною антеною.
+View image	Показати зображення
+image	зображення
+reacted	відреагував(ла)
+reacted to	відреагував(ла) на

@@ -2363,3 +2363,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	%d livro(s)
+A chapter is missing from this book	Falta um capítulo neste livro
+Apply the new look? The Pager restarts to apply it.	Aplicar o novo visual? O Pager reinicia.
+Back to book	Voltar ao livro
+Books	Livros
+Cannot open this book	Não foi possível abrir este livro
+Cannot read this file	Não foi possível ler este arquivo
+Cannot show this image	Não foi possível mostrar esta imagem
+Chapters	Capítulos
+Continue reading	Continuar lendo
+Earlier chapters	Capítulos anteriores
+Ebook needs a newer firmware	O ebook precisa de um firmware mais novo
+End of book	Fim do livro
+External LoRa antenna	Antena LoRa externa
+Images	Imagens
+Later chapters	Capítulos seguintes
+No books. Add .epub files to this app's folder.	Sem livros. Adicione arquivos .epub à pasta deste app.
+No data from the receiver	Sem dados do receptor
+No login reply, tracing instead…	Sem resposta de login, rastreando…
+No readable chapters	Sem capítulos legíveis
+Not an epub	Não é um epub
+Opening...	Abrindo...
+Receiver is talking at	O receptor fala a
+Section	Seção
+Start of book	Início do livro
+The book index is too large	O índice do livro é grande demais
+This book is compressed. Repack it with scripts/ebook-prep.py	Este livro está compactado. Reempacote-o com scripts/ebook-prep.py
+Use external	Usar externa
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Usar a antena externa?\nSó com uma antena conectada: transmitir em um conector vazio pode destruir o rádio.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Usa o conector externo em vez da antena interna. Só com uma antena conectada.
+View image	Ver imagem
+image	imagem
+reacted	reagiu
+reacted to	reagiu a

@@ -2363,3 +2363,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	Книг: %d
+A chapter is missing from this book	В этой книге отсутствует глава
+Apply the new look? The Pager restarts to apply it.	Применить новый вид? Pager перезапустится.
+Back to book	Назад к книге
+Books	Книги
+Cannot open this book	Не удаётся открыть книгу
+Cannot read this file	Не удаётся прочитать файл
+Cannot show this image	Не удаётся показать изображение
+Chapters	Главы
+Continue reading	Продолжить чтение
+Earlier chapters	Предыдущие главы
+Ebook needs a newer firmware	Для e-book нужна более новая прошивка
+End of book	Конец книги
+External LoRa antenna	Внешняя антенна LoRa
+Images	Изображения
+Later chapters	Следующие главы
+No books. Add .epub files to this app's folder.	Нет книг. Добавьте файлы .epub в папку приложения.
+No data from the receiver	Нет данных от приёмника
+No login reply, tracing instead…	Нет ответа на вход, трассировка…
+No readable chapters	Нет читаемых глав
+Not an epub	Не epub
+Opening...	Открытие...
+Receiver is talking at	Приёмник работает на скорости
+Section	Раздел
+Start of book	Начало книги
+The book index is too large	Индекс книги слишком велик
+This book is compressed. Repack it with scripts/ebook-prep.py	Книга сжата. Перепакуйте её через scripts/ebook-prep.py
+Use external	Внешняя
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Использовать внешнюю антенну?\nТолько при подключённой антенне: передача в пустой разъём может уничтожить радио.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Использует внешний разъём вместо встроенной антенны. Только при подключённой антенне.
+View image	Показать изображение
+image	изображение
+reacted	отреагировал(а)
+reacted to	отреагировал(а) на

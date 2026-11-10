@@ -2379,3 +2379,37 @@ Sage	Sage
 Dusk	Dusk
 Tone the whole screen	Tone the whole screen
 Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	Knih: %d
+A chapter is missing from this book	V knize chybí kapitola
+Apply the new look? The Pager restarts to apply it.	Použít nový vzhled? Pager se restartuje.
+Back to book	Zpět ke knize
+Books	Knihy
+Cannot open this book	Knihu nelze otevřít
+Cannot read this file	Soubor nelze přečíst
+Cannot show this image	Obrázek nelze zobrazit
+Chapters	Kapitoly
+Continue reading	Pokračovat ve čtení
+Earlier chapters	Dřívější kapitoly
+Ebook needs a newer firmware	E-kniha vyžaduje novější firmware
+End of book	Konec knihy
+External LoRa antenna	Externí anténa LoRa
+Images	Obrázky
+Later chapters	Pozdější kapitoly
+No books. Add .epub files to this app's folder.	Žádné knihy. Přidej soubory .epub do složky aplikace.
+No data from the receiver	Žádná data z přijímače
+No login reply, tracing instead…	Bez odpovědi na přihlášení, sleduji trasu…
+No readable chapters	Žádné čitelné kapitoly
+Not an epub	Není epub
+Opening...	Otevírání...
+Receiver is talking at	Přijímač komunikuje rychlostí
+Section	Oddíl
+Start of book	Začátek knihy
+The book index is too large	Index knihy je příliš velký
+This book is compressed. Repack it with scripts/ebook-prep.py	Kniha je komprimovaná. Přebal ji pomocí scripts/ebook-prep.py
+Use external	Použít externí
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Použít externí anténu?\nJen s připojenou anténou: vysílání do prázdného konektoru může zničit rádio.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Použije externí konektor místo vestavěné antény. Jen s připojenou anténou.
+View image	Zobrazit obrázek
+image	obrázek
+reacted	reagoval(a)
+reacted to	reagoval(a) na
