@@ -38,6 +38,7 @@ extern bool             luaHostBeep();
 extern void             luaHostSetSelectionGlow(lv_obj_t* obj, bool selected);
 extern uint32_t         luaHostPanelColor();                      // wada.ui.panel defaults (live theme)
 extern uint32_t         luaHostBorderColor();
+extern bool             luaHostAnimOn();                          // false: Mute colours and animations
 extern void             luaHostMarkInert(lv_obj_t* obj);          // never a keyboard focus stop
 extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
@@ -3286,7 +3287,7 @@ bool luaAppScroll(bool up) {
   lv_coord_t step = (lv_coord_t)((s_h->body_h * 3) / 5);
   if (step > room) step = room;
   const lv_coord_t cur = lv_obj_get_scroll_y(s_h->body);
-  lv_obj_scroll_to_y(s_h->body, up ? cur - step : cur + step, LV_ANIM_ON);
+  lv_obj_scroll_to_y(s_h->body, up ? cur - step : cur + step, luaHostAnimOn() ? LV_ANIM_ON : LV_ANIM_OFF);
   return true;
 }
 

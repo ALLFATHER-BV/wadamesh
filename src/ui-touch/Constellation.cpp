@@ -369,7 +369,8 @@ void flowDrawCb(lv_event_t* e) {
   ld.width = K1(1);
   ld.round_start = ld.round_end = 1;
   const float period = (float)K(9), dash = (float)LV_MAX(2, K(2));
-  const float shift = fmodf((float)((uint64_t)lv_tick_get() * (uint64_t)K(12) % 1000000000ull) / 1000.0f, period);
+  const float shift = s_th.calm ? 0.0f
+      : fmodf((float)((uint64_t)lv_tick_get() * (uint64_t)K(12) % 1000000000ull) / 1000.0f, period);
   for (int f = 0; f < s_nflow; ++f) {
     const Flow& fl = s_flow[f];
     ld.color = C(s_flow_col[f]);
@@ -747,7 +748,7 @@ void sweepTimerCb(lv_timer_t*) {
 // image; s_static itself stays hidden, so LVGL never walks it during a frame.
 // Without the memory for it, the scene is simply drawn live.
 void staticCache() {
-  if (!s_static || !s_static_img) return;
+  if (!s_static || !s_static_img || s_th.calm) return;   // calm draws no mesh at all
   if (!s_static_buf)
     s_static_buf = static_cast<lv_color_t*>(lv_mem_alloc(sizeof(lv_color_t) * (size_t)s_w * (size_t)s_h));
   lv_disp_t* disp = lv_obj_get_disp(s_static);
@@ -838,7 +839,7 @@ void pingExec(void* var, int32_t v) {
 void hideReady(lv_anim_t* a) { lv_obj_add_flag(static_cast<lv_obj_t*>(a->var), LV_OBJ_FLAG_HIDDEN); }
 
 void pingAt(lv_coord_t x, lv_coord_t y, uint32_t col) {
-  if (!s_root) return;
+  if (!s_root || s_th.calm) return;
   lv_obj_t* o = s_ping[s_next_ping];
   s_next_ping = (s_next_ping + 1) % kPings;
   lv_anim_del(o, pingExec);
@@ -872,7 +873,7 @@ void dotStart(lv_anim_t* a) { lv_obj_clear_flag(static_cast<lv_obj_t*>(a->var), 
 // A packet travelling one leg of its path. Delayed legs stay hidden until they
 // start, so a two-hop arrival reads as one dot handed on by the repeater.
 void launchDot(Pt from, Pt to, uint32_t delay_ms, uint32_t col) {
-  if (!s_root) return;
+  if (!s_root || s_th.calm) return;
   const int i = s_next_dot;
   s_next_dot = (s_next_dot + 1) % kDots;
   lv_obj_t* o = s_dot[i];
@@ -1191,6 +1192,12 @@ void hudHiddenReady(lv_anim_t*) {
 }
 void hudMove() {
   if (!s_root || s_hud_moving || !s_clock) return;
+  if (s_th.calm) {   // straight to the next corner, no fade
+    s_hud = (s_hud + 1) % (s_portrait ? 2 : 4);
+    placeHud();
+    s_sig = 0;
+    return;
+  }
   s_hud_moving = true;
   lv_anim_t a;
   lv_anim_init(&a);
@@ -1269,7 +1276,7 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
   s_core = disc(s_scene, s_cx, s_cy, K(8));
   lv_obj_set_style_bg_color(s_core, C(s_th.glow), 0);
   lv_obj_set_style_bg_opa(s_core, LV_OPA_COVER, 0);
-  {
+  if (!s_th.calm) {
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_core);
@@ -1281,7 +1288,7 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_start(&a);
   }
-  {
+  if (!s_th.calm) {
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, s_halo);
@@ -1292,6 +1299,9 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&a, lv_anim_path_ease_in_out);
     lv_anim_start(&a);
+  } else {   // the plain face: only the status, on the bare background
+    for (lv_obj_t* o : { s_static, s_static_img, s_flow_obj, s_self_ring, s_halo, s_core_glow, s_core })
+      lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
 
   for (int i = 0; i < kPings; ++i) {
@@ -1310,8 +1320,8 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_obj_add_flag(s_dot[i], LV_OBJ_FLAG_HIDDEN);
   }
 
-  // The radar sweep, over the mesh and under the status.
-  {
+  // The radar sweep, over the mesh and under the status (none when calm).
+  if (!s_th.calm) {
     uint32_t seed = 0x9E3779B9u;
     for (int i = 0; i < kClutter; ++i) {
       seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5;
@@ -1354,7 +1364,7 @@ void cstShow(lv_obj_t* parent, const CstTheme& theme) {
     lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
     lv_obj_set_style_bg_color(dot, C(s_th.glow), 0);
     lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(dot, K(6), 0);
+    lv_obj_set_style_shadow_width(dot, s_th.calm ? 0 : K(6), 0);
     lv_obj_set_style_shadow_color(dot, C(s_th.glow), 0);
     lv_obj_set_style_shadow_opa(dot, 150, 0);
     lv_obj_add_flag(slot, LV_OBJ_FLAG_OVERFLOW_VISIBLE);   // the glow reaches past the slot
@@ -1569,7 +1579,7 @@ void cstSetStatus(const CstStatus& s) {
   }
 #endif
   if (all || s.north_up != s_st.north_up) {
-    if (s.north_up) lv_obj_clear_flag(s_north, LV_OBJ_FLAG_HIDDEN);
+    if (s.north_up && !s_th.calm) lv_obj_clear_flag(s_north, LV_OBJ_FLAG_HIDDEN);
     else            lv_obj_add_flag(s_north, LV_OBJ_FLAG_HIDDEN);
     staticCache();
   }
@@ -1619,7 +1629,7 @@ void cstTick(uint32_t now_ms) {
   // Burn-in: the mesh takes its next step round and drifts (applyTurn), and the
   // status moves to another corner every two minutes (a fade out, a whole move, a
   // fade in). The sweep keeps every part of the mesh changing in between.
-  if (now_ms / kTurnStepMs != s_turn_step) {
+  if (!s_th.calm && now_ms / kTurnStepMs != s_turn_step) {   // calm has no mesh to turn
     applyTurn(now_ms);
     ringsBuild();
     if (s_self_ring) lv_obj_set_pos(s_self_ring, s_cx - K(15) / 2, s_cy - K(15) / 2);
