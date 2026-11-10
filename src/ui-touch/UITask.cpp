@@ -56465,6 +56465,16 @@ static void ccScreenshotCb(lv_event_t* e) {
 #endif
 
 #if CAP_KEYBOARD
+// The control centre's keyboard-light chip, except on the older T-Deck keyboards: their
+// controller firmware (before LilyGo's 2024-12-25 one) takes no backlight command, only
+// its own Alt+B, so the chip would do nothing (#801). Same gate as Settings > Keyboard (#382).
+static bool ccKbLightShown() {
+#if defined(HAS_TDECK_KEYBOARD)
+  return !touchPrefsGetKbForceLegacy();
+#else
+  return true;
+#endif
+}
 static void ccKbBacklightCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_kb_bl_mode = (uint8_t)((s_kb_bl_mode + 1) % 3);   // off -> on -> auto -> off
@@ -57696,7 +57706,7 @@ static void openControlCenter() {
   if (!g_lv.task || g_lv.task->hasBleCapability()) chip_count++;   // BT
   chip_count++;   // GPS (toggle or info-only, always shown)
 #if CAP_KEYBOARD
-  chip_count++;
+  if (ccKbLightShown()) chip_count++;
 #endif
 #if defined(HAS_UI_SOUND) || defined(HAS_TANMATSU)
   chip_count++;
@@ -57754,9 +57764,11 @@ static void openControlCenter() {
 #if CAP_KEYBOARD
   // Keyboard-backlight chip: the keyboard glyph WITH its off/on/auto mode word beneath it,
   // so the mode stays visible at a glance (sub_text stacks a small caption under the icon).
-  const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
-  ccToggle(row, UI_ICON_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0,
-           ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode, CC_NAV_KEYBOARD);
+  if (ccKbLightShown()) {
+    const char* kb_mode = s_kb_bl_mode == 0 ? "off" : (s_kb_bl_mode == 1 ? "on" : "auto");
+    ccToggle(row, UI_ICON_KEYBOARD, TR("Keyboard"), s_kb_bl_mode != 0,
+             ccKbBacklightCb, tw, th, CAT_KEYBOARD, kb_mode, CC_NAV_KEYBOARD);
+  }
 #endif
 #if defined(HAS_TDECK_GT911)
   ccToggle(row, UI_ICON_LOCK, TR("Lock"), false, ccLockCb, tw, th, CAT_LOCK);   // real padlock, not an eye
