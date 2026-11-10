@@ -1,3 +1,5 @@
+#if !defined(HAS_TDECK_PRO)
+
 /*******************************************************************************
  * Size: 16 px
  * Bpp: 4
@@ -2356,3 +2358,6 @@ lv_font_t lv_font_montserrat_16 = {
 
 
 #endif /*#if WADA_UI_FONT_16_BODY*/
+
+
+#endif /* !defined(HAS_TDECK_PRO) */
