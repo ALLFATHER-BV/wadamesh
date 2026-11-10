@@ -1,0 +1,44 @@
+# beta_102 - community round, GPS start, repeater traces, TAK text hiding, Lua paths and ping, Ebook. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards, apps.
+
+Test build, on top of beta_101. The stable build stays beta_101.
+
+# --- New ---
+Hide MediaMesh and TAK texts: MeshCore Open TAK and Wadamesh TAK send photos, voice and team tracking as ordinary texts with machine-readable headers, which read as gibberish here. With the new switch in Settings > Radio & Mesh, messages between apps disappear with no badge or sound, and photos, voice and encrypted texts become a short line such as "Photo: Look at this". It is off by default and a connected phone app still gets every message. The recognition rules are by jadestarwatcher, asked for by zomgugoff.
+Mute colours and animations: a new switch for a calm, flat look with muted tones, a plain screensaver face and no animation (#798 by oumike).
+Emoji reactions from MeshCore Open and MeshCore One read as reactions, naming the message they answer, instead of raw text like r:6801:02 (#795 by oumike, reported by DenRalle).
+Browser features share one code: the Remote terminal, Remote screen and VNC pages all ask for the same code shown on the device, and a browser that does not give it within 30 seconds is dropped (#793 by CarpeNoctem).
+Eight more emoji display: ice cube, red, yellow, green and blue circles, oncoming car, hiking boot and the police light, used by a popular channel bot (asked for by jadestarwatcher).
+Chat icons take their initials from the first letters of the first and last word (#796 by oumike, asked for by big-edd).
+The web flasher offers the last 25 builds under Version, and an older test build picked on the Stable side no longer fails to download (asked for by lottibotti).
+
+# --- Fixes ---
+GPS that stayed silent on the T-Deck: since beta_100 the T-Deck tells its receiver to stop and start, and at boot those commands go out close together, so a receiver could end up stopped with nothing to wake it. The firmware now watches for as long as the GPS is on and starts it again when sentences stop. Under the GPS or battery saver the first search gets ten minutes instead of three, and Settings > GPS says either "Receiver is talking at 38400" or "No data from the receiver" (#778, reported by johntofflemire-alt).
+Ping on a repeater with no guest access: Ping logs in as a guest first, and such a repeater refuses it and never answers. When a repeater stays silent, Ping now falls back to a trace, which needs no login (#780, reported by Myrlhyn). The guest logins behind Ping and Telemetry also flood at 1-byte hashes, like Admin (#783 by oumike).
+Traces in 3-byte path mode send 4-byte hops, matching what the packet declares (#818, found by Ve2mrx).
+Trace route works past the first repeater: it now goes out along the path, through the target and back the same way, because a trace ends at whoever hears its last forwarder. Before, a path with 2 or 3-byte hashes fell back to one hop and a longer route never came back. Each node on the way now reports its own reading.
+A contact added from Discovered after a restart learns its route, so its direct messages go out properly (#781 by oumike, reported by EricMW61).
+Web client: the Contacts filter Peers leaves out rooms, and Rooms has its own filter (#779 by oumike).
+A long list of screens now translate, from oumike's language work (#631), including "Mark all as read" in the chat list menu (#782, reported by SnowGlobeio).
+Settings > Device > System info shows how many messages are in memory and how many each chat keeps.
+
+# --- Boards ---
+T-LoRa Pager: the knob counts each rest position once and fast turns no longer overshoot to the top bar or out of the messages (#769 by MrYoshii, fixes #643 from zomgugoff).
+T-LoRa Pager: the microSD card runs at 20 MHz after mounting (#770), Back on the Theme page offers a look you have not applied (#771), and W, A, S and D pan the map with the bottom menu out of the way (#772), all by MrYoshii.
+T-Deck: Space locks the screen while an app without key handling is open, and a locked or dark screen no longer sends keys to the app (#817, asked for by joennu).
+T-Deck: the keyboard-light chip in the control panel is hidden on older keyboards that have no light (#802 by oumike).
+T-Deck Max: Settings > Radio & Mesh > External LoRa antenna switches the radio to the external connector, with a warning before it turns on (#777, asked for by Myrlhyn).
+T-Deck Pro: e-paper fonts and settings buttons that fit, no name in the status bar, a clock at the far left, a two-row chat header, no lock wallpaper, and badges that no longer redraw the panel every moment (#784 by oumike, #767).
+T-Deck Pro and Max: the lock screen refreshes every 5 minutes (#786 by Ender436).
+ThinkNode M9: a pause between words no longer swallows doubled letters (#810), and double-tap Space switches the keyboard language again (#811), both by jcyrio.
+ThinkNode M9: the buzzer has Volume steps in Settings > Sound (#814 by denmojo).
+Keypad navigation: Left and Right on a settings row with - and + buttons press them instead of jumping to another row (#815 by denmojo).
+Wio Tracker L2: the mesh LED is off after boot (#808, reported by MaxMullert).
+
+# --- Apps and Lua SDK ---
+Ebook: a new app in the Store that reads .epub books from the app folder (#797 by CarpeNoctem).
+ProTreck 1.3 shows local sun, twilight and moon times (#773 by Ender436).
+Lua: wada.mesh.ping traces one repeater with no login and reports through app.on_ping (#816, asked for by joennu).
+Lua: flooded messages carry m.hops and m.path, rx_log and on_packet carry p.path, and wada.mesh.repeats also returns the repeaters heard (asked for by jadestarwatcher).
+Lua: wada.sys.lock() locks the screen (#817) and wada.mesh.contacts() has flags and favorite (asked for by steve9994320).
