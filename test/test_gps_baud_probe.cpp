@@ -185,6 +185,71 @@ int main() {
     assert(nvs.found_writes == 0);
   }
 
+  // ---- #778: a GNSS start lost right after the stop: the receiver must not stay silent ----
+  {
+    resetNvs();
+    Board b(38400, 38400);
+    b.run(5000);
+    b.gps->stop();
+    assert(b.uart.stopped);
+    b.uart.drop_starts = 2;                    // this start and the first repeat are lost
+    b.gps->begin();
+    assert(b.uart.stopped);
+    const uint32_t n = b.gps->validSentences();
+    b.run(10000);
+    assert(!b.uart.stopped);
+    assert(b.gps->validSentences() > n);
+    assert(b.gps->msSinceValidSentence() < 2000);
+    // ...and with sentences flowing the repeats stop.
+    const int heard = b.uart.starts_heard;
+    b.run(120000);
+    assert(b.uart.starts_heard == heard);
+  }
+  // ---- a start that goes out with stale sentences still in the UART is still repeated ----
+  {
+    resetNvs();
+    Board b(38400, 38400);
+    b.run(5000);
+    b.gps->stop();
+    b.uart.drop_starts = 1;
+    b.run(3);                                  // the tail of what it sent, unread
+    b.gps->begin();
+    b.run(5000);
+    assert(!b.uart.stopped);
+  }
+  // ---- a receiver lost for longer: the slow repeats still bring it back ----
+  {
+    resetNvs();
+    nvs.chosen = 38400;                        // no probe: only the repeats send a start
+    Board b(38400, 38400);
+    b.run(5000);
+    b.gps->stop();
+    b.uart.drop_starts = 7;
+    b.gps->begin();
+    b.run(30000);
+    assert(b.uart.stopped);
+    b.run(70000);
+    assert(!b.uart.stopped);
+  }
+  // ---- Auto, stopped at a speed we have not tried yet: the start goes out on each candidate ----
+  {
+    resetNvs();
+    Board b(9600, 38400);
+    b.uart.stopped = true;
+    b.run(60000);
+    assert(!b.uart.stopped && b.uart.baud == 9600);
+    assert(nvs.found == 9600 && nvs.found_writes == 1);
+  }
+  // ---- a board with no receiver gets no reopen from the repeats ----
+  {
+    resetNvs();
+    nvs.chosen = 38400;
+    Board b(0, 38400);
+    b.run(5 * 60000);
+    assert(b.uart.begins == 1);
+    assert(b.gps->validSentences() == 0 && b.gps->msSinceValidSentence() == UINT32_MAX);
+  }
+
   // ---- the rules themselves ----
   assert(GpsBaudPrefs::effective(0, 0, 38400) == 38400);
   assert(GpsBaudPrefs::effective(0, 9600, 38400) == 9600);

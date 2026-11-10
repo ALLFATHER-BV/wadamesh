@@ -61,10 +61,14 @@ class WadaNmeaLocationProvider : public LocationProvider {
   bool _ubx_standby = false;      // rest in software standby (setUbxStandby)
   uint8_t _wake_tries = 0;
   uint32_t _wake_check_ms = 0;    // when begin() looks for the stream again (0: not waiting)
+  uint32_t _valid_sentences = 0;  // checksummed sentences since boot (the GPS page shows them)
+  uint32_t _last_valid_ms = 0;    // millis() of the last one (0: none yet)
   static const unsigned long TIME_SYNC_INTERVAL = 1800000;  // re-sync every 30 minutes
   static const unsigned long BAUD_PROBE_START_MS = 9000;
   static const unsigned long BAUD_PROBE_INTERVAL_MS = 5000;
   static const unsigned long WAKE_CHECK_MS = 1500;
+  static const unsigned long WAKE_SLOW_MS = 30000;
+  static const uint8_t WAKE_FAST_TRIES = 5;
 
   void nudgeReceiver() {
     if (!_probe_serial) return;
@@ -91,6 +95,9 @@ class WadaNmeaLocationProvider : public LocationProvider {
       _active_baud = candidate;
       _probe_deadline_ms = millis() + BAUD_PROBE_INTERVAL_MS;
       nudgeReceiver();
+      // A receiver left stopped only hears the start at its own speed, and a stopped one
+      // sends nothing for the probe to lock on to, so every candidate gets one.
+      ubxGnss(true);
       return;
     }
   }
@@ -203,7 +210,7 @@ public:
     time_valid = 0;
     // What waited in the UART while the receiver rested is old news, and it would read as
     // the stream being back before the receiver has woken.
-    if (_ubx_standby) while (_gps_serial->available()) _gps_serial->read();
+    if (_pin_en == -1) while (_gps_serial->available()) _gps_serial->read();
     if (_pin_en != -1) digitalWrite(_pin_en, _en_active);
     if (_pin_reset != -1) digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
     if (_pin_en != -1 && _post_enable) _post_enable();
@@ -217,10 +224,13 @@ public:
       nudgeReceiver();
     }
     ubxGnss(true);
-    // A receiver in standby spends the first bytes waking up, so the start may be lost;
-    // loop() repeats the nudge and the start until the stream is back.
+    // The start can be lost: a receiver in standby spends the first bytes waking up, and
+    // one that was told to stop a moment ago (the boot sequence stops it, then starts it)
+    // can drop a start that follows too closely. A stopped receiver sends nothing, so it
+    // would stay silent until the next restart of the GPS (#778). loop() repeats the nudge
+    // and the start until sentences flow again.
     _wake_tries = 0;
-    _wake_check_ms = _ubx_standby ? millis() + WAKE_CHECK_MS : 0;
+    _wake_check_ms = _pin_en == -1 ? millis() + WAKE_CHECK_MS : 0;
   }
 
   void reset() override {
@@ -270,6 +280,12 @@ public:
 
   void sendSentence(const char* sentence) override { nmea.sendSentence(*_gps_serial, sentence); }
 
+  // For the GPS page: is the receiver talking at all? Satellites at 0 with sentences
+  // arriving is a receiver still searching; no sentences is a silent or mis-clocked one.
+  uint32_t validSentences() const { return _valid_sentences; }
+  uint32_t msSinceValidSentence() const { return _last_valid_ms ? millis() - _last_valid_ms : UINT32_MAX; }
+  uint32_t activeBaud() const { return _active_baud; }
+
   // ---- the addition -------------------------------------------------------
   // Speed and course over ground from the last RMC sentence. MicroNMEA stores
   // knots×1000 and degrees×1000, LONG_MIN after clear(). An EMPTY course field
@@ -292,19 +308,6 @@ public:
   }
 
   void loop() override {
-    if (_wake_check_ms) {
-      if (_gps_serial->available()) {
-        _wake_check_ms = 0;   // the stream is back
-      } else if ((int32_t)(millis() - _wake_check_ms) >= 0) {
-        if (++_wake_tries > 5) {
-          _wake_check_ms = 0;   // give up quietly; the baud probe and the UI carry on as before
-        } else {
-          nudgeReceiver();
-          ubxGnss(true);
-          _wake_check_ms = millis() + WAKE_CHECK_MS;
-        }
-      }
-    }
     while (_gps_serial->available()) {
       char c = _gps_serial->read();
 #ifdef GPS_NMEA_DEBUG
@@ -314,8 +317,26 @@ public:
       nmea.process(c);
       if (sentence_end) {
         const char* sentence = nmea.getSentence();
-        if (sentence && sentence[0] == '$' && MicroNMEA::testChecksum(sentence))
+        if (sentence && sentence[0] == '$' && MicroNMEA::testChecksum(sentence)) {
+          _valid_sentences++;
+          _last_valid_ms = millis();
+          if (!_last_valid_ms) _last_valid_ms = 1;
           noteValidSentence();
+        }
+      }
+    }
+
+    if (_wake_check_ms && (int32_t)(millis() - _wake_check_ms) >= 0) {
+      // A sentence from inside this last window, not any byte: the tail of what a stopping
+      // receiver sent is still in the UART when the start goes out.
+      if (_last_valid_ms && millis() - _last_valid_ms < WAKE_CHECK_MS) {
+        _wake_check_ms = 0;
+      } else {
+        const bool fast = _wake_tries < WAKE_FAST_TRIES;
+        if (fast) _wake_tries++;
+        nudgeReceiver();
+        ubxGnss(true);
+        _wake_check_ms = millis() + (fast ? WAKE_CHECK_MS : WAKE_SLOW_MS);
       }
     }
 

@@ -4784,6 +4784,17 @@ static const char* gpsStatusStr(bool compact = false) {
       if (secs < 600) n += snprintf(s + n, sizeof s - n, " %lum%02lus", (unsigned long)(secs / 60), (unsigned long)(secs % 60));
       else            n += snprintf(s + n, sizeof s - n, " %lum", (unsigned long)(secs / 60));
     }
+#if CAP_GPS_BAUD_FIND
+    // These boards build their GPS on our provider, which knows whether sentences arrive:
+    // the one thing that tells a receiver still searching from one that is silent (#778).
+    if (!compact && n < (int)sizeof s) {
+      extern WadaNmeaLocationProvider gps;
+      if (gps.msSinceValidSentence() < 5000)
+        n += snprintf(s + n, sizeof s - n, "\n%s %lu", TR("Receiver is talking at"), (unsigned long)gps.activeBaud());
+      else
+        n += snprintf(s + n, sizeof s - n, "\n%s", TR("No data from the receiver"));
+    }
+#endif
     if (!compact && n < (int)sizeof s)
       snprintf(s + n, sizeof s - n, "\n%s",
 #if CAP_GPS_RECEIVER
@@ -22233,6 +22244,11 @@ static void actionSheetSendMsgCb(lv_event_t* e) {
 // "No reply from <name>" toast and cancel the_mesh's pending slot.
 static unsigned long s_ui_ping_deadline_ms = 0;
 static char s_ui_ping_target_name[24] = {0};
+// A repeater with no guest access refuses the login behind Ping and never answers. A trace
+// needs no login, so a repeater that stayed silent gets one before "No reply" (#780).
+static uint8_t s_ui_ping_trace_key[PUB_KEY_SIZE];
+static bool    s_ui_ping_trace_due = false;
+static constexpr unsigned long UI_PING_TRACE_TIMEOUT_MS = 10000;
 
 // ---- Telemetry window state (window + auto-poll defined further down) ----
 enum { TELEM_IN_PROGRESS = 0, TELEM_RECEIVED, TELEM_FAILED, TELEM_HISTORY };
@@ -22264,6 +22280,8 @@ static void actionSheetPingCb(lv_event_t* e) {
                                     sizeof(s_ui_ping_target_name),
                                     c.name[0] ? contactShownName(c.id.pub_key, c.name) : "repeater");
     s_ui_ping_deadline_ms = millis() + UI_PING_TIMEOUT_MS;
+    s_ui_ping_trace_due = c.type == ADV_TYPE_REPEATER;
+    memcpy(s_ui_ping_trace_key, c.id.pub_key, PUB_KEY_SIZE);
     g_lv.task->showAlert(r == MSG_SEND_SENT_DIRECT
                          ? TR("Pinged (direct) — waiting…")
                          : TR("Pinged (flood) — waiting…"), 1400);
@@ -76850,6 +76868,7 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
 void UITask::onTracePingResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
                                uint8_t extra_hops, const int8_t* extra_snrs) {
   (void)tag;
+  s_ui_ping_deadline_ms = 0;   // the trace behind a Ping that got no login reply (#780)
   // SNR values come from the wire as int8_t * 4. Convert to floating-point
   // dB just for display so a user reading "-3.25 dB" understands the scale
   // (negative SNR is below the noise floor — typical for chirp-spread LoRa).
@@ -79236,20 +79255,20 @@ static void gpsSaverTick(uint32_t now) {
     // A fix only counts once the receiver has had a few seconds to report afresh (the
     // parser still holds the one from before the rest).
     if (!s_gps_fix_since && now - s_gps_phase_at > 5000 && g_lv.task->getGpsFix()) s_gps_fix_since = now ? now : 1;
+    // Until the first fix since boot (a cold start, which under a poor sky takes several
+    // minutes) it searches for ten minutes before resting, later for three (#778: three
+    // minutes at a time is a cold start that never finishes).
+    static bool s_had_fix = false;
+    if (s_gps_fix_since) s_had_fix = true;
 #if defined(TLORA_PAGER)
     // Two minutes with a fix, not thirty seconds: the orbits of the satellites in
     // view arrive over that time, and with them stored the next waking is a hot
-    // start of a few seconds. Until the first fix since boot (a cold start, which
-    // under a poor sky takes several minutes) it searches for ten minutes before
-    // resting, later for three.
-    static bool s_had_fix = false;
-    if (s_gps_fix_since) s_had_fix = true;
+    // start of a few seconds.
     const bool settled = s_gps_fix_since && now - s_gps_fix_since >= 120000;
-    const bool gave_up = !s_gps_fix_since && now - s_gps_phase_at >= (s_had_fix ? 180000u : 600000u);
 #else
     const bool settled = s_gps_fix_since && now - s_gps_fix_since >= 30000;
-    const bool gave_up = !s_gps_fix_since && now - s_gps_phase_at >= 180000;
 #endif
+    const bool gave_up = !s_gps_fix_since && now - s_gps_phase_at >= (s_had_fix ? 180000u : 600000u);
     if (settled || gave_up) {
       g_lv.task->setGpsPower(false);
       s_gps_hw_on = false;
@@ -82774,9 +82793,16 @@ void UITask::loop() {
     s_ui_ping_deadline_ms = 0;
     the_mesh.cancelUIDeferredLogin();
     the_mesh.cancelUIPingPending();
-    char msg[64];
-    snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
-    showAlert(msg, 3500);
+    ContactInfo* trace_c = s_ui_ping_trace_due ? the_mesh.lookupContactByPubKey(s_ui_ping_trace_key, PUB_KEY_SIZE) : nullptr;
+    s_ui_ping_trace_due = false;
+    if (trace_c && the_mesh.uiSendTraceRoute(*trace_c)) {
+      s_ui_ping_deadline_ms = millis() + UI_PING_TRACE_TIMEOUT_MS;
+      showAlert(TR("No login reply, tracing instead\xE2\x80\xA6"), 2000);
+    } else {
+      char msg[64];
+      snprintf(msg, sizeof(msg), TR("No reply from %s"), s_ui_ping_target_name);
+      showAlert(msg, 3500);
+    }
   }
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
   // Original V4 Expansion Kit SW3 "IO" (GPIO35, active-low). Debounce before

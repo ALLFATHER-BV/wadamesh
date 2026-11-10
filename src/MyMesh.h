@@ -931,9 +931,11 @@ public:
    *  Returns 0 on failure. */
   uint32_t uiSendTracePing(const uint8_t pub_key[32]) {
     if (!pub_key) return 0;
-    uint8_t hash_sz = (uint8_t)(_prefs.path_hash_mode + 1);
-    if (hash_sz == 0 || hash_sz > 4) hash_sz = 1;
+    // A TRACE hop is 1, 2 or 4 bytes (1 << flags), so the 3-byte path mode sends 4: the
+    // repeater reads as many as the flags declare (#818).
     uint8_t flags = (uint8_t)(_prefs.path_hash_mode & 0x03);
+    if (flags > 2) flags = 0;
+    const uint8_t hash_sz = (uint8_t)(1 << flags);
     uint32_t tag = 0;
     getRNG()->random((uint8_t*)&tag, sizeof(tag));
     if (tag == 0) tag = 1;
@@ -952,20 +954,31 @@ public:
    *  to a single-hop trace when the path to `c` is unknown (flood-routed
    *  contact — there's no fixed path to walk). Returns the tag, 0 on failure. */
   uint32_t uiSendTraceRoute(const ContactInfo& c) {
-    uint8_t flags = (uint8_t)(_prefs.path_hash_mode & 0x03);
+    // out_path_len packs the hop count with the hash size of that stored path (Packet.h).
+    const bool have_path = c.out_path_len != OUT_PATH_UNKNOWN && mesh::Packet::isValidPathLen(c.out_path_len);
+    const uint8_t hops = have_path ? (uint8_t)(c.out_path_len & 63) : 0;
+    const uint8_t path_hash = (uint8_t)((c.out_path_len >> 6) + 1);
+    // A TRACE hop is 1, 2 or 4 bytes (#818): the path's own size, and its first 2 bytes when
+    // it holds 3. One byte fewer is still that repeater's hash. No path: one hop at the
+    // size uiSendTracePing uses.
+    uint8_t flags;
+    if (hops) flags = path_hash == 1 ? 0 : 1;
+    else { flags = (uint8_t)(_prefs.path_hash_mode & 0x03); if (flags > 2) flags = 0; }
     uint32_t tag = 0;
     getRNG()->random((uint8_t*)&tag, sizeof(tag));
     if (tag == 0) tag = 1;
     _ui_trace_ping_tag = tag;
     mesh::Packet* pkt = createTrace(tag, 0, flags);
     if (!pkt) { _ui_trace_ping_tag = 0; return 0; }
-    if (c.out_path_len != OUT_PATH_UNKNOWN && c.out_path_len > 0 &&
-        c.out_path_len <= MAX_PATH_SIZE) {             // clamp: a corrupt out_path_len (>64)
-      sendDirect(pkt, c.out_path, c.out_path_len);   // would overrun sendDirect's payload memcpy -> reboot
+    if (hops) {
+      const uint8_t hop_sz = (uint8_t)(1 << flags);
+      uint8_t route[MAX_PATH_SIZE];
+      uint8_t n = 0;
+      for (uint8_t i = 0; i < hops && n + hop_sz <= sizeof route; ++i, n += hop_sz)
+        memcpy(&route[n], &c.out_path[i * path_hash], hop_sz);
+      sendDirect(pkt, route, n);
     } else {
-      uint8_t hash_sz = (uint8_t)(_prefs.path_hash_mode + 1);
-      if (hash_sz == 0 || hash_sz > 4) hash_sz = 1;
-      sendDirect(pkt, c.id.pub_key, hash_sz);         // unknown path → single hop
+      sendDirect(pkt, c.id.pub_key, (uint8_t)(1 << flags));   // unknown path: single hop
     }
     return tag;
   }

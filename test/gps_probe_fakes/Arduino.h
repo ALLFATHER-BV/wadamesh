@@ -44,6 +44,9 @@ public:
   int begins = 0;                  // UART (re)opens
   std::vector<uint32_t> begun_at;  // every speed it was opened at, in order
   std::string sent;                // what the ESP wrote to the receiver
+  bool stopped = false;            // a UBX-CFG-RST GNSS stop was heard: the receiver is silent
+  int drop_starts = 0;             // this many starts are lost (too soon after a stop)
+  int starts_heard = 0;
   std::vector<uint8_t> rx;         // the RX ring
   size_t rx_head = 0;
   uint32_t last_ms = 0;
@@ -58,7 +61,7 @@ public:
   // Fill the ring for the time that passed since the last look.
   void pump() {
     const uint32_t now = millis();
-    if (!open || !true_baud) { last_ms = now; return; }
+    if (!open || !true_baud || stopped) { last_ms = now; return; }
     carry += (double)(now - last_ms) * (double)true_baud / 10000.0;   // 10 bits a byte
     last_ms = now;
     while (carry >= 1.0) {
@@ -89,5 +92,19 @@ public:
     if (rx_head > 8192) { rx.erase(rx.begin(), rx.begin() + (long)rx_head); rx_head = 0; }
     return c;
   }
-  size_t write(uint8_t b) override { sent.push_back((char)b); return 1; }
+  size_t write(uint8_t b) override {
+    sent.push_back((char)b);
+    // The receiver only hears a UBX-CFG-RST sent at its own speed.
+    static const char kHead[] = "\xB5\x62\x06\x04\x04\x00\x00\x00";
+    if (open && baud == true_baud && sent.size() >= 12 &&
+        memcmp(sent.data() + sent.size() - 12, kHead, 8) == 0) {
+      const uint8_t mode = (uint8_t)sent[sent.size() - 4];
+      if (mode == 0x08) { pump(); stopped = true; }
+      if (mode == 0x09) {
+        if (drop_starts > 0) --drop_starts;
+        else { pump(); stopped = false; ++starts_heard; }
+      }
+    }
+    return 1;
+  }
 };

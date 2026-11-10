@@ -2712,9 +2712,11 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
     void* reallocate(void* p, size_t n) override { void* q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); return q ? q : realloc(p, n); }
   } alloc;
   JsonDocument doc(&alloc);
-  if (deserializeJson(doc, in)) return false;
+  // The serial line says why, for a report: a file that parses on a computer but not here (#822).
+  const DeserializationError parse_err = deserializeJson(doc, in);
+  if (parse_err) { Serial.printf("[BACKUP] import failed: %s\n", parse_err.c_str()); return false; }
   JsonObjectConst root = doc.as<JsonObjectConst>();
-  if (root.isNull()) return false;
+  if (root.isNull()) { Serial.println("[BACKUP] import failed: not a JSON object"); return false; }
 
   bool prefs_dirty = false;
   if (sections & 0x01) {  // identity: name + private key
