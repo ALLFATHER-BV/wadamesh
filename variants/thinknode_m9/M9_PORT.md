@@ -58,7 +58,7 @@ this table as schematic-verified, not Meshtastic-derived, going forward.)
 | Battery ADC                  | 13              | **ADC2**_CH2 (S3: ADC1=GPIO1-10, ADC2=GPIO11-20 — earlier "ADC1_CH2" label was wrong; ADC2 is Wi-Fi-arbitrated, see getBattMilliVolts's per-sample filter), **2:1 divider** (manufacturer-confirmed)                                                                                                                                                                                                            |
 | GPS RX/TX                    | 2 / 3           | CC1167Q, UART1                                                                                                                                                                                                                                                |
 | GPS EN / ON_OFF / RST / 1PPS | 11 / 10 / 5 / 4 | EN+RST wired, **both active-LOW** (confirmed on schematic: same P-MOS circuit as the peripheral power rail for EN; GPS_RST1 -> R46 -> NPN Q16 base, GPIO HIGH turns Q16 on and pulls the module's reset line to GND, so HIGH asserts reset / LOW releases it — inverted vs. the library defaults, both now overridden in platformio.ini). ON_OFF + 1PPS unused |
-| Buzzer                       | 9               | wired — simple GPIO piezo (`THINKNODE_M9_BUZZER_PIN`), Arduino `tone()`/`noTone()`, shares the Heltec V4 buzzer code path |
+| Buzzer                       | 9               | wired: simple GPIO piezo (`THINKNODE_M9_BUZZER_PIN`), shares the Heltec V4 chime code but plays it through LEDC channel 4 so the Volume setting scales the duty |
 | ESP_WAKEUP (from KB MCU)     | 12              | not wired; behaviour undocumented                                                                                                                                                                                                                             |
 | KEY_LED                      | 46              | not wired                                                                                                                                                                                                                                                     |
 | User button (BOOT)           | —               | **does not exist** (Deferred #6, schematic-confirmed): only a power-cut slider and a reset button, neither a GPIO. PIN_USER_BTN removed from the env — the old GPIO0 entry here contradicted Deferred #6 |                                                                                                                                                                                                                       |
@@ -190,7 +190,10 @@ focused — see "Deferred" below.
   widened to also accept `THINKNODE_M9_BUZZER_PIN` (same mechanism — Arduino
   `tone()`/`noTone()`, no separate enable line; `BUZZER_EN` is just GPIO9's
   net name, not a second pin). Confirmed working via the Settings > Sound
-  toggle previews.
+  toggle previews. Since the Volume row came to the M9, the chime no longer
+  uses `tone()` here: `v4BeepTaskFn` drives GPIO9 from LEDC channel 4 and
+  scales the duty from `snd_vol` (100% = the old 50% drive, squared curve,
+  0% = no chime). The Heltec V4 keeps `tone()`.
 - **Commander (Home tab) landscape layout** — the TX/RX chart width and the
   5-button right-hand column's height-per-button math (Advert/Terminal/Files/
   Apps/Control) both had sizing gates that didn't include `HAS_THINKNODE_M9`,
