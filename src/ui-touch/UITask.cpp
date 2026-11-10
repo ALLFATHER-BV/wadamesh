@@ -75398,6 +75398,99 @@ void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
 
+#if CAP_LUA_SDK_EXT
+// wada.ui.image: decode a PNG / JPEG / BMP held in memory and fit it inside
+// max_w x max_h, aspect kept and never enlarged. The result is a lvglPsramAlloc'd
+// RGB565 buffer of exactly *out_w x *out_h (freed with luaHostImageFree), so the
+// widget that shows it is small and drawn 1:1, whatever the source size. On
+// failure returns nullptr with a short reason in *err. The input comes from an
+// app, so everything is bounded before a decoder sees it.
+uint8_t* luaHostImageDecodeFit(const uint8_t* enc, size_t len, int max_w, int max_h,
+                               int* out_w, int* out_h, const char** err) {
+  *err = "undecodable";
+  if (!enc || len < 8 || max_w <= 0 || max_h <= 0) return nullptr;
+  int dw = 0, dh = 0;
+  uint8_t* rgb = nullptr;
+  s_jpgScaleErr[0] = '\0';
+  if (enc[0] == 0x89 && enc[1] == 'P' && enc[2] == 'N' && enc[3] == 'G') {
+    // lodepng decodes the whole image to RGBA first (w*h*4 bytes, one block), so
+    // read the size from the IHDR and refuse before that allocation is tried.
+    if (len < 24) return nullptr;
+    const uint32_t pw = ((uint32_t)enc[16] << 24) | ((uint32_t)enc[17] << 16) | ((uint32_t)enc[18] << 8) | enc[19];
+    const uint32_t ph = ((uint32_t)enc[20] << 24) | ((uint32_t)enc[21] << 16) | ((uint32_t)enc[22] << 8) | enc[23];
+    if (pw == 0 || ph == 0 || pw > 1024 || ph > 1024) { *err = "too big"; return nullptr; }
+    if (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) < (size_t)pw * ph * 4u + 65536u) {
+      *err = "no memory";
+      return nullptr;
+    }
+    rgb = decodePngToRgb565(enc, len, &dw, &dh);
+  } else if (enc[0] == 'B' && enc[1] == 'M') {
+    rgb = decodeBmpToRgb565(enc, len, &dw, &dh);
+  } else if (enc[0] == 0xFF && enc[1] == 0xD8) {
+    // tjpgd downscales 1/2..1/8 while decoding, which keeps the buffer small. Aim
+    // for about twice the box, then fall back to the full 1024 for a huge picture.
+    int want = (max_w > max_h ? max_w : max_h) * 2;
+    if (want < 256) want = 256;
+    if (want > 1024) want = 1024;
+    rgb = decodeJpegScaledToRgb565(enc, len, &dw, &dh, want);
+    if (!rgb && want < 1024 && strstr(s_jpgScaleErr, "too big"))
+      rgb = decodeJpegScaledToRgb565(enc, len, &dw, &dh, 1024);
+    if (!rgb && strstr(s_jpgScaleErr, "Progressive")) *err = "progressive jpeg";
+  } else {
+    *err = "unsupported format";
+    return nullptr;
+  }
+  if (!rgb || dw <= 0 || dh <= 0) {
+    if (rgb) lvglPsramFree(rgb);
+    return nullptr;
+  }
+
+  int fw = dw, fh = dh;
+  if (dw > max_w || dh > max_h) {
+    if ((int64_t)max_w * dh <= (int64_t)max_h * dw) { fw = max_w; fh = (int)((int64_t)dh * max_w / dw); }
+    else                                            { fh = max_h; fw = (int)((int64_t)dw * max_h / dh); }
+    if (fw < 1) fw = 1;
+    if (fh < 1) fh = 1;
+    uint16_t* dst = (uint16_t*)lvglPsramAlloc((size_t)fw * fh * sizeof(uint16_t));
+    if (!dst) { lvglPsramFree(rgb); *err = "no memory"; return nullptr; }
+    // Box filter: each output pixel is the mean of the source pixels it covers.
+    const uint16_t* src = (const uint16_t*)rgb;
+    for (int y = 0; y < fh; ++y) {
+      const int sy0 = (int)((int64_t)y * dh / fh);
+      int sy1 = (int)((int64_t)(y + 1) * dh / fh);
+      if (sy1 <= sy0) sy1 = sy0 + 1;
+      for (int x = 0; x < fw; ++x) {
+        const int sx0 = (int)((int64_t)x * dw / fw);
+        int sx1 = (int)((int64_t)(x + 1) * dw / fw);
+        if (sx1 <= sx0) sx1 = sx0 + 1;
+        uint32_t sr = 0, sg = 0, sb = 0;
+        for (int yy = sy0; yy < sy1; ++yy) {
+          const uint16_t* row = src + (size_t)yy * dw;
+          for (int xx = sx0; xx < sx1; ++xx) {
+            lv_color_t c; c.full = row[xx];
+            sr += LV_COLOR_GET_R(c); sg += LV_COLOR_GET_G(c); sb += LV_COLOR_GET_B(c);
+          }
+        }
+        const uint64_t n = (uint64_t)(sy1 - sy0) * (uint64_t)(sx1 - sx0);
+        dst[(size_t)y * fw + x] = lv_color_make((uint8_t)((uint64_t)sr * 255 / (31 * n)),
+                                                (uint8_t)((uint64_t)sg * 255 / (63 * n)),
+                                                (uint8_t)((uint64_t)sb * 255 / (31 * n))).full;
+      }
+    }
+    lvglPsramFree(rgb);
+    rgb = (uint8_t*)dst;
+  }
+#if defined(HAS_TDECK_PRO)
+  // The 1-bit panel would clip a photo to black and white; dither it the way map tiles are.
+  TDeckProDisplay::prepareMapTileRGB565((uint16_t*)rgb, fw, fh);
+#endif
+  *out_w = fw; *out_h = fh;
+  *err = nullptr;
+  return rgb;
+}
+void luaHostImageFree(void* buf) { lvglPsramFree(buf); }
+#endif  // CAP_LUA_SDK_EXT
+
 #if CAP_LUA_AUDIO
 namespace {
 enum class LuaAudioCommandKind : uint8_t { Play, Pause, Resume, Stop, Release };
