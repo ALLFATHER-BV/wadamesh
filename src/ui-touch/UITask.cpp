@@ -16468,6 +16468,39 @@ static void radioAntAlwaysToggleCb(lv_event_t* e) {
               TR("Turn on"), antAlwaysConfirmApply);
 }
 #endif
+#if defined(HAS_TDECK_MAX)
+// LoRa antenna on the T-Deck Max (#777): an RF switch on the XL9555, HIGH = on-board, LOW = the
+// external socket. Kept in the same key as the P4's. Turning it on asks first: keying the PA
+// into an empty socket is how one gets destroyed.
+static lv_obj_t* s_tdmax_ant_sw = nullptr;
+static void tdmaxAntConfirmed() {
+  touchPrefsSetAntExtAlways(true);
+  const bool saved = touchPrefsGetAntExtAlways();
+  if (saved) board.xlWrite(TDMAX_XL_LORA_SEL, false);
+  if (s_tdmax_ant_sw && saved) lv_obj_add_state(s_tdmax_ant_sw, LV_STATE_CHECKED);
+  if (!saved && g_lv.task) g_lv.task->showAlert(TR("Save failed"), 1500);
+}
+static void tdmaxAntToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* sw = lv_event_get_target(e);
+  if (!lv_obj_has_state(sw, LV_STATE_CHECKED)) {
+    touchPrefsSetAntExtAlways(false);
+    board.xlWrite(TDMAX_XL_LORA_SEL, true);
+    return;
+  }
+  lv_obj_clear_state(sw, LV_STATE_CHECKED);   // stays off unless the confirm turns it on
+  showConfirm(TR("Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio."),
+              TR("Use external"), tdmaxAntConfirmed);
+}
+static void tdmaxAntDeleteCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_DELETE) s_tdmax_ant_sw = nullptr;
+}
+static void tdmaxAntRow(lv_obj_t* c) {
+  s_tdmax_ant_sw = setSwitchRow(c, "External LoRa antenna", "Uses the external socket instead of the on-board antenna. Only with an antenna fitted.",
+                                touchPrefsGetAntExtAlways(), tdmaxAntToggleCb);
+  lv_obj_add_event_cb(s_tdmax_ant_sw, tdmaxAntDeleteCb, LV_EVENT_DELETE, nullptr);
+}
+#endif
 #if defined(HELTEC_LORA_V4_TFT)
 // Heltec V4.3 high-gain FEM LNA (~17 dB external receive amp). Persists + applies live.
 static void radioFemLnaToggleCb(lv_event_t* e) {
@@ -16706,6 +16739,9 @@ static void buildRadioSettings() {
                    touchPrefsGetAntExtAlways(), radioAntAlwaysToggleCb);
     lv_obj_add_event_cb(s_ant_dd, antSelWidgetDeleteCb, LV_EVENT_DELETE, nullptr);
     lv_obj_add_event_cb(s_ant_always_sw, antSelWidgetDeleteCb, LV_EVENT_DELETE, nullptr);
+#endif
+#if defined(HAS_TDECK_MAX)
+    tdmaxAntRow(c);
 #endif
 #if defined(HELTEC_LORA_V4_TFT)
     // Heltec V4.3 only: the FEM's ~17 dB receive amplifier, separate from the SX1262's own
@@ -54790,9 +54826,11 @@ static void handleHwKey(int key) {
       // field unable to receive any text on a physical keyboard (#571).
       && !s_fm_prompt
 #if CAP_TRACKBALL
-      // Trackball switched off: the keyboard is the only way to wake and unlock, so
-      // while locked or dark the handlers below get the key, not the app.
-      && (tdeckTrackballEnabled() || !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff())))
+      // Locked or dark: the handlers below get the key, not the app. With the trackball
+      // switched off the keyboard is the only way to wake and unlock.
+      && !(g_lv.task && (g_lv.task->isManualLock() || g_lv.task->isScreenOff()))
+      // An app with no on_input has no use for Space: it stays the screen lock (#817).
+      && (key != ' ' || luaAppHasOnInput())
 #endif
 #if defined(HAS_M9_KEYBOARD)
       // Locked or dark: the lock/wake handlers below must see the key — else
@@ -74322,6 +74360,16 @@ static void luaPubkeyHex(const uint8_t* pk, int n, char* out, size_t cap) {
   if (cap) out[o < cap ? o : cap - 1] = '\0';
 }
 
+int luaHostContactFlags(int idx) {
+  ContactInfo ci;
+  return (idx >= 0 && the_mesh.getContactByIdx((uint32_t)idx, ci)) ? ci.flags : 0;
+}
+// wada.sys.lock(): from a queued call, since the app's own callback is on the stack.
+void luaHostLockScreen() {
+#if CAP_LOCK_SCREEN
+  lv_async_call([](void*) { if (g_lv.task) g_lv.task->lockScreen(); }, nullptr);
+#endif
+}
 int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                      double* lat, double* lon, char* pk_hex, size_t pk_cap,
                      int32_t* lat_e6, int32_t* lon_e6) {
@@ -78445,6 +78493,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // Heltec V4.3 high-gain FEM LNA: apply the saved state at boot (default OFF / bypassed on
     // the plain V4; ON on the V4-R8 since prefs v49). No-op on a V4.2 board (femLnaControllable() == false).
     if (board.femLnaControllable()) board.setFemLnaEnable(touchPrefsGetFemLna());
+#endif
+#if defined(HAS_TDECK_MAX)
+    if (touchPrefsGetAntExtAlways()) board.xlWrite(TDMAX_XL_LORA_SEL, false);   // #777; boot starts on-board
 #endif
 #if CAP_ANTENNA_SELECT
     // Switchable antenna (T-Display P4): force the on-board antenna (RF1 / IO1 HIGH) on EVERY

@@ -63,6 +63,8 @@ extern bool             luaHostSdReadFailed();                    // failed open
 extern bool             luaHostSdClearAttributes(const char* path); // drop read-only/hidden/system
 #include "SdThreat.h"   // the SD malware policy wada.sd.check/remove enforce
 #endif
+extern int  luaHostContactFlags(int idx);   // ContactInfo.flags, bit 0 = favourite
+extern void luaHostLockScreen();
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
@@ -1271,6 +1273,7 @@ int sysKeepAwake(lua_State* L) {
   luaHostKeepAwake(on);
   return 0;
 }
+int sysLock(lua_State* L)   { (void)L; luaHostLockScreen(); return 0; }   // #817
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -2490,7 +2493,7 @@ int meshContacts(lua_State* L) {
   for (int i = (offset > 0 ? offset : 0), out = 0; out < limit; i++) {
     if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk,
                           &lat6, &lon6)) break;
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 10);
     lua_pushstring(L, name);          lua_setfield(L, -2, "name");
     lua_pushstring(L, pk);            lua_setfield(L, -2, "pubkey");
     lua_pushinteger(L, type);         lua_setfield(L, -2, "type");
@@ -2499,6 +2502,9 @@ int meshContacts(lua_State* L) {
     lua_pushnumber(L, lon);           lua_setfield(L, -2, "lon");
     lua_pushinteger(L, lat6);         lua_setfield(L, -2, "lat_e6");
     lua_pushinteger(L, lon6);         lua_setfield(L, -2, "lon_e6");
+    const int cflags = luaHostContactFlags(i);
+    lua_pushinteger(L, cflags);       lua_setfield(L, -2, "flags");
+    lua_pushboolean(L, cflags & 1);   lua_setfield(L, -2, "favorite");
     lua_rawseti(L, -2, ++out);
   }
   return 1;
@@ -2976,6 +2982,7 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.sys
   lua_pushcfunction(L, sysMillis); lua_setfield(L, -2, "millis");
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
+  lua_pushcfunction(L, sysLock);   lua_setfield(L, -2, "lock");
   lua_pushcfunction(L, sysKeepAwake); lua_setfield(L, -2, "keep_awake");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
   lua_pushcfunction(L, sysTr);     lua_setfield(L, -2, "tr");      // #257

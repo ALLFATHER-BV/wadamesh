@@ -43,8 +43,9 @@ void MultiTransportCompanionInterface::begin(Stream& usb_serial, uint16_t tcp_po
   _last_reply_target = REPLY_TARGET_USB;
 }
 
-// The web port only listens while a browser feature (VNC, Remote UI, Remote terminal,
-// File Transfer) is on; otherwise anyone on the Wi-Fi could poke at the device.
+// Whether a browser feature (VNC, Remote UI, Remote terminal, File Transfer) is on. The web
+// port stays open without one: the browser client's Wi-Fi mode talks the companion protocol
+// on it, like TCP 5000. The features themselves answer only with the on-screen code.
 static bool webUiWanted() {
 #if WADA_WEB_FILE_TRANSFER
   if (g_web_file_transfer.enabled()) return true;
@@ -61,7 +62,7 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
     _p4_srv.begin(_tcp_port);
     _tcp_started = true;
   }
-  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected && webUiWanted()) {
+  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected) {
     _ws_started = true;   // enables tickHandshake + the mirror stream task; _ws itself stays listen-less
     printf("[WS] P4 router: web UI shares TCP:%u (first-byte dispatch)\n", (unsigned)_tcp_port);
   }
@@ -71,7 +72,7 @@ void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
     _tcp_started = true;
   }
   // Plain WebSocket: start only when Wi-Fi has an address (caller defers TCP/WS start after splash).
-  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected && webUiWanted()) {
+  if (_tcp_enabled && !_ws_started && _ws_port != 0 && wifi_connected) {
     _ws.begin(_ws_port);
     _ws_started = true;
   }
@@ -156,7 +157,6 @@ void MultiTransportCompanionInterface::tickWebSocketHandshake() {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
 #endif
-  if (!webUiWanted()) stopWsServer();   // last browser feature switched off: close the port
   retireWebCodeIfIdle();
   if (_ws_started) {
     _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)

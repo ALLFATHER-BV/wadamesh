@@ -317,7 +317,7 @@ return app</code></pre>
       <h2>wada.mesh</h2>
       <div class="row"><div class="prose">
         <table class="api">
-          <tr><td>wada.mesh.contacts([offset], [limit])</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters, the same short form the rest of the interface uses, and what lines a contact up with a discovery hit. Returns at most <code>limit</code> entries (default 100, maximum 250) starting at <code>offset</code>, because every entry is an eight-field table and building thousands in one call would exhaust the app heap. On a device with more contacts than that, page through them: ask for 100, then 100 from offset 100, and so on.</td></tr>
+          <tr><td>wada.mesh.contacts([offset], [limit])</td><td>Array of <code>{name, pubkey, type, ago_s, lat, lon, lat_e6, lon_e6, flags, favorite}</code>. <code>pubkey</code> is the first 4 bytes as 8 hex characters, the same short form the rest of the interface uses, and what lines a contact up with a discovery hit. Returns at most <code>limit</code> entries (default 100, maximum 250) starting at <code>offset</code>, because every entry is an eight-field table and building thousands in one call would exhaust the app heap. On a device with more contacts than that, page through them: ask for 100, then 100 from offset 100, and so on.</td></tr>
           <tr><td>wada.mesh.contact_count()</td><td>How many contacts the device holds, so you can page through <code>contacts()</code> without calling it repeatedly to find where the list ends.</td></tr>
           <tr><td>wada.mesh.rx_log()</td><td>Recent packets, newest first: <code>{ago_ms, type, rssi, snr, hops, route, len}</code>, plus whatever identity the frame actually carried (see below). The RF Monitor feed.</td></tr>
           <tr><td>wada.mesh.stats()</td><td><code>{rssi, noise, rx_air_s, tx_air_s, rx_pkts, rx_err, tx_budget_ms, rx_events, rx_dropped, tx_pkts, freq, bw, sf, duty_pct}</code>.</td></tr>
@@ -527,6 +527,7 @@ end</code></pre>
           <tr><td>wada.sys.millis()</td><td>Milliseconds since boot.</td></tr>
           <tr><td>wada.sys.board()</td><td><code>{w, h, touch, keyboard, trackball, gps}</code>: size and capabilities.</td></tr>
           <tr><td>wada.sys.toast(msg)</td><td>Brief on-screen message.</td></tr>
+          <tr><td>wada.sys.lock()</td><td>Locks the screen, as the Space key does. For an app that runs with the screen on in a pocket. Does nothing on boards without a lock screen.</td></tr>
           <tr><td>wada.sys.random(n)<br>wada.sys.random(lo, hi)</td><td>Integer in 1..n, or in lo..hi (both ends included). From hardware randomness, so there is nothing to seed.</td></tr>
           <tr><td>wada.sys.epoch()</td><td>Unix time in seconds, or <code>nil</code> when the clock has not been set yet (no GPS fix and no NTP). Always handle the <code>nil</code>.</td></tr>
           <tr><td>wada.sys.datetime()</td><td><code>{year, month, day, hour, min, sec, wday}</code> in local time. <code>wday</code> is 0 for Sunday.</td></tr>
