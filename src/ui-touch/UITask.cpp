@@ -33256,6 +33256,7 @@ enum class BackupImport : uint8_t { Rebooting, BadFile, StoreFailed };
 // ============================================================================
 static lv_obj_t* s_file_transfer_root = nullptr;
 static lv_obj_t* s_file_transfer_status = nullptr;
+static lv_obj_t* s_file_transfer_bar = nullptr;   // shown while a file moves
 static lv_timer_t* s_file_transfer_timer = nullptr;
 static bool s_file_transfer_started_tcp = false;
 static File s_file_transfer_file;
@@ -34041,18 +34042,48 @@ static void webFileTransferTick() {
   }
 }
 
+// One transfer's progress line: the bytes, then the share done and, once the rate has
+// had two seconds to settle, the time left at the rate seen since it started.
+static void fileTransferProgress(const char* fmt, uint32_t done, uint32_t total, int8_t dir) {
+  static int8_t   s_dir = 0;
+  static uint32_t s_last = 0, s_t0 = 0, s_b0 = 0;
+  const uint32_t now = millis();
+  if (dir != s_dir || done < s_last) { s_dir = dir; s_t0 = now; s_b0 = done; }
+  s_last = done;
+  char text[192];
+  int n = snprintf(text, sizeof text, fmt, s_file_transfer_name,
+                   static_cast<unsigned long>(done), static_cast<unsigned long>(total));
+  const int pct = total ? (int)((uint64_t)done * 100 / total) : 0;
+  const uint32_t elapsed = now - s_t0, moved = done - s_b0;
+  if (n > 0 && n < (int)sizeof text && total > done) {
+    if (elapsed >= 2000 && moved > 0) {
+      const uint32_t left_s = (uint32_t)((uint64_t)(total - done) * elapsed / moved / 1000) + 1;
+      if (left_s < 90)
+        snprintf(text + n, sizeof text - n, TR("\n%d%%, about %lu s left"), pct, (unsigned long)left_s);
+      else
+        snprintf(text + n, sizeof text - n, TR("\n%d%%, about %lu min left"), pct,
+                 (unsigned long)((left_s + 30) / 60));
+    } else {
+      snprintf(text + n, sizeof text - n, "\n%d%%", pct);
+    }
+  }
+  lv_label_set_text(s_file_transfer_status, text);
+  if (s_file_transfer_bar) {
+    lv_bar_set_value(s_file_transfer_bar, total ? (int32_t)((uint64_t)done * 1000 / total) : 0, LV_ANIM_OFF);
+    lv_obj_clear_flag(s_file_transfer_bar, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
 static void fileTransferRefresh() {
   if (!s_file_transfer_status) return;
+  if (s_file_transfer_bar && !s_file_transfer_uploading && !s_file_transfer_downloading)
+    lv_obj_add_flag(s_file_transfer_bar, LV_OBJ_FLAG_HIDDEN);
   if (s_file_transfer_uploading) {
-    lv_label_set_text_fmt(s_file_transfer_status, TR("Receiving %s\n%lu / %lu bytes"),
-                          s_file_transfer_name,
-                          static_cast<unsigned long>(s_file_transfer_received),
-                          static_cast<unsigned long>(s_file_transfer_expected));
+    fileTransferProgress(TR("Receiving %s\n%lu / %lu bytes"), s_file_transfer_received,
+                         s_file_transfer_expected, 1);
   } else if (s_file_transfer_downloading) {
-    lv_label_set_text_fmt(s_file_transfer_status, TR("Sending %s\n%lu / %lu bytes"),
-                          s_file_transfer_name,
-                          static_cast<unsigned long>(s_file_transfer_download_offset),
-                          static_cast<unsigned long>(s_file_transfer_download_size));
+    fileTransferProgress(TR("Sending %s\n%lu / %lu bytes"), s_file_transfer_download_offset,
+                         s_file_transfer_download_size, 2);
   } else if (s_file_transfer_listing) {
     lv_label_set_text(s_file_transfer_status, TR("Reading file list"));
   } else if (s_file_transfer_result[0]) {
@@ -34073,6 +34104,7 @@ static void closeFileTransferPage() {
   s_file_transfer_started_tcp = false;
   if (s_file_transfer_root) { popupClose(&s_file_transfer_root); }
   s_file_transfer_status = nullptr;
+  s_file_transfer_bar = nullptr;
   appPageEnd(&closeFileTransferPage);
   if (s_file_transfer_map_dirty) {
     s_file_transfer_map_dirty = false;
@@ -34198,6 +34230,14 @@ static void openFileTransferPage() {
   lv_obj_set_style_text_color(s_file_transfer_status, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(s_file_transfer_status, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(s_file_transfer_status, width);
+
+  s_file_transfer_bar = lv_bar_create(s_file_transfer_root);
+  lv_obj_set_size(s_file_transfer_bar, width, SC(8));
+  lv_bar_set_range(s_file_transfer_bar, 0, 1000);
+  lv_obj_set_style_bg_color(s_file_transfer_bar, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_file_transfer_bar, LV_OPA_30, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_file_transfer_bar, lv_color_hex(COLOR_ACCENT), LV_PART_INDICATOR);
+  lv_obj_add_flag(s_file_transfer_bar, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t* stop = lv_btn_create(s_file_transfer_root);
   lv_obj_set_size(stop, width, SC(40));
