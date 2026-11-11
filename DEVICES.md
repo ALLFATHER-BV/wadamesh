@@ -91,7 +91,8 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   under Settings, Lock screen. The optional clip-on
   keyboard expansion can be attached or removed while running and is picked up
   within a couple of seconds; while it is on, it types into the focused field
-  and the on-screen keyboard stays down (tap the field again to bring it up).
+  and the on-screen keyboard stays down (long-press the field and pick the
+  keyboard key to bring it up).
   Arrows move the caret or the focus highlight, Esc goes back, F1-F5 open the
   tabs left to right, F11 steps the keyboard light through off, low, medium and
   high (the level is kept across reboots), Caps Lock lights its LEDs,
