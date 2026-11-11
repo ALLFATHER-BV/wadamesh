@@ -41,9 +41,33 @@ EnvironmentSensorManager sensors(gps);
   MomentaryButton user_btn(PIN_USER_BTN, 1000, true);
 #endif
 
+#define PIN_TOUCH_SDA 18
+#define PIN_TOUCH_SCL 8
+
 bool radio_init() {
   fallback_clock.begin();
-  Wire.begin(18, 8);
+
+  pinMode(PIN_TOUCH_SDA, INPUT);
+  pinMode(PIN_TOUCH_SCL, INPUT);
+  delayMicroseconds(50);
+  int lvl_sda = digitalRead(PIN_TOUCH_SDA);
+  int lvl_scl = digitalRead(PIN_TOUCH_SCL);
+
+  // I2C bus recovery: if a peripheral is mid-byte and holding SDA low, clock SCL
+  // up to 9 times so it can finish, then leave the lines idle-high.
+  pinMode(PIN_TOUCH_SCL, OUTPUT);
+  digitalWrite(PIN_TOUCH_SCL, HIGH);
+  pinMode(PIN_TOUCH_SDA, INPUT_PULLUP);
+  for (int i = 0; i < 9 && digitalRead(PIN_TOUCH_SDA) == LOW; ++i) {
+    digitalWrite(PIN_TOUCH_SCL, LOW);  delayMicroseconds(6);
+    digitalWrite(PIN_TOUCH_SCL, HIGH); delayMicroseconds(6);
+  }
+
+  // Force a clean re-route onto 18/8. ESP32 Arduino's Wire was already begun on
+  // DEFAULT pins in ESP32Board::begin(); a second begin() with new pins does not
+  // always re-assign them, so end() first guarantees the pins actually move.
+  Wire.end();
+  Wire.begin(PIN_TOUCH_SDA, PIN_TOUCH_SCL);
   // A DS3231 fitted to this bus, if there is one. This is NOT the generic
   // address probe the comment below warns about: it is a declared chip type at
   // its own address with a positive identity proof, and a bus with nothing at
