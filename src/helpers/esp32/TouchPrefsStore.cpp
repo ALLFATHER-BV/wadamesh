@@ -1832,6 +1832,16 @@ bool touchPrefsSetUiRotation(uint8_t rot) {
   return false;
 }
 
+#if defined(HELTEC_LORA_V4_R8)
+// V4-R8 landscape is kept only once the user has tapped "Keep" on it (UITask's
+// rotation check): "rot_ok" holds the rotation they kept, "rot_try" is set while a
+// landscape boot waits for that tap, so a boot that never got it goes back to portrait.
+uint8_t touchPrefsGetRotKept()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("rot_ok", 0xFF); }
+void    touchPrefsSetRotKept(uint8_t r) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("rot_ok", r); }
+bool    touchPrefsGetRotTrying()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("rot_try", 0) != 0; }
+void    touchPrefsSetRotTrying(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("rot_try", on ? 1 : 0); }
+#endif
+
 uint16_t touchPrefsGetBattFullMv() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.batt_full_mv;   // 0 = not calibrated -> default 4200

@@ -2434,3 +2434,7 @@ Lying face down, the screen goes off and the device stays silent. Picking it up 
 Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.	Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.
 \n%d%%, about %lu s left	\n%d%%, залишилося близько %lu с
 \n%d%%, about %lu min left	\n%d%%, залишилося близько %lu хв
+Keep this orientation?\nIf the screen does not answer your taps, leave it: it goes back to portrait in %d s.	Залишити цю орієнтацію?\nЯкщо екран не реагує на дотики, не чіпайте його: через %d с він повернеться в портретний режим.
+Back to portrait… restarting	Повернення в портретний режим… перезапуск
+Keep	Залишити
+Orientation kept	Орієнтацію збережено

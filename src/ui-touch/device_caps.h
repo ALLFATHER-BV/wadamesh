@@ -201,14 +201,10 @@
   // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
   // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
   #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
-  // Rotation is OFF until a tester verifies the R8-specific landscape touch
-  // maps (HeltecV4CapTouch.cpp, TESTER-VERIFY): the boot guard at UITask.cpp
-  // ("V4-R8: force PORTRAIT at every boot") reverts any landscape pref anyway,
-  // so with 1 the Orientation control was a reboot trap that always landed
-  // back on Portrait (plus one garbled session, since the boot wordmark had
-  // already rotated the panel). Flip back to 1 together with removing that
-  // guard once landscape touch is confirmed on hardware.
-  #define CAP_ROTATABLE    0
+  // Landscape asks "Keep this orientation?" on its first boot and goes back to
+  // portrait without a tap: the R8 landscape touch map (HeltecV4CapTouch.cpp)
+  // is not confirmed on every unit yet (r8RotationAskTick in UITask.cpp).
+  #define CAP_ROTATABLE    1
   #define CAP_LARGE_SCREEN 0   // 240x320
   #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
   #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)

@@ -59880,6 +59880,90 @@ static void langRebootWithNotice(const char* msg) {
   s_luastore_busy = true;                   // swallow further taps on the way out
   rebootWithNotice(msg);
 }
+
+#if defined(HELTEC_LORA_V4_R8)
+// ---- V4-R8 landscape: keep it, or back to portrait -----------------------------
+// The R8's landscape touch map (HeltecV4CapTouch.cpp) is not confirmed on every
+// unit, and a wrong map leaves a screen that cannot be used to undo the setting.
+// So the first boot in a landscape asks: one Keep button and a countdown. Keep
+// stores the choice; no tap, or a restart before it, goes back to portrait. The
+// button sits in a corner on its own: a map that turns taps half way round lands
+// them in the empty opposite corner, so a broken map can never press Keep.
+static bool        s_r8_rot_ask   = false;     // set at boot: this landscape is not kept yet
+static lv_obj_t*   s_r8_rot_root  = nullptr;
+static lv_obj_t*   s_r8_rot_lbl   = nullptr;
+static lv_timer_t* s_r8_rot_timer = nullptr;
+static uint8_t     s_r8_rot_left  = 15;        // seconds
+
+static void r8RotText() {
+  if (s_r8_rot_lbl)
+    lv_label_set_text_fmt(s_r8_rot_lbl,
+                          TR("Keep this orientation?\nIf the screen does not answer your taps, leave it: it goes back to portrait in %d s."),
+                          (int)s_r8_rot_left);
+}
+
+static void r8RotClose() {
+  if (s_r8_rot_timer) { lv_timer_del(s_r8_rot_timer); s_r8_rot_timer = nullptr; }
+  if (s_r8_rot_root)  { lv_obj_del_async(s_r8_rot_root); s_r8_rot_root = nullptr; }
+  s_r8_rot_lbl = nullptr;
+}
+
+static void r8RotTimerCb(lv_timer_t*) {
+  if (s_r8_rot_left > 0) --s_r8_rot_left;
+  if (s_r8_rot_left > 0) { r8RotText(); return; }
+  r8RotClose();
+  touchPrefsSetRotTrying(false);
+  touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+  rebootWithNotice(TR("Back to portrait\xE2\x80\xA6 restarting"));
+}
+
+static void r8RotKeepCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  touchPrefsSetRotKept(s_ui_rotation);
+  touchPrefsSetRotTrying(false);
+  r8RotClose();
+  if (g_lv.task) g_lv.task->showAlert(TR("Orientation kept"), 1500);
+}
+
+static void r8RotationAskTick(uint32_t now) {
+  static uint32_t s_seen = 0;
+  if (!s_r8_rot_ask) return;
+  if (!s_seen) { s_seen = now ? now : 1; return; }
+  if (now - s_seen < 1000) return;              // let the first screen settle first
+  s_r8_rot_ask = false;
+  if (g_lv.task && g_lv.task->isScreenOff()) g_lv.task->wakeScreen();
+  const lv_coord_t w = lv_disp_get_hor_res(nullptr), h = lv_disp_get_ver_res(nullptr);
+  // On the system layer, over the lock screen and every popup; the full-screen
+  // backdrop takes every tap that misses Keep and does nothing with it.
+  s_r8_rot_root = lv_obj_create(lv_layer_sys());
+  lv_obj_remove_style_all(s_r8_rot_root);
+  lv_obj_set_size(s_r8_rot_root, w, h);
+  lv_obj_set_style_bg_color(s_r8_rot_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_r8_rot_root, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_add_flag(s_r8_rot_root, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(s_r8_rot_root, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* keep = lv_btn_create(s_r8_rot_root);
+  lv_obj_set_size(keep, 110, 48);
+  lv_obj_align(keep, LV_ALIGN_TOP_RIGHT, -12, 12);
+  styleButton(keep);
+  lv_obj_add_event_cb(keep, r8RotKeepCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* kl = lv_label_create(keep);
+  lv_label_set_text(kl, TR("Keep"));
+  lv_obj_set_style_text_font(kl, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(kl);
+
+  s_r8_rot_lbl = lv_label_create(s_r8_rot_root);
+  lv_obj_set_width(s_r8_rot_lbl, w - 32);
+  lv_label_set_long_mode(s_r8_rot_lbl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_font(s_r8_rot_lbl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_r8_rot_lbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(s_r8_rot_lbl, LV_ALIGN_TOP_LEFT, 16, 76);
+  s_r8_rot_left = 15;
+  r8RotText();
+  s_r8_rot_timer = lv_timer_create(r8RotTimerCb, 1000, nullptr);
+}
+#endif
 // Switching language reboots (same as the Settings picker) so the whole UI —
 // fonts, keyboard layout, every built label — re-renders consistently.
 static void luaStoreLangBuiltinCb(lv_event_t* e) {
@@ -79783,24 +79867,27 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #if defined(ESP32)
     s_ui_rotation = touchPrefsGetUiRotation();
 #if defined(HELTEC_LORA_V4_R8)
-    // V4-R8: force PORTRAIT at every boot. A tester who switched to landscape got stuck: the
-    // shared cap-touch landscape transform was tuned on the V4's ST7789 driver, whose portrait
-    // baseline is panel rotation 2 (+180) -- the R8's LovyanGFX panel runs baseline 0, so the
-    // same map landed every touch point-mirrored and the setting could not be reached to undo
-    // it. The R8-specific map in HeltecV4CapTouch.cpp is the candidate fix (tester-verify);
-    // until a tester confirms it, booting always returns to the known-good portrait, so the
-    // worst case of trying landscape is a reboot. Portrait 180 is allowed (#701): it is a
-    // plain half turn, and its touch map flips both axes, so it cannot land mirrored.
+    // V4-R8 landscape: the R8's own touch map (HeltecV4CapTouch.cpp) is not confirmed on
+    // every unit, and a wrong one leaves a screen that cannot be used to undo the setting.
+    // So a landscape the user has not kept yet asks for Keep once this boot is up
+    // (r8RotationAskTick); a boot that never got that answer comes back in portrait.
+    // Portrait 180 is a plain half turn whose map flips both axes, so it never asks.
     if (s_ui_rotation == LV_DISP_ROT_90 || s_ui_rotation == LV_DISP_ROT_270) {
-      s_ui_rotation = LV_DISP_ROT_NONE;
-      touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
-      // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
-      // landscape rotation before this guard ran, so reverting only the pref
-      // left LVGL rendering portrait frames into a landscape-rotated panel —
-      // one fully garbled session per landscape attempt. (::display — the
-      // begin() parameter shadows the global, and the DisplayDriver base has
-      // no setDisplayRotation.)
-      ::display.setDisplayRotation(0);
+      if (touchPrefsGetRotKept() == s_ui_rotation) {
+        // kept on an earlier boot
+      } else if (touchPrefsGetRotTrying()) {
+        touchPrefsSetRotTrying(false);
+        s_ui_rotation = LV_DISP_ROT_NONE;
+        touchPrefsSetUiRotation(LV_DISP_ROT_NONE);
+        // Heal the PANEL too: main.cpp's boot wordmark already applied the saved
+        // landscape rotation, so reverting only the pref would leave LVGL drawing
+        // portrait frames into a landscape panel. (::display: the begin() parameter
+        // shadows the global, and the DisplayDriver base has no setDisplayRotation.)
+        ::display.setDisplayRotation(0);
+      } else {
+        touchPrefsSetRotTrying(true);
+        s_r8_rot_ask = true;
+      }
     }
 #endif
 #if defined(HAS_TDECK_GT911)
@@ -85247,6 +85334,9 @@ void UITask::loop() {
 
 #if defined(HAS_TOUCH_UI)
   if (!g_lv.ready) return;
+#if defined(HELTEC_LORA_V4_R8)
+  r8RotationAskTick(now);
+#endif
   rx24Sample(now);   // packets heard per hour, for the lock screen's activity line
   emojiFlushRecent(now, _last_input_ms);
 

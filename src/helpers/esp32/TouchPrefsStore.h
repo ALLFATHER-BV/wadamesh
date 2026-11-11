@@ -419,6 +419,12 @@ bool touchPrefsReadUseSdAtBoot();
  *  device so the UI rebuilds at the new orientation. */
 uint8_t touchPrefsGetUiRotation();
 bool    touchPrefsSetUiRotation(uint8_t rot);
+#if defined(HELTEC_LORA_V4_R8)
+uint8_t touchPrefsGetRotKept();              // landscape the user kept (0xFF = none yet)
+void    touchPrefsSetRotKept(uint8_t r);
+bool    touchPrefsGetRotTrying();            // a landscape boot is waiting for "Keep"
+void    touchPrefsSetRotTrying(bool on);
+#endif
 // Pre-storage boot copy of the rotation (raw NVS), for the boot logo. Falls back
 // to touchPrefsGetUiRotation() when absent. Sync after touchPrefsReload().
 uint8_t touchPrefsGetBootUiRotation();

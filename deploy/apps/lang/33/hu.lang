@@ -2444,3 +2444,7 @@ Lying face down, the screen goes off and the device stays silent. Picking it up 
 Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.	Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.
 \n%d%%, about %lu s left	\n%d%%, kb. %lu mp van hátra
 \n%d%%, about %lu min left	\n%d%%, kb. %lu perc van hátra
+Keep this orientation?\nIf the screen does not answer your taps, leave it: it goes back to portrait in %d s.	Megtartod ezt a tájolást?\nHa a képernyő nem reagál az érintésre, hagyd: %d mp múlva visszaáll állóra.
+Back to portrait… restarting	Vissza álló nézetre… újraindítás
+Keep	Megtart
+Orientation kept	Tájolás megtartva
