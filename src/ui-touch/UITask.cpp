@@ -34354,24 +34354,45 @@ static void closeAppDrawer();
 // These replace the second status-bar row of buttons the inbox used to carry.
 static constexpr lv_coord_t kChatListInset = 6;  // the inbox and contacts rows sit this far in
 static uint8_t   s_chats_filter = 0;               // 0 all, 1 channels, 2 direct
-static lv_obj_t* s_chats_chip[3] = { nullptr, nullptr, nullptr };
+// The "U" (unread only) chip left of the filter (#824): an on/off toggle that narrows whichever of All /
+// Channels / Direct is active to the threads with unread messages. Reading a thread
+// clears its count, so it leaves the list on the way back out of the chat (the
+// unread counts are in the list signature). Persisted (touch prefs v73).
+static bool      s_chats_unread_only = false;
+static lv_obj_t* s_chats_unread_chip = nullptr;
+// All / Channels / Direct is a dropdown chip ("▼ All"), as Contacts' filter is: it
+// opens an option sheet (openChatsFilterSheet, next to the Contacts sheets).
+static lv_obj_t* s_chats_filter_lbl = nullptr;
+static const char* chatsFilterName(uint8_t f) {
+  return f == 1 ? "Channels" : f == 2 ? "Direct" : "All";   // translated where shown
+}
 static void chatsChipsSync() {
-  for (int i = 0; i < 3; ++i) {
-    if (!s_chats_chip[i]) continue;
-    if (i == s_chats_filter) lv_obj_add_state(s_chats_chip[i], LV_STATE_CHECKED);
-    else                     lv_obj_clear_state(s_chats_chip[i], LV_STATE_CHECKED);
+  if (s_chats_filter_lbl)
+    lv_label_set_text_fmt(s_chats_filter_lbl, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(s_chats_filter)));
+  if (s_chats_unread_chip) {
+    if (s_chats_unread_only) lv_obj_add_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    else                     lv_obj_clear_state(s_chats_unread_chip, LV_STATE_CHECKED);
   }
 }
-static void chatsChipCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  s_chats_filter = (uint8_t)(intptr_t)lv_event_get_user_data(e);
+static void chatsFilterApply(uint8_t f) {
+  s_chats_filter = f;
   chatsChipsSync();
   g_lv.dm.list_sig = 0;          // the filter is part of what the list shows: rebuild
   refreshChatList(g_lv.dm);
   if (g_lv.dm.list_cont) lv_obj_scroll_to_y(g_lv.dm.list_cont, 0, LV_ANIM_OFF);
 }
+static void openChatsFilterSheetCb(lv_event_t* e);   // defined with the Contacts option sheets
 static void chatsMarkAllAsk() {
   showConfirm(TR("Mark all chats and channels as read?"), TR("Mark read"), markAllReadApply, false, true);
+}
+static void chatsUnreadChipCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_chats_unread_only = !s_chats_unread_only;
+  touchPrefsSetChatsUnreadOnly(s_chats_unread_only);
+  chatsChipsSync();
+  g_lv.dm.list_sig = 0;          // the filter is part of what the list shows: rebuild
+  refreshChatList(g_lv.dm);
+  if (g_lv.dm.list_cont) lv_obj_scroll_to_y(g_lv.dm.list_cont, 0, LV_ANIM_OFF);
 }
 static void chatsAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -34441,15 +34462,23 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
   const lv_coord_t row_h = SC(28);
   const lv_coord_t inner = (lv_coord_t)(w - 2 * 12);
   const lv_coord_t gap = 4;
-  const char* names[3] = { TR("All"), TR("Channels"), TR("Direct") };
-  lv_coord_t text_w = 0;
-  for (const char* n : names) text_w += lv_txt_get_width(n, (uint32_t)strlen(n), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
+  // Two chips: the "U" (unread only) toggle, then the "▼ All" filter dropdown. The
+  // dropdown is measured at its widest choice so picking one never reflows the row.
+  auto semi12W = [](const char* t) { return lv_txt_get_width(t, (uint32_t)strlen(t), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE); };
+  lv_coord_t drop_w = 0;
+  for (uint8_t f = 0; f < 3; ++f) {
+    char b[48];
+    snprintf(b, sizeof b, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(f)));
+    drop_w = LV_MAX(drop_w, semi12W(b));
+  }
+  const lv_coord_t text_w = (lv_coord_t)(semi12W(TR("U")) + drop_w);
+  s_chats_unread_only = touchPrefsGetChatsUnreadOnly();
   const char* title = TR("Chats");
   const lv_coord_t title_w = lv_txt_get_width(title, (uint32_t)strlen(title), &g_font_semi_16, 0, LV_TEXT_FLAG_NONE);
   const lv_coord_t icons_w = (lv_coord_t)(2 * SC(24));
-  // Items on one row: [title] spacer, three chips, +, ⋯ (the spacer takes no width
+  // Items on one row: [title] spacer, two chips, +, ⋯ (the spacer takes no width
   // but a gap on each side).
-  auto chipsW = [&](lv_coord_t pad) { return (lv_coord_t)(text_w + 6 * pad + 2 * gap); };
+  auto chipsW = [&](lv_coord_t pad) { return (lv_coord_t)(text_w + 4 * pad + gap); };
   lv_coord_t chip_pad = SC(8);
   const bool one_row = chipsW(SC(5)) + 3 * gap + icons_w + gap <= inner;
   if (one_row) {
@@ -34457,8 +34486,10 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
   } else {
     while (chip_pad > SC(4) && chipsW(chip_pad) > inner) --chip_pad;
   }
-  const bool show_title = !one_row ||
-                          title_w + gap + chipsW(chip_pad) + 4 * gap + icons_w + SC(8) <= inner;
+  auto titleFits = [&] { return title_w + gap + chipsW(chip_pad) + 4 * gap + icons_w + SC(8) <= inner; };
+  // Keep the title where tighter chips make room for it, before giving it up.
+  if (one_row) while (chip_pad > SC(4) && !titleFits()) --chip_pad;
+  const bool show_title = !one_row || titleFits();
   const lv_coord_t h = one_row ? row_h : (lv_coord_t)(2 * row_h);
 
   lv_obj_t* hd = lv_obj_create(tab);
@@ -34470,27 +34501,34 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
   lv_obj_t* chips = one_row ? top : chatsHeaderRow(hd, w, row_h, row_h);
   if (show_title) {
     lv_obj_t* t = lv_label_create(top);
-    lv_label_set_text(t, title);
     lv_label_set_long_mode(t, LV_LABEL_LONG_CLIP);
     lv_obj_set_style_text_font(t, &g_font_semi_16, LV_PART_MAIN);
     lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_text(t, title);
   }
   if (one_row) chatsHeaderSpacer(top);
-  for (int i = 0; i < 3; ++i) {
-    lv_obj_t* c = lv_btn_create(chips);   // the theme's button: the checked state is the selected chip
+  for (int i = 0; i < 2; ++i) {
+    lv_obj_t* c = lv_btn_create(chips);   // the theme's button: the checked state is the lit "U"
     lv_obj_set_height(c, SC(22));
     lv_obj_set_width(c, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(c, LV_RADIUS_CIRCLE, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(c, chip_pad, LV_PART_MAIN);
     lv_obj_set_style_pad_ver(c, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_color(c, lv_color_hex(COLOR_RAISED), LV_PART_MAIN);
-    lv_obj_set_style_text_color(c, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_add_event_cb(c, chatsChipCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_set_style_text_color(c, lv_color_hex(i == 0 ? COLOR_SUB : COLOR_TEXT), LV_PART_MAIN);
     lv_obj_t* l = lv_label_create(c);
-    lv_label_set_text(l, names[i]);
     lv_obj_set_style_text_font(l, &g_font_semi_12, LV_PART_MAIN);
+    if (i == 0) {
+      lv_obj_add_event_cb(c, chatsUnreadChipCb, LV_EVENT_CLICKED, nullptr);
+      lv_label_set_text(l, TR("U"));
+      s_chats_unread_chip = c;
+      navSetTip(c, TR("Unread only"));
+    } else {
+      lv_obj_add_event_cb(c, openChatsFilterSheetCb, LV_EVENT_CLICKED, nullptr);
+      s_chats_filter_lbl = l;   // text set by chatsChipsSync()
+      navSetTip(c, TR("Filter"));
+    }
     lv_obj_center(l);
-    s_chats_chip[i] = c;
   }
   if (!one_row) chatsHeaderSpacer(top);
   navSetTip(chatsIconBtn(top, LV_SYMBOL_PLUS, chatsAddCb), TR("Add a channel"));
@@ -35270,6 +35308,20 @@ static void openContactsFilterSheet(){
   s_ct_filter_btns[5] = ctSheetOption(card, TR("Direct (0-hop)"), ctFilterOptCb, 5, g_lv.contacts_filter==5);
 }
 static void openContactsFilterSheetCb(lv_event_t* e){ if(lv_event_get_code(e)==LV_EVENT_CLICKED) openContactsFilterSheet(); }
+// The Chats filter dropdown (All / Channels / Direct) in the same option sheet.
+static void chatsFilterOptCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  const uint8_t f = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
+  chatsFilterApply(f);
+  ctSortSheetClose();   // apply and dismiss, as the Contacts filter does
+}
+static void openChatsFilterSheetCb(lv_event_t* e){
+  if(lv_event_get_code(e)!=LV_EVENT_CLICKED) return;
+  for(int i=0;i<CONTACTS_SORT_COUNT;++i) s_ct_sort_btns[i]=nullptr;   // neither Contacts sheet is open now
+  for(int i=0;i<7;++i) s_ct_filter_btns[i]=nullptr;
+  lv_obj_t* card = ctOpenOptionSheet("Filter");
+  for(uint8_t f=0; f<3; ++f) ctSheetOption(card, chatsFilterName(f), chatsFilterOptCb, f, s_chats_filter==f);
+}
 
 // A click event for running a button's callback from an action-list row.
 static lv_event_t* ctClickEvent() {
@@ -48506,7 +48558,7 @@ static void refreshChatList(LvChatPanel& p) {
   mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
   mix(s_nick_gen);     // so does a contact's new nickname
   mix(s_deliv_gen);    // and a sent DM turning delivered (#670)
-  mix(p.inbox_combined ? 0xF1u + s_chats_filter : 0u);
+  mix(p.inbox_combined ? 0xF1u + s_chats_filter + (s_chats_unread_only ? 0x100u : 0u) : 0u);
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
     char nm[UITask::MAX_THREAD_NAME + 1];
@@ -48582,6 +48634,7 @@ static void refreshChatList(LvChatPanel& p) {
     char name[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, name, sizeof(name))) continue;
     if (p.inbox_combined && ((s_chats_filter == 1 && !ch) || (s_chats_filter == 2 && ch))) continue;
+    if (p.inbox_combined && s_chats_unread_only && unread == 0) continue;
     ++shown;
 
     // What the row shows: a direct chat's nickname. `name` stays the thread's key.
@@ -48800,7 +48853,10 @@ static void refreshChatList(LvChatPanel& p) {
 #endif
   }
   if (shown == 0) {
-    lv_obj_t* l = lv_list_add_text(p.list_cont, s_chats_filter == 1 ? TR("No channels yet") : TR("No direct chats yet"));
+    const char* none = s_chats_unread_only
+        ? (s_chats_filter == 1 ? TR("No unread channels") : s_chats_filter == 2 ? TR("No unread direct chats") : TR("No unread chats"))
+        : (s_chats_filter == 1 ? TR("No channels yet") : TR("No direct chats yet"));
+    lv_obj_t* l = lv_list_add_text(p.list_cont, none);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(l, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_pad_all(l, 20, LV_PART_MAIN);

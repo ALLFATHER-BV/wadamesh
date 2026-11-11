@@ -331,6 +331,11 @@ bool     touchPrefsGetContactPurge();
 bool     touchPrefsSetContactPurge(bool on);
 uint16_t touchPrefsGetContactPurgeDays();
 bool     touchPrefsSetContactPurgeDays(uint16_t days);
+
+// The Chats "U" (unread only) chip (#824): while on, the inbox lists only threads with unread
+// messages, within the active All / Channels / Direct chip. Default off.
+bool     touchPrefsGetChatsUnreadOnly();
+bool     touchPrefsSetChatsUnreadOnly(bool on);
 /** Where the navigation bar sits (Settings > Display > Navigation bar). Stored in the
  *  v66 condense_nav byte, so no schema change: 0 bottom (the default) and 1 right (the
  *  old Condense Nav rail) keep their meaning; 2 top and 3 left are new. Read once when
