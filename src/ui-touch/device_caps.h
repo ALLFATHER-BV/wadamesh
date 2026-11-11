@@ -330,9 +330,11 @@
 // The optional emoji pack and its tab/recent picker need both removable SD and
 // 8 MB PSRAM. Every enabled SD target below has an 8 MB PSRAM board definition;
 // the regular Heltec V4 has only 2 MB and no SD, so both conditions exclude it.
+// Not the T-LoRa Pager: its app slot is full (beta_103 overflowed by 2 KB with
+// the pack in; leaving it out frees about 7 KB).
 #if CAP_SD && defined(BOARD_HAS_PSRAM) && \
     (defined(HAS_CROWPANEL_35) || defined(HAS_TDECK_PRO) || defined(HAS_TDECK_GT911) || \
-     defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8))
+     defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8))
   #define CAP_EMOJI_PACK 1
 #else
   #define CAP_EMOJI_PACK 0
