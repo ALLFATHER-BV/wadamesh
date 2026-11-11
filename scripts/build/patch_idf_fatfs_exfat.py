@@ -15,16 +15,32 @@
 
 import sys
 
-OLD = "#define FF_FS_EXFAT\t\t0"
-NEW = "#define FF_FS_EXFAT\t\t1\t/* wadamesh: exFAT microSD (scripts/build/patch_idf_fatfs_exfat.py) */"
+# (old, new) pairs, each applied exactly once.
+PATCHES = [
+    ("#define FF_FS_EXFAT\t\t0",
+     "#define FF_FS_EXFAT\t\t1\t/* wadamesh: exFAT microSD (scripts/build/patch_idf_fatfs_exfat.py) */"),
+    # IDF maps FF_USE_LABEL to CONFIG_FATFS_USE_LABEL, which sdkconfig leaves undefined
+    # while the option is off. #if treats that as 0, but exFAT's dir_read() tests
+    # FF_USE_LABEL in plain C (ff.c), where an undefined name does not compile.
+    ("#define FF_USE_LABEL\tCONFIG_FATFS_USE_LABEL",
+     "#ifdef CONFIG_FATFS_USE_LABEL\t/* wadamesh: defined when off too, for exFAT's dir_read() */\n"
+     "#define FF_USE_LABEL\tCONFIG_FATFS_USE_LABEL\n"
+     "#else\n"
+     "#define FF_USE_LABEL\t0\n"
+     "#endif"),
+]
 
 
 def patch_source(source):
-    if source.count(OLD) == 0 and source.count(NEW) == 1:
-        return source, False
-    if source.count(OLD) != 1 or source.count(NEW) != 0:
-        raise RuntimeError("ffconf.h FF_FS_EXFAT line does not match ESP-IDF 5.5 (IDF version drift?)")
-    return source.replace(OLD, NEW, 1), True
+    changed = False
+    for old, new in PATCHES:
+        if new in source:
+            continue
+        if source.count(old) != 1:
+            raise RuntimeError("ffconf.h line %r does not match ESP-IDF 5.5 (IDF version drift?)" % old)
+        source = source.replace(old, new, 1)
+        changed = True
+    return source, changed
 
 
 def patch_file(path):
