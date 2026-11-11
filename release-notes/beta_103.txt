@@ -1,0 +1,28 @@
+# beta_103 - community round: unread chats filter, exFAT cards, SD emoji pack, Cyberspace app and wada.net.request, ThinkNode M9 hardware, V4-R8 rotation. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards, apps.
+
+Test build, on top of beta_102. The stable build stays beta_101.
+
+# --- New ---
+Chats can show unread conversations only: the new U chip in the Chats header hides every thread without unread messages and works together with the filter, so U plus Channels lists unread channels only. All, Channels and Direct now sit in one dropdown, and both choices are kept over a restart (#825 by oumike, asked for by SP4RT4N3R in #824).
+exFAT microSD cards mount: cards of 64 GB and up come formatted as exFAT, and none of them could be read before, because every board's file system had exFAT switched off. They now work for data, maps, music and files without reformatting to FAT32 (#812 by zmiguel).
+Emoji pack from the SD card: with a pack at emoji/emoji.pack on the card, the emoji picker gets category tabs (Smileys, People, Nature, Food and more), a Recent tab, flags and nearly the full emoji set. Without a pack it stays as it was. On the boards with an SD card and 8 MB PSRAM (#616 by TerryTel93).
+File Transfer shows a progress bar, the share done and the time left while a file moves, instead of only the byte counts (asked for by benanderson).
+Heltec V4-R8: Settings > Display > Orientation is back, landscape included. The first start in a landscape asks "Keep this orientation?" and goes back to portrait by itself after 15 seconds without a tap, so a screen whose touch does not line up can never leave the device stuck (asked for by e4m7g6).
+
+# --- Fixes ---
+Apps that load data from the internet could wait forever after a restart: their requests queued for the network worker, which only started once the Store or the map had run. Each request now starts it.
+A web request from an app answers at once with an error when Wi-Fi is not connected, or when a secure connection would leave too little memory, instead of hanging.
+
+# --- Boards ---
+ThinkNode M9: the battery reads the charger's own state, so it tells charging from charged, and readings no longer jump while Wi-Fi is busy. Settings > Battery > Low battery warning warns at 20 and 10 percent and puts the device to sleep at 3 percent so the cell is never run flat (on by default). All M9 lines by TinkeringDao (#826).
+ThinkNode M9: Settings > Display > Wake when picked up and Settings > Sound > Quiet when face down now work, using its motion sensor.
+ThinkNode M9: the microSD card runs at 20 MHz, the GPS is switched off cleanly with its lines released so it draws nothing while off, Wi-Fi sleeps deeper while the screen is dark, and the clock chip's unused output is off.
+ThinkNode M9: the radio calibrates from the right standby mode at start, accepts 150 to 960 MHz, and the RX boosted gain switch now takes effect. The compass heading is corrected, and Bluetooth no longer uses extended advertising, which could upset the radio controller when a phone reconnected quickly.
+
+# --- Apps and Lua SDK ---
+Cyberspace, a new app in the Store: a client for cyberspace.online with its cIRC rooms, C-Mail and the Feed, over https with your own account. Needs a board with 8 MB PSRAM, and not the P4 boards (#788 by oumike).
+GPS Compass 1.1: on the ThinkNode M9 the heading held level now matches the tilt-corrected one (#826).
+Lua: wada.net.request sends GET, POST and other requests with headers and a body over http or https, and https checks the certificate. Also wada.json.encode and decode, label:on_press, and caps().request and caps().https to check for them (#788 by oumike).
+Languages: the store moves to version 33, with every new line in all 15 languages.
