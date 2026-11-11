@@ -142,6 +142,15 @@
       "icon": "list",
       "requires": "sdk_ext",
       "seed": false
+    },
+    {
+      "id": "cyberspace",
+      "name": "Cyberspace",
+      "ver": "1.0",
+      "requires": "https",
+      "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_103 or later.",
+      "icon": "message",
+      "seed": false
     }
   ]
 }

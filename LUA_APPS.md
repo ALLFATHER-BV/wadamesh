@@ -232,3 +232,30 @@ once files are field-proven.
   symbol. `deploy/site/sdk.html`'s manifest table was corrected at the same
   time: it documented `version` / `min_api` / `description` / `boards`, none
   of which the device has ever parsed.
+
+- 2026-10-30: **wada.net.request + wada.json + the Cyberspace app.** An app for
+  cyberspace.online needed three things the net API did not have: https (the
+  API is TLS-only), request headers (every call carries `Authorization: Bearer`)
+  and the real status code (a 401 means "refresh the token", not "no Wi-Fi").
+  `request{url, method, headers, body, max}` adds all three; `http_get/post`
+  keep their contract. https is `CAP_LUA_HTTPS` (= `CAP_WEB_BROWSER`: the boards
+  with heap for a handshake) and, unlike the Reader, VERIFIES the chain against
+  pinned ISRG roots (UITask.cpp `kLuaTlsRoots`), since what crosses it is a
+  credential. Each https request runs on a one-shot 16 KB task: the tile
+  worker's 8 KB stack is sized for plain HTTP. Replies are read through
+  `writeToStream`, because Vercel answers chunked. `wada.json` is in C
+  (`LuaJson.h`, host test `test/test_lua_json.cpp`): a 32 KB reply parsed in Lua
+  blows the instruction budget, and integers past 32 bits (ms timestamps) come
+  back as exact text rather than rounded floats. Manifests can say
+  `"requires":"https"`. `deploy/apps/cyberspace/1.0` is the app: cIRC, C-Mail,
+  Feed. Rooms, conversations and posts are one page that scrolls
+  (`wada.ui.scroll`, beta_59+), newest at the top because a redraw lands there and
+  apps cannot set the scroll position; Load older / More replies add below
+  without a redraw. On a board with no touch the app drops `on_input` on those
+  pages so the D-pad scrolls them natively. Host test
+  `scripts/lua-harness/cyberspace/run.sh` (five board sizes, fake API, token
+  expiry, a 230-message room, touchless; worst callback ~49k of 100k).
+  Hardware-tested on the Wio Tracker L2 (sign-in, rooms, sending).
+  Also fixed here: `wada.store.get(key)` with no default returned the store
+  table for a missing key, and `storeFlush` wrote lines past its 192-byte buffer;
+  the store now also saves within 2 s of a change, not only on close.

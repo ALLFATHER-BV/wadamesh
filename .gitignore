@@ -14,6 +14,7 @@ out/*
 
 # host Lua harness: the compiled binary, not the sources (scripts/lua-harness)
 scripts/lua-harness/luah
+scripts/lua-harness/cyberspace/host
 scripts/lua-harness/*.o
 .DS_Store
 .idea
