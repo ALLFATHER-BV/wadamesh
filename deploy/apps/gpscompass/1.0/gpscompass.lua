@@ -506,7 +506,7 @@ local function mag_heading(m)
     end
   end
   tilt_deg = nil
-  return norm360(math.deg(math.atan(bx, by)) + align + decl)
+  return norm360(math.deg(math.atan(-by, bx)) + align + decl)
 end
 
 local function smooth_heading(h)

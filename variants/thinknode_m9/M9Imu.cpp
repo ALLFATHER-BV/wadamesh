@@ -108,12 +108,15 @@ bool probe(bool log) {
     if (log) Serial.printf("M9 IMU: unexpected WHO_AM_I 0x%02X at 0x6B (want 0x05)\n", id);
     return false;
   }
-  // Soft reset, then wait long enough for either die: the QMI8658A finishes in
-  // ~15 ms, the C wants ~150 ms, and the M9's variant is not documented.
+  // Soft reset, then poll kRegResetOk every 10 ms up to 160 ms: the QMI8658A
+  // finishes in ~15 ms, while the QMI8658C wants ~150 ms.
   if (!writeReg(kRegReset, kResetCmd)) return false;
-  delay(160);
   uint8_t ok = 0;
-  if (!readRegs(kRegResetOk, &ok, 1) || ok != kResetOkVal) {
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    delay(10);
+    if (readRegs(kRegResetOk, &ok, 1) && ok == kResetOkVal) break;
+  }
+  if (ok != kResetOkVal) {
     if (log) Serial.printf("M9 IMU: reset flag 0x%02X (want 0x80)\n", ok);
     return false;
   }
@@ -142,7 +145,7 @@ void m9ImuBegin(TwoWire& w) {
 
 bool m9ImuPresent() { return s_present; }
 
-bool m9ImuRead(float* x, float* y, float* z) {
+bool m9ImuReadAccelG(float* x, float* y, float* z) {
   if (!s_bus) return false;
   const uint32_t now = millis();
 
@@ -156,15 +159,24 @@ bool m9ImuRead(float* x, float* y, float* z) {
   s_last_read_ms = now;
   if (!s_awake) {
     // Leave power-down and re-enable the accelerometer. The first conversion
-    // is one turn-on time away, so this call reports nothing fresh and the
-    // caller's next poll gets data.
+    // is one turn-on time away; if we have a cached orientation sample from
+    // before idle-suspend, return it during the 55 ms settle window so
+    // tilt-compensated compass callers do not drop to flat-earth on wake.
     if (!writeReg(kRegCtrl1, kCtrl1)) return false;
     if (!writeReg(kRegCtrl7, kCtrl7On)) return false;
     s_awake = true;
     s_wake_ms = now;
-    return false;
   }
-  if ((now - s_wake_ms) < kWakeSettleMs) return false;   // still settling
+  if ((now - s_wake_ms) < kWakeSettleMs) {
+    if (s_have_sample) {
+      s_sample_ms = now;
+      if (x) *x = s_x;
+      if (y) *y = s_y;
+      if (z) *z = s_z;
+      return true;
+    }
+    return false;   // still settling, no prior sample yet
+  }
 
   uint8_t st = 0;
   bool ok = readRegs(kRegStatus0, &st, 1);
@@ -211,6 +223,10 @@ bool m9ImuRead(float* x, float* y, float* z) {
   return true;
 }
 
+bool m9ImuRead(float* x, float* y, float* z) {
+  return m9ImuReadAccelG(x, y, z);
+}
+
 void m9ImuIdleTick() {
   if (!s_bus || !s_present || !s_awake) return;
   const uint32_t now = millis();
@@ -220,7 +236,6 @@ void m9ImuIdleTick() {
   // bit, so do not copy it).
   if (writeReg(kRegCtrl7, kCtrl7Off) && writeReg(kRegCtrl1, kCtrl1 | 0x01)) {
     s_awake = false;
-    s_have_sample = false;
   }
 }
 

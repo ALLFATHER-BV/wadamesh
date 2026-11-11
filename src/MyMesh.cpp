@@ -4095,9 +4095,11 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021)
-#ifdef SX126X_RX_BOOSTED_GAIN
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(RX_BOOSTED_GAIN)
+#if defined(SX126X_RX_BOOSTED_GAIN)
   _prefs.rx_boosted_gain = SX126X_RX_BOOSTED_GAIN ? 1 : 0;
+#elif defined(RX_BOOSTED_GAIN)
+  _prefs.rx_boosted_gain = RX_BOOSTED_GAIN ? 1 : 0;
 #else
   _prefs.rx_boosted_gain = 1; // enabled by default
 #endif
@@ -4111,7 +4113,7 @@ void MyMesh::applyRadioFromPrefs() {
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.radioRelease();
   radio_driver.setTxPower(_prefs.tx_power_dbm);
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(RX_BOOSTED_GAIN)
   _prefs.rx_boosted_gain = _prefs.rx_boosted_gain ? 1 : 0;
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
@@ -4206,7 +4208,11 @@ void MyMesh::begin(bool has_display) {
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
   _prefs.airtime_factor = constrain(_prefs.airtime_factor, 0, 9.0f);
+#if defined(USE_LR1110)
+  _prefs.freq = constrain(_prefs.freq, 150.0f, 960.0f);
+#else
   _prefs.freq = constrain(_prefs.freq, 400.0f, 2500.0f);
+#endif
   _prefs.bw = constrain(_prefs.bw, 7.8f, 500.0f);
   _prefs.sf = constrain(_prefs.sf, 5, 12);
   _prefs.cr = constrain(_prefs.cr, 5, 8);
@@ -4952,8 +4958,13 @@ void MyMesh::handleCmdFrame(size_t len) {
 
     if (repeat && !isValidClientRepeatFreq(freq)) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+#if defined(USE_LR1110)
+    } else if (freq >= 150000 && freq <= 960000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
+        bw <= 500000) {
+#else
     } else if (freq >= 300000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
         bw <= 500000) {
+#endif
       _prefs.sf = sf;
       _prefs.cr = cr;
       _prefs.freq = (float)freq / 1000.0;
@@ -4963,7 +4974,7 @@ void MyMesh::handleCmdFrame(size_t len) {
 
       radio_driver.radioAcquire();   // hold off the RX drain task mid-sequence (no-op when off)
       radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN) || defined(RX_BOOSTED_GAIN)
       radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
 #endif
       radio_driver.radioRelease();
@@ -5851,7 +5862,11 @@ bool MyMesh::handleRadioCommand(const char* command, char* reply) {
     float bw    = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
     uint8_t sf  = num > 2 ? atoi(parts[2]) : 0;
     uint8_t cr  = num > 3 ? atoi(parts[3]) : 0;
+#if defined(USE_LR1110)
+    if (freq >= 150.0f && freq <= 960.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+#else
     if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+#endif
       _prefs.freq = freq;
       _prefs.bw = bw;
       _prefs.sf = sf;
@@ -5906,7 +5921,7 @@ bool MyMesh::handleRadioCommand(const char* command, char* reply) {
     return true;
   }
 
-#if defined(USE_SX1262) || defined(USE_SX1268)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(RX_BOOSTED_GAIN)
   if (strcmp(command, "get radio.rxgain") == 0) {
     sprintf(reply, "> %s", _prefs.rx_boosted_gain ? "on" : "off");
     return true;

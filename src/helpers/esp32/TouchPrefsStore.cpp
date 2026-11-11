@@ -2574,14 +2574,16 @@ uint8_t  touchPrefsGetChargeTmin()      { if (!s_begun) touchPrefsBegin(); retur
 void     touchPrefsSetChargeTmin(uint8_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_tmin", v); }
 bool touchPrefsGetChargeCare()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("chg_care", 0) != 0; }
 void touchPrefsSetChargeCare(bool on)   { if (!s_begun) touchPrefsBegin(); prefsPutUChar("chg_care", on ? 1 : 0); }
-bool touchPrefsGetLowBattWarn()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("low_batt", 1) != 0; }
-void touchPrefsSetLowBattWarn(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("low_batt", on ? 1 : 0); }
 uint32_t touchPrefsGetBattDayKey()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_day", 0); }
 void     touchPrefsSetBattDayKey(uint32_t k) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_day", k); }
 uint32_t touchPrefsGetBattDayMah()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_mah", 0xFFFF0000u); }
 void     touchPrefsSetBattDayMah(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_mah", v); }
 uint32_t touchPrefsGetBattUse()          { if (!s_begun) touchPrefsBegin(); return s_prefs.getUInt("bat_use", 0); }
 void     touchPrefsSetBattUse(uint32_t v) { if (!s_begun) touchPrefsBegin(); prefsPutUInt("bat_use", v); }
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_M9_IMU)
+bool touchPrefsGetLowBattWarn()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("low_batt", 1) != 0; }
+void touchPrefsSetLowBattWarn(bool on)  { if (!s_begun) touchPrefsBegin(); prefsPutUChar("low_batt", on ? 1 : 0); }
 bool touchPrefsGetFaceDownQuiet()       { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("face_down", 0) != 0; }
 void touchPrefsSetFaceDownQuiet(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("face_down", on ? 1 : 0); }
 bool touchPrefsGetPickupWake()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("pick_wake", 0) != 0; }
@@ -3070,7 +3072,10 @@ static int backupKeys(BkKey* out, int cap) {
     "glance_en", "msg_led", "dnd_en", "dnd_ss", "dnd_es", "kbd_bl",
 #if defined(TLORA_PAGER)
     "vib_in", "vib_str", "vib_pm", "vib_pd", "vib_pn",   // the Pager's vibration settings ("vibrate" is above)
-    "chg_care", "low_batt", "face_down", "pick_wake",             // the Pager's battery care and quiet modes
+    "chg_care",
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_M9_IMU)
+    "low_batt", "face_down", "pick_wake",                // low-battery warning and IMU motion quiet/wake modes
 #endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
     "glass", "bg_dim", "lock_dim",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket

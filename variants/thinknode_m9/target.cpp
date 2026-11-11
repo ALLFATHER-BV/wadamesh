@@ -69,12 +69,13 @@ DISPLAY_CLASS display(&board.periph_power);
 // Elecrow's own firmware pulses GPIO10 (the module's ON_OFF/wake line) after
 // driving EN active on these units: 50 ms, HIGH for 5 ms, then 50 ms settle.
 static void m9GpsWakePulse() {
-  pinMode(10, OUTPUT);
+  pinMode(PIN_GPS_STANDBY, OUTPUT);
   delay(50);
-  digitalWrite(10, HIGH);
+  digitalWrite(PIN_GPS_STANDBY, HIGH);
   delay(5);
-  digitalWrite(10, LOW);
+  digitalWrite(PIN_GPS_STANDBY, LOW);
   delay(50);
+  pinMode(PIN_GPS_STANDBY, INPUT);
 }
 
 static void m9OnKeyboardFound(uint8_t addr) {
@@ -170,6 +171,7 @@ bool radio_init() {
 
   radio.setCRC(2);
   radio.explicitHeader();
+  radio.setRegulatorDCDC();
 
   // RF-switch DIO table: pin assignment is SCHEMATIC-CONFIRMED
   // (Think_Node_M9_V1_0.pdf, the LR1110/U7 block) — DIO5 (pin 20) -> R20 -> net
@@ -196,6 +198,11 @@ bool radio_init() {
   };
   radio.setRfSwitchTable(rfswitch_dios, rfswitch_table);
 #endif
+  // Re-run full calibration and narrowband image rejection now that the DC-DC
+  // buck converter (L2=47nH) and RF switch table (DIO5/DIO6) are active on the
+  // stable 32 MHz TCXO, matching the post-switch sequence in LR11x0Reset.h.
+  radio.calibrate(RADIOLIB_LR11X0_CALIBRATE_ALL);
+  radio.calibrateImageRejection(LORA_FREQ - 4.0f, LORA_FREQ + 4.0f);
 #ifdef RX_BOOSTED_GAIN
   radio.setRxBoostedGainMode(RX_BOOSTED_GAIN);
 #endif

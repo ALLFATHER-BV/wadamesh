@@ -155,8 +155,31 @@ lfs_ssize_t _getLfsUsedBlockCount(FILESYSTEM* fs) {
 }
 #endif
 
+#if defined(HAS_THINKNODE_M9)
+static void querySdStorageKbCached(uint32_t& used_kb, uint32_t& total_kb) {
+  static uint32_t s_last_ms = 0;
+  static uint32_t s_used_kb = 0;
+  static uint32_t s_total_kb = 0;
+  const uint32_t now = millis();
+  if (s_total_kb == 0 || (uint32_t)(now - s_last_ms) >= 5000u) {
+    s_last_ms = now;
+    s_used_kb = (uint32_t)(SD.usedBytes() / 1024ULL);
+    s_total_kb = (uint32_t)(SD.totalBytes() / 1024ULL);
+  }
+  used_kb = s_used_kb;
+  total_kb = s_total_kb;
+}
+#endif
+
 uint32_t DataStore::getStorageUsedKb() const {
 #if defined(ESP32)
+#if defined(HAS_THINKNODE_M9)
+  if (_fs == &SD && SD.cardType() != CARD_NONE) {
+    uint32_t u = 0, t = 0;
+    querySdStorageKbCached(u, t);
+    return u;
+  }
+#endif
   return SPIFFS.usedBytes() / 1024;
 #elif defined(RP2040_PLATFORM)
   FSInfo info;
@@ -175,6 +198,13 @@ uint32_t DataStore::getStorageUsedKb() const {
 
 uint32_t DataStore::getStorageTotalKb() const {
 #if defined(ESP32)
+#if defined(HAS_THINKNODE_M9)
+  if (_fs == &SD && SD.cardType() != CARD_NONE) {
+    uint32_t u = 0, t = 0;
+    querySdStorageKbCached(u, t);
+    if (t > 0) return t;
+  }
+#endif
   return SPIFFS.totalBytes() / 1024;
 #elif defined(RP2040_PLATFORM)
   FSInfo info;
@@ -386,9 +416,11 @@ void DataStore::loadPrefs(NodePrefs& prefs, double& node_lat, double& node_lon) 
 namespace {
 
 void default_rx_boosted_gain_pref(uint8_t& out) {
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
-  #ifdef SX126X_RX_BOOSTED_GAIN
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN) || defined(RX_BOOSTED_GAIN)
+  #if defined(SX126X_RX_BOOSTED_GAIN)
   out = (SX126X_RX_BOOSTED_GAIN != 0) ? 1 : 0;
+  #elif defined(RX_BOOSTED_GAIN)
+  out = (RX_BOOSTED_GAIN != 0) ? 1 : 0;
   #else
   out = 1;
   #endif
