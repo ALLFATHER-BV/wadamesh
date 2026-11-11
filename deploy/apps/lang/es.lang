@@ -1419,8 +1419,8 @@ Never	Nunca
 New PIN	New PIN
 No backups available to restore.	No hay copias para restaurar.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Aún no hay canales
+No direct chats yet	Aún no hay chats directos
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2413,3 +2413,8 @@ Asleep: tap screen or 🤍 to wake	En reposo: toca la pantalla o 🤍 para despe
 Receiving %s\n%lu / %lu bytes	Recibiendo %s\n%lu / %lu bytes
 Sending %s\n%lu / %lu bytes	Enviando %s\n%lu / %lu bytes
 File Transfer	Transferencia de archivos
+U	N
+Unread only	Solo sin leer
+No unread chats	No hay chats sin leer
+No unread channels	No hay canales sin leer
+No unread direct chats	No hay chats directos sin leer

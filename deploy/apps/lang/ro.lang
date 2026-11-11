@@ -1420,8 +1420,8 @@ Never	Niciodată
 New PIN	New PIN
 No backups available to restore.	Niciun backup de restaurat.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Încă niciun canal
+No direct chats yet	Încă nicio conversație directă
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2414,3 +2414,8 @@ Asleep: tap screen or 🤍 to wake	În repaus: atinge ecranul sau 🤍 pentru tr
 Receiving %s\n%lu / %lu bytes	Se primeşte %s\n%lu / %lu octeţi
 Sending %s\n%lu / %lu bytes	Se trimite %s\n%lu / %lu octeţi
 File Transfer	Transfer de fişiere
+U	N
+Unread only	Doar necitite
+No unread chats	Nicio conversație necitită
+No unread channels	Niciun canal necitit
+No unread direct chats	Nicio conversație directă necitită

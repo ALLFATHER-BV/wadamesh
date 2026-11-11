@@ -1418,8 +1418,8 @@ Never	Mai
 New PIN	New PIN
 No backups available to restore.	Nessun backup da ripristinare.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Ancora nessun canale
+No direct chats yet	Ancora nessuna chat diretta
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2412,3 +2412,8 @@ Asleep: tap screen or 🤍 to wake	In sospensione: tocca lo schermo o 🤍 per r
 Receiving %s\n%lu / %lu bytes	Ricezione di %s\n%lu / %lu byte
 Sending %s\n%lu / %lu bytes	Invio di %s\n%lu / %lu byte
 File Transfer	Trasferimento file
+U	N
+Unread only	Solo non letti
+No unread chats	Nessuna chat non letta
+No unread channels	Nessun canale non letto
+No unread direct chats	Nessuna chat diretta non letta

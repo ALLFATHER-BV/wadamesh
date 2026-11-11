@@ -1432,8 +1432,8 @@ Never	Soha
 New PIN	New PIN
 No backups available to restore.	Nincs visszaállítható mentés.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Még nincs csatorna
+No direct chats yet	Még nincs közvetlen csevegés
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2423,3 +2423,8 @@ Asleep: tap screen or 🤍 to wake	Alvó mód: koppints a képernyőre vagy 🤍
 Receiving %s\n%lu / %lu bytes	%s fogadása\n%lu / %lu bájt
 Sending %s\n%lu / %lu bytes	%s küldése\n%lu / %lu bájt
 File Transfer	Fájlátvitel
+U	O
+Unread only	Csak olvasatlan
+No unread chats	Nincs olvasatlan csevegés
+No unread channels	Nincs olvasatlan csatorna
+No unread direct chats	Nincs olvasatlan közvetlen csevegés

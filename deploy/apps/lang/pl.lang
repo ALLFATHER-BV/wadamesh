@@ -2426,3 +2426,8 @@ Peak -- dBm	Peak -- dBm
 Receiving %s\n%lu / %lu bytes	Receiving %s\n%lu / %lu bytes
 Sending %s\n%lu / %lu bytes	Sending %s\n%lu / %lu bytes
 peak %d @ %.1f	peak %d @ %.1f
+U	N
+Unread only	Tylko nieprzeczytane
+No unread chats	Brak nieprzeczytanych czatów
+No unread channels	Brak nieprzeczytanych kanałów
+No unread direct chats	Brak nieprzeczytanych czatów bezpośrednich

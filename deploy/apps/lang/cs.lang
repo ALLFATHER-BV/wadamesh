@@ -1439,8 +1439,8 @@ Never	Nikdy
 New PIN	New PIN
 No backups available to restore.	Žádné zálohy k obnovení.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Zatím žádné kanály
+No direct chats yet	Zatím žádné přímé chaty
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
 November	November
@@ -2429,3 +2429,8 @@ Asleep: tap screen or 🤍 to wake	Spí: klepněte na obrazovku nebo 🤍 pro pr
 Receiving %s\n%lu / %lu bytes	Přijímání %s\n%lu / %lu bajtů
 Sending %s\n%lu / %lu bytes	Odesílání %s\n%lu / %lu bajtů
 File Transfer	Přenos souborů
+U	N
+Unread only	Jen nepřečtené
+No unread chats	Žádné nepřečtené chaty
+No unread channels	Žádné nepřečtené kanály
+No unread direct chats	Žádné nepřečtené přímé chaty

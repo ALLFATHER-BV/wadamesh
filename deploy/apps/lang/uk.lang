@@ -1419,8 +1419,8 @@ Never	Ніколи
 New PIN	New PIN
 No backups available to restore.	Немає резервних копій для відновлення.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Каналів ще немає
+No direct chats yet	Особистих чатів ще немає
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2413,3 +2413,8 @@ Asleep: tap screen or 🤍 to wake	Сон: торкніться екрана а�
 Receiving %s\n%lu / %lu bytes	Отримання %s\n%lu / %lu байт
 Sending %s\n%lu / %lu bytes	Надсилання %s\n%lu / %lu байт
 File Transfer	Передавання файлів
+U	Н
+Unread only	Лише непрочитані
+No unread chats	Немає непрочитаних чатів
+No unread channels	Немає непрочитаних каналів
+No unread direct chats	Немає непрочитаних особистих чатів

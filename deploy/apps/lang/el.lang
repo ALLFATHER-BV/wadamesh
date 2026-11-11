@@ -1419,8 +1419,8 @@ Never	Ποτέ
 New PIN	New PIN
 No backups available to restore.	Δεν υπάρχουν αντίγραφα για επαναφορά.
 No backups yet. Use Export Backup above to create one.	No backups yet. Use Export Backup above to create one.
-No channels yet	No channels yet
-No direct chats yet	No direct chats yet
+No channels yet	Δεν υπάρχουν ακόμη κανάλια
+No direct chats yet	Δεν υπάρχουν ακόμη άμεσες συνομιλίες
 Normal\nLarge text\nHuge text	Normal\nLarge text\nHuge text
 Not delivered, tap to resend	Not delivered, tap to resend
 Nov	Nov
@@ -2413,3 +2413,8 @@ Asleep: tap screen or 🤍 to wake	Σε αναστολή: πατήστε την 
 Receiving %s\n%lu / %lu bytes	Λήψη %s\n%lu / %lu byte
 Sending %s\n%lu / %lu bytes	Αποστολή %s\n%lu / %lu byte
 File Transfer	Μεταφορά αρχείων
+U	Α
+Unread only	Μόνο αδιάβαστα
+No unread chats	Δεν υπάρχουν αδιάβαστες συνομιλίες
+No unread channels	Δεν υπάρχουν αδιάβαστα κανάλια
+No unread direct chats	Δεν υπάρχουν αδιάβαστες άμεσες συνομιλίες
