@@ -14,12 +14,14 @@
 #include <esp_heap_caps.h>
 #include <FS.h>
 #include <time.h>
+#include <strings.h>   // strcasecmp: wada.net.request header names
 #include <math.h>   // isnan for optional sensor fields   // wada.sys.epoch/datetime (#245)
 #include "AppPage.h"
 #include "device_caps.h"
 #include "i18n.h"   // wada.sys.tr: apps can use the same translation table the UI does
 #include "Utf8Text.h"
 #include "LuaRandomRange.h"   // wada.sys.random(lo, hi), host-tested
+#include "LuaJson.h"          // wada.json, host-tested (test/test_lua_json.cpp)
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
 
 extern "C" {
@@ -38,6 +40,7 @@ extern bool             luaHostBeep();
 extern void             luaHostSetSelectionGlow(lv_obj_t* obj, bool selected);
 extern uint32_t         luaHostPanelColor();                      // wada.ui.panel defaults (live theme)
 extern uint32_t         luaHostBorderColor();
+extern bool             luaHostAnimOn();                          // false: Mute colours and animations
 extern void             luaHostMarkInert(lv_obj_t* obj);          // never a keyboard focus stop
 extern bool             luaHostScreenOn();   // false = display asleep; app ticks pause
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
@@ -63,12 +66,16 @@ extern bool             luaHostSdReadFailed();                    // failed open
 extern bool             luaHostSdClearAttributes(const char* path); // drop read-only/hidden/system
 #include "SdThreat.h"   // the SD malware policy wada.sd.check/remove enforce
 #endif
+extern int  luaHostContactFlags(int idx);   // ContactInfo.flags, bit 0 = favourite
+extern void luaHostLockScreen();
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
+#define LUA_RX_PATH_MAX 16   // MyMesh::UI_RXLOG_PATH_MAX
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                            int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
-                           uint32_t* at_ms = nullptr);
+                           uint32_t* at_ms = nullptr, uint8_t* path = nullptr,
+                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr);
 extern int  luaHostDiscoverCount();
 extern void luaHostDiscoverClear();
 extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
@@ -107,6 +114,11 @@ extern void luaHostRequestSendPerm(const char* app_id, const char* app_name); //
 extern bool luaHostMeshSendChannel(const char* chan_name, const char* text);
 extern uint32_t luaHostLastSentFp();
 extern uint8_t  luaHostRepeatsForFp(uint32_t fp);
+extern uint8_t  luaHostRepeatHop(uint32_t fp, uint8_t idx, uint8_t* out, uint8_t cap);
+#define LUA_PING_MAX_HOPS 63
+extern uint32_t luaHostMeshPing(const char* who, const char** err);
+extern bool luaHostPingTakeResult(int8_t* their_snr, int8_t* our_snr, uint8_t* extra_hops, int8_t* extra);
+extern void luaHostPingCancel();
 extern bool luaHostMeshSendDM(const char* to_name, const char* text, bool* was_room);
 extern int  luaHostMeshChannelNames(char out[][32], int max_n);
 extern int  luaHostDmSendPerm(const char* app_id);
@@ -149,6 +161,16 @@ extern bool luaHostAccel(float* x_g, float* y_g, float* z_g);   // sensor frame,
 extern int luaStoreHttpGetOpaque(void* client, void* http, const char* url, char* buf, size_t cap);
 extern int luaStoreHttpPostOpaque(void* client, void* http, const char* url, char* buf, size_t cap,
                                   const void* body, size_t body_len, const char* ctype);
+// wada.net.request: any method + headers, returns bytes read (status in *status).
+extern int luaStoreHttpRequestOpaque(void* client, void* http, const char* method, const char* url,
+                                     const char* hdrs, const void* body, size_t body_len,
+                                     char* buf, size_t cap, int* status);
+#if CAP_LUA_HTTPS
+// Starts the one-shot TLS task; it calls luaNetWorkerService with a verifying client.
+extern bool luaNetSpawnTls();
+#endif
+extern bool luaHostWifiUp();   // station connected with an address
+extern bool luaHostNetWorkerStart();   // the tile worker that runs plain-http fetches
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -227,6 +249,7 @@ struct Host {
   int         ref_app   = LUA_NOREF; // the table the chunk returned
   int         ref_btncb = LUA_NOREF; // { [btn lightuserdata] = fn } button callbacks
   bool        store_dirty = false;
+  uint32_t    store_flush_ms = 0;     // last store write, for the at-most-every-2-s flush
   uint32_t    fs_last_write_ms = 0;   // wada.fs write rate limit (#222 lesson)
   uint32_t    mesh_last_send_ms = 0;  // wada.mesh.send airtime rate limit
   uint32_t    mesh_last_probe_ms = 0; // wada.mesh.discover airtime rate limit (separate: a
@@ -330,8 +353,20 @@ bool guardedCall(Host* h, int nargs) {
   return true;
 }
 
+void storeFlush();
+
 void serviceDeferredClose() {
-  if (s_h && s_h->want_close && !s_h->in_lua) luaAppDismiss();
+  if (s_h && s_h->want_close && !s_h->in_lua) { luaAppDismiss(); return; }
+  // Save the store soon after it changes, not only on close: a reboot, a flash
+  // or a power-off with the app open used to lose everything set since launch
+  // (a sign-in, a high score). This runs on the UI thread and the write can land
+  // on SPIFFS, whose garbage collection stalls for seconds (the beta_25 watchdog
+  // bootloop), so at most every 30 s and under the watchdog guard.
+  if (s_h && s_h->store_dirty && !s_h->in_lua && millis() - s_h->store_flush_ms >= 30000) {
+    s_h->store_flush_ms = millis();
+    WdtHeavyGuard guard;
+    storeFlush();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +543,28 @@ int lbSet(lua_State* L) {
   const char* text = luaL_checklstring(L, 2, &length);
   lv_obj_t* l = labelTarget(u->obj);
   if (l) lv_label_set_text(l, safeUiText(text, length));
+  return 0;
+}
+// The gap this closes: a label could only be read. Chat lines, feed items and
+// log rows had no way to be picked, so "reply to this message" needed a button
+// per line. Making the label clickable also makes it a cursor stop on boards
+// with no touch (the firmware's nav collects every clickable). It bubbles its
+// events, so a press on it still reaches on_input as "down"/"up", and a drag
+// that starts on it still scrolls the page (LVGL sends no click after a scroll).
+void pressKindCb(lv_event_t* e);   // with the button dispatch, below
+int lbOnPress(lua_State* L) {
+  WidgetUd* u = checkLabel(L);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  if (!u->obj || !s_h) return 0;
+  lv_obj_add_flag(u->obj, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(u->obj, LV_OBJ_FLAG_EVENT_BUBBLE);
+  lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
+  lua_pushlightuserdata(L, u->obj);
+  lua_pushvalue(L, 2);
+  lua_rawset(L, -3);
+  lua_pop(L, 1);
+  lv_obj_add_event_cb(u->obj, pressKindCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_add_event_cb(u->obj, pressKindCb, LV_EVENT_LONG_PRESSED, nullptr);
   return 0;
 }
 int lbPos(lua_State* L) {
@@ -743,6 +800,26 @@ void btnEventCb(lv_event_t* e) {
   lua_remove(L, -2);
   if (lua_isfunction(L, -1)) guardedCall(s_h, 0);
   else lua_pop(L, 1);
+  serviceDeferredClose();
+}
+
+// label:on_press(fn) -- fn("click") on a tap or on Enter at the cursor,
+// fn("long") on a long press. The callback shares the button table, so
+// ui.clear drops it with the label.
+void pressKindCb(lv_event_t* e) {
+  const lv_event_code_t code = lv_event_get_code(e);
+  if ((code != LV_EVENT_CLICKED && code != LV_EVENT_LONG_PRESSED) || !s_h || !s_h->L) return;
+  lua_State* L = s_h->L;
+  lua_rawgeti(L, LUA_REGISTRYINDEX, s_h->ref_btncb);
+  lua_pushlightuserdata(L, lv_event_get_current_target(e));
+  lua_rawget(L, -2);
+  lua_remove(L, -2);
+  if (lua_isfunction(L, -1)) {
+    lua_pushstring(L, code == LV_EVENT_LONG_PRESSED ? "long" : "click");
+    guardedCall(s_h, 1);
+  } else {
+    lua_pop(L, 1);
+  }
   serviceDeferredClose();
 }
 
@@ -1096,6 +1173,8 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "rx_identity");// rx_log pubkey/src/dst
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "paths");      // repeater hashes in packets, messages, repeats()
+  lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "ping");       // wada.mesh.ping + app.on_ping
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
@@ -1103,7 +1182,10 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "widget");     // wada.widget (a Home widget)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "panel");      // wada.ui.panel, ui.label bold, size 24
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "press");      // label:on_press (tap, long press, cursor)
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_events"); // app.on_audio
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "request");    // wada.net.request + wada.json
+  lua_pushboolean(L, CAP_LUA_HTTPS);    lua_setfield(L, -2, "https");      // request() to an https:// url
 #if defined(HAS_TDECK_PRO)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "epaper");     // T-Deck Pro / Max: redraw sparingly
 #else
@@ -1271,6 +1353,7 @@ int sysKeepAwake(lua_State* L) {
   luaHostKeepAwake(on);
   return 0;
 }
+int sysLock(lua_State* L)   { (void)L; luaHostLockScreen(); return 0; }   // #817
 int sysToast(lua_State* L)  { luaHostToast(luaL_checkstring(L, 1), (int)luaL_optinteger(L, 2, 1500)); return 0; }
 int sysRandom(lua_State* L) {
   // esp_random-backed: apps should not have to seed math.random for games
@@ -1433,6 +1516,25 @@ int timerHandleStop(lua_State* L) {
   return 0;
 }
 
+// A repeater path as Lua sees it: one lowercase hex string per hop, first repeater
+// first, the same spelling rx_log's src and dst use so an app can compare them.
+void pushPathHops(lua_State* L, const uint8_t* path, uint8_t bytes, uint8_t hash_sz) {
+  static const char* H = "0123456789abcdef";
+  if (!path || hash_sz == 0 || hash_sz > 4) bytes = 0;
+  const int n = bytes ? bytes / hash_sz : 0;
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    char hex[9];
+    for (int b = 0; b < hash_sz; b++) {
+      const uint8_t v = path[i * hash_sz + b];
+      hex[b * 2]     = H[v >> 4];
+      hex[b * 2 + 1] = H[v & 0x0F];
+    }
+    lua_pushlstring(L, hex, (size_t)hash_sz * 2);
+    lua_rawseti(L, -2, i + 1);
+  }
+}
+
 // Store: a Lua table mirrored to /apps/<id>.sav as "k=v" lines (strings and
 // numbers only). Loaded at launch, flushed on dismiss when dirty — tiny, rare,
 // and off the hot path (touch_perf: never spam flash from the UI thread).
@@ -1554,10 +1656,22 @@ int meshSend(lua_State* L) {
 // send as repeats arrive, so an app polls it rather than reading it once. Only
 // meaningful for a channel send: a direct message is not flooded, so it has no
 // repeats to hear, and 0 is returned for an unknown or expired fingerprint.
+// The second value lists the repeaters heard, first heard first and deduplicated.
+// The firmware keeps only the first few, so the count can exceed the list.
 int meshRepeats(lua_State* L) {
-  const lua_Integer fp = luaL_checkinteger(L, 1);
-  lua_pushinteger(L, (lua_Integer)luaHostRepeatsForFp((uint32_t)fp));
-  return 1;
+  const uint32_t fp = (uint32_t)luaL_checkinteger(L, 1);
+  lua_pushinteger(L, (lua_Integer)luaHostRepeatsForFp(fp));
+  lua_newtable(L);
+  uint8_t hop[4];
+  for (uint8_t i = 0; i < 16; i++) {
+    const uint8_t sz = luaHostRepeatHop(fp, i, hop, sizeof hop);
+    if (!sz) break;
+    pushPathHops(L, hop, sz, sz);
+    lua_rawgeti(L, -1, 1);
+    lua_remove(L, -2);
+    lua_rawseti(L, -2, i + 1);
+  }
+  return 2;
 }
 
 // wada.mesh.send_dm(to, text) -> ok, err
@@ -1625,6 +1739,80 @@ int meshDiscover(lua_State* L) {
   const uint32_t tag = luaHostMeshDiscover(types);
   if (!tag) { lua_pushboolean(L, 0); lua_pushstring(L, "radio busy"); return 2; }
   s_h->mesh_last_probe_ms = now;
+  lua_pushinteger(L, (lua_Integer)tag);
+  return 1;
+}
+
+// wada.mesh.ping(name_or_pubkey) -> tag | nil, reason
+//
+// A trace to one repeater along its known route, so it needs no login and works
+// on repeaters without guest access. The answer arrives in app.on_ping. Gated
+// like discover(), because it transmits and costs a reply from every hop on the
+// way. One at a time per device: the mesh layer tracks a single trace tag.
+static constexpr uint32_t kMeshPingTimeoutMs = 20000;   // the trace goes there and back
+static lv_timer_t* s_ping_poll = nullptr;
+static uint32_t    s_ping_tag = 0;
+static uint32_t    s_ping_sent_ms = 0;
+
+static void pingPollCb(lv_timer_t* t) {
+  (void)t;
+  if (!s_h || !s_h->L) return;
+  int8_t their = 0, ours = 0, extra[LUA_PING_MAX_HOPS];
+  uint8_t extra_n = 0;
+  const bool got = luaHostPingTakeResult(&their, &ours, &extra_n, extra);
+  const uint32_t rtt = millis() - s_ping_sent_ms;
+  if (!got && rtt < kMeshPingTimeoutMs) return;
+
+  const uint32_t tag = s_ping_tag;
+  s_ping_tag = 0;
+  lv_timer_del(s_ping_poll);
+  s_ping_poll = nullptr;
+  if (!got) luaHostPingCancel();
+  if (!pushCallback(s_h, "on_ping")) return;
+  lua_State* L = s_h->L;
+  lua_createtable(L, 0, 7);
+  lua_pushinteger(L, (lua_Integer)tag); lua_setfield(L, -2, "tag");
+  lua_pushboolean(L, got);              lua_setfield(L, -2, "ok");
+  if (got) {
+    lua_pushinteger(L, (lua_Integer)rtt);       lua_setfield(L, -2, "rtt_ms");
+    lua_pushnumber(L, (double)ours / 4.0);      lua_setfield(L, -2, "snr");
+    // The route runs out, through the repeater, and back, so its reading is the middle one.
+    const int mid = extra_n / 2;
+    lua_pushnumber(L, (double)(mid ? extra[mid - 1] : their) / 4.0); lua_setfield(L, -2, "their_snr");
+    lua_pushinteger(L, 1 + (int)extra_n);       lua_setfield(L, -2, "hops");
+    lua_createtable(L, 1 + extra_n, 0);         // SNR at each node along the route, in order
+    lua_pushnumber(L, (double)their / 4.0);     lua_rawseti(L, -2, 1);
+    for (int i = 0; i < extra_n; i++) { lua_pushnumber(L, (double)extra[i] / 4.0); lua_rawseti(L, -2, i + 2); }
+    lua_setfield(L, -2, "hop_snr");
+  } else {
+    lua_pushstring(L, "no reply"); lua_setfield(L, -2, "err");
+  }
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+
+int meshPing(lua_State* L) {
+  const char* who = luaL_checkstring(L, 1);
+  if (!s_h) { lua_pushnil(L); lua_pushstring(L, "no app"); return 2; }
+  const int perm = luaHostProbePerm(s_h->id);
+  if (perm != 1) {
+    if (perm == 0) luaHostRequestProbePerm(s_h->id, s_h->id);   // ask once, never in a loop
+    lua_pushnil(L);
+    lua_pushstring(L, perm == 0 ? "permission requested" : "permission denied");
+    return 2;
+  }
+  const uint32_t now = millis();
+  if (s_h->mesh_last_probe_ms && (uint32_t)(now - s_h->mesh_last_probe_ms) < kMeshProbeMinGapMs) {
+    lua_pushnil(L); lua_pushstring(L, "too fast"); return 2;
+  }
+  if (s_ping_poll) { lua_pushnil(L); lua_pushstring(L, "radio busy"); return 2; }
+  const char* err = nullptr;
+  const uint32_t tag = luaHostMeshPing(who, &err);
+  if (!tag) { lua_pushnil(L); lua_pushstring(L, err ? err : "radio busy"); return 2; }
+  s_h->mesh_last_probe_ms = now;
+  s_ping_tag = tag;
+  s_ping_sent_ms = now;
+  s_ping_poll = lv_timer_create(pingPollCb, 100, nullptr);
   lua_pushinteger(L, (lua_Integer)tag);
   return 1;
 }
@@ -1751,10 +1939,14 @@ int meshChannels(lua_State* L) {
 #endif
 
 int storeGet(lua_State* L) {
+  // Settle the argument count first: once the store table is pushed, slot 2 is
+  // that table whenever no default was given, and a missing key used to hand it
+  // back instead of nil.
+  lua_settop(L, 2);
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   lua_pushvalue(L, 1);
   lua_rawget(L, -2);
-  if (lua_isnil(L, -1) && !lua_isnoneornil(L, 2)) { lua_pop(L, 1); lua_pushvalue(L, 2); }
+  if (lua_isnil(L, -1)) { lua_pop(L, 1); lua_pushvalue(L, 2); }
   return 1;
 }
 int storeSet(lua_State* L) {
@@ -2250,7 +2442,11 @@ void storeFlush() {
       char lbuf[192];
       int m = snprintf(lbuf, sizeof lbuf, "%s=%s\n", lua_tostring(L, -2), luaL_tolstring(L, -1, nullptr));
       lua_pop(L, 1);   // luaL_tolstring's copy
-      if (m > 0 && written + (size_t)m <= kStoreMax) { f.write((const uint8_t*)lbuf, m); written += m; }
+      // snprintf reports the length it WANTED: a line longer than lbuf is skipped,
+      // not written from past the end of the buffer (and read back cut short).
+      if (m > 0 && (size_t)m < sizeof lbuf && written + (size_t)m <= kStoreMax) {
+        f.write((const uint8_t*)lbuf, m); written += m;
+      }
     }
     lua_pop(L, 1);
   }
@@ -2490,7 +2686,7 @@ int meshContacts(lua_State* L) {
   for (int i = (offset > 0 ? offset : 0), out = 0; out < limit; i++) {
     if (!luaHostContactAt(i, name, sizeof name, &type, &ago, &lat, &lon, pk, sizeof pk,
                           &lat6, &lon6)) break;
-    lua_createtable(L, 0, 8);
+    lua_createtable(L, 0, 10);
     lua_pushstring(L, name);          lua_setfield(L, -2, "name");
     lua_pushstring(L, pk);            lua_setfield(L, -2, "pubkey");
     lua_pushinteger(L, type);         lua_setfield(L, -2, "type");
@@ -2499,11 +2695,17 @@ int meshContacts(lua_State* L) {
     lua_pushnumber(L, lon);           lua_setfield(L, -2, "lon");
     lua_pushinteger(L, lat6);         lua_setfield(L, -2, "lat_e6");
     lua_pushinteger(L, lon6);         lua_setfield(L, -2, "lon_e6");
+    const int cflags = luaHostContactFlags(i);
+    lua_pushinteger(L, cflags);       lua_setfield(L, -2, "flags");
+    lua_pushboolean(L, cflags & 1);   lua_setfield(L, -2, "favorite");
     lua_rawseti(L, -2, ++out);
   }
   return 1;
 }
 // wada.mesh.rx_log() -> newest-first list of frames the radio actually received.
+//
+// `path` is set on floods only (route 0 or 1): the repeaters the frame has passed
+// through. A direct frame's path is the route still ahead of it, not its history.
 //
 // `pubkey` is set ONLY on an advert (type 4), where the frame really does carry
 // the sender's public key -- that is the entry a coverage survey wants, since an
@@ -2514,10 +2716,12 @@ int meshContacts(lua_State* L) {
 int meshRxLog(lua_State* L) {
   lua_newtable(L);
   uint32_t ms_ago; int ptype, rssi, hops, route, flen, org_kind; float snr; char org[12];
+  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz;
   for (int i = 0, out = 0; i < 64; i++) {
     if (!luaHostRxLogAt(i, &ms_ago, &ptype, &rssi, &snr, &hops,
-                        &route, &flen, &org_kind, org, sizeof org)) break;
-    lua_createtable(L, 0, 9);
+                        &route, &flen, &org_kind, org, sizeof org,
+                        nullptr, path, &path_bytes, &path_sz)) break;
+    lua_createtable(L, 0, 10);
     lua_pushinteger(L, (lua_Integer)ms_ago); lua_setfield(L, -2, "ago_ms");
     lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
     lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
@@ -2531,6 +2735,7 @@ int meshRxLog(lua_State* L) {
       lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
       lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
     }
+    if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
     lua_rawseti(L, -2, ++out);
   }
   return 1;
@@ -2555,8 +2760,9 @@ uint32_t    s_pkt_last_ms = 0;      // newest record timestamp already delivered
 bool        s_pkt_primed = false;
 
 void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float snr, int hops,
-                     int route, int flen, int org_kind, const char* org) {
-  lua_createtable(L, 0, 9);
+                     int route, int flen, int org_kind, const char* org,
+                     const uint8_t* path, uint8_t path_bytes, uint8_t path_sz) {
+  lua_createtable(L, 0, 10);
   lua_pushinteger(L, (lua_Integer)ago_ms); lua_setfield(L, -2, "ago_ms");
   lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
   lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
@@ -2570,6 +2776,7 @@ void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float s
     lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
     lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
   }
+  if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
 }
 
 #if CAP_LUA_AUDIO
@@ -2606,14 +2813,16 @@ void packetPollCb(lv_timer_t* t) {
   if (!s_h || !s_h->L) return;
   // Snapshot the ring newest-first, then deliver oldest-first so an app sees
   // arrival order. 16 is the ring depth; reading past it just stops.
-  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12]; };
+  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
+               uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz; };
   Rec recs[16];
   int n = 0;
   uint32_t newest = s_pkt_last_ms;
   for (int i = 0; i < 16; i++) {
     Rec r;
     if (!luaHostRxLogAt(i, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
-                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at)) break;
+                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
+                        r.path, &r.path_bytes, &r.path_sz)) break;
     // millis() wraps at 49 days; compare as a signed delta so the wrap does not
     // silently stop delivery for the rest of the session.
     if ((int32_t)(r.at - s_pkt_last_ms) <= 0) break;   // already delivered, and so is everything older
@@ -2626,7 +2835,8 @@ void packetPollCb(lv_timer_t* t) {
     if (!s_h || !s_h->L) return;
     if (!pushCallback(s_h, "on_packet")) return;
     pushPacketTable(s_h->L, recs[i].ago, recs[i].ptype, recs[i].rssi, recs[i].snr, recs[i].hops,
-                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org);
+                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org,
+                    recs[i].path, recs[i].path_bytes, recs[i].path_sz);
     guardedCall(s_h, 1);
     serviceDeferredClose();
   }
@@ -2707,7 +2917,12 @@ int meshDiscoverClear(lua_State* L) { (void)L; luaHostDiscoverClear(); return 0;
 
 // ---- wada.net: one in-flight async http_get per app ----
 constexpr size_t kNetCapMax = 32 * 1024;
-char     s_net_url[160];
+constexpr size_t kNetHdrMax = 3 * 1024;   // a bearer JWT alone is over 1 KB
+char     s_net_url[320];
+char     s_net_method[8] = "";      // set = wada.net.request (real status); "" = http_get/post
+char*    s_net_hdrs = nullptr;      // request(): "Name: value\n" lines, PSRAM
+int      s_net_status = 0;          // request(): the HTTP status the server sent
+volatile bool s_net_tls = false;       // request(): on the TLS task, not the tile worker
 char*    s_net_buf = nullptr;
 size_t   s_net_cap = 0;
 char*    s_net_body = nullptr;      // POST payload (null = GET), PSRAM
@@ -2725,12 +2940,16 @@ void netDeliver(lv_timer_t* t) {
   s_net_done = false;
   if (s_net_poll) { lv_timer_del(s_net_poll); s_net_poll = nullptr; }
   if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  if (s_net_hdrs) { heap_caps_free(s_net_hdrs); s_net_hdrs = nullptr; }
   if (!s_h || !s_h->L || s_net_cb == LUA_NOREF) { s_net_cb = LUA_NOREF; return; }
   lua_State* L = s_h->L;
   lua_rawgeti(L, LUA_REGISTRYINDEX, s_net_cb);
   luaL_unref(L, LUA_REGISTRYINDEX, s_net_cb);
   s_net_cb = LUA_NOREF;
-  lua_pushinteger(L, s_net_result >= 0 ? 200 : -1);
+  // request() reports what the server said (a 401 is something to act on, not a
+  // failed connection); http_get/post keep their 200-or--1 contract.
+  if (s_net_method[0]) lua_pushinteger(L, s_net_result >= 0 ? s_net_status : s_net_result);
+  else                 lua_pushinteger(L, s_net_result >= 0 ? 200 : -1);
   if (s_net_result >= 0 && s_net_buf) lua_pushlstring(L, s_net_buf, (size_t)s_net_result);
   else                                lua_pushnil(L);
   guardedCall(s_h, 2);
@@ -2840,11 +3059,14 @@ int netHttpPost(lua_State* L) {
   memcpy(s_net_body, body, blen);
   s_net_body_len = blen;
   snprintf(s_net_ctype, sizeof s_net_ctype, "%s", ctype);
+  s_net_method[0] = 0;
+  s_net_tls = false;
   snprintf(s_net_url, sizeof s_net_url, "%s", url);
   lua_pushvalue(L, argi);
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   s_net_done = false;
   s_net_pending = true;
+  luaHostNetWorkerStart();
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }
@@ -2864,11 +3086,163 @@ int netHttpGet(lua_State* L) {
     if (!s_net_buf) return luaL_error(L, "no memory for the fetch buffer");
   }
   if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  s_net_method[0] = 0;
+  s_net_tls = false;
   snprintf(s_net_url, sizeof s_net_url, "%s", url);
   lua_pushvalue(L, 2);
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   s_net_done = false;
   s_net_pending = true;
+  luaHostNetWorkerStart();
+  if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
+  return 0;
+}
+
+// wada.net.request{url=, method=, headers=, body=, max=}, cb) -> cb(status, body)
+//
+// For a real web API: any method, request headers (Authorization: Bearer ...),
+// the server's actual status code, and https:// where CAP_LUA_HTTPS. The body
+// comes back for every status, because an API's error reply says what went
+// wrong. status < 0 is no answer at all: -1 could not connect / no Wi-Fi, -2 the
+// reply was larger than `max` (default 16 KB, at most 32 KB).
+//
+// https runs on its own short-lived task (luaNetSpawnTls, UITask.cpp): the tile
+// worker's 8 KB stack is sized for plain HTTP and a TLS handshake overflows it.
+// The certificate chain is verified against the ISRG roots (Let's Encrypt),
+// not skipped as the Reader does, since what goes over it is a credential.
+// One request at a time, shared with http_get/http_post.
+static bool netHeaderNameOk(const char* k, size_t n) {
+  if (n == 0 || n > 40) return false;
+  for (size_t i = 0; i < n; i++) {
+    const char c = k[i];
+    if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+  }
+  // Framing headers belong to HTTPClient; letting an app set them would let it
+  // desynchronise the request it is making.
+  return strcasecmp(k, "Host") != 0 && strcasecmp(k, "Content-Length") != 0 &&
+         strcasecmp(k, "Transfer-Encoding") != 0 && strcasecmp(k, "Connection") != 0;
+}
+
+int netRequest(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  if (!s_h) return luaL_error(L, "no app");
+  if (s_net_pending || s_net_cb != LUA_NOREF) return luaL_error(L, "a fetch is already running");
+
+  lua_getfield(L, 1, "url");
+  const char* url = luaL_optstring(L, -1, nullptr);
+  if (!url) return luaL_error(L, "request: url is required");
+  const bool https = strncmp(url, "https://", 8) == 0;
+  if (!https && strncmp(url, "http://", 7) != 0) return luaL_error(L, "request: http:// or https:// urls only");
+  if (https && !CAP_LUA_HTTPS) return luaL_error(L, "request: https is not available on this board");
+  if (strlen(url) >= sizeof(s_net_url)) return luaL_error(L, "request: url too long");
+
+  lua_getfield(L, 1, "method");
+  const char* method = luaL_optstring(L, -1, "GET");
+  static const char* const kMethods[] = { "GET", "POST", "PUT", "PATCH", "DELETE" };
+  bool known = false;
+  for (const char* m : kMethods) if (strcmp(method, m) == 0) known = true;
+  if (!known) return luaL_error(L, "request: method must be GET, POST, PUT, PATCH or DELETE");
+
+  lua_getfield(L, 1, "body");
+  size_t blen = 0;
+  const char* body = lua_isnil(L, -1) ? nullptr : luaL_checklstring(L, -1, &blen);
+  if (blen > kNetCapMax) return luaL_error(L, "request: body too long");
+
+  lua_getfield(L, 1, "max");
+  size_t maxb = (size_t)luaL_optinteger(L, -1, 16 * 1024);
+  if (maxb < 64) maxb = 64;
+  if (maxb > kNetCapMax) maxb = kNetCapMax;
+
+  // Headers: validated and flattened here, on the UI thread, into one PSRAM
+  // block the worker reads; the Lua strings could be collected before it runs.
+  char* hdrs = (char*)heap_caps_malloc(kNetHdrMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!hdrs) return luaL_error(L, "no memory for the headers");
+  size_t hn = 0;
+  bool has_ctype = false;
+  const char* bad = nullptr;
+  lua_getfield(L, 1, "headers");
+  if (lua_istable(L, -1)) {
+    const int ht = lua_gettop(L);
+    lua_pushnil(L);
+    while (!bad && lua_next(L, ht)) {
+      size_t kn = 0, vn = 0;
+      const char* k = lua_type(L, -2) == LUA_TSTRING ? lua_tolstring(L, -2, &kn) : nullptr;
+      const char* v = lua_type(L, -1) == LUA_TSTRING ? lua_tolstring(L, -1, &vn) : nullptr;
+      if (!k || !netHeaderNameOk(k, kn)) bad = "request: bad header name";
+      else if (!v || memchr(v, '\r', vn) || memchr(v, '\n', vn) || strlen(v) != vn) bad = "request: bad header value";
+      else if (hn + kn + vn + 4 > kNetHdrMax) bad = "request: headers too long";
+      else {
+        if (strcasecmp(k, "Content-Type") == 0) has_ctype = true;
+        memcpy(hdrs + hn, k, kn); hn += kn;
+        hdrs[hn++] = ':'; hdrs[hn++] = ' ';
+        memcpy(hdrs + hn, v, vn); hn += vn;
+        hdrs[hn++] = '\n';
+      }
+      lua_pop(L, 1);
+    }
+    if (bad) lua_pop(L, 1);   // the key lua_next left behind
+  } else if (!lua_isnil(L, -1)) {
+    bad = "request: headers must be a table";
+  }
+  static const char kJson[] = "Content-Type: application/json\n";
+  if (!bad && body && !has_ctype) {
+    if (hn + sizeof kJson > kNetHdrMax) bad = "request: headers too long";
+    else { memcpy(hdrs + hn, kJson, sizeof kJson - 1); hn += sizeof kJson - 1; }
+  }
+  if (bad) { heap_caps_free(hdrs); return luaL_error(L, "%s", bad); }
+  hdrs[hn] = 0;
+
+  // No answer possible: report -1 through the callback, as a failed connect does.
+  // Without Wi-Fi a connect would assert where lwIP never started (a Bluetooth-only
+  // boot), and a TLS handshake below ~46 KB of free internal heap starves Wi-Fi's
+  // own buffers, which next to the map has dropped the link.
+  if (!luaHostWifiUp() ||
+      (https && heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 46 * 1024)) {
+    heap_caps_free(hdrs);
+    if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+    snprintf(s_net_method, sizeof s_net_method, "%s", method);
+    s_net_tls = false;
+    s_net_result = -1;
+    lua_pushvalue(L, 2);
+    s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+    s_net_done = true;          // netDeliver hands -1 to the app on its next tick
+    if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
+    return 0;
+  }
+
+  if (!s_net_buf || s_net_cap < maxb + 1) {
+    if (s_net_buf) heap_caps_free(s_net_buf);
+    s_net_buf = (char*)heap_caps_malloc(maxb + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s_net_cap = s_net_buf ? maxb + 1 : 0;
+    if (!s_net_buf) { heap_caps_free(hdrs); return luaL_error(L, "no memory for the reply buffer"); }
+  }
+  if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+  if (body && blen) {
+    s_net_body = (char*)heap_caps_malloc(blen, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_net_body) { heap_caps_free(hdrs); return luaL_error(L, "no memory for the body"); }
+    memcpy(s_net_body, body, blen);
+    s_net_body_len = blen;
+  }
+  if (s_net_hdrs) heap_caps_free(s_net_hdrs);
+  s_net_hdrs = hdrs;
+  snprintf(s_net_method, sizeof s_net_method, "%s", method);
+  snprintf(s_net_url, sizeof s_net_url, "%s", url);
+  s_net_status = 0;
+  s_net_tls = https;
+  lua_pushvalue(L, 2);
+  s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+  s_net_done = false;
+  s_net_pending = true;
+#if CAP_LUA_HTTPS
+  if (https && !luaNetSpawnTls()) {
+    s_net_pending = false;
+    luaL_unref(L, LUA_REGISTRYINDEX, s_net_cb);
+    s_net_cb = LUA_NOREF;
+    return luaL_error(L, "request: could not start the TLS task (low memory)");
+  }
+#endif
+  if (!https) luaHostNetWorkerStart();
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }
@@ -2976,6 +3350,7 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.sys
   lua_pushcfunction(L, sysMillis); lua_setfield(L, -2, "millis");
   lua_pushcfunction(L, sysToast);  lua_setfield(L, -2, "toast");
+  lua_pushcfunction(L, sysLock);   lua_setfield(L, -2, "lock");
   lua_pushcfunction(L, sysKeepAwake); lua_setfield(L, -2, "keep_awake");
   lua_pushcfunction(L, sysBoard);  lua_setfield(L, -2, "board");
   lua_pushcfunction(L, sysTr);     lua_setfield(L, -2, "tr");      // #257
@@ -3074,6 +3449,7 @@ void openWada(lua_State* L) {
 #if CAP_LUA_SDK_EXT
   lua_pushcfunction(L, meshSend);     lua_setfield(L, -2, "send");      // consent-gated (channels)
   lua_pushcfunction(L, meshRepeats);  lua_setfield(L, -2, "repeats");   // repeaters heard rebroadcasting a send
+  lua_pushcfunction(L, meshPing);     lua_setfield(L, -2, "ping");      // consent-gated (transmits)
   lua_pushcfunction(L, meshSendDm);   lua_setfield(L, -2, "send_dm");   // consent-gated (DMs + rooms)
   lua_pushcfunction(L, meshChannels); lua_setfield(L, -2, "channels");  // names only, no secrets
   lua_pushcfunction(L, meshDiscover); lua_setfield(L, -2, "discover");  // consent-gated (transmits)
@@ -3093,7 +3469,13 @@ void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada.net
   lua_pushcfunction(L, netHttpGet);  lua_setfield(L, -2, "http_get");
   lua_pushcfunction(L, netHttpPost); lua_setfield(L, -2, "http_post");
+  lua_pushcfunction(L, netRequest);  lua_setfield(L, -2, "request");
   lua_setfield(L, -2, "net");
+
+  lua_newtable(L);                                       // wada.json (in C: see LuaJson.h)
+  lua_pushcfunction(L, luajson::decode); lua_setfield(L, -2, "decode");
+  lua_pushcfunction(L, luajson::encode); lua_setfield(L, -2, "encode");
+  lua_setfield(L, -2, "json");
 
   lua_setglobal(L, "wada");
 
@@ -3172,6 +3554,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, lbColor); lua_setfield(L, -2, "color");
   lua_pushcfunction(L, lbWidth); lua_setfield(L, -2, "width");
   lua_pushcfunction(L, lbBg);    lua_setfield(L, -2, "bg");
+  lua_pushcfunction(L, lbOnPress); lua_setfield(L, -2, "on_press");
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 }
@@ -3210,18 +3593,23 @@ lv_obj_t* luaHostAppBody() { return s_h ? s_h->body : nullptr; }
 // semi-public and rides LUA_PERM_READ; direct messages and room posts are private
 // and need LUA_PERM_DM_READ, which is never auto-prompted (it would fire on someone
 // else's traffic arriving) and is granted only from Settings > App permissions.
-static void deliverMessage(const char* kind, const char* channel, const char* sender, const char* text) {
+static void deliverMessage(const char* kind, const char* channel, const char* sender, const char* text,
+                           int hops, const uint8_t* path, uint8_t path_bytes, uint8_t path_hash_sz) {
   if (!s_h || !s_h->L) return;
   const bool is_channel = (kind && strcmp(kind, "channel") == 0);
   if (is_channel) { if (!luaHostReadPerm(s_h->id))   return; }
   else            { if (!luaHostDmReadPerm(s_h->id)) return; }
   if (!pushCallback(s_h, "on_message")) return;
   lua_State* L = s_h->L;
-  lua_createtable(L, 0, 4);
+  lua_createtable(L, 0, 6);
   lua_pushstring(L, kind    ? kind    : ""); lua_setfield(L, -2, "kind");
   lua_pushstring(L, channel ? channel : ""); lua_setfield(L, -2, "channel");
   lua_pushstring(L, sender  ? sender  : ""); lua_setfield(L, -2, "sender");
   lua_pushstring(L, text    ? text    : ""); lua_setfield(L, -2, "text");
+  if (hops >= 0) {   // a flood; a direct message has no repeater list to report
+    lua_pushinteger(L, hops); lua_setfield(L, -2, "hops");
+    pushPathHops(L, path, path_bytes, path_hash_sz); lua_setfield(L, -2, "path");
+  }
   guardedCall(s_h, 1);
   serviceDeferredClose();
 }
@@ -3234,8 +3622,9 @@ bool luaAppKey(int key) {
 }
 
 #if CAP_LUA_SDK_EXT
-void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text) {
-  deliverMessage(kind, channel, sender, text);
+void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text,
+                   int hops, const uint8_t* path, uint8_t path_bytes, uint8_t path_hash_sz) {
+  deliverMessage(kind, channel, sender, text, hops, path, path_bytes, path_hash_sz);
 }
 #endif
 
@@ -3279,7 +3668,7 @@ bool luaAppScroll(bool up) {
   lv_coord_t step = (lv_coord_t)((s_h->body_h * 3) / 5);
   if (step > room) step = room;
   const lv_coord_t cur = lv_obj_get_scroll_y(s_h->body);
-  lv_obj_scroll_to_y(s_h->body, up ? cur - step : cur + step, LV_ANIM_ON);
+  lv_obj_scroll_to_y(s_h->body, up ? cur - step : cur + step, luaHostAnimOn() ? LV_ANIM_ON : LV_ANIM_OFF);
   return true;
 }
 
@@ -3303,6 +3692,9 @@ void hostTeardown() {
   if (h->L && h->prompt_cb != LUA_NOREF) luaL_unref(h->L, LUA_REGISTRYINDEX, h->prompt_cb);
   h->prompt_cb = LUA_NOREF;
   if (s_pkt_poll) { lv_timer_del(s_pkt_poll); s_pkt_poll = nullptr; }
+#if CAP_LUA_SDK_EXT
+  if (s_ping_poll) { lv_timer_del(s_ping_poll); s_ping_poll = nullptr; s_ping_tag = 0; luaHostPingCancel(); }
+#endif
 #if CAP_LUA_AUDIO
   if (s_audio_poll) { lv_timer_del(s_audio_poll); s_audio_poll = nullptr; }
 #endif
@@ -3327,6 +3719,7 @@ void hostTeardown() {
   if (!s_net_pending) {
     if (s_net_buf)  { heap_caps_free(s_net_buf);  s_net_buf  = nullptr; s_net_cap = 0; }
     if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+    if (s_net_hdrs) { heap_caps_free(s_net_hdrs); s_net_hdrs = nullptr; }
   }
   if (h->L) {
     // best-effort on_close + store flush before the state dies
@@ -3526,7 +3919,8 @@ bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, s
 }
 
 // ---- net worker entry points (UITask's tile/net worker calls these) --------
-bool luaNetWorkerPending() { return s_net_pending; }
+// The tile worker never takes an https request: that one is on the TLS task.
+bool luaNetWorkerPending() { return s_net_pending && !s_net_tls; }
 void luaNetWorkerService(void* client, void* http) {
   // s_net_pending stays TRUE for the whole request and is cleared at the end,
   // not here. It is the only thing telling the UI thread that the worker may
@@ -3537,6 +3931,9 @@ void luaNetWorkerService(void* client, void* http) {
   // across the call cannot re-enter, and http_get/http_post keep rejecting a
   // second fetch while it is set -- which is what we want anyway.
   if (!s_net_buf)            s_net_result = -1;
+  else if (s_net_method[0])  s_net_result = luaStoreHttpRequestOpaque(client, http, s_net_method, s_net_url,
+                                                                      s_net_hdrs, s_net_body, s_net_body_len,
+                                                                      s_net_buf, s_net_cap, &s_net_status);
   else if (s_net_body)       s_net_result = luaStoreHttpPostOpaque(client, http, s_net_url, s_net_buf,
                                                                    s_net_cap, s_net_body, s_net_body_len,
                                                                    s_net_ctype);

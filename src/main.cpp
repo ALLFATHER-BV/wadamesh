@@ -5,6 +5,9 @@
   #include <new>               // placement-new for the PSRAM-resident the_mesh
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
   #include <esp_sntp.h>        // completion status for normal + cold-boot time sync
+#if defined(HAS_THINKNODE_M9)
+  #include <esp_task_wdt.h>    // WDT suspend around multi-second SPIFFS format on first boot
+#endif
   #include "helpers/esp32/SntpClockPush.h"   // every SNTP result -> the mesh clock (and its RTC chip)
 static SntpClockPush s_sntp_push;
 #endif
@@ -26,7 +29,10 @@ static SntpClockPush s_sntp_push;
 #include "ui-touch/device_caps.h"            // CAP_BLE_KEYBOARD: keyboard mode keeps the phone link paused from boot
 #endif
 
-#if defined(WADA_LVGL_O2)
+#if defined(HAS_THINKNODE_M9)
+// ThinkNode M9: nested LVGL + shared-SPI SD/FATFS + Lua frames exceed the 8 KB default.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+#elif defined(WADA_LVGL_O2)
 // LVGL compiled at -O2 (scripts/build/perf_lvgl.py) goes 160 bytes deeper into the
 // loop task's stack at its deepest (measured on the T-Deck: 2108 -> 1948 bytes left of
 // the framework's 8 KB). 1 KB more leaves more room than before; the draw band that
@@ -1066,7 +1072,15 @@ void setup() {
   // ("Store data on SD"). The SD shares the LoRa SPI bus, already brought up by
   // radio_init() above, so SD.begin's spi.begin is a no-op. Graceful: any SD
   // failure falls back to SPIFFS so the device always boots.
+#if defined(HAS_THINKNODE_M9)
+  // Keep SPIFFS internal work/cache buffers in internal DRAM (4096 B threshold)
+  // rather than Octal PSRAM (256 B threshold) during flash operations.
+  heap_caps_malloc_extmem_enable(4096);
   bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
+  heap_caps_malloc_extmem_enable(256);
+#else
+  bool spiffs_ok = SPIFFS.begin(false);   // try first WITHOUT auto-format
+#endif
   bool sd_storage = false;
 #if defined(HAS_WIO_TRACKER_L2)
   // This target uses a dedicated one-bit SD_MMC bus rather than the LoRa SPI
@@ -1176,6 +1190,7 @@ void setup() {
     if (!sd_mounted) Serial.println("[BOOT] CrowPanel SD unavailable; using SPIFFS");
 #elif defined(TLORA_PAGER)
     sdMountDiagBegin();
+    uint32_t pager_sd_hz = 4000000;
     if (!_spi) {
       Serial.println("[BOOT] SD: shared SPI unavailable");
     } else if (!board.sdCardPresent()) {
@@ -1215,8 +1230,15 @@ void setup() {
         digitalWrite(PIN_SD_CS, HIGH);
       }
       Serial.printf("[BOOT] SD mount: %s\n", sd_mounted ? "ok" : "failed");
+      // Raise the operating clock once the 4 MHz mount has proved the card
+      // (read-verified, falls back to 4 MHz; no-op without SD_SPI_FAST_HZ).
+      if (sd_mounted) {
+        pager_sd_hz = sdTryFastClock(PIN_SD_CS, *_spi, 4000000, "BOOT");
+        sd_mounted = pager_sd_hz != 0;
+        if (sd_mounted) { extern uint32_t g_sd_operating_hz; g_sd_operating_hz = pager_sd_hz; }
+      }
     }
-    sdMountDiagSetMounted(sd_mounted, sd_mounted ? 4000000 : 0);
+    sdMountDiagSetMounted(sd_mounted, sd_mounted ? pager_sd_hz : 0);
 #else
     sdMountDiagBegin();
     uint32_t mounted_hz = 0;
@@ -1372,7 +1394,11 @@ void setup() {
           }
           // On a genuine first run, persist the auto-pick so the "Store data on SD"
           // toggle reflects it and the choice sticks on every later boot.
+#if defined(HAS_THINKNODE_M9)
+          if ((fresh_install || !spiffs_ok) && sd_storage && !use_sd_pref) {
+#else
           if (fresh_install && sd_storage && !use_sd_pref) {
+#endif
             Preferences _p; if (_p.begin("touch", false)) { _p.putBool("use_sd", true); _p.end(); }
             Serial.println("[BOOT] first run + SD card present -> data defaults to SD");
           }
@@ -1446,7 +1472,19 @@ void setup() {
   // that can afford a multi-second blocking format (before the Wi-Fi/event tasks
   // exist, or deferred to a UI-driven action with a progress notice), and to
   // confirm on hardware that a cold first-format boot survives.
+#if defined(HAS_THINKNODE_M9)
+  if (!spiffs_ok) {
+    // M9-only: keep SPIFFS work/cache buffers in internal DRAM during format/mount,
+    // and suspend the task watchdog around the blocking 3.375 MB SPIFFS format.
+    heap_caps_malloc_extmem_enable(4096);
+    esp_task_wdt_delete(NULL);
+    spiffs_ok = SPIFFS.begin(true);
+    esp_task_wdt_add(NULL);
+    heap_caps_malloc_extmem_enable(256);
+  }
+#else
   if (!sd_storage && !spiffs_ok) SPIFFS.begin(true);   // last resort: format SPIFFS
+#endif
   Serial.printf("[BOOT] storage: %s\n", sd_storage ? "SD /meshcomod" : "SPIFFS");
 #if defined(ESP32_PLATFORM) && defined(HAS_TOUCH_UI)
   // The card holds this device's data but did not mount: say so on screen, and keep the
@@ -2204,6 +2242,7 @@ void loop() {
 #ifdef DISPLAY_CLASS
   { uint32_t _wfdt = millis() - _wf0; if (_wfdt >= 200) stallLog("wifi-sm", _wfdt); }
 #endif
+  serial_interface.retireWebCodeIfIdle();   // the tick below only runs with Wi-Fi up
   // Defer TCP and WebSocket until after splash dismisses so the_mesh.loop() never blocks on accept() before ui_task.loop() runs.
   static const uint32_t TCP_DEFER_MS = 5000;   // 5 s: don't start TCP/WS until version screen has dismissed
   /* Only start TCP / WS when WiFi was actually brought up. In BLE-only mode

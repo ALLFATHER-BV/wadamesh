@@ -7,6 +7,12 @@
 
 void WioTrackerL2Board::begin() {
   ESP32Board::begin();
+#if ARDUINO_USB_CDC_ON_BOOT
+  // GPIO43 is both the mesh LED and the S3's UART0 TX, which idles high, so the LED was on
+  // from power-up and nothing ever cleared it (#808). Serial is USB here; UART0 is unused.
+  pinMode(43, OUTPUT);
+  digitalWrite(43, LOW);
+#endif
   Wire.setClock(100000);
   if (!WioTrackerL2Io::begin()) Serial.println("[wio-l2] expander unavailable");
 }

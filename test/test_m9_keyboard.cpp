@@ -151,6 +151,24 @@ static std::string typeText(const char* text, uint32_t iki, uint32_t hold, uint3
   sim.run(Wire1, testMillis, t + 400, typed, real, oldRule);
   return typed;
 }
+// Like typeText, with a thinking pause of `pause` ms before each word after the first,
+// the way people actually type a message: quick inside a word, slower between words.
+// A pause shorter than a keystroke is no pause, and a run of spaces gets none.
+static std::string typeWords(const char* text, uint32_t iki, uint32_t pause, uint32_t hold, uint32_t chatter) {
+  resetDriver();
+  Wire1.device = 0x6c;
+  m9KeyboardBegin();
+  ControllerSim sim;
+  uint32_t t = 7;
+  for (const char* p = text; *p; ++p) {
+    if (p != text && p[-1] == ' ' && *p != ' ' && pause > iki) t += pause - iki;
+    sim.strokes.push_back({(uint8_t)*p, t, hold, chatter});
+    t += iki;
+  }
+  std::string typed;
+  sim.run(Wire1, testMillis, t + 400, typed, true, oldRule);
+  return typed;
+}
 static std::string typeKeys(const std::vector<uint8_t>& keys, uint32_t iki, uint32_t hold, uint32_t chatter) {
   resetDriver();
   Wire1.device = 0x6c;
@@ -184,6 +202,16 @@ static void checkChatter() {
   assert(typeText("bookkeeper", 170, 70, 0, true) == "bookkeeper");
   // Moderate pace.
   assert(typeText("aardvark scissors", 300, 120, 10, true) == "aardvark scissors");
+  // Pauses between words are not the typing pace. A typist at 200 ms a key with a 1 s
+  // pause before each word: on beta_100 the pauses pushed the pace, and the window, up
+  // to the 250 ms ceiling, so a letter doubled at the same 200 ms was dropped
+  // ("hello al, se you son"). With and without chatter, at several paces.
+  for (uint32_t iki : {180u, 200u, 220u, 250u}) {
+    for (uint32_t pause : {600u, 1000u, 1400u}) {
+      assert(typeWords("hello all, see you soon", iki, pause, 90, 0) == "hello all, see you soon");
+      assert(typeWords("hello all, see you soon", iki, pause, 90, 10) == "hello all, see you soon");
+    }
+  }
   // Arrows tapped quickly keep every tap (stepping down a list), as before.
   const std::string downs = typeKeys({M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN, M9_KEY_DOWN}, 110, 50, 0);
   assert(downs.size() == 5);
@@ -213,10 +241,44 @@ static void checkChatter() {
   assert(p.pace_ms == 0);
   assert(m9KeyGuardAccept(p, 'c', 5300));
   assert(p.pace_ms == 300);
+  // A gap over twice the pace counts as twice the pace: a 1.2 s pause at a 200 ms pace
+  // moves it to 250, not 450.
+  M9KeyGuard q;
+  q.last_key = 'a'; q.last_ms = 0; q.pace_ms = 200;
+  assert(m9KeyGuardAccept(q, 'b', 1200));
+  assert(q.pace_ms == 250);
+  // A writer who really slows down still raises the pace within a few keys.
+  M9KeyGuard r;
+  r.last_key = 'a'; r.last_ms = 0; r.pace_ms = 150;
+  uint32_t t = 0;
+  const char* slow = "bcdefgh";
+  for (const char* c = slow; *c; ++c) { t += 600; assert(m9KeyGuardAccept(r, (uint8_t)*c, t)); }
+  assert(m9KeyGuardWindow(r) == kM9GuardMaxMs);
+}
+
+// Double-tap SPACE switches the keyboard language when both spaces arrive within
+// kM9DoubleSpaceMs (handleHwKey). On beta_100 that limit was 250 ms, and the guard
+// dropped a second space inside its own window, also 250 ms right after boot, so the
+// shortcut could never fire.
+static void checkDoubleSpace() {
+  static_assert(kM9DoubleSpaceMs > kM9GuardMaxMs, "a second space must be able to get past the guard");
+  for (uint32_t gap : {260u, 300u, 350u, 420u}) {
+    for (uint32_t pace : {0u, 150u, 300u, 900u}) {   // 0 = right after boot
+      M9KeyGuard g;
+      g.pace_ms = pace;
+      assert(m9KeyGuardAccept(g, ' ', 10000));
+      assert(m9KeyGuardAccept(g, ' ', 10000 + gap));   // the second tap gets through...
+      assert(gap < kM9DoubleSpaceMs);                  // ...in time to switch
+    }
+  }
+  // One slow space press that chatters as it comes up is still one space, so it can
+  // neither type two spaces nor switch the language.
+  assert(typeText("a b", 450, 180, 10, true) == "a b");
 }
 
 int main() {
   checkChatter();
+  checkDoubleSpace();
   checkController(0x6c, false);
   checkController(0x6c, true);
   checkController(0x6d, false);

@@ -21,6 +21,12 @@
 //    which is once after boot). A chatter repeat comes after about one hold
 //    time, and a letter typed twice on purpose ("ll") after about one whole
 //    keystroke, which is longer, at any pace.
+//  - The pace is the gap between keystrokes INSIDE a burst of typing. A pause to
+//    think between words is not a keystroke: counted at full length it pushed the
+//    pace, and with it the window, up to the 250 ms ceiling, so a doubled letter
+//    typed at the writer's real pace was dropped ("se you son"). A gap longer
+//    than twice the pace counts as only twice the pace, so pauses barely move it
+//    while a writer who really slows down still raises it within a few keys.
 //  - Arrows, Delete, Enter and the function keys keep the flat 70 ms: a list is
 //    stepped with quick taps, and a held Delete repeats every 100 ms.
 
@@ -36,6 +42,7 @@ static constexpr uint32_t kM9GuardMinMs     = 70;    // any key: the stale latch
 static constexpr uint32_t kM9GuardMaxMs     = 250;   // a character: never longer than this
 static constexpr uint32_t kM9GuardDefaultMs = 250;   // a character, before the pace is known
 static constexpr uint32_t kM9PaceIdleMs     = 1500;  // a longer gap is a pause, not the pace
+static constexpr uint32_t kM9PacePauseRatio = 2;     // a gap counts as at most this many paces
 
 inline bool m9KeyIsChar(uint8_t key) { return key >= 0x20 && key <= 0x7E; }
 
@@ -57,10 +64,26 @@ inline bool m9KeyGuardAccept(M9KeyGuard& g, uint8_t key, uint32_t now_ms) {
     const uint32_t window = m9KeyIsChar(key) ? m9KeyGuardWindow(g) : kM9GuardMinMs;
     if (gap < window) return false;
   } else if (g.last_key && m9KeyIsChar(key) && m9KeyIsChar(g.last_key) && gap < kM9PaceIdleMs) {
-    // Two different characters in a row: that gap is one keystroke at this pace.
-    g.pace_ms = g.pace_ms ? (g.pace_ms * 3 + gap) / 4 : gap;
+    // Two different characters in a row: that gap is one keystroke at this pace,
+    // or a pause, which counts as no more than kM9PacePauseRatio keystrokes.
+    if (!g.pace_ms) {
+      g.pace_ms = gap;
+    } else {
+      const uint32_t cap  = g.pace_ms * kM9PacePauseRatio;
+      const uint32_t step = gap < cap ? gap : cap;
+      g.pace_ms = (g.pace_ms * 3 + step) / 4;
+    }
   }
   g.last_key = key;
   g.last_ms  = now_ms;
   return true;
 }
+
+// Double-tap SPACE (switch the keyboard language, handleHwKey in UITask.cpp). The
+// guard above drops a second space that comes inside its window, which can be as
+// long as kM9GuardMaxMs, so on this board the second tap has to be allowed to come
+// later than that or the shortcut can never fire: with the 250 ms the other boards
+// use, both limits were 250 ms right after boot and the language never changed
+// (beta_100). A chatter repeat of one space comes inside the window and is still
+// dropped, so it cannot switch the language on its own.
+static constexpr uint32_t kM9DoubleSpaceMs = kM9GuardMaxMs + 200;

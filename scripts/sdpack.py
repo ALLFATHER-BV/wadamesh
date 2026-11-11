@@ -13,8 +13,8 @@ tool fills a card for it:
 - A .txt or .md file is copied to /library/ as it is: the Reader pages through it.
 - /home.htm is (re)written to list everything in /library, so the Reader opens on it.
 
-Only the Python standard library. The card must be FAT32 (the firmware does not
-read exFAT). Pages stay well under the Reader's limits (it reads up to 48 KB of a
+Only the Python standard library. The card must be FAT32 or exFAT (FAT16 works
+too). Pages stay well under the Reader's limits (it reads up to 48 KB of a
 page on the smallest boards and shows up to 280 links).
 """
 import html, os, posixpath, re, shutil, sys, zipfile

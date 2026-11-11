@@ -421,7 +421,7 @@ public:
   int sendStatusPingWithGuestLoginForUI(ContactInfo& recipient) {
     if (contactNeedsGuestLogin(recipient)) {
       uint32_t login_est = 0;
-      sendLogin(recipient, "", login_est);
+      sendLoginForUI(recipient, "", login_est);
     }
     return sendStatusPingForUI(recipient);
   }
@@ -431,7 +431,7 @@ public:
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient) {
     if (contactNeedsGuestLogin(recipient)) {
       uint32_t login_est = 0;
-      sendLogin(recipient, "", login_est);
+      sendLoginForUI(recipient, "", login_est);
     }
     return sendTelemetryRequestForUI(recipient);
   }
@@ -492,7 +492,7 @@ public:
   int uiSendRequestViaGuestLogin(ContactInfo& recipient, UiReqKind kind) {
     uiResetPathForLogin(recipient);
     uint32_t login_est = 0;
-    int r = sendLogin(recipient, "", login_est);
+    int r = sendLoginForUI(recipient, "", login_est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
       memcpy(&_ui_login_then, recipient.id.pub_key, 4);
       _ui_login_then_kind = kind;
@@ -512,13 +512,22 @@ public:
    *  use the legacy-compatible one-byte path hash: older room/repeater
    *  firmware silently drops packets using the optional wider hashes. */
   static constexpr uint8_t UI_LOGIN_FLOOD_HASH_SIZE = 1;
+  /** sendLogin() with a flood at UI_LOGIN_FLOOD_HASH_SIZE. Every login the touch UI
+   *  sends goes through here. The guest logins in front of Ping and Telemetry used
+   *  to flood at the configured hash size, so on a 2- or 3-byte mesh an older
+   *  repeater could drop them and Ping end in "No reply" where Admin, at 1 byte,
+   *  logs in (#780). */
+  int sendLoginForUI(ContactInfo& recipient, const char* password, uint32_t& est) {
+    const uint8_t previous_hash_override = _flood_path_hash_size_override;
+    _flood_path_hash_size_override = UI_LOGIN_FLOOD_HASH_SIZE;
+    int r = sendLogin(recipient, password, est);
+    _flood_path_hash_size_override = previous_hash_override;
+    return r;
+  }
   int uiSendAdminLogin(ContactInfo& recipient, const char* password) {
     uiResetPathForLogin(recipient);
     uint32_t est = 0;
-    const uint8_t previous_hash_override = _flood_path_hash_size_override;
-    _flood_path_hash_size_override = UI_LOGIN_FLOOD_HASH_SIZE;
-    int r = sendLogin(recipient, password ? password : "", est);
-    _flood_path_hash_size_override = previous_hash_override;
+    int r = sendLoginForUI(recipient, password ? password : "", est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
       // BaseChatMesh::sendLogin() only transmits; MyMesh owns this response matcher.
       memcpy(&pending_login, recipient.id.pub_key, 4);
@@ -711,6 +720,7 @@ public:
   // / hop count / length + signal, so the Monitor page can show a live "what am
   // I hearing" feed without a core hook. Newest-first via uiRxLogGet (i=0 = most
   // recent). Board-independent — populated on every board, not just touch.
+  static const int UI_RXLOG_PATH_MAX = 16;
   struct UiRxRec {
     uint32_t ms;        // millis() at RX
     int8_t   rssi;      // dBm
@@ -729,6 +739,12 @@ public:
     //            2 = org[0] is the destination hash, org[1] the source hash
     uint8_t  org_kind;
     uint8_t  org[4];
+    // The repeaters a FLOOD passed through, first one first. Whole hops only and
+    // capped, so a long path keeps its true count in `hops` and its start here. A
+    // direct frame's path is the route still ahead of it, so it is not kept.
+    uint8_t  path_bytes;
+    uint8_t  path_hash_sz;
+    uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
   UiRxRec  _ui_rxlog[UI_RXLOG_MAX];
@@ -744,12 +760,19 @@ public:
   // Record a reception into the ring (called from logRxRaw).
   void uiRxLogPush(uint32_t ms, int8_t rssi, int8_t snr_q4,
                    uint8_t ptype, uint8_t route, uint8_t hops, uint8_t len,
-                   uint8_t org_kind = 0, const uint8_t* org = nullptr) {
+                   uint8_t org_kind = 0, const uint8_t* org = nullptr,
+                   const uint8_t* path = nullptr, uint8_t path_bytes = 0, uint8_t path_hash_sz = 1) {
     UiRxRec& r = _ui_rxlog[_ui_rxlog_head];
     r.ms = ms; r.rssi = rssi; r.snr_q4 = snr_q4;
     r.ptype = ptype; r.route = route; r.hops = hops; r.len = len;
     r.org_kind = org ? org_kind : 0;
     if (r.org_kind) memcpy(r.org, org, 4); else memset(r.org, 0, 4);
+    if (!path || path_hash_sz == 0 || path_hash_sz > 4) path_bytes = 0;
+    if (path_bytes > UI_RXLOG_PATH_MAX)
+      path_bytes = (uint8_t)(UI_RXLOG_PATH_MAX / path_hash_sz * path_hash_sz);
+    r.path_bytes = path_bytes;
+    r.path_hash_sz = path_hash_sz;
+    if (path_bytes) memcpy(r.path, path, path_bytes);
     _ui_rxlog_head = (uint8_t)((_ui_rxlog_head + 1) % UI_RXLOG_MAX);
     if (_ui_rxlog_cnt < UI_RXLOG_MAX) _ui_rxlog_cnt++;
   }
@@ -922,9 +945,11 @@ public:
    *  Returns 0 on failure. */
   uint32_t uiSendTracePing(const uint8_t pub_key[32]) {
     if (!pub_key) return 0;
-    uint8_t hash_sz = (uint8_t)(_prefs.path_hash_mode + 1);
-    if (hash_sz == 0 || hash_sz > 4) hash_sz = 1;
+    // A TRACE hop is 1, 2 or 4 bytes (1 << flags), so the 3-byte path mode sends 4: the
+    // repeater reads as many as the flags declare (#818).
     uint8_t flags = (uint8_t)(_prefs.path_hash_mode & 0x03);
+    if (flags > 2) flags = 0;
+    const uint8_t hash_sz = (uint8_t)(1 << flags);
     uint32_t tag = 0;
     getRNG()->random((uint8_t*)&tag, sizeof(tag));
     if (tag == 0) tag = 1;
@@ -941,22 +966,40 @@ public:
    *  probes the immediate neighbour). The result arrives via the same
    *  onTracePingResult callback, but with one SNR reading per hop. Falls back
    *  to a single-hop trace when the path to `c` is unknown (flood-routed
-   *  contact — there's no fixed path to walk). Returns the tag, 0 on failure. */
+   *  contact — there's no fixed path to walk). A trace ends at whoever hears its
+   *  last forwarder, so a known path goes out, through `c`, and back the same way
+   *  or the answer would never reach us. Returns the tag, 0 on failure. */
   uint32_t uiSendTraceRoute(const ContactInfo& c) {
-    uint8_t flags = (uint8_t)(_prefs.path_hash_mode & 0x03);
+    // out_path_len packs the hop count with the hash size of that stored path (Packet.h).
+    const bool have_path = c.out_path_len != OUT_PATH_UNKNOWN && mesh::Packet::isValidPathLen(c.out_path_len);
+    const uint8_t hops = have_path ? (uint8_t)(c.out_path_len & 63) : 0;
+    const uint8_t path_hash = (uint8_t)((c.out_path_len >> 6) + 1);
+    // A TRACE hop is 1, 2 or 4 bytes (#818): the path's own size, and its first 2 bytes when
+    // it holds 3. One byte fewer is still that repeater's hash. No path: one hop at the
+    // size uiSendTracePing uses.
+    uint8_t flags;
+    if (hops) flags = path_hash == 1 ? 0 : 1;
+    else { flags = (uint8_t)(_prefs.path_hash_mode & 0x03); if (flags > 2) flags = 0; }
+    const uint8_t hop_sz = (uint8_t)(1 << flags);
+    if (hops && (2u * hops + 1u) * hop_sz > MAX_PATH_SIZE) return 0;   // too long to go there and back
     uint32_t tag = 0;
     getRNG()->random((uint8_t*)&tag, sizeof(tag));
     if (tag == 0) tag = 1;
     _ui_trace_ping_tag = tag;
     mesh::Packet* pkt = createTrace(tag, 0, flags);
     if (!pkt) { _ui_trace_ping_tag = 0; return 0; }
-    if (c.out_path_len != OUT_PATH_UNKNOWN && c.out_path_len > 0 &&
-        c.out_path_len <= MAX_PATH_SIZE) {             // clamp: a corrupt out_path_len (>64)
-      sendDirect(pkt, c.out_path, c.out_path_len);   // would overrun sendDirect's payload memcpy -> reboot
+    if (hops) {
+      uint8_t route[MAX_PATH_SIZE];
+      uint8_t n = 0;
+      for (uint8_t i = 0; i < hops; ++i, n += hop_sz)
+        memcpy(&route[n], &c.out_path[i * path_hash], hop_sz);
+      memcpy(&route[n], c.id.pub_key, hop_sz);
+      n += hop_sz;
+      for (uint8_t i = hops; i > 0; --i, n += hop_sz)
+        memcpy(&route[n], &c.out_path[(i - 1) * path_hash], hop_sz);
+      sendDirect(pkt, route, n);
     } else {
-      uint8_t hash_sz = (uint8_t)(_prefs.path_hash_mode + 1);
-      if (hash_sz == 0 || hash_sz > 4) hash_sz = 1;
-      sendDirect(pkt, c.id.pub_key, hash_sz);         // unknown path → single hop
+      sendDirect(pkt, c.id.pub_key, hop_sz);   // unknown path: single hop
     }
     return tag;
   }

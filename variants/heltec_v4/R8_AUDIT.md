@@ -33,13 +33,12 @@ on the physical device.
   LGFX floods the shared FSPI bus with the boot logo.
 
 ### Display / touch
-- **Rotation trap defused.** `CAP_ROTATABLE` → 0: the Orientation control was a
-  reboot trap (the boot guard force-reverts landscape because the R8 landscape
-  touch maps are TESTER-VERIFY), and worse, the boot wordmark had already
-  rotated the panel before the guard ran — the pref got reverted but the panel
-  stayed landscape → one fully garbled session per attempt. The guard now also
-  heals the panel (`::display.setDisplayRotation(0)`). Re-enable rotation +
-  remove the guard together once a tester confirms landscape touch. **[HW]**
+- **Rotation is back, with a safety net (2026-11-11).** `CAP_ROTATABLE` is 1 again.
+  The first boot in a landscape shows "Keep this orientation?" with one Keep button
+  in the top-right corner and a 15 s countdown (`r8RotationAskTick`). Keep stores the
+  choice (`rot_ok`); no tap, or a restart before it (`rot_try` still set), goes back
+  to portrait and heals the panel. A map that turns taps half way round cannot press
+  Keep. Landscape touch on the R8 map is still to be confirmed by a tester. **[HW]**
 - **Display SPI raised 20 → 40 MHz** (full-screen flush was ~61 ms of pure bus
   time, ~4× the plain V4's 80 MHz driver). **[HW]** Watch for tearing/garbled
   bands; fall back to 26.6 MHz if seen.

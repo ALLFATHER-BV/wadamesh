@@ -23,6 +23,7 @@
 #include "../NodePrefs.h"
 
 struct ContactInfo;
+namespace ReactionCodec { struct Reaction; }   // ReactionCodec.h (#791)
 
 /** Maps bottom tabs (Home, Chats, Contacts, Set — no separate Net tab). */
 enum class TouchUiScreen : uint8_t { Home = 0, ChatInbox = 1, Contacts = 2, Settings = 3 };
@@ -279,6 +280,11 @@ private:
   void newMsgImpl(uint8_t path_len, const char* from_name, const char* text, int msgcount,
                   uint8_t meta_flags, int8_t snr_q4, int8_t rssi,
                   const char* sender_override = nullptr);
+  // An emoji reaction from MeshCore Open / MeshCore One (#791) as the line its bubble
+  // shows: "<emoji> reacted to "<start of the target>"" when a recent message in the
+  // thread hashes to it, "<emoji> reacted" otherwise. See UITask.cpp.
+  bool reactionLine(const char* thread, bool channel, const ReactionCodec::Reaction& r,
+                    char* out, size_t cap) const;
 public:
   /** Match an arriving ACK (4-byte hash) against the last few outgoing DMs
    *  and flip their delivery state to DELIV_DELIVERED so the chat detail
@@ -287,6 +293,9 @@ public:
   /** Trace-ping reply landed: open a modal with the bidirectional SNR
    *  numbers. Called by MyMesh::onTraceRecv when the trace's tag matches
    *  the one we issued from the contact action sheet's Trace Ping button. */
+  bool hidesIncomingText(const char* text, bool channel) override;
+  int  uiMsgCount() const { return _ui_msg_count; }   // System info
+  int  uiMsgCap() const { return _ui_msg_cap; }
   void onTracePingResult(uint32_t tag, int8_t their_snr, int8_t our_snr,
                          uint8_t extra_hops, const int8_t* extra_snrs) override;
 private:

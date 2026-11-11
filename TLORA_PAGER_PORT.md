@@ -430,7 +430,7 @@ truth — that's what our own `TLoraPagerBoard.cpp` already uses.
 | IO expander | **XL9555** (addr `0x20`): DRV_EN ch0, AMP_EN ch1, KB_RST ch2, LORA_EN ch3, GPS_EN ch4, NFC_EN ch5, **DISP_RST ch6 — the ST7796 panel's hardware reset** (missing from BOTH the LilyGoLib doc's channel table and arduino-esp32 master's pins header; confirmed from LilyGoLib's `LilyGo_LoRa_Pager.cpp` begin(), which pulses it LOW→50ms→HIGH before display init — leaving it floating was M7's intermittent-black-screen root cause, see `TLORA_PAGER_M7_HW_DEBUG_LOG.md` session 2), GPS_RST ch7, KB_EN ch8, GPIO_EN ch9, SD_DET ch10, SD_PULLEN ch11, SD_EN ch12 |
 | GPS | u-blox **MIA-M10Q**: TX 12, RX 4, PPS 13 |
 | I²C bus | SDA 3, SCL 2 — shared by TCA8418 (`0x34`), XL9555 (`0x20`), BQ25896 (`0x6B`), BQ27220 (`0x55`), PCF85063 RTC (`0x51`), BHI260AP IMU (`0x28`), DRV2605 haptics (`0x5A`), ES8311 codec (`0x18`) |
-| SD | microSD on the shared SPI bus, CS 21, card-detect via expander (ch10), max 32 GB, **FAT32 only** |
+| SD | microSD on the shared SPI bus, CS 21, card-detect via expander (ch10), FAT32 or exFAT |
 | Audio | ES8311 codec (I²C `0x18`; I2S MCLK 10, SCK/BCK 11, WS 18, SDOUT 45, SDIN 17 — confirmed against arduino-esp32's canonical `variants/lilygo_tlora_pager/pins_arduino.h`, matching LilyGoLib's own `codec.setPins(I2S_MCLK, I2S_SCK, I2S_WS, I2S_SDOUT, I2S_SDIN)` call in `LilyGo_LoRa_Pager.cpp`) driving an **NS4150B** 3 W Class-D amp (enabled via expander AMP_EN ch1, toggled at runtime around playback — not the boot-time permanently-on drive; see Decision below) |
 | Misc | PCF85063A RTC (INT 1), BHI260AP IMU (INT 8), ST25R3916 NFC (unused — CS 39, INT 5, powered via expander NFC_EN ch5), USB VID/PID `0x303A:0x82D4` |
 

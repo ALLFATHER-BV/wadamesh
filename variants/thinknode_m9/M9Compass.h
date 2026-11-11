@@ -44,6 +44,14 @@ bool m9CompassPresent();
  *  compass", but they are not a usable heading. */
 bool m9CompassRead(float* x_gauss, float* y_gauss, float* z_gauss, bool* overflow = nullptr);
 
+/** Right-handed compass heading in degrees [0, 360) from body-frame (bx, by),
+ *  where +X is North (0°), -Y is East (90°), -X is South (180°), +Y is West (270°). */
+float m9CompassHeadingFromBody(float bx, float by);
+
+/** Reads the QMC6309, maps sensor frame to M9 body frame (bx = my - oy,
+ *  by = -(mx - ox)), and computes the right-handed heading in [0, 360). */
+bool m9CompassReadHeadingDeg(float* heading_deg, float ox = 0.0f, float oy = 0.0f);
+
 /** Call periodically (cheap: one comparison until it acts). Suspends the chip
  *  a couple of seconds after the last read, so it only draws its ~1 mA while
  *  something is actually using the compass. The next read wakes it. */

@@ -907,6 +907,7 @@ void MyMesh::beDirectMessage(const uint8_t pub_key[32], uint32_t sender_ts, cons
   if (flood) _n_recv_flood++; else _n_recv_direct++;
   beSignal(snr_q4, rssi);
   stashRxMeta(false, from->id.pub_key, flood ? path_len : 0xFF);
+  if (_ui->hidesIncomingText(text, false)) return;
   _ui->notify(UIEventType::contactMessage);
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(flood ? path_len : 0xFF, flood, from->id.pub_key, from->name, text,
@@ -922,6 +923,7 @@ void MyMesh::beChannelMessage(int channel_idx, uint32_t sender_ts, const char* t
   beSignal(snr_q4, rssi);
   stashRxMeta(true, (channel_idx >= 0 && channel_idx < MAX_GROUP_CHANNELS) ? _channels[channel_idx].channel.hash : nullptr,
               path_len);
+  if (_ui->hidesIncomingText(text, true)) return;
   _ui->notify(UIEventType::channelMessage);
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(path_len, true, nullptr, channel_name, text, ++_msgcount, snr_q4, rssi);
@@ -1049,6 +1051,14 @@ void MyMesh::beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len)
   r.len = (uint8_t)(len > 255 ? 255 : len);
   r.org_kind = org_kind;
   memcpy(r.org, org, 4);
+  r.path_hash_sz = v.hash_sz;
+  r.path_bytes = 0;
+  if (v.route == ROUTE_TYPE_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_FLOOD) {
+    int n = (int)v.hops * (int)v.hash_sz;
+    if (n > UI_RXLOG_PATH_MAX) n = UI_RXLOG_PATH_MAX / v.hash_sz * v.hash_sz;
+    r.path_bytes = (uint8_t)n;
+    if (n) memcpy(r.path, &raw[v.path_off], n);
+  }
   _rxlog_head = (uint8_t)((_rxlog_head + 1) % UI_RXLOG_MAX);
   if (_rxlog_cnt < UI_RXLOG_MAX) _rxlog_cnt++;
 

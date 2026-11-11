@@ -28,7 +28,10 @@ bool luaAppKey(int key);              // hardware key -> on_input; true = app co
 bool luaAppHasOnInput();              // app declares on_input? (touchless boards: app keys vs native d-pad)
 bool luaAppScroll(bool up);           // page-scroll the app body (display-only apps on touchless boards)
 // kind: "channel" | "dm" | "room" — what arrived, so an app can tell them apart.
-void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text);  // -> on_message
+// hops < 0 = the message was routed directly, so no repeater list exists for it.
+void luaAppMessage(const char* kind, const char* channel, const char* sender, const char* text,
+                   int hops = -1, const uint8_t* path = nullptr, uint8_t path_bytes = 0,
+                   uint8_t path_hash_sz = 1);  // -> on_message
 // Per-app permission bits, stored as a decimal mask in /apps/perms.kv.
 // Per-app grants, stored as a bitmask in /apps/perms.kv. Channels and private
 // conversations are deliberately separate grants: posting to #public is not the
@@ -64,5 +67,6 @@ inline void luaAppPress() {}
 inline bool luaAppKey(int) { return false; }
 inline bool luaAppHasOnInput() { return false; }
 inline bool luaAppScroll(bool) { return false; }
-inline void luaAppMessage(const char*, const char*, const char*, const char*) {}
+inline void luaAppMessage(const char*, const char*, const char*, const char*, int = -1,
+                          const uint8_t* = nullptr, uint8_t = 0, uint8_t = 1) {}
 #endif

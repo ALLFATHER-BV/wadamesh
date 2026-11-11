@@ -30,8 +30,8 @@
     {
       "id": "protreck",
       "name": "ProTreck",
-      "ver": "1.2",
-      "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
+      "ver": "1.3",
+      "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms + local sun times), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
       "requires": "sdk_ext",
       "seed": false
     },
@@ -67,7 +67,7 @@
     {
       "id": "gpscompass",
       "name": "GPS Compass",
-      "ver": "1.0",
+      "ver": "1.1",
       "desc": "Compass rose: magnetometer or GPS course, live fix, bearing to contacts",
       "seed": false
     },
@@ -138,7 +138,7 @@
       "id": "todo",
       "name": "To-Do",
       "ver": "1.0",
-      "desc": "A simple To-List with, customizable Categories."
+      "desc": "A simple To-Do List manager with customizable Categories, designed for LilyGo T-Deck Plus using the 200 Bytes limit to store your Tasks."
     }
   ]
 }

@@ -25,6 +25,7 @@ extra_flags() {
     # Its subject is a board variant header, not shared src/.
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
+    test_m9_board) echo "-DM9_HOST_TEST=1 -DESP32 -DHAS_THINKNODE_M9=1 -DHAS_M9_COMPASS=1 -DHAS_M9_IMU=1 -DHAS_M9_KEYBOARD=1 -DPIN_PERIPH_POWER=18 -DPIN_TFT_BL_EN=17 -DPIN_USB_5V_SENSE=1 -DPIN_CHG_DONE=8 -DPIN_KB_WAKEUP=12 -DTHINKNODE_M9_BUZZER_PIN=9 -DPIN_KEY_LED=46 -DPIN_VBAT_READ=13 -DPIN_TFT_CS=16 -DP_LORA_NSS=39 -DPIN_SD_CS=48 -DP_LORA_SCLK=40 -DP_LORA_MISO=38 -DP_LORA_MOSI=47 -DPIN_GPS_STANDBY=10 -DPIN_GPS_EN=11 -DPIN_GPS_RESET=5 -DPIN_GPS_RX=3 -DPIN_GPS_TX=2 -I test/m9_hw_fakes -I variants/thinknode_m9 variants/thinknode_m9/M9Board.cpp variants/thinknode_m9/M9Compass.cpp variants/thinknode_m9/M9Imu.cpp" ;;
     test_time_zones) echo "-I test/clock_floor_fakes" ;;
     # Its subject lives in the T-Display P4 IDF component, not in src/.
     test_c6_link_health) echo "-I tdisplay_p4/components/c6_at" ;;
@@ -34,6 +35,7 @@ extra_flags() {
     # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
     test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
     test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
+    test_lua_json) echo "-I lib/lua/src" ;;   # wada.json runs against the real Lua (objects from prep)
     test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
     test_keyboard_layouts_hw) echo "-I test/kb_layouts_fakes" ;;   # LVGL names only
     test_clock_floor) echo "-I test/clock_hw_fakes" ;;   # a settable hardware clock
@@ -51,6 +53,7 @@ extra_flags() {
 link_flags() {
   case "$1" in
     test_emoji_deflated) echo "-lz" ;;
+    test_lua_json) echo "$OUT/lua/"'*.o' ;;
     *) echo "" ;;
   esac
 }
@@ -61,6 +64,13 @@ prep() {
     test_emoji_deflated)
       mkdir -p "$OUT/gen" &&
         python3 scripts/build/gen-emoji-deflated.py src/ui-touch/emoji_data.c "$OUT/gen/emoji_deflated.h" ;;
+    test_lua_json)
+      # The Lua core as C objects, once per run; lua.c and luac.c carry their own main().
+      rm -rf "$OUT/lua" && mkdir -p "$OUT/lua" &&
+        for c in lib/lua/src/*.c; do
+          case "$(basename "$c")" in lua.c|luac.c) continue ;; esac
+          ${CC:-cc} -c -O1 -w -I lib/lua/src "$c" -o "$OUT/lua/$(basename "$c" .c).o" || return 1
+        done ;;
     *) true ;;
   esac
 }

@@ -31,6 +31,9 @@ fi
 unset VIRTUAL_ENV CONDA_PREFIX
 # shellcheck disable=SC1091
 source esp-idf/export.sh >/dev/null 2>&1
+# exFAT microSD cards (all SDXC, 64 GB and up). IDF hard-codes it off; idempotent, fails on drift.
+python3 "$(cd .. && pwd)/scripts/build/patch_idf_fatfs_exfat.py" \
+  --patch-file "$IDF_PATH/components/fatfs/src/ffconf.h"
 
 # Firmware tag shown on About + used by the update check. Derived from git so dev
 # builds are honest ("beta_28-14-gabc123" = 14 commits past beta_28) and a release

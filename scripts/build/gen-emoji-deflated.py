@@ -34,6 +34,15 @@ def parse(src):
     if not table:
         sys.exit('gen-emoji-deflated: no kGlyphs table in the source')
     glyphs = [(int(cp, 16), d) for cp, d in re.findall(r'\{ 0x([0-9A-Fa-f]+)u, &(\w+) \}', table.group(1))]
+    # Multi-codepoint emoji (a ZWJ flag, say) matched by their whole UTF-8 text:
+    # (C string literal body, image). Absent in sources older than the SD pack.
+    seqs = []
+    seq_table = re.search(r'static const EmojiSequence kSequences\[\] = \{(.*?)\n\};', src, re.S)
+    if seq_table:
+        seqs = re.findall(r'\{\s*"((?:[^"\\]|\\.)*)",\s*&(\w+)\s*\}', seq_table.group(1))
+        for _, d in seqs:
+            if d not in dscs:
+                sys.exit('gen-emoji-deflated: sequence table names unknown image %s' % d)
     count = re.search(r'const uint16_t kEmojiGlyphCount = (\d+);', src)
     if not glyphs or not count:
         sys.exit('gen-emoji-deflated: emoji_data.c changed shape; update this parser')
@@ -43,19 +52,19 @@ def parse(src):
     cps = [cp for cp, _ in glyphs]
     if cps != sorted(cps) or len(set(cps)) != len(cps):
         sys.exit('gen-emoji-deflated: glyph table is not strictly sorted')
-    return arrays, dscs, glyphs, int(count.group(1))
+    return arrays, dscs, glyphs, seqs, int(count.group(1))
 
 
 def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     src = open(sys.argv[1], encoding='utf-8').read()
-    arrays, dscs, glyphs, count = parse(src)
+    arrays, dscs, glyphs, seqs, count = parse(src)
 
     # Images in source order (similar emoji sit together there, which deflates
     # ~1.5 KB better than glyph-table order), each stored once. An image no glyph
     # points at is dropped, as the linker would drop it from emoji_data.c.
-    used = set(d for _, d in glyphs)
+    used = set(d for _, d in glyphs) | set(d for _, d in seqs)
     order = [d for d in re.findall(r'static const lv_img_dsc_t (\w+) =', src) if d in used]
     index = {d: i for i, d in enumerate(order)}
     raw, imgs = bytearray(), []
@@ -84,7 +93,8 @@ def main():
           '#define EMOJI_Z_IMG_COUNT %d' % len(imgs),
           '#define EMOJI_Z_GLYPH_COUNT %d' % count, '',
           'struct EmojiZImg { uint32_t off; uint16_t len; uint16_t w; uint16_t h; uint8_t cf; };',
-          'struct EmojiZGlyph { uint32_t cp; uint16_t img; };', '',
+          'struct EmojiZGlyph { uint32_t cp; uint16_t img; };',
+          'struct EmojiZSeq { const char* utf8; uint16_t img; };', '',
           'static const uint8_t kEmojiZ[%d] = {  // %d B of images' % (len(z), len(raw))]
     for i in range(0, len(z), 24):
         w_.append('  ' + ','.join('0x%02x' % x for x in z[i:i + 24]) + ',')
@@ -96,6 +106,13 @@ def main():
     w_.append('static const EmojiZGlyph kEmojiZGlyphs[] = {')
     for cp, d in glyphs:
         w_.append('  { 0x%X, %d },' % (cp, index[d]))
+    w_.append('};')
+    w_.append('#define EMOJI_Z_SEQ_COUNT %d' % len(seqs))
+    w_.append('static const EmojiZSeq kEmojiZSeqs[%d] = {' % max(1, len(seqs)))
+    for lit, d in seqs:
+        w_.append('  { "%s", %d },' % (lit, index[d]))
+    if not seqs:
+        w_.append('  { "", 0 },')
     w_.append('};')
     w_.append('')
     # Always written: the build reruns this only when emoji_data.c (or this script)

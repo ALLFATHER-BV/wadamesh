@@ -9,7 +9,7 @@
 namespace TouchPrefsSchema {
 
 static constexpr uint16_t MAGIC = 0x5743;   // 'WC' (WadaCfg)
-static constexpr uint8_t CURRENT_VERSION = 72;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Night/Day, with high-contrast variants, #296/#544; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF); v61: ble_kbd_* (Bluetooth serves a keyboard instead of the phone app, its layout and the paired keyboard; default phone app); v62: ble_kbd_back (a second key that acts as Back; 0 = only Esc); v63: V4-R8 ui_scale reset before exposing font-only presets (#536); v64: report_ping + report_done_n (beta test reports: the opt-in install count and the tag this device already reported on; both default 0); v65: ThinkNode M9 ui_scale reset before exposing font-only presets, the same one-time correction v63 made for the V4-R8 (no new field); v66: condense_nav (landscape nav rail + icon-only Home launchers, #592; default OFF); v67: T-Pager keyboard navigation (#591): kbd_nav ON and its own key bindings, a one-time reset on that board only (no new field); v68: Attaky Orientation setting: ui_rotation reset once to its landscape default, on that board only (no new field); v69: T-Deck trackball mode: tb_nav holds 0 cursor / 1 D-pad nav / 2 scroll, and scroll is the T-Deck default (a one-time flip of cursor installs; no new field); v70: T-Deck ui_scale reset before exposing the font-only text sizes, as v63/v65 did for the V4-R8 and M9 (no new field); v71: Wio Tracker L2 and CrowPanel P4 10.1 Orientation setting: ui_rotation reset once to their landscape default, on those boards only (no new field); v72: ct_purge_on + ct_purge_days (remove contacts not heard from in N days, favourites kept, #719; OFF, 30 days)
+static constexpr uint8_t CURRENT_VERSION = 73;   // v49: fem_lna default flip on the V4-R8; v50: map tile z/x/y line off by default (no new fields); v51: console_mode (boot into the text console; new trailing field, default OFF); v52: console_monitor (show incoming messages in the console, default ON); v54: boot_wifi_time + boot_wifi_open (cold-boot saved-Wi-Fi time sync, #383; both OFF); v55: loud_alerts (resonant-pitch chime, #388; OFF); v56: theme_mode (Night/Day, with high-contrast variants, #296/#544; default Night); v57: gps_fuzz_m (displace the advertised position, #399; 0 = off); v58: Attaky notification blink enable + room/DM color indexes (#423); v59: telem_loc_exact (answer position requests from chosen contacts with the REAL fix instead of the advert displacement; 0 = keep it displaced); v60: home_key_keeps_drawer (#491; default OFF); v61: ble_kbd_* (Bluetooth serves a keyboard instead of the phone app, its layout and the paired keyboard; default phone app); v62: ble_kbd_back (a second key that acts as Back; 0 = only Esc); v63: V4-R8 ui_scale reset before exposing font-only presets (#536); v64: report_ping + report_done_n (beta test reports: the opt-in install count and the tag this device already reported on; both default 0); v65: ThinkNode M9 ui_scale reset before exposing font-only presets, the same one-time correction v63 made for the V4-R8 (no new field); v66: condense_nav (landscape nav rail + icon-only Home launchers, #592; default OFF); v67: T-Pager keyboard navigation (#591): kbd_nav ON and its own key bindings, a one-time reset on that board only (no new field); v68: Attaky Orientation setting: ui_rotation reset once to its landscape default, on that board only (no new field); v69: T-Deck trackball mode: tb_nav holds 0 cursor / 1 D-pad nav / 2 scroll, and scroll is the T-Deck default (a one-time flip of cursor installs; no new field); v70: T-Deck ui_scale reset before exposing the font-only text sizes, as v63/v65 did for the V4-R8 and M9 (no new field); v71: Wio Tracker L2 and CrowPanel P4 10.1 Orientation setting: ui_rotation reset once to their landscape default, on those boards only (no new field); v72: ct_purge_on + ct_purge_days (remove contacts not heard from in N days, favourites kept, #719; OFF, 30 days); v73: chats_unread_only (the Chats "U" (unread only) chip, #824; OFF)
 static constexpr uint8_t BROKEN_MID_INSERT_VERSION = 44;
 
 // Persisted byte layout. New fields must be appended at the end: older blobs
@@ -97,10 +97,10 @@ struct __attribute__((packed)) Config {
   // trust decision from reconnecting to a saved secured one.
   uint8_t  boot_wifi_time;   // sync the clock from a saved Wi-Fi network after a cold boot
   uint8_t  boot_wifi_open;   // ...and allow saved OPEN networks to be used for it
-  // A bare piezo on a GPIO has no amplitude control -- tone() is a fixed-duty
-  // square wave -- so the only lever on loudness is frequency: a piezo is far
-  // louder near its mechanical resonance, typically around 4 kHz, than at the
-  // 1-2.6 kHz the chime uses. This shifts the same chime up into that band (#388).
+  // A piezo is far louder near its mechanical resonance, typically around 4 kHz,
+  // than at the 1-2.6 kHz the chime uses. This shifts the same chime up into that
+  // band (#388). On the Heltec V4 it is the only loudness lever (tone() is a
+  // fixed-duty square wave); the M9 also scales its LEDC duty from snd_vol.
   uint8_t  loud_alerts;      // play the notification chime at the piezo's resonant pitch
   uint8_t  theme_mode;       // v56: 0 Night, 1 Day, 2 Day HC, 3 Night HC (#544)
   // v57 (#399): displace the position put in our OWN adverts, in metres, 0 = off.
@@ -145,6 +145,9 @@ struct __attribute__((packed)) Config {
   // Default OFF, 30 days.
   uint8_t  ct_purge_on;
   uint16_t ct_purge_days;
+  // v73 (#824): the Chats "U" (unread only) chip. While on, the inbox lists only threads with
+  // unread messages, within whichever All / Channels / Direct chip is active.
+  uint8_t  chats_unread_only;
 };
 
 static constexpr size_t HEADER_SIZE = offsetof(Config, bright);
@@ -160,8 +163,11 @@ static_assert(offsetof(Config, web_mirror) == offsetof(Config, rx_queue) + sizeo
 // whichever board is using the file backend. 163 bytes today.
 static_assert(sizeof(Config) <= 2048,
               "Config exceeds the SdNvsPrefs value cap; prefs would silently stop saving");
-static_assert(offsetof(Config, ct_purge_days) + sizeof(Config::ct_purge_days) == sizeof(Config),
+static_assert(offsetof(Config, chats_unread_only) + sizeof(Config::chats_unread_only) == sizeof(Config),
               "new preference fields must remain trailing");
+static_assert(offsetof(Config, chats_unread_only) ==
+                  offsetof(Config, ct_purge_days) + sizeof(Config::ct_purge_days),
+              "chats_unread_only must follow ct_purge_days");
 static_assert(offsetof(Config, ct_purge_on) ==
                   offsetof(Config, condense_nav) + sizeof(Config::condense_nav),
               "ct_purge_on must follow condense_nav");

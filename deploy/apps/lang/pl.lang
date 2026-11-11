@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: pl
-# ver: 31
+# ver: 33
 # name: Polski
 # base: pl
 # translators: tom73god (Discord)
@@ -2366,3 +2366,88 @@ This help	This help
 Turn the knob • click to insert	Turn the knob • click to insert
 Turn to scroll, click or any key to close.	Turn to scroll, click or any key to close.
 W A S D,  Q / E	W A S D,  Q / E
+Mute colours and animations	Mute colours and animations
+Mute colours and animations sets these for now.	Mute colours and animations sets these for now.
+Nothing moves, no boot animation, quiet colours and solid panels. Your other colour choices come back when it is off.	Nothing moves, no boot animation, quiet colours and solid panels. Your other colour choices come back when it is off.
+Slate	Slate
+Sepia	Sepia
+Grey	Grey
+Sage	Sage
+Dusk	Dusk
+Tone the whole screen	Tone the whole screen
+Off: only the accent takes the tone.	Off: only the accent takes the tone.
+%d book(s)	Książek: %d
+A chapter is missing from this book	W tej książce brakuje rozdziału
+Apply the new look? The Pager restarts to apply it.	Zastosować nowy wygląd? Pager uruchomi się ponownie.
+Back to book	Wróć do książki
+Books	Książki
+Cannot open this book	Nie można otworzyć tej książki
+Cannot read this file	Nie można odczytać tego pliku
+Cannot show this image	Nie można wyświetlić tego obrazu
+Chapters	Rozdziały
+Continue reading	Czytaj dalej
+Earlier chapters	Wcześniejsze rozdziały
+Ebook needs a newer firmware	E-book wymaga nowszego oprogramowania
+End of book	Koniec książki
+External LoRa antenna	Zewnętrzna antena LoRa
+Images	Obrazy
+Later chapters	Późniejsze rozdziały
+No books. Add .epub files to this app's folder.	Brak książek. Dodaj pliki .epub do folderu aplikacji.
+No data from the receiver	Brak danych z odbiornika
+No login reply, tracing instead…	Brak odpowiedzi logowania, zamiast tego śledzenie…
+No readable chapters	Brak czytelnych rozdziałów
+Not an epub	To nie epub
+Opening...	Otwieranie...
+Receiver is talking at	Odbiornik nadaje z prędkością
+Section	Sekcja
+Start of book	Początek książki
+The book index is too large	Indeks książki jest za duży
+This book is compressed. Repack it with scripts/ebook-prep.py	Ta książka jest skompresowana. Przepakuj ją przez scripts/ebook-prep.py
+Use external	Użyj zewnętrznej
+Use the external antenna?\nOnly with an antenna fitted: transmitting into an empty socket can destroy the radio.	Użyć anteny zewnętrznej?\nTylko z podłączoną anteną: nadawanie do pustego gniazda może zniszczyć radio.
+Uses the external socket instead of the on-board antenna. Only with an antenna fitted.	Używa gniazda zewnętrznego zamiast wbudowanej anteny. Tylko z podłączoną anteną.
+View image	Pokaż obraz
+image	obraz
+reacted	zareagował(a)
+reacted to	zareagował(a) na
+Hide MediaMesh and TAK texts	Ukryj teksty MediaMesh i TAK
+Apps like MeshCore Open TAK send photos, voice and team tracking as text. Messages between apps are dropped, and the rest become a short label such as Photo. A connected phone app still gets everything.	Aplikacje takie jak MeshCore Open TAK wysyłają zdjęcia, głos i śledzenie zespołu jako tekst. Wiadomości między aplikacjami są odrzucane, a pozostałe stają się krótką etykietą, np. Zdjęcie. Połączona aplikacja w telefonie nadal dostaje wszystko.
+MediaMesh and TAK texts will be hidden	Teksty MediaMesh i TAK będą ukryte
+MediaMesh and TAK texts will be shown	Teksty MediaMesh i TAK będą pokazywane
+Photo	Zdjęcie
+Voice message	Wiadomość głosowa
+Push-to-talk	Push-to-talk
+Encrypted message	Zaszyfrowana wiadomość
+30 sec	30 sec
+Asleep: tap screen or 🤍 to wake	Asleep: tap screen or 🤍 to wake
+File Transfer	File Transfer
+Peak %d dBm @ %.1f MHz	Peak %d dBm @ %.1f MHz
+Peak -- dBm	Peak -- dBm
+Receiving %s\n%lu / %lu bytes	Receiving %s\n%lu / %lu bytes
+Sending %s\n%lu / %lu bytes	Sending %s\n%lu / %lu bytes
+peak %d @ %.1f	peak %d @ %.1f
+U	N
+Unread only	Tylko nieprzeczytane
+No unread chats	Brak nieprzeczytanych czatów
+No unread channels	Brak nieprzeczytanych kanałów
+No unread direct chats	Brak nieprzeczytanych czatów bezpośrednich
+Recent	Ostatnie
+Smileys	Buźki
+People	Ludzie
+Nature	Natura
+Food	Jedzenie
+Activity	Aktywność
+Travel	Podróże
+Objects	Obiekty
+Symbols	Symbole
+Flags	Flagi
+Chars	Znaki
+Lifting the device off the table turns the screen on (a locked device shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Lifting the device off the table turns the screen on (a locked device shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.
+Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.	Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.
+Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.	Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.
+\n%d%%, about %lu s left	\n%d%%, zostało ok. %lu s
+\n%d%%, about %lu min left	\n%d%%, zostało ok. %lu min
+Keep this orientation?\nIf the screen does not answer your taps, leave it: it goes back to portrait in %d s.	Zachować tę orientację?\nJeśli ekran nie reaguje na dotyk, zostaw go: za %d s wróci do pionu.
+Back to portrait… restarting	Powrót do pionu… ponowne uruchamianie
+Keep	Zachowaj
+Orientation kept	Orientacja zachowana

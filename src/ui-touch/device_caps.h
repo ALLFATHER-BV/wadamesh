@@ -201,14 +201,10 @@
   // HELTEC_LORA_V4_TFT to reuse all its UI code); the deltas are 8 MB octal
   // PSRAM (→ web browser) and a micro-SD slot on the Expansion Kit V2.
   #define CAP_TOUCH        1   // CHSC6x capacitive touch (Expansion Kit V2)
-  // Rotation is OFF until a tester verifies the R8-specific landscape touch
-  // maps (HeltecV4CapTouch.cpp, TESTER-VERIFY): the boot guard at UITask.cpp
-  // ("V4-R8: force PORTRAIT at every boot") reverts any landscape pref anyway,
-  // so with 1 the Orientation control was a reboot trap that always landed
-  // back on Portrait (plus one garbled session, since the boot wordmark had
-  // already rotated the panel). Flip back to 1 together with removing that
-  // guard once landscape touch is confirmed on hardware.
-  #define CAP_ROTATABLE    0
+  // Landscape asks "Keep this orientation?" on its first boot and goes back to
+  // portrait without a tap: the R8 landscape touch map (HeltecV4CapTouch.cpp)
+  // is not confirmed on every unit yet (r8RotationAskTick in UITask.cpp).
+  #define CAP_ROTATABLE    1
   #define CAP_LARGE_SCREEN 0   // 240x320
   #define CAP_SD           1   // micro-SD on Expansion Kit V2 (shared TFT SPI bus, CS=3)
   #define CAP_FILESYSTEM   1   // browsable filesystem (the SD card)
@@ -329,6 +325,19 @@
   #define CAP_TILES_ON_STORAGE 1
 #else
   #define CAP_TILES_ON_STORAGE 0
+#endif
+
+// The optional emoji pack and its tab/recent picker need both removable SD and
+// 8 MB PSRAM. Every enabled SD target below has an 8 MB PSRAM board definition;
+// the regular Heltec V4 has only 2 MB and no SD, so both conditions exclude it.
+// Not the T-LoRa Pager: its app slot is full (beta_103 overflowed by 2 KB with
+// the pack in; leaving it out frees about 7 KB).
+#if CAP_SD && defined(BOARD_HAS_PSRAM) && \
+    (defined(HAS_CROWPANEL_35) || defined(HAS_TDECK_PRO) || defined(HAS_TDECK_GT911) || \
+     defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8))
+  #define CAP_EMOJI_PACK 1
+#else
+  #define CAP_EMOJI_PACK 0
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
@@ -638,6 +647,22 @@
     #define CAP_WEB_BROWSER 0   // 2 MB V4: TLS handshake can't fit
   #else
     #define CAP_WEB_BROWSER 1   // 8 MB boards incl. the V4-R8
+  #endif
+#endif
+
+// ---- Lua apps over HTTPS (wada.net.request with an https:// url) -------------
+// Same heap limit as the Reader: the handshake needs ~30 KB of internal heap, so
+// it follows CAP_WEB_BROWSER. Unlike the Reader the chain IS verified (ISRG roots,
+// UITask.cpp kLuaTlsRoots), because an app sends a password or a bearer token.
+// Off on the P4 boards: TLS runs on the C6 there and setCACert is a no-op, so the
+// chain is not checked before a password goes out. Off on the 2 MB Heltec V4: it
+// cannot fit the handshake (the V4-R8, 8 MB, keeps it).
+#ifndef CAP_LUA_HTTPS
+  #if defined(HAS_TDISPLAY_P4) || defined(HAS_CROWPANEL_P4_101) || \
+      (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8))
+    #define CAP_LUA_HTTPS 0
+  #else
+    #define CAP_LUA_HTTPS CAP_WEB_BROWSER
   #endif
 #endif
 

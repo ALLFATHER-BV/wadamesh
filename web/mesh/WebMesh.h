@@ -229,6 +229,7 @@ public:
   void     discoverClear() {}
 
   // ---- RF monitor ring ------------------------------------------------------------------
+  static const int UI_RXLOG_PATH_MAX = 16;
   struct UiRxRec {
     uint32_t ms;
     int8_t   rssi;
@@ -239,6 +240,9 @@ public:
     uint8_t  len;
     uint8_t  org_kind;
     uint8_t  org[4];
+    uint8_t  path_bytes;
+    uint8_t  path_hash_sz;
+    uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
   uint8_t uiRxLogCount() const { return _rxlog_cnt; }   // from the node's raw RX pushes (demo: empty)

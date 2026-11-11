@@ -14,6 +14,7 @@ out/*
 
 # host Lua harness: the compiled binary, not the sources (scripts/lua-harness)
 scripts/lua-harness/luah
+scripts/lua-harness/cyberspace/host
 scripts/lua-harness/*.o
 .DS_Store
 .idea
@@ -28,6 +29,10 @@ platformio.local.ini
 # Local tile-pack build data + generated Wi-Fi creds (never commit)
 /data/
 scripts/build/wifi_secrets.h
+
+# Built SD-card emoji pack (gen-emoji-pack.py output) — an asset, rebuild it
+/emoji.pack
+scripts/build/__pycache__/
 
 # Local working notes + agent config (contain ops/infra details — never publish)
 CLAUDE.md

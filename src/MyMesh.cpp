@@ -2349,6 +2349,8 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   // source hash. Anything else is anonymous on the wire and stays that way
   // here -- see UiRxRec::org_kind.
   uint8_t org_kind = 0, org[4] = {0, 0, 0, 0};
+  const uint8_t* flood_path = nullptr;   // repeaters this flood passed through
+  uint8_t flood_path_bytes = 0, flood_path_sz = 1;
   if (len > 0) {
     rt = raw[0] & 0x03;
     const bool xp = (rt == ROUTE_TYPE_TRANSPORT_FLOOD || rt == ROUTE_TYPE_TRANSPORT_DIRECT);
@@ -2361,6 +2363,11 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
     const uint8_t plb = (ps < len) ? raw[ps] : 0;
     hops = (uint8_t)(plb & 0x3F);
     const int payload = ps + 1 + (int)hops * (int)(((plb >> 6) & 0x03) + 1);
+    if ((rt == ROUTE_TYPE_FLOOD || rt == ROUTE_TYPE_TRANSPORT_FLOOD) && payload <= len) {
+      flood_path = &raw[ps + 1];
+      flood_path_bytes = (uint8_t)(payload - ps - 1);
+      flood_path_sz = (uint8_t)(((plb >> 6) & 0x03) + 1);
+    }
     switch ((raw[0] >> 2) & 0x0F) {
       case PAYLOAD_TYPE_ADVERT:
         if (payload + 32 <= len) { org_kind = 1; memcpy(org, &raw[payload], 4); }
@@ -2388,7 +2395,8 @@ void MyMesh::logRxRaw(float snr, float rssi, const uint8_t raw[], int len) {
   if (len > 0) {
     uiRxLogPush(now_ms, (int8_t)rssi, snr_q4,
                 (uint8_t)((raw[0] >> 2) & 0x0F), rt, hops,
-                (uint8_t)(len > 255 ? 255 : len), org_kind, org);
+                (uint8_t)(len > 255 ? 255 : len), org_kind, org,
+                flood_path, flood_path_bytes, flood_path_sz);
   }
 #if defined(DISPLAY_CLASS)
   // Diagnostic: log EVERY received frame so we can prove what reaches the
@@ -2712,9 +2720,11 @@ bool MyMesh::uiImportBackup(Stream& in, uint8_t sections,
     void* reallocate(void* p, size_t n) override { void* q = heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM); return q ? q : realloc(p, n); }
   } alloc;
   JsonDocument doc(&alloc);
-  if (deserializeJson(doc, in)) return false;
+  // The serial line says why, for a report: a file that parses on a computer but not here (#822).
+  const DeserializationError parse_err = deserializeJson(doc, in);
+  if (parse_err) { Serial.printf("[BACKUP] import failed: %s\n", parse_err.c_str()); return false; }
   JsonObjectConst root = doc.as<JsonObjectConst>();
-  if (root.isNull()) return false;
+  if (root.isNull()) { Serial.println("[BACKUP] import failed: not a JSON object"); return false; }
 
   bool prefs_dirty = false;
   if (sections & 0x01) {  // identity: name + private key
@@ -3267,6 +3277,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
 #ifdef DISPLAY_CLASS
   // we only want to show text messages on display, not cli data
   bool should_display = txt_type == TXT_TYPE_PLAIN || txt_type == TXT_TYPE_SIGNED_PLAIN;
+  if (txt_type == TXT_TYPE_PLAIN && _ui && _ui->hidesIncomingText(text, false)) should_display = false;
   if (should_display && _ui) {
     /* notify BEFORE newMsgFromPub: UITask::newMsg keys on g_last_event to
      * decide channel-thread vs DM-thread. Previously this fired only when
@@ -3525,8 +3536,9 @@ void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packe
    * to decide whether the message lands in a channel thread or a DM thread.
    * Used to only fire when the serial client was disconnected, which meant
    * channel messages got appended as DMs whenever TCP/BLE was up. */
-  if (_ui) _ui->notify(UIEventType::channelMessage);
-  if (_ui) {
+  const bool ui_shows = _ui && !_ui->hidesIncomingText(text, true);
+  if (ui_shows) _ui->notify(UIEventType::channelMessage);
+  if (ui_shows) {
     const int8_t snr_q4 = (int8_t)(pkt->getSNR() * 4);
     const int8_t rssi   = (int8_t)(_radio->getLastRSSI());
     const bool   is_flood = pkt->isRouteFlood();
@@ -4083,9 +4095,11 @@ MyMesh::MyMesh(mesh::Radio &radio, mesh::RNG &rng, mesh::RTCClock &rtc, SimpleMe
   _prefs.gps_enabled = 0;       // GPS disabled by default
   _prefs.gps_interval = 0;      // No automatic GPS updates by default
   //_prefs.rx_delay_base = 10.0f;  enable once new algo fixed
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021)
-#ifdef SX126X_RX_BOOSTED_GAIN
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(RX_BOOSTED_GAIN)
+#if defined(SX126X_RX_BOOSTED_GAIN)
   _prefs.rx_boosted_gain = SX126X_RX_BOOSTED_GAIN ? 1 : 0;
+#elif defined(RX_BOOSTED_GAIN)
+  _prefs.rx_boosted_gain = RX_BOOSTED_GAIN ? 1 : 0;
 #else
   _prefs.rx_boosted_gain = 1; // enabled by default
 #endif
@@ -4099,7 +4113,7 @@ void MyMesh::applyRadioFromPrefs() {
   radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
   radio_driver.radioRelease();
   radio_driver.setTxPower(_prefs.tx_power_dbm);
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(RX_BOOSTED_GAIN)
   _prefs.rx_boosted_gain = _prefs.rx_boosted_gain ? 1 : 0;
   radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
   MESH_DEBUG_PRINTLN("RX Boosted Gain Mode: %s",
@@ -4194,7 +4208,11 @@ void MyMesh::begin(bool has_display) {
   // sanitise bad pref values
   _prefs.rx_delay_base = constrain(_prefs.rx_delay_base, 0, 20.0f);
   _prefs.airtime_factor = constrain(_prefs.airtime_factor, 0, 9.0f);
+#if defined(USE_LR1110)
+  _prefs.freq = constrain(_prefs.freq, 150.0f, 960.0f);
+#else
   _prefs.freq = constrain(_prefs.freq, 400.0f, 2500.0f);
+#endif
   _prefs.bw = constrain(_prefs.bw, 7.8f, 500.0f);
   _prefs.sf = constrain(_prefs.sf, 5, 12);
   _prefs.cr = constrain(_prefs.cr, 5, 8);
@@ -4940,8 +4958,13 @@ void MyMesh::handleCmdFrame(size_t len) {
 
     if (repeat && !isValidClientRepeatFreq(freq)) {
       writeErrFrame(ERR_CODE_ILLEGAL_ARG);
+#if defined(USE_LR1110)
+    } else if (freq >= 150000 && freq <= 960000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
+        bw <= 500000) {
+#else
     } else if (freq >= 300000 && freq <= 2500000 && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7000 &&
         bw <= 500000) {
+#endif
       _prefs.sf = sf;
       _prefs.cr = cr;
       _prefs.freq = (float)freq / 1000.0;
@@ -4951,7 +4974,7 @@ void MyMesh::handleCmdFrame(size_t len) {
 
       radio_driver.radioAcquire();   // hold off the RX drain task mid-sequence (no-op when off)
       radio_driver.setParams(_prefs.freq, _prefs.bw, _prefs.sf, _prefs.cr);
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN) || defined(RX_BOOSTED_GAIN)
       radio_driver.setRxBoostedGainMode(_prefs.rx_boosted_gain != 0);
 #endif
       radio_driver.radioRelease();
@@ -5839,7 +5862,11 @@ bool MyMesh::handleRadioCommand(const char* command, char* reply) {
     float bw    = num > 1 ? strtof(parts[1], nullptr) : 0.0f;
     uint8_t sf  = num > 2 ? atoi(parts[2]) : 0;
     uint8_t cr  = num > 3 ? atoi(parts[3]) : 0;
+#if defined(USE_LR1110)
+    if (freq >= 150.0f && freq <= 960.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+#else
     if (freq >= 150.0f && freq <= 2500.0f && sf >= 5 && sf <= 12 && cr >= 5 && cr <= 8 && bw >= 7.0f && bw <= 500.0f) {
+#endif
       _prefs.freq = freq;
       _prefs.bw = bw;
       _prefs.sf = sf;
@@ -5894,7 +5921,7 @@ bool MyMesh::handleRadioCommand(const char* command, char* reply) {
     return true;
   }
 
-#if defined(USE_SX1262) || defined(USE_SX1268)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(RX_BOOSTED_GAIN)
   if (strcmp(command, "get radio.rxgain") == 0) {
     sprintf(reply, "> %s", _prefs.rx_boosted_gain ? "on" : "off");
     return true;

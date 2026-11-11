@@ -93,6 +93,14 @@ of view, the highlight moves to a link coming into view. Only at the top or
 bottom of the page does focus leave for the address bar or the toolbar.
 **OK** opens the highlighted link.
 
+## Sliders and − / + rows
+
+On a slider (brightness, screen timeout) Left and Right change the value. On a
+settings row with **−** and **+** buttons (Volume, Do Not Disturb From and
+Until, the custom UTC offset, battery capacity), Left presses − and Right
+presses +, wherever the highlight sits on that row. Up and Down leave the row
+in both cases.
+
 ## Typing & editing
 
 Inside a text field the left/right arrows move the caret, and when the caret

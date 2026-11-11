@@ -18,9 +18,11 @@
 
 // The raw table, renamed so both implementations link into one binary.
 #define emojiGlyphLookup rawEmojiGlyphLookup
+#define emojiGlyphSequenceLookup rawEmojiGlyphSequenceLookup
 #define kEmojiGlyphCount rawEmojiGlyphCount
 #include "ui-touch/emoji_data.c"
 #undef emojiGlyphLookup
+#undef emojiGlyphSequenceLookup
 #undef kEmojiGlyphCount
 
 #define WADA_EMOJI_DEFLATED 1
@@ -58,6 +60,15 @@ int main() {
   }
   printf("%d codepoints match\n", hits);
   assert(hits == (int)(sizeof(kGlyphs) / sizeof(kGlyphs[0])));
+
+  // Every multi-codepoint sequence resolves to the same pixels, and a near miss does not.
+  for (size_t i = 0; i < sizeof(kSequences) / sizeof(kSequences[0]); ++i) {
+    const lv_img_dsc_t* z = emojiGlyphSequenceLookup(kSequences[i].utf8);
+    assert(z && sameImage(kSequences[i].dsc, z));
+    assert(rawEmojiGlyphSequenceLookup(kSequences[i].utf8) == kSequences[i].dsc);
+  }
+  assert(emojiGlyphSequenceLookup("\xF0\x9F\x8F\xB3") == nullptr);
+  assert(emojiGlyphSequenceLookup(nullptr) == nullptr);
 
   // Codepoints that share one image in the source still share one image here.
   assert(emojiGlyphLookup(0xFE0F) == emojiGlyphLookup(0x200D));

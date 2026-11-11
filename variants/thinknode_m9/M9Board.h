@@ -36,8 +36,50 @@ public:
   void powerOff() override;
 
   uint16_t getBattMilliVolts() override;
+  int externalPowerPresent();
+  int isCharging() const;
+  bool isExternalPowered() override;
 
   const char *getManufacturerName() const override {
     return "Elecrow ThinkNode M9";
+  }
+};
+
+// Battery EMA + 20 s publish hold + charge-state transition reset.
+struct M9BatterySmoother {
+  float         ema      = 0.0f;
+  uint16_t      pub      = 0;
+  unsigned long pub_ms   = 0;
+  unsigned long flip_ms  = 0;
+  int           ext_prev = -2;
+
+  uint16_t sample(uint16_t raw) {
+    if (raw == 0) return 0;
+    if (ema < 1.0f) {
+      ema = (float)raw;
+    } else {
+      const float d = (float)raw - ema;
+      if (d > 70.0f || d < -70.0f) ema = (float)raw;
+      else                         ema += d * 0.15f;
+    }
+    return (uint16_t)(ema + 0.5f);
+  }
+
+  uint16_t smooth(uint16_t raw, int ext_present, int chg_state, unsigned long now_ms) {
+    const uint16_t cur = sample(raw);
+    if (cur == 0) return 0;
+    const int ext_now = ((ext_present & 1) << 2) | (chg_state & 3);
+    const bool charge_flip = (pub != 0) && ext_prev != -2 && ext_now != ext_prev;
+    ext_prev = ext_now;
+    if (pub == 0 || charge_flip || (unsigned long)(now_ms - pub_ms) >= 20000UL) {
+      pub     = cur;
+      pub_ms  = now_ms;
+      flip_ms = charge_flip ? (now_ms ? now_ms : 1UL) : 0UL;
+    } else if (flip_ms && (unsigned long)(now_ms - flip_ms) >= 3000UL) {
+      pub     = cur;
+      pub_ms  = now_ms;
+      flip_ms = 0UL;
+    }
+    return pub;
   }
 };

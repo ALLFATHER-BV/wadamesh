@@ -101,6 +101,9 @@ public:
     (void)channel_name; (void)text; (void)sent_fp;
   }
   virtual void notify(UIEventType t = UIEventType::none) = 0;
+  /** True when this incoming text must not appear or notify at all. Asked before
+   *  notify(), which runs first. `text` is a channel's "name: body" or a DM. */
+  virtual bool hidesIncomingText(const char* text, bool channel) { (void)text; (void)channel; return false; }
   virtual void appendDiag(const char* message) { (void)message; }
   /** Flush any UI-side persistent state (chat history, thread table) to storage
    *  NOW. Called before programmatic reboots (the companion app's reboot

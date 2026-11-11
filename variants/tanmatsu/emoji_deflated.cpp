@@ -73,4 +73,12 @@ const lv_img_dsc_t* emojiGlyphLookup(uint32_t cp) {
   }
   return nullptr;
 }
+
+const lv_img_dsc_t* emojiGlyphSequenceLookup(const char* utf8) {
+  if (!utf8) return nullptr;
+  for (int i = 0; i < EMOJI_Z_SEQ_COUNT; ++i)
+    if (strcmp(utf8, kEmojiZSeqs[i].utf8) == 0)
+      return emojiInflate() ? &s_emoji_dsc[kEmojiZSeqs[i].img] : nullptr;
+  return nullptr;
+}
 #endif

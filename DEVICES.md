@@ -119,7 +119,7 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   and [reference radio pin map](https://github.com/meshtastic/firmware/blob/master/variants/esp32s3/elecrow_panel/variant.h).
   An optional external GPS can be connected to UART1 (CrowPanel RX GPIO18 /
   TX GPIO17, 9600 baud). Data
-  can use a FAT32 microSD card for data, offline maps, File Manager and browser
+  can use a FAT32 or exFAT microSD card for data, offline maps, File Manager and browser
   Transfer. The card uses software SPI (SCLK 5, MISO 4, MOSI 6, CS 7), leaving
   the display and radio SPI hosts untouched; missing or unreadable cards fall
   back to SPIFFS. The dedicated LittleFS partition remains the internal tile

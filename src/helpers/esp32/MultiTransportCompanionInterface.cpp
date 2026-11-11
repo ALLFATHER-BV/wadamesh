@@ -43,6 +43,16 @@ void MultiTransportCompanionInterface::begin(Stream& usb_serial, uint16_t tcp_po
   _last_reply_target = REPLY_TARGET_USB;
 }
 
+// Whether a browser feature (VNC, Remote UI, Remote terminal, File Transfer) is on. The web
+// port stays open without one: the browser client's Wi-Fi mode talks the companion protocol
+// on it, like TCP 5000. The features themselves answer only with the on-screen code.
+static bool webUiWanted() {
+#if WADA_WEB_FILE_TRANSFER
+  if (g_web_file_transfer.enabled()) return true;
+#endif
+  return g_web_mirror.wanted();
+}
+
 void MultiTransportCompanionInterface::startTcpServer(bool wifi_connected) {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   // ESP-AT allows ONE listening port, so the router server (_p4_srv) owns it and dispatches
@@ -136,10 +146,18 @@ static void wsMirrorStreamTask(void* arg) {
   }
 }
 
+// Called from the handshake tick (every board's loop) and, for the Arduino main.cpp, also while
+// Wi-Fi is off, when the tick doesn't run. Keeps a code from an earlier session from coming back
+// when a feature is switched on again later.
+void MultiTransportCompanionInterface::retireWebCodeIfIdle() {
+  if (!webUiWanted()) g_web_auth.disarm();
+}
+
 void MultiTransportCompanionInterface::tickWebSocketHandshake() {
 #if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
   p4RouteClients();        // dispatch newly accepted AT-listener connections to _tcp / _ws
 #endif
+  retireWebCodeIfIdle();
   if (_ws_started) {
     _ws.tickHandshake();   // accept + WS handshake stay on core 1 (the main loop)
     if (!_mirror_task) {   // spawn the core-0 streamer once, on first tick after the WS server is up
@@ -149,11 +167,15 @@ void MultiTransportCompanionInterface::tickWebSocketHandshake() {
   }
 }
 
-void MultiTransportCompanionInterface::stopTcpServer() {
+void MultiTransportCompanionInterface::stopWsServer() {
   if (_ws_started) {
     _ws.stop();
     _ws_started = false;
   }
+}
+
+void MultiTransportCompanionInterface::stopTcpServer() {
+  stopWsServer();
   if (_tcp_started) {
     _tcp.stop();
     _tcp_started = false;
