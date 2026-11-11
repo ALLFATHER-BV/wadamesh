@@ -169,6 +169,7 @@ extern int luaStoreHttpRequestOpaque(void* client, void* http, const char* metho
 // Starts the one-shot TLS task; it calls luaNetWorkerService with a verifying client.
 extern bool luaNetSpawnTls();
 #endif
+extern bool luaHostWifiUp();   // station connected with an address
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -357,9 +358,12 @@ void serviceDeferredClose() {
   if (s_h && s_h->want_close && !s_h->in_lua) { luaAppDismiss(); return; }
   // Save the store soon after it changes, not only on close: a reboot, a flash
   // or a power-off with the app open used to lose everything set since launch
-  // (a sign-in, a high score). At most every 2 s, so a chatty app costs little.
-  if (s_h && s_h->store_dirty && !s_h->in_lua && millis() - s_h->store_flush_ms >= 2000) {
+  // (a sign-in, a high score). This runs on the UI thread and the write can land
+  // on SPIFFS, whose garbage collection stalls for seconds (the beta_25 watchdog
+  // bootloop), so at most every 30 s and under the watchdog guard.
+  if (s_h && s_h->store_dirty && !s_h->in_lua && millis() - s_h->store_flush_ms >= 30000) {
     s_h->store_flush_ms = millis();
+    WdtHeavyGuard guard;
     storeFlush();
   }
 }
@@ -3185,6 +3189,24 @@ int netRequest(lua_State* L) {
   }
   if (bad) { heap_caps_free(hdrs); return luaL_error(L, "%s", bad); }
   hdrs[hn] = 0;
+
+  // No answer possible: report -1 through the callback, as a failed connect does.
+  // Without Wi-Fi a connect would assert where lwIP never started (a Bluetooth-only
+  // boot), and a TLS handshake below ~46 KB of free internal heap starves Wi-Fi's
+  // own buffers, which next to the map has dropped the link.
+  if (!luaHostWifiUp() ||
+      (https && heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 46 * 1024)) {
+    heap_caps_free(hdrs);
+    if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
+    snprintf(s_net_method, sizeof s_net_method, "%s", method);
+    s_net_tls = false;
+    s_net_result = -1;
+    lua_pushvalue(L, 2);
+    s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+    s_net_done = true;          // netDeliver hands -1 to the app on its next tick
+    if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
+    return 0;
+  }
 
   if (!s_net_buf || s_net_cap < maxb + 1) {
     if (s_net_buf) heap_caps_free(s_net_buf);

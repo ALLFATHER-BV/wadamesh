@@ -27,7 +27,7 @@ local W, H, LH
 local caps = sys.caps and sys.caps() or {}
 
 local id_token, refresh_token, username
--- Every store.get passes a default: on firmware up to beta_101 a get with no
+-- Every store.get passes a default: on firmware up to beta_102 a get with no
 -- default, for a key that is not set, returns the whole store table, not nil.
 local remember = store.get("remember", "1") ~= "0"
 

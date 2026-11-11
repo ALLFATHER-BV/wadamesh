@@ -36531,6 +36531,13 @@ int luaStoreHttpRequestOpaque(void* client, void* http, const char* method, cons
                              method, url, hdrs, (const uint8_t*)body, body_len, buf, cap, status);
 }
 
+// wada.net.request answers -1 at once without a station link. A boot with only
+// Bluetooth on never started lwIP, and a TLS connect there asserts in the TCP/IP
+// task instead of failing.
+bool luaHostWifiUp() {
+  return WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0;
+}
+
 #if CAP_LUA_HTTPS
 // Trust anchors for wada.net.request over https: ISRG Root X1 (RSA) and X2
 // (ECDSA), Let's Encrypt's roots, exported from the macOS system root store
