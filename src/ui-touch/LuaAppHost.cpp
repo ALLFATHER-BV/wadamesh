@@ -170,6 +170,7 @@ extern int luaStoreHttpRequestOpaque(void* client, void* http, const char* metho
 extern bool luaNetSpawnTls();
 #endif
 extern bool luaHostWifiUp();   // station connected with an address
+extern bool luaHostNetWorkerStart();   // the tile worker that runs plain-http fetches
 
 // ---------------------------------------------------------------------------
 // 1) allocator + budget
@@ -3065,6 +3066,7 @@ int netHttpPost(lua_State* L) {
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   s_net_done = false;
   s_net_pending = true;
+  luaHostNetWorkerStart();
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }
@@ -3091,6 +3093,7 @@ int netHttpGet(lua_State* L) {
   s_net_cb = luaL_ref(L, LUA_REGISTRYINDEX);
   s_net_done = false;
   s_net_pending = true;
+  luaHostNetWorkerStart();
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }
@@ -3239,6 +3242,7 @@ int netRequest(lua_State* L) {
     return luaL_error(L, "request: could not start the TLS task (low memory)");
   }
 #endif
+  if (!https) luaHostNetWorkerStart();
   if (!s_net_poll) s_net_poll = lv_timer_create(netDeliver, 120, nullptr);
   return 0;
 }

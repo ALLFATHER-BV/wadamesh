@@ -37369,6 +37369,12 @@ bool luaHostWifiUp() {
   return WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0;
 }
 
+// Lua's http_get / http_post / request run on the tile worker, which only exists
+// once something has started it (the map, the Store, the update check). An app
+// opened straight from its launcher after a reboot queued its fetch and waited
+// forever, so every request starts the worker itself.
+bool luaHostNetWorkerStart() { return ensureTileFetchTaskRunning(); }
+
 #if CAP_LUA_HTTPS
 // Trust anchors for wada.net.request over https: ISRG Root X1 (RSA) and X2
 // (ECDSA), Let's Encrypt's roots, exported from the macOS system root store
