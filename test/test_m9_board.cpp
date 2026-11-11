@@ -149,7 +149,7 @@ static void testCompassHeading() {
   assert(nearf(m9CompassHeadingFromBody( 0.0f, +1.0f), 270.0f));
 
   {
-    std::ifstream lua_in("deploy/apps/gpscompass/1.0/gpscompass.lua");
+    std::ifstream lua_in("deploy/apps/gpscompass/1.1/gpscompass.lua");
     assert(lua_in.good());
     std::ostringstream ss;
     ss << lua_in.rdbuf();
