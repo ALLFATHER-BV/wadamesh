@@ -34,6 +34,7 @@ extra_flags() {
     # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
     test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
     test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
+    test_lua_json) echo "-I lib/lua/src" ;;   # wada.json runs against the real Lua (objects from prep)
     test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
     test_keyboard_layouts_hw) echo "-I test/kb_layouts_fakes" ;;   # LVGL names only
     test_clock_floor) echo "-I test/clock_hw_fakes" ;;   # a settable hardware clock
@@ -51,6 +52,7 @@ extra_flags() {
 link_flags() {
   case "$1" in
     test_emoji_deflated) echo "-lz" ;;
+    test_lua_json) echo "$OUT/lua/"'*.o' ;;
     *) echo "" ;;
   esac
 }
@@ -61,6 +63,13 @@ prep() {
     test_emoji_deflated)
       mkdir -p "$OUT/gen" &&
         python3 scripts/build/gen-emoji-deflated.py src/ui-touch/emoji_data.c "$OUT/gen/emoji_deflated.h" ;;
+    test_lua_json)
+      # The Lua core as C objects, once per run; lua.c and luac.c carry their own main().
+      rm -rf "$OUT/lua" && mkdir -p "$OUT/lua" &&
+        for c in lib/lua/src/*.c; do
+          case "$(basename "$c")" in lua.c|luac.c) continue ;; esac
+          ${CC:-cc} -c -O1 -w -I lib/lua/src "$c" -o "$OUT/lua/$(basename "$c" .c).o" || return 1
+        done ;;
     *) true ;;
   esac
 }
