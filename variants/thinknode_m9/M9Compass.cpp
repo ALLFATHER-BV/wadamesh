@@ -166,18 +166,22 @@ bool m9CompassRead(float* x, float* y, float* z, bool* overflow) {
   }
 
   s_last_read_ms = now;
+  uint8_t st = 0;
+  bool ok = false;
   if (!s_awake) {
-    // Waking costs one register write; the first conversion lands a sample
-    // period later, so this call reports "nothing fresh" and the caller's next
-    // poll gets real data. Callers already handle a miss (the chip may be
-    // absent), so this needs no special case at the other end.
+    // Waking costs one register write; wait up to ~15 ms for the first 100 Hz
+    // conversion so 1 Hz callers (hwCompassUpdate) receive a valid heading on
+    // their very first call instead of failing until the next 1 s tick.
     if (!writeReg(kRegCtrl1, kCtrl1)) return false;
     s_awake = true;
-    return false;
+    for (int wait_i = 0; wait_i < 8; ++wait_i) {
+      delay(2);
+      ok = readRegs(kRegStatus, &st, 1);
+      if (ok && (st & kStatDrdy)) break;
+    }
+  } else {
+    ok = readRegs(kRegStatus, &st, 1);
   }
-
-  uint8_t st = 0;
-  bool ok = readRegs(kRegStatus, &st, 1);
   if (ok && (st & kStatDrdy)) {
     uint8_t b[6];
     ok = readRegs(kRegData, b, 6);
@@ -230,6 +234,23 @@ bool m9CompassRead(float* x, float* y, float* z, bool* overflow) {
   if (y) *y = s_y;
   if (z) *z = s_z;
   if (overflow) *overflow = s_ovfl;
+  return true;
+}
+
+float m9CompassHeadingFromBody(float bx, float by) {
+  float deg = atan2f(-by, bx) * 57.2957795f;
+  if (deg < 0.0f) deg += 360.0f;
+  if (deg >= 360.0f) deg -= 360.0f;
+  return deg;
+}
+
+bool __attribute__((used)) m9CompassReadHeadingDeg(float* heading_deg, float ox, float oy) {
+  float mx = 0.0f, my = 0.0f, mz = 0.0f;
+  bool ovfl = false;
+  if (!m9CompassRead(&mx, &my, &mz, &ovfl) || ovfl) return false;
+  const float bx = my - oy;
+  const float by = -(mx - ox);
+  if (heading_deg) *heading_deg = m9CompassHeadingFromBody(bx, by);
   return true;
 }
 

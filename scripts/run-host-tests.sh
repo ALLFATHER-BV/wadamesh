@@ -25,6 +25,7 @@ extra_flags() {
     # Its subject is a board variant header, not shared src/.
     test_crowpanel_sd_codec) echo "-I variants/crowpanel_35" ;;
     test_m9_keyboard) echo "-I test/m9_keyboard_fakes" ;;
+    test_m9_board) echo "-DM9_HOST_TEST=1 -DESP32 -DHAS_THINKNODE_M9=1 -DHAS_M9_COMPASS=1 -DHAS_M9_IMU=1 -DHAS_M9_KEYBOARD=1 -DPIN_PERIPH_POWER=18 -DPIN_TFT_BL_EN=17 -DPIN_USB_5V_SENSE=1 -DPIN_CHG_DONE=8 -DPIN_KB_WAKEUP=12 -DTHINKNODE_M9_BUZZER_PIN=9 -DPIN_KEY_LED=46 -DPIN_VBAT_READ=13 -DPIN_TFT_CS=16 -DP_LORA_NSS=39 -DPIN_SD_CS=48 -DP_LORA_SCLK=40 -DP_LORA_MISO=38 -DP_LORA_MOSI=47 -DPIN_GPS_STANDBY=10 -DPIN_GPS_EN=11 -DPIN_GPS_RESET=5 -DPIN_GPS_RX=3 -DPIN_GPS_TX=2 -I test/m9_hw_fakes -I variants/thinknode_m9 variants/thinknode_m9/M9Board.cpp variants/thinknode_m9/M9Compass.cpp variants/thinknode_m9/M9Imu.cpp" ;;
     test_time_zones) echo "-I test/clock_floor_fakes" ;;
     # Its subject lives in the T-Display P4 IDF component, not in src/.
     test_c6_link_health) echo "-I tdisplay_p4/components/c6_at" ;;

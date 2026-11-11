@@ -6,8 +6,8 @@
 #include "M9Board.h"
 #include <RadioLib.h>
 #include <helpers/AutoDiscoverRTCClock.h>
-#include <helpers/radiolib/CustomLR1110Wrapper.h>
 #include <helpers/radiolib/RadioLibWrappers.h>
+#include "M9LR1110Wrapper.h"
 #ifdef DISPLAY_CLASS
 #include <helpers/ui/MomentaryButton.h>
 #include <helpers/ui/ST7789LCDDisplay.h>

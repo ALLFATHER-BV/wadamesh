@@ -11,7 +11,7 @@
 //   0x00 WHO_AM_I (0x05)      0x01 REVISION_ID (0x7C on the A, other on the C)
 //   0x02 CTRL1: bit6 ADDR_AI (burst reads need it), bit5 BE, bit0 SensorDisable
 //   0x03 CTRL2: aFS[6:4] full scale, aODR[3:0] rate
-//   0x05 CTRL5: accel low-pass    0x08 CTRL7: bit0 aEN
+//   0x06 CTRL5: accel low-pass    0x08 CTRL7: bit0 aEN
 //   0x2E STATUS0: bit0 aDA        0x35..0x3A AX/AY/AZ int16 little-endian
 //   0x60 RESET (write 0xB0)       0x4D reset-success flag (0x80)
 // At ±2 g the scale is 16384 LSB/g.
@@ -39,6 +39,7 @@ bool m9ImuPresent();
  *  reads about ±1 and the others about 0 — which is what identifies the axes.
  *  False = no chip, bus error, or nothing fresh. */
 bool m9ImuRead(float* x_g, float* y_g, float* z_g);
+bool m9ImuReadAccelG(float* x_g, float* y_g, float* z_g);
 
 /** Call periodically (cheap until it acts). Puts the part in power-down a
  *  couple of seconds after the last read, so it costs nothing while no app

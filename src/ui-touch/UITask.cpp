@@ -215,7 +215,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #if defined(HAS_PAGER_KEYBOARD)
     #include "../helpers/input/PagerKeyboard.h"
   #endif
-  #if defined(TLORA_PAGER) && !defined(WADA_WEB)
+  #if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
     #include <esp_wifi.h>              // esp_wifi_set_ps: deeper modem sleep while the screen is off
   #endif
   #if defined(TLORA_PAGER)
@@ -2737,10 +2737,12 @@ static void v4BeepTaskFn(void* arg) {
 #if defined(THINKNODE_M9_BUZZER_PIN)
   ledcWrite(kM9BuzzCh, 0);
   ledcDetachPin(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, OUTPUT);
+  digitalWrite(UI_BUZZER_PIN, LOW);  // hold transistor base / piezo LOW -> zero idle current
 #else
   noTone(UI_BUZZER_PIN);
-#endif
   pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
+#endif
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
@@ -14291,12 +14293,17 @@ static void toggleGpsCb(lv_event_t* e) {   // GPS on/off switch (VALUE_CHANGED)
 // (hold Shift: on until held again, not kept over a restart) and lying face down
 // (Settings > Sound, off by default). Either one counts as Do Not Disturb.
 static bool s_quiet_manual = false;
-static bool s_face_down    = false;
 static uint32_t s_pager_input_seq = 0;   // moves on with every key, chord, turn and click
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+static bool s_face_down    = false;
 #endif
 static bool dndActive() {
 #if defined(TLORA_PAGER)
-  if (s_quiet_manual || s_face_down) return true;
+  if (s_quiet_manual) return true;
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+  if (s_face_down) return true;
 #endif
   if (!touchPrefsGetDndEnabled()) return false;
   if (!wallClockIsCurrent()) return false;
@@ -14311,13 +14318,15 @@ static bool dndActive() {
 }
 
 #if defined(TLORA_PAGER)
-static void pagerFaceDownSettingChanged(bool on);
-static void pagerPickupSettingChanged(bool on);
 static void quietNowToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   s_quiet_manual = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   updateGlobalStatusBar();
 }
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+static void pagerFaceDownSettingChanged(bool on);
+static void pagerPickupSettingChanged(bool on);
 static void pickupToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   pagerPickupSettingChanged(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
@@ -19720,6 +19729,10 @@ static void buildDisplayPage() {
     setSwitchRow(c, "Wake when picked up", "Lifting the Pager off the table turns the screen on (a locked Pager shows "
                  "its lock screen). Only after it lay still, so it stays dark in a bag or pocket.",
                  touchPrefsGetPickupWake(), pickupToggleCb);
+#elif defined(HAS_M9_IMU)
+    setSwitchRow(c, "Wake when picked up", "Lifting the device off the table turns the screen on (a locked device shows "
+                 "its lock screen). Only after it lay still, so it stays dark in a bag or pocket.",
+                 touchPrefsGetPickupWake(), pickupToggleCb);
 #endif
   }
 
@@ -20213,6 +20226,10 @@ static void buildSoundPage() {
     setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the Pager stays silent "
                  "(no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.",
                  touchPrefsGetFaceDownQuiet(), faceDownToggleCb);
+#elif defined(HAS_M9_IMU)
+    setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the device stays silent. "
+                 "Picking it up ends it. Keeps the motion sensor on, a little more power.",
+                 touchPrefsGetFaceDownQuiet(), faceDownToggleCb);
 #endif
   }
 #else
@@ -20544,6 +20561,13 @@ static void buildBatteryPage() {
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     setNote(c, "Tap with a full battery to call its voltage 100%. Hold to go back to the default.");
+#if defined(HAS_THINKNODE_M9)
+    setSwitchRow(c, "Low battery warning", "Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.",
+                 touchPrefsGetLowBattWarn(), +[](lv_event_t* e) {
+                   if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED)
+                     touchPrefsSetLowBattWarn(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+                 });
+#endif
 #endif
   }
 }
@@ -26096,8 +26120,8 @@ static uint16_t batteryFullMv() {
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
-// (R8: the divider is permanently connected — PIN_ADC_CTRL=-1 — so the same
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+// (R8 & M9: the divider is permanently connected, so EMA smoothing filters ADC2/Wi-Fi jitter.)
 // EMA + above-full voltage heuristic applies; threshold accuracy vs the
 // uncalibrated ADC_MULTIPLIER=5.07 conversion needs on-device confirmation.)
 // Per-board battery sampler: EMA over the noisy ADC so the value doesn't jitter
@@ -26146,7 +26170,14 @@ static uint16_t batteryMvSampled() { return g_lv.task ? g_lv.task->getBattMilliV
 // The threshold against an uncalibrated ADC still wants on-device confirmation,
 // exactly as the V4-R8 note above already says.
 static bool batteryIsCharging(uint16_t mv) {
-#if defined(TLORA_PAGER)
+#if defined(HAS_THINKNODE_M9)
+  // ThinkNode M9: GPIO1 (5V_TEST) senses USB VBUS and GPIO8 (U6 LGS4056HDA-4.35,
+  // active-LOW open-drain) reports 0=discharging, 1=actively charging, 2=charge complete.
+  if (mv != 0) {
+    const int chg = board.isCharging();
+    if (chg >= 0) return chg == 1;
+  }
+#elif defined(TLORA_PAGER)
   // The Pager's BQ25896 charger knows whether USB power is in, and its gauge reads
   // the CELL voltage, which never rises past the charger's target: the voltage test
   // below could not report charging on this board at all. Fall back to it only
@@ -26175,11 +26206,15 @@ static uint16_t batteryMvSmoothed() {
   // Normally hold for 20 s to kill jitter — BUT publish at once when the charge
   // state flips, so plugging/unplugging the charger is recognized immediately
   // instead of waiting out the hold window.
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // The verdict above is the charger's, not a function of the reading, so comparing
   // two readings never sees it change: watch the charger's own state instead.
   static int s_ext_prev = -2;
+#if defined(HAS_THINKNODE_M9)
+  const int ext_now = ((board.externalPowerPresent() & 1) << 2) | (board.isCharging() & 3);
+#else
   const int ext_now = board.externalPowerPresent();
+#endif
   const bool charge_flip = (s_pub != 0) && s_ext_prev != -2 && ext_now != s_ext_prev;
   s_ext_prev = ext_now;
 #else
@@ -32640,7 +32675,15 @@ static bool spectrumSweepChunk() {
     // attribute the old frequency's RSSI to this bin.
     if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
 #endif
+#if defined(HAS_THINKNODE_M9)
+    // Pass irqMask = 0 so RX_DONE / PREAMBLE_DETECTED are not routed to DIO1
+    // (GPIO42) while sweeping: the wrapper's setFlag ISR stays attached on DIO1
+    // and a stray LoRa preamble mid-sweep would otherwise latch irq_read during
+    // spectrum mode.
+    radio.LR11x0::startReceive(RADIOLIB_LR11X0_RX_TIMEOUT_INF, 0, 0, 0);
+#else
     radio.startReceive();                 // ARM RX — GET_RSSI_INST is only valid in RX
+#endif
     // The modem's instantaneous-RSSI readout needs SEVERAL ms in RX to settle after
     // arming (measured on the SX1262; the LR1110 behaves the same): at ~1.5 ms it
     // still reads the reset default, only by ~3-4 ms does it report the true channel
@@ -33042,6 +33085,9 @@ static void spectrumRestoreRadio() {
   // skips startReceive(), and the node goes DEAF. Re-arm RX here on the mesh channel so
   // the chip's reality matches the wrapper state and packets flow again immediately.
   radio.startReceive();
+#if defined(HAS_THINKNODE_M9)
+  (void)radio_driver.isInRecvMode();  // drain any stale DIO1 flag latched during sweep
+#endif
 #endif
   s_spectrum_active = false;          // hand the radio back; the mesh keeps RX armed
 }
@@ -51610,17 +51656,14 @@ static bool pagerSliderEditClick() {
   pagerSliderEditBegin(foc);
   return true;
 }
+#endif
 
-#if defined(TLORA_PAGER)
-// ---- Low battery (Pager) --------------------------------------------------------
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+// ---- Low battery (Pager & ThinkNode M9) -----------------------------------------
 // On battery only, with Settings > Battery > Low battery warning on (the default):
-// a warning with a vibration at 20 % and again at 10 %, and at 3 % the Pager
-// switches itself off (ship mode, see powerOffNow) before the cell is run flat; a
-// LiPo left empty for long can be damaged for good. The percentage is the fuel
-// gauge's. Each warning comes once per discharge: plugging in (or the pack coming
-// back 5 % above it) arms it again. A warning given while the screen is off is
-// shown when it next comes on.
-#if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
+// a warning at 20 % and again at 10 %, and at 3 % the device switches itself off
+// before the cell is run flat; a LiPo left empty for long can be damaged for good.
+#if defined(TLORA_PAGER) && defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
 static void powerOffNow();
 #define PAGER_HAS_POWER_OFF 1
 #endif
@@ -51634,7 +51677,12 @@ static void pagerLowBatteryTick(uint32_t now) {
   if (now < 20000 || now - s_ms < 2000) return;   // let the boot and the gauge settle first
   s_ms = now;
   if (!g_lv.task) return;
+#if defined(TLORA_PAGER)
   const int soc = board.getBattStateOfCharge();
+#else
+  const uint16_t mv = batteryMvSmoothed();
+  const int soc = mv ? batteryPercentFromMv(mv) : -1;
+#endif
   const bool on_usb = board.externalPowerPresent() != 0;   // 1 = USB, -1 = charger silent: do nothing
   if (on_usb || soc < 0 || soc > 100 || !touchPrefsGetLowBattWarn()) {
     if (s_off_at) { s_off_at = 0; if (on_usb) g_lv.task->showAlert(TR("Charging: switch-off cancelled"), 2500); }
@@ -51643,12 +51691,18 @@ static void pagerLowBatteryTick(uint32_t now) {
     return;
   }
   if (soc >= s_warned + 5) s_warned = 101;          // charged back up a fair way
+#if defined(TLORA_PAGER)
   const bool vib_ok = touchPrefsGetVibrate() && !dndActive();
+#endif
   if (soc <= 3) {
     if (++s_low_reads < 3) return;                  // 3 readings in a row (6 s): not a glitch
     if (!s_off_at) {
       s_off_at = now + 10000;
+#if defined(TLORA_PAGER)
       pagerHapticsPattern(PAGER_VIB_LONG, 2);
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+      if (!dndActive()) uiPlayMention();
+#endif
       if (g_lv.task->isManualLock()) g_lv.task->lockscreenReveal();
       else                           g_lv.task->wakeScreen();
       g_lv.task->showAlert(TR("Battery empty: switching off in 10 s to protect it. Plug in to cancel."), 9500);
@@ -51656,6 +51710,8 @@ static void pagerLowBatteryTick(uint32_t now) {
       s_off_at = 0;
 #if defined(PAGER_HAS_POWER_OFF)
       powerOffNow();
+#elif defined(HAS_THINKNODE_M9)
+      board.powerOff();
 #endif
     }
     return;
@@ -51668,37 +51724,33 @@ static void pagerLowBatteryTick(uint32_t now) {
     s_warned = 10;
     snprintf(s_msg, sizeof s_msg, TR("Battery at %d%%: charge soon"), soc);
     msg = s_msg;
+#if defined(TLORA_PAGER)
     if (vib_ok) pagerHapticsPattern(PAGER_VIB_THRICE, 2);
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+    if (!dndActive() && touchPrefsGetSoundMessages()) uiPlayNotify();
+#endif
   } else if (soc <= 20 && s_warned > 20) {
     s_warned = 20;
     snprintf(s_msg, sizeof s_msg, TR("Battery low: %d%%"), soc);
     msg = s_msg;
+#if defined(TLORA_PAGER)
     if (vib_ok) pagerHapticsPattern(PAGER_VIB_TWICE, touchPrefsGetVibrateStrength());
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+    if (!dndActive() && touchPrefsGetSoundMessages()) uiPlayNotify();
+#endif
   }
   if (!msg) return;
   if (g_lv.task->isScreenOff()) s_pending = msg;
   else                          g_lv.task->showAlert(msg, 5000);
 }
+#endif
 
-// ---- Motion: face down = quiet, pick up = wake (Pager) ---------------------------
-// Both off by default (Settings > Sound > Do Not Disturb; Settings > Display > Screen).
-// Face down: lying face down for 3 s turns the screen off and keeps the Pager
-// quiet (no sound, no vibration, no glance), as Do Not Disturb; picking it up
-// ends it. Pick up: lifting it off a table lights the screen (a locked Pager
-// only shows its lock screen). The accelerometer is read only while one of
-// them is on: once a second with the screen on, five times a second with it off
-// and pick-up on (a lift is over in half a second).
-//
-// Pick-up is meant not to go off in a bag or pocket. It only arms after the
-// Pager has lain still and flat (screen up or down, as on a table) for 3 s;
-// then it needs a real movement, and the Pager must come to rest within 2 s
-// in a reading position (screen facing up or towards you) tilted at least 20
-// degrees from how it lay. A bag that is carried never lies still enough to arm
-// it, and one that is picked up keeps swinging instead of settling. Waking it
-// that way disarms it until it has lain still again.
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+// ---- Motion: face down = quiet, pick up = wake (Pager & M9 QMI8658A) ------------
 static int8_t s_face_pref = -1;          // the face-down setting, cached; -1 = not read yet
 static int8_t s_pickup_pref = -1;        // the pick-up setting, likewise
 static void pagerMotionWarmup() {
+#if defined(TLORA_PAGER)
   // The first read of a boot uploads the sensor hub's firmware (1-2 s, the loop
   // stands still meanwhile): say so before it happens, so it does not look hung.
   if (pagerImuStarted()) return;
@@ -51706,6 +51758,20 @@ static void pagerMotionWarmup() {
   lv_refr_now(nullptr);
   float x, y, z;
   pagerImuRead(&x, &y, &z);
+#elif defined(HAS_M9_IMU)
+  float x, y, z;
+  (void)m9ImuRead(&x, &y, &z);
+#endif
+}
+static bool deviceImuRead(float* x, float* y, float* z) {
+#if defined(TLORA_PAGER)
+  return pagerImuRead(x, y, z);
+#elif defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
 }
 static void pagerMotionTick(uint32_t now) {
   static uint32_t s_ms = 0, s_since = 0;
@@ -51731,7 +51797,7 @@ static void pagerMotionTick(uint32_t now) {
   s_ms = now;
   pagerMotionWarmup();
   float x, y, z;
-  if (!pagerImuRead(&x, &y, &z)) return;
+  if (!deviceImuRead(&x, &y, &z)) return;
 
   // ---- face down
   if (want_face) {
@@ -51742,7 +51808,9 @@ static void pagerMotionTick(uint32_t now) {
           s_face_down = true;
           s_since = 0;
           Serial.printf("[MOTION] face down: quiet\n");
+#if defined(TLORA_PAGER)
           pagerHapticsClick(1);         // a light tick: noticed
+#endif
           if (g_lv.task && !g_lv.task->isScreenOff()) g_lv.task->sleepScreen();
           updateGlobalStatusBar();
         }
@@ -51801,6 +51869,7 @@ static void pagerPickupSettingChanged(bool on) {
 }
 #endif
 
+#if defined(HAS_PAGER_ENCODER)
 #if defined(TLORA_PAGER)
 // ---- Shift + knob, hold Shift, hold Fn (Pager) --------------------------------
 // Shift + turn: screen brightness, without opening a menu; Shift + click switches
@@ -56458,7 +56527,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       taDeleteRange(ta, bs_s, bs_e);
       taClearSelection(ta);
     } else {
-#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
       // Keyboard nav: backspace in an EMPTY field drops back to navigate mode — the
       // discoverable keyboard way OUT of the auto-focused chat composer (Enter on an
       // empty composer already did this, silently). Reveal the focus highlight so the
@@ -56552,7 +56621,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
           }
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
         }
-#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
         else if (s_kbd_nav) { s_nav_ta_editing = false; s_nav_show = true; }   // Enter on an EMPTY composer: drop to navigate mode, highlight visible
 #endif
       }
@@ -58757,7 +58826,7 @@ static bool ccClockStrings(char* clock_s, size_t clock_cap, char* date_s, size_t
   return current;
 }
 static void openControlCenter() {
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   const bool cc_fresh = (s_cc_root == nullptr);   // not a rebuild after a chip was toggled
 #endif
   closeControlCenter();
@@ -59048,8 +59117,8 @@ static void openControlCenter() {
 #else
   navSetTip(bl, TR("Brightness"));
 #endif
-#if defined(TLORA_PAGER)
-  // Opened afresh (hold S, the bar), focus starts here, not on the power button built
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  // Opened afresh, focus starts on Brightness rather than the red Power button built
   // before it: clicking straight through the panel must not land on Power off. A
   // rebuild after a chip keeps focus on that chip.
   if (cc_fresh) s_nav_focus_hint = bl;
@@ -67891,12 +67960,17 @@ static int hwCompassHeading() {
     }
   }
 #endif
-  if (!tilted) deg = atan2f(bx, by) * 57.29578f;
+  if (!tilted) deg = atan2f(-by, bx) * 57.29578f;
   deg += s_hw_cal.align + s_hw_cal.decl;
   // Smooth as a vector, so 359 and 1 average to 0, not 180.
   const float r = deg / 57.29578f;
-  s_hw_head_x = s_hw_head_x * 0.7f + sinf(r) * 0.3f;
-  s_hw_head_y = s_hw_head_y * 0.7f + cosf(r) * 0.3f;
+  if (s_hw_head_x == 0.0f && s_hw_head_y == 0.0f) {
+    s_hw_head_x = sinf(r);
+    s_hw_head_y = cosf(r);
+  } else {
+    s_hw_head_x = s_hw_head_x * 0.7f + sinf(r) * 0.3f;
+    s_hw_head_y = s_hw_head_y * 0.7f + cosf(r) * 0.3f;
+  }
   int h = (int)lroundf(atan2f(s_hw_head_x, s_hw_head_y) * 57.29578f);
   return (h % 360 + 360) % 360;
 }
@@ -79090,7 +79164,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     tzset();
   }
 
-#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
   // Boot storage setup may have mounted SD before UITask starts. Synchronize
   // the UI's lifecycle state before tile-backend selection and before the
   // first loop tick can run health/remount logic. (R8: without this the
@@ -79533,9 +79607,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW;   // top safe-area + one row (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
     // (Not the T-Deck Pro: its bar keeps the Normal faces at every size, see sbFixed.)
-    // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
+    // Geometry stays fixed for R8/M9 text presets, but Huge's 20 px title role
     // needs two extra pixels to avoid clipping regular one-row status text.
     const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
     if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
@@ -81056,6 +81130,9 @@ bool UITask::setRadioParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr
   // Clamp TX to the radio's range here — the same bound the boot-time load applies — so a too-high
   // value is corrected the moment it's set + saved, not silently dropped on the next reboot.
   tx_dbm = constrain(tx_dbm, (int8_t)-9, (int8_t)MAX_LORA_TX_POWER);
+#if defined(USE_LR1110)
+  freq_mhz = constrain(freq_mhz, 150.0f, 960.0f);
+#endif
   _node_prefs->freq = freq_mhz;
   _node_prefs->bw = bw_khz;
   _node_prefs->sf = sf;
@@ -81119,7 +81196,7 @@ void UITask::setExperimentalFlags(uint8_t multi_acks, uint8_t client_repeat, uin
   the_mesh.savePrefs();
   // Boosted gain is a radio register: set it now, the way the phone app's radio command
   // does (CMD_SET_RADIO_PARAMS in MyMesh), instead of leaving it for the next boot.
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN) || defined(RX_BOOSTED_GAIN)
   radio_driver.radioAcquire();
   radio_driver.setRxBoostedGainMode(_node_prefs->rx_boosted_gain != 0);
   radio_driver.radioRelease();
@@ -81352,6 +81429,7 @@ static inline void touchScreenBacklight(bool on) {
     touchPanelSleep(false);
     applyBrightness(s_brightness_pct);
   } else {
+    if (!s_bl_pwm_ready) applyBrightness(s_brightness_pct);
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
@@ -81379,13 +81457,13 @@ static inline void touchScreenBacklight(bool on) {
 // stops listening to the mesh — we just stop burning 240 MHz to render nothing.
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
-#if defined(TLORA_PAGER) && !defined(WADA_WEB)
-// A joined Wi-Fi is the Pager's largest draw after the backlight: with the screen
+#if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
+// A joined Wi-Fi is the largest draw after the backlight: with the screen
 // dark and no app connected, let the modem sleep through more beacons (maximum
 // modem sleep: it wakes every listen interval instead of every DTIM). Still
 // associated, so the web client and the app reconnect as before, a beat slower.
 // Waking the screen, or a client connecting, returns it to the normal setting:
-// setCpuForScreen() passes screen changes in, the pager loop calls it with -1
+// setCpuForScreen() passes screen changes in, the loop calls it with -1
 // about once a second to catch clients coming and going.
 // (Never WIFI_PS_NONE: illegal while Bluetooth runs, see main.cpp.)
 static void pagerWifiPsUpdate(int screen_on) {
@@ -81411,7 +81489,7 @@ static void setCpuForScreen(bool screen_on) {
   setCpuFrequencyMhz(want);
   s_cur_mhz = want;
 #endif
-#if defined(TLORA_PAGER) && !defined(WADA_WEB)
+#if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
   pagerWifiPsUpdate(screen_on);
 #endif
 }
@@ -83991,9 +84069,11 @@ static void sdHealthTick() {
   static uint8_t  s_absent_samples   = 0;
 #endif
   const uint32_t now = (uint32_t)millis();
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   if (!s_sd_mounted && !sdRuntimeLifecycleBusy() && sdAdoptLiveMount()) {
+#if defined(TLORA_PAGER)
     s_sd_data_warn_next_ms = 0;
+#endif
     if (!s_ui_data_fs) uiDataFsReady();
     if (s_ui_data_fs == &SD) {
       SD.mkdir("/meshcomod");
@@ -85627,7 +85707,17 @@ void UITask::loop() {
   m9CompassIdleTick();   // park the magnetometer when no app is reading it
 #endif
 #if defined(HAS_M9_IMU)
+  pagerMotionTick(now);
   m9ImuIdleTick();       // and the accelerometer
+#endif
+#if defined(HAS_THINKNODE_M9)
+  pagerLowBatteryTick(now);
+#endif
+#if defined(ESP32) && defined(HAS_THINKNODE_M9) && !defined(WADA_WEB)
+  {
+    static uint32_t s_wifi_ps_ms = 0;
+    if (now - s_wifi_ps_ms >= 1000) { s_wifi_ps_ms = now; pagerWifiPsUpdate(-1); }
+  }
 #endif
   uiCp("ui:keys");
   for (int kbi = 0; kbi < 12; ++kbi) {
@@ -85656,8 +85746,8 @@ void UITask::loop() {
     uint8_t kb_bl = 0;
     if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();   // Settings > Keyboard > Brightness (#664)
     else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
-    if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
-    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();   // notify pulse
+    if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();   // notify pulse (lights PIN_KEY_LED & keys even when locked/screen-off)
+    else if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     if (s_pin_root && !_screen_off) kb_bl = tdeckKbBlLevel();   // the PIN screen lights the keys to type it
     // Cache the last duty the controller ACTUALLY took, not the last one
     // computed: the write is dropped while the controller (its own MCU, on
@@ -86012,11 +86102,10 @@ void UITask::loop() {
     lv_obj_invalidate(lv_scr_act());
 #endif
   uiCp("ui:lvgl");
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   const uint32_t lv_next_ms = lv_timer_handler();
-  // The loop runs flat out, and the keyboard no longer parks it on an I2C read every
-  // pass (pagerKeyboardPoll reads only when the chip's INT line asks): when LVGL has
-  // nothing due for a couple of ms, give the core 1 ms back instead of spinning.
+  // When LVGL has nothing due for a couple of ms, yield 1 ms back to FreeRTOS
+  // instead of spinning Core 1 at 100%.
   if (lv_next_ms >= 2) vTaskDelay(1);
 #else
   lv_timer_handler();
