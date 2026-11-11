@@ -1655,7 +1655,12 @@ static FRESULT dir_clear (	/* Returns FR_OK or FR_DISK_ERR */
 	sect = clst2sect(fs, clst);		/* Top of the cluster */
 	fs->winsect = sect;				/* Set window to top of the cluster */
 	mem_set(fs->win, 0, sizeof fs->win);	/* Clear window buffer */
-#if FF_USE_LFN == 3		/* Quick table clear by using multi-secter write */
+/* wadamesh: the quick clear is off. With FF_USE_LFN 3 it zeroes a new directory cluster
+   from a heap buffer of up to 32 KB, and ff_memalloc prefers PSRAM, so every mkdir and
+   directory growth would hand the card driver a PSRAM buffer. SD writes from PSRAM
+   short-write at random offsets; the window buffer below is the path the stock build
+   (FF_USE_LFN 2) has always taken. */
+#if 0		/* Quick table clear by using multi-secter write */
 	/* Allocate a temporary buffer */
 	for (szb = ((DWORD)fs->csize * SS(fs) >= MAX_MALLOC) ? MAX_MALLOC : fs->csize * SS(fs), ibuf = 0; szb > SS(fs) && (ibuf = ff_memalloc(szb)) == 0; szb /= 2) ;
 	if (szb > SS(fs)) {		/* Buffer allocated? */
