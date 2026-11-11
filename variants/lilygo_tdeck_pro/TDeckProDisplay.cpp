@@ -69,7 +69,16 @@ bool TDeckProDisplay::begin() {
   _touch_is_cst3530 = probeCst3530();
   if (_touch_is_cst3530) {
     pinMode(PIN_TOUCH_INT, INPUT_PULLUP);
-    _touch_ready = initCst3530();
+    // One NACKed init write used to leave touch dead until the next boot. The
+    // controller already answered the probe and every read is checked, so retry
+    // the sequence and keep touch enabled even if a write still fails.
+    bool init_ok = false;
+    for (uint8_t attempt = 0; attempt < 3 && !init_ok; ++attempt) {
+      if (attempt) delay(50);
+      init_ok = initCst3530();
+    }
+    if (!init_ok) Serial.println("[BOOT] CST3530 init writes failed; touch left enabled");
+    _touch_ready = true;
     s_cst3530_irq_pending = false;
     attachInterrupt(digitalPinToInterrupt(PIN_TOUCH_INT), cst3530IntIsr, FALLING);
   } else {
