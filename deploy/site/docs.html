@@ -167,6 +167,7 @@
     <a href="#tdeck-keys">T-Deck keyboard</a>
     <a href="#tanmatsu">Tanmatsu</a>
     <a href="#theme">Colours &amp; theme</a>
+    <a href="#emoji">Emoji pack</a>
     <div class="grp">Finding nodes</div>
     <a href="#discover">Discover &amp; wardriving</a>
     <div class="grp">With your phone</div>
@@ -245,7 +246,8 @@
           <p>Every conversation in one list, newest first: channels (group chats like <code>#wadamesh</code> or <code>Public</code>) and direct messages. Each row has an avatar drawn from the chat's key, a square for a channel and a circle for a person, with its last message, the time, and a count while something in it is unread, in the chat's own colour. Prefer the older look? Pick <b>Initials</b> on the <a href="#theme">Theme page</a> and every avatar becomes the first two letters of the name in a coloured ball.</p>
           <h3>Along the top</h3>
           <ul>
-            <li><b>All</b>, <b>Channels</b> and <b>Direct</b> filter the list.</li>
+            <li>The dropdown filters the list to <b>All</b>, <b>Channels</b> or <b>Direct</b>.</li>
+            <li>The <b>U</b> chip beside it hides every chat with nothing unread. The two work together, so U plus Channels lists only the channels with unread messages, and both are kept over a restart.</li>
             <li><b>+</b> adds a channel.</li>
             <li><b>&middot;&middot;&middot;</b> has Add a channel, Mark all as read, and Share my contact (a QR code someone else scans to add you).</li>
           </ul>
@@ -265,7 +267,7 @@
           <p>The header shows the chat's avatar and name, and under it how the last message reached you: <i>Direct, no repeaters</i>, a number of hops, or for a channel how many different nodes it heard from today. The chevron on the left goes back.</p>
           <p>Other people's messages sit on the left with the sender's name in their own colour; yours sit on the right. Turn on <b>Colourful bubbles</b> on the <a href="#theme">Theme page</a> and the bubbles take a dark tint of each sender's colour too, yours included. Under each message is how many hops it came over (the dots count them) and the time. Under your own channel posts it reads <b>Heard by N repeaters</b>, counting the repeats of your message as they come back, so you can watch it spread.</p>
           <p>A direct message shows <b>Sent</b>, then <b>Delivered</b> once the other side confirms it. One that never arrived says <b>Not delivered, tap to resend</b>. A <b>NEW</b> line marks where your unread messages start.</p>
-          <p>Along the bottom: quick replies, emoji, the message field and the send button. Type on the keyboard to reply; hold a message for its menu.</p>
+          <p>Along the bottom: quick replies, emoji (many more with the <a href="#emoji">emoji pack</a>), the message field and the send button. Type on the keyboard to reply; hold a message for its menu.</p>
         </div>
         <div class="shot"><div class="device"><img class="screen" src="docs-img/conversation.png?v=92" alt="A channel conversation"></div><div class="cap">A channel, with hops and the composer</div></div>
       </div>
@@ -308,6 +310,7 @@
           <li><code>/tiles/&lt;z&gt;/&lt;x&gt;/&lt;y&gt;.png</code>: also read. This is the same folder the Wi-Fi download cache uses, so your own tiles and downloaded ones live side by side.</li>
         </ul>
         <p><b>Format.</b> 256&times;256 <code>.png</code> tiles (<code>.jpg</code> also works). <code>z</code> is the zoom level and <code>x</code>/<code>y</code> the tile column and row at that zoom, the same scheme OSM's own tile server and every XYZ tile downloader use, so most ready-made packs drop in unchanged.</p>
+        <p><b>The card.</b> FAT32 or exFAT. exFAT, the format cards of 64&nbsp;GB and up come in, works since beta_103, so there is no need to reformat a large card.</p>
         <p><b>Turn it on.</b> Open the map's options (the gear button on the map) and switch on <b>Tiles from SD card</b>; the status line confirms <code>Map tiles: microSD</code>. Turn it back off to fetch live tiles over Wi-Fi again.</p>
         <p><b>Making a pack.</b> Any XYZ or slippy-map tile downloader works: point it at OpenStreetMap for your area and a sensible zoom range, then copy the resulting <code>z/x/y</code> folders onto the card. Each extra zoom level roughly quadruples the tile count, so grab only the levels you will actually use.</p>
         <div class="callout">
@@ -465,6 +468,7 @@
           <li>On a slider, Left and Right change the value. On a settings row with <b>&minus;</b> and <b>+</b> buttons, such as Volume or Do Not Disturb, Left presses &minus; and Right presses +. Up and Down leave the row.</li>
         </ul>
         <p>Start typing in a conversation and the text field takes the letters. Left and Right move the caret, and at either end of the text they move on to the next control.</p>
+        <p>The M9's motion sensor drives two switches, both off until you turn them on. <b>Settings &rarr; Display &rarr; Wake when picked up</b> lights the screen when you lift the M9 off the table. <b>Settings &rarr; Sound &rarr; Quiet when face down</b> turns the screen off and keeps the M9 silent while it lies face down. <b>Settings &rarr; Battery &rarr; Low battery warning</b> is on from the start: it warns at 20% and 10% and puts the M9 to sleep at 3%, before the cell runs flat.</p>
       </div>
     </section>
 
@@ -568,6 +572,31 @@
       <div class="gallery">
         <div class="mini"><img src="docs-img/icons_initials.png?v=92" alt="Chats with initials"><div class="cap">Chat icons: Initials</div></div>
         <div class="mini"><img src="docs-img/look_neon_chat.png?v=92" alt="A conversation in Neon"><div class="cap">Neon: bubbles as lit tubes</div></div>
+      </div>
+    </section>
+
+    <section class="doc" id="emoji">
+      <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg></span> Emoji pack</h2>
+      <div class="prose" style="max-width:64ch">
+        <p>The firmware carries the emoji people use most. Put the emoji pack on the microSD card and the picker grows to nearly the full set: about 1,350 more emoji, country and region flags included, sorted into tabs (Smileys, People, Nature, Food and more) with a <b>Recent</b> tab for the ones you picked last. Messages that contain them draw them too, instead of an empty box. Without a pack nothing changes: the picker stays the plain grid it always was.</p>
+        <h3>Installing it</h3>
+        <ol>
+          <li>Download <a href="emoji/emoji.pack"><code>emoji.pack</code></a> (about 1 MB).</li>
+          <li>Put the card in your computer and make a folder called <code>emoji</code> in the top of the card, then copy the file into it, so it sits at <code>emoji/emoji.pack</code>. Keep the name exactly as it is. Loose in the top of the card, as <code>emoji.pack</code>, works too.</li>
+          <li>Put the card back and restart the device. The pack is read once, at start-up.</li>
+          <li>Open the emoji picker in a conversation. Tabs along the top mean the pack is in.</li>
+        </ol>
+        <p>No card reader? On boards whose USB socket is the ESP32-S3's own (the T-Deck family and the Heltec V4-R8) you can also copy it over the USB cable with <a href="https://files.wadamesh.com">USB Files</a>: make the <code>emoji</code> folder there, upload the file into it, and restart.</p>
+        <p>The card can be FAT32 or exFAT. exFAT, the format cards of 64&nbsp;GB and up come in, works since beta_103.</p>
+        <div class="callout">
+          <span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
+          <div>
+            <b>Which boards</b>
+            <p>The pack needs a microSD slot and 8&nbsp;MB of PSRAM, where it is kept while the device runs. It works on the LilyGo T-Deck and T-Deck Plus, the T-Deck Pro and T-Deck Max, the ThinkNode M9, the Heltec V4-R8 (in the Expansion Kit V2 card slot) and the CrowPanel Advance 3.5. The T-LoRa Pager has no flash space left for the code that reads it. The Heltec V4 has no card slot, and the ESP32-P4 boards and the Tanmatsu do not read it yet. On all of these the built-in set keeps working as before.</p>
+          </div>
+        </div>
+        <h3>Making your own <span class="tag">Dev</span></h3>
+        <p>The pack is built from Google's Noto emoji art, the same art as the built-in set, so both sit on the same line. <code>python3 scripts/build/gen-emoji-pack.py --all</code> in the repository builds the full one (it needs Pillow and downloads the art once). To pick your own selection, list the emoji in <code>scripts/build/emoji-pack.txt</code> and run it without <code>--all</code>. <code>scripts/build/check-emoji-pack.py emoji.pack</code> tells you whether the device would accept a pack. Thanks to TerryTel93 for the pack (#616).</p>
       </div>
     </section>
 
@@ -805,6 +834,7 @@
             <li><b>Screen timeout</b> before the screen sleeps</li>
             <li><b>Screensaver</b>, how long it shows <b>on battery</b>, and <b>always on when connected to power</b>, with a preview (<a href="#screensaver">Screensaver</a>)</li>
             <li><b>Launcher layout</b>, <b>UI size</b> and <b>Condense Nav</b> (a navigation rail in landscape)</li>
+            <li><b>Orientation</b>, portrait or landscape, on boards that can turn. On the Heltec V4-R8 the first start in a new landscape asks <b>Keep this orientation?</b> with one button in the corner. Leave it and it goes back to portrait by itself after 15 seconds, so a screen whose touch does not line up can never leave you stuck.</li>
             <li><b>At a glance</b> and <b>at a glance while locked</b> (<a href="#glance">New messages</a>)</li>
             <li><b>Hide device name</b>, <b>distance in miles</b> and <b>temperature in Fahrenheit</b></li>
           </ul>
@@ -880,6 +910,7 @@
             <li><b>Battery and power history</b> chart</li>
             <li><b>Calibrate</b>: tap to set 100% at the current voltage</li>
             <li><b>Battery saver</b>, also a tile in the control panel: slows the processor while the screen is off, lets the GPS rest between position checks and keeps a moving background still</li>
+            <li><b>Low battery warning</b> on the T-LoRa Pager and ThinkNode M9: warns at 20% and again at 10%, and switches the device off at 3% so the battery is never run flat. On by default</li>
           </ul>
         </div>
       </div>
@@ -937,6 +968,8 @@
       <h2><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span> Apps</h2>
       <div class="prose" style="max-width:64ch">
         <p>Tools from the home launcher. <b>Spectrum</b> sweeps the band so you can spot interference or find a clear frequency, <b>Signal</b> shows the live receive signal, and <b>Advertise</b> announces you to the mesh, by hand or on a timer. <b>RF Monitor</b> is a repeater-style view of recent packets and radio stats, from the Store.</p>
+        <h3>Cyberspace</h3>
+        <p><b>Cyberspace</b>, from the Store, is a client for <a href="https://cyberspace.online">cyberspace.online</a>: its cIRC rooms, C-Mail and the Feed, to read, page through and write. Sign in with your own cyberspace.online email and password. The password goes out once, over https, and is not stored; the app keeps only a sign-in token so the next open goes straight in, and <b>Stay signed in</b> on its home screen turns that off. It needs Wi-Fi and a board with 8&nbsp;MB of PSRAM that can open https connections, so not the Heltec V4 and not the ESP32-P4 boards. By oumike (#788).</p>
         <h3>Writing your own</h3>
         <p>The Apps drawer is open. Snake, RF Monitor and Airtime are ordinary Lua apps downloaded from the Store over Wi-Fi, and anyone can submit one; they get no privileges yours would not have. The Heltec V4 cannot use the Store's app list, so those three come built into its firmware instead. An app that transmits needs your permission first and shares one sending budget with every other app, so no app can flood the mesh (the numbers are in the <a href="sdk.html">SDK guide</a>).</p>
         <p>An app is a single Lua file plus a one-line manifest, talking to the firmware through the <code>wada.*</code> API. Submit it as a pull request to <a href="https://github.com/ALLFATHER-BV/wadamesh">the repository</a>, or open an issue with the file attached if you would rather not use git. The full procedure (file layout, versioning, and what the review looks for) is in <a href="https://github.com/ALLFATHER-BV/wadamesh/blob/main/deploy/apps/README.md">deploy/apps/README.md</a>.</p>
