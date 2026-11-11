@@ -77,6 +77,9 @@ fi
 unset VIRTUAL_ENV CONDA_PREFIX
 # shellcheck disable=SC1091
 source esp-idf/export.sh >/dev/null 2>&1
+# exFAT microSD cards (all SDXC, 64 GB and up). IDF hard-codes it off; idempotent, fails on drift.
+python3 "$(cd .. && pwd)/scripts/build/patch_idf_fatfs_exfat.py" \
+  --patch-file "$IDF_PATH/components/fatfs/src/ffconf.h"
 
 WADA_FW_TAG="${WADA_FW_TAG:-$(git describe --tags --match 'beta_*' --always 2>/dev/null || echo dev)}"
 WADA_FW_DATE="$(date '+%-d %b %Y')"

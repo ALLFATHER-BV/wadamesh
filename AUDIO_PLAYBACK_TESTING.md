@@ -20,7 +20,7 @@ pio device monitor -b 115200
 
 ## Quick MP3 test from SD
 
-1. Use a FAT32 SD card and create these paths on it:
+1. Use a FAT32 or exFAT SD card and create these paths on it:
 
    ```text
    /Music/test.mp3

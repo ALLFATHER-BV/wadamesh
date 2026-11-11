@@ -28230,7 +28230,7 @@ static void fmSdDoFormat() {
   s_sd_format_pending = 2;
 }
 // Tap on an unmounted SD row: try to mount, and if the card is unreadable
-// (e.g. exFAT, which this build can't read — only FAT16/FAT32) offer to format.
+// (no FAT16/FAT32/exFAT volume, or a corrupt one) offer to format.
 static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
