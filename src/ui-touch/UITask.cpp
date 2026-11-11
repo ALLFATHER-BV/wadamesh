@@ -215,7 +215,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #if defined(HAS_PAGER_KEYBOARD)
     #include "../helpers/input/PagerKeyboard.h"
   #endif
-  #if defined(TLORA_PAGER) && !defined(WADA_WEB)
+  #if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
     #include <esp_wifi.h>              // esp_wifi_set_ps: deeper modem sleep while the screen is off
   #endif
   #if defined(TLORA_PAGER)
@@ -2605,9 +2605,10 @@ static void l2PlayNotifySlot(int slot) {
 // chime rather than a different alert (#388).
 struct V4Note { uint16_t hz_soft, hz_loud, ms; };
 static const V4Note kV4ChimeMention[] = { {1500, 3400, 110}, {2000, 3900, 110}, {2600, 4200, 170} };
+static const V4Note kV4ChimeDm[]      = { {1400, 3500, 120}, {0,    0,    60},  {2100, 4100, 180} };
 static const V4Note kV4ChimeMessage[] = { {1000, 3200, 160}, {1500, 3700, 160}, {2000, 4100, 200} };
 static volatile bool s_v4_beep_playing = false;
-static volatile bool s_v4_mention = false;
+static volatile int  s_v4_beep_slot = TOUCH_SND_MSG;
 static volatile bool s_v4_loud = false;
 #if defined(THINKNODE_M9_BUZZER_PIN)
 // M9: tone() is a fixed 50% square wave, so the piezo had no volume. LEDC lets the
@@ -2625,7 +2626,10 @@ static uint32_t m9BuzzerDutyForVolume(uint32_t vol) {
 #endif
 static void v4BeepTaskFn(void* arg) {
   (void)arg;
-  const V4Note* chime = s_v4_mention ? kV4ChimeMention : kV4ChimeMessage;
+  const int slot = s_v4_beep_slot;
+  const V4Note* chime = (slot == TOUCH_SND_MEN) ? kV4ChimeMention
+                      : (slot == TOUCH_SND_DM)  ? kV4ChimeDm
+                                                : kV4ChimeMessage;
   const bool loud = s_v4_loud;
 #if defined(THINKNODE_M9_BUZZER_PIN)
   const uint32_t duty = s_v4_duty;
@@ -2635,20 +2639,27 @@ static void v4BeepTaskFn(void* arg) {
   for (int i = 0; i < 3; ++i) {
     const uint32_t hz = loud ? chime[i].hz_loud : chime[i].hz_soft;
 #if defined(THINKNODE_M9_BUZZER_PIN)
-    ledcChangeFrequency(kM9BuzzCh, hz, 8);
-    ledcWrite(kM9BuzzCh, duty);
+    if (hz == 0) {
+      ledcWrite(kM9BuzzCh, 0);
+    } else {
+      ledcChangeFrequency(kM9BuzzCh, hz, 8);
+      ledcWrite(kM9BuzzCh, duty);
+    }
 #else
-    tone(UI_BUZZER_PIN, hz);
+    if (hz == 0) noTone(UI_BUZZER_PIN);
+    else         tone(UI_BUZZER_PIN, hz);
 #endif
     vTaskDelay(pdMS_TO_TICKS(chime[i].ms));
   }
 #if defined(THINKNODE_M9_BUZZER_PIN)
   ledcWrite(kM9BuzzCh, 0);
   ledcDetachPin(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, OUTPUT);
+  digitalWrite(UI_BUZZER_PIN, LOW);  // actively hold transistor base / piezo LOW -> zero idle current
 #else
   noTone(UI_BUZZER_PIN);
+  pinMode(UI_BUZZER_PIN, INPUT);     // high-Z -> no idle current / no buzz
 #endif
-  pinMode(UI_BUZZER_PIN, INPUT);   // high-Z → no idle current / no buzz
   s_v4_beep_playing = false;
   vTaskDelete(nullptr);
 }
@@ -2656,10 +2667,12 @@ static void v4BeepTaskFn(void* arg) {
 // read here, not in the task: the shared Preferences handle is closed and reopened by
 // every pref write (prefsPutUChar), so a read from another task could race a Volume
 // press and get the default back.
-static void v4BuzzerBeep(bool mention) {
+static void v4BuzzerBeep(int slot) {
   if (s_v4_beep_playing) return;
 #if defined(ESP32)
   s_v4_loud = touchPrefsGetLoudAlerts();
+#else
+  s_v4_loud = false;
 #endif
 #if defined(THINKNODE_M9_BUZZER_PIN)
   const uint32_t vol = touchPrefsGetSoundVolume();
@@ -2669,7 +2682,7 @@ static void v4BuzzerBeep(bool mention) {
 #else
   constexpr uint32_t kBeepStack = 2048;
 #endif
-  s_v4_mention = mention;
+  s_v4_beep_slot = slot;
   s_v4_beep_playing = true;
   if (xTaskCreate(v4BeepTaskFn, "v4beep", kBeepStack, nullptr, 3, nullptr) != pdPASS)
     s_v4_beep_playing = false;
@@ -2695,7 +2708,7 @@ static inline void uiPlaySlot(int slot) {
 #elif defined(TLORA_PAGER)
   pagerPlayNotifySlot(slot);
 #elif defined(HELTEC_V4_BUZZER_PIN) || defined(THINKNODE_M9_BUZZER_PIN)
-  v4BuzzerBeep(slot == TOUCH_SND_MEN);   // mention = higher trill; msg/DM = the lower chime
+  v4BuzzerBeep(slot);                    // distinct patterns for mention, DM, and channel message
 #elif defined(HAS_TANMATSU)
   tanBeep();   // single codec tick on these boards (no per-slot sounds)
 #endif
@@ -13471,12 +13484,17 @@ static void toggleGpsCb(lv_event_t* e) {   // GPS on/off switch (VALUE_CHANGED)
 // (hold Shift: on until held again, not kept over a restart) and lying face down
 // (Settings > Sound, off by default). Either one counts as Do Not Disturb.
 static bool s_quiet_manual = false;
-static bool s_face_down    = false;
 static uint32_t s_pager_input_seq = 0;   // moves on with every key, chord, turn and click
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+static bool s_face_down    = false;
 #endif
 static bool dndActive() {
 #if defined(TLORA_PAGER)
-  if (s_quiet_manual || s_face_down) return true;
+  if (s_quiet_manual) return true;
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+  if (s_face_down) return true;
 #endif
   if (!touchPrefsGetDndEnabled()) return false;
   if (!wallClockIsCurrent()) return false;
@@ -13491,13 +13509,15 @@ static bool dndActive() {
 }
 
 #if defined(TLORA_PAGER)
-static void pagerFaceDownSettingChanged(bool on);
-static void pagerPickupSettingChanged(bool on);
 static void quietNowToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   s_quiet_manual = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
   updateGlobalStatusBar();
 }
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+static void pagerFaceDownSettingChanged(bool on);
+static void pagerPickupSettingChanged(bool on);
 static void pickupToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   pagerPickupSettingChanged(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
@@ -15550,14 +15570,22 @@ static void openDiscoveredModalCb(lv_event_t* e) {
 // multi-second UI freeze). Batching into 1 KB writes makes it ~60 ops.
 class FileBufWriter : public Print {
   File& _f;
-  uint8_t _buf[1024];
+  uint8_t* _heap_buf = nullptr;
+  uint8_t _inline_buf[64];
+  uint8_t* _buf = nullptr;
+  size_t _cap = 0;
   size_t _n = 0;
 public:
-  explicit FileBufWriter(File& f) : _f(f) {}
+  explicit FileBufWriter(File& f) : _f(f) {
+    _heap_buf = (uint8_t*)psAlloc(1024);
+    if (_heap_buf) { _buf = _heap_buf; _cap = 1024; }
+    else           { _buf = _inline_buf; _cap = sizeof(_inline_buf); }
+  }
+  ~FileBufWriter() { if (_heap_buf) free(_heap_buf); }
   void flushBuf() { if (_n) { _f.write(_buf, _n); _n = 0; } }
-  size_t write(uint8_t b) override { _buf[_n++] = b; if (_n >= sizeof(_buf)) flushBuf(); return 1; }
+  size_t write(uint8_t b) override { _buf[_n++] = b; if (_n >= _cap) flushBuf(); return 1; }
   size_t write(const uint8_t* d, size_t n) override {
-    for (size_t i = 0; i < n; ++i) { _buf[_n++] = d[i]; if (_n >= sizeof(_buf)) flushBuf(); }
+    for (size_t i = 0; i < n; ++i) { _buf[_n++] = d[i]; if (_n >= _cap) flushBuf(); }
     return n;
   }
 };
@@ -17434,7 +17462,7 @@ static void refreshSysInfo(unsigned long now) {
     if (lv_indev_get_scroll_dir(in) != LV_DIR_NONE) { next = now + 120; return; }
   }
   next = now + 1000;
-  char buf[1024];
+  static char buf[1024];
   sysInfoTextLive(buf, sizeof buf);
   lv_label_set_text(s_sysinfo_lbl, buf);
   // Slow tier: pushing identical text would still invalidate + repaint the whole
@@ -17507,7 +17535,7 @@ static void refreshSleepDiag(unsigned long now) {
 
 static void buildSystemInfoSettings() {
   lv_obj_t* body = createSettingsModal(TR("System Information"), SettingsModalKind::SystemInfo);
-  char buf[1024];
+  static char buf[1024];
 
   // FLEX COLUMN, deliberately not the manual y cursor the rest of this file uses.
   // Both labels below are re-texted AFTER build with text whose LINE COUNT
@@ -18885,8 +18913,8 @@ static void buildDisplayPage() {
     setSwitchRow(c, "Message LED", "Flashes on a new message and breathes while any are unread.",
                  touchPrefsGetMsgLed(), msgLedToggleCb);
 #endif
-#if defined(TLORA_PAGER)
-    setSwitchRow(c, "Wake when picked up", "Lifting the Pager off the table turns the screen on (a locked Pager shows "
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+    setSwitchRow(c, "Wake when picked up", "Lifting the device off the table turns the screen on (a locked device shows "
                  "its lock screen). Only after it lay still, so it stays dark in a bag or pocket.",
                  touchPrefsGetPickupWake(), pickupToggleCb);
 #endif
@@ -19379,7 +19407,9 @@ static void buildSoundPage() {
 #if defined(TLORA_PAGER)
     setSwitchRow(c, "Quiet now", "Do Not Disturb until you switch it off. Holding Shift does the same from anywhere.",
                  s_quiet_manual, quietNowToggleCb);
-    setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the Pager stays silent "
+#endif
+#if defined(TLORA_PAGER) || defined(HAS_M9_IMU)
+    setSwitchRow(c, "Quiet when face down", "Lying face down, the screen goes off and the device stays silent "
                  "(no sound, no vibration). Picking it up ends it. Keeps the motion sensor on, a little more power.",
                  touchPrefsGetFaceDownQuiet(), faceDownToggleCb);
 #endif
@@ -19713,6 +19743,13 @@ static void buildBatteryPage() {
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     setNote(c, "Tap with a full battery to call its voltage 100%. Hold to go back to the default.");
+#if defined(HAS_THINKNODE_M9)
+    setSwitchRow(c, "Low battery warning", "Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.",
+                 touchPrefsGetLowBattWarn(), +[](lv_event_t* e) {
+                   if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED)
+                     touchPrefsSetLowBattWarn(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+                 });
+#endif
 #endif
   }
 }
@@ -25265,8 +25302,8 @@ static uint16_t batteryFullMv() {
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
 
-#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8)
-// (R8: the divider is permanently connected — PIN_ADC_CTRL=-1 — so the same
+#if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
+// (R8 & M9: the divider is permanently connected, so EMA smoothing filters ADC2/Wi-Fi jitter.)
 // EMA + above-full voltage heuristic applies; threshold accuracy vs the
 // uncalibrated ADC_MULTIPLIER=5.07 conversion needs on-device confirmation.)
 // Per-board battery sampler: EMA over the noisy ADC so the value doesn't jitter
@@ -25315,11 +25352,16 @@ static uint16_t batteryMvSampled() { return g_lv.task ? g_lv.task->getBattMilliV
 // The threshold against an uncalibrated ADC still wants on-device confirmation,
 // exactly as the V4-R8 note above already says.
 static bool batteryIsCharging(uint16_t mv) {
-#if defined(TLORA_PAGER)
-  // The Pager's BQ25896 charger knows whether USB power is in, and its gauge reads
-  // the CELL voltage, which never rises past the charger's target: the voltage test
-  // below could not report charging on this board at all. Fall back to it only
-  // while the charger is not answering.
+#if defined(HAS_THINKNODE_M9)
+  // ThinkNode M9: GPIO1 (5V_TEST) senses USB VBUS and GPIO8 (U6 LGS4056HDA-4.35,
+  // active-LOW open-drain) reports 0=discharging, 1=actively charging, 2=charge complete.
+  if (mv != 0) {
+    const int chg = board.isCharging();
+    if (chg >= 0) return chg == 1;
+  }
+#elif defined(TLORA_PAGER)
+  // Boards with hardware USB VBUS / charger sense (BQ25896 on Pager):
+  // query externalPowerPresent() first and fall back to voltage threshold only if unknown (< 0).
   if (mv != 0) {
     const int ext = board.externalPowerPresent();
     if (ext >= 0) return ext != 0;
@@ -25344,11 +25386,15 @@ static uint16_t batteryMvSmoothed() {
   // Normally hold for 20 s to kill jitter — BUT publish at once when the charge
   // state flips, so plugging/unplugging the charger is recognized immediately
   // instead of waiting out the hold window.
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   // The verdict above is the charger's, not a function of the reading, so comparing
   // two readings never sees it change: watch the charger's own state instead.
   static int s_ext_prev = -2;
+#if defined(HAS_THINKNODE_M9)
+  const int ext_now = ((board.externalPowerPresent() & 1) << 2) | (board.isCharging() & 3);
+#else
   const int ext_now = board.externalPowerPresent();
+#endif
   const bool charge_flip = (s_pub != 0) && s_ext_prev != -2 && ext_now != s_ext_prev;
   s_ext_prev = ext_now;
 #else
@@ -28272,20 +28318,19 @@ static void sdEnsureMeshcomodFolders() {
 // (so there's no FATFS cache to fight). Best-effort — silently no-ops on any
 // layout it doesn't recognise. Handles both MBR-partitioned and superfloppy.
 static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
-  uint8_t sec[512];
-  if (!sd_read_raw(pdrv, sec, 0)) return;
-  if (sec[510] != 0x55 || sec[511] != 0xAA) return;
+  uint8_t* sec = (uint8_t*)malloc(512);
+  if (!sec) return;
+  if (!sd_read_raw(pdrv, sec, 0) || sec[510] != 0x55 || sec[511] != 0xAA) { free(sec); return; }
   uint32_t part_lba = 0;
   const bool boot_at_0 = (sec[0] == 0xEB || sec[0] == 0xE9) &&
                          (uint16_t)(sec[11] | (sec[12] << 8)) == 512;
   if (!boot_at_0) {  // MBR: first partition entry @446, LBA-first @ +8 (454)
     part_lba = (uint32_t)sec[454] | ((uint32_t)sec[455] << 8) |
                ((uint32_t)sec[456] << 16) | ((uint32_t)sec[457] << 24);
-    if (!part_lba) return;
+    if (!part_lba) { free(sec); return; }
   }
-  uint8_t bs[512];
-  if (!sd_read_raw(pdrv, bs, part_lba)) return;
-  if (bs[510] != 0x55 || bs[511] != 0xAA) return;
+  uint8_t* bs = sec;
+  if (!sd_read_raw(pdrv, bs, part_lba) || bs[510] != 0x55 || bs[511] != 0xAA) { free(sec); return; }
   const uint16_t bps     = bs[11] | (bs[12] << 8);
   const uint8_t  spc     = bs[13];
   const uint16_t rsvd    = bs[14] | (bs[15] << 8);
@@ -28296,7 +28341,7 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
   const uint32_t rootcl  = (uint32_t)bs[44] | ((uint32_t)bs[45] << 8) |
                            ((uint32_t)bs[46] << 16) | ((uint32_t)bs[47] << 24);
   const uint32_t fatsz = fatsz16 ? fatsz16 : fatsz32;
-  if (bps != 512 || !spc || !nfats || !fatsz || rootcl < 2) return;  // not the FAT32 we expect
+  if (bps != 512 || !spc || !nfats || !fatsz || rootcl < 2) { free(sec); return; }  // not the FAT32 we expect
 
   char lab[11]; memset(lab, ' ', sizeof lab);
   for (int i = 0; i < 11 && label[i]; ++i) {
@@ -28307,18 +28352,19 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
 
   const uint32_t root_lba = part_lba + rsvd + (uint32_t)nfats * fatsz +
                             (rootcl - 2) * spc;
-  uint8_t rd[512];
-  if (!sd_read_raw(pdrv, rd, root_lba)) return;
+  uint8_t* rd = sec;
+  if (!sd_read_raw(pdrv, rd, root_lba)) { free(sec); return; }
   int slot = -1;
   for (int i = 0; i < 512; i += 32) {
     if (rd[i] == 0x00 || rd[i] == 0xE5) { slot = i; break; }   // free slot
     if (rd[i + 11] == 0x08) { slot = i; break; }               // existing volume label -> replace
   }
-  if (slot < 0) return;
+  if (slot < 0) { free(sec); return; }
   memset(rd + slot, 0, 32);
   memcpy(rd + slot, lab, 11);
   rd[slot + 11] = 0x08;                      // ATTR_VOLUME_ID
   sd_write_raw(pdrv, rd, root_lba);
+  free(sec);
 }
 
 // Long-press the SD card row -> confirm -> explicit reformat (vs the tap, which
@@ -31809,7 +31855,15 @@ static bool spectrumSweepChunk() {
     // attribute the old frequency's RSSI to this bin.
     if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
 #endif
+#if defined(HAS_THINKNODE_M9)
+    // Pass irqMask = 0 so RX_DONE /PREAMBLE_DETECTED are not routed to DIO1
+    // (GPIO42) while sweeping: the wrapper's setFlag ISR stays attached on DIO1
+    // and a stray LoRa preamble mid-sweep would otherwise latchirq_read during
+    // spectrum mode.
+    radio.LR11x0::startReceive(RADIOLIB_LR11X0_RX_TIMEOUT_INF, 0, 0, 0);
+#else
     radio.startReceive();                 // ARM RX — GET_RSSI_INST is only valid in RX
+#endif
     // The modem's instantaneous-RSSI readout needs SEVERAL ms in RX to settle after
     // arming (measured on the SX1262; the LR1110 behaves the same): at ~1.5 ms it
     // still reads the reset default, only by ~3-4 ms does it report the true channel
@@ -32210,8 +32264,12 @@ static void spectrumRestoreRadio() {
   // the last swept frequency. If we just hand back, the mesh's recvRaw() sees STATE_RX,
   // skips startReceive(), and the node goes DEAF. Re-arm RX here on the mesh channel so
   // the chip's reality matches the wrapper state and packets flow again immediately.
+  // Also drain any stale DIO1 flag latched during the sweep and resume rxQueueSuspend
+  // here so the safety-net caller in UITask::loop() cannot leave rxq_suspend stranded.
   radio.startReceive();
+  (void)radio_driver.isInRecvMode();
 #endif
+  radio_driver.rxQueueSuspend(false);
   s_spectrum_active = false;          // hand the radio back; the mesh keeps RX armed
 }
 
@@ -33843,7 +33901,11 @@ static void openSpectrumPage() {
     if (cap > 6000) cap = 6000;
     const uint32_t t0 = millis();
     while (millis() - t0 < cap) {
-      if (radio_driver.isSendComplete() || radio_driver.isInRecvMode()) break;
+      if (radio_driver.isSendComplete()) {
+        radio_driver.onSendFinished();
+        break;
+      }
+      if (radio_driver.isInRecvMode()) break;
       delay(5);
     }
   }
@@ -33860,6 +33922,7 @@ static void openSpectrumPage() {
   // ---- claim the radio + compute the band BEFORE building UI ----
   NodePrefs* pr = the_mesh.getNodePrefs();
   float center = pr ? pr->freq : 915.0f;
+  if (center < SPEC_FMIN_MHZ || center > SPEC_FMAX_MHZ) center = (float)LORA_FREQ;
   s_spec_sf   = pr ? pr->sf : 7;
   s_spec_cr   = pr ? pr->cr : 5;
   float span = SPEC_SPAN_MHZ;
@@ -33870,6 +33933,7 @@ static void openSpectrumPage() {
   float stop  = center + span * 0.5f;
   if (start < SPEC_FMIN_MHZ) start = SPEC_FMIN_MHZ;
   if (stop  > SPEC_FMAX_MHZ) stop  = SPEC_FMAX_MHZ;
+  if (start > stop - 1.0f)   start = stop - span;
   s_spec_start = start;
   s_spec_step  = (stop - start) / (float)SPEC_BINS;
   s_spec_pos   = 0;
@@ -38079,6 +38143,16 @@ extern "C" unsigned lodepng_decode32(unsigned char** out, unsigned* w, unsigned*
                                       const unsigned char* in, size_t insize);
 static uint8_t* decodePngToRgb565(const uint8_t* png, size_t png_len, int* out_w, int* out_h,
                                   uint8_t* dst_buf, size_t dst_cap) {
+  // Pre-validate PNG signature + IHDR dimensions before lodepng_decode32() so a
+  // corrupt or oversized PNG cannot attempt a multi-megabyte RGBA8888 malloc.
+  if (!png || png_len < 24 || png[0] != 0x89 || png[1] != 'P' || png[2] != 'N' || png[3] != 'G')
+    return nullptr;
+  const uint32_t ihdr_w = ((uint32_t)png[16] << 24) | ((uint32_t)png[17] << 16) |
+                          ((uint32_t)png[18] << 8)  | (uint32_t)png[19];
+  const uint32_t ihdr_h = ((uint32_t)png[20] << 24) | ((uint32_t)png[21] << 16) |
+                          ((uint32_t)png[22] << 8)  | (uint32_t)png[23];
+  if (ihdr_w == 0 || ihdr_h == 0 || ihdr_w > 1024 || ihdr_h > 1024) return nullptr;
+  if (dst_buf && (size_t)ihdr_w * ihdr_h * sizeof(uint16_t) > dst_cap) return nullptr;
   unsigned char* rgba = nullptr; unsigned w = 0, h = 0;
   if (lodepng_decode32(&rgba, &w, &h, png, png_len) != 0 || !rgba) { if (rgba) free(rgba); return nullptr; }
   if (w == 0 || h == 0 || w > 1024 || h > 1024) { free(rgba); return nullptr; }
@@ -38289,70 +38363,75 @@ static void pmTilesSelect(int index) {
   touchPrefsSetMapPmTiles(index < 0 ? "-" : s_pmtiles[index].name);
 }
 
+struct PmTilesLazyFile {
+  const PmTilesArchive* archive = nullptr;
+  File file;
+  bool open_failed = false;
+  ~PmTilesLazyFile() { if (file) file.close(); }
+  bool ensureOpen() {
+    if (file) return true;
+    if (open_failed || !archive) return false;
+    file = mapSdStorage()->open(archive->path, FILE_READ);
+    if (!file) {
+      open_failed = true;
+      s_pmtiles_sel = -1;
+      pmTilesDropDirectories();
+      return false;
+    }
+    return true;
+  }
+};
+
 static bool pmTilesFileRead(void* ctx, uint64_t offset, uint8_t* dst, size_t length) {
-  return pmTilesReadRange(*static_cast<File*>(ctx), offset, dst, length);
+  PmTilesLazyFile* lf = static_cast<PmTilesLazyFile*>(ctx);
+  if (!lf || !lf->ensureOpen()) return false;
+  return pmTilesReadRange(lf->file, offset, dst, length);
 }
 
 // Where the selected archive keeps z/x/y (absolute offset + length in the file).
 // The directory walk is PmTiles::locateTile, covered by test/test_pmtiles.cpp.
-static bool pmTilesFindTile(File& file, const PmTilesArchive* archive, uint8_t z, int32_t x,
+// Opens the underlying SD file lazily only if s_pmtiles_dirs misses.
+static bool pmTilesFindTile(PmTilesLazyFile& lf, uint8_t z, int32_t x,
                             int32_t y, uint64_t& offset, uint32_t& length) {
-  if (x < 0 || y < 0) return false;
-  const PmTiles::Lookup r = PmTiles::locateTile(archive->header, pmTilesFileRead, &file,
+  if (!lf.archive || x < 0 || y < 0) return false;
+  if (z < lf.archive->header.min_zoom || z > lf.archive->header.max_zoom) return false;
+  const PmTiles::Lookup r = PmTiles::locateTile(lf.archive->header, pmTilesFileRead, &lf,
                                                 s_pmtiles_dirs, z, static_cast<uint32_t>(x),
                                                 static_cast<uint32_t>(y), offset, length);
   if (r == PmTiles::kCorrupt && !s_pmtiles_bad_logged) {
     s_pmtiles_bad_logged = true;
-    Serial.printf("[PMTILES] %s: corrupt directory, its tiles are skipped\n", archive->path);
+    Serial.printf("[PMTILES] %s: corrupt directory, its tiles are skipped\n", lf.archive->path);
   }
   return r == PmTiles::kFound;
 }
 
-// Opens the selected archive. If it vanished since the scan, drop it for this
-// mount (the saved choice stays) instead of retrying the open for every tile.
-static File pmTilesOpenActive(const PmTilesArchive*& archive) {
-  archive = pmTilesActive();
-  if (!archive) return File();
-  File file = mapSdStorage()->open(archive->path, FILE_READ);
-  if (!file) {
-    s_pmtiles_sel = -1;
-    pmTilesDropDirectories();
-    archive = nullptr;
-  }
-  return file;
-}
-
 static bool pmTilesHasTile(uint8_t z, int32_t x, int32_t y) {
-  const PmTilesArchive* archive = nullptr;
-  File file = pmTilesOpenActive(archive);
-  if (!file) return false;
+  PmTilesLazyFile lf;
+  lf.archive = pmTilesActive();
+  if (!lf.archive) return false;
   uint64_t offset = 0;
   uint32_t length = 0;
-  const bool found = pmTilesFindTile(file, archive, z, x, y, offset, length);
-  file.close();
-  return found;
+  return pmTilesFindTile(lf, z, x, y, offset, length);
 }
 
 static bool loadPmTilesTile(uint8_t z, int32_t x, int32_t y,
                             uint8_t** out_data, size_t* out_len) {
-  const PmTilesArchive* archive = nullptr;
-  File file = pmTilesOpenActive(archive);
-  if (!file) return false;
+  PmTilesLazyFile lf;
+  lf.archive = pmTilesActive();
+  if (!lf.archive) return false;
   uint64_t offset = 0;
   uint32_t length = 0;
   static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  if (!pmTilesFindTile(file, archive, z, x, y, offset, length) ||
+  if (!pmTilesFindTile(lf, z, x, y, offset, length) ||
       length < sizeof(png_signature) || length > 256u * 1024u) {   // the folder loader's cap
-    file.close();
     return false;
   }
+  if (!lf.ensureOpen()) return false;
   uint8_t* data = (uint8_t*)lvglPsramAlloc(length);
   if (!data) {
-    file.close();
     return false;
   }
-  const bool read_ok = pmTilesReadRange(file, offset, data, length);
-  file.close();
+  const bool read_ok = pmTilesReadRange(lf.file, offset, data, length);
   if (!read_ok || memcmp(data, png_signature, sizeof(png_signature)) != 0) {
     lvglPsramFree(data);
     return false;
@@ -45379,7 +45458,7 @@ static void openMessageInfoPopup(int msg_idx) {
   //   SNR    -3.5 dB             (or "—")
   //   RSSI   -101 dBm            (or "—")
   //   Status sent / delivered / failed   (only when outgoing DM)
-  char body[1400];  // headroom for the FULL per-hop route list + recolor markers (#RRGGBB ... #)
+  static char body[1400];  // headroom for the FULL per-hop route list + recolor markers (#RRGGBB ... #); static to keep 1.4 KB off loopTask stack
   int blen = 0;
   // Title is rendered as a separate label below — don't repeat it in body.
   // Time
@@ -50567,15 +50646,13 @@ static bool pagerSliderEditClick() {
   return true;
 }
 
-#if defined(TLORA_PAGER)
-// ---- Low battery (Pager) --------------------------------------------------------
+#endif
+
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_M9_IMU)
+// ---- Low battery (Pager & ThinkNode M9) -----------------------------------------
 // On battery only, with Settings > Battery > Low battery warning on (the default):
-// a warning with a vibration at 20 % and again at 10 %, and at 3 % the Pager
-// switches itself off (ship mode, see powerOffNow) before the cell is run flat; a
-// LiPo left empty for long can be damaged for good. The percentage is the fuel
-// gauge's. Each warning comes once per discharge: plugging in (or the pack coming
-// back 5 % above it) arms it again. A warning given while the screen is off is
-// shown when it next comes on.
+// a warning at 20 % and again at 10 %, and at 3 % the device switches itself off
+// before the cell is run flat; a LiPo left empty for long can be damaged for good.
 #if defined(PIN_USER_BTN) && !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_SENSECAP_INDICATOR)
 static void powerOffNow();
 #define PAGER_HAS_POWER_OFF 1
@@ -50590,7 +50667,12 @@ static void pagerLowBatteryTick(uint32_t now) {
   if (now < 20000 || now - s_ms < 2000) return;   // let the boot and the gauge settle first
   s_ms = now;
   if (!g_lv.task) return;
+#if defined(TLORA_PAGER)
   const int soc = board.getBattStateOfCharge();
+#else
+  const uint16_t mv = batteryMvSmoothed();
+  const int soc = mv ? batteryPercentFromMv(mv) : -1;
+#endif
   const bool on_usb = board.externalPowerPresent() != 0;   // 1 = USB, -1 = charger silent: do nothing
   if (on_usb || soc < 0 || soc > 100 || !touchPrefsGetLowBattWarn()) {
     if (s_off_at) { s_off_at = 0; if (on_usb) g_lv.task->showAlert(TR("Charging: switch-off cancelled"), 2500); }
@@ -50599,12 +50681,18 @@ static void pagerLowBatteryTick(uint32_t now) {
     return;
   }
   if (soc >= s_warned + 5) s_warned = 101;          // charged back up a fair way
+#if defined(TLORA_PAGER)
   const bool vib_ok = touchPrefsGetVibrate() && !dndActive();
+#endif
   if (soc <= 3) {
     if (++s_low_reads < 3) return;                  // 3 readings in a row (6 s): not a glitch
     if (!s_off_at) {
       s_off_at = now + 10000;
+#if defined(TLORA_PAGER)
       pagerHapticsPattern(PAGER_VIB_LONG, 2);
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+      if (!dndActive()) uiPlayMention();
+#endif
       if (g_lv.task->isManualLock()) g_lv.task->lockscreenReveal();
       else                           g_lv.task->wakeScreen();
       g_lv.task->showAlert(TR("Battery empty: switching off in 10 s to protect it. Plug in to cancel."), 9500);
@@ -50612,6 +50700,8 @@ static void pagerLowBatteryTick(uint32_t now) {
       s_off_at = 0;
 #if defined(PAGER_HAS_POWER_OFF)
       powerOffNow();
+#elif defined(HAS_THINKNODE_M9)
+      board.powerOff();
 #endif
     }
     return;
@@ -50624,37 +50714,31 @@ static void pagerLowBatteryTick(uint32_t now) {
     s_warned = 10;
     snprintf(s_msg, sizeof s_msg, TR("Battery at %d%%: charge soon"), soc);
     msg = s_msg;
+#if defined(TLORA_PAGER)
     if (vib_ok) pagerHapticsPattern(PAGER_VIB_THRICE, 2);
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+    if (!dndActive() && touchPrefsGetSoundMessages()) uiPlayNotify();
+#endif
   } else if (soc <= 20 && s_warned > 20) {
     s_warned = 20;
     snprintf(s_msg, sizeof s_msg, TR("Battery low: %d%%"), soc);
     msg = s_msg;
+#if defined(TLORA_PAGER)
     if (vib_ok) pagerHapticsPattern(PAGER_VIB_TWICE, touchPrefsGetVibrateStrength());
+#elif defined(THINKNODE_M9_BUZZER_PIN)
+    if (!dndActive() && touchPrefsGetSoundMessages()) uiPlayNotify();
+#endif
   }
   if (!msg) return;
   if (g_lv.task->isScreenOff()) s_pending = msg;
   else                          g_lv.task->showAlert(msg, 5000);
 }
 
-// ---- Motion: face down = quiet, pick up = wake (Pager) ---------------------------
-// Both off by default (Settings > Sound > Do Not Disturb; Settings > Display > Screen).
-// Face down: lying face down for 3 s turns the screen off and keeps the Pager
-// quiet (no sound, no vibration, no glance), as Do Not Disturb; picking it up
-// ends it. Pick up: lifting it off a table lights the screen (a locked Pager
-// only shows its lock screen). The accelerometer is read only while one of
-// them is on: once a second with the screen on, five times a second with it off
-// and pick-up on (a lift is over in half a second).
-//
-// Pick-up is meant not to go off in a bag or pocket. It only arms after the
-// Pager has lain still and flat (screen up or down, as on a table) for 3 s;
-// then it needs a real movement, and the Pager must come to rest within 2 s
-// in a reading position (screen facing up or towards you) tilted at least 20
-// degrees from how it lay. A bag that is carried never lies still enough to arm
-// it, and one that is picked up keeps swinging instead of settling. Waking it
-// that way disarms it until it has lain still again.
+// ---- Motion: face down = quiet, pick up = wake (Pager & M9 QMI8658A) ------------
 static int8_t s_face_pref = -1;          // the face-down setting, cached; -1 = not read yet
 static int8_t s_pickup_pref = -1;        // the pick-up setting, likewise
 static void pagerMotionWarmup() {
+#if defined(TLORA_PAGER)
   // The first read of a boot uploads the sensor hub's firmware (1-2 s, the loop
   // stands still meanwhile): say so before it happens, so it does not look hung.
   if (pagerImuStarted()) return;
@@ -50662,6 +50746,20 @@ static void pagerMotionWarmup() {
   lv_refr_now(nullptr);
   float x, y, z;
   pagerImuRead(&x, &y, &z);
+#elif defined(HAS_M9_IMU)
+  float x, y, z;
+  (void)m9ImuRead(&x, &y, &z);
+#endif
+}
+static bool deviceImuRead(float* x, float* y, float* z) {
+#if defined(TLORA_PAGER)
+  return pagerImuRead(x, y, z);
+#elif defined(HAS_M9_IMU)
+  return m9ImuRead(x, y, z);
+#else
+  (void)x; (void)y; (void)z;
+  return false;
+#endif
 }
 static void pagerMotionTick(uint32_t now) {
   static uint32_t s_ms = 0, s_since = 0;
@@ -50687,7 +50785,7 @@ static void pagerMotionTick(uint32_t now) {
   s_ms = now;
   pagerMotionWarmup();
   float x, y, z;
-  if (!pagerImuRead(&x, &y, &z)) return;
+  if (!deviceImuRead(&x, &y, &z)) return;
 
   // ---- face down
   if (want_face) {
@@ -50698,7 +50796,9 @@ static void pagerMotionTick(uint32_t now) {
           s_face_down = true;
           s_since = 0;
           Serial.printf("[MOTION] face down: quiet\n");
+#if defined(TLORA_PAGER)
           pagerHapticsClick(1);         // a light tick: noticed
+#endif
           if (g_lv.task && !g_lv.task->isScreenOff()) g_lv.task->sleepScreen();
           updateGlobalStatusBar();
         }
@@ -50757,6 +50857,7 @@ static void pagerPickupSettingChanged(bool on) {
 }
 #endif
 
+#if defined(HAS_PAGER_ENCODER)
 #if defined(TLORA_PAGER)
 // ---- Shift + knob, hold Shift, hold Fn (Pager) --------------------------------
 // Shift + turn: screen brightness, without opening a menu; Shift + click switches
@@ -52022,17 +52123,20 @@ static void lockscreenUpdateBattery() {
   s_lock_batt_key = key;
   if (key == -2) { lv_obj_add_flag(s_lock_batt, LV_OBJ_FLAG_HIDDEN); return; }
   lv_obj_clear_flag(s_lock_batt, LV_OBJ_FLAG_HIDDEN);
-  // Charging: the bolt and a teal fill say it; the voltage under charge
-  // overstates the level, so no percentage then (as in the status bar).
+  // Show the bolt when charging, and always show the percentage when valid so
+  // the user can track charge progress on the lock screen.
   if (charging) {
     lv_obj_clear_flag(s_lock_batt_chg, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(s_lock_batt_lbl, LV_OBJ_FLAG_HIDDEN);
   } else {
+    lv_obj_add_flag(s_lock_batt_chg, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (pct >= 0) {
     char b[8];
     snprintf(b, sizeof b, "%d%%", pct);
     lv_label_set_text(s_lock_batt_lbl, b);
-    lv_obj_add_flag(s_lock_batt_chg, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(s_lock_batt_lbl, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(s_lock_batt_lbl, LV_OBJ_FLAG_HIDDEN);
   }
   lv_obj_set_user_data(s_lock_batt_icon, (void*)(intptr_t)(charging ? 1000 + (pct < 0 ? 100 : pct) : pct));
   lv_obj_invalidate(s_lock_batt_icon);
@@ -55414,7 +55518,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
       taDeleteRange(ta, bs_s, bs_e);
       taClearSelection(ta);
     } else {
-#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
       // Keyboard nav: backspace in an EMPTY field drops back to navigate mode — the
       // discoverable keyboard way OUT of the auto-focused chat composer (Enter on an
       // empty composer already did this, silently). Reveal the focus highlight so the
@@ -55508,7 +55612,7 @@ if (g_lv.task && g_lv.task->isManualLock()) {
           }
           lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
         }
-#if CAP_TRACKBALL || defined(HAS_TDECK_PRO)
+#if CAP_TRACKBALL || defined(HAS_TDECK_PRO) || defined(HAS_M9_KEYBOARD)
         else if (s_kbd_nav) { s_nav_ta_editing = false; s_nav_show = true; }   // Enter on an EMPTY composer: drop to navigate mode, highlight visible
 #endif
       }
@@ -57713,7 +57817,7 @@ static bool ccClockStrings(char* clock_s, size_t clock_cap, char* date_s, size_t
   return current;
 }
 static void openControlCenter() {
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   const bool cc_fresh = (s_cc_root == nullptr);   // not a rebuild after a chip was toggled
 #endif
   closeControlCenter();
@@ -57813,10 +57917,10 @@ static void openControlCenter() {
   // ---- Battery + Wi-Fi info (right) ----
   const uint16_t mv = batteryMvSmoothed();
   const int pct = batteryPercentFromMv(mv);
-  char batt_s[28];
+  char batt_s[32];
   if (batteryIsCharging(mv))
-    snprintf(batt_s, sizeof batt_s, "%s  %u.%02uV", TR("Charging"),
-             (unsigned)(mv / 1000), (unsigned)((mv % 1000) / 10));
+    snprintf(batt_s, sizeof batt_s, "%s %d%%  %u.%02uV", TR("Charging"),
+             pct < 0 ? 0 : pct, (unsigned)(mv / 1000), (unsigned)((mv % 1000) / 10));
   else
     snprintf(batt_s, sizeof batt_s, "%d%%  %u.%02uV",
              pct < 0 ? 0 : pct, (unsigned)(mv / 1000), (unsigned)((mv % 1000) / 10));
@@ -58004,8 +58108,8 @@ static void openControlCenter() {
 #else
   navSetTip(bl, TR("Brightness"));
 #endif
-#if defined(TLORA_PAGER)
-  // Opened afresh (hold S, the bar), focus starts here, not on the power button built
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
+  // Opened afresh, focus starts on Brightness rather than the red Power button built
   // before it: clicking straight through the panel must not land on Power off. A
   // rebuild after a chip keeps focus on that chip.
   if (cc_fresh) s_nav_focus_hint = bl;
@@ -58295,7 +58399,10 @@ static void luaStoreScanInstalledFs(bool force) {
   // card does not grow ghost apps.
   File dir = fs->open(appsdir);
   if (!dir || !dir.isDirectory()) return;
-  char bare[kLuaInstMax][sizeof(LuaInstApp::id)];
+  using BareId = char[sizeof(LuaInstApp::id)];
+  BareId* bare = (BareId*)psAlloc(kLuaInstMax * sizeof(BareId));
+  char* buf = (char*)psAlloc(900);
+  if (!bare || !buf) { dir.close(); free(bare); free(buf); return; }
   int nbare = 0;
   for (;;) {
     bool is_dir = false;
@@ -58313,8 +58420,7 @@ static void luaStoreScanInstalledFs(bool force) {
       if (!e) continue;
       const size_t sz = e.size();
       if (sz > 0 && sz < 900) {
-        char buf[900];
-        const size_t rd = e.read((uint8_t*)buf, sizeof buf - 1);
+        const size_t rd = e.read((uint8_t*)buf, 899);
         buf[rd] = 0;
         LuaInstApp& a = s_lua_inst[s_lua_inst_n];
         if (luaJsonField(buf, "id", a.id, sizeof a.id) &&
@@ -58327,7 +58433,7 @@ static void luaStoreScanInstalledFs(bool force) {
       e.close();
     } else if (ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0 && nbare < kMax) {
       size_t o = 0;
-      for (size_t k = 0; k + 4 < ln && o + 1 < sizeof bare[0]; k++) bare[nbare][o++] = leaf[k];
+      for (size_t k = 0; k + 4 < ln && o + 1 < sizeof(BareId); k++) bare[nbare][o++] = leaf[k];
       bare[nbare][o] = 0;
       nbare++;
     }
@@ -58342,6 +58448,8 @@ static void luaStoreScanInstalledFs(bool force) {
     a.icon[0] = 0;
     s_lua_inst_n++;
   }
+  free(bare);
+  free(buf);
 }
 
 static void luaStoreScanInstalled(bool force) {
@@ -63075,14 +63183,9 @@ static void updateGlobalStatusBar() {
   static bool s_last_charging = false;
   if (pct != s_last_pct || charging != s_last_charging) {
     char buf[8];
-    if (charging)       buf[0] = '\0';                       // charging -> batteryGlyphForMv shows the bolt; no text
-    else if (pct < 0)   snprintf(buf, sizeof(buf), "?");
+    if (pct < 0)        snprintf(buf, sizeof(buf), charging ? "" : "?");
     else                snprintf(buf, sizeof(buf), "%d%%", pct);
     lv_label_set_text(g_statusbar.batt_pct, buf);
-    if (charging != s_last_charging) {
-      // The % column disappears while charging (bolt only). The packed bars close
-      // up on their own (statusBarPackRight, run below on the change).
-    }
     s_last_pct = pct;
     s_last_charging = charging;
     s_batt_lvl = charging ? 1000 : pct;
@@ -65441,14 +65544,18 @@ static void hwBatteryUpdate(int i) {
   const uint32_t col = chg ? COLOR_HUE[HUE_DEVICE] : pct >= 0 && pct <= 15 ? COLOR_STATUS_DANGER_TEXT
                      : pct >= 0 && pct <= 30 ? COLOR_STATUS_WARN : COLOR_HUE[HUE_DEVICE];
   const int16_t val = pct < 0 ? 0 : (int16_t)(pct * 10);
-  if (f->value != val || f->ca != col || f->full != chg) { f->value = val; f->ca = col; f->full = chg; lv_obj_invalidate(w.fig); }
+  const bool ring_full = chg && pct < 0;
+  if (f->value != val || f->ca != col || f->full != ring_full) { f->value = val; f->ca = col; f->full = ring_full; lv_obj_invalidate(w.fig); }
   const bool side = hwBattSideBySide(w, lv_obj_get_style_width(w.fig, LV_PART_MAIN));   // as hwBatteryBuild chose
-  char in[8] = "", v[16], a[24], b[64];
+  char in[8] = "", v[20], a[28], b[64];
   if (!chg) {
     if (pct >= 0) snprintf(in, sizeof in, side ? "%d%%" : "%d", pct);
     else snprintf(in, sizeof in, "?");
   }
-  snprintf(v, sizeof v, "%u.%02u V", mv / 1000u, (mv % 1000u) / 10u);
+  if (chg && w.size == HWS_S && pct >= 0)
+    snprintf(v, sizeof v, "%d%% %u.%02uV", pct, mv / 1000u, (mv % 1000u) / 10u);
+  else
+    snprintf(v, sizeof v, "%u.%02u V", mv / 1000u, (mv % 1000u) / 10u);
 #if defined(TLORA_PAGER)
   // The fuel gauge measures the current: show what the Pager draws (or takes in)
   // right now instead of the voltage, which says little on a gauged pack.
@@ -65484,7 +65591,10 @@ static void hwBatteryUpdate(int i) {
     lv_label_set_text(w.l[2], v);   // the bolt in the ring already says charging
     return;
   }
-  if (chg) snprintf(a, sizeof a, "%s", TR("Charging"));
+  if (chg) {
+    if (pct >= 0) snprintf(a, sizeof a, "%s %d%%", TR("Charging"), pct);
+    else          snprintf(a, sizeof a, "%s", TR("Charging"));
+  }
   else if (pct >= 0) snprintf(a, sizeof a, "%d%%", pct);
   else snprintf(a, sizeof a, "%s", TR("No reading yet"));
   int hl = chg ? -1 : hwBattHoursLeft(mv);
@@ -66846,12 +66956,17 @@ static int hwCompassHeading() {
     }
   }
 #endif
-  if (!tilted) deg = atan2f(bx, by) * 57.29578f;
+  if (!tilted) deg = atan2f(-by, bx) * 57.29578f;
   deg += s_hw_cal.align + s_hw_cal.decl;
   // Smooth as a vector, so 359 and 1 average to 0, not 180.
   const float r = deg / 57.29578f;
-  s_hw_head_x = s_hw_head_x * 0.7f + sinf(r) * 0.3f;
-  s_hw_head_y = s_hw_head_y * 0.7f + cosf(r) * 0.3f;
+  if (s_hw_head_x == 0.0f && s_hw_head_y == 0.0f) {
+    s_hw_head_x = sinf(r);
+    s_hw_head_y = cosf(r);
+  } else {
+    s_hw_head_x = s_hw_head_x * 0.7f + sinf(r) * 0.3f;
+    s_hw_head_y = s_hw_head_y * 0.7f + cosf(r) * 0.3f;
+  }
   int h = (int)lroundf(atan2f(s_hw_head_x, s_hw_head_y) * 57.29578f);
   return (h % 360 + 360) % 360;
 }
@@ -78041,12 +78156,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     tzset();
   }
 
-#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8)
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)
   // Boot storage setup may have mounted SD before UITask starts. Synchronize
   // the UI's lifecycle state before tile-backend selection and before the
-  // first loop tick can run health/remount logic. (R8: without this the
-  // reinsert watch SD.end()'d the LIVE DataStore volume ~30 s after boot —
-  // spurious "SD card remounted" toast, or a slow card stranded unmounted.)
+  // first loop tick can run health/remount logic. (Without this, when SD tiles
+  // are enabled at boot without full SD storage, s_sd_mounted stayed false and
+  // the reinsert watch SD.end()'d the live volume ~30 s after boot.)
   sdAdoptLiveMount();
 #endif
 
@@ -78446,9 +78561,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     STATUSBAR_H = SB_TOP_PAD + SB_ROW;   // top safe-area + one row (round phone panel)
 #else
     STATUSBAR_H = SC(22);   // grow the status bar to fit bigger text at Large/Huge (no-op at 100%)
-#if defined(HELTEC_LORA_V4_R8) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
+#if defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || (defined(DOC_CAPTURE) && defined(DOC_VIRT_FONTSET))
     // (Not the T-Deck Pro: its bar keeps the Normal faces at every size, see sbFixed.)
-    // Geometry stays fixed for R8 text presets, but Huge's 20 px title role
+    // Geometry stays fixed for R8/M9 text presets, but Huge's 20 px title role
     // needs two extra pixels to avoid clipping regular one-row status text.
     const lv_coord_t text_bar_h = lv_font_get_line_height(&g_font_14) + 4;
     if (STATUSBAR_H < text_bar_h) STATUSBAR_H = text_bar_h;
@@ -79949,6 +80064,11 @@ bool UITask::setRadioParams(float freq_mhz, float bw_khz, uint8_t sf, uint8_t cr
   // Clamp TX to the radio's range here — the same bound the boot-time load applies — so a too-high
   // value is corrected the moment it's set + saved, not silently dropped on the next reboot.
   tx_dbm = constrain(tx_dbm, (int8_t)-9, (int8_t)MAX_LORA_TX_POWER);
+#if defined(USE_LR1110)
+  freq_mhz = constrain(freq_mhz, 150.0f, 960.0f);
+#else
+  freq_mhz = constrain(freq_mhz, 400.0f, 2500.0f);
+#endif
   _node_prefs->freq = freq_mhz;
   _node_prefs->bw = bw_khz;
   _node_prefs->sf = sf;
@@ -80012,7 +80132,7 @@ void UITask::setExperimentalFlags(uint8_t multi_acks, uint8_t client_repeat, uin
   the_mesh.savePrefs();
   // Boosted gain is a radio register: set it now, the way the phone app's radio command
   // does (CMD_SET_RADIO_PARAMS in MyMesh), instead of leaving it for the next boot.
-#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN)
+#if defined(USE_SX1262) || defined(USE_SX1268) || defined(USE_LR1110) || defined(USE_LR1121) || defined(USE_LR2021) || defined(SX126X_RX_BOOSTED_GAIN) || defined(RX_BOOSTED_GAIN)
   radio_driver.radioAcquire();
   radio_driver.setRxBoostedGainMode(_node_prefs->rx_boosted_gain != 0);
   radio_driver.radioRelease();
@@ -80245,6 +80365,7 @@ static inline void touchScreenBacklight(bool on) {
     touchPanelSleep(false);
     applyBrightness(s_brightness_pct);
   } else {
+    if (!s_bl_pwm_ready) applyBrightness(s_brightness_pct);
     ledcWrite(kM9BlPwmChannel, 255);   // inverted: 255 = 0% conduction = off
     touchPanelSleep(true);
   }
@@ -80272,13 +80393,13 @@ static inline void touchScreenBacklight(bool on) {
 // stops listening to the mesh — we just stop burning 240 MHz to render nothing.
 // Restored to 240 MHz on wake so tile decode / rendering stays fast. Only
 // switches when the target changes (the call is a hard DFS switch).
-#if defined(TLORA_PAGER) && !defined(WADA_WEB)
-// A joined Wi-Fi is the Pager's largest draw after the backlight: with the screen
+#if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
+// A joined Wi-Fi is the largest draw after the backlight: with the screen
 // dark and no app connected, let the modem sleep through more beacons (maximum
 // modem sleep: it wakes every listen interval instead of every DTIM). Still
 // associated, so the web client and the app reconnect as before, a beat slower.
 // Waking the screen, or a client connecting, returns it to the normal setting:
-// setCpuForScreen() passes screen changes in, the pager loop calls it with -1
+// setCpuForScreen() passes screen changes in, the loop calls it with -1
 // about once a second to catch clients coming and going.
 // (Never WIFI_PS_NONE: illegal while Bluetooth runs, see main.cpp.)
 static void pagerWifiPsUpdate(int screen_on) {
@@ -80304,7 +80425,7 @@ static void setCpuForScreen(bool screen_on) {
   setCpuFrequencyMhz(want);
   s_cur_mhz = want;
 #endif
-#if defined(TLORA_PAGER) && !defined(WADA_WEB)
+#if (defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)) && !defined(WADA_WEB)
   pagerWifiPsUpdate(screen_on);
 #endif
 }
@@ -82884,9 +83005,11 @@ static void sdHealthTick() {
   static uint8_t  s_absent_samples   = 0;
 #endif
   const uint32_t now = (uint32_t)millis();
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9) || defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO)
   if (!s_sd_mounted && !sdRuntimeLifecycleBusy() && sdAdoptLiveMount()) {
+#if defined(TLORA_PAGER)
     s_sd_data_warn_next_ms = 0;
+#endif
     if (!s_ui_data_fs) uiDataFsReady();
     if (s_ui_data_fs == &SD) {
       SD.mkdir("/meshcomod");
@@ -83051,8 +83174,8 @@ static void sdHealthTick() {
   // not abandoned, it retries on the next tick; it just stops holding the door
   // shut on the only task that can open it. Same reasoning as the reader
   // excluding itself from this predicate a few lines up.
-  if (s_sdinfo_request && tileBackendSwapRequested()) tileBackendSwapFinish();
   if (s_pager_sd_removal_pending) {
+    if (s_sdinfo_request && tileBackendSwapRequested()) tileBackendSwapFinish();
     if (sdRuntimeLifecycleBusy()) return;
     fmSdUnmount();
     s_pager_sd_removal_pending = false;
@@ -83064,6 +83187,7 @@ static void sdHealthTick() {
     return;
   }
 #endif
+  if (s_sdinfo_request && tileBackendSwapRequested()) tileBackendSwapFinish();
 #if CAP_SD && defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION) && CAP_OTA
   // Worker downloading a firmware bin to /BINS. The worker clears s_sdfw_request the
   // moment it picks the job up, so the request flag alone left the whole download
@@ -83084,7 +83208,10 @@ static void sdHealthTick() {
   if (s_sd_fail_note_ms) {
     if (s_next_probe_ms && (int32_t)(now - s_next_probe_ms) < 0) return;
   } else {
-    if (touchSleep::isSleeping()) return;
+    if (touchSleep::isSleeping()) {
+      if (tileBackendSwapRequested()) tileBackendSwapFinish();
+      return;
+    }
     if ((int32_t)(now - s_next_bg_probe_ms) < 0) return;
   }
   // This tick is going to probe and may invalidate the VFS. Assert the backend
@@ -84500,7 +84627,15 @@ void UITask::loop() {
   m9CompassIdleTick();   // park the magnetometer when no app is reading it
 #endif
 #if defined(HAS_M9_IMU)
+  pagerMotionTick(now);
   m9ImuIdleTick();       // and the accelerometer
+#endif
+  pagerLowBatteryTick(now);
+#if defined(ESP32) && defined(HAS_THINKNODE_M9) && !defined(WADA_WEB)
+  {
+    static uint32_t s_wifi_ps_ms = 0;
+    if (now - s_wifi_ps_ms >= 1000) { s_wifi_ps_ms = now; pagerWifiPsUpdate(-1); }
+  }
 #endif
   uiCp("ui:keys");
   for (int kbi = 0; kbi < 12; ++kbi) {
@@ -84529,8 +84664,8 @@ void UITask::loop() {
     uint8_t kb_bl = 0;
     if (s_kb_bl_mode == 1) kb_bl = tdeckKbBlLevel();   // Settings > Keyboard > Brightness (#664)
     else if (s_kb_bl_mode == 2 && kbBacklightAutoActive(now)) kb_bl = tdeckKbBlLevel();
-    if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
-    else if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();   // notify pulse
+    if (s_msgflash_until && (int32_t)(now - s_msgflash_until) < 0) kb_bl = tdeckKbBlLevel();   // notify pulse (lights PIN_KEY_LED & keys even when locked/screen-off)
+    else if (_screen_off || _manual_lock) kb_bl = 0;   // dark/locked screen -> keyboard dark too
     if (s_pin_root && !_screen_off) kb_bl = tdeckKbBlLevel();   // the PIN screen lights the keys to type it
     // Cache the last duty the controller ACTUALLY took, not the last one
     // computed: the write is dropped while the controller (its own MCU, on
@@ -84885,11 +85020,10 @@ void UITask::loop() {
     lv_obj_invalidate(lv_scr_act());
 #endif
   uiCp("ui:lvgl");
-#if defined(TLORA_PAGER)
+#if defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9)
   const uint32_t lv_next_ms = lv_timer_handler();
-  // The loop runs flat out, and the keyboard no longer parks it on an I2C read every
-  // pass (pagerKeyboardPoll reads only when the chip's INT line asks): when LVGL has
-  // nothing due for a couple of ms, give the core 1 ms back instead of spinning.
+  // When LVGL has nothing due for a couple of ms, yield 1 ms back to FreeRTOS
+  // instead of spinning Core 1 at 100%.
   if (lv_next_ms >= 2) vTaskDelay(1);
 #else
   lv_timer_handler();

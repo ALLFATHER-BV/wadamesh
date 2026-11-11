@@ -1,9 +1,13 @@
 #include "M9Board.h"
+#include "M9Keyboard.h"
 #include "soc/usb_serial_jtag_reg.h"
+#if !defined(M9_HOST_TEST)
 #include "target.h" // radio_driver / sensors / display externs for enterDeepSleep
                     // (same source the base ESP32Board.cpp pulls them from)
+#endif
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
 
 void ThinkNodeM9Board::begin() {
   // Release the S3's native USB pads. GPIO19/20 are USB D-/D+ and the ROM's
@@ -17,8 +21,28 @@ void ThinkNodeM9Board::begin() {
 
   ESP32Board::begin(); // attaches PIN_VBAT_READ, brings up Wire on
                        // PIN_BOARD_SDA/SCL (7/6)
+  // PCF8563 (0x51), QMI8658A (0x6B), and QMC6309 (0x7C) all support 400 kHz Fast Mode.
+  Wire.setClock(400000);
+  Wire.setTimeOut(20);
 
-  // Undo the pad holds enterDeepSleep() arms (backlight/rail/NSS): a held pad
+#if defined(PIN_USB_5V_SENSE)
+  pinMode(PIN_USB_5V_SENSE, INPUT);
+#endif
+#if defined(PIN_CHG_DONE)
+  // U6 (LGS4056HDA-4.35) DONE pin is an open-drain NMOS output without an
+  // external pull-up on the V1.0 schematic; enable the internal pull-up so
+  // charging-in-progress reads HIGH and charge-complete reads LOW.
+  pinMode(PIN_CHG_DONE, INPUT_PULLUP);
+#endif
+#if defined(PIN_KB_WAKEUP)
+  pinMode(PIN_KB_WAKEUP, INPUT);
+#endif
+#if defined(THINKNODE_M9_BUZZER_PIN)
+  pinMode(THINKNODE_M9_BUZZER_PIN, OUTPUT);
+  digitalWrite(THINKNODE_M9_BUZZER_PIN, LOW);
+#endif
+
+  // Undo the pad holds enterDeepSleep() arms (backlight/rail/NSS/key-LED): a held pad
   // silently ignores every pinMode/digitalWrite below, so a timer wake would
   // otherwise come up with both rails latched OFF and the radio's NSS stuck.
   // The holds live in the RTC domain and survive ANY reset short of the power
@@ -29,42 +53,30 @@ void ThinkNodeM9Board::begin() {
   rtc_gpio_hold_dis((gpio_num_t)PIN_PERIPH_POWER);
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)P_LORA_NSS); // digital pad (39 > RTC range), own API
+#if defined(PIN_KEY_LED)
+  gpio_hold_dis((gpio_num_t)PIN_KEY_LED);
+#endif
 
-  // The one place this board's init genuinely has to differ from T-Deck/
-  // Heltec V4's pattern: their displays use ST7789LCDDisplay's dedicated-
-  // instance branch (LILYGO_TDECK / HELTEC_LORA_V4_TFT), which begins its
-  // own SPI bus internally — so neither board's board.begin() touches SPI
-  // at all, and the radio's bus only gets begun later, inside radio_init().
-  // M9's display is on the class's "default" branch (display(&SPI, ...)) —
-  // the only safe branch available without borrowing another board's
-  // identity macro (HELTEC_LORA_V4_TFT is also checked in shared UITask.cpp
-  // against HeltecV4Board-only methods, which would be a compile error here)
-  // — and that branch does NOT begin the bus itself, it assumes the caller
-  // already has. So a single bare SPI.begin() has to happen here, before
-  // display.begin() runs (next, in main.cpp). Everything else in this
-  // function mirrors TDeckBoard::begin()/HeltecV4Board::begin() as closely
-  // as M9's actual hardware allows — no CS-deselect dance, no NSS pre-drive:
-  // neither working board does either, and they don't need it.
-  SPI.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, PIN_TFT_CS);
+#if defined(PIN_VBAT_READ)
+  // Explicitly set 11 dB attenuation (full 0..3.1 V range) on GPIO13 (ADC2_CH2)
+  // and prime s_last_good_mv before Wi-Fi is initialized so ADC2 contention can
+  // never cause an initial 0 mV reading.
+  analogSetPinAttenuation(PIN_VBAT_READ, ADC_11db);
+  (void)getBattMilliVolts();
+#endif
 
-  // Shared-SPI bus discipline: park the bus devices' chip-selects HIGH before
-  // any traffic flows (LR1110 NSS=39, TFT CS=16). NOTE: do NOT touch GPIO35-37
-  // on this board — the S3R8's octal PSRAM owns them (driving GPIO36 as a GPIO
-  // wedged the PSRAM bus and hung boot right after prefs init, bring-up #3).
-  // SCHEMATIC TRUTH (read from the V1.0 sheet, bring-up #9): the microSD *is*
-  // on this shared SPI bus with CS = GPIO48 — the patch's "SD CS = 36" misread
-  // the S3's PACKAGE pin 36 (SPICLK_N = GPIO48) as GPIO36.
+  // Shared-SPI bus discipline: park ALL three bus devices' chip-selects HIGH
+  // BEFORE calling SPI.begin() (TFT CS=16, LR1110 NSS=39, SD CS=48) so no slave
+  // sees SCK/MOSI edges with a floating CS line during bus initialization.
+  // Pass -1 for SS so GPIO16 is not momentarily bound to the hardware SPI CS matrix.
   pinMode(PIN_TFT_CS, OUTPUT);
   digitalWrite(PIN_TFT_CS, HIGH);
   pinMode(P_LORA_NSS, OUTPUT);
   digitalWrite(P_LORA_NSS, HIGH);
-  // Park the SD's CS HIGH too: the card mounts lazily from the UI, so from
-  // reset until then it would otherwise watch 80 MHz display + radio traffic
-  // with its CS floating (no pull at reset on GPIO48) — a card that samples CS
-  // low can drive MISO into the LR1110's reads. SD.begin later re-runs the
-  // same pinMode, so this is purely the boot-window fix.
   pinMode(PIN_SD_CS, OUTPUT);
   digitalWrite(PIN_SD_CS, HIGH);
+
+  SPI.begin(P_LORA_SCLK, P_LORA_MISO, P_LORA_MOSI, -1);
 
   // Bring up both rails at boot and leave them claimed for now. Display
   // power-down (turnOff()) releases periph_power via the pointer passed into
@@ -125,12 +137,44 @@ void ThinkNodeM9Board::enterDeepSleep(uint32_t secs, int pin_wake_btn) {
 
   Serial.flush();
 
-  // Clear stale wake sources before arming the timer, so a leftover from
+  // Darken the keyboard backlight and silence the buzzer before halting.
+#if defined(HAS_M9_KEYBOARD)
+  m9KeyboardSetBacklight(0);
+#endif
+#if defined(PIN_KEY_LED)
+  pinMode(PIN_KEY_LED, OUTPUT);
+  digitalWrite(PIN_KEY_LED, LOW);
+  gpio_hold_en((gpio_num_t)PIN_KEY_LED);
+#endif
+#if defined(THINKNODE_M9_BUZZER_PIN)
+  pinMode(THINKNODE_M9_BUZZER_PIN, OUTPUT);
+  digitalWrite(THINKNODE_M9_BUZZER_PIN, LOW);
+#endif
+
+  // Clear stale wake sources before arming the timer/keyboard wake, so a leftover from
   // PM/auto-light-sleep can't ghost-wake us — same guard as the base class.
   esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
   if (secs > 0) {
     esp_sleep_enable_timer_wakeup(secs * 1000000ULL);
   }
+#if defined(PIN_KB_WAKEUP)
+  // GPIO12 (ESP32_WAKEUP from ESP32-S2 keyboard MCU) is an RTC GPIO (GPIO0-21).
+  // Only arm keyboard wake for timed/hibernating sleep (secs > 0 || pin_wake_btn >= 0)
+  // so powerOff() (secs == 0, pin_wake_btn == -1) stays off until the power slider cycles.
+  if (secs > 0 || pin_wake_btn >= 0) {
+    const int idle_lvl = digitalRead(PIN_KB_WAKEUP);
+    if (idle_lvl == LOW) {
+      rtc_gpio_pullup_dis((gpio_num_t)PIN_KB_WAKEUP);
+      rtc_gpio_pulldown_en((gpio_num_t)PIN_KB_WAKEUP);
+    } else {
+      rtc_gpio_pulldown_dis((gpio_num_t)PIN_KB_WAKEUP);
+      rtc_gpio_pullup_en((gpio_num_t)PIN_KB_WAKEUP);
+    }
+    esp_sleep_enable_ext1_wakeup(
+        1ULL << PIN_KB_WAKEUP,
+        idle_lvl == LOW ? ESP_EXT1_WAKEUP_ANY_HIGH : ESP_EXT1_WAKEUP_ALL_LOW);
+  }
+#endif
 
   // Turn both active-LOW rails off. The backlight pad needs a re-route first:
   // UITask's applyBrightness attached LEDC ch7 to GPIO17, and a bare
@@ -183,4 +227,35 @@ uint16_t ThinkNodeM9Board::getBattMilliVolts() {
 #else
   return 0;
 #endif
+}
+
+int ThinkNodeM9Board::externalPowerPresent() {
+#if defined(PIN_USB_5V_SENSE)
+  // V1.0 schematic wires 5V_TEST (USB VBUS sense) to GPIO1 and U6 (LGS4056HDA-4.35) DONE to GPIO8.
+  return digitalRead(PIN_USB_5V_SENSE) == HIGH ? 1 : 0;
+#else
+  return -1;
+#endif
+}
+
+int ThinkNodeM9Board::isCharging() const {
+#if defined(PIN_USB_5V_SENSE)
+  if (digitalRead(PIN_USB_5V_SENSE) != HIGH) return 0; // USB VBUS absent -> discharging
+#if defined(PIN_CHG_DONE)
+  // U6 (LGS4056HDA-4.35) DONE# pin (GPIO8) is open-drain active-LOW with internal pull-up:
+  // HIGH (1, pulled up while open-drain off) = actively charging (1),
+  // LOW (0, pulled low by U6 when charge terminates) = charge complete / top-off (2).
+  return digitalRead(PIN_CHG_DONE) == LOW ? 2 : 1;
+#else
+  return 1;
+#endif
+#else
+  return -1;
+#endif
+}
+
+bool ThinkNodeM9Board::isExternalPowered() {
+  const int ext = externalPowerPresent();
+  if (ext >= 0) return ext != 0;
+  return getBattMilliVolts() >= 4250;
 }

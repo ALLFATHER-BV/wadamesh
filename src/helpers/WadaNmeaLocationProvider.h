@@ -88,6 +88,7 @@ class WadaNmeaLocationProvider : public LocationProvider {
                                 (sizeof(candidates) / sizeof(candidates[0])));
       if (candidate == 0 || candidate == _active_baud) continue;
       _probe_serial->end();
+      _probe_serial->setRxBufferSize(4096);
       _probe_serial->setPins(_probe_rx, _probe_tx);
       _probe_serial->begin(candidate);
       nmea.clear();
@@ -213,9 +214,20 @@ public:
     if (_pin_en == -1) while (_gps_serial->available()) _gps_serial->read();
     if (_pin_en != -1) digitalWrite(_pin_en, _en_active);
     if (_pin_reset != -1) digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
+    if (_probe_serial && _probe_rx >= 0 && _probe_tx >= 0) {
+      // Re-attach UART1 RX/TX pins after stop() tri-stated TX to prevent ESD back-powering.
+      _probe_serial->setPins(_probe_rx, _probe_tx);
+    }
     if (_pin_en != -1 && _post_enable) _post_enable();
     if (_probe_serial) {
-      _active_baud = touchPrefsGetGpsBaud(_probe_default_baud);
+      const uint32_t want_baud = touchPrefsGetGpsBaud(_probe_default_baud);
+      if (_active_baud != 0 && _active_baud != want_baud) {
+        _probe_serial->end();
+        _probe_serial->setRxBufferSize(1024);
+        if (_probe_rx >= 0 && _probe_tx >= 0) _probe_serial->setPins(_probe_rx, _probe_tx);
+        _probe_serial->begin(want_baud);
+      }
+      _active_baud = want_baud;
       _probe_cursor = 0;
       // A speed the user picked is used as it is: no probe, nothing saved.
       const bool probe = !(_keep_choice && touchPrefsGpsBaudChosen());
@@ -238,19 +250,33 @@ public:
       digitalWrite(_pin_reset, GPS_RESET_ACTIVE);
       delay(10);
       digitalWrite(_pin_reset, !GPS_RESET_ACTIVE);
+      if (_claims > 0 && _pin_en != -1 && _post_enable) _post_enable();
     }
   }
 
   void stop() override {
+    ubxGnss(false);
     if (_pin_en != -1) digitalWrite(_pin_en, !_en_active);
     // LOW, not GPS_RESET_ACTIVE — the zero-current park level for both reset
     // circuits (see the constructor comment; on the M9 "asserted" = GPIO HIGH
     // through R46 into Q16's base = a constant drain while the GPS is off).
     if (_pin_reset != -1) digitalWrite(_pin_reset, LOW);
+    // Prevent UART1 TX/RX from back-powering the unpowered GPS IC through its
+    // upper ESD protection diodes while _pin_en cuts VCC.
+    if (_pin_en != -1 && _probe_tx >= 0) {
+      pinMode(_probe_tx, INPUT);
+    }
+    if (_pin_en != -1 && _probe_rx >= 0) {
+      pinMode(_probe_rx, INPUT);
+    }
+#if defined(PIN_GPS_STANDBY)
+    pinMode(PIN_GPS_STANDBY, INPUT);
+#elif defined(PIN_GPS_STAND_BY)
+    pinMode(PIN_GPS_STAND_BY, INPUT);
+#endif
     _probe_deadline_ms = 0;
     _stream_locked = false;
     _wake_check_ms = 0;
-    ubxGnss(false);
     release();
   }
 

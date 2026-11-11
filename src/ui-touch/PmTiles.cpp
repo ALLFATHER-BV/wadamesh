@@ -2,6 +2,9 @@
 
 #include <cstring>
 #include <limits>
+#if defined(ESP32)
+  #include <esp_rom_crc.h>
+#endif
 
 // The ROM's tinfl on the S3 (no flash cost); the IDF 5.x P4 boards moved the
 // header to esp_rom/include; the web build and the host test use upstream
@@ -242,6 +245,10 @@ uint8_t* gunzip(const uint8_t* input, size_t length, size_t& output_length) {
   freeBuffer(state);
   bool ok = status == TINFL_STATUS_DONE && decompressed_length == expected_length;
   if (ok) {
+#if defined(ESP32)
+    const uint32_t crc = esp_rom_crc32_le(0, output, decompressed_length);
+    ok = crc == readU32(input + length - 8);
+#else
     uint32_t crc = UINT32_MAX;
     for (size_t i = 0; i < decompressed_length; ++i) {
       crc ^= output[i];
@@ -249,6 +256,7 @@ uint8_t* gunzip(const uint8_t* input, size_t length, size_t& output_length) {
         crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
     }
     ok = (crc ^ UINT32_MAX) == readU32(input + length - 8);
+#endif
   }
   if (!ok) {
     freeBuffer(output);
@@ -267,6 +275,7 @@ namespace {
 
 Lookup readDirectory(const Header& header, ReadFn read, void* ctx, uint64_t offset,
                      uint64_t length, Directory& out) {
+  out.clear();
   if (length == 0 || length > kMaxDirectoryBytes) return kCorrupt;
   uint8_t* raw = static_cast<uint8_t*>(allocBuffer(static_cast<size_t>(length)));
   if (!raw) return kReadError;

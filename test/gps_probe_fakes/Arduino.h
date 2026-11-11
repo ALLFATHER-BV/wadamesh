@@ -12,7 +12,9 @@
 
 #define HIGH 1
 #define LOW 0
+#define INPUT 0
 #define OUTPUT 1
+#define INPUT_PULLUP 2
 
 extern uint32_t g_test_ms;
 inline uint32_t millis() { return g_test_ms; }
@@ -58,6 +60,7 @@ public:
   void begin(uint32_t b) { baud = b; open = true; ++begins; begun_at.push_back(b); rx.clear(); rx_head = 0; last_ms = millis(); carry = 0; }
   void end() { open = false; }
   void setPins(int, int) {}
+  size_t setRxBufferSize(size_t s) { return s; }
   // Fill the ring for the time that passed since the last look.
   void pump() {
     const uint32_t now = millis();

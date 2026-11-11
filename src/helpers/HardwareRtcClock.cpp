@@ -166,6 +166,13 @@ bool HardwareRtcClock::clearStopBit(bool& was_stopped) {
   }
   uint8_t ctrl1 = 0;
   if (!readRegs(REG_CTRL1, &ctrl1, 1)) return false;
+  if (_chip == Chip::PCF8563) {
+    // Disable PCF8563 CLKOUT (reg 0x0D defaults to 0x80 = 32.768 kHz output enabled at POR)
+    // and clear any stale alarm/timer interrupt flags in Control_status_2 (reg 0x01).
+    const uint8_t zero = 0x00;
+    (void)writeRegs(0x01, &zero, 1);
+    (void)writeRegs(0x0D, &zero, 1);
+  }
   was_stopped = (ctrl1 & CTRL1_STOP) != 0;
   if (!was_stopped) return true;
   const uint8_t running = (uint8_t)(ctrl1 & ~CTRL1_STOP);

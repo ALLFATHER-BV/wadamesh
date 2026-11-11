@@ -11,7 +11,9 @@
 
 #define HIGH 1
 #define LOW 0
+#define INPUT 0
 #define OUTPUT 1
+#define INPUT_PULLUP 2
 
 extern uint32_t g_test_ms;
 extern uint32_t g_utc_at_ms0;   // true UTC (Unix seconds) when g_test_ms was 0
@@ -81,4 +83,5 @@ public:
   void begin(uint32_t) {}
   void end() {}
   void setPins(int, int) {}
+  size_t setRxBufferSize(size_t s) { return s; }
 };

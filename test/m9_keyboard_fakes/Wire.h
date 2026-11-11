@@ -11,12 +11,16 @@ class TwoWire {
   bool online = true;
   bool readFails = false;
   int sda = -1, scl = -1;
+  uint32_t clockHz = 100000;
+  uint16_t timeoutMs = 50;
   uint8_t backlight = 0;
   std::deque<uint8_t> keys;
   std::vector<uint8_t> writes;
   uint8_t address = 0, reg = 0;
   int result = 0;
   bool begin(int data, int clock) { sda = data; scl = clock; return true; }
+  bool setClock(uint32_t hz) { clockHz = hz; return true; }
+  void setTimeOut(uint16_t ms) { timeoutMs = ms; }
   void beginTransmission(uint8_t addr) { address = addr; writes.clear(); }
   void write(uint8_t value) { writes.push_back(value); }
   uint8_t endTransmission(bool = true) {
