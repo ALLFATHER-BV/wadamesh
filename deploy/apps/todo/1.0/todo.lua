@@ -4,8 +4,8 @@
 -- CHANGE LOG:
 -- It stores Tasks entries within the 200 bytes budget in the todo.sav file.
 -- Added a Budget indicator in bytes to keep track of free space available.
--- (in this version the lower limit is 69 Bytes, anything written after that
--- it won't be saved.)
+-- (in this version there is a 175 Bytes budget, anything written after the
+-- Budget reaches 0 Bytes won't be saved.)
 
 local ui, sys, store = wada.ui, wada.sys, wada.store
 local C = ui.colors
@@ -494,7 +494,7 @@ local function draw_header()
   local used = #encode_payload()
   local budget = 255 - used
   if budget < 0 then budget = 0 end
-  local right = "Budget: " .. budget .. " bytes"
+  local right = "Budget: " .. budget - 69 .. " bytes"
   -- Right-align: approximate character width is 7 px at 12 pt.
   local rx = W - 12 - #right * 7
   local color = (budget < 40) and C.bad or C.sub
