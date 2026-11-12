@@ -3907,7 +3907,7 @@ static lv_obj_t* s_addct_error_l = nullptr;
 static uint8_t   s_kb_rotation       = 0;
 static lv_obj_t* s_kb_rot_left_btn   = nullptr;
 static lv_obj_t* s_kb_rot_right_btn  = nullptr;
-static lv_obj_t* s_kb_lang_btn       = nullptr;   // on-screen language-cycle key (boards w/o a physical keyboard)
+static lv_obj_t* s_kb_lang_btn       = nullptr;   // floating language key, V4 only (every other layout has an in-map key)
 static lv_obj_t* s_kb_lang_lbl       = nullptr;   // its label — the active layout's 2-letter code
 static lv_obj_t* s_kb_alt_btn        = nullptr;   // on-screen "Alt" key: cycles the last letter's accent (issue #22)
 // Accent-popup picker on/off (default on). Loaded from NVS at boot; gates
@@ -10667,6 +10667,27 @@ static const char* kbLayoutCode(KeyboardLayoutId id) {
 static void kbLangBtnRefresh() {
   if (s_kb_lang_lbl) lv_label_set_text(s_kb_lang_lbl, kbLayoutCode(keyboardLayoutsGetCurrent()));
 }
+// The in-map language key (KB_LANG_KEY). Its label is already the active layout
+// code, so tapping it cycles and the map is rebuilt with the next code. Registered
+// ahead of lv_keyboard_def_event_cb: without stop_processing the default handler
+// would type the label ("EN", "BG", ...) into the field.
+static void kbLangKeyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  if (!keyboardLayoutsIsLangKey(lv_btnmatrix_get_selected_btn(kb))) return;
+  lv_event_stop_processing(e);
+  const KeyboardLayoutId before = keyboardLayoutsGetCurrent();
+  const KeyboardLayoutId next = keyboardLayoutsCycle(kb);
+  if (next == before) return;   // nothing else enabled: the key is the indicator only
+#if defined(ESP32)
+  touchPrefsSetKeyboardLayout(static_cast<uint8_t>(next));
+#endif
+  if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
+}
+
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
+// Floating language button, V4 only: its compact 240 px maps are built separately
+// and have no room for the in-map key every other layout carries.
 static void kbLangCycleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED || !keyboardLayoutsAnySecondary()) return;
   KeyboardLayoutId next = keyboardLayoutsCycle(g_lv.keyboard);
@@ -10676,6 +10697,7 @@ static void kbLangCycleCb(lv_event_t* e) {
   kbLangBtnRefresh();
   if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
 }
+#endif
 
 // Picking a UI language auto-enables + selects the matching keyboard layout (so choosing French
 // gives AZERTY without a separate trip to keyboard settings). EU layouts via #29 (samuelcoustet).
@@ -10731,7 +10753,7 @@ static void kbShowRotateArrows(bool show) {
     kbSetRotateArrowsOpa(LV_OPA_COVER);
     if (s_kb_rot_left_btn)  lv_obj_move_foreground(s_kb_rot_left_btn);
     if (s_kb_rot_right_btn) lv_obj_move_foreground(s_kb_rot_right_btn);
-    if (lang_show) { kbLangBtnRefresh(); lv_obj_move_foreground(s_kb_lang_btn); }
+    if (lang_show && s_kb_lang_btn) { kbLangBtnRefresh(); lv_obj_move_foreground(s_kb_lang_btn); }
     if (s_kb_alt_btn) lv_obj_move_foreground(s_kb_alt_btn);
   }
 }
@@ -73582,6 +73604,7 @@ static void buildUiTree() {
   lv_obj_add_event_cb(g_lv.keyboard, kbV4SpecialPageCb,       LV_EVENT_VALUE_CHANGED, nullptr);
 #endif
   lv_obj_add_event_cb(g_lv.keyboard, kbBackspaceSelCb,         LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(g_lv.keyboard, kbLangKeyCb,              LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, keyboardCb, LV_EVENT_READY,         nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, keyboardCb, LV_EVENT_CANCEL,        nullptr);
@@ -73640,11 +73663,13 @@ static void buildUiTree() {
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
-  // On-screen language-cycle key (boards without a physical keyboard). Its label
-  // is the active layout's 2-letter code; kbShowRotateArrows reveals it only when
-  // a secondary layout is enabled.
+  // On-screen language-cycle key. Every ordinary layout now carries a real key in
+  // its bottom row (KB_LANG_KEY in KeyboardLayouts.cpp), so only the V4's compact
+  // maps still get this floating button. Its label is the active layout's code.
+#if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
   s_kb_lang_btn = makeRotBtn(kbLayoutCode(keyboardLayoutsGetCurrent()), kbLangCycleCb);
   s_kb_lang_lbl = lv_obj_get_child(s_kb_lang_btn, 0);
+#endif
   // (The on-screen "á" accent key was removed — the tap-to-pick accent box that
   // pops up automatically when you type an accentable letter replaces it. The
   // s_kb_alt_btn pointer stays null so every guarded reference below no-ops.)
