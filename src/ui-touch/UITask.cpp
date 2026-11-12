@@ -85246,15 +85246,24 @@ void UITask::loop() {
 #elif defined(HAS_WIO_TRACKER_L2) || defined(HAS_TDISPLAY_P4)
     // Either physical button wakes/reveals immediately. Continuing to hold for
     // two seconds toggles the hard lock; releasing early cancels the transition.
-    // The T-Display P4's BOOT button (GPIO35) works the same way.
+    // The T-Display P4's BOOT button (GPIO35) works the same way. A tap on an
+    // unlocked, lit screen sleeps it, so the button toggles the panel like the
+    // one button on every other board. Sleeping on RELEASE, and only when the
+    // press began lit, is what keeps two cases straight: a press that WAKES must
+    // not be slept again by its own release, and the two-second lock hold must
+    // not blank the panel out from under its unlock-progress hint. It is a soft
+    // sleep (no _manual_lock): touch or the next tap brings it back, while the
+    // hold stays the only way into the hard lock.
     static constexpr uint32_t kL2WakeHoldMs = 2000;
     static uint32_t s_l2_btn_down_ms = 0;
     static bool s_l2_press_active = false;
     static bool s_l2_hold_fired = false;
+    static bool s_l2_press_lit = false;   // press began on a lit, unlocked screen
     if (v == LOW && s_user_btn_prev == HIGH) {
       s_l2_press_active = true;
       s_l2_btn_down_ms = now;
       s_l2_hold_fired = false;
+      s_l2_press_lit = !_screen_off && !_manual_lock;
       if (_manual_lock) lockscreenReveal();
       else              noteUserInput();
     } else if (v == LOW && s_l2_press_active && !s_l2_hold_fired) {
@@ -85271,6 +85280,8 @@ void UITask::loop() {
       s_l2_press_active = false;
       s_l2_btn_down_ms = 0;
       lockscreenUnlockPopupHide();
+      if (s_l2_press_lit && !s_l2_hold_fired) sleepScreen();
+      s_l2_press_lit = false;
     }
 #elif defined(HAS_RAK_TAP_V2)
     // RAK Tap V2: single BOOT button (GPIO0), no trackball, no keyboard.
