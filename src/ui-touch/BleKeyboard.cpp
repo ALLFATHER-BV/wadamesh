@@ -104,6 +104,10 @@ uint8_t  s_src = kSrcNone;
 uint32_t s_report_logs = 0;   // the first reports of each link are logged
 #endif
 uint8_t  s_prev_keys[6] = {};
+uint8_t  s_prev_mod = 0;
+// Any new key or modifier since the UI last looked. A modifier-only report has
+// no key in keys[6], so without this the UI never learns Ctrl/Alt was pressed.
+bool     s_activity = false;
 // Command (GUI) tapped on its own, with nothing else pressed while it was down.
 bool     s_gui_down = false;
 bool     s_gui_alone = false;
@@ -455,6 +459,25 @@ void onReport(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) 
 
   bool any_key = false;
   for (int i = 0; i < 6; i++) any_key |= keys[i] >= 0x04;
+
+  // A new key OR a newly pressed modifier counts as activity. The keys[] scan
+  // is what makes Ctrl/Alt wake the screen: they live in mod, not keys[], so
+  // pressKey() never runs for them and no key event reaches the UI.
+  bool new_input = (mod & (uint8_t)~s_prev_mod) != 0;
+  for (int i = 0; i < 6 && !new_input; i++) {
+    const uint8_t k = keys[i];
+    if (k < 0x04) continue;
+    bool was_down = false;
+    for (int j = 0; j < 6; j++) was_down |= (s_prev_keys[j] == k);
+    new_input = !was_down;
+  }
+  if (new_input) {
+    portENTER_CRITICAL(&s_mux);
+    s_activity = true;
+    portEXIT_CRITICAL(&s_mux);
+  }
+  s_prev_mod = mod;
+
   const bool gui = (mod & 0x88) != 0;
   const bool others = any_key || (mod & ~0x88) != 0;
   if (gui && !s_gui_down) {
@@ -489,11 +512,13 @@ void onReport(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) 
 class ClientCallbacks : public NimBLEClientCallbacks {
   void onDisconnect(NimBLEClient*) override {
     memset(s_prev_keys, 0, sizeof s_prev_keys);
+    s_prev_mod = 0;
     s_gui_down = false;
     s_gui_alone = false;
     s_dead = 0;
     clearHeld();
     portENTER_CRITICAL(&s_mux);
+    s_activity = false;
     if (s_state == State::Connected) s_state = s_active ? State::Waiting : State::Off;
     bumpLocked();
     portEXIT_CRITICAL(&s_mux);
@@ -1218,6 +1243,14 @@ int readKey() {
   }
   portEXIT_CRITICAL(&s_mux);
   return code;
+}
+
+bool takeActivity() {
+  portENTER_CRITICAL(&s_mux);
+  const bool active = s_activity;
+  s_activity = false;
+  portEXIT_CRITICAL(&s_mux);
+  return active;
 }
 
 bool takeNewPairing(Device* out) {
