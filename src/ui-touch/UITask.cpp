@@ -64651,7 +64651,9 @@ static void updateGlobalStatusBar() {
   }
 #endif
   if (g_statusbar.layout_label) {
-    if (show_layout && s_chat_title[0]) {
+    // With a Bluetooth keyboard linked the composer badge below already shows
+    // the deck; this copy would sit on the Bluetooth/keyboard icon by the clock.
+    if (!ble_ext && show_layout && s_chat_title[0]) {
       setLabelIfChanged(g_statusbar.layout_label, layout_name);
       // Park it just left of the clock on EVERY board, so it tracks wherever the
       // clock lands (12/24-hour width, the charging slide, centred hide-name
