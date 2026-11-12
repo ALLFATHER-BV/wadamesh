@@ -2984,7 +2984,42 @@ void MyMesh::onContactsFull() {
   }
 }
 
+#if defined(ESP32)
+static uint32_t peerClockQuorumIdFromPubKey(const uint8_t* pub_key) {
+  if (!pub_key) return 0;
+  uint32_t id = (uint32_t)pub_key[0] |
+                ((uint32_t)pub_key[1] << 8) |
+                ((uint32_t)pub_key[2] << 16) |
+                ((uint32_t)pub_key[3] << 24);
+  return id == 0 ? 1u : id;
+}
+
+static uint32_t peerClockQuorumIdFromChannelText(const char* text) {
+  if (!text) return 0;
+  const char* colon = strchr(text, ':');
+  if (!colon || colon == text || (colon - text) > 48) return 0;
+  uint32_t h = 2166136261u;
+  for (const char* p = text; p < colon; ++p) {
+    h ^= (uint8_t)(*p);
+    h *= 16777619u;
+  }
+  return h == 0 ? 1u : h;
+}
+#endif
+
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  // Bootstrap an unsynced clock (Seed or Floor after power loss) from an Ed25519-verified
+  // advertisement timestamp via adoptMeshPeerTime (2-peer quorum for large jumps, keeps
+  // _source == Floor so a stale peer heard first cannot lock out real-time peers).
+#if defined(ESP32)
+  rtc_clock.adoptMeshPeerTime(contact.last_advert_timestamp,
+                              peerClockQuorumIdFromPubKey(contact.id.pub_key));
+#else
+  if (contact.last_advert_timestamp > 1772323200UL && contact.last_advert_timestamp < 2000000000UL &&
+      getRTCClock()->getCurrentTime() <= 1772323200UL) {
+    getRTCClock()->setCurrentTime(contact.last_advert_timestamp);
+  }
+#endif
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact, true);
@@ -3233,14 +3268,16 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
   // Clock bootstrap from a peer's send-time when we have no real clock of our own (Wi-Fi
-  // and GPS off, or not yet synced). Reliable by construction: adopt ONLY a sane epoch
-  // (~2023..2033, so the 1902/0 garbage and absurd-future values are ignored), and ONLY
-  // while our own clock still reads unset — NTP/GPS override it the instant they sync, and
-  // a clock that already reads real is never moved by the mesh.
+  // and GPS off, or not yet synced). Uses adoptMeshPeerTime so a stale peer does not
+  // promote _source to ExternalSync and lock out real-time peers.
+#if defined(ESP32)
+  rtc_clock.adoptMeshPeerTime(sender_timestamp, peerClockQuorumIdFromPubKey(from.id.pub_key));
+#else
   if (sender_timestamp > 1700000000UL && sender_timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
     getRTCClock()->setCurrentTime(sender_timestamp);
   }
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -3470,12 +3507,15 @@ int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[],
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
-  // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
-  // as queueMessage above) so a Wi-Fi/GPS-off node can still get time off public channels.
+  // Clock bootstrap from a channel peer's send-time via adoptMeshPeerTime.
+#if defined(ESP32)
+  rtc_clock.adoptMeshPeerTime(timestamp, peerClockQuorumIdFromChannelText(text));
+#else
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
     getRTCClock()->setCurrentTime(timestamp);
   }
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);

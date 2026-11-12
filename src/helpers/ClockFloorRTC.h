@@ -48,6 +48,8 @@ public:
 
 private:
   uint32_t    _floor = 0;
+  uint32_t    _pending_peer_ts = 0;
+  uint32_t    _pending_peer_id = 0;
   ClockSource _source = ClockSource::Seed;
   bool        _hw_present = false;
 
@@ -58,8 +60,10 @@ public:
   // MeshCore 1.18, 15 May 2024 (1715770351) before. It has to be the seed itself, not
   // anything below it: a set equal to the seed is the "Sync clock from system" poisoning
   // described at pushSystemClock(), and a seed above this value would read as a real time.
-  static constexpr uint32_t MIN_VALID_EPOCH  = 1772323200UL;
-  static constexpr uint32_t TRUSTED_BACK_CAP = 10UL * 60UL;
+  static constexpr uint32_t MIN_VALID_EPOCH            = 1772323200UL;
+  static constexpr uint32_t TRUSTED_BACK_CAP           = 10UL * 60UL;
+  static constexpr uint32_t MAX_SINGLE_PEER_JUMP_SECS  = 3600UL;
+  static constexpr uint32_t PEER_QUORUM_TOLERANCE_SECS = 900UL;
 
   // High-side twin of MIN_VALID_EPOCH: an external RTC chip with corrupted/unset date
   // registers can read as a *future* date (seen live: a T-Display P4's PCF8563 came back
@@ -198,4 +202,47 @@ public:
     if (persisted > _floor) _floor = persisted;
   }
   uint32_t getFloor() const { return _floor; }
+
+  // Adopt a mesh peer's timestamp (advert, DM, or channel post) only while our
+  // clock is not yet authoritative (!timeIsCurrent()). Unlike setCurrentTime():
+  //   1. Keeps _source == ClockSource::Floor (never ExternalSync and never writes
+  //      unverified peer time to the hardware RTC), so a stale peer heard first
+  //      cannot lock out newer real-time peers.
+  //   2. Any jump of >1 hour (or the first jump off Seed) requires a 2-peer quorum
+  //      from two distinct peer_ids within +/-15 minutes, preventing a single rogue
+  //      repeater days in the future from poisoning the monotonic floor.
+  bool adoptMeshPeerTime(uint32_t peer_ts, uint32_t peer_id = 0) {
+    if (timeIsCurrent()) return false;
+    if (peer_ts <= MIN_VALID_EPOCH || peer_ts > MAX_PLAUSIBLE_EPOCH) return false;
+    const uint32_t cur = getCurrentTime();
+    if (peer_ts <= cur) return false;
+
+    const bool large_jump = (_source == ClockSource::Seed) ||
+                            (cur <= MIN_VALID_EPOCH) ||
+                            (peer_ts > cur + MAX_SINGLE_PEER_JUMP_SECS);
+    if (large_jump) {
+      if (peer_id == 0) return false;
+      if (_pending_peer_ts != 0 && _pending_peer_id != 0 && peer_id != _pending_peer_id) {
+        const uint32_t diff = (peer_ts >= _pending_peer_ts)
+                                  ? (peer_ts - _pending_peer_ts)
+                                  : (_pending_peer_ts - peer_ts);
+        if (diff <= PEER_QUORUM_TOLERANCE_SECS) {
+          _pending_peer_ts = 0;
+          _pending_peer_id = 0;
+          _floor = peer_ts;
+          _source = ClockSource::Floor;
+          pushSystemClock(peer_ts);
+          return true;
+        }
+      }
+      _pending_peer_ts = peer_ts;
+      _pending_peer_id = peer_id;
+      return false;
+    }
+
+    _floor = peer_ts;
+    _source = ClockSource::Floor;
+    pushSystemClock(peer_ts);
+    return true;
+  }
 };
