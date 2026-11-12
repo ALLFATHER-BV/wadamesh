@@ -57491,6 +57491,15 @@ static void bleKbdUiTick() {
     }
     bleKbdDispatch(key);
   }
+  // A modifier-only report (Ctrl, Alt, Shift, GUI) makes no key event, so the
+  // loop above never sees it. Any new key or modifier still counts as input:
+  // light the screen, or the lock screen, and keep the waking key swallowed —
+  // the same rule every other keyboard on this device follows.
+  if (BleKbd::takeActivity() && g_lv.task) {
+    if (g_lv.task->isManualLock())      g_lv.task->lockscreenReveal();
+    else if (g_lv.task->isScreenOff())  g_lv.task->wakeScreen();
+    else                                g_lv.task->noteUserInput();
+  }
 #endif  // CAP_BLE_KEYBOARD
 #if defined(HAS_CARDKB) && !defined(HAS_M9_KEYBOARD)   // (the host's M9 flavour reads them as M9 keys)
   for (int i = 0; i < 16; ++i) {
@@ -84672,6 +84681,11 @@ void UITask::loop() {
         c = key;
       }
       if (c) consoleKey(c);
+    }
+    // Modifier-only keys wake the console too; a text key above already did.
+    if (BleKbd::takeActivity()) {
+      con_activity = true;
+      if (_screen_off) wakeScreen();
     }
 #endif
 #if defined(HAS_CARDKB)
