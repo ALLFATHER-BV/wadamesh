@@ -2945,6 +2945,19 @@ static inline lv_coord_t statusBarCurH() { return s_round_chat_bar ? SB_CHAT_H :
 #else
 static inline lv_coord_t statusBarCurH() { return s_statusbar_tall ? (lv_coord_t)(STATUSBAR_H * 2) : STATUSBAR_H; }
 #endif
+// The 240 px wide header (#767, #833): the tall bar's top row is the same as on every
+// page (clock, icons, battery), and a second row under it carries the open chat's
+// back arrow, picture and name, or a settings / tool page's "‹ Title". The T-Deck Pro
+// always; the V4 builds while the screen is portrait (the chat keyboard can turn it).
+static inline bool sbTwoRow() {
+#if defined(HAS_TDECK_PRO)
+  return true;
+#elif defined(HELTEC_LORA_V4_TFT)
+  return lv_disp_get_hor_res(nullptr) < lv_disp_get_ver_res(nullptr);
+#else
+  return false;
+#endif
+}
 #if defined(HELTEC_LORA_V4_R8)
 static void r8ResizeContentBelowStatusBar(lv_coord_t top);
 #endif
@@ -8975,6 +8988,16 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   // too would race the state machine and double-dispatch tap/swipe events.
   if (!heltecV4CapTouchIsAsyncPolling()) {
     (void)heltecV4CapTouchCheck();
+  }
+  // #836: clear LVGL 8's stuck-scroll latch. lv_indev_wait_release() (the swipe abort
+  // below, and many handlers) drops last_obj but keeps scroll_obj while the list is
+  // still coasting. A press landing in that window resets scroll_dir to NONE yet keeps
+  // scroll_obj; the throw handler then returns early forever and never clears it, so
+  // every later release skips CLICKED: rows highlight but nothing opens. scroll_dir is
+  // always set together with scroll_obj, so this pair only ever means the dead latch.
+  if (lv_indev_t* sc_act = lv_indev_get_act()) {
+    auto& ptr = sc_act->proc.types.pointer;
+    if (ptr.scroll_obj && ptr.scroll_dir == LV_DIR_NONE) ptr.scroll_obj = nullptr;
   }
   // Stamp s_slider_touch_ms while the finger is down on any slider. Both the press
   // abort below and the tab / swipe-back handler skip a slider drag on this stamp,
@@ -19321,7 +19344,8 @@ static void openLocalSensorsPage() {
 
   lv_obj_t* card = lv_obj_create(s_local_sensors_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, sw - 12, H - 44);
+  // The card scrolls; the console button sits below it so it is always reachable.
+  lv_obj_set_size(card, sw - 12, H - 44 - 42);
   lv_obj_set_pos(card, 6, 36);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
@@ -19329,6 +19353,9 @@ static void openLocalSensorsPage() {
   lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
+  // Column flow so the readout, chart and legend stack without overlapping.
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(card, 8, LV_PART_MAIN);
 
   lv_obj_t* status = lv_label_create(card);
   lv_obj_set_width(status, lv_pct(100));
@@ -19347,10 +19374,17 @@ static void openLocalSensorsPage() {
     }
   }
   if (have_hist) {
-    lv_obj_t* chart = lv_chart_create(card);
-    lv_obj_set_size(chart, sw - 28, 116);
-    lv_obj_align(status, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_align_to(chart, status, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
+    // The Y-axis tick labels draw outside the chart box; pad the host so they stay on the card.
+    lv_obj_t* host = lv_obj_create(card);
+    lv_obj_remove_style_all(host);
+    lv_obj_set_size(host, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_left(host, 34, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(host, 26, LV_PART_MAIN);
+    lv_obj_clear_flag(host, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(host, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t* chart = lv_chart_create(host);
+    lv_obj_set_size(chart, lv_pct(100), 116);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, kHomeEnvHistoryPoints);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 3400, 4600);
@@ -19376,20 +19410,16 @@ static void openLocalSensorsPage() {
       lv_chart_set_next_value(chart, hs, s_home_env_hist_hum[i] >= 0 ? (lv_coord_t)s_home_env_hist_hum[i] : LV_CHART_POINT_NONE);
     }
     lv_obj_t* legend = lv_label_create(card);
+    lv_obj_set_width(legend, lv_pct(100));
+    lv_label_set_long_mode(legend, LV_LABEL_LONG_WRAP);
     lv_label_set_text(legend, TR("Blue battery  Orange temp  Cyan humidity"));
     lv_obj_set_style_text_font(legend, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_align_to(legend, chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
   }
 
-  lv_obj_t* btn_row = lv_obj_create(card);
-  lv_obj_remove_style_all(btn_row);
-  lv_obj_set_size(btn_row, sw - 28, 36);
-  lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
-
-  lv_obj_t* term = lv_btn_create(btn_row);
-  lv_obj_set_size(term, sw - 40, 34);
-  lv_obj_align(term, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_t* term = lv_btn_create(s_local_sensors_root);
+  lv_obj_set_size(term, sw - 12, 34);
+  lv_obj_align(term, LV_ALIGN_BOTTOM_MID, 0, -4);
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
@@ -58890,6 +58920,13 @@ static void openControlCenter() {
   // screen can't fit the battery/IP beside the clock, so portrait stacks the
   // header vertically and uses a taller card.
   const bool portrait = (sw < sh);
+#if defined(HELTEC_LORA_V4_TFT)
+  // V4 portrait has no room for the battery row and the Expansion Kit env line above
+  // the chips; both are elsewhere (status bar battery, Sensors tab / Home widget). #833
+  const bool cc_lean = portrait;
+#else
+  const bool cc_lean = false;
+#endif
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 40 > 560) ? 560 : (sw - 40);   // way wider on the 800-px panel
 #elif defined(TLORA_PAGER)
@@ -59028,7 +59065,9 @@ static void openControlCenter() {
   lv_obj_set_style_text_font(bi, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(bi, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   int row_y = 42;   // first content row under the date / battery
-  if (portrait) {
+  if (cc_lean) {
+    lv_obj_add_flag(brow, LV_OBJ_FLAG_HIDDEN);
+  } else if (portrait) {
     lv_obj_align(brow, LV_ALIGN_TOP_LEFT, 0, 38);   // battery under the date
     row_y = 58;
   } else {
@@ -59053,10 +59092,16 @@ static void openControlCenter() {
 #endif
 
 #if !defined(HAS_THINKNODE_M9) && !defined(TLORA_PAGER)
+  // The 12 px lines' real height (it grows with the Text size); the bottom of the
+  // GPS / Expansion Kit text, which the portrait chip grid below must stay under.
+  const int cc_lh12 = lv_font_get_line_height(&g_font_12);
+  int cc_text_bot = gps_y + cc_lh12;
+  (void)cc_text_bot;
   // ---- GPS fix status (live; refreshed while the panel is open) ----
   s_cc_gps_label = lv_label_create(card);
   lv_label_set_long_mode(s_cc_gps_label, LV_LABEL_LONG_DOT);
   lv_obj_set_width(s_cc_gps_label, card_w - 20);
+  lv_obj_set_height(s_cc_gps_label, cc_lh12);   // LONG_DOT still wraps unless the height is clamped
   lv_label_set_text(s_cc_gps_label, gpsStatusStr(true));   // one line — keeps the dropdown short
   lv_obj_set_style_text_font(s_cc_gps_label, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_cc_gps_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
@@ -59064,15 +59109,17 @@ static void openControlCenter() {
 
 #if defined(HAS_EXPANSION_KIT)
   // Expansion Kit: live local-env one-liner under the GPS status in the CC.
-  const char* env_status = localEnvStatusStr();
+  const char* env_status = cc_lean ? "" : localEnvStatusStr();
   if (env_status[0]) {
     s_cc_env_label = lv_label_create(card);
     lv_label_set_long_mode(s_cc_env_label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(s_cc_env_label, card_w - 20);
+    lv_obj_set_height(s_cc_env_label, cc_lh12);   // one line: a wrapped second line ran under the chips (#833)
     lv_label_set_text(s_cc_env_label, env_status);
     lv_obj_set_style_text_font(s_cc_env_label, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_cc_env_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_align(s_cc_env_label, LV_ALIGN_TOP_LEFT, 0, gps_y + 12);
+    lv_obj_align(s_cc_env_label, LV_ALIGN_TOP_LEFT, 0, gps_y + cc_lh12);   // the line under GPS, at any Text size
+    cc_text_bot += cc_lh12;
   }
 #endif
 #endif  // !HAS_THINKNODE_M9 && !TLORA_PAGER
@@ -59285,14 +59332,18 @@ static void openControlCenter() {
     const int per_row = (chip_count + 1) / 2;                 // 6 -> 3 per row, 5 -> 3 then 2
     tw = (card_w - 20 - 5 * (per_row - 1)) / per_row;
     if (tw > 92) tw = 92;
-    int rowh = (card_h - 40) - (gps_y + 38);                 // card bottom (minus margin) up to just below GPS/env (card_h-40 == the old 196 on the 236px V4 card)
+    // Between the GPS / Expansion Kit text and the one-line system info at the bottom,
+    // both measured at the current Text size: a fixed 34 px floor and 20 px gap let the
+    // chips grow over those lines, so the text read underneath them (#833).
+    const int sys_gap = LV_MAX(20, cc_lh12 + 4);              // above the system info line
+    int rowh = (card_h - 20 - sys_gap) - (cc_text_bot + 6);   // card_h - 20: the card's inner height
     if (rowh > 116) rowh = 116;
     th = (rowh - 8) / 2;                                      // two rows + an 8px inter-row gap
     if (th > 52) th = 52;
-    if (th < 34) th = 34;
+    if (th < 24) th = 24;                                     // icon-only squares: still a fingertip
     lv_obj_set_style_pad_row(row, 8, LV_PART_MAIN);
     lv_obj_set_height(row, th * 2 + 8);
-    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);           // re-anchor after the resize
+    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -sys_gap);      // re-anchor after the resize
   } else {
     tw = (card_w - 20 - 5 * (chip_count - 1)) / chip_count;   // single row, fit all across
     if (tw > 76) tw = 76;
@@ -62265,7 +62316,21 @@ static void statusBarReaderBackCb(lv_event_t* e) {
   // then falls through every other branch to the control-center toggle at its end — so exiting any
   // app page by the "‹" also popped the dropdown open. Harmless while this was Reader-only, wrong
   // for every app page since beta_49.
-  if (s_apppage_close) { s_apppage_close(); s_sb_back_ms = millis() | 1u; }   // |1: 0 means "none"
+  if (s_apppage_close) { s_apppage_close(); s_sb_back_ms = millis() | 1u; return; }   // |1: 0 means "none"
+  // A settings page's "‹ Title" on the two-row bar's second row (#833): the same
+  // touch-down back, as the CLICKED alone did not take it there.
+  if (s_settings_sheet && s_statusbar_tall && sbTwoRow()) {
+    lv_indev_t* in = lv_indev_get_act();
+    lv_point_t pt = {0, 0};
+    if (in) lv_indev_get_point(in, &pt);
+    lv_area_t ba;
+    lv_obj_get_coords(g_statusbar.root, &ba);
+    if (pt.y < ba.y1 + STATUSBAR_H) return;   // the top row keeps the bar's usual tap
+    const bool reopen_cc = s_settings_from_cc;
+    closeSettingsCategory();
+    if (reopen_cc) openControlCenter();
+    s_sb_back_ms = millis() | 1u;
+  }
 }
 
 // Capture the composited screen to a 16-bit BMP on the SD card. BMP (no
@@ -62844,6 +62909,9 @@ static void buildGlobalStatusBar() {
   lv_obj_add_event_cb(g_statusbar.chat_head, channelGearCb, LV_EVENT_CLICKED, nullptr);
   #if defined(HAS_TDECK_PRO)
   g_statusbar.chat_avatar = makeGlyphAvatar(g_statusbar.root, "", GLYPH_SQUARE, 20);   // fits the 22 px second row
+#elif defined(HELTEC_LORA_V4_TFT)
+  // Fits the portrait second row (one bar row high).
+  g_statusbar.chat_avatar = makeGlyphAvatar(g_statusbar.root, "", GLYPH_SQUARE, LV_MIN(SC(26), STATUSBAR_H - 2));
 #else
   g_statusbar.chat_avatar = makeGlyphAvatar(g_statusbar.root, "", GLYPH_SQUARE, SC(26));
 #endif
@@ -63330,11 +63398,8 @@ static void chatHeaderApply(bool chat_open) {
   const bool keep_links = false;
   const lv_coord_t inset = 0, ymid = 0;
 #endif
-#if defined(HAS_TDECK_PRO)
-  const bool chat_radios_hidden = false;   // the top row is the same as on every other page
-#else
-  const bool chat_radios_hidden = chat_open;
-#endif
+  const bool two_row = sbTwoRow();
+  const bool chat_radios_hidden = two_row ? false : chat_open;   // two rows: the top row is the same as on every other page
   lv_obj_t* radios[] = { g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.sd_icon,
                          g_statusbar.dnd_icon, g_statusbar.sig_box, g_statusbar.sleep_icon };
   auto isLink = [](lv_obj_t* o) {
@@ -63351,8 +63416,10 @@ static void chatHeaderApply(bool chat_open) {
     }
   }
   static bool s_was_open = false;
+  static bool s_hdr_was_two_row = false;   // the last pass laid out the two-row header
   if (chat_open != s_was_open) {
     s_was_open = chat_open;
+    s_hdr_was_two_row = false;
     if (chat_open) {
       lv_obj_clear_flag(g_statusbar.chat_avatar, LV_OBJ_FLAG_HIDDEN);
       lv_obj_clear_flag(g_statusbar.chat_sub, LV_OBJ_FLAG_HIDDEN);
@@ -63396,6 +63463,7 @@ static void chatHeaderApply(bool chat_open) {
   static char s_emoji[20] = "";
   static uint8_t s_gen = 0;
   static uint8_t s_ngen = 0;
+  static bool s_two_row = false;
   const int thread = g_lv.task ? g_lv.task->activeThreadIdx() : -1;
   const int count = g_lv.task ? g_lv.task->getMsgCount() : 0;   // any new message: recount
   bool ch = true; uint16_t unread = 0; uint32_t ts = 0;
@@ -63405,7 +63473,8 @@ static void chatHeaderApply(bool chat_open) {
   touchPrefsGetChannelEmoji(name, emoji, sizeof emoji);   // its sheet can change it while it is open
   if (!emoji[0] && !ch && thread >= 0) nameFirstEmoji(threadShownName(thread, name), emoji, sizeof emoji);
   if (thread != s_thread || count != s_count || strcmp(emoji, s_emoji) != 0 || s_gen != s_avatar_gen ||
-      s_ngen != s_nick_gen) {
+      s_ngen != s_nick_gen || two_row != s_two_row) {
+    s_two_row = two_row;
     s_gen = s_avatar_gen;
     s_ngen = s_nick_gen;
     s_thread = thread;
@@ -63415,11 +63484,11 @@ static void chatHeaderApply(bool chat_open) {
     if (ch) lv_obj_add_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
     else    lv_obj_clear_flag(g_statusbar.chat_avatar, AVATAR_SQUARE_FLAG);
     glyphAvatarSetEmoji(g_statusbar.chat_avatar, threadShownName(thread, name), emoji);
-#if !defined(HAS_TDECK_PRO)
-    char sub[48];
-    chatHeaderSubtitle(sub, sizeof sub);
-    lv_label_set_text(g_statusbar.chat_sub, sub);
-#endif
+    if (!two_row) {   // two rows: chat_sub carries the name (below)
+      char sub[48];
+      chatHeaderSubtitle(sub, sizeof sub);
+      lv_label_set_text(g_statusbar.chat_sub, sub);
+    }
   }
   // The composer says who it writes to: "Message #bemesh". Checked on every pass
   // against the field itself, not only when the thread changes: the panel and its
@@ -63432,22 +63501,70 @@ static void chatHeaderApply(bool chat_open) {
   const lv_coord_t av_sz = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
   const lv_coord_t x_back = inset ? inset : 6;
   const lv_coord_t x_av = x_back + SC(24) - 6, x_text = x_av + av_sz + 8;
-#if !defined(HAS_TDECK_PRO)
-  sbTranslateY(g_statusbar.chat_avatar, 0);
-  sbAlign(g_statusbar.chat_avatar, LV_ALIGN_LEFT_MID, x_av, ymid);
-#endif
   if (g_statusbar.chat_back) {
     sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT));
     sbTranslateY(g_statusbar.chat_back, 0);
-#if defined(HAS_TDECK_PRO)
-    // The far left of the second row; the clock holds the top row's corner.
-    const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
-    sbAlign(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, x_back, STATUSBAR_H + (STATUSBAR_H - lv_font_get_line_height(bf)) / 2);
-#else
-    sbAlign(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, x_back, ymid);
-#endif
+    if (two_row) {
+      // The far left of the second row; the top row above it is the same as on every page.
+      const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
+      sbAlign(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, x_back, STATUSBAR_H + (STATUSBAR_H - lv_font_get_line_height(bf)) / 2);
+    } else {
+      sbAlign(g_statusbar.chat_back, LV_ALIGN_LEFT_MID, x_back, ymid);
+    }
   }
-#if !defined(HAS_TDECK_PRO)   // the Pro's top row is updateGlobalStatusBar's, as on every page
+  if (two_row) {
+    // A second header under the top row: the chat's picture and name, centred as one
+    // group. chat_sub carries the name here (left_label keeps the unread badge of the
+    // top row); the subtitle has no room on the one-row-high second row.
+    (void)x_text; (void)av_sz; (void)bar_h; (void)x_av;
+    // Coming from the one-row-header layout (the chat keyboard turned the V4 back to
+    // portrait): hand the title's box back to the top row's unread badge, and the GPS
+    // glyph back to its packed slot in the row.
+    if (!s_hdr_was_two_row) {
+      lv_obj_set_size(g_statusbar.left_label, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+      lv_label_set_long_mode(g_statusbar.left_label, LV_LABEL_LONG_WRAP);
+      if (g_statusbar.gps_icon) statusBarPackRight();
+    }
+    s_hdr_was_two_row = true;
+    const lv_coord_t row_h = STATUSBAR_H;
+    const lv_coord_t hor = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN);
+    const lv_coord_t av = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
+    const lv_coord_t gap = 6;
+    const lv_font_t* tf = sbFixed(&g_font_semi_14);
+    const lv_coord_t title_h = lv_font_get_line_height(tf);
+    sbFont(g_statusbar.chat_sub, &g_font_semi_14, LV_PART_MAIN);
+    sbTextColor(g_statusbar.chat_sub, lv_color_hex(COLOR_TEXT));
+    // The back arrow's zone, kept clear on both sides so the group stays centred.
+    const char* bt = lv_label_get_text(g_statusbar.chat_back);
+    const lv_coord_t back_w = lv_txt_get_width(bt, strlen(bt), lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN),
+                                               0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t back_zone = LV_MAX((lv_coord_t)40, x_back + back_w + 16);
+    char ttl[sizeof(s_chat_title) + 4];
+    uiFitTrailingDots(s_chat_title, tf, hor - 2 * back_zone - av - gap, ttl, sizeof ttl);
+    const lv_coord_t name_w = lv_txt_get_width(ttl, strlen(ttl), tf, 0, LV_TEXT_FLAG_NONE) + 2;
+    const lv_coord_t x0 = (hor - (av + gap + name_w)) / 2;
+    sbTranslateY(g_statusbar.chat_avatar, 0);
+    sbAlign(g_statusbar.chat_avatar, LV_ALIGN_TOP_LEFT, x0, row_h + (row_h - av) / 2);
+    sbTranslateY(g_statusbar.chat_sub, 0);
+    sbSize(g_statusbar.chat_sub, name_w, title_h);
+    if (lv_label_get_long_mode(g_statusbar.chat_sub) != LV_LABEL_LONG_CLIP)
+      lv_label_set_long_mode(g_statusbar.chat_sub, LV_LABEL_LONG_CLIP);
+    if (strcmp(lv_label_get_text(g_statusbar.chat_sub), ttl) != 0) lv_label_set_text(g_statusbar.chat_sub, ttl);
+    sbAlign(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x0 + av + gap, row_h + (row_h - title_h) / 2);
+    // The second row right of the back arrow is the hit area for chat settings. Over
+    // the arrow it took the tap meant for the bar (which closes the chat).
+    sbTranslateY(g_statusbar.chat_head, 0);
+    sbSize(g_statusbar.chat_head, hor - back_zone, row_h);
+    sbAlign(g_statusbar.chat_head, LV_ALIGN_TOP_LEFT, back_zone, row_h);
+    return;
+  }
+  s_hdr_was_two_row = false;
+#if !defined(HAS_TDECK_PRO)
+  // The one-row-high title's subtitle, as built (the two-row header restyles chat_sub as the name).
+  sbFont(g_statusbar.chat_sub, &g_font_12, LV_PART_MAIN);
+  sbTextColor(g_statusbar.chat_sub, lv_color_hex(COLOR_TERTIARY));
+  sbTranslateY(g_statusbar.chat_avatar, 0);
+  sbAlign(g_statusbar.chat_avatar, LV_ALIGN_LEFT_MID, x_av, ymid);
   // Right side: battery, then the clock just left of it, at the same height as on
   // the one-row bar (its centre line), not centred on the taller chat bar.
 #if CAP_ROUND_CORNERS
@@ -63489,45 +63606,6 @@ static void chatHeaderApply(bool chat_open) {
   }
 #endif
   const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room;
-#endif
-#if defined(HAS_TDECK_PRO)
-  // A second header under the top row: the chat's picture and name, centred as one
-  // group. chat_sub carries the name here (left_label keeps the unread badge of the
-  // top row); the subtitle has no room on the 22 px row.
-  (void)x_text; (void)av_sz; (void)bar_h;
-  {
-    const lv_coord_t row_h = STATUSBAR_H;
-    const lv_coord_t hor = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN);
-    const lv_coord_t av = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
-    const lv_coord_t gap = 6;
-    const lv_font_t* tf = sbFixed(&g_font_semi_14);
-    const lv_coord_t title_h = lv_font_get_line_height(tf);
-    sbFont(g_statusbar.chat_sub, &g_font_semi_14, LV_PART_MAIN);
-    sbTextColor(g_statusbar.chat_sub, lv_color_hex(COLOR_TEXT));
-    // The back arrow's zone, kept clear on both sides so the group stays centred.
-    const char* bt = lv_label_get_text(g_statusbar.chat_back);
-    const lv_coord_t back_w = lv_txt_get_width(bt, strlen(bt), lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN),
-                                               0, LV_TEXT_FLAG_NONE);
-    const lv_coord_t back_zone = LV_MAX((lv_coord_t)40, x_back + back_w + 16);
-    char ttl[sizeof(s_chat_title) + 4];
-    uiFitTrailingDots(s_chat_title, tf, hor - 2 * back_zone - av - gap, ttl, sizeof ttl);
-    const lv_coord_t name_w = lv_txt_get_width(ttl, strlen(ttl), tf, 0, LV_TEXT_FLAG_NONE) + 2;
-    const lv_coord_t x0 = (hor - (av + gap + name_w)) / 2;
-    sbTranslateY(g_statusbar.chat_avatar, 0);
-    sbAlign(g_statusbar.chat_avatar, LV_ALIGN_TOP_LEFT, x0, row_h + (row_h - av) / 2);
-    sbTranslateY(g_statusbar.chat_sub, 0);
-    sbSize(g_statusbar.chat_sub, name_w, title_h);
-    if (lv_label_get_long_mode(g_statusbar.chat_sub) != LV_LABEL_LONG_CLIP)
-      lv_label_set_long_mode(g_statusbar.chat_sub, LV_LABEL_LONG_CLIP);
-    if (strcmp(lv_label_get_text(g_statusbar.chat_sub), ttl) != 0) lv_label_set_text(g_statusbar.chat_sub, ttl);
-    sbAlign(g_statusbar.chat_sub, LV_ALIGN_TOP_LEFT, x0 + av + gap, row_h + (row_h - title_h) / 2);
-    // The second row right of the back arrow is the hit area for chat settings. Over
-    // the arrow it took the tap meant for the bar (which closes the chat).
-    sbTranslateY(g_statusbar.chat_head, 0);
-    sbSize(g_statusbar.chat_head, hor - back_zone, row_h);
-    sbAlign(g_statusbar.chat_head, LV_ALIGN_TOP_LEFT, back_zone, row_h);
-  }
-#else
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
@@ -63633,6 +63711,10 @@ static uint32_t s_sb_pack_sig = 0;   // what the last pack saw; the clock's over
 // The bar shows no node name, so the clock holds the far left corner on every page,
 // an open chat included (the icons keep their places).
 static bool sbProClockLeft() { return true; }
+#elif defined(HELTEC_LORA_V4_TFT)
+// The same in portrait, the 240 px two-row bar (#833): centred, the clock met the
+// icons there and the overlap guard's step left lifted it off the top of the screen.
+static bool sbProClockLeft() { return sbTwoRow(); }
 #endif
 static void statusBarPackRight() {
   if (!g_statusbar.root) return;
@@ -63771,6 +63853,13 @@ static void updateGlobalStatusBar() {
   const bool chat_hdr = false;
 #endif
   const bool inbox_overview = (getActiveTab() == CHAT_INBOX_TAB_INDEX) && !chat_open && (s_settings_open_cat < 0) && !s_apppage_title;
+  const bool two_row = sbTwoRow();   // the 240 px header: a second row under the usual top row
+#if defined(HAS_TDECK_PRO)
+  const bool title_row2 = false;     // settings stay one row; tool pages keep the centred title
+#else
+  // A settings / tool page's "‹ Title" on the second row, clear of the top row's clock.
+  const bool title_row2 = two_row && ((s_settings_open_cat >= 0) || (s_apppage_title && !s_apppage_slim));   // the tall bar's cases
+#endif
   {
 #if defined(TLORA_PAGER)
     const bool want_tall = false;   // one row in every state (see statusBarSetTall)
@@ -63841,24 +63930,21 @@ static void updateGlobalStatusBar() {
       lv_obj_t* c = lv_obj_get_child(g_statusbar.root, i);
       if (c == inbox_btns[0] || c == inbox_btns[1] || c == inbox_btns[2]) continue;
       if (c == g_statusbar.fade || c == g_statusbar.dim || c == s_sb_tint) continue;   // full-bar backdrops — never shift
-#if defined(HAS_TDECK_PRO)
-      // The top row (clock, icons, unread badge) is placed as on any page; the header's
-      // second row is chatHeaderApply's.
-      if (chat_hdr && (c == g_statusbar.chat_back || c == g_statusbar.chan_gear || c == g_statusbar.chat_avatar ||
-                       c == g_statusbar.chat_sub || c == g_statusbar.chat_head))
+      if (two_row) {
+        // The top row (clock, icons, unread badge) is placed as on any page; the header's
+        // second row is chatHeaderApply's.
+        if (chat_hdr && (c == g_statusbar.chat_back || c == g_statusbar.chan_gear || c == g_statusbar.chat_avatar ||
+                         c == g_statusbar.chat_sub || c == g_statusbar.chat_head))
+          continue;
+      } else if (chat_hdr && (c == g_statusbar.left_label || c == g_statusbar.chat_back || c == g_statusbar.chan_gear ||
+                              c == g_statusbar.clock || c == g_statusbar.batt_icon || c == g_statusbar.batt_pct ||
+                              c == g_statusbar.chat_avatar || c == g_statusbar.chat_sub || c == g_statusbar.chat_head)) {
         continue;
-#else
-      if (chat_hdr && (c == g_statusbar.left_label || c == g_statusbar.chat_back || c == g_statusbar.chan_gear ||
-                       c == g_statusbar.clock || c == g_statusbar.batt_icon || c == g_statusbar.batt_pct ||
-                       c == g_statusbar.chat_avatar || c == g_statusbar.chat_sub || c == g_statusbar.chat_head))
-        continue;
-#endif
+      }
       lv_coord_t t = up;   // top row by default
       if (c == g_statusbar.left_label) {
-        if (s_settings_open_cat >= 0 || s_apppage_title) t = 0;    // settings/tool back+title: centred
-#if !defined(HAS_TDECK_PRO)
-        else if (chat_open)           t = -up;  // chat thread name: lower row
-#endif
+        if (s_settings_open_cat >= 0 || s_apppage_title) t = title_row2 ? -up : 0;   // settings/tool back+title: second row, or centred
+        else if (chat_open && !two_row) t = -up;  // chat thread name: lower row
       } else if (chat_open && (c == g_statusbar.chan_gear || c == g_statusbar.chat_back)) {
         t = 0;                                  // chat back + cog: centred across both rows
       } else if (c == g_statusbar.layout_label) {
@@ -63912,11 +63998,7 @@ static void updateGlobalStatusBar() {
     }
   }
 #else
-#if defined(HAS_TDECK_PRO)
-  if (false) {
-#else
-  if (in_chan_chat) {
-#endif
+  if (in_chan_chat && !two_row) {   // two rows: the name is on chatHeaderApply's second row
 #if defined(TLORA_PAGER)
     // Back + gear occupy the first 48 px; cap the title before the clock so
     // the entire open-chat header shares the overview/status baseline.
@@ -63927,7 +64009,7 @@ static void updateGlobalStatusBar() {
     if (!chat_hdr) sbAlign(g_statusbar.left_label, LV_ALIGN_CENTER, 0, 0);
 #endif
   } else {
-#if defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_TFT)
     // The clock holds the left corner: the left zone (the unread count) follows it.
     lv_coord_t lx = 6;
     if (sbProClockLeft() && (!s_statusbar_tall || chat_open) && g_statusbar.clock &&
@@ -64018,7 +64100,9 @@ static void updateGlobalStatusBar() {
       lv_area_t la;
       lv_obj_get_coords(g_statusbar.left_label, &la);
       lv_coord_t room = lv_obj_get_width(g_statusbar.root) / 2 - 12;   // no clock: half the bar
-      if (g_statusbar.clock && !lv_obj_has_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN)) {
+      if (title_row2) {
+        room = lv_obj_get_width(g_statusbar.root) - 2 * 6;   // the second row is the title's alone
+      } else if (g_statusbar.clock && !lv_obj_has_flag(g_statusbar.clock, LV_OBJ_FLAG_HIDDEN)) {
         lv_area_t ca;
         lv_obj_get_coords(g_statusbar.clock, &ca);
         if (ca.x1 > la.x1) room = ca.x1 - la.x1 - SC(8);
@@ -64049,11 +64133,7 @@ static void updateGlobalStatusBar() {
     // global ✉ badge competing with the buttons).
     setLabelIfChanged(g_statusbar.left_label, "");
   } else
-#if defined(HAS_TDECK_PRO)
-  if (false) {
-#else
-  if (s_chat_title[0]) {
-#endif
+  if (s_chat_title[0] && !two_row) {   // two rows: the left zone keeps the unread badge
     // An open conversation surfaces its thread name here (the in-chat header bar
     // was removed to reclaim height). Keep the global unread badge as a prefix so
     // you still see mail waiting in OTHER threads while reading this one. Smaller
@@ -64432,13 +64512,13 @@ static void updateGlobalStatusBar() {
                                    strlen(lv_label_get_text(g_statusbar.clock)),
                                    lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0,
                                    LV_TEXT_FLAG_NONE));
-    mix(charging); mix(chat_open); mix(touchPrefsGetHideNodeName());
+    mix(charging); mix(chat_open); mix(touchPrefsGetHideNodeName()); mix(two_row);
     mix(s_sb_pack_sig);   // the icons were re-packed: check the clock against their new places
     for (lv_obj_t* o : sb_icons) mix(visible(o));
     mixText(g_statusbar.ble_icon);   // Bluetooth vs the wider keyboard glyph
     mixText(g_statusbar.gps_icon);   // crosshair vs pin
     static uint32_t s_clk_sig = 0;
-#if defined(HAS_TDECK_PRO)
+#if defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_TFT)
     mix(sbProClockLeft());
     if (sbProClockLeft()) {
       if (sig != s_clk_sig && visible(g_statusbar.clock)) {
@@ -64499,7 +64579,10 @@ static void updateGlobalStatusBar() {
         lv_area_t ba; lv_obj_get_coords(g_statusbar.root, &ba);
         const lv_coord_t x = left_edge - kGap - lv_area_get_width(&ca)
                            - (ba.x1 + lv_obj_get_style_pad_left(g_statusbar.root, LV_PART_MAIN));
-        const lv_coord_t y = ca.y1 - (ba.y1 + lv_obj_get_style_pad_top(g_statusbar.root, LV_PART_MAIN));
+        // The coords include the clock's top-row translate, which stays applied: take it
+        // out, or the clock lands that much higher again.
+        const lv_coord_t y = ca.y1 - (ba.y1 + lv_obj_get_style_pad_top(g_statusbar.root, LV_PART_MAIN))
+                           - lv_obj_get_style_translate_y(g_statusbar.clock, LV_PART_MAIN);
         lv_obj_align(g_statusbar.clock, LV_ALIGN_TOP_LEFT, x, y);
       }
       // Park the async-request spinner just LEFT of the clock wherever it lands,
@@ -72806,7 +72889,7 @@ static void refreshSensorsHistoryCharts() {
   if (s_sens_env_chart && s_sens_env_temp && s_sens_env_hum) {
     const bool show = have_temp || have_hum;
     if (show) {
-      lv_obj_clear_flag(s_sens_env_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_env_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_env_legend) lv_obj_clear_flag(s_sens_env_legend, LV_OBJ_FLAG_HIDDEN);
       lv_chart_set_all_value(s_sens_env_chart, s_sens_env_temp, LV_CHART_POINT_NONE);
       lv_chart_set_all_value(s_sens_env_chart, s_sens_env_hum,  LV_CHART_POINT_NONE);
@@ -72822,7 +72905,7 @@ static void refreshSensorsHistoryCharts() {
       }
       lv_chart_refresh(s_sens_env_chart);
     } else {
-      lv_obj_add_flag(s_sens_env_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_env_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_env_legend) lv_obj_add_flag(s_sens_env_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
@@ -72830,7 +72913,7 @@ static void refreshSensorsHistoryCharts() {
   if (s_sens_press_chart && s_sens_press_ser && s_sens_alt_ser) {
     const bool show = have_press || have_alt;
     if (show) {
-      lv_obj_clear_flag(s_sens_press_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_press_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_press_legend) lv_obj_clear_flag(s_sens_press_legend, LV_OBJ_FLAG_HIDDEN);
       if (have_press) {
         int lo = press_min - 3;
@@ -72874,14 +72957,14 @@ static void refreshSensorsHistoryCharts() {
       }
       lv_chart_refresh(s_sens_press_chart);
     } else {
-      lv_obj_add_flag(s_sens_press_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_press_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_press_legend) lv_obj_add_flag(s_sens_press_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
 
   if (s_sens_batt_chart && s_sens_batt_ser) {
     if (have_batt) {
-      lv_obj_clear_flag(s_sens_batt_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_batt_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_batt_legend) lv_obj_clear_flag(s_sens_batt_legend, LV_OBJ_FLAG_HIDDEN);
       lv_chart_set_all_value(s_sens_batt_chart, s_sens_batt_ser, LV_CHART_POINT_NONE);
       for (int i = 0; i < kHomeEnvHistoryPoints; ++i)
@@ -72891,7 +72974,7 @@ static void refreshSensorsHistoryCharts() {
                                   : LV_CHART_POINT_NONE);
       lv_chart_refresh(s_sens_batt_chart);
     } else {
-      lv_obj_add_flag(s_sens_batt_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_batt_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_batt_legend) lv_obj_add_flag(s_sens_batt_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
@@ -73039,21 +73122,32 @@ static void refreshSensorsTab() {
   refreshSensorsHistoryCharts();
 }
 
-static lv_obj_t* sensorsAddSection(lv_obj_t* page, int& y, const char* title) {
+static lv_obj_t* sensorsAddSection(lv_obj_t* page, const char* title) {
   lv_obj_t* hdr = lv_label_create(page);
   lv_label_set_text(hdr, title);
   lv_obj_set_style_text_font(hdr, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(hdr, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_pos(hdr, 8, y);
-  y += SC(18);
 
   lv_obj_t* val = lv_label_create(page);
   lv_label_set_long_mode(val, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(val, lv_pct(100) - SC(16));
+  lv_obj_set_width(val, lv_pct(100));
   lv_obj_set_style_text_font(val, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(val, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(val, 8, y);
   return val;
+}
+
+// Full-width row that hosts a chart. LVGL draws the Y-axis tick labels outside the
+// chart box (left of x1 / right of x2), so the host pads those sides to keep them
+// on screen. The refresh hides/shows the host so no empty gap is left behind.
+static lv_obj_t* sensorsChartHost(lv_obj_t* tab, lv_coord_t pad_l, lv_coord_t pad_r) {
+  lv_obj_t* host = lv_obj_create(tab);
+  lv_obj_remove_style_all(host);
+  lv_obj_set_size(host, lv_pct(100), LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_left(host, pad_l, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(host, pad_r, LV_PART_MAIN);
+  lv_obj_clear_flag(host, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(host, LV_OBJ_FLAG_CLICKABLE);
+  return host;
 }
 
 static void makeSensorsTab(lv_obj_t* tab) {
@@ -73062,13 +73156,19 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_add_event_cb(tab, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
 
-  int y = SC(6);
+  // Stacked column: every block flows under the previous one, so a value that
+  // wraps (240 px portrait, larger Text size) pushes the rest down instead of
+  // running into it, as the old fixed y offsets did.
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_hor(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(tab, SC(6), LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(tab, SC(10), LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, SC(4), LV_PART_MAIN);
 
-  s_sens_atmo_lbl = sensorsAddSection(tab, y, LV_SYMBOL_CHARGE "  Atmosphere");
+  s_sens_atmo_lbl = sensorsAddSection(tab, LV_SYMBOL_CHARGE "  Atmosphere");
   lv_label_set_text(s_sens_atmo_lbl, "...");
-  s_sens_env_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_env_chart, lv_pct(100) - SC(16), SC(74));
-  lv_obj_set_pos(s_sens_env_chart, 8, y + SC(56));
+  s_sens_env_chart = lv_chart_create(sensorsChartHost(tab, 36, 32));
+  lv_obj_set_size(s_sens_env_chart, lv_pct(100), SC(74));
   lv_obj_clear_flag(s_sens_env_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_env_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_env_chart, kHomeEnvHistoryPoints);
@@ -73100,12 +73200,9 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_env_legend, TR("Orange temp  Cyan humidity"));
   lv_obj_set_style_text_font(s_sens_env_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_env_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_env_legend, 8, y + SC(56 + 74 + 4));
-  y += SC(152);
 
-  s_sens_press_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_press_chart, lv_pct(100) - SC(16), SC(74));
-  lv_obj_set_pos(s_sens_press_chart, 8, y);
+  s_sens_press_chart = lv_chart_create(sensorsChartHost(tab, 36, 36));
+  lv_obj_set_size(s_sens_press_chart, lv_pct(100), SC(74));
   lv_obj_clear_flag(s_sens_press_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_press_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_press_chart, kHomeEnvHistoryPoints);
@@ -73137,40 +73234,32 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_press_legend, TR("Green pressure  Gray altitude"));
   lv_obj_set_style_text_font(s_sens_press_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_press_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_press_legend, 8, y + SC(74 + 4));
-  y += SC(110);
 
   // Divider
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_gps_lbl = sensorsAddSection(tab, y, LV_SYMBOL_GPS "  GPS");
+  s_sens_gps_lbl = sensorsAddSection(tab, LV_SYMBOL_GPS "  GPS");
   lv_label_set_text(s_sens_gps_lbl, "...");
-  y += SC(82);
 
   // Divider
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_batt_lbl = sensorsAddSection(tab, y, LV_SYMBOL_BATTERY_FULL "  Battery");
+  s_sens_batt_lbl = sensorsAddSection(tab, LV_SYMBOL_BATTERY_FULL "  Battery");
   lv_label_set_text(s_sens_batt_lbl, "...");
-  s_sens_batt_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_batt_chart, lv_pct(100) - SC(16), SC(70));
-  lv_obj_set_pos(s_sens_batt_chart, 8, y + SC(30));
+  s_sens_batt_chart = lv_chart_create(sensorsChartHost(tab, 38, 0));
+  lv_obj_set_size(s_sens_batt_chart, lv_pct(100), SC(70));
   lv_obj_clear_flag(s_sens_batt_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_batt_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_batt_chart, kHomeEnvHistoryPoints);
@@ -73199,29 +73288,23 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_batt_legend, TR("Blue battery  Last 6 min"));
   lv_obj_set_style_text_font(s_sens_batt_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_batt_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_batt_legend, 8, y + SC(30 + 70 + 4));
-  y += SC(120);
 
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_alerts_lbl = sensorsAddSection(tab, y, LV_SYMBOL_WARNING "  Terrain alerts");
+  s_sens_alerts_lbl = sensorsAddSection(tab, LV_SYMBOL_WARNING "  Terrain alerts");
   lv_label_set_text(s_sens_alerts_lbl, "...");
-  y += SC(176);
 
   // Footer: last updated
   s_sens_time_lbl = lv_label_create(tab);
   lv_label_set_text(s_sens_time_lbl, "");
   lv_obj_set_style_text_font(s_sens_time_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_time_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_time_lbl, 8, y);
 
   refreshSensorsTab();
 }
