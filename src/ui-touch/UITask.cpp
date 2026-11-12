@@ -2875,7 +2875,6 @@ struct GlobalStatusBar {
   lv_obj_t* clock;
   lv_obj_t* batt_pct;
   lv_obj_t* batt_icon;
-  lv_obj_t* layout_label;   // EN / BG indicator, right side
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
   lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
@@ -63193,14 +63192,6 @@ static void buildGlobalStatusBar() {
     }
   }
 
-  // Keyboard layout indicator — sits left of the clock (only shown while typing).
-  g_statusbar.layout_label = lv_label_create(g_statusbar.root);
-  lv_label_set_text(g_statusbar.layout_label, "");
-  lv_obj_set_style_text_color(g_statusbar.layout_label, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_style_text_font(g_statusbar.layout_label, sbFixed(&g_font_12), LV_PART_MAIN);
-  lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -182, 0);   // follows the clock's shift
-  lv_obj_add_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN);
-
   // Modal scrim for the bar. Modal popups live on lv_layer_top ABOVE the bar but their
   // own dim backdrop only covers the screen BELOW the bar (they were authored when the
   // bar was always-on-top on lv_layer_sys). So the bar would stay bright while the rest
@@ -63499,11 +63490,10 @@ static void chatHeaderApply(bool chat_open) {
         statusBarPackRight();
       }
 #if defined(HAS_THINKNODE_M9)
-      // The M9 header resized the bar and stepped the battery and layout tag in (below): put them back.
+      // The M9 header resized the bar and stepped the battery in (below): put it back.
       lv_obj_set_height(g_statusbar.root, statusBarCurH());
       for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
         if (o) lv_obj_set_style_translate_x(o, 0, LV_PART_MAIN);
-      if (g_statusbar.layout_label) lv_obj_set_style_translate_y(g_statusbar.layout_label, 0, LV_PART_MAIN);
 #endif
 #endif
       return;
@@ -63712,28 +63702,17 @@ static void chatHeaderApply(bool chat_open) {
     for (lv_obj_t* o : { g_statusbar.batt_icon, g_statusbar.batt_pct })
       if (o) lv_obj_set_style_translate_x(o, -corner, LV_PART_MAIN);
     lv_obj_align(g_statusbar.clock, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + corner), 0);
-    // Left of the clock: the keyboard layout ("EN", "BG") while a second layout is
-    // on, then the GPS glyph. Both used to take the same spot, so the layout code
-    // sat on top of the GPS glyph (#672).
+    // Left of the clock: the GPS glyph.
     lv_coord_t right_x = pct_w + 8 + clk_w + SBX(6) + corner;
-    lv_coord_t lay_w = 0;
-    if (g_statusbar.layout_label && !lv_obj_has_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN)) {
-      const char* lt = lv_label_get_text(g_statusbar.layout_label);
-      lay_w = lv_txt_get_width(lt, strlen(lt), lv_obj_get_style_text_font(g_statusbar.layout_label, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-      lv_obj_align(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -right_x, 0);
-      lv_obj_set_style_translate_y(g_statusbar.layout_label, line_dy, LV_PART_MAIN);
-      right_x += lay_w + SBX(6);
-    }
     // The GPS glyph was placed left of the clock above (gps_room); it steps in with the group.
     if (gps_room) {
       lv_obj_align(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -right_x, 0);
       lv_obj_set_style_translate_y(g_statusbar.gps_icon, line_dy, LV_PART_MAIN);
     }
-    // The title stays short of the clock, the layout code and the GPS glyph: text_w
-    // already leaves the clock's and GPS glyph's room, so the corner's step and the
-    // layout code come off here.
+    // The title stays short of the clock and the GPS glyph: text_w already
+    // leaves their room, so the corner's step comes off here.
     {
-      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner - (lay_w ? lay_w + SBX(6) : 0));
+      const lv_coord_t tw = LV_MAX((lv_coord_t)40, text_w - corner);
       lv_obj_set_width(g_statusbar.left_label, tw);
       lv_obj_set_width(g_statusbar.chat_sub, tw);
       char ttl[sizeof(s_chat_title) + 4];
@@ -63749,8 +63728,8 @@ static void chatHeaderApply(bool chat_open) {
 // The right-hand indicators, packed leftwards from the battery with one gap between
 // neighbours, so one that is hidden (no Wi-Fi link, Bluetooth off, no DND) leaves no
 // hole. Fixed slots left the Bluetooth glyph a slot and more away from the Wi-Fi.
-// Right to left: the battery, its %, the signal bars, Wi-Fi, Bluetooth, the DND moon,
-// the keyboard-layout tag. updateGlobalStatusBar runs it only when one of them
+// Right to left: the battery, its %, the signal bars, Wi-Fi, Bluetooth, the DND moon.
+// updateGlobalStatusBar runs it only when one of them
 // appears, goes or changes width. The round one-row bar has its own (statusBarLayoutOneRow).
 static uint32_t s_sb_pack_sig = 0;   // what the last pack saw; the clock's overlap guard follows it
 #if defined(HAS_TDECK_PRO)
@@ -63770,7 +63749,6 @@ static void statusBarPackRight() {
     { g_statusbar.ble_icon,     SBX(7) },
     { g_statusbar.gps_icon,     SBX(6) },
     { g_statusbar.dnd_icon,     SBX(7) },
-    { g_statusbar.layout_label, SBX(10) },
   };
   lv_coord_t x = 2;   // the battery's margin from the edge
   bool first = true;
@@ -63985,11 +63963,6 @@ static void updateGlobalStatusBar() {
 #endif
       } else if (chat_open && (c == g_statusbar.chan_gear || c == g_statusbar.chat_back)) {
         t = 0;                                  // chat back + cog: centred across both rows
-      } else if (c == g_statusbar.layout_label) {
-        // The layout indicator is align_to'd against the CLOCK's final (already
-        // translated) coords every tick — shifting it here too double-applied the
-        // top-row offset and clipped its top half out of the bar in a chat.
-        t = 0;
       }
       sbTranslateY(c, t);
     }
@@ -64513,7 +64486,7 @@ static void updateGlobalStatusBar() {
     auto pmix = [&ps](uint32_t v) { ps = (ps ^ v) * 16777619u; };
     lv_obj_t* const packed[] = { g_statusbar.batt_icon, g_statusbar.batt_pct, g_statusbar.sig_box,
                                  g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.gps_icon,
-                                 g_statusbar.dnd_icon, g_statusbar.layout_label };
+                                 g_statusbar.dnd_icon };
     for (lv_obj_t* o : packed) {
       pmix(o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN) ? 1u : 0u);
       if (o && lv_obj_check_type(o, &lv_label_class))
@@ -64633,11 +64606,9 @@ static void updateGlobalStatusBar() {
     }
   }
 
-  // ---- Layout indicator ----
-  // Only while a chat/channel conversation is open (s_chat_title set): that is
-  // where typing happens and the active layout matters. Everywhere else it was
-  // permanent bar clutter (and sat next to the clock 24/7 once a secondary
-  // language was enabled).
+  // ---- Layout badge ----
+  // The Bluetooth deck is shown inside the message field's right edge while a
+  // keyboard is linked; the on-screen keyboard carries its own language key.
   bool show_layout = keyboardLayoutsAnySecondary();
   const char* layout_name = keyboardLayoutName(keyboardLayoutsGetCurrent());
   bool ble_ext = false;
@@ -64650,21 +64621,6 @@ static void updateGlobalStatusBar() {
     layout_name = BleKbd::layoutName(BleKbd::layout());
   }
 #endif
-  if (g_statusbar.layout_label) {
-    // With a Bluetooth keyboard linked the composer badge below already shows
-    // the deck; this copy would sit on the Bluetooth/keyboard icon by the clock.
-    if (!ble_ext && show_layout && s_chat_title[0]) {
-      setLabelIfChanged(g_statusbar.layout_label, layout_name);
-      // Park it just left of the clock on EVERY board, so it tracks wherever the
-      // clock lands (12/24-hour width, the charging slide, centred hide-name
-      // mode, SC() scaling). The old fixed -182 build offset overlapped the wide
-      // 12-hour clock on the T-Deck bar ("7:45 PM" reaches past -182).
-      lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
-      sbShow(g_statusbar.layout_label, true);
-    } else {
-      sbShow(g_statusbar.layout_label, false);
-    }
-  }
 #if CAP_BLE_KEYBOARD
   // The same code at the right edge of the field being typed into, where the
   // eyes are. The textarea's right padding grows by the badge's width while it
