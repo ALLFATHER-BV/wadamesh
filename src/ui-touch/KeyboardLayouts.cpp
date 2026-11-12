@@ -9,6 +9,9 @@
  ******************************************************************************/
 #include "KeyboardLayouts.h"
 
+#include <stdio.h>
+#include <string.h>
+
 #if 1
 #include "lvgl.h"
 #else
@@ -19,152 +22,156 @@
  * On-screen keyboard (LVGL lv_keyboard) maps
  * ================================================================ */
 
-/* Helper: build a control entry for a special key with a given width multiplier. */
-static constexpr lv_btnmatrix_ctrl_t KC(uint8_t width_mul) {
-    return LV_BTNMATRIX_CTRL_NO_REPEAT | (width_mul << 4);
-}
+/* Key width in button-matrix control entries lives in the least significant
+ * 3 bits (lv_btnmatrix's get_button_width); the flag bits start at 0x10. */
+#define EN_KB_BTN(w) (LV_BTNMATRIX_CTRL_POPOVER | ((w) & 0x07))
+
+/* The language-cycle key. keyboardLayoutsApply() replaces this cell with the
+ * active layout's 2-letter code before handing the map to LVGL, so every
+ * layout carries the same key in the same place and the label is never stale. */
+#define KB_LANG_KEY "LANG"
 
 /* ---------- Bulgarian on-screen keyboard ---------- */
 
 /* Lower-case Cyrillic, 3 letter rows + 1 control row. */
 static const char* const kb_bg_lower[] = {
-    "я","в","е","р","т","ъ","у","и","о","п","\n",
-    "а","с","д","ф","г","х","й","к","л","ь","\n",
-    "з","ц","ч","ж","б","н","м","ш","щ","ю","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "я", "в", "е", "р", "т", "ъ", "у", "и", "о", "п", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "а", "с", "д", "ф", "г", "х", "й", "к", "л", "ь", LV_SYMBOL_NEW_LINE, "\n",
+    "з", "ц", "ч", "ж", "б", "н", "м", "ш", "щ", "ю", ".", ",", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 
 static const lv_btnmatrix_ctrl_t kb_bg_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Upper-case Cyrillic. */
 static const char* const kb_bg_upper[] = {
-    "Я","В","Е","Р","Т","Ъ","У","И","О","П","\n",
-    "А","С","Д","Ф","Г","Х","Й","К","Л","Ь","\n",
-    "З","Ц","Ч","Ж","Б","Н","М","Ш","Щ","Ю","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "Я", "В", "Е", "Р", "Т", "Ъ", "У", "И", "О", "П", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "А", "С", "Д", "Ф", "Г", "Х", "Й", "К", "Л", "Ь", LV_SYMBOL_NEW_LINE, "\n",
+    "З", "Ц", "Ч", "Ж", "Б", "Н", "М", "Ш", "Щ", "Ю", ".", ",", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 
 static const lv_btnmatrix_ctrl_t kb_bg_upper_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- Russian (ЙЦУКЕН) on-screen keyboard ---------- */
 /* Standard Russian layout, 3 rows of 11 = all 33 letters. */
 static const char* const kb_ru_lower[] = {
-    "й","ц","у","к","е","н","г","ш","щ","з","х","\n",
-    "ф","ы","в","а","п","р","о","л","д","ж","э","\n",
-    "я","ч","с","м","и","т","ь","б","ю","ъ","ё","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э", LV_SYMBOL_NEW_LINE, "\n",
+    "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", "ъ", "ё", ".", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 
 static const lv_btnmatrix_ctrl_t kb_ru_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_ru_upper[] = {
-    "Й","Ц","У","К","Е","Н","Г","Ш","Щ","З","Х","\n",
-    "Ф","Ы","В","А","П","Р","О","Л","Д","Ж","Э","\n",
-    "Я","Ч","С","М","И","Т","Ь","Б","Ю","Ъ","Ё","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "Ф", "Ы", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Э", LV_SYMBOL_NEW_LINE, "\n",
+    "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", "Ъ", "Ё", ".", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 
 static const lv_btnmatrix_ctrl_t kb_ru_upper_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- Ukrainian on-screen keyboard ---------- */
 /* Standard Ukrainian layout, 3 rows of 11 = all 33 letters. */
 static const char* const kb_uk_lower[] = {
-    "й","ц","у","к","е","н","г","ш","щ","з","х","\n",
-    "ф","і","в","а","п","р","о","л","д","ж","є","\n",
-    "я","ч","с","м","и","т","ь","б","ю","ї","ґ","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "ф", "і", "в", "а", "п", "р", "о", "л", "д", "ж", "є", LV_SYMBOL_NEW_LINE, "\n",
+    "я", "ч", "с", "м", "и", "т", "ь", "б", "ю", "ї", "ґ", ".", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_uk_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 static const char* const kb_uk_upper[] = {
-    "Й","Ц","У","К","Е","Н","Г","Ш","Щ","З","Х","\n",
-    "Ф","І","В","А","П","Р","О","Л","Д","Ж","Є","\n",
-    "Я","Ч","С","М","И","Т","Ь","Б","Ю","Ї","Ґ","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "Ф", "І", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Є", LV_SYMBOL_NEW_LINE, "\n",
+    "Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю", "Ї", "Ґ", ".", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_uk_upper_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- Serbian (Cyrillic) on-screen keyboard ---------- */
 /* Serbian azbuka, 3 rows of 10 = all 30 letters. */
 static const char* const kb_sr_lower[] = {
-    "љ","њ","е","р","т","з","у","и","о","п","\n",
-    "а","с","д","ф","г","х","ј","к","л","ч","\n",
-    "ж","џ","ц","в","б","н","м","ђ","ћ","ш","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "љ", "њ", "е", "р", "т", "з", "у", "и", "о", "п", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "а", "с", "д", "ф", "г", "х", "ј", "к", "л", "ч", LV_SYMBOL_NEW_LINE, "\n",
+    "ж", "џ", "ц", "в", "б", "н", "м", "ђ", "ћ", "ш", ".", ",", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_sr_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 static const char* const kb_sr_upper[] = {
-    "Љ","Њ","Е","Р","Т","З","У","И","О","П","\n",
-    "А","С","Д","Ф","Г","Х","Ј","К","Л","Ч","\n",
-    "Ж","Џ","Ц","В","Б","Н","М","Ђ","Ћ","Ш","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "Љ", "Њ", "Е", "Р", "Т", "З", "У", "И", "О", "П", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "А", "С", "Д", "Ф", "Г", "Х", "Ј", "К", "Л", "Ч", LV_SYMBOL_NEW_LINE, "\n",
+    "Ж", "Џ", "Ц", "В", "Б", "Н", "М", "Ђ", "Ћ", "Ш", ".", ",", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_sr_upper_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- Greek on-screen keyboard ---------- */
 /* ΕΛΟΤ-style positions; 9+9+7 = all 24 letters (+ final sigma ς). */
 static const char* const kb_el_lower[] = {
-    "ς","ε","ρ","τ","υ","θ","ι","ο","π","\n",
-    "α","σ","δ","φ","γ","η","ξ","κ","λ","\n",
-    "ζ","χ","ψ","ω","β","ν","μ","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "ς", "ε", "ρ", "τ", "υ", "θ", "ι", "ο", "π", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "α", "σ", "δ", "φ", "γ", "η", "ξ", "κ", "λ", LV_SYMBOL_NEW_LINE, "\n",
+    "ζ", "χ", "ψ", "ω", "β", "ν", "μ", ".", ",", ";", "!", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_el_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 static const char* const kb_el_upper[] = {
-    "Σ","Ε","Ρ","Τ","Υ","Θ","Ι","Ο","Π","\n",
-    "Α","Σ","Δ","Φ","Γ","Η","Ξ","Κ","Λ","\n",
-    "Ζ","Χ","Ψ","Ω","Β","Ν","Μ","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "Σ", "Ε", "Ρ", "Τ", "Υ", "Θ", "Ι", "Ο", "Π", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "Α", "Σ", "Δ", "Φ", "Γ", "Η", "Ξ", "Κ", "Λ", LV_SYMBOL_NEW_LINE, "\n",
+    "Ζ", "Χ", "Ψ", "Ω", "Β", "Ν", "Μ", ".", ",", ";", "!", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 static const lv_btnmatrix_ctrl_t kb_el_upper_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- Arabic on-screen keyboard (RTL) ---------- */
@@ -172,25 +179,32 @@ static const lv_btnmatrix_ctrl_t kb_el_upper_ctrl[] = {
  * Arabic is unicameral, so the same map serves LOWER and UPPER. The text
  * field renders RTL + shaped via LV_USE_BIDI / LV_USE_ARABIC_PERSIAN_CHARS. */
 static const char* const kb_ar_lower[] = {
-    "ض","ص","ث","ق","ف","غ","ع","ه","خ","ح","ج","\n",
-    "ش","س","ي","ب","ل","ا","ت","ن","م","ك","ط","\n",
-    "ئ","ء","ؤ","ر","ى","ة","و","ز","ظ","ذ","د","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "ض", "ص", "ث", "ق", "ف", "غ", "ع", "ه", "خ", "ح", "ج", LV_SYMBOL_BACKSPACE, "\n",
+    "ABC", "ش", "س", "ي", "ب", "ل", "ا", "ت", "ن", "م", "ك", "ط", LV_SYMBOL_NEW_LINE, "\n",
+    "ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "ذ", "د", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
 /* Shift: what the letter rows cannot hold (#582). Tashkeel and tatweel, the hamza
  * forms with the lam-alef pairs and Arabic punctuation, then the third letter row again
  * so typing goes on without switching back. */
 static const char* const kb_ar_upper[] = {
-    "\u064B","\u064C","\u064D","\u064E","\u064F","\u0650","\u0651","\u0652","\u0640","\u061B","\u060C","\n",
-    "\u0623","\u0625","\u0622","\u0644\u0623","\u0644\u0625","\u0644\u0622","\u061F","!","\u00AB","\u00BB",".","\n",
-    "ئ","ء","ؤ","ر","ى","ة","و","ز","ظ","ذ","د","\n",
-    LV_SYMBOL_UP, "1#", " ", LV_SYMBOL_BACKSPACE, LV_SYMBOL_OK, NULL
+    "1#", "\u064B", "\u064C", "\u064D", "\u064E", "\u064F", "\u0650", "\u0651", "\u0652", "\u0640", "\u061B", "\u060C", LV_SYMBOL_BACKSPACE, "\n",
+    "abc", "\u0623", "\u0625", "\u0622", "\u0644\u0623", "\u0644\u0625", "\u0644\u0622", "\u061F", "!", "\u00AB", "\u00BB", ".", LV_SYMBOL_NEW_LINE, "\n",
+    "ئ", "ء", "ؤ", "ر", "ى", "ة", "و", "ز", "ظ", "ذ", "د", "\n",
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, NULL
 };
+static const lv_btnmatrix_ctrl_t kb_ar_upper_ctrl[] = {
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+};
+
 static const lv_btnmatrix_ctrl_t kb_ar_lower_ctrl[] = {
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,
-    KC(2), KC(1), KC(4), KC(2), KC(1)
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
+    EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1),
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* ---------- English on-screen keyboard ---------- */
@@ -199,35 +213,33 @@ static const lv_btnmatrix_ctrl_t kb_ar_lower_ctrl[] = {
  * 1# symbols key, full punctuation row, magnified key-press preview). lv_keyboard
  * keeps the maps in a GLOBAL kb_map[] that lv_keyboard_set_map overwrites in place,
  * so once a non-Latin layout is applied the stock map is gone — we re-apply this
- * copy to restore it when the user cycles back to English. EN_KB_BTN mirrors the
- * library's private LV_KB_BTN (popover preview + width). */
-#define EN_KB_BTN(w) (LV_BTNMATRIX_CTRL_POPOVER | (w))
+ * copy to restore it when the user cycles back to English. */
 static const char* const kb_en_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_en_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_en_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_en_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
@@ -370,28 +382,28 @@ static const char* const kb_fr_lower[] = {
     "1#", "a", "z", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "q", "s", "d", "f", "g", "h", "j", "k", "l", "m", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "w", "x", "c", "v", "b", "n", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_fr_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_fr_upper[] = {
     "1#", "A", "Z", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "Q", "S", "D", "F", "G", "H", "J", "K", "L", "M", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "W", "X", "C", "V", "B", "N", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_fr_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Dutch largely stays QWERTY, but a dedicated IJ key makes the most common
@@ -400,28 +412,28 @@ static const char* const kb_nl_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "z", "x", "c", "v", "b", "n", "m", ".", ",", "ij", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_nl_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(2),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_nl_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "Z", "X", "C", "V", "B", "N", "M", ".", ",", "IJ", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_nl_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(2),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* German QWERTZ keeps the proven LVGL control rows and swaps the Y/Z alpha
@@ -430,28 +442,28 @@ static const char* const kb_de_lower[] = {
     "1#", "q", "w", "e", "r", "t", "z", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "y", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_de_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_de_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Z", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "Y", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_de_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Spanish keeps QWERTY but promotes n-tilde directly onto the alpha deck. */
@@ -459,28 +471,28 @@ static const char* const kb_es_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "ñ", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_es_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_es_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ñ", LV_SYMBOL_NEW_LINE, "\n",
     "_", "-", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_es_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Italian gets the common accented vowels directly on the base layer. */
@@ -488,28 +500,28 @@ static const char* const kb_it_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "à", LV_SYMBOL_NEW_LINE, "\n",
     "è", "ì", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_it_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_it_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "À", LV_SYMBOL_NEW_LINE, "\n",
     "È", "Ì", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_it_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Romanian keeps QWERTY and promotes the three letters the accent popup can't
@@ -521,28 +533,28 @@ static const char* const kb_ro_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "ă", LV_SYMBOL_NEW_LINE, "\n",
     "ş", "ţ", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_ro_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_ro_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Ă", LV_SYMBOL_NEW_LINE, "\n",
     "Ş", "Ţ", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_ro_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 /* Latvian keeps the exact QWERTY deck (same alpha positions as English — no
@@ -558,29 +570,66 @@ static const char* const kb_lv_lower[] = {
     "1#", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", LV_SYMBOL_BACKSPACE, "\n",
     "ABC", "a", "s", "d", "f", "g", "h", "j", "k", "l", "š", LV_SYMBOL_NEW_LINE, "\n",
     "č", "ž", "z", "x", "c", "v", "b", "n", "m", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_lv_lower_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
 
 static const char* const kb_lv_upper[] = {
     "1#", "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P", LV_SYMBOL_BACKSPACE, "\n",
     "abc", "A", "S", "D", "F", "G", "H", "J", "K", "L", "Š", LV_SYMBOL_NEW_LINE, "\n",
     "Č", "Ž", "Z", "X", "C", "V", "B", "N", "M", ".", ",", ":", "\n",
-    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
+    LV_SYMBOL_KEYBOARD, LV_SYMBOL_LEFT, KB_LANG_KEY, " ", LV_SYMBOL_RIGHT, LV_SYMBOL_OK, ""
 };
 
 static const lv_btnmatrix_ctrl_t kb_lv_upper_ctrl[] = {
     LV_KEYBOARD_CTRL_BTN_FLAGS | 5, EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), EN_KB_BTN(4), LV_BTNMATRIX_CTRL_CHECKED | 7,
     LV_KEYBOARD_CTRL_BTN_FLAGS | 6, EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), EN_KB_BTN(3), LV_BTNMATRIX_CTRL_CHECKED | 7,
     EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1), LV_BTNMATRIX_CTRL_CHECKED | EN_KB_BTN(1),
-    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, 6, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
+    LV_KEYBOARD_CTRL_BTN_FLAGS | 2, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2, 5, LV_BTNMATRIX_CTRL_CHECKED | 2, LV_KEYBOARD_CTRL_BTN_FLAGS | 2
 };
+
+/* One control entry per key: a mismatch silently shifts widths and flags onto
+ * the wrong keys (that is how the old KC() macro hid a key and disabled space).
+ * Map size = keys + one "\n" separator per row + the terminator. */
+#define KB_ASSERT_PAIRED(map, ctrl)                                               \
+    static_assert(sizeof(map) / sizeof((map)[0]) == sizeof(ctrl) / sizeof((ctrl)[0]) + 4, \
+                  #map " and " #ctrl " must describe the same keys")
+
+
+KB_ASSERT_PAIRED(kb_bg_lower, kb_bg_lower_ctrl);
+KB_ASSERT_PAIRED(kb_bg_upper, kb_bg_upper_ctrl);
+KB_ASSERT_PAIRED(kb_ru_lower, kb_ru_lower_ctrl);
+KB_ASSERT_PAIRED(kb_ru_upper, kb_ru_upper_ctrl);
+KB_ASSERT_PAIRED(kb_uk_lower, kb_uk_lower_ctrl);
+KB_ASSERT_PAIRED(kb_uk_upper, kb_uk_upper_ctrl);
+KB_ASSERT_PAIRED(kb_sr_lower, kb_sr_lower_ctrl);
+KB_ASSERT_PAIRED(kb_sr_upper, kb_sr_upper_ctrl);
+KB_ASSERT_PAIRED(kb_el_lower, kb_el_lower_ctrl);
+KB_ASSERT_PAIRED(kb_el_upper, kb_el_upper_ctrl);
+KB_ASSERT_PAIRED(kb_ar_lower, kb_ar_lower_ctrl);
+KB_ASSERT_PAIRED(kb_ar_upper, kb_ar_upper_ctrl);
+KB_ASSERT_PAIRED(kb_en_lower, kb_en_lower_ctrl);
+KB_ASSERT_PAIRED(kb_en_upper, kb_en_upper_ctrl);
+KB_ASSERT_PAIRED(kb_fr_lower, kb_fr_lower_ctrl);
+KB_ASSERT_PAIRED(kb_fr_upper, kb_fr_upper_ctrl);
+KB_ASSERT_PAIRED(kb_nl_lower, kb_nl_lower_ctrl);
+KB_ASSERT_PAIRED(kb_nl_upper, kb_nl_upper_ctrl);
+KB_ASSERT_PAIRED(kb_de_lower, kb_de_lower_ctrl);
+KB_ASSERT_PAIRED(kb_de_upper, kb_de_upper_ctrl);
+KB_ASSERT_PAIRED(kb_es_lower, kb_es_lower_ctrl);
+KB_ASSERT_PAIRED(kb_es_upper, kb_es_upper_ctrl);
+KB_ASSERT_PAIRED(kb_it_lower, kb_it_lower_ctrl);
+KB_ASSERT_PAIRED(kb_it_upper, kb_it_upper_ctrl);
+KB_ASSERT_PAIRED(kb_ro_lower, kb_ro_lower_ctrl);
+KB_ASSERT_PAIRED(kb_ro_upper, kb_ro_upper_ctrl);
+KB_ASSERT_PAIRED(kb_lv_lower, kb_lv_lower_ctrl);
+KB_ASSERT_PAIRED(kb_lv_upper, kb_lv_upper_ctrl);
 
 struct OsKeyboardLayout {
     KeyboardLayoutId id;
@@ -612,7 +661,7 @@ static const OsKeyboardLayout k_os_layouts[] = {
       kb_el_upper, kb_el_upper_ctrl },
     { KeyboardLayoutId::AR, "AR",
       kb_ar_lower, kb_ar_lower_ctrl,
-      kb_ar_upper, kb_ar_lower_ctrl },   // Shift: tashkeel, hamza forms, punctuation
+      kb_ar_upper, kb_ar_upper_ctrl },   // Shift: tashkeel, hamza forms, punctuation
     { KeyboardLayoutId::FR, "FR",
       kb_fr_lower, kb_fr_lower_ctrl,
       kb_fr_upper, kb_fr_upper_ctrl },
@@ -954,6 +1003,40 @@ const char* keyboardLayoutName(KeyboardLayoutId id) {
     return k_os_layouts[static_cast<int>(id)].name;
 }
 
+/* The maps are compile-time constants in flash, but the language key has to show
+ * the ACTIVE layout's code, which changes at run time. So apply() copies the
+ * chosen map pointer-by-pointer into these buffers, swapping the KB_LANG_KEY cell
+ * for the code, and points LVGL at the copy. LVGL keeps that pointer in its global
+ * kb_map[] (see the EN comment above), so the buffers must stay valid while the
+ * map is selected — they are file-static and there is exactly one keyboard. */
+static const char* s_live_lower[64];
+static const char* s_live_upper[64];
+static char     s_lang_code[8];
+static uint16_t s_lang_btn = 0xFFFF;
+
+static void kbCopyMapWithLang(const char* const* src, const char** dst, uint16_t* lang_btn) {
+    uint16_t n = 0;     // index in the map array (separators included)
+    uint16_t btn = 0;   // index among the keys only — what lv_btnmatrix reports
+    // Both terminators are in use: the modern maps end with "" (LVGL's own style,
+    // see lv_btnmatrix_set_map: map[i][0] == '\0' ends the map) and the legacy ones
+    // with NULL. Stop at either, or the copy walks into the next .rodata object.
+    for (; src[n] && src[n][0] != '\0' &&
+           n + 1 < (uint16_t)(sizeof s_live_lower / sizeof s_live_lower[0]); ++n) {
+        if (strcmp(src[n], KB_LANG_KEY) == 0) {
+            dst[n] = s_lang_code;
+            *lang_btn = btn;   // NOT n: the "\n" row separators are not buttons
+        } else {
+            dst[n] = src[n];
+        }
+        if (strcmp(src[n], "\n") != 0) btn++;
+    }
+    dst[n] = nullptr;
+}
+
+bool keyboardLayoutsIsLangKey(uint16_t btn) {
+    return btn != 0xFFFF && btn == s_lang_btn;
+}
+
 void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
     if (static_cast<uint8_t>(id) >= KEYBOARD_LAYOUT_COUNT) id = KeyboardLayoutId::EN;
     // Track the active layout even with NO on-screen keyboard to re-map — the
@@ -984,9 +1067,17 @@ void keyboardLayoutsApply(lv_obj_t* keyboard, KeyboardLayoutId id) {
                                             const_cast<const char**>(kb_v4_special), kb_v4_special_ctrl);
     lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_USER_1,
                                             const_cast<const char**>(kb_v4_special_more), kb_v4_special_ctrl);
+    s_lang_btn = 0xFFFF;   // V4 keeps the floating language button instead
 #else
-  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(lo.lower_map), lo.lower_ctrl);   // maps now in flash; LVGL never writes them
-  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, const_cast<const char**>(lo.upper_map), lo.upper_ctrl);
+  snprintf(s_lang_code, sizeof s_lang_code, "%s", lo.name);
+  uint16_t lower_lang_btn = 0xFFFF;
+  kbCopyMapWithLang(lo.lower_map, s_live_lower, &lower_lang_btn);
+  kbCopyMapWithLang(lo.upper_map, s_live_upper, &s_lang_btn);   // same cell index in both
+  // NOT const: LVGL keeps the pointer in its global kb_map[] and reads it back on
+  // every mode switch, so these buffers are the maps for as long as the layout is
+  // active (see the s_live_* comment above).
+  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_LOWER, const_cast<const char**>(s_live_lower), lo.lower_ctrl);
+  lv_keyboard_set_map(keyboard, LV_KEYBOARD_MODE_TEXT_UPPER, const_cast<const char**>(s_live_upper), lo.upper_ctrl);
 #endif
 }
 

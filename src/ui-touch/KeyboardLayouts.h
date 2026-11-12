@@ -59,6 +59,10 @@ uint32_t keyboardLayoutsGetEnabledMask();
  *  something and the status indicator should show). */
 bool keyboardLayoutsAnySecondary();
 
+/** True when `btn` (an lv_btnmatrix button index) is the in-map language-cycle
+ *  key of the map currently installed. Its label is the active layout's code. */
+bool keyboardLayoutsIsLangKey(uint16_t btn);
+
 /** Map a physical T-Deck key to a UTF-8 string in the given layout.
  *  @param key    ASCII code from tdeckKeyboardReadKey() (e.g. 'a', 'A', '1', '!')
  *  @param shifted true if Shift was active (key >= 'A' && key <= 'Z', or symbol)
