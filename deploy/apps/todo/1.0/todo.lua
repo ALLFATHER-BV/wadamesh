@@ -1,11 +1,10 @@
--- To-Do: A simple, customizable, To Do list manager.
+-- To-Do: A simple customizable To Do manager.
 -- Contributor: Hernán Moraga-Müller
 -- Version: 1.0, November 2nd, 2026
 -- CHANGE LOG:
 -- It stores Tasks entries within the 200 bytes budget in the todo.sav file.
--- Added a Budget indicator in bytes to keep track of free space available.
--- (in this version there is a 175 Bytes budget, anything written after the
--- Budget reaches 0 Bytes won't be saved.)
+-- Added a Budget in bytes to keep track of free space available for the ToDo.
+-- (in this version the Budget limit is 175 Bytes for all tasks and groups)
 
 local ui, sys, store = wada.ui, wada.sys, wada.store
 local C = ui.colors
@@ -88,7 +87,6 @@ local do_action
 local draw
 local draw_edit
 
--- ---------------------------------------------------------------- storage
 -- ---------------------------------------------------------------- storage
 -- Single-key, versioned, compact payload. Designed to fit 255 bytes and to
 -- be transmittable verbatim over mesh later. Wire format:
@@ -307,24 +305,16 @@ end
 
 local function save()
   local payload = encode_payload()
-  local dropped = 0
   if #payload > PAYLOAD_MAX then
-    payload, dropped = truncate_payload(payload, PAYLOAD_MAX)
-    if not payload then
-      -- Header alone overflows; cannot save anything coherent. Keep the
-      -- previous on-disk payload intact rather than overwriting it.
-      sys.toast("Payload header too long", 2000)
-      return false
-    end
+    -- Do not write a truncated header-only payload; that is what produced
+    -- the 17-byte file and wiped every record on reload. Keep last good file.
+    sys.toast("Too large to save (" .. #payload .. "B)", 2000)
+    return false
   end
   local ok = store.set(PAYLOAD_KEY, payload)
   if ok == false then
     sys.toast("Store refused write (" .. #payload .. "B)", 2000)
     return false
-  end
-  if dropped > 0 then
-    sys.toast("Saved; " .. dropped .. " task(s) omitted (" .. #payload .. "B)",
-              2000)
   end
   return true
 end
@@ -493,11 +483,11 @@ local function draw_header()
 
   local used = #encode_payload()
   local budget = 255 - used
-  if budget < 0 then budget = 0 end
+  if budget - 69 < 0 then budget = 69 end
   local right = "Budget: " .. budget - 69 .. " bytes"
   -- Right-align: approximate character width is 7 px at 12 pt.
   local rx = W - 12 - #right * 7
-  local color = (budget < 40) and C.bad or C.sub
+  local color = (budget - 69 < 13) and C.bad or C.sub
   cv:text(rx, y + 5, right, color, 12)
 end
 
@@ -846,6 +836,63 @@ end
 function commit_edit()
   local txt = edit_ctx.text:match("^%s*(.-)%s*$")
   if txt == "" then toast("Cannot be empty"); return end
+
+  -- Budget gate: compute the payload that *would* exist after this edit,
+  -- without mutating categories/todos yet. Floor is PAYLOAD_MAX - 69 = 186,
+  -- the same point at which the header display reads "Budget: 0 bytes".
+  local function preview_len()
+    -- encode_payload() reads `categories`, `todos`, `filter`. For "todo" we
+    -- append a temporary record; for "todo_rename" we swap the target text;
+    -- for "cat" we append a temporary label; for "rename" we swap the label.
+    if edit_ctx.kind == "todo" then
+      local cat = (filter ~= "All") and filter or (categories[1] or "General")
+      local tmp = { id = next_id, text = txt, cat = cat,
+                    done = false, urgent = false }
+      todos[#todos + 1] = tmp
+      local n = #encode_payload()
+      todos[#todos] = nil
+      return n
+    elseif edit_ctx.kind == "todo_rename" then
+      local t
+      for _, x in ipairs(todos) do
+        if x.id == edit_ctx.target then t = x; break end
+      end
+      if not t then return #encode_payload() end
+      local old = t.text
+      t.text = txt
+      local n = #encode_payload()
+      t.text = old
+      return n
+    elseif edit_ctx.kind == "cat" then
+      if #txt > 3 then return nil end
+      categories[#categories + 1] = txt
+      local n = #encode_payload()
+      categories[#categories] = nil
+      return n
+    elseif edit_ctx.kind == "rename" then
+      if #txt > 3 then return nil end
+      local idx = edit_ctx.target
+      local old = categories[idx]
+      categories[idx] = txt
+      local n = #encode_payload()
+      categories[idx] = old
+      return n
+    end
+    return #encode_payload()
+  end
+
+  -- Reject empty/3-char violations early, matching the per-kind rules.
+  if (edit_ctx.kind == "cat" or edit_ctx.kind == "rename") and #txt > 3 then
+    toast("Max 3 chars"); return
+  end
+
+  local need = preview_len()
+  if need == nil then toast("Max 3 chars"); return end
+  if need > (255 - 69) then
+    toast("Budget exhausted")
+    return
+  end
+
   if edit_ctx.kind == "todo" then
     local cat = (filter ~= "All") and filter or (categories[1] or "General")
     todos[#todos + 1] = { id = next_id, text = txt, cat = cat,
@@ -857,13 +904,11 @@ function commit_edit()
     end
     toast("Updated")
   elseif edit_ctx.kind == "cat" then
-    if #txt > 3 then toast("Max 3 chars"); return end
     for _, c in ipairs(categories) do
       if c == txt then toast("Already exists"); return end
     end
     categories[#categories + 1] = txt
   elseif edit_ctx.kind == "rename" then
-    if #txt > 3 then toast("Max 3 chars"); return end
     local idx = edit_ctx.target
     for j, c in ipairs(categories) do
       if j ~= idx and c == txt then toast("Already exists"); return end
@@ -874,6 +919,7 @@ function commit_edit()
     if filter == old then filter = txt end
     if selected_cat == old then selected_cat = txt end
   end
+
   save(); mode = "list"; edit_ctx = nil
   clear_snapshot()
   recalc_layout(); reclamp_scrolls(); draw()
@@ -1179,4 +1225,3 @@ end
 function app.on_close() save() end
 
 return app
-
