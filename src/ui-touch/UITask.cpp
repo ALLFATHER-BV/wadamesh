@@ -3584,7 +3584,7 @@ struct LvChatPanel {
   lv_obj_t* composer_row;  // container: input + send button
   lv_obj_t* composer_ta;   // textarea: user types here
   lv_obj_t* composer_cnt;  // "148/160" counter, shown only near the limit
-  lv_obj_t* composer_lang; // EN/BG badge above the composer while a BLE keyboard types
+  lv_obj_t* composer_lang; // EN/BG badge inside the composer's right edge while a BLE keyboard types
   lv_obj_t* symbol_btn;    // M9 conversation special-character picker
   lv_obj_t* emoji_btn;     // composer emoji picker; stored for M9 focus routing
   lv_obj_t* qr_btn;        // composer quick-reply picker; stored for the P4 two-row re-layout
@@ -44425,20 +44425,18 @@ static void makeChatDetail(LvChatPanel& p) {
 
 #if CAP_BLE_KEYBOARD
   // Layout badge while an external Bluetooth keyboard is connected. It sits
-  // just above the composer's left edge and is shown/hidden by
-  // updateGlobalStatusBar(), which also keeps it aligned as the composer
-  // moves for the on-screen keyboard.
-  p.composer_lang = lv_label_create(p.overlay);
+  // inside the composer's right edge, and updateGlobalStatusBar() reserves
+  // room for it in the textarea's right padding so it never covers the text
+  // or the message above.
+  p.composer_lang = lv_label_create(p.composer_row);
   lv_label_set_text(p.composer_lang, "");
   lv_obj_set_style_text_font(p.composer_lang, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(p.composer_lang, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_style_bg_color(p.composer_lang, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(p.composer_lang, LV_OPA_80, LV_PART_MAIN);
-  lv_obj_set_style_radius(p.composer_lang, SC(4), LV_PART_MAIN);
-  lv_obj_set_style_pad_hor(p.composer_lang, SC(5), LV_PART_MAIN);
-  lv_obj_set_style_pad_ver(p.composer_lang, SC(1), LV_PART_MAIN);
-  lv_obj_set_style_border_width(p.composer_lang, 1, LV_PART_MAIN);
-  lv_obj_set_style_border_color(p.composer_lang, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p.composer_lang, LV_OPA_70, LV_PART_MAIN);
+  lv_obj_set_style_radius(p.composer_lang, SC(3), LV_PART_MAIN);
+  lv_obj_set_style_pad_hor(p.composer_lang, SC(3), LV_PART_MAIN);
+  lv_obj_set_style_pad_ver(p.composer_lang, 0, LV_PART_MAIN);
   lv_obj_clear_flag(p.composer_lang, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(p.composer_lang, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(p.composer_lang);
@@ -64666,17 +64664,32 @@ static void updateGlobalStatusBar() {
     }
   }
 #if CAP_BLE_KEYBOARD
-  // The same code next to the field being typed into, where the eyes are.
-  // Kept above the composer's right edge; updateGlobalStatusBar runs on every
-  // tick, so it follows the composer when the on-screen keyboard lifts it.
+  // The same code at the right edge of the field being typed into, where the
+  // eyes are. The textarea's right padding grows by the badge's width while it
+  // is shown, so typed text and the placeholder stop before it.
   if (LvChatPanel* p = navOpenChatPanel()) {
-    if (p->composer_lang && p->composer_row) {
-      if (ble_ext && show_layout) {
+    if (p->composer_lang && p->composer_row && p->composer_ta) {
+      const bool show_badge = ble_ext && show_layout;
+      const bool was_hidden = lv_obj_has_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
+      if (show_badge) {
         setLabelIfChanged(p->composer_lang, layout_name);
-        lv_obj_align_to(p->composer_lang, p->composer_row, LV_ALIGN_OUT_TOP_LEFT, SC(6), -SC(2));
-        lv_obj_clear_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
-      } else {
+        if (was_hidden) {
+          lv_obj_set_style_pad_right(p->composer_ta, SC(29), LV_PART_MAIN);
+          lv_obj_clear_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
+        }
+        // lv_obj_align_to() positions against the base's CONTENT box, so the
+        // textarea's 29 px right padding would leave the badge 29 px short of
+        // the visible edge. Use the widget coords and the row's content origin.
+        lv_obj_update_layout(p->composer_lang);
+        lv_area_t ta, content;
+        lv_obj_get_coords(p->composer_ta, &ta);
+        lv_obj_get_content_coords(p->composer_row, &content);
+        lv_obj_set_pos(p->composer_lang,
+                       ta.x2 - lv_obj_get_width(p->composer_lang) - SC(7) - content.x1,
+                       ta.y1 + (lv_area_get_height(&ta) - lv_obj_get_height(p->composer_lang)) / 2 - content.y1);
+      } else if (!was_hidden) {
         lv_obj_add_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_style_pad_right(p->composer_ta, SC(12), LV_PART_MAIN);
       }
     }
   }
