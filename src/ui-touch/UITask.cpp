@@ -8989,6 +8989,16 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   if (!heltecV4CapTouchIsAsyncPolling()) {
     (void)heltecV4CapTouchCheck();
   }
+  // #836: clear LVGL 8's stuck-scroll latch. lv_indev_wait_release() (the swipe abort
+  // below, and many handlers) drops last_obj but keeps scroll_obj while the list is
+  // still coasting. A press landing in that window resets scroll_dir to NONE yet keeps
+  // scroll_obj; the throw handler then returns early forever and never clears it, so
+  // every later release skips CLICKED: rows highlight but nothing opens. scroll_dir is
+  // always set together with scroll_obj, so this pair only ever means the dead latch.
+  if (lv_indev_t* sc_act = lv_indev_get_act()) {
+    auto& ptr = sc_act->proc.types.pointer;
+    if (ptr.scroll_obj && ptr.scroll_dir == LV_DIR_NONE) ptr.scroll_obj = nullptr;
+  }
   // Stamp s_slider_touch_ms while the finger is down on any slider. Both the press
   // abort below and the tab / swipe-back handler skip a slider drag on this stamp,
   // but nothing ever set it, so a sideways drag past the swipe threshold aborted the
