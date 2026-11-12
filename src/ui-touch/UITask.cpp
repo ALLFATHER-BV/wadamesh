@@ -19344,7 +19344,8 @@ static void openLocalSensorsPage() {
 
   lv_obj_t* card = lv_obj_create(s_local_sensors_root);
   lv_obj_remove_style_all(card);
-  lv_obj_set_size(card, sw - 12, H - 44);
+  // The card scrolls; the console button sits below it so it is always reachable.
+  lv_obj_set_size(card, sw - 12, H - 44 - 42);
   lv_obj_set_pos(card, 6, 36);
   styleSurface(card, COLOR_PANEL, 8);
   lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
@@ -19352,6 +19353,9 @@ static void openLocalSensorsPage() {
   lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
   lv_obj_set_scroll_dir(card, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(card, LV_SCROLLBAR_MODE_AUTO);
+  // Column flow so the readout, chart and legend stack without overlapping.
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_row(card, 8, LV_PART_MAIN);
 
   lv_obj_t* status = lv_label_create(card);
   lv_obj_set_width(status, lv_pct(100));
@@ -19370,10 +19374,17 @@ static void openLocalSensorsPage() {
     }
   }
   if (have_hist) {
-    lv_obj_t* chart = lv_chart_create(card);
-    lv_obj_set_size(chart, sw - 28, 116);
-    lv_obj_align(status, LV_ALIGN_TOP_LEFT, 0, 0);
-    lv_obj_align_to(chart, status, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
+    // The Y-axis tick labels draw outside the chart box; pad the host so they stay on the card.
+    lv_obj_t* host = lv_obj_create(card);
+    lv_obj_remove_style_all(host);
+    lv_obj_set_size(host, lv_pct(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_left(host, 34, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(host, 26, LV_PART_MAIN);
+    lv_obj_clear_flag(host, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(host, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t* chart = lv_chart_create(host);
+    lv_obj_set_size(chart, lv_pct(100), 116);
+    lv_obj_clear_flag(chart, LV_OBJ_FLAG_SCROLLABLE);
     lv_chart_set_type(chart, LV_CHART_TYPE_LINE);
     lv_chart_set_point_count(chart, kHomeEnvHistoryPoints);
     lv_chart_set_range(chart, LV_CHART_AXIS_PRIMARY_Y, 3400, 4600);
@@ -19399,20 +19410,16 @@ static void openLocalSensorsPage() {
       lv_chart_set_next_value(chart, hs, s_home_env_hist_hum[i] >= 0 ? (lv_coord_t)s_home_env_hist_hum[i] : LV_CHART_POINT_NONE);
     }
     lv_obj_t* legend = lv_label_create(card);
+    lv_obj_set_width(legend, lv_pct(100));
+    lv_label_set_long_mode(legend, LV_LABEL_LONG_WRAP);
     lv_label_set_text(legend, TR("Blue battery  Orange temp  Cyan humidity"));
     lv_obj_set_style_text_font(legend, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    lv_obj_align_to(legend, chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
   }
 
-  lv_obj_t* btn_row = lv_obj_create(card);
-  lv_obj_remove_style_all(btn_row);
-  lv_obj_set_size(btn_row, sw - 28, 36);
-  lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
-
-  lv_obj_t* term = lv_btn_create(btn_row);
-  lv_obj_set_size(term, sw - 40, 34);
-  lv_obj_align(term, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_t* term = lv_btn_create(s_local_sensors_root);
+  lv_obj_set_size(term, sw - 12, 34);
+  lv_obj_align(term, LV_ALIGN_BOTTOM_MID, 0, -4);
   styleButton(term);
   lv_obj_add_event_cb(term, localSensorsOpenTerminalCb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t* tl = lv_label_create(term);
@@ -58913,6 +58920,13 @@ static void openControlCenter() {
   // screen can't fit the battery/IP beside the clock, so portrait stacks the
   // header vertically and uses a taller card.
   const bool portrait = (sw < sh);
+#if defined(HELTEC_LORA_V4_TFT)
+  // V4 portrait has no room for the battery row and the Expansion Kit env line above
+  // the chips; both are elsewhere (status bar battery, Sensors tab / Home widget). #833
+  const bool cc_lean = portrait;
+#else
+  const bool cc_lean = false;
+#endif
 #if CAP_LARGE_SCREEN
   const int card_w = (sw - 40 > 560) ? 560 : (sw - 40);   // way wider on the 800-px panel
 #elif defined(TLORA_PAGER)
@@ -59051,7 +59065,9 @@ static void openControlCenter() {
   lv_obj_set_style_text_font(bi, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(bi, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   int row_y = 42;   // first content row under the date / battery
-  if (portrait) {
+  if (cc_lean) {
+    lv_obj_add_flag(brow, LV_OBJ_FLAG_HIDDEN);
+  } else if (portrait) {
     lv_obj_align(brow, LV_ALIGN_TOP_LEFT, 0, 38);   // battery under the date
     row_y = 58;
   } else {
@@ -59093,7 +59109,7 @@ static void openControlCenter() {
 
 #if defined(HAS_EXPANSION_KIT)
   // Expansion Kit: live local-env one-liner under the GPS status in the CC.
-  const char* env_status = localEnvStatusStr();
+  const char* env_status = cc_lean ? "" : localEnvStatusStr();
   if (env_status[0]) {
     s_cc_env_label = lv_label_create(card);
     lv_label_set_long_mode(s_cc_env_label, LV_LABEL_LONG_DOT);
@@ -72873,7 +72889,7 @@ static void refreshSensorsHistoryCharts() {
   if (s_sens_env_chart && s_sens_env_temp && s_sens_env_hum) {
     const bool show = have_temp || have_hum;
     if (show) {
-      lv_obj_clear_flag(s_sens_env_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_env_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_env_legend) lv_obj_clear_flag(s_sens_env_legend, LV_OBJ_FLAG_HIDDEN);
       lv_chart_set_all_value(s_sens_env_chart, s_sens_env_temp, LV_CHART_POINT_NONE);
       lv_chart_set_all_value(s_sens_env_chart, s_sens_env_hum,  LV_CHART_POINT_NONE);
@@ -72889,7 +72905,7 @@ static void refreshSensorsHistoryCharts() {
       }
       lv_chart_refresh(s_sens_env_chart);
     } else {
-      lv_obj_add_flag(s_sens_env_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_env_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_env_legend) lv_obj_add_flag(s_sens_env_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
@@ -72897,7 +72913,7 @@ static void refreshSensorsHistoryCharts() {
   if (s_sens_press_chart && s_sens_press_ser && s_sens_alt_ser) {
     const bool show = have_press || have_alt;
     if (show) {
-      lv_obj_clear_flag(s_sens_press_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_press_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_press_legend) lv_obj_clear_flag(s_sens_press_legend, LV_OBJ_FLAG_HIDDEN);
       if (have_press) {
         int lo = press_min - 3;
@@ -72941,14 +72957,14 @@ static void refreshSensorsHistoryCharts() {
       }
       lv_chart_refresh(s_sens_press_chart);
     } else {
-      lv_obj_add_flag(s_sens_press_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_press_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_press_legend) lv_obj_add_flag(s_sens_press_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
 
   if (s_sens_batt_chart && s_sens_batt_ser) {
     if (have_batt) {
-      lv_obj_clear_flag(s_sens_batt_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_clear_flag(lv_obj_get_parent(s_sens_batt_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_batt_legend) lv_obj_clear_flag(s_sens_batt_legend, LV_OBJ_FLAG_HIDDEN);
       lv_chart_set_all_value(s_sens_batt_chart, s_sens_batt_ser, LV_CHART_POINT_NONE);
       for (int i = 0; i < kHomeEnvHistoryPoints; ++i)
@@ -72958,7 +72974,7 @@ static void refreshSensorsHistoryCharts() {
                                   : LV_CHART_POINT_NONE);
       lv_chart_refresh(s_sens_batt_chart);
     } else {
-      lv_obj_add_flag(s_sens_batt_chart, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(lv_obj_get_parent(s_sens_batt_chart), LV_OBJ_FLAG_HIDDEN);
       if (s_sens_batt_legend) lv_obj_add_flag(s_sens_batt_legend, LV_OBJ_FLAG_HIDDEN);
     }
   }
@@ -73106,21 +73122,32 @@ static void refreshSensorsTab() {
   refreshSensorsHistoryCharts();
 }
 
-static lv_obj_t* sensorsAddSection(lv_obj_t* page, int& y, const char* title) {
+static lv_obj_t* sensorsAddSection(lv_obj_t* page, const char* title) {
   lv_obj_t* hdr = lv_label_create(page);
   lv_label_set_text(hdr, title);
   lv_obj_set_style_text_font(hdr, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(hdr, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
-  lv_obj_set_pos(hdr, 8, y);
-  y += SC(18);
 
   lv_obj_t* val = lv_label_create(page);
   lv_label_set_long_mode(val, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(val, lv_pct(100) - SC(16));
+  lv_obj_set_width(val, lv_pct(100));
   lv_obj_set_style_text_font(val, &g_font_16, LV_PART_MAIN);
   lv_obj_set_style_text_color(val, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_set_pos(val, 8, y);
   return val;
+}
+
+// Full-width row that hosts a chart. LVGL draws the Y-axis tick labels outside the
+// chart box (left of x1 / right of x2), so the host pads those sides to keep them
+// on screen. The refresh hides/shows the host so no empty gap is left behind.
+static lv_obj_t* sensorsChartHost(lv_obj_t* tab, lv_coord_t pad_l, lv_coord_t pad_r) {
+  lv_obj_t* host = lv_obj_create(tab);
+  lv_obj_remove_style_all(host);
+  lv_obj_set_size(host, lv_pct(100), LV_SIZE_CONTENT);
+  lv_obj_set_style_pad_left(host, pad_l, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(host, pad_r, LV_PART_MAIN);
+  lv_obj_clear_flag(host, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_clear_flag(host, LV_OBJ_FLAG_CLICKABLE);
+  return host;
 }
 
 static void makeSensorsTab(lv_obj_t* tab) {
@@ -73129,13 +73156,19 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_AUTO);
   lv_obj_add_event_cb(tab, scrollClampOnEndCb, LV_EVENT_SCROLL_END, nullptr);
 
-  int y = SC(6);
+  // Stacked column: every block flows under the previous one, so a value that
+  // wraps (240 px portrait, larger Text size) pushes the rest down instead of
+  // running into it, as the old fixed y offsets did.
+  lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_hor(tab, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_top(tab, SC(6), LV_PART_MAIN);
+  lv_obj_set_style_pad_bottom(tab, SC(10), LV_PART_MAIN);
+  lv_obj_set_style_pad_row(tab, SC(4), LV_PART_MAIN);
 
-  s_sens_atmo_lbl = sensorsAddSection(tab, y, LV_SYMBOL_CHARGE "  Atmosphere");
+  s_sens_atmo_lbl = sensorsAddSection(tab, LV_SYMBOL_CHARGE "  Atmosphere");
   lv_label_set_text(s_sens_atmo_lbl, "...");
-  s_sens_env_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_env_chart, lv_pct(100) - SC(16), SC(74));
-  lv_obj_set_pos(s_sens_env_chart, 8, y + SC(56));
+  s_sens_env_chart = lv_chart_create(sensorsChartHost(tab, 36, 32));
+  lv_obj_set_size(s_sens_env_chart, lv_pct(100), SC(74));
   lv_obj_clear_flag(s_sens_env_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_env_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_env_chart, kHomeEnvHistoryPoints);
@@ -73167,12 +73200,9 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_env_legend, TR("Orange temp  Cyan humidity"));
   lv_obj_set_style_text_font(s_sens_env_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_env_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_env_legend, 8, y + SC(56 + 74 + 4));
-  y += SC(152);
 
-  s_sens_press_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_press_chart, lv_pct(100) - SC(16), SC(74));
-  lv_obj_set_pos(s_sens_press_chart, 8, y);
+  s_sens_press_chart = lv_chart_create(sensorsChartHost(tab, 36, 36));
+  lv_obj_set_size(s_sens_press_chart, lv_pct(100), SC(74));
   lv_obj_clear_flag(s_sens_press_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_press_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_press_chart, kHomeEnvHistoryPoints);
@@ -73204,40 +73234,32 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_press_legend, TR("Green pressure  Gray altitude"));
   lv_obj_set_style_text_font(s_sens_press_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_press_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_press_legend, 8, y + SC(74 + 4));
-  y += SC(110);
 
   // Divider
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_gps_lbl = sensorsAddSection(tab, y, LV_SYMBOL_GPS "  GPS");
+  s_sens_gps_lbl = sensorsAddSection(tab, LV_SYMBOL_GPS "  GPS");
   lv_label_set_text(s_sens_gps_lbl, "...");
-  y += SC(82);
 
   // Divider
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_batt_lbl = sensorsAddSection(tab, y, LV_SYMBOL_BATTERY_FULL "  Battery");
+  s_sens_batt_lbl = sensorsAddSection(tab, LV_SYMBOL_BATTERY_FULL "  Battery");
   lv_label_set_text(s_sens_batt_lbl, "...");
-  s_sens_batt_chart = lv_chart_create(tab);
-  lv_obj_set_size(s_sens_batt_chart, lv_pct(100) - SC(16), SC(70));
-  lv_obj_set_pos(s_sens_batt_chart, 8, y + SC(30));
+  s_sens_batt_chart = lv_chart_create(sensorsChartHost(tab, 38, 0));
+  lv_obj_set_size(s_sens_batt_chart, lv_pct(100), SC(70));
   lv_obj_clear_flag(s_sens_batt_chart, LV_OBJ_FLAG_SCROLLABLE);
   lv_chart_set_type(s_sens_batt_chart, LV_CHART_TYPE_LINE);
   lv_chart_set_point_count(s_sens_batt_chart, kHomeEnvHistoryPoints);
@@ -73266,29 +73288,23 @@ static void makeSensorsTab(lv_obj_t* tab) {
   lv_label_set_text(s_sens_batt_legend, TR("Blue battery  Last 6 min"));
   lv_obj_set_style_text_font(s_sens_batt_legend, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_batt_legend, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_batt_legend, 8, y + SC(30 + 70 + 4));
-  y += SC(120);
 
   {
     lv_obj_t* div = lv_obj_create(tab);
     lv_obj_remove_style_all(div);
-    lv_obj_set_size(div, lv_pct(100) - SC(16), 1);
-    lv_obj_set_pos(div, 8, y);
+    lv_obj_set_size(div, lv_pct(100), 1);
     lv_obj_set_style_bg_color(div, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(div, LV_OPA_20, LV_PART_MAIN);
-    y += SC(10);
   }
 
-  s_sens_alerts_lbl = sensorsAddSection(tab, y, LV_SYMBOL_WARNING "  Terrain alerts");
+  s_sens_alerts_lbl = sensorsAddSection(tab, LV_SYMBOL_WARNING "  Terrain alerts");
   lv_label_set_text(s_sens_alerts_lbl, "...");
-  y += SC(176);
 
   // Footer: last updated
   s_sens_time_lbl = lv_label_create(tab);
   lv_label_set_text(s_sens_time_lbl, "");
   lv_obj_set_style_text_font(s_sens_time_lbl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(s_sens_time_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_obj_set_pos(s_sens_time_lbl, 8, y);
 
   refreshSensorsTab();
 }
