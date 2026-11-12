@@ -4,6 +4,18 @@
 # ver: 33
 # name: Português (BR)
 # base: pt-br
+Checking emoji pack…	Verificando o pacote de emojis…
+Connect to Wi-Fi to download the emoji pack.	Conecte-se ao Wi-Fi para baixar o pacote de emojis.
+Download emoji pack	Baixar pacote de emojis
+Download the emoji pack over Wi-Fi. A microSD card is required.	Baixe o pacote de emojis pelo Wi-Fi. É necessário um cartão microSD.
+Downloading emoji pack…	Baixando o pacote de emojis…
+Emoji pack	Pacote de emojis
+Emoji pack installed. Downloading another will replace it.	Um pacote de emojis está instalado. Baixar outro irá substituí-lo.
+Replace the installed emoji pack? A custom pack may be overwritten.	Substituir o pacote de emojis instalado? Um pacote personalizado pode ser sobrescrito.
+Emoji pack changed. Please try again.	O pacote de emojis mudou. Tente novamente.
+Replace	Substituir
+Emoji pack download failed	Falha ao baixar o pacote de emojis
+Emoji pack downloaded	Pacote de emojis baixado
  (device behind)	 (dispositivo atrasado)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d pontos de cobertura · %lu salvos no SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: aguardando fixação de GPS…#

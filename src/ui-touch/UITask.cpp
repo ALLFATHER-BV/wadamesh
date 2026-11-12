@@ -237,6 +237,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
   #include "AvatarText.h"     // initials and the name's emoji for avatars (pure, host-tested)
   #if CAP_EMOJI_PACK
     #include "EmojiPack.h"    // optional SD-card pack that extends the baked set
+    #include "EmojiPackDownload.h"
   #else
     enum : uint8_t {
       EMOJI_CAT_FACES = 0, EMOJI_CAT_GESTURES = 1, EMOJI_CAT_HEARTS = 2,
@@ -9176,6 +9177,23 @@ static void mentionBoxHide();  // tap-to-pick @-mention contact picker (issue #4
 static void txtMenuHide();     // cut/copy/paste/select-all edit menu
 static void showKb(LvChatPanel* p, bool reveal = true);
 static void closeSettingsModal();
+#if CAP_EMOJI_PACK && defined(MULTI_TRANSPORT_COMPANION)
+static lv_obj_t* s_emoji_pack_download_button = nullptr;
+static lv_obj_t* s_emoji_pack_download_note = nullptr;
+static volatile bool s_emoji_pack_download_done = false;
+static volatile bool s_emoji_pack_download_ok = false;
+static bool s_emoji_pack_download_busy = false;
+static bool s_emoji_pack_download_validating = false;
+static uint8_t s_emoji_pack_download_message = 0;
+static uint8_t s_emoji_pack_download_ui_state = 0xFF;
+static bool s_emoji_pack_file_exists = false;
+static unsigned long s_emoji_pack_file_check_at = 0;
+static unsigned s_emoji_pack_approved_locations = 0;
+static bool emojiPackDownloadStart();
+static void emojiPackDownloadUiSync();
+static bool emojiPackFileExists();
+static unsigned emojiPackFileLocations();
+#endif
 static void contactSelectCb(lv_event_t* e);
 static double contactDistanceKm(double lat1, double lon1, double lat2, double lon2);
 static void openLogModalCb(lv_event_t* e);
@@ -20734,6 +20752,80 @@ static void p4KbLightPickCb(lv_event_t* e) {
 }
 #endif
 
+#if CAP_EMOJI_PACK && defined(MULTI_TRANSPORT_COMPANION)
+static void emojiPackDownloadUiSync() {
+  const bool wifi = WiFi.status() == WL_CONNECTED;
+  const unsigned long now = millis();
+  if (s_emoji_pack_download_button && (!s_emoji_pack_file_check_at || (long)(now - s_emoji_pack_file_check_at) >= 0)) {
+    s_emoji_pack_file_exists = emojiPackFileExists();
+    s_emoji_pack_file_check_at = now + 2000;
+  }
+  const bool disabled = !wifi || s_emoji_pack_download_busy || emojiPackLoading();
+  if (s_emoji_pack_download_button) {
+    if (disabled) lv_obj_add_state(s_emoji_pack_download_button, LV_STATE_DISABLED);
+    else           lv_obj_clear_state(s_emoji_pack_download_button, LV_STATE_DISABLED);
+  }
+
+  uint8_t state;
+  const char* text;
+  if (s_emoji_pack_download_busy) {
+    state = s_emoji_pack_download_validating ? 3 : 2;
+    text = s_emoji_pack_download_validating ? TR("Checking emoji pack…") : TR("Downloading emoji pack…");
+  } else if (s_emoji_pack_file_exists) {
+    state = 6;
+    text = TR("Emoji pack installed. Downloading another will replace it.");
+  } else if (!wifi) {
+    state = 1;
+    text = TR("Connect to Wi-Fi to download the emoji pack.");
+  } else if (s_emoji_pack_download_message == 1) {
+    state = 4;
+    text = TR("Emoji pack downloaded");
+  } else if (s_emoji_pack_download_message == 2) {
+    state = 5;
+    text = TR("Emoji pack download failed");
+  } else {
+    state = 0;
+    text = TR("Download the emoji pack over Wi-Fi. A microSD card is required.");
+  }
+  if (s_emoji_pack_download_note && state != s_emoji_pack_download_ui_state)
+    lv_label_set_text(s_emoji_pack_download_note, text);
+  s_emoji_pack_download_ui_state = state;
+}
+
+static void emojiPackDownloadApply() {
+  if (s_emoji_pack_download_busy || emojiPackLoading() || WiFi.status() != WL_CONNECTED) return;
+  if (SD.cardType() == CARD_NONE) {
+    if (g_lv.task) g_lv.task->showAlert(TR("No SD card"), 1800);
+    return;
+  }
+  if (emojiPackFileLocations() != s_emoji_pack_approved_locations) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Emoji pack changed. Please try again."), 2600);
+    return;
+  }
+  s_emoji_pack_download_busy = true;
+  s_emoji_pack_download_validating = false;
+  s_emoji_pack_download_message = 0;
+  emojiPackDownloadUiSync();
+  if (!emojiPackDownloadStart()) {
+    s_emoji_pack_download_busy = false;
+    s_emoji_pack_download_message = 2;
+    emojiPackDownloadUiSync();
+    if (g_lv.task) g_lv.task->showAlert(TR("Emoji pack download failed"), 2200);
+  }
+}
+
+static void emojiPackDownloadCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || s_emoji_pack_download_busy ||
+      emojiPackLoading() || WiFi.status() != WL_CONNECTED) return;
+  s_emoji_pack_approved_locations = emojiPackFileLocations();
+  if (s_emoji_pack_approved_locations)
+    showConfirm(TR("Replace the installed emoji pack? A custom pack may be overwritten."),
+                TR("Replace"), emojiPackDownloadApply);
+  else
+    emojiPackDownloadApply();
+}
+#endif
+
 static void buildKeyboardPage() {
 #if KB_BL_DIMMABLE
   // Keyboard backlight (#84, the M9 since #664): a live slider plus one-tap presets.
@@ -20843,6 +20935,17 @@ static void buildKeyboardPage() {
                  touchPrefsGetKbdNav(), pagerKbdNavToggleCb);
   }
   setNavKeyCards();
+#endif
+#if CAP_EMOJI_PACK && defined(MULTI_TRANSPORT_COMPANION)
+  {
+    lv_obj_t* c = setCard(TR("Emoji pack"));
+    s_emoji_pack_download_note = setNote(c, TR("Download the emoji pack over Wi-Fi. A microSD card is required."));
+    s_emoji_pack_download_button = setButton(c, LV_SYMBOL_DOWNLOAD, TR("Download emoji pack"),
+                                             emojiPackDownloadCb, nullptr, SET_PRIMARY);
+    s_emoji_pack_download_ui_state = 0xFF;
+    s_emoji_pack_file_check_at = 0;
+    emojiPackDownloadUiSync();
+  }
 #endif
 #if CAP_TRACKBALL
   {
@@ -37514,6 +37617,19 @@ static const char kLuaTlsRoots[] =
     "zj0EAwMDaAAwZQIwe3lORlCEwkSHRhtFcP9Ymd70/aTSVaYgLXTWNLxBo1BfASdW\n"
     "tL4ndQavEi51mI38AjEAi/V3bNTIZargCyzuFJ0nN6T5U6VR5CmD1/iQMVtCnwr1\n"
     "/q4AaOeMSQ+2b1tbFfLn\n"
+    "-----END CERTIFICATE-----\n"
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIICCTCCAY6gAwIBAgINAgPlwGjvYxqccpBQUjAKBggqhkjOPQQDAzBHMQswCQYD\n"
+    "VQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIG\n"
+    "A1UEAxMLR1RTIFJvb3QgUjQwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAw\n"
+    "WjBHMQswCQYDVQQGEwJVUzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2Vz\n"
+    "IExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjQwdjAQBgcqhkjOPQIBBgUrgQQAIgNi\n"
+    "AATzdHOnaItgrkO4NcWBMHtLSZ37wWHO5t5GvWvVYRg1rkDdc/eJkTBa6zzuhXyi\n"
+    "QHY7qca4R9gq55KRanPpsXI5nymfopjTX15YhmUPoYRlBtHci8nHc8iMai/lxKvR\n"
+    "HYqjQjBAMA4GA1UdDwEB/wQEAwIBhjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQW\n"
+    "BBSATNbrdP9JNqPV2Py1PsVq8JQdjDAKBggqhkjOPQQDAwNpADBmAjEA6ED/g94D\n"
+    "9J+uHXqnLrmvT/aDHQ4thQEd0dlq7A/Cr8deVl5c1RxYIigL9zC2L7F8AjEA8GE8\n"
+    "p/SgguMh1YQdc4acLa/KNJvxn7kjNuK8YAOdgLOaVsjh4rsUecrNIdSUtUlD\n"
     "-----END CERTIFICATE-----\n";
 
 // The handshake needs a deeper stack than the tile worker's 8 KB (sized for plain
@@ -37561,7 +37677,8 @@ static bool appFileNameOk(const char* n, size_t len) {   // as LuaAppHost's audi
 // Stream url into path, up to max_bytes. A file can be far larger than the code buffers,
 // so it goes through a 4 KB internal (DMA-capable) buffer: SD writes from PSRAM come back
 // short. The server must send a length; a short or failed read deletes the partial file.
-static bool luaStoreHttpToFile(WiFiClient& client, HTTPClient& http, const char* url,
+template <typename ClientT>
+static bool luaStoreHttpToFile(ClientT& client, HTTPClient& http, const char* url,
                                fs::FS* fs, const char* path, size_t max_bytes) {
   http.setReuse(false);
   http.setConnectTimeout(8000);
@@ -37598,6 +37715,64 @@ static bool luaStoreHttpToFile(WiFiClient& client, HTTPClient& http, const char*
   if (!ok || total != (size_t)want) { fs->remove(path); return false; }
   return true;
 }
+
+#if CAP_EMOJI_PACK && defined(MULTI_TRANSPORT_COMPANION)
+static constexpr char kEmojiPackUrl[] = "https://wadamesh.com/emoji/emoji.pack";
+static unsigned emojiPackFileLocations() {
+  fs::FS* data = luaHostAppFs();
+  fs::FS* card = SD.cardType() != CARD_NONE ? &SD : nullptr;
+  if (!card && data == &SD) data = nullptr;
+  return EmojiPackDownload::locations(card, data);
+}
+static bool emojiPackFileExists() { return emojiPackFileLocations() != 0; }
+
+static void emojiPackDownloadTaskFn(void*) {
+  bool ok = false;
+  if (WiFi.status() == WL_CONNECTED && SD.cardType() != CARD_NONE &&
+      (SD.exists("/emoji") || SD.mkdir("/emoji"))) {
+    SD.remove(EmojiPackDownload::kTempPath);
+    WiFiClientSecure client;
+    client.setCACert(kLuaTlsRoots);
+    HTTPClient http;
+    ok = luaStoreHttpToFile(client, http, kEmojiPackUrl, &SD, EmojiPackDownload::kTempPath, 2u * 1024u * 1024u);
+  }
+  if (!ok) SD.remove(EmojiPackDownload::kTempPath);
+  s_emoji_pack_download_ok = ok;
+  __sync_synchronize();
+  s_emoji_pack_download_done = true;
+  vTaskDelete(nullptr);
+}
+
+static bool emojiPackDownloadStart() {
+  s_emoji_pack_download_done = false;
+  s_emoji_pack_download_ok = false;
+  return xTaskCreatePinnedToCore(emojiPackDownloadTaskFn, "emoji-pack", 16384,
+                                nullptr, 1, nullptr, 0) == pdPASS;
+}
+
+static bool emojiPackInstallDownloaded() {
+  fs::FS& card = SD;
+  return EmojiPackDownload::install(card, luaHostAppFs(), s_emoji_pack_approved_locations);
+}
+
+static void emojiPackReloadInstalled() {
+  fs::FS* data = luaHostAppFs();
+  fs::FS* card = SD.cardType() != CARD_NONE ? &SD : nullptr;
+  fs::FS* roots[2] = {card, data == card ? nullptr : data};
+  File pack;
+  for (int i = 0; i < 2 && !pack; ++i) {
+    if (!roots[i]) continue;
+    pack = roots[i]->open(EmojiPackDownload::kPath, FILE_READ);
+    if (!pack) pack = roots[i]->open(EmojiPackDownload::kRootPath, FILE_READ);
+  }
+  emojiPackBegin(pack);
+  emojiInvalidateMergedList();
+  g_lv.dm.list_sig = 0;
+  g_lv.dirty_threads = true;
+  g_lv.dirty_timeline = true;
+}
+#endif
+
 static bool luaStoreFetchAppFiles(WiFiClient& client, HTTPClient& http, fs::FS* fs,
                                   const char* id, const char* ver, const char* list) {
   char rel[64], dir[96];
@@ -45186,6 +45361,13 @@ static void closeSettingsCategory() {
     s_ota_prev_btn = nullptr;
     g_lv.settings_status = nullptr; g_lv.diag_id_label = nullptr; g_lv.diag_label = nullptr;
   }
+#if CAP_EMOJI_PACK && defined(MULTI_TRANSPORT_COMPANION)
+  if (s_settings_open_cat == CAT_KEYBOARD) {
+    s_emoji_pack_download_button = nullptr;
+    s_emoji_pack_download_note = nullptr;
+    s_emoji_pack_download_ui_state = 0xFF;
+  }
+#endif
 #if defined(HAS_TDECK_GT911)
   if (s_settings_open_cat == CAT_LOCK) {   // null the sleep-diag live-label ptrs
     s_sleep_diag_lbl = nullptr; s_sleep_diag_lbl2 = nullptr;
@@ -79701,7 +79883,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       if (s_ui_data_fs && (nc == 0 || cands[0] != s_ui_data_fs)) cands[nc++] = s_ui_data_fs;
 
     #if CAP_EMOJI_PACK
-      static const char* const kPackPaths[2] = { "/emoji/emoji.pack", "/emoji.pack" };
+      if (nc && cands[0] == &SD && SD.exists(EmojiPackDownload::kBackupPath) &&
+          !SD.exists(EmojiPackDownload::kPath) &&
+          !SD.rename(EmojiPackDownload::kBackupPath, EmojiPackDownload::kPath))
+        pushDiagLine("emoji: failed to restore pack backup");
+      static const char* const kPackPaths[2] = { EmojiPackDownload::kPath, EmojiPackDownload::kRootPath };
       File ep;
       for (int i = 0; i < nc && !ep; ++i)
         for (int p = 0; p < 2 && !ep; ++p) ep = cands[i]->open(kPackPaths[p], FILE_READ);
@@ -85341,6 +85527,37 @@ void UITask::loop() {
   emojiFlushRecent(now, _last_input_ms);
 
 #if CAP_EMOJI_PACK
+#if defined(MULTI_TRANSPORT_COMPANION)
+  if (s_emoji_pack_download_done) {
+    __sync_synchronize();
+    s_emoji_pack_download_done = false;
+    if (s_emoji_pack_download_ok && emojiPackFileLocations() != s_emoji_pack_approved_locations) {
+      SD.remove(EmojiPackDownload::kTempPath);
+      s_emoji_pack_download_busy = false;
+      s_emoji_pack_file_exists = true;
+      s_emoji_pack_file_check_at = millis() + 2000;
+      if (g_lv.task) g_lv.task->showAlert(TR("Emoji pack changed. Please try again."), 2600);
+    } else if (s_emoji_pack_download_ok) {
+      File downloaded = SD.open(EmojiPackDownload::kTempPath, FILE_READ);
+      if (downloaded && emojiPackBegin(downloaded)) {
+        s_emoji_pack_download_validating = true;
+      } else {
+        if (downloaded) downloaded.close();
+        SD.remove(EmojiPackDownload::kTempPath);
+        emojiPackReloadInstalled();
+        s_emoji_pack_download_busy = false;
+        s_emoji_pack_download_message = 2;
+        if (g_lv.task) g_lv.task->showAlert(TR("Emoji pack download failed"), 2200);
+      }
+    } else {
+      SD.remove(EmojiPackDownload::kTempPath);
+      s_emoji_pack_download_busy = false;
+      s_emoji_pack_download_message = 2;
+      if (g_lv.task) g_lv.task->showAlert(TR("Emoji pack download failed"), 2200);
+    }
+    emojiPackDownloadUiSync();
+  }
+#endif
   // Budgeted slices of the SD emoji pack. A full set is ~850 KB on a 4 MHz card,
   // so it arrives a couple of seconds in; emoji render from the baked set until
   // then. 8 KB is ~16 ms of SPI per tick, small enough not to show as a stutter.
@@ -85356,7 +85573,28 @@ void UITask::loop() {
       snprintf(msg, sizeof msg, "emoji: pack rejected (bad file)");
     }
     pushDiagLine(msg);
+#if defined(MULTI_TRANSPORT_COMPANION)
+    if (s_emoji_pack_download_validating) {
+      s_emoji_pack_download_validating = false;
+      const bool installed = emojiPackLoaded() && emojiPackInstallDownloaded();
+      if (!installed) {
+        SD.remove(EmojiPackDownload::kTempPath);
+        emojiPackReloadInstalled();
+      }
+      s_emoji_pack_download_busy = false;
+      s_emoji_pack_download_message = installed ? 1 : 2;
+      s_emoji_pack_file_check_at = 0;
+      emojiPackDownloadUiSync();
+      if (g_lv.task)
+        g_lv.task->showAlert(installed ? TR("Emoji pack downloaded")
+                             : TR("Emoji pack download failed"),
+                             installed ? 1800 : 2200);
+    }
+#endif
   }
+#if defined(MULTI_TRANSPORT_COMPANION)
+  emojiPackDownloadUiSync();
+#endif
 #endif
 
 #if CAP_TOUCH

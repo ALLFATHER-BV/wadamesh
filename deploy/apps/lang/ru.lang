@@ -4,6 +4,18 @@
 # ver: 33
 # name: Русский
 # base: ru
+Checking emoji pack…	Проверка пакета эмодзи…
+Connect to Wi-Fi to download the emoji pack.	Подключитесь к Wi-Fi, чтобы загрузить пакет эмодзи.
+Download emoji pack	Загрузить пакет эмодзи
+Download the emoji pack over Wi-Fi. A microSD card is required.	Загрузите пакет эмодзи по Wi-Fi. Требуется карта microSD.
+Downloading emoji pack…	Загрузка пакета эмодзи…
+Emoji pack	Пакет эмодзи
+Emoji pack installed. Downloading another will replace it.	Пакет эмодзи установлен. Загрузка другого заменит его.
+Replace the installed emoji pack? A custom pack may be overwritten.	Заменить установленный пакет эмодзи? Пользовательский пакет может быть перезаписан.
+Emoji pack changed. Please try again.	Пакет эмодзи изменился. Попробуйте снова.
+Replace	Заменить
+Emoji pack download failed	Не удалось загрузить пакет эмодзи
+Emoji pack downloaded	Пакет эмодзи загружен
  (device behind)	 (устройство отстаёт)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d точек покрытия · %lu записано на SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: ожидание GPS…#

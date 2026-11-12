@@ -4,6 +4,18 @@
 # ver: 33
 # name: Nederlands
 # base: nl
+Checking emoji pack…	Emoji-pakket controleren…
+Connect to Wi-Fi to download the emoji pack.	Maak verbinding met wifi om het emoji-pakket te downloaden.
+Download emoji pack	Emoji-pakket downloaden
+Download the emoji pack over Wi-Fi. A microSD card is required.	Download het emoji-pakket via wifi. Een microSD-kaart is vereist.
+Downloading emoji pack…	Emoji-pakket downloaden…
+Emoji pack	Emoji-pakket
+Emoji pack installed. Downloading another will replace it.	Er is een emoji-pakket geïnstalleerd. Een nieuwe download vervangt het.
+Replace the installed emoji pack? A custom pack may be overwritten.	Het geïnstalleerde emoji-pakket vervangen? Een aangepast pakket kan worden overschreven.
+Emoji pack changed. Please try again.	Het emoji-pakket is gewijzigd. Probeer het opnieuw.
+Replace	Vervangen
+Emoji pack download failed	Downloaden van emoji-pakket mislukt
+Emoji pack downloaded	Emoji-pakket gedownload
  (device behind)	(apparaat loopt achter)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d dekkingspunten · %lu opgeslagen op SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: wachten op GPS-fix…#

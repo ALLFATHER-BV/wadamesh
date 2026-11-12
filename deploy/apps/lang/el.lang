@@ -4,6 +4,18 @@
 # ver: 33
 # name: Ελληνικά
 # base: el
+Checking emoji pack…	Έλεγχος πακέτου emoji…
+Connect to Wi-Fi to download the emoji pack.	Συνδεθείτε σε Wi-Fi για λήψη του πακέτου emoji.
+Download emoji pack	Λήψη πακέτου emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Κατεβάστε το πακέτο emoji μέσω Wi-Fi. Απαιτείται κάρτα microSD.
+Downloading emoji pack…	Λήψη πακέτου emoji…
+Emoji pack	Πακέτο emoji
+Emoji pack installed. Downloading another will replace it.	Υπάρχει εγκατεστημένο πακέτο emoji. Η λήψη άλλου θα το αντικαταστήσει.
+Replace the installed emoji pack? A custom pack may be overwritten.	Αντικατάσταση του πακέτου emoji; Ένα προσαρμοσμένο πακέτο μπορεί να αντικατασταθεί.
+Emoji pack changed. Please try again.	Το πακέτο emoji άλλαξε. Δοκιμάστε ξανά.
+Replace	Αντικατάσταση
+Emoji pack download failed	Αποτυχία λήψης πακέτου emoji
+Emoji pack downloaded	Το πακέτο emoji λήφθηκε
  (device behind)	 (συσκευή πίσω)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d σημεία κάλυψης · %lu στην SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: αναμονή στίγματος GPS…#
