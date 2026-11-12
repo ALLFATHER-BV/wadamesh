@@ -84,6 +84,16 @@ int main() {
   fmtDuration(90061, b, sizeof b); assert(!strcmp(b, "1d 1h"));
   fmtDuration(3725, b, sizeof b);  assert(!strcmp(b, "1h 2m"));
   fmtDuration(42, b, sizeof b);    assert(!strcmp(b, "42s"));
+
+  // Repeater DM "ping" command detection and PONG status formatting.
+  assert(isPingCmd("ping"));
+  assert(isPingCmd("  PING?! \r\n"));
+  assert(!isPingCmd("ping 123"));
+  assert(!isPingCmd("ver"));
+  assert(!isPingCmd(nullptr));
+  char pong[140];
+  formatPongStatus(d, sizeof d, 2, pong, sizeof pong);
+  assert(!strcmp(pong, "PONG | RX -6.5dB -87dBm (NF -112) | 4.01V | up 25h01m | 2h"));
   printf("test_repeater_admin_proto: all assertions passed\n");
   return 0;
 }

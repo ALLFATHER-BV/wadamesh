@@ -27602,12 +27602,17 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
   } else {
     ContactInfo* by = the_mesh.lookupContactByPubKey((uint8_t*)pub, PUB_KEY_SIZE);
     if (!by) { termLogAppendC(TERM_C_ERR, nullptr, "contact missing"); return; }
-    ContactInfo rcpt = *by;
-    rcpt.out_path_len = OUT_PATH_UNKNOWN;   // force flood routing (matches Chats TX)
-    uint8_t attempt = s_term_attempt++;
-    if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
     uint32_t expected_ack = 0, est_timeout = 0;
-    int rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
+    int rr;
+    if (by->type == ADV_TYPE_REPEATER && MyMesh::isRepeaterPingCmd(body)) {
+      rr = the_mesh.uiSendRepeaterDmPing(*by, expected_ack, est_timeout);
+    } else {
+      ContactInfo rcpt = *by;
+      rcpt.out_path_len = OUT_PATH_UNKNOWN;   // force flood routing (matches Chats TX)
+      uint8_t attempt = s_term_attempt++;
+      if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
+      rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
+    }
     if (rr == MSG_SEND_FAILED) { termLogAppendC(TERM_C_ERR, nullptr, "send failed"); return; }
     the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
     snprintf(r, sizeof r, "TX -> %s: %s", disp, body);
@@ -74815,12 +74820,18 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
 }
 
 void UITask::onAdminCommandReply(const ContactInfo& contact, const char* text) {
-  // Only append if the reply is from the contact we're currently logged
-  // into. Replies from a different repeater would be confusing — the
-  // companion-serial side handles those separately via queueMessage.
   if (raOnCliReply(contact, text)) return;   // a "wX|" reply to the admin app
-  if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
-  adminLogAppend("", text ? text : "");
+  if (s_admin_root && memcmp(contact.id.pub_key, s_admin_pub32, 32) == 0) {
+    adminLogAppend("", text ? text : "");
+    return;
+  }
+  // If the user sent a CLI command from the repeater's DM chat thread (with the
+  // Admin Console modal closed), display the repeater's CLI reply in that DM thread.
+  if (text && text[0] && contact.name[0]) {
+    notify(UIEventType::contactMessage);
+    const uint8_t plen = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0xFF;
+    newMsgFromPub(plen, contact.id.pub_key, contact.name, text, _msgcount + 1);
+  }
 }
 
 void UITask::markThreadsDirty(unsigned long delay_ms) {
@@ -79021,7 +79032,12 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
     attempt = 4;
     s_ui_tx_attempt = 5;
   }
-  int r = the_mesh.sendMessage(tx_recipient, ts, attempt, truncated, expected_ack, est_timeout);
+  int r;
+  if (recipient.type == ADV_TYPE_REPEATER && MyMesh::isRepeaterPingCmd(truncated)) {
+    r = the_mesh.uiSendRepeaterDmPing(*by_pub, expected_ack, est_timeout);
+  } else {
+    r = the_mesh.sendMessage(tx_recipient, ts, attempt, truncated, expected_ack, est_timeout);
+  }
   {
     uint32_t hash4 = 0;
     bool has_hash = the_mesh.getLastTxtTxHash4(hash4);
