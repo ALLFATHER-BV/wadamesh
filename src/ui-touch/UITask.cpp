@@ -53,7 +53,8 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
   #include <LittleFS.h>
   #include <esp_heap_caps.h>
   #if CAP_MAP_PMTILES
-    #include "PmTiles.h"   // PNG raster archives on the card (Map options -> Map file)
+    #include "PmTiles.h"       // PNG raster archives on the card (Map options -> Map file)
+    #include "PmTilesCard.h"   // ...read through FatFs: archives past 2 GiB (exFAT)
   #endif
   #if CAP_MAP_OVERZOOM
     #include "MapOverzoom.h"   // stand-in tiles from an ancestor when one is missing offline
@@ -39271,34 +39272,48 @@ static void resetPmTilesArchiveCache() {
   pmTilesDropDirectories();
 }
 
-static bool pmTilesReadRange(File& file, uint64_t offset, uint8_t* dst, size_t length) {
-  if (!dst || offset > UINT32_MAX || length > UINT32_MAX ||
-      offset + length < offset || offset + length > UINT32_MAX ||
-      !file.seek(static_cast<uint32_t>(offset)))
-    return false;
-  size_t read = 0;
-  while (read < length) {
-    const int n = file.read(dst + read, length - read);
-    if (n <= 0) return false;
-    read += static_cast<size_t>(n);
-  }
-  return true;
+// The card's FatFs path for a path on it: "<drive>:<path>" (PmTilesCard.h says
+// why archives bypass the VFS). False while the card is not mounted.
+#if CAP_SD
+static bool pmTilesCardPath(const char* path, char* out, size_t cap) {
+  const uint8_t drive = sdDriveNumber();
+  if (drive >= 10) return false;   // 0xFF: SD not mounted
+  const int n = snprintf(out, cap, "%u:%s", (unsigned)drive, path);
+  return n > 0 && (size_t)n < cap;
+}
+#else
+// SD_MMC keeps its card in a protected member and FatFs knows the drive by card
+// (diskio_sdmmc.h, declared by hand like f_chmod: ff.h stays out of this file).
+extern "C" uint8_t ff_diskio_get_pdrv_card(const sdmmc_card_t* card);
+struct SdmmcCardAccess : fs::SDMMCFS {
+  static sdmmc_card_t* of(const fs::SDMMCFS& sd) { return sd.*(&SdmmcCardAccess::_card); }
+};
+static bool pmTilesCardPath(const char* path, char* out, size_t cap) {
+  const sdmmc_card_t* card = SdmmcCardAccess::of(SD_MMC);
+  if (!card) return false;
+  const uint8_t drive = ff_diskio_get_pdrv_card(card);
+  if (drive >= 10) return false;
+  const int n = snprintf(out, cap, "%u:%s", (unsigned)drive, path);
+  return n > 0 && (size_t)n < cap;
+}
+#endif
+
+static PmTilesCard::Archive* pmTilesOpenPath(const char* path) {
+  char ffpath[2 * TOUCH_MAP_PMTILES_MAXLEN + 24];
+  if (!pmTilesCardPath(path, ffpath, sizeof ffpath)) return nullptr;
+  return PmTilesCard::open(ffpath);
 }
 
 // Header check for one candidate archive (PmTiles::checkArchive): PMTiles v3,
 // PNG (or untyped) uncompressed tiles, gzip or plain directories, and every
 // section inside the file (a copy that was cut short fails the last check).
-static PmTilesProbeResult pmTilesProbe(fs::FS* fs, const char* path, PmTiles::Header& header) {
-  File file = fs->open(path, FILE_READ);
-  if (!file) return kPmProbeMissing;
-  if (file.isDirectory()) {
-    file.close();
-    return kPmProbeMissing;
-  }
+static PmTilesProbeResult pmTilesProbe(const char* path, PmTiles::Header& header) {
+  PmTilesCard::Archive* file = pmTilesOpenPath(path);
+  if (!file) return kPmProbeMissing;   // also a directory of that name
   uint8_t raw[PmTiles::kHeaderBytes];
-  const bool header_read = pmTilesReadRange(file, 0, raw, sizeof(raw));
-  const uint64_t size = file.size();
-  file.close();
+  const bool header_read = PmTilesCard::read(file, 0, raw, sizeof(raw));
+  const uint64_t size = PmTilesCard::size(file);
+  PmTilesCard::close(file);
   PmTilesProbeResult result = kPmProbeNotV3;   // also a file shorter than the header
   if (header_read) {
     switch (PmTiles::checkArchive(raw, sizeof(raw), size, header)) {
@@ -39309,8 +39324,8 @@ static PmTilesProbeResult pmTilesProbe(fs::FS* fs, const char* path, PmTiles::He
     }
   }
   if (result != kPmProbeOk)
-    Serial.printf("[PMTILES] Rejected %s (reason %u, %lu bytes)\n", path,
-                  (unsigned)result, (unsigned long)size);
+    Serial.printf("[PMTILES] Rejected %s (reason %u, %llu bytes)\n", path,
+                  (unsigned)result, (unsigned long long)size);
   return result;
 }
 
@@ -39361,7 +39376,7 @@ static void pmTilesScan() {
         continue;
       PmTilesArchive& a = s_pmtiles[s_pmtiles_count];
       snprintf(a.path, sizeof(a.path), "%s/%s/%s.pmtiles", root, base, base);
-      PmTilesProbeResult result = pmTilesProbe(fs, a.path, a.header);
+      PmTilesProbeResult result = pmTilesProbe(a.path, a.header);
       if (result == kPmProbeOk) {
         strlcpy(a.name, base, sizeof(a.name));
         ++s_pmtiles_count;
@@ -39416,15 +39431,15 @@ static void pmTilesSelect(int index) {
 }
 
 static bool pmTilesFileRead(void* ctx, uint64_t offset, uint8_t* dst, size_t length) {
-  return pmTilesReadRange(*static_cast<File*>(ctx), offset, dst, length);
+  return PmTilesCard::read(static_cast<PmTilesCard::Archive*>(ctx), offset, dst, length);
 }
 
 // Where the selected archive keeps z/x/y (absolute offset + length in the file).
 // The directory walk is PmTiles::locateTile, covered by test/test_pmtiles.cpp.
-static bool pmTilesFindTile(File& file, const PmTilesArchive* archive, uint8_t z, int32_t x,
-                            int32_t y, uint64_t& offset, uint32_t& length) {
+static bool pmTilesFindTile(PmTilesCard::Archive* file, const PmTilesArchive* archive, uint8_t z,
+                            int32_t x, int32_t y, uint64_t& offset, uint32_t& length) {
   if (x < 0 || y < 0) return false;
-  const PmTiles::Lookup r = PmTiles::locateTile(archive->header, pmTilesFileRead, &file,
+  const PmTiles::Lookup r = PmTiles::locateTile(archive->header, pmTilesFileRead, file,
                                                 s_pmtiles_dirs, z, static_cast<uint32_t>(x),
                                                 static_cast<uint32_t>(y), offset, length);
   if (r == PmTiles::kCorrupt && !s_pmtiles_bad_logged) {
@@ -39436,10 +39451,10 @@ static bool pmTilesFindTile(File& file, const PmTilesArchive* archive, uint8_t z
 
 // Opens the selected archive. If it vanished since the scan, drop it for this
 // mount (the saved choice stays) instead of retrying the open for every tile.
-static File pmTilesOpenActive(const PmTilesArchive*& archive) {
+static PmTilesCard::Archive* pmTilesOpenActive(const PmTilesArchive*& archive) {
   archive = pmTilesActive();
-  if (!archive) return File();
-  File file = mapSdStorage()->open(archive->path, FILE_READ);
+  if (!archive) return nullptr;
+  PmTilesCard::Archive* file = pmTilesOpenPath(archive->path);
   if (!file) {
     s_pmtiles_sel = -1;
     pmTilesDropDirectories();
@@ -39450,35 +39465,35 @@ static File pmTilesOpenActive(const PmTilesArchive*& archive) {
 
 static bool pmTilesHasTile(uint8_t z, int32_t x, int32_t y) {
   const PmTilesArchive* archive = nullptr;
-  File file = pmTilesOpenActive(archive);
+  PmTilesCard::Archive* file = pmTilesOpenActive(archive);
   if (!file) return false;
   uint64_t offset = 0;
   uint32_t length = 0;
   const bool found = pmTilesFindTile(file, archive, z, x, y, offset, length);
-  file.close();
+  PmTilesCard::close(file);
   return found;
 }
 
 static bool loadPmTilesTile(uint8_t z, int32_t x, int32_t y,
                             uint8_t** out_data, size_t* out_len) {
   const PmTilesArchive* archive = nullptr;
-  File file = pmTilesOpenActive(archive);
+  PmTilesCard::Archive* file = pmTilesOpenActive(archive);
   if (!file) return false;
   uint64_t offset = 0;
   uint32_t length = 0;
   static const uint8_t png_signature[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
   if (!pmTilesFindTile(file, archive, z, x, y, offset, length) ||
       length < sizeof(png_signature) || length > 256u * 1024u) {   // the folder loader's cap
-    file.close();
+    PmTilesCard::close(file);
     return false;
   }
   uint8_t* data = (uint8_t*)lvglPsramAlloc(length);
   if (!data) {
-    file.close();
+    PmTilesCard::close(file);
     return false;
   }
-  const bool read_ok = pmTilesReadRange(file, offset, data, length);
-  file.close();
+  const bool read_ok = PmTilesCard::read(file, offset, data, length);
+  PmTilesCard::close(file);
   if (!read_ok || memcmp(data, png_signature, sizeof(png_signature)) != 0) {
     lvglPsramFree(data);
     return false;
