@@ -3660,6 +3660,53 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
   return 0; // unknown
 }
 
+static void formatRepeaterPongMessage(const uint8_t* payload, size_t payload_len,
+                                      int8_t out_path_len, char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  unsigned batt_mv = 0, uptime_s = 0, queue_len = 0;
+  int16_t  noise_floor = 0, last_rssi = 0, last_snr_q4 = 0;
+  bool     has_snr = false;
+  bool     parsed = false;
+
+  if (payload && payload_len >= 24) {
+    batt_mv     = (unsigned)(payload[0] | (payload[1] << 8));
+    queue_len   = (unsigned)(payload[2] | (payload[3] << 8));
+    noise_floor = (int16_t)(payload[4] | (payload[5] << 8));
+    last_rssi   = (int16_t)(payload[6] | (payload[7] << 8));
+    uptime_s    = (unsigned)(payload[20] | (payload[21] << 8) |
+                             (payload[22] << 16) | (payload[23] << 24));
+    if (payload_len >= 44) {
+      last_snr_q4 = (int16_t)(payload[42] | (payload[43] << 8));
+      has_snr = true;
+    }
+    if (batt_mv >= 2000 && batt_mv <= 5500) parsed = true;
+  }
+  const int hops = (out_path_len >= 0) ? (int)(out_path_len & 0x3F) : -1;
+  char hop_str[16] = "";
+  if (hops >= 0) {
+    snprintf(hop_str, sizeof(hop_str), " | %dh", hops);
+  }
+  if (parsed) {
+    char up_str[24];
+    if (uptime_s >= 3600) {
+      snprintf(up_str, sizeof(up_str), "%uh%02um", uptime_s / 3600, (uptime_s % 3600) / 60);
+    } else {
+      snprintf(up_str, sizeof(up_str), "%um%02us", uptime_s / 60, uptime_s % 60);
+    }
+    if (has_snr) {
+      snprintf(out, cap, "PONG | RX %+.1fdB %ddBm (NF %d) | %u.%02uV | up %s%s",
+               ((float)last_snr_q4) / 4.0f, (int)last_rssi, (int)noise_floor,
+               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, hop_str);
+    } else {
+      snprintf(out, cap, "PONG | RX %ddBm (NF %d) | %u.%02uV | up %s | q=%u%s",
+               (int)last_rssi, (int)noise_floor,
+               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, queue_len, hop_str);
+    }
+  } else {
+    snprintf(out, cap, "PONG | status reply (%u bytes)%s", (unsigned)payload_len, hop_str);
+  }
+}
+
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
   if (!data || len < 4) return;
   uint32_t tag;
@@ -3691,6 +3738,28 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     } else if (kind == UiReqKind::Binary) {
       _ui->onBinaryReply(contact, &data[4], (size_t)(len - 4));
     } else {
+      // If this status ping was triggered by sending "ping" in a repeater's DM thread,
+      // confirm the outgoing "ping" bubble and post the formatted PONG reply in the DM thread.
+      if (_ui_dm_ping_active && memcmp(_ui_dm_ping_pub, contact.id.pub_key, PUB_KEY_SIZE) == 0) {
+        _ui_dm_ping_active = false;
+        const uint32_t ack4 = _ui_dm_ping_ack ? _ui_dm_ping_ack : tag;
+        uint32_t trip_time = millis() - _ui_dm_ping_sent_ms;
+        out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
+        memcpy(&out_frame[1], &ack4, 4);
+        memcpy(&out_frame[5], &trip_time, 4);
+        _serial->writeFrameToAll(out_frame, 9);
+        _ui->onMessageAcked(ack4);
+
+        char pong_text[140];
+        formatRepeaterPongMessage(&data[4], (size_t)(len - 4), contact.out_path_len,
+                                  pong_text, sizeof(pong_text));
+        mesh::Packet rx_pkt{};
+        rx_pkt.header   = (uint8_t)((PAYLOAD_TYPE_TXT_MSG << PH_TYPE_SHIFT) | ROUTE_TYPE_FLOOD);
+        rx_pkt.path_len = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0;
+        rx_pkt._snr     = (int8_t)(_radio->getLastSNR() * 4.0f);
+        queueMessage(contact, TXT_TYPE_PLAIN, &rx_pkt, getRTCClock()->getCurrentTimeUnique(),
+                     nullptr, 0, pong_text);
+      }
       // STATUS or unknown — let the UI fall through its RepeaterStats /
       // JSON parser path.
       _ui->onPingReply(contact, &data[4], (size_t)(len - 4));
@@ -4526,23 +4595,27 @@ void MyMesh::handleCmdFrame(size_t len) {
           _ui->appendDiag(line);
         }
       } else if (!skip_radio_send) {
-        // Force node-side unique timestamp for plain sends as well.
-        // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
-        // and replay-like suppression on receivers.
-        msg_timestamp = getRTCClock()->getCurrentTimeUnique();
-        uint32_t tx_hash4 = 0;
-        TxtTxDebugInfo dbg{};
-        result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);
-        if (_ui) {
-          char line[192];
-          snprintf(line, sizeof(line), "TX CMD src=CMD_SEND_TXT_MSG kind=PLAIN ts=%lu att=%u r=%d ack=%lu h=%08lX core_ts=%lu core_att=%u n=%u",
-                   static_cast<unsigned long>(msg_timestamp), static_cast<unsigned>(attempt), result,
-                   static_cast<unsigned long>(expected_ack),
-                   static_cast<unsigned long>(tx_hash4),
-                   static_cast<unsigned long>(dbg.uniq_ts),
-                   static_cast<unsigned>(dbg.uniq_attempt),
-                   static_cast<unsigned>(dbg.nonce));
-          _ui->appendDiag(line);
+        if (recipient->type == ADV_TYPE_REPEATER && isRepeaterPingCmd(text)) {
+          result = uiSendRepeaterDmPing(*recipient, expected_ack, est_timeout);
+        } else {
+          // Force node-side unique timestamp for plain sends as well.
+          // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
+          // and replay-like suppression on receivers.
+          msg_timestamp = getRTCClock()->getCurrentTimeUnique();
+          uint32_t tx_hash4 = 0;
+          TxtTxDebugInfo dbg{};
+          result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);
+          if (_ui) {
+            char line[192];
+            snprintf(line, sizeof(line), "TX CMD src=CMD_SEND_TXT_MSG kind=PLAIN ts=%lu att=%u r=%d ack=%lu h=%08lX core_ts=%lu core_att=%u n=%u",
+                     static_cast<unsigned long>(msg_timestamp), static_cast<unsigned>(attempt), result,
+                     static_cast<unsigned long>(expected_ack),
+                     static_cast<unsigned long>(tx_hash4),
+                     static_cast<unsigned long>(dbg.uniq_ts),
+                     static_cast<unsigned>(dbg.uniq_attempt),
+                     static_cast<unsigned>(dbg.nonce));
+            _ui->appendDiag(line);
+          }
         }
       }
       if (result == MSG_SEND_FAILED) {
