@@ -140,6 +140,14 @@ static void testChargerAndBattery() {
   assert(smoother.smooth(4100, 0, 0, 12000) == 4100);
   assert(smoother.smooth(4000, 0, 0, 14000) == 4100);
   assert(smoother.smooth(4000, 0, 0, 15000) == 4000);
+
+  // Transient >70 mV LoRa TX sag while discharging on battery (ext=0, chg=0,
+  // no charger state flip) must be EMA-smoothed rather than snapping downward:
+  // at 3420 mV (~12%), a single +22 dBm TX sample sagging 180 mV to 3240 mV
+  // must stay well above the 3% switch-off threshold (3327 mV).
+  M9BatterySmoother tx_smoother;
+  assert(tx_smoother.smooth(3420, 0, 0, 1000) == 3420);
+  assert(tx_smoother.sample(3240) >= 3380);
 }
 
 static void testCompassHeading() {

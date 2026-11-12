@@ -26136,11 +26136,24 @@ static uint16_t batteryMvSampled() {
     s_ema = (float)raw;                            // seed on first read
   } else {
     const float d = (float)raw - s_ema;
+#if defined(HAS_THINKNODE_M9)
+    // On the M9, charger plug/unplug is read directly from GPIO1 (5V_TEST) and
+    // GPIO8 (DONE#), not inferred from voltage steps. Only snap s_ema when the
+    // charger state changes so a >70 mV IR sag during a +22 dBm LoRa TX burst
+    // is smoothed by the EMA instead of snapping downward to raw.
+    static int s_ext_prev = -2;
+    const int ext_now = ((board.externalPowerPresent() & 1) << 2) | (board.isCharging() & 3);
+    const bool charge_flip = (s_ext_prev != -2 && ext_now != s_ext_prev);
+    s_ext_prev = ext_now;
+    if (charge_flip) s_ema = (float)raw;
+    else             s_ema += d * 0.15f;           // ~7-sample time constant
+#else
     // A charger plug/unplug steps the rail ~100 mV+ — snap straight to it so the
     // charge state is recognized within a tick instead of crawling there over
     // the EMA. Smaller deltas are ADC noise, so keep smoothing those.
     if (d > 70.0f || d < -70.0f) s_ema = (float)raw;
     else                         s_ema += d * 0.15f;   // ~7-sample time constant
+#endif
   }
   return (uint16_t)(s_ema + 0.5f);
 }
@@ -51720,7 +51733,11 @@ static void pagerLowBatteryTick(uint32_t now) {
 #if defined(TLORA_PAGER)
   const int soc = board.getBattStateOfCharge();
 #else
-  const uint16_t mv = batteryMvSmoothed();
+  // Sample the live EMA directly rather than batteryMvSmoothed()'s 20 s held
+  // value: a 3-read (6 s) debounce + 10 s countdown is 16 s total, so reading
+  // a 20 s latch would repeat the same sample 8 times and could not see the
+  // rail recover after a transmit burst before the 16 s window expires.
+  const uint16_t mv = batteryMvSampled();
   const int soc = mv ? batteryPercentFromMv(mv) : -1;
 #endif
   const bool on_usb = board.externalPowerPresent() != 0;   // 1 = USB, -1 = charger silent: do nothing
