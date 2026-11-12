@@ -11,9 +11,14 @@ set -e
 # the IDF builds need it here or the P4 boards ship stale copies.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 # LVGL is vendored (gitignored) by fetch-deps.sh, so a copy vendored before the
-# anim_timer use-after-free fix (#428) still needs it. Idempotent; fails on drift.
+# anim_timer use-after-free fix (#428), the scroll_obj one (beta_102) or the
+# pending async delete one still needs them. Idempotent; fails on drift.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_anim_uaf.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_anim.c"
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_scroll_uaf.py" \
+  --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/core/lv_obj_tree.c"
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_async_del.py" \
+  --patch-root "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream"
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_arabic.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_txt_ap.c"
 cd "$(dirname "$0")"
