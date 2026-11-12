@@ -4,6 +4,18 @@
 # ver: 33
 # name: Čeština
 # base: cs
+Checking emoji pack…	Ověřuji balíček emoji…
+Connect to Wi-Fi to download the emoji pack.	Připojte se k Wi-Fi a stáhněte balíček emoji.
+Download emoji pack	Stáhnout balíček emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Stáhněte balíček emoji přes Wi-Fi. Je potřeba karta microSD.
+Downloading emoji pack…	Stahování balíčku emoji…
+Emoji pack	Balíček emoji
+Emoji pack installed. Downloading another will replace it.	Balíček emoji je nainstalován. Stažení jiného jej nahradí.
+Replace the installed emoji pack? A custom pack may be overwritten.	Nahradit nainstalovaný balíček emoji? Vlastní balíček může být přepsán.
+Emoji pack changed. Please try again.	Balíček emoji se změnil. Zkuste to znovu.
+Replace	Nahradit
+Emoji pack download failed	Stažení balíčku emoji se nezdařilo
+Emoji pack downloaded	Balíček emoji byl stažen
  (device behind)	 (zařízení za)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d bodů pokrytí · %lu uloženo na SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: čekání na GPS fix…#

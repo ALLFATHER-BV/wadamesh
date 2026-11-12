@@ -4,6 +4,18 @@
 # ver: 33
 # name: Polski
 # base: pl
+Checking emoji pack…	Sprawdzanie pakietu emoji…
+Connect to Wi-Fi to download the emoji pack.	Połącz się z Wi-Fi, aby pobrać pakiet emoji.
+Download emoji pack	Pobierz pakiet emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Pobierz pakiet emoji przez Wi-Fi. Wymagana jest karta microSD.
+Downloading emoji pack…	Pobieranie pakietu emoji…
+Emoji pack	Pakiet emoji
+Emoji pack installed. Downloading another will replace it.	Pakiet emoji jest zainstalowany. Pobranie innego zastąpi go.
+Replace the installed emoji pack? A custom pack may be overwritten.	Zastąpić zainstalowany pakiet emoji? Własny pakiet może zostać nadpisany.
+Emoji pack changed. Please try again.	Pakiet emoji został zmieniony. Spróbuj ponownie.
+Replace	Zastąp
+Emoji pack download failed	Nie udało się pobrać pakietu emoji
+Emoji pack downloaded	Pakiet emoji pobrany
 # translators: tom73god (Discord)
  (device behind)	 (starsza wersja urządzenia)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d coverage pts · %lu logged to SD#

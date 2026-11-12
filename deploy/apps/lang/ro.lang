@@ -4,6 +4,18 @@
 # ver: 33
 # name: Română
 # base: ro
+Checking emoji pack…	Se verifică pachetul de emoji…
+Connect to Wi-Fi to download the emoji pack.	Conectează-te la Wi-Fi pentru a descărca pachetul de emoji.
+Download emoji pack	Descarcă pachetul de emoji
+Download the emoji pack over Wi-Fi. A microSD card is required.	Descarcă pachetul de emoji prin Wi-Fi. Este necesar un card microSD.
+Downloading emoji pack…	Se descarcă pachetul de emoji…
+Emoji pack	Pachet de emoji
+Emoji pack installed. Downloading another will replace it.	Un pachet de emoji este instalat. Descărcarea altuia îl va înlocui.
+Replace the installed emoji pack? A custom pack may be overwritten.	Înlocuiești pachetul de emoji instalat? Un pachet personalizat poate fi suprascris.
+Emoji pack changed. Please try again.	Pachetul de emoji s-a schimbat. Încearcă din nou.
+Replace	Înlocuiește
+Emoji pack download failed	Descărcarea pachetului de emoji a eșuat
+Emoji pack downloaded	Pachetul de emoji a fost descărcat
  (device behind)	 (dispozitiv în urmă)
 #7A7F87 Wardrive: %d coverage pts · %lu logged to SD#	#7A7F87 Wardrive: %d puncte de acoperire · %lu salvate pe SD#
 #7A7F87 Wardrive: waiting for GPS fix…#	#7A7F87 Wardrive: se aşteaptă fix GPS…#
