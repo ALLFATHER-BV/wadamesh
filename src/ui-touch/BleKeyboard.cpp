@@ -30,6 +30,7 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include <helpers/input/HidReportMap.h>
+#include "BleKeyboardChord.h"
 
 namespace BleKbd {
 namespace {
@@ -111,6 +112,7 @@ uint32_t s_gui_since = 0;
 constexpr uint32_t kGuiTapMs = 1000;   // held longer than this it was not a tap
 bool     s_caps = false;
 uint32_t s_dead = 0;   // pending dead-key accent, 0 = none
+BleCtrlShiftToggle s_ctrl_shift;   // Ctrl+Shift tap -> next layout
 
 // Worker.
 enum class CmdType : uint8_t { Activate, Deactivate, ScanOn, ScanOff, Pair, Forget, SyncLeds };
@@ -193,130 +195,8 @@ void emit(int code, uint8_t usage, bool repeatable) {
   portEXIT_CRITICAL(&s_mux);
 }
 
-// ---- layouts ------------------------------------------------------------------
-
-constexpr uint16_t DK = 0x8000;           // table flag: dead key (accent waits for the next key)
-constexpr uint32_t kDeadFlag = 0x80000000;
-
-struct KeyMap { uint8_t usage; uint16_t base, shift, altgr; };
-
-// US: every non-letter key. Other layouts list what differs; unlisted
-// non-letters fall back to this table and letters to their US position.
-constexpr KeyMap kUS[] = {
-  {0x1E,'1','!',0}, {0x1F,'2','@',0}, {0x20,'3','#',0}, {0x21,'4','$',0}, {0x22,'5','%',0},
-  {0x23,'6','^',0}, {0x24,'7','&',0}, {0x25,'8','*',0}, {0x26,'9','(',0}, {0x27,'0',')',0},
-  {0x2D,'-','_',0}, {0x2E,'=','+',0}, {0x2F,'[','{',0}, {0x30,']','}',0}, {0x31,'\\','|',0},
-  {0x32,'\\','|',0}, {0x33,';',':',0}, {0x34,'\'','"',0}, {0x35,'`','~',0}, {0x36,',','<',0},
-  {0x37,'.','>',0}, {0x38,'/','?',0}, {0x64,'\\','|',0},
-};
-
-constexpr KeyMap kUK[] = {
-  {0x1F,'2','"',0}, {0x20,'3',0xA3,0}, {0x21,'4','$',0x20AC},
-  {0x31,'#','~',0}, {0x32,'#','~',0}, {0x34,'\'','@',0}, {0x35,'`',0xAC,0xA6},
-  {0x64,'\\','|',0},
-};
-
-constexpr KeyMap kDE[] = {
-  {0x1C,'z','Z',0}, {0x1D,'y','Y',0},
-  {0x14,'q','Q','@'}, {0x08,'e','E',0x20AC}, {0x10,'m','M',0xB5},
-  {0x1E,'1','!',0}, {0x1F,'2','"',0xB2}, {0x20,'3',0xA7,0xB3}, {0x21,'4','$',0},
-  {0x22,'5','%',0}, {0x23,'6','&',0}, {0x24,'7','/','{'}, {0x25,'8','(','['},
-  {0x26,'9',')',']'}, {0x27,'0','=','}'},
-  {0x2D,0xDF,'?','\\'}, {0x2E,DK|0xB4,DK|'`',0}, {0x2F,0xFC,0xDC,0}, {0x30,'+','*','~'},
-  {0x31,'#','\'',0}, {0x32,'#','\'',0}, {0x33,0xF6,0xD6,0}, {0x34,0xE4,0xC4,0},
-  {0x35,DK|'^',0xB0,0}, {0x36,',',';',0}, {0x37,'.',':',0}, {0x38,'-','_',0},
-  {0x64,'<','>','|'},
-};
-
-constexpr KeyMap kFR[] = {
-  {0x04,'q','Q',0}, {0x14,'a','A',0}, {0x1A,'z','Z',0}, {0x1D,'w','W',0}, {0x33,'m','M',0},
-  {0x08,'e','E',0x20AC},
-  {0x10,',','?',0}, {0x36,';','.',0}, {0x37,':','/',0}, {0x38,'!',0xA7,0},
-  {0x1E,'&','1',0}, {0x1F,0xE9,'2',DK|'~'}, {0x20,'"','3','#'}, {0x21,'\'','4','{'},
-  {0x22,'(','5','['}, {0x23,'-','6','|'}, {0x24,0xE8,'7',DK|'`'}, {0x25,'_','8','\\'},
-  {0x26,0xE7,'9','^'}, {0x27,0xE0,'0','@'},
-  {0x2D,')',0xB0,']'}, {0x2E,'=','+','}'}, {0x2F,DK|'^',DK|0xA8,0}, {0x30,'$',0xA3,0xA4},
-  {0x31,'*',0xB5,0}, {0x32,'*',0xB5,0}, {0x34,0xF9,'%',0}, {0x35,0xB2,0,0},
-  {0x64,'<','>',0},
-};
-
-constexpr KeyMap kBE[] = {
-  {0x04,'q','Q',0}, {0x14,'a','A',0}, {0x1A,'z','Z',0}, {0x1D,'w','W',0}, {0x33,'m','M',0},
-  {0x08,'e','E',0x20AC},
-  {0x10,',','?',0}, {0x36,';','.',0}, {0x37,':','/',0}, {0x38,'=','+',DK|'~'},
-  {0x1E,'&','1','|'}, {0x1F,0xE9,'2','@'}, {0x20,'"','3','#'}, {0x21,'\'','4',0},
-  {0x22,'(','5',0}, {0x23,0xA7,'6','^'}, {0x24,0xE8,'7',0}, {0x25,'!','8',0},
-  {0x26,0xE7,'9','{'}, {0x27,0xE0,'0','}'},
-  {0x2D,')',0xB0,0}, {0x2E,'-','_',0}, {0x2F,DK|'^',DK|0xA8,'['}, {0x30,'$','*',']'},
-  {0x31,0xB5,0xA3,DK|'`'}, {0x32,0xB5,0xA3,DK|'`'}, {0x34,0xF9,'%',DK|0xB4},
-  {0x35,0xB2,0xB3,0}, {0x64,'<','>','\\'},
-};
-
-struct LayoutDef { const char* name; const KeyMap* keys; size_t count; };
-constexpr LayoutDef kLayouts[] = {
-  {"US", kUS, sizeof(kUS) / sizeof(kUS[0])},
-  {"UK", kUK, sizeof(kUK) / sizeof(kUK[0])},
-  {"DE", kDE, sizeof(kDE) / sizeof(kDE[0])},
-  {"FR", kFR, sizeof(kFR) / sizeof(kFR[0])},
-  {"BE", kBE, sizeof(kBE) / sizeof(kBE[0])},
-};
-
-const KeyMap* findKey(const KeyMap* table, size_t count, uint8_t usage) {
-  for (size_t i = 0; i < count; i++)
-    if (table[i].usage == usage) return &table[i];
-  return nullptr;
-}
-
-// A key whose shifted value is its own capital is a letter, so Caps Lock flips it.
-bool isCasePair(uint16_t lower, uint16_t upper) {
-  if (lower >= 'a' && lower <= 'z') return upper == lower - 32;
-  if (lower >= 0xE0 && lower <= 0xFE && lower != 0xF7) return upper == lower - 0x20;
-  return false;
-}
-
-// Code point for a key, kDeadFlag | accent for a dead key, 0 for nothing.
-uint32_t mapKey(Layout layout, uint8_t usage, bool shift, bool altgr, bool caps) {
-  const LayoutDef& def = kLayouts[(size_t)layout < (size_t)Layout::Count ? (size_t)layout : 0];
-  const KeyMap* km = findKey(def.keys, def.count, usage);
-  if (!km && def.keys != kUS) km = findKey(kUS, sizeof(kUS) / sizeof(kUS[0]), usage);
-  if (km) {
-    uint16_t v = altgr ? km->altgr : (shift ? km->shift : km->base);
-    if (!v) return 0;
-    if (caps && !altgr && !(v & DK) && isCasePair(km->base, km->shift))
-      v = shift ? km->base : km->shift;
-    return (v & DK) ? (kDeadFlag | (uint32_t)(v & 0x7FFF)) : v;
-  }
-  if (usage >= 0x04 && usage <= 0x1D) {
-    if (altgr) return 0;
-    const char c = (char)('a' + (usage - 0x04));
-    return (shift != caps) ? (uint32_t)(c - 32) : (uint32_t)c;
-  }
-  return 0;
-}
-
-struct Compose { uint16_t accent; char base; uint16_t out; };
-constexpr Compose kCompose[] = {
-  {'^','a',0xE2}, {'^','e',0xEA}, {'^','i',0xEE}, {'^','o',0xF4}, {'^','u',0xFB},
-  {'^','A',0xC2}, {'^','E',0xCA}, {'^','I',0xCE}, {'^','O',0xD4}, {'^','U',0xDB},
-  {0xA8,'a',0xE4}, {0xA8,'e',0xEB}, {0xA8,'i',0xEF}, {0xA8,'o',0xF6}, {0xA8,'u',0xFC},
-  {0xA8,'y',0xFF}, {0xA8,'A',0xC4}, {0xA8,'E',0xCB}, {0xA8,'I',0xCF}, {0xA8,'O',0xD6},
-  {0xA8,'U',0xDC},
-  {0xB4,'a',0xE1}, {0xB4,'e',0xE9}, {0xB4,'i',0xED}, {0xB4,'o',0xF3}, {0xB4,'u',0xFA},
-  {0xB4,'y',0xFD}, {0xB4,'A',0xC1}, {0xB4,'E',0xC9}, {0xB4,'I',0xCD}, {0xB4,'O',0xD3},
-  {0xB4,'U',0xDA}, {0xB4,'Y',0xDD},
-  {'`','a',0xE0}, {'`','e',0xE8}, {'`','i',0xEC}, {'`','o',0xF2}, {'`','u',0xF9},
-  {'`','A',0xC0}, {'`','E',0xC8}, {'`','I',0xCC}, {'`','O',0xD2}, {'`','U',0xD9},
-  {'~','a',0xE3}, {'~','n',0xF1}, {'~','o',0xF5}, {'~','A',0xC3}, {'~','N',0xD1},
-  {'~','O',0xD5},
-};
-
-// Accent + key. Space gives the accent itself; 0 means "no such letter".
-uint32_t compose(uint32_t accent, uint32_t cp) {
-  if (cp == ' ') return accent;
-  for (const Compose& c : kCompose)
-    if (c.accent == accent && (uint8_t)c.base == cp) return c.out;
-  return 0;
-}
+// HID-usage -> Unicode mapping lives in BleKeyMap.cpp so the host test can
+// exercise it without NimBLE.
 
 // ---- reports ------------------------------------------------------------------
 
@@ -387,18 +267,18 @@ void pressKey(uint8_t usage, uint8_t mod) {
     static constexpr char kPad[] = "/*-+\n1234567890.";   // 0x58 (keypad Enter) is handled above
     cp = (uint8_t)kPad[usage - 0x54];
   } else {
-    cp = mapKey(layout, usage, shift, altgr, s_caps);
+    cp = BleKeyMap::mapKey(layout, usage, shift, altgr, s_caps);
   }
   if (!cp) return;
-  if (cp & kDeadFlag) {
+  if (cp & BleKeyMap::kDeadFlag) {
     if (s_dead) emit(BLE_KEY_TEXT | (int)s_dead, usage, false);   // a second accent: type the first
-    s_dead = cp & ~kDeadFlag;
+    s_dead = cp & ~BleKeyMap::kDeadFlag;
     return;
   }
   if (s_dead) {
     const uint32_t accent = s_dead;
     s_dead = 0;
-    const uint32_t composed = compose(accent, cp);
+    const uint32_t composed = BleKeyMap::compose(accent, cp);
     if (composed) {
       cp = composed;
     } else {
@@ -467,6 +347,24 @@ void onReport(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) 
   }
   s_gui_down = gui;
 
+  // Ctrl+Shift on its own -> next layout. A letter pressed while both are
+  // held is a shortcut, so the chord is disarmed and nothing switches.
+  bool capture = false;
+  portENTER_CRITICAL(&s_mux);
+  capture = s_capture;
+  portEXIT_CRITICAL(&s_mux);
+  if (capture) {
+    s_ctrl_shift.reset();   // the settings page is picking a key
+  } else {
+    const bool ctrl  = (mod & 0x11) != 0;
+    const bool shift = (mod & 0x22) != 0;
+    const bool alt   = (mod & 0x44) != 0;   // AltGr is right Alt / Ctrl+Alt
+    if (s_ctrl_shift.update(ctrl, shift, alt, gui, any_key)) {
+      s_dead = 0;
+      emit(BLE_KEY_NEXT_LAYOUT, 0, false);
+    }
+  }
+
   portENTER_CRITICAL(&s_mux);
   const uint8_t held = s_held_usage;
   portEXIT_CRITICAL(&s_mux);
@@ -492,6 +390,7 @@ class ClientCallbacks : public NimBLEClientCallbacks {
     s_gui_down = false;
     s_gui_alone = false;
     s_dead = 0;
+    s_ctrl_shift.reset();
     clearHeld();
     portENTER_CRITICAL(&s_mux);
     if (s_state == State::Connected) s_state = s_active ? State::Waiting : State::Off;
@@ -1123,8 +1022,15 @@ Layout layout() {
 }
 
 const char* layoutName(Layout l) {
-  const size_t i = (size_t)l < (size_t)Layout::Count ? (size_t)l : 0;
-  return kLayouts[i].name;
+  return BleKeyMap::layoutCode(l);
+}
+
+bool layoutToId(Layout l, KeyboardLayoutId* out) {
+  return BleKeyMap::toKeyboardLayout(l, out);
+}
+
+bool layoutFromId(KeyboardLayoutId id, Layout* out) {
+  return BleKeyMap::fromKeyboardLayout(id, out);
 }
 
 void setBackKey(uint8_t usage) {
@@ -1183,7 +1089,7 @@ void keyName(uint8_t usage, char* out, size_t cap) {
   }
   if (usage >= 0x3A && usage <= 0x45) { snprintf(out, cap, "F%u", (unsigned)(usage - 0x3A + 1)); return; }
   if (usage >= 0x68 && usage <= 0x73) { snprintf(out, cap, "F%u", (unsigned)(usage - 0x68 + 13)); return; }
-  uint32_t cp = mapKey(layout(), usage, false, false, false) & ~kDeadFlag;
+  uint32_t cp = BleKeyMap::mapKey(layout(), usage, false, false, false) & ~BleKeyMap::kDeadFlag;
   if (cp >= 0x20 && cp != 0x7F) {   // the character it types, as UTF-8
     char u[5] = {};
     if (cp < 0x80) {
