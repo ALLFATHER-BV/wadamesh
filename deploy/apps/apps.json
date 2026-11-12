@@ -135,22 +135,10 @@
       "seed": false
     },
     {
-      "id": "ebook",
-      "name": "Ebook",
+      "id": "todo",
+      "name": "To-Do",
       "ver": "1.0",
-      "desc": "Reads .epub books from the app's folder (text only), with chapters, text sizes and a remembered place. Books must be stored uncompressed: repack them with scripts/ebook-prep.py.",
-      "icon": "list",
-      "requires": "sdk_ext",
-      "seed": false
-    },
-    {
-      "id": "cyberspace",
-      "name": "Cyberspace",
-      "ver": "1.0",
-      "requires": "https",
-      "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_103 or later.",
-      "icon": "message",
-      "seed": false
+      "desc": "A simple To-Do List manager with customizable Categories, designed for LilyGo T-Deck Plus using the 200 Bytes limit to store your Tasks."
     }
   ]
 }
