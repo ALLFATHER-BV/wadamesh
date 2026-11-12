@@ -85,9 +85,10 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   validated at boot; if it reports lost integrity, the same optional saved-Wi-Fi
   cold-boot sync offered on T-Deck is available in Clock settings. New in beta_38;
   report anything that feels off.
-- **T-Display P4**: touch UI with the on-screen keyboard. The BOOT button wakes
-  the screen (or lights the lock screen) and holding it for two seconds locks or
-  unlocks, as the Wio Tracker L2's wake button does; "Lock when screen off" is
+- **T-Display P4**: touch UI with the on-screen keyboard. The BOOT button toggles
+  the screen — a tap wakes it (or lights the lock screen) and a tap on a lit
+  screen sleeps it — and holding it for two seconds locks or unlocks, as the Wio
+  Tracker L2's wake button does; "Lock when screen off" is
   under Settings, Lock screen. The optional clip-on
   keyboard expansion can be attached or removed while running and is picked up
   within a couple of seconds; while it is on, it types into the focused field
@@ -101,7 +102,9 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   mode manually and retry, and please report it.
 - **Seeed Wio Tracker L2**: pre-release touch target under active bring-up. Builds are for
   development and hardware validation only; no public release artifact is
-  promised until the port is verified. It has no battery-backed clock, so the
+  promised until the port is verified. Its wake button toggles the screen: a tap
+  wakes a dark panel or sleeps a lit one, and holding it for two seconds locks or
+  unlocks. It has no battery-backed clock, so the
   same optional saved-Wi-Fi cold-boot time sync offered on T-Deck is available
   in Clock settings.
 - **CrowPanel Advance 3.5**: `crowpanel_35_companion_radio_touch` is a
