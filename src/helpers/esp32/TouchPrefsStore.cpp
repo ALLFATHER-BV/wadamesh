@@ -944,6 +944,18 @@ bool touchPrefsSetWebTerminal(bool on) {
   return cfgFlush();
 }
 
+static void prefsPutUInt(const char* key, uint32_t v);
+static const char* LK_WEB_FIXED_CODE = "web_fix_code";
+uint32_t touchPrefsGetWebFixedCode() {
+  if (!s_begun) touchPrefsBegin();
+  const uint32_t c = s_prefs.isKey(LK_WEB_FIXED_CODE) ? s_prefs.getUInt(LK_WEB_FIXED_CODE, 0) : 0;
+  return c <= 999999u ? c : 0;
+}
+void touchPrefsSetWebFixedCode(uint32_t code) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUInt(LK_WEB_FIXED_CODE, code <= 999999u ? code : 0);
+}
+
 bool touchPrefsGetMapTileDebug() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.map_tile_debug != 0;
