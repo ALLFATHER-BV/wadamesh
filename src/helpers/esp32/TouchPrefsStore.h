@@ -106,6 +106,9 @@ bool touchPrefsGetRemoteLandscape();
 bool touchPrefsSetRemoteLandscape(bool on);
 bool touchPrefsGetWebTerminal();
 bool touchPrefsSetWebTerminal(bool on);
+/** Fixed browser code for the web features (#837): 0 = a new random code each session. */
+uint32_t touchPrefsGetWebFixedCode();
+void     touchPrefsSetWebFixedCode(uint32_t code);
 
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();

@@ -34419,6 +34419,8 @@ static void openVncPage() {
 static lv_obj_t* s_remote_root = nullptr;
 static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
 static lv_obj_t* s_remote_ipval  = nullptr;   // its address label (URL + the web code)
+static lv_obj_t* s_remote_fixed_row = nullptr;   // "Code" entry row, shown while "Fixed code" is on (#837)
+static lv_obj_t* s_remote_fixed_ta  = nullptr;
 
 static void remoteAddrText(char* u, size_t n) {
   char code[16];
@@ -34430,6 +34432,8 @@ static void remoteAddrText(char* u, size_t n) {
 static void closeRemotePage() {
   s_remote_ipcard = nullptr;
   s_remote_ipval = nullptr;
+  s_remote_fixed_row = nullptr;
+  s_remote_fixed_ta = nullptr;
   if (s_remote_root) { popupClose(&s_remote_root); }
   if (s_apppage_close == closeRemotePage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
@@ -34511,6 +34515,64 @@ static void webTerminalToggleCb(lv_event_t* e) {
   } else {
     g_lv.task->showAlert(TR("Remote terminal off"), 1400);
   }
+}
+
+static void remoteRefreshAddr() {
+  if (s_remote_ipval && WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[64]; remoteAddrText(u, sizeof u);
+    lv_label_set_text(s_remote_ipval, u);
+  }
+}
+
+static void remoteFixedPlaceholder() {
+  if (!s_remote_fixed_ta) return;
+  const uint32_t c = touchPrefsGetWebFixedCode();
+  char pb[12];
+  if (c) snprintf(pb, sizeof pb, "%06lu", static_cast<unsigned long>(c));
+  else   snprintf(pb, sizeof pb, "------");
+  taSetPlaceholder(s_remote_fixed_ta, pb);
+}
+
+// Fixed browser code (#837): saved on blur / Enter once all 6 digits are typed.
+// Empty or partial on blur = keep the saved code, like the BLE pairing-code field.
+static void remoteFixedSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
+  if (!s_remote_fixed_ta || !lv_obj_is_valid(s_remote_fixed_ta)) return;
+  kbMirrorSyncToReal();
+  const char* txt = lv_textarea_get_text(s_remote_fixed_ta);
+  if (!txt || strlen(txt) != 6) return;
+  const uint32_t c = (uint32_t)atol(txt);
+  lv_textarea_set_text(s_remote_fixed_ta, "");
+  if (c == 0) {   // 0 means "no code" internally
+    if (g_lv.task) g_lv.task->showAlert(TR("000000 can't be used - pick another code"), 2200);
+    return;
+  }
+  if (c == touchPrefsGetWebFixedCode()) return;
+  touchPrefsSetWebFixedCode(c);
+  g_web_auth.setFixed(c);
+  remoteFixedPlaceholder();
+  remoteRefreshAddr();
+  if (g_lv.task) g_lv.task->showAlert(TR("Fixed code saved"), 1600);
+}
+
+static void remoteFixedToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  if (s_remote_fixed_row) {
+    if (on) lv_obj_clear_flag(s_remote_fixed_row, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(s_remote_fixed_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (on) {
+    if (s_remote_fixed_row && s_remote_root) lv_obj_scroll_to_view(s_remote_fixed_row, LV_ANIM_ON);
+    if (g_lv.task) g_lv.task->showAlert(TR("Type a 6-digit code"), 1600);
+    return;
+  }
+  if (touchPrefsGetWebFixedCode() == 0) return;
+  touchPrefsSetWebFixedCode(0);
+  g_web_auth.setFixed(0);
+  if (s_remote_fixed_ta) lv_textarea_set_text(s_remote_fixed_ta, "");
+  remoteFixedPlaceholder();
+  remoteRefreshAddr();
+  if (g_lv.task) g_lv.task->showAlert(TR("New random code each session"), 1600);
 }
 
 static void openRemotePage() {
@@ -34727,6 +34789,72 @@ static void openRemotePage() {
   if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+  // ---- 3. Access code (#837) ----
+  const bool fixed_on = touchPrefsGetWebFixedCode() != 0;
+  lv_obj_t* ah = lv_label_create(s_remote_root);
+  lv_label_set_text(ah, TR("Access code"));
+  lv_obj_set_style_text_font(ah, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ah, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(ah, cw);
+
+  lv_obj_t* frow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(frow);
+  lv_obj_set_size(frow, cw, SC(42));
+  lv_obj_set_style_bg_color(frow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(frow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(frow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(frow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(frow, 12, LV_PART_MAIN);
+  styleGlass(frow);
+  lv_obj_clear_flag(frow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* fl = lv_label_create(frow);
+  lv_label_set_text(fl, TR("Fixed code"));
+  lv_obj_set_style_text_font(fl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(fl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(fl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(fl, cw - 84);
+  lv_obj_align(fl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* fsw = lv_switch_create(frow);
+  lv_obj_align(fsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (fixed_on) lv_obj_add_state(fsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(fsw, remoteFixedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t* crow2 = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(crow2);
+  lv_obj_set_size(crow2, cw, SC(48));
+  lv_obj_set_style_bg_color(crow2, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(crow2, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(crow2, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(crow2, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(crow2, 12, LV_PART_MAIN);
+  styleGlass(crow2);
+  lv_obj_clear_flag(crow2, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cl2 = lv_label_create(crow2);
+  lv_label_set_text(cl2, TR("Code"));
+  lv_obj_set_style_text_font(cl2, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cl2, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(cl2, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* fta = lv_textarea_create(crow2);
+  lv_obj_set_size(fta, SC(96), SC(32));
+  lv_textarea_set_one_line(fta, true);
+  lv_textarea_set_accepted_chars(fta, "0123456789");
+  lv_textarea_set_max_length(fta, 6);
+  lv_textarea_set_text(fta, "");
+  lv_obj_align(fta, LV_ALIGN_RIGHT_MID, 0, 0);
+  s_remote_fixed_row = crow2;
+  s_remote_fixed_ta = fta;
+  remoteFixedPlaceholder();
+  attachSettingsTaEvents(fta);
+  lv_obj_add_event_cb(fta, remoteFixedSaveCb, LV_EVENT_DEFOCUSED, nullptr);
+  lv_obj_add_event_cb(fta, remoteFixedSaveCb, LV_EVENT_READY, nullptr);
+  if (!fixed_on) lv_obj_add_flag(crow2, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* aexpl = lv_label_create(s_remote_root);
+  lv_label_set_text(aexpl, TR("Off: a new random code each session. On: the same code every time - anyone on your Wi-Fi who knows it can connect."));
+  lv_obj_set_style_text_font(aexpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(aexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(aexpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(aexpl, cw);
 }
 #endif  // !HAS_TANMATSU
 
@@ -79595,6 +79723,7 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   touchPrefsBegin();
+  g_web_auth.setFixed(touchPrefsGetWebFixedCode());   // before any web feature arms a code (#837)
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
 #if defined(HAS_TDECK_PRO)
