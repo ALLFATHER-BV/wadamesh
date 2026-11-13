@@ -1427,11 +1427,14 @@ static void uiFitButtonCaption(lv_obj_t* btn) {
 }
 
 // Buttons waiting for a caption fit, run by ONE lv_async_call for all of them.
-// lv_async_call_cancel() is never used: LVGL 8.3 frees an async call's info when
-// it has run but leaves its timer in the list until the next timer pass if any
-// timer was deleted meanwhile, and a cancel in that window reads the freed info,
-// matches it and frees it again (CORRUPT HEAP, a boot loop on the T-Deck). With
-// one queue nothing is ever cancelled; a deleted button just leaves the list.
+// lv_async_call_cancel() is never used here: stock LVGL 8 frees an async call's
+// info when it has run but leaves its timer in the list until the next timer pass
+// if any timer was deleted meanwhile, and a cancel in that window reads the freed
+// info, matches it and frees it again (CORRUPT HEAP, a boot loop on the T-Deck).
+// scripts/build/patch_lvgl_async_del.py now deletes the timer before the call
+// (LVGL 9 order), which closes that window - every object delete cancels through
+// it - but one queue still needs no cancel at all; a deleted button just leaves
+// the list.
 static std::vector<lv_obj_t*> s_fit_pending;
 static bool s_fit_scheduled = false;
 static lv_obj_t* s_fit_running = nullptr;   // its own events must not queue it again

@@ -54,6 +54,8 @@ clone miniz        https://github.com/richgel999/miniz.git       "$MINIZ_TAG"
 case " $FRESH " in *" lvgl "*)
   # the same LVGL source patches the firmware builds apply (fail-closed scripts)
   python3 "$REPO/scripts/build/patch_lvgl_anim_uaf.py" --patch-file "$TP/lvgl/src/misc/lv_anim.c"
+  python3 "$REPO/scripts/build/patch_lvgl_scroll_uaf.py" --patch-file "$TP/lvgl/src/core/lv_obj_tree.c"
+  python3 "$REPO/scripts/build/patch_lvgl_async_del.py"  --patch-root "$TP/lvgl"
   python3 "$REPO/scripts/build/patch_lvgl_arabic.py"   --patch-file "$TP/lvgl/src/misc/lv_txt_ap.c"
   echo "$LVGL_TAG" > "$TP/lvgl/.wada-ref";;
 esac
