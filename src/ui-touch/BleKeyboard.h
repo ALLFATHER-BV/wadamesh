@@ -122,6 +122,10 @@ void    keyName(uint8_t usage, char* out, size_t cap);
 
 // UI loop.
 int    readKey();                // next key, 0 when none
+// Any new key or modifier went down since the last call. Modifier-only
+// reports (Ctrl, Alt, Shift, GUI) produce no key event, so the UI needs this
+// to wake a sleeping screen for them too.
+bool   takeActivity();
 bool   takeNewPairing(Device* out);   // true once after a successful pairing
 bool   takeForgotten();               // true once after forget()
 
