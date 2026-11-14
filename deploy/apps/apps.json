@@ -151,6 +151,14 @@
       "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_103 or later.",
       "icon": "message",
       "seed": false
+    },
+    {
+      "id": "holdem",
+      "name": "Texas Hold'em",
+      "ver": "1.3",
+      "desc": "No-Limit Texas Hold'em Poker (4-Max vs 3 AI bots) with blinds, side pots, live hand evaluator, and auto-scaling UI for T-Deck & T-Display P4 (AMOLED/LCD). Contributed by halflive-743.",
+      "icon": "game",
+      "seed": false
     }
   ]
 }
