@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wadamesh</title>
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0b0b0c;color:#d7dbdd;font-family:-apple-system,'Segoe UI',Roboto,sans-serif}
+#app{display:flex;flex-direction:column;height:100%}
+nav{display:flex;align-items:center;gap:4px;padding:6px 10px;border-bottom:1px solid #1c1c1f;overflow-x:auto}
+nav b{color:#19d6c2;letter-spacing:2px;margin-right:10px;white-space:nowrap}
+nav button{background:none;border:0;color:#929b99;font:inherit;font-size:14px;padding:8px 12px;border-radius:6px;cursor:pointer}
+nav button.on{background:#15191a;color:#edf2f1}nav button[hidden]{display:none}
+#views{flex:1;position:relative}
+iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none}iframe.on{display:block}
+#msg{padding:24px;color:#929b99}
+</style></head>
+<body><div id="app">
+<nav><b>WADAMESH</b><button data-v="mesh" hidden>Mesh</button><button data-v="screen" hidden>Screen</button><button data-v="files" hidden>Files</button></nav>
+<div id="views"><div id="msg">Connecting…</div></div>
+</div>
+<script>
+// One page for every browser tool. Each tab is its own app in a same-origin frame; they
+// share the browser id, so approving this browser once on the device unlocks every tab.
+// The screen tab only exists while shown (its socket makes the device stream frames);
+// mesh and files stay loaded so a chat or a transfer keeps going in the background.
+var frames={},cur=null,KEEP={mesh:1,files:1},tabs=document.querySelectorAll('nav button');
+function show(n){
+  if(cur&&cur!==n&&frames[cur]&&!KEEP[cur]){frames[cur].remove();delete frames[cur];}
+  if(cur&&frames[cur])frames[cur].classList.remove('on');
+  cur=n;
+  if(!frames[n]){var f=document.createElement('iframe');f.src='/'+n;f.title=n;document.getElementById('views').appendChild(f);frames[n]=f;}
+  frames[n].classList.add('on');
+  tabs.forEach(function(b){b.classList.toggle('on',b.dataset.v===n);});
+  try{history.replaceState(null,'','#'+n);}catch(e){}
+}
+tabs.forEach(function(b){b.onclick=function(){show(b.dataset.v);};});
+fetch('/api/info',{cache:'no-store'}).then(function(r){return r.json();}).then(function(j){
+  var first=null,want=location.hash.slice(1);
+  tabs.forEach(function(b){if(j[b.dataset.v]){b.hidden=false;if(!first)first=b.dataset.v;}});
+  if(!first){document.getElementById('msg').textContent='The web console is off on the device.';return;}
+  document.getElementById('msg').remove();
+  show(j[want]?want:first);
+}).catch(function(){document.getElementById('msg').textContent='Could not reach the device.';});
+</script></body></html>

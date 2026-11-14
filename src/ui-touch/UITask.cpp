@@ -34120,11 +34120,13 @@ static void fileTransferTimerCb(lv_timer_t*) {
   fileTransferRefresh();
 }
 
-static void openFileTransferPage() {
-  closeFileTransferPage();
+// Start a File Transfer session without building its page: the device page and the web
+// console's Files tab (g_web_file_transfer.requestStart) both come through here. Alerts
+// and returns false when Wi-Fi, storage or memory is not ready.
+static bool fileTransferSessionStart() {
   if (WiFi.status() != WL_CONNECTED || static_cast<uint32_t>(WiFi.localIP()) == 0) {
     if (g_lv.task) g_lv.task->showAlert(TR("Connect to Wi-Fi first"), 1800);
-    return;
+    return false;
   }
   if (!fileTransferStorageReady()) {
 #if WADA_WEB_FILE_TRANSFER_INTERNAL
@@ -34133,18 +34135,18 @@ static void openFileTransferPage() {
 #else
     if (g_lv.task) g_lv.task->showAlert(TR("File Transfer needs the SD card"), 2000);
 #endif
-    return;
+    return false;
   }
   fs::FS& storage = fileTransferStorage();
   if (!storage.exists("/transfer") && !storage.mkdir("/transfer")) {
     fileTransferStorageIoFailed();
     if (g_lv.task) g_lv.task->showAlert(TR("Could not create transfer folder"), 2000);
-    return;
+    return false;
   }
   if (storage.exists(kFileTransferTemp) && !storage.remove(kFileTransferTemp)) {
     fileTransferStorageIoFailed();
     if (g_lv.task) g_lv.task->showAlert(TR("Could not clear previous upload"), 2000);
-    return;
+    return false;
   }
   if (storage.exists(kFileTransferBackupTemp)) storage.remove(kFileTransferBackupTemp);
   markSdIo();
@@ -34157,8 +34159,14 @@ static void openFileTransferPage() {
     if (s_file_transfer_started_tcp && g_lv.task) g_lv.task->disableTcp();
     s_file_transfer_started_tcp = false;
     if (g_lv.task) g_lv.task->showAlert(TR("File Transfer: low memory"), 1800);
-    return;
+    return false;
   }
+  return true;
+}
+
+static void openFileTransferPage() {
+  closeFileTransferPage();
+  if (!fileTransferSessionStart()) return;
 
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_file_transfer_root = appPageCreateRoot(COLOR_BG);
@@ -34255,162 +34263,6 @@ static void openFileTransferPage() {
 
 #if !defined(HAS_TANMATSU)
 // ============================================================================
-// VNC app  (app-drawer tile -> APPACT_VNC): serve the live UI to a phone browser
-// over the WebSocket server (WebMirror) and inject taps back. This screen is the
-// explanation + on/off switch + the reachable URL + live connection status.
-// ============================================================================
-static lv_obj_t*   s_vnc_root       = nullptr;
-static lv_obj_t*   s_vnc_url_lbl    = nullptr;
-static lv_obj_t*   s_vnc_status_lbl = nullptr;
-static lv_timer_t* s_vnc_timer      = nullptr;
-
-static void vncRefresh() {
-  if (!s_vnc_root) return;
-  const bool on   = touchPrefsGetWebMirror();
-  const bool wifi = (WiFi.status() == WL_CONNECTED) && ((uint32_t)WiFi.localIP() != 0);
-  if (s_vnc_url_lbl) {
-    if (wifi) {
-      char u[64];
-      char code[16];
-      webCodeText(code, sizeof code);
-      snprintf(u, sizeof u, "http://%s:" WEB_UI_PORT_STR "/%s%s", WiFi.localIP().toString().c_str(),
-               (on && code[0]) ? "\n" : "", on ? code : "");
-      lv_label_set_text(s_vnc_url_lbl, u);
-      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(on ? COLOR_ACCENT : COLOR_SUB), LV_PART_MAIN);
-    } else {
-      lv_label_set_text(s_vnc_url_lbl, TR("Connect to Wi-Fi to get a browser address."));
-      lv_obj_set_style_text_color(s_vnc_url_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-    }
-  }
-  if (s_vnc_status_lbl) {
-    const char* st;
-    if (!on)                             st = TR("Off");
-    else if (!wifi)                      st = TR("Waiting for Wi-Fi...");
-    else if (g_web_mirror.clients() > 0) st = TR("Connected - a browser is viewing this screen.");
-    else                                 st = TR("On - open the address above in a phone browser.");
-    lv_label_set_text(s_vnc_status_lbl, st);
-  }
-}
-
-static void closeVncPage() {
-  if (s_vnc_timer) { lv_timer_del(s_vnc_timer); s_vnc_timer = nullptr; }
-  if (s_vnc_root)  { popupClose(&s_vnc_root); }
-  s_vnc_url_lbl = nullptr; s_vnc_status_lbl = nullptr;
-  if (s_apppage_close == closeVncPage) {   // release the tall title bar back to normal
-    s_apppage_title = nullptr; s_apppage_close = nullptr;
-    statusBarSetTall(false); updateGlobalStatusBar();
-  }
-}
-
-static void vncToggleCb(lv_event_t* e) {
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
-  touchPrefsSetWebMirror(on);
-  g_web_mirror.setEnabled(on);
-  if (on && touchPrefsGetWebTerminal()) {   // VNC and the web terminal both serve "/" -> mutually exclusive
-    touchPrefsSetWebTerminal(false);
-    g_web_mirror.setTerminalOn(false);
-    if (s_term_log_box == nullptr) MyMesh::setTerminalSink(nullptr);
-  }
-  vncRefresh();
-}
-
-static void vncTimerCb(lv_timer_t*) { vncRefresh(); }
-
-static void openVncPage() {
-  closeVncPage();
-  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
-  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_vnc_root = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_vnc_root);
-  lv_obj_set_size(s_vnc_root, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_vnc_root, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_pad_top(s_vnc_root, STATUSBAR_H + 10, LV_PART_MAIN);   // clear the tall title bar
-  lv_obj_set_style_pad_left(s_vnc_root, 14, LV_PART_MAIN);
-  lv_obj_set_style_pad_right(s_vnc_root, 14, LV_PART_MAIN);
-  lv_obj_set_style_pad_bottom(s_vnc_root, 14, LV_PART_MAIN);
-  lv_obj_set_flex_flow(s_vnc_root, LV_FLEX_FLOW_COLUMN);
-  lv_obj_set_flex_align(s_vnc_root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-  lv_obj_set_style_pad_row(s_vnc_root, 10, LV_PART_MAIN);
-  lv_obj_set_scroll_dir(s_vnc_root, LV_DIR_VER);
-  // Make it obvious the page scrolls: a prominent, always-visible accent scrollbar.
-  lv_obj_set_scrollbar_mode(s_vnc_root, LV_SCROLLBAR_MODE_ON);
-  lv_obj_set_style_bg_color(s_vnc_root, lv_color_hex(COLOR_ACCENT), LV_PART_SCROLLBAR);
-  lv_obj_set_style_bg_opa(s_vnc_root, LV_OPA_80, LV_PART_SCROLLBAR);
-  lv_obj_set_style_width(s_vnc_root, 6, LV_PART_SCROLLBAR);
-  lv_obj_set_style_radius(s_vnc_root, 3, LV_PART_SCROLLBAR);
-
-  s_apppage_title = "VNC";
-  s_apppage_close = closeVncPage;
-  statusBarSetTall(true);
-  updateGlobalStatusBar();
-
-  const lv_coord_t cw = sw - 28;
-
-  lv_obj_t* head = lv_label_create(s_vnc_root);
-  lv_label_set_text(head, TR("Control this device from a browser"));
-  lv_obj_set_style_text_font(head, &g_font_16, LV_PART_MAIN);
-  lv_obj_set_style_text_color(head, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_label_set_long_mode(head, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(head, cw);
-
-  lv_obj_t* expl = lv_label_create(s_vnc_root);
-  lv_label_set_text(expl, TR("Turn this on, then open the address below in any web browser on the same Wi-Fi - no app needed. This device's screen appears live in the browser and you can tap to control it."));
-  lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(expl, cw);
-
-  lv_obj_t* row = lv_obj_create(s_vnc_root);
-  lv_obj_remove_style_all(row);
-  lv_obj_set_size(row, cw, SC(42));
-  lv_obj_set_style_bg_color(row, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_radius(row, 8, LV_PART_MAIN);
-  lv_obj_set_style_pad_left(row, 12, LV_PART_MAIN);
-  lv_obj_set_style_pad_right(row, 12, LV_PART_MAIN);
-  styleGlass(row);
-  lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_t* rl = lv_label_create(row);
-  lv_label_set_text(rl, TR("Enable web access"));
-  lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(rl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
-  lv_obj_align(rl, LV_ALIGN_LEFT_MID, 0, 0);
-  lv_obj_t* sw2 = lv_switch_create(row);
-  lv_obj_align(sw2, LV_ALIGN_RIGHT_MID, 0, 0);
-#if defined(HAS_TDECK_PRO)
-  lv_obj_update_layout(row);
-  const lv_coord_t label_w = lv_obj_get_content_width(row) - lv_obj_get_width(sw2) - 12;
-  lv_obj_set_size(rl, label_w, lv_font_get_line_height(&g_font_12));
-  lv_label_set_long_mode(rl, LV_LABEL_LONG_DOT);
-#endif
-  if (touchPrefsGetWebMirror()) lv_obj_add_state(sw2, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(sw2, vncToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
-
-  s_vnc_url_lbl = lv_label_create(s_vnc_root);
-  lv_obj_set_style_text_font(s_vnc_url_lbl, &g_font_14, LV_PART_MAIN);
-  lv_label_set_long_mode(s_vnc_url_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_vnc_url_lbl, cw);
-
-  s_vnc_status_lbl = lv_label_create(s_vnc_root);
-  lv_obj_set_style_text_font(s_vnc_status_lbl, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(s_vnc_status_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_long_mode(s_vnc_status_lbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(s_vnc_status_lbl, cw);
-
-  lv_obj_t* warn = lv_label_create(s_vnc_root);
-  lv_label_set_text(warn, TR("While this is on, anyone on your Wi-Fi can view and control this device. Uses plain HTTP (local network only)."));
-  lv_obj_set_style_text_font(warn, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(warn, lightSurfaceTextColor(0x8A8F98), LV_PART_MAIN);
-  lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(warn, cw);
-
-  vncRefresh();
-  s_vnc_timer = lv_timer_create(vncTimerCb, 1000, nullptr);
-}
-
-// ============================================================================
 // REMOTE app (app-drawer tile -> APPACT_REMOTE): reboot into "remote mode" — the
 // full UI renders to an off-screen 480x800 display served to a browser, and the
 // physical panel drops to a placeholder. A boot mode (the UI is built once per
@@ -34419,6 +34271,7 @@ static void openVncPage() {
 static lv_obj_t* s_remote_root = nullptr;
 static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
 static lv_obj_t* s_remote_ipval  = nullptr;   // its address label (URL + the web code)
+static lv_obj_t* s_remote_trust_box = nullptr;   // the web console's trusted-browsers list
 
 static void remoteAddrText(char* u, size_t n) {
   char code[16];
@@ -34430,6 +34283,7 @@ static void remoteAddrText(char* u, size_t n) {
 static void closeRemotePage() {
   s_remote_ipcard = nullptr;
   s_remote_ipval = nullptr;
+  s_remote_trust_box = nullptr;
   if (s_remote_root) { popupClose(&s_remote_root); }
   if (s_apppage_close == closeRemotePage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
@@ -34479,17 +34333,94 @@ static void remoteLandscapeCb(lv_event_t* e) {
   }
 }
 
-// "Remote terminal": a runtime web mesh-CLI terminal on the device IP. No reboot; turning
-// it on disables VNC (they both serve the landing page). See WebMirror term* + the WS server.
-static void webTerminalToggleCb(lv_event_t* e) {
-  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+// ---- Web console: one switch for the browser console (Mesh, Screen and Files tabs on the
+// device's web port). New browsers need an OK on this screen (g_web_session); "Always
+// allow" ones are kept in prefs. No reboot. See web/console/ and the WS server.
+static bool webConsoleOn() { return touchPrefsGetWebTerminal() || touchPrefsGetWebMirror(); }
+
+static void webTrustSave() {
+  WebTrustedEntry list[WebSessionAuth::MAX_TRUSTED];
+  const int n = g_web_session.exportTrusted(list, WebSessionAuth::MAX_TRUSTED);
+  touchPrefsSetWebTrust(list, (size_t)n * sizeof(WebTrustedEntry));
+}
+
+static void webTrustLoad() {
+  WebTrustedEntry list[WebSessionAuth::MAX_TRUSTED];
+  const size_t n = touchPrefsGetWebTrust(list, sizeof list);
+  g_web_session.loadTrusted(list, (int)(n / sizeof(WebTrustedEntry)));
+}
+
+static void webConsoleSetOn(bool on) {
   touchPrefsSetWebTerminal(on);
-  g_web_mirror.setTerminalOn(on);
-  if (on) {
-    if (touchPrefsGetWebMirror()) { touchPrefsSetWebMirror(false); g_web_mirror.setEnabled(false); }   // exclusive with VNC
-  } else if (s_term_log_box == nullptr) {
-    MyMesh::setTerminalSink(nullptr);   // release the CLI sink (on-device console isn't using it)
+  touchPrefsSetWebMirror(on);
+  g_web_mirror.setTerminalOn(on && !s_remote_mode);   // remote mode serves the screen only
+  if (!s_remote_mode) g_web_mirror.setEnabled(on);
+  if (on) return;
+  g_web_session.endSessions();
+  if (s_term_log_box == nullptr) MyMesh::setTerminalSink(nullptr);   // release the CLI sink (on-device console isn't using it)
+#if WADA_WEB_FILE_TRANSFER
+  if (g_web_file_transfer.enabled() && !s_file_transfer_root) closeFileTransferPage();   // started by the Files tab
+#endif
+}
+
+static void remoteTrustRebuild();
+static void remoteTrustRebuildAsync(void*) { remoteTrustRebuild(); }
+
+static void remoteTrustRemoveCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  if (g_web_session.revoke((int)(intptr_t)lv_event_get_user_data(e))) webTrustSave();
+  lv_async_call(remoteTrustRebuildAsync, nullptr);   // never delete the clicked button inside its own event
+}
+
+static void remoteEndSessionsCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  g_web_session.endSessions();
+  if (g_lv.task) g_lv.task->showAlert(TR("Browsers disconnected. They must ask again unless trusted."), 2200);
+}
+
+static void remoteTrustRebuild() {
+  if (!s_remote_trust_box) return;
+  lv_obj_clean(s_remote_trust_box);
+  const lv_coord_t w = lv_obj_get_content_width(s_remote_trust_box);
+  const int n = g_web_session.trustedCount();
+  if (n == 0) {
+    lv_obj_t* none = lv_label_create(s_remote_trust_box);
+    lv_label_set_text(none, TR("No trusted browsers. Choose \"Always allow\" when a browser asks."));
+    lv_obj_set_style_text_font(none, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(none, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_label_set_long_mode(none, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(none, w);
+    return;
   }
+  for (int i = 0; i < n; i++) {
+    WebTrustedEntry te;
+    if (!g_web_session.trustedAt(i, &te)) continue;
+    lv_obj_t* row = lv_obj_create(s_remote_trust_box);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, w, SC(36));
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_t* name = lv_label_create(row);
+    lv_label_set_text(name, te.label[0] ? te.label : TR("Browser"));
+    lv_obj_set_style_text_font(name, &g_font_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(name, w - SC(90));
+    lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_t* rm = lv_btn_create(row);
+    lv_obj_set_size(rm, SC(80), SC(30));
+    styleButton(rm);
+    lv_obj_align(rm, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_add_event_cb(rm, remoteTrustRemoveCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
+    lv_obj_t* rl = lv_label_create(rm);
+    lv_label_set_text(rl, TR("Remove"));
+    lv_obj_set_style_text_font(rl, &g_font_12, LV_PART_MAIN);
+    lv_obj_center(rl);
+  }
+}
+
+static void webConsoleToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  webConsoleSetOn(on);
   // Reveal / hide the "open in a browser" address card as a mode goes on/off (this page stays up).
   if (s_remote_ipcard) {
     if (on || touchPrefsGetRemoteMode()) lv_obj_clear_flag(s_remote_ipcard, LV_OBJ_FLAG_HIDDEN);
@@ -34501,15 +34432,118 @@ static void webTerminalToggleCb(lv_event_t* e) {
   }
   if (!g_lv.task) return;
   if (on) {
-    char msg[112], code[16];
+    char msg[112];
     if (WiFi.status() == WL_CONNECTED)
-      snprintf(msg, sizeof msg, "Terminal on: http://%s:" WEB_UI_PORT_STR "/ - %s",
-               WiFi.localIP().toString().c_str(), webCodeText(code, sizeof code));
+      snprintf(msg, sizeof msg, TR("Web console on: http://%s:%s/"),
+               WiFi.localIP().toString().c_str(), WEB_UI_PORT_STR);
     else
-      snprintf(msg, sizeof msg, "%s", "Terminal on (connect Wi-Fi to reach it)");
+      snprintf(msg, sizeof msg, "%s", TR("Web console on (connect Wi-Fi to reach it)"));
     g_lv.task->showAlert(msg, 3200);
   } else {
-    g_lv.task->showAlert(TR("Remote terminal off"), 1400);
+    g_lv.task->showAlert(TR("Web console off"), 1400);
+  }
+}
+
+// ---- "Allow this browser?" ------------------------------------------------------------
+// A new browser opening the console raises one request (g_web_session.pending); the UI
+// loop shows this card for it and closes it once answered here or timed out.
+static lv_obj_t* s_web_ask = nullptr;
+static uint32_t s_web_ask_seq = 0;
+#if CAP_LOCK_SCREEN
+static bool lockScreenUp();   // defined with the lock screen, below
+#else
+static bool lockScreenUp() { return false; }
+#endif
+
+static void webAskClose() { popupClose(&s_web_ask); }
+
+static void webAskAnswerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp()) return;
+  const auto d = (WebSessionAuth::Decision)(intptr_t)lv_event_get_user_data(e);
+  if (g_web_session.resolve(s_web_ask_seq, d)) {
+    webTrustSave();
+    if (s_remote_trust_box) lv_async_call(remoteTrustRebuildAsync, nullptr);
+  }
+  webAskClose();
+}
+
+static void webAskOpen(const char* label) {
+  webAskClose();
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  s_web_ask = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_web_ask);
+  lv_obj_set_size(s_web_ask, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(s_web_ask, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(s_web_ask, lv_color_black(), LV_PART_MAIN);
+  styleScrim(s_web_ask, LV_OPA_60);
+  lv_obj_clear_flag(s_web_ask, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_web_ask, LV_OBJ_FLAG_FLOATING);
+  lv_obj_move_foreground(s_web_ask);
+
+  const lv_coord_t cw = (sw < PCW(260)) ? sw - 20 : PCW(260);
+  lv_obj_t* card = lv_obj_create(s_web_ask);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, cw, LV_SIZE_CONTENT);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 12);
+  lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
+  lv_obj_set_style_pad_row(card, PSC(8), LV_PART_MAIN);
+  lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+  const lv_coord_t iw = cw - PSC(12) * 2;
+
+  char msg[112];
+  snprintf(msg, sizeof msg, TR("Allow %s to use the web console?"), label[0] ? label : TR("a browser"));
+  lv_obj_t* t = lv_label_create(card);
+  lv_label_set_text(t, msg);
+  lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(t, iw);
+  lv_obj_t* sub = lv_label_create(card);
+  lv_label_set_text(sub, TR("It will see your chats and contacts, and can send messages, change settings and control this screen."));
+  lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(sub, iw);
+
+  struct Choice { const char* text; WebSessionAuth::Decision d; };
+  const Choice choices[] = {
+    { TR("Allow once"),    WebSessionAuth::ALLOW_ONCE },
+    { TR("Always allow"),  WebSessionAuth::ALLOW_ALWAYS },
+    { TR("Deny"),          WebSessionAuth::DENY },
+  };
+  for (const Choice& c : choices) {
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, iw, PSC(34));
+    styleButton(b);
+    lv_obj_add_event_cb(b, webAskAnswerCb, LV_EVENT_CLICKED, (void*)(intptr_t)c.d);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, c.text);
+    lv_obj_set_style_text_font(bl, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(bl);
+  }
+  if (g_lv.task) g_lv.task->wakeScreen();
+}
+
+// UI loop: open the card for a new request, close it once the request is gone. Never
+// over the lock screen: a browser must not get in past the PIN. The request stays
+// pending (or times out) and the card appears once the device is unlocked.
+static void webConsoleTick() {
+  char label[24];
+  uint32_t seq = 0;
+  if (lockScreenUp()) {
+    if (s_web_ask) webAskClose();
+    s_web_ask_seq = 0;
+    return;
+  }
+  if (g_web_session.pending(label, sizeof label, &seq)) {
+    if (!s_web_ask || seq != s_web_ask_seq) { s_web_ask_seq = seq; webAskOpen(label); }
+  } else if (s_web_ask) {
+    webAskClose();
   }
 }
 
@@ -34583,22 +34617,22 @@ static void openRemotePage() {
   s_remote_ipcard = ipcard;
   s_remote_ipval = ipval;
   // Only show the address once a mode is actually serving it — hide it while both are off.
-  if (!(touchPrefsGetWebTerminal() || on)) lv_obj_add_flag(ipcard, LV_OBJ_FLAG_HIDDEN);
+  if (!(webConsoleOn() || on)) lv_obj_add_flag(ipcard, LV_OBJ_FLAG_HIDDEN);
   lv_obj_t* intro = lv_label_create(s_remote_root);
   lv_label_set_text(intro, TR("Then pick a mode:"));
   lv_obj_set_style_text_font(intro, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(intro, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_obj_set_width(intro, cw);
 
-  // ---- 1. Remote terminal (recommended) ----
+  // ---- 1. Web console (recommended) ----
   lv_obj_t* th = lv_label_create(s_remote_root);
-  lv_label_set_text(th, TR("Remote terminal (recommended)"));
+  lv_label_set_text(th, TR("Web console (recommended)"));
   lv_obj_set_style_text_font(th, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(th, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
   lv_obj_set_width(th, cw);
 
   lv_obj_t* texpl = lv_label_create(s_remote_root);
-  lv_label_set_text(texpl, TR("Chats, contacts, settings and a mesh terminal - all in the browser. No reboot; the device keeps its normal screen."));
+  lv_label_set_text(texpl, TR("Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot."));
   lv_obj_set_style_text_font(texpl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(texpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(texpl, LV_LABEL_LONG_WRAP);
@@ -34615,7 +34649,7 @@ static void openRemotePage() {
   styleGlass(trow);
   lv_obj_clear_flag(trow, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_t* tl = lv_label_create(trow);
-  lv_label_set_text(tl, TR("Remote terminal"));
+  lv_label_set_text(tl, TR("Web console"));
   lv_obj_set_style_text_font(tl, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(tl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
@@ -34623,9 +34657,36 @@ static void openRemotePage() {
   lv_obj_align(tl, LV_ALIGN_LEFT_MID, 0, 0);
   lv_obj_t* tsw = lv_switch_create(trow);
   lv_obj_align(tsw, LV_ALIGN_RIGHT_MID, 0, 0);
-  if (touchPrefsGetWebTerminal()) lv_obj_add_state(tsw, LV_STATE_CHECKED);
-  lv_obj_add_event_cb(tsw, webTerminalToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  if (webConsoleOn()) lv_obj_add_state(tsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(tsw, webConsoleToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_move_to_index(trow, lv_obj_get_index(texpl));   // toggle sits ABOVE its explanation
+
+  lv_obj_t* trh = lv_label_create(s_remote_root);
+  lv_label_set_text(trh, TR("Trusted browsers"));
+  lv_obj_set_style_text_font(trh, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(trh, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_width(trh, cw);
+  s_remote_trust_box = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(s_remote_trust_box);
+  lv_obj_set_size(s_remote_trust_box, cw, LV_SIZE_CONTENT);
+  lv_obj_set_style_bg_color(s_remote_trust_box, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(s_remote_trust_box, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(s_remote_trust_box, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(s_remote_trust_box, 10, LV_PART_MAIN);
+  lv_obj_set_style_pad_row(s_remote_trust_box, 4, LV_PART_MAIN);
+  styleGlass(s_remote_trust_box);
+  lv_obj_clear_flag(s_remote_trust_box, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_flex_flow(s_remote_trust_box, LV_FLEX_FLOW_COLUMN);
+  lv_obj_update_layout(s_remote_trust_box);
+  remoteTrustRebuild();
+  lv_obj_t* endb = lv_btn_create(s_remote_root);
+  lv_obj_set_size(endb, cw, SC(38));
+  styleButton(endb);
+  lv_obj_add_event_cb(endb, remoteEndSessionsCb, LV_EVENT_CLICKED, nullptr);
+  lv_obj_t* endl = lv_label_create(endb);
+  lv_label_set_text(endl, TR("Disconnect all browsers"));
+  lv_obj_set_style_text_font(endl, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(endl);
 
   // ---- 2. Remote UI (off-screen mirror; reboots) ----
   lv_obj_t* uh = lv_label_create(s_remote_root);
@@ -34635,7 +34696,7 @@ static void openRemotePage() {
   lv_obj_set_width(uh, cw);
 
   lv_obj_t* expl = lv_label_create(s_remote_root);
-  lv_label_set_text(expl, TR("Streams the device screen as a live picture you tap to control. Heavier; the panel shows a placeholder. Toggling reboots the device."));
+  lv_label_set_text(expl, TR("Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device."));
   lv_obj_set_style_text_font(expl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(expl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(expl, LV_LABEL_LONG_WRAP);
@@ -52580,6 +52641,7 @@ static uint32_t rx24Sum() {
 // (backlight on) without unlocking; holding the trackball ~1 s unlocks (see the
 // loop's button block).
 static lv_obj_t*    s_lock_root      = nullptr;
+[[maybe_unused]] static bool lockScreenUp() { return s_lock_root != nullptr; }
 static lv_obj_t*    s_lock_body      = nullptr;   // everything but the wallpaper; drifts against burn-in
 static lv_obj_t*    s_lock_mark      = nullptr;   // the wadamesh mark (lockMarkDrawCb)
 static lv_obj_t*    s_lock_clock     = nullptr;
@@ -61460,7 +61522,7 @@ static void appLaunch(int act, lv_event_t* e) {
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
-    case APPACT_VNC:       openVncPage();        return;   // screen mirror + remote control from a browser
+    case APPACT_VNC:       openRemotePage();     return;   // the screen mirror is now the web console's Screen tab
     case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
@@ -80256,9 +80318,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     const size_t rmt_frame = (size_t)s_web_fb_w * s_web_fb_h * 2;
     g_web_mirror.begin(s_remote_mode ? (rmt_frame + 48u * 1024u) : (size_t)0);
     g_web_mirror.setScreenSize(s_web_fb_w, s_web_fb_h);
-    g_web_mirror.setEnabled(s_remote_mode ? true : touchPrefsGetWebMirror());
+    // The web console is one switch now; either old pref (VNC or Remote terminal) turns it on.
+    const bool web_console = touchPrefsGetWebTerminal() || touchPrefsGetWebMirror();
+    g_web_mirror.setEnabled(s_remote_mode || web_console);
     g_web_mirror.setRemote(s_remote_mode);    // browser shows the Rotate button only in remote mode
-    g_web_mirror.setTerminalOn(!s_remote_mode && touchPrefsGetWebTerminal());   // web mesh terminal (runtime; not in the off-screen boot mode)
+    g_web_mirror.setTerminalOn(!s_remote_mode && web_console);   // web mesh terminal (runtime; not in the off-screen boot mode)
+    webTrustLoad();
     if (s_remote_mode) {
       const bool mirror_ready = g_web_mirror.ringBytes() > 0 && webMirrorEnsureBufs();
       Serial.printf("[REMOTE] mirror %dx%d ring=%u buffers=%s\n",
@@ -84636,7 +84701,13 @@ void UITask::loop() {
     }
   }
 #endif
+#if !defined(HAS_TANMATSU)
+  webConsoleTick();
+#endif
 #if WADA_WEB_FILE_TRANSFER
+  if (g_web_file_transfer.takeStartRequest() && !g_web_file_transfer.enabled() &&
+      g_web_mirror.terminalOn())
+    fileTransferSessionStart();   // the console's Files tab, for an approved browser
   webFileTransferTick();
 #endif
 #if CAP_USB_FILES
@@ -86481,7 +86552,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_regions_modal),         []{ regionsModalClose(); },          PF_COUNT },   // was in no registry at all (#449)
   { P_OPEN(s_wifi_scan_popup),       []{ wifiScanPopupClose(); },         PF_COUNT },
 #if !defined(HAS_TANMATSU)
-  { P_OPEN(s_vnc_root),              []{ closeVncPage(); },               PF_COUNT },
+  { P_OPEN(s_web_ask),               []{ webAskClose(); },                PF_COUNT },
   { P_OPEN(s_remote_root),           []{ closeRemotePage(); },            PF_COUNT },
 #endif
 #if WADA_WEB_FILE_TRANSFER
@@ -86722,7 +86793,7 @@ static void docAuditTour() {
   openMentionsScreen();    auditShot("mentions");   closeMentionsScreen(); docSettle(4);
   openDiscoverPage();      auditShot("discover");   auditDismissAll();
 #if !defined(HAS_TANMATSU)
-  openVncPage();           auditShot("vnc");        auditDismissAll();
+  openRemotePage();        auditShot("vnc");        auditDismissAll();
 #endif
 #if CAP_LUA_APPS
   openLuaStorePage();      auditShot("store", 20);  auditDismissAll();

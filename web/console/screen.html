@@ -1,0 +1,120 @@
+<!DOCTYPE html><html><head><meta charset=utf-8>
+<meta name=viewport content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'>
+<title>wadamesh</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0b0c;color:#e8e8ea;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:none}
+#w{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;height:100%;gap:8px;padding-top:6px;box-sizing:border-box}
+#c{background:#000;image-rendering:auto;max-width:100vw;box-shadow:0 0 26px #000a;border-radius:8px}
+#s{font-size:13px;opacity:.7;max-width:calc(100vw - 16px);text-align:center} #s.ok{color:#19d6c2} #s.err{color:#ff6b6b}
+b{color:#19d6c2;letter-spacing:.5px}
+#ctl{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 8px)}
+#ctl button{margin:0;min-height:34px}
+#kb,#pst{padding:8px 16px;font-size:14px;background:#1c1c1f;color:#e8e8ea;border:1px solid #333;border-radius:8px}
+#kb:active,#pst:active{background:#19d6c2;color:#000;border-color:#19d6c2}
+#rot{padding:7px 15px;font-size:12px;background:#141416;color:#c8ccce;border:1px solid #2a2a2e;border-radius:8px;display:none}
+#rot:active{background:#19d6c2;color:#000;border-color:#19d6c2}
+#xit{padding:7px 15px;font-size:12px;background:#1e1416;color:#e0a6a6;border:1px solid #4a2a2e;border-radius:8px;display:none}
+#xit:active{background:#ff6b6b;color:#000;border-color:#ff6b6b}
+#unl{padding:8px 16px;font-size:14px;background:#19d6c2;color:#000;border:1px solid #19d6c2;border-radius:8px;font-weight:600;display:none}
+#unl:active{background:#0f8f82;border-color:#0f8f82}
+#k{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px}
+#hdr{position:fixed;top:14px;left:18px;display:none;align-items:center;gap:11px;z-index:5}
+#hdr .wm{font-family:'JetBrains Mono','Courier New',monospace;font-weight:700;font-size:22px;letter-spacing:2px;color:#e8e8ea}
+#hdr .wm .m{color:#15B6A6}
+@media(hover:hover) and (pointer:fine){#hdr{display:flex}#cap{display:none}}
+</style></head><body>
+<!--#include auth.html-->
+<div id=hdr><svg width='40' height='27' viewBox='0 0 180 120' fill='none'><path d='M10 60 L50 108 L90 60 L130 108 L170 60' stroke='#dfe3e8' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><path d='M10 60 L50 12 L90 60 L130 12 L170 60' stroke='#dfe3e8' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><g fill='#15B6A6'><circle cx='10' cy='60' r='7'/><circle cx='90' cy='60' r='7'/><circle cx='170' cy='60' r='7'/><circle cx='50' cy='12' r='7'/><circle cx='130' cy='12' r='7'/><circle cx='50' cy='108' r='7'/><circle cx='130' cy='108' r='7'/></g></svg><span class=wm>WADA<span class=m>MESH</span></span></div>
+<div id=w>
+<div id=cap><b>wadamesh</b> &nbsp; live UI</div>
+<canvas id=c width=320 height=240></canvas>
+<div id=s>connecting...</div>
+<div id=ctl><button id=unl>Unlock screen</button>
+<button id=kb>&#9000; Keyboard</button>
+<button id=pst>&#128203; Paste</button>
+<button id=rot>&#8635; Rotate</button>
+<button id=xit>&#10005; Exit remote</button></div>
+<textarea id=k autocomplete=off autocorrect=off autocapitalize=off spellcheck=false></textarea>
+</div>
+<script>
+/*#include auth.js*/
+var C=document.getElementById('c'),X=C.getContext('2d'),S=document.getElementById('s');
+var OT=document.createElement('canvas'),OX=OT.getContext('2d');
+var DW=320,DH=240,down=false,last=0,ws;
+var isTouch=('ontouchstart' in window)||navigator.maxTouchPoints>0,kbT=null;
+var ROT=document.getElementById('rot'),XIT=document.getElementById('xit'),CTL=document.getElementById('ctl');
+var UNL=document.getElementById('unl'),LK=false;
+function st(t,k){S.textContent=t;S.className=k||''}
+function conn(){
+ ws=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/mirror');
+ ws.binaryType='arraybuffer';
+ ws.onopen=function(){LK=false;UNL.style.display='none';st('connected','ok');wOpen(ws)};
+ ws.onclose=function(){st('disconnected - retrying','err');wRetry(conn)};
+ ws.onerror=function(){st('connection error','err')};
+ ws.onmessage=function(e){
+  if(wGate(e))return;
+  var a=new Uint8Array(e.data);
+  if(a[0]==2){var nw=a[1]|(a[2]<<8),nh=a[3]|(a[4]<<8),rem=a.length>5&&!!(a[5]&1),valid=nw>0&&nh>0;
+   if(valid){DW=nw;DH=nh;if(C.width!=DW)C.width=DW;if(C.height!=DH)C.height=DH}else{st('screen stream unavailable - use Exit remote','err')}
+   ROT.style.display=(rem&&valid)?'inline-block':'none';XIT.style.display=(rem||!valid)?'inline-block':'none';fit();return}
+  if(a[0]==3){clearTimeout(kbT);if(a[1])K.focus();else K.blur();return}
+  if(a[0]==6){var l=!!a[1];if(l!=LK){LK=l;UNL.style.display=l?'inline-block':'none';st(l?'screen locked':'connected',l?'':'ok');fit()}return}
+  if(a[0]==1){
+   var fl=a[1],x=a[2]|(a[3]<<8),y=a[4]|(a[5]<<8),w=a[6]|(a[7]<<8),h=a[8]|(a[9]<<8);
+   var hf=fl&2,ow=hf?((w+1)>>1):w,oh=hf?((h+1)>>1):h;
+   var img=X.createImageData(ow,oh),d=img.data,L=d.length,p=10,o=0,v,r,g,b,c;
+   if(fl&1){
+    while(o<L){c=a[p++];v=a[p]|(a[p+1]<<8);p+=2;r=(v>>8)&0xf8;g=(v>>3)&0xfc;b=(v<<3)&0xf8;
+     while(c-->0){d[o++]=r;d[o++]=g;d[o++]=b;d[o++]=255}}
+   }else{
+    while(o<L){v=a[p]|(a[p+1]<<8);p+=2;d[o++]=(v>>8)&0xf8;d[o++]=(v>>3)&0xfc;d[o++]=(v<<3)&0xf8;d[o++]=255}
+   }
+   if(hf){OT.width=ow;OT.height=oh;OX.putImageData(img,0,0);X.imageSmoothingEnabled=true;X.drawImage(OT,0,0,ow,oh,x,y,w,h)}
+   else{X.putImageData(img,x,y)}
+  }
+ }
+}
+function xy(e){var r=C.getBoundingClientRect();
+ var x=(e.clientX-r.left)*DW/r.width,y=(e.clientY-r.top)*DH/r.height;
+ x=x<0?0:x>=DW?DW-1:x;y=y<0?0:y>=DH?DH-1:y;return[x|0,y|0]}
+function snd(x,y,pr){if(!ws||ws.readyState!=1)return;ws.send(new Uint8Array([1,x&255,x>>8,y&255,y>>8,pr]))}
+C.addEventListener('pointerdown',function(e){down=true;try{C.setPointerCapture(e.pointerId)}catch(x){}var p=xy(e);snd(p[0],p[1],1);e.preventDefault()});
+C.addEventListener('pointermove',function(e){if(!down)return;var t=Date.now();if(t-last<33)return;last=t;var p=xy(e);snd(p[0],p[1],1)});
+function up(e){if(!down)return;down=false;var p=xy(e);snd(p[0],p[1],0);
+ if(isTouch){K.value=' ';K.focus();try{K.setSelectionRange(1,1)}catch(x){}clearTimeout(kbT);kbT=setTimeout(function(){K.blur()},350)}}
+C.addEventListener('pointerup',up);C.addEventListener('pointercancel',up);
+var K=document.getElementById('k');
+document.getElementById('kb').addEventListener('click',function(){K.value=' ';K.focus();try{K.setSelectionRange(1,1)}catch(x){}});
+ROT.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;st('rotating - reconnecting','');ws.send(new Uint8Array([4,DW<DH?1:0]))});
+UNL.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;ws.send(new Uint8Array([6]))});
+XIT.addEventListener('click',function(){if(!ws||ws.readyState!=1)return;if(!confirm('Leave remote mode? The device reboots to its normal screen.'))return;st('leaving remote - rebooting','');ws.send(new Uint8Array([5]))});
+function skey(cp){if(!ws||ws.readyState!=1)return;ws.send(new Uint8Array([2,cp&255,(cp>>8)&255]))}
+K.addEventListener('beforeinput',function(e){var t=e.inputType;
+ if(t=='insertText'&&e.data){for(var i=0;i<e.data.length;i++)skey(e.data.codePointAt(i));e.preventDefault()}
+ else if(t=='deleteContentBackward'){skey(8);e.preventDefault()}
+ else if(t=='insertLineBreak'||t=='insertParagraph'){skey(13);e.preventDefault()}
+ K.value=' ';try{K.setSelectionRange(1,1)}catch(x){}});
+window.addEventListener('keydown',function(e){
+ if(!WA||document.activeElement===K)return;if(e.ctrlKey||e.metaKey||e.altKey)return;
+ if(e.key=='Backspace'){skey(8);e.preventDefault()}
+ else if(e.key=='Enter'){skey(13);e.preventDefault()}
+ else if(e.key.length==1){skey(e.key.codePointAt(0));e.preventDefault()}});
+var PQ=[],PT=0;
+function pdrain(){if(!PQ.length||!ws||ws.readyState!=1){PQ=[];PT=0;return}
+ for(var i=0;i<16&&PQ.length;i++)skey(PQ.shift());PT=setTimeout(pdrain,80)}
+function ptxt(t){if(!t)return;t=t.replace(/\r\n?|\n/g,' ');
+ for(var ch of t){var c=ch.codePointAt(0);if(c<=0xFFFF)PQ.push(c)}if(!PT)pdrain()}
+document.addEventListener('paste',function(e){if(!WA)return;var d=e.clipboardData||window.clipboardData;
+ var t=d?d.getData('text'):'';if(t){ptxt(t);e.preventDefault()}
+ K.value=' ';try{K.setSelectionRange(1,1)}catch(x){}});
+document.getElementById('pst').addEventListener('click',function(){
+ var t=prompt('Paste the text to type into the focused field on the device:');if(t)ptxt(t)});
+function fit(){var vv=window.visualViewport,vw=vv?vv.width:window.innerWidth,vh=vv?vv.height:window.innerHeight;
+ var desk=matchMedia('(hover:hover) and (pointer:fine)').matches,f=desk?0.72:0.99,cap=document.getElementById('cap');
+ var ch=6+S.offsetHeight+CTL.offsetHeight+16;if(cap.offsetParent!==null)ch+=cap.offsetHeight+8;
+ var aw=vw-8,ah=vh-ch-2;if(aw<60)aw=60;if(ah<40)ah=40;var s=Math.min(aw/DW,ah/DH)*f;
+ C.style.width=Math.max(1,Math.round(DW*s))+'px';C.style.height=Math.max(1,Math.round(DH*s))+'px'}
+if(window.visualViewport)window.visualViewport.addEventListener('resize',fit);
+window.addEventListener('resize',fit);fit();
+conn();
+</script></body></html>

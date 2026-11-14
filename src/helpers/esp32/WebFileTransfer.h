@@ -30,6 +30,10 @@ public:
   void noteClients(int count) { _clients = count; }
   int clients() const { return _clients; }
   void touch();
+  // The console's Files tab asks for a session (web-server task); the UI task takes the
+  // request and starts File Transfer the way its device page does.
+  void requestStart() { _start_req = true; }
+  bool takeStartRequest() { const bool r = _start_req; _start_req = false; return r; }
   uint32_t lastActivityMs() const { return _last_activity_ms; }
 
 private:
@@ -54,6 +58,7 @@ private:
   portMUX_TYPE _outbound_mux = portMUX_INITIALIZER_UNLOCKED;
 
   volatile bool _enabled = false;
+  volatile bool _start_req = false;
   volatile int _clients = 0;
   volatile uint32_t _last_activity_ms = 0;
 };
