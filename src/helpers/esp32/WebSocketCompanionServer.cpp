@@ -803,8 +803,9 @@ bool WebSocketCompanionServer::servePage(int idx) {
     { "/mesh",       WC_MESH_GZ,   WC_MESH_GZ_LEN },
     { "/screen",     WC_SCREEN_GZ, WC_SCREEN_GZ_LEN },
     { "/files",      WC_FILES_GZ,  WC_FILES_GZ_LEN },
+    { "/settings",   WC_SETTINGS_GZ, WC_SETTINGS_GZ_LEN },
   };
-  const bool on[] = { term || screen || files, term || screen || files, term, screen, files };
+  const bool on[] = { term || screen || files, term || screen || files, term, screen, files, term };
 
   char hdr[400];
   for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
@@ -838,8 +839,9 @@ bool WebSocketCompanionServer::servePage(int idx) {
   char body[96] = "";
   if (strcmp(path, "/api/info") == 0) {
     status = 200;
-    snprintf(body, sizeof body, "{\"mesh\":%s,\"screen\":%s,\"files\":%s}",
-             term ? "true" : "false", screen ? "true" : "false", files ? "true" : "false");
+    snprintf(body, sizeof body, "{\"mesh\":%s,\"screen\":%s,\"files\":%s,\"settings\":%s}",
+             term ? "true" : "false", screen ? "true" : "false", files ? "true" : "false",
+             term ? "true" : "false");
   }
 #if WADA_WEB_FILE_TRANSFER
   // Files tab: start File Transfer for an approved browser (the device would otherwise

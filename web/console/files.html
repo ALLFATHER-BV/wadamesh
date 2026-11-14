@@ -5,11 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>WADAMESH File Transfer</title>
 <style>
-:root{color-scheme:dark;--bg:#0b0d0e;--panel:#15191a;--line:#303738;--text:#edf2f1;--muted:#929b99;--accent:#15b6a6;--danger:#ef6a67}
-*{box-sizing:border-box}body{margin:0;min-height:100vh;background:linear-gradient(150deg,#0b0d0e,#111817);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-main{width:min(560px,100%);margin:0 auto;padding:24px 16px 40px}header{display:flex;align-items:center;gap:11px;margin-bottom:24px}header b{font-size:20px;letter-spacing:0}header i{display:block;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px var(--accent)}
-section{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:16px;margin:12px 0}label{display:block;color:var(--muted);font-size:12px;margin-bottom:7px}input,button,select{font:inherit;border-radius:6px;min-height:42px}input[type=password]{width:100%;padding:9px 11px;background:#0d1112;color:var(--text);border:1px solid var(--line);font-size:18px;letter-spacing:3px}button,select{border:1px solid var(--line);background:#202627;color:var(--text);padding:8px 14px}button{cursor:pointer}button.primary{background:var(--accent);border-color:var(--accent);color:#061412;font-weight:700}button.danger{color:var(--danger)}button:disabled,select:disabled{opacity:.4;cursor:not-allowed}.row{display:flex;gap:8px;margin-top:10px}.row>*{flex:1}.file-tools{align-items:center}.file-tools b{flex:1.4}.file-tools select{min-width:0}.drop{display:block;border:1px dashed #53605e;border-radius:8px;padding:24px 12px;text-align:center;color:var(--muted);cursor:pointer}.drop.ready{border-color:var(--accent);color:var(--text)}#pick{position:absolute;opacity:0;pointer-events:none}#name{margin-top:10px;overflow-wrap:anywhere}progress{width:100%;height:10px;margin-top:14px;accent-color:var(--accent)}#status{min-height:20px;margin-top:10px;color:var(--muted);font-size:13px}#status.ok{color:var(--accent)}#status.err{color:var(--danger)}small{display:block;color:var(--muted);line-height:1.5;margin-top:12px}.file{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}.file:last-child{border-bottom:0}.file span{flex:1;min-width:0;overflow-wrap:anywhere}.file small{margin:2px 0 0}.actions{display:flex;gap:6px}.actions button{padding:7px 10px}.empty{color:var(--muted);padding:10px 0}
-.check{display:none;align-items:center;gap:8px;margin:12px 0;color:var(--text)}.check input{width:18px;height:18px;min-height:0;margin:0}
+/*#include theme.css*/
+body{min-height:100vh}
+main{width:min(600px,100%);margin:0 auto;padding:24px 16px 40px}
+header{display:flex;align-items:center;gap:10px;margin-bottom:16px}header b{font-size:15px;font-weight:600;letter-spacing:.06em}header i{width:8px;height:8px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 4px var(--acc-soft)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:16px;margin:16px 0}
+label{display:block;color:var(--sub);font-size:12px;font-weight:500;margin-bottom:8px}
+input,button,select{border-radius:8px;min-height:40px}
+input[type=password]{width:100%;padding:8px 12px;background:var(--panel);border:1px solid var(--line2);font-family:var(--mono);font-size:18px;letter-spacing:4px;outline:none}
+input[type=password]:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--acc-soft);outline:none}
+select{background:var(--panel);border:1px solid var(--line2);padding:8px 12px}
+button{background:var(--panel2);border:1px solid var(--line);padding:8px 16px;font-weight:500}button:hover:enabled{background:var(--hover)}
+button.primary{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);font-weight:600}button.primary:hover:enabled{background:var(--acc);filter:brightness(1.08)}
+button.danger{color:var(--danger)}button.danger:hover:enabled{background:var(--danger-soft)}
+button:disabled,select:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;margin-top:12px}.row>*{flex:1}.file-tools{align-items:center}.file-tools b{flex:1.4;font-weight:600}.file-tools select{min-width:0}
+.drop{border:1.5px dashed var(--line2);border-radius:10px;padding:24px 12px;margin:16px 0 0;text-align:center;color:var(--sub);font-size:14px;cursor:pointer;background:var(--bg)}.drop:hover{border-color:var(--acc);background:var(--acc-soft)}.drop.ready{border-color:var(--acc);color:var(--text)}
+#pick{position:absolute;opacity:0;pointer-events:none}#name{margin-top:8px;overflow-wrap:anywhere;color:var(--sub);font-size:13px}
+progress{width:100%;height:8px;margin-top:16px;accent-color:var(--acc)}
+#status{min-height:20px;margin-top:8px;color:var(--sub);font-size:13px}#status.ok{color:var(--ok)}#status.err{color:var(--danger)}
+small{display:block;color:var(--faint);font-size:12px;line-height:1.5;margin-top:12px}
+.file{display:flex;align-items:center;gap:12px;padding:10px 8px;margin:0 -8px;border-radius:8px;border-bottom:1px solid var(--line)}.file:hover{background:var(--hover)}.file:last-child{border-bottom:0}
+.file span{flex:1;min-width:0;overflow-wrap:anywhere}.file b{font-family:var(--mono);font-size:13px;font-weight:500}.file small{margin:2px 0 0;font-family:var(--mono);font-size:11px}
+.actions{display:flex;gap:6px}.actions button{min-height:32px;padding:4px 10px;font-size:12px}.empty{color:var(--faint);padding:12px 0}
+.check{display:none;align-items:center;gap:8px;margin:12px 0;color:var(--text);font-size:14px}.check input{width:18px;height:18px;min-height:0;margin:0;accent-color:var(--acc)}
 </style>
 </head>
 <body><main>

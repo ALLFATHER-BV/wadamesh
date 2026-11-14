@@ -2,29 +2,25 @@
 <meta name=viewport content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'>
 <title>wadamesh</title>
 <style>
-html,body{margin:0;height:100%;background:#0b0b0c;color:#e8e8ea;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:none}
-#w{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;height:100%;gap:8px;padding-top:6px;box-sizing:border-box}
-#c{background:#000;image-rendering:auto;max-width:100vw;box-shadow:0 0 26px #000a;border-radius:8px}
-#s{font-size:13px;opacity:.7;max-width:calc(100vw - 16px);text-align:center} #s.ok{color:#19d6c2} #s.err{color:#ff6b6b}
-b{color:#19d6c2;letter-spacing:.5px}
+/*#include theme.css*/
+html,body{height:100%;overflow:hidden;-webkit-user-select:none;user-select:none;touch-action:none}
+#w{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;height:100%;gap:8px;padding-top:6px}
+#c{background:#000;image-rendering:auto;max-width:100vw;border-radius:10px;box-shadow:0 0 0 5px #15191c,var(--pop)}
+#s{font-size:13px;color:var(--sub);max-width:calc(100vw - 16px);text-align:center}#s.ok{color:var(--acc)}#s.err{color:var(--danger)}
+b{color:var(--acc);font-weight:600;letter-spacing:.5px}#cap{color:var(--sub)}
 #ctl{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;max-width:calc(100vw - 8px)}
-#ctl button{margin:0;min-height:34px}
-#kb,#pst{padding:8px 16px;font-size:14px;background:#1c1c1f;color:#e8e8ea;border:1px solid #333;border-radius:8px}
-#kb:active,#pst:active{background:#19d6c2;color:#000;border-color:#19d6c2}
-#rot{padding:7px 15px;font-size:12px;background:#141416;color:#c8ccce;border:1px solid #2a2a2e;border-radius:8px;display:none}
-#rot:active{background:#19d6c2;color:#000;border-color:#19d6c2}
-#xit{padding:7px 15px;font-size:12px;background:#1e1416;color:#e0a6a6;border:1px solid #4a2a2e;border-radius:8px;display:none}
-#xit:active{background:#ff6b6b;color:#000;border-color:#ff6b6b}
-#unl{padding:8px 16px;font-size:14px;background:#19d6c2;color:#000;border:1px solid #19d6c2;border-radius:8px;font-weight:600;display:none}
-#unl:active{background:#0f8f82;border-color:#0f8f82}
+#ctl button{margin:0;min-height:34px;padding:7px 16px;font-size:13px;font-weight:500;background:var(--panel2);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+#ctl button:hover{background:var(--hover)}#ctl button:active{background:var(--acc-soft);border-color:var(--acc)}
+#rot,#xit,#unl{display:none}#xit{color:var(--danger)}#xit:hover{background:var(--danger-soft)}
+#ctl #unl{background:var(--acc);color:var(--acc-ink);border-color:var(--acc);font-weight:600}#ctl #unl:hover{filter:brightness(1.08)}
 #k{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px}
 #hdr{position:fixed;top:14px;left:18px;display:none;align-items:center;gap:11px;z-index:5}
-#hdr .wm{font-family:'JetBrains Mono','Courier New',monospace;font-weight:700;font-size:22px;letter-spacing:2px;color:#e8e8ea}
-#hdr .wm .m{color:#15B6A6}
+#hdr .wm{font-family:var(--mono);font-weight:700;font-size:22px;letter-spacing:2px}
+#hdr .m,#hdr g{color:var(--acc);fill:var(--acc)}#hdr path{stroke:var(--text)}
 @media(hover:hover) and (pointer:fine){#hdr{display:flex}#cap{display:none}}
 </style></head><body>
 <!--#include auth.html-->
-<div id=hdr><svg width='40' height='27' viewBox='0 0 180 120' fill='none'><path d='M10 60 L50 108 L90 60 L130 108 L170 60' stroke='#dfe3e8' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><path d='M10 60 L50 12 L90 60 L130 12 L170 60' stroke='#dfe3e8' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><g fill='#15B6A6'><circle cx='10' cy='60' r='7'/><circle cx='90' cy='60' r='7'/><circle cx='170' cy='60' r='7'/><circle cx='50' cy='12' r='7'/><circle cx='130' cy='12' r='7'/><circle cx='50' cy='108' r='7'/><circle cx='130' cy='108' r='7'/></g></svg><span class=wm>WADA<span class=m>MESH</span></span></div>
+<div id=hdr><svg width='40' height='27' viewBox='0 0 180 120' fill='none'><path d='M10 60 L50 108 L90 60 L130 108 L170 60' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><path d='M10 60 L50 12 L90 60 L130 12 L170 60' stroke-width='9' stroke-linecap='round' stroke-linejoin='round'/><g><circle cx='10' cy='60' r='7'/><circle cx='90' cy='60' r='7'/><circle cx='170' cy='60' r='7'/><circle cx='50' cy='12' r='7'/><circle cx='130' cy='12' r='7'/><circle cx='50' cy='108' r='7'/><circle cx='130' cy='108' r='7'/></g></svg><span class=wm>WADA<span class=m>MESH</span></span></div>
 <div id=w>
 <div id=cap><b>wadamesh</b> &nbsp; live UI</div>
 <canvas id=c width=320 height=240></canvas>

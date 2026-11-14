@@ -3,27 +3,38 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>wadamesh</title>
 <style>
-:root{color-scheme:dark}*{box-sizing:border-box}
-html,body{margin:0;height:100%;background:#0b0b0c;color:#d7dbdd;font-family:-apple-system,'Segoe UI',Roboto,sans-serif}
+/*#include theme.css*/
+html,body{height:100%;overflow:hidden}
 #app{display:flex;flex-direction:column;height:100%}
-nav{display:flex;align-items:center;gap:4px;padding:6px 10px;border-bottom:1px solid #1c1c1f;overflow-x:auto}
-nav b{color:#19d6c2;letter-spacing:2px;margin-right:10px;white-space:nowrap}
-nav button{background:none;border:0;color:#929b99;font:inherit;font-size:14px;padding:8px 12px;border-radius:6px;cursor:pointer}
-nav button.on{background:#15191a;color:#edf2f1}nav button[hidden]{display:none}
-#views{flex:1;position:relative}
-iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none}iframe.on{display:block}
-#msg{padding:24px;color:#929b99}
+header{display:flex;align-items:center;gap:16px;padding:0 16px;height:52px;flex:none;background:var(--bg2);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:9px;font-weight:700;font-size:15px;letter-spacing:.02em;white-space:nowrap}
+.brand i{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--acc),color-mix(in srgb,var(--acc) 55%,#2c6bcf));box-shadow:inset 0 0 0 5px var(--bg2),0 0 0 1px var(--acc)}
+nav{display:flex;gap:2px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:3px;overflow-x:auto;margin-left:auto}
+nav button{display:flex;align-items:center;gap:7px;background:none;border:0;color:var(--sub);font-size:13.5px;font-weight:500;padding:6px 12px;border-radius:7px;white-space:nowrap}
+nav button:hover{color:var(--text)}nav button.on{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
+nav button[hidden]{display:none}
+nav svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#views{flex:1;position:relative;min-height:0}
+iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none;background:var(--bg)}iframe.on{display:block}
+#msg{padding:80px 24px;color:var(--sub);text-align:center}
+@media(max-width:600px){header{gap:8px;padding:0 8px}.brand span{display:none}nav{margin-left:0;flex:1}nav button{flex:1;justify-content:center;padding:6px 6px}nav button b{display:none}}
 </style></head>
 <body><div id="app">
-<nav><b>WADAMESH</b><button data-v="mesh" hidden>Mesh</button><button data-v="screen" hidden>Screen</button><button data-v="files" hidden>Files</button></nav>
+<header><div class="brand"><i></i><span>wadamesh</span></div>
+<nav>
+<button data-v="mesh" hidden title="Mesh"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg><b>Mesh</b></button>
+<button data-v="screen" hidden title="Screen"><svg viewBox="0 0 24 24"><rect x=3 y=4 width=18 height=13 rx=2 /><path d="M8 21h8M12 17v4"/></svg><b>Screen</b></button>
+<button data-v="files" hidden title="Files"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><b>Files</b></button>
+<button data-v="settings" hidden title="Settings"><svg viewBox="0 0 24 24"><circle cx=12 cy=12 r=3 /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><b>Settings</b></button>
+</nav></header>
 <div id="views"><div id="msg">Connecting…</div></div>
 </div>
 <script>
 // One page for every browser tool. Each tab is its own app in a same-origin frame; they
 // share the browser id, so approving this browser once on the device unlocks every tab.
 // The screen tab only exists while shown (its socket makes the device stream frames);
-// mesh and files stay loaded so a chat or a transfer keeps going in the background.
-var frames={},cur=null,KEEP={mesh:1,files:1},tabs=document.querySelectorAll('nav button');
+// the others stay loaded so a chat, a transfer or unsaved settings survive a tab switch.
+var frames={},cur=null,KEEP={mesh:1,files:1,settings:1},tabs=document.querySelectorAll('nav button');
 function show(n){
   if(cur&&cur!==n&&frames[cur]&&!KEEP[cur]){frames[cur].remove();delete frames[cur];}
   if(cur&&frames[cur])frames[cur].classList.remove('on');

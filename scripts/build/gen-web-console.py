@@ -10,7 +10,7 @@ import gzip, os, re, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(ROOT, "web", "console")
 OUT = os.path.join(ROOT, "src", "helpers", "esp32", "WebConsoleAssets.h")
-PAGES = [("index", "WC_INDEX"), ("mesh", "WC_MESH"), ("screen", "WC_SCREEN"), ("files", "WC_FILES")]
+PAGES = [("index", "WC_INDEX"), ("mesh", "WC_MESH"), ("screen", "WC_SCREEN"), ("files", "WC_FILES"), ("settings", "WC_SETTINGS")]
 INC = re.compile(r"<!--#include ([\w.]+)-->|/\*#include ([\w.]+)\*/")
 
 

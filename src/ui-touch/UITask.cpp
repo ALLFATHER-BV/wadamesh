@@ -16478,6 +16478,45 @@ enum : uint8_t { SET_TONE_HELP = 0, SET_TONE_INFO, SET_TONE_WARN, SET_TONE_DANGE
 static bool isUiIconGlyph(const char* g);         // with the launcher tiles
 static void clampDropdownListCb(lv_event_t* e);   // with the dropdown helpers below
 
+// The web console's Settings tab (#854) drives these same pages: it builds one out of
+// sight and, while it does, every kit row below is noted here (what it is, its widget,
+// its name), so the page can be described to the browser and its controls worked the
+// way a tap would. Off (one test) whenever the web is not asking. WebSettingsEngine.h.
+enum : uint8_t { WCK_CARD = 1, WCK_SWITCH, WCK_CHOICE, WCK_DROP, WCK_SLIDER, WCK_FIELD, WCK_STEP,
+                 WCK_SWATCH, WCK_ACTION, WCK_BUTTON, WCK_INFO, WCK_NOTE };
+enum : uint8_t { WCF_CHEVRON = 0x10, WCF_SAVE = 0x20, WCF_NUM = 0x40 };   // over a row's kind/tone
+struct WcRow { lv_obj_t* obj; lv_obj_t* aux; uint16_t title, help; uint8_t kind, sub; };
+struct WcRec { bool on; int n; int an; WcRow* rows; char* arena; };
+static WcRec s_wc = {};
+static const int WC_MAX_ROWS = 360;
+static const int WC_ARENA    = 16384;
+static uint16_t wcStr(const char* s) {
+  if (!s || !s[0]) return 0xFFFF;
+  const int len = (int)strlen(s);
+  if (s_wc.an + len + 1 > WC_ARENA) return 0xFFFF;
+  memcpy(s_wc.arena + s_wc.an, s, (size_t)len + 1);
+  const uint16_t at = (uint16_t)s_wc.an;
+  s_wc.an += len + 1;
+  return at;
+}
+// A noted widget that goes (its page rebuilt part of itself) is struck off, so nothing
+// later works a freed widget or one that reused its address.
+static void wcObjGoneCb(lv_event_t* e) {
+  lv_obj_t* o = lv_event_get_target(e);
+  for (int i = 0; i < s_wc.n; ++i) if (s_wc.rows[i].obj == o) s_wc.rows[i].obj = nullptr;
+}
+static void wcRec(uint8_t kind, lv_obj_t* obj, lv_obj_t* aux, const char* title, const char* help, uint8_t sub = 0) {
+  if (!s_wc.on || !s_wc.rows || !obj || s_wc.n >= WC_MAX_ROWS) return;
+  s_wc.rows[s_wc.n++] = { obj, aux, wcStr(title), wcStr(help), kind, sub };
+  lv_obj_add_event_cb(obj, wcObjGoneCb, LV_EVENT_DELETE, nullptr);
+}
+static inline const char* wcTR(const char* s) { return s && s[0] ? TR(s) : nullptr; }
+#if !defined(HAS_TANMATSU)
+static void webCfgNoteAlert(const char* text);   // WebSettingsEngine.h (included at the end)
+static void webCfgCmd(const char* args);
+static void webCfgPump();
+#endif
+
 static lv_obj_t* setBox(lv_obj_t* parent) {
   lv_obj_t* o = lv_obj_create(parent);
   lv_obj_remove_style_all(o);
@@ -16490,6 +16529,7 @@ static lv_obj_t* setCard(const char* title) {
   lv_obj_t* c = createSettingsModal(title && title[0] ? TR(title) : "", SettingsModalKind::Device);
   lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(c, SC(10), LV_PART_MAIN);
+  wcRec(WCK_CARD, c, nullptr, wcTR(title), nullptr);
   return c;
 }
 // A card built into a column of its own (setColumn, or the page for a raw title):
@@ -16499,6 +16539,7 @@ static lv_obj_t* setCardIn(lv_obj_t* parent, const char* title) {
   lv_obj_t* c = settingsCardIn(parent, title);
   lv_obj_set_flex_flow(c, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(c, SC(10), LV_PART_MAIN);
+  wcRec(WCK_CARD, c, nullptr, title, nullptr);
   return c;
 }
 // The whole card (section name and panel) around a content column, to hide or show as one.
@@ -16573,6 +16614,7 @@ static lv_obj_t* setSwitchRow(lv_obj_t* card, const char* title, const char* hel
   lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(row, SC(8));
   lv_obj_add_event_cb(row, setSwitchTapCb, LV_EVENT_CLICKED, sw);
+  wcRec(WCK_SWITCH, sw, nullptr, wcTR(title), wcTR(help));
   return sw;
 }
 
@@ -16635,6 +16677,7 @@ static lv_obj_t* setChoiceRow(lv_obj_t* card, const char* title, const char* hel
     lv_obj_center(l);
   }
   for (int i = 0; i < n; ++i) setTileStyle(lv_obj_get_child(row, i), i == picked, true);
+  wcRec(WCK_CHOICE, row, nullptr, wcTR(title), wcTR(help));
   return row;
 }
 static void setChoicePick(lv_obj_t* row, int picked, bool enabled = true) {
@@ -16730,6 +16773,7 @@ static lv_obj_t* setActionRowRaw(lv_obj_t* card, const char* icon, const char* t
     setIconLabel(cl, UI_ICON_CHEVRON_RIGHT);
     lv_obj_set_style_text_color(cl, lv_color_hex(glow ? COLOR_ON_GLOW : COLOR_TERTIARY), LV_PART_MAIN);
   }
+  wcRec(WCK_ACTION, b, vl, text, nullptr, (uint8_t)(kind | (chevron ? WCF_CHEVRON : 0)));
   return b;
 }
 // The same, its name passed through TR(): the English literal goes in. The raw one
@@ -16796,6 +16840,9 @@ static lv_obj_t* setButton(lv_obj_t* card, const char* icon, const char* title, 
     lv_label_set_long_mode(tl, LV_LABEL_LONG_DOT);
     lv_obj_set_style_max_width(tl, tmax, LV_PART_MAIN);
   }
+  // A page's Save (MQTT) applies its fields: the web presses it for them.
+  const bool save = icon && strcmp(icon, LV_SYMBOL_SAVE) == 0 && title && strcmp(title, "Save") == 0;
+  wcRec(WCK_BUTTON, b, nullptr, TR(title), nullptr, (uint8_t)(kind | (save ? WCF_SAVE : 0)));
   return b;
 }
 
@@ -16813,6 +16860,7 @@ static lv_obj_t* setInfoRow(lv_obj_t* card, const char* title, const char* value
   lv_obj_set_width(vl, w * 55 / 100);
   lv_obj_align(vl, LV_ALIGN_TOP_RIGHT, 0, 0);
   setRowText(row, title, nullptr, w * 45 / 100 - 6, 0);
+  wcRec(WCK_INFO, vl, nullptr, wcTR(title), nullptr);
   return vl;
 }
 
@@ -16842,6 +16890,7 @@ static lv_obj_t* setField(lv_obj_t* parent, const char* title, const char* place
   if (placeholder && placeholder[0]) taSetPlaceholder(ta, TR(placeholder));
   if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
   attachSettingsTaEvents(ta);
+  wcRec(WCK_FIELD, ta, nullptr, wcTR(title), nullptr);
   return ta;
 }
 // Two or more fields side by side in one row; returns the row to hand to setField().
@@ -16869,6 +16918,7 @@ static lv_obj_t* setNumFieldRow(lv_obj_t* card, const char* title, const char* h
   if (max_len > 0) lv_textarea_set_max_length(ta, max_len);
   attachSettingsTaEvents(ta);
   setRowText(row, title, help, w - fw - SC(10), LV_MAX(0, (fh - lv_font_get_line_height(&g_font_14)) / 2));
+  wcRec(WCK_FIELD, ta, nullptr, wcTR(title), wcTR(help), WCF_NUM);
   return ta;
 }
 
@@ -16890,6 +16940,7 @@ static lv_obj_t* setDropdownRow(lv_obj_t* card, const char* title, const char* h
   if (cb) lv_obj_add_event_cb(dd, cb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(dd, clampDropdownListCb, LV_EVENT_CLICKED, nullptr);   // open the list on top of the bar
   lv_obj_set_user_data(dd, (void*)title);   // the T-Deck Pro's picker page title (openDropdownPicker)
+  wcRec(WCK_DROP, dd, nullptr, wcTR(title), wcTR(help));
   return dd;
 }
 
@@ -16945,6 +16996,11 @@ static lv_obj_t* setSliderRow(lv_obj_t* card, const char* title, const char* val
       lv_obj_align(l, k ? LV_ALIGN_TOP_RIGHT : LV_ALIGN_TOP_LEFT, k ? 0 : 2, ey);
     }
   }
+  if (s_wc.on) {
+    char ends_txt[96];
+    snprintf(ends_txt, sizeof ends_txt, "%s\t%s", lo ? lo : "", hi ? hi : "");
+    wcRec(WCK_SLIDER, sl, vl, wcTR(title), ends ? ends_txt : nullptr);
+  }
   return sl;
 }
 
@@ -16959,6 +17015,7 @@ static lv_obj_t* setNote(lv_obj_t* card, const char* text, uint8_t tone = SET_TO
     lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
     lv_obj_set_style_text_color(l, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
     lv_obj_set_style_pad_left(l, 2, LV_PART_MAIN);
+    wcRec(WCK_NOTE, l, nullptr, nullptr, nullptr, tone);
     return l;
   }
   const uint32_t hue = tone == SET_TONE_WARN ? COLOR_STATUS_WARN
@@ -16984,6 +17041,7 @@ static lv_obj_t* setNote(lv_obj_t* card, const char* text, uint8_t tone = SET_TO
   lv_label_set_text(l, TR(text));
   lv_obj_set_style_text_font(l, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(l, lv_color_hex(s_theme_day ? COLOR_TEXT : rgbMix(COLOR_TEXT, hue, 70)), LV_PART_MAIN);
+  wcRec(WCK_NOTE, l, nullptr, nullptr, nullptr, tone);
   return box;
 }
 
@@ -20027,6 +20085,7 @@ static lv_obj_t* setStepperRow(lv_obj_t* card, const char* title, const char* he
   lv_label_set_text(vl, "");
   step_btn(plus_txt, plus_cb, plus_ud);
   setRowText(row, title, help, stacked ? w - 4 : w - cluster_w - 8, stacked ? 0 : 6);
+  wcRec(WCK_STEP, vl, nullptr, wcTR(title), wcTR(help));
   return vl;
 }
 
@@ -20068,6 +20127,7 @@ static lv_obj_t* setSwatchRow(lv_obj_t* card, const char* title, const uint32_t*
     lv_obj_set_style_transform_height(sb, -2, LV_PART_MAIN | LV_STATE_PRESSED);
     if (cb) lv_obj_add_event_cb(sb, cb, LV_EVENT_CLICKED, (void*)(uintptr_t)colors[i]);
   }
+  wcRec(WCK_SWATCH, grid, nullptr, wcTR(title), nullptr);
   return grid;
 }
 static void setSwatchPick(lv_obj_t* tapped) {
@@ -22979,7 +23039,8 @@ static void buildWifiSettings() {
   // (wifiScanService). Kick a fresh scan so "Other networks" fills in; wifiKickScan
   // drops the link first when connected (the S3 cannot sweep while associated).
   s_wifi_list_cont = setColumn();
-  if (wifiConfigWantsWifi()) wifiKickScan();
+  // Not for the web console's copy of the page: the scan drops the link the browser is on.
+  if (wifiConfigWantsWifi() && !s_wc.on) wifiKickScan();
   wifiRebuildNetworkList();
 #else
   lv_obj_t* c = setCard("");
@@ -28362,6 +28423,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'c' && a[2] == ' ')  { const char* t = a + 3; webSendToContact(atoi(t), argAfter(t)); return true; }
   if (a[0] == 's' && a[1] == 'h' && a[2] == ' ')  { const char* t = a + 3; webSendToChannel(atoi(t), argAfter(t)); return true; }
   if (a[0] == 's' && a[1] == ' ')                 { const char* t = a + 2; webSendToThread(atoi(t), argAfter(t)); return true; }
+  if (strncmp(a, "cfg", 3) == 0 && (a[3] == ' ' || !a[3])) { webCfgCmd(a + 3); return true; }   // Settings tab
   if (a[0] == 'i' && a[1] == 'c' && a[2] == ' ')  { webPushContactInfo(atoi(a + 3)); return true; }
   if (a[0] == 'f' && a[1] == 'v' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'f'); return true; }   // favorite toggle
   if (a[0] == 'b' && a[1] == 'k' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'b'); return true; }   // block toggle
@@ -45219,8 +45281,10 @@ static void settingsShowDrawer() {
 
 // Tear down the open category detail sheet and return to the landing. Safe to
 // call when nothing is open (tab change / key dismiss call it unconditionally).
-static void closeSettingsCategory() {
-  if (!s_settings_sheet && s_settings_open_cat < 0) return;
+// The page's own teardown, without the status bar, drawer and landing that a page the
+// user had open also hands back (closeSettingsCategory); the web console's out-of-sight
+// pages (WebSettingsEngine.h) close with just this.
+static void settingsCategoryDrop() {
   // A popup settings modal sits above this category. Tear it down through its
   // canonical closer before resetting g_set_modal, otherwise the root survives
   // on lv_layer_top with no pointer left for Back or Close to dismiss it.
@@ -45236,7 +45300,9 @@ static void closeSettingsCategory() {
       break;
     }
   }
-  hideKb();
+  // The web console's hidden page leaves the device keyboard alone (someone may be
+  // typing a chat there), unless its own click bound the keyboard to a field.
+  if (!s_wc.on || s_kb_bind_ta) hideKb();
   if (s_settings_open_cat == CAT_DEVICE) {   // null the live-label ptrs (freed with the sheet)
     s_device_hw_lbl = nullptr;
     s_update_about_lbl = nullptr; s_ota_status_lbl = nullptr;
@@ -45263,6 +45329,10 @@ static void closeSettingsCategory() {
   s_settings_open_cat = -1;
   s_settings_from_cc  = false;
   resetSettingsModalState();
+}
+static void closeSettingsCategory() {
+  if (!s_settings_sheet && s_settings_open_cat < 0) return;
+  settingsCategoryDrop();
   settingsLandingRefresh();   // a page may have changed what the landing shows
   statusBarSetTall(false);
   updateGlobalStatusBar();   // apply the height change AND the content shift in the SAME
@@ -80474,6 +80544,9 @@ void UITask::showAlert(const char* text, int duration_millis) {
 #endif
   strncpy(_alert, text, sizeof(_alert) - 1);
   _alert[sizeof(_alert) - 1] = '\0';
+#if !defined(HAS_TANMATSU)
+  webCfgNoteAlert(text);   // what a web console change said, for the browser too
+#endif
   _alert_expiry = millis() + static_cast<unsigned long>(duration_millis);
 #if defined(HAS_TOUCH_UI)
   pushDiagLine(text);
@@ -84751,6 +84824,7 @@ void UITask::loop() {
     }
     // Live receive: a mesh callback flagged new/changed messages -> nudge the web client (single-producer here).
     if (s_web_rx_nudge) { s_web_rx_nudge = false; g_web_mirror.pushTermData("{\"t\":\"rx\"}"); }
+    webCfgPump();   // the Settings tab's replies still waiting for room in the data ring
     // Periodic status bar refresh (battery / wifi / clock / signal / unread) for the web header.
     static uint32_t s_web_status_next = 0;
     if ((int32_t)(millis() - s_web_status_next) >= 0) { s_web_status_next = millis() + 3000; webPushStatus(); }
@@ -86675,6 +86749,10 @@ static bool popupRegistryBlocksSwipe() {
     if ((e.flags & PF_SWIPE) && e.is_open()) return true;
   return false;
 }
+
+// The web console's Settings tab: drives the pages above from the browser. Here, after
+// the popup registry, which it uses to tell what a tap opened and how to close it.
+#include "WebSettingsEngine.h"
 
 // Last Wi-Fi STA disconnect reason, surfaced by wifiStaStatusBrief as
 // "auth failed (rNN)". Defined HERE rather than in src/main.cpp because every
