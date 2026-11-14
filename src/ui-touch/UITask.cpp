@@ -9183,6 +9183,9 @@ static void logModeRxCb(lv_event_t* e);
 static void logModeRawCb(lv_event_t* e);
 static void showConfirm(const char* msg, const char* ok_label, void (*on_confirm)(),
                         bool actions_only_nav = false, bool focus_confirm = false);
+// Set just before showConfirm() for an action the web console may only take once someone
+// at the device allows it (factory reset, backup import, firmware install, ...).
+static bool s_confirm_owner_next = false;
 static void clipboardSet(const char* text, const char* tag);
 static void copyLabelLongPressCb(lv_event_t* e);
 static void taClearSelection(lv_obj_t* ta);   // clear composer text-selection before an insert
@@ -10028,6 +10031,7 @@ static void otaPrevPickCb(lv_event_t* e) {
   otaPrevModalClose();
   char m[96];
   snprintf(m, sizeof m, TR("Install beta_%d?\nThis downgrades the firmware and reboots."), v);
+  s_confirm_owner_next = true;
   showConfirm(m, TR("Install"), otaConfirmInstallApply);
 }
 
@@ -18592,9 +18596,11 @@ static void sdRestoreApply() {
 static void sdRestoreFromInternalCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
 #if defined(TLORA_PAGER)
+  s_confirm_owner_next = true;
   showConfirm(TR("Copy only missing internal files to a matching SD profile,\nkeep existing SD data, then reboot?"),
               TR("Resume"), sdRestoreApply);
 #else
+  s_confirm_owner_next = true;
   showConfirm(TR("Overwrite the SD card's settings and\nidentity with the internal copies,\nthen reboot?"),
               TR("Copy"), sdRestoreApply);
 #endif
@@ -21023,6 +21029,7 @@ static void saveTransportWifiCb(lv_event_t* e) {
 namespace {
 typedef void (*SimpleCb)();
 SimpleCb s_confirm_cb = nullptr;
+bool s_confirm_owner = false;   // this confirm needs the device's own "yes" when asked from the web
 lv_obj_t* s_confirm_modal = nullptr;
 lv_obj_t* s_confirm_msg_lbl = nullptr;   // the message, for confirmSetMessage()
 
@@ -21051,6 +21058,8 @@ static void showConfirm(const char* msg, const char* ok_label, SimpleCb on_confi
                         bool actions_only_nav, bool focus_confirm) {
   confirmDismiss();
   s_confirm_cb = on_confirm;
+  s_confirm_owner = s_confirm_owner_next;
+  s_confirm_owner_next = false;
 
   // Backdrop: semi-opaque full-screen catcher so taps outside the card do nothing.
   s_confirm_modal = lv_obj_create(lv_layer_top());
@@ -28393,6 +28402,109 @@ static void webPushSettings() {
   g_web_mirror.pushTermData(s_webdata_buf);
 }
 
+// Dashboard tab: one snapshot of the node, which the page asks for every few seconds
+// while it is on screen. The SD size comes from the worker's off-thread scan.
+static void webPushDash() {
+  if (!g_lv.task || !s_webdata_buf) return;
+  NodePrefs* pr = the_mesh.getNodePrefs();
+  const uint16_t mv = batteryMvSmoothed();
+  const bool wc = WiFi.status() == WL_CONNECTED;
+  const uint32_t now_ms = millis();
+  long sig_age = -1;
+  int sq = 0, rs = 0;
+  if (the_mesh.uiSignalMs() != 0) {
+    sig_age = (long)((now_ms - the_mesh.uiSignalMs()) / 1000);
+    sq = the_mesh.uiSignalSnrQ4();
+    rs = the_mesh.uiSignalRssi();
+  }
+  char* p = s_webdata_buf; const char* e = s_webdata_buf + WEBDATA_BUF;
+  p += snprintf(p, e - p,
+    "{\"t\":\"db\",\"up\":%lu,\"batt\":%d,\"mv\":%u,\"chg\":%d,"
+    "\"freq\":%.3f,\"bw\":%.1f,\"sf\":%d,\"cr\":%d,\"tx\":%d,"
+    "\"sq\":%d,\"rs\":%d,\"sa\":%ld,"
+    "\"rf\":%u,\"rd\":%u,\"tf\":%u,\"td\":%u,\"rok\":%u,\"rer\":%u,\"air\":%lu,"
+    "\"wifi\":%d,\"wr\":%d,\"ble\":%d,\"bc\":%d,"
+    "\"hf\":%u,\"hm\":%u,\"ht\":%u,\"pf\":%u,\"pt\":%u,\"ff\":%u,\"ft\":%u,"
+    "\"nc\":%d,\"mc\":%d,\"unr\":%d,\"la\":%ld,\"lo\":%ld",
+    (unsigned long)(now_ms / 1000), batteryPercentFromMv(mv), (unsigned)mv, batteryIsCharging(mv) ? 1 : 0,
+    pr ? pr->freq : 0.0f, pr ? pr->bw : 0.0f, pr ? pr->sf : 0, pr ? pr->cr : 0, pr ? (int)pr->tx_power_dbm : 0,
+    sq, rs, sig_age,
+    (unsigned)the_mesh.getNumRecvFlood(), (unsigned)the_mesh.getNumRecvDirect(),
+    (unsigned)the_mesh.getNumSentFlood(), (unsigned)the_mesh.getNumSentDirect(),
+    (unsigned)radio_driver.getPacketsRecv(), (unsigned)radio_driver.getPacketsRecvErrors(),
+    (unsigned long)(the_mesh.getTotalAirTime() / 1000),
+    wc ? 1 : 0, wc ? (int)WiFi.RSSI() : 0,
+    g_lv.task->isBleEnabled() ? 1 : 0, g_lv.task->hasBleCapability() ? 1 : 0,
+    (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+    (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024),
+    (unsigned)(heap_caps_get_total_size(MALLOC_CAP_INTERNAL) / 1024),
+    (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+    (unsigned)(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024),
+    (unsigned)((SPIFFS.totalBytes() - SPIFFS.usedBytes()) / 1024), (unsigned)(SPIFFS.totalBytes() / 1024),
+    the_mesh.getNumContacts(), (int)MAX_CONTACTS, g_lv.task->getUnreadTotal(),
+    (long)(g_lv.task->getNodeLat() * 1e6), (long)(g_lv.task->getNodeLon() * 1e6));
+#if CAP_MICROSD && CAP_SD
+  {
+    static uint32_t s_db_sd_ms = 0;
+    if (!s_sdinfo_request && (s_db_sd_ms == 0 || now_ms - s_db_sd_ms >= 60000)) {
+      s_db_sd_ms = now_ms ? now_ms : 1;
+      if (ensureTileFetchTaskRunning()) s_sdinfo_request = true;
+    }
+    if (s_sdinfo_done && s_sdinfo_ok)
+      p += snprintf(p, e - p, ",\"sdt\":%lu,\"sdf\":%lu",
+                    (unsigned long)(s_sdinfo_tot / 1048576ull), (unsigned long)(s_sdinfo_free / 1048576ull));
+  }
+#endif
+  p += snprintf(p, e - p, ",\"id\":\"");
+  for (int b = 0; b < 4; ++b) p += snprintf(p, e - p, "%02X", the_mesh.self_id.pub_key[b]);
+  p += snprintf(p, e - p, "\",\"fw\":\""); jsonEsc(p, e, FIRMWARE_VERSION);
+  p += snprintf(p, e - p, "\",\"hw\":\""); jsonEsc(p, e, board.getManufacturerName());
+  p += snprintf(p, e - p, "\",\"ip\":\""); jsonEsc(p, e, wc ? WiFi.localIP().toString().c_str() : "");
+  p += snprintf(p, e - p, "\",\"ssid\":\""); jsonEsc(p, e, wc ? WiFi.SSID().c_str() : "");
+  p += snprintf(p, e - p, "\",\"nm\":\""); jsonEsc(p, e, g_lv.task->getNodeNameCstr());
+  p += snprintf(p, e - p, "\",\"h\":[");
+
+  // Recently heard: newest adverts from contacts (receive clock) and the discovered ring.
+  struct Heard { int16_t ci, di; uint32_t ago; };
+  Heard top[10]; int nt = 0;
+  auto keep = [&](int16_t ci, int16_t di, uint32_t ago) {
+    int at = nt < 10 ? nt++ : 10;
+    while (at > 0 && top[at - 1].ago > ago) { if (at < 10) top[at] = top[at - 1]; --at; }
+    if (at < 10) top[at] = { ci, di, ago };
+  };
+  auto* rtc = the_mesh.getRTCClock();
+  const uint32_t now_s = (wallClockIsCurrent() && rtc) ? rtc->getCurrentTime() : 0;
+  if (now_s) {
+    const int nc = the_mesh.getNumContacts();
+    for (int i = 0; i < nc; ++i) {
+      ContactInfo c{};
+      if (!the_mesh.getContactByIdx((uint32_t)i, c) || !c.lastmod || c.lastmod > now_s) continue;
+      keep((int16_t)i, -1, now_s - c.lastmod);
+    }
+  }
+  if (s_discovered)
+    for (int i = 0; i < DISCOVERED_MAX; ++i)
+      if (s_discovered[i].used && !s_discovered[i].in_contacts && s_discovered[i].recv_ms)
+        keep(-1, (int16_t)i, (now_ms - s_discovered[i].recv_ms) / 1000);
+  for (int k = 0; k < nt && p < e - 200; ++k) {
+    ContactInfo c{};
+    int hops = -1;
+    if (top[k].ci >= 0) {
+      if (!the_mesh.getContactByIdx((uint32_t)top[k].ci, c)) continue;
+      hops = (c.out_path_len == OUT_PATH_UNKNOWN) ? -1 : (int)pathHops(c.out_path_len);
+    } else {
+      c = s_discovered[top[k].di].ci;
+      hops = (s_discovered[top[k].di].path_len == OUT_PATH_UNKNOWN) ? -1 : (int)pathHops(s_discovered[top[k].di].path_len);
+    }
+    p += snprintf(p, e - p, "%s{\"ty\":%d,\"p\":%d,\"a\":%lu,\"c\":%d,\"n\":\"", k ? "," : "",
+                  (int)c.type, hops, (unsigned long)top[k].ago, top[k].ci >= 0 ? 1 : 0);
+    jsonEsc(p, e, c.name[0] ? c.name : "(unnamed)");
+    p += snprintf(p, e - p, "\"}");
+  }
+  p += snprintf(p, e - p, "]}");
+  g_web_mirror.pushTermData(s_webdata_buf);
+}
+
 static void webSetRadio(float freq, float bw, int sf, int cr, int tx) {
   if (!g_lv.task || freq <= 0) return;
   NodePrefs* pr = the_mesh.getNodePrefs();
@@ -28416,6 +28528,7 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
   if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
   if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+  if (a[0] == 'd' && a[1] == 'b' && (a[2] == 0 || a[2] == ' ')) { webPushDash(); return true; }   // Dashboard tab
   if (a[0] == 'm' && a[1] == 'h' && (a[2] == 0 || a[2] == ' ')) { webPushMentionNames((uint32_t)strtoul(a + 2, nullptr, 10)); return true; }
   if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
   if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
@@ -29163,6 +29276,7 @@ static void fmSdMountOrFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   s_sd_retry_after_ms = 0;   // explicit user retry — bypass the mount backoff
   if (fmSdTryMount()) { fmShowRoots(); return; }
+  s_confirm_owner_next = true;
   showConfirm(TR("Format SD as MESHCOMOD (FAT32)?\nAll data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
@@ -29253,6 +29367,7 @@ static void sdWriteFatLabel(uint8_t pdrv, const char* label) {
 // only mounts, or formats an already-unreadable card).
 static void fmSdLongPressFormatCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED) return;
+  s_confirm_owner_next = true;
   showConfirm(TR("Reformat SD as MESHCOMOD (FAT32)?\nALL data on the card will be erased."), TR("Format"), fmSdDoFormat);
 }
 
@@ -34032,6 +34147,35 @@ static bool webFileTransferStorageBusy() {
          static_cast<bool>(s_file_transfer_list_dir);
 }
 
+#if !defined(HAS_TANMATSU)   // no web console there: no one to ask from the browser
+// A backup holds the private key and a restore replaces the identity: the browser is
+// signed in, but someone at the device still says yes to each (webApprove, below).
+typedef void (*WebApproveDone)(bool ok);
+static void webApprove(const char* what, WebApproveDone done);
+static void webApproveWithdraw(WebApproveDone done);
+static char s_ft_parked[32];   // "BACKUP" / "RESTORE <n>" waiting for that yes
+
+static void fileTransferApproved(bool ok) {
+  char cmd[sizeof s_ft_parked];
+  strlcpy(cmd, s_ft_parked, sizeof cmd);
+  s_ft_parked[0] = 0;
+  if (!cmd[0] || g_web_file_transfer.clients() == 0) return;
+  if (!ok) { fileTransferReply("ERR declined on the device"); return; }
+  if (strcmp(cmd, "BACKUP") == 0) fileTransferBackupBegin();
+  else fileTransferRestoreBegin(cmd);
+}
+
+static void fileTransferAsk(const char* command) {
+  if (strlen(command) >= sizeof s_ft_parked) { fileTransferFail("invalid backup size"); return; }
+  const bool backup = strcmp(command, "BACKUP") == 0;
+  strlcpy(s_ft_parked, command, sizeof s_ft_parked);
+  fileTransferReply("ASK");
+  webApprove(backup ? TR("Download a settings backup. It holds this node's private key.")
+                    : TR("Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts."),
+             fileTransferApproved);
+}
+#endif
+
 static void webFileTransferTick() {
   if (!g_web_file_transfer.enabled()) return;
   if (WiFi.status() != WL_CONNECTED || static_cast<uint32_t>(WiFi.localIP()) == 0) {
@@ -34040,6 +34184,9 @@ static void webFileTransferTick() {
     return;
   }
   if (g_web_file_transfer.clients() == 0) {
+#if !defined(HAS_TANMATSU)
+    if (s_ft_parked[0]) { s_ft_parked[0] = 0; webApproveWithdraw(fileTransferApproved); }
+#endif
     if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
       fileTransferResetUpload(true);
       fileTransferResetRead();
@@ -34077,8 +34224,12 @@ static void webFileTransferTick() {
     else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
     else if (strncmp(command, "DELETE ", 7) == 0) fileTransferDelete(command + 7);
     else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
+#if !defined(HAS_TANMATSU)
+    else if (strcmp(command, "BACKUP") == 0 || strncmp(command, "RESTORE ", 8) == 0) fileTransferAsk(command);
+#else
     else if (strcmp(command, "BACKUP") == 0) fileTransferBackupBegin();
     else if (strncmp(command, "RESTORE ", 8) == 0) fileTransferRestoreBegin(command);
+#endif
     else if (strcmp(command, "CANCEL") == 0) {
       fileTransferResetUpload(true);
       fileTransferResetRead();
@@ -34529,24 +34680,28 @@ static void webAskAnswerCb(lv_event_t* e) {
   webAskClose();
 }
 
-static void webAskOpen(const char* label) {
-  webAskClose();
+// The card both web prompts use: a scrim with a centred card holding the message and
+// a smaller line under it; the caller adds the buttons with webCardBtn().
+static lv_obj_t* webCardOpen(lv_obj_t** slot, const char* msg, const char* sub) {
+  popupClose(slot);
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  s_web_ask = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(s_web_ask);
-  lv_obj_set_size(s_web_ask, sw, sh - STATUSBAR_H);
-  lv_obj_set_pos(s_web_ask, 0, STATUSBAR_H);
-  lv_obj_set_style_bg_color(s_web_ask, lv_color_black(), LV_PART_MAIN);
-  styleScrim(s_web_ask, LV_OPA_60);
-  lv_obj_clear_flag(s_web_ask, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_add_flag(s_web_ask, LV_OBJ_FLAG_FLOATING);
-  lv_obj_move_foreground(s_web_ask);
+  lv_obj_t* scrim = lv_obj_create(lv_layer_top());
+  *slot = scrim;
+  lv_obj_remove_style_all(scrim);
+  lv_obj_set_size(scrim, sw, sh - STATUSBAR_H);
+  lv_obj_set_pos(scrim, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_color(scrim, lv_color_black(), LV_PART_MAIN);
+  styleScrim(scrim, LV_OPA_60);
+  lv_obj_clear_flag(scrim, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(scrim, LV_OBJ_FLAG_FLOATING);
+  lv_obj_move_foreground(scrim);
 
   const lv_coord_t cw = (sw < PCW(260)) ? sw - 20 : PCW(260);
-  lv_obj_t* card = lv_obj_create(s_web_ask);
+  lv_obj_t* card = lv_obj_create(scrim);
   lv_obj_remove_style_all(card);
   lv_obj_set_size(card, cw, LV_SIZE_CONTENT);
+  lv_obj_set_style_max_height(card, sh - STATUSBAR_H - 16, LV_PART_MAIN);
   lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
   styleSurface(card, COLOR_PANEL, 12);
   lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
@@ -34554,41 +34709,96 @@ static void webAskOpen(const char* label) {
   lv_obj_set_style_pad_all(card, PSC(12), LV_PART_MAIN);
   lv_obj_set_style_pad_row(card, PSC(8), LV_PART_MAIN);
   lv_obj_set_flex_flow(card, LV_FLEX_FLOW_COLUMN);
-  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
   const lv_coord_t iw = cw - PSC(12) * 2;
 
-  char msg[112];
-  snprintf(msg, sizeof msg, TR("Allow %s to use the web console?"), label[0] ? label : TR("a browser"));
   lv_obj_t* t = lv_label_create(card);
   lv_label_set_text(t, msg);
   lv_obj_set_style_text_font(t, &g_font_14, LV_PART_MAIN);
   lv_obj_set_style_text_color(t, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(t, iw);
-  lv_obj_t* sub = lv_label_create(card);
-  lv_label_set_text(sub, TR("It will see your chats and contacts, and can send messages, change settings and control this screen."));
-  lv_obj_set_style_text_font(sub, &g_font_12, LV_PART_MAIN);
-  lv_obj_set_style_text_color(sub, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
-  lv_label_set_long_mode(sub, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(sub, iw);
-
-  struct Choice { const char* text; WebSessionAuth::Decision d; };
-  const Choice choices[] = {
-    { TR("Allow once"),    WebSessionAuth::ALLOW_ONCE },
-    { TR("Always allow"),  WebSessionAuth::ALLOW_ALWAYS },
-    { TR("Deny"),          WebSessionAuth::DENY },
-  };
-  for (const Choice& c : choices) {
-    lv_obj_t* b = lv_btn_create(card);
-    lv_obj_set_size(b, iw, PSC(34));
-    styleButton(b);
-    lv_obj_add_event_cb(b, webAskAnswerCb, LV_EVENT_CLICKED, (void*)(intptr_t)c.d);
-    lv_obj_t* bl = lv_label_create(b);
-    lv_label_set_text(bl, c.text);
-    lv_obj_set_style_text_font(bl, &g_font_14, LV_PART_MAIN);
-    lv_obj_center(bl);
-  }
+  lv_obj_t* sb = lv_label_create(card);
+  lv_label_set_text(sb, sub);
+  lv_obj_set_style_text_font(sb, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(sb, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(sb, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(sb, iw);
   if (g_lv.task) g_lv.task->wakeScreen();
+  return card;
+}
+
+static void webCardBtn(lv_obj_t* card, const char* text, lv_event_cb_t cb, intptr_t ud) {
+  lv_obj_t* b = lv_btn_create(card);
+  lv_obj_set_size(b, lv_pct(100), PSC(34));
+  styleButton(b);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void*)ud);
+  lv_obj_t* bl = lv_label_create(b);
+  lv_label_set_text(bl, text);
+  lv_obj_set_style_text_font(bl, &g_font_14, LV_PART_MAIN);
+  lv_obj_center(bl);
+}
+
+static void webAskOpen(const char* label) {
+  char msg[112];
+  snprintf(msg, sizeof msg, TR("Allow %s to use the web console?"), label[0] ? label : TR("a browser"));
+  lv_obj_t* card = webCardOpen(&s_web_ask, msg,
+      TR("It will see your chats and contacts, and can send messages, change settings and control this screen."));
+  webCardBtn(card, TR("Allow once"),   webAskAnswerCb, WebSessionAuth::ALLOW_ONCE);
+  webCardBtn(card, TR("Always allow"), webAskAnswerCb, WebSessionAuth::ALLOW_ALWAYS);
+  webCardBtn(card, TR("Deny"),         webAskAnswerCb, WebSessionAuth::DENY);
+}
+
+// ---- "The web console wants to ..." ---------------------------------------------------
+// A signed-in browser still needs a tap here for the actions that cannot be taken back
+// (factory reset, backup import or download, firmware install, ...). One request at a
+// time; it lapses unanswered after a minute and never shows over the lock screen.
+typedef void (*WebApproveDone)(bool ok);
+static lv_obj_t*      s_web_appr = nullptr;
+static WebApproveDone s_web_appr_done = nullptr;
+static uint32_t       s_web_appr_ms = 0;   // when asked; 0 = nothing pending
+static char           s_web_appr_msg[200];
+static const uint32_t kWebApproveMs = 60000;
+
+static bool webApprovePending() { return s_web_appr_ms != 0; }
+
+static void webApproveFinish(bool ok) {
+  popupClose(&s_web_appr);
+  WebApproveDone d = s_web_appr_done;
+  s_web_appr_done = nullptr;
+  s_web_appr_ms = 0;
+  if (d) d(ok);
+}
+
+// Ask the person at the device; done(true/false) runs on the UI task once they answer.
+static void webApprove(const char* what, WebApproveDone done) {
+  if (webApprovePending()) webApproveFinish(false);
+  strlcpy(s_web_appr_msg, what ? what : "", sizeof s_web_appr_msg);
+  s_web_appr_done = done;
+  s_web_appr_ms = millis() | 1;
+}
+
+// The browser gave up on its request: drop it without an answer.
+static void webApproveWithdraw(WebApproveDone done) {
+  if (!webApprovePending() || s_web_appr_done != done) return;
+  s_web_appr_done = nullptr;
+  webApproveFinish(false);
+}
+
+static void webApproveAnswerCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp()) return;
+  webApproveFinish(lv_event_get_user_data(e) != nullptr);
+}
+
+static void webApproveTick() {
+  if (!webApprovePending()) return;
+  if (millis() - s_web_appr_ms > kWebApproveMs) { webApproveFinish(false); return; }
+  if (lockScreenUp() || s_web_ask) { popupClose(&s_web_appr); return; }
+  if (s_web_appr) return;
+  char head[240];
+  snprintf(head, sizeof head, "%s\n\n%s", TR("The web console wants to:"), s_web_appr_msg);
+  lv_obj_t* card = webCardOpen(&s_web_appr, head, TR("Only allow this if you started it in the browser yourself."));
+  webCardBtn(card, TR("Allow"), webApproveAnswerCb, 1);
+  webCardBtn(card, TR("Deny"),  webApproveAnswerCb, 0);
 }
 
 // UI loop: open the card for a new request, close it once the request is gone. Never
@@ -34597,6 +34807,7 @@ static void webAskOpen(const char* label) {
 static void webConsoleTick() {
   char label[24];
   uint32_t seq = 0;
+  webApproveTick();
   if (lockScreenUp()) {
     if (s_web_ask) webAskClose();
     s_web_ask_seq = 0;
@@ -54844,6 +55055,7 @@ static void confirmBackupImport(const char* stored) {
   s_backup_chosen[sizeof(s_backup_chosen) - 1] = '\0';
   // Actions only, focus on Import: on the Pager the wheel then just loops Import <->
   // Cancel, instead of starting on the X and stopping on the message text (#603).
+  s_confirm_owner_next = true;
   showConfirm(TR("Import this backup?\nReplaces identity,\nchannels & contacts,\nthen reboots."), TR("Import"), doBackupImportChosen,
               /*actions_only_nav=*/true, /*focus_confirm=*/true);
 }
@@ -55077,6 +55289,7 @@ static void backupDeleteCb(lv_event_t* e) {
   if (!path) return;
   strncpy(s_backup_del_path, path, sizeof s_backup_del_path - 1);
   s_backup_del_path[sizeof s_backup_del_path - 1] = '\0';
+  s_confirm_owner_next = true;
   showConfirm(TR("Delete this backup file?\nThis cannot be undone."), TR("Delete"), doDeleteBackup);
 }
 
@@ -55164,6 +55377,7 @@ static void doFactoryReset() {
 }
 static void backupFactoryResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_confirm_owner_next = true;
   showConfirm(TR("Factory reset?\n\nErases identity, contacts,\nchannels, messages, Wi-Fi\nand every setting. This\ncannot be undone."), TR("Erase all"), doFactoryReset);
 }
 
@@ -58242,6 +58456,7 @@ static void powerOffCb(lv_event_t* e) {
 #if defined(TLORA_PAGER)
   // No touch: the wheel clicks its way here (hold S, click the power button, click),
   // so one stray click must not switch the Pager off. Ask first, Cancel focused.
+  s_confirm_owner_next = true;
   showConfirm(TR("Power off?"), TR("Power off"), powerOffNow, true);
 #else
   powerOffNow();

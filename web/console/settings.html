@@ -134,7 +134,7 @@ function pump(){if(pend||!wait.length||!WS||WS.readyState!=1||!WA)return;var r=w
  WS.send('@cfg '+r.v+' '+r.q+(r.a!=null&&r.a!==''?' '+r.a:''))}
 function fin(j,err){var r=pend;if(!r)return;clearTimeout(r.tm);pend=null;if(err)r.rej(new Error(err));else r.res(j);pump()}
 function failAll(m){var l=wait;wait=[];if(pend)fin(null,m);l.forEach(function(r){r.rej(new Error(m))})}
-function onData(p){var j;try{j=JSON.parse(p)}catch(e){return}if(!j||j.t!=='cfg'||!pend||j.q!==pend.q)return;var a=pend.acc;
+function onData(p){var j;try{j=JSON.parse(p)}catch(e){return}if(j&&j.t==='cfg'&&j.k==='grant'){if(GR)GR(j.g);return}if(!j||j.t!=='cfg'||!pend||j.q!==pend.q)return;var a=pend.acc;
  if(j.k=='view')a.view=j;else if(j.k=='items')a.a=a.a.concat(j.a||[]);
  else if(j.k=='end')fin({k:'view',v:a.view,a:a.a});else fin(j)}
 function conn(){WS=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/term');WS.binaryType='arraybuffer';
@@ -221,6 +221,11 @@ function bar(){var n=Object.keys(chg).length;E('bar').classList.toggle('on',n>0)
 function act(it){if(it.ch&&Object.keys(chg).length)return guard().then(function(ok){if(ok)run(it.i)});
  if(it.kd==2)return dlg(it.t||'Are you sure?','This cannot be undone.',[{k:0,l:'Cancel'},{k:1,l:it.t||'Continue',c:'d p'}]).then(function(k){if(k)run(it.i,1)});
  run(it.i)}
+// The device asks the person holding it; resolves 1 (allowed), 0 (denied or timed out), -1 (cancelled here).
+var GR=null;
+function owner(m){return new Promise(function(res){var f=0;function end(g){if(f)return;f=1;GR=null;E('dlg').classList.remove('on');res(g)}
+ GR=function(g){end(g?1:0)};
+ dlg('Approve on the device','Tap Allow on the device screen to go ahead.\n\n'+m,[{k:0,l:'Cancel'}]).then(function(){if(f)return;req('nogo').catch(function(){});end(-1)})})}
 function clean(v){return String(v).replace(/[\r\n]+/g,' ').slice(0,220)}
 function run(idx,ok){loading(1);running=1;var ks=Object.keys(chg),p=req('clr');
  ks.forEach(function(k){p=p.then(function(j){if(j.k=='err')throw new Error(j.m);return req('set',k+' '+clean(chg[k].v))})});
@@ -228,6 +233,8 @@ function run(idx,ok){loading(1);running=1;var ks=Object.keys(chg),p=req('clr');
   // ap: the changes went in before the device asked; steppers already saved theirs.
   if(j.k=='confirm'){if(j.ap)items.forEach(function(t){if(t.k=='step')delete chg[t.i]});
    return dlg('Confirm',j.m,[{k:0,l:'Cancel'},{k:1,l:'Confirm',c:'p'}]).then(function(k){if(k)return run(idx,1);if(j.ap){chg={};load()}})}
+  if(j.k=='ask'){if(j.ap)items.forEach(function(t){if(t.k=='step')delete chg[t.i]});
+   return owner(j.m).then(function(g){if(g==1)return run(idx,1);if(!g)toast('Not allowed on the device.','wrn');if(j.ap){chg={};load()}})}
   if(j.k=='view'){chg={};stack.push({p:j.v.p,t:j.v.ti});show(j);return}
   if(j.k=='err'){toast(j.m,'err');if(/chang/i.test(j.m)){chg={};return load()}return}
   if(j.al)toast(j.al);if(j.pt)toast('Some changes could not be applied.','wrn');if(j.op)toast('That opened on the device screen.','wrn');

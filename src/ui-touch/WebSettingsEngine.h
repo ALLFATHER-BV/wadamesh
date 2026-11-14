@@ -493,6 +493,15 @@ struct WcSnap {
 };
 
 static bool s_wc_confirm_ok = false;   // this request may answer the device's confirms "yes"
+// Confirms marked s_confirm_owner (factory reset, backup import, ...) also need a "yes"
+// from someone at the device: the browser is told to wait, webApprove() asks, and an
+// Allow grants that one action once, for the browser's repeat of the same request.
+static bool     s_wc_need_owner = false;
+static SimpleCb s_wc_owner_cb = nullptr;   // the action being asked about
+static SimpleCb s_wc_grant_cb = nullptr;   // the action allowed at the device
+static uint32_t s_wc_grant_ms = 0;
+static unsigned s_wc_ask_q = 0;
+static const uint32_t WC_GRANT_MS = 30000;
 
 // Tap one thing, then see what it did: a confirm (answered when allowed, else reported),
 // a new page or sheet (a view the browser can go into), or something the device opened
@@ -504,12 +513,18 @@ static int wcClick(lv_obj_t* ob, WcView* out) {
   lv_event_send(ob, LV_EVENT_CLICKED, nullptr);
   if (s_confirm_modal && s_confirm_modal != conf0) {
     gone = s_confirm_modal;
-    if (!s_wc_confirm_ok) {
+    const bool granted = s_confirm_owner && s_wc_grant_cb == s_confirm_cb &&
+                         millis() - s_wc_grant_ms < WC_GRANT_MS;
+    const bool owner = s_wc_confirm_ok && s_confirm_owner && !granted;
+    if (!s_wc_confirm_ok || owner) {
       const char* m = s_confirm_msg_lbl ? wcLabel(s_confirm_msg_lbl) : nullptr;
       strlcpy(s_wc_confirm_msg, m ? m : TR("Are you sure?"), sizeof s_wc_confirm_msg);
+      s_wc_need_owner = owner;
+      s_wc_owner_cb = s_confirm_cb;
       confirmDismiss();
       return WCR_CONFIRM;
     }
+    if (granted) s_wc_grant_cb = nullptr;   // once
     SimpleCb cb = s_confirm_cb;
     confirmDismiss();
     if (cb) cb();
@@ -556,6 +571,7 @@ static const char* wcBusy() {
   if (s_settings_sheet || s_settings_open_cat >= 0 || settingsModalIsOpen() || s_confirm_modal || s_subpage_n)
     return "Settings are open on the device. Close them there and try again.";
   if (s_kb_bind_ta) return "Someone is typing on the device. Try again in a moment.";
+  if (webApprovePending()) return "Waiting for an answer on the device.";
   return nullptr;
 }
 
@@ -740,6 +756,14 @@ static void wcCats() {
   o.end();
 }
 
+static void wcApproved(bool ok) {
+  if (ok) { s_wc_grant_cb = s_wc_owner_cb; s_wc_grant_ms = millis(); }
+  char m[64];
+  snprintf(m, sizeof m, "{\"t\":\"cfg\",\"q\":%u,\"k\":\"grant\",\"g\":%d}", s_wc_ask_q, ok ? 1 : 0);
+  wcEnqueue(m);
+  webCfgPump();
+}
+
 static void webCfgCmd(const char* a) {
   while (*a == ' ') ++a;
   char verb[8] = {0};
@@ -752,6 +776,7 @@ static void webCfgCmd(const char* a) {
 
   if (!strcmp(verb, "cats")) { wcCats(); webCfgPump(); return; }
   if (!strcmp(verb, "clr"))  { wcStageClear(); wcReplyOk(); webCfgPump(); return; }
+  if (!strcmp(verb, "nogo")) { webApproveWithdraw(wcApproved); wcReplyOk(); webCfgPump(); return; }
   if (!strcmp(verb, "set")) {
     char* e = nullptr;
     const long idx = strtol(a, &e, 10);
@@ -808,6 +833,7 @@ static void webCfgCmd(const char* a) {
     return;
   }
   s_wc_confirm_ok = confirm != 0;
+  s_wc_need_owner = false;
   const int staged = s_wcs_n;
   bool partial = false;
   int r = wcApply(&partial, ss);
@@ -827,6 +853,14 @@ static void webCfgCmd(const char* a) {
           break;
         }
     }
+  }
+  if (r == WCR_CONFIRM && s_wc_need_owner) {
+    wcTeardown(ss);
+    s_wc_ask_q = s_wc_q;
+    webApprove(s_wc_confirm_msg, wcApproved);
+    WcOut o; o.begin("ask"); o.str("m", s_wc_confirm_msg); if (staged) o.num("ap", 1); o.end();
+    webCfgPump();
+    return;
   }
   if (r == WCR_CONFIRM) {
     wcTeardown(ss);

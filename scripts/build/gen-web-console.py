@@ -4,13 +4,18 @@
 Each page may pull in a shared snippet with <!--#include name--> or /*#include name*/.
 The gzip header carries no name or timestamp, so the output only changes with the
 sources. The header is committed: the ESP-IDF builds do not run PlatformIO hooks.
+
+Not implemented yet: translation of the pages' own labels (nav, dashboard cards, dialogs).
+They are English only. Text the device sends (settings names, values, prompts) already
+goes through TR() and follows the device language. Future work: ship a per-language
+string table and pick it from the device language reported by /api/info.
 """
 import gzip, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SRC = os.path.join(ROOT, "web", "console")
 OUT = os.path.join(ROOT, "src", "helpers", "esp32", "WebConsoleAssets.h")
-PAGES = [("index", "WC_INDEX"), ("mesh", "WC_MESH"), ("screen", "WC_SCREEN"), ("files", "WC_FILES"), ("settings", "WC_SETTINGS")]
+PAGES = [("index", "WC_INDEX"), ("mesh", "WC_MESH"), ("screen", "WC_SCREEN"), ("files", "WC_FILES"), ("settings", "WC_SETTINGS"), ("dashboard", "WC_DASHBOARD")]
 INC = re.compile(r"<!--#include ([\w.]+)-->|/\*#include ([\w.]+)\*/")
 
 
