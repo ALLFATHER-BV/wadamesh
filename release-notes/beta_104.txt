@@ -1,0 +1,8 @@
+# beta_104 - ThinkNode M9 charging state fix. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, fixes.
+
+Test build, on top of beta_103. The stable build stays beta_101.
+
+# --- Fixes ---
+ThinkNode M9: the charging state is the right way round again. beta_103 read the USB power line backwards, so an M9 showed charging on battery and the battery level on USB. The screensaver stayed up on battery as if it were on power, which drained it faster, and the 3% switch-off could not fire on battery (#842 by ofnabua and #853 by mikehsmith64, also reported by n7eal, benanderson, van_t1000e and michaelaf6fb).
