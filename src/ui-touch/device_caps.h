@@ -473,6 +473,12 @@
   #define CAP_EPAPER 0
 #endif
 
+// Short pulses along the map's self-to-contact lines as messages and ACKs come and go
+// (#827). Each one repaints for about a second, so not on e-paper (see above).
+#ifndef CAP_MAP_PULSES
+  #define CAP_MAP_PULSES (!CAP_EPAPER)
+#endif
+
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
 // cannot show that, and refreshing it to try would wear the panel, so the T-Deck
 // Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.

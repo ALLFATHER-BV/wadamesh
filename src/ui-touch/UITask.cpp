@@ -41017,6 +41017,139 @@ static void freeMapMarkers() {
 #endif
 }
 
+// ---- Traffic pulses (#827) ------------------------------------------------------
+// A message or ACK leaving or arriving shows as a dot running along the line between
+// us and that contact for about a second; channel traffic, and a contact with no
+// position, shows as a ring spreading out from our own marker. Only while the map is
+// on screen and animations are on. Endpoints are kept as lat/lon and re-projected
+// every frame against the centre the markers were last drawn for, so a pan or zoom
+// mid-pulse keeps it on its line.
+enum MapPulseKind : uint8_t { MAP_PULSE_OUT, MAP_PULSE_IN, MAP_PULSE_ACK };
+#if CAP_MAP_PULSES
+struct MapPulse {
+  lv_obj_t* obj;
+  int32_t   lat_e6, lon_e6;   // the contact's end (unused for a ring)
+  bool      ring;
+  bool      inbound;          // the dot runs contact -> self
+  uint32_t  born;
+};
+constexpr int      k_map_pulse_max = 6;      // more at once drops the oldest
+constexpr uint32_t k_map_pulse_ms  = 1000;
+constexpr int      k_map_pulse_dot = 8;
+constexpr int      k_map_pulse_ring_max = 44;
+static MapPulse s_map_pulses[k_map_pulse_max];
+static double   s_map_pulse_cwx = 0.0, s_map_pulse_cwy = 0.0;   // renderMapMarkers' centre
+static uint8_t  s_map_pulse_zoom = 0;
+static bool     s_map_pulse_have_centre = false;
+
+static void mapPulseDeletedCb(lv_event_t* e) {
+  lv_obj_t* o = lv_event_get_target(e);
+  for (auto& p : s_map_pulses) if (p.obj == o) p.obj = nullptr;
+}
+
+static bool mapPulseScreenPt(double lat, double lon, int* sx, int* sy) {
+  if (!s_map_pulse_have_centre) return false;
+  double wx, wy;
+  latLonToWorldPx(lat, lon, s_map_pulse_zoom, &wx, &wy);
+  auto clampc = [](double v) { return (int)(v < -2000 ? -2000 : (v > 2000 ? 2000 : v)); };
+  *sx = clampc(wx - s_map_pulse_cwx + k_map_canvas_w / 2);
+  *sy = clampc(wy - s_map_pulse_cwy + k_map_canvas_h / 2);
+  return true;
+}
+
+static void mapPulseAnimCb(void* var, int32_t v) {   // v: 0..1000
+  lv_obj_t* o = static_cast<lv_obj_t*>(var);
+  MapPulse* p = static_cast<MapPulse*>(lv_obj_get_user_data(o));
+  if (!p || p->obj != o || !g_lv.task) return;
+  int ssx, ssy;
+  if (!mapPulseScreenPt(g_lv.task->getNodeLat(), g_lv.task->getNodeLon(), &ssx, &ssy)) return;
+  // Fade over the last third.
+  const int32_t opa = v < 667 ? 255 : (255 * (1000 - v)) / 333;
+  if (p->ring) {
+    const int d = k_map_pulse_dot + ((k_map_pulse_ring_max - k_map_pulse_dot) * v) / 1000;
+    lv_obj_set_size(o, d, d);
+    lv_obj_set_pos(o, ssx - d / 2, ssy - d / 2);
+    lv_obj_set_style_border_opa(o, (lv_opa_t)opa, LV_PART_MAIN);
+    return;
+  }
+  int csx, csy;
+  if (!mapPulseScreenPt(p->lat_e6 / 1.0e6, p->lon_e6 / 1.0e6, &csx, &csy)) return;
+  const int32_t t = p->inbound ? 1000 - v : v;
+  const int x = ssx + (int)(((int64_t)(csx - ssx) * t) / 1000);
+  const int y = ssy + (int)(((int64_t)(csy - ssy) * t) / 1000);
+  lv_obj_set_pos(o, x - k_map_pulse_dot / 2, y - k_map_pulse_dot / 2);
+  lv_obj_set_style_bg_opa(o, (lv_opa_t)opa, LV_PART_MAIN);
+}
+
+static void mapPulseDoneCb(lv_anim_t* a) {
+  lv_obj_del_async(static_cast<lv_obj_t*>(a->var));
+}
+
+// pub: the other end, or nullptr for channel traffic (a ring around self).
+static void mapPulse(const uint8_t* pub, MapPulseKind kind) {
+  if (s_ui_muted || !s_map_pan_layer || !s_map_pulse_have_centre || !g_lv.task) return;
+  if (g_lv.task->isScreenOff() || getActiveTab() != MAP_TAB_INDEX) return;
+  const double self_lat = g_lv.task->getNodeLat(), self_lon = g_lv.task->getNodeLon();
+  if (self_lat == 0.0 && self_lon == 0.0) return;   // nothing to draw from
+
+  MapPulse np = {};
+  np.ring = true;
+  np.inbound = kind != MAP_PULSE_OUT;
+  if (pub && s_map_show_contacts) {
+    ContactInfo* c = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+    if (c && (c->gps_lat != 0 || c->gps_lon != 0)) {
+      np.ring = false;
+      np.lat_e6 = c->gps_lat;
+      np.lon_e6 = c->gps_lon;
+    }
+  }
+
+  MapPulse* slot = nullptr;
+  for (auto& p : s_map_pulses) if (!p.obj) { slot = &p; break; }
+  if (!slot) {
+    slot = &s_map_pulses[0];
+    for (auto& p : s_map_pulses) if ((int32_t)(p.born - slot->born) < 0) slot = &p;
+    lv_obj_del(slot->obj);   // also stops its anim; the delete callback clears slot->obj
+  }
+
+  const uint32_t col = kind == MAP_PULSE_OUT ? 0x4FC3F7 : (kind == MAP_PULSE_IN ? 0x81C784 : 0xFFD54F);
+  lv_obj_t* o = lv_obj_create(s_map_pan_layer);
+  lv_obj_remove_style_all(o);
+  lv_obj_clear_flag(o, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(o, LV_OBJ_FLAG_IGNORE_LAYOUT);
+  lv_obj_set_size(o, k_map_pulse_dot, k_map_pulse_dot);
+  lv_obj_set_pos(o, -100, -100);   // placed by the first anim frame
+  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  if (np.ring) {
+    lv_obj_set_style_border_width(o, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(o, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_border_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+  } else {
+    lv_obj_set_style_bg_color(o, lv_color_hex(col), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(o, LV_OPA_COVER, LV_PART_MAIN);
+  }
+  lv_obj_move_foreground(o);
+
+  np.obj = o;
+  np.born = millis();
+  *slot = np;
+  lv_obj_set_user_data(o, slot);
+  lv_obj_add_event_cb(o, mapPulseDeletedCb, LV_EVENT_DELETE, nullptr);
+
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, o);
+  lv_anim_set_exec_cb(&a, mapPulseAnimCb);
+  lv_anim_set_values(&a, 0, 1000);
+  lv_anim_set_time(&a, k_map_pulse_ms);
+  lv_anim_set_ready_cb(&a, mapPulseDoneCb);
+  lv_anim_start(&a);
+  mapPulseAnimCb(o, 0);
+}
+#else
+static inline void mapPulse(const uint8_t*, MapPulseKind) {}
+#endif
+
 static void openMarkerPopupForContact(int mesh_idx);
 static void openContactActionSheet(uint32_t mesh_idx, bool is_repeater, const char* name, bool from_map);
 static void openMapPicker(const int* idxs, int n);
@@ -41055,6 +41188,12 @@ static void renderMapMarkers() {
 
   double cwx, cwy;
   latLonToWorldPx(s_map_center_lat, s_map_center_lon, s_map_zoom, &cwx, &cwy);
+#if CAP_MAP_PULSES
+  s_map_pulse_cwx = cwx;
+  s_map_pulse_cwy = cwy;
+  s_map_pulse_zoom = s_map_zoom;
+  s_map_pulse_have_centre = true;
+#endif
 
   // Self screen position (computed even if off-canvas, so link lines from an
   // off-screen self still point the right way; clipped to the canvas by LVGL).
@@ -78850,6 +78989,10 @@ void UITask::onMessageAcked(uint32_t ack_hash) {
     if (!m.outgoing || m.channel) continue;
     if (m.ack_hash == 0) continue;
     if (m.ack_hash == ack_hash && m.deliv_state != DELIV_DELIVERED) {
+      if (!any) {   // one pulse per ACK, from the contact the thread is locked to
+        const int t = findThreadByName(m.thread, false);
+        mapPulse(t >= 0 ? _ui_threads[t].mesh_contact_pub : nullptr, MAP_PULSE_ACK);
+      }
       m.deliv_state = DELIV_DELIVERED;
       any = true;
     }
@@ -79113,6 +79256,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
       showAlert(TR("Send failed"), 1200);
       return false;
     }
+    mapPulse(nullptr, MAP_PULSE_OUT);
     {
       const int slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head]
       if (appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, true, true, false,
@@ -79208,6 +79352,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
   // Register the ACK hash so when the recipient acks the DM, processAck
   // matches it and fires UITask::onMessageAcked → bubble flips to ✓✓.
   the_mesh.uiRegisterExpectedAck(expected_ack, recipient.id.pub_key);
+  mapPulse(recipient.id.pub_key, MAP_PULSE_OUT);
   {
     const int slot = _ui_msg_head;   // appendMessage writes _ui_msgs[head]
     if (appendMessage(_ui_threads[_active_thread_idx].name, sender, truncated, false, true, false,
@@ -84149,6 +84294,7 @@ void UITask::newMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
                                    const char* text, int msgcount,
                                    int8_t snr_q4, int8_t rssi) {
   if (from_pub && touchPrefsIsIgnored(from_pub)) return;   // blocked sender — drop (no chat entry, no notify)
+  mapPulse(from_pub, MAP_PULSE_IN);   // a channel post has no from_pub: a ring around us
   const uint8_t meta_flags = MSG_META_HAS_RX | (is_flood ? MSG_META_IS_FLOOD : 0);
   newMsgImpl(path_len, from_name, text, msgcount, meta_flags, snr_q4, rssi);
   // Mirror newMsgFromPub's contact-pub plumbing so the newly-arrived DM
@@ -84172,6 +84318,7 @@ void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
                                        const char* text, int msgcount,
                                        int8_t snr_q4, int8_t rssi) {
   if (from_pub && touchPrefsIsIgnored(from_pub)) return;   // blocked room — drop
+  mapPulse(from_pub, MAP_PULSE_IN);
   const uint8_t meta_flags = MSG_META_HAS_RX | (is_flood ? MSG_META_IS_FLOOD : 0);
   // The thread is the room (from_name); the per-message sender label is the
   // resolved author. g_last_event is roomMessage here, so newMsgImpl keeps the
@@ -84196,6 +84343,7 @@ void UITask::newRoomMsgFromPubWithMeta(uint8_t path_len, bool is_flood,
 void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, const char* text,
                                  uint32_t ack_hash, uint32_t sent_fp) {
   if (!to_name || !to_name[0] || !text || !text[0]) return;
+  mapPulse(to_pub, MAP_PULSE_OUT);
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated DM as a local outgoing bubble in the recipient's thread (#46) — the
   // on-device UI is otherwise the only message consumer that never sees sends made from the
@@ -84219,6 +84367,7 @@ void UITask::appSentMsgToContact(const uint8_t* to_pub, const char* to_name, con
 
 void UITask::appSentMsgToChannel(const char* channel_name, const char* text, uint32_t sent_fp) {
   if (!channel_name || !channel_name[0] || !text || !text[0]) return;
+  mapPulse(nullptr, MAP_PULSE_OUT);
   const char* sender = (_node_prefs && _node_prefs->node_name[0]) ? _node_prefs->node_name : "me";
   // Mirror an app-originated channel message as a local outgoing bubble in the channel thread — the
   // channel-send command otherwise never tells the on-device UI about companion sends (the DM path
