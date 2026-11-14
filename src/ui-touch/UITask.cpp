@@ -34551,16 +34551,37 @@ static void remoteLandscapeCb(lv_event_t* e) {
 // allow" ones are kept in prefs. No reboot. See web/console/ and the WS server.
 static bool webConsoleOn() { return touchPrefsGetWebTerminal() || touchPrefsGetWebMirror(); }
 
-static void webTrustSave() {
+// The saved list is tagged with this node's identity: prefs can live on the SD card, which
+// outlives an erase-flash and can move to another device, and neither a new identity nor
+// another device should inherit the browsers trusted here. Untagged (older) lists are dropped.
+struct WebTrustBlob {
+  uint8_t magic[4];
+  uint8_t node[8];   // first bytes of self_id.pub_key
   WebTrustedEntry list[WebSessionAuth::MAX_TRUSTED];
-  const int n = g_web_session.exportTrusted(list, WebSessionAuth::MAX_TRUSTED);
-  touchPrefsSetWebTrust(list, (size_t)n * sizeof(WebTrustedEntry));
+};
+static const uint8_t kWebTrustMagic[4] = {'W', 'T', 'R', '1'};
+static const size_t kWebTrustHead = offsetof(WebTrustBlob, list);
+
+static void webTrustSave() {
+  WebTrustBlob b;
+  memcpy(b.magic, kWebTrustMagic, sizeof b.magic);
+  memcpy(b.node, the_mesh.self_id.pub_key, sizeof b.node);
+  const int n = g_web_session.exportTrusted(b.list, WebSessionAuth::MAX_TRUSTED);
+  touchPrefsSetWebTrust(&b, n > 0 ? kWebTrustHead + (size_t)n * sizeof(WebTrustedEntry) : 0);
 }
 
 static void webTrustLoad() {
-  WebTrustedEntry list[WebSessionAuth::MAX_TRUSTED];
-  const size_t n = touchPrefsGetWebTrust(list, sizeof list);
-  g_web_session.loadTrusted(list, (int)(n / sizeof(WebTrustedEntry)));
+  WebTrustBlob b;
+  const size_t len = touchPrefsGetWebTrust(&b, sizeof b);
+  if (len == 0) return;
+  if (len < kWebTrustHead || memcmp(b.magic, kWebTrustMagic, sizeof b.magic) != 0 ||
+      memcmp(b.node, the_mesh.self_id.pub_key, sizeof b.node) != 0) {
+    Serial.println("[WEB] trusted browsers belong to another identity; cleared");
+    touchPrefsSetWebTrust(nullptr, 0);
+    g_web_session.loadTrusted(nullptr, 0);
+    return;
+  }
+  g_web_session.loadTrusted(b.list, (int)((len - kWebTrustHead) / sizeof(WebTrustedEntry)));
 }
 
 static void webConsoleSetOn(bool on) {
