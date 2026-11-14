@@ -169,6 +169,9 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "UsbFilesPaint.h"      // host-tested: how often the USB Files screen repaints (e-paper)
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
+#if defined(WADA_CITY_LOCATOR)
+#include "../helpers/CityLocator.h"   // host-tested: which city limits the GPS fix is inside
+#endif
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
 #include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
@@ -63824,6 +63827,12 @@ static void statusBarPackRight() {
   }
 }
 
+#if defined(WADA_CITY_LOCATOR)
+// The city the last confirmed GPS fix is inside ("" = outside every place, or
+// no fix / no cities.bin yet). Written by cityLocatorTick(), shown on Home.
+static char s_city_now[64] = "";
+#endif
+
 static void updateGlobalStatusBar() {
   // The drawer's badges are a snapshot taken when the grid was built, so a
   // message arriving while it is open -- including while the screen was locked
@@ -64305,6 +64314,9 @@ static void updateGlobalStatusBar() {
       // when the name changes (re-setting the scroll every tick would restart it).
       const char* nm = g_lv.task->getNodeNameCstr();
       if (!nm || !nm[0]) nm = "WADAMESH";
+#if defined(WADA_CITY_LOCATOR)
+      if (s_city_now[0]) nm = s_city_now;   // inside city limits: show the city instead of the node name
+#endif
       if (strncmp(s_left_home_name, nm, sizeof(s_left_home_name)) != 0) {
         strncpy(s_left_home_name, nm, sizeof(s_left_home_name) - 1);
         s_left_home_name[sizeof(s_left_home_name) - 1] = '\0';
@@ -84347,6 +84359,74 @@ static bool sdRuntimeLifecycleBusy() {
   return busy;
 }
 
+#if defined(WADA_CITY_LOCATOR) && CAP_SD
+// City locator: every 10 s with a GPS fix, look up which Census place (city,
+// town or CDP) the fix is inside, using /cities.bin from the SD card root
+// or /transfer/cities.bin (built by tools/make_cities.py). Read once into PSRAM on the
+// first fix; lookups after that never touch the card. A change has to be seen
+// on two checks in a row before it is shown, so GPS jitter on a boundary
+// can't make the name flicker. Nothing is ever transmitted.
+static void cityLocatorTick(unsigned long now) {
+  static unsigned long s_next = 0, s_retry_at = 0;
+  static bool s_gave_up = false, s_first = true;
+  static uint8_t* s_buf = nullptr;
+  static char s_pending[64] = "";
+  static uint8_t s_pending_hits = 0;
+  if ((long)(now - s_next) < 0) return;
+  s_next = now + 10000;
+  if (!g_lv.task || !g_lv.task->getGPSState() || !g_lv.task->getGpsFix()) return;
+
+  if (!city::loaded()) {
+    if (s_gave_up || !s_sd_mounted || (long)(now - s_retry_at) < 0) return;
+    s_retry_at = now + 60000;                       // no card / no file yet: look again in a minute
+    // The card's top folder, or /transfer (where the Wi-Fi Transfer app puts uploads,
+    // so a board with an internal card never needs it taken out).
+    const char* path = SD.exists("/cities.bin")          ? "/cities.bin"
+                     : SD.exists("/transfer/cities.bin") ? "/transfer/cities.bin"
+                     : nullptr;
+    if (!path) return;
+    File f = SD.open(path, FILE_READ);
+    if (!f) { sdNoteIoFailure(); return; }
+    const size_t len = f.size();
+    if (len < 8 || len > 4u * 1024u * 1024u) { f.close(); s_gave_up = true; return; }
+    s_buf = (uint8_t*)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    if (!s_buf) { f.close(); s_gave_up = true; return; }
+    const size_t got = f.read(s_buf, len);
+    f.close();
+    if (got != len || !city::load(s_buf, len)) {
+      heap_caps_free(s_buf);
+      s_buf = nullptr;
+      s_gave_up = true;
+      g_lv.task->showAlert("cities.bin could not be read", 3000);
+      return;
+    }
+  }
+
+  const int32_t lat = (int32_t)llround(g_lv.task->getNodeLat() * 1.0e6);
+  const int32_t lon = (int32_t)llround(g_lv.task->getNodeLon() * 1.0e6);
+  const char* found = city::lookup(lat, lon);
+  const char* name = found ? found : "";
+  if (strcmp(name, s_city_now) == 0) { s_pending_hits = 0; s_first = false; return; }
+  if (strcmp(name, s_pending) == 0) {
+    if (s_pending_hits < 255) ++s_pending_hits;
+  } else {
+    strncpy(s_pending, name, sizeof(s_pending) - 1);
+    s_pending[sizeof(s_pending) - 1] = '\0';
+    s_pending_hits = 1;
+  }
+  if (s_pending_hits < 2 && !s_first) return;
+  s_first = false;
+  strncpy(s_city_now, name, sizeof(s_city_now) - 1);
+  s_city_now[sizeof(s_city_now) - 1] = '\0';
+  s_pending_hits = 0;
+  if (s_city_now[0]) {
+    char msg[80];
+    snprintf(msg, sizeof msg, "Now in %s", s_city_now);
+    g_lv.task->showAlert(msg, 3000);
+  }
+}
+#endif
+
 // Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
 // card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
 // if the card stopped answering, drop and remount it once all SD consumers are
@@ -85660,6 +85740,9 @@ void UITask::loop() {
 #endif
 #if CAP_SD || defined(TLORA_PAGER)
   sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
+#if defined(WADA_CITY_LOCATOR) && CAP_SD
+  cityLocatorTick(now);   // "Now in <city>" from the GPS fix + /cities.bin
+#endif
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. Lifecycle changes run on this loop task; each
   // device transfer uses the shared SPIClass's transaction arbitration.
