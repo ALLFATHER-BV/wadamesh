@@ -96,22 +96,22 @@ static void testChargerAndBattery() {
   assert(g_pin_mode[PIN_SD_CS] == OUTPUT && g_pin_level[PIN_SD_CS] == HIGH);
   assert(Wire.clock_hz == 400000 && Wire.timeout_ms == 20);
 
-  // Discharging: VBUS low
-  g_pin_level[PIN_USB_5V_SENSE] = LOW;
+  // Discharging: no USB, the sense pin idles HIGH
+  g_pin_level[PIN_USB_5V_SENSE] = HIGH;
   g_pin_level[PIN_CHG_DONE] = HIGH;
   assert(board.externalPowerPresent() == 0);
   assert(board.isCharging() == 0);
   assert(!board.isExternalPowered());
 
-  // Charging: VBUS high, DONE# open-drain pulled high
-  g_pin_level[PIN_USB_5V_SENSE] = HIGH;
+  // Charging: USB present (sense pin LOW), DONE# open-drain pulled high
+  g_pin_level[PIN_USB_5V_SENSE] = LOW;
   g_pin_level[PIN_CHG_DONE] = HIGH;
   assert(board.externalPowerPresent() == 1);
   assert(board.isCharging() == 1);
   assert(board.isExternalPowered());
 
-  // Charge complete: VBUS high, DONE# pulled low by U6
-  g_pin_level[PIN_USB_5V_SENSE] = HIGH;
+  // Charge complete: USB present (sense pin LOW), DONE# pulled low by U6
+  g_pin_level[PIN_USB_5V_SENSE] = LOW;
   g_pin_level[PIN_CHG_DONE] = LOW;
   assert(board.externalPowerPresent() == 1);
   assert(board.isCharging() == 2);
