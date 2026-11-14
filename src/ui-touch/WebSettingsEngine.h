@@ -136,8 +136,43 @@ static void webCfgNoteAlert(const char* text) {
 static inline bool wcIs(lv_obj_t* o, const lv_obj_class_t* c) { return lv_obj_check_type(o, c); }
 static inline const char* wcRowStr(uint16_t at) { return at == 0xFFFF ? nullptr : s_wc.arena + at; }
 static inline bool wcHidden(lv_obj_t* o) { return lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); }
-static inline const char* wcLabel(lv_obj_t* l) {
+// The label's text as set, for pointers kept past the next wcLabel() call. A LONG_DOT
+// label too narrow for it reads back cut short (with "...").
+static inline const char* wcLabelRaw(lv_obj_t* l) {
   return l && wcIs(l, &lv_label_class) ? lv_label_get_text(l) : nullptr;
+}
+// The label's full text. A LONG_DOT label that does not fit has "..." written over the
+// end of its own buffer, the replaced bytes kept aside (LVGL 8's lv_label_revert_dots),
+// so the browser would see "..." where the device just ran out of width. The rebuilt
+// text lives in a small ring: use it before the fourth call after this one.
+static const char* wcLabel(lv_obj_t* l) {
+  const char* s = wcLabelRaw(l);
+  if (!s) return nullptr;
+  const lv_label_t* lb = (const lv_label_t*)l;
+  static const uint32_t kDotEndInv = 0xFFFFFFFF;   // LV_LABEL_DOT_END_INV, private to lv_label.c
+  if (lb->long_mode != LV_LABEL_LONG_DOT || lb->dot_end == kDotEndInv ||
+      lb->dot_end < LV_LABEL_DOT_NUM) return s;
+  static char ring[4][192];
+  static uint8_t at = 0;
+  char* out = ring[at++ & 3];
+  const size_t cap = sizeof ring[0];
+  const uint32_t cut = _lv_txt_encoded_get_byte_id(s, lb->dot_end - LV_LABEL_DOT_NUM);
+  const char* kept = lb->dot_tmp_alloc ? lb->dot.tmp_ptr : lb->dot.tmp;
+  size_t n = 0;
+  for (uint32_t i = 0; i < cut && s[i] && n < cap - 1; ++i) out[n++] = s[i];
+  // kept[] holds the bytes from `cut` through the dots' terminator; the rest of the
+  // original text is still in the buffer after it.
+  uint32_t i = cut;
+  for (size_t k = 0; ; ++k, ++i) {
+    const char c = kept[k];
+    const bool was_end = s[i] == '\0';
+    if (c == '\0' || n >= cap - 1) { out[n] = 0; return out; }
+    out[n++] = c;
+    if (was_end) { ++i; break; }
+  }
+  while (s[i] && n < cap - 1) out[n++] = s[i++];
+  out[n] = 0;
+  return out;
 }
 static inline uint32_t wcHex(lv_color_t c) { return (uint32_t)lv_color_to32(c) & 0xFFFFFF; }
 
@@ -201,7 +236,7 @@ static void wcGuessTitle(lv_obj_t* o, const char** t, const char** h) {
   for (uint32_t i = 0; i < n; ++i) {
     lv_obj_t* c = lv_obj_get_child(par, i);
     if (c == o || wcHidden(c)) continue;
-    const char* s = wcLabel(c);
+    const char* s = wcLabelRaw(c);
     if (!s || !s[0]) continue;
     if (!*t) *t = s; else if (!*h) { *h = s; break; }
   }
@@ -212,7 +247,7 @@ static void wcGuessTitle(lv_obj_t* o, const char** t, const char** h) {
   for (int32_t i = at - 1; i >= 0; --i) {
     lv_obj_t* c = lv_obj_get_child(gp, i);
     if (wcHidden(c)) continue;
-    const char* s = wcLabel(c);
+    const char* s = wcLabelRaw(c);
     if (s && s[0]) *t = s;
     break;
   }
@@ -279,7 +314,9 @@ static void wcWalk(lv_obj_t* o, bool is_root) {
 }
 static void wcWalkView(lv_obj_t* root) {
   s_wci_n = 0; s_wci_more = false; s_wc_grp_n = 0;
-  if (root) wcWalk(root, true);
+  if (!root) return;
+  lv_obj_update_layout(root);   // a page built this tick has no sizes yet: every LONG_DOT label would read "..."
+  wcWalk(root, true);
 }
 
 static bool wcIsSave(const WcItem& it) {
@@ -432,7 +469,7 @@ static const char* wcFirstText(lv_obj_t* o) {
   for (uint32_t i = 0; i < n; ++i) {
     lv_obj_t* c = lv_obj_get_child(o, i);
     if (wcHidden(c)) continue;
-    const char* s = wcLabel(c);
+    const char* s = wcLabelRaw(c);
     if (s && s[0] && !((unsigned char)s[0] == 0xEE || (unsigned char)s[0] == 0xEF)) return s;
     if (!s) if (const char* d = wcFirstText(c)) return d;
   }
