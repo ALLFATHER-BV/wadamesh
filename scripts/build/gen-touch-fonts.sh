@@ -426,6 +426,8 @@ generate_fallback_icons() {
   local name=$1
   local size=$2
   local set=$3
+  local guard_expr=${4:-}
+  local guard_label=${5:-$guard_expr}
   local raw="$work_dir/${name}.c"
   local output="$stage/src/ui-touch/${name}.c"
   local text_raw="$work_dir/${name}_text.c"
@@ -443,7 +445,7 @@ generate_fallback_icons() {
     --lv-font-name "$name" -o "$raw"
   # shellcheck disable=SC2086
   python3 "$lucide_py" patch "$raw" "$icons" $metrics
-  normalise "$raw" "$output" "Lucide 1.52.0 (${set} icons)"
+  normalise "$raw" "$output" "Lucide 1.52.0 (${set} icons)" "$guard_expr" "$guard_label"
 }
 
 # Which boards carry which size is decided here, on board macros, and not in
@@ -471,9 +473,13 @@ done
 generate_badge 11
 generate_icons 16
 generate_icons 20
+# The Tanmatsu chat composer's quick-reply and send icons, sized to match its 24 px tab bar.
+generate_icons 24 "defined(HAS_TANMATSU) || defined(DOC_CAPTURE)"
 python3 "$lucide_py" header "$lucide_cp" > "$stage/src/ui-touch/ui_icons.h"
 generate_fallback_icons person_font 16 person
 generate_fallback_icons person_font14 14 person
+# The Tanmatsu tab bar's Contacts icon, beside the 24 px Montserrat LV_SYMBOLs.
+generate_fallback_icons person_font24 24 person "$ui_big"
 generate_fallback_icons zoom_font 16 zoom
 generate_fallback_icons sleepicons_font 16 sleep
 generate_fallback_icons cc_icons_16 16 cc
@@ -528,9 +534,11 @@ files=(
   src/ui-touch/ui_badge_11.c
   src/ui-touch/ui_icons_16.c
   src/ui-touch/ui_icons_20.c
+  src/ui-touch/ui_icons_24.c
   src/ui-touch/ui_icons.h
   src/ui-touch/person_font.c
   src/ui-touch/person_font14.c
+  src/ui-touch/person_font24.c
   src/ui-touch/zoom_font.c
   src/ui-touch/sleepicons_font.c
   src/ui-touch/cc_icons_16.c

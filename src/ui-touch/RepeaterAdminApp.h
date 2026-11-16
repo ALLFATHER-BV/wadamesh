@@ -183,6 +183,7 @@ RaState* s_ra = nullptr;
 
 lv_obj_t* s_ra_root = nullptr;        // the app page (lv_layer_top, under the bar)
 lv_obj_t* s_ra_page = nullptr;        // the scrolling content of the current view
+lv_obj_t* s_ra_col[2] = {nullptr, nullptr};   // two-column landscape: the page's columns
 lv_obj_t* s_ra_edit_root = nullptr;   // the edit sheet (popup)
 lv_obj_t* s_ra_edit_ta = nullptr;
 lv_obj_t* s_ra_edit_choice = nullptr;
@@ -585,8 +586,15 @@ lv_coord_t raColW() {
   return raTwoCol() ? (sw - 34) / 2 : sw - 22;
 }
 // A card under a section name, s_settings_content_w set for the kit's rows.
+// In two columns each card goes under the shorter column (masonry), so a tall card
+// beside a short one leaves no hole the height of the tall one.
+lv_obj_t* raCardParent() {
+  if (!s_ra_col[0] || !s_ra_col[1]) return s_ra_page;
+  lv_obj_update_layout(s_ra_page);
+  return lv_obj_get_height(s_ra_col[1]) < lv_obj_get_height(s_ra_col[0]) ? s_ra_col[1] : s_ra_col[0];
+}
 lv_obj_t* raCard(const char* title_tr) {
-  lv_obj_t* c = settingsCardIn(s_ra_page, title_tr ? title_tr : "");
+  lv_obj_t* c = settingsCardIn(raCardParent(), title_tr ? title_tr : "");
   lv_obj_t* wrap = lv_obj_get_parent(lv_obj_get_parent(c));
   const lv_coord_t w = raColW();
   lv_obj_set_width(wrap, w);
@@ -630,6 +638,7 @@ void raNewPage() {
     lv_obj_del_async(s_ra_page);
     s_ra_page = nullptr;
   }
+  s_ra_col[0] = s_ra_col[1] = nullptr;
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   s_ra_page = lv_obj_create(s_ra_root);
   lv_obj_remove_style_all(s_ra_page);
@@ -641,9 +650,30 @@ void raNewPage() {
   lv_obj_set_style_pad_bottom(s_ra_page, 12, LV_PART_MAIN);
   lv_obj_set_style_pad_left(s_ra_page, 8, LV_PART_MAIN);
   lv_obj_set_style_pad_column(s_ra_page, 10, LV_PART_MAIN);
-  lv_obj_set_flex_flow(s_ra_page, raTwoCol() ? LV_FLEX_FLOW_ROW_WRAP : LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_flex_flow(s_ra_page, raTwoCol() ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
   lv_obj_set_scroll_dir(s_ra_page, LV_DIR_VER);
   lv_obj_set_scrollbar_mode(s_ra_page, LV_SCROLLBAR_MODE_AUTO);
+  if (raTwoCol()) {
+    lv_obj_set_flex_align(s_ra_page, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    for (auto& col : s_ra_col) {
+      col = lv_obj_create(s_ra_page);
+      lv_obj_remove_style_all(col);
+      lv_obj_set_size(col, raColW(), LV_SIZE_CONTENT);
+      lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+      lv_obj_clear_flag(col, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_flag(col, LV_OBJ_FLAG_EVENT_BUBBLE);
+    }
+  }
+}
+// After a view is built: a view of one column's worth of cards sits centred, not
+// against the left edge with the right half empty.
+void raFinishPage() {
+  if (!s_ra_col[0] || !s_ra_col[1]) return;
+  if (lv_obj_get_child_cnt(s_ra_col[1]) == 0) {
+    lv_obj_add_flag(s_ra_col[1], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_pad_left(s_ra_page, 0, LV_PART_MAIN);
+    lv_obj_set_flex_align(s_ra_page, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+  }
 }
 
 // ---- edit sheet -------------------------------------------------------------------
@@ -1458,6 +1488,7 @@ void raBuildView(uint8_t v) {
     case RA_V_ACTIONS:    raBuildActions(); break;
     default: break;
   }
+  raFinishPage();
   if (g_statusbar.root) lv_obj_move_foreground(g_statusbar.root);
   lv_obj_scroll_to_y(s_ra_page, 0, LV_ANIM_OFF);
 }
