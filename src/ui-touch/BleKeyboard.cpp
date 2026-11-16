@@ -30,7 +30,9 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include <helpers/input/HidReportMap.h>
+#if CAP_BLE_KBD_LANG
 #include "BleKeyboardChord.h"
+#endif
 
 namespace BleKbd {
 namespace {
@@ -116,7 +118,9 @@ uint32_t s_gui_since = 0;
 constexpr uint32_t kGuiTapMs = 1000;   // held longer than this it was not a tap
 bool     s_caps = false;
 uint32_t s_dead = 0;   // pending dead-key accent, 0 = none
+#if CAP_BLE_KBD_LANG
 BleCtrlShiftToggle s_ctrl_shift;   // Ctrl+Shift tap -> next layout
+#endif
 
 // Worker.
 enum class CmdType : uint8_t { Activate, Deactivate, ScanOn, ScanOff, Pair, Forget, SyncLeds };
@@ -370,6 +374,7 @@ void onReport(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) 
   }
   s_gui_down = gui;
 
+#if CAP_BLE_KBD_LANG
   // Ctrl+Shift on its own -> next layout. A letter pressed while both are
   // held is a shortcut, so the chord is disarmed and nothing switches.
   bool capture = false;
@@ -387,6 +392,7 @@ void onReport(NimBLERemoteCharacteristic* chr, uint8_t* data, size_t len, bool) 
       emit(BLE_KEY_NEXT_LAYOUT, 0, false);
     }
   }
+#endif
 
   portENTER_CRITICAL(&s_mux);
   const uint8_t held = s_held_usage;
@@ -414,7 +420,9 @@ class ClientCallbacks : public NimBLEClientCallbacks {
     s_gui_down = false;
     s_gui_alone = false;
     s_dead = 0;
+#if CAP_BLE_KBD_LANG
     s_ctrl_shift.reset();
+#endif
     clearHeld();
     portENTER_CRITICAL(&s_mux);
     s_activity = false;
@@ -1048,14 +1056,6 @@ Layout layout() {
 
 const char* layoutName(Layout l) {
   return BleKeyMap::layoutCode(l);
-}
-
-bool layoutToId(Layout l, KeyboardLayoutId* out) {
-  return BleKeyMap::toKeyboardLayout(l, out);
-}
-
-bool layoutFromId(KeyboardLayoutId id, Layout* out) {
-  return BleKeyMap::fromKeyboardLayout(id, out);
 }
 
 void setBackKey(uint8_t usage) {

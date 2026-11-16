@@ -10729,15 +10729,25 @@ static void kbLangBtnRefresh() {
   if (s_kb_lang_lbl) lv_label_set_text(s_kb_lang_lbl, kbLayoutCode(keyboardLayoutsGetCurrent()));
 }
 #if CAP_BLE_KEYBOARD
-// Keep a Bluetooth keyboard on the active on-screen layout when the two have a
-// matching HID table. The Bluetooth-only decks (British, Belgian) have no
-// on-screen id, so cycling to another shared layout leaves them alone.
-static void bleKbdMirrorActiveLayout() {
-  BleKbd::Layout l;
-  if (BleKbd::layoutFromId(keyboardLayoutsGetCurrent(), &l)) {
-    BleKbd::setLayout(l);
-    touchPrefsSetBleKbdLayout((uint8_t)l);
-  }
+// A Bluetooth keyboard types the deck printed on its keys (picked under Bluetooth
+// keyboard, Keys), except while the keyboard language is Bulgarian: the phonetic
+// layout sits on a US deck's keys, so it follows the language key and Ctrl+Shift.
+// The other languages never change the deck, so a UK or Belgian keyboard keeps
+// its symbols and a German UI does not turn a US keyboard into QWERTZ.
+static BleKbd::Layout s_blekbd_deck = BleKbd::Layout::US;
+#if CAP_BLE_KBD_LANG
+// The composer's layout badge (updateGlobalStatusBar): which label was last aligned, and where.
+static lv_obj_t* s_blekbd_badge_for = nullptr;
+static lv_coord_t s_blekbd_badge_y = 0;
+#endif
+static void bleKbdSyncLayout() {
+#if CAP_BLE_KBD_LANG
+  const BleKbd::Layout want = keyboardLayoutsGetCurrent() == KeyboardLayoutId::BG
+                            ? BleKbd::Layout::BG : s_blekbd_deck;
+#else
+  const BleKbd::Layout want = s_blekbd_deck;
+#endif
+  if (BleKbd::layout() != want) BleKbd::setLayout(want);
 }
 #endif
 // The in-map language key (KB_LANG_KEY). Its label is already the active layout
@@ -10760,7 +10770,7 @@ static void kbLangKeyCb(lv_event_t* e) {
   touchPrefsSetKeyboardLayout(static_cast<uint8_t>(next));
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdMirrorActiveLayout();
+  bleKbdSyncLayout();
 #endif
   if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
 }
@@ -10775,7 +10785,7 @@ static void kbLangCycleCb(lv_event_t* e) {
   touchPrefsSetKeyboardLayout(static_cast<uint8_t>(next));
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdMirrorActiveLayout();
+  bleKbdSyncLayout();
 #endif
   kbLangBtnRefresh();
   if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
@@ -10816,7 +10826,7 @@ static void kbApplyUiLangDefault(uint8_t lang) {
   touchPrefsSetKeyboardLayout(target_id);
 #endif
 #if CAP_BLE_KEYBOARD
-  bleKbdMirrorActiveLayout();
+  bleKbdSyncLayout();
 #endif
   kbLangBtnRefresh();
 }
@@ -19203,7 +19213,7 @@ static void kbLayoutSwitchCb(lv_event_t* e) {
   keyboardLayoutsApply(g_lv.keyboard, keyboardLayoutsGetCurrent());
   touchPrefsSetKeyboardLayout(static_cast<uint8_t>(keyboardLayoutsGetCurrent()));
 #if CAP_BLE_KEYBOARD
-  bleKbdMirrorActiveLayout();
+  bleKbdSyncLayout();
 #endif
 #endif
   if (g_lv.task) {
@@ -20905,7 +20915,7 @@ static void buildKeyboardPage() {
 #else
     setNote(c, "Tap the language key (EN) on the on-screen keyboard to cycle through the layouts you turn on.");
 #endif
-#if CAP_BLE_KEYBOARD
+#if CAP_BLE_KBD_LANG
     setNote(c, "Ctrl+Shift on a Bluetooth keyboard does the same.");
 #endif
 #if defined(ESP32)
@@ -21578,22 +21588,10 @@ static void bleKbdModeCb(lv_event_t* e) {
 static void bleKbdLayoutCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   const uint16_t sel = lv_dropdown_get_selected(lv_event_get_target(e));
-  if (sel >= (uint16_t)BleKbd::Layout::Count) return;
-  const BleKbd::Layout l = (BleKbd::Layout)sel;
-  BleKbd::setLayout(l);
-  touchPrefsSetBleKbdLayout((uint8_t)l);
-  // Picking a layout here also selects it for the on-screen keyboard and puts
-  // it in the Ctrl+Shift rotation, so the two do not disagree.
-  KeyboardLayoutId id;
-  if (BleKbd::layoutToId(l, &id)) {
-    uint16_t mask = touchPrefsGetEnabledLayouts();
-    mask |= (uint16_t)(1u << (int)id);
-    touchPrefsSetEnabledLayouts(mask);
-    keyboardLayoutsSetEnabledMask(mask);
-    keyboardLayoutsApply(g_lv.keyboard, id);
-    touchPrefsSetKeyboardLayout((uint8_t)id);
-    kbLangBtnRefresh();
-  }
+  if (sel >= (uint16_t)BleKbd::Layout::BG) return;   // Bulgarian is not a deck, it follows the language
+  s_blekbd_deck = (BleKbd::Layout)sel;
+  touchPrefsSetBleKbdLayout((uint8_t)sel);
+  bleKbdSyncLayout();
 }
 
 static void bleKbdBackKeyCb(lv_event_t* e) {
@@ -21934,9 +21932,11 @@ static void bleKbdBuildPage(bool ble_active) {
   {
     lv_obj_t* c = setCardIn(col, TR("Keys"));
     setDropdownRow(c, "Keyboard layout", "Pick the layout printed on the keys, or letters and symbols come out wrong.",
-                   TR("US (QWERTY)\nUK (QWERTY)\nGerman (QWERTZ)\nFrench (AZERTY)\nBelgian (AZERTY)\nBulgarian (phonetic)"),
-                   (int)BleKbd::layout(), bleKbdLayoutCb);
-    setNote(c, "Ctrl+Shift on the keyboard switches to the next layout you turn on in Settings, Keyboard.");
+                   TR("US (QWERTY)\nUK (QWERTY)\nGerman (QWERTZ)\nFrench (AZERTY)\nBelgian (AZERTY)"),
+                   (int)s_blekbd_deck, bleKbdLayoutCb);
+#if CAP_BLE_KBD_LANG
+    setNote(c, "Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.");
+#endif
     // "Back key": tap, then press the key that should go back.
     {
       const lv_coord_t w = s_settings_content_w, bw = SC(120), bh = SC(34);
@@ -44737,7 +44737,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_move_foreground(p.composer_cnt);
   lv_obj_add_event_cb(p.composer_ta, composerCountCb, LV_EVENT_VALUE_CHANGED, &p);
 
-#if CAP_BLE_KEYBOARD
+#if CAP_BLE_KBD_LANG
   // Layout badge while an external Bluetooth keyboard is connected. It sits
   // just above the composer's left edge and is shown/hidden by
   // updateGlobalStatusBar(), which also keeps it aligned as the composer
@@ -44756,6 +44756,7 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_clear_flag(p.composer_lang, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(p.composer_lang, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(p.composer_lang);
+  s_blekbd_badge_for = nullptr;   // a new label can reuse a freed one's address: align it afresh
 #endif
 
   // Tap on composer → show keyboard
@@ -55689,29 +55690,16 @@ static void bleKbdBack() {
 #endif
 #endif  // CAP_EXT_KEYBOARD
 
-#if CAP_BLE_KEYBOARD
-// Ctrl+Shift on the Bluetooth keyboard: next layout the user turned on under
-// Settings > Keyboard. No second layout = no-op; layouts BleKeyMap has no table
-// for are skipped, because they would keep typing English under a foreign code.
+#if CAP_BLE_KBD_LANG
+// Ctrl+Shift on the Bluetooth keyboard: the language key's job, the next layout
+// turned on under Settings, Keyboard. No second layout = no-op.
 static void bleKbdCycleLayout() {
   if (!keyboardLayoutsAnySecondary()) return;
-  const uint32_t mask = keyboardLayoutsGetEnabledMask() | 1u;   // EN is implicit
-  const int cur = (int)BleKbd::layout();
-  for (int step = 1; step <= (int)BleKbd::Layout::Count; ++step) {
-    const int n = (cur + step) % (int)BleKbd::Layout::Count;
-    const BleKbd::Layout l = (BleKbd::Layout)n;
-    KeyboardLayoutId id;
-    if (!BleKbd::layoutToId(l, &id)) continue;
-    if (!(mask & (1u << (int)id))) continue;
-    if (l == BleKbd::layout()) return;   // only the current layout is enabled
-    BleKbd::setLayout(l);
-    touchPrefsSetBleKbdLayout((uint8_t)l);
-    keyboardLayoutsApply(g_lv.keyboard, id);
-    touchPrefsSetKeyboardLayout((uint8_t)id);
-    kbLangBtnRefresh();   // V4's floating key; the in-map key is rebuilt by apply()
-    if (g_lv.task) g_lv.task->showAlert(BleKbd::layoutName(l), 800);
-    return;
-  }
+  const KeyboardLayoutId next = keyboardLayoutsCycle(g_lv.keyboard);
+  touchPrefsSetKeyboardLayout(static_cast<uint8_t>(next));
+  kbLangBtnRefresh();   // V4's floating key; the in-map key is rebuilt by the cycle
+  bleKbdSyncLayout();
+  if (g_lv.task) g_lv.task->showAlert(keyboardLayoutName(next), 800);
 }
 #endif
 
@@ -57195,11 +57183,13 @@ static void bleKbdDispatch(int key) {
   // A key on a dark screen wakes it and goes no further, like a tap does.
   if (g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
 
+#if CAP_BLE_KBD_LANG
   if (key == BLE_KEY_NEXT_LAYOUT) {
     bleKbdCycleLayout();
     g_lv.task->noteUserInput();
     return;
   }
+#endif
 
   if (luaAppIsOpen() && !s_fm_prompt) {   // the app's ui.input prompt types, not the app (#571)
     const int code = bleKbdLuaCode(key);
@@ -57446,10 +57436,12 @@ static void bleKbdDispatch(int key) {
   if (g_lv.task->isScreenOff()) { g_lv.task->noteUserInput(); return; }
   g_lv.task->noteUserInput();
 
+#if CAP_BLE_KBD_LANG
   if (key == BLE_KEY_NEXT_LAYOUT) {
     bleKbdCycleLayout();
     return;
   }
+#endif
 
   if (luaAppIsOpen() && !s_fm_prompt) {   // the app's ui.input prompt types, not the app (#571)
     const int code = bleKbdLuaCode(key);
@@ -57611,28 +57603,9 @@ static bool s_blekbd_booted = false;
 static void bleKbdBoot() {
   if (s_blekbd_booted) return;
   s_blekbd_booted = true;
-  uint8_t layout = touchPrefsGetBleKbdLayout();
-  // US is also the "never picked one" default. When the on-screen keyboard is
-  // already on a deck the Bluetooth keyboard can type (BG/DE/FR), start there
-  // too instead of making the user find Ctrl+Shift first. An explicit
-  // non-US Bluetooth choice still wins.
-  if (layout == (uint8_t)BleKbd::Layout::US) {
-    BleKbd::Layout active;
-    if (BleKbd::layoutFromId(keyboardLayoutsGetCurrent(), &active))
-      layout = (uint8_t)active;
-  }
-  BleKbd::setLayout(layout < (uint8_t)BleKbd::Layout::Count ? (BleKbd::Layout)layout : BleKbd::Layout::US);
-  // An older build let the Bluetooth deck be chosen on its own. If no
-  // on-screen layout is enabled at all, put that choice in the rotation too,
-  // so Ctrl+Shift has somewhere to go after the update.
-  KeyboardLayoutId chosen;
-  if (touchPrefsGetEnabledLayouts() == 0 && layout != (uint8_t)BleKbd::Layout::US &&
-      BleKbd::layoutToId((BleKbd::Layout)layout, &chosen)) {
-    touchPrefsSetEnabledLayouts((uint16_t)(1u << (int)chosen));
-    keyboardLayoutsSetEnabledMask(1u << (int)chosen);
-    keyboardLayoutsApply(g_lv.keyboard, chosen);
-    touchPrefsSetKeyboardLayout((uint8_t)chosen);
-  }
+  const uint8_t deck = touchPrefsGetBleKbdLayout();
+  s_blekbd_deck = deck < (uint8_t)BleKbd::Layout::BG ? (BleKbd::Layout)deck : BleKbd::Layout::US;
+  bleKbdSyncLayout();
   BleKbd::setBackKey(touchPrefsGetBleKbdBackKey());
   BleKbd::Device dev = {};
   if (touchPrefsGetBleKbdPeer(dev.addr, &dev.addr_type, dev.name, sizeof dev.name)) BleKbd::setPaired(&dev);
@@ -65035,6 +65008,7 @@ static void updateGlobalStatusBar() {
   const char* layout_name = keyboardLayoutName(keyboardLayoutsGetCurrent());
   bool ble_ext = false;
 #if CAP_BLE_KEYBOARD
+  bleKbdSyncLayout();   // catches every other way the keyboard language changes
   ble_ext = BleKbd::linkUp();
   if (ble_ext) {
     // The Bluetooth deck is the one that actually types, and it can be a
@@ -65064,19 +65038,24 @@ static void updateGlobalStatusBar() {
       sbShow(g_statusbar.layout_label, false);
     }
   }
-#if CAP_BLE_KEYBOARD
+#if CAP_BLE_KBD_LANG
   // The same code next to the field being typed into, where the eyes are.
-  // Kept above the composer's right edge; updateGlobalStatusBar runs on every
+  // Kept above the composer's left edge; updateGlobalStatusBar runs on every
   // tick, so it follows the composer when the on-screen keyboard lifts it.
+  // Aligning repaints the badge, so it only re-aligns when the composer moved.
   if (LvChatPanel* p = navOpenChatPanel()) {
     if (p->composer_lang && p->composer_row) {
-      if (ble_ext && show_layout) {
+      const bool show = ble_ext && show_layout;
+      if (show) {
+        const lv_coord_t y = p->composer_row->coords.y1;
         setLabelIfChanged(p->composer_lang, layout_name);
-        lv_obj_align_to(p->composer_lang, p->composer_row, LV_ALIGN_OUT_TOP_LEFT, SC(6), -SC(2));
-        lv_obj_clear_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
-      } else {
-        lv_obj_add_flag(p->composer_lang, LV_OBJ_FLAG_HIDDEN);
+        if (p->composer_lang != s_blekbd_badge_for || y != s_blekbd_badge_y) {
+          lv_obj_align_to(p->composer_lang, p->composer_row, LV_ALIGN_OUT_TOP_LEFT, SC(6), -SC(2));
+          s_blekbd_badge_for = p->composer_lang;
+          s_blekbd_badge_y = y;
+        }
       }
+      sbShow(p->composer_lang, show);
     }
   }
 #endif

@@ -385,6 +385,15 @@
   #define CAP_BLE_KEYBOARD 0
 #endif
 
+// The Bluetooth keyboard's Bulgarian phonetic deck, its Ctrl+Shift language switch
+// and the layout badge above the chat composer (#855). Not the T-LoRa Pager: its app
+// slot is full, and it has a keyboard of its own.
+#if CAP_BLE_KEYBOARD && !defined(TLORA_PAGER)
+  #define CAP_BLE_KBD_LANG 1
+#else
+  #define CAP_BLE_KBD_LANG 0
+#endif
+
 // A keyboard that comes and goes at runtime and is routed like the Bluetooth
 // one above (bleKbdDispatch() and friends): Bluetooth itself, an M5Stack CardKB,
 // or the T-Display P4's clip-on keyboard expansion. CAP_BLE_KEYBOARD stays the

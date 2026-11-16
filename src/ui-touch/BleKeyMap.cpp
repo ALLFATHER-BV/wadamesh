@@ -15,9 +15,9 @@
 namespace BleKeyMap {
 namespace {
 
-constexpr uint32_t DK = 0x8000;   // table flag: dead key (accent waits for the next key)
+constexpr uint16_t DK = 0x8000;   // table flag: dead key (accent waits for the next key)
 
-struct KeyMap { uint8_t usage; uint32_t base, shift, altgr; };
+struct KeyMap { uint8_t usage; uint16_t base, shift, altgr; };   // every value fits 16 bits
 
 // US: every non-letter key. Other layouts list what differs; unlisted
 // non-letters fall back to this table and letters to their US position.
@@ -71,6 +71,7 @@ constexpr KeyMap kBE[] = {
   {0x35,0xB2,0xB3,0}, {0x64,'<','>','\\'},
 };
 
+#if CAP_BLE_KBD_LANG
 // Bulgarian (traditional phonetic). Every letter position is here, so the
 // Latin fallback in mapKey() is never reached for a letter; the punctuation
 // keys a full keyboard has carry the four extra letters.
@@ -96,6 +97,7 @@ constexpr KeyMap kBG[] = {
   {0x35,0x0447,0x0427,0},                           // ` = ч
   {0x64,0x044E,0x042E,0},                           // ISO extra key = ю
 };
+#endif
 
 struct LayoutDef { const KeyMap* keys; size_t count; };
 
@@ -105,7 +107,9 @@ LayoutDef tableFor(BleKbd::Layout layout) {
     case BleKbd::Layout::DE: return {kDE, sizeof(kDE) / sizeof(kDE[0])};
     case BleKbd::Layout::FR: return {kFR, sizeof(kFR) / sizeof(kFR[0])};
     case BleKbd::Layout::BE: return {kBE, sizeof(kBE) / sizeof(kBE[0])};
+#if CAP_BLE_KBD_LANG
     case BleKbd::Layout::BG: return {kBG, sizeof(kBG) / sizeof(kBG[0])};
+#endif
     case BleKbd::Layout::US:
     default:                 return {kUS, sizeof(kUS) / sizeof(kUS[0])};
   }
@@ -119,14 +123,14 @@ const KeyMap* findKey(const KeyMap* table, size_t count, uint8_t usage) {
 
 // A key whose shifted value is its own capital is a letter, so Caps Lock
 // flips it. Cyrillic а-я is contiguous, like Latin a-z.
-bool isCasePair(uint32_t lower, uint32_t upper) {
+bool isCasePair(uint16_t lower, uint16_t upper) {
   if (lower >= 'a' && lower <= 'z') return upper == lower - 32;
   if (lower >= 0xE0 && lower <= 0xFE && lower != 0xF7) return upper == lower - 0x20;
   if (lower >= 0x0430 && lower <= 0x044F) return upper == lower - 0x20;
   return false;
 }
 
-struct Compose { uint32_t accent; char base; uint32_t out; };
+struct Compose { uint16_t accent; char base; uint16_t out; };
 constexpr Compose kCompose[] = {
   {'^','a',0xE2}, {'^','e',0xEA}, {'^','i',0xEE}, {'^','o',0xF4}, {'^','u',0xFB},
   {'^','A',0xC2}, {'^','E',0xCA}, {'^','I',0xCE}, {'^','O',0xD4}, {'^','U',0xDB},
@@ -149,11 +153,11 @@ uint32_t mapKey(BleKbd::Layout layout, uint8_t usage, bool shift, bool altgr, bo
   const KeyMap* km = findKey(def.keys, def.count, usage);
   if (!km && def.keys != kUS) km = findKey(kUS, sizeof(kUS) / sizeof(kUS[0]), usage);
   if (km) {
-    uint32_t v = altgr ? km->altgr : (shift ? km->shift : km->base);
+    uint16_t v = altgr ? km->altgr : (shift ? km->shift : km->base);
     if (!v) return 0;
     if (caps && !altgr && !(v & DK) && isCasePair(km->base, km->shift))
       v = shift ? km->base : km->shift;
-    return (v & DK) ? (kDeadFlag | (v & 0x7FFF)) : v;
+    return (v & DK) ? (kDeadFlag | (uint32_t)(v & 0x7FFF)) : v;
   }
   if (usage >= 0x04 && usage <= 0x1D) {
     if (altgr) return 0;
@@ -168,28 +172,6 @@ uint32_t compose(uint32_t accent, uint32_t cp) {
   for (const Compose& c : kCompose)
     if (c.accent == accent && (uint8_t)c.base == cp) return c.out;
   return 0;
-}
-
-bool toKeyboardLayout(BleKbd::Layout layout, KeyboardLayoutId* out) {
-  if (!out) return false;
-  switch (layout) {
-    case BleKbd::Layout::US: *out = KeyboardLayoutId::EN; return true;
-    case BleKbd::Layout::BG: *out = KeyboardLayoutId::BG; return true;
-    case BleKbd::Layout::DE: *out = KeyboardLayoutId::DE; return true;
-    case BleKbd::Layout::FR: *out = KeyboardLayoutId::FR; return true;
-    default: return false;   // UK (British) and BE have no shared on-screen id
-  }
-}
-
-bool fromKeyboardLayout(KeyboardLayoutId id, BleKbd::Layout* out) {
-  if (!out) return false;
-  switch (id) {
-    case KeyboardLayoutId::EN: *out = BleKbd::Layout::US; return true;
-    case KeyboardLayoutId::BG: *out = BleKbd::Layout::BG; return true;
-    case KeyboardLayoutId::DE: *out = BleKbd::Layout::DE; return true;
-    case KeyboardLayoutId::FR: *out = BleKbd::Layout::FR; return true;
-    default: return false;
-  }
 }
 
 const char* layoutCode(BleKbd::Layout layout) {

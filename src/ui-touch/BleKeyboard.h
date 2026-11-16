@@ -108,11 +108,6 @@ void        setLayout(Layout l);
 Layout      layout();
 const char* layoutName(Layout l);   // two-letter code: EN, UK, DE, FR, BE, BG
 
-// The shared on-screen layout a Bluetooth layout maps to, and back. The
-// British and Belgian decks have no KeyboardLayoutId, so those return false.
-bool        layoutToId(Layout l, KeyboardLayoutId* out);
-bool        layoutFromId(KeyboardLayoutId id, Layout* out);
-
 // A key that goes back besides Esc (its HID usage, 0 = none), for keyboards
 // whose Esc key sends another code.
 void    setBackKey(uint8_t usage);

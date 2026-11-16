@@ -91,17 +91,6 @@ int main() {
   assert(BleKeyMap::compose(0xB4, 'a') == 0xE1);
   assert(BleKeyMap::compose(0xB4, 'q') == 0);
 
-  // ---- The shared on-screen ids ----
-  KeyboardLayoutId id;
-  assert(BleKeyMap::toKeyboardLayout(Layout::BG, &id) && id == KeyboardLayoutId::BG);
-  assert(BleKeyMap::toKeyboardLayout(Layout::US, &id) && id == KeyboardLayoutId::EN);
-  assert(!BleKeyMap::toKeyboardLayout(Layout::UK, &id));
-  assert(!BleKeyMap::toKeyboardLayout(Layout::BE, &id));
-  Layout l;
-  assert(BleKeyMap::fromKeyboardLayout(KeyboardLayoutId::BG, &l) && l == Layout::BG);
-  assert(BleKeyMap::fromKeyboardLayout(KeyboardLayoutId::FR, &l) && l == Layout::FR);
-  assert(!BleKeyMap::fromKeyboardLayout(KeyboardLayoutId::RU, &l));
-
   printf("test_ble_keymap: ok\n");
   return 0;
 }
