@@ -264,6 +264,51 @@ void WebSocketCompanionServer::pruneDisconnected() {
   }
 }
 
+// The value of request header `name` (matched case-insensitively at a line start), its
+// length in *len; nullptr when the request has no such header.
+static const char* httpHeader(const char* req, const char* name, size_t* len) {
+  const size_t nl = strlen(name);
+  for (const char* l = strstr(req, "\r\n"); l; l = strstr(l, "\r\n")) {
+    l += 2;
+    if (strncasecmp(l, name, nl) != 0 || l[nl] != ':') continue;
+    const char* v = l + nl + 1;
+    while (*v == ' ' || *v == '\t') v++;
+    const char* e = v;
+    while (*e && *e != '\r' && *e != '\n') e++;
+    while (e > v && (e[-1] == ' ' || e[-1] == '\t')) e--;
+    *len = (size_t)(e - v);
+    return v;
+  }
+  return nullptr;
+}
+
+// True when the request carries an Origin that is not the address it was sent to: a
+// page from another site (or another host on the LAN) the user happens to have open.
+// Browsers send Origin on every WebSocket upgrade and every cross-origin fetch; the
+// companion app and other non-browser clients send none, and those stay allowed.
+static bool crossOrigin(const char* req) {
+  size_t ol = 0, hl = 0;
+  const char* o = httpHeader(req, "Origin", &ol);
+  if (!o) return false;
+  const char* h = httpHeader(req, "Host", &hl);
+  const char* sep = nullptr;
+  for (size_t i = 0; i + 3 <= ol; i++)
+    if (o[i] == ':' && o[i + 1] == '/' && o[i + 2] == '/') { sep = o + i + 3; break; }
+  if (!h || !sep) return true;   // "Origin: null" (a sandboxed or file: page) included
+  const size_t rest = ol - (size_t)(sep - o);
+  return rest != hl || strncasecmp(sep, h, hl) != 0;
+}
+
+// The peer's IPv4 address for the approval card (0 when this transport cannot tell).
+static uint32_t clientIp(WiFiClient& client) {
+#if defined(HAS_TDISPLAY_P4) && !TDP4_C6_HOSTED
+  (void)client;
+  return 0;   // AT links have no lwIP socket to ask
+#else
+  return static_cast<uint32_t>(client.remoteIP());
+#endif
+}
+
 bool WebSocketCompanionServer::doHandshake(int idx) {
   WSClientState* c = &_clients[idx];
   WiFiClient* cl = &c->client;
@@ -303,6 +348,17 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
           }
           if (c->is_files && (!g_web_file_transfer.enabled() || another_files)) unavailable = true;
 #endif
+          // The console's sockets only take a page served from this device. The companion
+          // protocol path stays open to any client (the official app, the web client).
+          if ((c->is_mirror || c->is_term || c->is_files) && crossOrigin(c->handshake_buf)) {
+            static const char forbidden[] = "HTTP/1.1 403 Forbidden\r\n"
+                                            "Content-Length: 0\r\nConnection: close\r\n\r\n";
+            writeAllBytes(*cl, reinterpret_cast<const uint8_t*>(forbidden), sizeof(forbidden) - 1,
+                          TCP_WRITE_TIMEOUT_MS);
+            c->client.stop();
+            c->in_use = false;
+            return false;
+          }
           if (unavailable) {
             const char* refused = "HTTP/1.1 503 Service Unavailable\r\n"
                                   "Content-Length: 0\r\nConnection: close\r\n\r\n";
@@ -689,7 +745,7 @@ void WebSocketCompanionServer::authFrame(int idx, const uint8_t* buf, size_t len
     const size_t id_len = sp ? (size_t)(sp - id) : strlen(id);
     if (!consoleKey(id, id_len, c->key)) { reply = "ERR reload the page"; c->close_after_tx = true; }
     else {
-      switch (g_web_session.hello(c->key, sp ? sp + 1 : "")) {
+      switch (g_web_session.hello(c->key, sp ? sp + 1 : "", clientIp(c->client))) {
         case WebSessionAuth::OK:   grantClient(idx); return;
         case WebSessionAuth::WAIT: c->waiting = true; reply = "WAIT"; break;
         case WebSessionAuth::BUSY: reply = "ERR the device is answering another browser; enter the code instead"; break;
@@ -853,13 +909,20 @@ bool WebSocketCompanionServer::servePage(int idx) {
   // need its own File Transfer page opened first). Its socket is refused until then, so
   // this is also where a Files-only page asks for approval (202 = waiting; poll again)
   // or uses the code. Query: id=<32 hex>&l=<label>[&code=nnnnnn].
+  // Only the console's own page may call it: it sends X-Wada-Console, which a page on
+  // another site cannot add without a CORS preflight (refused here), and a cross-origin
+  // Origin is refused outright. A plain GET from elsewhere (an <img>, a no-cors fetch)
+  // carries neither header and so cannot raise an approval card.
   else if (strcmp(path, "/api/files") == 0) {
     char id[33] = "", label[24] = "", code[7] = "";
     queryParam(query, "id", id, sizeof id);
     queryParam(query, "l", label, sizeof label);
     queryParam(query, "code", code, sizeof code);
     uint8_t key[16];
+    size_t xl = 0;
     if (!term) status = 404;
+    else if (crossOrigin(c->handshake_buf) || !httpHeader(c->handshake_buf, "X-Wada-Console", &xl))
+      status = 403;
     else if (!consoleKey(id, strlen(id), key)) status = 403;
     else if (code[0]) {
       const bool allowed = g_web_auth.allowed();
@@ -872,7 +935,7 @@ bool WebSocketCompanionServer::servePage(int idx) {
         status = 403;
       }
     } else {
-      switch (g_web_session.hello(key, label)) {
+      switch (g_web_session.hello(key, label, clientIp(c->client))) {
         case WebSessionAuth::OK:   status = 200; break;
         case WebSessionAuth::WAIT: status = 202; break;
         default:                   status = 403; break;

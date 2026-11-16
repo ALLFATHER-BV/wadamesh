@@ -19,10 +19,12 @@ int main() {
   uint32_t seq = 0;
 
   // A new browser waits; a second one is told the device is busy asking about the first.
-  assert(a.hello(A, "Chrome on Mac") == WebSessionAuth::WAIT);
+  assert(a.hello(A, "Chrome on Mac", 0x1701A8C0) == WebSessionAuth::WAIT);   // 192.168.1.23
   assert(a.hello(A, "Chrome on Mac") == WebSessionAuth::WAIT);   // its other tabs join the same request
   assert(a.hello(B, "Safari") == WebSessionAuth::BUSY);
-  assert(a.pending(label, sizeof label, &seq) && strcmp(label, "Chrome on Mac") == 0);
+  uint32_t ip = 0;
+  assert(a.pending(label, sizeof label, &seq, &ip) && strcmp(label, "Chrome on Mac") == 0);
+  assert(ip == 0x1701A8C0);   // the card shows where the request came from
 
   // Allow once: in for this console session, not remembered.
   assert(!a.resolve(seq, WebSessionAuth::ALLOW_ONCE));

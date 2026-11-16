@@ -44,7 +44,8 @@ public:
 
   // A browser's first frame. OK: let it in. WAIT: the device is now asking (or already
   // was, for this browser). BUSY: another browser is being asked. DENIED: just refused.
-  Check hello(const uint8_t key[16], const char* label) {
+  // `ip` (IPv4, first octet in the low byte; 0 = unknown) is shown with the request.
+  Check hello(const uint8_t key[16], const char* label, uint32_t ip = 0) {
     WSA_LOCK();
     expireLocked();
     Check r;
@@ -55,6 +56,7 @@ public:
     else {
       memcpy(_pend_key, key, 16);
       copyLabel(_pend_label, label);
+      _pend_ip = ip;
       _pend_ms = millis();
       _pending = true;
       ++_pend_seq;
@@ -90,14 +92,16 @@ public:
     WSA_UNLOCK();
   }
 
-  // UI side: the request to show, if any. `seq` identifies it for resolve().
-  bool pending(char* label, size_t cap, uint32_t* seq) {
+  // UI side: the request to show, if any. `seq` identifies it for resolve(); `ip` is
+  // the address it came from (0 = unknown).
+  bool pending(char* label, size_t cap, uint32_t* seq, uint32_t* ip = nullptr) {
     WSA_LOCK();
     expireLocked();
     const bool r = _pending;
     if (r) {
       if (label && cap) { strncpy(label, _pend_label, cap - 1); label[cap - 1] = '\0'; }
       if (seq) *seq = _pend_seq;
+      if (ip) *ip = _pend_ip;
     }
     WSA_UNLOCK();
     return r;
@@ -239,6 +243,7 @@ private:
   int _n_sessions = 0;
   uint8_t _pend_key[16];
   char _pend_label[24];
+  uint32_t _pend_ip = 0;
   uint32_t _pend_ms = 0;
   uint32_t _pend_seq = 0;
   bool _pending = false;

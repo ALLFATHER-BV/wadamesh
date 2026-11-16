@@ -34782,9 +34782,14 @@ static void webCardBtn(lv_obj_t* card, const char* text, lv_event_cb_t cb, intpt
   lv_obj_center(bl);
 }
 
-static void webAskOpen(const char* label) {
-  char msg[112];
-  snprintf(msg, sizeof msg, TR("Allow %s to use the web console?"), label[0] ? label : TR("a browser"));
+// The label is whatever the browser sent; the address under it is the one the request
+// actually came from (a label cannot contain a line break, so it cannot fake that line).
+static void webAskOpen(const char* label, uint32_t ip) {
+  char msg[176];
+  int n = snprintf(msg, sizeof msg, TR("Allow %s to use the web console?"), label[0] ? label : TR("a browser"));
+  if (ip && n > 0 && n < (int)sizeof msg)
+    snprintf(msg + n, sizeof msg - n, "\n%u.%u.%u.%u", (unsigned)(ip & 0xFF), (unsigned)((ip >> 8) & 0xFF),
+             (unsigned)((ip >> 16) & 0xFF), (unsigned)(ip >> 24));
   lv_obj_t* card = webCardOpen(&s_web_ask, msg,
       TR("It will see your chats and contacts, and can send messages, change settings and control this screen."));
   webCardBtn(card, TR("Allow once"),   webAskAnswerCb, WebSessionAuth::ALLOW_ONCE);
@@ -34850,15 +34855,15 @@ static void webApproveTick() {
 // pending (or times out) and the card appears once the device is unlocked.
 static void webConsoleTick() {
   char label[24];
-  uint32_t seq = 0;
+  uint32_t seq = 0, ip = 0;
   webApproveTick();
   if (lockScreenUp()) {
     if (s_web_ask) webAskClose();
     s_web_ask_seq = 0;
     return;
   }
-  if (g_web_session.pending(label, sizeof label, &seq)) {
-    if (!s_web_ask || seq != s_web_ask_seq) { s_web_ask_seq = seq; webAskOpen(label); }
+  if (g_web_session.pending(label, sizeof label, &seq, &ip)) {
+    if (!s_web_ask || seq != s_web_ask_seq) { s_web_ask_seq = seq; webAskOpen(label, ip); }
   } else if (s_web_ask) {
     webAskClose();
   }
