@@ -1238,16 +1238,16 @@ static const lv_font_t* withMissingGlyph(lv_font_t* tail_store, const lv_font_t*
 }
 static const lv_font_t* s_text_tail[3] = { nullptr, nullptr, nullptr };   // per size: extras -> '*'
 
-// Swap a label's RESOLVED raw Montserrat for its chained twin (g_font_NN), so
+// Swap a widget's RESOLVED raw Montserrat for its chained twin (g_font_NN), so
 // accents, Greek, Cyrillic and Arabic reach the fallback fonts instead of
-// rendering as tofu boxes. LVGL's theme puts a font on each widget, so a label
+// rendering as tofu boxes. LVGL's theme puts a font on each widget, so a widget
 // that sets none of its own lands on the stock LV_FONT_MONTSERRAT_* — which has
 // no fallback chain. That is the Hungarian "Lek□rdez□s (perc)" class of bug.
 //
-// Reads what the label actually resolves to rather than assuming 14, so a label
+// Reads what the widget actually resolves to rather than assuming 14, so one
 // inheriting a larger font from its parent keeps that size. Anything already
 // chained, or using a deliberately different font, is left alone — so this is
-// safe to call after any lv_label_create.
+// safe to call after any lv_label_create / lv_textarea_create.
 #if defined(TLORA_PAGER)
 // The Pager's map chrome stays a fixed 14 px at every UI size (the map credit, the
 // "set your location" hint), but the bare Montserrat face has no (c), dash or arrow:
@@ -14847,6 +14847,13 @@ static inline bool blurFromDelete(lv_event_t* e) {
 }
 
 static void attachSettingsTaEvents(lv_obj_t* ta) {
+  // A settings field is a bare lv_textarea: it resolves to the theme's raw Montserrat,
+  // which has no fallback chain, so text outside Latin — a Bulgarian quick reply, a
+  // Cyrillic node name — drew as a row of empty boxes. The same string was fine in the
+  // composer, which sets g_font_14 itself, as setField() does; ad-hoc fields that build
+  // their own textarea, like Quick replies, had no such line. Hang the chained twin of
+  // the field's own size here, the one call every settings field already makes.
+  useChainedFont(ta);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_FOCUSED, nullptr);
   lv_obj_add_event_cb(ta, settingsFieldFocusCb, LV_EVENT_CLICKED, nullptr);
   // PRESSED is used only for the keyboard backlight (see kbActivityPressCb),
