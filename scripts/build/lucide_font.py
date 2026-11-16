@@ -29,6 +29,8 @@ Sets:
               them without touching a call site.
   app         The app and launcher icons, on Lucide's own codepoints (U+E000
               and up, clear of the FontAwesome range above).
+  composer    The two app icons of the Tanmatsu chat composer (quick replies and
+              Send), on the same codepoints, for its one 24 px cut.
   person, zoom, sleep, cc
               The codepoints of the small icon fonts the UI chains in as
               fallbacks (TOUCH_SYM_* in UITask.cpp).
@@ -78,6 +80,10 @@ APP = [
     "arrow-down-wide-narrow", "user-plus", "list-checks", "ban",
 ]
 
+# The Tanmatsu chat composer's chips at 24 px: a cut of all of APP there would
+# carry 89 icons for these two.
+COMPOSER = ["message-square-text", "arrow-up"]
+
 FA_PERSON = {0xF007: "user", 0xF519: "radio-tower", 0xF0C0: "users"}
 FA_ZOOM = {0xF002: "search"}
 FA_SLEEP = {0xF185: "sun", 0xF186: "moon"}
@@ -95,6 +101,8 @@ def icon_map(codepoints, which):
         return {t: cp(n) for t, n in LV_SYMBOLS.items()}
     if which == "app":
         return {cp(n): cp(n) for n in APP}
+    if which == "composer":
+        return {cp(n): cp(n) for n in COMPOSER}
     named = {"person": FA_PERSON, "zoom": FA_ZOOM, "sleep": FA_SLEEP, "cc": FA_CC}
     if which in named:
         return {t: cp(n) for t, n in named[which].items()}
