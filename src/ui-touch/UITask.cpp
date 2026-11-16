@@ -7884,7 +7884,7 @@ static bool navComposerEnter(lv_obj_t* ta) {
   if (!text || !text[0]) return true;
   g_lv.task->setComposerMode(true);
   g_lv.task->composerReset();
-  for (const char* cp = text; *cp; ++cp) g_lv.task->composerAppendChar(*cp);
+  composerAppendDisplayText(g_lv.task, text);   // as the Send button: flag placeholders go out as their real pairs
   if (g_lv.task->composerSend()) {
     lv_textarea_set_text(ta, "");
     refreshChatDetailAsync(*p);

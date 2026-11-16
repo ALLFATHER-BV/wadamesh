@@ -253,7 +253,8 @@ Wi-Fi) survives USB reflashes unless `--erase` is given.
 - Release: `scripts/build/p4-release.sh` builds it into `out/p4_<tag>/`, and
   `scripts/release.sh` (beta) publishes it; `gen-flasher-meta.py` emits
   `manifest-tanmatsu.json` (beta channel only, like the other P4 boards).
-- Local: `scripts/build-upload-monitor.sh --tanmatsu` (tries each USB port, P4 then C6,
-  unless `PORT=` is set; esptool aborts on the C6 before writing),
+- Local: `PORT=/dev/cu.usbmodemXXXX scripts/build-upload-monitor.sh --tanmatsu` (PORT is
+  required: every ESP32-P4 passes esptool's chip check, so trying each port could flash
+  another P4 board on the desk; the C6 port is refused by that check),
   `scripts/build-all-targets.sh` target `tanmatsu_standalone`.
 - `CAP_OTA` stays 0: on-device OTA is not wired for the standalone layout yet.

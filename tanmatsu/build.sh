@@ -3,9 +3,9 @@
 # and runs idf.py with our device/target/sdkconfig params.
 #   ./build.sh build        # compile the AppFS app (launcher / app store)
 #   ./build.sh standalone   # + bootloader + standalone table -> build/tanmatsu/wadamesh-tanmatsu-merged.bin
-#   ./build.sh standalone-flash [-p /dev/cu.usbmodemXXXX] [--erase]
+#   ./build.sh standalone-flash -p /dev/cu.usbmodemXXXX [--erase]
 #                           # write that merged image at 0x0. REPLACES the launcher.
-#                           # Without -p, tries each USB serial port (P4, then C6).
+#                           # -p is required: the Tanmatsu's ESP32-P4 port.
 #   ./build.sh menuconfig
 #
 # Never `./build.sh flash`: idf.py writes the launcher's 16M.csv table plus the app
@@ -126,7 +126,7 @@ fi
 # by the launcher. The app finds its data by partition label ('locfd') and the table
 # is at 0x8000 either way, so nothing in the app changes between the two.
 STANDALONE_BIN="build/tanmatsu/wadamesh-tanmatsu-merged.bin"
-# Port the last standalone-flash succeeded on (the P4), for build-upload-monitor.sh.
+# Port the last standalone-flash wrote to (the P4), for build-upload-monitor.sh.
 STANDALONE_PORT_FILE="build/tanmatsu/standalone/port"
 build_standalone() {
   local B=build/tanmatsu PT=build/tanmatsu/standalone/partition-table.bin
@@ -162,39 +162,30 @@ case "${1:-}" in
       case "$1" in
         -p|--port) port="${2:-}"; shift ;;
         --erase)   erase=1 ;;
-        *) echo "usage: ./build.sh standalone-flash [-p PORT] [--erase]" >&2; exit 2 ;;
+        *) echo "usage: ./build.sh standalone-flash -p PORT [--erase]" >&2; exit 2 ;;
       esac
       shift
     done
-    # The Tanmatsu shows two USB serial ports, the ESP32-P4 and its ESP32-C6 radio, and
-    # their names swap between replugs. Trying the C6 is harmless: with --chip esp32p4,
-    # esptool aborts on the chip mismatch before writing. So without -p, try each port
-    # and keep the first that works (recorded in $STANDALONE_PORT_FILE for monitoring).
-    ports=()
-    if [ -n "$port" ]; then
-      ports=("$port")
-    else
-      for p in /dev/cu.usbmodem* /dev/ttyACM*; do [ -e "$p" ] && ports+=("$p"); done
-      [ "${#ports[@]}" -gt 0 ] || { echo "[build.sh] no USB serial ports found. Is the Tanmatsu connected?" >&2; exit 1; }
+    # The port must be named. Every ESP32-P4 passes esptool's --chip esp32p4 check, so
+    # trying each port would also write (or erase) a T-Display P4 or a CrowPanel P4 on
+    # the same desk. The Tanmatsu shows two ports, its ESP32-P4 and its ESP32-C6 radio,
+    # and their names swap between replugs: the C6 one is refused here by that check.
+    if [ -z "$port" ]; then
+      echo "[build.sh] pass -p PORT, the Tanmatsu's ESP32-P4 port. USB serial ports now:" >&2
+      for p in /dev/cu.usbmodem* /dev/ttyACM*; do [ -e "$p" ] && echo "  $p" >&2; done
+      exit 2
     fi
-    # Build once up front so a compile error fails once, not once per port.
     build_standalone
     rm -f "$STANDALONE_PORT_FILE"
-    for p in "${ports[@]}"; do
-      echo "[build.sh] flashing the standalone image to $p: this REPLACES the badge.team launcher"
-      if { [ "$erase" = 0 ] || python -m esptool --chip esp32p4 -p "$p" erase_flash; } &&
-         python -m esptool --chip esp32p4 -p "$p" write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
-           0x2000 build/tanmatsu/bootloader/bootloader.bin \
-           0x8000 build/tanmatsu/standalone/partition-table.bin \
-           0x1D000 build/tanmatsu/standalone/otadata-blank.bin \
-           0x20000 build/tanmatsu/application.bin; then
-        echo "$p" > "$STANDALONE_PORT_FILE"
-        exit 0
-      fi
-      echo "[build.sh] flashing failed on $p." >&2
-    done
-    echo "[build.sh] flashing failed on every port: ${ports[*]}" >&2
-    exit 1 ;;
+    echo "[build.sh] flashing the standalone image to $port: this REPLACES the badge.team launcher"
+    if [ "$erase" = 1 ]; then python -m esptool --chip esp32p4 -p "$port" erase_flash; fi
+    python -m esptool --chip esp32p4 -p "$port" write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+      0x2000 build/tanmatsu/bootloader/bootloader.bin \
+      0x8000 build/tanmatsu/standalone/partition-table.bin \
+      0x1D000 build/tanmatsu/standalone/otadata-blank.bin \
+      0x20000 build/tanmatsu/application.bin
+    echo "$port" > "$STANDALONE_PORT_FILE"
+    exit 0 ;;
 esac
 
 exec idf.py "${IDF_ARGS[@]}" "$@"
