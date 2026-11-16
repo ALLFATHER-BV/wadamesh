@@ -54111,7 +54111,7 @@ static void lockHintText(char* out, size_t cap) {
 #elif defined(HAS_TDECK_PRO)
   // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
   // for them: GPIO0 is the deliberate unlock control.
-  const char* h = TR("press the button to unlock");
+  const char* h = TR("press the BOOT button to unlock");
 #elif defined(HAS_PAGER_KEYBOARD)
   const char* h = TR("hold Backspace to unlock");
 #elif defined(HAS_THINKNODE_M9)
@@ -86555,14 +86555,15 @@ void UITask::loop() {
     uint8_t key_id = 0;
     if (display.takeFrontKeyPress(key_id)) {
       if (_manual_lock) {
-        // Front pads may reveal the retained lock view, but GPIO0 remains the
-        // deliberate unlock control. wakeScreen() would clear _manual_lock and
-        // leave the lock overlay stranded on screen.
-        if (_screen_off) lockscreenReveal();
-        if (key_id == 0) {
+        // Locked: the pads are inert, like the touchscreen and keyboard (a stray
+        // press in a pocket must not light the front-light or wake the panel).
+        // GPIO0 is the deliberate unlock control. The exception is the PIN
+        // screen, which only a GPIO0 press brings up: there the heart still
+        // toggles the front-light so the pad can be read.
+        if (s_pin_root && !_screen_off && key_id == 0) {
           if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+          notePinActivity();
         }
-        _last_input_ms = millis();
       } else if (key_id == 0) {
         if (_screen_off) wakeScreen();
         if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
