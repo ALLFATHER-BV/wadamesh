@@ -84,9 +84,61 @@ bool CrowPanel35Display::begin() {
     Serial.println("[crowpanel-35] GT911 I2C bus init failed");
     return false;
   }
+  if (!_touch.ready()) {
+    Serial.println("[crowpanel-35] GT911 did not answer, resetting it");
+    recoverTouch();
+  }
   _isOn = true;
   Serial.printf("[crowpanel-35] display %dx%d\n", width(), height());
   return true;
+}
+
+// The address the GT911 answers at, 0 while it does not. LovyanGFX's own reset does
+// not hold INT, so after a software restart the chip can come up at 0x14 instead of
+// 0x5D; LovyanGFX tries both, and the touch probe has to follow it. While the chip is
+// silent this tries the full reset again now and then rather than stay dead.
+uint8_t CrowPanel35Display::touchAddr() {
+  if (!_touch.ready()) {
+    const uint32_t now = millis();
+    if (_touch_retries >= 5 || now - _touch_retry_ms < 3000) return 0;
+    _touch_retry_ms = now;
+    ++_touch_retries;
+    if (!recoverTouch()) return 0;
+  }
+  return (uint8_t)_touch.config().i2c_addr;
+}
+
+// After a software restart the GT911 sometimes did not answer the few milliseconds
+// LovyanGFX gives it after its 5 ms reset pulse, and LovyanGFX then leaves touch off
+// for the whole session (kc9seb, Discord: dead touch after a restart from Settings,
+// fine after the next one). A restart in the middle of a touch read can also leave
+// the chip holding SDA low. So: clock the bus free, give the chip a full reset with
+// INT held low (address 0x5D) and its boot time, then try again without a reset.
+// Wire is released first and opened again last, in the order begin() uses: the pin
+// writes below take GPIO15/16 off the I2C peripheral.
+bool CrowPanel35Display::recoverTouch() {
+  Wire.end();
+  pinMode(15, INPUT_PULLUP);
+  pinMode(16, OUTPUT);
+  for (int i = 0; i < 9 && digitalRead(15) == LOW; ++i) {
+    digitalWrite(16, LOW);  delayMicroseconds(5);
+    digitalWrite(16, HIGH); delayMicroseconds(5);
+  }
+  pinMode(47, OUTPUT); digitalWrite(47, LOW);
+  pinMode(48, OUTPUT); digitalWrite(48, LOW);
+  delay(20);
+  digitalWrite(48, HIGH);
+  delay(10);
+  pinMode(47, INPUT);
+  delay(60);
+  auto cfg = _touch.config();
+  cfg.pin_rst = -1;   // the reset above stands; another short pulse would undo it
+  cfg.i2c_addr = 0x5D;
+  _touch.config(cfg);
+  for (int i = 0; i < 3 && !_touch.init(); ++i) delay(20);
+  Wire.begin(15, 16, 400000);
+  Serial.printf("[crowpanel-35] GT911 %s after reset\n", _touch.ready() ? "answers" : "still silent");
+  return _touch.ready();
 }
 
 void CrowPanel35Display::turnOn() {

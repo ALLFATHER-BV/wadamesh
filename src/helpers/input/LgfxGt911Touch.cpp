@@ -65,15 +65,10 @@ void pollTask(void*) {
 }
 
 bool heltecV4CapTouchBegin() {
-#if defined(HAS_CROWPANEL_35)
-  static uint32_t nextProbeMs = 0;
-  const uint32_t now = millis();
-  if (nextProbeMs && (int32_t)(now - nextProbeMs) < 0) return false;
-  nextProbeMs = now + 1000;
-  Wire.beginTransmission(0x5D);
-  if (Wire.endTransmission() != 0) return false;
-#elif defined(HAS_CROWPANEL_50)
-  // The display reset the GT911 and recorded where it answered (0x5D or 0x14).
+#if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50)
+  // The display reset the GT911 and recorded where it answered (0x5D or 0x14). The
+  // 3.5 only ever probed 0x5D, so a chip that came up at 0x14 after a software
+  // restart left touch dead until the next restart (kc9seb, Discord).
   static uint32_t nextProbeMs = 0;
   const uint32_t now = millis();
   if (nextProbeMs && (int32_t)(now - nextProbeMs) < 0) return false;
