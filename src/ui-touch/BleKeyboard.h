@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "device_caps.h"
+#include "BleKeyMap.h"   // Layout + the HID-usage tables
 
 // Serial trace of raw reports, the Report Map and every key handed to the UI.
 // Off by default: typed text would land on the USB serial port the phone app
@@ -41,6 +42,7 @@ constexpr int BLE_KEY_ESC        = BLE_KEY_SPECIAL | 10;
 constexpr int BLE_KEY_TAB        = BLE_KEY_SPECIAL | 11;
 constexpr int BLE_KEY_SHIFT_TAB  = BLE_KEY_SPECIAL | 12;
 constexpr int BLE_KEY_EMOJI      = BLE_KEY_SPECIAL | 13;   // Command (Windows) key tapped on its own
+constexpr int BLE_KEY_NEXT_LAYOUT = BLE_KEY_SPECIAL | 14;  // a clean Ctrl+Shift tap
 // Jump to main tab n (0-4, the tab bar left to right): BLE_KEY_GOTO_TAB + n.
 // No Bluetooth key sends these; the T-Display P4 keyboard's F1-F5 do.
 constexpr int BLE_KEY_GOTO_TAB   = BLE_KEY_SPECIAL | 0x100;
@@ -71,8 +73,6 @@ enum class Error : uint8_t {
   NotKeyboard,    // linked, but the device offers no keyboard input
   NeedsPairing,   // this side lost the bond; pair the keyboard again
 };
-
-enum class Layout : uint8_t { US = 0, UK, DE, FR, BE, Count };
 
 struct Device {
   char    name[32];
@@ -106,7 +106,12 @@ void   forget();
 
 void        setLayout(Layout l);
 Layout      layout();
-const char* layoutName(Layout l);
+const char* layoutName(Layout l);   // two-letter code: EN, UK, DE, FR, BE, BG
+
+// The shared on-screen layout a Bluetooth layout maps to, and back. The
+// British and Belgian decks have no KeyboardLayoutId, so those return false.
+bool        layoutToId(Layout l, KeyboardLayoutId* out);
+bool        layoutFromId(KeyboardLayoutId id, Layout* out);
 
 // A key that goes back besides Esc (its HID usage, 0 = none), for keyboards
 // whose Esc key sends another code.
