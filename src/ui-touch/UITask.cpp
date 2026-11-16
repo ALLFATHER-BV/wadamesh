@@ -26182,8 +26182,14 @@ static int s_home_chart_max_y = 10;
 // updated in place by the Calibrate-battery action.
 static uint16_t s_batt_full_mv = 0;
 static bool     s_batt_full_loaded = false;
+// No single cell rests above this, high-voltage packs included. A reading past it is
+// the charger's rail (the T-Deck Pro shows 4.8-4.9 V on USB), so it is never a "full".
+static const uint16_t kBattFullMaxMv = 4400;
 static uint16_t batteryFullMv() {
   if (!s_batt_full_loaded) { s_batt_full_mv = touchPrefsGetBattFullMv(); s_batt_full_loaded = true; }
+  // A calibration taken on USB before the guard in calibrateBatteryCb stored the charger's
+  // rail as 100%, so a full pack resting at 4.18 V read about 60%. Fall back to the default.
+  if (s_batt_full_mv > kBattFullMaxMv) return 4200;
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
 
@@ -26390,6 +26396,12 @@ static void calibrateBatteryCb(lv_event_t* e) {
   const uint16_t mv = n ? (uint16_t)(sum / n) : 0;
   if (mv < 3500) {   // implausibly low for a "full" pack — refuse rather than store junk
     if (g_lv.task) g_lv.task->showAlert(TR("Battery read too low — charge fully first"), 2600);
+    return;
+  }
+  // On USB the reading is the charger's rail, not the cell: calibrated there, a full
+  // pack resting on battery came out at about 60%.
+  if (batteryIsCharging(mv) || mv > kBattFullMaxMv) {
+    if (g_lv.task) g_lv.task->showAlert(TR("Unplug USB, then calibrate with a full battery"), 2600);
     return;
   }
   touchPrefsSetBattFullMv(mv);
