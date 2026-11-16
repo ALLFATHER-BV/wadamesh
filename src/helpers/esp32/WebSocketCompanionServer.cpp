@@ -7,6 +7,7 @@
 #include <esp_heap_caps.h>
 #include "WebMirror.h"
 #include "WebConsoleAssets.h"
+#include "../../ui-touch/device_caps.h"   // CAP_WEB_CONSOLE_SETTINGS: the Settings and Dashboard tabs
 #if WADA_WEB_FILE_TRANSFER
 #include "WebFileTransfer.h"
 #include "WebFileTransferPage.h"
@@ -792,6 +793,7 @@ bool WebSocketCompanionServer::servePage(int idx) {
 
   const bool term = g_web_mirror.terminalOn();
   const bool screen = g_web_mirror.enabled();
+  const bool settings = CAP_WEB_CONSOLE_SETTINGS && term;   // not on every board (device_caps.h)
 #if WADA_WEB_FILE_TRANSFER
   const bool files = term || g_web_file_transfer.enabled();
 #else
@@ -803,10 +805,12 @@ bool WebSocketCompanionServer::servePage(int idx) {
     { "/mesh",       WC_MESH_GZ,   WC_MESH_GZ_LEN },
     { "/screen",     WC_SCREEN_GZ, WC_SCREEN_GZ_LEN },
     { "/files",      WC_FILES_GZ,  WC_FILES_GZ_LEN },
+#if CAP_WEB_CONSOLE_SETTINGS
     { "/settings",   WC_SETTINGS_GZ, WC_SETTINGS_GZ_LEN },
     { "/dashboard",  WC_DASHBOARD_GZ, WC_DASHBOARD_GZ_LEN },
+#endif
   };
-  const bool on[] = { term || screen || files, term || screen || files, term, screen, files, term, term };
+  const bool on[] = { term || screen || files, term || screen || files, term, screen, files, settings, settings };
 
   char hdr[400];
   for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
@@ -841,8 +845,8 @@ bool WebSocketCompanionServer::servePage(int idx) {
   if (strcmp(path, "/api/info") == 0) {
     status = 200;
     snprintf(body, sizeof body, "{\"dashboard\":%s,\"mesh\":%s,\"screen\":%s,\"files\":%s,\"settings\":%s}",
-             term ? "true" : "false", term ? "true" : "false", screen ? "true" : "false",
-             files ? "true" : "false", term ? "true" : "false");
+             settings ? "true" : "false", term ? "true" : "false", screen ? "true" : "false",
+             files ? "true" : "false", settings ? "true" : "false");
   }
 #if WADA_WEB_FILE_TRANSFER
   // Files tab: start File Transfer for an approved browser (the device would otherwise

@@ -16510,12 +16510,15 @@ static void wcObjGoneCb(lv_event_t* e) {
   for (int i = 0; i < s_wc.n; ++i) if (s_wc.rows[i].obj == o) s_wc.rows[i].obj = nullptr;
 }
 static void wcRec(uint8_t kind, lv_obj_t* obj, lv_obj_t* aux, const char* title, const char* help, uint8_t sub = 0) {
+#if !CAP_WEB_CONSOLE_SETTINGS
+  return;
+#endif
   if (!s_wc.on || !s_wc.rows || !obj || s_wc.n >= WC_MAX_ROWS) return;
   s_wc.rows[s_wc.n++] = { obj, aux, wcStr(title), wcStr(help), kind, sub };
   lv_obj_add_event_cb(obj, wcObjGoneCb, LV_EVENT_DELETE, nullptr);
 }
 static inline const char* wcTR(const char* s) { return s && s[0] ? TR(s) : nullptr; }
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE_SETTINGS
 static void webCfgNoteAlert(const char* text);   // WebSettingsEngine.h (included at the end)
 static void webCfgCmd(const char* args);
 static void webCfgPump();
@@ -28402,6 +28405,7 @@ static void webPushSettings() {
   g_web_mirror.pushTermData(s_webdata_buf);
 }
 
+#if CAP_WEB_CONSOLE_SETTINGS
 // Dashboard tab: one snapshot of the node, which the page asks for every few seconds
 // while it is on screen. The SD size comes from the worker's off-thread scan.
 static void webPushDash() {
@@ -28504,6 +28508,7 @@ static void webPushDash() {
   p += snprintf(p, e - p, "]}");
   g_web_mirror.pushTermData(s_webdata_buf);
 }
+#endif
 
 static void webSetRadio(float freq, float bw, int sf, int cr, int tx) {
   if (!g_lv.task || freq <= 0) return;
@@ -28528,7 +28533,9 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'g' && (a[2] == 0 || a[2] == ' ')) { webPushSettings(); return true; }
   if (a[0] == 's' && a[1] == 'r' && a[2] == ' ') { float fq=0,bw=0; int sf=0,cr=0,tx=0; sscanf(a+3, "%f %f %d %d %d", &fq,&bw,&sf,&cr,&tx); webSetRadio(fq,bw,sf,cr,tx); return true; }
   if (a[0] == 's' && a[1] == 't' && (a[2] == 0 || a[2] == ' ')) { webPushStatus(); return true; }
+#if CAP_WEB_CONSOLE_SETTINGS
   if (a[0] == 'd' && a[1] == 'b' && (a[2] == 0 || a[2] == ' ')) { webPushDash(); return true; }   // Dashboard tab
+#endif
   if (a[0] == 'm' && a[1] == 'h' && (a[2] == 0 || a[2] == ' ')) { webPushMentionNames((uint32_t)strtoul(a + 2, nullptr, 10)); return true; }
   if (a[0] == 'm' && a[1] == ' ')                 { webPushMessages(atoi(a + 2)); return true; }
   if (a[0] == 'o' && a[1] == 'c' && a[2] == ' ')  { webOpenContact(atoi(a + 3)); return true; }
@@ -28536,7 +28543,9 @@ static bool handleWebDataCmd(const char* cmd) {
   if (a[0] == 's' && a[1] == 'c' && a[2] == ' ')  { const char* t = a + 3; webSendToContact(atoi(t), argAfter(t)); return true; }
   if (a[0] == 's' && a[1] == 'h' && a[2] == ' ')  { const char* t = a + 3; webSendToChannel(atoi(t), argAfter(t)); return true; }
   if (a[0] == 's' && a[1] == ' ')                 { const char* t = a + 2; webSendToThread(atoi(t), argAfter(t)); return true; }
+#if CAP_WEB_CONSOLE_SETTINGS
   if (strncmp(a, "cfg", 3) == 0 && (a[3] == ' ' || !a[3])) { webCfgCmd(a + 3); return true; }   // Settings tab
+#endif
   if (a[0] == 'i' && a[1] == 'c' && a[2] == ' ')  { webPushContactInfo(atoi(a + 3)); return true; }
   if (a[0] == 'f' && a[1] == 'v' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'f'); return true; }   // favorite toggle
   if (a[0] == 'b' && a[1] == 'k' && a[2] == ' ')  { webContactAction(atoi(a + 3), 'b'); return true; }   // block toggle
@@ -34147,7 +34156,7 @@ static bool webFileTransferStorageBusy() {
          static_cast<bool>(s_file_transfer_list_dir);
 }
 
-#if !defined(HAS_TANMATSU)   // no web console there: no one to ask from the browser
+#if CAP_WEB_CONSOLE   // no web console, no one to ask from the browser
 // A backup holds the private key and a restore replaces the identity: the browser is
 // signed in, but someone at the device still says yes to each (webApprove, below).
 typedef void (*WebApproveDone)(bool ok);
@@ -34184,7 +34193,7 @@ static void webFileTransferTick() {
     return;
   }
   if (g_web_file_transfer.clients() == 0) {
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE
     if (s_ft_parked[0]) { s_ft_parked[0] = 0; webApproveWithdraw(fileTransferApproved); }
 #endif
     if (s_file_transfer_uploading || s_file_transfer_downloading || s_file_transfer_listing) {
@@ -34224,7 +34233,7 @@ static void webFileTransferTick() {
     else if (strncmp(command, "GET ", 4) == 0) fileTransferDownloadBegin(command + 4);
     else if (strncmp(command, "DELETE ", 7) == 0) fileTransferDelete(command + 7);
     else if (strncmp(command, "READ ", 5) == 0) fileTransferDownloadRead(command);
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE
     else if (strcmp(command, "BACKUP") == 0 || strncmp(command, "RESTORE ", 8) == 0) fileTransferAsk(command);
 #else
     else if (strcmp(command, "BACKUP") == 0) fileTransferBackupBegin();
@@ -80782,7 +80791,7 @@ void UITask::showAlert(const char* text, int duration_millis) {
 #endif
   strncpy(_alert, text, sizeof(_alert) - 1);
   _alert[sizeof(_alert) - 1] = '\0';
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE_SETTINGS
   webCfgNoteAlert(text);   // what a web console change said, for the browser too
 #endif
   _alert_expiry = millis() + static_cast<unsigned long>(duration_millis);
@@ -85012,7 +85021,7 @@ void UITask::loop() {
     }
   }
 #endif
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE
   webConsoleTick();
 #endif
 #if WADA_WEB_FILE_TRANSFER
@@ -85062,7 +85071,9 @@ void UITask::loop() {
     }
     // Live receive: a mesh callback flagged new/changed messages -> nudge the web client (single-producer here).
     if (s_web_rx_nudge) { s_web_rx_nudge = false; g_web_mirror.pushTermData("{\"t\":\"rx\"}"); }
+#if CAP_WEB_CONSOLE_SETTINGS
     webCfgPump();   // the Settings tab's replies still waiting for room in the data ring
+#endif
     // Periodic status bar refresh (battery / wifi / clock / signal / unread) for the web header.
     static uint32_t s_web_status_next = 0;
     if ((int32_t)(millis() - s_web_status_next) >= 0) { s_web_status_next = millis() + 3000; webPushStatus(); }

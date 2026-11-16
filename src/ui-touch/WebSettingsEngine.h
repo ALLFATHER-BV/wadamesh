@@ -27,7 +27,7 @@
 //   @cfg aview <q> <appid>              -> a Lua app's settings (its manifest "config"),
 //                                          as view/items/end; cats lists them as "a:<id>"
 //   @cfg arun <q> <appid>               -> saves the staged values to the app's store; k:"done"
-#if !defined(HAS_TANMATSU)
+#if CAP_WEB_CONSOLE_SETTINGS
 
 enum : uint8_t { WCI_TILE = 13, WCI_DOT = 14 };   // after the WCK_* row kinds
 struct WcItem { lv_obj_t* obj; const char* t; const char* h; int16_t row; uint8_t kind; uint8_t grp; };
@@ -1258,4 +1258,4 @@ static void webCfgCmd(const char* a) {
   webCfgPump();
 }
 
-#endif  // !HAS_TANMATSU
+#endif  // CAP_WEB_CONSOLE_SETTINGS
