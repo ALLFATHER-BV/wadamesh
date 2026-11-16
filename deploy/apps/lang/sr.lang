@@ -2441,3 +2441,7 @@ Orientation kept	Оријентација задржана
 Unplug USB, then calibrate with a full battery	Искључите USB, па калибришите са пуном батеријом
 Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift на Bluetooth тастатури ради исто.
 Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift мења језик тастатуре. Док је бугарски, тастери куцају бугарски фонетски.
+Now in %s	Сада у: %s
+cities.bin could not be read	cities.bin није могуће прочитати
+City on Home	Град на почетном екрану
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Са датотеком граница cities.bin на SD картици почетни екран приказује град у којем сте уместо имена чвора.

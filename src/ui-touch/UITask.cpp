@@ -169,6 +169,14 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "UsbFilesPaint.h"      // host-tested: how often the USB Files screen repaints (e-paper)
 #include "SenderExtField.h"   // host-tested split/rejoin of a sender across the two on-disk fields
 #include "Constellation.h"    // the Constellation screensaver (drawing only; the mesh side is in this file)
+#if CAP_CITY_LOCATOR
+#include "../helpers/CityLocator.h"   // host-tested: which city limits the GPS fix is inside
+// The city the last confirmed GPS fix is inside ("" = outside every place, or
+// no fix / no cities.bin yet). Written by cityLocatorTick(), shown on Home in
+// place of the node name when s_city_on_home (GPS settings, off by default).
+static char s_city_now[64] = "";
+static bool s_city_on_home = false;
+#endif
 #include "OtaResume.h"         // host-tested on-device update copy + Range resume (#689)
 #include "WifiSwitchRejoin.h"  // host-tested: the Wi-Fi switches' one rejoin after turning on
 #include "WifiColdStartGate.h" // host-tested: may a Wi-Fi switch start the radio from cold
@@ -20071,6 +20079,14 @@ static void buildGpsPage() {
   {
     lv_obj_t* c = setCard("");
     lv_obj_t* gps_sw = setSwitchRow(c, "GPS", nullptr, g_lv.task && g_lv.task->getGPSState(), toggleGpsCb);
+#if CAP_CITY_LOCATOR
+    setSwitchRow(c, "City on Home", "With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.",
+                 s_city_on_home, [](lv_event_t* e) {
+      if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+      s_city_on_home = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+      touchPrefsSetCityOnHome(s_city_on_home);
+    });
+#endif
     // The live fix status, re-texted every tick while the page is open
     // (refreshSettingsSectionSubtitles). Its height is pinned to the tallest text it can
     // hold, so a fix arriving never pushes the rows below it around.
@@ -64687,6 +64703,9 @@ static void updateGlobalStatusBar() {
       // when the name changes (re-setting the scroll every tick would restart it).
       const char* nm = g_lv.task->getNodeNameCstr();
       if (!nm || !nm[0]) nm = "WADAMESH";
+#if CAP_CITY_LOCATOR
+      if (s_city_on_home && s_city_now[0]) nm = s_city_now;   // inside city limits: the city instead of the node name
+#endif
       if (strncmp(s_left_home_name, nm, sizeof(s_left_home_name)) != 0) {
         strncpy(s_left_home_name, nm, sizeof(s_left_home_name) - 1);
         s_left_home_name[sizeof(s_left_home_name) - 1] = '\0';
@@ -84890,6 +84909,113 @@ static bool sdRuntimeLifecycleBusy() {
   return busy;
 }
 
+#if CAP_CITY_LOCATOR
+// City locator: every 10 s with a GPS fix, look up which Census place (city,
+// town or CDP) the fix is inside, using /cities.bin from the SD card root
+// or /transfer/cities.bin (built by scripts/build/make_cities.py). The file is
+// read into PSRAM once, at the first fix, a few KB per loop pass so the UI and
+// the mesh never stall on a multi-MB read; lookups after that never touch the
+// card. A change has to be seen on two checks in a row before it is shown, so
+// GPS jitter on a boundary can't make the name flicker. With the GPS off the
+// place clears at once, after 10 minutes without a fix too. Nothing is ever
+// transmitted.
+static void cityClear() { s_city_now[0] = '\0'; }
+
+static void cityLocatorTick(unsigned long now) {
+  static unsigned long s_next = 0, s_retry_at = 0, s_nofix_since = 0;
+  static bool s_gave_up = false, s_first = true;
+  static uint8_t* s_buf = nullptr;
+  static uint8_t* s_bounce = nullptr;   // internal RAM: SD transfers never land in PSRAM directly
+  static File s_file;
+  static size_t s_len = 0, s_got = 0;
+  static char s_pending[64] = "";
+  static uint8_t s_pending_hits = 0;
+  constexpr size_t kSlice = 4096;
+  static bool s_pref_read = false;
+  if (!s_pref_read) { s_city_on_home = touchPrefsGetCityOnHome(); s_pref_read = true; }
+
+  auto loadFailed = [&](bool tell) {
+    if (s_file) s_file.close();
+    heap_caps_free(s_buf);    s_buf = nullptr;
+    heap_caps_free(s_bounce); s_bounce = nullptr;
+    s_gave_up = true;
+    if (tell && g_lv.task) g_lv.task->showAlert(TR("cities.bin could not be read"), 3000);
+  };
+
+  // Loading: one slice per loop pass.
+  if (s_buf && !city::loaded()) {
+    if (!s_sd_mounted) {   // the card went away mid-read: start over on the next fix
+      if (s_file) s_file.close();
+      heap_caps_free(s_buf);    s_buf = nullptr;
+      heap_caps_free(s_bounce); s_bounce = nullptr;
+      return;
+    }
+    const size_t n = (s_len - s_got) < kSlice ? (s_len - s_got) : kSlice;
+    if (s_file.read(s_bounce, n) != n) { sdNoteIoFailure(); loadFailed(true); return; }
+    memcpy(s_buf + s_got, s_bounce, n);
+    s_got += n;
+    if (s_got < s_len) return;
+    s_file.close();
+    heap_caps_free(s_bounce); s_bounce = nullptr;
+    if (!city::load(s_buf, s_len)) { loadFailed(true); return; }
+    s_next = now;   // look the fix up straight away
+  }
+
+  if ((long)(now - s_next) < 0) return;
+  s_next = now + 10000;
+  if (!g_lv.task || !g_lv.task->getGPSState()) { cityClear(); s_nofix_since = 0; return; }
+  if (!g_lv.task->getGpsFix()) {
+    if (!s_nofix_since) s_nofix_since = now | 1;
+    else if (now - s_nofix_since > 10UL * 60UL * 1000UL) cityClear();
+    return;
+  }
+  s_nofix_since = 0;
+
+  if (!city::loaded()) {
+    if (s_buf || s_gave_up || !s_sd_mounted || (long)(now - s_retry_at) < 0) return;
+    s_retry_at = now + 60000;                       // no card / no file yet: look again in a minute
+    // The card's top folder, or /transfer (where the Wi-Fi Transfer app puts uploads,
+    // so a board with an internal card never needs it taken out).
+    const char* path = SD.exists("/cities.bin")          ? "/cities.bin"
+                     : SD.exists("/transfer/cities.bin") ? "/transfer/cities.bin"
+                     : nullptr;
+    if (!path) return;
+    s_file = SD.open(path, FILE_READ);
+    if (!s_file) { sdNoteIoFailure(); return; }
+    s_len = s_file.size();
+    s_got = 0;
+    if (s_len < 8 || s_len > 4u * 1024u * 1024u) { loadFailed(true); return; }
+    s_buf = (uint8_t*)heap_caps_malloc(s_len, MALLOC_CAP_SPIRAM);
+    s_bounce = (uint8_t*)heap_caps_malloc(kSlice, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+    if (!s_buf || !s_bounce) loadFailed(false);
+    return;   // the slices follow on the next loop passes
+  }
+
+  const int32_t lat = (int32_t)llround(g_lv.task->getNodeLat() * 1.0e6);
+  const int32_t lon = (int32_t)llround(g_lv.task->getNodeLon() * 1.0e6);
+  const char* found = city::lookup(lat, lon);
+  const char* name = found ? found : "";
+  if (strcmp(name, s_city_now) == 0) { s_pending_hits = 0; s_first = false; return; }
+  if (strcmp(name, s_pending) == 0) {
+    if (s_pending_hits < 255) ++s_pending_hits;
+  } else {
+    strncpy(s_pending, name, sizeof(s_pending) - 1);
+    s_pending[sizeof(s_pending) - 1] = '\0';
+    s_pending_hits = 1;
+  }
+  if (s_pending_hits < 2 && !s_first) return;
+  s_first = false;
+  strncpy(s_city_now, name, sizeof(s_city_now) - 1);
+  s_city_now[sizeof(s_city_now) - 1] = '\0';
+  s_pending_hits = 0;
+  if (s_city_now[0]) {
+    char msg[96];
+    snprintf(msg, sizeof msg, TR("Now in %s"), s_city_now);
+    g_lv.task->showAlert(msg, 3000);
+  }
+}
+#endif
+
 // Runtime SD wedge detect + recover. Some writer saw an SD write fail while the
 // card was supposedly mounted (sdNoteIoFailure) — verify with real I/O and,
 // if the card stopped answering, drop and remount it once all SD consumers are
@@ -86203,6 +86329,9 @@ void UITask::loop() {
 #endif
 #if CAP_SD || defined(TLORA_PAGER)
   sdHealthTick();   // wedge detect + remount, driven by writer-flagged failures (any task)
+#if CAP_CITY_LOCATOR
+  cityLocatorTick(now);   // "Now in <city>" from the GPS fix + /cities.bin
+#endif
   // microSD insert/remove detection — only while the file manager is open, so
   // there's no idle SPI traffic. Lifecycle changes run on this loop task; each
   // device transfer uses the shared SPIClass's transaction arbitration.

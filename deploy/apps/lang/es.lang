@@ -2441,3 +2441,7 @@ Orientation kept	Orientación guardada
 Unplug USB, then calibrate with a full battery	Desconecta el USB y calibra con la batería llena
 Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Mayús en un teclado Bluetooth hace lo mismo.
 Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Mayús cambia el idioma del teclado. Mientras sea búlgaro, las teclas escriben en búlgaro fonético.
+Now in %s	Ahora en %s
+cities.bin could not be read	No se pudo leer cities.bin
+City on Home	Ciudad en Inicio
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Con un archivo de límites cities.bin en la tarjeta SD, Inicio muestra la ciudad en la que estás en lugar del nombre del nodo.

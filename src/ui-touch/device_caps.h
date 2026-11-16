@@ -350,6 +350,14 @@
   #define CAP_EMOJI_PACK 0
 #endif
 
+// "Now in <city>" (CITY_LOCATOR.md): the GPS fix looked up in a boundary file from the
+// SD card, held in PSRAM. Not the T-LoRa Pager: its app slot is full.
+#if CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)
+  #define CAP_CITY_LOCATOR 1
+#else
+  #define CAP_CITY_LOCATOR 0
+#endif
+
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
 // expose it; the Pager, V4-R8, ThinkNode M9, T-Deck and T-Deck Pro / Max add
 // font-only presets because their compact viewports cannot safely take global
