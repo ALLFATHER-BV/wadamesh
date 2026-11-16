@@ -63674,19 +63674,36 @@ static void chatHeaderApply(bool chat_open) {
   const char* clk = lv_label_get_text(g_statusbar.clock);
   const lv_coord_t clk_w = lv_txt_get_width(clk, strlen(clk), lv_obj_get_style_text_font(g_statusbar.clock, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
   lv_coord_t gps_room = 0;
+  lv_coord_t layout_room = 0;
 #if !CAP_ROUND_CORNERS
-  // The GPS glyph joins the clock and battery: just left of the clock, on their line.
-  // Left in its packed slot it sat past the radio glyphs a chat hides (they only go
-  // transparent, so they keep their room), apart from the clock.
+  // Just left of the clock, packed right to left: the keyboard layout tag (only in
+  // an open chat with a second layout enabled) and then the GPS glyph. Until now
+  // updateGlobalStatusBar parked the tag on the clock's left edge before this header
+  // pass, which is also where the glyph sits: "BG" painted over the GPS pin on the
+  // L2 Pro and the T-Deck. One slot each, and text_w below leaves room for both.
+  lv_coord_t right_x = pct_w + 8 + clk_w + SBX(6);
+#if !defined(HAS_THINKNODE_M9)   // the M9 block below has its own, corner-stepped copy
+  if (g_statusbar.layout_label && !lv_obj_has_flag(g_statusbar.layout_label, LV_OBJ_FLAG_HIDDEN)) {
+    const char* lt = lv_label_get_text(g_statusbar.layout_label);
+    const lv_coord_t lay_w = lv_txt_get_width(lt, strlen(lt), lv_obj_get_style_text_font(g_statusbar.layout_label, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
+    sbAlign(g_statusbar.layout_label, LV_ALIGN_RIGHT_MID, -right_x, ymid);
+    sbTranslateY(g_statusbar.layout_label, right_up);
+    right_x += lay_w + SBX(6);
+    layout_room = lay_w + SBX(6);
+  }
+#endif
+  // The GPS glyph joins the clock and battery: just left of the layout tag, on their
+  // line. Left in its packed slot it sat past the radio glyphs a chat hides (they
+  // only go transparent, so they keep their room), apart from the clock.
   if (g_statusbar.gps_icon && !lv_obj_has_flag(g_statusbar.gps_icon, LV_OBJ_FLAG_HIDDEN)) {
     const char* gt = lv_label_get_text(g_statusbar.gps_icon);
     const lv_coord_t gps_w = lv_txt_get_width(gt, strlen(gt), lv_obj_get_style_text_font(g_statusbar.gps_icon, LV_PART_MAIN), 0, LV_TEXT_FLAG_NONE);
-    sbAlign(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -(pct_w + 8 + clk_w + SBX(6)), ymid);
+    sbAlign(g_statusbar.gps_icon, LV_ALIGN_RIGHT_MID, -right_x, ymid);
     sbTranslateY(g_statusbar.gps_icon, right_up);
     gps_room = gps_w + SBX(6);
   }
 #endif
-  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room;
+  const lv_coord_t text_w = lv_obj_get_style_width(g_statusbar.root, LV_PART_MAIN) - x_text - (pct_w + 8 + clk_w + 10) - gps_room - layout_room;
   // Title on the upper half, subtitle under it.
   // Each line is one line high: LONG_DOT only shortens a label of fixed height and
   // wraps one that sizes itself (a narrow panel's subtitle then ran into the list).
@@ -64686,7 +64703,14 @@ static void updateGlobalStatusBar() {
       // clock lands (12/24-hour width, the charging slide, centred hide-name
       // mode, SC() scaling). The old fixed -182 build offset overlapped the wide
       // 12-hour clock on the T-Deck bar ("7:45 PM" reaches past -182).
-      lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
+      //
+      // EXCEPT in an open chat's one-row header: that header gives the tag a slot
+      // left of the clock and moves the GPS glyph past it (chatHeaderApply below,
+      // which runs after this). Aligning it here first used the clock's NON-chat
+      // centred position, so the tag flashed mid-bar for a tick before the header
+      // pulled it right.
+      if (!(chat_hdr && !two_row))
+        lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
       sbShow(g_statusbar.layout_label, true);
     } else {
       sbShow(g_statusbar.layout_label, false);
