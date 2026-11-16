@@ -291,6 +291,7 @@ extern volatile uint8_t g_wifi_last_disc_reason;
 #endif
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
+#include "helpers/esp32/WdtHeavyGuard.h"
 
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
@@ -1477,9 +1478,13 @@ void setup() {
     // M9-only: keep SPIFFS work/cache buffers in internal DRAM during format/mount,
     // and suspend the task watchdog around the blocking 3.375 MB SPIFFS format.
     heap_caps_malloc_extmem_enable(4096);
-    esp_task_wdt_delete(NULL);
-    spiffs_ok = SPIFFS.begin(true);
-    esp_task_wdt_add(NULL);
+    {
+      // Restores loopTask's prior TWDT state. A bare esp_task_wdt_add() subscribed
+      // loopTask, which Arduino never feeds (loopTaskWDTEnabled stays false), so the
+      // first boot after a flash erase reset ~20 s later.
+      LoopWdtGuard loop_wdt;
+      spiffs_ok = SPIFFS.begin(true);
+    }
     heap_caps_malloc_extmem_enable(256);
   }
 #else
