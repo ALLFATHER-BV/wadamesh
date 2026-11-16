@@ -26286,6 +26286,21 @@ static bool batteryIsCharging(uint16_t mv) {
   return mv != 0 && mv >= (uint16_t)(full + 50);
 }
 
+// On USB power, charging or not: what the screensaver and the power saving ask.
+// batteryIsCharging() answers "is the charger filling the pack", which is right for
+// the icon but goes false on the M9 once its charger stops at full, and back to
+// true at every top-up, so an M9 left on USB kept dropping to battery behaviour
+// (benanderson, Discord). Boards whose charger only tells charging fall back to it.
+static bool batteryOnExternalPower(uint16_t mv) {
+#if defined(HAS_THINKNODE_M9)
+  if (mv != 0) {
+    const int ext = board.externalPowerPresent();
+    if (ext >= 0) return ext != 0;
+  }
+#endif
+  return batteryIsCharging(mv);
+}
+
 // Hold the battery reading steady: publish a fresh value only every 20 s so the
 // %, icon and voltage stop twitching tick-to-tick. The per-board sampler above
 // still runs on every call (keeps the T-Deck EMA fed); every readout just sees
@@ -62654,9 +62669,8 @@ static bool tsWifiOff() {
 // tsBleOff: true when no BLE capability is enabled (mirrors the ble_up flag in
 // updateGlobalStatusBar — hasBleCapability() && isBleEnabled()).
 static bool tsBleOff()     { return true; }   // Bluetooth on is fine (see tsWifiOff); a connected app is a client
-// tsOnBattery: true when NOT charging (mirrors the charging bool in updateGlobalStatusBar
-// — batteryIsCharging(batteryMvSmoothed())).
-static bool tsOnBattery()  { return !batteryIsCharging(batteryMvSmoothed()); }
+// tsOnBattery: true when NOT on USB power (charging, or full and held by the charger).
+static bool tsOnBattery()  { return !batteryOnExternalPower(batteryMvSmoothed()); }
 // tsMeshIdle: true when the radio is NOT mid-receive (preamble→RxDone race guarded),
 // AND no outbound packet / retry / contact write is due now. Future retry and
 // write deadlines are allowed to use the timed idle-power-saving path.
@@ -81920,7 +81934,7 @@ static void ssaverSetNorthLock(bool on) {
 #endif
 
 #if CAP_BATTERY
-static bool ssaverCharging() { return batteryIsCharging(batteryMvSmoothed()); }
+static bool ssaverCharging() { return batteryOnExternalPower(batteryMvSmoothed()); }
 #else
 static bool ssaverCharging() { return true; }   // no battery sensing: runs from external power
 #endif
