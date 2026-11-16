@@ -2448,3 +2448,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Vissza álló nézetre… újraindítás
 Keep	Megtart
 Orientation kept	Tájolás megtartva
+Now in %s	Most itt: %s
+cities.bin could not be read	A cities.bin nem olvasható
+City on Home	Város a kezdőképernyőn
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Ha az SD-kártyán van cities.bin határfájl, a kezdőképernyő a csomópont neve helyett azt a várost mutatja, ahol vagy.

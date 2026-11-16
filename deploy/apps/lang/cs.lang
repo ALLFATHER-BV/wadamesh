@@ -2454,3 +2454,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Zpět na výšku… restartuje se
 Keep	Ponechat
 Orientation kept	Orientace ponechána
+Now in %s	Nyní v %s
+cities.bin could not be read	cities.bin nelze přečíst
+City on Home	Město na domovské obrazovce
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Se souborem hranic cities.bin na SD kartě ukazuje domovská obrazovka město, ve kterém jste, místo názvu uzlu.

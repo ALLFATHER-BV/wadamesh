@@ -2438,3 +2438,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Επιστροφή σε κατακόρυφο… επανεκκίνηση
 Keep	Διατήρηση
 Orientation kept	Ο προσανατολισμός διατηρήθηκε
+Now in %s	Τώρα σε %s
+cities.bin could not be read	Το cities.bin δεν διαβάστηκε
+City on Home	Πόλη στην Αρχική
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Με αρχείο ορίων cities.bin στην κάρτα SD, η Αρχική δείχνει την πόλη όπου βρίσκεστε αντί για το όνομα του κόμβου.

@@ -2438,3 +2438,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Zurück ins Hochformat… Neustart
 Keep	Behalten
 Orientation kept	Ausrichtung behalten
+Now in %s	Jetzt in %s
+cities.bin could not be read	cities.bin konnte nicht gelesen werden
+City on Home	Stadt auf Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Mit einer Grenzdatei cities.bin auf der SD-Karte zeigt Home die Stadt, in der du bist, statt des Knotennamens.

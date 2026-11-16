@@ -2437,3 +2437,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Ritorno in verticale… riavvio
 Keep	Mantieni
 Orientation kept	Orientamento mantenuto
+Now in %s	Ora a %s
+cities.bin could not be read	Impossibile leggere cities.bin
+City on Home	Città nella Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Con un file di confini cities.bin sulla scheda SD, la Home mostra la città in cui ti trovi al posto del nome del nodo.

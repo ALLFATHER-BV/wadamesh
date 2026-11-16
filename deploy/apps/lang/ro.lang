@@ -2439,3 +2439,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Înapoi la portret… repornire
 Keep	Păstrează
 Orientation kept	Orientare păstrată
+Now in %s	Acum în %s
+cities.bin could not be read	cities.bin nu a putut fi citit
+City on Home	Orașul pe ecranul principal
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Cu un fișier de limite cities.bin pe cardul SD, ecranul principal arată orașul în care te afli în locul numelui nodului.

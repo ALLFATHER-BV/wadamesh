@@ -2,7 +2,7 @@
 #pragma once
 // CityLocator: "which city am I in?" from an offline boundary file.
 //
-// The file (cities.bin, built by tools/make_cities.py from Census TIGER/Line
+// The file (cities.bin, built by scripts/build/make_cities.py from Census TIGER/Line
 // place boundaries) holds each place's name, bounding box and polygon rings.
 // A point is inside a place when it crosses that place's rings an odd number
 // of times (even-odd rule), which handles holes (county islands inside a city)

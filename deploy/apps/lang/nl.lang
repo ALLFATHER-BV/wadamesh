@@ -2436,3 +2436,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Terug naar staand… herstarten
 Keep	Houden
 Orientation kept	Stand gehouden
+Now in %s	Nu in %s
+cities.bin could not be read	cities.bin kon niet worden gelezen
+City on Home	Stad op Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Met een grenzenbestand cities.bin op de SD-kaart toont Home de stad waar je bent in plaats van de nodenaam.

@@ -2438,3 +2438,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Voltando para retrato… reiniciando
 Keep	Manter
 Orientation kept	Orientação mantida
+Now in %s	Agora em %s
+cities.bin could not be read	Não foi possível ler cities.bin
+City on Home	Cidade no Início
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Com um arquivo de limites cities.bin no cartão SD, o Início mostra a cidade onde você está em vez do nome do nó.

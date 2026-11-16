@@ -28,7 +28,7 @@ void put32(std::vector<uint8_t>& b, int32_t v) {
 }
 int32_t e6(double v) { return (int32_t)(v * 1e6 + (v < 0 ? -0.5 : 0.5)); }
 
-// Same layout tools/make_cities.py writes (format v1).
+// Same layout scripts/build/make_cities.py writes (format v1).
 std::vector<uint8_t> build(const std::vector<Place>& places) {
   std::vector<uint8_t> b = {'W', 'C', 'T', 'Y', 1, 0};
   put16(b, (uint16_t)places.size());

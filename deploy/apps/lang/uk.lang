@@ -2438,3 +2438,7 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Повернення в портретний режим… перезапуск
 Keep	Залишити
 Orientation kept	Орієнтацію збережено
+Now in %s	Зараз у: %s
+cities.bin could not be read	Не вдалося прочитати cities.bin
+City on Home	Місто на головному екрані
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	З файлом меж cities.bin на SD-картці головний екран показує місто, де ви є, замість імені вузла.
