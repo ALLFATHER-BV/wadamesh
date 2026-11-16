@@ -64708,8 +64708,9 @@ static void updateGlobalStatusBar() {
       // left of the clock and moves the GPS glyph past it (chatHeaderApply below,
       // which runs after this). Aligning it here first used the clock's NON-chat
       // centred position, so the tag flashed mid-bar for a tick before the header
-      // pulled it right.
-      if (!(chat_hdr && !two_row))
+      // pulled it right. The round-cornered header has no such slot, so it keeps
+      // aligning here.
+      if (CAP_ROUND_CORNERS || !(chat_hdr && !two_row))
         lv_obj_align_to(g_statusbar.layout_label, g_statusbar.clock, LV_ALIGN_OUT_LEFT_MID, -SC(8), 0);
       sbShow(g_statusbar.layout_label, true);
     } else {
