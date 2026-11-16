@@ -1014,6 +1014,7 @@ static bool wcaSavPut(const char* id, const char* key, const char* val, bool tex
     fs->mkdir(appsdir);
     snprintf(rel, sizeof rel, "/apps/%s.sav", id);
     luaHostAppPath(path, sizeof path, rel);
+    WdtHeavyGuard guard;   // the .sav may be on SPIFFS, whose GC can stall the UI thread for seconds
     File f = fs->open(path, "w");
     ok = f && f.write((const uint8_t*)out, n) == n;
     if (f) f.close();

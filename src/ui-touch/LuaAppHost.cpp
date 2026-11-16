@@ -3605,8 +3605,11 @@ void hostTeardown();   // fwd
 lv_obj_t* luaAppBody() { return s_h ? s_h->body : nullptr; }
 bool luaAppIsOpen() { return s_h != nullptr; }
 
+// Both write the store from the UI thread, where a SPIFFS garbage collection can stall
+// for seconds: under the watchdog guard, like the 30 s flush in the tick.
 bool luaAppStoreSync(const char* id) {
   if (!s_h || !s_h->L || !id || strcmp(s_h->id, id) != 0) return false;
+  WdtHeavyGuard guard;
   storeFlush();
   return true;
 }
@@ -3628,6 +3631,7 @@ bool luaAppStoreSet(const char* id, const char* key, const char* value, bool tex
   lua_rawset(L, -3);
   lua_pop(L, 1);
   s_h->store_dirty = true;
+  WdtHeavyGuard guard;
   storeFlush();
   return true;
 }
