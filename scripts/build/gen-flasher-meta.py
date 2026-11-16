@@ -33,7 +33,8 @@ with open(os.path.join(outdir, "version.json"), "w") as f:
     json.dump({"tag": tag, "channel": channel, "notes": notes}, f, indent=2)
 
 # manifest filename -> (display name, merged-bin filename, chipFamily).
-# chipFamily is ESP32-S3 for every board except the P4-class T-Display P4.
+# chipFamily is ESP32-S3 for every board except the P4-class boards (T-Display P4,
+# CrowPanel P4, Tanmatsu).
 BOARDS = {
     "manifest-tdeck.json":            ("wadamesh - LilyGo T-Deck", "wadamesh-tdeck-merged.bin", "ESP32-S3"),
     "manifest-heltec-v4-tft.json":    ("wadamesh - Heltec V4 TFT", "wadamesh-heltec-v4-tft-merged.bin", "ESP32-S3"),
@@ -71,6 +72,9 @@ BOARDS = {
     "manifest-tdisplay-p4-lr2021-at.json": ("wadamesh - LilyGo T-Display P4 (AMOLED, LR2021) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lr2021-at-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lcd-at.json": ("wadamesh - LilyGo T-Display P4 (LCD, SX1262) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lcd-at-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lcd-lr2021-at.json": ("wadamesh - LilyGo T-Display P4 (LCD, LR2021) - older unit, ESP-AT C6", "wadamesh-tdisplay-p4-lcd-lr2021-at-merged.bin", "ESP32-P4"),
+    # Standalone image: it replaces the badge.team launcher (the app store build is
+    # the other way to install), so the name says so before anyone clicks Install.
+    "manifest-tanmatsu.json":         ("wadamesh - Nicolai Electronics Tanmatsu (standalone, replaces launcher)", "wadamesh-tanmatsu-merged.bin", "ESP32-P4"),
 }
 for fn, (name, binf, chip) in BOARDS.items():
     # A board that joined the matrix after this tag has no image in this feed

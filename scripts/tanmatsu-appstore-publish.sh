@@ -16,6 +16,9 @@
 #      Nicolai-Electronics/app-repository
 #
 # NB:
+#  - This publishes the launcher (AppFS) build, `tanmatsu/build.sh build`. The
+#    web-flasher image is the separate standalone build (`build.sh standalone`,
+#    scripts/build/p4-release.sh); both wrap the same application.bin.
 #  - WadaMesh on the Tanmatsu is KEYBOARD-driven (no touchscreen). Keep the
 #    listing wording free of "touch" — the canonical text lives in the template.
 #  - For an update you MUST bump BOTH `version` AND `revision` or the launcher
