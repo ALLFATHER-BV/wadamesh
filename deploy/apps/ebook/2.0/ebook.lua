@@ -51,6 +51,13 @@ local POS_BYTES = 180        -- the store reloads a line of at most 191 bytes, "
 local W, H
 local size = 14
 local screen = "none"
+local caps = sys.caps and sys.caps() or {}
+local on_input
+-- On a touchless board an app with an on_input gets every key, and the firmware stops
+-- moving the cursor through list rows. Screens made of rows therefore hand the keys back.
+local function keys_to_app(on)
+  app.on_input = (on or caps.touch ~= false) and on_input or nil
+end
 local task                       -- the one step function the tick runs
 local book                       -- the open book, see open_task
 local sec                        -- the section on screen: paras, kinds, off, nxt, eu, pp, po
@@ -718,6 +725,7 @@ end
 function show_reading()
   clear()
   screen = "reading"
+  keys_to_app(true)
   local gap = 4
   local bh = math.max(34, ui.text_h(16) + 12)
   local bw = math.max(40, bh)
@@ -743,6 +751,7 @@ end
 function show_image(path)
   clear()
   screen = "image"
+  keys_to_app(true)
   text_lbl, stat_lbl = nil, nil
   if not draw_image(path, 0, 0, W, H) then
     show_reading()
@@ -754,6 +763,7 @@ function show_error(msg)
   set_task(nil)
   clear()
   screen = "error"
+  keys_to_app(false)
   text_lbl, stat_lbl = nil, nil
   local l = ui.label(tr("Cannot open this book"), M, M, 16, C.bad, true)
   l:width(W - 2 * M)
@@ -955,6 +965,7 @@ end
 function show_library()
   clear()
   screen = "library"
+  keys_to_app(false)
   text_lbl, stat_lbl = nil, nil
   ui.label(tr("Books"), M, M, 16, C.text, true)
   local y = M + ui.text_h(16) + 6
@@ -994,6 +1005,7 @@ function show_menu()
   remember()
   clear()
   screen = "menu"
+  keys_to_app(false)
   text_lbl, stat_lbl = nil, nil
   local tw = W - 2 * M
   local title, tn = fit_text(book and book.title or "", tw, 16, 3)
@@ -1032,6 +1044,7 @@ end
 function show_chapters()
   clear()
   screen = "chapters"
+  keys_to_app(false)
   local n = #book.spine
   local first = (chap_page - 1) * PAGE_ROWS + 1
   local last = math.min(n, first + PAGE_ROWS - 1)
@@ -1091,7 +1104,7 @@ function app.on_tick()
   if task then task() end
 end
 
-function app.on_input(ev)
+on_input = function(ev)
   local t = ev.type
   if screen == "image" then
     if t == "up" or t == "key" then show_reading() end
@@ -1126,6 +1139,8 @@ function app.on_input(ev)
     elseif k == "c" and book then chap_page = (book.sp - 1) // PAGE_ROWS + 1; show_chapters() end
   end
 end
+
+app.on_input = on_input
 
 function app.on_close()
   remember()

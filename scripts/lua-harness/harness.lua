@@ -3224,6 +3224,22 @@ scenarios.ebook_errors = function()
   app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   assert(label_dump():find("newer firmware", 1, true), "gated: " .. label_dump())
+  -- no touch (ThinkNode M9): screens made of list rows hand the d-pad back to the firmware,
+  -- the reading screen keeps it for page turns
+  eb_start(320, 240, zip_build(files), { touch = false, keyboard = true, sdk_ext = true })
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(label_dump():find("Books", 1, true) and app.on_input == nil, "touchless library: keys left to the firmware")
+  assert(guarded(BUDGET, eb_row("book").fn))
+  eb_wait(app)
+  assert(app.on_input ~= nil, "touchless reading: the app turns pages")
+  key(app, "enter"); tick(app, 1, 40)
+  assert(app.on_input == nil and eb_row("") ~= nil, "touchless menu: keys left to the firmware")
+  -- with touch the app always keeps on_input
+  eb_start(320, 240, zip_build(files))
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(app.on_input ~= nil, "touch library keeps on_input")
 end
 
 scenarios.ebook_cost = function()
