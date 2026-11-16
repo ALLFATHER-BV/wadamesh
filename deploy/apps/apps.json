@@ -151,6 +151,14 @@
       "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_103 or later.",
       "icon": "message",
       "seed": false
+    },
+    {
+      "id": "holdem",
+      "name": "Texas Hold'em",
+      "ver": "1.3",
+      "desc": "Play no-limit Texas Hold'em against three AI opponents, with side pots and a bankroll that carries over between sessions.",
+      "icon": "game",
+      "seed": false
     }
   ]
 }
