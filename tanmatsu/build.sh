@@ -136,9 +136,12 @@ build_standalone() {
     partition_tables/wadamesh_standalone.csv "$PT"
   python "$IDF_PATH/components/partition_table/check_sizes.py" --offset 0x8000 \
     partition --type app "$PT" "$B/application.bin"
-  # No otadata/nvs parts: merge_bin pads the 0x9000-0x20000 gap with 0xFF, so the
-  # launcher's otadata and NVS are erased and the bootloader starts ota_0. 'locfd'
-  # lies past the end of the image and is left alone.
+  # Blank otadata (0x1D000, 8K) so the bootloader starts ota_0 even after an OTA
+  # switched to ota_1. standalone-flash writes it on its own so NVS is kept.
+  python -c "import sys; sys.stdout.buffer.write(b'\xff' * 0x2000)" > "$B/standalone/otadata-blank.bin"
+  # Web installer image, written at 0x0. merge_bin pads the 0x9000-0x20000 gap with
+  # 0xFF, so otadata AND NVS (0x19000) are erased: a web install starts at the setup
+  # wizard. 'locfd' lies past the end of the image and is left alone.
   python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_size 16MB --flash_freq 80m \
     -o "$STANDALONE_BIN" \
     0x2000 "$B/bootloader/bootloader.bin" \
@@ -180,7 +183,11 @@ case "${1:-}" in
     for p in "${ports[@]}"; do
       echo "[build.sh] flashing the standalone image to $p: this REPLACES the badge.team launcher"
       if { [ "$erase" = 0 ] || python -m esptool --chip esp32p4 -p "$p" erase_flash; } &&
-         python -m esptool --chip esp32p4 -p "$p" write_flash 0x0 "$STANDALONE_BIN"; then
+         python -m esptool --chip esp32p4 -p "$p" write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+           0x2000 build/tanmatsu/bootloader/bootloader.bin \
+           0x8000 build/tanmatsu/standalone/partition-table.bin \
+           0x1D000 build/tanmatsu/standalone/otadata-blank.bin \
+           0x20000 build/tanmatsu/application.bin; then
         echo "$p" > "$STANDALONE_PORT_FILE"
         exit 0
       fi

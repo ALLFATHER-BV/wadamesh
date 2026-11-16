@@ -245,6 +245,11 @@ slots (the 3.2 MB app does not fit the launcher table's 2 MB `ota_0`) and `locfd
 same 0xC20000 offset as the launcher table, so WADAMESH data survives switching. It
 **replaces the launcher**; restore it from https://recovery.tanmatsu.cloud/.
 
+Because the merged image is written at 0x0, its 0xFF padding erases NVS (0x19000) as
+well as otadata, so a web install starts at the setup wizard. `standalone-flash` writes
+the parts at their own offsets plus a blank otadata, so NVS (setup flag, touch prefs,
+Wi-Fi) survives USB reflashes unless `--erase` is given.
+
 - Release: `scripts/build/p4-release.sh` builds it into `out/p4_<tag>/`, and
   `scripts/release.sh` (beta) publishes it; `gen-flasher-meta.py` emits
   `manifest-tanmatsu.json` (beta channel only, like the other P4 boards).
