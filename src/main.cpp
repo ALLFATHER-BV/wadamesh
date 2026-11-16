@@ -291,6 +291,7 @@ extern volatile uint8_t g_wifi_last_disc_reason;
 #endif
 
 #include "esp_task_wdt.h"   // task-watchdog reconfigure — see setup() (GH #56)
+#include "helpers/esp32/TlsPsramAlloc.h"
 
 #if defined(HAS_TDECK_GT911) || defined(HAS_TDECK_PRO) || defined(HELTEC_LORA_V4_R8) || defined(TLORA_PAGER) || defined(HAS_THINKNODE_M9) || defined(HAS_CROWPANEL_35)
 // ---- SPIFFS -> SD migration (fixes the beta_36 "lost my profile" upgrades) ----
@@ -809,6 +810,8 @@ void setup() {
   // genuinely needs internal/DMA memory asks for it by capability and is
   // unaffected. Tunable — raise it if something misbehaves.
   heap_caps_malloc_extmem_enable(256);
+  // TLS buffers to PSRAM too: the core's mbedtls takes them from internal DRAM (#870).
+  if (tlsUsePsram()) Serial.println("[BOOT] TLS allocations: PSRAM first");
 
   // Widen the task-watchdog grace period. The ~5 s default trips during a legitimate-but-slow flash
   // burst — a SPIFFS garbage-collect, or a bulk save (DataStore issues ~12 flash ops per contact,
