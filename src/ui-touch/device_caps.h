@@ -474,9 +474,14 @@
 #endif
 
 // Short pulses along the map's self-to-contact lines as messages and ACKs come and go
-// (#827). Each one repaints for about a second, so not on e-paper (see above).
+// (#827). Each one repaints for about a second, so not on e-paper (see above), and not
+// on the T-LoRa Pager, whose app slot had about 800 bytes left with them.
 #ifndef CAP_MAP_PULSES
-  #define CAP_MAP_PULSES (!CAP_EPAPER)
+  #if CAP_EPAPER || defined(TLORA_PAGER)
+    #define CAP_MAP_PULSES 0
+  #else
+    #define CAP_MAP_PULSES 1
+  #endif
 #endif
 
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
