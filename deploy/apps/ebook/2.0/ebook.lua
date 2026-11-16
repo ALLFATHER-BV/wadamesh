@@ -973,7 +973,7 @@ local README = "Welcome to Ebook.\n\n" ..
   "Put your books in this folder: /meshcomod/apps/ebook.d/ on the SD card (/apps/ebook.d/ on a device that keeps its apps in internal flash). Copy them there from a computer, then open Ebook again.\n\n" ..
   "Books can be .epub or plain .txt files. Names are limited to 32 characters of A-Z a-z 0-9 . _ - (no spaces).\n\n" ..
   "An .epub must be stored uncompressed inside. Convert one with scripts/ebook-prep.py from github.com/CarpeNoctem/wadamesh-app-ebook.\n\n" ..
-  "This file is only made when the folder has no books. Delete it whenever you like.\n"
+  "This file is created when the folder has no books, and refreshed when a newer app changes it. Delete it whenever you like; it only comes back if the folder has no books.\n"
 
 local function list_books()
   local names = {}
