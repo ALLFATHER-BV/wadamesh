@@ -1073,10 +1073,11 @@ function app.on_open(w, h)
   local real = 0
   for _, f in ipairs(list_books()) do if f.name ~= README_NAME then real = real + 1 end end
   local last = kv("last")
+  -- keep the guide current: an older copy (this folder may predate it) is rewritten
+  local _, have = fs.read(README_NAME, 0, 0)
+  if (real == 0 or have) and have ~= #README then fs.write(README_NAME, README) end   -- also creates the folder
   if real == 0 then
     -- an empty folder: open the README as the guide to filling it
-    local _, have = fs.read(README_NAME, 0, 0)
-    if have ~= #README then fs.write(README_NAME, README) end   -- also creates the folder; refreshes an older guide
     open_book(README_NAME)
   elseif last and last ~= README_NAME and fs.read(tostring(last), 0, 0) then
     open_book(last)

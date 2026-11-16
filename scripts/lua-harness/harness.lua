@@ -3193,9 +3193,11 @@ scenarios.ebook_errors = function()
   eb_wait(app)
   app.on_close()
   fsfiles["book.epub"] = zip_build((eb_book()))
+  fsfiles["README.txt"] = "old"
   app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   assert(eb_row("book") and not eb_page(), "with books the library opens, not the README: " .. label_dump())
+  assert(fsfiles["README.txt"] ~= "old", "a stale README is refreshed even when books exist")
   -- a compressed book says how to fix it
   local files = eb_book()
   eb_start(320, 240, zip_build(files, 8))
