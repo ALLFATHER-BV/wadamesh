@@ -1087,6 +1087,9 @@ extern "C" const lv_font_t star_font_14;
 // and the Chats list (person = DM, group = channel).
 extern "C" const lv_font_t person_font;     // 16 px — for g_font_16 contexts
 extern "C" const lv_font_t person_font14;   // 14 px — for g_font_14 (chat list rows)
+#if defined(HAS_TANMATSU)
+extern "C" const lv_font_t person_font24;   // 24 px — the Tanmatsu tab bar's Contacts icon
+#endif
 #define TOUCH_SYM_PERSON  "\xEF\x80\x87"   /* U+F007 user */
 #define TOUCH_SYM_ANTENNA "\xEF\x94\x99"   /* U+F519 tower-broadcast */
 #define TOUCH_SYM_GROUP   "\xEF\x83\x80"   /* U+F0C0 users (group) */
@@ -1160,6 +1163,9 @@ extern "C" const lv_font_t ui_semibold_16;
 extern "C" const lv_font_t ui_badge_11;     // count pills: digits, + and ! in Bold
 extern "C" const lv_font_t ui_icons_16;     // app and chrome icons (UI_ICON_* in ui_icons.h)
 extern "C" const lv_font_t ui_icons_20;     // launcher tiles
+#if defined(HAS_TANMATSU)
+extern "C" const lv_font_t ui_icons_24;     // chat composer quick-reply and send icons
+#endif
 extern "C" const lv_font_t clock_font_48;   // Montserrat Light digits and colon: lock screen clock
 extern "C" const lv_font_t clock_font_40;   // the same face at the screensaver's size
 #if defined(HAS_TANMATSU)
@@ -3397,7 +3403,7 @@ constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 // 320×180 landscape).
 #if CAP_LARGE_SCREEN
 constexpr int TABBAR_BOTTOM_H = 46;   // taller on the big 800×480 panel — room for the coloured F-key shapes
-constexpr int TABBAR_RAIL_W   = 56;   // Condense Nav rail: fits the 34-px F-key shapes with a margin
+constexpr int TABBAR_RAIL_W   = 56;   // Condense Nav rail: fits an icon plus its small F-key shape with a margin
 #elif defined(HAS_THINKNODE_M9)
 // No tab bar on this board: it is tap-only chrome (navMaybeRebuild deliberately
 // never adds it to the focus group), and the M9 has no touch — the dedicated
@@ -3459,7 +3465,7 @@ static inline lv_coord_t chatComposerChipSz() {
 static inline lv_coord_t chatComposerSendSz() {
 #if CAP_ROUND_CORNERS
   return CHAT_COMP_BTN_P4;
-#elif defined(TLORA_PAGER) || defined(HAS_CROWPANEL_50)
+#elif defined(TLORA_PAGER) || defined(HAS_CROWPANEL_50) || defined(HAS_TANMATSU)
   return chatComposerChipSz();
 #else
   return 34;
@@ -3530,6 +3536,15 @@ static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h) {
   return (ta_h > band ? ta_h : band) + chatComposerChromeH();
 #endif
 }
+// Tanmatsu: the QR and emoji buttons each carry a small F-key shape just to their right
+// (chatAddFkeyHint); the text box gives up this much room per button for it.
+#if defined(HAS_TANMATSU)
+static constexpr lv_coord_t CHAT_FKEY_HINT_SZ  = 14;
+static constexpr lv_coord_t CHAT_FKEY_HINT_GAP = 4;
+static constexpr lv_coord_t CHAT_FKEY_HINT_W   = CHAT_FKEY_HINT_SZ + CHAT_FKEY_HINT_GAP;
+#else
+static constexpr lv_coord_t CHAT_FKEY_HINT_W   = 0;
+#endif
 static inline lv_coord_t chatComposerTaW(bool channel_mode) {
   const lv_coord_t chip = chatComposerChipSz();
   // Two-row: the chips are on the row above, so the text box only shares its row with Send.
@@ -3537,7 +3552,7 @@ static inline lv_coord_t chatComposerTaW(bool channel_mode) {
   lv_coord_t width = chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14
                    - chatComposerSendInset() - chatComposerLeftInset();
   if (chatHasSymbolChip(channel_mode)) width -= chip + 6;
-  return width;
+  return width - 2 * CHAT_FKEY_HINT_W;
 }
 // Most boards use a DOUBLE-height status bar in a chat (thread name on the lower
 // row + a centred cog). The round panel grows its one-row bar to SB_CHAT_H for the
@@ -8858,15 +8873,18 @@ static void buildEpaperScrollControls() {
 }
 #endif
 
-// Re-skin the bottom tab bar so each tab is its physical F-key's coloured OUTLINE shape with the
-// page icon inside, same colour: △ Messages · □ Contacts · ○ Home · ♣ Map · ◇ Settings.
+// Re-skin the bottom tab bar so each tab shows its page icon at normal size with a small coloured
+// OUTLINE of its physical F-key beside it: △ Messages · □ Contacts · ○ Home · ♣ Map · ◇ Settings.
+#if defined(HAS_TANMATSU)
 static lv_obj_t* s_tabhint_cv[5] = { nullptr };
 static lv_obj_t* s_tabhint_ic[5] = { nullptr };
+#endif
 
 // All tabs stay full-bright; the active page is shown only by its cell backing (set below). Kept as
 // a hook in case we want a per-tab active treatment later.
 static void navUpdateTabHilite(int) {}
 
+#if defined(HAS_TANMATSU)   // its fonts (person_font24) are Tanmatsu-only
 static void navBuildTabKeyHints() {
   static bool built = false;
   if (built || !g_lv.tabview) return;
@@ -8883,16 +8901,26 @@ static void navBuildTabKeyHints() {
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
   lv_obj_set_style_radius(bar, 8, LV_PART_ITEMS | LV_STATE_CHECKED);
 
-  const int SZ = 34;
+  const int SZ  = 14;   // small key shape beside the icon
+  const int GAP = 6;    // between the icon and its shape
   const lv_coord_t cell = lv_disp_get_hor_res(nullptr) / 5;
   const uint32_t cols[5]  = { 0xF5A623, 0xFFD400, 0x2ECC40, 0x2E9BFF, 0xC724B1 };
-  const char*    icons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME, LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
+  // 24 px icons (1.5x the old 16 px; fixed, never UI-size scaled). montserrat_24 carries the
+  // Lucide LV_SYMBOLs; the person glyph is chained behind it so all five share one line box.
+  static lv_font_t s_tab_icon_font, s_tab_person24;
+  s_tab_person24 = person_font24;
+  s_tab_person24.fallback = nullptr;
+  s_tab_icon_font = lv_font_montserrat_24;
+  s_tab_icon_font.fallback = &s_tab_person24;
+  const lv_font_t* icon_font = &s_tab_icon_font;
+  const lv_coord_t icon_h = lv_font_get_line_height(icon_font);
+  const char* icons[5] = { LV_SYMBOL_ENVELOPE, TOUCH_SYM_PERSON, LV_SYMBOL_HOME, LV_SYMBOL_GPS, LV_SYMBOL_SETTINGS };
   for (int i = 0; i < 5; i++) {
     lv_color_t col = lv_color_hex(s_theme_high_contrast ? COLOR_TEXT : cols[i]);
     lv_obj_t* cv = lv_canvas_create(bar);
     lv_obj_clear_flag(cv, LV_OBJ_FLAG_CLICKABLE);
-    uint8_t* buf = (uint8_t*)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(34, 34), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!buf) buf = (uint8_t*)malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(34, 34));
+    uint8_t* buf = (uint8_t*)heap_caps_malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(SZ, SZ), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) buf = (uint8_t*)malloc(LV_CANVAS_BUF_SIZE_TRUE_COLOR_ALPHA(SZ, SZ));
     lv_canvas_set_buffer(cv, buf, SZ, SZ, LV_IMG_CF_TRUE_COLOR_ALPHA);
     lv_canvas_fill_bg(cv, lv_color_black(), LV_OPA_TRANSP);
     lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
@@ -8903,34 +8931,39 @@ static void navBuildTabKeyHints() {
       case 0: { lv_point_t p[4] = {{SZ/2,1},{1,SZ-2},{SZ-2,SZ-2},{SZ/2,1}}; lv_canvas_draw_line(cv, p, 4, &ld); } break; // △
       case 1: rd.radius = 4; lv_canvas_draw_rect(cv, 1, 1, SZ-2, SZ-2, &rd); break;                                       // □
       case 2: rd.radius = LV_RADIUS_CIRCLE; lv_canvas_draw_rect(cv, 1, 1, SZ-2, SZ-2, &rd); break;                        // ○
-      case 3: { rd.radius = LV_RADIUS_CIRCLE; const int r = 18;                                                           // ♣ three lobes
+      case 3: { rd.radius = LV_RADIUS_CIRCLE; const int r = SZ * 4 / 7;                                                   // ♣ three lobes
                 lv_canvas_draw_rect(cv, (SZ-r)/2, 0, r, r, &rd);
                 lv_canvas_draw_rect(cv, 0, SZ-r, r, r, &rd);
                 lv_canvas_draw_rect(cv, SZ-r, SZ-r, r, r, &rd); } break;
       default: { lv_point_t p[5] = {{SZ/2,1},{SZ-2,SZ/2},{SZ/2,SZ-2},{1,SZ/2},{SZ/2,1}}; lv_canvas_draw_line(cv, p, 5, &ld); } break; // ◇
     }
-    lv_coord_t rx, ry;
-    if (s_nav_rail && tabBarChildPosForCell(i, SZ, SZ, &rx, &ry))
-      lv_obj_align(cv, LV_ALIGN_TOP_LEFT, rx, ry);   // Condense Nav rail: stacked down the right edge
-    else
-      lv_obj_align(cv, LV_ALIGN_LEFT_MID, i * cell + (cell - SZ) / 2, 0);
     s_tabhint_cv[i] = cv;
 
     lv_obj_t* ic = lv_label_create(bar);
     lv_label_set_text(ic, icons[i]);
     lv_obj_set_style_text_color(ic, col, LV_PART_MAIN);
-#if CAP_LARGE_SCREEN
-    lv_obj_set_style_text_font(ic, &g_font_tab, LV_PART_MAIN);   // fixed 16 px — tab bar never scales
-#else
-    lv_obj_set_style_text_font(ic, &g_font_16, LV_PART_MAIN);
-#endif
+    lv_obj_set_style_text_font(ic, icon_font, LV_PART_MAIN);
     lv_obj_clear_flag(ic, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align_to(ic, cv, LV_ALIGN_CENTER, 0, (i == 0) ? 5 : 0);   // nudge the icon into the triangle's body
     s_tabhint_ic[i] = ic;
+
+    // Lay the icon and its shape out as one centred group: [icon] gap [shape].
+    const lv_coord_t icon_w = lv_txt_get_width(icons[i], strlen(icons[i]), icon_font, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t grp_w  = icon_w + GAP + SZ;
+    const lv_coord_t grp_h  = LV_MAX(icon_h, (lv_coord_t)SZ);
+    lv_coord_t rx, ry;
+    if (s_nav_rail && tabBarChildPosForCell(i, grp_w, grp_h, &rx, &ry)) {   // Condense Nav rail: stacked down the right edge
+      lv_obj_align(ic, LV_ALIGN_TOP_LEFT, rx, ry + (grp_h - icon_h) / 2);
+      lv_obj_align(cv, LV_ALIGN_TOP_LEFT, rx + icon_w + GAP, ry + (grp_h - SZ) / 2);
+    } else {
+      const lv_coord_t gx = i * cell + (cell - grp_w) / 2;
+      lv_obj_align(ic, LV_ALIGN_LEFT_MID, gx, 0);
+      lv_obj_align(cv, LV_ALIGN_LEFT_MID, gx + icon_w + GAP, 0);
+    }
   }
   navUpdateTabHilite(getActiveTab());
 }
-#endif // HAS_TANMATSU
+#endif  // HAS_TANMATSU
+#endif // CAP_KEYPAD_NAV
 
 // Touch-only boards (Heltec V4) compile out the keypad/trackball focus-group nav
 // above, so navMarkDirty() has no group to flag dirty. Provide a no-op fallback
@@ -11175,7 +11208,7 @@ static void chatComposerAlignSlim(LvChatPanel* p) {
   lift(p->composer_ta, s_comp_ta_h);
   lift(p->qr_btn,      chatComposerChipSz());
   lift(p->emoji_btn,   chatComposerChipSz());
-#if defined(HAS_CROWPANEL_50)
+#if defined(HAS_CROWPANEL_50) || defined(HAS_TANMATSU)
   lift(p->send_btn,    chatComposerSendSz());
 #else
   lift(p->send_btn,    30);   // a 30-px circle in a send_sz-wide slot (makeChatDetail)
@@ -44113,6 +44146,21 @@ static void styleChipAsFkey(lv_obj_t* btn, lv_obj_t* icon, int shape, uint32_t r
     if (tint_icon) lv_obj_set_style_text_color(icon, lv_color_hex(rgb), LV_PART_MAIN);
   }
 }
+// Composer chips: a small F-key shape just right of the button, vertically centred on it,
+// instead of a big shape drawn behind the icon. It is the button's child with overflow
+// visible, so it follows the button wherever the composer lifts or moves it.
+static void chatAddFkeyHint(lv_obj_t* btn, lv_obj_t* icon, int shape, uint32_t rgb, bool tint_icon) {
+  if (!btn) return;
+  lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
+  lv_obj_clear_flag(btn, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(btn, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+  lv_obj_t* cv = makeFkeyShape(btn, shape, rgb, CHAT_FKEY_HINT_SZ);
+  // RIGHT_MID aligns to the content box; add the right pad to reach the button's edge.
+  const lv_coord_t pr = lv_obj_get_style_pad_right(btn, LV_PART_MAIN);
+  lv_obj_align(cv, LV_ALIGN_RIGHT_MID, pr + CHAT_FKEY_HINT_W, 0);
+  if (icon && tint_icon) lv_obj_set_style_text_color(icon, lv_color_hex(rgb), LV_PART_MAIN);
+}
 #endif  // HAS_TANMATSU
 
 // ----- Chat detail (full-screen overlay on lv_scr_act) -------
@@ -44287,10 +44335,11 @@ static void makeChatDetail(LvChatPanel& p) {
   const bool has_symbol_chip = chatHasSymbolChip(p.channel_mode);
   const lv_coord_t send_sz = chatComposerSendSz();
   const lv_coord_t comp_ta_w = chatComposerTaW(p.channel_mode);
-  const lv_coord_t comp_ta_x = chip_sz + chip_gap;
+  // CHAT_FKEY_HINT_W (Tanmatsu only, else 0) leaves room right of QR and emoji for their F-key shapes.
+  const lv_coord_t comp_ta_x = chip_sz + CHAT_FKEY_HINT_W + chip_gap;
   // Right-edge offsets: the chips stack leftward from Send's slot, # nearest it.
   const lv_coord_t symbol_rx = chatComposerSendInset() + send_sz + chip_gap;
-  const lv_coord_t emoji_rx = has_symbol_chip ? symbol_rx + chip_sz + chip_gap : symbol_rx;
+  const lv_coord_t emoji_rx = (has_symbol_chip ? symbol_rx + chip_sz + chip_gap : symbol_rx) + CHAT_FKEY_HINT_W;
 
   // Macro picker button: a compact chip taps to a popup grid of user-
   // defined quick-reply presets. Saves typing for stock phrases ("ok",
@@ -44317,19 +44366,15 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_label_set_text(ql, UI_ICON_MESSAGE_SQUARE_TEXT);
 #if defined(HAS_CROWPANEL_50)
   lv_obj_set_style_text_font(ql, &ui_icons_20, LV_PART_MAIN);
+#elif defined(HAS_TANMATSU)
+  lv_obj_set_style_text_font(ql, &ui_icons_24, LV_PART_MAIN);
 #else
   lv_obj_set_style_text_font(ql, &g_font_16, LV_PART_MAIN);
 #endif
   lv_obj_center(ql);
 #if defined(HAS_TANMATSU)
-  styleChipAsFkey(qr_btn, ql, 0, 0xF5A623, chip_sz, true);    // orange △ — quick replies (F2)
-  // styleChipAsFkey clears the bg to draw the shape — restore the glass backing behind it.
-  lv_obj_set_style_bg_color(qr_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+  chatAddFkeyHint(qr_btn, ql, 0, 0xF5A623, true);    // orange △ — quick replies (F2)
   lv_obj_set_style_bg_opa(qr_btn, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_set_style_radius(qr_btn, chip_sz / 2, LV_PART_MAIN);
-  // ~40% smaller list glyph (fixed size, not the UI-scaled g_font_14) so it sits neatly in
-  // the narrow lower body of the △ instead of overflowing it.
-  lv_obj_set_style_text_font(ql, &lv_font_montserrat_14, LV_PART_MAIN);
 #endif
 
   // Emoji / special-character picker button (smiley). Opens the insert grid.
@@ -44360,15 +44405,12 @@ static void makeChatDetail(LvChatPanel& p) {
 #endif
   lv_obj_center(el);
 #if defined(HAS_TANMATSU)
-  styleChipAsFkey(p.emoji_btn, el, 1, 0xFFD400, chip_sz, false); // yellow □ — emoji picker (F3); keep the colour glyph
-  // styleChipAsFkey clears the bg to draw the shape — restore the glass backing behind it.
-  lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+  chatAddFkeyHint(p.emoji_btn, el, 1, 0xFFD400, false); // yellow □ — emoji picker (F3); keep the colour glyph
   lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_50, LV_PART_MAIN);
-  lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
 #if LV_USE_IMGFONT
   // The colour emoji is a fixed ~16-px baked image (it doesn't scale with the font), so it
-  // looks tiny in the big □. Hide the label glyph and draw the same emoji as a 2x-zoomed
-  // image so it fills the shape.
+  // looks tiny in the big chip. Hide the label glyph and draw the same emoji as a 2x-zoomed
+  // image so it fills the button.
   if (const lv_img_dsc_t* sm = emojiLookupAny(0x1F60A)) {   // 😊
     lv_obj_add_flag(el, LV_OBJ_FLAG_HIDDEN);
     lv_obj_t* eimg = lv_img_create(p.emoji_btn);
@@ -44497,7 +44539,7 @@ static void makeChatDetail(LvChatPanel& p) {
 
   lv_obj_t* send = lv_btn_create(p.composer_row);
   p.send_btn = send;
-#if defined(TLORA_PAGER) || CAP_ROUND_CORNERS || defined(HAS_CROWPANEL_50)
+#if defined(TLORA_PAGER) || CAP_ROUND_CORNERS || defined(HAS_CROWPANEL_50) || defined(HAS_TANMATSU)
   lv_obj_set_size(send, send_sz, send_sz);
 #else
   lv_obj_set_size(send, 30, 30);   // a circle; the slot is send_sz wide
@@ -44510,6 +44552,8 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_label_set_text(sl, UI_ICON_ARROW_UP);
 #if defined(HAS_CROWPANEL_50)
   lv_obj_set_style_text_font(sl, &ui_icons_20, LV_PART_MAIN);
+#elif defined(HAS_TANMATSU)
+  lv_obj_set_style_text_font(sl, &ui_icons_24, LV_PART_MAIN);
 #else
   lv_obj_set_style_text_font(sl, &g_font_16, LV_PART_MAIN);
 #endif
