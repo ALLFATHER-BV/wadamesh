@@ -536,12 +536,40 @@ static bool s_wc_confirm_ok = false;   // this request may answer the device's c
 // Confirms marked s_confirm_owner (factory reset, backup import, ...) also need a "yes"
 // from someone at the device: the browser is told to wait, webApprove() asks, and an
 // Allow grants that one action once, for the browser's repeat of the same request.
+// A grant names the action (its callback) and the item it was asked for (wcItemKey:
+// the page, the path to it, the item's place and text, the confirm's own message), so
+// it never covers another item that happens to share the callback (one backup file's
+// Delete is not another's).
 static bool     s_wc_need_owner = false;
 static SimpleCb s_wc_owner_cb = nullptr;   // the action being asked about
+static uint32_t s_wc_owner_key = 0;        // ... and the item it is for
 static SimpleCb s_wc_grant_cb = nullptr;   // the action allowed at the device
+static uint32_t s_wc_grant_key = 0;
 static uint32_t s_wc_grant_ms = 0;
 static unsigned s_wc_ask_q = 0;
+static uint32_t s_wc_page_key = 0;         // the page and path of the request in progress
+static uint32_t s_wc_click_key = 0;        // the item the click in progress is for (set before wcClick)
 static const uint32_t WC_GRANT_MS = 30000;
+
+static uint32_t wcHash(uint32_t h, const char* s) {   // FNV-1a, with a separator after each part
+  for (; s && *s; ++s) { h ^= (uint8_t)*s; h *= 16777619u; }
+  h ^= 0x1F; h *= 16777619u;
+  return h;
+}
+static uint32_t wcPageKey(int cat, const char* path) {
+  char b[12];
+  snprintf(b, sizeof b, "%d", cat);
+  return wcHash(wcHash(2166136261u, b), path);
+}
+// Which item a click is for: the request's page and path, the item's index and its text,
+// and for a staged value the value itself. Ties a device grant to exactly that item.
+static uint32_t wcItemKey(int idx, const char* val) {
+  char b[12];
+  snprintf(b, sizeof b, "%d", idx);
+  uint32_t h = wcHash(s_wc_page_key, b);
+  if (idx >= 0 && idx < s_wci_n) { h = wcHash(h, s_wci[idx].t); h = wcHash(h, s_wci[idx].h); }
+  return wcHash(h, val);
+}
 
 // Tap one thing, then see what it did: a confirm (answered when allowed, else reported),
 // a new page or sheet (a view the browser can go into), or something the device opened
@@ -553,18 +581,20 @@ static int wcClick(lv_obj_t* ob, WcView* out) {
   lv_event_send(ob, LV_EVENT_CLICKED, nullptr);
   if (s_confirm_modal && s_confirm_modal != conf0) {
     gone = s_confirm_modal;
-    const bool granted = s_confirm_owner && s_wc_grant_cb == s_confirm_cb &&
+    const char* m = s_confirm_msg_lbl ? wcLabel(s_confirm_msg_lbl) : nullptr;
+    const uint32_t key = wcHash(s_wc_click_key, m);
+    const bool granted = s_confirm_owner && s_wc_grant_cb == s_confirm_cb && s_wc_grant_key == key &&
                          millis() - s_wc_grant_ms < WC_GRANT_MS;
     const bool owner = s_wc_confirm_ok && s_confirm_owner && !granted;
     if (!s_wc_confirm_ok || owner) {
-      const char* m = s_confirm_msg_lbl ? wcLabel(s_confirm_msg_lbl) : nullptr;
       strlcpy(s_wc_confirm_msg, m ? m : TR("Are you sure?"), sizeof s_wc_confirm_msg);
       s_wc_need_owner = owner;
       s_wc_owner_cb = s_confirm_cb;
+      s_wc_owner_key = key;
       confirmDismiss();
       return WCR_CONFIRM;
     }
-    if (granted) s_wc_grant_cb = nullptr;   // once
+    if (granted) { s_wc_grant_cb = nullptr; s_wc_grant_key = 0; }   // once
     SimpleCb cb = s_confirm_cb;
     confirmDismiss();
     if (cb) cb();
@@ -715,6 +745,7 @@ static int wcApply(bool* partial, WcSession& ss) {
       if (pass == 1) { lv_event_send(o, LV_EVENT_DEFOCUSED, nullptr); continue; }
       if (lv_obj_has_state(o, LV_STATE_DISABLED)) continue;
       WcView v; int r = WCR_NONE;
+      s_wc_click_key = wcItemKey(i, val);
       switch (it.kind) {
         case WCK_SWITCH: {
           const bool want = atoi(val) != 0;
@@ -1103,7 +1134,7 @@ static void wcaRun(const char* id) {
 #endif  // CAP_LUA_APPS
 
 static void wcApproved(bool ok) {
-  if (ok) { s_wc_grant_cb = s_wc_owner_cb; s_wc_grant_ms = millis(); }
+  if (ok) { s_wc_grant_cb = s_wc_owner_cb; s_wc_grant_key = s_wc_owner_key; s_wc_grant_ms = millis(); }
   char m[64];
   snprintf(m, sizeof m, "{\"t\":\"cfg\",\"q\":%u,\"k\":\"grant\",\"g\":%d}", s_wc_ask_q, ok ? 1 : 0);
   wcEnqueue(m);
@@ -1168,6 +1199,8 @@ static void webCfgCmd(const char* a) {
   WcSession ss;
   wcBuild(cat, ss);
   s_wc_confirm_ok = false;
+  s_wc_page_key = wcPageKey(cat, path);
+  s_wc_click_key = s_wc_page_key;   // replaying the path never answers a confirm
   if (!wcReplay(path)) {
     wcTeardown(ss);
     wcReplyErr(TR("This page changed on the device. Reloading."));
@@ -1197,6 +1230,7 @@ static void webCfgCmd(const char* a) {
   WcView nv = {};
   if (r == WCR_NONE) {
     if (idx >= 0 && idx < s_wci_n) {
+      s_wc_click_key = wcItemKey(idx, nullptr);
       if (!s_wci[idx].obj) partial = true;
       else r = wcClick(s_wci[idx].obj, &nv);
     } else if (idx < 0 && staged) {
@@ -1206,6 +1240,7 @@ static void webCfgCmd(const char* a) {
       for (int i = 0; i < s_wci_n; ++i)
         if (s_wci[i].obj && wcIsSave(s_wci[i]) && !lv_obj_has_state(s_wci[i].obj, LV_STATE_DISABLED)) {
           idx = i;
+          s_wc_click_key = wcItemKey(i, nullptr);
           r = wcClick(s_wci[i].obj, &nv);
           break;
         }
