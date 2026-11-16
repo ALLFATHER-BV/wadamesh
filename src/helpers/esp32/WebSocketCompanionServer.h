@@ -66,6 +66,12 @@ struct WSClientState {
   uint8_t auth_failures;
   uint8_t key[16];     // hash of the browser's console id (valid once HELLO/CODE was seen)
   uint32_t auth_gen;   // g_web_session.generation() when authed; a change ends the session
+  // Plain HTTP: a console page still going out (drainPage). The request has been read;
+  // the slot stays until the body has left or WS_PAGE_SEND_MS runs out.
+  const uint8_t* page_ptr;   // null = no page pending
+  uint32_t page_len;
+  uint32_t page_sent;
+  uint32_t page_ms;          // when the page started
   bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
   uint8_t lock_sent;   // mirror: lock state last sent to this browser (0xFF = not yet)
 #if WADA_WEB_FILE_TRANSFER
@@ -140,6 +146,7 @@ private:
   void grantClient(int idx);                                 // approved: mark authed and send "AUTH OK"
   void pollApproval(int idx);                                // a waiting browser: has the device user answered?
   bool servePage(int idx);                                   // plain HTTP GET: console pages and /api/*
+  void drainPage(int idx);                                   // push a pending page body, non-blocking
 #if WADA_WEB_FILE_TRANSFER
   void serviceFileClients();
   void drainFileInput(int idx);

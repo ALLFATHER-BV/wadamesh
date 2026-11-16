@@ -18,7 +18,8 @@
 #endif
 
 #define TCP_WRITE_TIMEOUT_MS   120
-#define WS_PAGE_WRITE_TIMEOUT_MS 1500      // a console page is up to ~12 KB gzipped; it is sent once per page load
+#define WS_PAGE_SEND_MS        10000        // a console page (up to ~13 KB gzipped) must have left by then
+#define WS_PAGE_CHUNK          1436         // one TCP segment: a probed-writable socket takes it without blocking
 #define WS_WEDGED_DROP_MS      10000
 #define WS_AUTH_TIMEOUT_MS     45000        // a browser socket must be approved within this, or it is dropped (frees the slot); longer than the device's 30 s request so its answer arrives first
 #define WS_MIRROR_WRITE_TIMEOUT_MS 250   // mirror bands are bigger than companion frames — a little more headroom before we treat the frame as unrecoverable
@@ -135,6 +136,8 @@ WebSocketCompanionServer::WebSocketCompanionServer()
     _clients[i].auth_failures = 0;
     _clients[i].meta_sent = false;
     _clients[i].lock_sent = 0xFF;
+    _clients[i].page_ptr = nullptr;
+    _clients[i].page_len = _clients[i].page_sent = _clients[i].page_ms = 0;
   #if WADA_WEB_FILE_TRANSFER
     _clients[i].files_request_pending = false;
     _clients[i].files_frame_started_ms = 0;
@@ -162,6 +165,7 @@ void WebSocketCompanionServer::stop() {
     if (_clients[i].in_use) {
       _clients[i].client.stop();
       _clients[i].in_use = false;
+      _clients[i].page_ptr = nullptr;
     }
   }
 }
@@ -233,6 +237,8 @@ void WebSocketCompanionServer::adoptClient(WiFiClient& incoming) {
   _clients[slot].auth_failures = 0;
   _clients[slot].meta_sent = false;
   _clients[slot].lock_sent = 0xFF;
+  _clients[slot].page_ptr = nullptr;
+  _clients[slot].page_len = _clients[slot].page_sent = 0;
 #if WADA_WEB_FILE_TRANSFER
   _clients[slot].files_request_pending = false;
   _clients[slot].files_frame_started_ms = 0;
@@ -255,11 +261,12 @@ void WebSocketCompanionServer::pruneDisconnected() {
   uint32_t now = millis();
   for (int i = 0; i < WS_COMPANION_MAX_CLIENTS; i++) {
     if (!_clients[i].in_use) continue;
-    bool stale_handshake = !_clients[i].handshake_done &&
+    bool stale_handshake = !_clients[i].handshake_done && !_clients[i].page_ptr &&
                            (now - _clients[i].accept_ms) > WS_HANDSHAKE_TIMEOUT_MS;
     if (!_clients[i].client.connected() || stale_handshake) {
       _clients[i].client.stop();
       _clients[i].in_use = false;
+      _clients[i].page_ptr = nullptr;
     }
   }
 }
@@ -312,6 +319,7 @@ static uint32_t clientIp(WiFiClient& client) {
 bool WebSocketCompanionServer::doHandshake(int idx) {
   WSClientState* c = &_clients[idx];
   WiFiClient* cl = &c->client;
+  if (c->page_ptr) { drainPage(idx); return false; }
   while (cl->available() && c->handshake_len < WS_HANDSHAKE_MAX_LEN - 1) {
     char ch = (char)cl->read();
     c->handshake_buf[c->handshake_len++] = ch;
@@ -400,6 +408,7 @@ bool WebSocketCompanionServer::doHandshake(int idx) {
         }
       }
       servePage(idx);
+      if (c->page_ptr) { drainPage(idx); return false; }   // the body goes out over the next loops
       c->client.stop();
       c->in_use = false;
       return false;
@@ -891,8 +900,15 @@ bool WebSocketCompanionServer::servePage(int idx) {
       "frame-ancestors 'self'\r\n"
       "X-Content-Type-Options: nosniff\r\n"
       "Connection: close\r\n\r\n", (unsigned)pages[i].len);
-    if (writeAllBytes(*cl, reinterpret_cast<const uint8_t*>(hdr), (size_t)n, TCP_WRITE_TIMEOUT_MS))
-      writeAllBytes(*cl, pages[i].gz, pages[i].len, WS_PAGE_WRITE_TIMEOUT_MS);
+    // The headers fit one probed write; the body is queued for drainPage, which pushes
+    // only what the socket takes now. A blocking write here held the main loop for as
+    // long as the browser took to ACK (#854 review: up to 1.5 s per page).
+    if (writeAllBytes(*cl, reinterpret_cast<const uint8_t*>(hdr), (size_t)n, TCP_WRITE_TIMEOUT_MS)) {
+      c->page_ptr = pages[i].gz;
+      c->page_len = (uint32_t)pages[i].len;
+      c->page_sent = 0;
+      c->page_ms = millis();
+    }
     return true;
   }
 
@@ -957,6 +973,29 @@ bool WebSocketCompanionServer::servePage(int idx) {
     (unsigned)strlen(body), body);
   writeAllBytes(*cl, reinterpret_cast<const uint8_t*>(hdr), (size_t)n, TCP_WRITE_TIMEOUT_MS);
   return status == 200;
+}
+
+// Push the rest of a console page from flash as far as the socket takes it right now,
+// one segment per probed write, from the main loop (pollRecvFrame -> doHandshake). The
+// slot is freed once the body has left, the peer has gone, or WS_PAGE_SEND_MS is up.
+void WebSocketCompanionServer::drainPage(int idx) {
+  WSClientState* c = &_clients[idx];
+  while (c->page_sent < c->page_len && c->client.connected() && socketWritableNow(c->client)) {
+    size_t chunk = c->page_len - c->page_sent;
+    if (chunk > WS_PAGE_CHUNK) chunk = WS_PAGE_CHUNK;
+    const size_t n = c->client.write(c->page_ptr + c->page_sent, chunk);
+    if (n == 0) break;
+    c->page_sent += (uint32_t)n;
+#if defined(HAS_TDISPLAY_P4)
+    break;   // AT transport: each write is a worker round-trip; one per pass (as drainClientTx)
+#endif
+  }
+  if (c->page_sent >= c->page_len || !c->client.connected() ||
+      (uint32_t)(millis() - c->page_ms) > WS_PAGE_SEND_MS) {
+    c->page_ptr = nullptr;
+    c->client.stop();
+    c->in_use = false;
+  }
 }
 
 // Read masked WebSocket binary frames from a mirror client and dispatch pointer
