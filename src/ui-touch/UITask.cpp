@@ -8950,10 +8950,18 @@ static void ssaverSetNorthLock(bool on);
 // WebSocket server (WebMirror). Drives the SAME LVGL UI as the physical touch;
 // idle -> released so it never fights the real touchscreen.
 static lv_indev_drv_t s_web_indev_drv;
+#if CAP_WEB_CONSOLE
+static bool webRemoteInputBlocked();   // a card only the person at the device may answer is up
+#else
+static bool webRemoteInputBlocked() { return false; }
+#endif
 static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
   (void)drv;
   int16_t x = 0, y = 0; bool pr = false;
-  if (g_web_mirror.readPointer(&x, &y, &pr)) {
+  // The pointer is still read (and dropped) while blocked, so a tap queued meanwhile
+  // does not land once the card is gone. Released keeps the last point: a press that
+  // began before the card still ends on what it pressed, never on the card.
+  if (g_web_mirror.readPointer(&x, &y, &pr) && !webRemoteInputBlocked()) {
     data->point.x = x;
     data->point.y = y;
     data->state = pr ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
@@ -34700,8 +34708,14 @@ static bool lockScreenUp() { return false; }
 
 static void webAskClose() { popupClose(&s_web_ask); }
 
+// A click that came from the Screen tab (the web mirror's pointer), not from this device.
+static bool webClickIsRemote() {
+  lv_indev_t* in = lv_indev_get_act();
+  return in && in->driver == &s_web_indev_drv;
+}
+
 static void webAskAnswerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp()) return;
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp() || webClickIsRemote()) return;
   const auto d = (WebSessionAuth::Decision)(intptr_t)lv_event_get_user_data(e);
   if (g_web_session.resolve(s_web_ask_seq, d)) {
     webTrustSave();
@@ -34815,7 +34829,7 @@ static void webApproveWithdraw(WebApproveDone done) {
 }
 
 static void webApproveAnswerCb(lv_event_t* e) {
-  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp()) return;
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || lockScreenUp() || webClickIsRemote()) return;
   webApproveFinish(lv_event_get_user_data(e) != nullptr);
 }
 
@@ -34849,6 +34863,21 @@ static void webConsoleTick() {
     webAskClose();
   }
 }
+
+// The Screen tab drives this UI with the browser's pointer and keys, so while a card
+// that only the person at the device may answer is up, that input is dropped: the
+// "Allow this browser?" card, the console's approval card, and the device's own
+// confirm for an action the console needs a local yes for (factory reset, backup
+// import, firmware install, ...). Otherwise an approved browser could tap Allow on
+// its own request, or let another browser in. The device's own confirm stays usable
+// in remote mode, where the browser is the only screen the device has; the two
+// console cards never do (a browser waiting there gets in with the code instead).
+#if CAP_WEB_CONSOLE
+static bool webRemoteInputBlocked() {
+  if (s_web_ask || s_web_appr) return true;
+  return s_confirm_modal && s_confirm_owner && !s_remote_mode;
+}
+#endif
 
 static void openRemotePage() {
   closeRemotePage();
@@ -86401,9 +86430,11 @@ void UITask::loop() {
     uint16_t wk;
     // Drain generously: a paste or a phone autocomplete arrives as one burst, and a low cap
     // left the rest sitting in the ring until the next iteration (where it could be pushed
-    // out by newer keys and silently lost). Each key here is cheap.
+    // out by newer keys and silently lost). Each key here is cheap. Keys that arrive while
+    // an approval card is up are drained and dropped (webRemoteInputBlocked).
+    const bool web_keys = !webRemoteInputBlocked();
     for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i)
-      handleHwKey((int)wk);
+      if (web_keys) handleHwKey((int)wk);
 #else
     // On-screen-keyboard boards (V4/RAK): the browser's laptop keyboard should type too, not
     // only pointer-taps on the on-screen keys. Inject into the focused field — which IS the
@@ -86412,8 +86443,9 @@ void UITask::loop() {
     // ready cb (send/next); backspace deletes; other printables type in.
     uint16_t wk;
     // Same generous drain as the physical-keyboard branch above (burst paste / autocomplete).
+    const bool web_keys = !webRemoteInputBlocked();
     for (int i = 0; i < 64 && g_web_mirror.popKey(&wk); ++i) {
-      if (!fta) continue;   // no editable field focused -> drain + drop
+      if (!fta || !web_keys) continue;   // no editable field focused, or a card is up -> drain + drop
       if (wk == 0x0D || wk == 0x0A)      lv_event_send(g_lv.keyboard, LV_EVENT_READY, nullptr);
       else if (wk == 0x08 || wk == 0x7F) taDeletePreviousGrapheme(fta);
       else if (wk >= 0x20)               lv_textarea_add_char(fta, (uint32_t)wk);
