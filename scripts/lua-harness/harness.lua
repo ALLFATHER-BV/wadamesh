@@ -2969,9 +2969,9 @@ local function eb_pic_book()
   return zip_build(files), pic
 end
 
-local function eb_images_start(with_api, result)
+local function eb_images_start(with_api, result, caps)
   local zipped, pic = eb_pic_book()
-  eb_start(320, 240, zipped)
+  eb_start(320, 240, zipped, caps)
   local calls = { n = 0, removed = 0 }
   if with_api then
     wada.ui.image = function(file, off, len, x, y, w, h)
@@ -3089,6 +3089,21 @@ scenarios.ebook_images = function()
   assert(eb_wait(app) == p, "and the page is back")
   app.on_close()
   assert(storekv.img == nil or storekv.img == "tap", "mode stored: " .. tostring(storekv.img))
+
+  -- no touch: the menu lists the page's pictures (a tap cannot reach them); d-pad right is the next page
+  app, calls = eb_images_start(true, nil, { touch = false, keyboard = true, sdk_ext = true })
+  p = eb_page()
+  assert(#buttons == 0, "touchless reading has no on-screen buttons")
+  key(app, "m")
+  assert(eb_row("View image 1") and eb_row("View image 2"), "a row per picture on the page: " .. label_dump())
+  assert(guarded(BUDGET, eb_row("View image 1").fn))
+  assert(#calls == 1, "the row shows the picture")
+  key(app, "enter"); assert(eb_wait(app) == p, "back on the same page")
+  swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left on the first page stays on it")
+  swipe(app, "right"); tick(app, 3, 40)
+  assert(eb_page() ~= p, "d-pad right goes to the next page")
+  swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left goes back")
+  app.on_close()
 end
 
 local function eb_txt_pages(app)

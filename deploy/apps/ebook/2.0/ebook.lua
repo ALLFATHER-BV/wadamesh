@@ -53,6 +53,7 @@ local size = 14
 local screen = "none"
 local caps = sys.caps and sys.caps() or {}
 local on_input
+local touchless = caps.touch == false   -- a d-pad and keyboard, no screen taps
 -- On a touchless board an app with an on_input gets every key, and the firmware stops
 -- moving the cursor through list rows. Screens made of rows therefore hand the keys back.
 local function keys_to_app(on)
@@ -603,6 +604,20 @@ local function page_image(s, i, y)
   end
 end
 
+-- Every picture whose placeholder is on page i, in reading order (zip paths).
+local function page_images(s, i)
+  local p, o = s.pp[i], s.po[i]
+  local ep, eo = s.pp[i + 1], s.po[i + 1]
+  if not ep then ep, eo = #s.paras + 1, 1 end
+  local out = {}
+  for q = p, math.min(ep, #s.paras) do
+    local so = q == p and o or 1
+    local se = q == ep and eo - 1 or #s.paras[q]
+    if se >= so and s.imgs[q] then out[#out + 1] = s.imgs[q] end
+  end
+  return out
+end
+
 local function find_page(s, p, o)
   local at = 1
   for i = 1, #s.pp do
@@ -727,16 +742,24 @@ function show_reading()
   screen = "reading"
   keys_to_app(true)
   local gap = 4
-  local bh = math.max(34, ui.text_h(16) + 12)
-  local bw = math.max(40, bh)
-  foot_y = H - bh - M
+  if touchless then
+    -- the keys turn the pages and nothing on screen can take focus, so no buttons
+    local bh = ui.text_h(12) + 2
+    foot_y = H - bh - M
+    stat_lbl = ui.label("", M, foot_y, 12, C.sub)
+    stat_lbl:width(W - 2 * M, "center")
+  else
+    local bh = math.max(34, ui.text_h(16) + 12)
+    local bw = math.max(40, bh)
+    foot_y = H - bh - M
+    -- The next button is created first so a jog wheel or trackball focus lands on it.
+    ui.button(SYM_RIGHT, W - M - bw, foot_y, bw, bh, next_page)
+    ui.button(SYM_LEFT, M, foot_y, bw, bh, prev_page)
+    ui.button(SYM_LIST, M + bw + gap, foot_y, bw, bh, function() show_menu() end)
+    stat_lbl = ui.label("", M + 2 * (bw + gap) + gap, foot_y + (bh - ui.text_h(12)) // 2, 12, C.sub)
+    stat_lbl:width(W - 3 * bw - 4 * gap - 2 * M, "center")
+  end
   maxl = math.max(1, (foot_y - 2 * M) // ui.text_h(size))
-  -- The next button is created first so a jog wheel or trackball focus lands on it.
-  ui.button(SYM_RIGHT, W - M - bw, foot_y, bw, bh, next_page)
-  ui.button(SYM_LEFT, M, foot_y, bw, bh, prev_page)
-  ui.button(SYM_LIST, M + bw + gap, foot_y, bw, bh, function() show_menu() end)
-  stat_lbl = ui.label("", M + 2 * (bw + gap) + gap, foot_y + (bh - ui.text_h(12)) // 2, 12, C.sub)
-  stat_lbl:width(W - 3 * bw - 4 * gap - 2 * M, "center")
   text_lbl = ui.label(tr("Opening..."), M, M, size, C.text)
   text_lbl:width(W - 2 * M)
   if sec_dirty then
@@ -1019,6 +1042,13 @@ function show_menu()
   local list = ui.list(M, y + 4, W - 2 * M, H - y - 2 * M - 4)
   local size_row, img_row
   list:add(SYM_LEFT .. "  " .. tr("Continue reading"), function() show_reading() end)
+  if touchless and HAS_IMG and images() == "tap" and sec and sec.pp then
+    -- no screen to tap a placeholder on: the pictures on this page are listed here
+    local pics = page_images(sec, page)
+    for n, pic in ipairs(pics) do
+      list:add(#pics > 1 and (tr("View image") .. " " .. n) or tr("View image"), function() show_image(pic) end)
+    end
+  end
   list:add(tr("Chapters"), function() chap_page = (book.sp - 1) // PAGE_ROWS + 1; show_chapters() end)
   size_row = list:add(size_label(), function()
     for i, v in ipairs(SIZES) do
@@ -1115,6 +1145,8 @@ on_input = function(ev)
   elseif t == "swipe" then
     touch_moved = true
     local d = ev.dir
+    -- a touch swipe drags the page away (left = next); the d-pad points where it goes
+    if touchless and (d == "left" or d == "right") then d = d == "left" and "right" or "left" end
     if d == "left" or d == "down" then next_page()
     elseif d == "right" or d == "up" then prev_page() end
   elseif t == "up" then
