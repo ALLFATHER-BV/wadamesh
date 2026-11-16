@@ -115,7 +115,8 @@ lock:'<rect x=4 y=11 width=16 height=10 rx=2 /><path d="M8 11V7a4 4 0 0 1 8 0v4"
 general:'<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx=16 cy=6 r=2 /><circle cx=10 cy=12 r=2 /><circle cx=18 cy=18 r=2 />',
 backups:'<path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2"/>',language:'<circle cx=12 cy=12 r=9 /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
 mqtt:'<circle cx=18 cy=5 r=3 /><circle cx=6 cy=12 r=3 /><circle cx=18 cy=19 r=3 /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/>',
-app:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>'};
+app:'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/>',
+apps:'<rect x=3 y=3 width=7 height=7 rx=1.5 /><rect x=14 y=3 width=7 height=7 rx=1.5 /><rect x=3 y=14 width=7 height=7 rx=1.5 /><rect x=14 y=14 width=7 height=7 rx=1.5 />'};
 IC.profile=IC.user;IC.device=IC.info;IC.notifications=IC.sound;
 function icon(e){var k=(e||'').toLowerCase().replace('wi-fi','wifi').split(/[^a-z]/)[0];return '<svg viewBox="0 0 24 24">'+(IC[k]||IC.general)+'</svg>'}
 function el(t,c,x,p){var n=document.createElement(t);if(c)n.className=c;if(x!=null)n.textContent=x;if(p)p.appendChild(n);return n}
@@ -141,11 +142,11 @@ function conn(){WS=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+
  WS.onopen=function(){wOpen(WS)};
  WS.onclose=function(){if(running){restart=1;loading(0);showEmpty('Device restarting…','Reconnecting when it is back.')}failAll('Connection lost.');wRetry(conn)};
  WS.onmessage=function(e){if(wGate(e))return;var b=new Uint8Array(e.data);if(b.length&&b[0]==1)onData(dec.decode(b.subarray(1)))}}
-WR=function(){if(restart){restart=0;stack.length=1;chg={}}pump();loadCats().then(function(){if(cat>=0)load()})};
+WR=function(){if(restart){restart=0;stack.length=1;chg={}}pump();loadCats().then(function(){if(cat!==-1)load()})};
 
 // ---- categories ---------------------------------------------------------------------
 function loadCats(){return req('cats').then(function(j){if(j.k!='cats')throw new Error(j.m||'');CATS=j;drawCats();
- if(cat<0&&innerWidth>760){var f=j.g.find(function(g){return g.c.length});if(f)openCat(f.c[0])}else if(cat<0)E('cont').innerHTML=''}).catch(function(e){showEmpty('Settings unavailable',e.message)})}
+ if(cat===-1&&innerWidth>760){var f=j.g.find(function(g){return g.c.length});if(f)openCat(f.c[0])}else if(cat===-1)E('cont').innerHTML=''}).catch(function(e){showEmpty('Settings unavailable',e.message)})}
 function drawCats(){var d=E('cats');d.innerHTML='';E('dev').textContent=CATS.dev||'';
  CATS.g.forEach(function(g){if(!g.c.length)return;if(g.t)el('div','gt',g.t,d);
   g.c.forEach(function(c){var b=el('button','ci'+(c.id==cat?' on':''),null,d);b.innerHTML=icon(c.e);el('span',null,c.l,b);if(c.v)el('small',null,c.v,b);
@@ -159,7 +160,9 @@ function guard(){if(!Object.keys(chg).length)return Promise.resolve(true);
 
 // ---- a page ---------------------------------------------------------------------------
 function path(){return stack[stack.length-1].p}
-function load(){loading(1);return req('view',cat+' '+path()).then(function(r){loading(0);if(r.k=='err'){showEmpty('Not available right now',r.m,1);return}show(r)})
+// A Lua app's settings (cat "a:<id>"): saved to the app's own store, not a device page.
+function appId(){return typeof cat=='string'&&cat.slice(0,2)=='a:'?cat.slice(2):null}
+function load(){loading(1);var a=appId();return (a?req('aview',a):req('view',cat+' '+path())).then(function(r){loading(0);if(r.k=='err'){showEmpty('Not available right now',r.m,1);return}show(r)})
  .catch(function(e){loading(0);showEmpty('Not available right now',e.message,1)})}
 function showEmpty(t,m,retry){var c=E('cont');c.innerHTML='';var d=el('div','empty',null,c);el('b',null,t,d);el('div',null,m||'',d);
  if(retry){var b=el('button','btn','Try again',d);b.onclick=load}bar()}
@@ -229,7 +232,7 @@ function owner(m){return new Promise(function(res){var f=0;function end(g){if(f)
 function clean(v){return String(v).replace(/[\r\n]+/g,' ').slice(0,220)}
 function run(idx,ok){loading(1);running=1;var ks=Object.keys(chg),p=req('clr');
  ks.forEach(function(k){p=p.then(function(j){if(j.k=='err')throw new Error(j.m);return req('set',k+' '+clean(chg[k].v))})});
- return p.then(function(j){if(j.k=='err')throw new Error(j.m);return req('run',cat+' '+path()+' '+idx+' '+nItems+' '+(ok?1:0))}).then(function(j){running=0;loading(0);
+ return p.then(function(j){if(j.k=='err')throw new Error(j.m);var a=appId();return a?req('arun',a):req('run',cat+' '+path()+' '+idx+' '+nItems+' '+(ok?1:0))}).then(function(j){running=0;loading(0);
   // ap: the changes went in before the device asked; steppers already saved theirs.
   if(j.k=='confirm'){if(j.ap)items.forEach(function(t){if(t.k=='step')delete chg[t.i]});
    return dlg('Confirm',j.m,[{k:0,l:'Cancel'},{k:1,l:'Confirm',c:'p'}]).then(function(k){if(k)return run(idx,1);if(j.ap){chg={};load()}})}
@@ -242,7 +245,7 @@ function run(idx,ok){loading(1);running=1;var ks=Object.keys(chg),p=req('clr');
  .catch(function(e){running=0;loading(0);if(!restart)toast(e.message,'err')})}
 function loadCatsQuiet(){req('cats').then(function(j){if(j.k=='cats'){CATS=j;drawCats()}}).catch(function(){})}
 E('save').onclick=function(){run(-1)};E('disc').onclick=function(){chg={};load()};
-E('rel').onclick=function(){guard().then(function(ok){if(ok&&cat>=0){chg={};load()}})};
+E('rel').onclick=function(){guard().then(function(ok){if(ok&&cat!==-1){chg={};load()}})};
 E('back').onclick=function(){guard().then(function(ok){if(!ok)return;chg={};if(stack.length>1){stack.pop();load()}else{cat=-1;E('app').classList.remove('in');drawCats()}})};
 addEventListener('beforeunload',function(e){if(Object.keys(chg).length)e.preventDefault()});
 conn();

@@ -494,4 +494,26 @@ assert(store_t.rt == nil and store_t.rtn == nil and store_t.rt1 == nil and store
 row("Sign out")
 assert(W_.buttons["Sign in"])
 
+-- 1.1: a password set from the web console (Settings > Apps) signs in at the
+-- next open and is erased. The device store hands a saved "0" back as the
+-- number 0, which 1.0 read as "remember".
+guarded(app.on_close)
+reset(); timers = {}
+store_t.remember, store_t.email, store_t.password = 0, "a@b.c", "pw"
+app = assert(loadfile(APP))()
+guarded(app.on_open, BW, BH); settle()
+print("[web password] " .. table.concat(rows(), " / "))
+assert(store_t.password == nil, "the web password is erased at open")
+assert(rows()[1] == "cIRC rooms", "the web password signs in")
+assert(store_t.rtn == nil and store_t.rt1 == nil, "remember = 0 (a number) keeps no token")
+row("Sign out")
+-- a wrong one is erased all the same, and the sign-in page says why
+guarded(app.on_close)
+reset(); timers = {}
+store_t.password = "nope"
+app = assert(loadfile(APP))()
+guarded(app.on_open, BW, BH); settle()
+assert(store_t.password == nil, "a wrong web password is erased too")
+assert(W_.buttons["Sign in"] and status() == "Wrong email or password")
+
 print(string.format("ok (%dx%d) peak budget ~%d of %d", BW, BH, peak, BUDGET))

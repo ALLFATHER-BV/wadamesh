@@ -59743,6 +59743,7 @@ static const LuaInstApp* luaStoreFindInstalled(const char* id);   // fwd (define
 static void luaStoreInvalidateInstalled();
 
 static bool s_lua_inst_valid = false;   // cache flag: the /apps listing is SD I/O
+static volatile uint32_t s_lua_inst_gen = 0;   // bumped on every rescan (web app settings cache)
 static void luaStoreInvalidateInstalled() { s_lua_inst_valid = false; }
 
 #if CAP_BUILTIN_LUA_APPS
@@ -59863,6 +59864,7 @@ static void luaStoreScanInstalledFs(bool force) {
     a.icon[0] = 0;
     s_lua_inst_n++;
   }
+  ++s_lua_inst_gen;
 }
 
 static void luaStoreScanInstalled(bool force) {

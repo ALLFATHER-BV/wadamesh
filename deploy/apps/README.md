@@ -58,6 +58,14 @@ symbol. Choose from: `gps` / `compass` / `map`, `radio`, `signal`, `chart`,
 `list`, `message`, `person`, `group`, `bell`, `star`, `search`, `settings`,
 `battery`, `game`.
 
+`config` is optional. It lists settings (an account, a server, a switch) that
+the web console's Settings tab shows under **Apps**, each saved into the
+`wada.store` key of the same name. Types are `text`, `password`, `bool` and
+`number`; put `config` last and keep the manifest under 900 bytes. See
+`deploy/apps/cyberspace/1.1/cyberspace.json` and the SDK page's App format
+section. A password should be read once in `on_open` and then erased with
+`store.set(key, nil)`; say in your PR what the app does with it.
+
 **Version directories are immutable.** Once `1.0/` is published it is never edited
 — a change ships as `1.1/`. Devices cache by version, so editing in place means
 some users silently run different code from others under the same version number.

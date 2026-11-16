@@ -24,6 +24,9 @@
 //        own Save/Apply). <n> = the item count the browser saw (page changed if not).
 //        -> k:"confirm" (m), a new view (as above), or k:"done" (al, pt, cl, op)
 //   <path> is "-" or dot-separated item indices clicked from the page to reach a view.
+//   @cfg aview <q> <appid>              -> a Lua app's settings (its manifest "config"),
+//                                          as view/items/end; cats lists them as "a:<id>"
+//   @cfg arun <q> <appid>               -> saves the staged values to the app's store; k:"done"
 #if !defined(HAS_TANMATSU)
 
 enum : uint8_t { WCI_TILE = 13, WCI_DOT = 14 };   // after the WCK_* row kinds
@@ -758,6 +761,10 @@ static int wcApply(bool* partial, WcSession& ss) {
 
 static void wcStageClear() { s_wcs_n = 0; s_wcs_an = 0; }
 
+#if CAP_LUA_APPS
+static void wcaCatsJson(WcOut& o);
+#endif
+
 static void wcCats() {
   WcOut o;
   o.begin("cats");
@@ -789,9 +796,311 @@ static void wcCats() {
     }
     o.raw("]}");
   }
+#if CAP_LUA_APPS
+  wcaCatsJson(o);
+#endif
   o.raw("]");
   o.end();
 }
+
+#if CAP_LUA_APPS
+// ---- Lua app settings -----------------------------------------------------------------
+// An installed app lists what it can be set up with in its manifest (<root>/apps/<id>.json):
+//   "config":[{"key":"email","label":"Email","type":"text","help":"..."}, ...]
+// type: text | password | bool | number; "default" is what the app uses while the key is
+// unset (a bool's "1"/"0", a field's placeholder). The values are the app's own wada.store keys
+// (<root>/apps/<id>.sav, "key=value" lines), so the app reads them with store.get. Only
+// declared keys can be written. Passwords are never sent back to the browser.
+enum : uint8_t { WCA_TEXT, WCA_PASSWORD, WCA_BOOL, WCA_NUMBER };
+struct WcAppField { char key[24]; char label[40]; char help[120]; char def[32]; uint8_t type; };
+struct WcApp { char id[20]; char name[28]; };
+static const int WCA_MAX_APPS   = 16;
+static const int WCA_MAX_FIELDS = 12;
+static const int WCA_FILE       = 2304;   // manifest / .sav read buffer (.sav caps at 2 KB)
+static const int WCA_LINE       = 192;    // wada.store's longest line, newline included
+static const int WCA_STORE_MAX  = 2048;   // wada.store's per-app budget
+static WcApp*      s_wca = nullptr;
+static int         s_wca_n = 0;
+static uint32_t    s_wca_gen = 0xFFFFFFFFu;
+static WcAppField* s_wcaf = nullptr;
+static int         s_wcaf_n = 0;
+static char*       s_wca_buf = nullptr;
+
+static bool wcaEnsure() {
+  if (!s_wca)     s_wca     = (WcApp*)wcAlloc(sizeof(WcApp) * WCA_MAX_APPS);
+  if (!s_wcaf)    s_wcaf    = (WcAppField*)wcAlloc(sizeof(WcAppField) * WCA_MAX_FIELDS);
+  if (!s_wca_buf) s_wca_buf = (char*)wcAlloc(WCA_FILE + 1);
+  return s_wca && s_wcaf && s_wca_buf;
+}
+
+static bool wcaIdOk(const char* s) {
+  if (!s || !*s || strlen(s) >= sizeof(WcApp::id)) return false;
+  for (; *s; ++s)
+    if (!isalnum((unsigned char)*s) && *s != '_' && *s != '-') return false;
+  return true;
+}
+static bool wcaKeyOk(const char* s) {
+  if (!s || !*s || strlen(s) >= sizeof(WcAppField::key)) return false;
+  for (; *s; ++s)
+    if (!isalnum((unsigned char)*s) && *s != '_') return false;
+  return true;
+}
+
+// <root>/apps/<id><ext> into s_wca_buf; false when absent or too large.
+static bool wcaReadFile(const char* id, const char* ext) {
+  s_wca_buf[0] = 0;
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char rel[48], path[96];
+  snprintf(rel, sizeof rel, "/apps/%s%s", id, ext);
+  luaHostAppPath(path, sizeof path, rel);
+  File f = fs->open(path, "r");
+  if (!f) return false;
+  const size_t sz = f.size();
+  size_t n = 0;
+  if (sz <= (size_t)WCA_FILE) n = f.read((uint8_t*)s_wca_buf, (size_t)WCA_FILE);
+  f.close();
+  s_wca_buf[n] = 0;
+  return sz <= (size_t)WCA_FILE;
+}
+
+// The "config" list of the manifest now in s_wca_buf into s_wcaf.
+static void wcaParseConfig() {
+  s_wcaf_n = 0;
+  const char* p = strstr(s_wca_buf, "\"config\"");
+  if (!p || !(p = strchr(p, '['))) return;
+  ++p;
+  while (s_wcaf_n < WCA_MAX_FIELDS) {
+    while (*p && *p != '{' && *p != ']') ++p;
+    if (*p != '{') return;
+    const char* s = p;
+    bool in_str = false;
+    for (; *p && (in_str || *p != '}'); ++p) {
+      if (in_str && *p == '\\' && p[1]) ++p;
+      else if (*p == '"') in_str = !in_str;
+    }
+    if (!*p) return;
+    char obj[400];
+    const size_t len = (size_t)(p - s) + 1;
+    ++p;
+    if (len >= sizeof obj) continue;
+    memcpy(obj, s, len);
+    obj[len] = 0;
+    WcAppField& f = s_wcaf[s_wcaf_n];
+    char type[12] = "text";
+    if (!luaJsonField(obj, "key", f.key, sizeof f.key) || !wcaKeyOk(f.key)) continue;
+    if (!luaJsonField(obj, "label", f.label, sizeof f.label)) strlcpy(f.label, f.key, sizeof f.label);
+    if (!luaJsonField(obj, "help", f.help, sizeof f.help)) f.help[0] = 0;
+    if (!luaJsonField(obj, "default", f.def, sizeof f.def)) f.def[0] = 0;
+    luaJsonField(obj, "type", type, sizeof type);
+    if      (!strcmp(type, "password")) f.type = WCA_PASSWORD;
+    else if (!strcmp(type, "bool"))     f.type = WCA_BOOL;
+    else if (!strcmp(type, "number"))   f.type = WCA_NUMBER;
+    else                                f.type = WCA_TEXT;
+    ++s_wcaf_n;
+  }
+}
+
+// The installed apps whose manifest has a config list, cached until the next /apps rescan.
+static void wcaScan() {
+  s_wca_n = 0;
+  luaStoreScanInstalled(false);
+  if (!luaStoreTablesReady()) return;
+  const uint32_t gen = s_lua_inst_gen;
+  for (int i = 0; i < s_lua_inst_n && s_wca_n < WCA_MAX_APPS; ++i) {
+    const LuaInstApp& a = s_lua_inst[i];
+    if (!wcaIdOk(a.id) || !wcaReadFile(a.id, ".json")) continue;
+    wcaParseConfig();
+    if (!s_wcaf_n) continue;
+    WcApp& w = s_wca[s_wca_n++];
+    strlcpy(w.id, a.id, sizeof w.id);
+    strlcpy(w.name, a.name[0] ? a.name : a.id, sizeof w.name);
+  }
+  s_wca_gen = gen;
+}
+static void wcaApps() {
+  if (s_wca_gen != s_lua_inst_gen || !s_lua_inst_valid) wcaScan();
+}
+static const WcApp* wcaFind(const char* id) {
+  wcaApps();
+  for (int i = 0; i < s_wca_n; ++i)
+    if (!strcmp(s_wca[i].id, id)) return &s_wca[i];
+  return nullptr;
+}
+
+// The value of `key` in the .sav text in s_wca_buf (out = "" when unset).
+static bool wcaSavGet(const char* key, char* out, size_t cap) {
+  out[0] = 0;
+  const size_t kl = strlen(key);
+  for (const char* l = s_wca_buf; *l; ) {
+    const char* e = strchr(l, '\n');
+    const size_t ll = e ? (size_t)(e - l) : strlen(l);
+    if (ll > kl && !strncmp(l, key, kl) && l[kl] == '=') {
+      const char* v = l + kl + 1;
+      size_t vl = ll - kl - 1;
+      if (vl && *v == '\x1F') { ++v; --vl; }   // LuaAppHost's kStoreTextMark
+      vl = LV_MIN(vl, cap - 1);
+      memcpy(out, v, vl);
+      out[vl] = 0;
+      return true;
+    }
+    l += ll + (e ? 1 : 0);
+  }
+  return false;
+}
+
+// Rewrite <root>/apps/<id>.sav (text now in s_wca_buf) with `key` set to `val` (null = removed).
+// text: a value that reads as a number is marked so the app gets it back as a string.
+static bool wcaSavPut(const char* id, const char* key, const char* val, bool text) {
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return false;
+  char* out = (char*)wcAlloc(WCA_FILE + WCA_LINE);
+  if (!out) return false;
+  size_t n = 0;
+  const size_t kl = strlen(key);
+  for (const char* l = s_wca_buf; *l; ) {
+    const char* e = strchr(l, '\n');
+    const size_t ll = e ? (size_t)(e - l) : strlen(l);
+    const bool same = ll > kl && !strncmp(l, key, kl) && l[kl] == '=';
+    if (!same && ll && n + ll + 1 <= (size_t)WCA_STORE_MAX) {
+      memcpy(out + n, l, ll); n += ll; out[n++] = '\n';
+    }
+    l += ll + (e ? 1 : 0);
+  }
+  bool ok = true;
+  if (val) {
+    char line[WCA_LINE];
+    char* end = nullptr;
+    strtod(val, &end);
+    const bool mark = text && val[0] && end && *end == 0;
+    const int m = snprintf(line, sizeof line, "%s=%s%s\n", key, mark ? "\x1F" : "", val);
+    if (m <= 0 || m >= (int)sizeof line || n + (size_t)m > (size_t)WCA_STORE_MAX) ok = false;
+    else { memcpy(out + n, line, (size_t)m); n += (size_t)m; }
+  }
+  if (ok) {
+    char appsdir[48], rel[48], path[96];
+    luaHostAppPath(appsdir, sizeof appsdir, "/apps");
+    fs->mkdir(appsdir);
+    snprintf(rel, sizeof rel, "/apps/%s.sav", id);
+    luaHostAppPath(path, sizeof path, rel);
+    File f = fs->open(path, "w");
+    ok = f && f.write((const uint8_t*)out, n) == n;
+    if (f) f.close();
+    if (ok) { memcpy(s_wca_buf, out, n); s_wca_buf[n] = 0; }
+  }
+  heap_caps_free(out);
+  return ok;
+}
+
+static void wcaCatsJson(WcOut& o) {
+  wcaApps();
+  if (!s_wca_n) return;
+  o.raw(",{\"t\":\""); jsonEsc(o.p, o.e, TR("Apps")); o.raw("\",\"c\":[");
+  for (int i = 0; i < s_wca_n; ++i) {
+    if (i) o.raw(",");
+    o.raw("{\"id\":\"a:"); jsonEsc(o.p, o.e, s_wca[i].id); o.raw("\"");
+    o.str("l", s_wca[i].name);
+    o.str("e", "apps");
+    o.raw("}");
+  }
+  o.raw("]}");
+}
+
+static bool wcaLoad(const char* id, const WcApp** app) {
+  *app = wcaFind(id);
+  if (!*app || !wcaReadFile(id, ".json")) return false;
+  wcaParseConfig();
+  if (!s_wcaf_n) return false;
+  luaAppStoreSync(id);
+  wcaReadFile(id, ".sav");
+  return true;
+}
+
+static void wcaView(const char* id) {
+  const WcApp* app = nullptr;
+  if (!wcaLoad(id, &app)) { wcReplyErr(TR("This app has no settings")); return; }
+  WcOut o;
+  o.begin("view");
+  o.str("ti", app->name);
+  o.str("p", "-");
+  o.num("n", s_wcaf_n);
+  o.end();
+  o.begin("items");
+  o.raw(",\"a\":[");
+  for (int i = 0; i < s_wcaf_n; ++i) {
+    const WcAppField& f = s_wcaf[i];
+    char v[WCA_LINE];
+    const bool set = wcaSavGet(f.key, v, sizeof v);
+    if (i) o.raw(",");
+    o.p += snprintf(o.p, (size_t)(o.e - o.p), "{\"i\":%d,\"k\":\"%s\"", i, f.type == WCA_BOOL ? "switch" : "field");
+    o.str("t", f.label);
+    if (f.help[0]) o.str("h", f.help);
+    switch (f.type) {
+      case WCA_BOOL:
+        o.num("v", strtod(set ? v : f.def, nullptr) != 0.0 ? 1 : 0);
+        break;
+      case WCA_PASSWORD:
+        o.num("pw", 1);
+        if (set && v[0]) o.num("set", 1);
+        o.num("ml", 128);
+        break;
+      case WCA_NUMBER:
+        o.str("v", v);
+        o.num("num", 1);
+        o.num("ml", 24);
+        if (f.def[0]) o.str("ph", f.def);
+        break;
+      default:
+        o.str("v", v);
+        o.num("ml", 128);
+        if (f.def[0]) o.str("ph", f.def);
+        break;
+    }
+    o.raw("}");
+  }
+  o.raw(",{\"i\":"); o.p += snprintf(o.p, (size_t)(o.e - o.p), "%d", s_wcaf_n);
+  o.raw(",\"k\":\"note\"");
+  o.str("s", TR("Saved on the device for this app. The app reads them when it opens."));
+  o.raw("}]");
+  o.end();
+  o.begin("end");
+  o.end();
+}
+
+static void wcaRun(const char* id) {
+  const WcApp* app = nullptr;
+  if (!wcaLoad(id, &app)) { wcStageClear(); wcReplyErr(TR("This app has no settings")); return; }
+  bool bad = false, failed = false;
+  for (int s = 0; s < s_wcs_n; ++s) {
+    const int idx = s_wcs[s].idx;
+    if (idx < 0 || idx >= s_wcaf_n) { bad = true; continue; }
+    const WcAppField& f = s_wcaf[idx];
+    const char* in = s_wcs_arena + s_wcs[s].at;
+    char v[WCA_LINE];
+    strlcpy(v, in, sizeof v);
+    for (char* c = v; *c; ++c) if (*c == '\n' || *c == '\r') *c = ' ';
+    const char* put = v;
+    if (f.type == WCA_BOOL) {
+      put = (v[0] && strcmp(v, "0")) ? "1" : "0";
+    } else if (f.type == WCA_NUMBER) {
+      char* end = nullptr;
+      strtod(v, &end);
+      if (v[0] && (!end || *end)) { bad = true; continue; }
+    } else if (f.type == WCA_PASSWORD && !v[0]) {
+      continue;   // a blank password field leaves the stored one alone
+    }
+    if (!put[0]) put = nullptr;   // an emptied field removes the key
+    const bool text = f.type == WCA_TEXT || f.type == WCA_PASSWORD;
+    if (!luaAppStoreSet(id, f.key, put, text) && !wcaSavPut(id, f.key, put, text)) failed = true;
+  }
+  wcStageClear();
+  if (failed) { wcReplyErr(TR("Could not save to the device storage")); return; }
+  WcOut o;
+  o.begin("done");
+  if (bad) o.num("pt", 1);
+  o.end();
+}
+#endif  // CAP_LUA_APPS
 
 static void wcApproved(bool ok) {
   if (ok) { s_wc_grant_cb = s_wc_owner_cb; s_wc_grant_ms = millis(); }
@@ -830,6 +1139,17 @@ static void webCfgCmd(const char* a) {
     wcReplyOk(); webCfgPump();
     return;
   }
+#if CAP_LUA_APPS
+  if (!strcmp(verb, "aview") || !strcmp(verb, "arun")) {
+    char id[sizeof(WcApp::id)] = {0};
+    k = 0;
+    while (*a && *a != ' ' && k < (int)sizeof id - 1) id[k++] = *a++;
+    if (!wcaIdOk(id) || !wcaEnsure()) { wcStageClear(); wcReplyErr("No such app"); webCfgPump(); return; }
+    if (verb[1] == 'v') wcaView(id); else wcaRun(id);
+    webCfgPump();
+    return;
+  }
+#endif
   const bool is_view = !strcmp(verb, "view"), is_run = !strcmp(verb, "run");
   if (!is_view && !is_run) { wcReplyErr("Unknown command"); webCfgPump(); return; }
 
