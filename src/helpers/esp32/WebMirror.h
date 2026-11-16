@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "WebAuthCode.h"   // g_web_auth: the one code shared by every browser feature
+#include "WebSessionAuth.h"   // g_web_session: on-device approval of web-console browsers
 
 class WebMirror {
 public:

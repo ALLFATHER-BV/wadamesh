@@ -107,6 +107,12 @@ bool touchPrefsSetRemoteLandscape(bool on);
 bool touchPrefsGetWebTerminal();
 bool touchPrefsSetWebTerminal(bool on);
 
+/** Web console "Always allow" browsers: an opaque blob (identity-tagged WebTrustedEntry
+ *  records, see webTrustSave in UITask.cpp). Get returns the bytes read (0 = none); Set
+ *  with len 0 clears it. */
+size_t touchPrefsGetWebTrust(void* out, size_t cap);
+bool touchPrefsSetWebTrust(const void* buf, size_t len);
+
 /** UI language index (UiLang enum in i18n.h; 0 = English). Read at boot. */
 uint8_t touchPrefsGetUiLang();
 bool    touchPrefsSetUiLang(uint8_t lang);

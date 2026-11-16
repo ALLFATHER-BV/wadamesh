@@ -219,6 +219,7 @@ constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
 // and the compiled chunk still has to fit the 256 KB per-app heap below.
 constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
+constexpr char   kStoreTextMark = '\x1F';     // .sav value prefix: text that reads as a number (see storeLoad)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
 constexpr uint32_t kAppTitleMs = 3000;         // identify the app briefly, then reclaim its top row
 
@@ -2528,15 +2529,28 @@ void storePath(char* out, size_t cap) {
   luaHostAppPath(out, cap, rel);
 }
 
+// A value that reads as a number comes back from the store as one. A value written as
+// text that would read as a number (an all-digit password set from the web console) is
+// saved with kStoreTextMark in front, so it comes back as the same string. Keys loaded
+// or set that way are kept in "wada.storetext", so a flush marks them again.
+bool storeLooksNumeric(const char* s) {
+  char* end = nullptr;
+  strtod(s, &end);
+  return s[0] && end && *end == 0;
+}
+
 void storeLoad() {
   lua_State* L = s_h->L;
   lua_newtable(L);
   lua_setfield(L, LUA_REGISTRYINDEX, "wada.storetab");
+  lua_newtable(L);
+  lua_setfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;
   char path[64]; storePath(path, sizeof path);
   File f = fs->open(path, "r");
   if (!f) return;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   char line[192];
   size_t n;
@@ -2546,14 +2560,18 @@ void storeLoad() {
     if (!eq) continue;
     *eq = 0;
     lua_pushstring(L, line);
-    lua_Number num;
-    char* end = nullptr;
-    num = strtod(eq + 1, &end);
-    if (end && *end == 0 && end != eq + 1) lua_pushnumber(L, num);
-    else                                   lua_pushstring(L, eq + 1);
+    if (eq[1] == kStoreTextMark) {
+      lua_pushstring(L, eq + 2);
+      lua_pushboolean(L, 1);
+      lua_setfield(L, -5, line);
+    } else if (storeLooksNumeric(eq + 1)) {
+      lua_pushnumber(L, strtod(eq + 1, nullptr));
+    } else {
+      lua_pushstring(L, eq + 1);
+    }
     lua_rawset(L, -3);
   }
-  lua_pop(L, 1);
+  lua_pop(L, 2);
   f.close();
 }
 
@@ -2568,12 +2586,21 @@ void storeFlush() {
   File f = fs->open(path, "w");
   if (!f) return;
   size_t written = 0;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   lua_pushnil(L);
   while (lua_next(L, -2)) {
     if (lua_type(L, -2) == LUA_TSTRING && (lua_isstring(L, -1) || lua_isnumber(L, -1))) {
+      const char* key = lua_tostring(L, -2);
+      bool mark = false;
+      if (lua_type(L, -1) == LUA_TSTRING && storeLooksNumeric(lua_tostring(L, -1)) && lua_istable(L, -4)) {
+        lua_getfield(L, -4, key);
+        mark = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+      }
       char lbuf[192];
-      int m = snprintf(lbuf, sizeof lbuf, "%s=%s\n", lua_tostring(L, -2), luaL_tolstring(L, -1, nullptr));
+      int m = mark ? snprintf(lbuf, sizeof lbuf, "%s=%c%s\n", key, kStoreTextMark, luaL_tolstring(L, -1, nullptr))
+                   : snprintf(lbuf, sizeof lbuf, "%s=%s\n", key, luaL_tolstring(L, -1, nullptr));
       lua_pop(L, 1);   // luaL_tolstring's copy
       // snprintf reports the length it WANTED: a line longer than lbuf is skipped,
       // not written from past the end of the buffer (and read back cut short).
@@ -2583,7 +2610,7 @@ void storeFlush() {
     }
     lua_pop(L, 1);
   }
-  lua_pop(L, 1);
+  lua_pop(L, 2);
   f.close();
   s_h->store_dirty = false;
 }
@@ -3721,6 +3748,37 @@ void hostTeardown();   // fwd
 // ---------------------------------------------------------------------------
 lv_obj_t* luaAppBody() { return s_h ? s_h->body : nullptr; }
 bool luaAppIsOpen() { return s_h != nullptr; }
+
+// Both write the store from the UI thread, where a SPIFFS garbage collection can stall
+// for seconds: under the watchdog guard, like the 30 s flush in the tick.
+bool luaAppStoreSync(const char* id) {
+  if (!s_h || !s_h->L || !id || strcmp(s_h->id, id) != 0) return false;
+  WdtHeavyGuard guard;
+  storeFlush();
+  return true;
+}
+
+bool luaAppStoreSet(const char* id, const char* key, const char* value, bool text) {
+  if (!s_h || !s_h->L || !id || !key || strcmp(s_h->id, id) != 0) return false;
+  lua_State* L = s_h->L;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
+  if (lua_istable(L, -1)) {
+    if (text && value) lua_pushboolean(L, 1); else lua_pushnil(L);
+    lua_setfield(L, -2, key);
+  }
+  lua_pop(L, 1);
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
+  lua_pushstring(L, key);
+  if (!value)                                 lua_pushnil(L);
+  else if (!text && storeLooksNumeric(value)) lua_pushnumber(L, strtod(value, nullptr));
+  else                                        lua_pushstring(L, value);
+  lua_rawset(L, -3);
+  lua_pop(L, 1);
+  s_h->store_dirty = true;
+  WdtHeavyGuard guard;
+  storeFlush();
+  return true;
+}
 
 // The app's content area, so UITask can parent a map view into it. External
 // linkage on purpose: UITask owns the map machinery and this file owns the app.

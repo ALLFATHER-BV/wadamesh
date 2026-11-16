@@ -6,7 +6,7 @@
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
-app="$root/deploy/apps/cyberspace/1.0/cyberspace.lua"
+app="$root/deploy/apps/cyberspace/${CYBERSPACE_VER:-1.1}/cyberspace.lua"
 bin="$here/host"
 if [ ! -x "$bin" ] || [ "$here/host.cpp" -nt "$bin" ] || [ "$root/src/ui-touch/LuaJson.h" -nt "$bin" ]; then
   obj=$(mktemp -d)

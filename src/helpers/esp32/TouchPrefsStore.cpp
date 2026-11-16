@@ -944,6 +944,25 @@ bool touchPrefsSetWebTerminal(bool on) {
   return cfgFlush();
 }
 
+static const char* KEY_WEB_TRUST = "web_trust";
+
+size_t touchPrefsGetWebTrust(void* out, size_t cap) {
+  if (!s_begun) touchPrefsBegin();
+  if (!out || cap == 0 || !s_prefs.isKey(KEY_WEB_TRUST)) return 0;   // isKey: no [E] NOT_FOUND log
+  return s_prefs.getBytes(KEY_WEB_TRUST, out, cap);
+}
+
+bool touchPrefsSetWebTrust(const void* buf, size_t len) {
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) return false;
+  bool ok;
+  if (!buf || len == 0) { s_prefs.remove(KEY_WEB_TRUST); ok = true; }
+  else ok = s_prefs.putBytes(KEY_WEB_TRUST, buf, len) == len;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
 bool touchPrefsGetMapTileDebug() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.map_tile_debug != 0;

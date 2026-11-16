@@ -20,6 +20,12 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 // seeded built-ins user-editable.
 bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, size_t embedded_len);
 bool luaAppIsOpen();
+// The web console's app settings (#854). Both act only when `id` is the app open now
+// and return false otherwise, leaving <id>.sav to the caller. Sync writes the live
+// store out; Set changes one key (value null = remove) and writes it out at once.
+// text: keep the value a string even when it reads as a number (see storeLoad).
+bool luaAppStoreSync(const char* id);
+bool luaAppStoreSet(const char* id, const char* key, const char* value, bool text);
 lv_obj_t* luaAppBody();              // the running app's page, or null (capture audits)
 void luaAppDismiss();                 // THE close path (AppPage back hook)
 void luaAppSteer(int dx, int dy);     // trackball/keypad direction -> on_input

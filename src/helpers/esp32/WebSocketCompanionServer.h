@@ -21,9 +21,9 @@ class WebMirror;   // web-UI mirror bridge (WebMirror.h); included in the .cpp
 
 #ifndef WS_COMPANION_MAX_CLIENTS
   #if WADA_WEB_FILE_TRANSFER
-    #define WS_COMPANION_MAX_CLIENTS  3
+    #define WS_COMPANION_MAX_CLIENTS  4   // console tabs (mesh, screen, files) + a companion app
   #else
-    #define WS_COMPANION_MAX_CLIENTS  2
+    #define WS_COMPANION_MAX_CLIENTS  3
   #endif
 #endif
 
@@ -60,9 +60,18 @@ struct WSClientState {
   bool is_mirror;      // this client is a web-UI mirror (GET /mirror), not a companion peer
   bool is_term;        // this client is a web mesh terminal (GET /term)
   bool is_files;       // authenticated browser file transfer (GET /files)
-  bool authed;         // browser sent the right "AUTH nnnnnn" (mirror, terminal and files)
+  bool authed;         // browser approved on the device, or sent the right code (mirror, terminal and files)
+  bool waiting;        // browser sent HELLO and is waiting for the device user to answer
   bool close_after_tx; // close once the pending reply has drained
   uint8_t auth_failures;
+  uint8_t key[16];     // hash of the browser's console id (valid once HELLO/CODE was seen)
+  uint32_t auth_gen;   // g_web_session.generation() when authed; a change ends the session
+  // Plain HTTP: a console page still going out (drainPage). The request has been read;
+  // the slot stays until the body has left or WS_PAGE_SEND_MS runs out.
+  const uint8_t* page_ptr;   // null = no page pending
+  uint32_t page_len;
+  uint32_t page_sent;
+  uint32_t page_ms;          // when the page started
   bool meta_sent;      // mirror: the one-time screen-size meta frame has been sent
   uint8_t lock_sent;   // mirror: lock state last sent to this browser (0xFF = not yet)
 #if WADA_WEB_FILE_TRANSFER
@@ -133,7 +142,11 @@ private:
   void drainClientTx(int idx);        // push a mirror client's pending tx_buf bytes, non-blocking
   void serviceTerminalClients(WebMirror& m);   // web mesh terminal: reply text out + command text in
   void drainTermInput(int idx, WebMirror& m);  // parse a term client's WS frames -> m.pushTermCmd
-  void authFrame(int idx, const uint8_t* buf, size_t len);   // a not-yet-authed browser's frame: check "AUTH nnnnnn"
+  void authFrame(int idx, const uint8_t* buf, size_t len);   // a not-yet-authed browser's frame: HELLO / CODE / AUTH
+  void grantClient(int idx);                                 // approved: mark authed and send "AUTH OK"
+  void pollApproval(int idx);                                // a waiting browser: has the device user answered?
+  bool servePage(int idx);                                   // plain HTTP GET: console pages and /api/*
+  void drainPage(int idx);                                   // push a pending page body, non-blocking
 #if WADA_WEB_FILE_TRANSFER
   void serviceFileClients();
   void drainFileInput(int idx);

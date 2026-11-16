@@ -715,6 +715,29 @@
   #define CAP_SCREEN_MIRROR 1
 #endif
 
+// ---- Web console (#854) ---------------------------------------------------------
+// CAP_WEB_CONSOLE: the browser console on the WebSocket port (Mesh, Screen and Files
+// tabs) and the on-device cards that let a browser in and confirm what it asks for.
+// Not on the Tanmatsu, which serves no web UI. CAP_WEB_CONSOLE_SETTINGS: its Settings
+// and Dashboard tabs, which drive the device's own Settings pages (WebSettingsEngine.h)
+// and cost about 36 KB of flash. Not on the T-LoRa Pager: its app slot is full (the
+// console with both tabs overflowed it by 9 KB). The Pager never had those tabs, so
+// nothing is taken away.
+#ifndef CAP_WEB_CONSOLE
+  #if defined(HAS_TANMATSU)
+    #define CAP_WEB_CONSOLE 0
+  #else
+    #define CAP_WEB_CONSOLE 1
+  #endif
+#endif
+#ifndef CAP_WEB_CONSOLE_SETTINGS
+  #if CAP_WEB_CONSOLE && !defined(TLORA_PAGER)
+    #define CAP_WEB_CONSOLE_SETTINGS 1
+  #else
+    #define CAP_WEB_CONSOLE_SETTINGS 0
+  #endif
+#endif
+
 // ---- Links the board sets up itself ------------------------------------------
 // CAP_WIFI_SETUP / CAP_BT_SETUP: Settings > Wi-Fi and > Bluetooth configure the board's
 // own radios (networks, the pairing code). A board whose links are chosen elsewhere
