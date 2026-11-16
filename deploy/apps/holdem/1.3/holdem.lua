@@ -1,5 +1,5 @@
 local TIT_T,SUB_T="TEXAS HOLD'EM","No-Limit 4-Max  ·  3 AI Opponents"
--- Texas Hold'em Poker — WADAMESH Lua app for LilyGo T-Deck, T-Display P4, & MeshCore boards
+-- Texas Hold'em Poker: WADAMESH Lua app, landscape and portrait, from 240 px wide screens up to the T-Display P4
 local ui,sys,store,timer=wada.ui,wada.sys,wada.store,wada.timer
 local C,fmt,flr,max,min,abs=ui.colors,string.format,math.floor,math.max,math.min,math.abs
 local app={}
@@ -24,6 +24,7 @@ local deck,board,btns={},{},{}
 local d_top,pot,c_bet,min_r,r_to=0,0,0,10,20
 local dlr_s,trn_s,f_idx=1,1,1
 local b_tit,b_sub,b_col="","",0x15B6A6
+local PL={}
 local seats={}
 for i,n in ipairs({"YOU","TEX","VIPER","DUKE"})do
 seats[i]={name=n,hum=(i==1),sty=({"h","l","t","g"})[i],stack=S0,cards={},sb=0,tb=0,fold=false,all=false,act=false,st="",role=""}
@@ -55,6 +56,25 @@ if s2 then
 cc_h=I(clp(tbl_h*0.3,88,120));cc_w=I(cc_h*0.74);cc_g,p_cw,p_ch,p_sm,p_lg=12,cc_w,cc_h,5,11
 else
 cc_h=clp(I(tbl_h*0.3),40,48);cc_w=clp(I(cc_h*0.77),32,37);cc_g,p_cw,p_ch,p_sm,p_lg=5,cc_w,cc_h,3,5
+end
+if port then
+-- Portrait: opponents as full-width rows on top, then the board, then your cards and
+-- an info box, then two rows of buttons. Sized from W and H so 240 x 289 fits and a
+-- tall panel scales the cards up; spare height goes to the rows, gaps and a centre offset.
+local hp,vg,pv,hg=s2 and 16 or 6,s2 and 12 or 3,s2 and 8 or 3,s2 and 10 or 4
+local brh=s2 and I(max(lh_md+20,52))or I(max(lh_sm+7,24))
+bot_h=brh*2+pv*3;tbl_h=max(80,H-top_h-bot_h)
+local oph,og=lh_xs*2+(s2 and 10 or-2),s2 and 8 or 2
+cc_g=s2 and 10 or 4
+cc_w=I(clp((W-hp*2-cc_g*4)/5,24,s2 and 130 or 64));cc_h=I(cc_w*1.34)
+local av=tbl_h-oph*3-og*2-vg*4
+if cc_h*2>av then cc_h=max(30,I(av/2));cc_w=min(cc_w,I(cc_h*0.74));p_cw,p_ch=cc_w,cc_h
+else p_ch=min(I(cc_h*1.4),av-cc_h);p_cw=min(I(p_ch*0.74),I((W*0.58-hp*2-hg)/2));p_ch=min(p_ch,I(p_cw*1.36))end
+local sp=max(0,av-cc_h-p_ch);local go=min(I(sp*0.4/3),oph);oph,sp=oph+go,sp-go*3
+local ex=min(I(sp/4),s2 and 24 or 8)
+p_sm,p_lg=I(clp(p_cw*0.06,3,6)),I(clp(p_cw*0.11,5,14))
+PL={hp=hp,vg=vg+ex,pv=pv,hg=hg,oph=oph,og=og,y0=I((sp-ex*4)/2)}
+PL.mch=oph-(s2 and 10 or 4);PL.mcw=I(PL.mch*0.72)
 end
 end
 local function make_cv(w,h)
@@ -311,7 +331,34 @@ local function cyc_bl()b_idx=(b_idx%#BLINDS)+1;local sb,bb=blinds();sys.toast(fm
 local function rst_tbl()for i=1,4 do seats[i].stack=S0 end;sys.toast("New $500 Table");sfx();start_hand()end
 rebuild_btns=function()
 btns={};local sb,bb=blinds();local cmp=(W<280)
-if port then btns={{label="ROTATE TO LANDSCAPE",w=W-32,enabled=false}};f_idx=1;return end
+if port then
+if state=="title"or state=="done"then
+btns={
+{label=(state=="title")and"DEAL HOLD'EM [D]"or"NEXT HAND [D]",w=120,primary=true,enabled=true,fn=start_hand,row=1},
+{label=fmt("$%d/$%d [B]",sb,bb),w=60,enabled=true,fn=cyc_bl,row=2},
+{label=(state=="title")and"RESET $500"or"NEW TABLE [N]",w=60,enabled=true,fn=rst_tbl,row=2},
+};f_idx=1
+elseif state=="player"then
+local p=seats[1];local tc=I(max(0,c_bet-p.sb));local cr=(p.stack>tc);sync_r()
+local cl=(tc<=0)and"CHECK"or((tc>=p.stack)and fmt("ALL-IN $%d",I(p.stack))or fmt("CALL $%d",tc))
+local rl=(c_bet==0)and fmt("BET $%d",I(r_to))or fmt("RAISE $%d",I(r_to))
+btns={
+{label=cl,w=96,primary=true,enabled=true,fn=function()act_pl(1,"call")end,row=1},
+{label=rl,w=96,enabled=cr,fn=function()act_pl(1,"raise",r_to)end,row=1},
+{label="FOLD",w=50,enabled=true,fn=function()act_pl(1,"fold")end,row=2},
+{label="-BB",w=40,enabled=cr,fn=function()adj_r(-bb)end,row=2},
+{label="+BB",w=40,enabled=cr,fn=function()
+local mt=I(p.sb+p.stack);r_to=(r_to>=mt)and I(c_bet+max(bb,min_r))or I(r_to+bb)
+sync_r();sfx();rebuild_btns();draw_screen()
+end,row=2},
+{label="ALL-IN",w=60,enabled=p.stack>0,fn=function()act_pl(1,"allin")end,row=2},
+};f_idx=1
+elseif state=="ai"then
+local who=seats[trn_s]and seats[trn_s].name or"DEALER"
+btns={{label=who.." ACTING... SKIP",w=200,enabled=true,fn=function()if state=="ai"then app.on_tick(0)end end,row=1}};f_idx=1
+end
+return
+end
 if state=="title"then
 btns={
 {label=fmt("BLINDS $%d/$%d",sb,bb),w=96,enabled=true,fn=cyc_bl},
@@ -447,32 +494,92 @@ local cx=sx+(i-1)*(cc_w+cc_g)
 if board[i]then cbox(cx,y,cc_w,cc_h,board[i],false)else box(cx,y,cc_w,cc_h,K_FDK,K_FLN,r)end
 end
 end
+local function fitx(s,w,z)
+if tw(s,z)<=w then return s end
+local t=s:gsub(" %(.-%)$","");if tw(t,z)<=w then return t end
+return(t:gsub(" %$%d+",""))
+end
+local function opp_row(idx,x,y,w,h)
+local p=seats[idx];local it=(state=="ai"and trn_s==idx)
+box(x,y,w,h,p.fold and K_PFD or K_POD,it and K_GLD or(p.st=="WIN!"and C.good or 0x22303C),s2 and 8 or 5)
+local hd=p.role~=""and(p.name.."·"..p.role)or p.name
+local nc,sc=p.fold and K_DIM or(it and K_GLD or C.text),p.fold and K_DIM or K_GLD
+local st,stc=p.st~=""and p.st or(p.all and"ALL-IN"or"WAIT"),p.fold and K_DIM or(p.st=="WIN!"and C.good or(it and C.accent or C.sub))
+local pin,ms=s2 and 12 or 5,fmt("$%d",I(p.stack))
+local l1=y+I((h-(lh_xs*2-2))/2)
+cv:text(x+pin,l1,hd,nc,f_xs);cv:text(x+pin,l1+lh_xs-2,ms,sc,f_xs)
+local rx=x+w-pin
+if#p.cards==2 and not p.fold then
+local mw,mh=PL.mcw,PL.mch;local my=y+I((h-mh)/2)
+cbox(rx-mw*2-2,my,mw,mh,p.cards[1],not show_all);cbox(rx-mw,my,mw,mh,p.cards[2],not show_all)
+rx=rx-mw*2-(s2 and 14 or 6)
+end
+local lx=x+pin+max(tw(hd,f_xs),tw(ms,f_xs))+(s2 and 12 or 6)
+st=fitx(st,rx-lx,f_sm);if tw(st,f_sm)<=rx-lx then cv:text(rx-tw(st,f_sm),y+I((h-lh_sm)/2),st,stc,f_sm)end
+end
+local function title_p()
+local sb,bb=blinds();local cx=I(W/2)
+local px,py=s2 and 20 or 8,s2 and 16 or 6;local bw,bh,by=W-px*2,tbl_h-py*2,top_h+py
+box(px,by,bw,bh,K_FDK,K_FLN,s2 and 12 or 8)
+local sg=s2 and 18 or 8;local dw=I(clp(W*0.17,36,s2 and 110 or 56));local dh=I(dw*1.38)
+local pl=fmt("$%d/$%d  ·  BUY-IN $%d",sb,bb,I(seats[1].stack))
+local ph=lh_md+(s2 and 16 or 8);local plw=min(bw-8,tw(pl,f_md)+(s2 and 36 or 20))
+local sa,sz=SUB_T:match("^(.-)%s+·%s+(.+)$")
+local blk=lh_xl+4+lh_sm*(sz and 2 or 1)+sg+dh+sg+ph+sg+lh_sm
+local y=by+max(sg,I((bh-blk)/2))
+tcx(cx,y,TIT_T,K_GLD,f_xl);y=y+lh_xl+4
+tcx(cx,y,sa or SUB_T,C.sub,f_sm);y=y+lh_sm
+if sz then tcx(cx,y,sz,C.sub,f_sm);y=y+lh_sm end
+y=y+sg
+cbox(cx-dw-I(sg/2),y,dw,dh,{r=1,s=1},false,s2 and 4 or 3,s2 and 9 or 5);cbox(cx+I(sg/2),y,dw,dh,{r=1,s=2},false,s2 and 4 or 3,s2 and 9 or 5)
+y=y+dh+sg
+box(cx-I(plw/2),y,plw,ph,K_BAC,C.accent,5);tcx(cx,y+I((ph-lh_md)/2),pl,C.text,f_md);y=y+ph+sg
+if y+lh_sm<=by+bh-4 then tcx(cx,y,fmt("WON %d OF %d HANDS",I(h_won),I(h_play)),C.sub,f_sm)end
+end
+local function table_p()
+local hp,vg=PL.hp,PL.vg;local y=top_h+PL.y0+vg
+for i=0,2 do opp_row(i+2,hp,y+i*(PL.oph+PL.og),W-hp*2,PL.oph)end
+y=y+PL.oph*3+PL.og*2+vg
+brow(I((W-(cc_w*5+cc_g*4))/2),y,s2 and 8 or 3);y=y+cc_h+vg
+local p=seats[1]
+if#p.cards==2 then cbox(hp,y,p_cw,p_ch,p.cards[1],false);cbox(hp+p_cw+PL.hg,y,p_cw,p_ch,p.cards[2],false)end
+local ix=hp+p_cw*2+PL.hg+(s2 and 14 or 5);local iw,ih=W-hp-ix,p_ch
+if state=="done"and b_tit~=""then
+box(ix,y,iw,ih,0x0D131A,b_col,6)
+local tz=(tw(b_tit,f_lg)<=iw-8)and f_lg or f_sm;local tt,sub=fitx(b_tit,iw-8,tz),fitx(b_sub,iw-8,f_sm)
+local t1=th(tz);local ty1=y+I((ih-(t1+lh_sm))/2)
+tcx(ix+I(iw/2),ty1,tt,b_col,tz);tcx(ix+I(iw/2),ty1+t1,sub,C.text,f_sm)
+return
+end
+box(ix,y,iw,ih,K_POD,(state=="player")and C.accent or 0x22303C,5)
+local pin=s2 and 12 or 5
+local _,_,hn=eval_hand(p.cards,board);local hs=p.fold and"FOLDED"or hn
+local ms=fmt("$%d",I(p.stack));local st=p.st~=""and p.st or(state=="player"and""or"WAITING")
+local nl=(ih>=lh_sm*3+(s2 and 24 or 8))and 3 or 2
+local stp=I((ih-nl*lh_sm)/(nl+1));local ly=y+stp
+if nl==3 then cv:text(ix+pin,ly,p.role~=""and fmt("YOU [%s]",p.role)or"YOU",C.text,f_sm);ly=ly+lh_sm+stp end
+cv:text(ix+pin,ly,hs,p.fold and C.bad or K_GLD,f_sm);ly=ly+lh_sm+stp
+cv:text(ix+pin,ly,ms,C.text,f_sm)
+local sx=ix+pin+tw(ms,f_sm)+(s2 and 12 or 6);st=fitx(st,ix+iw-pin-sx,f_sm)
+if st~=""and tw(st,f_sm)<=ix+iw-pin-sx then cv:text(ix+iw-pin-tw(st,f_sm),ly,st,C.accent,f_sm)end
+end
 draw_screen=function()
 local sb,bb=blinds();local cx=I(W/2)
 cv:fill(K_FLT);local m=s2 and 8 or 3
 cv:rect(m,top_h+m-1,W-m*2,tbl_h-(m-1)*2,K_FLN,false,s2 and 12 or 7)
 cv:rect(0,0,W,top_h,K_BAR,true);cv:line(0,top_h,W,top_h,0x1F2933,1)
 local tf=s2 and f_md or f_sm;local ty=max(1,I((top_h-th(tf))/2))
+if port then
+local ls,rs=fmt("POT $%d",I(pot)),(SNAMES[street]or"HOLD'EM")..(snd and""or" [M]")
+if state=="title"then ls,rs=fmt("STACK $%d",I(seats[1].stack)),fmt("PEAK $%d%s",I(best_b),snd and""or" [M]")end
+cv:text(pad,ty,ls,K_GLD,tf);cv:text(W-pad-tw(rs,tf),ty,rs,state=="title"and C.sub or C.accent,tf)
+if state=="title"then title_p()else table_p()end
+else
 cv:text(pad,ty,fmt("STACK $%d",I(seats[1].stack)),K_GLD,tf)
 local ms=(state=="title")and fmt("BLINDS $%d/$%d",sb,bb)or fmt("%s · $%d/$%d",SNAMES[street]or"HOLD'EM",sb,bb)
 local mx=I((W-tw(ms,tf))/2);cv:text(mx,ty,ms,C.accent,tf)
 local ps=fmt("PEAK $%d%s",I(best_b),snd and""or" [M]")
 cv:text(max(mx+tw(ms,tf)+6,W-tw(ps,tf)-pad),ty,ps,C.sub,tf)
-if port then
-local px,py=16,top_h+16;local bw,bh=W-px*2,tbl_h-py*2
-box(px,py,bw,bh,K_FDK,C.accent,12)
-local my=py+I(bh*0.28)
-tcx(cx,my,"[ ROTATE DEVICE ]",K_GLD,f_xl)
-tcx(cx,my+lh_xl+14,TIT_T,C.text,f_lg)
-tcx(cx,my+lh_xl+lh_lg+24,"Texas Hold'em requires horizontal screen play.",C.sub,f_sm)
-tcx(cx,my+lh_xl+lh_lg+lh_sm+34,"Please rotate your device to Landscape.",K_GLD,f_sm)
-tcx(cx,my+lh_xl+lh_lg+lh_sm*2+46,"(Settings > Display > Orientation > Landscape)",C.sub,f_xs)
-local by=H-bot_h;box(0,by,W,bot_h,K_BAR)
-local bw_b,bh_b=W-32,bot_h-12;local bx,bby=16,by+6
-box(bx,bby,bw_b,bh_b,K_BDS,nil,6)
-tcx(cx,bby+I((bh_b-lh_sm)/2),"ROTATE TO LANDSCAPE TO PLAY",K_DIM,f_sm)
-return
-end
 if state=="title"then
 local px,py=s2 and 20 or 12,s2 and 16 or 8;local bw,bh,by=W-px*2,tbl_h-py*2,top_h+py
 box(px,by,bw,bh,K_FDK,K_FLN,s2 and 12 or 8)
@@ -512,29 +619,38 @@ cv:text(ix+pin,iy+I((ih-lh_xs)/2)+1,(state=="player")and fmt("RAISE TARGET: $%d 
 cv:text(ix+pin,iy+ih-lh_xs-(s2 and 6 or 1),"[F]Fold  [C]Call/Chk  [R]Raise  [A]All-In",C.sub,f_xs)
 end
 end
+end
 local by=H-bot_h;cv:rect(0,by,W,bot_h,K_BAR,true);cv:line(0,by,W,by,0x1F2933,1)
 local nb=#btns
 if nb>0 then
-local g=(not s2 and nb>=5)and 3 or gap
+local nr=1;for i=1,nb do nr=max(nr,btns[i].row or 1)end
 local pv,bf,br,mp=s2 and 8 or 3,s2 and f_md or f_sm,s2 and 8 or 4,s2 and 20 or 8
-local avw,bh,blh=W-g*(nb+1),bot_h-pv*2,th(bf)
+if port then pv=PL.pv end
+local bh,blh=I((bot_h-pv*(nr+1))/nr),th(bf)
+for r=1,nr do
+local ix={};for i=1,nb do if(btns[i].row or 1)==r then ix[#ix+1]=i end end
+local n=#ix
+local g=(not s2 and n>=5)and 3 or gap
+local avw=W-g*(n+1)
 local wts,tws,tot,wi={},{},0,1
-for i=1,nb do
-local b=btns[i];local t_w=tw(b.label,bf);local wt=max(b.w or 60,t_w+mp)
-wts[i],tws[i],tot=wt,t_w,tot+wt;if wt>wts[wi]then wi=i end
+for k=1,n do
+local b=btns[ix[k]];local t_w=tw(b.label,bf);local wt=max(b.w or 60,t_w+mp)
+wts[k],tws[k],tot=wt,t_w,tot+wt;if wt>wts[wi]then wi=k end
 end
 local bws,uw={},0
-for i=1,nb do bws[i]=I((avw*wts[i])/tot);uw=uw+bws[i]end
-if uw<avw then bws[wi]=bws[wi]+(avw-uw)end
+for k=1,n do bws[k]=I((avw*wts[k])/tot);uw=uw+bws[k]end
+if n>0 and uw<avw then bws[wi]=bws[wi]+(avw-uw)end
 local cbx=g
-for i=1,nb do
-local b,bw=btns[i],bws[i];local bx,bby=cbx,by+pv;cbx=cbx+bw+g
+for k=1,n do
+local i=ix[k];local b,bw=btns[i],bws[k];local bx,bby=cbx,by+pv+(r-1)*(bh+pv);cbx=cbx+bw+g
 b.x,b.y,b.bw,b.bh=bx,bby,bw,bh
 local bg=not b.enabled and K_BDS or(b.primary and K_BAC or K_BTN)
 local fg=b.enabled and((i==f_idx)and(b.primary and K_GLD or C.accent)or 0x2B3642)or nil
-box(bx,bby,bw,bh,bg,fg,br);local lbl,t_w=b.label,tws[i]
+box(bx,bby,bw,bh,bg,fg,br);local lbl,t_w=b.label,tws[k]
 if t_w>bw-6 and lbl:find(" %[")then lbl=lbl:gsub(" %[.*%]","");t_w=tw(lbl,bf)end
+if port and t_w>bw-6 then lbl=fitx(lbl,bw-6,bf);t_w=tw(lbl,bf)end
 cv:text(bx+max(2,I((bw-t_w)/2)),bby+max(1,I((bh-blh)/2)),lbl,not b.enabled and K_DIM or(b.primary and K_GLD or C.text),bf)
+end
 end
 end
 end
@@ -565,7 +681,7 @@ local p=seats[trn_s]
 if p and not p.hum and not p.fold and not p.all then ai_go(trn_s)else adv_turn()end
 end
 function app.on_input(ev)
-if not ev or port then return end
+if not ev then return end
 if ev.type=="down"then
 local ex,ey=tonumber(ev.x)or 0,tonumber(ev.y)or 0
 for i=1,#btns do
