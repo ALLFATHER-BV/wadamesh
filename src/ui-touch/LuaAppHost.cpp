@@ -46,7 +46,7 @@ extern bool             luaHostScreenOn();   // false = display asleep; app tick
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_IMAGE
 extern uint8_t*         luaHostImageDecodeFit(const uint8_t* enc, size_t len, int max_w, int max_h,
                                               int* out_w, int* out_h, const char** err);   // wada.ui.image
 extern void             luaHostImageFree(void* buf);
@@ -1191,7 +1191,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_events"); // app.on_audio
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "request");    // wada.net.request + wada.json
   lua_pushboolean(L, CAP_LUA_HTTPS);    lua_setfield(L, -2, "https");      // request() to an https:// url
-  lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "image");      // wada.ui.image (needs wada.fs)
+  lua_pushboolean(L, CAP_LUA_IMAGE);    lua_setfield(L, -2, "image");      // wada.ui.image (needs wada.fs)
 #if defined(HAS_TDECK_PRO)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "epaper");     // T-Deck Pro / Max: redraw sparingly
 #else
@@ -2120,6 +2120,7 @@ int fsList(lua_State* L) {
   return 1;
 }
 
+#if CAP_LUA_IMAGE
 // ---- wada.ui.image(file, offset, length, x, y, w, h) -------------------------
 // Draws a PNG / JPEG / BMP that sits in the middle of one of the app's own files
 // (a stored entry of an .epub, say), scaled down to fit the box x,y,w,h, aspect
@@ -2244,6 +2245,7 @@ static int uiImage(lua_State* L) {
   ud->obj = im;
   return 1;
 }
+#endif  // CAP_LUA_IMAGE
 
 #if CAP_LUA_SD_READ
 // ---- wada.sd: read-only physical SD directory listing ----------------------
@@ -3452,7 +3454,7 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiButton); lua_setfield(L, -2, "button");
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
   lua_pushcfunction(L, uiPanel);  lua_setfield(L, -2, "panel");
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_IMAGE
   lua_pushcfunction(L, uiImage);  lua_setfield(L, -2, "image");
 #endif
   lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
@@ -3671,7 +3673,7 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_IMAGE
   luaL_newmetatable(L, "wada.image");
   lua_newtable(L);
   lua_pushcfunction(L, imRemove); lua_setfield(L, -2, "remove");

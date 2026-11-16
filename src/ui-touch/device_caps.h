@@ -766,6 +766,17 @@
   #endif
 #endif
 
+// wada.ui.image: an app draws a PNG / JPEG / BMP from one of its own files. Needs
+// wada.fs (the extended SDK) and the firmware's image decoders, which only ESP32
+// builds carry. Not on the T-LoRa Pager: its app slot has no room left for it.
+#ifndef CAP_LUA_IMAGE
+  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(TLORA_PAGER)
+    #define CAP_LUA_IMAGE 1
+  #else
+    #define CAP_LUA_IMAGE 0
+  #endif
+#endif
+
 // ---- USB Files ---------------------------------------------------------------
 // files.wadamesh.com browses and edits the SD card and internal storage over the
 // USB cable (Web Serial) while the USB Files app is open (UsbFilesSession.h).

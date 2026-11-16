@@ -75456,7 +75456,7 @@ void luaHostAppPath(char* out, size_t cap, const char* rel) {
   snprintf(out, cap, "%s%s", s_ui_data_root, rel);   // SD-rooted stores prefix /meshcomod
 }
 
-#if CAP_LUA_SDK_EXT
+#if CAP_LUA_IMAGE
 // wada.ui.image: decode a PNG / JPEG / BMP held in memory and fit it inside
 // max_w x max_h, aspect kept and never enlarged. The result is a lvglPsramAlloc'd
 // RGB565 buffer of exactly *out_w x *out_h (freed with luaHostImageFree), so the
@@ -75547,7 +75547,7 @@ uint8_t* luaHostImageDecodeFit(const uint8_t* enc, size_t len, int max_w, int ma
   return rgb;
 }
 void luaHostImageFree(void* buf) { lvglPsramFree(buf); }
-#endif  // CAP_LUA_SDK_EXT
+#endif  // CAP_LUA_IMAGE
 
 #if CAP_LUA_AUDIO
 namespace {
