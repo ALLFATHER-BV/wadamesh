@@ -637,11 +637,13 @@ struct WcSession {
   lv_obj_t* root = nullptr;
 };
 
+// Why a request cannot run now (translated), or null. TR() on the literals themselves so
+// the i18n audit sees them.
 static const char* wcBusy() {
   if (s_settings_sheet || s_settings_open_cat >= 0 || settingsModalIsOpen() || s_confirm_modal || s_subpage_n)
-    return "Settings are open on the device. Close them there and try again.";
-  if (s_kb_bind_ta) return "Someone is typing on the device. Try again in a moment.";
-  if (webApprovePending()) return "Waiting for an answer on the device.";
+    return TR("Settings are open on the device. Close them there and try again.");
+  if (s_kb_bind_ta) return TR("Someone is typing on the device. Try again in a moment.");
+  if (webApprovePending()) return TR("Waiting for an answer on the device.");
   return nullptr;
 }
 
@@ -1195,7 +1197,7 @@ static void webCfgCmd(const char* a) {
   if (is_run) sscanf(a, "%d %d %d", &idx, &want_n, &confirm);
 
   if (cat < 0 || cat >= CAT_COUNT || !settingsCatOnBoard(cat)) { wcReplyErr("No such settings page"); webCfgPump(); return; }
-  if (const char* why = wcBusy()) { wcReplyErr(TR(why)); webCfgPump(); return; }
+  if (const char* why = wcBusy()) { wcReplyErr(why); webCfgPump(); return; }
 
   WcSession ss;
   wcBuild(cat, ss);
