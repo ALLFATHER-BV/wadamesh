@@ -37,6 +37,18 @@ on 2026-11-17. Its SD card did not mount; the internal SPIFFS fallback booted.
 Status reported a latched RX-start-timeout flag (`0x4`) after startup; the
 noise floor later settled to -115 dBm. Packet reception has not been verified.
 
+A subsequent read-only SD diagnostic initialized the inserted card and read
+sectors at 4 MHz, 1 MHz and 400 kHz with the radio and display inactive. It
+reported 127,139,840 bytes (about 128 MB). Sectors 0, 1, 63 and 2048 returned
+identical contents beginning with a repeating `55 aa` pattern; sector 0 ended
+in `58 58` instead of the required `55 aa` signature. FatFs returned
+`FR_NO_FILESYSTEM` (13). Power cycling and changing the pull-control setting
+did not recover a filesystem. This points to card contents or card behavior;
+checking the card in a separate reader or testing a known-good card is still
+needed to distinguish them. No card writes or formatting were performed. The
+unified firmware was restored, its flash hash verified, and mesh/UI startup
+passed again using internal storage.
+
 **Full hardware validation, including LR1121, remains pending.** Keep the
 existing radio-specific choices as the public defaults until both Pager
 variants pass the following checks with the same image:
