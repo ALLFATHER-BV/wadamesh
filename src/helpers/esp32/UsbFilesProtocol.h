@@ -288,6 +288,8 @@ inline bool splitPath(const char* p, size_t len, Root* root, char* rel, size_t r
 //               so an app can be side-loaded without pulling the card. Its
 //               save files (.sav, .wgt) and data folders (<id>.d) are written
 //               by running apps and stay read-only.
+//   languages   likewise the language folder (/meshcomod/lang, /lang) takes
+//               .lang files at its top level, so a translation can be side-loaded.
 //   map tiles   everything (a re-downloadable cache)
 //
 // On FAT (case_insensitive) names compare without case, and any '~' is refused:
@@ -347,6 +349,22 @@ inline bool appFileUnder(const char* rel, const char* dir, bool ci) {
   return endsWithCi(leaf, n, ".lua") || endsWithCi(leaf, n, ".json");
 }
 
+// rel is "<dir>/<leaf>.lang" where dir is "/meshcomod/lang" (card) or "/lang"
+// (internal): a language file, e.g. a translation being tested on the device.
+// Same leaf rules as appFileUnder; the folder itself stays read-only.
+inline bool langFileUnder(const char* rel, const char* dir, bool ci) {
+  if (!rel) return false;
+  const size_t d = strlen(dir);
+  for (size_t i = 0; i < d; ++i) {
+    const char a = ci ? lowerAscii(rel[i]) : rel[i];
+    if (a != dir[i]) return false;
+  }
+  if (rel[d] != '/') return false;
+  const char* leaf = rel + d + 1;
+  if (leaf[0] == '\0' || leaf[0] == '.' || strchr(leaf, '/') || strchr(leaf, '~')) return false;
+  return endsWithCi(leaf, strlen(leaf), ".lang");
+}
+
 inline Access access(Root root, const char* rel, bool case_insensitive) {
   if (root == ROOT_NONE || !rel || rel[0] != '/') return A_NONE;
   if (rel[1] == '\0') return A_READ;   // a root itself: list it, never delete or rename it
@@ -354,6 +372,7 @@ inline Access access(Root root, const char* rel, bool case_insensitive) {
     case ROOT_SD:
       if (case_insensitive && strchr(rel, '~')) return A_READ;
       if (appFileUnder(rel, "/meshcomod/apps", case_insensitive)) return A_WRITE;
+      if (langFileUnder(rel, "/meshcomod/lang", case_insensitive)) return A_WRITE;
       if (relUnder(rel, "meshcomod", case_insensitive)) return A_READ;
       return A_WRITE;
     case ROOT_INTERNAL:
@@ -363,6 +382,7 @@ inline Access access(Root root, const char* rel, bool case_insensitive) {
           relUnder(rel, "lock", case_insensitive))
         return A_WRITE;
       if (appFileUnder(rel, "/apps", case_insensitive)) return A_WRITE;
+      if (langFileUnder(rel, "/lang", case_insensitive)) return A_WRITE;
       if (topLevelFile(rel) && nameIsBackupOrCrash(rel + 1)) return A_WRITE;
       return A_READ;
     case ROOT_TILES:

@@ -185,6 +185,18 @@ int main() {
   assert(acc(ROOT_SD, "/meshcomod/apps/bible.json", true) == A_WRITE);
   assert(acc(ROOT_SD, "/MeshComod/Apps/Bible.LUA", true) == A_WRITE);   // FAT ignores case
   assert(acc(ROOT_SD, "/meshcomod/apps", true) == A_READ);              // the folder itself
+  // Language files: .lang at the top of the lang folder only.
+  assert(acc(ROOT_SD, "/meshcomod/lang/da.lang", true) == A_WRITE);
+  assert(acc(ROOT_SD, "/MESHCOMOD/LANG/DA.LANG", true) == A_WRITE);
+  assert(acc(ROOT_SD, "/meshcomod/lang", true) == A_READ);              // the folder itself
+  assert(acc(ROOT_SD, "/meshcomod/lang/da.txt", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/lang/x/da.lang", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/lang/.lang", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/lang/DA~1.LAN", true) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/language/da.lang", true) == A_READ);
+  assert(acc(ROOT_INTERNAL, "/lang/da.lang", false) == A_WRITE);
+  assert(acc(ROOT_INTERNAL, "/lang", false) == A_READ);
+  assert(acc(ROOT_SD, "/meshcomod/contacts3", true) == A_READ);
   assert(acc(ROOT_SD, "/meshcomod/apps/snake.sav", true) == A_READ);    // written by the app
   assert(acc(ROOT_SD, "/meshcomod/apps/snake.wgt", true) == A_READ);
   assert(acc(ROOT_SD, "/meshcomod/apps/wardrive.d/log.csv", true) == A_READ);
