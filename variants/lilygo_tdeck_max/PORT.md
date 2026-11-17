@@ -38,11 +38,22 @@ The GPS supply follows the Pro's behaviour: off at boot, on when GPS is enabled,
 
 ## Not in this port
 
-The A7682E modem, the DRV2605 haptic and the BHI260AP IMU are powered or muxed by the expander but not driven by this build. The Pro's `PIN_PERF_POWERON` radio power-cycle rescue in `main.cpp` compiles out on the Max; a Max equivalent through XL9555 line 1 is a follow-up.
+The DRV2605 haptic and the BHI260AP IMU are powered by the expander but not driven by this build. The Pro's `PIN_PERF_POWERON` radio power-cycle rescue in `main.cpp` compiles out on the Max; a Max equivalent through XL9555 line 1 is a follow-up.
 
 ## Audio (ES8311 + NS4150B)
 
 Notification chimes, custom WAV notification sounds and Lua `wada.audio` WAV/MP3 playback run through the ES8311 codec at 0x18 plus the NS4150B amp, mirroring LilyGo's `examples/ES8311/playWAV` bring-up: I2S MCLK 38 / BCLK 39 / LRCK 18 with the shared-speaker mux (XL9555 line 10) held LOW for the ES8311 and the amp enable (XL9555 line 6) bracketed HIGH only around playback via `TDeckMaxBoard::setAmpEnabled()`. Data-pin caveat (GlomarGadaffi/tdeck-max-phone#34, measured with pull-probe + A/B capture): despite the header names `BOARD_ES8311_ASDOUT=40` / `DSDIN=17`, the ESP32 must drive GPIO40 for playback and read GPIO17 — LilyGo's own `playWAV` passes `setPins(MCLK, SCLK, LRCK, ASDOUT, DSDIN)` with the last two args as ESP32-side dout/din. This env therefore uses `PIN_I2S_DOUT=40` / `PIN_I2S_SDIN=17`. The DAC register sequence reuses the pager's shared `Es8311Codec` driver (compiled into this env from `variants/lilygo_tlora_pager/`). Boot logs `[BOOT] T-Deck Max es8311 ok` from a probe-only check; `Settings > Sound` volume and per-slot WAV pickers are enabled via `CAP_SOUND`/`CAP_SOUND_FILES`/`CAP_AUDIO_STREAM`.
+
+## 4G modem (A7682E)
+
+`HAS_CELLULAR=1` in this env turns on `variants/lilygo_tdeck_max/CellularService`: the modem's own FreeRTOS task on core 0 with an AT engine, a command queue and a status snapshot, so the UI and Lua never wait on the UART. Pins follow LilyGo's T-Deck MAX examples: ESP32 RX = GPIO 11, TX = GPIO 10, RI = GPIO 7, DTR = GPIO 8 on `Serial2`; modem supply = XL9555 line 0 (SGM6609 boost), PWRKEY = line 8 (LOW 100 ms, HIGH 1.1 s, LOW, as LilyGo's `A7670GBoard::powerOnPulse()`), speaker mux = line 10.
+
+- **Calls**: `ATD`/`ATA`/`ATH`, `+CLCC` for call state, `+CLIP` for the caller. While a call is up `TDeckMaxBoard::setModemAudio(true)` puts the speaker mux on the modem and the amp on; `setAmpEnabled()` and `selectEs8311Audio()` leave the speaker alone until the call ends, so a notification chime cannot pull the mux back mid-call. DTMF is `AT+VTS` (network signalling to the far end, no local tone).
+- **SMS**: text mode in `UCS2`, so any script and emoji survive; single SMS only (70 UTF-16 units). Received messages go to `meshcomod/sms_inbox.txt` on the card (newest 50 kept) whether or not an app is open.
+- **Data**: the modem's own HTTP(S) stack (`AT+HTTPINIT`/`HTTPACTION`/`HTTPREAD`). PPP is not available in the Arduino core this builds with, so there is no device-wide IP route: map tiles fall back to 4G when Wi-Fi is down and data is on, and Lua gets `wada.cell.request`; `wada.net` and everything else stay on Wi-Fi.
+- **UI**: a "4G"/"R" tag with four bars in the status bar, a firmware incoming-call sheet (Answer / Reject / Hang up) that wakes the screen and rings, and an app permission row "4G: calls, SMS and mobile data". Dialling, SMS and settings live in a Lua app (the Phone app in the Store) through `wada.cell` and `app.on_cell` (see the SDK page).
+
+Settings (enabled, APN, SIM PIN) are kept by the service in NVS. A battery must be connected: the modem draws more on transmit than USB alone gives on this board, and the 4G antenna must be fitted.
 
 ## Validation status
 

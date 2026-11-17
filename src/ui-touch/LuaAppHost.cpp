@@ -1183,6 +1183,11 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "ping");       // wada.mesh.ping + app.on_ping
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
+#if HAS_CELLULAR
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "cell");       // wada.cell + app.on_cell
+#else
+  lua_pushboolean(L, 0);                lua_setfield(L, -2, "cell");
+#endif
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "map");        // wada.map.view
   lua_pushboolean(L, CAP_COMPASS);      lua_setfield(L, -2, "compass");    // wada.sys.compass()
   lua_pushboolean(L, CAP_IMU);          lua_setfield(L, -2, "accel");      // wada.sys.accel()
@@ -3471,6 +3476,255 @@ int cryptoHex(lua_State* L) {
 }
 #endif
 
+#if HAS_CELLULAR
+// ---- wada.cell: the T-Deck Max's A7682E 4G modem ----------------------------
+// Calls, SMS and mobile data cost the user money and a call speaks as them, so
+// everything that acts (dial, SMS, data, settings) needs LUA_PERM_CELL, asked
+// once and bound to the app id like the mesh send grant. Reading the status and
+// answering/hanging up a call the user can see are ungated: refusing to let an
+// app hang up would only ever trap the user in a call.
+//
+// The modem runs on its own task (CellularService); every call here only
+// queues a command and returns at once. Results come back as app.on_cell(ev):
+//   { type="call",  state="dialing|alerting|incoming|active|held|idle", number=}
+//   { type="ring",  number= }                  -- each RING (~3 s) while incoming
+//   { type="sms",   from=, text= }
+//   { type="sms_sent", ok=, number= }
+//   { type="status" } / { type="data", up=, ip= }
+}  // namespace
+#include "CellularService.h"
+extern int  luaHostCellPerm(const char* app_id);
+extern void luaHostRequestCellPerm(const char* app_id, const char* app_name);
+namespace {
+
+int s_cell_http_cb = LUA_NOREF;
+
+// Returns true if the app may act; otherwise pushes false, reason and returns false.
+bool cellGate(lua_State* L) {
+  if (!s_h) { lua_pushboolean(L, 0); lua_pushstring(L, "no app"); return false; }
+  const int perm = luaHostCellPerm(s_h->id);
+  if (perm == 1) return true;
+  if (perm == 0) luaHostRequestCellPerm(s_h->id, s_h->id);   // ask once, never in a loop
+  lua_pushboolean(L, 0);
+  lua_pushstring(L, perm == 0 ? "permission requested" : "permission denied");
+  return false;
+}
+
+int cellPushResult(lua_State* L, bool ok, const char* why) {
+  lua_pushboolean(L, ok);
+  if (ok) return 1;
+  lua_pushstring(L, why);
+  return 2;
+}
+
+// wada.cell.status() -> table
+int cellStatus(lua_State* L) {
+  CellStatus st;
+  cellGetStatus(&st);
+  lua_createtable(L, 0, 16);
+  lua_pushboolean(L, st.enabled);               lua_setfield(L, -2, "enabled");
+  lua_pushstring(L, cellPowerName(st.power));   lua_setfield(L, -2, "power");
+  lua_pushstring(L, cellSimName(st.sim));       lua_setfield(L, -2, "sim");
+  lua_pushstring(L, cellRegName(st.reg));       lua_setfield(L, -2, "reg");
+  lua_pushstring(L, cellCallName(st.call));     lua_setfield(L, -2, "call");
+  lua_pushstring(L, st.call_number);            lua_setfield(L, -2, "number");
+  lua_pushinteger(L, st.call_started_ms ? (lua_Integer)((millis() - st.call_started_ms) / 1000) : 0);
+  lua_setfield(L, -2, "call_secs");
+  lua_pushinteger(L, st.csq);                   lua_setfield(L, -2, "csq");
+  lua_pushinteger(L, st.rssi_dbm);              lua_setfield(L, -2, "rssi");
+  // 0..4 bars, the way a phone shows it
+  const int bars = st.csq < 0 ? 0 : st.csq >= 20 ? 4 : st.csq >= 15 ? 3 : st.csq >= 10 ? 2 : st.csq >= 5 ? 1 : 0;
+  lua_pushinteger(L, bars);                     lua_setfield(L, -2, "bars");
+  lua_pushstring(L, st.op);                     lua_setfield(L, -2, "operator");
+  lua_pushboolean(L, st.data_up);               lua_setfield(L, -2, "data");
+  lua_pushstring(L, st.ip);                     lua_setfield(L, -2, "ip");
+  lua_pushstring(L, st.apn);                    lua_setfield(L, -2, "apn");
+  lua_pushstring(L, st.last_error);             lua_setfield(L, -2, "error");
+  return 1;
+}
+
+int cellEnable(lua_State* L) {
+  const bool on = lua_toboolean(L, 1);
+  if (!cellGate(L)) return 2;
+  cellSetEnabled(on);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+// wada.cell.set_apn(apn [, user, pass])
+int cellApn(lua_State* L) {
+  const char* apn  = luaL_checkstring(L, 1);
+  const char* user = luaL_optstring(L, 2, "");
+  const char* pass = luaL_optstring(L, 3, "");
+  if (strchr(apn, '"') || strchr(user, '"') || strchr(pass, '"')) return cellPushResult(L, false, "invalid characters");
+  if (!cellGate(L)) return 2;
+  cellSetApn(apn, user, pass);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int cellPin(lua_State* L) {
+  const char* pin = luaL_checkstring(L, 1);
+  const size_t n = strlen(pin);
+  if (n && (n < 4 || n > 8 || strspn(pin, "0123456789") != n)) return cellPushResult(L, false, "PIN must be 4-8 digits");
+  if (!cellGate(L)) return 2;
+  cellSetPin(pin);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+int cellDialL(lua_State* L) {
+  const char* num = luaL_checkstring(L, 1);
+  if (!cellGate(L)) return 2;
+  return cellPushResult(L, cellDial(num), "invalid number or modem busy");
+}
+
+int cellAnswerL(lua_State* L) { return cellPushResult(L, cellAnswer(), "modem busy"); }
+int cellHangupL(lua_State* L) { return cellPushResult(L, cellHangup(), "modem busy"); }
+
+int cellDtmfL(lua_State* L) {
+  const char* d = luaL_checkstring(L, 1);
+  return cellPushResult(L, d[0] && cellDtmf(d[0]), "invalid digit");
+}
+
+int cellVolumeL(lua_State* L) { return cellPushResult(L, cellSetVolume((int)luaL_checkinteger(L, 1)), "modem busy"); }
+int cellMuteL(lua_State* L)   { return cellPushResult(L, cellSetMute(lua_toboolean(L, 1)), "modem busy"); }
+
+// wada.cell.sms(number, text) -- one SMS, at most 70 characters (UCS2).
+int cellSmsL(lua_State* L) {
+  const char* num = luaL_checkstring(L, 1);
+  const char* text = luaL_checkstring(L, 2);
+  if (!cellGate(L)) return 2;
+  return cellPushResult(L, cellSmsSend(num, text), "invalid number, empty text or over 70 characters");
+}
+
+int cellDataL(lua_State* L) {
+  const bool up = lua_toboolean(L, 1);
+  if (!cellGate(L)) return 2;
+  return cellPushResult(L, cellDataConnect(up), "modem busy");
+}
+
+// wada.cell.request{ url=, method="GET"|"POST", body=, content_type=, max_bytes= }, cb(status, body)
+// http:// and https:// both work: TLS runs inside the modem.
+int cellRequestL(lua_State* L) {
+  luaL_checktype(L, 1, LUA_TTABLE);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  if (!cellGate(L)) return 2;
+  lua_getfield(L, 1, "url");          const char* url = luaL_checkstring(L, -1);
+  lua_getfield(L, 1, "method");       const char* method = luaL_optstring(L, -1, "GET");
+  lua_getfield(L, 1, "content_type"); const char* ctype = luaL_optstring(L, -1, "");
+  lua_getfield(L, 1, "max_bytes");    lua_Integer maxb = luaL_optinteger(L, -1, 32 * 1024);
+  size_t body_len = 0;
+  lua_getfield(L, 1, "body");         const char* body = luaL_optlstring(L, -1, nullptr, &body_len);
+  if (maxb < 1) maxb = 1;
+  if (maxb > 64 * 1024) maxb = 64 * 1024;
+  if (s_cell_http_cb != LUA_NOREF || cellHttpBusy()) { lua_pop(L, 5); return cellPushResult(L, false, "a request is already running"); }
+  const bool ok = cellHttpStart(method, url, ctype, body, body_len, (size_t)maxb);
+  lua_pop(L, 5);
+  if (!ok) return cellPushResult(L, false, "invalid request");
+  lua_pushvalue(L, 2);
+  s_cell_http_cb = luaL_ref(L, LUA_REGISTRYINDEX);
+  lua_pushboolean(L, 1);
+  return 1;
+}
+
+// wada.cell.http_get(url, cb [, max_bytes])
+int cellHttpGetL(lua_State* L) {
+  const char* url = luaL_checkstring(L, 1);
+  luaL_checktype(L, 2, LUA_TFUNCTION);
+  const lua_Integer maxb = luaL_optinteger(L, 3, 32 * 1024);
+  lua_createtable(L, 0, 2);
+  lua_pushstring(L, url);   lua_setfield(L, -2, "url");
+  lua_pushinteger(L, maxb); lua_setfield(L, -2, "max_bytes");
+  lua_replace(L, 1);
+  lua_settop(L, 2);
+  return cellRequestL(L);
+}
+
+// wada.cell.inbox([max]) -> { {from=, text=, when=}, ... } newest first (firmware-kept, on the card)
+int cellInboxL(lua_State* L) {
+  lua_Integer maxn = luaL_optinteger(L, 1, 20);
+  if (maxn < 1) maxn = 1;
+  if (maxn > 50) maxn = 50;
+  if (!cellGate(L)) return 2;   // SMS are private: same grant as sending them
+  CellInboxEntry* e = (CellInboxEntry*)heap_caps_malloc(sizeof(CellInboxEntry) * (size_t)maxn,
+                                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!e) return cellPushResult(L, false, "out of memory");
+  const int n = cellInboxLoad(e, (int)maxn);
+  lua_createtable(L, n, 0);
+  for (int i = 0; i < n; i++) {
+    lua_createtable(L, 0, 3);
+    lua_pushstring(L, e[i].from); lua_setfield(L, -2, "from");
+    lua_pushstring(L, e[i].text); lua_setfield(L, -2, "text");
+    lua_pushstring(L, e[i].when); lua_setfield(L, -2, "when");
+    lua_rawseti(L, -2, i + 1);
+  }
+  heap_caps_free(e);
+  return 1;
+}
+
+int cellInboxClearL(lua_State* L) {
+  if (!cellGate(L)) return 2;
+  return cellPushResult(L, cellInboxClear(), "could not clear");
+}
+
+void cellDeliver(const CellEvent* ev) {
+  if (!s_h || !s_h->L) return;
+  lua_State* L = s_h->L;
+  if (ev->type == CELL_EV_HTTP) {
+    char* buf = nullptr; size_t len = 0;
+    const int status = cellHttpTake(&buf, &len);
+    if (s_cell_http_cb != LUA_NOREF) {
+      lua_rawgeti(L, LUA_REGISTRYINDEX, s_cell_http_cb);
+      luaL_unref(L, LUA_REGISTRYINDEX, s_cell_http_cb);
+      s_cell_http_cb = LUA_NOREF;
+      lua_pushinteger(L, status);
+      if (buf && status >= 0) lua_pushlstring(L, buf, len); else lua_pushnil(L);
+      if (buf) heap_caps_free(buf);
+      guardedCall(s_h, 2);
+      serviceDeferredClose();
+    } else if (buf) {
+      heap_caps_free(buf);
+    }
+    return;
+  }
+  if (!pushCallback(s_h, "on_cell")) return;
+  lua_createtable(L, 0, 4);
+  switch (ev->type) {
+    case CELL_EV_CALL:
+      lua_pushstring(L, "call"); lua_setfield(L, -2, "type");
+      lua_pushstring(L, cellCallName((CellCall)ev->code)); lua_setfield(L, -2, "state");
+      lua_pushstring(L, ev->text); lua_setfield(L, -2, "number");
+      break;
+    case CELL_EV_RING:
+      lua_pushstring(L, "ring"); lua_setfield(L, -2, "type");
+      lua_pushstring(L, ev->text); lua_setfield(L, -2, "number");
+      break;
+    case CELL_EV_SMS:
+      lua_pushstring(L, "sms"); lua_setfield(L, -2, "type");
+      lua_pushstring(L, ev->text); lua_setfield(L, -2, "from");
+      lua_pushstring(L, ev->body); lua_setfield(L, -2, "text");
+      lua_pushstring(L, ev->when); lua_setfield(L, -2, "when");
+      break;
+    case CELL_EV_SMS_SENT:
+      lua_pushstring(L, "sms_sent"); lua_setfield(L, -2, "type");
+      lua_pushboolean(L, ev->code); lua_setfield(L, -2, "ok");
+      lua_pushstring(L, ev->text); lua_setfield(L, -2, "number");
+      break;
+    case CELL_EV_DATA:
+      lua_pushstring(L, "data"); lua_setfield(L, -2, "type");
+      lua_pushboolean(L, ev->code); lua_setfield(L, -2, "up");
+      lua_pushstring(L, ev->text); lua_setfield(L, -2, "ip");
+      break;
+    default:
+      lua_pushstring(L, "status"); lua_setfield(L, -2, "type");
+      break;
+  }
+  guardedCall(s_h, 1);
+  serviceDeferredClose();
+}
+#endif  // HAS_CELLULAR
+
 // ---- module registration ----
 void openWada(lua_State* L) {
   lua_newtable(L);                                       // wada
@@ -3640,6 +3894,27 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, luajson::encode); lua_setfield(L, -2, "encode");
   lua_setfield(L, -2, "json");
 
+#if HAS_CELLULAR
+  lua_newtable(L);                                       // wada.cell (T-Deck Max 4G modem)
+  lua_pushcfunction(L, cellStatus);    lua_setfield(L, -2, "status");
+  lua_pushcfunction(L, cellEnable);    lua_setfield(L, -2, "enable");     // consent-gated
+  lua_pushcfunction(L, cellApn);       lua_setfield(L, -2, "set_apn");    // consent-gated
+  lua_pushcfunction(L, cellPin);       lua_setfield(L, -2, "set_pin");    // consent-gated
+  lua_pushcfunction(L, cellDialL);     lua_setfield(L, -2, "dial");       // consent-gated
+  lua_pushcfunction(L, cellAnswerL);   lua_setfield(L, -2, "answer");
+  lua_pushcfunction(L, cellHangupL);   lua_setfield(L, -2, "hangup");
+  lua_pushcfunction(L, cellDtmfL);     lua_setfield(L, -2, "dtmf");
+  lua_pushcfunction(L, cellVolumeL);   lua_setfield(L, -2, "volume");
+  lua_pushcfunction(L, cellMuteL);     lua_setfield(L, -2, "mute");
+  lua_pushcfunction(L, cellSmsL);      lua_setfield(L, -2, "sms");        // consent-gated
+  lua_pushcfunction(L, cellDataL);     lua_setfield(L, -2, "data");       // consent-gated
+  lua_pushcfunction(L, cellRequestL);  lua_setfield(L, -2, "request");    // consent-gated
+  lua_pushcfunction(L, cellHttpGetL);  lua_setfield(L, -2, "http_get");   // consent-gated
+  lua_pushcfunction(L, cellInboxL);    lua_setfield(L, -2, "inbox");      // consent-gated
+  lua_pushcfunction(L, cellInboxClearL); lua_setfield(L, -2, "inbox_clear"); // consent-gated
+  lua_setfield(L, -2, "cell");
+#endif
+
   lua_setglobal(L, "wada");
 
   // metatables
@@ -3748,6 +4023,7 @@ void hostTeardown();   // fwd
 // ---------------------------------------------------------------------------
 lv_obj_t* luaAppBody() { return s_h ? s_h->body : nullptr; }
 bool luaAppIsOpen() { return s_h != nullptr; }
+const char* luaAppOpenId() { return s_h ? s_h->id : ""; }
 
 // Both write the store from the UI thread, where a SPIFFS garbage collection can stall
 // for seconds: under the watchdog guard, like the 30 s flush in the tick.
@@ -3830,6 +4106,18 @@ void luaAppMessage(const char* kind, const char* channel, const char* sender, co
 }
 #endif
 
+#if HAS_CELLULAR
+void luaAppCellEvent(const CellEvent* ev) {
+  if (!ev) return;
+  if (!s_h) {
+    // No app to hand an HTTP response to: free it so the next request starts clean.
+    if (ev->type == CELL_EV_HTTP) { char* b = nullptr; size_t n = 0; cellHttpTake(&b, &n); if (b) heap_caps_free(b); }
+    return;
+  }
+  cellDeliver(ev);
+}
+#endif
+
 void luaAppSteer(int dx, int dy) {
   if (!s_h) return;
   const char* dir = (dy < 0) ? "up" : (dy > 0) ? "down" : (dx < 0) ? "left" : (dx > 0) ? "right" : nullptr;
@@ -3899,6 +4187,9 @@ void hostTeardown() {
 #endif
 #if CAP_LUA_AUDIO
   if (s_audio_poll) { lv_timer_del(s_audio_poll); s_audio_poll = nullptr; }
+#endif
+#if HAS_CELLULAR
+  s_cell_http_cb = LUA_NOREF;   // the ref dies with the state; a late response is freed on arrival
 #endif
   // Named timers hold both an lv_timer and a registry ref; both go now, while
   // the state is still alive to unref against.

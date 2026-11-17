@@ -161,6 +161,7 @@
     <a href="#store">wada.store</a>
     <a href="#fs">wada.fs</a>
     <a href="#audio">wada.audio</a>
+    <a href="#cell">wada.cell</a>
     <a href="#sd">wada.sd</a>
     <a href="#sys">wada.sys</a>
     <a href="#timer">wada.timer</a>
@@ -513,6 +514,36 @@ end</code></pre>
   if st.state == "ended" then play_next() end
 end</code></pre>
         <p>Plain names follow the same sandbox rules as <code>wada.fs</code>. Explicit <code>sd:</code> paths follow <a href="#sd">wada.sd</a> path validation. Expected errors include <code>bad path</code>, <code>no storage</code>, <code>no sd</code>, <code>not found</code>, <code>busy</code>, <code>muted</code>, and <code>unsupported format</code>.</p>
+      </div></div>
+    </section>
+
+    <section class="doc" id="cell">
+      <h2>wada.cell <span class="chip">cell</span></h2>
+      <div class="row"><div class="prose">
+        <p>The T-Deck Max's A7682E 4G modem: voice calls, SMS and mobile data. Only boards with a modem have it, so check <code>wada.sys.caps().cell</code> (or <code>if wada.cell then</code>). The modem runs on its own task: every call queues a command and returns at once, and results arrive in <code>app.on_cell(ev)</code>.</p>
+        <p>Calls, SMS and data cost the user money and a call speaks as them, so everything that acts needs the <b>4G: calls, SMS and mobile data</b> permission. The first call asks the user once and returns <code>false, "permission requested"</code>; after that it returns <code>false, "permission denied"</code> or goes ahead. Reading the status and answering or hanging up a call the user can see are never gated. The firmware itself shows the incoming-call sheet, rings and keeps the SMS inbox, with or without an app.</p>
+        <table class="api">
+          <tr><th>Call</th><th>Returns / does</th></tr>
+          <tr><td>wada.cell.status()</td><td><code>{enabled, power, sim, reg, call, number, call_secs, csq, rssi, bars, operator, data, ip, apn, error}</code>. <code>power</code> is <code>off</code>, <code>booting</code>, <code>ready</code> or <code>error</code>; <code>sim</code> is <code>unknown</code>, <code>ready</code>, <code>pin</code>, <code>puk</code> or <code>absent</code>; <code>reg</code> is <code>none</code>, <code>searching</code>, <code>home</code>, <code>roaming</code> or <code>denied</code>; <code>call</code> is <code>idle</code>, <code>dialing</code>, <code>alerting</code>, <code>incoming</code>, <code>active</code> or <code>held</code>. <code>bars</code> is 0&ndash;4.</td></tr>
+          <tr><td>wada.cell.enable(on) <span class="chip">perm</span></td><td>Powers the modem on or off. Remembered across reboots.</td></tr>
+          <tr><td>wada.cell.set_apn(apn [, user, pass]) <span class="chip">perm</span></td><td>The data APN, remembered.</td></tr>
+          <tr><td>wada.cell.set_pin(pin) <span class="chip">perm</span></td><td>SIM PIN (4&ndash;8 digits, or <code>""</code> for none), remembered and entered when the SIM asks.</td></tr>
+          <tr><td>wada.cell.dial(number) <span class="chip">perm</span></td><td>Places a voice call.</td></tr>
+          <tr><td>wada.cell.answer() / hangup()</td><td>Answers the ringing call / ends or rejects the current one.</td></tr>
+          <tr><td>wada.cell.dtmf(digit)</td><td>Sends one DTMF digit (<code>0-9 * # A-D</code>) in the call. The tone goes to the far end as network signalling; nothing plays locally.</td></tr>
+          <tr><td>wada.cell.volume(level) / mute(on)</td><td>Call volume 0&ndash;5 / microphone mute.</td></tr>
+          <tr><td>wada.cell.sms(number, text) <span class="chip">perm</span></td><td>Sends one SMS of at most 70 characters (UCS2, so any script and emoji). <code>on_cell</code> reports <code>sms_sent</code>.</td></tr>
+          <tr><td>wada.cell.data(on) <span class="chip">perm</span></td><td>Opens or closes the mobile data connection. While it is up, map tiles download over 4G when Wi-Fi is down.</td></tr>
+          <tr><td>wada.cell.request{url, method, body, content_type, max_bytes}, cb <span class="chip">perm</span></td><td>An HTTP or HTTPS request through the modem's own stack (TLS runs in the modem). <code>cb(status, body)</code>, <code>body</code> capped at <code>max_bytes</code> (default 32&nbsp;KB, at most 64&nbsp;KB). One request at a time. <code>wada.net</code> stays Wi-Fi only.</td></tr>
+          <tr><td>wada.cell.http_get(url, cb [, max_bytes]) <span class="chip">perm</span></td><td>Shorthand for a GET.</td></tr>
+          <tr><td>wada.cell.inbox([max]) <span class="chip">perm</span></td><td>Received SMS, newest first: <code>{ {from, text, when}, ... }</code>, up to 50. Kept by the firmware on the card, so messages that arrived while no app was open are there.</td></tr>
+          <tr><td>wada.cell.inbox_clear() <span class="chip">perm</span></td><td>Empties the inbox.</td></tr>
+        </table>
+        <h3>app.on_cell</h3>
+        <p>One table per event: <code>{type="call", state, number}</code> on every call-state change, <code>{type="ring", number}</code> on each ring while a call is incoming, <code>{type="sms", from, text, when}</code>, <code>{type="sms_sent", ok, number}</code>, <code>{type="data", up, ip}</code> and <code>{type="status"}</code> when <code>status()</code> has changed.</p>
+        <pre><code>function app.on_cell(ev)
+  if ev.type == "call" and ev.state == "idle" then show_dialer() end
+end</code></pre>
       </div></div>
     </section>
 

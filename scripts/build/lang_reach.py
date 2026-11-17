@@ -303,10 +303,10 @@ def src_files(root):
 # The built-in table is baked only for the 2 MB Heltec V4 (CAP_BUILTIN_LANGS), so an
 # app's texts belong in it only if that board can run the app: the version the
 # catalog serves (old versions are gone from the Store), and not an app that needs
-# what the V4 lacks. "sdk_ext" apps need 8 MB of PSRAM; "audio" apps need a speaker.
+# what the V4 lacks. "sdk_ext" apps need 8 MB of PSRAM; "audio" apps need a speaker; "cell" apps a 4G modem.
 # Keeping every version of every app cost the V4 the flash the Music app's 16
 # texts x 14 languages took (2026-10-15). An unknown "requires" is kept, to be safe.
-V4_UNMET = {"sdk_ext", "audio"}
+V4_UNMET = {"sdk_ext", "audio", "cell"}
 
 
 def lua_sources_for_table(root):

@@ -100,8 +100,40 @@ void TDeckMaxBoard::gpsPowerOff() {
   if (xlWrite(TDMAX_XL_GPS_EN, false)) gps_on_ = false;
 }
 
+void TDeckMaxBoard::setModemRail(bool on) {
+  if (xlWrite(TDMAX_XL_6609_EN, on)) modem_rail_on_ = on;
+  if (!on) {
+    // Never leave PWRKEY asserted into an unpowered module.
+    xlWrite(TDMAX_XL_PWRKEY, false);
+    if (modem_audio_) setModemAudio(false);
+  }
+}
+
+void TDeckMaxBoard::modemPowerKeyPulse() {
+  // Same shape as LilyGo's A7670GBoard::powerOnPulse(): LOW 100 ms, HIGH 1.1 s, LOW.
+  xlWrite(TDMAX_XL_PWRKEY, false);
+  delay(100);
+  xlWrite(TDMAX_XL_PWRKEY, true);
+  delay(1100);
+  xlWrite(TDMAX_XL_PWRKEY, false);
+}
+
+void TDeckMaxBoard::setModemAudio(bool on) {
+  if (!expander_ready_) return;
+  modem_audio_ = on;
+  if (on) {
+    xlWrite(TDMAX_XL_AUDIO_SEL, true);
+    xlWrite(TDMAX_XL_AMP_EN, true);
+  } else {
+    xlWrite(TDMAX_XL_AMP_EN, false);
+    xlWrite(TDMAX_XL_AUDIO_SEL, false);
+  }
+  Serial.printf("[MAXAUDIO] speaker -> %s\n", on ? "modem (call)" : "es8311");
+}
+
 void TDeckMaxBoard::setAmpEnabled(bool on) {
   if (!expander_ready_) { Serial.println("[MAXAUDIO] amp toggle skipped: expander not ready"); return; }
+  if (modem_audio_) return;   // a call owns the speaker; chimes stay silent until it ends
   // Route the shared speaker to the ES8311 before the amp comes up, so a
   // modem-audio selection can never blast through the NS4150B.
   if (on) xlWrite(TDMAX_XL_AUDIO_SEL, false);
@@ -110,6 +142,7 @@ void TDeckMaxBoard::setAmpEnabled(bool on) {
 }
 
 void TDeckMaxBoard::selectEs8311Audio() {
+  if (modem_audio_) return;
   xlWrite(TDMAX_XL_AUDIO_SEL, false);
 }
 

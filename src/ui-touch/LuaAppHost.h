@@ -20,6 +20,11 @@ bool luaAppLaunch(const char* id, const char* title, const char* src, size_t len
 // seeded built-ins user-editable.
 bool luaAppLaunchFile(const char* id, const char* title, const char* embedded, size_t embedded_len);
 bool luaAppIsOpen();
+const char* luaAppOpenId();           // id of the running app, "" when none
+#if HAS_CELLULAR
+struct CellEvent;
+void luaAppCellEvent(const CellEvent* ev);   // -> app.on_cell / wada.cell.request callback
+#endif
 // The web console's app settings (#854). Both act only when `id` is the app open now
 // and return false otherwise, leaving <id>.sav to the caller. Sync writes the live
 // store out; Set changes one key (value null = remove) and writes it out at once.
@@ -47,6 +52,7 @@ void luaAppMessage(const char* kind, const char* channel, const char* sender, co
 #define LUA_PERM_READ     2   // see incoming channel traffic
 #define LUA_PERM_DM_SEND  4   // send a direct message, or post to a room server, AS the user
 #define LUA_PERM_DM_READ  8   // see incoming direct messages and room posts
+#define LUA_PERM_CELL     32  // 4G modem: calls, SMS, mobile data, modem settings (costs money)
 #define LUA_PERM_PROBE    16  // transmit discovery probes (wada.mesh.discover)
 #if CAP_LUA_SDK_EXT
 // A Home widget an app publishes with wada.widget.set{} while it runs. Home shows the
@@ -66,6 +72,7 @@ bool luaWidgetGet(const char* app_id, LuaWidgetSnap* out);   // false: nothing p
 #endif
 #else
 inline bool luaAppIsOpen() { return false; }
+inline const char* luaAppOpenId() { return ""; }
 inline lv_obj_t* luaAppBody() { return nullptr; }
 inline void luaAppDismiss() {}
 inline void luaAppSteer(int, int) {}

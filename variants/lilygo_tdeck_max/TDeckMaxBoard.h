@@ -106,11 +106,25 @@ public:
   void setAmpEnabled(bool on);
   void selectEs8311Audio();
 
+  // A7682E modem (driven by CellularService). setModemRail powers the SGM6609
+  // boost that feeds the modem; modemPowerKeyPulse is the 1.1 s PWRKEY pulse
+  // that boots (or, when already on, shuts down) the module.
+  void setModemRail(bool on);
+  bool modemRailIsOn() const { return modem_rail_on_; }
+  void modemPowerKeyPulse();
+  // Voice-call audio: speaker mux to the modem and the amp on. While this is
+  // set, setAmpEnabled() leaves the speaker alone so a notification chime
+  // cannot pull the mux back to the ES8311 in the middle of a call.
+  void setModemAudio(bool on);
+  bool modemAudioActive() const { return modem_audio_; }
+
   ExtensionIOXL9555 io_expander;
   GaugeBQ27220 gauge;
 
 private:
   bool expander_ready_ = false;
   bool gps_on_ = false;
+  volatile bool modem_rail_on_ = false;
+  volatile bool modem_audio_ = false;
   SemaphoreHandle_t expander_mutex_ = nullptr;
 };

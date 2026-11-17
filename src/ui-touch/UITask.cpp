@@ -11,6 +11,9 @@
 #include "../RegionDiscovery.h"
 
 #include "device_caps.h"   // CAP_* capability flags (replaces device-name #ifs)
+#if HAS_CELLULAR
+#include "CellularService.h"   // T-Deck Max 4G modem: status bar signal + incoming-call sheet
+#endif
 
 // Port the browser-facing web UI (VNC mirror / remote / terminal viewer page) listens on.
 // A T-Display P4 on the legacy ESP-AT C6 stack gets ONE listening port, so there the web UI
@@ -2895,6 +2898,9 @@ struct GlobalStatusBar {
   lv_obj_t* batt_icon;
   lv_obj_t* layout_label;   // EN / BG indicator, right side
   lv_obj_t* chan_gear;      // channel-settings gear, left of the thread name (channels only)
+  lv_obj_t* cell_box;       // 4G modem: "4G"/"R" tag + four bars (HAS_CELLULAR only, else null)
+  lv_obj_t* cell_tag;
+  lv_obj_t* cell_bars[4];
   lv_obj_t* sig_bars[4];    // mesh signal-strength bars (lit count = last-heard SNR)
   lv_obj_t* sig_box;        // container holding sig_bars (slides over when charging hides the %)
   lv_obj_t* inbox_add;      // chat/channel-overview actions: [✓ read | + add | QR]
@@ -39145,6 +39151,17 @@ static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
 #endif
 #endif
 
+// Can map tiles be downloaded right now? Wi-Fi, or on the T-Deck Max the 4G
+// modem with mobile data switched on (its own HTTP stack carries the request).
+static bool tileNetUp() {
+  if (WiFi.status() == WL_CONNECTED) return true;
+#if HAS_CELLULAR
+  return cellDataIsUp();
+#else
+  return false;
+#endif
+}
+
 static void tileFetchTaskFn(void* arg) {
   (void)arg;
   // Plain HTTP, not HTTPS. We can't do HTTPS on this device: mbedTLS
@@ -39370,7 +39387,7 @@ static void tileFetchTaskFn(void* arg) {
     // disk (the prefetch now enqueues without stat'ing) would otherwise be a
     // tight no-yield loop of tileCacheExists() and could starve core-0 IDLE.
     vTaskDelay(1);
-    if (WiFi.status() != WL_CONNECTED) {
+    if (!tileNetUp()) {
       WIRE_DBG("[TILE] skip z=%u x=%ld y=%ld: WiFi down\n",
                     (unsigned)req.z, (long)req.x, (long)req.y);
       s_tile_fetch_step = '!';
@@ -39491,6 +39508,57 @@ static void tileFetchTaskFn(void* arg) {
     char url[160];
     snprintf(url, sizeof(url), "%s%s/%u/%ld/%ld.jpg",
              base, fseg, (unsigned)req.z, (long)req.x, (long)req.y);
+#if HAS_CELLULAR
+    if (WiFi.status() != WL_CONNECTED) {
+      // No Wi-Fi: fetch through the 4G modem's own HTTP stack. Same checks as
+      // the Wi-Fi path below (JPEG SOI, verified write), whole tile in PSRAM.
+      s_tile_fetch_step = 'g';
+      char* body = nullptr;
+      size_t body_len = 0;
+      const int code = cellHttpGetSync(url, &body, &body_len, 100 * 1024, 45000);
+      s_tile_fetch_last_code = (int16_t)code;
+      bool wrote = false;
+      if (code != 200) {
+        s_tile_fetch_last_wr = 'e';
+      } else if (!body || body_len < 2 || (uint8_t)body[0] != 0xFF || (uint8_t)body[1] != 0xD8) {
+        s_tile_fetch_last_wr = 'J';
+      } else {
+        File f = tileCacheOpen(path_jpg, "w");
+        if (f) {
+          size_t done_n = 0;
+          while (done_n < body_len) {            // in slices, yielding, like the Wi-Fi path
+            const size_t want = body_len - done_n > 4096 ? 4096 : body_len - done_n;
+            const size_t wn = f.write((const uint8_t*)body + done_n, want);
+            done_n += wn;
+            if (wn != want) break;
+            vTaskDelay(1);
+          }
+          f.close();
+          if (done_n == body_len) wrote = true;
+          else { tileCacheRemove(path_jpg); ++s_tile_fetch_short_wr; s_tile_fetch_last_wr = 'P'; }
+        } else {
+          ++s_tile_fetch_open_fail;
+          s_tile_fetch_last_wr = 'O';
+        }
+      }
+      if (body) heap_caps_free(body);
+      tileFetchPendingDec();
+      backend_lease.release();
+      if (wrote) {
+        WIRE_DBG("[TILE]  -> wrote %s (4G)\n", path_jpg);
+        s_tile_fetch_step = 'w';
+        s_tile_fetch_last_wr = 'w';
+        ++s_tile_fetch_ok;
+        if (req.z == s_map_zoom) s_tile_fetch_dirty = true;
+      } else {
+        ++s_tile_fetch_failed;
+        const bool permanent = (code >= 400 && code < 500 && code != 408 && code != 429);
+        if (!permanent) tileFetchForget(req.z, req.x, req.y);
+      }
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+#endif
     http.begin(client, url);
     // Bound the network waits BELOW the 5 s task-watchdog timeout. HTTPClient's
     // default TCP timeout is 5 s — identical to the WDT — so a single stalled
@@ -39775,7 +39843,7 @@ static void queueTileForFetch(uint8_t z, int32_t x, int32_t y) {
 #if defined(TLORA_PAGER)
   if (s_pager_sd_removal_pending && s_tile_fs == &SD) return;
 #endif
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (!tileNetUp()) return;
   if (tileFetchSeen(z, x, y)) return;
   // HONOR the result: ensureTileFetchTaskRunning() creates the QUEUE first and can
   // still fail afterwards on the worker's 8 KB contiguous-DRAM stack. Ignoring it left
@@ -40346,7 +40414,7 @@ static uint16_t s_map_ovz_miss_ok = 0;   // s_tile_fetch_ok when the ring was la
 // as before, rather than drawing a stand-in the arriving tile would have to replace.
 static bool mapTileFetchCanFill() {
 #if defined(ESP32) && defined(MULTI_TRANSPORT_COMPANION)
-  return WiFi.status() == WL_CONNECTED;
+  return tileNetUp();
 #else
   return false;
 #endif
@@ -60635,6 +60703,11 @@ static bool luaStoreBoardMeets(const char* req) {
   if (!strcmp(req, "sd"))      return CAP_SD != 0;
   if (!strcmp(req, "audio"))   return CAP_LUA_AUDIO != 0;   // a speaker that plays files (Music)
   if (!strcmp(req, "https"))   return CAP_LUA_HTTPS != 0;   // wada.net.request to an https:// API
+#if HAS_CELLULAR
+  if (!strcmp(req, "cell"))    return true;                 // wada.cell: a 4G modem (Phone)
+#else
+  if (!strcmp(req, "cell"))    return false;
+#endif
   return true;
 }
 
@@ -62910,6 +62983,8 @@ static const char* luaAppIconGlyph(const char* name) {
     { "battery",  LV_SYMBOL_CHARGE },
     { "game",     LV_SYMBOL_PLAY },
     { "music",    LV_SYMBOL_AUDIO },      // a note: players
+    { "phone",    LV_SYMBOL_CALL },       // a handset: the Phone app (U+F095, in every text font)
+    { "call",     LV_SYMBOL_CALL },
   };
   for (const auto& e : kMap) if (strcmp(e.name, name) == 0) return e.glyph;
   return LV_SYMBOL_PLAY;
@@ -64010,6 +64085,37 @@ static void buildGlobalStatusBar() {
     }
   }
 
+#if HAS_CELLULAR
+  // 4G signal: a small "4G" tag and the same four-bar shape as the mesh bars, so
+  // the two read as one family but the tag says which is the phone network.
+  // Hidden while the modem is switched off; packed next to the battery.
+  {
+    const int bw = 2, gap = 1, bh = 10;
+    const int hh[4] = {4, 6, 8, 10};
+    lv_obj_t* cb = lv_obj_create(g_statusbar.root);
+    lv_obj_remove_style_all(cb);
+    lv_obj_clear_flag(cb, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_t* tag = lv_label_create(cb);
+    lv_label_set_text(tag, "4G");
+    lv_obj_set_style_text_color(tag, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    lv_obj_set_style_text_font(tag, sbFixed(&g_font_12), LV_PART_MAIN);
+    g_statusbar.cell_tag = tag;
+    for (int i = 0; i < 4; i++) {
+      lv_obj_t* b = lv_obj_create(cb);
+      lv_obj_remove_style_all(b);
+      lv_obj_set_size(b, bw, hh[i]);
+      lv_obj_set_style_radius(b, 1, LV_PART_MAIN);
+      lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+      lv_obj_set_style_bg_color(b,
+        lv_color_hex(s_theme_high_contrast ? COLOR_SUB : COLOR_SECONDARY_ACTION), LV_PART_MAIN);
+      g_statusbar.cell_bars[i] = b;
+    }
+    (void)bh;
+    lv_obj_add_flag(cb, LV_OBJ_FLAG_HIDDEN);   // shown once the modem is enabled
+    g_statusbar.cell_box = cb;
+  }
+#endif
+
   // Keyboard layout indicator — sits left of the clock (only shown while typing).
   g_statusbar.layout_label = lv_label_create(g_statusbar.root);
   lv_label_set_text(g_statusbar.layout_label, "");
@@ -64274,7 +64380,8 @@ static void chatHeaderApply(bool chat_open) {
   const bool two_row = sbTwoRow();
   const bool chat_radios_hidden = two_row ? false : chat_open;   // two rows: the top row is the same as on every other page
   lv_obj_t* radios[] = { g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.sd_icon,
-                         g_statusbar.dnd_icon, g_statusbar.sig_box, g_statusbar.sleep_icon };
+                         g_statusbar.dnd_icon, g_statusbar.sig_box, g_statusbar.sleep_icon,
+                         g_statusbar.cell_box };
   auto isLink = [](lv_obj_t* o) {
     return o == g_statusbar.conn_icon || o == g_statusbar.ble_icon || o == g_statusbar.sig_box;
   };
@@ -64615,6 +64722,7 @@ static void statusBarPackRight() {
   const Slot order[] = {
     { g_statusbar.batt_icon,    0 },
     { g_statusbar.batt_pct,     0 },
+    { g_statusbar.cell_box,     SBX(8) },   // 4G (null without HAS_CELLULAR)
     { g_statusbar.sig_box,      SBX(8) },
     { g_statusbar.conn_icon,    SBX(7) },
     { g_statusbar.ble_icon,     SBX(7) },
@@ -65280,6 +65388,55 @@ static void updateGlobalStatusBar() {
     }
   }
 
+#if HAS_CELLULAR
+  // ---- 4G signal (edge-triggered: repaints only when what it shows changes) ----
+  if (g_statusbar.cell_box) {
+    CellStatus cs;
+    cellGetStatus(&cs);
+    const bool show = cs.enabled;
+    const bool reg  = (cs.reg == CELL_REG_HOME || cs.reg == CELL_REG_ROAMING);
+    const bool fault = (cs.power == CELL_POWER_ERROR) || cs.sim == CELL_SIM_ABSENT ||
+                       cs.sim == CELL_SIM_PIN || cs.sim == CELL_SIM_PUK || cs.reg == CELL_REG_DENIED;
+    int level = 0;
+    if (reg && cs.csq >= 0) level = cs.csq >= 20 ? 4 : cs.csq >= 15 ? 3 : cs.csq >= 10 ? 2 : 1;
+    // "4G" normally, "R" while roaming, "4G!" for something the user must fix
+    // (no SIM, PIN, modem not answering); bars stay dark until registered.
+    const char* tag = fault ? "4G!" : (cs.reg == CELL_REG_ROAMING ? "R" : "4G");
+    const uint32_t sig = (show ? 1u : 0u) | ((uint32_t)level << 1) | (fault ? 0x10u : 0u) |
+                         (cs.reg == CELL_REG_ROAMING ? 0x20u : 0u) | (reg ? 0x40u : 0u);
+    static uint32_t s_cell_sig = 0xFFFFFFFFu;
+    if (sig != s_cell_sig) {
+      s_cell_sig = sig;
+      if (!show) {
+        lv_obj_add_flag(g_statusbar.cell_box, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_clear_flag(g_statusbar.cell_box, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(g_statusbar.cell_tag, tag);
+        lv_obj_set_style_text_color(g_statusbar.cell_tag,
+            lv_color_hex(fault ? COLOR_STATUS_DANGER_TEXT : reg ? COLOR_TEXT : COLOR_SUB), LV_PART_MAIN);
+        const lv_font_t* f = lv_obj_get_style_text_font(g_statusbar.cell_tag, LV_PART_MAIN);
+        const lv_coord_t tw = lv_txt_get_width(tag, strlen(tag), f, 0, LV_TEXT_FLAG_NONE);
+        const lv_coord_t th = lv_font_get_line_height(f);
+        const lv_coord_t bh = 10, bx = tw + 2;
+        const lv_coord_t h = LV_MAX(th, bh);
+        lv_obj_set_size(g_statusbar.cell_box, bx + 4 * 2 + 3 * 1, h);
+        lv_obj_set_pos(g_statusbar.cell_tag, 0, (h - th) / 2);
+        static const int hh[4] = {4, 6, 8, 10};
+        const lv_coord_t base = (h + bh) / 2;   // bars' bottom, centred on the tag
+        for (int i = 0; i < 4; i++) {
+          if (!g_statusbar.cell_bars[i]) continue;
+          lv_obj_set_pos(g_statusbar.cell_bars[i], bx + i * 3, base - hh[i]);
+          lv_obj_set_style_bg_color(g_statusbar.cell_bars[i],
+              lv_color_hex(i < level ? COLOR_GLOW
+                                     : s_theme_high_contrast ? COLOR_SUB : COLOR_SECONDARY_ACTION),
+              LV_PART_MAIN);
+        }
+      }
+      s_sb_pack_sig = 0;   // width or visibility changed: re-pack the right-hand icons
+    }
+  }
+#endif
+
   // ---- Battery ----
   const uint16_t mv = batteryMvSmoothed();
   const bool charging = batteryIsCharging(mv);
@@ -65362,7 +65519,8 @@ static void updateGlobalStatusBar() {
   {
     uint32_t ps = 2166136261u;
     auto pmix = [&ps](uint32_t v) { ps = (ps ^ v) * 16777619u; };
-    lv_obj_t* const packed[] = { g_statusbar.batt_icon, g_statusbar.batt_pct, g_statusbar.sig_box,
+    lv_obj_t* const packed[] = { g_statusbar.batt_icon, g_statusbar.batt_pct, g_statusbar.cell_box,
+                                 g_statusbar.cell_tag, g_statusbar.sig_box,
                                  g_statusbar.conn_icon, g_statusbar.ble_icon, g_statusbar.gps_icon,
                                  g_statusbar.dnd_icon, g_statusbar.layout_label };
     for (lv_obj_t* o : packed) {
@@ -65393,7 +65551,7 @@ static void updateGlobalStatusBar() {
   // the clock or those icons changes, not every tick.
   {
     lv_obj_t* const sb_icons[] = { g_statusbar.ble_icon, g_statusbar.gps_icon, g_statusbar.dnd_icon, g_statusbar.sleep_icon,
-                                   g_statusbar.conn_icon, g_statusbar.sig_box,
+                                   g_statusbar.conn_icon, g_statusbar.sig_box, g_statusbar.cell_box,
                                    g_statusbar.batt_pct, g_statusbar.batt_icon };
     auto visible = [](lv_obj_t* o) { return o && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
     uint32_t sig = 2166136261u;   // FNV-1a over everything that moves or resizes the clock / icons
@@ -77716,6 +77874,9 @@ static void buildAppPermsSettings() {
       { TR("Send private messages as me"), LUA_PERM_DM_SEND },
       { TR("Read private messages"), LUA_PERM_DM_READ },
       { TR("Send discovery probes"), LUA_PERM_PROBE },
+#if HAS_CELLULAR
+      { TR("4G: calls, SMS and mobile data"), LUA_PERM_CELL },
+#endif
     };
     for (const auto& p : perms)   // user_data packs the app index and the bit, one callback for all
       setSwitchRow(c, p.label, nullptr, (mask & p.bit) != 0, appPermsToggleCb,
@@ -77753,6 +77914,174 @@ void luaHostRequestProbePerm(const char* app_id, const char* app_name) {
            label);
   showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_PROBE, true); });
 }
+
+#if HAS_CELLULAR
+// ---- wada.cell: the 4G modem ------------------------------------------------
+// A call or an SMS goes out under the user's phone number and costs money, so
+// it is a grant of its own. It keeps its own "asked" marker bit: the shared
+// per-app record only says the app was asked about SOMETHING, and an app that
+// once asked to post to a channel must still be asked about the modem.
+#define LUA_PERM_CELL_ASKED 64
+static_assert(LUA_PERM_CELL_ASKED < (1 << APPPERM_SHIFT), "APPPERM_SHIFT too small");
+int luaHostCellPerm(const char* app_id) {
+  bool asked = false;
+  const int mask = luaHostAppPerms(app_id, &asked);
+  if (mask & LUA_PERM_CELL) return 1;
+  return (mask & LUA_PERM_CELL_ASKED) ? -1 : 0;
+}
+void luaHostRequestCellPerm(const char* app_id, const char* app_name) {
+  if (!app_id || !*app_id) return;
+  snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
+  luaPermSetBit(app_id, LUA_PERM_CELL_ASKED, true);
+  luaPermSetBit(app_id, LUA_PERM_CELL, false);    // refused unless the user says otherwise
+  const char* label = (app_name && *app_name) ? app_name : app_id;
+  char msg[260];
+  snprintf(msg, sizeof msg,
+           TR("\"%s\" wants to use the 4G modem.\n\n"
+              "It will be able to make calls, send SMS and use mobile data on "
+              "your SIM card, under your phone number. This can cost money.\n\n"
+              "You can take it back under Settings > Apps."),
+           label);
+  showConfirm(msg, TR("Allow"), +[]() { luaPermSetBit(s_lua_perm_target, LUA_PERM_CELL, true); });
+}
+#endif
+
+#if HAS_CELLULAR
+// ---- Call sheet: the firmware's own incoming / in-call screen ----------------
+// A phone call must be answerable whatever is on screen, and whether or not the
+// Phone app is installed, so this lives in firmware. It is a full-screen sheet on
+// lv_layer_top (above every page, below nothing): Answer / Reject while it rings,
+// Hang up once connected. When the Phone Lua app is in front it draws its own
+// call screen instead and this one stays away (cellUiPump decides).
+static lv_obj_t* s_call_sheet = nullptr;
+static lv_obj_t* s_call_state_lbl = nullptr;
+static lv_obj_t* s_call_dur_lbl = nullptr;
+static int       s_call_sheet_state = -1;   // CellCall the buttons were built for
+static const char* s_call_last_state = nullptr;
+static uint32_t  s_call_last_shown = 0xFFFFFFFFu;
+
+static void callSheetClose() {
+  if (s_call_sheet) { lv_obj_del(s_call_sheet); s_call_sheet = nullptr; }
+  s_call_state_lbl = s_call_dur_lbl = nullptr;
+  s_call_sheet_state = -1;
+  s_call_last_state = nullptr;
+  s_call_last_shown = 0xFFFFFFFFu;
+}
+
+static lv_obj_t* callSheetButton(lv_obj_t* parent, const char* text, uint32_t bg, uint32_t fg,
+                                 lv_coord_t w, void (*cb)()) {
+  lv_obj_t* b = lv_btn_create(parent);
+  lv_obj_remove_style_all(b);
+  lv_obj_set_size(b, w, 54);
+  lv_obj_set_style_radius(b, 12, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(b, lv_color_hex(bg), LV_PART_MAIN);
+  lv_obj_set_style_border_width(b, 2, LV_PART_MAIN);
+  lv_obj_set_style_border_color(b, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_t* l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_set_style_text_font(l, &g_font_semi_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(l, lv_color_hex(fg), LV_PART_MAIN);
+  lv_obj_center(l);
+  lv_obj_add_event_cb(b, [](lv_event_t* e) {
+    auto fn = (void (*)())lv_event_get_user_data(e);
+    if (fn) fn();
+  }, LV_EVENT_CLICKED, (void*)cb);
+  return b;
+}
+
+static void callSheetBuild(int state, const char* number) {
+  callSheetClose();
+  const lv_coord_t W = lv_disp_get_hor_res(nullptr), H = lv_disp_get_ver_res(nullptr);
+  s_call_sheet = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_call_sheet);
+  lv_obj_set_size(s_call_sheet, W, H - STATUSBAR_H);
+  lv_obj_set_pos(s_call_sheet, 0, STATUSBAR_H);
+  lv_obj_set_style_bg_opa(s_call_sheet, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_bg_color(s_call_sheet, lv_color_hex(COLOR_BG), LV_PART_MAIN);
+  lv_obj_clear_flag(s_call_sheet, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(s_call_sheet, LV_OBJ_FLAG_CLICKABLE);   // swallow taps meant for what is under it
+  lv_obj_move_foreground(s_call_sheet);
+
+  lv_obj_t* who = lv_label_create(s_call_sheet);
+  lv_label_set_text(who, (number && *number) ? number : TR("Unknown number"));
+  lv_label_set_long_mode(who, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(who, W - 24);
+  lv_obj_set_style_text_align(who, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_set_style_text_font(who, &g_font_semi_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(who, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(who, LV_ALIGN_TOP_MID, 0, 40);
+
+  s_call_state_lbl = lv_label_create(s_call_sheet);
+  lv_obj_set_style_text_font(s_call_state_lbl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_call_state_lbl, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_label_set_text(s_call_state_lbl, "");
+  lv_obj_set_width(s_call_state_lbl, W - 24);
+  lv_obj_set_style_text_align(s_call_state_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(s_call_state_lbl, LV_ALIGN_TOP_MID, 0, 40 + 2 * 22 + 12);
+
+  s_call_dur_lbl = lv_label_create(s_call_sheet);
+  lv_obj_set_style_text_font(s_call_dur_lbl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(s_call_dur_lbl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_text(s_call_dur_lbl, "");
+  lv_obj_set_width(s_call_dur_lbl, W - 24);
+  lv_obj_set_style_text_align(s_call_dur_lbl, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+  lv_obj_align(s_call_dur_lbl, LV_ALIGN_TOP_MID, 0, 40 + 2 * 22 + 12 + 26);
+
+  if (state == CELL_CALL_INCOMING) {
+    const lv_coord_t bw = (W - 36) / 2;
+    lv_obj_t* a = callSheetButton(s_call_sheet, TR("Answer"), COLOR_STATUS_OK, COLOR_ON_GLOW, bw,
+                                  []() { cellAnswer(); });
+    lv_obj_align(a, LV_ALIGN_BOTTOM_LEFT, 12, -24);
+    lv_obj_t* r = callSheetButton(s_call_sheet, TR("Reject"), COLOR_STATUS_DANGER, COLOR_ON_GLOW, bw,
+                                  []() { cellHangup(); });
+    lv_obj_align(r, LV_ALIGN_BOTTOM_RIGHT, -12, -24);
+  } else {
+    lv_obj_t* h = callSheetButton(s_call_sheet, TR("Hang up"), COLOR_STATUS_DANGER, COLOR_ON_GLOW, W - 24,
+                                  []() { cellHangup(); });
+    lv_obj_align(h, LV_ALIGN_BOTTOM_MID, 0, -24);
+  }
+  s_call_sheet_state = state;
+}
+
+// Called from cellUiPump on every loop pass. show = false closes the sheet (no
+// call, or the Phone app is in front and handles it).
+void uiCellCallSheet(bool show) {
+  CellStatus cs;
+  cellGetStatus(&cs);
+  if (!show || cs.call == CELL_CALL_IDLE) {
+    if (s_call_sheet) callSheetClose();
+    return;
+  }
+  // Buttons differ only between ringing and everything else.
+  const int kind = (cs.call == CELL_CALL_INCOMING) ? CELL_CALL_INCOMING : CELL_CALL_ACTIVE;
+  if (!s_call_sheet || s_call_sheet_state != kind) {
+    // A call that arrives with the screen off has to be seen: wake it (with a PIN
+    // lock this asks for the PIN first, exactly like any other wake).
+    if (g_lv.task && g_lv.task->isScreenOff()) g_lv.task->wakeScreen();
+    callSheetBuild(kind, cs.call_number);
+  }
+
+  const char* st = cs.call == CELL_CALL_INCOMING ? TR("Incoming call")
+                 : cs.call == CELL_CALL_DIALING  ? TR("Calling...")
+                 : cs.call == CELL_CALL_ALERTING ? TR("Ringing...")
+                 : cs.call == CELL_CALL_HELD     ? TR("On hold")
+                 :                                 TR("Connected");
+  if (st != s_call_last_state) {
+    s_call_last_state = st;
+    lv_label_set_text(s_call_state_lbl, st);
+  }
+  // Duration: every 5 s is plenty on e-paper, and each change is a panel refresh.
+  const uint32_t secs = cs.call_started_ms ? (millis() - cs.call_started_ms) / 1000 : 0;
+  const uint32_t shown = (cs.call == CELL_CALL_ACTIVE) ? (secs / 5) * 5 : 0xFFFFFFFEu;
+  if (shown != s_call_last_shown) {
+    s_call_last_shown = shown;
+    char b[16] = "";
+    if (cs.call == CELL_CALL_ACTIVE) snprintf(b, sizeof b, "%u:%02u", (unsigned)(secs / 60), (unsigned)(secs % 60));
+    lv_label_set_text(s_call_dur_lbl, b);
+  }
+}
+#endif  // HAS_CELLULAR
 // A Lua ping's trace: onTracePingResult parks the answer here for the app's timer,
 // because it runs inside packet reception, where app code must not.
 static uint32_t s_lua_ping_tag = 0;

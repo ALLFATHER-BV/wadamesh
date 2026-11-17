@@ -56,7 +56,7 @@ what the app *does*. One sentence.
 ship its own artwork, so anything unrecognised falls back to the generic app
 symbol. Choose from: `gps` / `compass` / `map`, `radio`, `signal`, `chart`,
 `list`, `message`, `person`, `group`, `bell`, `star`, `search`, `settings`,
-`battery`, `game`.
+`battery`, `game`, `music`, `phone`.
 
 `config` is optional. It lists settings (an account, a server, a switch) that
 the web console's Settings tab shows under **Apps**, each saved into the

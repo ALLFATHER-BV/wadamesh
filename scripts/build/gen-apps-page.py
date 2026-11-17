@@ -29,10 +29,12 @@ RUNS_ON = {
     "sd": ("Boards with an SD card", "most"),
     "gps": ("Needs a GPS", "most"),
     "audio": ("Boards with a speaker", "some"),
+    "cell": ("Boards with a 4G modem (T-Deck Max)", "some"),
 }
 
 # Outline glyphs (24x24, stroke = currentColor), one per manifest icon name.
 GLYPH = {
+    "phone": '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/>',
     "signal": '<path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/>',
     "chart": '<path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 6-7"/>',
     "map": '<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14M15 6v14"/>',

@@ -851,6 +851,9 @@ void setup() {
 
   board.begin();
   Serial.println("[BOOT] board ok");
+#if HAS_CELLULAR
+  { extern void cellBegin(); cellBegin(); }   // A7682E service; powers the modem only if enabled
+#endif
 
 #if defined(HAS_RAK_TAP_V2)
   // Quick PSRAM sanity check — silent crash before SPIFFS could be bad PSRAM config
@@ -1865,6 +1868,9 @@ void loop() {
     uint32_t _uidt = millis() - _ui0;
     if (_uidt >= 200) stallLog((g_ui_stall_max >= 150 && g_ui_stall_tag[0]) ? g_ui_stall_tag : "ui:other", _uidt);
   }
+#if HAS_CELLULAR
+  { extern void cellUiPump(); cellUiPump(); }  // modem events -> ring/toast + app.on_cell
+#endif
 #endif
 #ifdef MULTI_TRANSPORT_COMPANION
 #ifdef DISPLAY_CLASS
