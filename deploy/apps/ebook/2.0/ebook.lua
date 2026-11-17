@@ -24,7 +24,7 @@
 --     Returns a widget handle (img:remove() takes it off the screen), or nil, reason.
 --
 -- Input: touch taps the left/right thirds or swipes left/right; a trackball or D-pad
--- swipes up/down (and left/right); keyboard arrows, space, n/p; a jog wheel or
+-- swipes up/down (and left/right); keyboard arrows, n/p; a jog wheel or
 -- encoder walks the on-screen < menu > buttons. A centre tap / Enter opens the menu.
 local ui, sys, timer, store, fs = wada.ui, wada.sys, wada.timer, wada.store, wada.fs
 local tr = sys.tr or function(x) return x end
@@ -995,7 +995,7 @@ function show_library()
   local list = ui.list(M, y, W - 2 * M, H - y - M - ui.text_h(12) - 4)
   local hint = ui.label("", M, H - M - ui.text_h(12), 12, C.sub)
   hint:width(W - 2 * M)
-  if book then list:add(SYM_LEFT .. "  " .. tr("Back to book"), function() show_reading() end) end
+  if book then list:add(SYM_LEFT .. "  " .. tr("Back"), function() show_menu() end) end
   local names = list_books()
   for _, f in ipairs(names) do
     local stem = f.name:lower():sub(-4) == ".txt" and f.name:sub(1, -5) or f.name:sub(1, -6)
@@ -1162,7 +1162,7 @@ on_input = function(ev)
     end
   elseif t == "key" then
     local k = ev.key
-    if k == "right" or k == "down" or k == " " or k == "n" then next_page()
+    if k == "right" or k == "down" or k == "n" then next_page()
     elseif k == "left" or k == "up" or k == "p" or k == "backspace" then prev_page()
     elseif k == "i" and images() == "tap" and sec and sec.pp then
       local pic = page_image(sec, page)
