@@ -31,6 +31,20 @@ void simPagerHoldKey(uint8_t c, uint32_t ms);   // web/sim_pager/SimPager.cpp
 #include <fstream>
 #include <unistd.h>
 #include <sstream>
+#if defined(WADA_ZERO_DESKTOP)
+#include <execinfo.h>
+#include <signal.h>
+// Cardputer Zero HDMI build: a crash prints its backtrace (binary+offset), so a report from
+// the device can be resolved with addr2line against the unstripped build.
+static void wadaCrashHandler(int sig) {
+  void* frames[48];
+  const int n = backtrace(frames, 48);
+  fprintf(stderr, "[desktop] crash: signal %d, backtrace:\n", sig);
+  backtrace_symbols_fd(frames, n, 2);
+  signal(sig, SIG_DFL);
+  raise(sig);
+}
+#endif
 
 extern WebDisplay display;   // board.cpp
 
@@ -65,10 +79,22 @@ bool savePng(const std::string& path) {
 
 void present() {
   if (!s_ren || !display.takeDirty()) return;
+#if defined(WADA_ZERO_DESKTOP)
+  const uint32_t t0 = millis();
+#endif
   SDL_UpdateTexture(s_tex, nullptr, display.framebuffer(), WADA_WEB_W * 2);
   SDL_RenderClear(s_ren);
   SDL_RenderCopy(s_ren, s_tex, nullptr, nullptr);
   SDL_RenderPresent(s_ren);
+#if defined(WADA_ZERO_DESKTOP)
+  // A line now and then about how drawing keeps up (Cardputer Zero, software drawing).
+  static uint32_t s_frames = 0, s_ms = 0, s_next = 10000;
+  s_frames++; s_ms += millis() - t0;
+  if (millis() >= s_next) {
+    fprintf(stderr, "[desktop] %u frames drawn, %u ms per frame\n", (unsigned)s_frames, (unsigned)(s_ms / s_frames));
+    s_next = millis() + 60000;
+  }
+#endif
 }
 
 // SDL key -> CardKB code (the external-keyboard path the UI already has).
@@ -256,17 +282,61 @@ int main(int argc, char** argv) {
   setvbuf(stdout, nullptr, _IOLBF, 0);
 
   if (!headless) {
+#if defined(WADA_ZERO_DESKTOP)
+    signal(SIGSEGV, wadaCrashHandler); signal(SIGBUS, wadaCrashHandler); signal(SIGABRT, wadaCrashHandler);
+    // Draw on the CPU: the Pi's Mesa EGL path crashed in dri2_query_image on the first
+    // present (Debian 13, Mesa 26.2 backport), and an 800x480 canvas needs no GPU.
+    // WADA_GPU=1 tries the GPU renderer again.
+    if (!getenv("WADA_GPU")) setenv("SDL_RENDER_DRIVER", "software", 0);
+#endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) { fprintf(stderr, "SDL_Init: %s\n", SDL_GetError()); return 1; }
     if (scale < 1) scale = 1;
-    s_win = SDL_CreateWindow("wadamesh", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             WADA_WEB_W * scale, WADA_WEB_H * scale, SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    int wpos = SDL_WINDOWPOS_CENTERED, wposY = SDL_WINDOWPOS_CENTERED;
+    int winW = WADA_WEB_W * scale, winH = WADA_WEB_H * scale;
+    Uint32 winFlags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI;
+    bool fullscreen = getenv("WADA_FULLSCREEN") && atoi(getenv("WADA_FULLSCREEN"));
+    bool maximize = false;
+#if defined(WADA_ZERO_DESKTOP)
+    {
+      // Pick the TV: the Zero's own LCD can show up as a second screen of the desktop, and a
+      // window that goes full screen there never reaches the HDMI. The display named HDMI,
+      // else the biggest one; WADA_DISPLAY=<n> picks one by number.
+      const int n = SDL_GetNumVideoDisplays();
+      int best = 0; long bestArea = -1; bool hdmi = false;
+      for (int i = 0; i < n; ++i) {
+        SDL_Rect r{}; SDL_GetDisplayBounds(i, &r);
+        const char* nm = SDL_GetDisplayName(i);
+        const bool h = nm && (strstr(nm, "HDMI") || strstr(nm, "hdmi"));
+        fprintf(stderr, "[desktop] display %d: %s %dx%d at %d,%d\n", i, nm ? nm : "?", r.w, r.h, r.x, r.y);
+        const long area = (long)r.w * r.h;
+        if ((h && !hdmi) || (h == hdmi && area > bestArea)) { best = i; bestArea = area; hdmi = h; }
+      }
+      if (const char* e = getenv("WADA_DISPLAY")) best = atoi(e);
+      fprintf(stderr, "[desktop] using display %d\n", best);
+      wpos = wposY = SDL_WINDOWPOS_CENTERED_DISPLAY(best);
+      // "Full screen" here is a maximized window on the TV. A real full-screen window froze
+      // on its first frame on the Pi's desktop (labwc + Xwayland) and a borderless TV-sized
+      // one never appeared; a plain window works, so start as one and maximize it.
+      if (fullscreen) { winFlags |= SDL_WINDOW_MAXIMIZED; fullscreen = false; maximize = true; }
+    }
+#endif
+    s_win = SDL_CreateWindow("wadamesh", wpos, wposY, winW, winH, winFlags);
     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     if (!s_ren) s_ren = SDL_CreateRenderer(s_win, -1, 0);
     SDL_RenderSetLogicalSize(s_ren, WADA_WEB_W, WADA_WEB_H);   // mouse coordinates arrive in canvas pixels
     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, WADA_WEB_W, WADA_WEB_H);
     SDL_StartTextInput();
+#if defined(WADA_ZERO_DESKTOP)
+    fprintf(stderr, "[desktop] SDL video %s, window %p, renderer %p, texture %p (%s)\n", SDL_GetCurrentVideoDriver(),
+            (void*)s_win, (void*)s_ren, (void*)s_tex, SDL_GetError());
+    if (!s_win || !s_ren || !s_tex) { fprintf(stderr, "[desktop] no window/renderer: %s\n", SDL_GetError()); return 1; }
+#endif
     // WADA_FULLSCREEN=1: fill the screen (a monitor or TV on the Cardputer Zero's HDMI)
-    if (getenv("WADA_FULLSCREEN") && atoi(getenv("WADA_FULLSCREEN"))) SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+    if (fullscreen) SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
+#if defined(WADA_ZERO_DESKTOP)
+    if (maximize) SDL_MaximizeWindow(s_win);
+    SDL_RaiseWindow(s_win);
+#endif
   }
 
   wadaBoardBegin(choice);   // demo, or the companion node --serial / --tcp named

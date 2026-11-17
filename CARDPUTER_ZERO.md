@@ -39,8 +39,9 @@ scripting, bots and loggers that a microcontroller can't offer.
 **Experimental, community port.** Tested on a Cardputer Zero with the Cap LoRa-1262 and
 MeshCoreRPI: the LCD and keyboard (all keys and the 2D arrows), sending and receiving on a
 live mesh, the battery gauge, the GPS fix, the city locator with the full California file,
-the boot log, HUD, themes, the key help and sound through PipeWire. **Waiting for
-confirmation on hardware:** the HDMI desktop mode, the shell on the LCD and the launcher icon. If you
+the boot log, HUD, themes, the key help, sound through PipeWire and the HDMI desktop mode
+(in a window, opened from the menu). **Waiting for confirmation on hardware:** the shell on
+the LCD and the launcher icon. If you
 try one of them, please report how it went.
 
 ## Contents
@@ -112,8 +113,8 @@ All screenshots are the real 320x170 LCD output, shown at 2x.
 
 **Off the device**
 
-- **HDMI desktop mode**: plug in a monitor or TV, use a mouse and any USB or Bluetooth
-  keyboard, and WADAMESH runs full screen in its large-screen layout.
+- **HDMI desktop mode** (experimental): plug in a monitor or TV, use a mouse and any USB or Bluetooth
+  keyboard, and WADAMESH opens from the desktop menu in a window with its large-screen layout.
 - **wadamesh-cli** over SSH: status, contacts, channels, send to a channel or a person,
   advert, screenshot, and `tail` to watch the mesh live.
 - **Bots**: a script runs for every incoming message, and what it prints as `reply ...` goes
@@ -162,7 +163,7 @@ sudo systemctl restart wadamesh-zero
 ```
 
 The installer puts the programs in `/usr/local/bin`, the service in systemd, the desktop
-menu entry and autostart for HDMI, the launcher icon, and an example bot in
+menu entry for HDMI (and, with `--hdmi-autostart`, opening it at login), the launcher icon, and an example bot in
 `/var/lib/wadamesh-zero/hooks`. It also adds `/etc/sudoers.d/wadamesh`, which lets your
 user run exactly `systemctl stop wadamesh-zero` and `systemctl start wadamesh-zero`
 without a password: HDMI desktop mode and the launcher icon use them to hand the radio
@@ -234,16 +235,67 @@ fine for `htop`, `ping`, `nmcli` and `journalctl -f`, less so for a text editor.
 
 <p align="center"><img src="web/zero/docs/img/themes.png" width="640" alt="The four looks"></p>
 
-Plug a monitor or TV into the HDMI port and log in to the desktop. WADAMESH opens full
-screen in the **large-screen layout** (the one the Tanmatsu and the 5" CrowPanel use), with:
+> **Experimental.** HDMI mode works on hardware (tested on a 1080p TV) but has rough edges,
+> listed below. Reports and fixes are welcome.
+
+Plug a monitor or TV into the HDMI port and log in to the desktop. Open **WADAMESH** from
+the desktop menu (the Raspberry icon, top left). It opens in an 800x480 window in the
+**large-screen layout** (the one the Tanmatsu and the 5" CrowPanel use), with:
 
 - the mouse as the touch screen,
 - any USB keyboard, or a Bluetooth keyboard and mouse through a dongle on the USB-A port,
 - the same radio, chats and settings as the LCD version (same data folder).
 
-It starts by itself at login when HDMI is connected, and it's in the desktop menu as
-**WADAMESH**. While it runs, the LCD version steps aside; close it and the LCD version comes
-back. `WADA_FULLSCREEN=0 wadamesh-hdmi` runs it in a window.
+While it runs, the LCD version steps aside (both can't share the one radio link); close the
+window and the LCD version comes back. WADAMESH also has its own web link for running it in
+a browser, which is the lighter option if you want it big on the screen.
+
+### Commands
+
+| What | Command |
+| --- | --- |
+| Open it (from the TV desktop) | the **WADAMESH** entry in the desktop menu |
+| Open it over SSH, stays open after you log out | `wadamesh-hdmi --start` |
+| Open it in the foreground (closes with the terminal) | `wadamesh-hdmi` |
+| Close it, LCD version comes back | `wadamesh-hdmi --stop` (or close the window) |
+| Is it open, and where | `wadamesh-hdmi --status` |
+| Its log | `cat /run/user/$(id -u)/wadamesh-hdmi.log` |
+| Fill the screen (needs `cma-128`, see below) | `WADA_FULLSCREEN=1 wadamesh-hdmi --start` |
+| Pick a screen when there are several | `WADA_DISPLAY=1 wadamesh-hdmi --start` |
+| Open by itself at login (experimental) | `./install.sh --hdmi-autostart` |
+| Stop opening at login | `rm ~/.config/autostart/wadamesh.desktop` |
+
+### How it works, and the rough edges
+
+- **It's a window, not full screen.** The Zero sets aside 64 MB of memory for graphics
+  (`dtoverlay=vc4-kms-v3d,cma-64` in `/boot/firmware/config.txt`), and a 1080p desktop
+  already uses most of it. A window much bigger than 800x480 can't get its share, so it
+  runs but the desktop never shows it (`sudo dmesg` says `Failed to allocate from GEM DMA
+  helper`). Changing `cma-64` to `cma-128` and rebooting lets `WADA_FULLSCREEN=1` fill the
+  screen, but that leaves the 512 MB Zero short of everyday memory, so the window is the
+  default. Change it back to `cma-64` when you're done.
+- **It draws on the CPU, through X11.** The Pi's Mesa crashed (`dri2_query_image`) when SDL2
+  showed a frame through the GPU under Wayland. `wadamesh-hdmi` finds the desktop's X
+  server (Xwayland, `DISPLAY=:0` or `:1` depending on the boot) and draws with SDL2's
+  software renderer, which is quick at 800x480. `WADA_GPU=1` tries the GPU path again.
+- **Opening at login is unreliable.** With `--hdmi-autostart` it waits for the desktop to
+  finish starting, but on our Zero the window still sometimes ran without showing up when
+  opened that early. Opening it from the menu, or with `--start`, has always worked.
+- **Memory is tight with the desktop running.** The Zero has about 350 MB for programs, and
+  the desktop takes a good share. If the Pi warns about memory, the background updater
+  `packagekitd` is often the biggest user: `sudo systemctl mask --now packagekit` stops it
+  (`sudo systemctl unmask packagekit` undoes it; `apt` keeps working). Turning off the
+  wallpaper and desktop icons (right-click the desktop, **Desktop Preferences**) helps a little.
+
+### If it doesn't show up
+
+1. `wadamesh-hdmi --status`. If it says "open", it's running but not on screen.
+2. `tail /run/user/$(id -u)/wadamesh-hdmi.log`. `frames drawn` lines mean it's drawing.
+   `display 0: HDMI-A-1 ...` shows the screens it found.
+3. `sudo dmesg | grep "Failed to allocate"`. Any lines mean graphics memory ran out: use
+   the window (no `WADA_FULLSCREEN`) or raise `cma` as above.
+4. `wadamesh-hdmi --stop`, wait a few seconds, then `wadamesh-hdmi --start`.
+5. Still nothing: open an issue with the log and the `dmesg` lines.
 
 ## wadamesh-cli: the mesh from SSH
 
@@ -448,6 +500,7 @@ Command-line options of `wadamesh-zero`: `--tcp HOST:PORT` (default in the servi
 | `/dev/serial0 is in use` | Another program reads the GPS. Stop it, or set `WADA_ZERO_GPS=off` |
 | City name never shows | `cities.bin` in the data folder, GPS on, City on Home on, and a fix |
 | A key does the wrong thing | Run with `WADA_ZERO_KEYDEBUG=1` and open an issue with the keycodes |
+| HDMI: WADAMESH runs but isn't on the TV | See [If it doesn't show up](#if-it-doesnt-show-up); usually graphics memory (a window bigger than 800x480) or it was opened at login before the desktop was ready |
 | HDMI or the launcher icon leaves the LCD version running | The sudo rule is missing (`/etc/sudoers.d/wadamesh`); run `./install.sh` again |
 | `wadamesh-cli: can't reach ...` | WADAMESH isn't running, or set `WADA_DATA_DIR` |
 

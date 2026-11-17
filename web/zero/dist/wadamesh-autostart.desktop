@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
 Name=WADAMESH (HDMI)
-Exec=/usr/local/bin/wadamesh-hdmi --if-hdmi
+Exec=/usr/local/bin/wadamesh-hdmi --watch
 Terminal=false
 X-GNOME-Autostart-enabled=true

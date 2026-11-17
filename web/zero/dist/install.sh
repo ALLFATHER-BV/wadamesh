@@ -2,16 +2,24 @@
 # wadamesh for the M5Stack Cardputer Zero.
 #   ./install.sh             WADAMESH owns the LCD from boot (M5 launcher paused while it runs)
 #   ./install.sh --launcher  WADAMESH is an app in M5Stack's launcher; nothing starts at boot
+#   add --hdmi-autostart     also open the HDMI desktop version by itself at login (experimental)
 # Both: wadamesh-cli, the HDMI desktop mode, the launcher icon and an example bot hook.
 set -e
 cd "$(dirname "$0")"
-MODE=boot; [ "$1" = "--launcher" ] && MODE=launcher
+MODE=boot; AUTO=0
+for a in "$@"; do
+  case "$a" in --launcher) MODE=launcher ;; --hdmi-autostart) AUTO=1 ;; esac
+done
 DATA=/var/lib/wadamesh-zero
 for f in wadamesh-zero wadamesh-desktop wadamesh-hdmi wadamesh-cli wadamesh-launch; do [ ! -f "$f" ] || sudo install -m 755 "$f" /usr/local/bin/ || true; done
 sudo install -m 644 wadamesh-zero.service /etc/systemd/system/wadamesh-zero.service
 sudo install -m 644 wadamesh.desktop /usr/share/applications/wadamesh.desktop
-mkdir -p "$HOME/.config/autostart"
-install -m 644 wadamesh-autostart.desktop "$HOME/.config/autostart/wadamesh.desktop"
+if [ "$AUTO" = 1 ]; then
+  mkdir -p "$HOME/.config/autostart"
+  install -m 644 wadamesh-autostart.desktop "$HOME/.config/autostart/wadamesh.desktop"
+else
+  rm -f "$HOME/.config/autostart/wadamesh.desktop"   # opened from the desktop menu instead
+fi
 # HDMI desktop mode and the launcher icon pause and resume the LCD version with sudo;
 # allow exactly those two commands without a password (nothing else).
 SUDOERS=$(mktemp)
@@ -36,5 +44,5 @@ echo "Installed ($MODE mode)."
 echo "  LCD now:       sudo systemctl restart wadamesh-zero"
 echo "  From SSH:      wadamesh-cli status | wadamesh-cli tail | wadamesh-cli send '#public' 'hi'"
 echo "  Bot hook:      cp $DATA/hooks/on-message.example $DATA/hooks/on-message"
-echo "  HDMI desktop:  WADAMESH in the desktop menu (or automatic at login with HDMI plugged in)"
+echo "  HDMI desktop:  WADAMESH in the desktop menu, or wadamesh-hdmi --start / --stop (experimental)"
 echo "  Launcher mode: ./install.sh --launcher      Boot mode: ./install.sh"
