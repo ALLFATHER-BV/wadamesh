@@ -25,7 +25,8 @@
 --
 -- Input: touch taps the left/right thirds or swipes left/right; a trackball or D-pad
 -- swipes up/down (and left/right); keyboard arrows, n/p; a jog wheel or
--- encoder walks the on-screen < menu > buttons. A centre tap / Enter opens the menu.
+-- encoder walks the on-screen < menu > buttons. A centre tap / Enter / m opens the menu.
+-- The full list of controls is in README.md (and a short one in the in-app README.txt).
 local ui, sys, timer, store, fs = wada.ui, wada.sys, wada.timer, wada.store, wada.fs
 local tr = sys.tr or function(x) return x end
 local C = ui.colors
@@ -973,6 +974,7 @@ local README = "Welcome to Ebook.\n\n" ..
   "Put your books in this folder: /meshcomod/apps/ebook.d/ on the SD card (/apps/ebook.d/ on a device that keeps its apps in internal flash). Copy them there from a computer, then open Ebook again.\n\n" ..
   "Books can be .epub or plain .txt files. Names are limited to 32 characters of A-Z a-z 0-9 . _ - (no spaces).\n\n" ..
   "An .epub must be stored uncompressed inside. Convert one with scripts/ebook-prep.py from github.com/CarpeNoctem/wadamesh-app-ebook.\n\n" ..
+  "Controls: tap the right or left third of the page (or swipe, or press n / p, or use the arrow keys, trackball or D-pad) to turn it. Tap the middle, or press Enter or m, for the menu. Press c for the chapters and i to view a picture. In the menu, Enter or a tap picks a row and the first row goes back. Space does nothing. The full list is in README.md at github.com/CarpeNoctem/wadamesh-app-ebook.\n\n" ..
   "This file is created when the folder has no books, and refreshed when a newer app changes it. Delete it whenever you like; it only comes back if the folder has no books.\n"
 
 local function list_books()
@@ -1136,12 +1138,8 @@ end
 
 on_input = function(ev)
   local t = ev.type
-  -- the firmware hands every key to an app with on_input, so Space can't lock the screen unless we do
-  -- (e-paper boards poll their own hold-Space lock, so a tap must stay a no-op there)
-  if t == "key" and ev.key == " " then
-    if sys.lock and not caps.epaper then sys.lock() end
-    return
-  end
+  -- Space does nothing: the firmware forwards it to an app with on_input, so it can't lock the screen here
+  if t == "key" and ev.key == " " then return end
   if screen == "image" then
     if t == "up" or t == "key" then show_reading() end
     return

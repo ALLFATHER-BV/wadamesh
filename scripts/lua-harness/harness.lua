@@ -2941,10 +2941,8 @@ scenarios.ebook_input = function()
   swipe(app, "right"); assert(eb_wait(app) == p1, "swipe right: previous")
   swipe(app, "down"); assert(eb_wait(app) == p2, "trackball down: next")
   swipe(app, "up"); assert(eb_wait(app) == p1, "trackball up: previous")
-  local locks = 0
-  wada.sys.lock = function() locks = locks + 1 end
   key(app, " "); tick(app, 3, 40)
-  assert(eb_page() == p1 and locks == 0, "e-paper boards poll their own hold-Space lock; a tap does nothing")
+  assert(eb_page() == p1, "space does nothing")
   drag(app, 100, 100, 20, 100, "left"); assert(eb_wait(app) == p2, "a drag turns once, and its release is not a tap")
   tap(app, 200, 315); assert(eb_wait(app) == p2, "a tap in the button row is ignored")
   -- the footer buttons (what a jog wheel or encoder activates): next is created first
@@ -3107,12 +3105,8 @@ scenarios.ebook_images = function()
   swipe(app, "right"); tick(app, 3, 40)
   assert(eb_page() ~= p, "d-pad right goes to the next page")
   swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left goes back")
-  local locks = 0
-  local old_lock = wada.sys.lock
-  wada.sys.lock = function() locks = locks + 1 end
   key(app, " "); tick(app, 3, 40)
-  assert(eb_page() == p and locks == 1, "space locks the screen (the firmware forwards it to an app with on_input), not a page turn")
-  wada.sys.lock = old_lock
+  assert(eb_page() == p, "space does nothing")
   app.on_close()
 end
 
