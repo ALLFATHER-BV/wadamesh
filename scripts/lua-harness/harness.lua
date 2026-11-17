@@ -329,7 +329,7 @@ local function build_wada()
                                        input = true, input_len = true,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
-                                       panel = cfg.caps.panel or false,
+                                       panel = cfg.caps.panel or false, epaper = cfg.caps.epaper or false,
                                        map = cfg.caps.sdk_ext or false,
                                        sd_list = cfg.caps.sd_list or false,
                                        sd_clean = cfg.caps.sd_clean or false,
@@ -2941,6 +2941,10 @@ scenarios.ebook_input = function()
   swipe(app, "right"); assert(eb_wait(app) == p1, "swipe right: previous")
   swipe(app, "down"); assert(eb_wait(app) == p2, "trackball down: next")
   swipe(app, "up"); assert(eb_wait(app) == p1, "trackball up: previous")
+  local locks = 0
+  wada.sys.lock = function() locks = locks + 1 end
+  key(app, " "); tick(app, 3, 40)
+  assert(eb_page() == p1 and locks == 0, "e-paper boards poll their own hold-Space lock; a tap does nothing")
   drag(app, 100, 100, 20, 100, "left"); assert(eb_wait(app) == p2, "a drag turns once, and its release is not a tap")
   tap(app, 200, 315); assert(eb_wait(app) == p2, "a tap in the button row is ignored")
   -- the footer buttons (what a jog wheel or encoder activates): next is created first

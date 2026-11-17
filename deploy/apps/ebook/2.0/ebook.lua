@@ -1137,8 +1137,9 @@ end
 on_input = function(ev)
   local t = ev.type
   -- the firmware hands every key to an app with on_input, so Space can't lock the screen unless we do
+  -- (e-paper boards poll their own hold-Space lock, so a tap must stay a no-op there)
   if t == "key" and ev.key == " " then
-    if sys.lock then sys.lock() end
+    if sys.lock and not caps.epaper then sys.lock() end
     return
   end
   if screen == "image" then
