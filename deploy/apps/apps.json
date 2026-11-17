@@ -159,6 +159,15 @@
       "desc": "Play no-limit Texas Hold'em against three AI opponents, with side pots and a bankroll that carries over between sessions.",
       "icon": "game",
       "seed": false
+    },
+    {
+      "id": "phone",
+      "name": "Phone",
+      "ver": "1.0",
+      "desc": "Dial pad, calls, SMS and mobile data on the T-Deck Max 4G modem.",
+      "icon": "phone",
+      "requires": "cell",
+      "seed": false
     }
   ]
 }
