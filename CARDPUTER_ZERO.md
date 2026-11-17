@@ -163,7 +163,10 @@ sudo systemctl restart wadamesh-zero
 
 The installer puts the programs in `/usr/local/bin`, the service in systemd, the desktop
 menu entry and autostart for HDMI, the launcher icon, and an example bot in
-`/var/lib/wadamesh-zero/hooks`. If the desktop's SDL2 library is missing it installs it.
+`/var/lib/wadamesh-zero/hooks`. It also adds `/etc/sudoers.d/wadamesh`, which lets your
+user run exactly `systemctl stop wadamesh-zero` and `systemctl start wadamesh-zero`
+without a password: HDMI desktop mode and the launcher icon use them to hand the radio
+link over, and nothing else is allowed. If the desktop's SDL2 library is missing it installs it.
 
 Updating is the same steps with the new tarball. Your chats, settings and logs live in
 `/var/lib/wadamesh-zero` and are kept.
@@ -445,6 +448,7 @@ Command-line options of `wadamesh-zero`: `--tcp HOST:PORT` (default in the servi
 | `/dev/serial0 is in use` | Another program reads the GPS. Stop it, or set `WADA_ZERO_GPS=off` |
 | City name never shows | `cities.bin` in the data folder, GPS on, City on Home on, and a fix |
 | A key does the wrong thing | Run with `WADA_ZERO_KEYDEBUG=1` and open an issue with the keycodes |
+| HDMI or the launcher icon leaves the LCD version running | The sudo rule is missing (`/etc/sudoers.d/wadamesh`); run `./install.sh` again |
 | `wadamesh-cli: can't reach ...` | WADAMESH isn't running, or set `WADA_DATA_DIR` |
 
 Logs: `journalctl -u wadamesh-zero -f`.

@@ -12,6 +12,14 @@ sudo install -m 644 wadamesh-zero.service /etc/systemd/system/wadamesh-zero.serv
 sudo install -m 644 wadamesh.desktop /usr/share/applications/wadamesh.desktop
 mkdir -p "$HOME/.config/autostart"
 install -m 644 wadamesh-autostart.desktop "$HOME/.config/autostart/wadamesh.desktop"
+# HDMI desktop mode and the launcher icon pause and resume the LCD version with sudo;
+# allow exactly those two commands without a password (nothing else).
+SUDOERS=$(mktemp)
+echo "$USER ALL=(root) NOPASSWD: /usr/bin/systemctl stop wadamesh-zero, /usr/bin/systemctl start wadamesh-zero" > "$SUDOERS"
+if sudo visudo -cf "$SUDOERS" >/dev/null; then
+  sudo install -m 440 -o root -g root "$SUDOERS" /etc/sudoers.d/wadamesh
+fi
+rm -f "$SUDOERS"
 sudo mkdir -p "$DATA/hooks" "$DATA/logs"
 sudo install -m 755 hooks/on-message.example "$DATA/hooks/on-message.example"
 sudo chown -R pi:pi "$DATA"
