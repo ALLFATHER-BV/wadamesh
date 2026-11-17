@@ -18,7 +18,12 @@ TLoraPagerBoard board;
 // reusing it here (instead of our own separate SPIClass) is what makes this
 // a real shared bus. Depends on DISPLAY_CLASS always being defined for this
 // board today -- revisit if a headless pager env is ever added.
+#if defined(TLORA_PAGER_UNIFIED)
+RADIO_CLASS radio(new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, TFT_eSPI::getSPIinstance()),
+                  new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, TFT_eSPI::getSPIinstance()));
+#else
 RADIO_CLASS radio = new Module(P_LORA_NSS, P_LORA_DIO_1, P_LORA_RESET, P_LORA_BUSY, TFT_eSPI::getSPIinstance());
+#endif
 
 WRAPPER_CLASS radio_driver(radio, board);
 
@@ -74,7 +79,13 @@ bool radio_init() {
   // unnecessary, and it's one less thing to keep in sync if the boot order
   // ever changes.
 
-#if defined(USE_SX1262)
+#if defined(TLORA_PAGER_UNIFIED)
+  radio.select(pagerDetectRadio(TFT_eSPI::getSPIinstance()));
+  Serial.printf("[pager] detected radio: %s\n", radio.name());
+  if (!radio_driver.bindSelected()) return false;
+  if (radio.family() == PagerRadioFamily::SX1262) return radio.sx().std_init(nullptr);
+  CustomLR1121& lr_radio = radio.lr();
+#elif defined(USE_SX1262)
   // SX1262 variant of this board (Milestone 10 — same NSS/RESET/BUSY/DIO1
   // pins as the LR1121 branch below; same PCB slot, different chip
   // populated). CustomSX1262::std_init() is the exact same generic init the
@@ -89,6 +100,9 @@ bool radio_init() {
   // here" comment above.
   return radio.std_init(nullptr);
 #else
+  CustomLR1121& lr_radio = radio;
+#endif
+#if !defined(USE_SX1262) || defined(TLORA_PAGER_UNIFIED)
 #ifdef LORA_CR
   uint8_t cr = LORA_CR;
 #else
@@ -102,7 +116,7 @@ bool radio_init() {
   // unlike trail-mate's initLoRa() — which calls the zero-arg begin() (default
   // tcxoVoltage 1.6V) and therefore NEEDS a follow-up setTCXO(3.0f) fixup —
   // passing 3.0f directly here makes a second setTCXO() call redundant.
-  int state = radio.begin(LORA_FREQ, LORA_BW, LORA_SF, cr,
+  int state = lr_radio.begin(LORA_FREQ, LORA_BW, LORA_SF, cr,
                            RADIOLIB_LR11X0_LORA_SYNC_WORD_PRIVATE,
                            LORA_TX_POWER, 8, 3.0f);
   if (state != RADIOLIB_ERR_NONE) {
@@ -129,18 +143,22 @@ bool radio_init() {
     { LR11x0::MODE_WIFI,  { LOW, LOW } },
     END_OF_MODE_TABLE,
   };
-  radio.setRfSwitchTable(rfswitch_dio_pins, rfswitch_table);
+  lr_radio.setRfSwitchTable(rfswitch_dio_pins, rfswitch_table);
 
   // LR11x0::begin() defaults to a 2-byte CRC; MeshCore's wire protocol expects
   // 1 byte for interop with the SX126x/SX127x nodes already on the mesh
   // (CustomSX1262::std_init() makes the same override for the same reason).
-  radio.setCRC(1);
+  lr_radio.setCRC(1);
 
   return true;
 #endif
 }
 
 mesh::LocalIdentity radio_new_identity() {
+#if defined(TLORA_PAGER_UNIFIED)
+  RadioNoiseListener rng(*radio.physical());
+#else
   RadioNoiseListener rng(radio);
+#endif
   return mesh::LocalIdentity(&rng); // create new random identity
 }

@@ -9520,7 +9520,9 @@ static const char* deviceKeyboardText() {
 #define WADA_STR2(x) #x
 #define WADA_STR(x)  WADA_STR2(x)
 static const char* deviceRadioName() {
-#if defined(RADIO_CLASS)
+#if defined(TLORA_PAGER_UNIFIED)
+  return radio.name();
+#elif defined(RADIO_CLASS)
   const char* n = WADA_STR(RADIO_CLASS);
   if (!strncmp(n, "Custom", 6) && n[6]) n += 6;
   return n;
@@ -33126,7 +33128,9 @@ static bool spectrumSweepChunk() {
     // attribute the old frequency's RSSI to this bin.
     if (radio.setFrequency(f) != RADIOLIB_ERR_NONE) continue;   // retune (chip -> standby on the new freq)
 #endif
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+    radio.startSpectrumReceive();
+#elif defined(HAS_THINKNODE_M9)
     // Pass irqMask = 0 so RX_DONE / PREAMBLE_DETECTED are not routed to DIO1
     // (GPIO42) while sweeping: the wrapper's setFlag ISR stays attached on DIO1
     // and a stray LoRa preamble mid-sweep would otherwise latch irq_read during
@@ -33165,7 +33169,9 @@ static bool spectrumSweepChunk() {
       if (r <= -5 && r >= -180 && r > peak) peak = r;
       delayMicroseconds(SPEC_READ_GAP_US);
     }
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+    radio.spectrumStandby();
+#elif defined(HAS_THINKNODE_M9)
     // Park in STDBY_XOSC (raw mode byte 0x01), NOT the default standby(): the
     // plain call selects STDBY_RC, which stops the TCXO on this board (it is
     // powered from the chip's DIO3 rail), so the next bin's startReceive would
@@ -33510,7 +33516,10 @@ static void spectrumTimerCb(lv_timer_t* t) {
 static void spectrumRestoreRadio() {
   if (!s_spectrum_active) return;     // idempotent — never restore/clear twice
   NodePrefs* p = the_mesh.getNodePrefs();
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+  radio.standby();
+  if (p) radio.spectrumCalibrate(p->freq - 4.0f, p->freq + 4.0f);
+#elif defined(HAS_THINKNODE_M9)
   // The sweep left the chip parked in STDBY_XOSC; drop to a true STDBY_RC first
   // so the mesh gets the chip back in the standby mode RadioLib's own flow uses
   // (and because CalibImage is only legal in RC standby). Then re-run image
@@ -35459,7 +35468,9 @@ static void openSpectrumPage() {
   // silicon actually rejects them from RX is unverified — but one SPI command is
   // cheap hardening against the first sweep running on stale modem config.
   radio.standby();
-#if defined(HAS_THINKNODE_M9)
+#if defined(TLORA_PAGER_UNIFIED)
+  radio.spectrumCalibrate(start, stop);
+#elif defined(HAS_THINKNODE_M9)
   // LR1110: image rejection is only calibrated where the chip was told to
   // calibrate it — begin() covered mesh_freq ±4 MHz, NOT this ±12 MHz span. One
   // CalibImage over the whole span (legal from the RC standby above, a few ms,
@@ -38758,7 +38769,9 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #elif defined(HAS_RAK_TAP_V2)
 #define WADA_BOARD_ID "rak-tap-v2"
 #elif defined(TLORA_PAGER)
-  #if defined(USE_LR1121)
+  #if defined(TLORA_PAGER_UNIFIED)
+#define WADA_BOARD_ID "tlora-pager-unified"
+  #elif defined(USE_LR1121)
 #define WADA_BOARD_ID "tlora-pager-lr1121"
   #else
 #define WADA_BOARD_ID "tlora-pager-sx1262"
