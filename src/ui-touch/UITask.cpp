@@ -89840,6 +89840,40 @@ static void docAuditFocus() {
 // 2 left, 3 right. In a text field left / right move the caret.
 void wadaZeroNavArrow(int dir) {
   if (!s_nav_group) return;
+  const bool fwd = (dir == 1 || dir == 3);   // down / right = next, up / left = previous
+  // The pickers that capture the Pager's knob capture the arrows too (updatePagerEncoder):
+  // the @-mention and accent pickers, a slider being edited, and an open dropdown, whose
+  // list only moves on LV_KEY_UP/DOWN (a spatial move would leave it with the old choice).
+  if (s_mentionnav_active) {
+    if (s_mentionbox_cell_n > 0) {
+      s_mentionnav_idx = (s_mentionnav_idx + (fwd ? 1 : (int)s_mentionbox_cell_n - 1)) % (int)s_mentionbox_cell_n;
+      mentionNavRestyle();
+    }
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (s_accentnav_active) {
+    if (s_accbox_cell_n > 0) {
+      s_accentnav_idx = (s_accentnav_idx + (fwd ? 1 : (int)s_accbox_cell_n - 1)) % (int)s_accbox_cell_n;
+      accentNavRestyle();
+    }
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (s_pager_slider_edit) {
+    navSliderNudge(s_pager_slider_edit, fwd ? +1 : -1);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if (navOpenDropdown()) {
+    if (dir == 0 || dir == 1) navPushTap(dir == 1 ? LV_KEY_DOWN : LV_KEY_UP);
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
+  if ((dir == 0 || dir == 1) && navInfoModalScroll(dir == 0)) {   // a long info sheet scrolls
+    if (g_lv.task) g_lv.task->noteUserInput();
+    return;
+  }
   lv_obj_t* ta = navFocusedTextarea();
   if (ta && (dir == 2 || dir == 3)) {
     const uint32_t pos = lv_textarea_get_cursor_pos(ta);
