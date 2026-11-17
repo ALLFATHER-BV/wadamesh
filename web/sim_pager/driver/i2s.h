@@ -29,6 +29,15 @@ typedef struct {
 } i2s_config_t;
 typedef struct { int mck_io_num, bck_io_num, ws_io_num, data_out_num, data_in_num; } i2s_pin_config_t;
 
+#if defined(WADA_ZERO)
+// Cardputer Zero: the Pager's tones and WAVs really play, through ALSA (zero_audio.cpp).
+esp_err_t i2s_driver_install(i2s_port_t, const i2s_config_t*, int, void*);
+esp_err_t i2s_driver_uninstall(i2s_port_t);
+static inline esp_err_t i2s_set_pin(i2s_port_t, const i2s_pin_config_t*) { return ESP_OK; }
+static inline esp_err_t i2s_zero_dma_buffer(i2s_port_t) { return ESP_OK; }
+esp_err_t i2s_set_sample_rates(i2s_port_t, uint32_t);
+esp_err_t i2s_write(i2s_port_t, const void*, size_t n, size_t* written, uint32_t);
+#else
 static inline esp_err_t i2s_driver_install(i2s_port_t, const i2s_config_t*, int, void*) { return ESP_OK; }
 static inline esp_err_t i2s_driver_uninstall(i2s_port_t) { return ESP_OK; }
 static inline esp_err_t i2s_set_pin(i2s_port_t, const i2s_pin_config_t*) { return ESP_OK; }
@@ -37,3 +46,4 @@ static inline esp_err_t i2s_set_sample_rates(i2s_port_t, uint32_t) { return ESP_
 static inline esp_err_t i2s_write(i2s_port_t, const void*, size_t n, size_t* written, uint32_t) {
   if (written) *written = n; return ESP_OK;
 }
+#endif

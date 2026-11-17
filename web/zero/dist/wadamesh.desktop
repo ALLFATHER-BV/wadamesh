@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=WADAMESH
+Comment=MeshCore chat, channels, contacts and map (HDMI desktop mode)
+Exec=/usr/local/bin/wadamesh-hdmi
+Icon=network-wireless
+Terminal=false
+Categories=Network;

@@ -1,0 +1,23 @@
+#!/bin/sh
+# WADAMESH on-message hook, an example bot. To use it:
+#   cp on-message.example /var/lib/wadamesh-zero/hooks/on-message
+#   chmod +x /var/lib/wadamesh-zero/hooks/on-message
+# It runs for every incoming message with these set:
+#   WADA_KIND  dm | channel | room      WADA_FROM  who sent it
+#   WADA_CHANNEL  channel or room name  WADA_TEXT  the message
+#   WADA_HOPS  WADA_SNR  WADA_RSSI      WADA_NODE  your node's name
+# Every line printed as "reply <text>" is sent back to the same chat (max 140 chars,
+# rate limited: one reply per chat per 10 s, six a minute). Rooms never get replies.
+# Log everything, reply only to direct messages that start with "!":
+
+echo "$(date -Is) $WADA_KIND ${WADA_CHANNEL:+#$WADA_CHANNEL }$WADA_FROM: $WADA_TEXT" >> "$WADA_DATA_DIR/messages.log"
+
+[ "$WADA_KIND" = "dm" ] || exit 0
+case "$WADA_TEXT" in
+  "!ping")   echo "reply pong ($WADA_HOPS hops, snr $WADA_SNR)" ;;
+  "!uptime") echo "reply $(uptime -p)" ;;
+  "!batt")   echo "reply battery $(cat /sys/class/power_supply/bq27220-0/capacity 2>/dev/null)%" ;;
+  "!temp")   echo "reply cpu $(($(cat /sys/class/thermal/thermal_zone0/temp) / 1000))C" ;;
+  "!sac")    echo "reply sac valley mesh says hi. all hops lead home." ;;
+  "!help")   echo "reply bot: !ping !uptime !batt !temp !sac" ;;
+esac

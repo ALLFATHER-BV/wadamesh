@@ -1,0 +1,7 @@
+#!/bin/sh
+# Started from M5Stack's launcher (APPLaunch): run WADAMESH in the foreground. If the boot
+# service already has the screen, it hands over by stopping; holding ESC in the launcher
+# returns home as for any app.
+sudo -n systemctl stop wadamesh-zero 2>/dev/null
+export WADA_DATA_DIR=/var/lib/wadamesh-zero
+exec /usr/local/bin/wadamesh-zero --tcp 127.0.0.1:5000
