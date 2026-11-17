@@ -3103,7 +3103,12 @@ scenarios.ebook_images = function()
   swipe(app, "right"); tick(app, 3, 40)
   assert(eb_page() ~= p, "d-pad right goes to the next page")
   swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left goes back")
-  key(app, " "); tick(app, 3, 40); assert(eb_page() == p, "space is left to the firmware (screen lock), not a page turn")
+  local locks = 0
+  local old_lock = wada.sys.lock
+  wada.sys.lock = function() locks = locks + 1 end
+  key(app, " "); tick(app, 3, 40)
+  assert(eb_page() == p and locks == 1, "space locks the screen (the firmware forwards it to an app with on_input), not a page turn")
+  wada.sys.lock = old_lock
   app.on_close()
 end
 

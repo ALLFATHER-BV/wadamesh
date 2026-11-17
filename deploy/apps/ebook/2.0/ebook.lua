@@ -1136,6 +1136,11 @@ end
 
 on_input = function(ev)
   local t = ev.type
+  -- the firmware hands every key to an app with on_input, so Space can't lock the screen unless we do
+  if t == "key" and ev.key == " " then
+    if sys.lock then sys.lock() end
+    return
+  end
   if screen == "image" then
     if t == "up" or t == "key" then show_reading() end
     return
