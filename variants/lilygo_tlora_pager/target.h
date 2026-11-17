@@ -4,7 +4,9 @@
 #define RADIOLIB_STATIC_ONLY 1
 #include <RadioLib.h>
 #include <helpers/radiolib/RadioLibWrappers.h>
-#if defined(USE_SX1262)
+#if defined(TLORA_PAGER_UNIFIED)
+  #include "PagerRadio.h"
+#elif defined(USE_SX1262)
   // Milestone 10 (SX1262-variant env): CustomSX1262/CustomSX1262Wrapper are
   // generic core-lib classes (angle include), unlike CustomLR1121 below --
   // T-Deck/Heltec V4's target.h include the exact same header.
@@ -38,6 +40,9 @@ extern EnvironmentSensorManager sensors;
 #endif
 
 bool radio_init();
+#if defined(TLORA_PAGER_UNIFIED)
+PagerRadioFamily pagerDetectRadio(SPIClass& spi);
+#endif
 SPIClass* tloraPagerSharedSPI();
 void tloraPagerGpsPowerDown();   // GPS rail off (switched off, power-off); begin() restores it
 mesh::LocalIdentity radio_new_identity();
