@@ -5,6 +5,9 @@
 // top of the web board. A pack at 76 %, no USB, no card, the radio of the web board.
 #include "../platform/WebBoard.h"
 #include "../../src/helpers/HardwareRtcClock.h"
+#if defined(WADA_ZERO)
+#include "../zero/zero_battery.h"
+#endif
 
 #define PAGER_PIN_SD_CS 21
 #ifndef PIN_I2S_MCLK
@@ -21,11 +24,22 @@ class TLoraPagerBoard : public WebBoard {
 public:
   enum class SdCardState : uint8_t { Absent, Present, Unknown };
   enum class ChargeState : uint8_t { NotCharging = 0, PreCharge = 1, FastCharge = 2, Done = 3, Unknown = 0xFF };
+#if defined(WADA_ZERO)
+  uint16_t getBattMilliVolts() override { return (uint16_t)zeroBattery().mv; }
+#else
   uint16_t getBattMilliVolts() override { return 3950; }
+#endif
+#if defined(WADA_ZERO)
+  const char* getManufacturerName() const override { return "M5Stack Cardputer Zero"; }
+#else
   const char* getManufacturerName() const override { return "LilyGo T-LoRa Pager (sim)"; }
+#endif
   // WADA_SIM_SOC=<0..100>: the gauge's state of charge (default 76), e.g. to
   // try the low-battery warnings; WADA_SIM_SOC_DROP=1 lets it fall 1 % per 5 s.
   int  getBattStateOfCharge() {
+#if defined(WADA_ZERO)
+    return zeroBattery().soc;
+#endif
     static const char* e = getenv("WADA_SIM_SOC");
     static const bool drop = getenv("WADA_SIM_SOC_DROP") != nullptr;
     int s = e ? atoi(e) : 76;
@@ -39,19 +53,46 @@ public:
   // WADA_SIM_CHARGING=1 in the environment: on USB, charging at ~480 mA.
   static bool simCharging() { static const bool c = getenv("WADA_SIM_CHARGING") != nullptr; return c; }
   GaugeInfo getGaugeInfo() {   // a pack drawing ~42 mA with the screen on
+#if defined(WADA_ZERO)
+    {
+      const ZeroBattery& b = zeroBattery();
+      if (!b.valid) return { false, 0, 0, 0, 0, 0xFFFF, 0xFFFF, 250, 0, 100 };
+      const int full = b.full_mah > 0 ? b.full_mah : 1750;   // the Zero's 1750 mAh cell
+      return { true, (int16_t)b.ma, (int16_t)((long)b.ma * b.mv / 1000),
+               (uint16_t)(b.remaining_mah > 0 ? b.remaining_mah : full * b.soc / 100), (uint16_t)full,
+               (uint16_t)(b.to_empty_min >= 0 ? b.to_empty_min : 0xFFFF),
+               (uint16_t)(b.to_full_min >= 0 ? b.to_full_min : 0xFFFF),
+               (int16_t)b.temp_c10, (uint16_t)b.cycles, 100 };
+    }
+#endif
     if (simCareHold())   // on USB, held at 80 %: the board runs from VBUS, the pack rests
       return { true, -2, -8, 1190, 1488, 0xFFFF, 0xFFFF, 262, 12, 99 };
     if (simCharging())
       return { true, (int16_t)(476 + (int)(millis() / 1000 % 9)), 1980, 1131, 1488, 0xFFFF, 47, 263, 12, 99 };
     return { true, (int16_t)(-38 - (int)(millis() / 1000 % 9)), -152, 1131, 1488, 1615, 0xFFFF, 241, 12, 99 };
   }
+#if defined(WADA_ZERO)
+  uint16_t sim_cap_ = 1750;   // the Cardputer Zero's cell
+#else
   uint16_t sim_cap_ = 1500;
+#endif
   bool     setBatteryCapacity(uint16_t mah) { sim_cap_ = mah; return true; }
   uint16_t batteryCapacitySetting() { return sim_cap_; }
   uint16_t batteryDesignCapacity() const { return sim_cap_; }
+#if defined(WADA_ZERO)
+  int  externalPowerPresent() { return zeroBattery().external ? 1 : 0; }
+#else
   int  externalPowerPresent() { return (simCharging() || simCareHold()) ? 1 : 0; }
+#endif
   static bool simCareHold() { static const bool h = getenv("WADA_SIM_CARE_HOLD") != nullptr; return h; }
+#if defined(WADA_ZERO)
+  ChargeState chargeState() {
+    const ZeroBattery& b = zeroBattery();
+    return b.full ? ChargeState::Done : b.charging ? ChargeState::FastCharge : ChargeState::NotCharging;
+  }
+#else
   ChargeState chargeState() { return ChargeState::NotCharging; }
+#endif
   // WADA_SIM_CHARGE_HOT=1: the temperature guard has charging paused (too hot).
   void setChargeLimits(uint16_t, uint16_t) {}
   void setChargeTempMax(int16_t) {}

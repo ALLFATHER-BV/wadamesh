@@ -352,7 +352,8 @@
 
 // "Now in <city>" (CITY_LOCATOR.md): the GPS fix looked up in a boundary file from the
 // SD card, held in PSRAM. Not the T-LoRa Pager: its app slot is full.
-#if CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)
+#if (CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)) || \
+    defined(WADA_ZERO)   // Cardputer Zero: Linux, cities.bin from the data folder (web/zero)
   #define CAP_CITY_LOCATOR 1
 #else
   #define CAP_CITY_LOCATOR 0

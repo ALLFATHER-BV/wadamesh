@@ -4,7 +4,11 @@
 class WebBoard : public mesh::MainBoard {
 public:
   uint16_t getBattMilliVolts() override { return 0; }      // CAP_BATTERY 0: never shown
+#if defined(WADA_ZERO_DESKTOP)
+  const char* getManufacturerName() const override { return "M5Stack Cardputer Zero (HDMI)"; }
+#else
   const char* getManufacturerName() const override { return "wadamesh web"; }
+#endif
   void reboot() override;                                   // web/platform/host_main.cpp
   void powerOff() override;
   uint8_t getStartupReason() const override { return BD_STARTUP_NORMAL; }

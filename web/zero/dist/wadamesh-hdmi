@@ -1,0 +1,15 @@
+#!/bin/sh
+# WADAMESH as a desktop app on the HDMI screen (mouse + keyboard). The LCD version is
+# stopped while it runs (both would share the one radio link) and started again after.
+#   wadamesh-hdmi            run it (from the menu, or a terminal on the desktop)
+#   wadamesh-hdmi --if-hdmi  only if an HDMI screen is connected (login autostart)
+#   WADA_FULLSCREEN=0 wadamesh-hdmi   in a window instead of full screen
+if [ "$1" = "--if-hdmi" ]; then
+  grep -qx connected /sys/class/drm/card*-HDMI-A-*/status 2>/dev/null || exit 0
+fi
+sudo -n systemctl stop wadamesh-zero 2>/dev/null
+sleep 1
+WADA_DATA_DIR=/var/lib/wadamesh-zero WADA_FULLSCREEN="${WADA_FULLSCREEN:-1}" \
+SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-wayland,x11}" \
+  /usr/local/bin/wadamesh-desktop --tcp 127.0.0.1:5000
+sudo -n systemctl start wadamesh-zero 2>/dev/null

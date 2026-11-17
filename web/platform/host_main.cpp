@@ -265,6 +265,8 @@ int main(int argc, char** argv) {
     SDL_RenderSetLogicalSize(s_ren, WADA_WEB_W, WADA_WEB_H);   // mouse coordinates arrive in canvas pixels
     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, WADA_WEB_W, WADA_WEB_H);
     SDL_StartTextInput();
+    // WADA_FULLSCREEN=1: fill the screen (a monitor or TV on the Cardputer Zero's HDMI)
+    if (getenv("WADA_FULLSCREEN") && atoi(getenv("WADA_FULLSCREEN"))) SDL_SetWindowFullscreen(s_win, SDL_WINDOW_FULLSCREEN_DESKTOP);
   }
 
   wadaBoardBegin(choice);   // demo, or the companion node --serial / --tcp named
