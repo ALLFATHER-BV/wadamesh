@@ -35,14 +35,17 @@ An SX1262 Pager running commit `71808574` passed a full USB erase/install, radio
 initialization, mesh/UI startup, a hardware reset and USB device-info queries
 on 2026-11-17. Its SD card did not mount; the internal SPIFFS fallback booted.
 Status reported a latched RX-start-timeout flag (`0x4`) after startup; the
-noise floor later settled to -115 dBm. Packet reception has not been verified.
+noise floor later settled to -115 dBm. The flag remained unchanged during
+the successful RX/TX test below.
 
-At 911.15 MHz (62.5 kHz bandwidth, SF8, coding rate 4/5, 22 dBm), two zero-hop
-node-discovery probes advanced the radio's TX-completion counter from 2 to 4
-and left the outbound queue empty. No packets or matching replies arrived
-during 105 seconds of observation, with no receive errors counted. This
-verifies local TX completion only; an over-the-air RX/TX pass needs a matching
-peer. The Pager was left configured for 911.15 MHz.
+An over-the-air test at 911.15 MHz (62.5 kHz bandwidth, SF8, coding rate 4/5,
+22 dBm) passed with a Heltec Tower V2 on the Mercerwood Pi. Each device sent
+three uniquely tagged zero-hop control packets; all six arrived at the other
+device with matching contents and no additional receive errors. The Pager
+received at -44 to -43 dBm / 12.0 to 12.75 dB SNR; the Tower received the Pager
+at -50 to -49 dBm / 11.75 to 12.0 dB SNR. Both send queues emptied. The Tower's
+original radio settings were restored and verified; the Pager remains at
+911.15 MHz. This verifies basic RX/TX on the tested SX1262 unit.
 
 A read-only SD diagnostic initialized the inserted card and read
 sectors at 4 MHz, 1 MHz and 400 kHz with the radio and display inactive. It
