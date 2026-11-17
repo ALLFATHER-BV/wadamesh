@@ -5788,6 +5788,16 @@ static bool emojiIconVisible(uint32_t cp, void*) {
   const lv_img_dsc_t* d = emojiLookupAny(cp);
   return d && d->header.w > 2;
 }
+static void avatarAddEmojiImage(lv_obj_t* av, const lv_img_dsc_t* emoji, bool scale_to_avatar) {
+  lv_obj_t* im = lv_img_create(av);
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_img_set_src(im, emoji);
+  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
+  const lv_coord_t px = scale_to_avatar ? LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28)) : 16;
+  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
+  lv_img_set_antialias(im, px != 16);
+  lv_obj_center(im);
+}
 static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8) {
   if (!av) return;
   const lv_img_dsc_t* eg = nullptr;
@@ -5824,14 +5834,7 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
   }
   lv_obj_clean(av);                    // no letters
   lv_obj_set_user_data(av, nullptr);   // no glyph under it
-  lv_obj_t* im = lv_img_create(av);
-  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_img_set_src(im, eg);
-  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
-  const lv_coord_t px = LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28));
-  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
-  lv_img_set_antialias(im, px != 16);
-  lv_obj_center(im);
+  avatarAddEmojiImage(av, eg, true);
   lv_obj_invalidate(av);
 }
 // A contact's chat icon when none was picked: the first emoji in its name that has a
@@ -49782,6 +49785,28 @@ static void openChatContactTuple(const char* text) {
   make_button("Add", pad + button_w + button_gap, chatContactTupleAddCb);
 }
 
+static void chatContactCardSetAvatarContent(lv_obj_t* avatar, const char* name,
+                                            const char* type_icon, uint32_t foreground) {
+  char emoji[20];
+  if (nameFirstEmoji(name, emoji, sizeof emoji)) {
+    uint32_t offset = 0;
+    avatarAddEmojiImage(avatar, emojiLookupAny(_lv_txt_encoded_next(emoji, &offset)), false);
+  } else {
+    char initials[12];
+    const char* avatar_text = type_icon;
+    if (!avatar_text) {
+      AvatarText::initials(name, initials, sizeof initials, uiFontDrawsGlyph,
+                           (void*)&g_font_semi_14);
+      avatar_text = initials;
+    }
+    lv_obj_t* avatar_label = lv_label_create(avatar);
+    lv_label_set_text(avatar_label, avatar_text);
+    lv_obj_set_style_text_font(avatar_label, type_icon ? &ui_icons_20 : &g_font_semi_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(avatar_label, lv_color_hex(foreground), LV_PART_MAIN);
+    lv_obj_center(avatar_label);
+  }
+}
+
 static void chatCreateContactCard(lv_obj_t* parent,
                                  const ChatContactTuple::Contact& contact,
                                  lv_coord_t x, lv_coord_t y, lv_coord_t width,
@@ -49837,18 +49862,7 @@ static void chatCreateContactCard(lv_obj_t* parent,
                             LV_PART_MAIN);
   const uint32_t avatar_foreground = 0xE6EBED;
 #endif
-  char initials[12];
-  const char* avatar_text = type_icon;
-  if (!avatar_text) {
-    AvatarText::initials(contact.name, initials, sizeof initials, uiFontDrawsGlyph,
-                         (void*)&g_font_semi_14);
-    avatar_text = initials;
-  }
-  lv_obj_t* avatar_label = lv_label_create(avatar);
-  lv_label_set_text(avatar_label, avatar_text);
-  lv_obj_set_style_text_font(avatar_label, type_icon ? &ui_icons_20 : &g_font_semi_14, LV_PART_MAIN);
-  lv_obj_set_style_text_color(avatar_label, lv_color_hex(avatar_foreground), LV_PART_MAIN);
-  lv_obj_center(avatar_label);
+  chatContactCardSetAvatarContent(avatar, contact.name, type_icon, avatar_foreground);
 
   lv_obj_t* name = lv_label_create(card);
   lv_label_set_text(name, contact.name);

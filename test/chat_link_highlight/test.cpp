@@ -4,10 +4,21 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include "ui-touch/AvatarText.h"
 #include "ui-touch/ChatContactTuple.h"
 #include "ui-touch/ChatHashtag.h"
 
 static uint32_t COLOR_CHAT_LINK = 0x4EA1FF;
+static const lv_font_t& g_font_semi_14 = lv_font_montserrat_14;
+static const lv_font_t& ui_icons_20 = lv_font_montserrat_14;
+static lv_img_dsc_t visible_emoji{};
+static lv_img_dsc_t invisible_emoji{};
+static const lv_img_dsc_t* emojiLookupAny(uint32_t cp) {
+    if (cp == 0x1F600) return &visible_emoji;
+    if (cp == 0xFE0F) return &invisible_emoji;
+    return nullptr;
+}
+static bool uiFontDrawsGlyph(uint32_t cp, void*) { return cp < 0x80; }
 static size_t layout_calls = 0;
 static uint16_t trackedVisualPos(const char* text, char** visual, uint16_t length,
                                 lv_base_dir_t dir, uint32_t logical, bool* rtl) {
@@ -114,6 +125,48 @@ int main() {
     driver.draw_buf = &draw_buffer;
     driver.flush_cb = flushDisplay;
     lv_disp_drv_register(&driver);
+
+    static uint8_t emoji_pixels[16 * 16 * 4] = {};
+    visible_emoji.header.cf = LV_IMG_CF_TRUE_COLOR;
+    visible_emoji.header.w = visible_emoji.header.h = 16;
+    visible_emoji.data_size = sizeof emoji_pixels;
+    visible_emoji.data = emoji_pixels;
+    invisible_emoji.header.w = 2;
+    const char* type_icons[] = {nullptr, "R", "Room", "S"};
+    for (const char* type_icon : type_icons) {
+        lv_obj_t* avatar = lv_obj_create(lv_scr_act());
+        lv_obj_set_size(avatar, 38, 38);
+        chatContactCardSetAvatarContent(avatar, "JP \xF0\x9F\x98\x80 Pocket", type_icon, 0xFFFFFF);
+        lv_obj_t* child = lv_obj_get_child(avatar, 0);
+        assert(lv_obj_check_type(child, &lv_img_class));
+        assert(lv_img_get_src(child) == &visible_emoji);
+        assert(lv_img_get_zoom(child) == 256);
+        assert(!lv_img_get_antialias(child));
+        lv_obj_del(avatar);
+    }
+    lv_obj_t* avatar = lv_obj_create(lv_scr_act());
+    lv_obj_set_size(avatar, 38, 38);
+    chatContactCardSetAvatarContent(avatar, "JP Pocket", nullptr, 0xFFFFFF);
+    lv_obj_t* child = lv_obj_get_child(avatar, 0);
+    assert(lv_obj_check_type(child, &lv_label_class));
+    assert(strcmp(lv_label_get_text(child), "JP") == 0);
+    lv_obj_clean(avatar);
+    chatContactCardSetAvatarContent(avatar, "Relay \xEF\xB8\x8F", "R", 0xFFFFFF);
+    child = lv_obj_get_child(avatar, 0);
+    assert(lv_obj_check_type(child, &lv_label_class));
+    assert(strcmp(lv_label_get_text(child), "R") == 0);
+    lv_obj_clean(avatar);
+    chatContactCardSetAvatarContent(avatar, "\xF0\x9F\x91\xA8 Relay", "R", 0xFFFFFF);
+    child = lv_obj_get_child(avatar, 0);
+    assert(lv_obj_check_type(child, &lv_label_class));
+    assert(strcmp(lv_label_get_text(child), "R") == 0);
+    lv_obj_clean(avatar);
+    chatContactCardSetAvatarContent(avatar, "\xEF\xB8\x8F\xF0\x9F\x98\x80 Relay", "R", 0xFFFFFF);
+    child = lv_obj_get_child(avatar, 0);
+    assert(lv_obj_check_type(child, &lv_img_class));
+    assert(lv_img_get_src(child) == &visible_emoji);
+    lv_obj_del(avatar);
+
     check("plain # test #mesh tail", LV_BASE_DIR_LTR, LV_TEXT_ALIGN_LEFT, 240, 0, "#mesh");
     check("plain https://example.com/path#section tail #mesh", LV_BASE_DIR_LTR,
           LV_TEXT_ALIGN_LEFT, 95, 0, "https://example.com/path#section#mesh");
