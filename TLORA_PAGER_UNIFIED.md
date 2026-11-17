@@ -31,9 +31,15 @@ first unified build, leaving 146,496 bytes of its 4,063,232-byte OTA slot.
 Build options, dependencies and release tags can change that size, so check
 the slot size again for every release.
 
-The new detection and shared driver have **not yet been verified on physical
-devices**. Keep the existing radio-specific choices as the public defaults
-until both Pager variants pass the following checks with the same image:
+An SX1262 Pager running commit `71808574` passed a full USB erase/install, radio detection and
+initialization, mesh/UI startup, a hardware reset and USB device-info queries
+on 2026-11-17. Its SD card did not mount; the internal SPIFFS fallback booted.
+Status reported a latched RX-start-timeout flag (`0x4`) after startup; the
+noise floor later settled to -115 dBm. Packet reception has not been verified.
+
+**Full hardware validation, including LR1121, remains pending.** Keep the
+existing radio-specific choices as the public defaults until both Pager
+variants pass the following checks with the same image:
 
 1. Cold boot and reboot several times. The serial log and Settings > Device
    should identify the installed SX1262 or LR1121. Confirm that an unknown or
