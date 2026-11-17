@@ -3107,6 +3107,14 @@ scenarios.ebook_images = function()
   swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left goes back")
   key(app, " "); tick(app, 3, 40)
   assert(eb_page() == p, "space does nothing")
+  -- the d-pad centre is a centre tap AND Enter: with pictures on the page it must open the menu
+  enter(app, 320, 240); assert(eb_row("Continue"), "the d-pad centre opens the menu: " .. label_dump())
+  assert(guarded(BUDGET, eb_row("Continue").fn)); eb_wait(app)
+  local n0 = #calls
+  tap(app, 160, 4 + 3 * 18 + 1); key(app, "enter")   -- the centre landing on a picture's row
+  assert(#calls == n0 and eb_row("Continue"), "the centre tap over a picture row opens the menu, not the picture")
+  assert(guarded(BUDGET, eb_row("View image 1").fn))
+  enter(app, 320, 240); assert(eb_wait(app) == p and not eb_row("Continue"), "centre closes the picture, and does not open the menu too")
   app.on_close()
 end
 

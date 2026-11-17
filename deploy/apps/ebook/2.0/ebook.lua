@@ -1140,6 +1140,8 @@ on_input = function(ev)
   local t = ev.type
   -- Space does nothing: the firmware forwards it to an app with on_input, so it can't lock the screen here
   if t == "key" and ev.key == " " then return end
+  -- no touchscreen: the d-pad centre arrives as a centre tap followed by Enter, so only the key counts
+  if touchless and (t == "down" or t == "up") then return end
   if screen == "image" then
     if t == "up" or t == "key" then show_reading() end
     return
