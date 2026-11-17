@@ -64,7 +64,7 @@ LV_SYMBOLS = {
 # firmware names them in ui_icons.h, which this list must stay in step with.
 APP = [
     "message-square", "user", "users", "at-sign", "map-pin", "map", "radio",
-    "signal", "activity", "audio-lines", "square-terminal", "monitor", "cast",
+    "signal", "activity", "audio-lines", "square-terminal", "monitor", "cast", "cpu",
     "sliders-horizontal", "settings", "house", "folder", "layout-grid",
     "gamepad-2", "globe", "radar", "shield-check", "usb", "qr-code", "power",
     "compass", "satellite", "wifi", "bluetooth", "lock", "bell", "bell-off",

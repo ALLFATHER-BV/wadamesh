@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include "ui-touch/ChatContactTuple.h"
 #include "ui-touch/ChatHashtag.h"
 
 static uint32_t COLOR_CHAT_LINK = 0x4EA1FF;
@@ -42,8 +43,10 @@ static void check(const char* text, lv_base_dir_t dir, lv_text_align_t align,
     lv_obj_set_style_text_line_space(plain, 3, LV_PART_MAIN);
     lv_obj_set_width(plain, width);
     lv_label_set_text(plain, text);
+    lv_obj_update_layout(parent);
     lv_obj_t* overlay = chatCreateLinkLabel(parent, plain, text, &lv_font_montserrat_14,
-                                           lv_color_white(), width, 0, 0);
+                                           lv_color_white(), width,
+                                           lv_obj_get_height(plain), 0, 0);
     assert(overlay);
     lv_obj_update_layout(parent);
     assert(lv_obj_get_height(overlay) == lv_obj_get_height(plain));
@@ -116,6 +119,13 @@ int main() {
           LV_TEXT_ALIGN_LEFT, 95, 0, "https://example.com/path#section#mesh");
     check("plain #mesh and #radio tail", LV_BASE_DIR_LTR, LV_TEXT_ALIGN_CENTER, 110, 2, "#mesh#radio");
     check("plain 32.123, 34.456 tail", LV_BASE_DIR_LTR, LV_TEXT_ALIGN_RIGHT, 240, 0, "32.123, 34.456");
+    const char* contact_tuple =
+        "<000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f:1:JP Mesh Pocket>";
+    check(contact_tuple, LV_BASE_DIR_LTR, LV_TEXT_ALIGN_LEFT, 240, 0, contact_tuple);
+    ChatLinkChoice contact_choice{};
+    assert(nextChatLinkChoice(contact_tuple, 0, &contact_choice));
+    assert(contact_choice.kind == CHAT_LINK_CONTACT);
+    assert(!nextChatLinkChoice("literal <contact>", 0, &contact_choice));
     const char* rtl = "\xD7\xA9\xD7\x9C\xD7\x95\xD7\x9D #mesh \xD7\xA2\xD7\x95\xD7\x93";
     check(rtl, LV_BASE_DIR_AUTO, LV_TEXT_ALIGN_AUTO, 240, 0, "#mesh");
     check(rtl, LV_BASE_DIR_RTL, LV_TEXT_ALIGN_RIGHT, 90, 2, "#mesh");
