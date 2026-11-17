@@ -380,12 +380,53 @@ public:
     /* Clear any stale serial-side status pending so the legacy match doesn't
      * eat our reply before the UI hook sees it. */
     pending_status = 0;
-    int r = sendRequest(recipient, REQ_TYPE_GET_STATUS, tag, est);
+    ContactInfo req_rcpt = recipient;
+    if (req_rcpt.type == ADV_TYPE_REPEATER) {
+      // Force flood on repeater status pings so simple_repeater hits its
+      // packet->isRouteFlood() createPathReturn + sendFloodReply branch instead
+      // of replying over a stale 0-hop client->out_path when the user has moved.
+      req_rcpt.out_path_len = OUT_PATH_UNKNOWN;
+    }
+    int r = sendRequest(req_rcpt, REQ_TYPE_GET_STATUS, tag, est);
     if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
       memcpy(&_ui_pending_status, recipient.id.pub_key, 4);
       _ui_pending_kind = UiReqKind::Status;
       _ui_pending_tag  = tag;   // request tag, reflected by the repeater
       _ui_pending_at   = millis();
+    }
+    return r;
+  }
+
+  static bool isRepeaterPingCmd(const char* text) {
+    if (!text) return false;
+    while (*text == ' ' || *text == '\t') ++text;
+    if (strncasecmp(text, "ping", 4) != 0) return false;
+    text += 4;
+    while (*text == ' ' || *text == '\t' || *text == '?' || *text == '!' ||
+           *text == '\r' || *text == '\n') {
+      ++text;
+    }
+    return *text == '\0';
+  }
+
+  /** Send a repeater status ping from a DM chat thread ("ping" to an ADV_TYPE_REPEATER).
+   *  Repeaters treat PAYLOAD_TYPE_TXT_MSG as an admin CLI command ("Unknown command")
+   *  and reply via stale direct out_path even when the DM arrived via flood. Routing
+   *  DM "ping" through flooded REQ_TYPE_GET_STATUS works on any repeater (admin or guest),
+   *  triggers simple_repeater's flood PATH+RESPONSE return, and synthesizes a PONG DM
+   *  bubble when onContactResponse receives the RepeaterStats payload. */
+  int uiSendRepeaterDmPing(ContactInfo& recipient, uint32_t& out_ack_tag, uint32_t& out_est_timeout) {
+    uiResetPathForLogin(recipient);
+    int r = uiSendRequestAfterGuestLogin(recipient, UiReqKind::Status);
+    out_ack_tag = (_ui_pending_tag != 0) ? _ui_pending_tag : getRTCClock()->getCurrentTimeUnique();
+    out_est_timeout = 12000u;
+    if (r == MSG_SEND_SENT_FLOOD || r == MSG_SEND_SENT_DIRECT) {
+      _ui_dm_ping_active  = true;
+      _ui_dm_ping_ack     = out_ack_tag;
+      _ui_dm_ping_sent_ms = millis();
+      memcpy(_ui_dm_ping_pub, recipient.id.pub_key, PUB_KEY_SIZE);
+    } else {
+      _ui_dm_ping_active = false;
     }
     return r;
   }
@@ -1531,6 +1572,10 @@ private:
   uint8_t   _ui_deferred_key[PUB_KEY_SIZE] = {0};
   UiReqKind _ui_deferred_kind = UiReqKind::None;
   uint32_t  _ui_deferred_at = 0;
+  bool      _ui_dm_ping_active = false;
+  uint32_t  _ui_dm_ping_ack = 0;
+  uint32_t  _ui_dm_ping_sent_ms = 0;
+  uint8_t   _ui_dm_ping_pub[PUB_KEY_SIZE] = {0};
   BaseSerialInterface *_serial;
   AbstractUITask* _ui;
 
