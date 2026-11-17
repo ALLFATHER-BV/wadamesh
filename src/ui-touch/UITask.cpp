@@ -18943,6 +18943,8 @@ static void lockOnScreenOffToggleCb(lv_event_t* e) {
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the wake button to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TDISPLAY_P4)
   const char* unlock_hint = on ? TR("Locks when screen off\n(hold the BOOT button to unlock)") : TR("Screen-off just dims");
+#elif defined(HAS_TDECK_MAX)
+  const char* unlock_hint = on ? TR("Locks when screen off\n(hold the bubble pad to unlock)") : TR("Screen-off just dims");
 #elif defined(HAS_TANMATSU)
   const char* unlock_hint = on ? TR("Locks when screen off\n(press Volume Down to unlock)") : TR("Screen-off just dims");
 #elif defined(TLORA_PAGER)
@@ -54108,6 +54110,10 @@ static void lockAnimCb(lv_timer_t*) {
 static void lockHintText(char* out, size_t cap) {
 #if defined(HAS_TANMATSU)
   const char* h = TR("press Volume Down to unlock");
+#elif defined(HAS_TDECK_MAX)
+  // Max: the BOOT button sits next to RST, so the bubble pad hold is the one
+  // the lock screen points at (BOOT still unlocks too).
+  const char* h = TR("hold the bubble pad to unlock");
 #elif defined(HAS_TDECK_PRO)
   // Pro/Max also define HAS_PAGER_KEYBOARD, but Backspace unlock is disabled
   // for them: GPIO0 is the deliberate unlock control.
@@ -86552,15 +86558,23 @@ void UITask::loop() {
   // idle timeout (already bumped by that real input) take over.
 #if defined(HAS_TDECK_MAX)
   {   // Front pads: heart toggles the front-light (Meck's shortcut on this board).
+    // On the lock screen, holding the bubble pad for kMaxPadUnlockHoldMs unlocks,
+    // so the BOOT button (right next to RST on the side) is no longer the only
+    // way in. A tap only lights the lock view; letting go early cancels.
+    static constexpr unsigned long kMaxPadUnlockHoldMs = 1500;
+    static unsigned long s_max_pad_unlock_start = 0;
     uint8_t key_id = 0;
     if (display.takeFrontKeyPress(key_id)) {
       if (_manual_lock) {
-        // Front pads may reveal the retained lock view, but GPIO0 remains the
-        // deliberate unlock control. wakeScreen() would clear _manual_lock and
-        // leave the lock overlay stranded on screen.
+        // Front pads reveal the retained lock view; unlocking takes GPIO0 or a
+        // bubble-pad hold (unlockScreen() below). wakeScreen() would clear
+        // _manual_lock and leave the lock overlay stranded on screen.
         if (_screen_off) lockscreenReveal();
         if (key_id == 0) {
           if (s_max_frontlight_on) maxFrontlightOff(); else maxFrontlightOn();
+        } else if (key_id == 1) {
+          s_max_pad_unlock_start = millis();   // hold the bubble pad to unlock (below)
+          if (!s_max_pad_unlock_start) s_max_pad_unlock_start = 1;
         }
         _last_input_ms = millis();
       } else if (key_id == 0) {
@@ -86570,6 +86584,41 @@ void UITask::loop() {
       } else if (key_id == 1) {   // bubble pad: Home (Meck's id; confirm with the [key] line)
         if (_screen_off) wakeScreen(); else maxGoHome();
         _last_input_ms = millis();
+      } else if (key_id == 2) {   // send pad: sends the message being written in a chat
+        if (_screen_off) {
+          wakeScreen();
+        } else if (LvChatPanel* p = s_kb_panel) {
+          // Same path as Enter on this keyboard, but always sends: the pad is an
+          // explicit send button, so the enter-sends preference does not apply.
+          if (p->composer_ta && lv_obj_is_valid(p->composer_ta)) {
+            const char* text = lv_textarea_get_text(p->composer_ta);
+            if (text && text[0]) {
+              setComposerMode(true);
+              composerReset();
+              composerAppendDisplayText(this, text);
+              if (composerSend()) {
+                lv_textarea_set_text(p->composer_ta, "");
+                refreshChatDetailAsync(*p);
+                g_lv.dirty_threads = true;
+              }
+              if (g_lv.keyboard) lv_keyboard_set_textarea(g_lv.keyboard, p->composer_ta);  // re-bind
+            }
+          }
+        }
+        noteUserInput();
+      }
+    }
+    if (s_max_pad_unlock_start) {
+      const unsigned long held = millis() - s_max_pad_unlock_start;
+      if (!_manual_lock || !display.frontKeyDown(1)) {
+        s_max_pad_unlock_start = 0;                 // released early, or already unlocked
+        lockscreenUnlockPopupHide();
+      } else if (held >= kMaxPadUnlockHoldMs) {
+        s_max_pad_unlock_start = 0;
+        unlockScreen();                             // hides the "Unlocking..." popup too
+        _last_input_ms = millis();
+      } else if (held >= 300 && !_screen_off) {
+        lockscreenUnlockProgress(kMaxPadUnlockHoldMs - held);
       }
     }
   }

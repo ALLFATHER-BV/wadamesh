@@ -400,6 +400,10 @@ bool TDeckProDisplay::takeFrontKeyPress(uint8_t& key_id) {
   key_id = s_key_press_id;
   return true;
 }
+
+bool TDeckProDisplay::frontKeyDown(uint8_t key_id) const {
+  return key_id < 3 && s_key_down[key_id];
+}
 #endif
 
 bool TDeckProDisplay::getTouchPoint(uint16_t& x, uint16_t& y) {
