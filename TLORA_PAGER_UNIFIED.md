@@ -37,7 +37,14 @@ on 2026-11-17. Its SD card did not mount; the internal SPIFFS fallback booted.
 Status reported a latched RX-start-timeout flag (`0x4`) after startup; the
 noise floor later settled to -115 dBm. Packet reception has not been verified.
 
-A subsequent read-only SD diagnostic initialized the inserted card and read
+At 911.15 MHz (62.5 kHz bandwidth, SF8, coding rate 4/5, 22 dBm), two zero-hop
+node-discovery probes advanced the radio's TX-completion counter from 2 to 4
+and left the outbound queue empty. No packets or matching replies arrived
+during 105 seconds of observation, with no receive errors counted. This
+verifies local TX completion only; an over-the-air RX/TX pass needs a matching
+peer. The Pager was left configured for 911.15 MHz.
+
+A read-only SD diagnostic initialized the inserted card and read
 sectors at 4 MHz, 1 MHz and 400 kHz with the radio and display inactive. It
 reported 127,139,840 bytes (about 128 MB). Sectors 0, 1, 63 and 2048 returned
 identical contents beginning with a repeating `55 aa` pattern; sector 0 ended
