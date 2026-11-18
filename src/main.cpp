@@ -6,7 +6,7 @@
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
   #include <esp_sntp.h>        // completion status for normal + cold-boot time sync
 #if defined(HAS_THINKNODE_M9)
-  #include <esp_task_wdt.h>    // WDT suspend around multi-second SPIFFS format on first boot
+  #include "helpers/esp32/WdtHeavyGuard.h"
 #endif
   #include "helpers/esp32/SntpClockPush.h"   // every SNTP result -> the mesh clock (and its RTC chip)
 static SntpClockPush s_sntp_push;
@@ -1474,12 +1474,13 @@ void setup() {
   // confirm on hardware that a cold first-format boot survives.
 #if defined(HAS_THINKNODE_M9)
   if (!spiffs_ok) {
-    // M9-only: keep SPIFFS work/cache buffers in internal DRAM during format/mount,
-    // and suspend the task watchdog around the blocking 3.375 MB SPIFFS format.
+    // Keep format buffers in internal DRAM and preserve the loop task's
+    // watchdog subscription across the mount attempt.
     heap_caps_malloc_extmem_enable(4096);
-    esp_task_wdt_delete(NULL);
-    spiffs_ok = SPIFFS.begin(true);
-    esp_task_wdt_add(NULL);
+    {
+      LoopWdtGuard guard;
+      spiffs_ok = SPIFFS.begin(true);
+    }
     heap_caps_malloc_extmem_enable(256);
   }
 #else
