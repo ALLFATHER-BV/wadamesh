@@ -6,7 +6,7 @@
 # Here every glyph is rendered from Noto Emoji, Google's monochrome outline font
 # (OFL 1.1), scaled to the 16 px cell and thresholded to black or nothing.
 #
-#   python3 scripts/build/gen-emoji-mono.py [--weight 400] [--threshold 110]
+#   python3 scripts/build/gen-emoji-mono.py [--weight 500] [--threshold 110]
 #
 # The glyph set, the sorted lookup table and the sequence table are copied from
 # emoji_data.c, so the two files can never disagree about which emoji exist. The
