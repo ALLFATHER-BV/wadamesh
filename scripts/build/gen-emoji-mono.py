@@ -17,87 +17,20 @@
 # error-diffused from the colour art already baked into emoji_data.c.
 #
 # Needs Pillow. Output is deterministic for a given font file, weight and threshold.
-import argparse, hashlib, os, re, sys, urllib.request
-from PIL import Image, ImageDraw, ImageFont
-from emoji_common import PX, ROOT, CACHE
+import argparse, os, re
+from emoji_common import PX, ROOT
+from emoji_mono import (DEFAULT_THRESHOLD, DEFAULT_WEIGHT, dithered, font_glyph,
+                        load_font, to_bytes)
 
-FONT_URL = (
-    "https://github.com/google/fonts/raw/b979dba422e445492b0eb9951ac52ee0b4d648c3"
-    "/ofl/notoemoji/NotoEmoji%5Bwght%5D.ttf"
-)
-FONT_SHA256 = "de6c18832938afc99caf132b39d6a30a19bac7f2e812e28db2535b4608d27551"
 OUTDIR = os.path.join(ROOT, "src", "ui-touch")
 SRC_C = os.path.join(OUTDIR, "emoji_data.c")
 OUT_C = os.path.join(OUTDIR, "emoji_data_mono.c")
-BIG = 256  # render size before the reduction to PX
-
-
-def font_path():
-    os.makedirs(CACHE, exist_ok=True)
-    fn = os.path.join(CACHE, "NotoEmoji-wght.ttf")
-    if not os.path.exists(fn):
-        req = urllib.request.Request(FONT_URL, headers={"User-Agent": "emoji-gen"})
-        with open(fn, "wb") as f:
-            f.write(urllib.request.urlopen(req, timeout=60).read())
-    if hashlib.sha256(open(fn, "rb").read()).hexdigest() != FONT_SHA256:
-        sys.exit("Noto Emoji font hash mismatch: delete " + fn + " and retry")
-    return fn
-
-
-def fit(mask):
-    # Same placement as emoji_common.to_rgb565a8: crop to the ink, scale to fit the
-    # cell, centre horizontally and sit on the bottom edge.
-    bbox = mask.getbbox()
-    if not bbox:
-        return None
-    mask = mask.crop(bbox)
-    w, h = mask.size
-    s = min(PX / w, PX / h)
-    nw, nh = max(1, round(w * s)), max(1, round(h * s))
-    out = Image.new("L", (PX, PX), 0)
-    out.paste(mask.resize((nw, nh), Image.LANCZOS), ((PX - nw) // 2, PX - nh))
-    return out
-
-
-def font_glyph(font, cp, threshold):
-    big = Image.new("L", (BIG * 2, BIG * 2), 0)
-    ImageDraw.Draw(big).text((BIG // 2, BIG // 2), chr(cp), font=font, fill=255)
-    m = fit(big)
-    return m.point(lambda v: 255 if v >= threshold else 0) if m else None
-
-
-def decode_colour(arr):
-    # emoji_data.c glyph bytes: [lo, hi, alpha] per pixel, RGB565 little-endian.
-    img = Image.new("RGBA", (PX, PX))
-    px = []
-    for i in range(0, len(arr), 3):
-        v = arr[i] | (arr[i + 1] << 8)
-        px.append((((v >> 11) & 31) * 255 // 31, ((v >> 5) & 63) * 255 // 63,
-                   (v & 31) * 255 // 31, arr[i + 2]))
-    img.putdata(px)
-    return img
-
-
-def dithered(arr):
-    img = decode_colour(arr)
-    bg = Image.new("RGBA", img.size, (255, 255, 255, 255))
-    grey = Image.alpha_composite(bg, img).convert("L")
-    dark = grey.convert("1").convert("L").point(lambda v: 255 if v == 0 else 0)  # Floyd-Steinberg
-    alpha = img.split()[3].point(lambda a: 255 if a >= 128 else 0)
-    return Image.composite(dark, Image.new("L", (PX, PX), 0), alpha)
-
-
-def to_bytes(mask):
-    out = bytearray()
-    for a in mask.tobytes():
-        out += bytes((0, 0, 255 if a else 0))  # RGB565 black, alpha 0 or 255
-    return out
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weight", type=int, default=400, help="Noto Emoji wght axis, 300-700")
-    ap.add_argument("--threshold", type=int, default=110, help="ink cut-off, 1-254")
+    ap.add_argument("--weight", type=int, default=DEFAULT_WEIGHT, help="Noto Emoji wght axis, 300-700")
+    ap.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD, help="ink cut-off, 1-254")
     args = ap.parse_args()
 
     src = open(SRC_C).read()
@@ -106,10 +39,7 @@ def main():
               for cp, body in re.findall(r"static const uint8_t e_([0-9a-f]+)\[\] = \{([^}]*)\};", src)}
     tail = src[cut:]
 
-    font = ImageFont.truetype(font_path(), BIG)
-    font.set_variation_by_axes([args.weight])
-    from fontTools.ttLib import TTFont
-    have = set(TTFont(font_path()).getBestCmap())
+    font, have = load_font(args.weight)
 
     # Glyphs the colour file keys by a lead codepoint but that are really bitmaps.
     bitmap = {cp for cp in colour if cp not in have} | {0x1F1F1, 0x1F3F3}
