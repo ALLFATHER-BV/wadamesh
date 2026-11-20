@@ -13661,6 +13661,13 @@ static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w, lv_coord_t y) {
 
   for (int i = 0; i < s_emoji_group_n; ++i) {
     lv_obj_t* t = lv_btn_create(row);
+#if CAP_EPAPER
+    // The theme's release transition is created before the click handler repaints the
+    // tab, so it fades to the OLD fill and on finishing leaves that on the panel (white
+    // label on white box until the next redraw). Transitions can only be added to, not
+    // overridden, so drop the theme styles; styleButton below restores the look.
+    lv_obj_remove_style_all(t);
+#endif
     lv_obj_set_height(t, 22);
     lv_obj_set_style_pad_hor(t, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_ver(t, 0, LV_PART_MAIN);
