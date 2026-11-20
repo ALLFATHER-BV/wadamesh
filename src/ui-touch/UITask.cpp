@@ -13588,6 +13588,11 @@ static void emojiPaintTabs() {
     if (!t) continue;
     const bool on = ((int)i == s_emoji_tab);
     lv_obj_set_style_bg_color(t, lv_color_hex(on ? COLOR_ACCENT : COLOR_CONTROL), LV_PART_MAIN);
+#if CAP_EPAPER
+    // The active tab is a black block on the 1-bit panel; its black label would vanish.
+    lv_obj_t* l = lv_obj_get_child(t, 0);
+    if (l) lv_obj_set_style_text_color(l, on ? lv_color_white() : lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+#endif
   }
 }
 
