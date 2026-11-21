@@ -12535,6 +12535,21 @@ static void threadSheetIconResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) threadSheetIconResetDo();
 }
 
+static void chatListRefreshAfterDismiss();   // defined with the Chats header
+// "Dismiss" (#901): this thread leaves the Chats u filter until a newer message waits on me.
+static void threadSheetDismissReplyDo() {
+  if (!g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  char nm[UITask::MAX_THREAD_NAME + 1] = "";
+  const bool named = channelLongSheetName(nm, sizeof nm);
+  closeChannelLongSheet();
+  uint32_t key = 0;
+  if (!named || !g_lv.task->threadAwaitingReply(idx, &key)) return;
+  touchPrefsSetReplyDismiss(nm, key);
+  chatListRefreshAfterDismiss();
+  g_lv.task->showAlert(TR("Dismissed"), 1000);
+}
+
 // Per-thread settings sheet (DM or channel) — opened by long-press AND the per-row gear AND the
 // in-channel cog, so all are the SAME screen. Mark-as-read, mute messages / @ mentions, region &
 // scope, share secret, blocked users, remove/delete.
@@ -12569,6 +12584,13 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     ActItem items[12];
     int n = 0;
     items[n++] = { LV_SYMBOL_OK, TR("Mark as read"), threadSheetMarkReadDo, false };
+    {
+      uint32_t key = 0;
+      char key_nm[UITask::MAX_THREAD_NAME + 1] = "";
+      if (g_lv.task && g_lv.task->threadAwaitingReply(thread_idx, &key) &&
+          channelLongSheetName(key_nm, sizeof key_nm) && touchPrefsGetReplyDismiss(key_nm) != key)
+        items[n++] = { LV_SYMBOL_EYE_CLOSE, TR("Dismiss"), threadSheetDismissReplyDo, false };
+    }
     if (is_channel) {
       const uint8_t mute = touchPrefsGetChannelMute(name ? name : "");
       items[n++] = { LV_SYMBOL_SETTINGS, TR("Region & scope"), channelLongSheetRegionDo, false };
@@ -35926,12 +35948,28 @@ static void closeAppDrawer();
 // These replace the second status-bar row of buttons the inbox used to carry.
 static constexpr lv_coord_t kChatListInset = 6;  // the inbox and contacts rows sit this far in
 static uint8_t   s_chats_filter = 0;               // 0 all, 1 channels, 2 direct
-// The "U" (unread only) chip left of the filter (#824): an on/off toggle that narrows whichever of All /
-// Channels / Direct is active to the threads with unread messages. Reading a thread
-// clears its count, so it leaves the list on the way back out of the chat (the
-// unread counts are in the list signature). Persisted (touch prefs v73).
-static bool      s_chats_unread_only = false;
+// The unread chip left of the filter (#824, #901) steps A -> U -> u: every thread, only
+// threads with unread messages, or those plus threads waiting on my reply (a direct chat
+// whose newest message is theirs, a channel that @mentioned me since I last posted;
+// "Dismiss" on the thread sheet drops one until a newer message waits). It narrows
+// whichever of All / Channels / Direct is active. Reading a thread clears its count, so
+// it leaves the U list on the way back out of the chat (the unread counts are in the list
+// signature). Persisted (touch prefs v73 byte).
+static uint8_t   s_chats_unread_mode = TOUCH_CHATS_ALL;
 static lv_obj_t* s_chats_unread_chip = nullptr;
+static lv_obj_t* s_chats_unread_lbl  = nullptr;
+static const char* chatsUnreadChipText(uint8_t m) {
+  return m == TOUCH_CHATS_UNREPLIED ? "u" : m == TOUCH_CHATS_UNREAD ? "U" : "A";
+}
+static const char* chatsUnreadChipTip(uint8_t m) {
+  return m == TOUCH_CHATS_UNREPLIED ? "Unread + unreplied" : m == TOUCH_CHATS_UNREAD ? "Unread only" : "All chats";
+}
+// A thread waiting on my reply that was not dismissed (the u filter's second half).
+static bool chatsThreadUnreplied(int idx, const char* name) {
+  uint32_t key = 0;
+  if (!g_lv.task || !g_lv.task->threadAwaitingReply(idx, &key)) return false;
+  return touchPrefsGetReplyDismiss(name) != key;
+}
 // All / Channels / Direct is a dropdown chip ("▼ All"), as Contacts' filter is: it
 // opens an option sheet (openChatsFilterSheet, next to the Contacts sheets).
 static lv_obj_t* s_chats_filter_lbl = nullptr;
@@ -35942,9 +35980,11 @@ static void chatsChipsSync() {
   if (s_chats_filter_lbl)
     lv_label_set_text_fmt(s_chats_filter_lbl, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(s_chats_filter)));
   if (s_chats_unread_chip) {
-    if (s_chats_unread_only) lv_obj_add_state(s_chats_unread_chip, LV_STATE_CHECKED);
-    else                     lv_obj_clear_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    if (s_chats_unread_mode != TOUCH_CHATS_ALL) lv_obj_add_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    else                                        lv_obj_clear_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    navSetTip(s_chats_unread_chip, TR(chatsUnreadChipTip(s_chats_unread_mode)));
   }
+  if (s_chats_unread_lbl) lv_label_set_text(s_chats_unread_lbl, TR(chatsUnreadChipText(s_chats_unread_mode)));
 }
 static void chatsFilterApply(uint8_t f) {
   s_chats_filter = f;
@@ -35959,12 +35999,16 @@ static void chatsMarkAllAsk() {
 }
 static void chatsUnreadChipCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  s_chats_unread_only = !s_chats_unread_only;
-  touchPrefsSetChatsUnreadOnly(s_chats_unread_only);
+  s_chats_unread_mode = (uint8_t)((s_chats_unread_mode + 1) % (TOUCH_CHATS_UNREPLIED + 1));
+  touchPrefsSetChatsUnreadMode(s_chats_unread_mode);
   chatsChipsSync();
   g_lv.dm.list_sig = 0;          // the filter is part of what the list shows: rebuild
   refreshChatList(g_lv.dm);
   if (g_lv.dm.list_cont) lv_obj_scroll_to_y(g_lv.dm.list_cont, 0, LV_ANIM_OFF);
+}
+static void chatListRefreshAfterDismiss() {
+  g_lv.dm.list_sig = 0;          // a dismissed thread leaves the u list without a ring change
+  refreshChatList(g_lv.dm);
 }
 static void chatsAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -36043,8 +36087,10 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     snprintf(b, sizeof b, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(f)));
     drop_w = LV_MAX(drop_w, semi12W(b));
   }
-  const lv_coord_t text_w = (lv_coord_t)(semi12W(TR("U")) + drop_w);
-  s_chats_unread_only = touchPrefsGetChatsUnreadOnly();
+  lv_coord_t unread_w = 0;   // the A / U / u chip, at its widest
+  for (uint8_t m = 0; m <= TOUCH_CHATS_UNREPLIED; ++m) unread_w = LV_MAX(unread_w, semi12W(TR(chatsUnreadChipText(m))));
+  const lv_coord_t text_w = (lv_coord_t)(unread_w + drop_w);
+  s_chats_unread_mode = touchPrefsGetChatsUnreadMode();
   const char* title = TR("Chats");
   const lv_coord_t title_w = lv_txt_get_width(title, (uint32_t)strlen(title), &g_font_semi_16, 0, LV_TEXT_FLAG_NONE);
   const lv_coord_t icons_w = (lv_coord_t)(2 * SC(24));
@@ -36092,9 +36138,10 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     lv_obj_set_style_text_font(l, &g_font_semi_12, LV_PART_MAIN);
     if (i == 0) {
       lv_obj_add_event_cb(c, chatsUnreadChipCb, LV_EVENT_CLICKED, nullptr);
-      lv_label_set_text(l, TR("U"));
       s_chats_unread_chip = c;
-      navSetTip(c, TR("Unread only"));
+      s_chats_unread_lbl  = l;   // text and tip set by chatsChipsSync()
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_set_width(l, unread_w);
     } else {
       lv_obj_add_event_cb(c, openChatsFilterSheetCb, LV_EVENT_CLICKED, nullptr);
       s_chats_filter_lbl = l;   // text set by chatsChipsSync()
@@ -50487,13 +50534,15 @@ static void refreshChatList(LvChatPanel& p) {
   mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
   mix(s_nick_gen);     // so does a contact's new nickname
   mix(s_deliv_gen);    // and a sent DM turning delivered (#670)
-  mix(p.inbox_combined ? 0xF1u + s_chats_filter + (s_chats_unread_only ? 0x100u : 0u) : 0u);
+  mix(p.inbox_combined ? 0xF1u + s_chats_filter + ((uint32_t)s_chats_unread_mode << 8) : 0u);
+  const bool unreplied_mode = p.inbox_combined && s_chats_unread_mode == TOUCH_CHATS_UNREPLIED;
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
     char nm[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, nm, sizeof(nm))) continue;
     mix((uint32_t)idxs[i]); mix(unread); mix(ts);
-    mix((ch ? 2u : 0u) | (g_lv.task->threadHasMention(idxs[i]) ? 1u : 0u));
+    mix((ch ? 2u : 0u) | (g_lv.task->threadHasMention(idxs[i]) ? 1u : 0u)
+        | (unreplied_mode && chatsThreadUnreplied(idxs[i], nm) ? 4u : 0u));
     for (const char* s = nm; *s; ++s) mix((uint8_t)*s);
     {   // a changed avatar emoji must re-render the row
       char eb[20];
@@ -50563,7 +50612,8 @@ static void refreshChatList(LvChatPanel& p) {
     char name[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, name, sizeof(name))) continue;
     if (p.inbox_combined && ((s_chats_filter == 1 && !ch) || (s_chats_filter == 2 && ch))) continue;
-    if (p.inbox_combined && s_chats_unread_only && unread == 0) continue;
+    if (p.inbox_combined && s_chats_unread_mode != TOUCH_CHATS_ALL && unread == 0 &&
+        !(unreplied_mode && chatsThreadUnreplied(idxs[i], name))) continue;
     ++shown;
 
     // What the row shows: a direct chat's nickname. `name` stays the thread's key.
@@ -50782,7 +50832,9 @@ static void refreshChatList(LvChatPanel& p) {
 #endif
   }
   if (shown == 0) {
-    const char* none = s_chats_unread_only
+    const char* none = unreplied_mode
+        ? (s_chats_filter == 1 ? TR("No unread or unreplied channels") : s_chats_filter == 2 ? TR("No unread or unreplied direct chats") : TR("No unread or unreplied chats"))
+        : s_chats_unread_mode != TOUCH_CHATS_ALL
         ? (s_chats_filter == 1 ? TR("No unread channels") : s_chats_filter == 2 ? TR("No unread direct chats") : TR("No unread chats"))
         : (s_chats_filter == 1 ? TR("No channels yet") : TR("No direct chats yet"));
     lv_obj_t* l = lv_list_add_text(p.list_cont, none);
@@ -78051,6 +78103,7 @@ bool UITask::loadMsgsFromStorage() {
     f.close();
     _ui_msg_count = 0;
     _ui_msg_head  = 0;
+    ++_reply_gen;
     _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
     _msgcount     = static_cast<int>(hdr.msgcount);
     return true;
@@ -78092,6 +78145,7 @@ bool UITask::loadMsgsFromStorage() {
 
   _ui_msg_count = n_keep;                     // ring is now linear: slots 0..n_keep-1, oldest first
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  ++_reply_gen;
   _thread_hist_dirty = true;                  // ring replaced — recompute "has history" on next read
   _msgcount     = static_cast<int>(hdr.msgcount);
   return true;
@@ -78225,6 +78279,7 @@ bool UITask::loadMsgsFromSegments() {
 
   _ui_msg_count = n_keep;
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  ++_reply_gen;
   _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
   _ui_seq_next  = max_seq + 1;
   s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
@@ -79492,6 +79547,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
     }
     strncpy(_ui_threads[i].name, name, MAX_THREAD_NAME);
     _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
+    ++_reply_gen;   // a recreated thread may own ring messages already
     return i;
   }
   return -1;
@@ -79500,6 +79556,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
 bool UITask::removeThread(int idx) {
   if (idx < 0 || idx >= MAX_UI_THREADS) return false;
   if (!_ui_threads[idx].used) return false;
+  ++_reply_gen;
   _thread_hist_dirty = true;   // slot is being freed + its ring records dropped
   // Match the thread by stored name (channel/DM) before wiping the slot so
   // we can drop any ring messages that belonged to it. Without this the
@@ -79627,6 +79684,7 @@ void UITask::refreshThreadsFromMesh() {
       if (c.name[0] && strncmp(_ui_threads[t].name, c.name, MAX_THREAD_NAME) != 0) {
         strlcpy(_ui_threads[t].name, c.name, sizeof(_ui_threads[t].name));
         _threads_dirty = true;
+        ++_reply_gen;   // its ring messages carry the old name now
       }
     }
   }
@@ -81635,6 +81693,57 @@ bool UITask::threadHasMention(int idx) const {
   return idx >= 0 && idx < MAX_UI_THREADS && _ui_threads[idx].used && _ui_threads[idx].has_mention;
 }
 
+// One ring pass, newest first, settling every thread as soon as its answer is known: a
+// direct chat by its newest message, a channel by its newest post of mine or @mention of
+// me, whichever comes first. Channels where neither appears read the whole ring, so the
+// answer is cached (see _reply_cache_sig) rather than recomputed on every list refresh.
+void UITask::rebuildReplyState() const {
+  for (int t = 0; t < MAX_UI_THREADS; ++t) _reply_key[t] = 0;
+  bool settled[MAX_UI_THREADS];
+  int open = 0;
+  for (int t = 0; t < MAX_UI_THREADS; ++t) {
+    settled[t] = !_ui_threads[t].used;
+    if (!settled[t]) ++open;
+  }
+  for (int i = 0; i < _ui_msg_count && open > 0; ++i) {
+    const int slot = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[slot];
+    if (!m.thread[0] || !m.text[0]) continue;
+    for (int t = 0; t < MAX_UI_THREADS; ++t) {
+      if (settled[t] || m.channel != _ui_threads[t].channel ||
+          strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) != 0) continue;
+      const bool waiting = !m.outgoing && (!m.channel || textMentionsMe(m.text));
+      if (!m.channel || m.outgoing || waiting) {   // a DM settles on its newest message
+        settled[t] = true;
+        --open;
+        if (waiting) {
+          uint32_t k = 2166136261u;
+          auto mix = [&k](uint32_t v) { k = (k ^ v) * 16777619u; };
+          mix(m.seq); mix(m.ts); mix(m.channel ? 1u : 0u);
+          _reply_key[t] = k ? k : 1u;
+        }
+      }
+      break;
+    }
+  }
+}
+
+bool UITask::threadAwaitingReply(int idx, uint32_t* key) const {
+  if (key) *key = 0;
+  if (!_ui_threads || !_ui_msgs || idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used) return false;
+  uint32_t sig = 2166136261u;
+  auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
+  mix(_ui_seq_next); mix((uint32_t)_ui_msg_head); mix((uint32_t)_ui_msg_count); mix(_reply_gen);
+  if (const NodePrefs* pr = the_mesh.getNodePrefs())   // a renamed node changes what mentions me
+    for (const char* s = pr->node_name; *s; ++s) mix((uint8_t)*s);
+  if (sig != _reply_cache_sig) {
+    rebuildReplyState();
+    _reply_cache_sig = sig;
+  }
+  if (key) *key = _reply_key[idx];
+  return _reply_key[idx] != 0;
+}
+
 int UITask::getThreadCount(bool channel_mode, int out_indexes[], int max_out) const {
   int scratch[UI_SORT_SCRATCH];
   int n = 0;
@@ -81688,7 +81797,7 @@ void UITask::enforceHistoryCap(int thread_idx) {
     --_thread_msgs[thread_idx];
     ++trimmed;
   }
-  if (trimmed) _msgs_dirty = true;
+  if (trimmed) { _msgs_dirty = true; ++_reply_gen; }
 }
 
 bool UITask::threadHasMessageHistory(int thread_idx) const {
@@ -81758,6 +81867,7 @@ bool UITask::deleteMessageBySlot(int msg_idx) {
   m.sender[0] = '\0';
   segMarkSeqDirty(m.seq);   // the owning segment needs a compaction pass
   _msgs_dirty = true;
+  ++_reply_gen;
   return true;
 }
 
@@ -81785,6 +81895,7 @@ int UITask::clearThreadHistory(int thread_idx) {
   // it. Channels are listed regardless, so they need no pin.
   if (!_ui_threads[thread_idx].channel) _ui_threads[thread_idx].keep_when_empty = true;
   _thread_msgs[thread_idx] = 0;   // emptied, and no other thread was touched
+  ++_reply_gen;
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
   return cleared;

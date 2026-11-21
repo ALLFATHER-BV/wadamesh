@@ -146,7 +146,8 @@ struct __attribute__((packed)) Config {
   uint8_t  ct_purge_on;
   uint16_t ct_purge_days;
   // v73 (#824): the Chats "U" (unread only) chip. While on, the inbox lists only threads with
-  // unread messages, within whichever All / Channels / Direct chip is active.
+  // unread messages, within whichever All / Channels / Direct chip is active. #901 added
+  // a third value with no schema change: 2 = unread plus threads waiting on my reply.
   uint8_t  chats_unread_only;
 };
 
