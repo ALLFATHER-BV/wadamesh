@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: pl
-# ver: 33
+# ver: 34
 # name: Polski
 # base: pl
 # translators: tom73god (Discord)
@@ -2451,3 +2451,41 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Powrót do pionu… ponowne uruchamianie
 Keep	Zachowaj
 Orientation kept	Orientacja zachowana
+Unplug USB, then calibrate with a full battery	Odłącz USB, potem skalibruj przy pełnej baterii
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift na klawiaturze Bluetooth robi to samo.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift przełącza język klawiatury. Gdy jest bułgarski, klawisze piszą po bułgarsku fonetycznie.
+Now in %s	Teraz w: %s
+cities.bin could not be read	Nie można odczytać cities.bin
+City on Home	Miasto na ekranie głównym
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Z plikiem granic cities.bin na karcie SD ekran główny pokazuje miasto, w którym jesteś, zamiast nazwy węzła.
+# Web console (#854)
+Allow %s to use the web console?	Pozwolić %s korzystać z konsoli WWW?
+Allow once	Zezwól raz
+Always allow	Zawsze zezwalaj
+Deny	Odmów
+a browser	przeglądarce
+Browser	Przeglądarka
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Zobaczy twoje czaty i kontakty, będzie mogła wysyłać wiadomości, zmieniać ustawienia i sterować tym ekranem.
+The web console wants to:	Konsola WWW chce:
+Only allow this if you started it in the browser yourself.	Zezwól tylko, jeśli sam to uruchomiłeś w przeglądarce.
+Are you sure?	Na pewno?
+Web console	Konsola WWW
+Web console (recommended)	Konsola WWW (zalecane)
+Web console off	Konsola WWW wyłączona
+Web console on (connect Wi-Fi to reach it)	Konsola WWW włączona (połącz Wi-Fi, aby się z nią połączyć)
+Web console on: http://%s:%s/	Konsola WWW włączona: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Czaty, kontakty, ustawienia, terminal mesh, ekran na żywo i przesyłanie plików - wszystko na jednej stronie w przeglądarce. Nowa przeglądarka najpierw potrzebuje tutaj twojej zgody. Bez restartu.
+Trusted browsers	Zaufane przeglądarki
+No trusted browsers. Choose "Always allow" when a browser asks.	Brak zaufanych przeglądarek. Wybierz "Zawsze zezwalaj", gdy przeglądarka zapyta.
+Disconnect all browsers	Rozłącz wszystkie przeglądarki
+Browsers disconnected. They must ask again unless trusted.	Przeglądarki rozłączone. Muszą zapytać ponownie, chyba że są zaufane.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Uruchamia cały interfejs w rozmiarze przeglądarki, dla urządzeń bez używalnego ekranu; wyświetlacz pokazuje zastępczy obraz. Karta Ekran konsoli WWW już pokazuje ten ekran bez tego. Przełączenie restartuje urządzenie.
+Download a settings backup. It holds this node's private key.	Pobierz kopię zapasową ustawień. Zawiera klucz prywatny tego węzła.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Przywróć kopię zapasową ustawień. Zastępuje tożsamość, kanały i kontakty tego węzła, a potem restartuje.
+This page changed on the device. Reloading.	Ta strona zmieniła się na urządzeniu. Wczytywanie ponownie.
+Settings are open on the device. Close them there and try again.	Ustawienia są otwarte na urządzeniu. Zamknij je tam i spróbuj ponownie.
+Someone is typing on the device. Try again in a moment.	Ktoś pisze na urządzeniu. Spróbuj ponownie za chwilę.
+Waiting for an answer on the device.	Czekam na odpowiedź na urządzeniu.
+This app has no settings	Ta aplikacja nie ma ustawień
+Saved on the device for this app. The app reads them when it opens.	Zapisane na urządzeniu dla tej aplikacji. Aplikacja odczytuje je przy otwarciu.
+Could not save to the device storage	Nie udało się zapisać w pamięci urządzenia

@@ -23,12 +23,20 @@ static inline bool navSpatialMetrics(const NavRect& a, const NavRect& b, int dir
   const long dy = (long)(b.y1 + b.y2) / 2 - (long)(a.y1 + a.y2) / 2;
   long hgap = (long)b.x1 - a.x2; if ((long)a.x1 - b.x2 > hgap) hgap = (long)a.x1 - b.x2; if (hgap < 0) hgap = 0;
   long vgap = (long)b.y1 - a.y2; if ((long)a.y1 - b.y2 > vgap) vgap = (long)a.y1 - b.y2; if (vgap < 0) vgap = 0;
+  // A candidate that overlaps the focused rect on one axis and is clear of it on the
+  // other lies strictly along that other axis: beside it (same row) or above/below it
+  // (same column). Only diagonal or overlapping candidates are placed by their centres.
+  // Without this a tall Home widget next to a row of toggles, its centre 2 px lower,
+  // counted as "below" every toggle with a zero gap and swallowed each Down, so the
+  // widgets underneath could never be reached (ThinkNode M9, beta_103).
+  const bool same_row = vgap == 0 && hgap > 0;
+  const bool same_col = hgap == 0 && vgap > 0;
   bool ok;
   switch (dir) {
-    case NAV_UP:    ok = dy < 0; *primary = vgap; *cross = hgap; break;
-    case NAV_DOWN:  ok = dy > 0; *primary = vgap; *cross = hgap; break;
-    case NAV_LEFT:  ok = dx < 0; *primary = hgap; *cross = vgap; break;
-    default:        ok = dx > 0; *primary = hgap; *cross = vgap; break;  // NAV_RIGHT
+    case NAV_UP:    ok = dy < 0 && !same_row; *primary = vgap; *cross = hgap; break;
+    case NAV_DOWN:  ok = dy > 0 && !same_row; *primary = vgap; *cross = hgap; break;
+    case NAV_LEFT:  ok = dx < 0 && !same_col; *primary = hgap; *cross = vgap; break;
+    default:        ok = dx > 0 && !same_col; *primary = hgap; *cross = vgap; break;  // NAV_RIGHT
   }
   return ok;
 }

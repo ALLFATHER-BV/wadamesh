@@ -28,14 +28,21 @@ public:
   void setDisplayRotation(uint8_t rotation);
   void setBrightness(uint8_t value);
   bool getTouchPoint(uint16_t& x, uint16_t& y);
+  uint8_t touchAddr();   // 0x5D / 0x14 the GT911 answers at, 0 while silent
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels);
 
 private:
+  // Touch_GT911 keeps its init result to itself; this only reads it back.
+  struct Gt911 : lgfx::Touch_GT911 { bool ready() const { return _inited; } };
+  bool recoverTouch();
+
   lgfx::Bus_SPI _bus;
   lgfx::Panel_ILI9488 _panel;
   lgfx::Light_PWM _light;
-  lgfx::Touch_GT911 _touch;
+  Gt911 _touch;
   lgfx::LGFX_Device _lcd;
   bool _isOn = false;
+  uint32_t _touch_retry_ms = 0;
+  uint8_t _touch_retries = 0;
   uint16_t _color = 0xffff;
 };

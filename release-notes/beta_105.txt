@@ -1,0 +1,22 @@
+# beta_105 - community round: crash and dead-tap fixes, keyboard layouts, maps over 2 GB, V4 portrait header, T-Deck Pro/Max touch, M9 battery guard, d-pad reach. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards.
+
+Test build, on top of beta_104. The stable build stays beta_101.
+
+# --- New ---
+On-screen keyboards in other languages now have the same shape as the English one: Shift and Backspace were switched off on the Cyrillic, Greek and Arabic layouts, which made them close to unusable. The language key sits left of the space bar and is left out while English is the only layout switched on (#843 by kkazakov).
+Map files (.pmtiles) larger than 2 GB load: tiles stored past 2 GB could not be read and files over 4 GB were rejected. Files over 4 GB need an exFAT card (#841 by zmiguel).
+Heltec V4 and V4-R8 in portrait: an open chat and the Settings pages get a second header row with the back arrow and the name, as on the T-Deck Pro, the control panel fits the narrow screen, and the Sensors tab and Local sensors page no longer overlap their own text (#848 by oumike, #833).
+Wio Tracker L2 and T-Display P4: a tap on the wake button also puts a lit screen to sleep, so the button toggles the screen. Holding it for two seconds still locks or unlocks (#851 by kkazakov).
+A Bluetooth keyboard wakes the screen with any key, Ctrl, Alt and Shift included (#852 by kkazakov).
+
+# --- Fixes ---
+A crash after closing a sheet while a list was still scrolling (since beta_102 on the T-Deck), and a second one where an object queued for deletion was deleted twice. Both come from the screen library and are patched on every board (#850 by kremers).
+Taps that stopped opening anything until a restart: after some scrolls the screen library thought a scroll was still running, so rows lit up but nothing opened. This is cleared now on every touch board (#848 by oumike, #836).
+The d-pad and keys could not reach some controls: a taller neighbour in the same row, like the clock card beside the toggles on Home, counted as "below" and took every Down press. On the ThinkNode M9 that left the Heard and Unread widgets out of reach (reported by benanderson). This applies to every board driven by keys.
+
+# --- Boards ---
+T-Deck Pro and T-Deck Max: touch no longer stays dead for a whole session when one setup write to the touch chip fails. Setup is retried and touch stays on (#838 by CarpeNoctem, also reported by busy_moose).
+T-Deck: a DS3231 clock chip fitted to the keyboard's I2C bus is found at start-up. The bus was not set up yet when the clock was looked for (#830 by robots, #378 reported by jrote1).
+ThinkNode M9: the 3% switch-off no longer reacts to the short voltage dip of a transmission, and the battery level settles quickly after the cable comes or goes (#832 by TinkeringDao).

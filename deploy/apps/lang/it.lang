@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: it
-# ver: 33
+# ver: 34
 # name: Italiano
 # base: it
  (device behind)	 (dispositivo indietro)
@@ -2437,3 +2437,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Ritorno in verticale… riavvio
 Keep	Mantieni
 Orientation kept	Orientamento mantenuto
+Unplug USB, then calibrate with a full battery	Scollega l'USB, poi calibra con la batteria carica
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Maiusc su una tastiera Bluetooth fa lo stesso.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Maiusc cambia la lingua della tastiera. Quando è bulgaro, i tasti scrivono in bulgaro fonetico.
+Now in %s	Ora a %s
+cities.bin could not be read	Impossibile leggere cities.bin
+City on Home	Città nella Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Con un file di confini cities.bin sulla scheda SD, la Home mostra la città in cui ti trovi al posto del nome del nodo.
+# Web console (#854)
+Allow	Consenti
+Allow %s to use the web console?	Consentire a %s di usare la console web?
+Allow once	Consenti una volta
+Always allow	Consenti sempre
+Deny	Nega
+a browser	un browser
+Browser	Browser
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Vedrà chat e contatti, e potrà inviare messaggi, cambiare impostazioni e controllare questo schermo.
+The web console wants to:	La console web vuole:
+Only allow this if you started it in the browser yourself.	Consentilo solo se l'hai avviato tu nel browser.
+Are you sure?	Sei sicuro?
+Web console	Console web
+Web console (recommended)	Console web (consigliata)
+Web console off	Console web disattivata
+Web console on (connect Wi-Fi to reach it)	Console web attiva (connetti il Wi-Fi per raggiungerla)
+Web console on: http://%s:%s/	Console web attiva: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Chat, contatti, impostazioni, un terminale mesh, lo schermo dal vivo e il trasferimento file - tutto in una pagina del browser. Un nuovo browser ha bisogno prima del tuo OK qui. Nessun riavvio.
+Trusted browsers	Browser fidati
+No trusted browsers. Choose "Always allow" when a browser asks.	Nessun browser fidato. Scegli "Consenti sempre" quando un browser lo chiede.
+Disconnect all browsers	Disconnetti tutti i browser
+Browsers disconnected. They must ask again unless trusted.	Browser disconnessi. Devono chiedere di nuovo, a meno che siano fidati.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Esegue l'intera interfaccia alla dimensione del browser, per dispositivi senza uno schermo utilizzabile; il display mostra un segnaposto. La scheda Schermo della console web mostra già questo schermo senza di esso. Cambiarlo riavvia il dispositivo.
+Download a settings backup. It holds this node's private key.	Scarica un backup delle impostazioni. Contiene la chiave privata di questo nodo.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Ripristina un backup delle impostazioni. Sostituisce identità, canali e contatti di questo nodo, poi riavvia.
+This page changed on the device. Reloading.	Questa pagina è cambiata sul dispositivo. Ricaricamento.
+Settings are open on the device. Close them there and try again.	Le impostazioni sono aperte sul dispositivo. Chiudile lì e riprova.
+Someone is typing on the device. Try again in a moment.	Qualcuno sta scrivendo sul dispositivo. Riprova tra un momento.
+Waiting for an answer on the device.	In attesa di una risposta sul dispositivo.
+This app has no settings	Questa app non ha impostazioni
+Saved on the device for this app. The app reads them when it opens.	Salvate sul dispositivo per questa app. L'app le legge quando si apre.
+Could not save to the device storage	Impossibile salvare nella memoria del dispositivo

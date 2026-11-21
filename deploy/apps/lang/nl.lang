@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: nl
-# ver: 33
+# ver: 34
 # name: Nederlands
 # base: nl
  (device behind)	(apparaat loopt achter)
@@ -2436,3 +2436,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Terug naar staand… herstarten
 Keep	Houden
 Orientation kept	Stand gehouden
+Unplug USB, then calibrate with a full battery	Koppel USB los en kalibreer dan met een volle batterij
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift op een Bluetooth-toetsenbord doet hetzelfde.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift wisselt de toetsenbordtaal. Zolang die Bulgaars is, typen de toetsen Bulgaars fonetisch.
+Now in %s	Nu in %s
+cities.bin could not be read	cities.bin kon niet worden gelezen
+City on Home	Stad op Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Met een grenzenbestand cities.bin op de SD-kaart toont Home de stad waar je bent in plaats van de nodenaam.
+# Web console (#854)
+Allow	Toestaan
+Allow %s to use the web console?	%s de webconsole laten gebruiken?
+Allow once	Eenmalig toestaan
+Always allow	Altijd toestaan
+Deny	Weigeren
+a browser	een browser
+Browser	Browser
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Hij ziet je chats en contacten, en kan berichten sturen, instellingen wijzigen en dit scherm bedienen.
+The web console wants to:	De webconsole wil:
+Only allow this if you started it in the browser yourself.	Sta dit alleen toe als je het zelf in de browser hebt gestart.
+Are you sure?	Weet je het zeker?
+Web console	Webconsole
+Web console (recommended)	Webconsole (aanbevolen)
+Web console off	Webconsole uit
+Web console on (connect Wi-Fi to reach it)	Webconsole aan (verbind wifi om hem te bereiken)
+Web console on: http://%s:%s/	Webconsole aan: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Chats, contacten, instellingen, een mesh-terminal, het live scherm en bestandsoverdracht - alles op één browserpagina. Een nieuwe browser heeft hier eerst je OK nodig. Geen herstart.
+Trusted browsers	Vertrouwde browsers
+No trusted browsers. Choose "Always allow" when a browser asks.	Geen vertrouwde browsers. Kies "Altijd toestaan" wanneer een browser het vraagt.
+Disconnect all browsers	Alle browsers loskoppelen
+Browsers disconnected. They must ask again unless trusted.	Browsers losgekoppeld. Ze moeten opnieuw vragen, tenzij ze vertrouwd zijn.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Toont de hele interface op browsergrootte, voor toestellen zonder bruikbaar scherm; het display toont een plaatshouder. Het tabblad Scherm van de webconsole toont dit scherm al zonder dit. Omschakelen herstart het toestel.
+Download a settings backup. It holds this node's private key.	Een back-up van de instellingen downloaden. Die bevat de privésleutel van deze node.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Een back-up van de instellingen terugzetten. Die vervangt de identiteit, kanalen en contacten van deze node en herstart daarna.
+This page changed on the device. Reloading.	Deze pagina is op het toestel gewijzigd. Opnieuw laden.
+Settings are open on the device. Close them there and try again.	De instellingen zijn open op het toestel. Sluit ze daar en probeer opnieuw.
+Someone is typing on the device. Try again in a moment.	Iemand typt op het toestel. Probeer het zo meteen opnieuw.
+Waiting for an answer on the device.	Wachten op een antwoord op het toestel.
+This app has no settings	Deze app heeft geen instellingen
+Saved on the device for this app. The app reads them when it opens.	Op het toestel bewaard voor deze app. De app leest ze bij het openen.
+Could not save to the device storage	Kon niet opslaan in de opslag van het toestel

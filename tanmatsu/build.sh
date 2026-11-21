@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 # Reusable wadamesh/Tanmatsu build wrapper: activates the project-local ESP-IDF 5.5.1
 # and runs idf.py with our device/target/sdkconfig params.
-#   ./build.sh build        # compile
-#   ./build.sh flash -p ... # flash over USB (dev)
+#   ./build.sh build        # compile the AppFS app (launcher / app store)
+#   ./build.sh standalone   # + bootloader + standalone table -> build/tanmatsu/wadamesh-tanmatsu-merged.bin
+#   ./build.sh standalone-flash -p /dev/cu.usbmodemXXXX [--erase]
+#                           # write that merged image at 0x0. REPLACES the launcher.
+#                           # -p is required: the Tanmatsu's ESP32-P4 port.
 #   ./build.sh menuconfig
+#
+# Never `./build.sh flash`: idf.py writes the launcher's 16M.csv table plus the app
+# into a 2 MB OTA slot it does not fit. Use tools/tan_flash.sh (AppFS) or standalone-flash.
 set -e
 
 # Keep the baked-in translation + Lua app tables in step with deploy/apps/.
@@ -11,9 +17,14 @@ set -e
 # the IDF builds need it here or the P4 boards ship stale copies.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/pre_gen_baked.py"
 # LVGL is vendored (gitignored) by fetch-deps.sh, so a copy vendored before the
-# anim_timer use-after-free fix (#428) still needs it. Idempotent; fails on drift.
+# anim_timer use-after-free fix (#428), the scroll_obj one (beta_102) or the
+# pending async delete one still needs them. Idempotent; fails on drift.
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_anim_uaf.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_anim.c"
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_scroll_uaf.py" \
+  --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/core/lv_obj_tree.c"
+python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_async_del.py" \
+  --patch-root "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream"
 python3 "$(cd "$(dirname "$0")/.." && pwd)/scripts/build/patch_lvgl_arabic.py" \
   --patch-file "$(cd "$(dirname "$0")" && pwd)/components/lvgl/upstream/src/misc/lv_txt_ap.c"
 cd "$(dirname "$0")"
@@ -109,5 +120,72 @@ fi
 if [ "$#" -eq 1 ] && [ "$1" = build ]; then
   exec idf.py "${IDF_ARGS[@]}" gen_project_binary
 fi
+
+# Standalone (web flasher) image: the SAME application.bin as the AppFS build, booted
+# by the stock IDF bootloader from partition_tables/wadamesh_standalone.csv instead of
+# by the launcher. The app finds its data by partition label ('locfd') and the table
+# is at 0x8000 either way, so nothing in the app changes between the two.
+STANDALONE_BIN="build/tanmatsu/wadamesh-tanmatsu-merged.bin"
+# Port the last standalone-flash wrote to (the P4), for build-upload-monitor.sh.
+STANDALONE_PORT_FILE="build/tanmatsu/standalone/port"
+build_standalone() {
+  local B=build/tanmatsu PT=build/tanmatsu/standalone/partition-table.bin
+  idf.py "${IDF_ARGS[@]}" gen_project_binary bootloader
+  mkdir -p "$B/standalone"
+  python "$IDF_PATH/components/partition_table/gen_esp32part.py" --quiet --flash-size 16MB \
+    partition_tables/wadamesh_standalone.csv "$PT"
+  python "$IDF_PATH/components/partition_table/check_sizes.py" --offset 0x8000 \
+    partition --type app "$PT" "$B/application.bin"
+  # Blank otadata (0x1D000, 8K) so the bootloader starts ota_0 even after an OTA
+  # switched to ota_1. standalone-flash writes it on its own so NVS is kept.
+  python -c "import sys; sys.stdout.buffer.write(b'\xff' * 0x2000)" > "$B/standalone/otadata-blank.bin"
+  # Web installer image, written at 0x0. merge_bin pads the 0x9000-0x20000 gap with
+  # 0xFF, so otadata AND NVS (0x19000) are erased: a web install starts at the setup
+  # wizard. 'locfd' lies past the end of the image and is left alone.
+  python -m esptool --chip esp32p4 merge_bin --flash_mode dio --flash_size 16MB --flash_freq 80m \
+    -o "$STANDALONE_BIN" \
+    0x2000 "$B/bootloader/bootloader.bin" \
+    0x8000 "$PT" \
+    0x20000 "$B/application.bin" >/dev/null
+  echo "[build.sh] standalone image: tanmatsu/$STANDALONE_BIN ($(wc -c < "$STANDALONE_BIN" | tr -d ' ') bytes)"
+}
+
+case "${1:-}" in
+  standalone)
+    [ "$#" -eq 1 ] || { echo "usage: ./build.sh standalone" >&2; exit 2; }
+    build_standalone
+    exit 0 ;;
+  standalone-flash)
+    shift
+    port=""; erase=0
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        -p|--port) port="${2:-}"; shift ;;
+        --erase)   erase=1 ;;
+        *) echo "usage: ./build.sh standalone-flash -p PORT [--erase]" >&2; exit 2 ;;
+      esac
+      shift
+    done
+    # The port must be named. Every ESP32-P4 passes esptool's --chip esp32p4 check, so
+    # trying each port would also write (or erase) a T-Display P4 or a CrowPanel P4 on
+    # the same desk. The Tanmatsu shows two ports, its ESP32-P4 and its ESP32-C6 radio,
+    # and their names swap between replugs: the C6 one is refused here by that check.
+    if [ -z "$port" ]; then
+      echo "[build.sh] pass -p PORT, the Tanmatsu's ESP32-P4 port. USB serial ports now:" >&2
+      for p in /dev/cu.usbmodem* /dev/ttyACM*; do [ -e "$p" ] && echo "  $p" >&2; done
+      exit 2
+    fi
+    build_standalone
+    rm -f "$STANDALONE_PORT_FILE"
+    echo "[build.sh] flashing the standalone image to $port: this REPLACES the badge.team launcher"
+    if [ "$erase" = 1 ]; then python -m esptool --chip esp32p4 -p "$port" erase_flash; fi
+    python -m esptool --chip esp32p4 -p "$port" write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \
+      0x2000 build/tanmatsu/bootloader/bootloader.bin \
+      0x8000 build/tanmatsu/standalone/partition-table.bin \
+      0x1D000 build/tanmatsu/standalone/otadata-blank.bin \
+      0x20000 build/tanmatsu/application.bin
+    echo "$port" > "$STANDALONE_PORT_FILE"
+    exit 0 ;;
+esac
 
 exec idf.py "${IDF_ARGS[@]}" "$@"

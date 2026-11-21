@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: el
-# ver: 33
+# ver: 34
 # name: Ελληνικά
 # base: el
  (device behind)	 (συσκευή πίσω)
@@ -2438,3 +2438,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Επιστροφή σε κατακόρυφο… επανεκκίνηση
 Keep	Διατήρηση
 Orientation kept	Ο προσανατολισμός διατηρήθηκε
+Unplug USB, then calibrate with a full battery	Αποσυνδέστε το USB και βαθμονομήστε με γεμάτη μπαταρία
+Ctrl+Shift on a Bluetooth keyboard does the same.	Το Ctrl+Shift σε πληκτρολόγιο Bluetooth κάνει το ίδιο.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Το Ctrl+Shift αλλάζει τη γλώσσα πληκτρολογίου. Όταν είναι Βουλγαρικά, τα πλήκτρα γράφουν βουλγαρικά φωνητικά.
+Now in %s	Τώρα σε %s
+cities.bin could not be read	Το cities.bin δεν διαβάστηκε
+City on Home	Πόλη στην Αρχική
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Με αρχείο ορίων cities.bin στην κάρτα SD, η Αρχική δείχνει την πόλη όπου βρίσκεστε αντί για το όνομα του κόμβου.
+# Web console (#854)
+Allow	Να επιτρέπεται
+Allow %s to use the web console?	Να επιτραπεί στο %s να χρησιμοποιεί την κονσόλα web;
+Allow once	Μία φορά
+Always allow	Πάντα να επιτρέπεται
+Deny	Άρνηση
+a browser	ένα πρόγραμμα περιήγησης
+Browser	Πρόγραμμα περιήγησης
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Θα βλέπει τις συνομιλίες και τις επαφές σας και θα μπορεί να στέλνει μηνύματα, να αλλάζει ρυθμίσεις και να ελέγχει αυτή την οθόνη.
+The web console wants to:	Η κονσόλα web θέλει να:
+Only allow this if you started it in the browser yourself.	Επιτρέψτε το μόνο αν το ξεκινήσατε εσείς στο πρόγραμμα περιήγησης.
+Are you sure?	Είστε σίγουροι;
+Web console	Κονσόλα web
+Web console (recommended)	Κονσόλα web (προτείνεται)
+Web console off	Κονσόλα web ανενεργή
+Web console on (connect Wi-Fi to reach it)	Κονσόλα web ενεργή (συνδέστε Wi-Fi για πρόσβαση)
+Web console on: http://%s:%s/	Κονσόλα web ενεργή: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Συνομιλίες, επαφές, ρυθμίσεις, τερματικό mesh, η ζωντανή οθόνη και μεταφορά αρχείων - όλα σε μία σελίδα του προγράμματος περιήγησης. Ένα νέο πρόγραμμα περιήγησης χρειάζεται πρώτα την έγκρισή σας εδώ. Χωρίς επανεκκίνηση.
+Trusted browsers	Αξιόπιστα προγράμματα περιήγησης
+No trusted browsers. Choose "Always allow" when a browser asks.	Κανένα αξιόπιστο πρόγραμμα περιήγησης. Επιλέξτε "Πάντα να επιτρέπεται" όταν ένα πρόγραμμα περιήγησης ζητήσει.
+Disconnect all browsers	Αποσύνδεση όλων των προγραμμάτων περιήγησης
+Browsers disconnected. They must ask again unless trusted.	Τα προγράμματα περιήγησης αποσυνδέθηκαν. Πρέπει να ζητήσουν ξανά, εκτός αν είναι αξιόπιστα.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Εκτελεί όλη τη διεπαφή σε μέγεθος προγράμματος περιήγησης, για συσκευές χωρίς χρήσιμη οθόνη· η οθόνη δείχνει ένδειξη θέσης. Η καρτέλα Οθόνη της κονσόλας web δείχνει ήδη αυτή την οθόνη χωρίς αυτό. Η εναλλαγή επανεκκινεί τη συσκευή.
+Download a settings backup. It holds this node's private key.	Λήψη αντιγράφου ασφαλείας ρυθμίσεων. Περιέχει το ιδιωτικό κλειδί αυτού του κόμβου.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Επαναφορά αντιγράφου ασφαλείας ρυθμίσεων. Αντικαθιστά την ταυτότητα, τα κανάλια και τις επαφές αυτού του κόμβου και μετά επανεκκινεί.
+This page changed on the device. Reloading.	Αυτή η σελίδα άλλαξε στη συσκευή. Επαναφόρτωση.
+Settings are open on the device. Close them there and try again.	Οι ρυθμίσεις είναι ανοιχτές στη συσκευή. Κλείστε τις εκεί και δοκιμάστε ξανά.
+Someone is typing on the device. Try again in a moment.	Κάποιος πληκτρολογεί στη συσκευή. Δοκιμάστε ξανά σε λίγο.
+Waiting for an answer on the device.	Αναμονή απάντησης στη συσκευή.
+This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
+Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
+Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής

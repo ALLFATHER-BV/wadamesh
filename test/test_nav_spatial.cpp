@@ -101,6 +101,26 @@ int main() {
     assert(navSpatialPick(cur, cand, 1, NAV_UP) == -1);
   }
 
+  // ThinkNode M9 Home widgets (Discord, beta_103): the clock card is taller than the row
+  // of toggles beside it and its centre sits 2 px lower, so it used to count as "below"
+  // every toggle with a zero gap. Down from a toggle must reach the Heard card, and
+  // Right from "no fix" the radar, not the clock above it.
+  {
+    const NavRect bell = { 275, 43, 304, 76 };
+    const NavRect cand[] = {
+      { 6, 30, 157, 93 },      // clock, same row
+      { 241, 100, 312, 163 },  // heard, below
+      { 85, 100, 235, 233 },   // radar
+    };
+    assert(navSpatialPick(bell, cand, 3, NAV_DOWN) == 1);
+    const NavRect nofix = { 6, 100, 78, 163 };
+    const NavRect cand2[] = {
+      { 6, 30, 157, 93 },      // clock, same column, above
+      { 85, 100, 235, 233 },   // radar, to the right
+    };
+    assert(navSpatialPick(nofix, cand2, 2, NAV_RIGHT) == 1);
+  }
+
   printf("test_nav_spatial: OK\n");
   return 0;
 }

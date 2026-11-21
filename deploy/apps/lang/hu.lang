@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: hu
-# ver: 33
+# ver: 34
 # name: Magyar
 # base: hu
  (device behind)	 (készülék hátulján)
@@ -2448,3 +2448,41 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Vissza álló nézetre… újraindítás
 Keep	Megtart
 Orientation kept	Tájolás megtartva
+Unplug USB, then calibrate with a full battery	Húzza ki az USB-t, majd kalibráljon teli akkumulátorral
+Ctrl+Shift on a Bluetooth keyboard does the same.	A Ctrl+Shift egy Bluetooth-billentyűzeten ugyanezt teszi.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	A Ctrl+Shift váltja a billentyűzet nyelvét. Amíg bolgár, a billentyűk bolgár fonetikus kiosztással írnak.
+Now in %s	Most itt: %s
+cities.bin could not be read	A cities.bin nem olvasható
+City on Home	Város a kezdőképernyőn
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Ha az SD-kártyán van cities.bin határfájl, a kezdőképernyő a csomópont neve helyett azt a várost mutatja, ahol vagy.
+# Web console (#854)
+Allow %s to use the web console?	Engedélyezed, hogy %s használja a webkonzolt?
+Allow once	Egyszer engedélyez
+Always allow	Mindig engedélyez
+Deny	Elutasít
+a browser	egy böngésző
+Browser	Böngésző
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Látni fogja a csevegéseidet és névjegyeidet, és üzenetet küldhet, beállításokat módosíthat és vezérelheti ezt a képernyőt.
+The web console wants to:	A webkonzol ezt szeretné:
+Only allow this if you started it in the browser yourself.	Csak akkor engedélyezd, ha te magad indítottad a böngészőben.
+Are you sure?	Biztos vagy benne?
+Web console	Webkonzol
+Web console (recommended)	Webkonzol (ajánlott)
+Web console off	Webkonzol kikapcsolva
+Web console on (connect Wi-Fi to reach it)	Webkonzol bekapcsolva (csatlakozz Wi-Fi-hez az eléréshez)
+Web console on: http://%s:%s/	Webkonzol bekapcsolva: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Csevegések, névjegyek, beállítások, mesh terminál, élő képernyő és fájlátvitel - mind egy böngészőoldalon. Egy új böngészőnek először itt kell az engedélyed. Nincs újraindítás.
+Trusted browsers	Megbízható böngészők
+No trusted browsers. Choose "Always allow" when a browser asks.	Nincs megbízható böngésző. Válaszd a "Mindig engedélyez" lehetőséget, amikor egy böngésző kérdez.
+Disconnect all browsers	Minden böngésző leválasztása
+Browsers disconnected. They must ask again unless trusted.	Böngészők leválasztva. Újra kérniük kell, hacsak nem megbízhatók.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	A teljes felületet böngészőméretben futtatja, használható képernyő nélküli eszközökhöz; a kijelző helyőrzőt mutat. A webkonzol Képernyő lapja enélkül is mutatja ezt a képernyőt. Az átkapcsolás újraindítja az eszközt.
+Download a settings backup. It holds this node's private key.	Beállítások mentésének letöltése. Tartalmazza ennek a csomópontnak a privát kulcsát.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Beállítások mentésének visszaállítása. Lecseréli ennek a csomópontnak az identitását, csatornáit és névjegyeit, majd újraindul.
+This page changed on the device. Reloading.	Ez az oldal megváltozott az eszközön. Újratöltés.
+Settings are open on the device. Close them there and try again.	A beállítások nyitva vannak az eszközön. Zárd be ott, és próbáld újra.
+Someone is typing on the device. Try again in a moment.	Valaki éppen gépel az eszközön. Próbáld újra egy pillanat múlva.
+Waiting for an answer on the device.	Válaszra vár az eszközön.
+This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
+Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
+Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére

@@ -332,12 +332,30 @@
 // the regular Heltec V4 has only 2 MB and no SD, so both conditions exclude it.
 // Not the T-LoRa Pager: its app slot is full (beta_103 overflowed by 2 KB with
 // the pack in; leaving it out frees about 7 KB).
+// The 240 px wide boards whose status bar grows a second row (the open chat's or the
+// settings page's title) while the screen is portrait, and whose control panel then
+// drops its battery and sensor lines (#833). The T-Deck Pro has the two-row bar always
+// and keeps its own HAS_TDECK_PRO branches. The V4-R8 build defines HELTEC_LORA_V4_TFT too.
+#if defined(HELTEC_LORA_V4_TFT)
+  #define CAP_TWO_ROW_BAR_PORTRAIT 1
+#else
+  #define CAP_TWO_ROW_BAR_PORTRAIT 0
+#endif
+
 #if CAP_SD && defined(BOARD_HAS_PSRAM) && \
     (defined(HAS_CROWPANEL_35) || defined(HAS_TDECK_PRO) || defined(HAS_TDECK_GT911) || \
      defined(HAS_THINKNODE_M9) || defined(HELTEC_LORA_V4_R8))
   #define CAP_EMOJI_PACK 1
 #else
   #define CAP_EMOJI_PACK 0
+#endif
+
+// "Now in <city>" (CITY_LOCATOR.md): the GPS fix looked up in a boundary file from the
+// SD card, held in PSRAM. Not the T-LoRa Pager: its app slot is full.
+#if CAP_SD && CAP_GPS && defined(BOARD_HAS_PSRAM) && defined(ESP32) && !defined(TLORA_PAGER)
+  #define CAP_CITY_LOCATOR 1
+#else
+  #define CAP_CITY_LOCATOR 0
 #endif
 
 // Persisted, restart-to-apply UI-size selector. Large-screen boards already
@@ -373,6 +391,15 @@
   #define CAP_BLE_KEYBOARD 1
 #else
   #define CAP_BLE_KEYBOARD 0
+#endif
+
+// The Bluetooth keyboard's Bulgarian phonetic deck, its Ctrl+Shift language switch
+// and the layout badge above the chat composer (#855). Not the T-LoRa Pager: its app
+// slot is full, and it has a keyboard of its own.
+#if CAP_BLE_KEYBOARD && !defined(TLORA_PAGER)
+  #define CAP_BLE_KBD_LANG 1
+#else
+  #define CAP_BLE_KBD_LANG 0
 #endif
 
 // A keyboard that comes and goes at runtime and is routed like the Bluetooth
@@ -461,6 +488,17 @@
   #define CAP_EPAPER 1
 #else
   #define CAP_EPAPER 0
+#endif
+
+// Short pulses along the map's self-to-contact lines as messages and ACKs come and go
+// (#827). Each one repaints for about a second, so not on e-paper (see above), and not
+// on the T-LoRa Pager, whose app slot had about 800 bytes left with them.
+#ifndef CAP_MAP_PULSES
+  #if CAP_EPAPER || defined(TLORA_PAGER)
+    #define CAP_MAP_PULSES 0
+  #else
+    #define CAP_MAP_PULSES 1
+  #endif
 #endif
 
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
@@ -677,6 +715,29 @@
   #define CAP_SCREEN_MIRROR 1
 #endif
 
+// ---- Web console (#854) ---------------------------------------------------------
+// CAP_WEB_CONSOLE: the browser console on the WebSocket port (Mesh, Screen and Files
+// tabs) and the on-device cards that let a browser in and confirm what it asks for.
+// Not on the Tanmatsu, which serves no web UI. CAP_WEB_CONSOLE_SETTINGS: its Settings
+// and Dashboard tabs, which drive the device's own Settings pages (WebSettingsEngine.h)
+// and cost about 36 KB of flash. Not on the T-LoRa Pager: its app slot is full (the
+// console with both tabs overflowed it by 9 KB). The Pager never had those tabs, so
+// nothing is taken away.
+#ifndef CAP_WEB_CONSOLE
+  #if defined(HAS_TANMATSU)
+    #define CAP_WEB_CONSOLE 0
+  #else
+    #define CAP_WEB_CONSOLE 1
+  #endif
+#endif
+#ifndef CAP_WEB_CONSOLE_SETTINGS
+  #if CAP_WEB_CONSOLE && !defined(TLORA_PAGER)
+    #define CAP_WEB_CONSOLE_SETTINGS 1
+  #else
+    #define CAP_WEB_CONSOLE_SETTINGS 0
+  #endif
+#endif
+
 // ---- Links the board sets up itself ------------------------------------------
 // CAP_WIFI_SETUP / CAP_BT_SETUP: Settings > Wi-Fi and > Bluetooth configure the board's
 // own radios (networks, the pairing code). A board whose links are chosen elsewhere
@@ -753,6 +814,17 @@
     #define CAP_LUA_SDK_EXT 0   // 2 MB V4 (and anything marked low-resource)
   #else
     #define CAP_LUA_SDK_EXT 1   // 8 MB boards incl. the V4-R8
+  #endif
+#endif
+
+// wada.ui.image: an app draws a PNG / JPEG / BMP from one of its own files. Needs
+// wada.fs (the extended SDK) and the firmware's image decoders, which only ESP32
+// builds carry. Not on the T-LoRa Pager: its app slot has no room left for it.
+#ifndef CAP_LUA_IMAGE
+  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(TLORA_PAGER)
+    #define CAP_LUA_IMAGE 1
+  #else
+    #define CAP_LUA_IMAGE 0
   #endif
 #endif
 

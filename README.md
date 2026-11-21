@@ -67,7 +67,8 @@ file**; the choice is remembered across restarts. Without a saved choice the
 read-only; tiles missing from the selected archive still load from the
 `maps/osm/z/x/y.png` or `/tiles/z/x/y.jpg` layouts and the normal Wi-Fi tile
 fallback, and **Folder tiles only** turns archives off. JPEG and vector
-PMTiles archives are not supported.
+PMTiles archives are not supported. An archive larger than 4 GB needs an exFAT
+card (FAT32 cannot hold a file that size); any size works there.
 
 Picking an archive moves the zoom into its range if it is outside. With
 **Tiles from SD card** on, **Map options → Zoom: map levels only** limits the

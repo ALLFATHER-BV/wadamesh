@@ -53,29 +53,29 @@ struct M9BatterySmoother {
   unsigned long flip_ms  = 0;
   int           ext_prev = -2;
 
-  uint16_t sample(uint16_t raw) {
+  uint16_t sample(uint16_t raw, bool snap = false) {
     if (raw == 0) return 0;
-    if (ema < 1.0f) {
+    if (ema < 1.0f || snap) {
       ema = (float)raw;
     } else {
       const float d = (float)raw - ema;
-      if (d > 70.0f || d < -70.0f) ema = (float)raw;
-      else                         ema += d * 0.15f;
+      ema += d * 0.15f;
     }
     return (uint16_t)(ema + 0.5f);
   }
 
   uint16_t smooth(uint16_t raw, int ext_present, int chg_state, unsigned long now_ms) {
-    const uint16_t cur = sample(raw);
-    if (cur == 0) return 0;
+    if (raw == 0) return 0;
     const int ext_now = ((ext_present & 1) << 2) | (chg_state & 3);
     const bool charge_flip = (pub != 0) && ext_prev != -2 && ext_now != ext_prev;
     ext_prev = ext_now;
+    const bool settle_due = flip_ms && !charge_flip && (unsigned long)(now_ms - flip_ms) >= 3000UL;
+    const uint16_t cur = sample(raw, charge_flip || settle_due);
     if (pub == 0 || charge_flip || (unsigned long)(now_ms - pub_ms) >= 20000UL) {
       pub     = cur;
       pub_ms  = now_ms;
       flip_ms = charge_flip ? (now_ms ? now_ms : 1UL) : 0UL;
-    } else if (flip_ms && (unsigned long)(now_ms - flip_ms) >= 3000UL) {
+    } else if (settle_due) {
       pub     = cur;
       pub_ms  = now_ms;
       flip_ms = 0UL;

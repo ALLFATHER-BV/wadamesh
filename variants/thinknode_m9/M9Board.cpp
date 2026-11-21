@@ -229,10 +229,17 @@ uint16_t ThinkNodeM9Board::getBattMilliVolts() {
 #endif
 }
 
+#if defined(PIN_USB_5V_SENSE)
+static bool usbSensePresent() { return digitalRead(PIN_USB_5V_SENSE) == LOW; }
+#endif
+
 int ThinkNodeM9Board::externalPowerPresent() {
 #if defined(PIN_USB_5V_SENSE)
-  // V1.0 schematic wires 5V_TEST (USB VBUS sense) to GPIO1 and U6 (LGS4056HDA-4.35) DONE to GPIO8.
-  return digitalRead(PIN_USB_5V_SENSE) == HIGH ? 1 : 0;
+  // 5V_TEST (USB VBUS sense) on GPIO1 reads LOW while USB power is present, the
+  // same as Meshtastic's M9 variant (EXT_PWR_DETECT 1, EXT_PWR_DETECT_VALUE LOW).
+  // beta_103 read it active-HIGH, so every M9 showed charging on battery and
+  // battery on USB (the screensaver followed, and the 3% switch-off never fired).
+  return usbSensePresent() ? 1 : 0;
 #else
   return -1;
 #endif
@@ -240,7 +247,7 @@ int ThinkNodeM9Board::externalPowerPresent() {
 
 int ThinkNodeM9Board::isCharging() const {
 #if defined(PIN_USB_5V_SENSE)
-  if (digitalRead(PIN_USB_5V_SENSE) != HIGH) return 0; // USB VBUS absent -> discharging
+  if (!usbSensePresent()) return 0; // USB VBUS absent -> discharging
 #if defined(PIN_CHG_DONE)
   // U6 (LGS4056HDA-4.35) DONE# pin (GPIO8) is open-drain active-LOW with internal pull-up:
   // HIGH (1, pulled up while open-drain off) = actively charging (1),

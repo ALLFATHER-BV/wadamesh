@@ -1,0 +1,25 @@
+{
+  "_about": "Community videos on the homepage (#videos). 'show' is rendered newest first by date. 'skip' holds videos that were looked at and turned down, so they are not suggested again. Titles are the creator's own, without emoji.",
+  "show": [
+    { "id": "OpZffwPpSLQ", "date": "2026-11-07", "title": "WADAMESH + MeshCore + TAK Features", "by": "EmComm Solutions" },
+    { "id": "r-XYsbq_DgU", "date": "2026-11-06", "title": "Ditch the Phone: Wadamesh on the Elecrow ThinkNode M9 (my pick)", "by": "Signal Trek" },
+    { "id": "7uFbi2WXm8s", "date": "2026-10-19", "title": "Seeed Studio Wio Tracker L2 Pro + WadaMesh! First Impressions & Setup Guide", "by": "KDHD Stuff" },
+    { "id": "KUAFvy5MsxA", "date": "2026-09-11", "title": "Test Firmware für LilyGo T-Display P4 und K270 Keyboard: Launcher, Meshcore Meck-P4 und Wadamesh", "by": "Doc Cool" },
+    { "id": "ygdJxk_eQwY", "date": "2026-09-06", "title": "WADAMESH - TANMATSU 2.0 - BETA 76 - MeshCore UI", "by": "TEXIT RAIDER" },
+    { "id": "6EuMfYuVcZE", "date": "2026-08-29", "title": "Installing WADAMESH on the Lilygo T-Deck - What MeshOS could have been!", "by": "Radiohyperactivity - LB5JJ" },
+    { "id": "WWMD0o4H9bw", "date": "2026-08-28", "title": "The Open Source Wadamesh Firmware for MeshCore is great!", "by": "AlpineRadioWaves" },
+    { "id": "NEzMOYMaKnA", "date": "2026-07-19", "title": "Best Screen on a MeshCore Device!! The Lilygo T-Display P4 - WadaMesh Firmware", "by": "KDHD Stuff" },
+    { "id": "1I7Oe1SqFlk", "date": "2026-07-14", "title": "WadaMesh Update! Supercharge Your T-Deck", "by": "KDHD Stuff" },
+    { "id": "e63uKp9r65U", "date": "2026-07-12", "title": "LilyGo T-Deck + WADAMESH: The Firmware That Finally Makes It Worth It", "by": "Signal Trek" },
+    { "id": "s-8pRsC0TYA", "date": "2026-07-09", "title": "Giving my Lilygo T-Deck Plus a Game-Changing Upgrade", "by": "BFGNeil" },
+    { "id": "V19od8jbFRc", "date": "2026-06-22", "title": "WadaMesh: The Best T-Deck Firmware So Far", "by": "KDHD Stuff" }
+  ],
+  "skip": [
+    { "id": "6X6FgcEb370", "by": "Attaky", "why": "1:42 flashing clip" },
+    { "id": "eUDOPRm8Evc", "by": "ProjectsApe", "why": "1:46 dual-boot clip" },
+    { "id": "xhOvOJ6oVtQ", "by": "F5SVP", "why": "MeshOS vs Wadamesh head-to-head" },
+    { "id": "8ubNvc7AwuE", "by": "TEXIT RAIDER", "why": "older beta_63 video, beta_76 one shown" },
+    { "id": "U47MCMvLu4o", "by": "TEXIT RAIDER", "why": "older beta_39 video, beta_76 one shown" },
+    { "id": "A7o-9C-Mkm0", "by": "Ham Radio Tube", "why": "about reflashing from meshcore.io, not wadamesh" }
+  ]
+}

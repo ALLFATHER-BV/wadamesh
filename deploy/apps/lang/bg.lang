@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: bg
-# ver: 33
+# ver: 34
 # name: Български
 # base: bg
  (device behind)	 (устройството изостава)
@@ -2438,3 +2438,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Обратно към портретна… рестартиране
 Keep	Запази
 Orientation kept	Ориентацията е запазена
+Unplug USB, then calibrate with a full battery	Изключете USB, после калибрирайте с пълна батерия
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift на Bluetooth клавиатура прави същото.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift сменя езика на клавиатурата. Докато е български, клавишите пишат на българска фонетична подредба.
+Now in %s	Сега в %s
+cities.bin could not be read	cities.bin не може да се прочете
+City on Home	Град на началния екран
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	С файл с граници cities.bin на SD картата началният екран показва града, в който сте, вместо името на възела.
+# Web console (#854)
+Allow	Разреши
+Allow %s to use the web console?	Да се разреши ли на %s да използва уеб конзолата?
+Allow once	Разреши веднъж
+Always allow	Винаги разрешавай
+Deny	Откажи
+a browser	браузър
+Browser	Браузър
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Ще вижда чатовете и контактите ви и ще може да изпраща съобщения, да променя настройки и да управлява този екран.
+The web console wants to:	Уеб конзолата иска да:
+Only allow this if you started it in the browser yourself.	Разрешете само ако сами сте го стартирали в браузъра.
+Are you sure?	Сигурни ли сте?
+Web console	Уеб конзола
+Web console (recommended)	Уеб конзола (препоръчително)
+Web console off	Уеб конзолата е изключена
+Web console on (connect Wi-Fi to reach it)	Уеб конзолата е включена (свържете Wi-Fi, за да я достъпите)
+Web console on: http://%s:%s/	Уеб конзолата е включена: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Чатове, контакти, настройки, mesh терминал, екранът на живо и прехвърляне на файлове - всичко в една страница на браузъра. Нов браузър първо се нуждае от вашето одобрение тук. Без рестарт.
+Trusted browsers	Доверени браузъри
+No trusted browsers. Choose "Always allow" when a browser asks.	Няма доверени браузъри. Изберете "Винаги разрешавай", когато браузър попита.
+Disconnect all browsers	Прекъсни всички браузъри
+Browsers disconnected. They must ask again unless trusted.	Браузърите са прекъснати. Трябва да попитат отново, освен ако не са доверени.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Изпълнява целия интерфейс в размера на браузъра, за устройства без използваем екран; дисплеят показва заместител. Разделът Екран на уеб конзолата вече показва този екран и без това. Превключването рестартира устройството.
+Download a settings backup. It holds this node's private key.	Изтегляне на резервно копие на настройките. То съдържа частния ключ на този възел.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Възстановяване на резервно копие на настройките. То заменя идентичността, каналите и контактите на този възел, след което рестартира.
+This page changed on the device. Reloading.	Тази страница се промени на устройството. Презареждане.
+Settings are open on the device. Close them there and try again.	Настройките са отворени на устройството. Затворете ги там и опитайте отново.
+Someone is typing on the device. Try again in a moment.	Някой пише на устройството. Опитайте отново след малко.
+Waiting for an answer on the device.	Изчакване на отговор на устройството.
+This app has no settings	Това приложение няма настройки
+Saved on the device for this app. The app reads them when it opens.	Запазени на устройството за това приложение. Приложението ги чете при отваряне.
+Could not save to the device storage	Неуспешно запазване в паметта на устройството

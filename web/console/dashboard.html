@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>wadamesh dashboard</title>
+<style>
+/*#include theme.css*/
+body{padding:18px 20px 28px;max-width:1180px;margin:0 auto}
+#hd{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+#hd h1{margin:0;font-size:22px;font-weight:650;letter-spacing:-.01em}
+#hd .sub{color:var(--sub);font-size:13px}#hd .sub code{font-family:var(--mono);font-size:12px;background:var(--panel2);padding:1px 6px;border-radius:6px}
+#live{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:var(--sub)}
+#live i{width:8px;height:8px;border-radius:50%;background:var(--faint)}#live.on i{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);padding:14px 16px;min-width:0}
+.card h2{margin:0 0 10px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);display:flex;align-items:center;gap:6px}
+.card h2 svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.big{font-size:26px;font-weight:650;letter-spacing:-.02em;line-height:1.1}.big small{font-size:13px;font-weight:500;color:var(--sub);margin-left:4px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin-top:8px;font-size:13px}.kv span{color:var(--sub)}.kv b{font-weight:500;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar{height:6px;border-radius:6px;background:var(--panel2);overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--acc);border-radius:6px;transition:width .4s}
+.bar.w i{background:var(--warn)}.bar.d i{background:var(--danger)}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:20px;background:var(--panel2);color:var(--sub)}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}.pill.w{background:var(--warn-soft);color:var(--warn)}
+svg.sp{width:100%;height:46px;margin-top:8px;display:block}svg.sp path{fill:none;stroke:var(--acc);stroke-width:2}svg.sp path.a{fill:var(--acc-soft);stroke:none}
+.wide{grid-column:1/-1}
+table{width:100%;border-collapse:collapse;font-size:13px}th{text-align:left;font-weight:600;color:var(--faint);font-size:11px;letter-spacing:.05em;text-transform:uppercase;padding:0 8px 8px}
+td{padding:8px;border-top:1px solid var(--line);white-space:nowrap}td:first-child{width:100%;white-space:normal;overflow-wrap:anywhere}
+.ty{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--info)}.ty.r{background:var(--warn)}.ty.m{background:var(--ok)}
+.muted{color:var(--sub)}.empty{color:var(--sub);padding:10px 0 2px;font-size:13px}
+#err{display:none;margin-bottom:12px;padding:10px 14px;border-radius:10px;background:var(--warn-soft);color:var(--warn);font-size:13px}#err.on{display:block}
+@media (max-width:560px){body{padding:14px 12px}.grid{grid-template-columns:1fr}}
+</style></head><body>
+<div id="hd"><div><h1 id="nm">Dashboard</h1><div class="sub" id="who">Connecting…</div></div><div id="live"><i></i><span>Live</span></div></div>
+<div id="err"></div>
+<div class="grid">
+ <div class="card"><h2><svg viewBox="0 0 24 24"><rect x=2 y=7 width=18 height=10 rx=2 /><path d="M22 11v2"/></svg>Battery</h2><div class="big" id="bt">–</div><div class="bar" id="btb"><i></i></div><div class="kv" id="btk"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"/></svg>Last signal</h2><div class="big" id="sg">–</div><div class="kv" id="sgk"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><path d="M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2M7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4"/><circle cx=12 cy=12 r=2 /></svg>Radio</h2><div class="big" id="rf">–</div><div class="kv" id="rfk"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><circle cx=12 cy=12 r=9 /><path d="M12 7v5l3 2"/></svg>Uptime</h2><div class="big" id="up">–</div><div class="kv" id="upk"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Packets</h2><div class="big" id="pk">–</div><svg class="sp" id="spk" viewBox="0 0 100 40" preserveAspectRatio="none"></svg><div class="kv" id="pkk"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><path d="M5 12.6a10 10 0 0 1 14 0M8.5 16.1a5 5 0 0 1 7 0M2 9a15 15 0 0 1 20 0M12 20h.01"/></svg>Connections</h2><div class="kv" id="nk" style="margin-top:0"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><rect x=4 y=4 width=16 height=16 rx=2 /><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>Memory</h2><div class="kv" id="mk" style="margin-top:0"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><ellipse cx=12 cy=5 rx=8 ry=3 /><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Storage</h2><div class="kv" id="sk" style="margin-top:0"></div></div>
+ <div class="card"><h2><svg viewBox="0 0 24 24"><circle cx=9 cy=8 r=4 /><path d="M2 21c0-4 3-6 7-6s7 2 7 6M17 11a3 3 0 1 0 0-6M22 21c0-3-2-5-4-5.5"/></svg>Contacts</h2><div class="big" id="ct">–</div><div class="bar" id="ctb"><i></i></div><div class="kv" id="ctk"></div></div>
+ <div class="card wide"><h2><svg viewBox="0 0 24 24"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>Recently heard</h2><div id="hl"><div class="empty">Waiting for data…</div></div></div>
+</div>
+<!--#include auth.html-->
+<script>
+/*#include auth.js*/
+// Live view of the node (#854): the device answers "@db" with one snapshot; this page asks
+// every few seconds while it is the open tab (the shell unloads it otherwise).
+var E=function(i){return document.getElementById(i)},WS=null,dec=new TextDecoder(),T=null,last=null,hist=[],seen=0;
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+function kv(id,rows){E(id).innerHTML=rows.filter(Boolean).map(function(r){return '<span>'+esc(r[0])+'</span><b title="'+esc(r[1])+'">'+esc(r[1])+'</b>'}).join('')}
+function bar(id,pct,warn){var b=E(id);pct=Math.max(0,Math.min(100,pct||0));b.firstChild.style.width=pct+'%';b.className='bar'+(warn?(pct>=warn[1]?' d':pct>=warn[0]?' w':''):'')}
+function used(id,label,free,tot,unit){if(!tot)return;var u=tot-free,p=u*100/tot;
+ E(id).insertAdjacentHTML('beforeend','<span>'+esc(label)+'</span><b>'+fmt(u,unit)+' / '+fmt(tot,unit)+'</b><div class="bar'+(p>=90?' d':p>=75?' w':'')+'" style="grid-column:1/-1;margin:0 0 6px"><i style="width:'+p.toFixed(1)+'%"></i></div>')}
+function fmt(v,unit){if(unit=='K'){if(v>=1024*1024)return (v/1048576).toFixed(1)+' GB';if(v>=1024)return (v/1024).toFixed(1)+' MB';return v+' KB'}
+ if(v>=1024)return (v/1024).toFixed(1)+' GB';return v+' MB'}
+function dur(s){var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+ return d?d+'d '+h+'h':h?h+'h '+m+'m':m?m+'m '+(s%60)+'s':s+'s'}
+function ago(s){return s<5?'just now':s<60?s+'s ago':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':Math.floor(s/86400)+'d ago'}
+function spark(){var s=E('spk');if(hist.length<2){s.innerHTML='';return}var mx=Math.max.apply(0,hist.map(function(h){return h.v}).concat([1])),n=hist.length,
+ pts=hist.map(function(h,i){return [(i*100/(n-1)).toFixed(1),(38-h.v*34/mx).toFixed(1)]}),l='M'+pts.map(function(p){return p.join(' ')}).join('L');
+ s.innerHTML='<path class="a" d="'+l+'L100 40L0 40Z"/><path d="'+l+'"/>'}
+function show(j){E('err').classList.remove('on');E('live').className='on';
+ E('nm').textContent=j.nm||'Dashboard';document.title=(j.nm?j.nm+' · ':'')+'wadamesh dashboard';
+ E('who').innerHTML='<code>'+esc(j.id)+'</code> · '+esc(j.hw)+' · '+esc(j.fw);
+ E('bt').innerHTML=j.batt+'<small>%</small>';bar('btb',j.batt);if(j.batt<=20)E('btb').className='bar d';
+ kv('btk',[['Voltage',(j.mv/1000).toFixed(2)+' V'],['State',j.chg?'Charging':'On battery']]);
+ if(j.sa<0){E('sg').innerHTML='<span class="muted" style="font-size:16px">Nothing heard yet</span>';kv('sgk',[])}
+ else{E('sg').innerHTML=(j.sq/4).toFixed(1)+'<small>dB SNR</small>';kv('sgk',[['RSSI',j.rs+' dBm'],['Heard',ago(j.sa)]])}
+ E('rf').innerHTML=j.freq.toFixed(3)+'<small>MHz</small>';
+ kv('rfk',[['Bandwidth',j.bw+' kHz'],['Spreading / coding','SF'+j.sf+' · 4/'+j.cr],['TX power',j.tx+' dBm'],['Time on air',dur(j.air)]]);
+ E('up').textContent=dur(j.up);
+ kv('upk',[j.la||j.lo?['Location',(j.la/1e6).toFixed(5)+', '+(j.lo/1e6).toFixed(5)]:null,['Unread',String(j.unr)]]);
+ var rx=j.rf+j.rd,tx=j.tf+j.td,now=Date.now();
+ if(last&&rx>=last.rx){hist.push({v:(rx-last.rx)*60000/Math.max(1,now-last.t)});if(hist.length>40)hist.shift()}
+ last={rx:rx,t:now};spark();
+ E('pk').innerHTML=rx+'<small>in</small> '+tx+'<small>out</small>';
+ kv('pkk',[['Received','flood '+j.rf+' · direct '+j.rd],['Sent','flood '+j.tf+' · direct '+j.td],['Radio errors',j.rer+' of '+(j.rok+j.rer)],
+  hist.length?['Rate',hist[hist.length-1].v.toFixed(1)+' / min']:null]);
+ kv('nk',[['Wi-Fi',j.wifi?(j.ssid||'Connected'):'Off'],j.wifi?['Wi-Fi signal',j.wr+' dBm']:null,j.ip?['Address',j.ip]:null,
+  ['Bluetooth',j.bc?(j.ble?'On':'Off'):'Not available']]);
+ E('mk').innerHTML='';used('mk','Internal RAM',j.hf,j.ht,'K');used('mk','PSRAM',j.pf,j.pt,'K');
+ E('mk').insertAdjacentHTML('beforeend','<span>Lowest free RAM</span><b>'+fmt(j.hm,'K')+'</b>');
+ E('sk').innerHTML='';used('sk','Internal',j.ff,j.ft,'K');if(j.sdt)used('sk','SD card',j.sdf,j.sdt,'M');else E('sk').insertAdjacentHTML('beforeend','<span>SD card</span><b>'+(j.sdt===undefined?'–':'None')+'</b>');
+ E('ct').innerHTML=j.nc+'<small>of '+j.mc+'</small>';bar('ctb',j.nc*100/j.mc,[80,95]);
+ kv('ctk',[]);
+ var h=j.h||[],TY=['','Companion','Repeater','Room','Sensor'];
+ E('hl').innerHTML=h.length?'<table><tr><th>Node</th><th>Type</th><th>Hops</th><th>Heard</th></tr>'+h.map(function(n){
+  return '<tr><td><i class="ty'+(n.ty==2?' r':n.ty==3?' m':'')+'"></i>'+esc(n.n)+(n.c?'':' <span class="pill">new</span>')+'</td><td>'+esc(TY[n.ty]||'Node')+'</td><td>'+(n.p<0?'–':n.p==0?'direct':n.p)+'</td><td class="muted">'+ago(n.a)+'</td></tr>'}).join('')+'</table>'
+  :'<div class="empty">No adverts heard yet.</div>'}
+function tick(){clearTimeout(T);if(WS&&WS.readyState==1){WS.send('@db');T=setTimeout(function(){E('live').className='';tick()},4000)}}
+function conn(){WS=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+location.host+'/term');WS.binaryType='arraybuffer';
+ WS.onopen=function(){wOpen(WS)};
+ WS.onclose=function(){clearTimeout(T);E('live').className='';E('err').textContent='Connection lost. Reconnecting…';E('err').classList.add('on');wRetry(conn)};
+ WS.onmessage=function(e){if(wGate(e))return;var b=new Uint8Array(e.data);if(!b.length||b[0]!=1)return;var j;
+  try{j=JSON.parse(dec.decode(b.subarray(1)))}catch(x){return}if(!j||j.t!=='db')return;show(j);clearTimeout(T);T=setTimeout(tick,2500)}}
+WR=function(){tick()};
+conn();
+</script></body></html>

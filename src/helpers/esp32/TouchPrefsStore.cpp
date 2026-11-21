@@ -944,6 +944,25 @@ bool touchPrefsSetWebTerminal(bool on) {
   return cfgFlush();
 }
 
+static const char* KEY_WEB_TRUST = "web_trust";
+
+size_t touchPrefsGetWebTrust(void* out, size_t cap) {
+  if (!s_begun) touchPrefsBegin();
+  if (!out || cap == 0 || !s_prefs.isKey(KEY_WEB_TRUST)) return 0;   // isKey: no [E] NOT_FOUND log
+  return s_prefs.getBytes(KEY_WEB_TRUST, out, cap);
+}
+
+bool touchPrefsSetWebTrust(const void* buf, size_t len) {
+  s_prefs.end();
+  if (!s_prefs.begin(TOUCH_NS, false)) return false;
+  bool ok;
+  if (!buf || len == 0) { s_prefs.remove(KEY_WEB_TRUST); ok = true; }
+  else ok = s_prefs.putBytes(KEY_WEB_TRUST, buf, len) == len;
+  s_prefs.end();
+  s_begun = s_prefs.begin(TOUCH_NS, true);
+  return ok;
+}
+
 bool touchPrefsGetMapTileDebug() {
   if (!s_begun) touchPrefsBegin();
   return s_cfg.map_tile_debug != 0;
@@ -2457,6 +2476,8 @@ uint8_t touchPrefsGetDiscoveredMaxHops() {
 void touchPrefsSetDiscoveredMaxHops(uint8_t hops) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("dsc_hops", hops); }
 bool touchPrefsGetEnterSends()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("ent_send", 1) != 0; }
 void touchPrefsSetEnterSends(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("ent_send", on ? 1 : 0); }
+bool touchPrefsGetCityOnHome()      { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("city_home", 0) != 0; }
+void touchPrefsSetCityOnHome(bool on)      { if (!s_begun) touchPrefsBegin(); prefsPutUChar("city_home", on ? 1 : 0); }
 bool touchPrefsGetClock12h()        { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("clk_12h", 0) != 0; }
 void touchPrefsSetClock12h(bool on)        { if (!s_begun) touchPrefsBegin(); prefsPutUChar("clk_12h", on ? 1 : 0); }
 bool touchPrefsGetNavMenubarKeys()         { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("nav_mbk", 0) != 0; }

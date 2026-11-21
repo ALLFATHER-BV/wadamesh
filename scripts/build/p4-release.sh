@@ -36,6 +36,9 @@
 # separate IDF project (crowpanel_p4_101/) with one image per board revision; it is
 # built and verified here in the same loop, from its own directory.
 #
+# The Tanmatsu's standalone web-flasher image (wadamesh-tanmatsu-merged.bin, which
+# replaces the badge.team launcher) is built and verified after the loop.
+#
 # Usage:
 #   scripts/build/p4-release.sh beta_88 [outdir]
 set -euo pipefail
@@ -161,10 +164,40 @@ for v in "${VARIANTS[@]}"; do
   echo "   ok  $(stat -f%z "$app") bytes  id=$got"
 done
 
+# Tanmatsu standalone (web flasher) image. One variant, no env axes, and the same
+# application.bin the app store gets, so no cache trap: `standalone` rebuilds the
+# app with this tag, adds the bootloader and the standalone partition table, and
+# merges them (tanmatsu/build.sh). It has no OTA name to check, so check its board
+# id ("tanmatsu", which the beta reports use) and that it is not another P4 board.
+name="wadamesh-tanmatsu"
+echo "=== $name  (tanmatsu/build/tanmatsu, standalone)"
+B="$ROOT/tanmatsu/build/tanmatsu"
+rm -f "$B/application.bin" "$B/wadamesh-tanmatsu-merged.bin"
+rc=0
+( cd "$ROOT/tanmatsu" && WADA_FW_TAG="$TAG" ./build.sh standalone ) > "/tmp/p4rel_$name.log" 2>&1 || rc=$?
+app="$B/application.bin"
+if [ "$rc" -ne 0 ] || [ ! -f "$app" ] || [ ! -f "$B/wadamesh-tanmatsu-merged.bin" ]; then
+  echo "   FAIL: build exited $rc or produced no image (see /tmp/p4rel_$name.log)"; fail=$((fail+1))
+else
+  ids="$(strings -a "$app" | grep -oE 'wadamesh-(tdisplay-p4|crowpanel-p4-101)[a-z0-9-]*' | sort -u || true)"
+  board="$(strings -a "$app" | grep -cx 'tanmatsu' || true)"
+  tagged="$(strings -a "$app" | grep -cE "(^|[^0-9a-z])${TAG}([^0-9]|$)" || true)"
+  if [ -n "$ids" ] || [ "${board:-0}" = "0" ]; then
+    echo "   FAIL: image does not identify as the Tanmatsu (found: ${ids:-no board id})"; fail=$((fail+1))
+  elif [ "${tagged:-0}" = "0" ]; then
+    echo "   FAIL: $TAG is not embedded (stale build dir?)"; fail=$((fail+1))
+  else
+    cp "$app" "$OUT/$name.bin"
+    cp "$B/wadamesh-tanmatsu-merged.bin" "$OUT/$name-merged.bin"
+    echo "   ok  $(stat -f%z "$app") bytes  id=tanmatsu"
+  fi
+fi
+TOTAL=$(( ${#VARIANTS[@]} + 1 ))
+
 echo
 if [ "$fail" -ne 0 ]; then
-  echo "ABORT: $fail of ${#VARIANTS[@]} P4 variants failed. Nothing is safe to ship." >&2
+  echo "ABORT: $fail of $TOTAL P4 images failed. Nothing is safe to ship." >&2
   exit 1
 fi
-echo "all ${#VARIANTS[@]} P4 variants built and verified -> $OUT"
+echo "all $TOTAL P4 images (T-Display P4, CrowPanel P4, Tanmatsu) built and verified -> $OUT"
 echo "Copy both .bin and -merged.bin for each into releases/<CHANNEL>/$TAG/ AND latest[-beta]/."

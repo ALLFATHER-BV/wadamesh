@@ -46,6 +46,11 @@ extern bool             luaHostScreenOn();   // false = display asleep; app tick
 extern void             luaHostKeepAwake(bool on);   // hold the screen + ticks for a measuring app                            // notification chime; false = no sounder / muted
 extern fs::FS*          luaHostAppFs();                           // /apps storage root FS (may be null)
 extern void             luaHostAppPath(char* out, size_t cap, const char* rel);   // prefixes the store root
+#if CAP_LUA_IMAGE
+extern uint8_t*         luaHostImageDecodeFit(const uint8_t* enc, size_t len, int max_w, int max_h,
+                                              int* out_w, int* out_h, const char** err);   // wada.ui.image
+extern void             luaHostImageFree(void* buf);
+#endif
 #if CAP_LUA_AUDIO
 extern bool             luaHostAudioPlay(fs::FS* fs, const char* path, const char* shown,
                                          const char* source, uint32_t owner,
@@ -214,6 +219,7 @@ constexpr size_t kHeapCap     = 256 * 1024;   // per-app PSRAM cap
 // and the compiled chunk still has to fit the 256 KB per-app heap below.
 constexpr size_t kMaxSrc      = 192 * 1024;   // app source size limit
 constexpr size_t kStoreMax    = 2048;         // per-app persisted KV budget (bytes, serialized)
+constexpr char   kStoreTextMark = '\x1F';     // .sav value prefix: text that reads as a number (see storeLoad)
 constexpr int    kMinTickMs   = 33;           // fastest on_tick cadence (~30 fps)
 constexpr uint32_t kAppTitleMs = 3000;         // identify the app briefly, then reclaim its top row
 
@@ -1186,6 +1192,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, CAP_LUA_AUDIO);    lua_setfield(L, -2, "audio_events"); // app.on_audio
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "request");    // wada.net.request + wada.json
   lua_pushboolean(L, CAP_LUA_HTTPS);    lua_setfield(L, -2, "https");      // request() to an https:// url
+  lua_pushboolean(L, CAP_LUA_IMAGE);    lua_setfield(L, -2, "image");      // wada.ui.image (needs wada.fs)
 #if defined(HAS_TDECK_PRO)
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "epaper");     // T-Deck Pro / Max: redraw sparingly
 #else
@@ -2114,6 +2121,133 @@ int fsList(lua_State* L) {
   return 1;
 }
 
+#if CAP_LUA_IMAGE
+// ---- wada.ui.image(file, offset, length, x, y, w, h) -------------------------
+// Draws a PNG / JPEG / BMP that sits in the middle of one of the app's own files
+// (a stored entry of an .epub, say), scaled down to fit the box x,y,w,h, aspect
+// kept, centred. Returns a handle with :remove(), or nil, reason. It reads the
+// file through the same scoped path check as wada.fs and never raises on what the
+// app passes, so a book with one bad picture stays readable.
+//
+// The decoded pixels are allocated by the firmware, outside the app's Lua heap, so
+// the host bounds them itself: the encoded size, the picture count and the total
+// decoded bytes. Each picture is sized to fit its box (at most the screen) before
+// it is kept, so an app cannot hold more than kImgMaxBytes however large the source.
+// The pixels belong to the LVGL widget and are freed when it is deleted: by
+// :remove(), by ui.clear(), or when the app closes.
+struct ImgUd { lv_obj_t* obj; uint32_t gen; };
+struct ImgPix { lv_img_dsc_t dsc; uint8_t* px; uint32_t bytes; };
+static const size_t   kImgMaxEnc   = 2u * 1024 * 1024;   // encoded bytes read from the file
+static const uint32_t kImgMaxLive  = 4;                  // pictures on screen at once
+static const uint32_t kImgMaxBytes = 3u * 1024 * 1024;   // decoded pixels held at once
+static uint32_t s_img_live = 0, s_img_bytes = 0;         // one app runs at a time
+
+static void imgDeleted(lv_event_t* e) {
+  ImgPix* p = (ImgPix*)lv_event_get_user_data(e);
+  if (!p) return;
+  lv_img_cache_invalidate_src(&p->dsc);   // LVGL caches by the dsc pointer, which malloc will reuse
+  luaHostImageFree(p->px);
+  s_img_live--;
+  s_img_bytes -= p->bytes;
+  free(p);
+}
+
+// Returns nullptr and sets *out, or a short reason. Touches no Lua state.
+static const char* imgBuild(const char* name, long long off, long long len,
+                            long long x, long long y, long long w, long long h, lv_obj_t** out) {
+  if (off < 0 || len <= 0) return "bad range";
+  if ((unsigned long long)len > kImgMaxEnc) return "too big";
+  if (w <= 0 || h <= 0) return "bad box";
+  if (s_img_live >= kImgMaxLive) return "too many images";
+  const long long sw = lv_disp_get_hor_res(nullptr), sh = lv_disp_get_ver_res(nullptr);
+  if (w > sw) w = sw;
+  if (h > sh) h = sh;
+  char path[128];
+  if (!fsPath(path, sizeof path, name)) return "bad file";
+  fs::FS* fs = luaHostAppFs();
+  if (!fs) return "no storage";
+  File f = fs->open(path, "r");
+  if (!f) return "no file";
+  if ((unsigned long long)off + (unsigned long long)len > (unsigned long long)f.size()) { f.close(); return "bad range"; }
+  if (off && !f.seek((uint32_t)off)) { f.close(); return "read failed"; }
+  uint8_t* enc = (uint8_t*)heap_caps_malloc((size_t)len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (!enc) { f.close(); return "no memory"; }
+  const size_t got = f.read(enc, (size_t)len);
+  f.close();
+  if (got != (size_t)len) { heap_caps_free(enc); return "read failed"; }
+
+  int fw = 0, fh = 0;
+  const char* why = nullptr;
+  uint8_t* px = luaHostImageDecodeFit(enc, (size_t)len, (int)w, (int)h, &fw, &fh, &why);
+  heap_caps_free(enc);
+  if (!px) return why ? why : "undecodable";
+  const uint32_t bytes = (uint32_t)fw * (uint32_t)fh * sizeof(lv_color_t);
+  if (s_img_bytes + bytes > kImgMaxBytes) { luaHostImageFree(px); return "too many images"; }
+  ImgPix* p = (ImgPix*)calloc(1, sizeof(ImgPix));
+  if (!p) { luaHostImageFree(px); return "no memory"; }
+  p->px = px;
+  p->bytes = bytes;
+  p->dsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+  p->dsc.header.w = (uint32_t)fw;
+  p->dsc.header.h = (uint32_t)fh;
+  p->dsc.data = px;
+  p->dsc.data_size = bytes;
+  lv_img_cache_invalidate_src(&p->dsc);
+  lv_obj_t* im = lv_img_create(s_h->body);
+  lv_obj_add_event_cb(im, imgDeleted, LV_EVENT_DELETE, p);
+  ++s_img_live;
+  s_img_bytes += bytes;
+  lv_img_set_src(im, &p->dsc);
+  long long at_x = x + (w - fw) / 2, at_y = y + (h - fh) / 2;
+  if (at_x < -16000) at_x = -16000; else if (at_x > 16000) at_x = 16000;
+  if (at_y < -16000) at_y = -16000; else if (at_y > 16000) at_y = 16000;
+  lv_obj_set_pos(im, (lv_coord_t)at_x, (lv_coord_t)at_y);
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE);   // a tap falls through to the page
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_SCROLLABLE);
+  luaHostMarkInert(im);
+  *out = im;
+  return nullptr;
+}
+
+static ImgUd* checkImg(lua_State* L) {
+  ImgUd* u = (ImgUd*)luaL_checkudata(L, 1, "wada.image");
+  if (u->gen != s_ui_gen) u->obj = nullptr;   // the page was cleared under this handle
+  return u;
+}
+static int imRemove(lua_State* L) {
+  ImgUd* u = checkImg(L);
+  if (u->obj) { lv_obj_del(u->obj); u->obj = nullptr; }
+  return 0;
+}
+static int imgFail(lua_State* L, const char* why) {
+  lua_pushnil(L);
+  lua_pushstring(L, why);
+  return 2;
+}
+static int uiImage(lua_State* L) {
+  if (!s_h || !s_h->body) return imgFail(L, "no page");
+  if (lua_type(L, 1) != LUA_TSTRING) return imgFail(L, "bad file");
+  double a[6];
+  for (int i = 0; i < 6; ++i) {
+    int ok = 0;
+    a[i] = (double)lua_tonumberx(L, 2 + i, &ok);
+    if (!ok || !(a[i] > -1e9 && a[i] < 1e9)) return imgFail(L, "bad argument");
+  }
+  // The handle goes first: the one step here that can raise (the app heap is capped)
+  // must come before any buffer is allocated.
+  ImgUd* ud = (ImgUd*)lua_newuserdatauv(L, sizeof(ImgUd), 0);
+  ud->obj = nullptr;
+  ud->gen = s_ui_gen;
+  luaL_setmetatable(L, "wada.image");
+  lv_obj_t* im = nullptr;
+  const char* why = imgBuild(lua_tostring(L, 1), (long long)a[0], (long long)a[1],
+                             (long long)a[2], (long long)a[3], (long long)a[4], (long long)a[5], &im);
+  if (why) { lua_pop(L, 1); return imgFail(L, why); }
+  ud->obj = im;
+  return 1;
+}
+#endif  // CAP_LUA_IMAGE
+
 #if CAP_LUA_SD_READ
 // ---- wada.sd: read-only physical SD directory listing ----------------------
 // Unlike wada.fs, this intentionally accepts paths, but only absolute paths
@@ -2395,15 +2529,28 @@ void storePath(char* out, size_t cap) {
   luaHostAppPath(out, cap, rel);
 }
 
+// A value that reads as a number comes back from the store as one. A value written as
+// text that would read as a number (an all-digit password set from the web console) is
+// saved with kStoreTextMark in front, so it comes back as the same string. Keys loaded
+// or set that way are kept in "wada.storetext", so a flush marks them again.
+bool storeLooksNumeric(const char* s) {
+  char* end = nullptr;
+  strtod(s, &end);
+  return s[0] && end && *end == 0;
+}
+
 void storeLoad() {
   lua_State* L = s_h->L;
   lua_newtable(L);
   lua_setfield(L, LUA_REGISTRYINDEX, "wada.storetab");
+  lua_newtable(L);
+  lua_setfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   fs::FS* fs = luaHostAppFs();
   if (!fs) return;
   char path[64]; storePath(path, sizeof path);
   File f = fs->open(path, "r");
   if (!f) return;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   char line[192];
   size_t n;
@@ -2413,14 +2560,18 @@ void storeLoad() {
     if (!eq) continue;
     *eq = 0;
     lua_pushstring(L, line);
-    lua_Number num;
-    char* end = nullptr;
-    num = strtod(eq + 1, &end);
-    if (end && *end == 0 && end != eq + 1) lua_pushnumber(L, num);
-    else                                   lua_pushstring(L, eq + 1);
+    if (eq[1] == kStoreTextMark) {
+      lua_pushstring(L, eq + 2);
+      lua_pushboolean(L, 1);
+      lua_setfield(L, -5, line);
+    } else if (storeLooksNumeric(eq + 1)) {
+      lua_pushnumber(L, strtod(eq + 1, nullptr));
+    } else {
+      lua_pushstring(L, eq + 1);
+    }
     lua_rawset(L, -3);
   }
-  lua_pop(L, 1);
+  lua_pop(L, 2);
   f.close();
 }
 
@@ -2435,12 +2586,21 @@ void storeFlush() {
   File f = fs->open(path, "w");
   if (!f) return;
   size_t written = 0;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
   lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
   lua_pushnil(L);
   while (lua_next(L, -2)) {
     if (lua_type(L, -2) == LUA_TSTRING && (lua_isstring(L, -1) || lua_isnumber(L, -1))) {
+      const char* key = lua_tostring(L, -2);
+      bool mark = false;
+      if (lua_type(L, -1) == LUA_TSTRING && storeLooksNumeric(lua_tostring(L, -1)) && lua_istable(L, -4)) {
+        lua_getfield(L, -4, key);
+        mark = lua_toboolean(L, -1);
+        lua_pop(L, 1);
+      }
       char lbuf[192];
-      int m = snprintf(lbuf, sizeof lbuf, "%s=%s\n", lua_tostring(L, -2), luaL_tolstring(L, -1, nullptr));
+      int m = mark ? snprintf(lbuf, sizeof lbuf, "%s=%c%s\n", key, kStoreTextMark, luaL_tolstring(L, -1, nullptr))
+                   : snprintf(lbuf, sizeof lbuf, "%s=%s\n", key, luaL_tolstring(L, -1, nullptr));
       lua_pop(L, 1);   // luaL_tolstring's copy
       // snprintf reports the length it WANTED: a line longer than lbuf is skipped,
       // not written from past the end of the buffer (and read back cut short).
@@ -2450,7 +2610,7 @@ void storeFlush() {
     }
     lua_pop(L, 1);
   }
-  lua_pop(L, 1);
+  lua_pop(L, 2);
   f.close();
   s_h->store_dirty = false;
 }
@@ -3321,6 +3481,9 @@ void openWada(lua_State* L) {
   lua_pushcfunction(L, uiButton); lua_setfield(L, -2, "button");
   lua_pushcfunction(L, uiChart);  lua_setfield(L, -2, "chart");
   lua_pushcfunction(L, uiPanel);  lua_setfield(L, -2, "panel");
+#if CAP_LUA_IMAGE
+  lua_pushcfunction(L, uiImage);  lua_setfield(L, -2, "image");
+#endif
   lua_pushcfunction(L, uiScroll); lua_setfield(L, -2, "scroll");
   lua_pushcfunction(L, uiTextH);  lua_setfield(L, -2, "text_h");
   lua_pushcfunction(L, uiTextW);     lua_setfield(L, -2, "text_w");
@@ -3537,6 +3700,14 @@ void openWada(lua_State* L) {
   lua_setfield(L, -2, "__index");
   lua_pop(L, 1);
 
+#if CAP_LUA_IMAGE
+  luaL_newmetatable(L, "wada.image");
+  lua_newtable(L);
+  lua_pushcfunction(L, imRemove); lua_setfield(L, -2, "remove");
+  lua_setfield(L, -2, "__index");
+  lua_pop(L, 1);
+#endif
+
   luaL_newmetatable(L, "wada.chart");
   lua_newtable(L);
   lua_pushcfunction(L, chPush);   lua_setfield(L, -2, "push");
@@ -3577,6 +3748,37 @@ void hostTeardown();   // fwd
 // ---------------------------------------------------------------------------
 lv_obj_t* luaAppBody() { return s_h ? s_h->body : nullptr; }
 bool luaAppIsOpen() { return s_h != nullptr; }
+
+// Both write the store from the UI thread, where a SPIFFS garbage collection can stall
+// for seconds: under the watchdog guard, like the 30 s flush in the tick.
+bool luaAppStoreSync(const char* id) {
+  if (!s_h || !s_h->L || !id || strcmp(s_h->id, id) != 0) return false;
+  WdtHeavyGuard guard;
+  storeFlush();
+  return true;
+}
+
+bool luaAppStoreSet(const char* id, const char* key, const char* value, bool text) {
+  if (!s_h || !s_h->L || !id || !key || strcmp(s_h->id, id) != 0) return false;
+  lua_State* L = s_h->L;
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetext");
+  if (lua_istable(L, -1)) {
+    if (text && value) lua_pushboolean(L, 1); else lua_pushnil(L);
+    lua_setfield(L, -2, key);
+  }
+  lua_pop(L, 1);
+  lua_getfield(L, LUA_REGISTRYINDEX, "wada.storetab");
+  lua_pushstring(L, key);
+  if (!value)                                 lua_pushnil(L);
+  else if (!text && storeLooksNumeric(value)) lua_pushnumber(L, strtod(value, nullptr));
+  else                                        lua_pushstring(L, value);
+  lua_rawset(L, -3);
+  lua_pop(L, 1);
+  s_h->store_dirty = true;
+  WdtHeavyGuard guard;
+  storeFlush();
+  return true;
+}
 
 // The app's content area, so UITask can parent a map view into it. External
 // linkage on purpose: UITask owns the map machinery and this file owns the app.

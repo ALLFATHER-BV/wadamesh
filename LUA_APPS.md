@@ -259,3 +259,16 @@ once files are field-proven.
   Also fixed here: `wada.store.get(key)` with no default returned the store
   table for a missing key, and `storeFlush` wrote lines past its 192-byte buffer;
   the store now also saves within 2 s of a change, not only on close.
+- 2026-11-15: **App settings in the web console (#854).** A manifest can list
+  `"config":[{"key","label","type","help","default"}]` (type text, password,
+  bool or number; `config` last, since `luaJsonField` takes the first match).
+  The web console's Settings tab then shows an Apps group with a page per such
+  app (`@cfg aview/arun`, WebSettingsEngine.h). Values are the app's own
+  `wada.store` keys: with the app open the live store is updated and flushed
+  (`luaAppStoreSet`), otherwise the `.sav` is rewritten. Only declared keys can
+  be written, and passwords are never sent back to the browser. Text that reads
+  as a number (an all-digit password) is saved with a `\x1F` mark so it loads
+  as the same string; other values keep the old typing, where numeric text
+  loads as a number. Cyberspace 1.1 uses this: email, a one-time password
+  (signs in at the next open, then erased) and "Stay signed in". Host test
+  covers the web password and a numeric `remember`.

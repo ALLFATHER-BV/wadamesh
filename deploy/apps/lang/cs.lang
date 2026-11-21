@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: cs
-# ver: 33
+# ver: 34
 # name: Čeština
 # base: cs
  (device behind)	 (zařízení za)
@@ -2454,3 +2454,41 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Zpět na výšku… restartuje se
 Keep	Ponechat
 Orientation kept	Orientace ponechána
+Unplug USB, then calibrate with a full battery	Odpojte USB a pak kalibrujte s plnou baterií
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift na klávesnici Bluetooth dělá totéž.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift přepíná jazyk klávesnice. Když je nastavena bulharština, klávesy píšou bulharsky foneticky.
+Now in %s	Nyní v %s
+cities.bin could not be read	cities.bin nelze přečíst
+City on Home	Město na domovské obrazovce
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Se souborem hranic cities.bin na SD kartě ukazuje domovská obrazovka město, ve kterém jste, místo názvu uzlu.
+# Web console (#854)
+Allow %s to use the web console?	Povolit %s používat webovou konzoli?
+Allow once	Povolit jednou
+Always allow	Vždy povolit
+Deny	Zamítnout
+a browser	prohlížeči
+Browser	Prohlížeč
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Uvidí vaše chaty a kontakty a bude moci posílat zprávy, měnit nastavení a ovládat tuto obrazovku.
+The web console wants to:	Webová konzole chce:
+Only allow this if you started it in the browser yourself.	Povolte to jen tehdy, pokud jste to sami spustili v prohlížeči.
+Are you sure?	Opravdu?
+Web console	Webová konzole
+Web console (recommended)	Webová konzole (doporučeno)
+Web console off	Webová konzole vypnuta
+Web console on (connect Wi-Fi to reach it)	Webová konzole zapnuta (připojte Wi-Fi, abyste se k ní dostali)
+Web console on: http://%s:%s/	Webová konzole zapnuta: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Chaty, kontakty, nastavení, mesh terminál, živá obrazovka a přenos souborů - vše na jedné stránce v prohlížeči. Nový prohlížeč tu nejprve potřebuje vaše OK. Bez restartu.
+Trusted browsers	Důvěryhodné prohlížeče
+No trusted browsers. Choose "Always allow" when a browser asks.	Žádné důvěryhodné prohlížeče. Když se prohlížeč zeptá, zvolte "Vždy povolit".
+Disconnect all browsers	Odpojit všechny prohlížeče
+Browsers disconnected. They must ask again unless trusted.	Prohlížeče odpojeny. Musí se zeptat znovu, pokud nejsou důvěryhodné.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Spouští celé rozhraní ve velikosti prohlížeče, pro zařízení bez použitelné obrazovky; displej ukazuje zástupný obraz. Karta Obrazovka webové konzole tuto obrazovku ukazuje i bez toho. Přepnutí restartuje zařízení.
+Download a settings backup. It holds this node's private key.	Stáhnout zálohu nastavení. Obsahuje soukromý klíč tohoto uzlu.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Obnovit zálohu nastavení. Nahradí identitu, kanály a kontakty tohoto uzlu a pak restartuje.
+This page changed on the device. Reloading.	Tato stránka se na zařízení změnila. Načítám znovu.
+Settings are open on the device. Close them there and try again.	Nastavení jsou otevřená na zařízení. Zavřete je tam a zkuste to znovu.
+Someone is typing on the device. Try again in a moment.	Někdo na zařízení píše. Zkuste to za chvíli znovu.
+Waiting for an answer on the device.	Čekám na odpověď na zařízení.
+This app has no settings	Tato aplikace nemá nastavení
+Saved on the device for this app. The app reads them when it opens.	Uloženo v zařízení pro tuto aplikaci. Aplikace je načte při otevření.
+Could not save to the device storage	Nelze uložit do úložiště zařízení

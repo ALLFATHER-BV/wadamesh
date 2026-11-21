@@ -34,6 +34,8 @@ extra_flags() {
     test_indicator_expander|test_indicator_dio1) echo "-I variants/sensecap_indicator" ;;
     # The reader is a .cpp of its own; tinfl comes from the web build's miniz.
     test_pmtiles) echo "-I src/ui-touch -I web/third_party/miniz src/ui-touch/PmTiles.cpp web/third_party/miniz/miniz_tinfl.c" ;;
+    # The firmware's own FatFs (exFAT on) under the archive reader, compiled as C.
+    test_pmtiles_card) echo "-I test/fatfs_fakes -I arch/esp32/fatfs_exfat/src -I src/ui-touch -DCAP_MAP_PMTILES=1 src/ui-touch/PmTilesCard.cpp" ;;   # FatFs objects from prep
     test_emoji_deflated) echo "-I test/emoji_fakes -I $OUT/gen -I src/ui-touch" ;;
     test_lua_json) echo "-I lib/lua/src" ;;   # wada.json runs against the real Lua (objects from prep)
     test_tdeck_keyboard_detect) echo "-I test/tdeck_keyboard_fakes" ;;
@@ -54,6 +56,7 @@ link_flags() {
   case "$1" in
     test_emoji_deflated) echo "-lz" ;;
     test_lua_json) echo "$OUT/lua/"'*.o' ;;
+    test_pmtiles_card) echo "$OUT/fatfs/"'*.o' ;;
     *) echo "" ;;
   esac
 }
@@ -64,6 +67,13 @@ prep() {
     test_emoji_deflated)
       mkdir -p "$OUT/gen" &&
         python3 scripts/build/gen-emoji-deflated.py src/ui-touch/emoji_data.c "$OUT/gen/emoji_deflated.h" ;;
+    test_pmtiles_card)
+      # The vendored exFAT FatFs as C objects: Apple clang refuses -std=c++17 next to
+      # "-x c" on one command line, so the C sources are compiled here, on their own.
+      rm -rf "$OUT/fatfs" && mkdir -p "$OUT/fatfs" &&
+        for c in arch/esp32/fatfs_exfat/src/ff.c arch/esp32/fatfs_exfat/src/ffunicode.c; do
+          ${CC:-cc} -c -O1 -w -I test/fatfs_fakes -I arch/esp32/fatfs_exfat/src "$c" -o "$OUT/fatfs/$(basename "$c" .c).o" || return 1
+        done ;;
     test_lua_json)
       # The Lua core as C objects, once per run; lua.c and luac.c carry their own main().
       rm -rf "$OUT/lua" && mkdir -p "$OUT/lua" &&

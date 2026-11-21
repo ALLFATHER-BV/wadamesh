@@ -1,0 +1,29 @@
+# beta_106 - community round: web console with on-device approval, map traffic pulses, pictures in Lua apps, city locator, Bulgarian Bluetooth keyboard, Tanmatsu standalone build, Texas Hold'em, battery and touch fixes. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, new, fixes, boards, apps.
+
+Test build, on top of beta_105. The stable build stays beta_101.
+
+# --- New ---
+Web console: the browser pages on the Wi-Fi address are one console now, with Mesh, Screen, Files, Settings and Dashboard tabs and settings for your Lua apps. A new browser is let in by tapping Allow on the device instead of typing a code, and the card shows its IP address. Sensitive actions from the browser ask on the device first, and the Screen tab cannot answer those questions itself. On the T-LoRa Pager the Settings and Dashboard tabs are left out for space (#857 by oumike).
+Map: short pulses show traffic while the Map tab is open. A message you send to a contact runs blue along its line, a message received runs green and an ACK yellow back to you; channel traffic spreads as a ring from your own marker. Mute colours and animations turns them off (#859 by oumike, #827). Not on the T-LoRa Pager.
+Lua apps can draw pictures (PNG, JPEG or BMP) from their own files with wada.ui.image (#865 by CarpeNoctem). Not on the T-LoRa Pager.
+City locator: with a cities.bin boundary file on the SD card, crossing into a new US city or town shows "Now in <city>". Settings, GPS, City on Home shows the city on Home instead of the node name; it is off by default. Nothing is transmitted (#858 by Languskhan).
+Bluetooth keyboards type Bulgarian (phonetic) while the keyboard language is Bulgarian, and Ctrl+Shift switches the keyboard language like the language key. The layout printed on the keys stays what you picked (#855 by kkazakov). Not on the T-LoRa Pager.
+
+# --- Fixes ---
+The EN/BG keyboard tag in a chat no longer covers the GPS icon (#860 by kkazakov).
+Cyrillic text shows in settings fields instead of empty boxes (#864 by kkazakov).
+Battery calibration refuses to run while USB is plugged in: the charger's voltage was stored as "full", so a full battery then read about 60%. A calibration taken that way is ignored and the default curve returns (reported by sonicblue7 and rausimous on the T-Deck Pro).
+
+# --- Boards ---
+Tanmatsu: a standalone image that replaces the launcher can be installed from wadamesh.com (beta), next to the app store install. Your identity, contacts and chats are kept; settings start fresh (#809 by oumike, #806).
+Tanmatsu: Enter in a chat sends the message, arrows leave the text box at its ends, Enter picks options in the setup wizard, the Wi-Fi scan waits for the radio to finish, F1 and F4 only wake a dark screen, and a radio preset no longer turns back into Custom (#809 by oumike).
+Tanmatsu: larger tab icons with the F-key shape beside them, F-key hints beside the chat buttons, and a two-column repeater admin layout (#862 by oumike).
+CrowPanel 3.5: touch works after a restart from Settings. The touch chip can come back on its second address, and the 3.5 now follows it and resets it if it does not answer (reported by kc9seb).
+ThinkNode M9: on USB the screensaver and power saving stay on USB behaviour after the charger stops at full (reported by benanderson).
+
+# --- Apps ---
+New in the Store: Texas Hold'em, no-limit poker against three AI opponents, in portrait and landscape (#856 by halflive-743).
+Cyberspace 1.1 in the Store: email, a one-time password and Stay signed in, set from the web console, which now has a settings page for every app that declares them (#857 by oumike).
+Language store v34: the new strings of this round in all 15 languages.

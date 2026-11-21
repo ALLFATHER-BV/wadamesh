@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: de
-# ver: 33
+# ver: 34
 # name: Deutsch
 # base: de
  (device behind)	 (Gerät geht nach)
@@ -2438,3 +2438,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Zurück ins Hochformat… Neustart
 Keep	Behalten
 Orientation kept	Ausrichtung behalten
+Unplug USB, then calibrate with a full battery	USB trennen, dann mit voller Batterie kalibrieren
+Ctrl+Shift on a Bluetooth keyboard does the same.	Strg+Umschalt auf einer Bluetooth-Tastatur macht dasselbe.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Strg+Umschalt wechselt die Tastatursprache. Ist sie Bulgarisch, tippen die Tasten bulgarisch phonetisch.
+Now in %s	Jetzt in %s
+cities.bin could not be read	cities.bin konnte nicht gelesen werden
+City on Home	Stadt auf Home
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	Mit einer Grenzdatei cities.bin auf der SD-Karte zeigt Home die Stadt, in der du bist, statt des Knotennamens.
+# Web console (#854)
+Allow	Erlauben
+Allow %s to use the web console?	%s die Web-Konsole nutzen lassen?
+Allow once	Einmal erlauben
+Always allow	Immer erlauben
+Deny	Ablehnen
+a browser	einen Browser
+Browser	Browser
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Er sieht deine Chats und Kontakte und kann Nachrichten senden, Einstellungen ändern und diesen Bildschirm steuern.
+The web console wants to:	Die Web-Konsole möchte:
+Only allow this if you started it in the browser yourself.	Erlaube das nur, wenn du es selbst im Browser gestartet hast.
+Are you sure?	Bist du sicher?
+Web console	Web-Konsole
+Web console (recommended)	Web-Konsole (empfohlen)
+Web console off	Web-Konsole aus
+Web console on (connect Wi-Fi to reach it)	Web-Konsole an (WLAN verbinden, um sie zu erreichen)
+Web console on: http://%s:%s/	Web-Konsole an: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Chats, Kontakte, Einstellungen, ein Mesh-Terminal, der Live-Bildschirm und Dateiübertragung - alles auf einer Browserseite. Ein neuer Browser braucht hier zuerst dein OK. Kein Neustart.
+Trusted browsers	Vertrauenswürdige Browser
+No trusted browsers. Choose "Always allow" when a browser asks.	Keine vertrauenswürdigen Browser. Wähle "Immer erlauben", wenn ein Browser fragt.
+Disconnect all browsers	Alle Browser trennen
+Browsers disconnected. They must ask again unless trusted.	Browser getrennt. Sie müssen erneut fragen, außer sie sind vertrauenswürdig.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Zeigt die ganze Oberfläche in Browsergröße, für Geräte ohne nutzbaren Bildschirm; das Display zeigt einen Platzhalter. Der Bildschirm-Tab der Web-Konsole zeigt diesen Bildschirm auch ohne das. Umschalten startet das Gerät neu.
+Download a settings backup. It holds this node's private key.	Ein Einstellungs-Backup herunterladen. Es enthält den privaten Schlüssel dieses Knotens.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Ein Einstellungs-Backup wiederherstellen. Es ersetzt Identität, Kanäle und Kontakte dieses Knotens und startet dann neu.
+This page changed on the device. Reloading.	Diese Seite hat sich auf dem Gerät geändert. Wird neu geladen.
+Settings are open on the device. Close them there and try again.	Die Einstellungen sind auf dem Gerät geöffnet. Schließe sie dort und versuche es erneut.
+Someone is typing on the device. Try again in a moment.	Jemand tippt gerade auf dem Gerät. Versuche es gleich noch einmal.
+Waiting for an answer on the device.	Warte auf eine Antwort am Gerät.
+This app has no settings	Diese App hat keine Einstellungen
+Saved on the device for this app. The app reads them when it opens.	Für diese App auf dem Gerät gespeichert. Die App liest sie beim Öffnen.
+Could not save to the device storage	Konnte nicht im Gerätespeicher sichern

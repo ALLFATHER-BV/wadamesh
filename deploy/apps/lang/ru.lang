@@ -1,7 +1,7 @@
 # wadamesh language file
 # canonical source - translators: edit this file and PR it
 # code: ru
-# ver: 33
+# ver: 34
 # name: Русский
 # base: ru
  (device behind)	 (устройство отстаёт)
@@ -2438,3 +2438,42 @@ Keep this orientation?\nIf the screen does not answer your taps, leave it: it go
 Back to portrait… restarting	Возврат в портретный режим… перезапуск
 Keep	Оставить
 Orientation kept	Ориентация сохранена
+Unplug USB, then calibrate with a full battery	Отключите USB, затем откалибруйте с полной батареей
+Ctrl+Shift on a Bluetooth keyboard does the same.	Ctrl+Shift на Bluetooth-клавиатуре делает то же самое.
+Ctrl+Shift switches the keyboard language. While it is Bulgarian, the keys type Bulgarian phonetic.	Ctrl+Shift переключает язык клавиатуры. Пока выбран болгарский, клавиши печатают по болгарской фонетической раскладке.
+Now in %s	Сейчас в: %s
+cities.bin could not be read	Не удалось прочитать cities.bin
+City on Home	Город на главном экране
+With a cities.bin boundary file on the SD card, Home shows the city you are in instead of the node name.	С файлом границ cities.bin на SD-карте главный экран показывает город, в котором вы находитесь, вместо имени узла.
+# Web console (#854)
+Allow	Разрешить
+Allow %s to use the web console?	Разрешить %s пользоваться веб-консолью?
+Allow once	Разрешить один раз
+Always allow	Разрешать всегда
+Deny	Запретить
+a browser	браузеру
+Browser	Браузер
+It will see your chats and contacts, and can send messages, change settings and control this screen.	Он увидит ваши чаты и контакты и сможет отправлять сообщения, менять настройки и управлять этим экраном.
+The web console wants to:	Веб-консоль хочет:
+Only allow this if you started it in the browser yourself.	Разрешайте, только если вы сами запустили это в браузере.
+Are you sure?	Вы уверены?
+Web console	Веб-консоль
+Web console (recommended)	Веб-консоль (рекомендуется)
+Web console off	Веб-консоль выключена
+Web console on (connect Wi-Fi to reach it)	Веб-консоль включена (подключите Wi-Fi, чтобы открыть её)
+Web console on: http://%s:%s/	Веб-консоль включена: http://%s:%s/
+Chats, contacts, settings, a mesh terminal, the live screen and file transfer - all in one browser page. A new browser needs your OK here first. No reboot.	Чаты, контакты, настройки, mesh-терминал, экран в реальном времени и передача файлов - всё на одной странице браузера. Новому браузеру сначала нужно ваше разрешение здесь. Без перезагрузки.
+Trusted browsers	Доверенные браузеры
+No trusted browsers. Choose "Always allow" when a browser asks.	Нет доверенных браузеров. Выберите "Разрешать всегда", когда браузер спросит.
+Disconnect all browsers	Отключить все браузеры
+Browsers disconnected. They must ask again unless trusted.	Браузеры отключены. Им нужно спросить снова, если они не доверенные.
+Runs the whole interface at browser size, for devices without a usable screen; the panel shows a placeholder. The web console's Screen tab already shows this screen without it. Toggling reboots the device.	Запускает весь интерфейс в размере браузера, для устройств без пригодного экрана; дисплей показывает заглушку. Вкладка Экран веб-консоли и так показывает этот экран. Переключение перезагружает устройство.
+Download a settings backup. It holds this node's private key.	Скачать резервную копию настроек. Она содержит закрытый ключ этого узла.
+Restore a settings backup. It replaces this node's identity, channels and contacts, then restarts.	Восстановить резервную копию настроек. Она заменяет идентичность, каналы и контакты этого узла, затем перезагружает.
+This page changed on the device. Reloading.	Эта страница изменилась на устройстве. Перезагрузка.
+Settings are open on the device. Close them there and try again.	Настройки открыты на устройстве. Закройте их там и попробуйте снова.
+Someone is typing on the device. Try again in a moment.	Кто-то печатает на устройстве. Попробуйте снова через мгновение.
+Waiting for an answer on the device.	Ожидание ответа на устройстве.
+This app has no settings	У этого приложения нет настроек
+Saved on the device for this app. The app reads them when it opens.	Сохранено на устройстве для этого приложения. Приложение читает их при открытии.
+Could not save to the device storage	Не удалось сохранить в памяти устройства
