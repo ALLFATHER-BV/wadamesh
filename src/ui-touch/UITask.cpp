@@ -12536,7 +12536,7 @@ static void threadSheetIconResetCb(lv_event_t* e) {
 }
 
 static void chatListRefreshAfterDismiss();   // defined with the Chats header
-// "Dismiss" (#901): this thread leaves the Chats u filter until a newer message waits on me.
+// "Dismiss" (#901): this thread leaves the Chats U | UR filter until a newer message waits on me.
 static void threadSheetDismissReplyDo() {
   if (!g_lv.task) return;
   const int idx = s_channel_long_idx;
@@ -35948,7 +35948,7 @@ static void closeAppDrawer();
 // These replace the second status-bar row of buttons the inbox used to carry.
 static constexpr lv_coord_t kChatListInset = 6;  // the inbox and contacts rows sit this far in
 static uint8_t   s_chats_filter = 0;               // 0 all, 1 channels, 2 direct
-// The unread chip left of the filter (#824, #901) steps A -> U -> u: every thread, only
+// The unread chip left of the filter (#824, #901) steps A -> U -> U | UR: every thread, only
 // threads with unread messages, or those plus threads waiting on my reply (a direct chat
 // whose newest message is theirs, a channel that @mentioned me since I last posted;
 // "Dismiss" on the thread sheet drops one until a newer message waits). It narrows
@@ -35959,12 +35959,12 @@ static uint8_t   s_chats_unread_mode = TOUCH_CHATS_ALL;
 static lv_obj_t* s_chats_unread_chip = nullptr;
 static lv_obj_t* s_chats_unread_lbl  = nullptr;
 static const char* chatsUnreadChipText(uint8_t m) {
-  return m == TOUCH_CHATS_UNREPLIED ? "u" : m == TOUCH_CHATS_UNREAD ? "U" : "A";
+  return m == TOUCH_CHATS_UNREPLIED ? "U | UR" : m == TOUCH_CHATS_UNREAD ? "U" : "A";
 }
 static const char* chatsUnreadChipTip(uint8_t m) {
   return m == TOUCH_CHATS_UNREPLIED ? "Unread + unreplied" : m == TOUCH_CHATS_UNREAD ? "Unread only" : "All chats";
 }
-// A thread waiting on my reply that was not dismissed (the u filter's second half).
+// A thread waiting on my reply that was not dismissed (the U | UR filter's second half).
 static bool chatsThreadUnreplied(int idx, const char* name) {
   uint32_t key = 0;
   if (!g_lv.task || !g_lv.task->threadAwaitingReply(idx, &key)) return false;
@@ -36007,7 +36007,7 @@ static void chatsUnreadChipCb(lv_event_t* e) {
   if (g_lv.dm.list_cont) lv_obj_scroll_to_y(g_lv.dm.list_cont, 0, LV_ANIM_OFF);
 }
 static void chatListRefreshAfterDismiss() {
-  g_lv.dm.list_sig = 0;          // a dismissed thread leaves the u list without a ring change
+  g_lv.dm.list_sig = 0;          // a dismissed thread leaves the U | UR list without a ring change
   refreshChatList(g_lv.dm);
 }
 static void chatsAddCb(lv_event_t* e) {
@@ -36087,7 +36087,7 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     snprintf(b, sizeof b, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(f)));
     drop_w = LV_MAX(drop_w, semi12W(b));
   }
-  lv_coord_t unread_w = 0;   // the A / U / u chip, at its widest
+  lv_coord_t unread_w = 0;   // the A / U / "U | UR" chip, at its widest
   for (uint8_t m = 0; m <= TOUCH_CHATS_UNREPLIED; ++m) unread_w = LV_MAX(unread_w, semi12W(TR(chatsUnreadChipText(m))));
   const lv_coord_t text_w = (lv_coord_t)(unread_w + drop_w);
   s_chats_unread_mode = touchPrefsGetChatsUnreadMode();

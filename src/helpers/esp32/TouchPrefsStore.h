@@ -338,7 +338,7 @@ bool     touchPrefsSetContactPurge(bool on);
 uint16_t touchPrefsGetContactPurgeDays();
 bool     touchPrefsSetContactPurgeDays(uint16_t days);
 
-// The Chats unread chip (#824, #901), stepping A -> U -> u: every thread, only threads with
+// The Chats unread chip (#824, #901), stepping A -> U -> U | UR: every thread, only threads with
 // unread messages, or unread plus threads waiting on my reply. Within the active
 // All / Channels / Direct chip. Stored in the v73 chats_unread_only byte (0/1 kept their
 // meaning, so no schema change). Default all.
@@ -718,7 +718,7 @@ void    touchPrefsSetChannelMute(const char* name, uint8_t flags);
 bool    touchPrefsGetChannelEmoji(const char* name, char* out, size_t cap);  // a conversation's avatar emoji (channel or chat); false/empty = its glyph
 bool    touchPrefsSetChannelEmoji(const char* name, const char* utf8);       // empty/null clears back to the glyph; false when the table is full
 /** "Dismiss" on a thread waiting for my reply (#901): remembers which message was waiting
- *  (its key, UITask::threadAwaitingReply), so the thread leaves the u filter until a newer
+ *  (its key, UITask::threadAwaitingReply), so the thread leaves the U | UR filter until a newer
  *  message is waiting. Name-keyed NVS blob; the oldest entry gives way when it is full. */
 uint32_t touchPrefsGetReplyDismiss(const char* name);                        // 0 = none
 void     touchPrefsSetReplyDismiss(const char* name, uint32_t key);          // 0 clears
