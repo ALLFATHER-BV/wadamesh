@@ -340,7 +340,7 @@ static_assert(ChannelSenderSplit::kMaxWireName >= (size_t)UITask::MAX_SENDER_NAM
     extern CrowPanel35Display display;
   #elif defined(HAS_CROWPANEL_50)
     extern CrowPanel50Display display;
-  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8)
+  #elif defined(HAS_RAK_TAP_V2) || defined(HELTEC_LORA_V4_R8) || defined(HAS_TWATCH_S3)
     extern LGFXDisplay display;
   #elif defined(HAS_TDISPLAY_P4)
     extern DISPLAY_CLASS display;            // RM69A10Display (AMOLED) or HI8561Display (LCD) — set in CMakeLists
@@ -8940,6 +8940,8 @@ static void ssaverSetEnabled(bool on);        // Settings > Display (bridge abov
 static void ssaverSetBatterySecs(uint8_t secs);
 static void ssaverSetAlwaysOnPower(bool on);
 static void ssaverRequestPreview();
+static bool ssaverAllowed(bool glance_lit);   // fwd decl: bridge lives further down
+static void ssaverStart(uint32_t now, bool preview);
 #if CAP_SSAVER_NORTH_LOCK
 static void ssaverSetNorthLock(bool on);
 #endif
@@ -8962,6 +8964,8 @@ static void webPointerRead(lv_indev_drv_t* drv, lv_indev_data_t* data) {
   }
 }
 #endif
+
+static void touchScreenBacklight(bool on);   // fwd decl: defined further down (backlight/panel control)
 
 static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
   (void)indev;
@@ -9090,6 +9094,14 @@ static void lvglTouchRead(lv_indev_drv_t* indev, lv_indev_data_t* data) {
     // otherwise press the UI underneath and trigger the action before you see
     // it (issue #4). Applies to both boards (V4 + T-Deck).
     if (g_lv.task && (g_lv.task->isScreenOff() || (g_lv.task->isManualLock() && !s_pin_root))) {
+#if defined(HAS_TWATCH_S3) && CAP_SCREENSAVER
+      // Touch while PIN-locked "peeks": re-shows the Constellation screensaver
+      // without unlocking (no-op if it's already up). The crown still unlocks.
+      if (g_lv.task->isManualLock() && ssaverAllowed(false)) {
+        touchScreenBacklight(true);
+        ssaverStart(millis(), false);
+      }
+#endif
 #if defined(HAS_TDECK_MAX)
       // Max: a tap wakes an idle-dark screen (swallowed, not delivered), as on
       // every non-Pro board. The Pro's side-button-only policy stays for the Pro.
@@ -38096,6 +38108,8 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #define WADA_BOARD_ID "thinknode-m9"
 #elif defined(HAS_RAK_TAP_V2)
 #define WADA_BOARD_ID "rak-tap-v2"
+#elif defined(HAS_TWATCH_S3)
+#define WADA_BOARD_ID "t-watch-s3"
 #elif defined(TLORA_PAGER)
   #if defined(USE_LR1121)
 #define WADA_BOARD_ID "tlora-pager-lr1121"
@@ -60876,6 +60890,8 @@ class UiUsbFilesHost : public UsbFilesHost {
     static const char* kBoard = "LilyGo T-Deck";
 #elif defined(HELTEC_LORA_V4_TFT)
     static const char* kBoard = "Heltec V4 TFT";
+#elif defined(HAS_TWATCH_S3)
+    static const char* kBoard = "LilyGo T-Watch S3";
 #else
     static const char* kBoard = "wadamesh";
 #endif
@@ -79925,6 +79941,12 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // must match so LVGL renders the full 320x240 landscape surface.
     s_ui_rotation = LV_DISP_ROT_270;
 #endif
+#if defined(HAS_TWATCH_S3)
+    // Square 240x240 ST7789 is mounted 180° (upside-down at rotation 0), so run
+    // at ROT_180: applyHardwarePanelRotation maps it to panel rotation 2, and the
+    // touch point rotation follows (180°) so taps stay aligned.
+    s_ui_rotation = LV_DISP_ROT_180;
+#endif
   #if defined(HAS_SENSECAP_INDICATOR)
     // The panel driver exposes its fixed 480x480 surface directly.
     s_ui_rotation = LV_DISP_ROT_NONE;
@@ -80074,6 +80096,10 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
     // (800x480 landscape, or portrait on a phone), already upright; no remote mode.
     g_lv.disp_drv.hor_res  = WADA_WEB_W;
     g_lv.disp_drv.ver_res  = WADA_WEB_H;
+#elif defined(HAS_TWATCH_S3)
+    // Square 240x240 ST7789 watch panel — fixed portrait, no landscape toggle.
+    g_lv.disp_drv.hor_res  = 240;
+    g_lv.disp_drv.ver_res  = 240;
 #else
     // Landscape rotates the panel in HARDWARE (smooth — no per-pixel software
     // rotation each flush), so tell LVGL the already-rotated resolution and let
@@ -80150,7 +80176,11 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
       // LVGL leaves input alone on a hardware-rotated panel, but DOES rotate it on
       // a software-rotated one (the P4), so lvglTouchRead hands the P4's points
       // back to LVGL in the panel frame.
+#if !defined(HAS_TWATCH_S3)
+      // T-Watch S3 exception: the FT6x36 already reports in the user frame (180°
+      // from the ST7789 native), so the point must NOT follow the panel rotation.
       heltecV4CapTouchSetPointRotation(s_ui_rotation); // LVGL won't, so driver does
+#endif
     }
 #endif
 #if defined(HAS_CROWPANEL_35) || defined(HAS_CROWPANEL_50) || defined(ATTAKY_MESH_SERIES) || defined(HAS_WIO_TRACKER_L2)
@@ -82057,7 +82087,17 @@ void UITask::noteUserInput() {
   /* Called from touch input. If the screen was explicitly locked via the
    * BOOT button, ignore touches entirely — only a BOOT button press can
    * release that. Idle-timeout locks still unlock on touch. */
-  if (_screen_off && _manual_lock) return;
+  if (_screen_off && _manual_lock) {
+#if defined(HAS_TWATCH_S3) && CAP_SCREENSAVER
+    // T-Watch S3: touch while PIN-locked "peeks" — it re-shows (or extends) the
+    // Constellation screensaver, but does NOT unlock. The crown still unlocks.
+    if (ssaverAllowed(false)) {
+      if (s_ssaver_on) s_ssaver_start_ms = millis();   // extend the one already up
+      else             ssaverStart(millis(), false);   // bring it back from dark
+    }
+#endif
+    return;
+  }
   _last_input_ms = millis();
 #if defined(ATTAKY_MESH_SERIES)
   // This board wakes on POWER_BTN only (polled in the UI loop). A touch on a dark
@@ -84930,6 +84970,12 @@ void UITask::loop() {
     static uint8_t s_user_btn_prev = HIGH;
     auto readUserButton = []() {
       uint8_t state = digitalRead(PIN_USER_BTN);
+#if defined(HAS_TWATCH_S3)
+      // Crown (PWR) button is the AXP2101 PEK line, not GPIO0 (which is the
+      // BOOT button under the back cover). Fold a latched short-press into the
+      // active-low user-button signal so the generic lock/wake branch below runs.
+      if (board.pollPowerKeyShortPress()) state = LOW;
+#endif
 #if defined(HAS_WIO_TRACKER_L2)
       static bool expanderDown = false;
   static uint32_t nextExpanderPollMs = 0;
@@ -85096,6 +85142,37 @@ void UITask::loop() {
           _screen_off = true;
           // NO _manual_lock -- touch can still wake the screen.
         }
+      }
+    }
+#elif defined(HAS_TWATCH_S3)
+    // T-Watch S3 crown (PWR) — T-Deck-style two-step: screen off -> peek (show the
+    // Constellation); screensaver up -> unlock (PIN entry if a PIN is set); awake ->
+    // lock. The 6 s long-press power-off is the AXP2101.
+    if (v == LOW && s_user_btn_prev == HIGH) {
+      if (_screen_off) {
+#if CAP_SCREENSAVER
+        if (s_ssaver_on) {
+          wakeScreen();                 // screensaver up -> unlock (routes to PIN when set)
+        } else if (ssaverAllowed(false)) {
+          touchScreenBacklight(true);   // wake the panel + light it (ssaverStart dims to 40%)
+          ssaverStart(millis(), false); // dark -> peek: light the Constellation, stay locked
+        } else {
+          wakeScreen();                 // dark but screensaver not allowed -> just wake
+        }
+#else
+        wakeScreen();
+#endif
+      } else {
+        // Awake -> lock to the screensaver (carrying the PIN), else plain sleep/lock.
+#if CAP_SCREENSAVER
+        if (ssaverAllowed(false)) {
+          ssaverStart(now, false);
+          _screen_off  = true;
+          _manual_lock = s_lock_on_screen_off || s_pin_on;
+        } else
+#endif
+        if (s_lock_on_screen_off || s_pin_on) { lockScreen(); }
+        else { sleepScreen(); }
       }
     }
 #else   // Generic: Heltec V4 -- short press toggles screen + lock
