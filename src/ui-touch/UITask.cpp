@@ -61772,11 +61772,10 @@ static void openLuaStorePage() {
   // Apps tab toolbar under the tab bar: [ search field ][ Sort ]. Starts hidden;
   // luaStoreStyleTabs shows it on the Apps tab and moves the list down to make room.
   {
-    const lv_coord_t tools_w = sw - 12, tools_h = bar_h;
+    const lv_coord_t tools_w = sw - 12;
     lv_obj_t* tb = lv_obj_create(s_luastore_root);
     s_luastore_tools = tb;
     lv_obj_remove_style_all(tb);
-    lv_obj_set_size(tb, tools_w, tools_h);
     lv_obj_set_pos(tb, 6, s_luastore_list_y);
     lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(tb, LV_OBJ_FLAG_HIDDEN);
@@ -61795,7 +61794,7 @@ static void openLuaStorePage() {
     lv_obj_t* ta = lv_textarea_create(tb);
     s_luastore_search_ta = ta;
     lv_obj_set_pos(ta, 0, 0);
-    lv_obj_set_size(ta, tools_w - sort_w - 4, tools_h);
+    lv_obj_set_width(ta, tools_w - sort_w - 4);
     styleCard(ta);
     lv_textarea_set_one_line(ta, true);
     taSetPlaceholder(ta, TR("Search apps"));
@@ -61806,6 +61805,11 @@ static void openLuaStorePage() {
     lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
     lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_READY, nullptr);
     attachSettingsTaEvents(ta);   // keyboard binds on focus / tap, as in Files
+    // One-line mode sizes the field to its text, so the toolbar and the Sort
+    // button take the field's height rather than the taller tab bar's.
+    lv_obj_update_layout(ta);
+    const lv_coord_t tools_h = lv_obj_get_height(ta);
+    lv_obj_set_size(tb, tools_w, tools_h);
 
     lv_obj_t* sb = lv_btn_create(tb);
     lv_obj_set_size(sb, sort_w, tools_h);
