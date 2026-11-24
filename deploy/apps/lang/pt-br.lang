@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Aguardando uma resposta no aparelho.
 This app has no settings	Este app não tem ajustes
 Saved on the device for this app. The app reads them when it opens.	Salvo no aparelho para este app. O app os lê ao abrir.
 Could not save to the device storage	Não foi possível salvar no armazenamento do aparelho
+
+# Store search / sort (#863)
+Search apps	Buscar apps
+Updates	Atualizações
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nenhum app corresponde a "%s"

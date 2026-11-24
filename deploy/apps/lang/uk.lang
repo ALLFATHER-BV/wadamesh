@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Очікування відповіді н�
 This app has no settings	Цей застосунок не має налаштувань
 Saved on the device for this app. The app reads them when it opens.	Збережено на пристрої для цього застосунку. Застосунок читає їх під час відкриття.
 Could not save to the device storage	Не вдалося зберегти в пам'ять пристрою
+
+# Store search / sort (#863)
+Search apps	Пошук застосунків
+Updates	Оновлення
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Немає застосунків за запитом «%s»

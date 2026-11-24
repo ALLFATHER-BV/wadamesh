@@ -2492,3 +2492,10 @@ Waiting for an answer on the device.	Čekám na odpověď na zařízení.
 This app has no settings	Tato aplikace nemá nastavení
 Saved on the device for this app. The app reads them when it opens.	Uloženo v zařízení pro tuto aplikaci. Aplikace je načte při otevření.
 Could not save to the device storage	Nelze uložit do úložiště zařízení
+
+# Store search / sort (#863)
+Search apps	Hledat aplikace
+Updates	Aktualizace
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Žádná aplikace neodpovídá „%s“

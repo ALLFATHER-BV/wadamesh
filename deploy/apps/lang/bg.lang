@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Изчакване на отговор на
 This app has no settings	Това приложение няма настройки
 Saved on the device for this app. The app reads them when it opens.	Запазени на устройството за това приложение. Приложението ги чете при отваряне.
 Could not save to the device storage	Неуспешно запазване в паметта на устройството
+
+# Store search / sort (#863)
+Search apps	Търсене на приложения
+Updates	Обновления
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Няма приложения за „%s“

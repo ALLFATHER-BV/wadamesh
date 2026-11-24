@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Ожидание ответа на устр
 This app has no settings	У этого приложения нет настроек
 Saved on the device for this app. The app reads them when it opens.	Сохранено на устройстве для этого приложения. Приложение читает их при открытии.
 Could not save to the device storage	Не удалось сохранить в памяти устройства
+
+# Store search / sort (#863)
+Search apps	Поиск приложений
+Updates	Обновления
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Нет приложений по запросу «%s»

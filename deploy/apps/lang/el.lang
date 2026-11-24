@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Αναμονή απάντησης στη σ
 This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
 Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
 Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής
+
+# Store search / sort (#863)
+Search apps	Αναζήτηση εφαρμογών
+Updates	Ενημερώσεις
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Καμία εφαρμογή για «%s»

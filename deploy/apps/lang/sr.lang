@@ -2477,3 +2477,10 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+
+# Store search / sort (#863)
+Search apps	Претрага апликација
+Updates	Ажурирања
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Нема апликација за „%s“

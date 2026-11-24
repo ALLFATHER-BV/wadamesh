@@ -2486,3 +2486,10 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+
+# Store search / sort (#863)
+Search apps	Appok keresése
+Updates	Frissítések
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nincs találat: „%s”

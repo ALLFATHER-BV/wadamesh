@@ -4,6 +4,7 @@
       "id": "monitor",
       "name": "RF Monitor",
       "ver": "1.4",
+      "released": "2026-10-15",
       "radio": "own",
       "desc": "RSSI, noise, margin and packet-rate tiles, a filled signal chart and the recently heard packets. Tap a packet for who sent it, its route, margin, size and airtime."
     },
@@ -11,6 +12,7 @@
       "id": "airtime",
       "name": "Airtime",
       "ver": "1.6",
+      "released": "2026-10-15",
       "radio": "own",
       "desc": "How busy the channel is: the live load, average, peak, a filled chart with the duty ceiling and the rx/tx split. Keeps a Home widget with the channel load while it runs."
     },
@@ -18,12 +20,14 @@
       "id": "snake",
       "name": "Snake",
       "ver": "1.0",
+      "released": "2026-08-04",
       "desc": "The classic, in Lua. Swipe to steer."
     },
     {
       "id": "tetris",
       "name": "Tetris",
       "ver": "1.0",
+      "released": "2026-10-02",
       "desc": "The classic falling-block puzzle. Swipe left/right to move, up to rotate, down to hard-drop. Contributed by samuelcoustet.",
       "seed": false
     },
@@ -31,6 +35,7 @@
       "id": "protreck",
       "name": "ProTreck",
       "ver": "1.3",
+      "released": "2026-10-26",
       "desc": "Outdoor watch: ASTRO (sun/moon + 3 alarms + local sun times), CMPAS (compass rose + waypoint), CHRONO (laps), TIMER (countdown), ALTI (altitude + trend + déniv). Swipe left/right to switch tabs. Contributed by samuelcoustet.",
       "requires": "sdk_ext",
       "seed": false
@@ -39,6 +44,7 @@
       "id": "sdktest",
       "name": "SDK Test",
       "ver": "1.7",
+      "released": "2026-08-23",
       "desc": "Developer tool. Checks the extended Lua SDK on this board: capabilities, clock, battery, GPS, private file access, audio API, read-only SD listing, crypto against published RFC vectors, channel discovery, and buttons that TRANSMIT test messages.",
       "requires": "sdk_ext"
     },
@@ -46,6 +52,7 @@
       "id": "2048",
       "name": "2048",
       "ver": "1.2",
+      "released": "2026-08-13",
       "desc": "The classic sliding-tile puzzle. Swipe to move, tap to restart. Keeps your best score. Contributed by pisti87.",
       "seed": false
     },
@@ -53,6 +60,7 @@
       "id": "wardrive",
       "name": "Wardrive",
       "ver": "1.3",
+      "released": "2026-10-23",
       "radio": "own",
       "desc": "LoRa coverage survey. Probes every 20s and logs each reply with GPS position, altitude and BOTH link directions (how well you heard them, how well they heard you) to a CSV, then plots the run back on the map so you can check coverage before driving it again. Reference app for wada.mesh.discover.",
       "requires": "sdk_ext"
@@ -61,6 +69,7 @@
       "id": "nearby",
       "name": "Nearby",
       "ver": "1.0",
+      "released": "2026-08-21",
       "desc": "Your contacts on a real map, sorted by distance, with bearing and a live frame counter. Reference app for wada.map, wada.ui.list, wada.geo and app.on_packet.",
       "requires": "sdk_ext"
     },
@@ -68,6 +77,7 @@
       "id": "gpscompass",
       "name": "GPS Compass",
       "ver": "1.1",
+      "released": "2026-11-11",
       "desc": "Compass rose: magnetometer or GPS course, live fix, bearing to contacts",
       "seed": false
     },
@@ -75,6 +85,7 @@
       "id": "sdscan",
       "name": "SD Scan",
       "ver": "1.1",
+      "released": "2026-09-19",
       "desc": "Finds and removes Windows malware on the SD card, like the M9 worm.",
       "requires": "sd",
       "seed": false
@@ -83,6 +94,7 @@
       "id": "tripodometer",
       "name": "Trip Odometer",
       "ver": "1.1",
+      "released": "2026-10-06",
       "desc": "GPS trip computer: distance, elapsed time, avg/max speed, min/current altitude, return-to-home bearing. Start/Stop to track, Reset to clear. Saves trip across restarts. Contributed by samuelcoustet.",
       "requires": "sdk_ext",
       "seed": false
@@ -91,6 +103,7 @@
       "id": "breakout",
       "name": "Breakout",
       "ver": "1.0",
+      "released": "2026-08-04",
       "desc": "Classic brick-breaker. Swipe left/right to move the paddle, swipe up to launch the ball. Clear all bricks to advance levels. Contributed by samuelcoustet.",
       "seed": false
     },
@@ -98,6 +111,7 @@
       "id": "ping",
       "name": "Ping",
       "ver": "1.0",
+      "released": "2026-10-02",
       "desc": "Send a mesh DM ping to any contact and measure round-trip time. Includes your GPS position so both sides see distance and bearing. Auto-replies to incoming pings. Contributed by samuelcoustet.",
       "requires": "sdk_ext"
     },
@@ -105,6 +119,7 @@
       "id": "mecp",
       "name": "MECP",
       "ver": "1.0",
+      "released": "2026-10-13",
       "desc": "Emergency messages in MECP code: pick severity and codes, add people and position, post to a channel. Decodes MECP lines into words. Code table: MECP by xiang-dev-1, CC BY 4.0.",
       "requires": "sdk_ext",
       "seed": false
@@ -113,6 +128,7 @@
       "id": "music",
       "name": "Music",
       "ver": "1.0",
+      "released": "2026-10-15",
       "desc": "MP3 and WAV from the SD card's Music folder, shuffle, repeat.",
       "icon": "music",
       "requires": "audio",
@@ -122,6 +138,7 @@
       "id": "blackjack",
       "name": "Blackjack",
       "ver": "1.2.2",
+      "released": "2026-10-18",
       "desc": "Casino Blackjack (21) with split, double down, 6-deck shoe, persistent bankroll, pixel-perfect suit pips, and auto-scaling UI with double-stacked P4 controls. Contributed by halflive-743.",
       "icon": "game",
       "seed": false
@@ -130,6 +147,7 @@
       "id": "spaceinvaders",
       "name": "Space Invaders",
       "ver": "1.1",
+      "released": "2026-10-21",
       "desc": "Classic alien shooter with shields, a bonus UFO and rising levels. Swipe or use keys to move, up or tap the middle to fire. Keeps your high score.",
       "icon": "game",
       "seed": false
@@ -138,6 +156,7 @@
       "id": "ebook",
       "name": "Ebook",
       "ver": "1.0",
+      "released": "2026-11-02",
       "desc": "Reads .epub books from the app's folder (text only), with chapters, text sizes and a remembered place. Books must be stored uncompressed: repack them with scripts/ebook-prep.py.",
       "icon": "list",
       "requires": "sdk_ext",
@@ -147,6 +166,7 @@
       "id": "cyberspace",
       "name": "Cyberspace",
       "ver": "1.1",
+      "released": "2026-11-15",
       "requires": "https",
       "desc": "A client for cyberspace.online: cIRC rooms, C-Mail and the Feed. Scroll, read and reply, over https with your own account. Needs beta_103 or later.",
       "icon": "message",
@@ -156,6 +176,7 @@
       "id": "holdem",
       "name": "Texas Hold'em",
       "ver": "1.3",
+      "released": "2026-11-14",
       "desc": "Play no-limit Texas Hold'em against three AI opponents, with side pots and a bankroll that carries over between sessions.",
       "icon": "game",
       "seed": false
