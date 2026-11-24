@@ -61776,7 +61776,8 @@ static void openLuaStorePage() {
     lv_obj_t* tb = lv_obj_create(s_luastore_root);
     s_luastore_tools = tb;
     lv_obj_remove_style_all(tb);
-    lv_obj_set_pos(tb, 6, s_luastore_list_y);
+    const lv_coord_t tools_gap = 1;               // tight under the tab buttons
+    lv_obj_set_pos(tb, 6, s_luastore_list_y - 4 + tools_gap);
     lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(tb, LV_OBJ_FLAG_HIDDEN);
     const bool narrow = luaStoreToolsNarrow();
@@ -61830,7 +61831,7 @@ static void openLuaStorePage() {
 
     s_nav_store_tools[0] = ta;
     s_nav_store_tools[1] = sb;
-    s_luastore_tools_dy = tools_h + 4;
+    s_luastore_tools_dy = tools_h + tools_gap;   // list keeps its 4 px gap below
   }
 #endif
 
