@@ -44,7 +44,8 @@ We do NOT bind LVGL wholesale. We bind a stable, versioned surface we own
   trackball dirs. (Snake's swipe steering maps here; the existing
   SnakeGame gesture path shows the shape.)
 - `wada.mesh` (READ-ONLY v1) — `contacts()` snapshot (name/type/last_seen/
-  rssi), `rx_log()` ring (the RF Monitor feed), `stats()` (airtime used,
+  rssi), `rx_log()` ring (the RF Monitor feed; floods carry `path`, up to
+  64 bytes, and `last_hop`, the repeater the radio heard), `stats()` (airtime used,
   duty budget, tx/rx counters, noise floor, current rssi), `self()` (name,
   lat/lon, battery_mv). No TX of any kind in v1 — mesh safety line.
 - `wada.net` — `http_get(url, cb, max_bytes)` async on the existing tile-fetch

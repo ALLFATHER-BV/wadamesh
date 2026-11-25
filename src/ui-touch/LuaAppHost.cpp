@@ -76,11 +76,12 @@ extern void luaHostLockScreen();
 extern int  luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* secs_ago,
                              double* lat, double* lon, char* pk_hex, size_t pk_cap,
                              int32_t* lat_e6, int32_t* lon_e6);
-#define LUA_RX_PATH_MAX 16   // MyMesh::UI_RXLOG_PATH_MAX
+#define LUA_RX_PATH_MAX 64   // MyMesh::UI_RXLOG_PATH_MAX
 extern int  luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                            int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
                            uint32_t* at_ms = nullptr, uint8_t* path = nullptr,
-                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr);
+                           uint8_t* path_bytes = nullptr, uint8_t* path_hash_sz = nullptr,
+                           uint8_t* last_hop = nullptr, uint8_t* last_hop_sz = nullptr);
 extern int  luaHostDiscoverCount();
 extern void luaHostDiscoverClear();
 extern int  luaHostDiscoverAt(int idx, char* pk_hex, size_t pk_cap, char* name, size_t name_cap,
@@ -1180,6 +1181,7 @@ int sysCaps(lua_State* L) {
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "list");       // wada.ui.list
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "packets");    // app.on_packet
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "paths");      // repeater hashes in packets, messages, repeats()
+  lua_pushboolean(L, 1);                lua_setfield(L, -2, "last_hop");   // rx_log/on_packet last_hop, paths up to 64 bytes
   lua_pushboolean(L, CAP_LUA_SDK_EXT);  lua_setfield(L, -2, "ping");       // wada.mesh.ping + app.on_ping
   lua_pushboolean(L, 1);                lua_setfield(L, -2, "measure");    // ui.text_w / text_lines
   lua_pushboolean(L, CAP_SENSORS);      lua_setfield(L, -2, "sensors");    // wada.sys.env
@@ -2873,29 +2875,26 @@ int meshContacts(lua_State* L) {
 // frames instead expose `src`/`dst`, the one-byte hashes they carry; two hex
 // characters collide easily, so treat them as a hint, not an identity. Anything
 // else is anonymous on the wire and gets neither field.
+//
+// `last_hop` (floods with at least one hop) is the repeater our radio actually
+// heard: the last hash of the full path, kept even when `path` is capped. With
+// `snr`/`rssi` it gives a per-repeater link reading.
+struct LuaRxRec {
+  uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
+  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz, last_hop[4], last_hop_sz;
+};
+static bool luaRxGet(int idx, LuaRxRec& r) {
+  return luaHostRxLogAt(idx, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
+                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
+                        r.path, &r.path_bytes, &r.path_sz, r.last_hop, &r.last_hop_sz) != 0;
+}
+void pushPacketTable(lua_State* L, const LuaRxRec& r);
 int meshRxLog(lua_State* L) {
   lua_newtable(L);
-  uint32_t ms_ago; int ptype, rssi, hops, route, flen, org_kind; float snr; char org[12];
-  uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz;
+  static LuaRxRec r;   // ~100 B: off the loop task's stack (single UI thread)
   for (int i = 0, out = 0; i < 64; i++) {
-    if (!luaHostRxLogAt(i, &ms_ago, &ptype, &rssi, &snr, &hops,
-                        &route, &flen, &org_kind, org, sizeof org,
-                        nullptr, path, &path_bytes, &path_sz)) break;
-    lua_createtable(L, 0, 10);
-    lua_pushinteger(L, (lua_Integer)ms_ago); lua_setfield(L, -2, "ago_ms");
-    lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
-    lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
-    lua_pushnumber(L, snr);                  lua_setfield(L, -2, "snr");
-    lua_pushinteger(L, hops);                lua_setfield(L, -2, "hops");
-    lua_pushinteger(L, route);               lua_setfield(L, -2, "route");
-    lua_pushinteger(L, flen);                lua_setfield(L, -2, "len");
-    if (org_kind == 1) {
-      lua_pushstring(L, org); lua_setfield(L, -2, "pubkey");
-    } else if (org_kind == 2 && strlen(org) >= 4) {
-      lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
-      lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
-    }
-    if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
+    if (!luaRxGet(i, r)) break;
+    pushPacketTable(L, r);
     lua_rawseti(L, -2, ++out);
   }
   return 1;
@@ -2919,24 +2918,30 @@ lv_timer_t* s_pkt_poll = nullptr;
 uint32_t    s_pkt_last_ms = 0;      // newest record timestamp already delivered
 bool        s_pkt_primed = false;
 
-void pushPacketTable(lua_State* L, uint32_t ago_ms, int ptype, int rssi, float snr, int hops,
-                     int route, int flen, int org_kind, const char* org,
-                     const uint8_t* path, uint8_t path_bytes, uint8_t path_sz) {
-  lua_createtable(L, 0, 10);
-  lua_pushinteger(L, (lua_Integer)ago_ms); lua_setfield(L, -2, "ago_ms");
-  lua_pushinteger(L, ptype);               lua_setfield(L, -2, "type");
-  lua_pushinteger(L, rssi);                lua_setfield(L, -2, "rssi");
-  lua_pushnumber(L, snr);                  lua_setfield(L, -2, "snr");
-  lua_pushinteger(L, hops);                lua_setfield(L, -2, "hops");
-  lua_pushinteger(L, route);               lua_setfield(L, -2, "route");
-  lua_pushinteger(L, flen);                lua_setfield(L, -2, "len");
-  if (org_kind == 1) {
-    lua_pushstring(L, org); lua_setfield(L, -2, "pubkey");
-  } else if (org_kind == 2 && strlen(org) >= 4) {
-    lua_pushlstring(L, org, 2);     lua_setfield(L, -2, "dst");
-    lua_pushlstring(L, org + 2, 2); lua_setfield(L, -2, "src");
+// One rx_log / on_packet entry (the same table for both).
+void pushPacketTable(lua_State* L, const LuaRxRec& r) {
+  lua_createtable(L, 0, 11);
+  lua_pushinteger(L, (lua_Integer)r.ago);  lua_setfield(L, -2, "ago_ms");
+  lua_pushinteger(L, r.ptype);             lua_setfield(L, -2, "type");
+  lua_pushinteger(L, r.rssi);              lua_setfield(L, -2, "rssi");
+  lua_pushnumber(L, r.snr);                lua_setfield(L, -2, "snr");
+  lua_pushinteger(L, r.hops);              lua_setfield(L, -2, "hops");
+  lua_pushinteger(L, r.route);             lua_setfield(L, -2, "route");
+  lua_pushinteger(L, r.len);               lua_setfield(L, -2, "len");
+  if (r.kind == 1) {
+    lua_pushstring(L, r.org); lua_setfield(L, -2, "pubkey");
+  } else if (r.kind == 2 && strlen(r.org) >= 4) {
+    lua_pushlstring(L, r.org, 2);     lua_setfield(L, -2, "dst");
+    lua_pushlstring(L, r.org + 2, 2); lua_setfield(L, -2, "src");
   }
-  if (route == 0 || route == 1) { pushPathHops(L, path, path_bytes, path_sz); lua_setfield(L, -2, "path"); }
+  if (r.route == 0 || r.route == 1) {
+    pushPathHops(L, r.path, r.path_bytes, r.path_sz); lua_setfield(L, -2, "path");
+    if (r.last_hop_sz) {   // the same one-hop hex spelling as the path entries
+      pushPathHops(L, r.last_hop, r.last_hop_sz, r.last_hop_sz);
+      lua_rawgeti(L, -1, 1); lua_remove(L, -2);
+      lua_setfield(L, -2, "last_hop");
+    }
+  }
 }
 
 #if CAP_LUA_AUDIO
@@ -2971,32 +2976,32 @@ void audioPollCb(lv_timer_t* t) {
 void packetPollCb(lv_timer_t* t) {
   (void)t;
   if (!s_h || !s_h->L) return;
-  // Snapshot the ring newest-first, then deliver oldest-first so an app sees
-  // arrival order. 16 is the ring depth; reading past it just stops.
-  struct Rec { uint32_t at, ago; int ptype, rssi, hops, route, len, kind; float snr; char org[12];
-               uint8_t path[LUA_RX_PATH_MAX], path_bytes, path_sz; };
-  Rec recs[16];
+  // Note the new records' timestamps newest-first, then deliver oldest-first so an
+  // app sees arrival order. 16 is the ring depth; reading past it just stops. Only
+  // the timestamps are kept (not 16 copies of a record with a 64-byte path on the
+  // loop task's stack); each record is fetched again by its timestamp to deliver.
+  static LuaRxRec r;
+  uint32_t ats[16];
   int n = 0;
   uint32_t newest = s_pkt_last_ms;
   for (int i = 0; i < 16; i++) {
-    Rec r;
-    if (!luaHostRxLogAt(i, &r.ago, &r.ptype, &r.rssi, &r.snr, &r.hops,
-                        &r.route, &r.len, &r.kind, r.org, sizeof r.org, &r.at,
-                        r.path, &r.path_bytes, &r.path_sz)) break;
+    if (!luaRxGet(i, r)) break;
     // millis() wraps at 49 days; compare as a signed delta so the wrap does not
     // silently stop delivery for the rest of the session.
     if ((int32_t)(r.at - s_pkt_last_ms) <= 0) break;   // already delivered, and so is everything older
     if ((int32_t)(r.at - newest) > 0) newest = r.at;
-    if (n < 16) recs[n++] = r;
+    ats[n++] = r.at;
   }
   s_pkt_last_ms = newest;
   if (!s_pkt_primed) { s_pkt_primed = true; return; }   // first pass only establishes the mark
-  for (int i = n - 1; i >= 0; i--) {                    // oldest first
+  for (int k = n - 1; k >= 0; k--) {                    // oldest first
     if (!s_h || !s_h->L) return;
+    // Normally still at index k; a frame logged meanwhile shifts it, so look it up.
+    bool found = luaRxGet(k, r) && r.at == ats[k];
+    for (int i = 0; !found && i < 16; i++) found = luaRxGet(i, r) && r.at == ats[k];
+    if (!found) continue;   // already overwritten
     if (!pushCallback(s_h, "on_packet")) return;
-    pushPacketTable(s_h->L, recs[i].ago, recs[i].ptype, recs[i].rssi, recs[i].snr, recs[i].hops,
-                    recs[i].route, recs[i].len, recs[i].kind, recs[i].org,
-                    recs[i].path, recs[i].path_bytes, recs[i].path_sz);
+    pushPacketTable(s_h->L, r);
     guardedCall(s_h, 1);
     serviceDeferredClose();
   }

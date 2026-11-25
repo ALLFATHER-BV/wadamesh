@@ -1053,8 +1053,14 @@ void MyMesh::beRxRaw(int8_t snr_q4, int8_t rssi, const uint8_t* raw, size_t len)
   memcpy(r.org, org, 4);
   r.path_hash_sz = v.hash_sz;
   r.path_bytes = 0;
+  r.last_hop_sz = 0;
+  memset(r.last_hop, 0, sizeof r.last_hop);
   if (v.route == ROUTE_TYPE_FLOOD || v.route == ROUTE_TYPE_TRANSPORT_FLOOD) {
     int n = (int)v.hops * (int)v.hash_sz;
+    if (v.hops > 0 && v.hash_sz <= 4) {   // the last hash of the full path: the repeater heard
+      r.last_hop_sz = v.hash_sz;
+      memcpy(r.last_hop, &raw[v.path_off + (v.hops - 1) * v.hash_sz], v.hash_sz);
+    }
     if (n > UI_RXLOG_PATH_MAX) n = UI_RXLOG_PATH_MAX / v.hash_sz * v.hash_sz;
     r.path_bytes = (uint8_t)n;
     if (n) memcpy(r.path, &raw[v.path_off], n);

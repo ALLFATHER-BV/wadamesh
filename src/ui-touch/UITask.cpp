@@ -77238,7 +77238,8 @@ int luaHostContactAt(int idx, char* name, size_t name_cap, int* type, uint32_t* 
 }
 int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr, int* hops,
                    int* route, int* len, int* org_kind, char* org_hex, size_t org_cap,
-                   uint32_t* at_ms, uint8_t* path, uint8_t* path_bytes, uint8_t* path_hash_sz) {
+                   uint32_t* at_ms, uint8_t* path, uint8_t* path_bytes, uint8_t* path_hash_sz,
+                   uint8_t* last_hop, uint8_t* last_hop_sz) {
   MyMesh::UiRxRec r;
   if (idx < 0 || !the_mesh.uiRxLogGet((uint8_t)idx, r)) return 0;
   if (at_ms) *at_ms = r.ms;   // the record's own timestamp: a stable delivery key
@@ -77255,10 +77256,14 @@ int luaHostRxLogAt(int idx, uint32_t* ms_ago, int* ptype, int* rssi, float* snr,
   // width the frame actually justifies, so 8 hex chars always means a key.
   if (org_hex && org_cap) luaPubkeyHex(r.org, r.org_kind == 1 ? 4 : 2, org_hex, org_cap);
   if (path && path_bytes && path_hash_sz) {
-    static_assert(MyMesh::UI_RXLOG_PATH_MAX == 16, "the buffers in LuaAppHost.cpp are LUA_RX_PATH_MAX");
+    static_assert(MyMesh::UI_RXLOG_PATH_MAX == 64, "the buffers in LuaAppHost.cpp are LUA_RX_PATH_MAX");
     memcpy(path, r.path, r.path_bytes);
     *path_bytes = r.path_bytes;
     *path_hash_sz = r.path_hash_sz;
+  }
+  if (last_hop && last_hop_sz) {
+    *last_hop_sz = r.last_hop_sz;
+    memcpy(last_hop, r.last_hop, sizeof r.last_hop);
   }
   return 1;
 }
