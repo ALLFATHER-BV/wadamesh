@@ -2,21 +2,26 @@
 #include "TDeckMaxBoard.h"
 #include <Preferences.h>
 
-// Set the gauge to the fitted pack once. The gauge sits on the battery, so the
-// setting outlives reflashes and power-off; boot only writes when the gauge
-// reads something else. Each target is tried once ("cap_try"), so a gauge that
-// refuses the write or reads back something else is not put through
-// config-update mode on every boot.
+// Set the gauge to the fitted pack. The BQ27220 keeps its configuration in RAM, so
+// the setting outlives reflashes and power-off but not a battery that is unplugged
+// or run flat: boot writes it whenever the gauge reads something else, which is
+// no wear (nothing goes to flash). Only a write the gauge refuses, or reads back
+// differently (sealed with a custom key), is remembered ("cap_try"), so such a
+// gauge is not put through config-update mode on every boot. A NVS write happens
+// only on those rare boots.
 static void maxConfigureGauge(GaugeBQ27220& gauge) {
   if (!gauge.refresh()) return;                 // not answering: try next boot
-  Preferences p;
-  if (!p.begin("maxhw", false)) return;
   const uint16_t want = TDMAX_GAUGE_DESIGN_MAH;
   const uint16_t have = gauge.getDesignCapacity();
-  if (have != want && p.getUShort("cap_try", 0) != want) {
-    const bool ok = gauge.setNewCapacity(want, want);
-    Serial.printf("[BOOT] bq27220 capacity %u -> %u mAh %s\n", (unsigned)have, (unsigned)want, ok ? "ok" : "FAILED");
-    p.putUShort("cap_try", want);
+  if (have == want) return;
+  Preferences p;
+  if (!p.begin("maxhw", false)) return;
+  if (p.getUShort("cap_try", 0) != want) {
+    gauge.setNewCapacity(want, want);
+    const bool ok = gauge.refresh() && gauge.getDesignCapacity() == want;
+    Serial.printf("[BOOT] bq27220 capacity %u -> %u mAh %s\n", (unsigned)have, (unsigned)want, ok ? "ok" : "NOT TAKEN");
+    if (ok) { if (p.isKey("cap_try")) p.remove("cap_try"); }
+    else    p.putUShort("cap_try", want);
   }
   p.end();
 }
