@@ -38798,7 +38798,7 @@ static int wifiScanWatchdogSafe(uint32_t cap_ms, uint16_t per_chan_ms = 300) {
 #elif defined(WADA_ZERO)
 #define WADA_BOARD_ID "cardputer-zero"
 #elif defined(HAS_TWATCH_S3)
-#define WADA_BOARD_ID "t-watch-s3"
+#define WADA_BOARD_ID "twatch-s3"
 #elif defined(TLORA_PAGER)
   #if defined(USE_LR1121)
 #define WADA_BOARD_ID "tlora-pager-lr1121"

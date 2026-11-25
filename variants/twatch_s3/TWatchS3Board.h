@@ -47,7 +47,10 @@ public:
     esp_deep_sleep_start();
   }
 
+  // Power off for real: the AXP2101 cuts every rail and the crown turns the watch
+  // back on. Deep sleep (the fallback) would keep waking on every LoRa packet.
   void powerOff() override {
+    if (_pmu_ok) { _pmu.shutdown(); delay(100); }
     enterDeepSleep(0);
   }
 

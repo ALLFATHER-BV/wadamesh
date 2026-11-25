@@ -21,23 +21,28 @@ void TWatchS3Board::begin() {
     // default, so isPekeyShortPressIrq()/isPekeyLongPressIrq() stay false until
     // we enable them here.
     _pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ | XPOWERS_AXP2101_PKEY_LONG_IRQ);
-    _pmu.setVbusVoltageLimit(4000);
-    _pmu.setVbusCurrentLimit(1000);
+    // These two take the AXP2101 register codes, not millivolts / milliamps: a plain
+    // 1000 truncated to code 0 = a 100 mA USB input limit (slow charge, brown-outs
+    // on TX when the cell is flat).
+    _pmu.setVbusVoltageLimit(XPOWERS_AXP2101_VBUS_VOL_LIM_4V36);
+    _pmu.setVbusCurrentLimit(XPOWERS_AXP2101_VBUS_CUR_LIM_900MA);
     _pmu.setSysPowerDownVoltage(2600);
 
-    // Peripheral 3.3 V rails (display + touch + sensors).
-    _pmu.setALDO1Voltage(3300);  _pmu.enableALDO1();
-    _pmu.setALDO2Voltage(3300);  _pmu.enableALDO2();
-    _pmu.setALDO3Voltage(3300);  _pmu.enableALDO3();
-    _pmu.setALDO4Voltage(3300);  _pmu.enableALDO4();
-    _pmu.setBLDO1Voltage(3300);  _pmu.enableBLDO1();
-    _pmu.setBLDO2Voltage(3300);  _pmu.enableBLDO2();
-    _pmu.setDC1Voltage(3300);    _pmu.enableDC1();
-    _pmu.setDC2Voltage(3300);    _pmu.enableDC2();
-    _pmu.setDC3Voltage(3300);    _pmu.enableDC3();
-
-    // ESP32-S3 core supply (CPU SLDO domain).
-    _pmu.setCPUSLDOVoltage(1100); _pmu.enableCPUSLDO();
+    // Rails as LilyGo's own T-Watch S3 library sets them. DC1 is the ESP32-S3's
+    // 3.3 V: left alone.
+    _pmu.setALDO1Voltage(3300);  _pmu.enableALDO1();   // RTC (PCF8563) VBAT
+    _pmu.setALDO2Voltage(3300);  _pmu.enableALDO2();   // TFT backlight VDD
+    _pmu.setALDO3Voltage(3300);  _pmu.enableALDO3();   // screen + touch VDD
+    _pmu.setALDO4Voltage(3300);  _pmu.enableALDO4();   // SX1262 VDD
+    _pmu.setBLDO2Voltage(3300);  _pmu.enableBLDO2();   // DRV2605 haptics enable
+#if ENV_INCLUDE_GPS
+    _pmu.setDC3Voltage(3300);    _pmu.enableDC3();     // GNSS (T-Watch S3 Plus)
+#else
+    _pmu.disableDC3();
+#endif
+    // Not connected on this board: off, they only cost battery.
+    _pmu.disableDC2(); _pmu.disableDC4(); _pmu.disableDC5();
+    _pmu.disableBLDO1(); _pmu.disableCPUSLDO(); _pmu.disableDLDO1(); _pmu.disableDLDO2();
 
     // RTC coin-cell charge + battery presence.
     _pmu.setButtonBatteryChargeVoltage(3300);

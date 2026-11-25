@@ -183,7 +183,7 @@ static int ft5x06ReadTouchData(uint16_t* rx, uint16_t* ry) {
   if (Wire1.endTransmission(false) != 0) return -1;
 
   uint8_t buf[7];
-  uint8_t got = Wire1.requestFrom((int)FT5x06_ADDR, (uint8_t)7);
+  uint8_t got = Wire1.requestFrom((int)FT5x06_ADDR, (int)7);
   if (got < 5) return -1;
   for (uint8_t i = 0; i < got; ++i) buf[i] = Wire1.read();
 
