@@ -642,7 +642,9 @@ size_t MultiTransportCompanionInterface::writeFrameToAll(const uint8_t src[], si
   // armed a one-shot pass because this frame is an echo of OUR OWN flood send: the
   // app's "Repeats heard" is computed exactly from those (it broke on BLE when the
   // blanket skip landed in beta_23 — issue #94), and a few echoes per send are
-  // nowhere near the flood that caused #46/#54.
+  // nowhere near the flood that caused #46/#54. logRxRaw arms the same pass for the
+  // first reception of a message this node can read (a DM to us, a post on one of
+  // our channels), which phone apps use to show the message's path.
   const bool rxlog    = (len > 0 && src[0] == PUSH_CODE_LOG_RX_DATA);
   // #256: a companion that wants the whole firehose (coverage/region mapping —
   // region and the full path exist ONLY in this frame) can ask for it per
