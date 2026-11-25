@@ -47228,7 +47228,7 @@ static void openMessageActionMenu(int msg_idx) {
   const bool can_web = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_URL) > 0;
   const bool can_channel = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_HASHTAG) > 0;
   const bool can_map = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_COORD) > 0;
-  const bool can_contact = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_CONTACT) > 0;
+  const bool can_contact = CAP_CHAT_CONTACT_CARDS && messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_CONTACT) > 0;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -48261,7 +48261,7 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
                                  m.outgoing ? d.show_sender : senderShownName(d.show_sender));
   char text_without_contacts[UITask::MAX_MSG_TEXT + 1];
   snprintf(text_without_contacts, sizeof(text_without_contacts), "%s", d.show_text);
-  d.contact_count = ChatContactTuple::extractAndRemove(text_without_contacts);
+  d.contact_count = CAP_CHAT_CONTACT_CARDS ? ChatContactTuple::extractAndRemove(text_without_contacts) : 0;
   copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text),
                                  text_without_contacts);
 }
@@ -49401,7 +49401,7 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
   const bool has_url = chatUrlSpan(text, from, &url_start, &url_end);
   const bool has_tag = chatHashtagSpan(text, from, &tag_start, &tag_end);
   const bool has_coord = chatCoordSpan(text, from, &coord_start, &coord_end, &lat, &lon);
-  const bool has_contact = chatContactLinkSpan(text, from, &contact_start, &contact_end);
+  const bool has_contact = CAP_CHAT_CONTACT_CARDS && chatContactLinkSpan(text, from, &contact_start, &contact_end);
   if (!has_url && !has_tag && !has_coord && !has_contact) return false;
 
   next->start = INT_MAX;
@@ -49588,7 +49588,7 @@ static void activateChatLinkChoice(int index) {
     case CHAT_LINK_URL: openUrlMenu(value); break;
     case CHAT_LINK_HASHTAG: openHashtagChat(value); break;
     case CHAT_LINK_COORD: openMapAtCoords(choice.lat, choice.lon); break;
-    case CHAT_LINK_CONTACT: openChatContactTuple(value); break;
+    case CHAT_LINK_CONTACT: if (CAP_CHAT_CONTACT_CARDS) openChatContactTuple(value); break;
   }
 }
 
@@ -49659,7 +49659,7 @@ static void bubbleChatLinkTapCb(lv_event_t* e) {
       return;
     }
     if (choice.kind == CHAT_LINK_CONTACT) {
-      openMessageContactTuple(message_idx, choice.contact_ordinal);
+      if (CAP_CHAT_CONTACT_CARDS) openMessageContactTuple(message_idx, choice.contact_ordinal);
       return;
     }
     char value[UITask::MAX_MSG_TEXT + 1];
@@ -49753,7 +49753,8 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
     memcpy(item, s_chat_link_picker_text + choice.start, len);
     item[len] = '\0';
     ChatContactTuple::Contact shared{};
-    if (choice.kind == CHAT_LINK_CONTACT && ChatContactTuple::parseAt(item, (size_t)len, 0, &shared))
+    if (CAP_CHAT_CONTACT_CARDS && choice.kind == CHAT_LINK_CONTACT &&
+        ChatContactTuple::parseAt(item, (size_t)len, 0, &shared))
       snprintf(item, sizeof item, "%s", shared.name);   // the name, not 64 hex digits
     lv_label_set_text(label, item);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
@@ -50072,11 +50073,12 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   const lv_coord_t sender_lh = lv_font_get_line_height(&g_font_semi_12);
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
-  const lv_coord_t card_w = d.contact_count ? chatContactCardWidth(kInnerMaxW) : 0;
+  const size_t contact_count = CAP_CHAT_CONTACT_CARDS ? d.contact_count : 0;
+  const lv_coord_t card_w = contact_count ? chatContactCardWidth(kInnerMaxW) : 0;
   lv_coord_t inner_w = LV_MAX(LV_MAX(txt_w_used, card_w),
                               LV_MIN(sender_w, kInnerMaxW));
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
-  const lv_coord_t content_h = chatContactContentHeight(d.contact_count, wrapped.y);
+  const lv_coord_t content_h = chatContactContentHeight(contact_count, wrapped.y);
   const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + content_h;
 
   ChatFoot foot;
@@ -50171,7 +50173,7 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 #endif
 
-  if (d.contact_count) {
+  if (contact_count) {
     size_t from = 0;
     int ordinal = 0;
     const size_t text_length = strlen(d.show_text);
@@ -50322,7 +50324,7 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
   double compact_lat = 0.0, compact_lon = 0.0;
   const bool compact_has_coords = chatFirstCoord(m.text, &compact_lat, &compact_lon);
   int tuple_start = 0, tuple_end = 0;
-  const bool compact_has_contact = chatContactTupleSpan(m.text, 0, &tuple_start, &tuple_end);
+  const bool compact_has_contact = CAP_CHAT_CONTACT_CARDS && chatContactTupleSpan(m.text, 0, &tuple_start, &tuple_end);
   if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
@@ -50350,7 +50352,7 @@ static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ri
     {
       UITask::UIMessage m;
       int a = 0, b = 0;
-      has_contact = g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m) &&
+      has_contact = CAP_CHAT_CONTACT_CARDS && g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m) &&
                     chatContactTupleSpan(m.text, 0, &a, &b);
     }
     if (!has_contact)
@@ -61941,12 +61943,12 @@ static void luaStoreRebuildList() {
     static storefilter::SortKey keys[kLuaCatMax];
     for (int i = 0; i < s_lua_cat_n; i++) {
       const LuaInstApp* in = luaStoreFindInstalled(s_lua_cat[i].id);
-      keys[i] = { s_lua_cat[i].name, s_lua_cat[i].released, in && luaVerNewer(s_lua_cat[i].ver, in->ver) };
+      keys[i] = { s_lua_cat[i].name, s_lua_cat[i].released, CAP_STORE_SEARCH && in && luaVerNewer(s_lua_cat[i].ver, in->ver) };
       if (!storefilter::appMatches(s_lua_cat[i].name, s_lua_cat[i].id, s_lua_cat[i].desc, q)) continue;
       view[vn++] = i;
       if (keys[i].update) pinned++;
     }
-    storefilter::sortView(view, vn, keys, s_luastore_sort);
+    if (CAP_STORE_SEARCH) storefilter::sortView(view, vn, keys, s_luastore_sort);   // else catalog order
   }
   for (int k = 0; k < vn; k++) {
     const int i = view[k];   // the real catalog index, for every callback below
@@ -62102,7 +62104,7 @@ static void luaStoreRebuildList() {
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
   }
 
-  if (q[0] && vn == 0 && side_n == 0 && s_lua_cat_n > 0) {
+  if (CAP_STORE_SEARCH && q[0] && vn == 0 && side_n == 0 && s_lua_cat_n > 0) {
     lv_obj_t* card = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(card);
     lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
@@ -62240,7 +62242,7 @@ static void openLuaStorePage() {
 #if !(CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS)
   // Apps tab toolbar under the tab bar: [ search field ][ Sort ]. Starts hidden;
   // luaStoreStyleTabs shows it on the Apps tab and moves the list down to make room.
-  {
+  if (CAP_STORE_SEARCH) {
     const lv_coord_t tools_w = sw - 12;
     lv_obj_t* tb = lv_obj_create(s_luastore_root);
     s_luastore_tools = tb;

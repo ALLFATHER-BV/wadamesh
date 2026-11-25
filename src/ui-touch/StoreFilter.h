@@ -8,8 +8,6 @@
 #include <stdint.h>
 #include <string.h>
 
-#include <algorithm>
-
 namespace storefilter {
 
 enum SortMode : uint8_t { SORT_AZ = 0, SORT_ZA = 1, SORT_NEWEST = 2, SORT_COUNT = 3 };
@@ -97,9 +95,16 @@ inline bool before(const SortKey& a, const SortKey& b, uint8_t mode) {
 }
 
 // Order `view` (indices into `keys`) in place. Stable, so equal names keep catalog order.
+// An insertion sort: the catalog is a few dozen rows, and std::stable_sort's
+// merge machinery cost about 1.5 KB of flash on the tight boards.
 inline void sortView(int* view, int n, const SortKey* keys, uint8_t mode) {
   if (!view || n <= 1 || !keys) return;
-  std::stable_sort(view, view + n, [keys, mode](int x, int y) { return before(keys[x], keys[y], mode); });
+  for (int i = 1; i < n; ++i) {
+    const int v = view[i];
+    int j = i;
+    for (; j > 0 && before(keys[v], keys[view[j - 1]], mode); --j) view[j] = view[j - 1];
+    view[j] = v;
+  }
 }
 
 }  // namespace storefilter
