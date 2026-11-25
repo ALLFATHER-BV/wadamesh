@@ -5,7 +5,7 @@
 Test build, on top of beta_106. The stable build stays beta_101.
 
 # --- Fixes ---
-Web console: opening Settings no longer crashes the device. The category list read the installed apps' settings into a buffer that did not exist yet, and an open browser tab asked for it again after every restart, so the device kept restarting (#867 by oumike).
+Web console: opening Settings no longer crashes the device. The category list read the installed apps' settings into a buffer that did not exist yet, and an open browser tab asked for it again after every restart, so the device kept restarting (#869 by oumike, #867).
 Web console: after a restart or a dropped link, Settings shows its category list and waits for a click instead of reopening the page that was loading.
 ThinkNode M9: the first start after an erase no longer resets about 20 seconds in. The SPIFFS format keeps the watchdog state as it was (#869 by oumike, #891 by RevEngOps, #889).
 Signal probe: the automatic probe now waits while the screen is off or locked and never wakes the device to send. After the screen comes on it waits a few seconds, so a glance at the clock sends nothing (reported by MC8 on Discord).
