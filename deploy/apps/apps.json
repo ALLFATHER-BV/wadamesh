@@ -104,7 +104,7 @@
     {
       "id": "mecp",
       "name": "MECP",
-      "ver": "1.0",
+      "ver": "1.1",
       "desc": "Emergency messages in MECP code: pick severity and codes, add people and position, post to a channel. Decodes MECP lines into words. Code table: MECP by xiang-dev-1, CC BY 4.0.",
       "requires": "sdk_ext",
       "seed": false
