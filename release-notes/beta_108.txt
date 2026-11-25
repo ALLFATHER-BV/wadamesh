@@ -1,0 +1,8 @@
+# beta_108 - hotfix: opening the Store no longer restarts the device. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, fixes.
+
+Test build, on top of beta_107. The stable build stays beta_101. Everything in beta_107 is in this build too.
+
+# --- Fixes ---
+Store: opening it no longer restarts the device. The Store re-reads your installed apps from the SD card on a background worker, and in beta_107 that worker's stack ran out under the SD read. Its rarely used jobs no longer sit on its stack all the time, which leaves about 1.5 KB more room there (reported by benanderson on a ThinkNode M9).
