@@ -901,6 +901,7 @@ bool WebSocketCompanionServer::servePage(int idx) {
       "frame-src 'self' blob:; frame-ancestors 'self'\r\n"
       "X-Content-Type-Options: nosniff\r\n"
       "Connection: close\r\n\r\n", (unsigned)pages[i].len);
+    if (n <= 0 || n >= (int)sizeof hdr) return false;   // a longer header must never send past hdr
     // The headers fit one probed write; the body is queued for drainPage, which pushes
     // only what the socket takes now. A blocking write here held the main loop for as
     // long as the browser took to ACK (#854 review: up to 1.5 s per page).
