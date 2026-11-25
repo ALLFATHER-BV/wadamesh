@@ -1722,10 +1722,10 @@ Turn on if your keyboard types the wrong letters. It turns off modifier latching
 Turn on only if your repeater re-floods just one region. Otherwise it can block logins and direct messages across regions.	Povolte pouze tehdy, pokud váš opakovač znovu šíří pouze jeden region. Jinak ponechte vypnuto — může blokovat přihlášení/DM mezi regiony.
 Typing	Typing
 Unreleased test firmware: newer features, less tested. The update check and Install update both follow it.	Přijímat nevydaný testovací firmware — novější funkce, ale méně otestované. Kontrola aktualizací i Instalovat aktualizaci používají beta kanál.
-Until	Until
-Up to date (beta_%d)	Up to date (beta_%d)
-Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.	Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.
-Update available: beta_%d\nYou have beta_%d. Install it below.	Update available: beta_%d\nYou have beta_%d. Install it below.
+Until	Až do
+Up to date (beta_%d)	Aktuální (beta_%d)
+Update available: beta_%d\nYou have beta_%d. Get it at flasher.wadamesh.com.	Dostupná aktualizace: beta_%d\nMáte beta_%d. Stáhněte ji na flasher.wadamesh.com.
+Update available: beta_%d\nYou have beta_%d. Install it below.	Dostupná aktualizace: beta_%d\nMáte beta_%d. Nainstalujte ji níže.
 Used only when the time zone is Custom (UTC offset).	Used only when the time zone is Custom (UTC offset).
 Wallpaper	Wallpaper
 When Contacts is full	When Contacts is full
@@ -1736,22 +1736,22 @@ The speed your GPS module talks at. Applies after a restart.	The speed your GPS 
 %d heard	%d heard
 %d m up	%d m up
 %d mentions	%d mentions
-%d new	%d new
-%d nodes	%d nodes
+%d new	%d nové
+%d nodes	%d uzlů
 %d sats, fix	%d sats, fix
 %d sats, no fix	%d sats, no fix
-%d unread	%d unread
+%d unread	%d nepřečtených
 %d.%d%% of %d%%	%d.%d%% of %d%%
 %lu d ago	%lu d ago
 %lu h ago	%lu h ago
 %lu min ago	%lu min ago
 %lu s ago	%lu s ago
 %s · about %s left	%s · about %s left
-%u new	%u new
+%u new	%u nová
 1 heard	1 heard
 1 mention	1 mention
-1 node	1 node
-1 unread	1 unread
+1 node	1 uzel
+1 unread	1 nepřečtená
 Add a widget	Add a widget
 Advert sent across the mesh	Advert sent across the mesh
 Adverts share it exactly	Adverts share it exactly
@@ -2205,7 +2205,7 @@ F11 on the keyboard steps through these too.	Klávesa F11 na klávesnici přepí
 Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.	Wi-Fi was switched off because the device crashed while it was on. Turn it on in Settings > Wi-Fi to try again.
 Auto	Auto
 Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.	Auto tries the common speeds until the GPS answers and keeps the one that works. Pick a speed only if Auto does not find it. Applies after a restart.
-Rooms	Rooms
+Rooms	Místnosti
 Auto-delete: on	Automatické mazání: zapnuto
 Auto-delete: off	Automatické mazání: vypnuto
 Contact Management	Správa kontaktů
@@ -2277,7 +2277,7 @@ Lying face down, the screen goes off and the Pager stays silent (no sound, no vi
 Never below freezing. It resumes 3 °C above the limit.	Never below freezing. It resumes 3 °C above the limit.
 Once	Once
 Powering off… hold the power key to switch on	Powering off… hold the power key to switch on
-Quiet when face down	Quiet when face down
+Quiet when face down	Tichý obrazovkou dolů
 Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.	Set the battery to %u mAh?\nOnly if that is the pack fitted. The percentage and time left are recalculated and settle over the next full charge.
 Starting the motion sensor…	Starting the motion sensor…
 Stop charging above	Stop charging above
@@ -2305,7 +2305,7 @@ Darker with Night, lighter with Day, so the text on it stays readable.	S Nocí t
 Asking the time server	Asking the time server
 Auto-delete old contacts	Auto-delete old contacts
 Buzz for new messages, even with Sound off. Respects Do Not Disturb.	Buzz for new messages, even with Sound off. Respects Do Not Disturb.
-Connections	Connections
+Connections	Připojení
 Days	Days
 Deletes contacts not heard from in the number of days below. Favourites are never deleted.	Deletes contacts not heard from in the number of days below. Favourites are never deleted.
 Downloaded to this computer, and kept in this browser.	Downloaded to this computer, and kept in this browser.
@@ -2447,7 +2447,7 @@ Symbols	Symboly
 Flags	Vlajky
 Chars	Znaky
 Lifting the device off the table turns the screen on (a locked device shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.	Lifting the device off the table turns the screen on (a locked device shows its lock screen). Only after it lay still, so it stays dark in a bag or pocket.
-Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.	Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.
+Lying face down, the screen goes off and the device stays silent. Picking it up ends it. Keeps the motion sensor on, a little more power.	Při položení displejem dolů obrazovka zhasne a zařízení zůstane zticha. Zvednutím se ukončí. Pohybový senzor zůstane zapnutý, což spotřebuje o něco více energie.
 Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.	Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.
 \n%d%%, about %lu s left	\n%d%%, zbývá asi %lu s
 \n%d%%, about %lu min left	\n%d%%, zbývá asi %lu min
