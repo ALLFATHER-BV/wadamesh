@@ -27896,6 +27896,17 @@ static bool sendGroupMessageScoped(int slot, ChannelDetails& cd, uint32_t ts, co
   return ok;
 }
 
+// The last text DM typed on this device to a repeater or room server (chat composer or
+// terminal): their CLI answer goes into that DM thread (UITask::onAdminCommandReply).
+static uint8_t  s_dm_cli_pub[8] = {0};
+static uint32_t s_dm_cli_ms = 0;
+static void noteDmCliSend(const ContactInfo& c) {
+  if (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) return;
+  memcpy(s_dm_cli_pub, c.id.pub_key, sizeof s_dm_cli_pub);
+  s_dm_cli_ms = millis();
+  if (!s_dm_cli_ms) s_dm_cli_ms = 1;
+}
+
 static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
                        const char* disp, const char* text) {
   static uint32_t s_last_term_tx_ts = 0;
@@ -27940,12 +27951,18 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
   } else {
     ContactInfo* by = the_mesh.lookupContactByPubKey((uint8_t*)pub, PUB_KEY_SIZE);
     if (!by) { termLogAppendC(TERM_C_ERR, nullptr, "contact missing"); return; }
-    ContactInfo rcpt = *by;
-    rcpt.out_path_len = OUT_PATH_UNKNOWN;   // force flood routing (matches Chats TX)
-    uint8_t attempt = s_term_attempt++;
-    if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
     uint32_t expected_ack = 0, est_timeout = 0;
-    int rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
+    int rr;
+    if (by->type == ADV_TYPE_REPEATER && MyMesh::isRepeaterPingCmd(body)) {
+      rr = the_mesh.uiSendRepeaterDmPing(*by, expected_ack, est_timeout);
+    } else {
+      ContactInfo rcpt = *by;
+      rcpt.out_path_len = OUT_PATH_UNKNOWN;   // force flood routing (matches Chats TX)
+      uint8_t attempt = s_term_attempt++;
+      if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
+      rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
+      if (rr != MSG_SEND_FAILED) noteDmCliSend(*by);
+    }
     if (rr == MSG_SEND_FAILED) { termLogAppendC(TERM_C_ERR, nullptr, "send failed"); return; }
     the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
     snprintf(r, sizeof r, "TX -> %s: %s", disp, body);
@@ -34759,6 +34776,8 @@ static lv_obj_t* s_remote_root = nullptr;
 static lv_obj_t* s_remote_ipcard = nullptr;   // the "open in a browser" address card; only shown while a mode is ON
 static lv_obj_t* s_remote_ipval  = nullptr;   // its address label (URL + the web code)
 static lv_obj_t* s_remote_trust_box = nullptr;   // the web console's trusted-browsers list
+static lv_obj_t* s_remote_fixed_row = nullptr;   // "Code" entry row, shown while "Fixed code" is on (#837)
+static lv_obj_t* s_remote_fixed_ta  = nullptr;
 
 static void remoteAddrText(char* u, size_t n) {
   char code[16];
@@ -34771,6 +34790,8 @@ static void closeRemotePage() {
   s_remote_ipcard = nullptr;
   s_remote_ipval = nullptr;
   s_remote_trust_box = nullptr;
+  s_remote_fixed_row = nullptr;
+  s_remote_fixed_ta = nullptr;
   if (s_remote_root) { popupClose(&s_remote_root); }
   if (s_apppage_close == closeRemotePage) {
     s_apppage_title = nullptr; s_apppage_close = nullptr;
@@ -35141,6 +35162,68 @@ static bool webRemoteInputBlocked() {
 }
 #endif
 
+#if CAP_WEB_FIXED_CODE
+static void remoteRefreshAddr() {
+  if (s_remote_ipval && WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
+    char u[64]; remoteAddrText(u, sizeof u);
+    lv_label_set_text(s_remote_ipval, u);
+  }
+}
+
+static void remoteFixedPlaceholder() {
+  if (!s_remote_fixed_ta) return;
+  const uint32_t c = touchPrefsGetWebFixedCode();
+  char pb[12];
+  if (c) snprintf(pb, sizeof pb, "%06lu", static_cast<unsigned long>(c));
+  else   snprintf(pb, sizeof pb, "------");
+  taSetPlaceholder(s_remote_fixed_ta, pb);
+}
+
+// Fixed browser code (#837): saved on blur / Enter once all 6 digits are typed.
+// Empty or partial on blur = keep the saved code, like the BLE pairing-code field.
+static void remoteFixedSaveCb(lv_event_t* e) {
+  if (blurFromDelete(e)) return;   // the widget is being destroyed
+  if (!s_remote_fixed_ta || !lv_obj_is_valid(s_remote_fixed_ta)) return;
+  kbMirrorSyncToReal();
+  const char* txt = lv_textarea_get_text(s_remote_fixed_ta);
+  if (!txt || strlen(txt) != 6) return;
+  const uint32_t c = (uint32_t)atol(txt);
+  lv_textarea_set_text(s_remote_fixed_ta, "");
+  if (WebAuthCode::weakFixed(c)) {   // 000000 (= "no code"), 111111, 123456, 121212 ...
+    if (g_lv.task) g_lv.task->showAlert(TR("Too easy to guess. Pick another code."), 2200);
+    return;
+  }
+  if (c == touchPrefsGetWebFixedCode()) return;
+  touchPrefsSetWebFixedCode(c);
+  g_web_auth.setFixed(c);
+  g_web_session.endSessions();   // browsers let in with the old code must ask again
+  remoteFixedPlaceholder();
+  remoteRefreshAddr();
+  if (g_lv.task) g_lv.task->showAlert(TR("Fixed code saved"), 1600);
+}
+
+static void remoteFixedToggleCb(lv_event_t* e) {
+  const bool on = lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED);
+  if (s_remote_fixed_row) {
+    if (on) lv_obj_clear_flag(s_remote_fixed_row, LV_OBJ_FLAG_HIDDEN);
+    else    lv_obj_add_flag(s_remote_fixed_row, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (on) {
+    if (s_remote_fixed_row && s_remote_root) lv_obj_scroll_to_view(s_remote_fixed_row, LV_ANIM_ON);
+    if (g_lv.task) g_lv.task->showAlert(TR("Type a 6-digit code"), 1600);
+    return;
+  }
+  if (touchPrefsGetWebFixedCode() == 0) return;
+  touchPrefsSetWebFixedCode(0);
+  g_web_auth.setFixed(0);
+  g_web_session.endSessions();   // browsers let in with the fixed code must ask again
+  if (s_remote_fixed_ta) lv_textarea_set_text(s_remote_fixed_ta, "");
+  remoteFixedPlaceholder();
+  remoteRefreshAddr();
+  if (g_lv.task) g_lv.task->showAlert(TR("New random code each session"), 1600);
+}
+#endif  // CAP_WEB_FIXED_CODE
+
 static void openRemotePage() {
   closeRemotePage();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
@@ -35382,6 +35465,74 @@ static void openRemotePage() {
   if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+#if CAP_WEB_FIXED_CODE
+  // ---- 3. Access code (#837) ----
+  const bool fixed_on = touchPrefsGetWebFixedCode() != 0;
+  lv_obj_t* ah = lv_label_create(s_remote_root);
+  lv_label_set_text(ah, TR("Access code"));
+  lv_obj_set_style_text_font(ah, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(ah, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+  lv_obj_set_width(ah, cw);
+
+  lv_obj_t* frow = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(frow);
+  lv_obj_set_size(frow, cw, SC(42));
+  lv_obj_set_style_bg_color(frow, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(frow, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(frow, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(frow, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(frow, 12, LV_PART_MAIN);
+  styleGlass(frow);
+  lv_obj_clear_flag(frow, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* fl = lv_label_create(frow);
+  lv_label_set_text(fl, TR("Fixed code"));
+  lv_obj_set_style_text_font(fl, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(fl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_label_set_long_mode(fl, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(fl, cw - 84);
+  lv_obj_align(fl, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* fsw = lv_switch_create(frow);
+  lv_obj_align(fsw, LV_ALIGN_RIGHT_MID, 0, 0);
+  if (fixed_on) lv_obj_add_state(fsw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(fsw, remoteFixedToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+
+  lv_obj_t* crow2 = lv_obj_create(s_remote_root);
+  lv_obj_remove_style_all(crow2);
+  lv_obj_set_size(crow2, cw, SC(48));
+  lv_obj_set_style_bg_color(crow2, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(crow2, LV_OPA_COVER, LV_PART_MAIN);
+  lv_obj_set_style_radius(crow2, 8, LV_PART_MAIN);
+  lv_obj_set_style_pad_left(crow2, 12, LV_PART_MAIN);
+  lv_obj_set_style_pad_right(crow2, 12, LV_PART_MAIN);
+  styleGlass(crow2);
+  lv_obj_clear_flag(crow2, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t* cl2 = lv_label_create(crow2);
+  lv_label_set_text(cl2, TR("Code"));
+  lv_obj_set_style_text_font(cl2, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(cl2, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_align(cl2, LV_ALIGN_LEFT_MID, 0, 0);
+  lv_obj_t* fta = lv_textarea_create(crow2);
+  lv_obj_set_size(fta, SC(96), SC(32));
+  lv_textarea_set_one_line(fta, true);
+  lv_textarea_set_accepted_chars(fta, "0123456789");
+  lv_textarea_set_max_length(fta, 6);
+  lv_textarea_set_text(fta, "");
+  lv_obj_align(fta, LV_ALIGN_RIGHT_MID, 0, 0);
+  s_remote_fixed_row = crow2;
+  s_remote_fixed_ta = fta;
+  remoteFixedPlaceholder();
+  attachSettingsTaEvents(fta);
+  lv_obj_add_event_cb(fta, remoteFixedSaveCb, LV_EVENT_DEFOCUSED, nullptr);
+  lv_obj_add_event_cb(fta, remoteFixedSaveCb, LV_EVENT_READY, nullptr);
+  if (!fixed_on) lv_obj_add_flag(crow2, LV_OBJ_FLAG_HIDDEN);
+
+  lv_obj_t* aexpl = lv_label_create(s_remote_root);
+  lv_label_set_text(aexpl, TR("Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour."));
+  lv_obj_set_style_text_font(aexpl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(aexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_label_set_long_mode(aexpl, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(aexpl, cw);
+#endif  // CAP_WEB_FIXED_CODE
 }
 #endif  // !HAS_TANMATSU
 
@@ -75914,12 +76065,22 @@ void UITask::onAdminLoginResult(const ContactInfo& contact, bool success, uint8_
 }
 
 void UITask::onAdminCommandReply(const ContactInfo& contact, const char* text) {
-  // Only append if the reply is from the contact we're currently logged
-  // into. Replies from a different repeater would be confusing — the
-  // companion-serial side handles those separately via queueMessage.
   if (raOnCliReply(contact, text)) return;   // a "wX|" reply to the admin app
-  if (memcmp(contact.id.pub_key, s_admin_pub32, 32) != 0) return;
-  adminLogAppend("", text ? text : "");
+  if (s_admin_root && memcmp(contact.id.pub_key, s_admin_pub32, 32) == 0) {
+    adminLogAppend("", text ? text : "");
+    return;
+  }
+  // A repeater we are admin on answers a text DM as a CLI line. When that DM was typed
+  // here (chat composer or terminal, s_dm_cli_*), show the answer in the DM thread.
+  // Only then: the companion app's own admin console gets its replies over the same
+  // path, and those belong to the app, not to this chat history.
+  if (text && text[0] && contact.name[0] && s_dm_cli_ms &&
+      (uint32_t)(millis() - s_dm_cli_ms) < 120000u &&
+      memcmp(contact.id.pub_key, s_dm_cli_pub, sizeof s_dm_cli_pub) == 0) {
+    notify(UIEventType::contactMessage);
+    const uint8_t plen = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0xFF;
+    newMsgFromPub(plen, contact.id.pub_key, contact.name, text, _msgcount + 1);
+  }
 }
 
 void UITask::markThreadsDirty(unsigned long delay_ms) {
@@ -78563,6 +78724,23 @@ bool UITask::loadHistoryFromStorage() {
     const uint32_t nt = newestThreadMessageTs(_ui_threads[i].name, _ui_threads[i].channel);
     if (nt >= 1577836800UL) { _ui_threads[i].last_ts = nt; markThreadsDirty(2000); }
   }
+  // A power cut between floor saves (every 15 min) can leave sent messages stamped above
+  // the persisted floor; raise the floor to the newest of them so the next send does not
+  // step back behind what a room server already saw (#835). Only while the time is not
+  // current and only within ClockFloorRTC::LOCAL_RECORD_WINDOW_SECS of the floor: a
+  // record further ahead came from a clock that was since corrected, and following it on
+  // every boot would wedge the clock forward. RAM only; the regular floor save keeps it.
+  {
+    const uint32_t base    = rtc_clock.getCurrentTime();   // brings the floor up to now
+    const uint32_t ceiling = rtc_clock.localRecordCeiling();
+    uint32_t best = 0;
+    for (int i = 0; ceiling && i < _ui_msg_count; ++i) {
+      const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
+      const UIMessage& m = _ui_msgs[slot];
+      if (m.outgoing && m.ts > base && m.ts <= ceiling && m.ts > best) best = m.ts;
+    }
+    if (best && rtc_clock.raiseFloorFromLocalRecord(best)) rtc_clock.seedSystemClock();
+  }
   if (!from_segments) {
     // Backfill per-record sequence numbers for records loaded from the
     // pre-segment formats (their records carry no seq on disk): stamp them in
@@ -80218,7 +80396,13 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
     attempt = 4;
     s_ui_tx_attempt = 5;
   }
-  int r = the_mesh.sendMessage(tx_recipient, ts, attempt, truncated, expected_ack, est_timeout);
+  int r;
+  if (recipient.type == ADV_TYPE_REPEATER && MyMesh::isRepeaterPingCmd(truncated)) {
+    r = the_mesh.uiSendRepeaterDmPing(*by_pub, expected_ack, est_timeout);
+  } else {
+    r = the_mesh.sendMessage(tx_recipient, ts, attempt, truncated, expected_ack, est_timeout);
+    if (r != MSG_SEND_FAILED) noteDmCliSend(recipient);
+  }
   {
     uint32_t hash4 = 0;
     bool has_hash = the_mesh.getLastTxtTxHash4(hash4);
@@ -80793,6 +80977,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   touchPrefsBegin();
+#if CAP_WEB_FIXED_CODE
+  g_web_auth.setFixed(touchPrefsGetWebFixedCode());   // before any web feature arms a code (#837)
+#endif
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
 #if defined(HAS_TDECK_PRO)

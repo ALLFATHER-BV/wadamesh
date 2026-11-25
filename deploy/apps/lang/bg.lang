@@ -2478,3 +2478,11 @@ Waiting for an answer on the device.	Изчакване на отговор на
 This app has no settings	Това приложение няма настройки
 Saved on the device for this app. The app reads them when it opens.	Запазени на устройството за това приложение. Приложението ги чете при отваряне.
 Could not save to the device storage	Неуспешно запазване в паметта на устройството
+Access code	Код за достъп
+Fixed code	Постоянен код
+Code	Код
+Fixed code saved	Постоянният код е запазен
+Type a 6-digit code	Въведете 6-цифрен код
+New random code each session	Нов случаен код за всяка сесия
+Too easy to guess. Pick another code.	Твърде лесен за отгатване. Изберете друг код.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Изкл.: нов случаен код за всяка сесия. Вкл.: винаги един и същ код. Кодът минава през вашия Wi-Fi некриптиран, така че всеки, който го види или отгатне там, може да се свърже. Грешните опити заключват всеки път за по-дълго, до един час.

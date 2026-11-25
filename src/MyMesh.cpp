@@ -2984,7 +2984,25 @@ void MyMesh::onContactsFull() {
   }
 }
 
+#if defined(ESP32)
+static uint32_t peerClockQuorumIdFromPubKey(const uint8_t* pub_key) {
+  if (!pub_key) return 0;
+  uint32_t id = (uint32_t)pub_key[0] |
+                ((uint32_t)pub_key[1] << 8) |
+                ((uint32_t)pub_key[2] << 16) |
+                ((uint32_t)pub_key[3] << 24);
+  return id == 0 ? 1u : id;
+}
+
+#endif
+
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
+  // An unsynced clock (Seed, or a stale Floor) may follow a signed advert's timestamp, but
+  // only once a second, different key agrees (ClockFloorRTC::adoptMeshPeerTime, #835).
+#if defined(ESP32)
+  rtc_clock.adoptMeshPeerTime(contact.last_advert_timestamp,
+                              peerClockQuorumIdFromPubKey(contact.id.pub_key));
+#endif
   if (_serial->isConnected()) {
     if (is_new) {
       writeContactRespFrame(PUSH_CODE_NEW_ADVERT, contact, true);
@@ -3233,14 +3251,16 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
   // Clock bootstrap from a peer's send-time when we have no real clock of our own (Wi-Fi
-  // and GPS off, or not yet synced). Reliable by construction: adopt ONLY a sane epoch
-  // (~2023..2033, so the 1902/0 garbage and absurd-future values are ignored), and ONLY
-  // while our own clock still reads unset — NTP/GPS override it the instant they sync, and
-  // a clock that already reads real is never moved by the mesh.
+  // and GPS off, or not yet synced): a decrypted DM names its key, so it can count toward
+  // the two-key quorum in ClockFloorRTC::adoptMeshPeerTime (#835).
+#if defined(ESP32)
+  if (!_queue_local) rtc_clock.adoptMeshPeerTime(sender_timestamp, peerClockQuorumIdFromPubKey(from.id.pub_key));
+#else
   if (sender_timestamp > 1700000000UL && sender_timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
     getRTCClock()->setCurrentTime(sender_timestamp);
   }
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CONTACT_MSG_RECV_V3;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -3470,12 +3490,14 @@ int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[],
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
-  // Clock bootstrap from a channel peer's send-time (same sane-window + unset-only guard
-  // as queueMessage above) so a Wi-Fi/GPS-off node can still get time off public channels.
+  // No clock bootstrap from channel posts on ESP32 (#835): the sender is only a name in the
+  // text, so one node could pose as the two peers the quorum needs.
+#if !defined(ESP32)
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
     getRTCClock()->setCurrentTime(timestamp);
   }
+#endif
   int i = 0;
   out_frame[i++] = RESP_CODE_CHANNEL_MSG_RECV_V3;
   out_frame[i++] = (int8_t)(pkt->getSNR() * 4);
@@ -3679,6 +3701,8 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       memcmp(&_ui_pending_status, contact.id.pub_key, 4) == 0 &&
       tag == _ui_pending_tag) {
     UiReqKind kind = _ui_pending_kind;
+    // A DM "ping" chain (uiSendRepeaterDmPing): read before cancelUIDeferredLogin clears it.
+    const bool dm_ping = kind == UiReqKind::Status && uiDmPingLive(contact.id.pub_key);
     _ui_pending_status = 0;
     _ui_pending_kind = UiReqKind::None;
     _ui_pending_tag = 0;
@@ -3691,6 +3715,29 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     } else if (kind == UiReqKind::Binary) {
       _ui->onBinaryReply(contact, &data[4], (size_t)(len - 4));
     } else {
+      // If this status ping was triggered by sending "ping" in a repeater's DM thread,
+      // confirm the outgoing "ping" bubble and post the formatted PONG reply in the DM thread.
+      if (dm_ping) {
+        const uint32_t ack4 = _ui_dm_ping_ack ? _ui_dm_ping_ack : tag;
+        uint32_t trip_time = millis() - _ui_dm_ping_sent_ms;
+        out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
+        memcpy(&out_frame[1], &ack4, 4);
+        memcpy(&out_frame[5], &trip_time, 4);
+        _serial->writeFrameToAll(out_frame, 9);
+        _ui->onMessageAcked(ack4);
+
+        char pong_text[140];
+        RepeaterAdminProto::formatPongStatus(&data[4], (size_t)(len - 4), contact.out_path_len,
+                                             pong_text, sizeof(pong_text));
+        mesh::Packet rx_pkt{};
+        rx_pkt.header   = (uint8_t)((PAYLOAD_TYPE_TXT_MSG << PH_TYPE_SHIFT) | ROUTE_TYPE_FLOOD);
+        rx_pkt.path_len = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0;
+        rx_pkt._snr     = (int8_t)(_radio->getLastSNR() * 4.0f);
+        _queue_local = true;   // our own time, not the repeater's: keep it out of the clock quorum
+        queueMessage(contact, TXT_TYPE_PLAIN, &rx_pkt, getRTCClock()->getCurrentTimeUnique(),
+                     nullptr, 0, pong_text);
+        _queue_local = false;
+      }
       // STATUS or unknown — let the UI fall through its RepeaterStats /
       // JSON parser path.
       _ui->onPingReply(contact, &data[4], (size_t)(len - 4));
@@ -4259,7 +4306,23 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+#if defined(ESP32)
+  // The core's bootstrapRTCfromContacts() SETS the clock to the newest contact's lastmod:
+  // that claims an external sync, moves a good RTC chip back to it, and pulls the floor
+  // down when the chip is ahead (#840). lastmod is only our own earlier clock reading, so
+  // treat it like any other own record: it may lift a stale floor a little (a power cut
+  // between floor saves), never set the clock.
+  if (ensureContacts()) {
+    uint32_t latest = 0;
+    ContactInfo c;
+    ContactsIterator it = startContactsIterator();
+    while (it.hasNext(this, c)) if (c.lastmod > latest) latest = c.lastmod;
+    rtc_clock.getCurrentTime();   // brings the floor up to now before the window check
+    if (latest && rtc_clock.raiseFloorFromLocalRecord(latest)) rtc_clock.seedSystemClock();
+  }
+#else
   bootstrapRTCfromContacts();
+#endif
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
   loadSyncHistory();   // app-sync replay ring + client cursors survive a reboot/power cut
@@ -4526,23 +4589,27 @@ void MyMesh::handleCmdFrame(size_t len) {
           _ui->appendDiag(line);
         }
       } else if (!skip_radio_send) {
-        // Force node-side unique timestamp for plain sends as well.
-        // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
-        // and replay-like suppression on receivers.
-        msg_timestamp = getRTCClock()->getCurrentTimeUnique();
-        uint32_t tx_hash4 = 0;
-        TxtTxDebugInfo dbg{};
-        result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);
-        if (_ui) {
-          char line[192];
-          snprintf(line, sizeof(line), "TX CMD src=CMD_SEND_TXT_MSG kind=PLAIN ts=%lu att=%u r=%d ack=%lu h=%08lX core_ts=%lu core_att=%u n=%u",
-                   static_cast<unsigned long>(msg_timestamp), static_cast<unsigned>(attempt), result,
-                   static_cast<unsigned long>(expected_ack),
-                   static_cast<unsigned long>(tx_hash4),
-                   static_cast<unsigned long>(dbg.uniq_ts),
-                   static_cast<unsigned>(dbg.uniq_attempt),
-                   static_cast<unsigned>(dbg.nonce));
-          _ui->appendDiag(line);
+        if (recipient->type == ADV_TYPE_REPEATER && isRepeaterPingCmd(text)) {
+          result = uiSendRepeaterDmPing(*recipient, expected_ack, est_timeout);
+        } else {
+          // Force node-side unique timestamp for plain sends as well.
+          // Some clients may resend/reuse app timestamps, which can cause repeated packet hashes
+          // and replay-like suppression on receivers.
+          msg_timestamp = getRTCClock()->getCurrentTimeUnique();
+          uint32_t tx_hash4 = 0;
+          TxtTxDebugInfo dbg{};
+          result = sendMessage(*recipient, msg_timestamp, attempt, text, expected_ack, est_timeout, &tx_hash4, &dbg);
+          if (_ui) {
+            char line[192];
+            snprintf(line, sizeof(line), "TX CMD src=CMD_SEND_TXT_MSG kind=PLAIN ts=%lu att=%u r=%d ack=%lu h=%08lX core_ts=%lu core_att=%u n=%u",
+                     static_cast<unsigned long>(msg_timestamp), static_cast<unsigned>(attempt), result,
+                     static_cast<unsigned long>(expected_ack),
+                     static_cast<unsigned long>(tx_hash4),
+                     static_cast<unsigned long>(dbg.uniq_ts),
+                     static_cast<unsigned>(dbg.uniq_attempt),
+                     static_cast<unsigned>(dbg.nonce));
+            _ui->appendDiag(line);
+          }
         }
       }
       if (result == MSG_SEND_FAILED) {

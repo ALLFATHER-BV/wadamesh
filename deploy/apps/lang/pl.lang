@@ -2490,3 +2490,11 @@ Waiting for an answer on the device.	Czekam na odpowiedź na urządzeniu.
 This app has no settings	Ta aplikacja nie ma ustawień
 Saved on the device for this app. The app reads them when it opens.	Zapisane na urządzeniu dla tej aplikacji. Aplikacja odczytuje je przy otwarciu.
 Could not save to the device storage	Nie udało się zapisać w pamięci urządzenia
+Access code	Kod dostępu
+Fixed code	Stały kod
+Code	Kod
+Fixed code saved	Zapisano stały kod
+Type a 6-digit code	Wpisz 6-cyfrowy kod
+New random code each session	Nowy losowy kod w każdej sesji
+Too easy to guess. Pick another code.	Zbyt łatwy do odgadnięcia. Wybierz inny kod.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Wył.: nowy losowy kod w każdej sesji. Wł.: zawsze ten sam kod. Kod przechodzi przez Twoje Wi-Fi bez szyfrowania, więc każdy, kto go tam zobaczy lub odgadnie, może się połączyć. Błędne próby blokują za każdym razem dłużej, maksymalnie godzinę.

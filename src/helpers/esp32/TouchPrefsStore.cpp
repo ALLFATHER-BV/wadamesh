@@ -7,6 +7,7 @@
 
 #include "WifiRuntimeStore.h"
 
+#include "WebAuthCode.h"   // weakFixed(): the fixed browser code (#837)
 #include "SdNvsPrefs.h"   // NVS, or SD /meshcomod fallback when NVS is unusable (Launcher)
 
 #include <Preferences.h>
@@ -961,6 +962,18 @@ bool touchPrefsSetWebTrust(const void* buf, size_t len) {
   s_prefs.end();
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return ok;
+}
+
+static void prefsPutUInt(const char* key, uint32_t v);
+static const char* LK_WEB_FIXED_CODE = "web_fix_code";
+uint32_t touchPrefsGetWebFixedCode() {
+  if (!s_begun) touchPrefsBegin();
+  const uint32_t c = s_prefs.isKey(LK_WEB_FIXED_CODE) ? s_prefs.getUInt(LK_WEB_FIXED_CODE, 0) : 0;
+  return WebAuthCode::weakFixed(c) ? 0 : c;   // also 0 and out of range: a new random code each session
+}
+void touchPrefsSetWebFixedCode(uint32_t code) {
+  if (!s_begun) touchPrefsBegin();
+  prefsPutUInt(LK_WEB_FIXED_CODE, WebAuthCode::weakFixed(code) ? 0 : code);
 }
 
 bool touchPrefsGetMapTileDebug() {

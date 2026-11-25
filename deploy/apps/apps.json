@@ -159,6 +159,14 @@
       "desc": "Play no-limit Texas Hold'em against three AI opponents, with side pots and a bankroll that carries over between sessions.",
       "icon": "game",
       "seed": false
+    },
+    {
+      "id": "todo",
+      "name": "To-Do",
+      "ver": "1.0",
+      "desc": "A small to-do list: tasks sorted into short groups, marked urgent or done, kept on the device. Contributed by hamm-spec.",
+      "icon": "list",
+      "seed": false
     }
   ]
 }

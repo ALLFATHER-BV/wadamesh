@@ -2478,3 +2478,11 @@ Waiting for an answer on the device.	Ожидание ответа на устр
 This app has no settings	У этого приложения нет настроек
 Saved on the device for this app. The app reads them when it opens.	Сохранено на устройстве для этого приложения. Приложение читает их при открытии.
 Could not save to the device storage	Не удалось сохранить в памяти устройства
+Access code	Код доступа
+Fixed code	Постоянный код
+Code	Код
+Fixed code saved	Постоянный код сохранён
+Type a 6-digit code	Введите 6-значный код
+New random code each session	Новый случайный код в каждой сессии
+Too easy to guess. Pick another code.	Слишком легко угадать. Выберите другой код.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Выкл.: новый случайный код в каждой сессии. Вкл.: всегда один и тот же код. Код передаётся по вашему Wi-Fi без шифрования, поэтому любой, кто его там увидит или угадает, сможет подключиться. Неверные попытки блокируют каждый раз дольше, до часа.

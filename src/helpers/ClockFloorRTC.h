@@ -48,6 +48,8 @@ public:
 
 private:
   uint32_t    _floor = 0;
+  uint32_t    _pending_peer_ts = 0;
+  uint32_t    _pending_peer_id = 0;
   ClockSource _source = ClockSource::Seed;
   bool        _hw_present = false;
 
@@ -58,8 +60,10 @@ public:
   // MeshCore 1.18, 15 May 2024 (1715770351) before. It has to be the seed itself, not
   // anything below it: a set equal to the seed is the "Sync clock from system" poisoning
   // described at pushSystemClock(), and a seed above this value would read as a real time.
-  static constexpr uint32_t MIN_VALID_EPOCH  = 1772323200UL;
-  static constexpr uint32_t TRUSTED_BACK_CAP = 10UL * 60UL;
+  static constexpr uint32_t MIN_VALID_EPOCH            = 1772323200UL;
+  static constexpr uint32_t TRUSTED_BACK_CAP           = 10UL * 60UL;
+  static constexpr uint32_t PEER_QUORUM_TOLERANCE_SECS = 900UL;        // two peers must agree this closely
+  static constexpr uint32_t LOCAL_RECORD_WINDOW_SECS   = 20UL * 60UL;  // floor save cadence (15 min) + margin
 
   // High-side twin of MIN_VALID_EPOCH: an external RTC chip with corrupted/unset date
   // registers can read as a *future* date (seen live: a T-Display P4's PCF8563 came back
@@ -198,4 +202,61 @@ public:
     if (persisted > _floor) _floor = persisted;
   }
   uint32_t getFloor() const { return _floor; }
+
+  // Mesh peer time (#835). A node with no clock of its own (no RTC chip, Wi-Fi and GPS
+  // off) otherwise sits on its persisted floor, possibly days stale. Peer time is the
+  // weakest source there is: any node can claim any time, and one repeater with a wrong
+  // clock is a real, recurring sight on the mesh. A wrong forward clock is worse than a
+  // stale one (the floor ratchets and is persisted, so it sticks until real time passes
+  // it), so the rules are strict:
+  //   - only while our own time is not current, and only ever forward;
+  //   - only from peers that carry a verified public key (signed adverts, decrypted DMs).
+  //     Channel posts are refused: their sender is just a name in the text;
+  //   - every step needs two DIFFERENT keys agreeing within PEER_QUORUM_TOLERANCE_SECS,
+  //     so one node cannot move us, repeatedly or in small steps. The lower of the two
+  //     is taken;
+  //   - _source stays Floor: never ExternalSync, never written to the RTC chip, so the
+  //     cold-boot network sync still runs and a real set (NTP, GPS, phone) corrects it
+  //     (a >TRUSTED_BACK_CAP backward set pulls the floor down).
+  // peer_id is a non-zero hash of the peer's public key; 0 means "no verified identity".
+  bool adoptMeshPeerTime(uint32_t peer_ts, uint32_t peer_id) {
+    if (timeIsCurrent() || peer_id == 0) return false;
+    if (peer_ts <= MIN_VALID_EPOCH || peer_ts > MAX_PLAUSIBLE_EPOCH) return false;
+    if (peer_ts <= getCurrentTime()) return false;   // only ever forward
+    if (_pending_peer_id != 0 && peer_id != _pending_peer_id) {
+      const uint32_t diff = (peer_ts >= _pending_peer_ts) ? (peer_ts - _pending_peer_ts)
+                                                          : (_pending_peer_ts - peer_ts);
+      if (diff <= PEER_QUORUM_TOLERANCE_SECS) {
+        const uint32_t t = (peer_ts < _pending_peer_ts) ? peer_ts : _pending_peer_ts;
+        _pending_peer_ts = 0;
+        _pending_peer_id = 0;
+        if (t <= getCurrentTime()) return false;
+        _floor = t;
+        pushSystemClock(t);
+        if (_source < ClockSource::Floor) _source = ClockSource::Floor;
+        return true;
+      }
+    }
+    _pending_peer_ts = peer_ts;   // first witness (or a newer claim): wait for a second key
+    _pending_peer_id = peer_id;
+    return false;
+  }
+
+  // Our own records (sent messages in the history store) can carry a later stamp than
+  // the persisted floor when power was cut between floor saves. Raise the floor to them,
+  // but only within LOCAL_RECORD_WINDOW_SECS above it (the save cadence plus margin):
+  // a record further ahead was stamped by a clock that has since been corrected, and
+  // re-raising to it on every boot would wedge the clock forward. Only while the time
+  // is not current, and only on top of a real persisted floor. Returns the ceiling a
+  // candidate may not exceed, or 0 when no raise applies.
+  uint32_t localRecordCeiling() const {
+    if (timeIsCurrent() || _floor <= MIN_VALID_EPOCH) return 0;
+    return _floor + LOCAL_RECORD_WINDOW_SECS;
+  }
+  bool raiseFloorFromLocalRecord(uint32_t ts) {
+    const uint32_t ceiling = localRecordCeiling();
+    if (ceiling == 0 || ts <= _floor || ts > ceiling || ts > MAX_PLAUSIBLE_EPOCH) return false;
+    _floor = ts;
+    return true;
+  }
 };

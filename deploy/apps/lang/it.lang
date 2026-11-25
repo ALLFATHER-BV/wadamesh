@@ -2477,3 +2477,11 @@ Waiting for an answer on the device.	In attesa di una risposta sul dispositivo.
 This app has no settings	Questa app non ha impostazioni
 Saved on the device for this app. The app reads them when it opens.	Salvate sul dispositivo per questa app. L'app le legge quando si apre.
 Could not save to the device storage	Impossibile salvare nella memoria del dispositivo
+Access code	Codice di accesso
+Fixed code	Codice fisso
+Code	Codice
+Fixed code saved	Codice fisso salvato
+Type a 6-digit code	Digita un codice di 6 cifre
+New random code each session	Un nuovo codice casuale a ogni sessione
+Too easy to guess. Pick another code.	Troppo facile da indovinare. Scegli un altro codice.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Spento: un nuovo codice casuale a ogni sessione. Acceso: sempre lo stesso codice. Il codice passa in chiaro sul tuo Wi-Fi, quindi chi lo vede o lo indovina può collegarsi. I tentativi errati bloccano ogni volta più a lungo, fino a un'ora.

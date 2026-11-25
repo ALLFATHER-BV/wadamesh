@@ -2493,3 +2493,11 @@ Waiting for an answer on the device.	Čekám na odpověď na zařízení.
 This app has no settings	Tato aplikace nemá nastavení
 Saved on the device for this app. The app reads them when it opens.	Uloženo v zařízení pro tuto aplikaci. Aplikace je načte při otevření.
 Could not save to the device storage	Nelze uložit do úložiště zařízení
+Access code	Přístupový kód
+Fixed code	Pevný kód
+Code	Kód
+Fixed code saved	Pevný kód uložen
+Type a 6-digit code	Zadejte 6místný kód
+New random code each session	Pro každou relaci nový náhodný kód
+Too easy to guess. Pick another code.	Příliš snadno uhodnutelný. Zvolte jiný kód.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Vypnuto: pro každou relaci nový náhodný kód. Zapnuto: vždy stejný kód. Kód jde přes vaši Wi-Fi nešifrovaně, takže kdo ho tam uvidí nebo uhodne, se může připojit. Chybné pokusy zamykají pokaždé déle, až na hodinu.
