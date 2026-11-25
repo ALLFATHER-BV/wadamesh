@@ -1,5 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "TDeckMaxBoard.h"
+#include <Preferences.h>
+
+// Set the gauge to the fitted pack once. The gauge sits on the battery, so the
+// setting outlives reflashes and power-off; boot only writes when the gauge
+// reads something else. Each target is tried once ("cap_try"), so a gauge that
+// refuses the write or reads back something else is not put through
+// config-update mode on every boot.
+static void maxConfigureGauge(GaugeBQ27220& gauge) {
+  if (!gauge.refresh()) return;                 // not answering: try next boot
+  Preferences p;
+  if (!p.begin("maxhw", false)) return;
+  const uint16_t want = TDMAX_GAUGE_DESIGN_MAH;
+  const uint16_t have = gauge.getDesignCapacity();
+  if (have != want && p.getUShort("cap_try", 0) != want) {
+    const bool ok = gauge.setNewCapacity(want, want);
+    Serial.printf("[BOOT] bq27220 capacity %u -> %u mAh %s\n", (unsigned)have, (unsigned)want, ok ? "ok" : "FAILED");
+    p.putUShort("cap_try", want);
+  }
+  p.end();
+}
 
 // Boot order matters on this board and mirrors Meck's proven sequence:
 //   1. I2C up (XL9555, BQ27220, TCA8418, CST328, ES8311, SY6970 all share it)
@@ -48,6 +68,7 @@ void TDeckMaxBoard::begin() {
 
   const bool gauge_ok = gauge.begin(Wire);
   Serial.printf("[BOOT] T-Deck Max bq27220 %s\n", gauge_ok ? "ok" : "PROBE FAILED");
+  if (gauge_ok) maxConfigureGauge(gauge);
 
   // ES8311 codec presence check (address only -- no register writes yet, that
   // is the sound code's job on first use, same as the pager). Every rail this

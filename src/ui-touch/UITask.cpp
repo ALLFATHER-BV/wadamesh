@@ -27377,7 +27377,12 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_pad_left(chart, 4, LV_PART_TICKS);
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
   lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+#if CAP_EPAPER
+  // Blue is pale on a 1-bit panel and the line vanished; black is the one colour that holds.
+  lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x000000), LV_CHART_AXIS_PRIMARY_Y);
+#else
   lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
+#endif
   // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
   lv_chart_series_t* cser = nullptr;
   if (s_batt_show_cpu) {
