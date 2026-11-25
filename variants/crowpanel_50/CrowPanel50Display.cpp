@@ -50,6 +50,17 @@ bool CrowPanel50BoardCtl::probe(uint8_t addr) {
 }
 
 CrowPanel50BoardCtl::Kind CrowPanel50BoardCtl::begin() {
+  // Elecrow's V1.2/V1.3 code does not take one look: it probes until the board MCU answers,
+  // sending its touch wake (250) and pulsing the GT911's INT line low in between (#886: a
+  // V1.2 came up with no backlight). Do the same, for a bounded time.
+  for (int attempt = 0; attempt < 8 && !probe(kIoexAddr) && !probe(kMcuAddr); ++attempt) {
+    mcuSendAlways(kMcuTouchOn);
+    pinMode(kTouchInt, OUTPUT);
+    digitalWrite(kTouchInt, LOW);
+    delay(120);
+    pinMode(kTouchInt, INPUT);
+    delay(100);
+  }
   if (probe(kIoexAddr)) {
     _kind = PCA9557;
     // Levels first, then direction, so no pin glitches on the way to output.
@@ -65,8 +76,12 @@ CrowPanel50BoardCtl::Kind CrowPanel50BoardCtl::begin() {
     _kind = MCU;
     Serial.printf("[crowpanel-50] V1.1+ board: MCU at 0x%02X\n", kMcuAddr);
   } else {
-    _kind = NONE;
-    Serial.printf("[crowpanel-50] no backlight controller at 0x%02X or 0x%02X\n", kIoexAddr, kMcuAddr);
+    // Still silent. Every board since V1.1 has the MCU, and a V1.0's expander answers at
+    // once, so keep talking to the MCU: a command that is not taken now is sent again on
+    // the next brightness change or screen wake.
+    _kind = MCU;
+    Serial.printf("[crowpanel-50] no answer at 0x%02X or 0x%02X; assuming the V1.1+ MCU\n",
+                  kIoexAddr, kMcuAddr);
   }
   return _kind;
 }
@@ -103,14 +118,15 @@ uint8_t CrowPanel50BoardCtl::resetTouch() {
 
 // 0 is off. V1.0's backlight only switches; the MCU dims (255 brightest). Below
 // full the MCU's PWM can make the backlight driver whine, so 100% is steady DC.
-void CrowPanel50BoardCtl::setBacklight(uint8_t level) {
+bool CrowPanel50BoardCtl::setBacklight(uint8_t level) {
   if (_kind == PCA9557) {
     pcaSet(kIoexBl, level > 0);
-  } else if (_kind == MCU) {
-    if (level == 0) { mcuSend(kMcuBlOff); return; }
-    const uint8_t span = kMcuBlMin - kMcuBlMax;
-    mcuSend((uint8_t)(kMcuBlMin - (uint32_t)(level - 1) * span / 254));
+    return true;
   }
+  if (_kind != MCU) return false;
+  if (level == 0) return mcuSend(kMcuBlOff);
+  const uint8_t span = kMcuBlMin - kMcuBlMax;
+  return mcuSend((uint8_t)(kMcuBlMin - (uint32_t)(level - 1) * span / 254));
 }
 
 void CrowPanel50BoardCtl::pcaSet(uint8_t pin, bool high) {
@@ -127,9 +143,11 @@ void CrowPanel50BoardCtl::pcaWrite(uint8_t reg, uint8_t value) {
   Wire.endTransmission();
 }
 
-void CrowPanel50BoardCtl::mcuSend(uint8_t cmd) {
-  if (cmd == _lastMcu) return;
-  if (mcuSendAlways(cmd)) _lastMcu = cmd;
+bool CrowPanel50BoardCtl::mcuSend(uint8_t cmd) {
+  if (cmd == _lastMcu) return true;
+  if (!mcuSendAlways(cmd)) return false;
+  _lastMcu = cmd;
+  return true;
 }
 
 bool CrowPanel50BoardCtl::mcuSendAlways(uint8_t cmd) {
@@ -223,6 +241,9 @@ bool CrowPanel50Display::begin() {
   if (_isOn) return true;
   // board.begin() has opened Wire on GPIO15/16 already.
   _ctl.begin();
+  // Backlight on before the panel, as Elecrow's code does, while the bus still runs at
+  // the speed board.begin() opened it with.
+  _ctl.setBacklight(_brightness);
   _touchAddr = _ctl.resetTouch();
   if (_touchAddr) {
     auto cfg = _touch.config();
@@ -243,7 +264,15 @@ bool CrowPanel50Display::begin() {
     Serial.println("[crowpanel-50] I2C bus init failed");
     return false;
   }
-  _ctl.setBacklight(_brightness);
+  _ctl.forgetSent();   // a real transaction at the new bus speed, not the cached one
+  if (!_ctl.setBacklight(_brightness) && _ctl.kind() == CrowPanel50BoardCtl::MCU) {
+    // The board MCU did not take the command at 400 kHz. Elecrow's examples only ever
+    // talk to it at the default 100 kHz, so drop the whole shared bus to that (#886).
+    Wire.end();
+    Wire.begin(kTouchSda, kTouchScl, 100000);
+    const bool ok = _ctl.setBacklight(_brightness);
+    Serial.printf("[crowpanel-50] board MCU %s at 100 kHz\n", ok ? "answers" : "still silent");
+  }
 #ifdef CROWPANEL50_TESTPATTERN
   // Bring-up aid: colour ramps straight to the panel, no LVGL. Clean, even steps mean
   // the bus is fine; stray lines or flecks mean data bits are mis-sampled.

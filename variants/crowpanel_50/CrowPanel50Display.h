@@ -18,14 +18,15 @@ public:
 
   Kind begin();
   uint8_t resetTouch();            // 0x5D / 0x14 the GT911 answered at, 0 if neither
-  void setBacklight(uint8_t level);
+  bool setBacklight(uint8_t level);   // false: the controller did not take it
   Kind kind() const { return _kind; }
+  void forgetSent() { _lastMcu = -1; }   // the next command goes on the bus even if unchanged
 
 private:
   static bool probe(uint8_t addr);
   void pcaSet(uint8_t pin, bool high);
   void pcaWrite(uint8_t reg, uint8_t value);
-  void mcuSend(uint8_t cmd);
+  bool mcuSend(uint8_t cmd);
   bool mcuSendAlways(uint8_t cmd);
 
   Kind _kind = NONE;
