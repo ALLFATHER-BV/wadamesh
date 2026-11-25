@@ -61869,7 +61869,9 @@ static void openLuaStorePage() {
     // One-line mode sizes the field to its text, so the toolbar and the Sort
     // button take the field's height rather than the taller tab bar's.
     lv_obj_update_layout(ta);
-    const lv_coord_t tools_h = lv_obj_get_height(ta);
+    lv_coord_t tools_h = lv_obj_get_height(ta);
+    if (tools_h < lv_font_get_line_height(&g_font_12))   // no layout pass yet (hidden parent): one text line plus padding
+      tools_h = lv_font_get_line_height(&g_font_12) + 4 + 2 * lv_obj_get_style_border_width(ta, LV_PART_MAIN);
     lv_obj_set_size(tb, tools_w, tools_h);
 
     lv_obj_t* sb = lv_btn_create(tb);
