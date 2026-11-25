@@ -64378,8 +64378,12 @@ static void chatHeaderApply(bool chat_open) {
   // Layout across the full height of the tall bar.
   const lv_coord_t bar_h = statusBarCurH();
   const lv_coord_t av_sz = lv_obj_get_style_width(g_statusbar.chat_avatar, LV_PART_MAIN);
-  const lv_coord_t x_back = inset ? inset : 6;
-  const lv_coord_t x_av = x_back + SC(24) - 6, x_text = x_av + av_sz + 8;
+  // The back target is the bar left of the avatar (statusBarTapCb closes the chat;
+  // the avatar + title start chat_head, the chat-settings hit area). It was ~24 px,
+  // under the lip of a printed T-Deck case: the arrow steps in a little and the
+  // avatar + title move right, so the back strip is ~36 px wide.
+  const lv_coord_t x_back = (inset ? inset : 6) + SC(4);
+  const lv_coord_t x_av = x_back + SC(32) - 6, x_text = x_av + av_sz + 8;
   if (g_statusbar.chat_back) {
     sbTextColor(g_statusbar.chat_back, lv_color_hex(COLOR_TEXT));
     sbTranslateY(g_statusbar.chat_back, 0);
@@ -64551,7 +64555,7 @@ static void chatHeaderApply(bool chat_open) {
     lv_obj_align(g_statusbar.chat_avatar, LV_ALIGN_TOP_LEFT, x_av, text_mid - av_sz / 2);
     if (g_statusbar.chat_back) {
       const lv_font_t* bf = lv_obj_get_style_text_font(g_statusbar.chat_back, LV_PART_MAIN);
-      lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, 6, text_mid - lv_font_get_line_height(bf) / 2);
+      lv_obj_align(g_statusbar.chat_back, LV_ALIGN_TOP_LEFT, x_back, text_mid - lv_font_get_line_height(bf) / 2);
     }
     // RIGHT_MID-aligned on the bar, so shift them from its middle onto the two lines'
     // centre, level with the back arrow and avatar. The panel's rounded corner cut
