@@ -1,9 +1,10 @@
 # City locator
 
-Shows which US city or town you are in, from the GPS, with no internet and no mesh traffic.
+Shows which city or town you are in, from the GPS, with no internet and no mesh traffic.
+Boundary files can be built for the US, Quebec and Ontario.
 
-- With a GPS fix the radio checks every 10 seconds which Census place (city, town or
-  census-designated place) contains your position.
+- With a GPS fix the radio checks every 10 seconds which place (city, town,
+  municipality or census-designated place) contains your position.
 - Crossing into a new place shows a pop-up, "Now in Roseville". With **Settings, GPS,
   City on Home** switched on (it is off by default), the Home screen's top-left corner
   shows the place name instead of the node name; outside every place it goes back to
@@ -49,6 +50,44 @@ With the 2024 data every state fits in one file; the biggest are Texas and Calif
 
 Boundaries are simplified to about 5 m. Census-designated places are statistical
 areas, not legal city limits. Files up to 4 MB are accepted.
+
+## Canada (Quebec, Ontario)
+
+`scripts/build/make_cities_ca.py` builds the same file from Canadian municipal boundaries,
+optionally mixed with US places so one file can cross the border. It uses
+`make_cities.py` for the encoding and the 4 MB split.
+
+- **Quebec:** MRNF "Découpages administratifs" 1:20 000, the `munic_s` layer of
+  [`SDA.shp.zip`](https://www.donneesquebec.ca/recherche/dataset/decoupages-administratifs)
+  (CC-BY 4.0). Unorganized territories (TNO) are stored like census-designated places,
+  after the municipalities.
+- **Ontario:** Land Information Ontario "Municipal Boundary - Lower and Single Tier"
+  (Open Government Licence - Ontario). It is only offered as a web service, so
+  `fetch-ontario` downloads the municipalities inside a box first, 20 per request, one
+  request every 5 s (`--delay`). Names are title-cased (`MCNAB/BRAESIDE` becomes
+  `McNab/Braeside`).
+- **US:** TIGER/Line places as above; `--us` can be given once per state.
+
+A place goes in when it touches `--box`, or the band `--buffer-km` wide on each side of a
+`--route` of `lon,lat` points. `--us-box` adds a second area for US places only (a strip
+along the border, say).
+
+```
+cd work   # wherever the downloads are
+# Quebec: download SDA.shp.zip from the link above and unzip it into SDA/
+python3 path/to/scripts/build/make_cities_ca.py fetch-ontario on -76.5 44.5 -74.3 46.0
+python3 path/to/scripts/build/make_cities_ca.py build cities --qc SDA/munic_s --on on \
+    --route="-73.57,45.50;-75.70,45.42" --buffer-km 50                 # Montreal to Ottawa
+```
+
+Give `--route` with `=` so the leading minus of the first longitude is not read as an
+option. Larger areas split into `-north` / `-south` ... files like `--state` above. All
+of Quebec does not fit: its large northern territories keep one part over 4 MB after
+the splits, so pick a box or route.
+
+**Credit:** CC-BY 4.0 and the Ontario licence ask for a credit line wherever a built file
+is shared, for example "Contains data from the Gouvernement du Québec (MRNF, CC-BY 4.0)
+and information licensed under the Open Government Licence - Ontario."
 
 ## Code
 
