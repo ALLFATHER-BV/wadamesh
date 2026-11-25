@@ -15,4 +15,6 @@ public:
     auto it = testNvs().find(ns_ + "/" + k); return it == testNvs().end() ? d : it->second;
   }
   size_t putUShort(const char* k, uint16_t v) { testNvs()[ns_ + "/" + k] = v; return 2; }
+  bool isKey(const char* k) { return testNvs().count(ns_ + "/" + k) != 0; }
+  bool remove(const char* k) { return testNvs().erase(ns_ + "/" + k) != 0; }
 };

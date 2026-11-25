@@ -863,8 +863,8 @@
 // receiver's raw sentences), #896. Behind their own app permission. Arduino Wire
 // builds only (not the ESP-IDF P4 / Tanmatsu builds), not on the Pager (app slot).
 #ifndef CAP_LUA_HW
-  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(TLORA_PAGER) && !defined(HAS_TANMATSU) && \
-      !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
+  #if CAP_LUA_SDK_EXT && defined(ESP32) && !defined(WADA_WEB) && !defined(TLORA_PAGER) && \
+      !defined(HAS_TANMATSU) && !defined(HAS_TDISPLAY_P4) && !defined(HAS_CROWPANEL_P4_101)
     #define CAP_LUA_HW 1
   #else
     #define CAP_LUA_HW 0

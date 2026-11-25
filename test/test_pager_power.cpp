@@ -42,7 +42,17 @@ static void testBootLimitsAndCapacity() {
   assert(s_charger.vreg_mv == 4288 && s_charger.ichg_ma == 704);   // LilyGoLib's figures, not the 2 A default
   assert(s_charger.chargeEnabled() && s_charger.enable_calls == 1); // a reboot never leaves charging off
   assert(b.gauge.capacity_writes == 1 && b.gauge.design == 1500);
-  assert(testNvs()["pagerhw/cap_try"] == 1500);
+  assert(testNvs().count("pagerhw/cap_try") == 0);   // taken: nothing to remember
+
+  // The battery was unplugged: the gauge (config in RAM) is back at 3000, written again.
+  {
+    GaugeBQ27220 reset = b.gauge;
+    reset.design = 3000; reset.capacity_writes = 0;
+    powerOn(b, false);
+    b.gauge = reset;
+    b.begin();
+    assert(b.gauge.capacity_writes == 1 && b.gauge.design == 1500);
+  }
 
   // Next boot: the gauge already reads the target, nothing is written.
   GaugeBQ27220 kept = b.gauge;
@@ -56,6 +66,7 @@ static void testBootLimitsAndCapacity() {
   b.gauge.design = 3000; b.gauge.accept_capacity = false;
   b.begin();
   assert(b.gauge.capacity_writes == 1);
+  assert(testNvs()["pagerhw/cap_try"] == 1500);      // refused: remembered
   for (int boot = 0; boot < 3; ++boot) {
     GaugeBQ27220 g = b.gauge; g.capacity_writes = 0;
     powerOn(b, false);
