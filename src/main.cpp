@@ -5,9 +5,6 @@
   #include <new>               // placement-new for the PSRAM-resident the_mesh
   #include "esp_heap_caps.h"   // heap_caps_malloc(MALLOC_CAP_SPIRAM)
   #include <esp_sntp.h>        // completion status for normal + cold-boot time sync
-#if defined(HAS_THINKNODE_M9)
-  #include <esp_task_wdt.h>    // WDT suspend around multi-second SPIFFS format on first boot
-#endif
   #include "helpers/esp32/SntpClockPush.h"   // every SNTP result -> the mesh clock (and its RTC chip)
 static SntpClockPush s_sntp_push;
 #endif
