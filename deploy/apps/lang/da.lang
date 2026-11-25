@@ -2525,3 +2525,57 @@ no calls yet	ingen opkald endnu
 no messages	ingen beskeder
 no signal	intet signal
 ready	klar
+# beta_107: rows for the strings added this round
+"%s" wants to use the hardware: read and write devices on the I2C bus, and read the GPS receiver's raw data.\n\nA wrong write can change how a connected sensor behaves until it is powered off. The device's own keyboard, touch and power chips stay off limits.	"%s" vil bruge hardwaren: læse og skrive enheder på I2C-bussen og læse GPS-modtagerens rå data.\n\nEn forkert skrivning kan ændre, hvordan en tilsluttet sensor opfører sig, indtil den slukkes. Enhedens eget tastatur, berøring og strømkredse er udelukket.
+A	A
+A → Z	A → Z
+Access code	Adgangskode
+All chats	Alle chats
+Apply the new look? WADAMESH restarts to apply it.	Brug det nye udseende? WADAMESH genstarter for at anvende det.
+Code	Kode
+Connect to Wi-Fi to download the emoji pack.	Opret forbindelse til Wi-Fi for at hente emoji-pakken.
+Contact	Kontakt
+Could not add contact	Kunne ikke tilføje kontakten
+Dismiss	Afvis
+Dismissed	Afvist
+Download emoji pack	Hent emoji-pakke
+Download the emoji pack over Wi-Fi. A microSD card is required.	Hent emoji-pakken over Wi-Fi. Der kræves et microSD-kort.
+Downloading emoji pack…	Henter emoji-pakke…
+Emoji pack	Emoji-pakke
+Emoji pack download failed	Emoji-pakken kunne ikke hentes
+Emoji pack downloaded. It applies after a restart.	Emoji-pakken er hentet. Den bruges efter en genstart.
+Emoji pack installed. Downloading another will replace it.	Emoji-pakken er installeret. Hentes en ny, erstatter den denne.
+Empty at	Tom ved
+Fixed code	Fast kode
+Fixed code saved	Fast kode gemt
+New random code each session	Ny tilfældig kode hver session
+No apps match "%s"	Ingen apps matcher "%s"
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Ingen bøger. Læg .epub- eller .txt-filer i /meshcomod/apps/ebook.d/ på SD-kortet.
+No unread or unreplied channels	Ingen ulæste eller ubesvarede kanaler
+No unread or unreplied chats	Ingen ulæste eller ubesvarede chats
+No unread or unreplied direct chats	Ingen ulæste eller ubesvarede direkte chats
+Nodes farther away are left out. Auto fits the farthest node.	Noder længere væk udelades. Auto tilpasses den fjerneste node.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Fra: en ny tilfældig kode hver session. Til: den samme kode hver gang. Koden sendes ukrypteret over dit Wi-Fi, så alle der, som ser eller gætter den, kan forbinde. Forkerte forsøg låser den længere hver gang, op til en time.
+Only when moving (GPS)	Kun i bevægelse (GPS)
+Phosphor	Phosphor
+Range	Rækkevidde
+Replace	Erstat
+Replace the installed emoji pack? A custom pack may be overwritten.	Erstat den installerede emoji-pakke? En tilpasset pakke kan blive overskrevet.
+Search apps	Søg i apps
+Shows only the nodes you marked as favorite.	Viser kun de noder, du har markeret som favorit.
+Spell suggestions	Stavningsforslag
+Spell suggestions: off	Stavningsforslag: fra
+Spell suggestions: on	Stavningsforslag: til
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Spændingen, der vises som 0%. Slukker enheden, mens den stadig viser noget opladning, så vælg den spænding, den stopper ved.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Denne bog er for stor til appens hukommelse. Prøv en .txt-udgave af den, eller del den op i dele.
+This is your own node	Dette er din egen node
+Too easy to guess. Pick another code.	For let at gætte. Vælg en anden kode.
+Type a 6-digit code	Indtast en 6-cifret kode
+U | UR	U | UB
+Unread + unreplied	Ulæste + ubesvarede
+Updates	Opdateringer
+Use the I2C bus and raw GPS data	Brug I2C-bussen og rå GPS-data
+While the screen is on, asks nearby repeaters for a signal reading when none has been heard for a while. Neighbours only; nothing is repeated.	Mens skærmen er tændt, beder den nærliggende repeatere om en signalmåling, når ingen er hørt i et stykke tid. Kun naboer; intet videresendes.
+With a GPS fix, asks again only after you move about 250 m, or once an hour.	Med GPS-fix spørger den kun igen, når du har flyttet dig ca. 250 m, eller én gang i timen.
+With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Med cities.bin i /var/lib/wadamesh-zero viser Hjem den by, du er i, i stedet for nodenavnet.
+Z → A	Z → A
