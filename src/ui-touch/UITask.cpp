@@ -13657,6 +13657,11 @@ static void emojiPaintTabs() {
     if (!t) continue;
     const bool on = ((int)i == s_emoji_tab);
     lv_obj_set_style_bg_color(t, lv_color_hex(on ? COLOR_ACCENT : COLOR_CONTROL), LV_PART_MAIN);
+#if CAP_EPAPER
+    // The active tab is a black block on the 1-bit panel; its black label would vanish.
+    lv_obj_t* l = lv_obj_get_child(t, 0);
+    if (l) lv_obj_set_style_text_color(l, on ? lv_color_white() : lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+#endif
   }
 }
 
@@ -13725,6 +13730,13 @@ static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w, lv_coord_t y) {
 
   for (int i = 0; i < s_emoji_group_n; ++i) {
     lv_obj_t* t = lv_btn_create(row);
+#if CAP_EPAPER
+    // The theme's release transition is created before the click handler repaints the
+    // tab, so it fades to the OLD fill and on finishing leaves that on the panel (white
+    // label on white box until the next redraw). Transitions can only be added to, not
+    // overridden, so drop the theme styles; styleButton below restores the look.
+    lv_obj_remove_style_all(t);
+#endif
     lv_obj_set_height(t, 22);
     lv_obj_set_style_pad_hor(t, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_ver(t, 0, LV_PART_MAIN);

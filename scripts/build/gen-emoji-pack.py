@@ -6,6 +6,7 @@
 #   python3 scripts/build/gen-emoji-pack.py                       # default manifest -> ./emoji.pack
 #   python3 scripts/build/gen-emoji-pack.py -m my.txt -o out.pack
 #   python3 scripts/build/gen-emoji-pack.py --verify out.pack     # dump an existing pack
+#   python3 scripts/build/gen-emoji-pack.py --all --mono          # black-and-white art for the e-paper boards
 #
 # Manifest lines are "<category> <codepoints> <source>", '#' starts a comment:
 #   faces     1f929        1f929        # single codepoint, noto png stem
@@ -14,9 +15,13 @@
 #
 # Art comes from the same pinned Noto source as the baked glyphs, converted by the
 # same to_rgb565a8(), so pack art sits on the same baseline as the built-ins.
+# With --mono the single-codepoint art is drawn from the Noto Emoji monochrome font
+# instead (see emoji_mono.py), matching the firmware's black-and-white set on the
+# T-Deck Pro and Max; flags and sequences are error-diffused from the colour art.
 import argparse, concurrent.futures, json, os, re, struct, sys, urllib.request
 from PIL import Image
 from emoji_common import PX, ROOT, fetch, fetch_flag, to_rgb565a8
+import emoji_mono
 
 MAGIC = b"WMEP"
 VERSION = 1
@@ -273,9 +278,28 @@ def enumerate_all():
     return entries
 
 
-def prefetch(entries, workers=12):
+class Mono:
+    """The monochrome art source: the font, and which codepoints it can draw."""
+
+    def __init__(self, weight, threshold):
+        self.font, self.have = emoji_mono.load_font(weight)
+        self.threshold = threshold
+
+    def glyph(self, codes, src):
+        """Font art for a plain single emoji, else None (flags, sequences, gaps)."""
+        bare = [c for c in codes if c != 0xFE0F]
+        if src.startswith("flag:") or len(bare) != 1 or bare[0] not in self.have:
+            return None
+        mask = emoji_mono.font_glyph(self.font, bare[0], self.threshold)
+        return emoji_mono.to_bytes(mask) if mask and mask.getbbox() else None
+
+
+def prefetch(entries, workers=12, mono=None):
     """Warm the art cache in parallel; the build loop then hits disk only."""
-    todo = [src for _, _, _, src in entries]
+    fetch_idx = [
+        i for i, e in enumerate(entries) if not mono or mono.glyph(e[2], e[3]) is None
+    ]
+    todo = [entries[i][3] for i in fetch_idx]
     done = [0]
 
     def one(src):
@@ -287,9 +311,10 @@ def prefetch(entries, workers=12):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         results = list(ex.map(one, todo))
+    fetched = dict(zip(fetch_idx, results))
     available = []
-    for entry, path in zip(entries, results):
-        if path:
+    for i, entry in enumerate(entries):
+        if i not in fetched or fetched[i]:
             available.append(entry)
         elif entry[3].startswith("flag:"):
             print(
@@ -301,7 +326,7 @@ def prefetch(entries, workers=12):
     return available
 
 
-def build(manifest, entries=None, quiet_dupes=False):
+def build(manifest, entries=None, quiet_dupes=False, mono=None):
     if entries is None:
         entries = parse_manifest(manifest)
     if not entries:
@@ -310,10 +335,14 @@ def build(manifest, entries=None, quiet_dupes=False):
     baked = baked_codepoints()
     blobs, index, items = [], {}, []
     for lineno, cat, codes, src in entries:
-        png = fetch_flag(src[5:]) if src.startswith("flag:") else fetch(src)
-        if not png:
-            die("{}:{}: could not fetch art '{}'".format(manifest, lineno, src))
-        data = to_rgb565a8(Image.open(png))
+        data = mono.glyph(codes, src) if mono else None
+        if data is None:
+            png = fetch_flag(src[5:]) if src.startswith("flag:") else fetch(src)
+            if not png:
+                die("{}:{}: could not fetch art '{}'".format(manifest, lineno, src))
+            data = to_rgb565a8(Image.open(png))
+            if mono:
+                data = emoji_mono.to_bytes(emoji_mono.dithered(data))
         if len(data) != BLOB:
             die(
                 "{}:{}: converted to {} bytes, expected {}".format(
@@ -439,6 +468,15 @@ def main():
         help="take eligible upstream single-codepoint emoji and all country/region flags",
     )
     ap.add_argument(
+        "--mono",
+        action="store_true",
+        help="black-and-white art for the e-paper boards (T-Deck Pro and Max)",
+    )
+    ap.add_argument("--weight", type=int, default=emoji_mono.DEFAULT_WEIGHT,
+                    help="--mono: Noto Emoji wght axis, 300-700")
+    ap.add_argument("--threshold", type=int, default=emoji_mono.DEFAULT_THRESHOLD,
+                    help="--mono: ink cut-off, 1-254")
+    ap.add_argument(
         "--verify", metavar="PACK", help="dump an existing pack instead of building"
     )
     args = ap.parse_args()
@@ -447,13 +485,16 @@ def main():
         verify(args.verify)
         return
 
+    mono = Mono(args.weight, args.threshold) if args.mono else None
     entries = None
     if args.all:
         entries = enumerate_all()
         print("fetching art (cached in data/emoji-cache)...", file=sys.stderr)
-        entries = prefetch(entries)
+        entries = prefetch(entries, mono=mono)
 
-    pack, glyphs, idxn, items = build(args.manifest, entries, quiet_dupes=args.all)
+    pack, glyphs, idxn, items = build(
+        args.manifest, entries, quiet_dupes=args.all, mono=mono
+    )
     with open(args.out, "wb") as f:
         f.write(pack)
     print(
