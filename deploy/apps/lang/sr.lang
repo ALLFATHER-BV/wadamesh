@@ -2495,3 +2495,7 @@ Updates	Ажурирања
 A → Z	A → Z
 Z → A	Z → A
 No apps match "%s"	Нема апликација за „%s“
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Нема књига. Додај .epub или .txt датотеке у /meshcomod/apps/ebook.d/ на SD картици.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Књига је превелика за меморију апликације. Пробај .txt копију или је подели на делове.

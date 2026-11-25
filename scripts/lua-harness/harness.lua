@@ -3269,6 +3269,61 @@ scenarios.ebook_errors = function()
   assert(app.on_input ~= nil, "touch library keeps on_input")
 end
 
+-- A long book under the device's 256 KB app heap (#890 follow-up: an 11 MB book said
+-- "not enough memory"): 250 chapters and 300 pictures open and page; a book past the
+-- heap says so instead of sitting on "Opening...".
+local function eb_big_book(nch, nimg)
+  local files = { { "mimetype", "application/epub+zip" },
+    { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' } }
+  local man, spine, nav, body = {}, {}, {}, {}
+  for i = 1, 60 do local _, m = eb_para(i, 80); body[#body + 1] = "<p>" .. m .. "</p>\n" end
+  body = table.concat(body)
+  for i = 1, nch do
+    local nm = string.format("Text/chapter_%04d_split_%03d.xhtml", i, i % 7)
+    files[#files + 1] = { "OEBPS/" .. nm, "<html><body><h1>Chapter " .. i .. "</h1>" .. body ..
+      '<p><img src="../Images/illustration_' .. i .. '_highres.jpg" alt="Figure ' .. i .. '"/></p></body></html>' }
+    man[#man + 1] = string.format('<opf:item id="chapter_%04d_split_%03d" href="%s" media-type="application/xhtml+xml"/>', i, i % 7, nm)
+    spine[#spine + 1] = string.format('<opf:itemref idref="chapter_%04d_split_%03d"/>', i, i % 7)
+    nav[#nav + 1] = string.format('<li><a href="%s">Chapter %d, a long chapter title</a></li>', nm, i)
+  end
+  local img = ("\255"):rep(20000)
+  for i = 1, nimg do
+    local nm = string.format("Images/illustration_%d_highres.jpg", i)
+    files[#files + 1] = { "OEBPS/" .. nm, img }
+    man[#man + 1] = string.format('<opf:item id="img_%d" href="%s" media-type="image/jpeg"/>', i, nm)
+  end
+  files[#files + 1] = { "OEBPS/nav.xhtml", '<html><body><nav epub:type="toc"><ol>' .. table.concat(nav) .. "</ol></nav></body></html>" }
+  man[#man + 1] = '<opf:item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
+  files[#files + 1] = { "OEBPS/content.opf", "<opf:package><opf:metadata><dc:title>Big &amp; Long</dc:title></opf:metadata><opf:manifest>" ..
+    table.concat(man) .. "</opf:manifest><opf:spine>" .. table.concat(spine) .. "</opf:spine></opf:package>" }
+  return zip_build(files)
+end
+
+scenarios.ebook_big = function()
+  eb_start(320, 240, eb_big_book(250, 300))
+  collectgarbage(); collectgarbage()
+  __memcap(256 * 1024)
+  local app = load_app()
+  local t = eb_open_from_library(app, "book")
+  assert(t:find("Chapter 1", 1, true), "a 250-chapter book opens under the heap cap: " .. label_dump())
+  assert(label_dump():find("1/250", 1, true), "all 250 chapters: " .. label_dump())
+  for _ = 1, 20 do eb_next(app); eb_wait(app) end
+  key(app, "m"); assert(eb_row("Chapters") or eb_row("Continue"), "the menu opens: " .. label_dump())
+  local peak = __mempeak()
+  __memcap(-1)
+  app.on_close()
+  print(string.format("  250 chapters, 300 pictures: peak %d KB of 256", peak // 1024))
+  eb_start(320, 240, eb_big_book(1500, 300))
+  collectgarbage(); collectgarbage()
+  __memcap(256 * 1024)
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(guarded(BUDGET, assert(eb_row("book")).fn))
+  tick(app, 400, 40)
+  __memcap(-1)
+  assert(label_dump():find("too large for the app", 1, true), "past the heap the book says so: " .. label_dump())
+end
+
 scenarios.ebook_cost = function()
   -- a tag-dense chapter (one tag per few characters) and a long unbroken text run
   local dense = { "<html><body>" }
@@ -3328,7 +3383,7 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
   or APP_PATH:find("/ebook/", 1, true)
-  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_txt", "ebook_errors", "ebook_cost" }
+  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_txt", "ebook_errors", "ebook_big", "ebook_cost" }
   or APP_PATH:find("/breakout/", 1, true)
   and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or APP_PATH:find("/tripodometer/", 1, true)
@@ -3360,6 +3415,7 @@ for _, name in ipairs(order) do
     print("== " .. name)
     reset_world()
     local ok, err = pcall(scenarios[name])
+    __memcap(-1)   -- a failed scenario must not leave its heap cap on the next one
     if not ok then fails = fails + 1; print("  SCENARIO FAILED: " .. tostring(err)) end
   end
 end

@@ -213,7 +213,7 @@ local function zip_open(name)
   local _, _, _, _, cnt, cdsize, cdoff = string.unpack("<I4I2I2I2I2I4I4", tail, pos)
   if cdoff < 0 or cdsize < 0 or cdoff + cdsize > total then return nil, tr("Not an epub") end
   return { name = name, total = total, cnt = cnt, cdoff = cdoff, cdsize = cdsize,
-           rd = 0, buf = "", bp = 1, i = 1, ents = {}, nimg = 0 }
+           rd = 0, buf = "", bp = 1, i = 1, ents = {}, nimg = 0, cache = {}, ncache = 0 }
 end
 
 local ZIP_KEEP = { xhtml = 1, html = 1, htm = 1, xml = 1, opf = 1, ncx = 1, txt = 1 }
@@ -246,13 +246,31 @@ local function zip_step(Z)
       local x = ext and ext:lower()
       if x and (ZIP_KEEP[x] or (HAS_IMG and IMG_EXT[x] and Z.nimg < MAX_IMGS)) then
         if IMG_EXT[x] then Z.nimg = Z.nimg + 1 end
-        Z.ents[name] = { m = method, c = csize, u = usize, h = lho }
+        -- Packed, not a table: a big book has hundreds of entries, and a table each
+        -- costs about twice as much of the app's 256 KB heap. zent() unpacks one.
+        Z.ents[name] = string.pack("<I2I4I4", method, usize, lho)
       end
       Z.bp = Z.bp + need
       Z.i = Z.i + 1
     end
   end
   return false
+end
+
+-- The entry for a path inside the zip as a table { m = method, u = size, h = header
+-- offset, d = data offset once known }, or nil. A few recent ones are kept unpacked.
+local function zent(Z, name)
+  local v = name and Z.ents[name]
+  if type(v) ~= "string" then return v end
+  local c = Z.cache and Z.cache[name]
+  if c then return c end
+  local m, u, h = string.unpack("<I2I4I4", v)
+  c = { m = m, u = u, h = h }
+  if Z.cache then
+    if Z.ncache >= 32 then Z.cache, Z.ncache = {}, 0 end
+    Z.cache[name], Z.ncache = c, Z.ncache + 1
+  end
+  return c
 end
 
 local function entry_start(Z, e)
@@ -538,7 +556,7 @@ end
 
 -- Can paragraph p be shown as a picture? Only a stored (uncompressed) entry can be read.
 local function img_ok(s, p)
-  local e = s.imgs[p] and book and book.Z.ents[s.imgs[p]]
+  local e = s.imgs[p] and book and zent(book.Z, s.imgs[p])
   return e ~= nil and e.m == 0
 end
 
@@ -633,7 +651,7 @@ local show_library, show_menu, show_chapters, show_reading, show_error, show_ima
 -- Draw a picture from the open book, or nil if it cannot be (missing, compressed,
 -- or no wada.ui.image). Never raises: a book must stay readable.
 local function draw_image(path, x, y, w, h)
-  local e = HAS_IMG and book and book.Z.ents[path]
+  local e = HAS_IMG and book and zent(book.Z, path)
   local d = e and e.m == 0 and entry_start(book.Z, e)
   if not d then return nil end
   local ok, handle = pcall(ui.image, book.Z.name, d, e.u, x, y, w, h)
@@ -683,7 +701,7 @@ end
 -- `at` says where to land: "first", "last" or { p, o }.
 local function goto_section(sp, off, want, stop, at)
   local item = book.spine[sp]
-  local e = item and book.Z.ents[item.path]
+  local e = item and zent(book.Z, item.path)
   if not e then show_error(tr("A chapter is missing from this book")); return end
   if e.m ~= 0 then show_error(tr("This book is compressed. Repack it with scripts/ebook-prep.py")); return end
   if screen == "reading" and text_lbl then text_lbl:set(tr("Loading...")); stat_lbl:set("") end
@@ -798,18 +816,21 @@ end
 
 -- ---- opening a book -------------------------------------------------------------
 -- The table of contents (EPUB3 nav or EPUB2 NCX), read in windows and parsed 25
--- entries per tick: a real book has hundreds. T.titles maps a file path to the label
--- of the first entry that points at it.
-local function toc_new(Z, item, is_nav)
-  local e = Z.ents[item.path]
+-- entries per tick: a real book has hundreds. An entry names a spine item by path;
+-- the first entry for each item gives it its title (T.at maps a path to its spine index).
+local function toc_new(Z, path, is_nav, spine)
+  local e = zent(Z, path)
   if not e or e.m ~= 0 then return nil end
-  return { Z = Z, e = e, dir = dirname(item.path), nav = is_nav, fo = 0, buf = "", bp = 1,
-           eof = false, intoc = false, titles = {} }
+  local at = {}
+  for i, sp in ipairs(spine) do if not at[sp.path] then at[sp.path] = i end end
+  return { Z = Z, e = e, dir = dirname(path), nav = is_nav, fo = 0, buf = "", bp = 1,
+           eof = false, intoc = false, spine = spine, at = at }
 end
 
 local function toc_add(T, href, label)
   local path = resolve(T.dir, href)
-  if not T.titles[path] then T.titles[path] = plain(label) end
+  local i = T.at[path]
+  if i and not T.spine[i].title then T.spine[i].title = plain(label) end
 end
 
 -- Returns true when the table of contents is finished.
@@ -861,10 +882,40 @@ end
 
 local COMPRESSED = "This book is compressed. Repack it with scripts/ebook-prep.py"
 
+-- The package file (OPF) read in windows, a batch of tags per tick, so a book with a
+-- long manifest never holds the whole file in the app's heap. Two passes: the
+-- metadata and spine first, then only the manifest items the spine needs.
+local function xs_new(Z, e)
+  return { Z = Z, e = e, fo = 0, buf = "", bp = 1, eof = false }
+end
+
+-- Calls fn(name, attr_text, S) for up to n start tags ("opf:" prefix dropped).
+-- Returns true at the end of the file.
+local function xs_step(S, n, fn)
+  if not S.eof and #S.buf - S.bp < 4000 then
+    local piece = entry_read(S.Z, S.e, S.fo, 8192) or ""
+    S.buf, S.bp = S.buf:sub(S.bp) .. piece, 1
+    S.fo = S.fo + #piece
+    if #piece == 0 or S.fo >= S.e.u then S.eof = true end
+  end
+  for _ = 1, n do
+    local s, f, name, rest = S.buf:find("<([%a][%w:%-]*)([^<>]*)>", S.bp)
+    if not s then
+      if S.eof then return true end
+      S.bp = S.buf:find("<[^<>]*$", S.bp) or (#S.buf + 1)   -- keep a tag cut by the window
+      return false
+    end
+    S.bp = f + 1
+    fn((name:gsub("^opf:", "")), rest, S)
+  end
+  return false
+end
+
 local function open_task(name)
   local phase = name:lower():sub(-4) == ".txt" and "txt" or "zip"
-  local Z, opf, opf_dir, mpos, spos, spine, toc
-  local want, items, spine_ids, meta = {}, {}, {}, {}
+  local Z, opf, opf_dir, spine, toc
+  -- want[id] is true for a spine (or toc) id until the manifest pass swaps in its path.
+  local want, spine_ids, meta, nav_path = {}, {}, {}, nil
   return function()
     if phase == "txt" then
       local _, total = fs.read(name, 0, 0)
@@ -890,62 +941,61 @@ local function open_task(name)
       local done, err = zip_step(Z)
       if done == nil then show_error(err) elseif done then phase = "container" end
     elseif phase == "container" then
-      local ce = Z.ents["META-INF/container.xml"]
+      local ce = zent(Z, "META-INF/container.xml")
       if ce and ce.m ~= 0 then show_error(tr(COMPRESSED)); return end
       local xml = ce and entry_all(Z, ce, 16384)
       local full = xml and xml:match("full%-path%s*=%s*[\"']([^\"']+)[\"']")
       if not full then show_error(tr("Not an epub")); return end
       full = resolve("", full)
-      local oe = Z.ents[full]
+      local oe = zent(Z, full)
       if not oe then show_error(tr("Not an epub")); return end
       if oe.m ~= 0 then show_error(tr(COMPRESSED)); return end
-      local doc, why = entry_all(Z, oe, 81920)
-      if not doc then show_error(why == "too big" and tr("The book index is too large") or tr("Not an epub")); return end
-      opf, opf_dir = doc, dirname(full)
-      meta.title = plain(opf:match("<dc:title[^>]*>(.-)</dc:title>") or "")
-      meta.author = plain(opf:match("<dc:creator[^>]*>(.-)</dc:creator>") or "")
-      spos = opf:find("<spine", 1, true) or 1
+      opf, opf_dir = xs_new(Z, oe), dirname(full)
       phase = "spine"
-    elseif phase == "spine" then
-      for _ = 1, 150 do
-        local s, f, body = opf:find("<itemref%s+([^>]*)>", spos)
-        if not s then
-          local toc = opf:match("<spine[^>]-toc%s*=%s*[\"']([^\"']+)[\"']")
+    elseif phase == "spine" then   -- pass 1: title, author, the spine and its toc
+      local done = xs_step(opf, 150, function(tag, rest, S)
+        if tag == "itemref" then
+          local id = attrs(rest).idref
+          if id then spine_ids[#spine_ids + 1] = id; want[id] = true end
+        elseif tag == "spine" then
+          local toc = attrs(rest).toc
           if toc then want[toc] = true; meta.toc_id = toc end
-          phase, mpos = "manifest", opf:find("<manifest", 1, true) or 1
-          break
+        elseif (tag == "dc:title" or tag == "dc:creator") and rest:sub(-1) ~= "/" then
+          local k = tag == "dc:title" and "title" or "author"
+          if not meta[k] then meta[k] = plain(S.buf:match("^[^<]*", S.bp)) end
         end
-        local id = attrs(body).idref
-        if id then spine_ids[#spine_ids + 1] = id; want[id] = true end
-        spos = f + 1
+      end)
+      if done then
+        meta.title, meta.author = meta.title or "", meta.author or ""
+        opf = xs_new(Z, opf.e)
+        phase = "manifest"
       end
-    elseif phase == "manifest" then
-      for _ = 1, 150 do
-        local s, f, body = opf:find("<item%s+([^>]*)>", mpos)
-        if not s then phase = "toc"; break end
-        local a = attrs(body)
+    elseif phase == "manifest" then   -- pass 2: only the items the spine and toc need
+      local done = xs_step(opf, 150, function(tag, rest)
+        if tag ~= "item" then return end
+        local a = attrs(rest)
         local is_nav = (a.properties or ""):find("nav", 1, true) ~= nil
-        if a.id and a.href and (want[a.id] or is_nav) then
-          items[a.id] = { path = resolve(opf_dir, a.href), nav = is_nav }
+        if a.id and a.href then
+          if want[a.id] then want[a.id] = resolve(opf_dir, a.href) end
+          if is_nav and not nav_path then nav_path = resolve(opf_dir, a.href) end
         end
-        mpos = f + 1
-      end
+      end)
+      if done then phase = "toc" end
     elseif phase == "toc" then
       spine = {}
-      for _, id in ipairs(spine_ids) do
-        local it = items[id]
-        if it and Z.ents[it.path] then spine[#spine + 1] = { path = it.path } end
+      for i, id in ipairs(spine_ids) do
+        local path = want[id]
+        if type(path) == "string" and Z.ents[path] then spine[#spine + 1] = { path = path } end   -- presence only
+        spine_ids[i] = false   -- let the id strings go as the spine grows
       end
       if #spine == 0 then show_error(tr("No readable chapters")); return end
-      local nav_item
-      for _, it in pairs(items) do if it.nav then nav_item = it; break end end
-      local ncx_item = meta.toc_id and items[meta.toc_id]
-      toc = nav_item and toc_new(Z, nav_item, true) or ncx_item and toc_new(Z, ncx_item, false)
-      opf, items = nil, nil
+      local ncx_path = meta.toc_id and want[meta.toc_id]
+      want, spine_ids, opf = nil, nil, nil
+      toc = nav_path and toc_new(Z, nav_path, true, spine)
+         or type(ncx_path) == "string" and toc_new(Z, ncx_path, false, spine) or nil
       phase = toc and "titles" or "start"
     elseif phase == "titles" then
       if toc_step(toc) then
-        for _, sp in ipairs(spine) do sp.title = toc.titles[sp.path] end
         phase = "start"
       end
     elseif phase == "start" then
@@ -1132,8 +1182,21 @@ function app.on_open(w, h)
   timer.every(40)
 end
 
+-- A book can still outgrow the app's heap (a huge directory or chapter). Lua then
+-- raises "not enough memory" on every tick and the screen sat on "Opening..."; drop
+-- the book instead and say so. Any other error is passed on unchanged.
 function app.on_tick()
-  if task then task() end
+  if not task then return end
+  local ok, err = pcall(task)
+  if ok then return end
+  if type(err) == "string" and err:find("not enough memory", 1, true) then
+    set_task(nil)
+    book, sec, pred = nil, nil, {}
+    collectgarbage()
+    show_error(tr("This book is too large for the app's memory. Try a .txt copy of it, or split it into parts."))
+    return
+  end
+  error(err, 0)
 end
 
 on_input = function(ev)

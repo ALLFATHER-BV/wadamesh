@@ -2494,3 +2494,7 @@ Updates	Aggiornamenti
 A → Z	A → Z
 Z → A	Z → A
 No apps match "%s"	Nessuna app corrisponde a «%s»
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Nessun libro. Aggiungi file .epub o .txt in /meshcomod/apps/ebook.d/ sulla scheda SD.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Questo libro è troppo grande per la memoria dell'app. Prova una copia .txt o dividilo in parti.

@@ -2495,3 +2495,7 @@ Updates	Оновлення
 A → Z	A → Z
 Z → A	Z → A
 No apps match "%s"	Немає застосунків за запитом «%s»
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Немає книг. Додайте файли .epub або .txt до /meshcomod/apps/ebook.d/ на SD-картці.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Книга завелика для пам'яті застосунку. Спробуйте копію в .txt або розділіть її на частини.

@@ -2496,3 +2496,7 @@ Updates	Actualizări
 A → Z	A → Z
 Z → A	Z → A
 No apps match "%s"	Nicio aplicaţie pentru „%s”
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Nicio carte. Adaugă fișiere .epub sau .txt în /meshcomod/apps/ebook.d/ pe cardul SD.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Cartea este prea mare pentru memoria aplicației. Încearcă o copie .txt sau împarte-o în părți.

@@ -2504,3 +2504,7 @@ Updates	Frissítések
 A → Z	A → Z
 Z → A	Z → A
 No apps match "%s"	Nincs találat: „%s”
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Nincs könyv. Tegyél .epub vagy .txt fájlokat az SD-kártya /meshcomod/apps/ebook.d/ mappájába.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Ez a könyv túl nagy az alkalmazás memóriájához. Próbálj egy .txt másolatot, vagy oszd részekre.
