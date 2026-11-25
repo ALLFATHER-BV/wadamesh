@@ -23,6 +23,7 @@
 #include "LuaRandomRange.h"   // wada.sys.random(lo, hi), host-tested
 #include "LuaJson.h"          // wada.json, host-tested (test/test_lua_json.cpp)
 #include "helpers/esp32/WdtHeavyGuard.h"   // wada.fs writes can trigger SPIFFS GC
+#include "helpers/esp32/TlsPsramAlloc.h"   // tlsAllocIsPsram: the https heap gate
 
 extern "C" {
 #include "lua.h"
@@ -3357,8 +3358,13 @@ int netRequest(lua_State* L) {
   // Without Wi-Fi a connect would assert where lwIP never started (a Bluetooth-only
   // boot), and a TLS handshake below ~46 KB of free internal heap starves Wi-Fi's
   // own buffers, which next to the map has dropped the link.
-  if (!luaHostWifiUp() ||
-      (https && heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT) < 46 * 1024)) {
+  // With mbedtls in PSRAM (#870) an https request costs ~18 KB internal on the M9, nearly
+  // all of it the lua-tls task's 16 KB stack, which must be one contiguous block.
+  const uint32_t kInt = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  const bool heap_short = tlsAllocIsPsram()
+      ? (heap_caps_get_free_size(kInt) < 24 * 1024 || heap_caps_get_largest_free_block(kInt) < 20 * 1024)
+      : heap_caps_get_free_size(kInt) < 46 * 1024;
+  if (!luaHostWifiUp() || (https && heap_short)) {
     heap_caps_free(hdrs);
     if (s_net_body) { heap_caps_free(s_net_body); s_net_body = nullptr; s_net_body_len = 0; }
     snprintf(s_net_method, sizeof s_net_method, "%s", method);
