@@ -2488,3 +2488,10 @@ Dismissed	Скрыто
 No unread or unreplied chats	Нет непрочитанных чатов или чатов без ответа
 No unread or unreplied channels	Нет непрочитанных каналов или каналов без ответа
 No unread or unreplied direct chats	Нет непрочитанных личных чатов или чатов без ответа
+
+# Store search / sort (#863)
+Search apps	Поиск приложений
+Updates	Обновления
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Нет приложений по запросу «%s»

@@ -2488,3 +2488,10 @@ Dismissed	Скрито
 No unread or unreplied chats	Няма непрочетени чатове или чатове без отговор
 No unread or unreplied channels	Няма непрочетени канали или канали без отговор
 No unread or unreplied direct chats	Няма непрочетени лични чатове или чатове без отговор
+
+# Store search / sort (#863)
+Search apps	Търсене на приложения
+Updates	Обновления
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Няма приложения за „%s“

@@ -2497,3 +2497,10 @@ Dismissed	Elvetve
 No unread or unreplied chats	Nincs olvasatlan vagy megválaszolatlan csevegés
 No unread or unreplied channels	Nincs olvasatlan vagy megválaszolatlan csatorna
 No unread or unreplied direct chats	Nincs olvasatlan vagy megválaszolatlan közvetlen csevegés
+
+# Store search / sort (#863)
+Search apps	Appok keresése
+Updates	Frissítések
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nincs találat: „%s”

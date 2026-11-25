@@ -2489,3 +2489,10 @@ Dismissed	Ignorat
 No unread or unreplied chats	Nicio conversație necitită sau fără răspuns
 No unread or unreplied channels	Niciun canal necitit sau fără răspuns
 No unread or unreplied direct chats	Nicio conversație directă necitită sau fără răspuns
+
+# Store search / sort (#863)
+Search apps	Caută aplicaţii
+Updates	Actualizări
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nicio aplicaţie pentru „%s”

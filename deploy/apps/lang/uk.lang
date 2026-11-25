@@ -2488,3 +2488,10 @@ Dismissed	Приховано
 No unread or unreplied chats	Немає непрочитаних чатів чи чатів без відповіді
 No unread or unreplied channels	Немає непрочитаних каналів чи каналів без відповіді
 No unread or unreplied direct chats	Немає непрочитаних особистих чатів чи чатів без відповіді
+
+# Store search / sort (#863)
+Search apps	Пошук застосунків
+Updates	Оновлення
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Немає застосунків за запитом «%s»

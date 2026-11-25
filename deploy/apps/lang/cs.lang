@@ -2503,3 +2503,10 @@ Dismissed	Skryto
 No unread or unreplied chats	Žádné nepřečtené ani nezodpovězené chaty
 No unread or unreplied channels	Žádné nepřečtené ani nezodpovězené kanály
 No unread or unreplied direct chats	Žádné nepřečtené ani nezodpovězené přímé chaty
+
+# Store search / sort (#863)
+Search apps	Hledat aplikace
+Updates	Aktualizace
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Žádná aplikace neodpovídá „%s“

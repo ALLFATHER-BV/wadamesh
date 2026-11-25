@@ -2487,3 +2487,10 @@ Dismissed	Ignorato
 No unread or unreplied chats	Nessuna chat non letta o senza risposta
 No unread or unreplied channels	Nessun canale non letto o senza risposta
 No unread or unreplied direct chats	Nessuna chat diretta non letta o senza risposta
+
+# Store search / sort (#863)
+Search apps	Cerca app
+Updates	Aggiornamenti
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nessuna app corrisponde a «%s»

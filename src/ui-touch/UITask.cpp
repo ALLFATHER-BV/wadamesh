@@ -156,6 +156,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
+#include "StoreFilter.h"      // Store > Apps search + sort (#863)
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
@@ -6575,6 +6576,7 @@ static lv_obj_t* s_wifi_sheet        = nullptr;  // join / details / hidden over
 // pointers live outside CAP_KEYPAD_NAV; only the keypad navigation code uses them.
 static lv_obj_t* s_nav_store_list       = nullptr;
 static lv_obj_t* s_nav_store_tabs[3]    = { nullptr, nullptr, nullptr };
+static lv_obj_t* s_nav_store_tools[2]   = { nullptr, nullptr };   // Apps tab search field + sort button
 static lv_obj_t* s_nav_store_active_tab = nullptr;
 static lv_obj_t* s_nav_store_first      = nullptr;
 static lv_obj_t* s_nav_store_top_row    = nullptr;
@@ -7177,6 +7179,21 @@ static bool navIsStoreTab(lv_obj_t* o) {
   for (lv_obj_t* tab : s_nav_store_tabs) if (o && o == tab) return true;
   return false;
 }
+static bool navIsStoreTool(lv_obj_t* o) {
+  for (lv_obj_t* t : s_nav_store_tools) if (o && o == t) return true;
+  return false;
+}
+// 1 = the Store's tab bar, 2 = its Apps toolbar, 0 = anything else (the list included).
+static int navStoreRegion(lv_obj_t* o) {
+  return navIsStoreTab(o) ? 1 : navIsStoreTool(o) ? 2 : 0;
+}
+// The toolbar exists only with an Apps tab and is hidden on the other tabs.
+static lv_obj_t* navStoreToolsTarget() {
+  lv_obj_t* t = s_nav_store_tools[0];
+  if (!t || !lv_obj_is_valid(t) || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+  lv_obj_t* bar = lv_obj_get_parent(t);
+  return bar && lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN) ? nullptr : t;
+}
 static lv_obj_t* navStoreRowFor(lv_obj_t* o) {
   if (!o || !s_nav_store_list || !lv_obj_is_valid(s_nav_store_list)) return nullptr;
   while (o && lv_obj_get_parent(o) != s_nav_store_list) o = lv_obj_get_parent(o);
@@ -7193,11 +7210,10 @@ static lv_obj_t* navSettingsModalRegionFor(lv_obj_t* o) {
 static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
   if (o == s_nav_drawer_gear) return false;
-  // Store tabs are a fixed header above an independently scrolling list. Keep
-  // generic spatial search within whichever region currently owns focus; the
-  // explicit edge transitions in navMoveDir bridge the two at the true top.
-  if (navIsStoreTab(o) && !navIsStoreTab(cur)) return false;
-  if (navIsStoreTab(cur) && !navIsStoreTab(o)) return false;
+  // Store tabs and the Apps toolbar are fixed headers above an independently
+  // scrolling list. Keep generic spatial search within whichever region currently
+  // owns focus; the explicit edge transitions in navMoveDir bridge them.
+  if (navStoreRegion(o) != navStoreRegion(cur)) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
   // A message row scrolled out of the list's own view (under the floating composer, or
   // up under the header) is no target from OUTSIDE the list: Down from a composer button
@@ -7394,21 +7410,44 @@ static bool navMoveDir(int dir) {
     return false;
   }
   if (navIsStoreTab(cur)) {
-    if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
+    if (dir == NAV_DOWN) {
+      if (lv_obj_t* tools = navStoreToolsTarget()) {
+        s_nav_show = true;
+        lv_group_focus_obj(tools);
+        if (g_lv.task) g_lv.task->noteUserInput();
+      } else if (s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
+        if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list))
+          lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+        s_nav_show = true;
+        lv_group_focus_obj(s_nav_store_first);
+        if (g_lv.task) g_lv.task->noteUserInput();
+      }
+    }
+    if (dir == NAV_UP || dir == NAV_DOWN) return false;
+  } else if (navIsStoreTool(cur)) {
+    if (dir == NAV_UP && s_nav_store_active_tab && lv_obj_is_valid(s_nav_store_active_tab)) {
+      s_nav_show = true;
+      lv_group_focus_obj(s_nav_store_active_tab);
+    } else if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
       if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list))
         lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
       s_nav_show = true;
       lv_group_focus_obj(s_nav_store_first);
-      if (g_lv.task) g_lv.task->noteUserInput();
     }
-    if (dir == NAV_UP || dir == NAV_DOWN) return false;
+    if (dir == NAV_UP || dir == NAV_DOWN) {
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return false;
+    }
   } else if (dir == NAV_UP && s_nav_store_top_row &&
              navStoreRowFor(cur) == s_nav_store_top_row) {
     if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list) &&
         lv_obj_get_scroll_y(s_nav_store_list) > 0) {
       // The first card may still be clipped after free-scrolling. Reveal its
-      // whole box/name before allowing the next Up press into the fixed tabs.
+      // whole box/name before allowing the next Up press into the fixed header.
       lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+    } else if (lv_obj_t* tools = navStoreToolsTarget()) {
+      s_nav_show = true;
+      lv_group_focus_obj(tools);
     } else if (s_nav_store_active_tab && lv_obj_is_valid(s_nav_store_active_tab)) {
       s_nav_show = true;
       lv_group_focus_obj(s_nav_store_active_tab);
@@ -37977,7 +38016,8 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 // Airtime, Wardrive): a separate field because `requires` holds one name, and older
 // firmware ignores a field it does not know (a second name in `requires` would have
 // unhidden Wardrive on the 2 MB V4).
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8]; };
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8];
+                    char released[11]; };   // "YYYY-MM-DD" the current ver shipped; empty = sorts last
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -60632,17 +60672,33 @@ static int  s_lua_rm_pending = -1;        // long-press remove target (drawer ti
 static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
 static int  s_luastore_tab = 0;           // 0 = Apps, 1 = Built-in, 2 = Languages (kept across opens)
 static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
+// Apps tab toolbar (#863): search + sort. The sort mode is kept across opens like
+// the tab (not persisted); the query is cleared when the Store closes.
+static uint8_t     s_luastore_sort = storefilter::SORT_AZ;
+static char        s_luastore_query[32] = "";
+static lv_obj_t*   s_luastore_tools = nullptr;       // toolbar container (Apps tab only)
+static lv_obj_t*   s_luastore_search_ta = nullptr;
+static lv_obj_t*   s_luastore_sort_lbl = nullptr;
+static lv_timer_t* s_luastore_search_timer = nullptr; // one-shot debounce of the field
+static bool        s_luastore_reset_scroll = false;   // query/sort changed: next rebuild starts at the top
+static lv_coord_t  s_luastore_list_y = 0, s_luastore_list_h = 0, s_luastore_tools_dy = 0;
 
 static void luaStoreRebuildList();        // fwd
 static void langRebootWithNotice(const char* msg);   // fwd (Languages tab actions)
 void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
+  if (s_luastore_search_timer) { lv_timer_del(s_luastore_search_timer); s_luastore_search_timer = nullptr; }
+  if (s_luastore_search_ta && s_kb_bind_ta == s_luastore_search_ta) hideKb();   // unbind before it is freed
+  s_luastore_search_ta = s_luastore_sort_lbl = s_luastore_tools = nullptr;
+  s_luastore_query[0] = 0;
+  s_luastore_reset_scroll = false;
   s_luastore_list = nullptr;
   s_luastore_tabbtn[0] = s_luastore_tabbtn[1] = s_luastore_tabbtn[2] = nullptr;
   s_nav_store_list = s_nav_store_active_tab = nullptr;
   s_nav_store_first = s_nav_store_top_row = nullptr;
   for (lv_obj_t*& tab : s_nav_store_tabs) tab = nullptr;
+  for (lv_obj_t*& tool : s_nav_store_tools) tool = nullptr;
   appPageEnd(&closeLuaStorePage);
   popupClose(&s_luastore_root);
   // The drawer underneath was built BEFORE any install/remove done in here —
@@ -60672,6 +60728,7 @@ static void luaStoreParseCatalog() {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
       if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
       if (!luaJsonField(obj, "radio", c.radio, sizeof c.radio)) c.radio[0] = 0;
+      if (!luaJsonField(obj, "released", c.released, sizeof c.released)) c.released[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -61019,6 +61076,17 @@ static void luaStoreLangRemoveCb(lv_event_t* e) {
 
 static void luaStoreStyleTabs() {
   s_nav_store_active_tab = nullptr;
+  // The toolbar belongs to the Apps tab only; the list moves up into its space elsewhere.
+  if (s_luastore_tools && lv_obj_is_valid(s_luastore_tools) && s_luastore_list) {
+    const bool show = (s_luastore_tab == 0);
+    if (show == lv_obj_has_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN)) {
+      if (show) lv_obj_clear_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN);
+      else      lv_obj_add_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN);
+      const lv_coord_t dy = show ? s_luastore_tools_dy : 0;
+      lv_obj_set_y(s_luastore_list, s_luastore_list_y + dy);
+      lv_obj_set_height(s_luastore_list, s_luastore_list_h - dy);
+    }
+  }
   for (int t = 0; t < 3; t++) {
     lv_obj_t* b = s_luastore_tabbtn[t];
     if (!b || !lv_obj_is_valid(b)) continue;
@@ -61032,10 +61100,70 @@ static void luaStoreStyleTabs() {
   }
 }
 
+// ---- Apps tab toolbar: search + sort (#863) ----
+// Narrow panels (240 px V4 / M9) get the short label.
+static void luaStoreSortLabelText(char* out, size_t cap, uint8_t m, bool narrow) {
+  if (narrow) {
+    snprintf(out, cap, "%s", m == storefilter::SORT_ZA ? "Z-A" : m == storefilter::SORT_NEWEST ? TR("New") : "A-Z");
+    return;
+  }
+  const char* mode = m == storefilter::SORT_ZA ? TR("Z \xE2\x86\x92 A")
+                   : m == storefilter::SORT_NEWEST ? TR("Newest") : TR("A \xE2\x86\x92 Z");
+  snprintf(out, cap, "%s: %s", TR("Sort"), mode);
+}
+static bool luaStoreToolsNarrow() { return s_luastore_w < 260; }
+static void luaStoreSortBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_luastore_sort = storefilter::nextSort(s_luastore_sort);
+  if (s_luastore_sort_lbl) {
+    char t[40];
+    luaStoreSortLabelText(t, sizeof t, s_luastore_sort, luaStoreToolsNarrow());
+    lv_label_set_text(s_luastore_sort_lbl, t);
+  }
+  s_luastore_reset_scroll = true;
+  luaStoreRebuildList();   // the button lives in the toolbar, outside the list being rebuilt
+}
+static void luaStoreApplyQuery() {
+  char q[sizeof s_luastore_query];
+  storefilter::trimQuery(q, sizeof q, s_luastore_search_ta ? lv_textarea_get_text(s_luastore_search_ta) : "");
+  if (strcmp(q, s_luastore_query) == 0) return;
+  memcpy(s_luastore_query, q, sizeof q);
+  s_luastore_reset_scroll = true;
+  luaStoreRebuildList();
+}
+static void luaStoreSearchTimerCb(lv_timer_t*) {
+  s_luastore_search_timer = nullptr;   // repeat-count 1 -> LVGL deletes the timer after this
+  luaStoreApplyQuery();
+}
+// Every rebuild re-measures each card, and on the e-paper each one is a panel
+// refresh, so typing coalesces into one rebuild after a pause.
+static void luaStoreSearchSchedule(uint32_t ms) {
+  if (s_luastore_search_timer) {
+    lv_timer_set_period(s_luastore_search_timer, ms);
+    lv_timer_reset(s_luastore_search_timer);
+    return;
+  }
+  s_luastore_search_timer = lv_timer_create(luaStoreSearchTimerCb, ms, nullptr);
+  lv_timer_set_repeat_count(s_luastore_search_timer, 1);
+}
+static void luaStoreSearchChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_READY) { luaStoreSearchSchedule(1); return; }   // Enter: now
+  luaStoreSearchSchedule(CAP_EPAPER ? 600 : 250);
+}
+// The empty state's Clear sits inside the list, so the rebuild it causes is
+// deferred rather than run inside the button's own click.
+static void luaStoreSearchClearCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_luastore_search_ta) return;
+  lv_textarea_set_text(s_luastore_search_ta, "");
+  luaStoreSearchSchedule(1);
+}
+
 static void luaStoreTabCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int t = (int)(intptr_t)lv_event_get_user_data(e);
   if (t == s_luastore_tab) return;
+  // Leaving Apps hides the search field; let go of the keyboard bound to it.
+  if (s_luastore_search_ta && s_kb_bind_ta == s_luastore_search_ta) hideKb();
   s_luastore_tab = t;
   if (t == 2) {
     luaStoreScanLangs();                          // tiny dir; sync is fine here
@@ -61091,10 +61219,16 @@ static void luaStoreRebuildList() {
   // they had scrolled to (an app near the bottom could look like it had no
   // button at all). Restored after the rows exist, so the value is clamped
   // against the NEW content height rather than the old one.
-  const lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+  lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+  // A new query or sort is a new list: start it at the top.
+  const bool reset_scroll = s_luastore_reset_scroll;
+  s_luastore_reset_scroll = false;
+  if (reset_scroll) keep_scroll_y = 0;
 #if CAP_KEYPAD_NAV
   lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-  if (focused && lv_obj_is_valid(focused) &&
+  if (focused && lv_obj_is_valid(focused) && navIsStoreTool(focused)) {
+    s_nav_focus_hint = focused;   // the toolbar survives the rebuild: keep typing in it
+  } else if (focused && lv_obj_is_valid(focused) &&
       (navIsStoreTab(focused) || navStoreRowFor(focused))) {
     navMarkEntered(focused);   // reselect the recreated control at the same screen position
   }
@@ -61388,7 +61522,27 @@ static void luaStoreRebuildList() {
   }
   const int  chip_h  = lh14 + lh12 - 2;                  // icon chip (square)
   const lv_coord_t pad_v = 14;                           // pad_all 7, top + bottom
-  for (int i = 0; i < s_lua_cat_n; i++) {
+  // A filtered, sorted VIEW of catalog indices. s_lua_cat itself keeps catalog
+  // order: the button callbacks carry the catalog index, and the update count
+  // and re-parse rely on that order.
+  const char* q = s_luastore_query;
+  static int view[kLuaCatMax];                 // static: the UI loop's stack is tight
+  int vn = 0, pinned = 0;
+  {
+    static storefilter::SortKey keys[kLuaCatMax];
+    for (int i = 0; i < s_lua_cat_n; i++) {
+      const LuaInstApp* in = luaStoreFindInstalled(s_lua_cat[i].id);
+      keys[i] = { s_lua_cat[i].name, s_lua_cat[i].released, in && luaVerNewer(s_lua_cat[i].ver, in->ver) };
+      if (!storefilter::appMatches(s_lua_cat[i].name, s_lua_cat[i].id, s_lua_cat[i].desc, q)) continue;
+      view[vn++] = i;
+      if (keys[i].update) pinned++;
+    }
+    storefilter::sortView(view, vn, keys, s_luastore_sort);
+  }
+  for (int k = 0; k < vn; k++) {
+    const int i = view[k];   // the real catalog index, for every callback below
+    if (pinned > 0 && k == 0) section(TR("Updates"));
+    if (pinned > 0 && pinned < vn && k == pinned) section(TR("Apps"));
     // Per card, because every description wraps differently. Content is the
     // title line plus the wrapped description, but never shorter than the icon
     // chip or the action button or those would poke out of a short card.
@@ -61494,21 +61648,17 @@ static void luaStoreRebuildList() {
   }
 
   // ---- installed-but-not-in-catalog (sideloaded from the card) ----
-  {
-    bool any_side = false;
-    for (int i = 0; i < s_lua_inst_n; i++) {
-      bool in_cat = false;
-      for (int c = 0; c < s_lua_cat_n; c++)
-        if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
-      if (!in_cat) { any_side = true; break; }
-    }
-    if (any_side) section(TR("Your own apps"));
-  }
-  for (int i = 0; i < s_lua_inst_n; i++) {
-    bool in_cat = false;
+  // Filtered by name and id: a sideload carries no description here.
+  auto sideShown = [&](int i) {
     for (int c = 0; c < s_lua_cat_n; c++)
-      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
-    if (in_cat) continue;
+      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) return false;
+    return storefilter::appMatches(s_lua_inst[i].name, s_lua_inst[i].id, nullptr, q);
+  };
+  int side_n = 0;
+  for (int i = 0; i < s_lua_inst_n; i++) if (sideShown(i)) side_n++;
+  if (side_n > 0) section(TR("Your own apps"));
+  for (int i = 0; i < s_lua_inst_n; i++) {
+    if (!sideShown(i)) continue;
     lv_obj_t* row = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, W - 8, 40);
@@ -61543,9 +61693,47 @@ static void luaStoreRebuildList() {
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
   }
 
+  if (q[0] && vn == 0 && side_n == 0 && s_lua_cat_n > 0) {
+    lv_obj_t* card = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+    styleGlass(card);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    char msg[160];
+    snprintf(msg, sizeof msg, TR("No apps match \"%s\""), q);
+    lv_obj_t* t = lv_label_create(card);
+    useChainedFont(t);
+    lv_label_set_text(t, msg);
+    lv_obj_set_style_text_font(t, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    const lv_coord_t tw = W - 26 - act_gut;
+    lv_obj_set_width(t, tw);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_coord_t ch = wrapH(msg, &g_font_12, tw);
+    if (ch < 28) ch = 28;
+    lv_obj_set_size(card, W - 8, ch + 16);
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, act_w, 28);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, TR("Clear"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    if (s_theme_day || s_theme_high_contrast)
+      lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, luaStoreSearchClearCb, LV_EVENT_CLICKED, nullptr);
+  }
   if (keep_scroll_y > 0) {
     lv_obj_update_layout(s_luastore_list);          // content height must be known first
     lv_obj_scroll_to_y(s_luastore_list, keep_scroll_y, LV_ANIM_OFF);
+  } else if (reset_scroll) {
+    lv_obj_scroll_to_y(s_luastore_list, 0, LV_ANIM_OFF);
   }
 }
 
@@ -61632,11 +61820,80 @@ static void openLuaStorePage() {
   s_nav_store_list = s_luastore_list;
   lv_obj_remove_style_all(s_luastore_list);
   s_luastore_w = sw - 12;
-  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - bar_h - 14);
-  lv_obj_set_pos(s_luastore_list, 6, 4 + bar_h + 4);
+  s_luastore_list_y = 4 + bar_h + 4;
+  s_luastore_list_h = sh - STATUSBAR_H - bar_h - 14;
+  lv_obj_set_size(s_luastore_list, s_luastore_w, s_luastore_list_h);
+  lv_obj_set_pos(s_luastore_list, 6, s_luastore_list_y);
   lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
+
+#if !(CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS)
+  // Apps tab toolbar under the tab bar: [ search field ][ Sort ]. Starts hidden;
+  // luaStoreStyleTabs shows it on the Apps tab and moves the list down to make room.
+  {
+    const lv_coord_t tools_w = sw - 12;
+    lv_obj_t* tb = lv_obj_create(s_luastore_root);
+    s_luastore_tools = tb;
+    lv_obj_remove_style_all(tb);
+    const lv_coord_t tools_gap = 1;               // tight under the tab buttons
+    lv_obj_set_pos(tb, 6, s_luastore_list_y - 4 + tools_gap);
+    lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(tb, LV_OBJ_FLAG_HIDDEN);
+    const bool narrow = luaStoreToolsNarrow();
+    char t[40];
+    lv_coord_t sort_w = 0;
+    for (uint8_t m = 0; m < storefilter::SORT_COUNT; m++) {   // wide enough for every mode
+      luaStoreSortLabelText(t, sizeof t, m, narrow);
+      lv_point_t sz;
+      lv_txt_get_size(&sz, t, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      if (sz.x > sort_w) sort_w = sz.x;
+    }
+    sort_w += 16;
+    if (sort_w > tools_w / 2) sort_w = tools_w / 2;
+
+    lv_obj_t* ta = lv_textarea_create(tb);
+    s_luastore_search_ta = ta;
+    lv_obj_set_pos(ta, 0, 0);
+    lv_obj_set_width(ta, tools_w - sort_w - 4);
+    styleCard(ta);
+    lv_textarea_set_one_line(ta, true);
+    taSetPlaceholder(ta, TR("Search apps"));
+    lv_textarea_set_max_length(ta, sizeof(s_luastore_query) - 1);
+    lv_obj_set_style_text_font(ta, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(ta, 2, LV_PART_MAIN);
+    lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_READY, nullptr);
+    attachSettingsTaEvents(ta);   // keyboard binds on focus / tap, as in Files
+    // One-line mode sizes the field to its text, so the toolbar and the Sort
+    // button take the field's height rather than the taller tab bar's.
+    lv_obj_update_layout(ta);
+    const lv_coord_t tools_h = lv_obj_get_height(ta);
+    lv_obj_set_size(tb, tools_w, tools_h);
+
+    lv_obj_t* sb = lv_btn_create(tb);
+    lv_obj_set_size(sb, sort_w, tools_h);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(sb, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sb, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* sl = lv_label_create(sb);
+    s_luastore_sort_lbl = sl;
+    useChainedFont(sl);
+    luaStoreSortLabelText(t, sizeof t, s_luastore_sort, narrow);
+    lv_label_set_text(sl, t);
+    lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    uiFitLabelWidth(sl, sort_w - 8);
+    lv_obj_center(sl);
+    lv_obj_add_event_cb(sb, luaStoreSortBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    s_nav_store_tools[0] = ta;
+    s_nav_store_tools[1] = sb;
+    s_luastore_tools_dy = tools_h + tools_gap;   // list keeps its 4 px gap below
+  }
+#endif
 
 #if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
   if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board

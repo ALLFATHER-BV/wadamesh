@@ -2488,3 +2488,10 @@ Dismissed	Αποκρύφτηκε
 No unread or unreplied chats	Καμία αδιάβαστη ή αναπάντητη συνομιλία
 No unread or unreplied channels	Κανένα αδιάβαστο ή αναπάντητο κανάλι
 No unread or unreplied direct chats	Καμία αδιάβαστη ή αναπάντητη άμεση συνομιλία
+
+# Store search / sort (#863)
+Search apps	Αναζήτηση εφαρμογών
+Updates	Ενημερώσεις
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Καμία εφαρμογή για «%s»

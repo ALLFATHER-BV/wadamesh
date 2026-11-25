@@ -2486,3 +2486,10 @@ Dismissed	Genegeerd
 No unread or unreplied chats	Geen ongelezen of onbeantwoorde chats
 No unread or unreplied channels	Geen ongelezen of onbeantwoorde kanalen
 No unread or unreplied direct chats	Geen ongelezen of onbeantwoorde directe chats
+
+# Store search / sort (#863)
+Search apps	Apps zoeken
+Updates	Updates
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Geen apps gevonden voor "%s"

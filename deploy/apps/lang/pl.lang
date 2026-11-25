@@ -2500,3 +2500,10 @@ Dismissed	Odrzucono
 No unread or unreplied chats	Brak czatów nieprzeczytanych lub bez odpowiedzi
 No unread or unreplied channels	Brak kanałów nieprzeczytanych lub bez odpowiedzi
 No unread or unreplied direct chats	Brak czatów bezpośrednich nieprzeczytanych lub bez odpowiedzi
+
+# Store search / sort (#863)
+Search apps	Szukaj aplikacji
+Updates	Aktualizacje
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Brak aplikacji pasujących do „%s”
