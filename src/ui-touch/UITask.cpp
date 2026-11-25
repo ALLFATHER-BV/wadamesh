@@ -71431,6 +71431,24 @@ static void applyBootTheme() {
 // in HC. Reads COLOR_ACCENT after applyAccent has initialized it at boot.
 static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
 #if defined(HAS_TDECK_PRO)
+  // E-paper: a steady text cursor. LVGL blinks it every 400 ms, and on this
+  // panel each blink is a partial refresh -- the driver turns every 9th one into
+  // a full, flashing refresh, so a focused field flashed the whole screen every
+  // few seconds even with nobody typing. anim_time 0 = no blink (lv_textarea.c).
+  // Every state: the base theme puts its 400 ms on LV_PART_CURSOR | LV_STATE_FOCUSED,
+  // and a state-specific style outranks a plain LV_PART_CURSOR one, so setting only
+  // the default state left the cursor blinking exactly while it was shown.
+  if (lv_obj_check_type(obj, &lv_textarea_class)) {
+    static const lv_style_selector_t kCursorStates[] = {
+      LV_PART_CURSOR | LV_STATE_DEFAULT,
+      LV_PART_CURSOR | LV_STATE_FOCUSED,
+      LV_PART_CURSOR | LV_STATE_FOCUS_KEY,
+      LV_PART_CURSOR | LV_STATE_FOCUSED | LV_STATE_FOCUS_KEY,
+      LV_PART_CURSOR | LV_STATE_EDITED,
+      LV_PART_CURSOR | LV_STATE_FOCUSED | LV_STATE_EDITED,
+    };
+    for (lv_style_selector_t sel : kCursorStates) lv_obj_set_style_anim_time(obj, 0, sel);
+  }
   // E-paper: one bit per pixel, so black outlines on white, never tints.
   if (!s_theme_day && !s_theme_high_contrast) {
     if (lv_obj_check_type(obj, &lv_switch_class))
