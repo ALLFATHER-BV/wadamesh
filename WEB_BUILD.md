@@ -55,7 +55,7 @@ The web build is a board like any other: `-DWADA_WEB` selects a block in
 | CAP_WIFI_SETUP, CAP_BT_SETUP (new) | 0 | the page's bar picks the node and the link: Settings > Wi-Fi / Bluetooth explain that instead of showing switches that change nothing |
 | CAP_USB_FLASH (new) | 0 | no bootloader: the Power menu has no "Download mode" |
 | CAP_RADIO_TOOLS (new) | 0 | no own radio: no Signal / Discover / Spectrum tiles |
-| CAP_SCREEN_MIRROR (new) | 0 | it is the browser view: no Remote / VNC tiles |
+| CAP_SCREEN_MIRROR (new) | 0 | it is the browser view: no Remote tile |
 | CAP_WEB_BROWSER | 0 | a page cannot fetch arbitrary sites (CORS) |
 | CAP_BUILTIN_LANGS, CAP_BUILTIN_LUA_APPS | 1 | translations and catalog apps are baked in: the offline first load |
 | CAP_STORE_DOWNLOADS (new) | 1 | ...and the Store installs and updates anyway (Apps tab, language downloads) |
@@ -93,7 +93,7 @@ Every change is behaviour-neutral for the device builds (they never define
 | `src/ui-touch/UITask.cpp:9855-9859` | `CAP_NATIVE_KEYBOARD`: a second tap on a field does not summon the UI's keys while the phone's keyboard types | the page reopens the phone keyboard instead |
 | `src/ui-touch/UITask.cpp:49627` | `cardKbUiKey` passes `BLE_KEY_TEXT \| code point` through | text in any script and emoji from the page (a CardKB only ever sends bytes, never that bit) |
 | `src/ui-touch/UITask.cpp:51733-51748` | `CAP_NATIVE_KEYBOARD`: the phone's keyboard counts as an external keyboard for typing, but turns on no focus ring and no tab hotkeys or their letters | a phone keyboard has no keys to navigate by |
-| `src/ui-touch/UITask.cpp:55254-55262` | Signal/Discover/Spectrum tiles under `CAP_RADIO_TOOLS`; Remote/VNC also under `CAP_SCREEN_MIRROR` | capability gates, not board names |
+| `src/ui-touch/UITask.cpp:55254-55262` | Signal/Discover/Spectrum tiles under `CAP_RADIO_TOOLS`; Remote also under `CAP_SCREEN_MIRROR` | capability gates, not board names |
 | `src/ui-touch/UITask.cpp:4189-4193` | the GPS "searching" hint: sky + cold start under `CAP_GPS_RECEIVER`, else "allow this page to use your location" | the browser's GPS has no sky |
 | `src/ui-touch/UITask.cpp:17639, 17679` | Settings > GPS: the Receiver (baud) and Battery (saver) cards under `CAP_GPS_RECEIVER` | settings of a serial receiver |
 | `src/ui-touch/UITask.cpp:19243-19251` | Settings > Bluetooth: `!CAP_BT_SETUP` shows where the connection is set | no switches that change nothing |

@@ -9449,7 +9449,7 @@ struct SettingsCatDef { const char* label; const char* icon; };
 // Built-in tile hide bits (app_hide pref). Order is FROZEN — append only.
 enum {
   APPHIDE_SNAKE = 1u << 0,  APPHIDE_AIRTIME = 1u << 1, APPHIDE_MONITOR = 1u << 2,
-  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,
+  APPHIDE_SPECTRUM = 1u << 3, APPHIDE_DISCOVER = 1u << 4, APPHIDE_VNC = 1u << 5,   // VNC: retired tile (#908), bit kept
   APPHIDE_REMOTE = 1u << 6, APPHIDE_READER = 1u << 7, APPHIDE_TERMINAL = 1u << 8,
   APPHIDE_FILES = 1u << 9, APPHIDE_SIGNAL = 1u << 10, APPHIDE_MENTIONS = 1u << 11,
   APPHIDE_MQTT = 1u << 12,   // Settings -> MQTT bridge (hidden by default: experimental + privacy)
@@ -61086,7 +61086,7 @@ static void luaStoreRebuildList() {
     struct { const char* name; uint32_t bit; } builtins[] = {
       { "Spectrum", APPHIDE_SPECTRUM }, { "Discover", APPHIDE_DISCOVER },
 #if !defined(HAS_TANMATSU)
-      { "VNC", APPHIDE_VNC }, { "Remote", APPHIDE_REMOTE },
+      { "Remote", APPHIDE_REMOTE },
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
       { "Web", APPHIDE_READER },
@@ -61972,6 +61972,7 @@ static void openUsbFilesPage() {
 enum AppDrawerAction {
   APPACT_CHATS, APPACT_CONTACTS, APPACT_MAP, APPACT_SETTINGS,
   APPACT_ADVERT, APPACT_POWER, APPACT_MENTIONS, APPACT_CMDCENTER, APPACT_SIGNAL,
+  // APPACT_VNC has no tile since #908 (it opened Remote), but stays: Home App widgets store these numbers.
   APPACT_TERMINAL, APPACT_FILES, APPACT_FILE_TRANSFER, APPACT_SPECTRUM, APPACT_SNAKE, APPACT_VNC, APPACT_REMOTE, APPACT_READER,
   APPACT_DISCOVER, APPACT_STORE,
   APPACT_USB_FILES,
@@ -61997,8 +61998,7 @@ static const AppTileDef k_app_tiles[] = {
   { UI_ICON_SQUARE_TERMINAL,    "Terminal",  APPACT_TERMINAL,  HUE_SYS },
 #endif
 #if !defined(HAS_TANMATSU) && CAP_SCREEN_MIRROR
-  { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // headless web-resolution UI
-  { UI_ICON_CAST,               "VNC",       APPACT_VNC,       HUE_SYS },     // browser screen mirror
+  { UI_ICON_MONITOR,            "Remote",    APPACT_REMOTE,    HUE_SYS },     // web console (incl. screen mirror) + Remote UI
 #endif
   { UI_ICON_SLIDERS_HORIZONTAL, "Settings",  APPACT_SETTINGS,  HUE_SYS },     // "!" when an update waits
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
@@ -62385,8 +62385,8 @@ static void appLaunch(int act, lv_event_t* e) {
     case APPACT_SPECTRUM:  openSpectrumPage();   return;   // swept RF spectrum analyzer (borrows the radio)
     case APPACT_DISCOVER:  openDiscoverPage();   return;   // active node-discovery sweep + nearby list
 #if !defined(HAS_TANMATSU)
-    case APPACT_VNC:       openRemotePage();     return;   // the screen mirror is now the web console's Screen tab
-    case APPACT_REMOTE:    openRemotePage();     return;   // reboot into the web-resolution headless UI
+    case APPACT_VNC:                                       // no tile since #908; the mirror is the web console's Screen tab
+    case APPACT_REMOTE:    openRemotePage();     return;   // web console switch, trusted browsers, Remote UI
 #endif
 #if defined(MULTI_TRANSPORT_COMPANION) && CAP_WEB_BROWSER
     case APPACT_READER:    openReaderPage();     return;   // on-device text browser (no proxy)
@@ -62509,13 +62509,12 @@ static bool isUiIconGlyph(const char* g) {
 // One launcher tile, as in the redesign: a rounded square tinted with its
 // category colour (no border), a line icon in that colour, the name underneath,
 // and a count pill over the top-right corner. The whole cell is the touch target.
-// A tool still running behind the launcher: a VNC viewer watching, a Remote
-// session, the USB file link. Its tile carries the redesign's live mark.
+// A tool still running behind the launcher: a browser watching the screen or a
+// Remote UI session, the USB file link. Its tile carries the redesign's live mark.
 static bool appTileLive(int act) {
   switch (act) {
 #if !defined(HAS_TANMATSU)
-    case APPACT_VNC:    return g_web_mirror.active() && !s_remote_mode;
-    case APPACT_REMOTE: return s_remote_mode;
+    case APPACT_REMOTE: return s_remote_mode || g_web_mirror.active();
 #endif
 #if CAP_USB_FILES
     case APPACT_USB_FILES: return g_usb_files_owns_serial;
@@ -62526,7 +62525,6 @@ static bool appTileLive(int act) {
 static uint32_t appTilesLiveMask() {
   uint32_t m = 0;
 #if !defined(HAS_TANMATSU)
-  if (appTileLive(APPACT_VNC))    m |= 1u;
   if (appTileLive(APPACT_REMOTE)) m |= 2u;
 #endif
 #if CAP_USB_FILES
@@ -62996,7 +62994,6 @@ static void openAppDrawer() {
       case APPACT_SNAKE:    return hide_mask & APPHIDE_SNAKE;
       case APPACT_SPECTRUM: return hide_mask & APPHIDE_SPECTRUM;
       case APPACT_DISCOVER: return hide_mask & APPHIDE_DISCOVER;
-      case APPACT_VNC:      return hide_mask & APPHIDE_VNC;
       case APPACT_REMOTE:   return hide_mask & APPHIDE_REMOTE;
       case APPACT_READER:   return hide_mask & APPHIDE_READER;
       case APPACT_TERMINAL: return hide_mask & APPHIDE_TERMINAL;
@@ -68021,8 +68018,9 @@ static bool hwAppInfo(const HwRec& r, HwAppInfo& out) {
     return false;
 #endif
   }
+  const int opt = r.opt == APPACT_VNC ? APPACT_REMOTE : r.opt;   // a VNC widget saved before #908
   for (const AppTileDef& t : k_app_tiles)
-    if (t.act == r.opt && t.act != APPACT_CMDCENTER) { out = { t.icon, TR(t.label), appTileColor(t.hue), t.act }; return true; }
+    if (t.act == opt && t.act != APPACT_CMDCENTER) { out = { t.icon, TR(t.label), appTileColor(t.hue), t.act }; return true; }
   return false;
 }
 static bool hwAppAvail(uint8_t opt) {
