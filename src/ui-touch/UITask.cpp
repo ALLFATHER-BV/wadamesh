@@ -27896,6 +27896,17 @@ static bool sendGroupMessageScoped(int slot, ChannelDetails& cd, uint32_t ts, co
   return ok;
 }
 
+// The last text DM typed on this device to a repeater or room server (chat composer or
+// terminal): their CLI answer goes into that DM thread (UITask::onAdminCommandReply).
+static uint8_t  s_dm_cli_pub[8] = {0};
+static uint32_t s_dm_cli_ms = 0;
+static void noteDmCliSend(const ContactInfo& c) {
+  if (c.type != ADV_TYPE_REPEATER && c.type != ADV_TYPE_ROOM) return;
+  memcpy(s_dm_cli_pub, c.id.pub_key, sizeof s_dm_cli_pub);
+  s_dm_cli_ms = millis();
+  if (!s_dm_cli_ms) s_dm_cli_ms = 1;
+}
+
 static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
                        const char* disp, const char* text) {
   static uint32_t s_last_term_tx_ts = 0;
@@ -27950,6 +27961,7 @@ static void termDoSend(bool is_channel, const uint8_t* pub, int16_t chan_slot,
       uint8_t attempt = s_term_attempt++;
       if (attempt < 4) { attempt = 4; s_term_attempt = 5; }
       rr = the_mesh.sendMessage(rcpt, ts, attempt, body, expected_ack, est_timeout);
+      if (rr != MSG_SEND_FAILED) noteDmCliSend(*by);
     }
     if (rr == MSG_SEND_FAILED) { termLogAppendC(TERM_C_ERR, nullptr, "send failed"); return; }
     the_mesh.uiRegisterExpectedAck(expected_ack, by->id.pub_key);
@@ -75864,9 +75876,13 @@ void UITask::onAdminCommandReply(const ContactInfo& contact, const char* text) {
     adminLogAppend("", text ? text : "");
     return;
   }
-  // If the user sent a CLI command from the repeater's DM chat thread (with the
-  // Admin Console modal closed), display the repeater's CLI reply in that DM thread.
-  if (text && text[0] && contact.name[0]) {
+  // A repeater we are admin on answers a text DM as a CLI line. When that DM was typed
+  // here (chat composer or terminal, s_dm_cli_*), show the answer in the DM thread.
+  // Only then: the companion app's own admin console gets its replies over the same
+  // path, and those belong to the app, not to this chat history.
+  if (text && text[0] && contact.name[0] && s_dm_cli_ms &&
+      (uint32_t)(millis() - s_dm_cli_ms) < 120000u &&
+      memcmp(contact.id.pub_key, s_dm_cli_pub, sizeof s_dm_cli_pub) == 0) {
     notify(UIEventType::contactMessage);
     const uint8_t plen = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0xFF;
     newMsgFromPub(plen, contact.id.pub_key, contact.name, text, _msgcount + 1);
@@ -80191,6 +80207,7 @@ bool UITask::sendComposerToActiveThread(const char* override_text) {
     r = the_mesh.uiSendRepeaterDmPing(*by_pub, expected_ack, est_timeout);
   } else {
     r = the_mesh.sendMessage(tx_recipient, ts, attempt, truncated, expected_ack, est_timeout);
+    if (r != MSG_SEND_FAILED) noteDmCliSend(recipient);
   }
   {
     uint32_t hash4 = 0;

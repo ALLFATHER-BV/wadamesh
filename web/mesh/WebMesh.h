@@ -199,6 +199,10 @@ public:
   const UiLoginInfo& uiLastLoginInfo() const { return _ui_last_login; }
   int sendTelemetryRequestWithGuestLoginForUI(ContactInfo& recipient);
   int uiSendRequestAfterGuestLogin(ContactInfo& recipient, UiReqKind kind);
+  // A DM "ping" to a repeater is answered by the node itself (src/MyMesh.cpp turns it into a
+  // status request and pushes the PONG line back), so the browser sends it as plain text.
+  static bool isRepeaterPingCmd(const char*) { return false; }
+  int uiSendRepeaterDmPing(ContactInfo&, uint32_t&, uint32_t&) { return MSG_SEND_FAILED; }
   int uiSendAdminLogin(ContactInfo& recipient, const char* password);       // backend login (demo: its repeater / room)
   int uiSendAdminCommand(ContactInfo& recipient, const char* text);         // backend CLI line
   int uiRoomRelogin(const uint8_t pub_key[32]);

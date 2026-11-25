@@ -3254,7 +3254,7 @@ void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packe
   // and GPS off, or not yet synced): a decrypted DM names its key, so it can count toward
   // the two-key quorum in ClockFloorRTC::adoptMeshPeerTime (#835).
 #if defined(ESP32)
-  rtc_clock.adoptMeshPeerTime(sender_timestamp, peerClockQuorumIdFromPubKey(from.id.pub_key));
+  if (!_queue_local) rtc_clock.adoptMeshPeerTime(sender_timestamp, peerClockQuorumIdFromPubKey(from.id.pub_key));
 #else
   if (sender_timestamp > 1700000000UL && sender_timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
@@ -3682,53 +3682,6 @@ uint8_t MyMesh::onContactRequest(const ContactInfo &contact, uint32_t sender_tim
   return 0; // unknown
 }
 
-static void formatRepeaterPongMessage(const uint8_t* payload, size_t payload_len,
-                                      int8_t out_path_len, char* out, size_t cap) {
-  if (!out || cap == 0) return;
-  unsigned batt_mv = 0, uptime_s = 0, queue_len = 0;
-  int16_t  noise_floor = 0, last_rssi = 0, last_snr_q4 = 0;
-  bool     has_snr = false;
-  bool     parsed = false;
-
-  if (payload && payload_len >= 24) {
-    batt_mv     = (unsigned)(payload[0] | (payload[1] << 8));
-    queue_len   = (unsigned)(payload[2] | (payload[3] << 8));
-    noise_floor = (int16_t)(payload[4] | (payload[5] << 8));
-    last_rssi   = (int16_t)(payload[6] | (payload[7] << 8));
-    uptime_s    = (unsigned)(payload[20] | (payload[21] << 8) |
-                             (payload[22] << 16) | (payload[23] << 24));
-    if (payload_len >= 44) {
-      last_snr_q4 = (int16_t)(payload[42] | (payload[43] << 8));
-      has_snr = true;
-    }
-    if (batt_mv >= 2000 && batt_mv <= 5500) parsed = true;
-  }
-  const int hops = (out_path_len >= 0) ? (int)(out_path_len & 0x3F) : -1;
-  char hop_str[16] = "";
-  if (hops >= 0) {
-    snprintf(hop_str, sizeof(hop_str), " | %dh", hops);
-  }
-  if (parsed) {
-    char up_str[24];
-    if (uptime_s >= 3600) {
-      snprintf(up_str, sizeof(up_str), "%uh%02um", uptime_s / 3600, (uptime_s % 3600) / 60);
-    } else {
-      snprintf(up_str, sizeof(up_str), "%um%02us", uptime_s / 60, uptime_s % 60);
-    }
-    if (has_snr) {
-      snprintf(out, cap, "PONG | RX %+.1fdB %ddBm (NF %d) | %u.%02uV | up %s%s",
-               ((float)last_snr_q4) / 4.0f, (int)last_rssi, (int)noise_floor,
-               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, hop_str);
-    } else {
-      snprintf(out, cap, "PONG | RX %ddBm (NF %d) | %u.%02uV | up %s | q=%u%s",
-               (int)last_rssi, (int)noise_floor,
-               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, queue_len, hop_str);
-    }
-  } else {
-    snprintf(out, cap, "PONG | status reply (%u bytes)%s", (unsigned)payload_len, hop_str);
-  }
-}
-
 void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, uint8_t len) {
   if (!data || len < 4) return;
   uint32_t tag;
@@ -3748,6 +3701,8 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
       memcmp(&_ui_pending_status, contact.id.pub_key, 4) == 0 &&
       tag == _ui_pending_tag) {
     UiReqKind kind = _ui_pending_kind;
+    // A DM "ping" chain (uiSendRepeaterDmPing): read before cancelUIDeferredLogin clears it.
+    const bool dm_ping = kind == UiReqKind::Status && uiDmPingLive(contact.id.pub_key);
     _ui_pending_status = 0;
     _ui_pending_kind = UiReqKind::None;
     _ui_pending_tag = 0;
@@ -3762,8 +3717,7 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
     } else {
       // If this status ping was triggered by sending "ping" in a repeater's DM thread,
       // confirm the outgoing "ping" bubble and post the formatted PONG reply in the DM thread.
-      if (_ui_dm_ping_active && memcmp(_ui_dm_ping_pub, contact.id.pub_key, PUB_KEY_SIZE) == 0) {
-        _ui_dm_ping_active = false;
+      if (dm_ping) {
         const uint32_t ack4 = _ui_dm_ping_ack ? _ui_dm_ping_ack : tag;
         uint32_t trip_time = millis() - _ui_dm_ping_sent_ms;
         out_frame[0] = PUSH_CODE_SEND_CONFIRMED;
@@ -3773,14 +3727,16 @@ void MyMesh::onContactResponse(const ContactInfo &contact, const uint8_t *data, 
         _ui->onMessageAcked(ack4);
 
         char pong_text[140];
-        formatRepeaterPongMessage(&data[4], (size_t)(len - 4), contact.out_path_len,
-                                  pong_text, sizeof(pong_text));
+        RepeaterAdminProto::formatPongStatus(&data[4], (size_t)(len - 4), contact.out_path_len,
+                                             pong_text, sizeof(pong_text));
         mesh::Packet rx_pkt{};
         rx_pkt.header   = (uint8_t)((PAYLOAD_TYPE_TXT_MSG << PH_TYPE_SHIFT) | ROUTE_TYPE_FLOOD);
         rx_pkt.path_len = (contact.out_path_len >= 0) ? (uint8_t)contact.out_path_len : 0;
         rx_pkt._snr     = (int8_t)(_radio->getLastSNR() * 4.0f);
+        _queue_local = true;   // our own time, not the repeater's: keep it out of the clock quorum
         queueMessage(contact, TXT_TYPE_PLAIN, &rx_pkt, getRTCClock()->getCurrentTimeUnique(),
                      nullptr, 0, pong_text);
+        _queue_local = false;
       }
       // STATUS or unknown — let the UI fall through its RepeaterStats /
       // JSON parser path.
