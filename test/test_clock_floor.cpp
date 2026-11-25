@@ -132,28 +132,86 @@ int main() {
   // a poisoned persisted floor is refused
   { Rig r; r.clk.seedFloor(FUTURE_2043); assert(r.clk.getFloor() == 0); }
 
-  // adoptMeshPeerTime: 2-peer quorum for >1h jumps, keeps !timeIsCurrent() (Floor)
-  // so a stale peer heard first cannot lock out real-time peers, and never writes
-  // unverified mesh time to the hardware RTC.
+  // adoptMeshPeerTime (#835): two different verified keys within 15 min for EVERY step,
+  // the lower of the two wins, _source stays Floor, nothing reaches the RTC chip.
   {
     Rig r; r.hw().hw = MIN; g_sys = MIN; g_sys_sets = 0;
     r.clk.seedFloor(NOW);
     r.clk.seedSystemClock();
     assert(!r.clk.timeIsCurrent());
-    // Small advance (+5 min) accepted immediately, stays Floor (!timeIsCurrent()), 0 hw writes
-    assert(r.clk.adoptMeshPeerTime(NOW + 300, 0xAAAA0001u));
-    assert(r.clk.getFloor() == NOW + 300 && !r.clk.timeIsCurrent() && r.hw().writes == 0);
-    // Single rogue repeater +2 days in the future is held for quorum — even if it repeats!
+    // One key, even a small step and even repeated, never moves the clock
+    assert(!r.clk.adoptMeshPeerTime(NOW + 300, 0xAAAA0001u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 600, 0xAAAA0001u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 900, 0xAAAA0001u));
+    assert(r.clk.getFloor() == NOW);
+    // No verified identity (a channel post) never counts, not even as the second witness
+    assert(!r.clk.adoptMeshPeerTime(NOW + 900, 0));
+    assert(r.clk.getFloor() == NOW);
+    // A second key far from the first is not a quorum; it becomes the new first witness
     assert(!r.clk.adoptMeshPeerTime(NOW + 172800, 0xBAD0BEEFu));
-    assert(!r.clk.adoptMeshPeerTime(NOW + 172860, 0xBAD0BEEFu));
-    assert(r.clk.getFloor() == NOW + 300);
-    // Unidentified sender (peer_id == 0) cannot seed or corroborate a large jump
-    assert(!r.clk.adoptMeshPeerTime(NOW + 21600, 0));
-    assert(r.clk.getFloor() == NOW + 300);
-    // Two distinct real-time peers +6h ahead (within 15 min of each other) complete quorum
+    assert(r.clk.getFloor() == NOW);
+    // ...and the old first key agreeing with neither changes nothing
     assert(!r.clk.adoptMeshPeerTime(NOW + 21600, 0x11111111u));
+    assert(r.clk.getFloor() == NOW);
+    // Two different keys 20 s apart: the lower one is adopted
     assert(r.clk.adoptMeshPeerTime(NOW + 21620, 0x22222222u));
-    assert(r.clk.getFloor() == NOW + 21620 && !r.clk.timeIsCurrent() && r.hw().writes == 0);
+    assert(r.clk.getFloor() == NOW + 21600 && g_sys == (long)(NOW + 21600));
+    assert(!r.clk.timeIsCurrent() && r.clk.source() == C::ClockSource::Floor && r.hw().writes == 0);
+    // Only ever forward: two keys agreeing on an earlier time do nothing
+    assert(!r.clk.adoptMeshPeerTime(NOW + 100, 0x33333333u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 110, 0x44444444u));
+    assert(r.clk.getFloor() == NOW + 21600);
+    // Garbage times are refused before they can even be a witness
+    assert(!r.clk.adoptMeshPeerTime(FUTURE_2043, 0x55555555u));
+    assert(!r.clk.adoptMeshPeerTime(FUTURE_2043, 0x66666666u));
+    assert(r.clk.getFloor() == NOW + 21600);
+    // A real sync later corrects a wrong mesh time (>10 min back pulls the floor down)
+    r.clk.setCurrentTime(NOW + 60);
+    assert(r.clk.getFloor() == NOW + 60 && r.clk.timeIsCurrent());
+    // ...and once the time is current, peers are ignored
+    assert(!r.clk.adoptMeshPeerTime(NOW + 7200, 0x77777777u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 7210, 0x88888888u));
+    assert(r.clk.getFloor() == NOW + 60);
+  }
+  // Seed-only boot (no persisted floor) follows the same quorum rule
+  {
+    Rig r; r.hw().hw = MIN; g_sys = MIN;
+    r.clk.seedSystemClock();
+    assert(r.clk.source() == C::ClockSource::Seed);
+    assert(!r.clk.adoptMeshPeerTime(NOW, 0x1u));
+    assert(r.clk.adoptMeshPeerTime(NOW + 5, 0x2u));
+    assert(r.clk.getFloor() == NOW && r.clk.source() == C::ClockSource::Floor && r.hw().writes == 0);
+  }
+  // A good hardware clock is never moved by the mesh
+  {
+    Rig r; r.hw().hw = NOW; g_sys = MIN;
+    r.clk.noteHardwareClock(true);
+    r.clk.noteHardwareTime();
+    assert(!r.clk.adoptMeshPeerTime(NOW + 86400, 0x1u));
+    assert(!r.clk.adoptMeshPeerTime(NOW + 86400, 0x2u));
+    assert(r.clk.getCurrentTime() == NOW);
+  }
+
+  // raiseFloorFromLocalRecord (#835/#840): our own records may lift the floor, but only
+  // within LOCAL_RECORD_WINDOW_SECS above it, only while the time is not current, and
+  // only on top of a real persisted floor.
+  {
+    const uint32_t W = C::LOCAL_RECORD_WINDOW_SECS;
+    { Rig r; r.hw().hw = MIN; g_sys = MIN; r.clk.seedFloor(NOW); r.clk.seedSystemClock();
+      assert(r.clk.localRecordCeiling() == NOW + W);
+      assert(!r.clk.raiseFloorFromLocalRecord(NOW - 10));          // behind: nothing to do
+      assert(!r.clk.raiseFloorFromLocalRecord(NOW + W + 1));       // too far: a corrected clock
+      assert(r.clk.raiseFloorFromLocalRecord(NOW + 600));
+      assert(r.clk.getFloor() == NOW + 600);
+      r.clk.seedSystemClock();
+      assert(g_sys == (long)(NOW + 600) && r.clk.source() == C::ClockSource::Floor && r.hw().writes == 0); }
+    // no persisted floor: no raise at all
+    { Rig r; r.hw().hw = MIN; g_sys = MIN; r.clk.seedSystemClock();
+      assert(r.clk.localRecordCeiling() == 0 && !r.clk.raiseFloorFromLocalRecord(NOW)); }
+    // time already current (good chip): no raise
+    { Rig r; r.hw().hw = NOW; g_sys = MIN; r.clk.seedFloor(NOW - 60);
+      r.clk.noteHardwareClock(true); r.clk.noteHardwareTime();
+      assert(r.clk.localRecordCeiling() == 0 && !r.clk.raiseFloorFromLocalRecord(NOW + 60)); }
   }
 
   printf("test_clock_floor: ok\n");
