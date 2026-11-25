@@ -15455,7 +15455,7 @@ static lv_obj_t* settingsCardIn(lv_obj_t* parent, const char* title) {
 }
 
 // Width of a settings modal's "Close" button. The Pager's 16 px text cut it to
-// "Cl…" at 58 px; the Discovered header lines its own buttons up against it.
+// "Cl…" at 58 px. (The Discovered header uses the compact X instead.)
 static inline lv_coord_t settingsModalCloseW() {
 #if defined(TLORA_PAGER)
   return 72;
@@ -15502,8 +15502,11 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   // The read-only info pages (System Information, Memory detail) close with a
   // compact X: the whole page is text to scroll through, and "Close" read as one
   // more item in it.
+  // Discovered too: its header carries Purge / Sort / Settings buttons, and the
+  // word "Close" was clipped to "Cl.." at the normal font size.
   const bool info_page = (kind == SettingsModalKind::SystemInfo ||
-                          kind == SettingsModalKind::MemoryInfo);
+                          kind == SettingsModalKind::MemoryInfo ||
+                          kind == SettingsModalKind::Discovered);
   lv_obj_t* close_btn = lv_btn_create(header);
   lv_obj_set_size(close_btn, info_page ? SC(32) : settingsModalCloseW(), SC(32));
   lv_obj_align(close_btn, LV_ALIGN_RIGHT_MID, -6, 0);
@@ -15513,6 +15516,7 @@ static lv_obj_t* createSettingsModal(const char* title, SettingsModalKind kind) 
   useChainedFont(close_lbl);
   if (info_page) {
     lv_label_set_text(close_lbl, LV_SYMBOL_CLOSE);
+    tanCloseRed(close_lbl);
   } else {
 #if defined(HAS_TANMATSU)
   { char _cb[40]; snprintf(_cb, sizeof _cb, LV_SYMBOL_CLOSE "  %s", TR("Close")); lv_label_set_text(close_lbl, _cb);
@@ -16257,8 +16261,8 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   closeDiscoveredSettings();
   const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
-  // Full-screen backdrop ON TOP of the Discovered modal — its 58 px Close button
-  // is covered, so the sheet must be dismissed (tap outside) before the modal.
+  // Full-screen backdrop ON TOP of the Discovered modal: its X is covered, so the
+  // sheet is dismissed (its own X, or a tap outside) before the modal.
   s_disc_settings_root = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(s_disc_settings_root);
   lv_obj_set_size(s_disc_settings_root, sw, sh - STATUSBAR_H);
@@ -16296,10 +16300,14 @@ static void openDiscoveredSettingsSheetCb(lv_event_t* e) {
   lv_obj_set_style_pad_all(card, 12, LV_PART_MAIN);
   lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
+  addCloseXBadge(card, discSettingsDismissCb);   // same path as a tap outside: applies the hop limit
+
   lv_obj_t* title = lv_label_create(card);
   lv_label_set_text(title, TR("Discovered settings"));
   lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
   lv_obj_set_style_text_font(title, &g_font_14, LV_PART_MAIN);
+  lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(title, card_w - 24 - 30);   // keep a long translation clear of the X
   lv_obj_set_pos(title, 0, 0);
 
   lv_obj_t* lbl = lv_label_create(card);
@@ -16420,12 +16428,10 @@ static void openDiscoveredModalCb(lv_event_t* e) {
     if (header) {
       lv_obj_t* cog = lv_btn_create(header);
       lv_obj_set_size(cog, SC(32), SC(32));
-#if defined(TLORA_PAGER)
-      const lv_coord_t shift = settingsModalCloseW() - 58;   // the wider Close moves the row left
-#else
-      const lv_coord_t shift = 0;
-#endif
-      lv_obj_align(cog, LV_ALIGN_RIGHT_MID, -68 - shift, 0);   // just left of the 58 px "Close" (at -6)
+      // The header closes with the compact SC(32) X at -6; the row steps left
+      // from it one SC(32) button plus a 6 px gap at a time.
+      const lv_coord_t step = SC(32) + 6;
+      lv_obj_align(cog, LV_ALIGN_RIGHT_MID, -6 - step, 0);   // just left of the X
       styleButton(cog);
       lv_obj_add_event_cb(cog, openDiscoveredSettingsSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* cl = lv_label_create(cog);
@@ -16437,7 +16443,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       // each asc/desc). Always present so the control is visible even on an empty list.
       lv_obj_t* srt = lv_btn_create(header);
       lv_obj_set_size(srt, SC(32), SC(32));
-      lv_obj_align(srt, LV_ALIGN_RIGHT_MID, -106 - shift, 0);   // left of the cog
+      lv_obj_align(srt, LV_ALIGN_RIGHT_MID, -6 - 2 * step, 0);   // left of the cog
       styleButton(srt);
       lv_obj_add_event_cb(srt, openDiscSortSheetCb, LV_EVENT_CLICKED, nullptr);
       lv_obj_t* srtl = lv_label_create(srt);
@@ -16448,7 +16454,7 @@ static void openDiscoveredModalCb(lv_event_t* e) {
       if (n > 0) {
         lv_obj_t* pb = lv_btn_create(header);
         lv_obj_set_size(pb, SC(32), SC(32));
-        lv_obj_align(pb, LV_ALIGN_RIGHT_MID, -144 - shift, 0);   // left of the sort
+        lv_obj_align(pb, LV_ALIGN_RIGHT_MID, -6 - 3 * step, 0);   // left of the sort
         styleButton(pb);
         lv_obj_set_style_bg_color(pb, lv_color_hex(themeRole(0x7A2A2A, COLOR_STATUS_DANGER)), LV_PART_MAIN);
         lv_obj_set_style_text_color(pb, lv_color_hex(COLOR_ON_STATUS_DANGER), LV_PART_MAIN);
