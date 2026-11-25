@@ -4281,7 +4281,23 @@ void MyMesh::begin(bool has_display) {
 
   resetContacts();
   _store->loadContacts(this);
+#if defined(ESP32)
+  // The core's bootstrapRTCfromContacts() SETS the clock to the newest contact's lastmod:
+  // that claims an external sync, moves a good RTC chip back to it, and pulls the floor
+  // down when the chip is ahead (#840). lastmod is only our own earlier clock reading, so
+  // treat it like any other own record: it may lift a stale floor a little (a power cut
+  // between floor saves), never set the clock.
+  if (ensureContacts()) {
+    uint32_t latest = 0;
+    ContactInfo c;
+    ContactsIterator it = startContactsIterator();
+    while (it.hasNext(this, c)) if (c.lastmod > latest) latest = c.lastmod;
+    rtc_clock.getCurrentTime();   // brings the floor up to now before the window check
+    if (latest && rtc_clock.raiseFloorFromLocalRecord(latest)) rtc_clock.seedSystemClock();
+  }
+#else
   bootstrapRTCfromContacts();
+#endif
   addChannel("Public", PUBLIC_GROUP_PSK); // pre-configure Andy's public channel
   _store->loadChannels(this);
   loadSyncHistory();   // app-sync replay ring + client cursors survive a reboot/power cut
