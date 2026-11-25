@@ -1,0 +1,61 @@
+# beta_107 - fixes the web console Settings crash and boot loop, two new boards (LilyGo T-Watch S3, M5Stack Cardputer Zero), a quieter signal probe, Tanmatsu replacement display, spell suggestions, reply quotes, contact cards, Store search, Ebook 2.0, To-Do, Danish. TEST BUILD.
+# One user-facing note per non-blank, non-# line; # lines are section comments.
+# Order: what this build is, fixes, new, boards, apps.
+
+Test build, on top of beta_106. The stable build stays beta_101.
+
+# --- Fixes ---
+Web console: opening Settings no longer crashes the device. The category list read the installed apps' settings into a buffer that did not exist yet, and an open browser tab asked for it again after every restart, so the device kept restarting (#867 by oumike).
+Web console: after a restart or a dropped link, Settings shows its category list and waits for a click instead of reopening the page that was loading.
+ThinkNode M9: the first start after an erase no longer resets about 20 seconds in. The SPIFFS format keeps the watchdog state as it was (#869 by oumike, #891 by RevEngOps, #889).
+Signal probe: the automatic probe now waits while the screen is off or locked and never wakes the device to send. After the screen comes on it waits a few seconds, so a glance at the clock sends nothing (reported by MC8 on Discord).
+Signal probe: a new Only when moving (GPS) switch, on by default. With a GPS fix it asks again only after you move about 250 m, or once an hour. It never probes when the airtime budget is low, and new installs default to every 15 minutes instead of 5.
+T-Deck Plus: the GPS rests in standby and its start is confirmed on every wake, so a receiver that kept "talking at 38400" without a fix finds one again (#778).
+Map traffic pulses also show when your own node has no position: a message from or to a contact with a position spreads a ring around that contact.
+Wi-Fi: when the network you last joined is not around, the device tries your other saved Auto-Join networks in turn, and the one that joins becomes the default.
+CrowPanel Advance 5.0: the backlight controller is found the way Elecrow's own code finds it, with retries and a slower bus as a fallback, so V1.2 boards no longer stay dark (#886).
+T-Deck Pro and Max: the text cursor stays steady instead of blinking. Each blink was an e-paper refresh (#878 by chmadkk, #874).
+T-Deck Max: the fuel gauge is set to the fitted 1400 mAh pack instead of the factory 3000 mAh, and set again after the gauge resets (#892 by CarpeNoctem). The T-LoRa Pager now does the same after a gauge reset.
+T-Deck Max: the front pads do nothing while the screen is locked, and the lock hint names the BOOT button (#866 by CarpeNoctem).
+Phone apps are told the real contact limit. The number wrapped and said 464.
+TLS buffers live in PSRAM on boards that have it, so Lua apps using https keep working with the web console on (#873 by oumike, #870).
+Web console Files: downloads work in Firefox (#912 by oumike, #906).
+USB Files: Connect no longer restarts a T-Deck Plus. The page raises the serial lines one at a time.
+The VNC tile is gone, Remote covers it. A Home widget saved as VNC opens Remote (#910 by oumike, #908).
+
+# --- New ---
+Spell suggestions: when you finish an English word the word list does not know, up to three corrections appear above the message box. Settings, Keyboard, Spell suggestions turns it off. Not on the Heltec V4 and the T-LoRa Pager (#578 by oumike).
+Reply quotes: a message that answers someone with @[Name] shows a one-line quote of the message it answers, when Name has exactly one recent message in that chat. The text itself is not changed (#641 by samdems).
+Contact cards: a contact shared in a message as <key:type:name> shows as a card you can tap to add. Not on the T-LoRa Pager (#887 by TerryTel93).
+Chats: the unread chip steps through All, Unread and Unread + unreplied. Unreplied lists direct chats whose last message is theirs, and channels or rooms that mentioned you since you last posted. Long-press a chat and pick Dismiss to drop it from that list (#903 by oumike, #901).
+Store: search and sort on the Apps tab. Apps with an update stay on top. Not on the T-LoRa Pager (#913 by oumike, #863).
+Remote access: an optional fixed browser code that stays the same across sessions. Easy codes are refused, and wrong tries lock it for longer each time, up to an hour. Not on the T-LoRa Pager (#849 by oumike, #837).
+Emoji pack download over Wi-Fi to the SD card, in Settings, Keyboard. It is checked before it replaces the old one and applies after a restart (#831 by TerryTel93).
+Chats: "ping" sent to a repeater in its chat answers with a PONG line with signal, battery, uptime and hops, and replies to commands typed there show in that chat too (#834 by TinkeringDao).
+Clock: a device without a clock of its own now takes the time from the mesh only when two different nodes agree within 15 minutes, and a restart no longer sets the clock back to when a contact was last heard (#835 by TinkeringDao, #840).
+Phone apps see the path of messages again: the first reception of each message this node can read reaches the app as an RX log, as on stock firmware, so MeshCore One no longer shows every message as flood.
+Battery: Empty at (3.3 to 3.6 V) in Settings, Battery, for packs that shut down early. A T-Deck Pro that stopped at 3.6 V while showing 30% now reads 0% there.
+Screensaver: Range (Auto, 5, 20 or 50 km or mi) and Favorites only, in Settings, Display, Screensaver.
+Nodes, Discovered closes with the X like the other dialogs; the word Close was cut to "Cl..".
+In a chat, the back arrow sits further in with a wider strip around it, easier to hit when a printed case covers the screen edge.
+With a Bluetooth, CardKB or clip-on keyboard, tapping a field no longer brings up the on-screen keys; long-press the field and pick the keyboard to bring them up (#716 by oumike, #715).
+The long-press edit menu takes two rows on narrow screens instead of cutting off Paste and Emoji.
+Lua: rx_log() keeps paths up to 64 bytes and adds last_hop, the repeater your radio heard, so an app can track signal per repeater.
+Lua: wada.i2c (scan, read, write) on the board's I2C bus and wada.gps.nmea() with the receiver's raw sentences, behind a new hardware permission. The device's own keyboard, touch, power and audio chips are off limits. Not on the T-LoRa Pager and the Heltec V4 (#896).
+City locator: a cities.bin builder for Quebec and Ontario that can mix in US places (#909 by oumike, #907).
+
+# --- Boards ---
+New board, LilyGo T-Watch S3 (experimental): the 240x240 touch watch with an SX1262. The crown locks to the screensaver and unlocks; Power off switches the power chip off and the crown starts it again (#904 by Kelfitas).
+New board, M5Stack Cardputer Zero (experimental): wadamesh as a Linux program on the Zero's own screen and keyboard, talking to a MeshCore companion on the same Pi with the Cap LoRa-1262. Releases carry wadamesh-zero.tar.gz, install steps are in CARDPUTER_ZERO.md (#885 by Languskhan).
+Tanmatsu: built on badge-bsp 2, which recognises the replacement Tanmatsu display at start-up, so wadamesh runs on both the original and the new panel.
+T-LoRa Pager: an experimental single image that finds the SX1262 or LR1121 at boot can be built from source (env tlora_pager_unified). The two radio images stay the ones to install (#884 by mikecarper).
+ThinkNode M9: Quiet when face down and Wake when picked up read the screen the right way up (#898 by oumike, #897).
+ThinkNode M9: Right past Send moves to the conversation header, and OK there opens the chat settings (#905 by jcyrio).
+
+# --- Apps ---
+Ebook 2.0: pictures, .txt files, the d-pad on boards without a touchscreen, and much longer books. A book too large for the app's memory now says so instead of stopping at Opening (#890 by CarpeNoctem).
+New in the Store: To-Do, a small to-do list with groups and urgent tasks, for touch, trackball and keys (#787 by hamm-spec).
+MECP 1.1: P05 goes out with the codes, before the head count (#894 by Blake-Latchford).
+Cyberspace 1.1.1: a password set from the web console is kept until the server answers (#872 by oumike, #871).
+Language store v35: Danish is new (by chmadkk), Czech has 14 more strings (by brebtatv), and this round's new strings are in every language.
+T-Deck Pro and Max: emoji are black-and-white art drawn for the e-paper screen (#902 by CarpeNoctem).
