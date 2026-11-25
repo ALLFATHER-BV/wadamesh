@@ -218,4 +218,67 @@ inline void fmtDuration(uint32_t s, char* out, size_t cap) {
   else                 snprintf(out, cap, "%lus", (unsigned long)s);
 }
 
+// Does `text` consist solely of a repeater DM "ping" command (ignoring leading/trailing
+// whitespace and trailing '?' / '!')?
+inline bool isPingCmd(const char* text) {
+  if (!text) return false;
+  while (*text == ' ' || *text == '\t') ++text;
+  if (!startsWithNoCase(text, "ping")) return false;
+  text += 4;
+  while (*text == ' ' || *text == '\t' || *text == '?' || *text == '!' ||
+         *text == '\r' || *text == '\n') {
+    ++text;
+  }
+  return *text == '\0';
+}
+
+// Format a RepeaterStats payload (after the 4-byte reflected tag) into a single-line
+// PONG DM summary for repeater chat threads.
+inline void formatPongStatus(const uint8_t* payload, size_t payload_len,
+                             int8_t out_path_len, char* out, size_t cap) {
+  if (!out || cap == 0) return;
+  unsigned batt_mv = 0, uptime_s = 0, queue_len = 0;
+  int16_t  noise_floor = 0, last_rssi = 0, last_snr_q4 = 0;
+  bool     has_snr = false;
+  bool     parsed = false;
+
+  if (payload && payload_len >= 24) {
+    batt_mv     = (unsigned)(payload[0] | (payload[1] << 8));
+    queue_len   = (unsigned)(payload[2] | (payload[3] << 8));
+    noise_floor = (int16_t)(payload[4] | (payload[5] << 8));
+    last_rssi   = (int16_t)(payload[6] | (payload[7] << 8));
+    uptime_s    = (unsigned)(payload[20] | (payload[21] << 8) |
+                             (payload[22] << 16) | (payload[23] << 24));
+    if (payload_len >= 44) {
+      last_snr_q4 = (int16_t)(payload[42] | (payload[43] << 8));
+      has_snr = true;
+    }
+    if (batt_mv >= 2000 && batt_mv <= 5500) parsed = true;
+  }
+  const int hops = (out_path_len >= 0) ? (int)(out_path_len & 0x3F) : -1;
+  char hop_str[16] = "";
+  if (hops >= 0) {
+    snprintf(hop_str, sizeof(hop_str), " | %dh", hops);
+  }
+  if (parsed) {
+    char up_str[24];
+    if (uptime_s >= 3600) {
+      snprintf(up_str, sizeof(up_str), "%uh%02um", uptime_s / 3600, (uptime_s % 3600) / 60);
+    } else {
+      snprintf(up_str, sizeof(up_str), "%um%02us", uptime_s / 60, uptime_s % 60);
+    }
+    if (has_snr) {
+      snprintf(out, cap, "PONG | RX %+.1fdB %ddBm (NF %d) | %u.%02uV | up %s%s",
+               ((float)last_snr_q4) / 4.0f, (int)last_rssi, (int)noise_floor,
+               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, hop_str);
+    } else {
+      snprintf(out, cap, "PONG | RX %ddBm (NF %d) | %u.%02uV | up %s | q=%u%s",
+               (int)last_rssi, (int)noise_floor,
+               batt_mv / 1000, (batt_mv % 1000) / 10, up_str, queue_len, hop_str);
+    }
+  } else {
+    snprintf(out, cap, "PONG | status reply (%u bytes)%s", (unsigned)payload_len, hop_str);
+  }
+}
+
 }  // namespace RepeaterAdminProto
