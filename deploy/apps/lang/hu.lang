@@ -2486,3 +2486,14 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+
+# Chats unread chip: unreplied step (#901)
+A	Ö
+U | UR	O | MV
+All chats	Összes csevegés
+Unread + unreplied	Olvasatlan + megválaszolatlan
+Dismiss	Elvetés
+Dismissed	Elvetve
+No unread or unreplied chats	Nincs olvasatlan vagy megválaszolatlan csevegés
+No unread or unreplied channels	Nincs olvasatlan vagy megválaszolatlan csatorna
+No unread or unreplied direct chats	Nincs olvasatlan vagy megválaszolatlan közvetlen csevegés

@@ -2477,3 +2477,14 @@ Waiting for an answer on the device.	Warte auf eine Antwort am Gerät.
 This app has no settings	Diese App hat keine Einstellungen
 Saved on the device for this app. The app reads them when it opens.	Für diese App auf dem Gerät gespeichert. Die App liest sie beim Öffnen.
 Could not save to the device storage	Konnte nicht im Gerätespeicher sichern
+
+# Chats unread chip: unreplied step (#901)
+A	A
+U | UR	U | UB
+All chats	Alle Chats
+Unread + unreplied	Ungelesen + unbeantwortet
+Dismiss	Ausblenden
+Dismissed	Ausgeblendet
+No unread or unreplied chats	Keine ungelesenen oder unbeantworteten Chats
+No unread or unreplied channels	Keine ungelesenen oder unbeantworteten Kanäle
+No unread or unreplied direct chats	Keine ungelesenen oder unbeantworteten Direktchats

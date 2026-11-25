@@ -2492,3 +2492,14 @@ Waiting for an answer on the device.	Čekám na odpověď na zařízení.
 This app has no settings	Tato aplikace nemá nastavení
 Saved on the device for this app. The app reads them when it opens.	Uloženo v zařízení pro tuto aplikaci. Aplikace je načte při otevření.
 Could not save to the device storage	Nelze uložit do úložiště zařízení
+
+# Chats unread chip: unreplied step (#901)
+A	V
+U | UR	N | NO
+All chats	Všechny chaty
+Unread + unreplied	Nepřečtené + nezodpovězené
+Dismiss	Skrýt
+Dismissed	Skryto
+No unread or unreplied chats	Žádné nepřečtené ani nezodpovězené chaty
+No unread or unreplied channels	Žádné nepřečtené ani nezodpovězené kanály
+No unread or unreplied direct chats	Žádné nepřečtené ani nezodpovězené přímé chaty

@@ -2477,3 +2477,14 @@ Waiting for an answer on the device.	Αναμονή απάντησης στη σ
 This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
 Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
 Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής
+
+# Chats unread chip: unreplied step (#901)
+A	Ο
+U | UR	Α | ΑΠ
+All chats	Όλες οι συνομιλίες
+Unread + unreplied	Αδιάβαστα + αναπάντητα
+Dismiss	Απόκρυψη
+Dismissed	Αποκρύφτηκε
+No unread or unreplied chats	Καμία αδιάβαστη ή αναπάντητη συνομιλία
+No unread or unreplied channels	Κανένα αδιάβαστο ή αναπάντητο κανάλι
+No unread or unreplied direct chats	Καμία αδιάβαστη ή αναπάντητη άμεση συνομιλία

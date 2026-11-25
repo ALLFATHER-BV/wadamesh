@@ -2477,3 +2477,14 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+
+# Chats unread chip: unreplied step (#901)
+A	С
+U | UR	Н | БО
+All chats	Сва ћаскања
+Unread + unreplied	Непрочитано + без одговора
+Dismiss	Сакриј
+Dismissed	Сакривено
+No unread or unreplied chats	Нема непрочитаних ни неодговорених ћаскања
+No unread or unreplied channels	Нема непрочитаних ни неодговорених канала
+No unread or unreplied direct chats	Нема непрочитаних ни неодговорених директних ћаскања

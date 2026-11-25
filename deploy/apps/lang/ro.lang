@@ -2478,3 +2478,14 @@ Waiting for an answer on the device.	Se așteaptă un răspuns pe dispozitiv.
 This app has no settings	Această aplicație nu are setări
 Saved on the device for this app. The app reads them when it opens.	Salvate pe dispozitiv pentru această aplicație. Aplicația le citește la deschidere.
 Could not save to the device storage	Nu s-a putut salva în memoria dispozitivului
+
+# Chats unread chip: unreplied step (#901)
+A	T
+U | UR	N | FR
+All chats	Toate conversațiile
+Unread + unreplied	Necitite + fără răspuns
+Dismiss	Ignoră
+Dismissed	Ignorat
+No unread or unreplied chats	Nicio conversație necitită sau fără răspuns
+No unread or unreplied channels	Niciun canal necitit sau fără răspuns
+No unread or unreplied direct chats	Nicio conversație directă necitită sau fără răspuns

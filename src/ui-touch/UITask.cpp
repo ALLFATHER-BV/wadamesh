@@ -12549,6 +12549,9 @@ static void threadSheetDismissReplyDo() {
   chatListRefreshAfterDismiss();
   g_lv.task->showAlert(TR("Dismissed"), 1000);
 }
+static void threadSheetDismissReplyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) threadSheetDismissReplyDo();
+}
 
 // Per-thread settings sheet (DM or channel) — opened by long-press AND the per-row gear AND the
 // in-channel cog, so all are the SAME screen. Mark-as-read, mute messages / @ mentions, region &
@@ -12569,6 +12572,15 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
       is_room_thread = (rc && rc->type == ADV_TYPE_ROOM);
     }
   }
+  // "Dismiss" (#901): only while the thread waits on my reply and that message was not
+  // dismissed already.
+  bool can_dismiss = false;
+  {
+    uint32_t key = 0;
+    char key_nm[UITask::MAX_THREAD_NAME + 1] = "";
+    can_dismiss = g_lv.task && g_lv.task->threadAwaitingReply(thread_idx, &key) &&
+                  channelLongSheetName(key_nm, sizeof key_nm) && touchPrefsGetReplyDismiss(key_nm) != key;
+  }
 #if !defined(TLORA_PAGER)
   // The redesign's action list: one full-width row per action, so no name is ever
   // cut short, at any text size; it scrolls when it outgrows the screen. The
@@ -12584,13 +12596,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     ActItem items[12];
     int n = 0;
     items[n++] = { LV_SYMBOL_OK, TR("Mark as read"), threadSheetMarkReadDo, false };
-    {
-      uint32_t key = 0;
-      char key_nm[UITask::MAX_THREAD_NAME + 1] = "";
-      if (g_lv.task && g_lv.task->threadAwaitingReply(thread_idx, &key) &&
-          channelLongSheetName(key_nm, sizeof key_nm) && touchPrefsGetReplyDismiss(key_nm) != key)
-        items[n++] = { LV_SYMBOL_EYE_CLOSE, TR("Dismiss"), threadSheetDismissReplyDo, false };
-    }
+    if (can_dismiss) items[n++] = { LV_SYMBOL_EYE_CLOSE, TR("Dismiss"), threadSheetDismissReplyDo, false };
     if (is_channel) {
       const uint8_t mute = touchPrefsGetChannelMute(name ? name : "");
       items[n++] = { LV_SYMBOL_SETTINGS, TR("Region & scope"), channelLongSheetRegionDo, false };
@@ -12666,8 +12672,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // (4 rows). Room: mark-read + login-again + join + reset-path + blocked +
   // delete history = 6 (3 rows — the join row fills what was a half-empty
   // bottom row, so the card height is unchanged). DM: mark-read + reset-path
-  // + blocked + delete history = 4 (2 rows).
-  const int grid_items = is_channel ? 8 : (is_room_thread ? 6 : 4);
+  // + blocked + delete history = 4 (2 rows). Both also carry the chat icon, and a thread
+  // waiting on my reply adds Dismiss (#901).
+  const int grid_items = (is_channel ? 8 : (is_room_thread ? 7 : 5)) + (can_dismiss ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   // Exact content height: outer padding + fixed header + grid rows + one
   // full-width danger row. There is no trailing gap after the danger row.
@@ -12762,6 +12769,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     y += btn_h + btn_gap;
   };
   mk(TR(LV_SYMBOL_OK "  Mark as read"), threadSheetMarkReadCb, 0);
+  if (can_dismiss) mk(TR(LV_SYMBOL_EYE_CLOSE "  Dismiss"), threadSheetDismissReplyCb, 0);
   if (is_channel) {
     mk(TR(LV_SYMBOL_SETTINGS "  Region & scope"), channelLongSheetRegionCb, 0);
     // The two mutes sit side by side on their own row; labels set by chmuteRefreshLabels().
@@ -81700,10 +81708,21 @@ bool UITask::threadHasMention(int idx) const {
 void UITask::rebuildReplyState() const {
   for (int t = 0; t < MAX_UI_THREADS; ++t) _reply_key[t] = 0;
   bool settled[MAX_UI_THREADS];
+  // A room server's thread is a group conversation: like a channel, it waits on me only
+  // for an @mention, not for every post someone else makes there.
+  bool group[MAX_UI_THREADS];
   int open = 0;
   for (int t = 0; t < MAX_UI_THREADS; ++t) {
     settled[t] = !_ui_threads[t].used;
-    if (!settled[t]) ++open;
+    group[t] = false;
+    if (settled[t]) continue;
+    ++open;
+    if (_ui_threads[t].channel) { group[t] = true; continue; }
+    uint8_t pub[32];
+    if (getThreadContactPub(t, pub)) {
+      const ContactInfo* c = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+      group[t] = c && c->type == ADV_TYPE_ROOM;
+    }
   }
   for (int i = 0; i < _ui_msg_count && open > 0; ++i) {
     const int slot = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
@@ -81712,8 +81731,8 @@ void UITask::rebuildReplyState() const {
     for (int t = 0; t < MAX_UI_THREADS; ++t) {
       if (settled[t] || m.channel != _ui_threads[t].channel ||
           strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) != 0) continue;
-      const bool waiting = !m.outgoing && (!m.channel || textMentionsMe(m.text));
-      if (!m.channel || m.outgoing || waiting) {   // a DM settles on its newest message
+      const bool waiting = !m.outgoing && (!group[t] || textMentionsMe(m.text));
+      if (!group[t] || m.outgoing || waiting) {   // a DM settles on its newest message
         settled[t] = true;
         --open;
         if (waiting) {

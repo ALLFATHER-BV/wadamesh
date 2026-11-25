@@ -2477,3 +2477,14 @@ Waiting for an answer on the device.	Очікування відповіді н�
 This app has no settings	Цей застосунок не має налаштувань
 Saved on the device for this app. The app reads them when it opens.	Збережено на пристрої для цього застосунку. Застосунок читає їх під час відкриття.
 Could not save to the device storage	Не вдалося зберегти в пам'ять пристрою
+
+# Chats unread chip: unreplied step (#901)
+A	В
+U | UR	Н | БВ
+All chats	Усі чати
+Unread + unreplied	Непрочитані + без відповіді
+Dismiss	Приховати
+Dismissed	Приховано
+No unread or unreplied chats	Немає непрочитаних чатів чи чатів без відповіді
+No unread or unreplied channels	Немає непрочитаних каналів чи каналів без відповіді
+No unread or unreplied direct chats	Немає непрочитаних особистих чатів чи чатів без відповіді
