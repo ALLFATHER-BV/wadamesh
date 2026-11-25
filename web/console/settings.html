@@ -100,7 +100,7 @@ input.tx:focus,select:focus{border-color:var(--acc);box-shadow:0 0 0 3px var(--a
 // The device's own Settings pages, driven from here (#854): every page is described by
 // the device (see WebSettingsEngine.h), so nothing here knows any particular setting.
 var E=function(i){return document.getElementById(i)},WS=null,dec=new TextDecoder(),Q=(Math.random()*9e5|0)*1000,
-pend=null,wait=[],CATS=null,cat=-1,stack=[],items=[],chg={},nItems=0,restart=0,running=0;
+pend=null,wait=[],CATS=null,cat=-1,stack=[],items=[],chg={},nItems=0,restart=0,running=0,seen=0;
 var IC={info:'<circle cx=12 cy=12 r=9 /><path d="M12 11v5M12 8h.01"/>',user:'<circle cx=12 cy=8 r=4 /><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>',
 radio:'<circle cx=12 cy=9 r=2 /><path d="M8 5a6 6 0 0 0 0 8M16 5a6 6 0 0 1 0 8M5 2a10 10 0 0 0 0 14M19 2a10 10 0 0 1 0 14M12 11l-3 10h6z"/>',
 contact:'<circle cx=10 cy=8 r=4 /><path d="M2 21c0-4 4-6 8-6s8 2 8 6M19 7v6M16 10h6"/>',
@@ -142,11 +142,18 @@ function conn(){WS=new WebSocket((location.protocol=='https:'?'wss://':'ws://')+
  WS.onopen=function(){wOpen(WS)};
  WS.onclose=function(){if(running){restart=1;loading(0);showEmpty('Device restarting…','Reconnecting when it is back.')}failAll('Connection lost.');wRetry(conn)};
  WS.onmessage=function(e){if(wGate(e))return;var b=new Uint8Array(e.data);if(b.length&&b[0]==1)onData(dec.decode(b.subarray(1)))}}
-WR=function(){if(restart){restart=0;stack.length=1;chg={}}pump();loadCats().then(function(){if(cat!==-1)load()})};
+// Back after a drop (restart, crash, Wi-Fi): show the category list and let the user pick.
+// Never reopen the page that was loading. If loading it crashed the device, reopening it
+// on every reconnect turned one crash into a boot loop (#867). The cached list needs no
+// request at all; without one, the list waits for a click too.
+WR=function(){restart=0;pump();if(!seen){seen=1;loadCats(1);return}
+ cat=-1;stack=[];chg={};E('app').classList.remove('in');E('crumb').innerHTML='';
+ if(CATS){drawCats();showEmpty('Connected again','Pick a category to go on.')}
+ else{E('app').classList.add('in');showEmpty('Connected again','The settings list did not load.',function(){loadCats(0)})}};
 
 // ---- categories ---------------------------------------------------------------------
-function loadCats(){return req('cats').then(function(j){if(j.k!='cats')throw new Error(j.m||'');CATS=j;drawCats();
- if(cat===-1&&innerWidth>760){var f=j.g.find(function(g){return g.c.length});if(f)openCat(f.c[0])}else if(cat===-1)E('cont').innerHTML=''}).catch(function(e){showEmpty('Settings unavailable',e.message)})}
+function loadCats(first){return req('cats').then(function(j){if(j.k!='cats')throw new Error(j.m||'');CATS=j;drawCats();
+ if(cat===-1&&first&&innerWidth>760){var f=j.g.find(function(g){return g.c.length});if(f)openCat(f.c[0])}else if(cat===-1)E('cont').innerHTML=''}).catch(function(e){showEmpty('Settings unavailable',e.message)})}
 function drawCats(){var d=E('cats');d.innerHTML='';E('dev').textContent=CATS.dev||'';
  CATS.g.forEach(function(g){if(!g.c.length)return;if(g.t)el('div','gt',g.t,d);
   g.c.forEach(function(c){var b=el('button','ci'+(c.id==cat?' on':''),null,d);b.innerHTML=icon(c.e);el('span',null,c.l,b);if(c.v)el('small',null,c.v,b);
@@ -165,7 +172,7 @@ function appId(){return typeof cat=='string'&&cat.slice(0,2)=='a:'?cat.slice(2):
 function load(){loading(1);var a=appId();return (a?req('aview',a):req('view',cat+' '+path())).then(function(r){loading(0);if(r.k=='err'){showEmpty('Not available right now',r.m,1);return}show(r)})
  .catch(function(e){loading(0);showEmpty('Not available right now',e.message,1)})}
 function showEmpty(t,m,retry){var c=E('cont');c.innerHTML='';var d=el('div','empty',null,c);el('b',null,t,d);el('div',null,m||'',d);
- if(retry){var b=el('button','btn','Try again',d);b.onclick=load}bar()}
+ if(retry){var b=el('button','btn','Try again',d);b.onclick=typeof retry=='function'?retry:load}bar()}
 function crumb(){var c=E('crumb');c.innerHTML='';stack.forEach(function(s,i){if(i){el('i',null,'›',c)}
  if(i==stack.length-1)el('b',null,s.t||'…',c);else{var a=el('a',null,s.t,c);a.onclick=function(){guard().then(function(ok){if(ok){stack.length=i+1;chg={};load()}})}}})}
 function show(r){var v=r.v||{};items=r.a;nItems=v.n;if(stack.length>1&&v.ti)stack[stack.length-1].t=v.ti;crumb();
