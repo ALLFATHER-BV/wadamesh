@@ -2477,3 +2477,11 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+Access code	Приступни код
+Fixed code	Стални код
+Code	Код
+Fixed code saved	Стални код сачуван
+Type a 6-digit code	Унесите шестоцифрени код
+New random code each session	Нови насумични код за сваку сесију
+Too easy to guess. Pick another code.	Превише лако за погађање. Изаберите други код.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Искључено: нови насумични код за сваку сесију. Укључено: увек исти код. Код пролази кроз ваш Wi-Fi нешифрован, па свако ко га тамо види или погоди може да се повеже. Погрешни покушаји закључавају сваки пут дуже, до једног сата.

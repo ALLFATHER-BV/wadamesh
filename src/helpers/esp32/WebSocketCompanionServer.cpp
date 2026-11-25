@@ -780,7 +780,13 @@ void WebSocketCompanionServer::authFrame(int idx, const uint8_t* buf, size_t len
     }
     if (allowed) g_web_auth.noteFailure();
     if (++c->auth_failures >= 3) c->close_after_tx = true;
-    reply = allowed ? "ERR invalid code" : "ERR try again in 30 seconds";
+    static char locked[48];
+    if (!allowed) {
+      const uint32_t secs = g_web_auth.retryAfterSecs();   // grows while a fixed code is set (#837)
+      if (secs > 90) snprintf(locked, sizeof locked, "ERR too many tries, wait %lu minutes", (unsigned long)((secs + 59) / 60));
+      else           snprintf(locked, sizeof locked, "ERR too many tries, wait %lu seconds", (unsigned long)(secs ? secs : 1));
+    }
+    reply = allowed ? "ERR invalid code" : locked;
   }
   if (reply && c->tx_len == 0) writeBinaryFrame(idx, reinterpret_cast<const uint8_t*>(reply), strlen(reply));
 }

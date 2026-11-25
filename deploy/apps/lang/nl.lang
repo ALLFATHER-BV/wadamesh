@@ -2475,3 +2475,11 @@ Waiting for an answer on the device.	Wachten op een antwoord op het toestel.
 This app has no settings	Deze app heeft geen instellingen
 Saved on the device for this app. The app reads them when it opens.	Op het toestel bewaard voor deze app. De app leest ze bij het openen.
 Could not save to the device storage	Kon niet opslaan in de opslag van het toestel
+Access code	Toegangscode
+Fixed code	Vaste code
+Code	Code
+Fixed code saved	Vaste code opgeslagen
+Type a 6-digit code	Typ een 6-cijferige code
+New random code each session	Elke sessie een nieuwe willekeurige code
+Too easy to guess. Pick another code.	Te makkelijk te raden. Kies een andere code.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Uit: elke sessie een nieuwe willekeurige code. Aan: altijd dezelfde code. De code gaat onversleuteld over je wifi, dus wie hem daar ziet of raadt, kan verbinden. Foute pogingen blokkeren telkens langer, tot een uur.

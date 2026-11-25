@@ -2477,3 +2477,11 @@ Waiting for an answer on the device.	Αναμονή απάντησης στη σ
 This app has no settings	Αυτή η εφαρμογή δεν έχει ρυθμίσεις
 Saved on the device for this app. The app reads them when it opens.	Αποθηκεύτηκαν στη συσκευή για αυτή την εφαρμογή. Η εφαρμογή τις διαβάζει όταν ανοίγει.
 Could not save to the device storage	Δεν ήταν δυνατή η αποθήκευση στη μνήμη της συσκευής
+Access code	Κωδικός πρόσβασης
+Fixed code	Σταθερός κωδικός
+Code	Κωδικός
+Fixed code saved	Ο σταθερός κωδικός αποθηκεύτηκε
+Type a 6-digit code	Πληκτρολογήστε 6ψήφιο κωδικό
+New random code each session	Νέος τυχαίος κωδικός σε κάθε συνεδρία
+Too easy to guess. Pick another code.	Πολύ εύκολο να μαντευτεί. Διαλέξτε άλλον κωδικό.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Ανενεργό: νέος τυχαίος κωδικός σε κάθε συνεδρία. Ενεργό: πάντα ο ίδιος κωδικός. Ο κωδικός περνά από το Wi-Fi σας χωρίς κρυπτογράφηση, οπότε όποιος τον δει ή τον μαντέψει εκεί μπορεί να συνδεθεί. Οι λάθος προσπάθειες κλειδώνουν κάθε φορά για περισσότερο, έως μία ώρα.

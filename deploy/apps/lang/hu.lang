@@ -2486,3 +2486,11 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+Access code	Hozzáférési kód
+Fixed code	Állandó kód
+Code	Kód
+Fixed code saved	Állandó kód mentve
+Type a 6-digit code	Írj be egy 6 jegyű kódot
+New random code each session	Minden munkamenetben új véletlen kód
+Too easy to guess. Pick another code.	Túl könnyű kitalálni. Válassz másik kódot.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Ki: minden munkamenetben új véletlen kód. Be: mindig ugyanaz a kód. A kód titkosítatlanul megy át a Wi-Fi-n, így aki ott látja vagy kitalálja, csatlakozhat. A hibás próbálkozások után a zárolás egyre hosszabb, legfeljebb egy óra.

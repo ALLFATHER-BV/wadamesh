@@ -2478,3 +2478,11 @@ Waiting for an answer on the device.	Se așteaptă un răspuns pe dispozitiv.
 This app has no settings	Această aplicație nu are setări
 Saved on the device for this app. The app reads them when it opens.	Salvate pe dispozitiv pentru această aplicație. Aplicația le citește la deschidere.
 Could not save to the device storage	Nu s-a putut salva în memoria dispozitivului
+Access code	Cod de acces
+Fixed code	Cod fix
+Code	Cod
+Fixed code saved	Cod fix salvat
+Type a 6-digit code	Tastează un cod de 6 cifre
+New random code each session	Un cod aleatoriu nou la fiecare sesiune
+Too easy to guess. Pick another code.	Prea ușor de ghicit. Alege alt cod.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Oprit: un cod aleatoriu nou la fiecare sesiune. Pornit: mereu același cod. Codul trece necriptat prin Wi-Fi-ul tău, deci oricine îl vede sau îl ghicește acolo se poate conecta. Încercările greșite blochează de fiecare dată mai mult, până la o oră.

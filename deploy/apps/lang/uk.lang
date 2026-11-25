@@ -2477,3 +2477,11 @@ Waiting for an answer on the device.	Очікування відповіді н�
 This app has no settings	Цей застосунок не має налаштувань
 Saved on the device for this app. The app reads them when it opens.	Збережено на пристрої для цього застосунку. Застосунок читає їх під час відкриття.
 Could not save to the device storage	Не вдалося зберегти в пам'ять пристрою
+Access code	Код доступу
+Fixed code	Постійний код
+Code	Код
+Fixed code saved	Постійний код збережено
+Type a 6-digit code	Введіть 6-значний код
+New random code each session	Новий випадковий код у кожній сесії
+Too easy to guess. Pick another code.	Надто легко вгадати. Виберіть інший код.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Вимк.: новий випадковий код у кожній сесії. Увімк.: завжди той самий код. Код передається вашим Wi-Fi без шифрування, тож будь-хто, хто його там побачить або вгадає, зможе підключитися. Хибні спроби блокують щоразу довше, до години.

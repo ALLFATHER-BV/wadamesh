@@ -35188,13 +35188,14 @@ static void remoteFixedSaveCb(lv_event_t* e) {
   if (!txt || strlen(txt) != 6) return;
   const uint32_t c = (uint32_t)atol(txt);
   lv_textarea_set_text(s_remote_fixed_ta, "");
-  if (c == 0) {   // 0 means "no code" internally
-    if (g_lv.task) g_lv.task->showAlert(TR("000000 can't be used - pick another code"), 2200);
+  if (WebAuthCode::weakFixed(c)) {   // 000000 (= "no code"), 111111, 123456, 121212 ...
+    if (g_lv.task) g_lv.task->showAlert(TR("Too easy to guess. Pick another code."), 2200);
     return;
   }
   if (c == touchPrefsGetWebFixedCode()) return;
   touchPrefsSetWebFixedCode(c);
   g_web_auth.setFixed(c);
+  g_web_session.endSessions();   // browsers let in with the old code must ask again
   remoteFixedPlaceholder();
   remoteRefreshAddr();
   if (g_lv.task) g_lv.task->showAlert(TR("Fixed code saved"), 1600);
@@ -35214,6 +35215,7 @@ static void remoteFixedToggleCb(lv_event_t* e) {
   if (touchPrefsGetWebFixedCode() == 0) return;
   touchPrefsSetWebFixedCode(0);
   g_web_auth.setFixed(0);
+  g_web_session.endSessions();   // browsers let in with the fixed code must ask again
   if (s_remote_fixed_ta) lv_textarea_set_text(s_remote_fixed_ta, "");
   remoteFixedPlaceholder();
   remoteRefreshAddr();
@@ -35522,7 +35524,7 @@ static void openRemotePage() {
   if (!fixed_on) lv_obj_add_flag(crow2, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t* aexpl = lv_label_create(s_remote_root);
-  lv_label_set_text(aexpl, TR("Off: a new random code each session. On: the same code every time - anyone on your Wi-Fi who knows it can connect."));
+  lv_label_set_text(aexpl, TR("Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour."));
   lv_obj_set_style_text_font(aexpl, &g_font_12, LV_PART_MAIN);
   lv_obj_set_style_text_color(aexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(aexpl, LV_LABEL_LONG_WRAP);

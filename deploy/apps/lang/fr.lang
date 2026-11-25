@@ -2476,3 +2476,11 @@ Waiting for an answer on the device.	En attente d'une réponse sur l'appareil.
 This app has no settings	Cette application n'a pas de paramètres
 Saved on the device for this app. The app reads them when it opens.	Enregistré sur l'appareil pour cette application. L'application les lit à son ouverture.
 Could not save to the device storage	Impossible d'enregistrer dans le stockage de l'appareil
+Access code	Code d'accès
+Fixed code	Code fixe
+Code	Code
+Fixed code saved	Code fixe enregistré
+Type a 6-digit code	Saisissez un code à 6 chiffres
+New random code each session	Nouveau code aléatoire à chaque session
+Too easy to guess. Pick another code.	Trop facile à deviner. Choisissez un autre code.
+Off: a new random code each session. On: the same code every time. The code crosses your Wi-Fi unencrypted, so anyone there who sees or guesses it can connect. Wrong tries lock it for longer each time, up to an hour.	Désactivé : un nouveau code aléatoire à chaque session. Activé : toujours le même code. Le code passe en clair sur votre Wi-Fi, donc quiconque le voit ou le devine peut se connecter. Chaque série d'erreurs bloque plus longtemps, jusqu'à une heure.
