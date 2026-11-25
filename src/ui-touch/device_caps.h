@@ -966,6 +966,17 @@
   #endif
 #endif
 
+// Settings > Battery > "Empty at": the voltage the battery curve calls 0% (3.3 to
+// 3.6 V), for packs that brown out early. Not where a fuel gauge gives the charge
+// (the Pager, the T-Display P4).
+#ifndef CAP_BATT_EMPTY_PICK
+  #if CAP_BATTERY && !defined(TLORA_PAGER) && !defined(HAS_TDISPLAY_P4)
+    #define CAP_BATT_EMPTY_PICK 1
+  #else
+    #define CAP_BATT_EMPTY_PICK 0
+  #endif
+#endif
+
 // Backups listed by their date, or "Default", instead of the file name (#739).
 #ifndef CAP_BACKUP_DATE_LABELS
   #define CAP_BACKUP_DATE_LABELS 1

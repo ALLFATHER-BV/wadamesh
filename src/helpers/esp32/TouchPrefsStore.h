@@ -441,6 +441,10 @@ void    touchPrefsSyncBootUiRotation();
  *  default Li-ion full point). Lets custom batteries / builds read 100%. */
 uint16_t touchPrefsGetBattFullMv();
 bool     touchPrefsSetBattFullMv(uint16_t mv);
+/** The voltage the battery curve calls 0%, as a step: 0..3 = 3.3 / 3.4 / 3.5 / 3.6 V.
+ *  Standalone key, default 0 (3.3 V). For packs that shut down above 3.3 V. */
+uint8_t  touchPrefsGetBattEmptyStep();
+void     touchPrefsSetBattEmptyStep(uint8_t step);
 
 /** Saved Wi-Fi profile slots. The "active" credentials still live in the
  *  meshcomod NVS namespace (WifiRuntimeStore.cpp) and are what

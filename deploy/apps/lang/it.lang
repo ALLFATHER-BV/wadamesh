@@ -2479,3 +2479,5 @@ Could not save to the device storage	Impossibile salvare nella memoria del dispo
 Range	Raggio
 Nodes farther away are left out. Auto fits the farthest node.	I nodi più lontani vengono esclusi. Auto si adatta al nodo più lontano.
 Shows only the nodes you marked as favorite.	Mostra solo i nodi segnati come preferiti.
+Empty at	Scarica a
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	La tensione che corrisponde allo 0%. Se il dispositivo si spegne mentre mostra ancora carica, scegli la tensione a cui si ferma.

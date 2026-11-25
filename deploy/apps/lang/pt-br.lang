@@ -2480,3 +2480,5 @@ Could not save to the device storage	Não foi possível salvar no armazenamento 
 Range	Alcance
 Nodes farther away are left out. Auto fits the farthest node.	Nós mais distantes ficam de fora. Auto se ajusta ao nó mais distante.
 Shows only the nodes you marked as favorite.	Mostra apenas os nós marcados como favoritos.
+Empty at	Vazia em
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	A tensão que marca 0%. Se o aparelho desliga enquanto ainda mostra carga, escolha a tensão em que ele para.

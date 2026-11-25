@@ -2489,3 +2489,5 @@ Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyé
 Range	Hatótáv
 Nodes farther away are left out. Auto fits the farthest node.	A távolabbi csomópontok kimaradnak. Az Auto a legtávolabbi csomóponthoz igazodik.
 Shows only the nodes you marked as favorite.	Csak a kedvencként megjelölt csomópontokat mutatja.
+Empty at	Üres ennél
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Az a feszültség, amely 0%-ot jelent. Ha az eszköz kikapcsol, miközben még töltést mutat, válaszd azt a feszültséget, amelynél leáll.

@@ -2492,3 +2492,5 @@ Could not save to the device storage	Nie udało się zapisać w pamięci urządz
 Range	Zasięg
 Nodes farther away are left out. Auto fits the farthest node.	Dalsze węzły są pomijane. Auto dopasowuje się do najdalszego węzła.
 Shows only the nodes you marked as favorite.	Pokazuje tylko węzły oznaczone jako ulubione.
+Empty at	Pusta przy
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Napięcie odpowiadające 0%. Jeśli urządzenie wyłącza się, choć wciąż pokazuje naładowanie, wybierz napięcie, przy którym się wyłącza.

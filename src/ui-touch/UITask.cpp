@@ -19810,6 +19810,8 @@ static void openSoundPickerCb(lv_event_t* e);      // defined with the chooser, 
 #endif
 
 static void calibrateBatteryCb(lv_event_t* e);   // defined with the battery helpers below
+static uint16_t batteryEmptyMv();                 // ...and these two ("Empty at")
+static void batteryEmptySet(uint8_t step);
 // Keyboards whose backlight takes a level, not just on/off: the T-Deck's C3 keyboard
 // and the ThinkNode M9's controller (duty register 0x02, #664).
 #if defined(HAS_TDECK_KEYBOARD) || defined(HAS_M9_KEYBOARD)
@@ -20892,6 +20894,19 @@ static void buildBatteryPage() {
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_SHORT_CLICKED, nullptr);
     lv_obj_add_event_cb(b, calibrateBatteryCb, LV_EVENT_LONG_PRESSED, nullptr);
     setNote(c, "Tap with a full battery to call its voltage 100%. Hold to go back to the default.");
+#if CAP_BATT_EMPTY_PICK
+    {
+      static const char* const empties[] = { "3.3 V", "3.4 V", "3.5 V", "3.6 V" };
+      setChoiceRow(c, "Empty at", "The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.",
+                   empties, 4, (int)(batteryEmptyMv() - 3300) / 100, +[](lv_event_t* e) {
+                     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+                     const int i = setChoiceIndex(e);
+                     if (i < 0 || i > 3) return;
+                     batteryEmptySet((uint8_t)i);
+                     setChoicePick(lv_obj_get_parent(lv_event_get_current_target(e)), i);
+                   });
+    }
+#endif
 #if defined(HAS_THINKNODE_M9)
     setSwitchRow(c, "Low battery warning", "Warns at 20%, again at 10%, and enters deep sleep at 3% so the battery is never run flat.",
                  touchPrefsGetLowBattWarn(), +[](lv_event_t* e) {
@@ -26467,6 +26482,23 @@ static uint16_t batteryFullMv() {
   if (s_batt_full_mv > kBattFullMaxMv) return 4200;
   return s_batt_full_mv ? s_batt_full_mv : 4200;
 }
+// The voltage that reads 0%: 3.3 V, or up to 3.6 V for a pack that shuts down before
+// 3.3 V (a T-Deck Pro reported 30% at its 3.6 V cut-off). Cached like the full point.
+static uint8_t s_batt_empty_step = 0xFF;   // 0xFF = not loaded
+static uint16_t batteryEmptyMv() {
+#if CAP_BATT_EMPTY_PICK && defined(ESP32)
+  if (s_batt_empty_step == 0xFF) s_batt_empty_step = touchPrefsGetBattEmptyStep();
+  return (uint16_t)(3300 + 100 * (s_batt_empty_step & 3));
+#else
+  return 3300;
+#endif
+}
+static void batteryEmptySet(uint8_t step) {
+  s_batt_empty_step = (uint8_t)(step & 3);
+#if CAP_BATT_EMPTY_PICK && defined(ESP32)
+  touchPrefsSetBattEmptyStep(s_batt_empty_step);
+#endif
+}
 
 #if defined(HAS_TDECK_GT911) || defined(HELTEC_LORA_V4_R8) || defined(HAS_THINKNODE_M9)
 // (R8 & M9: the divider is permanently connected, so EMA smoothing filters ADC2/Wi-Fi jitter.)
@@ -26656,14 +26688,16 @@ static int batteryPercentFromMv(uint16_t mv) {
     if (soc >= 0) return soc;
   }
 #endif
-  // Li-ion curve: 3.30 V empty, FULL = the calibrated full (default 4.20 V).
-  // While charging the rail reads above full (charger-driven) — cap at 100
-  // rather than show a bogus number; the real cell % isn't observable here.
+  // Li-ion curve: EMPTY = 3.30 V or the picked "Empty at", FULL = the calibrated
+  // full (default 4.20 V). While charging the rail reads above full (charger-driven)
+  // — cap at 100 rather than show a bogus number; the real cell % isn't observable here.
   if (mv == 0) return -1;
   const uint16_t full = batteryFullMv();
+  uint16_t empty = batteryEmptyMv();
+  if (full < empty + 300) empty = 3300;   // a low calibrated full: keep a usable span
   if (mv >= full)  return 100;
-  if (mv <= 3300)  return 0;
-  return (int)((mv - 3300) * 100 / (full - 3300));
+  if (mv <= empty) return 0;
+  return (int)((mv - empty) * 100 / (full - empty));
 }
 
 // Calibrate-battery action (Device settings). SHORT_CLICKED captures the current
@@ -27145,7 +27179,7 @@ static void battChartTickCb(lv_event_t* e) {
 // Estimate remaining battery life from the logged samples. Charging samples
 // (mv > calibrated full) are ignored, and only the discharge segment AFTER the
 // most recent charge is used. A least-squares slope over that segment gives
-// mV/s; time-to-empty targets 3300 mV (the Li-ion empty point used by the % curve).
+// mV/s; time-to-empty targets the empty point the % curve uses (3.3 V, or "Empty at").
 static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
                                 int full_mv, char* out, size_t cap) {
   int start = 0;
@@ -27173,7 +27207,7 @@ static void batteryEstimateText(const uint32_t* eps, const uint16_t* mvs, int n,
   if (denom <= 0) { snprintf(out, cap, "Battery life: \xe2\x80\x94"); return; }
   const double slope = ((double)m * sxy - sx * sy) / denom;   // mV/s (negative = discharging)
   if (slope >= -1e-7) { snprintf(out, cap, "Battery life: charging / steady"); return; }
-  double secs = (double)(last_v - 3300) / (-slope);
+  double secs = (double)(last_v - (int)batteryEmptyMv()) / (-slope);
   if (secs < 0) secs = 0;
   long s = (long)secs;
   const int d = (int)(s / 86400); s %= 86400;
@@ -66430,7 +66464,7 @@ static int hwBattHoursLeft(uint16_t mv_now) {
   if (den <= 0) return -1;
   const double slope = (n * sxy - sx * sy) / den;   // mV per hour
   if (slope > -2.0) return -1;                        // steady or charging
-  const double h = (mv_now - 3300.0) / -slope;
+  const double h = (mv_now - (double)batteryEmptyMv()) / -slope;
   return h < 0 ? 0 : h > 999 ? 999 : (int)(h + 0.5);
 }
 

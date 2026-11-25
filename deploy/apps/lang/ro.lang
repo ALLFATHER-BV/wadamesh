@@ -2481,3 +2481,5 @@ Could not save to the device storage	Nu s-a putut salva în memoria dispozitivul
 Range	Rază
 Nodes farther away are left out. Auto fits the farthest node.	Nodurile mai îndepărtate sunt omise. Auto se potrivește celui mai îndepărtat nod.
 Shows only the nodes you marked as favorite.	Arată doar nodurile marcate ca favorite.
+Empty at	Goală la
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Tensiunea care înseamnă 0%. Dacă dispozitivul se oprește cât încă arată încărcare, alege tensiunea la care se oprește.

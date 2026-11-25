@@ -1872,6 +1872,13 @@ bool touchPrefsSetBattFullMv(uint16_t mv) {
   return cfgFlush();
 }
 
+uint8_t touchPrefsGetBattEmptyStep() {
+  if (!s_begun) touchPrefsBegin();
+  const uint8_t v = s_prefs.getUChar("batt_empty", 0);
+  return v > 3 ? 0 : v;
+}
+void touchPrefsSetBattEmptyStep(uint8_t step) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("batt_empty", step > 3 ? 0 : step); }
+
 // Wi-Fi profile slots ----------------------------------------------------
 //
 // NVS keys: "wsl_<idx>_l" (label), "wsl_<idx>_s" (ssid), "wsl_<idx>_p" (pwd).

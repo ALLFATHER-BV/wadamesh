@@ -2480,3 +2480,5 @@ Could not save to the device storage	Konnte nicht im Gerätespeicher sichern
 Range	Reichweite
 Nodes farther away are left out. Auto fits the farthest node.	Weiter entfernte Knoten werden ausgelassen. Auto passt sich dem entferntesten Knoten an.
 Shows only the nodes you marked as favorite.	Zeigt nur die Knoten, die du als Favorit markiert hast.
+Empty at	Leer bei
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Die Spannung, die 0 % anzeigt. Schaltet sich das Gerät ab, obwohl es noch Ladung zeigt, wähle die Spannung, bei der es aufhört.

@@ -2480,3 +2480,5 @@ Could not save to the device storage	Чување у меморију уређа
 Range	Домет
 Nodes farther away are left out. Auto fits the farthest node.	Удаљенији чворови се изостављају. Ауто се прилагођава најудаљенијем чвору.
 Shows only the nodes you marked as favorite.	Приказује само чворове означене као омиљене.
+Empty at	Празна на
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напон који значи 0%. Ако се уређај гаси док још показује пуњење, изаберите напон на ком се гаси.

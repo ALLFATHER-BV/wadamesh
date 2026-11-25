@@ -2478,3 +2478,5 @@ Could not save to the device storage	Kon niet opslaan in de opslag van het toest
 Range	Bereik
 Nodes farther away are left out. Auto fits the farthest node.	Verdere nodes worden weggelaten. Auto past zich aan de verste node aan.
 Shows only the nodes you marked as favorite.	Toont alleen de nodes die je als favoriet hebt gemarkeerd.
+Empty at	Leeg bij
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	De spanning die 0% aangeeft. Schakelt het toestel uit terwijl het nog lading toont, kies dan de spanning waarbij het stopt.

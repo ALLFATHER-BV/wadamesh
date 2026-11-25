@@ -2495,3 +2495,5 @@ Could not save to the device storage	Nelze uložit do úložiště zařízení
 Range	Dosah
 Nodes farther away are left out. Auto fits the farthest node.	Vzdálenější uzly se nezobrazí. Auto se přizpůsobí nejvzdálenějšímu uzlu.
 Shows only the nodes you marked as favorite.	Zobrazí jen uzly označené jako oblíbené.
+Empty at	Prázdná při
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Napětí, které odpovídá 0 %. Pokud se zařízení vypne, i když ještě ukazuje nějaké nabití, zvolte napětí, při kterém se vypíná.

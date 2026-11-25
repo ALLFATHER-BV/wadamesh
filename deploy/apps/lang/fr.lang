@@ -2479,3 +2479,5 @@ Could not save to the device storage	Impossible d'enregistrer dans le stockage d
 Range	Portée
 Nodes farther away are left out. Auto fits the farthest node.	Les nœuds plus éloignés sont omis. Auto s'adapte au nœud le plus éloigné.
 Shows only the nodes you marked as favorite.	Affiche uniquement les nœuds marqués comme favoris.
+Empty at	Vide à
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	La tension qui affiche 0 %. Si l'appareil s'éteint alors qu'il affiche encore de la charge, choisissez la tension à laquelle il s'arrête.

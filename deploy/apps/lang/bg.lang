@@ -2480,3 +2480,5 @@ Could not save to the device storage	Неуспешно запазване в п
 Range	Обхват
 Nodes farther away are left out. Auto fits the farthest node.	По-далечните възли не се показват. Авто побира най-далечния възел.
 Shows only the nodes you marked as favorite.	Показва само възлите, отбелязани като любими.
+Empty at	Празна при
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напрежението, при което се показва 0%. Ако устройството се изключва, докато още показва заряд, изберете напрежението, при което спира.

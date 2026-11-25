@@ -2480,3 +2480,5 @@ Could not save to the device storage	Не удалось сохранить в �
 Range	Радиус
 Nodes farther away are left out. Auto fits the farthest node.	Более дальние узлы не показываются. Авто подстраивается под самый дальний узел.
 Shows only the nodes you marked as favorite.	Показывает только узлы, отмеченные как избранные.
+Empty at	Пустая при
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Напряжение, которое считается 0%. Если устройство выключается, пока ещё показывает заряд, выберите напряжение, при котором оно отключается.

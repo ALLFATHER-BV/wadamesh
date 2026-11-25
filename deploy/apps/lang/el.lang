@@ -2480,3 +2480,5 @@ Could not save to the device storage	Δεν ήταν δυνατή η αποθή�
 Range	Εμβέλεια
 Nodes farther away are left out. Auto fits the farthest node.	Οι πιο μακρινοί κόμβοι παραλείπονται. Το Αυτόματα χωράει τον πιο μακρινό κόμβο.
 Shows only the nodes you marked as favorite.	Εμφανίζει μόνο τους κόμβους που σημειώσατε ως αγαπημένους.
+Empty at	Άδεια στα
+The voltage that reads 0%. If the device shuts down while it still shows some charge, pick the voltage it stops at.	Η τάση που αντιστοιχεί στο 0%. Αν η συσκευή σβήνει ενώ δείχνει ακόμη φορτίο, επιλέξτε την τάση στην οποία σταματά.
