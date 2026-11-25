@@ -83,7 +83,12 @@ def load_qc(path):
 
 def load_on(folder):
     seen = set()   # an object ID fetched twice must not become two places
-    parts = {}     # LIO splits some municipalities into several features; join them into one place
+    # LIO splits some municipalities into several features; join them into one place. Key on the
+    # short name AND the municipal type: a short name alone isn't unique in Ontario. HAMILTON is
+    # both the City of Hamilton (single tier) and the Township of Hamilton (lower tier,
+    # Northumberland County), 150 km apart; keyed on the name they became one place with a
+    # bounding box over both. (shortform, type) is unique across all 685 LIO features.
+    parts = {}
     for f in sorted(glob.glob(os.path.join(folder, "*.geojson"))):
         with open(f, encoding="utf-8") as fh:
             d = json.load(fh)
@@ -95,9 +100,10 @@ def load_on(folder):
                 continue
             seen.add(p["OBJECTID"])
             g = shape(ft["geometry"])
-            parts.setdefault(ontario_name(p["MUNICIPAL_NAME_SHORTFORM"]), []).append(g if g.is_valid else g.buffer(0))
-    for name, gs in parts.items():
-        yield name, 0, unary_union(gs)
+            key = (p["MUNICIPAL_NAME_SHORTFORM"], p.get("MUNICIPAL_TYPE"))
+            parts.setdefault(key, []).append(g if g.is_valid else g.buffer(0))
+    for (short, _), gs in parts.items():
+        yield ontario_name(short), 0, unary_union(gs)
 
 
 def load_us(path):
