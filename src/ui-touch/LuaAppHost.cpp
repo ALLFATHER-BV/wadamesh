@@ -3013,7 +3013,7 @@ static bool luaRxGet(int idx, LuaRxRec& r) {
 void pushPacketTable(lua_State* L, const LuaRxRec& r);
 int meshRxLog(lua_State* L) {
   lua_newtable(L);
-  static LuaRxRec r;   // ~100 B: off the loop task's stack (single UI thread)
+  LuaRxRec r;
   for (int i = 0, out = 0; i < 64; i++) {
     if (!luaRxGet(i, r)) break;
     pushPacketTable(L, r);
@@ -3102,7 +3102,7 @@ void packetPollCb(lv_timer_t* t) {
   // app sees arrival order. 16 is the ring depth; reading past it just stops. Only
   // the timestamps are kept (not 16 copies of a record with a 64-byte path on the
   // loop task's stack); each record is fetched again by its timestamp to deliver.
-  static LuaRxRec r;
+  LuaRxRec r;
   uint32_t ats[16];
   int n = 0;
   uint32_t newest = s_pkt_last_ms;

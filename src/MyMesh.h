@@ -721,8 +721,8 @@ public:
   // I hearing" feed without a core hook. Newest-first via uiRxLogGet (i=0 = most
   // recent). Board-independent — populated on every board, not just touch.
   // 64 bytes keeps a whole 32-hop path at 2-byte hashes (21 at 3 bytes); 16 cut
-  // most 2- and 3-byte paths short. The ring lives in PSRAM (internal fallback),
-  // allocated on the first frame, so the larger records cost no internal DRAM.
+  // most 2- and 3-byte paths short. The ring is part of the_mesh, which main.cpp
+  // places in PSRAM (makeTheMesh), so the larger records cost no internal DRAM.
   static const int UI_RXLOG_PATH_MAX = 64;
   struct UiRxRec {
     uint32_t ms;        // millis() at RX
@@ -755,13 +755,12 @@ public:
     uint8_t  path[UI_RXLOG_PATH_MAX];
   };
   static const int UI_RXLOG_MAX = 16;
-  UiRxRec* _ui_rxlog = nullptr;       // UI_RXLOG_MAX records, see uiRxLogAlloc
+  UiRxRec  _ui_rxlog[UI_RXLOG_MAX];
   uint8_t  _ui_rxlog_head = 0;        // next write slot
   uint8_t  _ui_rxlog_cnt  = 0;        // valid entries (<= UI_RXLOG_MAX)
-  static UiRxRec* uiRxLogAlloc();     // MyMesh.cpp: PSRAM-first, zeroed
-  uint8_t  uiRxLogCount() const { return _ui_rxlog ? _ui_rxlog_cnt : 0; }
+  uint8_t  uiRxLogCount() const { return _ui_rxlog_cnt; }
   bool     uiRxLogGet(uint8_t i, UiRxRec& out) const {
-    if (!_ui_rxlog || i >= _ui_rxlog_cnt) return false;
+    if (i >= _ui_rxlog_cnt) return false;
     uint8_t idx = (uint8_t)((_ui_rxlog_head + UI_RXLOG_MAX - 1 - i) % UI_RXLOG_MAX);
     out = _ui_rxlog[idx];
     return true;
@@ -771,7 +770,6 @@ public:
                    uint8_t ptype, uint8_t route, uint8_t hops, uint8_t len,
                    uint8_t org_kind = 0, const uint8_t* org = nullptr,
                    const uint8_t* path = nullptr, uint8_t path_bytes = 0, uint8_t path_hash_sz = 1) {
-    if (!_ui_rxlog && !(_ui_rxlog = uiRxLogAlloc())) return;
     UiRxRec& r = _ui_rxlog[_ui_rxlog_head];
     r.ms = ms; r.rssi = rssi; r.snr_q4 = snr_q4;
     r.ptype = ptype; r.route = route; r.hops = hops; r.len = len;

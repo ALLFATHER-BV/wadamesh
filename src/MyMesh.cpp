@@ -406,10 +406,6 @@ static void* msPsAlloc(size_t n) {
   if (p) memset(p, 0, n);
   return p;
 }
-// The recent-RX ring (MyMesh.h, UiRxRec): ~1.4 KB at 64-byte paths, off internal DRAM.
-MyMesh::UiRxRec* MyMesh::uiRxLogAlloc() {
-  return (UiRxRec*)msPsAlloc(sizeof(UiRxRec) * UI_RXLOG_MAX);
-}
 static MeshcomodCmdCacheEntry* s_meshcomod_cmd_cache =
     (MeshcomodCmdCacheEntry*)msPsAlloc(sizeof(MeshcomodCmdCacheEntry) * MESHCOMOD_CMD_CACHE_SIZE);
 static int s_meshcomod_cmd_cache_next = 0;

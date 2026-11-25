@@ -77886,8 +77886,12 @@ void luaHostRequestHwPerm(const char* app_id, const char* app_name) {
   snprintf(s_lua_perm_target, sizeof s_lua_perm_target, "%s", app_id);
   luaPermSetBit(app_id, LUA_PERM_HW, false);   // refused unless the user says otherwise
   const char* label = (app_name && *app_name) ? app_name : app_id;
-  static char msg[640];   // Cyrillic and Greek take two bytes a letter; static: off the loop stack
-  snprintf(msg, sizeof msg,
+  // Cyrillic and Greek take two bytes a letter. PSRAM, kept: off the loop stack and DRAM.
+  static char* msg = nullptr;
+  constexpr size_t kMsgCap = 640;
+  if (!msg) msg = (char*)psAlloc(kMsgCap);
+  if (!msg) return;
+  snprintf(msg, kMsgCap,
            TR("\"%s\" wants to use the hardware: read and write devices on the I2C bus, "
               "and read the GPS receiver's raw data.\n\n"
               "A wrong write can change how a connected sensor behaves until it is "
