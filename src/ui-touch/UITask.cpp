@@ -52666,7 +52666,13 @@ static bool deviceImuRead(float* x, float* y, float* z) {
 #if defined(TLORA_PAGER)
   return pagerImuRead(x, y, z);
 #elif defined(HAS_M9_IMU)
-  return m9ImuRead(x, y, z);
+  // The M9's QMI8658 has +Z into the screen (measured, see the GPS Compass app),
+  // so lying face up reads z = -1 g. The checks below want +Z out of the screen,
+  // as the Pager reports it: turn the frame 180 degrees about X (#897).
+  if (!m9ImuRead(x, y, z)) return false;
+  *y = -*y;
+  *z = -*z;
+  return true;
 #else
   (void)x; (void)y; (void)z;
   return false;
