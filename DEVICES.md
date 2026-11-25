@@ -23,7 +23,8 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
 | LilyGo T-Display P4 | ESP32-P4 + ESP32-C6, SX1262 or LR2021 | AMOLED or TFT-LCD, touch | Web flasher | Beta (new in beta_45) | Four panel/radio builds; AMOLED + SX1262 hardware-tested, the other combinations need validation |
 | Elecrow CrowPanel Advanced 10.1 | ESP32-P4 + ESP32-C6, external SX1262 | 10.1" EK79007 MIPI-DSI 1024x600 touch (GT911) | Web flasher (beta) | Experimental (new in beta_97), not yet tested on hardware | One image per board revision (V1.0, V1.1, V1.2); SX1262 in the wireless slot; no battery reading, sound or GPS |
 | Attaky Mesh Series | ESP32-S3, SX1262 | Touch display + front D-pad | Web flasher | Beta (new in beta_47) | Community port by attakygit (#158/#169); detachable keyboard supported; the front D-pad + SELECT navigate the UI |
-| M5Stack Cardputer Zero + Cap LoRa-1262 | Raspberry Pi CM0 (Linux), SX1262 via MeshCoreRPI | 1.9" 320x170 ST7789V3, 46-key TCA8418 keyboard; HDMI desktop mode | `web/zero/build.sh`, then `install.sh` on the device ([guide](CARDPUTER_ZERO.md)) | Experimental (community port) | Hardware-tested: display, keyboard, radio, GPS, battery gauge, city locator, sound, HDMI desktop mode (in a window). Runs as a native Linux app beside a MeshCore companion |
+| LilyGo T-Watch S3 | ESP32-S3 (8 MB PSRAM), SX1262 | 1.54" 240x240 ST7789 touch (FT6x36), crown button | Web flasher (beta) | Experimental (new in beta_107) | Community port by Kelfitas (#904); AXP2101 power, crown locks / peeks / unlocks; no GPS on the plain S3 (the S3 Plus GNSS is not wired yet), no SD |
+| M5Stack Cardputer Zero + Cap LoRa-1262 | Raspberry Pi CM0 (Linux), SX1262 via MeshCoreRPI | 1.9" 320x170 ST7789V3, 46-key TCA8418 keyboard; HDMI desktop mode | Release archive `wadamesh-zero.tar.gz` (or `web/zero/build.sh`), then `install.sh` on the device ([guide](CARDPUTER_ZERO.md)); not web-flashable | Experimental (new in beta_107, community port) | Hardware-tested: display, keyboard, radio, GPS, battery gauge, city locator, sound, HDMI desktop mode (in a window). Runs as a native Linux app beside a MeshCore companion |
 
 ## Feature notes per board
 
@@ -178,6 +179,21 @@ USB) and the [GitHub releases](https://github.com/ALLFATHER-BV/wadamesh/releases
   storage there are no map tiles. The D1Pro shares the ESP32 side and is expected
   to run the same image, but is untested. See
   [variants/sensecap_indicator/PORT.md](variants/sensecap_indicator/PORT.md).
+- **LilyGo T-Watch S3**: `t_watch_s3_companion_radio_touch` drives the 240x240
+  ST7789 on its own SPI host, FT6x36 touch on the second I2C bus and the SX1262,
+  with the AXP2101 PMU switching the rails. The crown is the PMU's power key:
+  a press locks the watch to the Constellation screensaver, peeks at it while the
+  screen is dark and unlocks (PIN entry when one is set) while it is shown; a long
+  hold is the PMU's own power off. Power off from the menu switches the PMU off and
+  the crown turns the watch back on. The flash runs in DIO mode: QIO at 80 MHz
+  boot-loops this board's flash.
+- **M5Stack Cardputer Zero**: not an ESP32. WADAMESH runs as an aarch64 Linux
+  program built from `web/` (`-DWADA_ZERO=ON`) in the T-Lora Pager layout, drawn to
+  the LCD's framebuffer and driven by the keyboard through evdev. The radio is a
+  MeshCore companion on the same Pi (MeshCoreRPI with the Cap LoRa-1262), reached
+  over the companion protocol. Releases carry `wadamesh-zero.tar.gz`; the full
+  guide, including the HDMI desktop mode, `wadamesh-cli` and the bot hook, is
+  [CARDPUTER_ZERO.md](CARDPUTER_ZERO.md).
 
 ## Requested boards
 

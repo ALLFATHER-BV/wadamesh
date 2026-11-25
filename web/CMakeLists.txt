@@ -148,6 +148,13 @@ foreach(_l IN LISTS _mm_ver)
   string(REGEX REPLACE "^#define (FIRMWARE_[A-Z_]+) +(.*)$" "\\1=\\2" _d "${_l}")
   list(APPEND WADA_VERSION_DEFS "${_d}")
 endforeach()
+# A release build (scripts/build/zero-release.sh -> web/zero/build.sh): -DWADA_FW_TAG=beta_N
+# names the build the way release.sh names the boards' (About, test reports).
+set(WADA_FW_TAG "" CACHE STRING "release tag baked in (empty: a dev build)")
+if(WADA_FW_TAG)
+  list(FILTER WADA_VERSION_DEFS EXCLUDE REGEX "^FIRMWARE_VERSION=")
+  list(APPEND WADA_VERSION_DEFS "FIRMWARE_RELEASE_TAG=\"${WADA_FW_TAG}\"" "FIRMWARE_VERSION=\"wadamesh ${WADA_FW_TAG}\"")
+endif()
 
 # The map tile server the web board may reach (compat/src/http_host.cpp, wada_http.h):
 # the firmware's own default, read from its one definition so the two never drift.

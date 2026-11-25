@@ -57,6 +57,7 @@ BOARDS = {
     "manifest-tdeck-pro-v1-0.json":   ("wadamesh - LilyGo T-Deck Pro V1.0 (experimental)", "wadamesh-tdeck-pro-v1-0-merged.bin", "ESP32-S3"),
     "manifest-tdeck-pro-v1-1.json":   ("wadamesh - LilyGo T-Deck Pro V1.1 (experimental)", "wadamesh-tdeck-pro-v1-1-merged.bin", "ESP32-S3"),
     "manifest-tdeck-max.json":        ("wadamesh - LilyGo T-Deck Max (experimental)", "wadamesh-tdeck-max-merged.bin", "ESP32-S3"),
+    "manifest-twatch-s3.json":        ("wadamesh - LilyGo T-Watch S3 (experimental)", "wadamesh-twatch-s3-merged.bin", "ESP32-S3"),
     "manifest-tdisplay-p4.json":      ("wadamesh - LilyGo T-Display P4 (AMOLED, SX1262)", "wadamesh-tdisplay-p4-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lr2021.json": ("wadamesh - LilyGo T-Display P4 (AMOLED, LR2021)", "wadamesh-tdisplay-p4-lr2021-merged.bin", "ESP32-P4"),
     "manifest-tdisplay-p4-lcd.json":  ("wadamesh - LilyGo T-Display P4 (LCD, SX1262)", "wadamesh-tdisplay-p4-lcd-merged.bin", "ESP32-P4"),
@@ -75,6 +76,9 @@ BOARDS = {
     # Standalone image: it replaces the badge.team launcher (the app store build is
     # the other way to install), so the name says so before anyone clicks Install.
     "manifest-tanmatsu.json":         ("wadamesh - Nicolai Electronics Tanmatsu (standalone, replaces launcher)", "wadamesh-tanmatsu-merged.bin", "ESP32-P4"),
+    # Not here: the M5Stack Cardputer Zero. It is a Linux computer, not something the web
+    # flasher can write; its release is wadamesh-zero.tar.gz (zero-release.sh), linked
+    # from the site with install steps instead of an Install button.
 }
 for fn, (name, binf, chip) in BOARDS.items():
     # A board that joined the matrix after this tag has no image in this feed

@@ -109,6 +109,7 @@ NAME_FALLBACK = {
     "tdisplay-p4-lcd": "LilyGo T-Display P4 (LCD, SX1262)",
     "tdisplay-p4-lcd-lr2021": "LilyGo T-Display P4 (LCD, LR2021)",
     "tanmatsu":        "Tanmatsu",
+    "cardputer-zero":  "M5Stack Cardputer Zero",
 }
 
 RE_TAG   = re.compile(r"^beta_\d{1,4}$")
