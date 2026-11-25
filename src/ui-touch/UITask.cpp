@@ -60989,11 +60989,14 @@ static void luaStoreTabCb(lv_event_t* e) {
   luaStoreRebuildList();
 }
 
-// "major.minor": a newer than b. Numeric per part, so 1.10 is newer than 1.9.
+// "major.minor[.patch]": a newer than b. Numeric per part, so 1.10 is newer than 1.9
+// and 1.1.1 newer than 1.1 (the Store badge missed patch releases such as Cyberspace 1.1.1).
 static bool luaVerNewer(const char* a, const char* b) {
-  int am = 0, an = 0, bm = 0, bn = 0;
-  if (sscanf(a, "%d.%d", &am, &an) < 1 || sscanf(b, "%d.%d", &bm, &bn) < 1) return strcmp(a, b) != 0;
-  return am != bm ? am > bm : an > bn;
+  int av[3] = {}, bv[3] = {};
+  if (sscanf(a, "%d.%d.%d", &av[0], &av[1], &av[2]) < 1 ||
+      sscanf(b, "%d.%d.%d", &bv[0], &bv[1], &bv[2]) < 1) return strcmp(a, b) != 0;
+  for (int k = 0; k < 3; k++) if (av[k] != bv[k]) return av[k] > bv[k];
+  return false;
 }
 static void luaStoreCountUpdates() {
   if (s_lua_cat_n <= 0 || !luaStoreTablesReady()) return;
