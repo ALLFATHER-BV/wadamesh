@@ -2501,3 +2501,6 @@ No apps match "%s"	Καμία εφαρμογή για «%s»
 # Ebook 2.0 (#890)
 No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Κανένα βιβλίο. Προσθέστε αρχεία .epub ή .txt στο /meshcomod/apps/ebook.d/ της κάρτας SD.
 This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Το βιβλίο είναι πολύ μεγάλο για τη μνήμη της εφαρμογής. Δοκιμάστε ένα αντίγραφο .txt ή χωρίστε το σε μέρη.
+
+# Contacts shared in chat (#887)
+This is your own node	Αυτός είναι ο δικός σας κόμβος

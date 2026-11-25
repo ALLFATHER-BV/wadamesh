@@ -2501,3 +2501,6 @@ No apps match "%s"	Няма приложения за „%s“
 # Ebook 2.0 (#890)
 No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Няма книги. Добави .epub или .txt файлове в /meshcomod/apps/ebook.d/ на SD картата.
 This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Книгата е твърде голяма за паметта на приложението. Опитай .txt копие или я раздели на части.
+
+# Contacts shared in chat (#887)
+This is your own node	Това е твоят собствен възел

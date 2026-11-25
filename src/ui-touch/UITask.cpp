@@ -49752,6 +49752,9 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
     const int len = choice.end - choice.start;
     memcpy(item, s_chat_link_picker_text + choice.start, len);
     item[len] = '\0';
+    ChatContactTuple::Contact shared{};
+    if (choice.kind == CHAT_LINK_CONTACT && ChatContactTuple::parseAt(item, (size_t)len, 0, &shared))
+      snprintf(item, sizeof item, "%s", shared.name);   // the name, not 64 hex digits
     lv_label_set_text(label, item);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(label, card_w - 2 - 2 * pad - 16);
@@ -49771,6 +49774,11 @@ static void closeChatContactTuplePopup() {
 
 static void addChatContactTuple(const ChatContactTuple::Contact& contact) {
   const uint8_t* pub_key = contact.public_key;
+  if (memcmp(pub_key, the_mesh.self_id.pub_key, PUB_KEY_SIZE) == 0) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("This is your own node"), 1400);
+    return;
+  }
   if (the_mesh.lookupContactByPubKey(pub_key, PUB_KEY_SIZE)) {
     closeChatContactTuplePopup();
     if (g_lv.task) g_lv.task->showAlert(TR("Already in contacts"), 1400);
@@ -49931,7 +49939,7 @@ static void chatCreateContactCard(lv_obj_t* parent,
   const lv_coord_t text_w = LV_MAX((lv_coord_t)1, width - text_x - pad);
   const char* type_icon = contact.type == 2 ? UI_ICON_RADIO_TOWER
                         : contact.type == 3 ? UI_ICON_USERS
-                        : contact.type == 4 ? UI_ICON_CPU
+                        : contact.type == 4 ? UI_ICON_THERMOMETER   // as in Contacts
                         : nullptr;
 
   lv_obj_t* card = lv_obj_create(parent);
@@ -50336,13 +50344,17 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
                                            lv_coord_t vp_y, lv_coord_t* out_jump_y) {
   if (s_chat_virt.compact_chat) {
-    UITask::UIMessage m;
-    if (g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m)) {
-      ChatBubbleDisplay d{};
-      chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
-      if (!d.contact_count)
-        return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+    // A shared contact needs its card, so that message gets a bubble. Only the tuple
+    // test lives in this frame: the compact row builder below is deep enough already.
+    bool has_contact = false;
+    {
+      UITask::UIMessage m;
+      int a = 0, b = 0;
+      has_contact = g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m) &&
+                    chatContactTupleSpan(m.text, 0, &a, &b);
     }
+    if (!has_contact)
+      return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
   }
   return chatVirtCreateBubble(p, logical_i, ring_idx, vp_y, out_jump_y);
 }
@@ -88507,6 +88519,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_keyhelp),               []{ pagerKeyHelpClose(); },          PF_COUNT },   // the key help (hold Fn)
   { P_OPEN(s_ql_pill),               []{ pagerQuickLevelClose(); },       0 },          // Shift + knob level pill: passing, not counted
 #endif
+  { P_OPEN(s_chat_contact_tuple_popup), []{ closeChatContactTuplePopup(); }, PF_COUNT },   // a contact shared in chat: Add (#887)
   { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
   { P_OPEN(s_ra_edit_root),          []{ raCloseEditSheet(); },           PF_COUNT },   // repeater admin: edit sheet
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet

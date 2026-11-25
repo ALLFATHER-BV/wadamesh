@@ -2501,3 +2501,6 @@ No apps match "%s"	Keine Apps zu „%s“
 # Ebook 2.0 (#890)
 No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Keine Bücher. Lege .epub- oder .txt-Dateien in /meshcomod/apps/ebook.d/ auf der SD-Karte ab.
 This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Dieses Buch ist zu groß für den Speicher der App. Versuche eine .txt-Kopie oder teile es in Teile auf.
+
+# Contacts shared in chat (#887)
+This is your own node	Das ist dein eigener Knoten
