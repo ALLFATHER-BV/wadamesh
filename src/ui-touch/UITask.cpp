@@ -35162,6 +35162,7 @@ static bool webRemoteInputBlocked() {
 }
 #endif
 
+#if CAP_WEB_FIXED_CODE
 static void remoteRefreshAddr() {
   if (s_remote_ipval && WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != 0) {
     char u[64]; remoteAddrText(u, sizeof u);
@@ -35221,6 +35222,7 @@ static void remoteFixedToggleCb(lv_event_t* e) {
   remoteRefreshAddr();
   if (g_lv.task) g_lv.task->showAlert(TR("New random code each session"), 1600);
 }
+#endif  // CAP_WEB_FIXED_CODE
 
 static void openRemotePage() {
   closeRemotePage();
@@ -35463,6 +35465,7 @@ static void openRemotePage() {
   if (touchPrefsGetRemoteLandscape()) lv_obj_add_state(lsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(lsw, remoteLandscapeCb, LV_EVENT_VALUE_CHANGED, nullptr);
 
+#if CAP_WEB_FIXED_CODE
   // ---- 3. Access code (#837) ----
   const bool fixed_on = touchPrefsGetWebFixedCode() != 0;
   lv_obj_t* ah = lv_label_create(s_remote_root);
@@ -35529,6 +35532,7 @@ static void openRemotePage() {
   lv_obj_set_style_text_color(aexpl, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
   lv_label_set_long_mode(aexpl, LV_LABEL_LONG_WRAP);
   lv_obj_set_width(aexpl, cw);
+#endif  // CAP_WEB_FIXED_CODE
 }
 #endif  // !HAS_TANMATSU
 
@@ -80913,7 +80917,9 @@ void UITask::begin(DisplayDriver* display, SensorManager* sensors, NodePrefs* no
 #endif
 
   touchPrefsBegin();
+#if CAP_WEB_FIXED_CODE
   g_web_auth.setFixed(touchPrefsGetWebFixedCode());   // before any web feature arms a code (#837)
+#endif
   uint16_t to_s = touchPrefsGetScreenTimeoutSecs();
   _screen_timeout_ms = static_cast<uint32_t>(to_s) * 1000u;
 #if defined(HAS_TDECK_PRO)

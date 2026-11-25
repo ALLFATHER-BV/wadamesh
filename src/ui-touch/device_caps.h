@@ -501,6 +501,17 @@
   #endif
 #endif
 
+// A fixed browser code for Remote access (#837, Settings > Remote access > Access code).
+// A convenience over the random per-session code, about 3 KB, so not on the T-LoRa
+// Pager, whose app slot is the tightest: it keeps the random code.
+#ifndef CAP_WEB_FIXED_CODE
+  #if defined(TLORA_PAGER)
+    #define CAP_WEB_FIXED_CODE 0
+  #else
+    #define CAP_WEB_FIXED_CODE 1
+  #endif
+#endif
+
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
 // cannot show that, and refreshing it to try would wear the panel, so the T-Deck
 // Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.
