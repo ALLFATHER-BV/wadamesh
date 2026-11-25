@@ -17,9 +17,11 @@ static PowersBQ25896 s_charger;
 // The capacity the gauge is set to: the fitted pack (1500 mAh) unless the user
 // set another in Settings > Battery (NVS "pagerhw/cap_mah"). The gauge sits on
 // the battery, so the setting outlives reflashes and power-off; boot only writes
-// it when the gauge reads something else. Each target is tried once ("cap_try"),
-// so a gauge that refuses the write (sealed with a custom key) or reads back
-// something else is not put through config-update mode on every boot.
+// it when the gauge reads something else. The BQ27220 keeps that setting in RAM, so
+// a battery that is unplugged or run flat puts it back at 3000 mAh and boot writes it
+// again (no wear: nothing goes to flash). Only a write the gauge refuses or reads back
+// differently (sealed with a custom key) is remembered ("cap_try"), so such a gauge is
+// not put through config-update mode on every boot.
 static uint16_t pagerCapTarget(Preferences& p) {
   const uint16_t v = p.getUShort("cap_mah", PAGER_GAUGE_DESIGN_MAH);
   return (v >= 300 && v <= 20000) ? v : PAGER_GAUGE_DESIGN_MAH;
@@ -30,9 +32,11 @@ static void pagerConfigureGauge(GaugeBQ27220& gauge) {
   if (!p.begin("pagerhw", false)) return;
   const uint16_t want = pagerCapTarget(p);
   if (gauge.getDesignCapacity() != want && p.getUShort("cap_try", 0) != want) {
-    const bool ok = gauge.setNewCapacity(want, want);
-    Serial.printf("[BOOT] bq27220 capacity -> %u mAh %s\n", (unsigned)want, ok ? "ok" : "FAILED");
-    p.putUShort("cap_try", want);
+    gauge.setNewCapacity(want, want);
+    const bool ok = gauge.refresh() && gauge.getDesignCapacity() == want;
+    Serial.printf("[BOOT] bq27220 capacity -> %u mAh %s\n", (unsigned)want, ok ? "ok" : "NOT TAKEN");
+    if (ok) { if (p.isKey("cap_try")) p.remove("cap_try"); }
+    else    p.putUShort("cap_try", want);
   }
   p.end();
 }
@@ -358,8 +362,9 @@ bool TLoraPagerBoard::setBatteryCapacity(uint16_t mah) {
       ok = true;
     } else {
       gauge.setNewCapacity(mah, mah);           // design and full charge: the gauge relearns from there
-      p.putUShort("cap_try", mah);
       ok = gauge.refresh() && gauge.getDesignCapacity() == mah;
+      if (ok) { if (p.isKey("cap_try")) p.remove("cap_try"); }
+      else    p.putUShort("cap_try", mah);
     }
   }
   p.end();
