@@ -61,7 +61,10 @@ static const uint32_t DEFAULT_LOCK_COLOR       = 0xE6F2FFu;  // soft white
 static const uint32_t DEFAULT_ACCENT           = 0x15B6A6u;  // brand teal
 static const bool     DEFAULT_DC_SHOW          = true;
 static const uint8_t  DEFAULT_SIG_PROBE_EN     = 1;          // signal discover probe ON
-static const uint16_t DEFAULT_SIG_POLL_MIN     = 5;          // minutes between probes
+// 15, was 5: the reading is mostly the signal icon, passive RX from any direct neighbour keeps
+// it fresh in a live mesh, and a crowd of devices probing every 5 minutes adds up for the
+// repeaters that answer each one. New installs only: a saved value is never rewritten.
+static const uint16_t DEFAULT_SIG_POLL_MIN     = 15;         // minutes between probes
 #if defined(HAS_CROWPANEL_35)
 static const uint8_t  DEFAULT_UI_ROTATION      = 3;          // upright ILI9488 landscape
 #elif defined(HAS_CROWPANEL_50)
@@ -603,6 +606,11 @@ bool touchPrefsSetSigPollMins(uint16_t mins) {
   s_cfg.sig_poll_min = mins;
   return cfgFlush();
 }
+// "Only when moving (GPS)": with a GPS fix the automatic probe waits until we have moved,
+// see the scheduler in UITask::loop. Its own key, default ON, so no cfg blob change.
+static void prefsPutUChar(const char* key, uint8_t v);   // defined below
+bool touchPrefsGetSigProbeMoving() { if (!s_begun) touchPrefsBegin(); return s_prefs.getUChar("sig_mv", 1) != 0; }
+void touchPrefsSetSigProbeMoving(bool on) { if (!s_begun) touchPrefsBegin(); prefsPutUChar("sig_mv", on ? 1 : 0); }
 
 uint8_t touchPrefsGetBrightness() {
   if (!s_begun) touchPrefsBegin();
@@ -3134,7 +3142,7 @@ static int backupKeys(BkKey* out, int cap) {
     "low_batt", "face_down", "pick_wake",                // low-battery warning and IMU motion quiet/wake modes
 #endif
     "chat_icons", "col_more", "col_style", "col_rb", "bg_kind", "gps_save", "gps_every",
-    "glass", "bg_dim", "lock_dim",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
+    "glass", "bg_dim", "lock_dim", "sig_mv",   // NOT "ant_ext": a restore must never point a unit at an empty antenna socket
   };
   for (const char* k : k_u8) add(k, 'c');
   add("map_cap", 's');

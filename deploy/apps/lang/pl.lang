@@ -1689,7 +1689,9 @@ SF is the spreading factor, CR the coding rate, AF the airtime factor. A field a
 Save in the foreground after	Zapisz na pierwszym planie po
 Saved to the SD card when one is in, otherwise to internal storage.	Zapisywany na karcie SD, gdy jest ona dostępna, w przeciwnym razie w pamięci wewnętrznej.
 Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Przewijanie przesuwa ekran, Kursor wskazuje i klika, Nawigacja (eksperymentalnie) przesuwa zaznaczenie. Przytrzymaj trackball, aby przełączać pomiędzy przewijaniem i kursorem.
-Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.	Wysyła ogłoszenie o zerowym przeskoku, gdy przez jakiś czas nie słychać żadnego sąsiada, dzięki czemu odczyt sygnału pozostaje świeży. Tylko sąsiedzi; nic się nie powtarza.
+While the screen is on, asks nearby repeaters for a signal reading when none has been heard for a while. Neighbours only; nothing is repeated.	Przy włączonym ekranie prosi pobliskie przemienniki o odczyt sygnału, gdy żaden nie był słyszany od pewnego czasu. Tylko sąsiedzi; nic nie jest powtarzane.
+Only when moving (GPS)	Tylko w ruchu (GPS)
+With a GPS fix, asks again only after you move about 250 m, or once an hour.	Z pozycją GPS pyta ponownie dopiero po przemieszczeniu o około 250 m albo raz na godzinę.
 Sends an extra copy of each ACK, so the sender is likelier to hear one.	Wysyła dodatkową kopię każdego potwierdzenia, więc nadawca ma większe szanse, że je usłyszy.
 Serial speed	Prędkość szeregowa
 Set the time	Ustaw godzinę

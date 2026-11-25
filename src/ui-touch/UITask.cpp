@@ -3752,8 +3752,13 @@ static uint32_t  s_live_diag_reads = 0;
 static uint32_t  s_live_diag_pressed = 0;
 static uint32_t  s_live_diag_tap_edges = 0;
 static unsigned long s_live_diag_next_ms = 0;
-// File-scope so tsNextWakeForcingDueMs can read it; initialised at first loop tick (~4 s).
+// The automatic signal probe (scheduler in UITask::loop, "ui:probe"). s_sig_probe_at is the
+// next check, file-scope so tsNextWakeForcingDueMs can read it; 0 while the screen is dark,
+// so the probe never wakes the device from idle sleep. First check ~4 s after boot.
 static unsigned long s_sig_probe_at = 4000;
+static uint32_t s_sig_probe_last_ms = 0;              // millis() of the last probe, auto or manual (0: none)
+static double   s_sig_probe_lat = 0, s_sig_probe_lon = 0;   // where it was sent, with a GPS fix
+static bool     s_sig_probe_pos_ok = false;           // the two above are valid
 /** Keep live diag overlay available but hidden by default; flip true for field debugging. */
 constexpr bool k_show_live_diag_overlay = false;
 
@@ -17515,6 +17520,13 @@ static void radioSigProbeToggleCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
   touchPrefsSetSigProbeEnabled(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
 }
+#if CAP_GPS
+// "Only when moving (GPS)": shared by the Radio settings card and the Signal popup.
+static void sigProbeMovingToggleCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  touchPrefsSetSigProbeMoving(lv_obj_has_state(lv_event_get_target(e), LV_STATE_CHECKED));
+}
+#endif
 // Opt-in (#64): scope direct/login/admin floods to the node's region. Persists + applies
 // live. OFF by default (unscoped) so cross-region login/DMs keep working.
 static void radioScopeDirectToggleCb(lv_event_t* e) {
@@ -17932,8 +17944,13 @@ static void buildRadioSettings() {
   {
     lv_obj_t* c = setCard("Signal probe");
     setSwitchRow(c, "Auto-discover",
-                 "Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.",
+                 "While the screen is on, asks nearby repeaters for a signal reading when none has been heard for a while. Neighbours only; nothing is repeated.",
                  touchPrefsGetSigProbeEnabled(), radioSigProbeToggleCb);
+#if CAP_GPS
+    setSwitchRow(c, "Only when moving (GPS)",
+                 "With a GPS fix, asks again only after you move about 250 m, or once an hour.",
+                 touchPrefsGetSigProbeMoving(), sigProbeMovingToggleCb);
+#endif
     s_radio_sig_poll_ta = setNumFieldRow(c, "Poll every", "Minutes, 1 to 1440.", 4);
     lv_obj_add_event_cb(s_radio_sig_poll_ta, radioSigPollSaveCb, LV_EVENT_DEFOCUSED, nullptr);   // saves on blur
     char pb[8];
@@ -31373,7 +31390,7 @@ static void openSignalInfoPopup() {
   lv_obj_add_event_cb(s_siginfo_root, sigInfoDismissCb, LV_EVENT_CLICKED, nullptr);
 
   const int card_w = sw - 16;   // near full-width, like the Send-advert modal
-  int card_h = 340;             // signal + auto-discover + probe + traffic
+  int card_h = 340 + (CAP_GPS ? 32 : 0);   // signal + auto-discover (+ moving) + probe + traffic
   const int avail = sh - STATUSBAR_H - 8;
   if (card_h > avail) card_h = avail;
   lv_obj_t* card = lv_obj_create(s_siginfo_root);
@@ -31519,6 +31536,22 @@ static void openSignalInfoPopup() {
   if (touchPrefsGetSigProbeEnabled()) lv_obj_add_state(dsw, LV_STATE_CHECKED);
   lv_obj_add_event_cb(dsw, sigProbeToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
   cy += 32;
+#if CAP_GPS
+  // ---- Only when moving: with a GPS fix, probe after ~250 m (or hourly) ----
+  lv_obj_t* mlbl = lv_label_create(card);
+  lv_label_set_long_mode(mlbl, LV_LABEL_LONG_DOT);   // long translations must not run under the switch
+  lv_obj_set_width(mlbl, card_w - 20 - 52);
+  lv_label_set_text(mlbl, TR("Only when moving (GPS)"));
+  lv_obj_set_style_text_color(mlbl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_style_text_font(mlbl, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_pos(mlbl, 0, cy + 4);
+  lv_obj_t* msw = lv_switch_create(card);
+  lv_obj_set_size(msw, 44, 24);
+  lv_obj_set_pos(msw, card_w - 20 - 44, cy);
+  if (touchPrefsGetSigProbeMoving()) lv_obj_add_state(msw, LV_STATE_CHECKED);
+  lv_obj_add_event_cb(msw, sigProbeMovingToggleCb, LV_EVENT_VALUE_CHANGED, nullptr);
+  cy += 32;
+#endif
 
   // ---- Poll interval (minutes; clamped 1..1440 on Set) ----
   lv_obj_t* plbl = lv_label_create(card);
@@ -63630,7 +63663,9 @@ static bool tsMeshIdle()   { return !the_mesh.hasPendingWork() && !the_mesh.isRa
 // Bound the timed idle park by the earliest UI probe or companion retry.
 static uint32_t tsNextWakeForcingDueMs(uint32_t now_ms) {
   uint32_t next_delay = UINT32_MAX;
-  if (s_sig_probe_at != 0) {
+  // The probe deadline is 0 whenever the screen is dark (see "ui:probe"); the screen check
+  // here also covers the frames before the loop has cleared it.
+  if (s_sig_probe_at != 0 && !(g_lv.task && g_lv.task->isScreenOff())) {
     next_delay = (uint32_t)(s_sig_probe_at > now_ms ? (s_sig_probe_at - now_ms) : 0);
   }
 
@@ -84290,6 +84325,11 @@ bool UITask::sendAdvertZeroHop() { return the_mesh.sendAdvert(false); }
 // with a known path is available, fall back to a zero-hop advert (announce ourselves;
 // passive RX still updates the signal from any directly-heard neighbour).
 bool UITask::sendSignalProbe() {
+  // Stamp time and place for the automatic scheduler ("ui:probe"), manual probes too.
+  s_sig_probe_last_ms = millis();
+  if (!s_sig_probe_last_ms) s_sig_probe_last_ms = 1;
+  s_sig_probe_pos_ok = getGPSState() && getGpsFix() && (getNodeLat() != 0.0 || getNodeLon() != 0.0);
+  if (s_sig_probe_pos_ok) { s_sig_probe_lat = getNodeLat(); s_sig_probe_lon = getNodeLon(); }
   if (the_mesh.uiSendSignalProbe() != 0) return true;
   return the_mesh.sendAdvert(false);
 }
@@ -87570,25 +87610,44 @@ void UITask::loop() {
   uiCp("ui:diag");
   refreshLiveDiag(now);
   uiCp("ui:probe");
-  // Keep the signal fresh with a "discover" probe: send a ZERO-HOP advert whenever
-  // we have no recent DIRECT signal. Zero-hop = neighbours only, never re-broadcast,
-  // so the probe injects NO repeated traffic into the mesh — it just announces us to
-  // whoever is in direct range. The reading itself comes passively from directly-heard
-  // (0-hop) neighbours (logRxRaw gates the signal to hops==0), so in a fully silent
-  // mesh the icon stays dark until a neighbour transmits — the honest answer (no direct
-  // neighbour = no direct signal). Off / poll-interval live in the "Signal & traffic" popup.
+  // Keep the signal fresh with a "discover" probe: a ZERO-HOP node-discover request that each
+  // neighbouring repeater answers directly (sendSignalProbe). Zero-hop = neighbours only, never
+  // re-broadcast. The reading also comes passively from any directly-heard (0-hop) neighbour
+  // (logRxRaw gates the signal to hops==0), so a live mesh needs no probe at all. Off /
+  // interval / "only when moving" live in the "Signal & traffic" popup and Radio & Mesh.
+  //
+  // It is mostly the signal icon, and every probe costs the answering repeaters airtime (in a
+  // crowd of devices, or under a 10% duty-cycle limit, that adds up), so it is frugal:
+  //  - only while the screen is on and unlocked; dark, nothing is scheduled, so it never
+  //    wakes the device either. After a wake it waits a few seconds, so a glance at the
+  //    clock does not transmit;
+  //  - never sooner than the interval after the last probe (manual ones included), and not
+  //    while a direct neighbour was heard within it;
+  //  - with a GPS fix ("Only when moving", default on): only after moving 250 m from where the
+  //    last one went out, or hourly as a keep-alive. Without a fix: by time, as before;
+  //  - never when the duty-cycle budget is low.
+  // One check a minute; a skipped check costs nothing on air.
   {
-    // s_sig_probe_at is file-scope (promoted for tsNextWakeForcingDueMs); no re-init here.
-    (void)0;  // placeholder — variable declared at file scope above
-    if ((long)(now - s_sig_probe_at) >= 0) {
-      if (touchPrefsGetSigProbeEnabled()) {
+    if (_screen_off || _manual_lock) {
+      s_sig_probe_at = 0;
+    } else {
+      if (s_sig_probe_at == 0) { s_sig_probe_at = now + 10000UL; if (!s_sig_probe_at) s_sig_probe_at = 1; }
+      if ((long)(now - s_sig_probe_at) >= 0) {
+        s_sig_probe_at = now + 60000UL;
+        if (!s_sig_probe_at) s_sig_probe_at = 1;
+        bool due = touchPrefsGetSigProbeEnabled();
         const uint32_t poll_ms = (uint32_t)touchPrefsGetSigPollMins() * 60000UL;  // minutes -> ms
-        s_sig_probe_at = now + poll_ms;
+        const uint32_t n32 = (uint32_t)now;
+        if (due && s_sig_probe_last_ms && n32 - s_sig_probe_last_ms < poll_ms) due = false;
         const uint32_t sms = the_mesh.uiSignalMs();
-        // Skip the announce when a direct neighbour was heard within the poll window.
-        if (sms == 0 || (now - sms) >= poll_ms - 5000UL) sendSignalProbe();
-      } else {
-        s_sig_probe_at = now + 60000;   // probe off: just re-check the toggle each minute
+        if (due && sms != 0 && n32 - sms < poll_ms - 5000UL) due = false;   // a neighbour was heard
+        if (due && s_sig_probe_pos_ok && touchPrefsGetSigProbeMoving() && getGPSState() && getGpsFix()) {
+          const uint32_t keep_ms = poll_ms > 3600000UL ? poll_ms : 3600000UL;
+          const double moved_m = contactDistanceKm(s_sig_probe_lat, s_sig_probe_lon, getNodeLat(), getNodeLon()) * 1000.0;
+          if (moved_m < 250.0 && n32 - s_sig_probe_last_ms < keep_ms) due = false;   // not moved
+        }
+        if (due && the_mesh.getRemainingTxBudget() < 300) due = false;   // airtime gate: keep a duty-cycle cushion
+        if (due) sendSignalProbe();
       }
     }
   }

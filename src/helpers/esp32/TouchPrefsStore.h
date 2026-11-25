@@ -895,15 +895,18 @@ bool     touchPrefsGpsBaudChosen();
  *  start opens the UART at the right speed. Written only when it changes. */
 void     touchPrefsSetGpsBaudFound(uint32_t baud);
 
-/** Mesh signal auto-discover probe. When ON (default), the firmware periodically
- *  sends a flood advert so nearby repeaters re-broadcast it and we can measure
- *  the echo's SNR — what drives the top-bar signal bars and the home-graph
- *  readout. The poll interval is in whole minutes, clamped 1..1440 (1 min =
- *  60 s minimum, no higher than a day). Both are exposed in the home-graph
- *  "Signal & traffic" popup (tap the graph). */
+/** Mesh signal auto-discover probe. When ON (default), the firmware sends a ZERO-HOP
+ *  node-discover request (never repeated) while the screen is on and no direct neighbour
+ *  has been heard for the poll interval; each neighbouring repeater answers and the reply
+ *  drives the top-bar signal bars and the home-graph readout. The poll interval is in
+ *  whole minutes, clamped 1..1440. "Moving" (default ON): with a GPS fix, probe only after
+ *  moving ~250 m, or hourly as a keep-alive. Exposed in the home-graph "Signal & traffic"
+ *  popup (tap the graph) and Radio & Mesh > Signal probe. */
 bool     touchPrefsGetSigProbeEnabled();
 bool     touchPrefsSetSigProbeEnabled(bool on);
 uint16_t touchPrefsGetSigPollMins();
+bool     touchPrefsGetSigProbeMoving();
+void     touchPrefsSetSigProbeMoving(bool on);
 
 /* Boards with a switchable LoRa antenna (CAP_ANTENNA_SELECT, the T-Display P4): "Always use the
  * external antenna". OFF by default, and then every boot comes up on the on-board antenna and the

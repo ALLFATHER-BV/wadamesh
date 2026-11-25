@@ -1668,7 +1668,9 @@ SF is the spreading factor, CR the coding rate, AF the airtime factor. A field a
 Save in the foreground after	Save in the foreground after
 Saved to the SD card when one is in, otherwise to internal storage.	Saved to the SD card when one is in, otherwise to internal storage.
 Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.	Scroll moves the screen, Cursor points and clicks, Navigate (experimental) moves a selection. Hold the trackball to switch between Scroll and Cursor.
-Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.	Sends a zero-hop advert when no neighbour has been heard for a while, so the signal reading stays fresh. Neighbours only; nothing is repeated.
+While the screen is on, asks nearby repeaters for a signal reading when none has been heard for a while. Neighbours only; nothing is repeated.	Fragt bei eingeschaltetem Bildschirm nahe Repeater nach einem Signalwert, wenn eine Weile keiner gehört wurde. Nur Nachbarn; nichts wird weitergeleitet.
+Only when moving (GPS)	Nur bei Bewegung (GPS)
+With a GPS fix, asks again only after you move about 250 m, or once an hour.	Mit GPS-Fix wird erst wieder gefragt, wenn du dich etwa 250 m bewegt hast, oder einmal pro Stunde.
 Sends an extra copy of each ACK, so the sender is likelier to hear one.	Sends an extra copy of each ACK, so the sender is likelier to hear one.
 Serial speed	Serial speed
 Set the time	Set the time
