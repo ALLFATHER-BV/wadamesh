@@ -183,18 +183,14 @@ local function position()
   return string.format("%.4f,%.4f", f.lat, f.lon)
 end
 
--- MECP/<sev>/<codes> <n>pax P05 <lat>,<lon> <note>. P05 ("At GPS coordinates")
--- always sits right before the coordinates, so a picked P05 is not repeated.
+-- MECP/<sev>/<codes> <n>pax <lat>,<lon> <note>
 local function encode()
+  local pos = st.gps and position()
   local parts = {}
-  for _, c in ipairs(st.codes) do
-    if not (c == "P05" and st.gps) then parts[#parts + 1] = c end
-  end
+  for _, c in ipairs(st.codes) do parts[#parts + 1] = c end
+  if pos and not has_code("P05") then parts[#parts + 1] = "P05" end
   if st.pax > 0 then parts[#parts + 1] = st.pax .. "pax" end
-  if st.gps then
-    local pos = position()
-    if pos then parts[#parts + 1] = "P05 " .. pos end
-  end
+  if pos then parts[#parts + 1] = pos end
   if st.note ~= "" then parts[#parts + 1] = st.note end
   return "MECP/" .. st.sev .. "/" .. table.concat(parts, " ")
 end
