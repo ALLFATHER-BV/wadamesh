@@ -39108,7 +39108,12 @@ bool luaNetSpawnTls() {
 }
 #endif
 
-static void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
+// noinline, like emojiPackDownloadWorker, luaStoreLangDownloadWorker and sdFwWorkerRun:
+// these run once in a while on the tile_fetch worker. Inlined, their locals became
+// part of tileFetchTaskFn's own frame and sat on its 8 KB stack under every other
+// job; with the installed-app SD scan on top, an M9 opening the Store overflowed it
+// (benanderson, beta_107).
+static __attribute__((noinline)) void luaStoreFetchCatalogWorker(WiFiClient& client, HTTPClient& http) {
   if (!s_luacat_buf)
     s_luacat_buf = (char*)heap_caps_malloc(kLuaCatBufMax, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (!s_luacat_buf) { return; }
@@ -39185,7 +39190,7 @@ static unsigned emojiPackFileLocations() {
 // size, and move it in place (EmojiPackDownload.h). The live pack is never touched:
 // loading the new one here would free tables that drawn emoji still point into.
 // Plain http through the worker's own client: no TLS handshake, no extra task.
-static bool emojiPackDownloadWorker(WiFiClient& client, HTTPClient& http) {
+static __attribute__((noinline)) bool emojiPackDownloadWorker(WiFiClient& client, HTTPClient& http) {
   using namespace EmojiPackDownload;
   if (WiFi.status() != WL_CONNECTED || SD.cardType() == CARD_NONE) return false;
   if (emojiPackLoading()) return false;   // the boot load still reads the current pack
@@ -39410,7 +39415,7 @@ static int langStreamToFile(WiFiClient& client, HTTPClient& http, const char* ur
   return (int)total;
 }
 
-static bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
+static __attribute__((noinline)) bool luaStoreLangDownloadWorker(WiFiClient& client, HTTPClient& http,
                                        const char* code, const char* ver) {
   fs::FS* fs = luaHostAppFs();
   if (!fs) return false;
@@ -39925,7 +39930,7 @@ static void otaWorkerRun(WiFiClient& client, HTTPClient& http) {
 // still COMPILES (the worker's only caller sits behind the same gate, so nothing
 // link-errors) and then hangs at "Saving to SD… 0%" with a poll timer writing to
 // a label the teardown never nulled. Change all seven or none.
-static void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
+static __attribute__((noinline)) void sdFwWorkerRun(WiFiClient& client, HTTPClient& http) {
   s_sdfw_pct = 0;
   if (SD.cardType() == CARD_NONE) { snprintf(s_sdfw_msg, sizeof s_sdfw_msg, "no SD card"); s_sdfw_state = 3; return; }
   if (!SD.exists("/BINS") && !SD.mkdir("/BINS")) {
@@ -62015,7 +62020,10 @@ static void luaStoreScanInstalledFs(bool force) {
   // card does not grow ghost apps.
   File dir = fs->open(appsdir);
   if (!dir || !dir.isDirectory()) return;
-  char bare[kLuaInstMax][sizeof(LuaInstApp::id)];
+  // Bare .lua names on the heap, not the stack: this runs on the tile_fetch worker
+  // under the SD/exFAT open path, which overflowed it on an M9 in beta_107.
+  typedef char BareName[sizeof(LuaInstApp::id)];
+  BareName* bare = (BareName*)heap_caps_malloc(sizeof(BareName) * kLuaInstMax, MALLOC_CAP_8BIT);
   int nbare = 0;
   for (;;) {
     bool is_dir = false;
@@ -62045,7 +62053,7 @@ static void luaStoreScanInstalledFs(bool force) {
         }
       }
       e.close();
-    } else if (ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0 && nbare < kMax) {
+    } else if (bare && ln > 4 && strcmp(leaf + ln - 4, ".lua") == 0 && nbare < kMax) {
       size_t o = 0;
       for (size_t k = 0; k + 4 < ln && o + 1 < sizeof bare[0]; k++) bare[nbare][o++] = leaf[k];
       bare[nbare][o] = 0;
@@ -62062,6 +62070,7 @@ static void luaStoreScanInstalledFs(bool force) {
     a.icon[0] = 0;
     s_lua_inst_n++;
   }
+  free(bare);
   ++s_lua_inst_gen;
 }
 
