@@ -7,6 +7,7 @@
 # (OFL 1.1), scaled to the 16 px cell and thresholded to black or nothing.
 #
 #   python3 scripts/build/gen-emoji-mono.py [--weight 500] [--threshold 110]
+#   python3 scripts/build/gen-emoji-mono.py --check   # in step with emoji_data.c? (no Pillow needed)
 #
 # The glyph set, the sorted lookup table and the sequence table are copied from
 # emoji_data.c, so the two files can never disagree about which emoji exist. The
@@ -17,26 +18,64 @@
 # error-diffused from the colour art already baked into emoji_data.c.
 #
 # Needs Pillow. Output is deterministic for a given font file, weight and threshold.
-import argparse, os, re
-from emoji_common import PX, ROOT
-from emoji_mono import (DEFAULT_THRESHOLD, DEFAULT_WEIGHT, dithered, font_glyph,
-                        load_font, to_bytes)
+import argparse, os, re, sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 OUTDIR = os.path.join(ROOT, "src", "ui-touch")
 SRC_C = os.path.join(OUTDIR, "emoji_data.c")
 OUT_C = os.path.join(OUTDIR, "emoji_data_mono.c")
 
 
+GLYPH_RE = r"static const uint8_t e_([0-9a-f]+)\[\] = \{([^}]*)\};"
+
+
+def drift():
+    """Why emoji_data_mono.c is out of step with emoji_data.c, or None. The mono file
+    copies the colour file's glyph set and lookup tables, so after add-emoji.py it
+    must be regenerated or the e-paper boards miss the new emoji."""
+    src, mono = open(SRC_C).read(), open(OUT_C).read()
+    key = "\ntypedef struct { uint32_t cp;"
+    if key not in src or key not in mono:
+        return "lookup table not found"
+    tail = src[src.index(key):].rstrip("\n")
+    mtail = mono[mono.index(key):]
+    mtail = mtail[:mtail.rindex("#endif")].rstrip("\n")
+    if tail != mtail:
+        return "lookup tables differ"
+    a = set(re.findall(r"static const uint8_t e_([0-9a-f]+)\[\]", src))
+    b = set(re.findall(r"static const uint8_t e_([0-9a-f]+)\[\]", mono))
+    if a != b:
+        return "glyph sets differ ({} only in colour, {} only in mono)".format(len(a - b), len(b - a))
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--weight", type=int, default=DEFAULT_WEIGHT, help="Noto Emoji wght axis, 300-700")
-    ap.add_argument("--threshold", type=int, default=DEFAULT_THRESHOLD, help="ink cut-off, 1-254")
+    ap.add_argument("--weight", type=int, help="Noto Emoji wght axis, 300-700 (default 500)")
+    ap.add_argument("--threshold", type=int, help="ink cut-off, 1-254 (default 110)")
+    ap.add_argument("--check", action="store_true", help="only check that the mono file is in step")
     args = ap.parse_args()
+    if args.check:
+        why = drift()
+        if why:
+            sys.exit("emoji_data_mono.c is out of step with emoji_data.c ({}): run "
+                     "python3 scripts/build/gen-emoji-mono.py (needs Pillow and fontTools)".format(why))
+        print("emoji_data_mono.c in step with emoji_data.c")
+        return
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from emoji_common import PX  # noqa: F401  (Pillow from here on)
+    from emoji_mono import (DEFAULT_THRESHOLD, DEFAULT_WEIGHT, dithered, font_glyph,
+                            load_font, to_bytes)
+    if args.weight is None:
+        args.weight = DEFAULT_WEIGHT
+    if args.threshold is None:
+        args.threshold = DEFAULT_THRESHOLD
 
     src = open(SRC_C).read()
     cut = src.index("\ntypedef struct { uint32_t cp;")
     colour = {int(cp, 16): bytes(int(b) for b in body.split(","))
-              for cp, body in re.findall(r"static const uint8_t e_([0-9a-f]+)\[\] = \{([^}]*)\};", src)}
+              for cp, body in re.findall(GLYPH_RE, src)}
     tail = src[cut:]
 
     font, have = load_font(args.weight)
