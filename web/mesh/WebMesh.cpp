@@ -3,6 +3,11 @@
 // src/MyMesh.h one for one (same return values, same UI callbacks in the same order),
 // so the UI cannot tell this mirror from a device's. Network work goes to the backend.
 #include "WebMesh.h"
+#if defined(WADA_ZERO)
+// web/zero/zero_ctl.cpp: wadamesh-cli's `tail` and the on-message hook.
+void zeroOnIncoming(int kind, const char* from, int channel_idx, const char* where, const char* text,
+                    uint8_t hops, int8_t snr_q4, int8_t rssi);
+#endif
 #include <SPIFFS.h>
 #include <Utils.h>
 #include <helpers/TxtDataHelpers.h>
@@ -912,6 +917,9 @@ void MyMesh::beDirectMessage(const uint8_t pub_key[32], uint32_t sender_ts, cons
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(flood ? path_len : 0xFF, flood, from->id.pub_key, from->name, text,
                              ++_msgcount, snr_q4, rssi);
+#if defined(WADA_ZERO)
+  zeroOnIncoming(0, from->name, -1, nullptr, text, flood ? path_len : 0, snr_q4, rssi);
+#endif
 }
 void MyMesh::beChannelMessage(int channel_idx, uint32_t sender_ts, const char* text,
                               uint8_t path_len, int8_t snr_q4, int8_t rssi) {
@@ -927,6 +935,9 @@ void MyMesh::beChannelMessage(int channel_idx, uint32_t sender_ts, const char* t
   _ui->notify(UIEventType::channelMessage);
   _last_sender_ts = sender_ts;
   _ui->newMsgFromPubWithMeta(path_len, true, nullptr, channel_name, text, ++_msgcount, snr_q4, rssi);
+#if defined(WADA_ZERO)
+  zeroOnIncoming(1, nullptr, channel_idx, channel_name, text, path_len, snr_q4, rssi);
+#endif
 }
 void MyMesh::beRoomMessage(const uint8_t room_pub_key[32], const char* author, uint32_t sender_ts,
                            const char* text, uint8_t path_len, int8_t snr_q4, int8_t rssi) {
@@ -939,6 +950,9 @@ void MyMesh::beRoomMessage(const uint8_t room_pub_key[32], const char* author, u
   _last_sender_ts = sender_ts;
   _ui->newRoomMsgFromPubWithMeta(path_len, true, room->id.pub_key, room->name, author, text,
                                  ++_msgcount, snr_q4, rssi);
+#if defined(WADA_ZERO)
+  zeroOnIncoming(2, author, -1, room->name, text, path_len, snr_q4, rssi);
+#endif
 }
 void MyMesh::beAck(uint32_t expected_ack) { if (_ui) _ui->onMessageAcked(expected_ack); }
 // src/MyMesh.h uiCountEcho: count one echo, remember which repeater re-flooded it.

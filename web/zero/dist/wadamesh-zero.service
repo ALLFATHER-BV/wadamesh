@@ -1,0 +1,20 @@
+[Unit]
+Description=WADAMESH on the Cardputer Zero's own screen and keyboard
+After=raspberrypimc-companion.service
+Wants=raspberrypimc-companion.service
+
+[Service]
+User=pi
+Environment=WADA_DATA_DIR=/var/lib/wadamesh-zero
+# fb0, the keyboard, the backlight and the console mode without running as root
+AmbientCapabilities=CAP_DAC_OVERRIDE CAP_SYS_TTY_CONFIG
+# the stock launcher draws on the same LCD: pause it while WADAMESH runs
+ExecStartPre=-/usr/bin/pkill -STOP -f M5CardputerZero
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/local/bin/wadamesh-zero --tcp 127.0.0.1:5000
+ExecStopPost=-/usr/bin/pkill -CONT -f M5CardputerZero
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -33,6 +33,7 @@ per-board status.
 - Attaky Mesh Series: env `attaky_mesh_series_companion_radio_touch` (beta)
 - Elecrow CrowPanel Advance 3.5: env `crowpanel_35_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the expansion slot)
 - Elecrow CrowPanel Advance 5.0: env `crowpanel_50_companion_radio_touch` (beta, hardware validation pending; requires an SX1262 in the wireless slot and the DIP switch set to it)
+- M5Stack Cardputer Zero (Linux, Raspberry Pi CM0) + Cap LoRa-1262: built from `web/` with `-DWADA_ZERO=ON` (`web/zero/build.sh`), a native Linux app on the 1.9" LCD and keyboard that drives a MeshCore companion on the same Pi (community port, experimental); **[Cardputer Zero guide](CARDPUTER_ZERO.md)**
 
 ## Architecture
 

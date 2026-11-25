@@ -196,13 +196,31 @@ endif()
 # UI branches (TLORA_PAGER) — so its screens can be reviewed and scripted off-device.
 # The Pager's hardware calls land on stubs (sim_pager/SimPager.cpp).
 option(WADA_SIM_PAGER "build the host app as a T-LoRa Pager simulator" OFF)
+# Cardputer Zero (-DWADA_ZERO=ON): the Pager layout on a Linux framebuffer + evdev keys,
+# no SDL (zero/zero_main.cpp replaces host_main.cpp). Implies WADA_SIM_PAGER.
+option(WADA_ZERO "build wadamesh-zero for the M5Stack Cardputer Zero (fbdev + evdev)" OFF)
+if(WADA_ZERO)
+  set(WADA_SIM_PAGER ON)
+  list(APPEND WADA_APP_DEFS WADA_ZERO=1)
+  list(FILTER WEB_SRCS EXCLUDE REGEX "/platform/host_main\\.cpp$")
+  list(APPEND WEB_SRCS ${WEB}/zero/zero_main.cpp ${WEB}/zero/zero_battery.cpp ${WEB}/zero/zero_gps.cpp ${WEB}/zero/zero_audio.cpp ${WEB}/zero/zero_term.cpp ${WEB}/zero/zero_sys.cpp ${WEB}/zero/zero_ctl.cpp ${SRC}/helpers/CityLocator.cpp)
+endif()
 if(WADA_SIM_PAGER)
   list(APPEND WADA_APP_DEFS WADA_SIM_PAGER=1 TLORA_PAGER=1 HAS_PAGER_KEYBOARD=1 HAS_PAGER_ENCODER=1)
   list(REMOVE_ITEM WADA_APP_DEFS HAS_CARDKB=1)   # keys arrive through the Pager keyboard's queue
 endif()
 
-if(EMSCRIPTEN)
-  set(SDL2_LIBS "")   # the page is the window: no SDL in the browser build
+# wadamesh-desktop for the Cardputer Zero's HDMI (-DWADA_DESKTOP_DLSDL=ON): the normal SDL2
+# host app, with SDL2 loaded at run time (desktop/sdl2_dlshim.c) so it cross-compiles
+# with only the SDL2 headers.
+option(WADA_DESKTOP_DLSDL "load SDL2 with dlopen at run time (cross builds)" OFF)
+if(EMSCRIPTEN OR WADA_ZERO)
+  set(SDL2_LIBS "")   # the page / the framebuffer is the window: no SDL
+elseif(WADA_DESKTOP_DLSDL)
+  set(SDL2_LIBS dl)
+  include_directories(${WADA_SDL2_INCLUDE})
+  list(APPEND WADA_APP_DEFS WADA_ZERO_DESKTOP=1)
+  list(APPEND WEB_SRCS ${WEB}/desktop/sdl2_dlshim.c)
 else()
   find_package(SDL2 REQUIRED)
   set(SDL2_LIBS SDL2::SDL2)
@@ -221,6 +239,9 @@ target_link_libraries(wadamesh-host PRIVATE wada_core wada_lvgl wada_lua wada_th
 if(WADA_SIM_PAGER)
   # The stubs come first so <driver/i2s.h>, "Es8311Codec.h", ... resolve to them.
   target_include_directories(wadamesh-host BEFORE PRIVATE ${WEB}/sim_pager)
+  if(WADA_ZERO)
+    target_include_directories(wadamesh-host PRIVATE ${WEB}/zero)
+  endif()
   target_sources(wadamesh-host PRIVATE ${WEB}/sim_pager/SimPager.cpp ${SRC}/helpers/HardwareRtcClock.cpp ${SRC}/helpers/esp32/WebFileTransfer.cpp)
 endif()
 # The UI is warning-clean under the firmware's GCC flags, not under clang -Wall; keep
