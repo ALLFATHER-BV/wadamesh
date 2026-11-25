@@ -49,7 +49,6 @@ public:
   static const int MAX_SENDER_NAME = 31;
   static const int MAX_MSG_TEXT = 160;   // full LoRa text length (was 96 -> cut long msgs ~3 lines)
   static const int MAX_UI_PATH = 32;  // inbound-route bytes/message for the Info popup (covers deep + multi-byte-hash routes)
-  static const int REPLY_QUOTE_MAX_BACK = 10;  // only quote a message if the original is within this many newer messages
 
   // Outgoing-DM delivery state. None for incoming + channel messages.
   enum : uint8_t {
@@ -377,6 +376,11 @@ public:
   bool getThreadInfo(int idx, bool& channel, uint16_t& unread, uint32_t& ts, char* name, size_t name_len) const;
   int  getActiveThreadMessageCount(int out_indexes[], int max_out, bool newest_first) const;
   bool getMessageByIndex(int msg_idx, UIMessage& out) const;
+  // The slot itself, no copy (UI thread only; nullptr when out of range). For scans
+  // that read a field or two of many messages, where a 300-byte copy each adds up.
+  const UIMessage* messageAt(int msg_idx) const {
+    return (_ui_msgs && msg_idx >= 0 && msg_idx < _ui_msg_cap) ? &_ui_msgs[msg_idx] : nullptr;
+  }
   int  getThreadMessageIndexes(int thread_idx, int out_indexes[], int max_out, bool newest_first) const;   // read any thread's message ring slots (no active-thread side effect)
   bool deleteMessageBySlot(int msg_idx);          // tombstone one ring slot (long-press Delete)
   int  clearThreadHistory(int thread_idx);        // tombstone every message of a thread; returns count

@@ -959,3 +959,13 @@
 #ifndef CAP_BACKUP_DATE_LABELS
   #define CAP_BACKUP_DATE_LABELS 1
 #endif
+
+// A one-line quote above a channel or room message that answers someone with a
+// leading "@[Name] " (#641). Not the T-LoRa Pager: its app slot is full.
+#ifndef CAP_REPLY_QUOTE
+  #if defined(TLORA_PAGER)
+    #define CAP_REPLY_QUOTE 0
+  #else
+    #define CAP_REPLY_QUOTE 1
+  #endif
+#endif

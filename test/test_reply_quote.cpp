@@ -1,107 +1,88 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-
-#define LVGL_H  // prevent ReplyQuote.h from including the real lvgl.h
+// Host test for ReplyQuote.h (#641).
+// Build: g++ -std=c++17 -I src -o /tmp/test_reply_quote test/test_reply_quote.cpp
 
 #include <assert.h>
-#include <string.h>
 #include <stdio.h>
-#include <stdint.h>
-
-// Minimal LVGL shim for host testing
-typedef int16_t lv_coord_t;
-typedef struct { lv_coord_t x; lv_coord_t y; } lv_point_t;
-typedef struct { int dummy; } lv_font_t;
-
-#define LV_COORD_MAX 32767
-#define LV_TEXT_FLAG_NONE 0
-
-static lv_font_t g_font_12 = {0};
-static lv_font_t g_font_semi_12 = {0};
-
-static void lv_txt_get_size(lv_point_t* size_res_p, const char* text, const lv_font_t* font,
-                            lv_coord_t letter_space, lv_coord_t line_space,
-                            lv_coord_t max_width, uint32_t flag) {
-  (void)letter_space; (void)line_space; (void)max_width; (void)flag;
-  // Approximate: 6px per char in 12px font, 7px per char in semi_12
-  int px_per_char = (font == &g_font_semi_12) ? 7 : 6;
-  size_t len = strlen(text);
-  size_res_p->x = (lv_coord_t)(len * px_per_char);
-  size_res_p->y = (lv_coord_t)((font == &g_font_semi_12) ? 14 : 12);
-}
-
-static lv_coord_t lv_font_get_line_height(const lv_font_t* font) {
-  return (lv_coord_t)((font == &g_font_semi_12) ? 14 : 12);
-}
+#include <string.h>
 
 #include "ui-touch/ReplyQuote.h"
 
+struct Msg { const char* sender; uint32_t ts; };
+
+// Messages before the reply, newest first (index 0 = right before it).
+static int pickIn(const char* name, uint32_t reply_ts, const Msg* msgs, int n) {
+  return ReplyQuote::pick(name, reply_ts, n, [&](int i, const char** s, uint32_t* ts) {
+    if (!msgs[i].sender) return false;
+    *s = msgs[i].sender;
+    *ts = msgs[i].ts;
+    return true;
+  });
+}
+
 int main() {
-  char sender[32];
-  char text[84];
+  char name[32];
 
-  // Parse: valid prefix
+  // parse: the MeshCore Open reply shape.
+  const char* body = ReplyQuote::parse("@[Alice] hello", name, sizeof name);
+  assert(body && strcmp(name, "Alice") == 0 && strcmp(body, "hello") == 0);
+  body = ReplyQuote::parse("@[Alice]   two spaces", name, sizeof name);
+  assert(body && strcmp(body, "two spaces") == 0);
+  body = ReplyQuote::parse("@[Name with space] x", name, sizeof name);
+  assert(body && strcmp(name, "Name with space") == 0);
+
+  // Not replies.
+  assert(!ReplyQuote::parse("hello @[Alice] hi", name, sizeof name));   // not leading
+  assert(!ReplyQuote::parse("@[Alice], ack: SNR 5", name, sizeof name)); // our Ack
+  assert(!ReplyQuote::parse("@[Alice]\xF0\x9F\x91\x8D", name, sizeof name)); // MeshCore One reaction
+  assert(!ReplyQuote::parse("@[Alice]", name, sizeof name));            // no text
+  assert(!ReplyQuote::parse("@[Alice]   ", name, sizeof name));         // only spaces
+  assert(!ReplyQuote::parse("@[] hi", name, sizeof name));
+  assert(!ReplyQuote::parse("@[Alice hi", name, sizeof name));
+  assert(!ReplyQuote::parse(nullptr, name, sizeof name));
+  assert(name[0] == '\0');   // cleared on failure
+
+  // Name length: 31 bytes fit, 32 do not.
+  assert(ReplyQuote::parse("@[1234567890123456789012345678901] t", name, sizeof name) && strlen(name) == 31);
+  assert(!ReplyQuote::parse("@[12345678901234567890123456789012] t", name, sizeof name));
+  char small[8];
+  assert(!ReplyQuote::parse("@[Alexander] t", small, sizeof small));   // never truncated
+
+  // pick: exactly one message from the name.
   {
-    const char* body = ReplyQuote::parse("@[Alice] hello", sender, sizeof(sender));
-    assert(body != nullptr);
-    assert(strcmp(sender, "Alice") == 0);
-    assert(strcmp(body, "hello") == 0);
+    Msg m[] = { {"Bob", 1000}, {"Alice", 990}, {"Carol", 980} };
+    assert(pickIn("Alice", 1010, m, 3) == 1);
+    assert(pickIn("Dave", 1010, m, 3) == -1);
+    assert(pickIn("alice", 1010, m, 3) == -1);   // names are exact
   }
-
-  // Parse: no prefix
+  // Two from the name: ambiguous, no quote.
   {
-    const char* body = ReplyQuote::parse("hello world", sender, sizeof(sender));
-    assert(body == nullptr);
+    Msg m[] = { {"Alice", 1000}, {"Bob", 995}, {"Alice", 990} };
+    assert(pickIn("Alice", 1010, m, 3) == -1);
   }
-
-  // Parse: empty name
+  // Skipped slots do not count.
   {
-    const char* body = ReplyQuote::parse("@[] hello", sender, sizeof(sender));
-    assert(body == nullptr);
+    Msg m[] = { {nullptr, 0}, {"Alice", 990} };
+    assert(pickIn("Alice", 1000, m, 2) == 1);
   }
-
-  // Parse: missing bracket
+  // Only the look-back window is searched; a second Alice outside it does not
+  // make the one inside ambiguous.
   {
-    const char* body = ReplyQuote::parse("@[Alice hello", sender, sizeof(sender));
-    assert(body == nullptr);
+    Msg m[12];
+    for (int i = 0; i < 12; ++i) m[i] = {"Bob", 1000};
+    m[11] = {"Alice", 1000};
+    assert(pickIn("Alice", 1000, m, 12) == -1);
+    m[ReplyQuote::kLookBack - 1] = {"Alice", 1000};
+    assert(pickIn("Alice", 1000, m, 12) == ReplyQuote::kLookBack - 1);
   }
-
-  // Parse: long name (31 chars max)
+  // Too old: no quote. Unknown times do not block it.
   {
-    const char* body = ReplyQuote::parse("@[1234567890123456789012345678901] test", sender, sizeof(sender));
-    assert(body != nullptr);
-    assert(strlen(sender) == 31);
-  }
-
-  // Parse: name too long (32 chars)
-  {
-    const char* body = ReplyQuote::parse("@[12345678901234567890123456789012] test", sender, sizeof(sender));
-    assert(body == nullptr);
-  }
-
-  // formatQuote: short sender and text
-  {
-    char out_sender[32], out_text[84];
-    ReplyQuote::formatQuote("Alice", "hello", 200, &g_font_semi_12, &g_font_12,
-                            out_sender, sizeof(out_sender), out_text, sizeof(out_text));
-    assert(strcmp(out_sender, "Alice") == 0);
-    assert(strcmp(out_text, "hello") == 0);
-  }
-
-  // formatQuote: long text that needs truncation
-  {
-    char out_sender[32], out_text[84];
-    ReplyQuote::formatQuote("Bob", "this is a very long message that should be truncated", 50, &g_font_semi_12, &g_font_12,
-                            out_sender, sizeof(out_sender), out_text, sizeof(out_text));
-    assert(out_text[0] == '.');  // starts with ellipsis
-    assert(strlen(out_text) <= 50);
-  }
-
-  // formatQuote: long sender name
-  {
-    char out_sender[32], out_text[84];
-    ReplyQuote::formatQuote("VeryLongSenderNameThatExceedsBuffer", "hi", 200, &g_font_semi_12, &g_font_12,
-                            out_sender, sizeof(out_sender), out_text, sizeof(out_text));
-    assert(strlen(out_sender) <= 31);  // truncated to buffer size
+    Msg m[] = { {"Alice", 1000} };
+    assert(pickIn("Alice", 1000 + ReplyQuote::kMaxAgeS, m, 1) == 0);
+    assert(pickIn("Alice", 1000 + ReplyQuote::kMaxAgeS + 1, m, 1) == -1);
+    assert(pickIn("Alice", 0, m, 1) == 0);
+    Msg z[] = { {"Alice", 0} };
+    assert(pickIn("Alice", 999999, z, 1) == 0);
   }
 
   printf("test_reply_quote: all assertions passed\n");
