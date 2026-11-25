@@ -224,9 +224,15 @@ class Link {
   }
   async open() {
     await this.port.open({baudRate: 115200, bufferSize: 1 << 16});
-    // DTR and RTS together, in one request: the chip's own USB serial resets the
-    // board on RTS without DTR, and TinyUSB only sends once DTR is up.
-    try { await this.port.setSignals({dataTerminalReady: true, requestToSend: true}); } catch (_) {}
+    // The ESP32-S3's own USB serial (the T-Deck's) resets the chip whenever RTS is
+    // up while DTR is down, and TinyUSB (the Heltec V4) only sends once DTR is up.
+    // Asking for both in one request let the OS apply RTS first: the T-Deck Plus
+    // restarted on the first Connect. So one line per request, in an order that
+    // never passes RTS-without-DTR: RTS down, DTR up, then RTS up (the idle state
+    // for boards with a USB-to-UART bridge, whose reset circuit reads both).
+    for (const s of [{requestToSend: false}, {dataTerminalReady: true}, {requestToSend: true}]) {
+      try { await this.port.setSignals(s); } catch (_) {}
+    }
     this.writer = this.port.writable.getWriter();
     this.readLoop();
   }
@@ -377,7 +383,7 @@ async function connect(filtered) {
   try { await link.open(); }
   catch (e) { setStart('Could not open the port: ' + errText(e) + '. Is another program (the flasher, a serial monitor) using it?', true); link = null; return; }
   $('connect').textContent = 'Reconnect';
-  setStart('Connected to the port. Waiting for USB Files: open it on the device (app drawer).');
+  setStart('Connected to the port. Waiting for USB Files: open it on the device (app drawer). If the device restarts, open USB Files on it again once it is back (and press Reconnect if this page says it was disconnected).');
 }
 
 async function startSession(beacon) {
