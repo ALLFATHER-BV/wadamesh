@@ -222,7 +222,9 @@ Connected - a browser is viewing this screen.	Συνδέθηκε - ένα πρό
 Connecting...	Σύνδεση...
 Connecting…	Σύνδεση…
 Console not available on this build	Η κονσόλα δεν είναι διαθέσιμη σε αυτό το build
+Contact	Επαφή
 Contact added	Η επαφή προστέθηκε
+Could not add contact	Δεν ήταν δυνατή η προσθήκη της επαφής
 Contact deleted	Η επαφή διαγράφηκε
 Contact gone	Η επαφή χάθηκε
 Contact missing	Η επαφή λείπει
@@ -2506,3 +2508,28 @@ English only. Press Up to reach the corrections, Left or Right to pick one, then
 Phosphor	Φώσφορος
 Apply the new look? WADAMESH restarts to apply it.	Εφαρμογή της νέας εμφάνισης; Το WADAMESH θα επανεκκινήσει.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Με το cities.bin στο /var/lib/wadamesh-zero, η Αρχική δείχνει την πόλη όπου βρίσκεστε αντί για το όνομα του κόμβου.
+
+# Chats unread chip: unreplied step (#901)
+A	Ο
+U | UR	Α | ΑΠ
+All chats	Όλες οι συνομιλίες
+Unread + unreplied	Αδιάβαστα + αναπάντητα
+Dismiss	Απόκρυψη
+Dismissed	Αποκρύφτηκε
+No unread or unreplied chats	Καμία αδιάβαστη ή αναπάντητη συνομιλία
+No unread or unreplied channels	Κανένα αδιάβαστο ή αναπάντητο κανάλι
+No unread or unreplied direct chats	Καμία αδιάβαστη ή αναπάντητη άμεση συνομιλία
+
+# Store search / sort (#863)
+Search apps	Αναζήτηση εφαρμογών
+Updates	Ενημερώσεις
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Καμία εφαρμογή για «%s»
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Κανένα βιβλίο. Προσθέστε αρχεία .epub ή .txt στο /meshcomod/apps/ebook.d/ της κάρτας SD.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Το βιβλίο είναι πολύ μεγάλο για τη μνήμη της εφαρμογής. Δοκιμάστε ένα αντίγραφο .txt ή χωρίστε το σε μέρη.
+
+# Contacts shared in chat (#887)
+This is your own node	Αυτός είναι ο δικός σας κόμβος

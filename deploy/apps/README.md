@@ -75,6 +75,10 @@ some users silently run different code from others under the same version number
 1. Fork `ALLFATHER-BV/wadamesh` and branch off `main`.
 2. Add your `deploy/apps/<id>/<ver>/` directory with the two files.
 3. Add or update your app's row in `deploy/apps/apps.json` (the store catalog).
+   Every row needs `"released": "YYYY-MM-DD"` right after `"ver"`: the date this
+   `ver` is published. Set it again whenever you bump the version, since the
+   Store's Newest sort orders by it. `scripts/deploy-apps.sh` refuses a row
+   without a valid date.
    Add `"seed": false` to that row if your app should be downloadable but not
    compiled into the firmware. Apps in the catalog are baked into the image as
    built-ins for boards that cannot reach the Store, and that is flash spent on

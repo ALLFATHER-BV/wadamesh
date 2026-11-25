@@ -202,6 +202,13 @@ private:
   mutable uint16_t _thread_msgs[MAX_UI_THREADS] = { 0 };
   mutable bool     _thread_hist_dirty = true;
   void rebuildThreadHistoryFlags() const;
+  // threadAwaitingReply's cache (#901): one ring pass answers it for every thread. Rebuilt
+  // when an append moves the ring (seq/head/count), _reply_gen is bumped by an edit that
+  // does not (delete, clear, trim, thread freed), or my node name changes.
+  mutable uint32_t _reply_key[MAX_UI_THREADS] = { 0 };   // 0 = not waiting
+  mutable uint32_t _reply_cache_sig = 0;
+  uint32_t         _reply_gen = 0;
+  void rebuildReplyState() const;
   /** Time of a thread's newest message in the ring (0 when it has none). */
   uint32_t newestThreadMessageTs(const char* name, bool channel) const;
   /** Drop this thread's oldest stored messages until it is back within the per-chat cap
@@ -365,6 +372,10 @@ public:
   void markActiveThreadRead();    // clear the currently-open thread's unread (viewing == read)
   void markAllThreadsRead();      // clear every thread's unread count
   bool threadHasMention(int idx) const;   // unread @mention of me in this thread
+  /** The thread waits on my reply (#901): a direct chat whose newest message is theirs, or
+   *  a channel with an @mention of me newer than my last post there. `key` (never 0)
+   *  identifies the waiting message, so a Dismiss lasts until a newer one waits. */
+  bool threadAwaitingReply(int idx, uint32_t* key = nullptr) const;
   // A direct chat's contact key (first 6 bytes), for its nickname; nullptr for a channel
   // or a chat not tied to a known contact.
   const uint8_t* threadContactKey6(int idx) const;

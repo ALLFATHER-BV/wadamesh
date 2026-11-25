@@ -1,6 +1,7 @@
 #include "UITask.h"
 #include "TouchSleep.h"
 #include "ChatHashtag.h"
+#include "ChatContactTuple.h"
 #include <climits>         // INT_MAX (glibc does not pull it in transitively, macOS/ESP-IDF do)
 
 #if defined(WADA_WEB)
@@ -161,6 +162,7 @@ static void* wadaMp3Scratch() { return s_wada_mp3_scratch; }
 #include "SnakeGame.h"        // Apps → Snake (self-contained game module)
 #include "LuaHost.h"          // Lua app host (LUA_APPS.md; Phase 0 spike gate)
 #include "LuaAppHost.h"       // sandboxed Lua apps (LUA_APPS.md Phase 1; self-gated on CAP_LUA_APPS)
+#include "StoreFilter.h"      // Store > Apps search + sort (#863)
 
 #include "AppPage.h"          // shared full-screen app-page chrome (both of the above use it)
 #include "ReaderContent.h"    // host-tested HTML text extraction + local/network link resolution
@@ -5816,6 +5818,16 @@ static bool emojiIconVisible(uint32_t cp, void*) {
   const lv_img_dsc_t* d = emojiLookupAny(cp);
   return d && d->header.w > 2;
 }
+static void avatarAddEmojiImage(lv_obj_t* av, const lv_img_dsc_t* emoji, bool scale_to_avatar) {
+  lv_obj_t* im = lv_img_create(av);
+  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_img_set_src(im, emoji);
+  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
+  const lv_coord_t px = scale_to_avatar ? LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28)) : 16;
+  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
+  lv_img_set_antialias(im, px != 16);
+  lv_obj_center(im);
+}
 static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8) {
   if (!av) return;
   const lv_img_dsc_t* eg = nullptr;
@@ -5852,14 +5864,7 @@ static void glyphAvatarSetEmoji(lv_obj_t* av, const char* name, const char* utf8
   }
   lv_obj_clean(av);                    // no letters
   lv_obj_set_user_data(av, nullptr);   // no glyph under it
-  lv_obj_t* im = lv_img_create(av);
-  lv_obj_clear_flag(im, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-  lv_img_set_src(im, eg);
-  const lv_coord_t sz = lv_obj_get_style_width(av, LV_PART_MAIN);
-  const lv_coord_t px = LV_MAX((lv_coord_t)16, (lv_coord_t)(sz * 16 / 28));
-  lv_img_set_zoom(im, (uint16_t)(256 * px / 16));
-  lv_img_set_antialias(im, px != 16);
-  lv_obj_center(im);
+  avatarAddEmojiImage(av, eg, true);
   lv_obj_invalidate(av);
 }
 // A contact's chat icon when none was picked: the first emoji in its name that has a
@@ -6604,6 +6609,7 @@ static lv_obj_t* s_wifi_sheet        = nullptr;  // join / details / hidden over
 // pointers live outside CAP_KEYPAD_NAV; only the keypad navigation code uses them.
 static lv_obj_t* s_nav_store_list       = nullptr;
 static lv_obj_t* s_nav_store_tabs[3]    = { nullptr, nullptr, nullptr };
+static lv_obj_t* s_nav_store_tools[2]   = { nullptr, nullptr };   // Apps tab search field + sort button
 static lv_obj_t* s_nav_store_active_tab = nullptr;
 static lv_obj_t* s_nav_store_first      = nullptr;
 static lv_obj_t* s_nav_store_top_row    = nullptr;
@@ -7206,6 +7212,21 @@ static bool navIsStoreTab(lv_obj_t* o) {
   for (lv_obj_t* tab : s_nav_store_tabs) if (o && o == tab) return true;
   return false;
 }
+static bool navIsStoreTool(lv_obj_t* o) {
+  for (lv_obj_t* t : s_nav_store_tools) if (o && o == t) return true;
+  return false;
+}
+// 1 = the Store's tab bar, 2 = its Apps toolbar, 0 = anything else (the list included).
+static int navStoreRegion(lv_obj_t* o) {
+  return navIsStoreTab(o) ? 1 : navIsStoreTool(o) ? 2 : 0;
+}
+// The toolbar exists only with an Apps tab and is hidden on the other tabs.
+static lv_obj_t* navStoreToolsTarget() {
+  lv_obj_t* t = s_nav_store_tools[0];
+  if (!t || !lv_obj_is_valid(t) || lv_obj_has_flag(t, LV_OBJ_FLAG_HIDDEN)) return nullptr;
+  lv_obj_t* bar = lv_obj_get_parent(t);
+  return bar && lv_obj_has_flag(bar, LV_OBJ_FLAG_HIDDEN) ? nullptr : t;
+}
 static lv_obj_t* navStoreRowFor(lv_obj_t* o) {
   if (!o || !s_nav_store_list || !lv_obj_is_valid(s_nav_store_list)) return nullptr;
   while (o && lv_obj_get_parent(o) != s_nav_store_list) o = lv_obj_get_parent(o);
@@ -7222,11 +7243,10 @@ static lv_obj_t* navSettingsModalRegionFor(lv_obj_t* o) {
 static bool navDirCandidate(lv_obj_t* o, lv_obj_t* cur, int dir) {
   if (!o || o == cur || !lv_obj_is_valid(o) || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN)) return false;
   if (o == s_nav_drawer_gear) return false;
-  // Store tabs are a fixed header above an independently scrolling list. Keep
-  // generic spatial search within whichever region currently owns focus; the
-  // explicit edge transitions in navMoveDir bridge the two at the true top.
-  if (navIsStoreTab(o) && !navIsStoreTab(cur)) return false;
-  if (navIsStoreTab(cur) && !navIsStoreTab(o)) return false;
+  // Store tabs and the Apps toolbar are fixed headers above an independently
+  // scrolling list. Keep generic spatial search within whichever region currently
+  // owns focus; the explicit edge transitions in navMoveDir bridge them.
+  if (navStoreRegion(o) != navStoreRegion(cur)) return false;
   if ((dir == NAV_UP || dir == NAV_DOWN) && lv_obj_has_flag(o, NAV_HMOVE_FLAG)) return false;
   // A message row scrolled out of the list's own view (under the floating composer, or
   // up under the header) is no target from OUTSIDE the list: Down from a composer button
@@ -7423,21 +7443,44 @@ static bool navMoveDir(int dir) {
     return false;
   }
   if (navIsStoreTab(cur)) {
-    if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
+    if (dir == NAV_DOWN) {
+      if (lv_obj_t* tools = navStoreToolsTarget()) {
+        s_nav_show = true;
+        lv_group_focus_obj(tools);
+        if (g_lv.task) g_lv.task->noteUserInput();
+      } else if (s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
+        if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list))
+          lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+        s_nav_show = true;
+        lv_group_focus_obj(s_nav_store_first);
+        if (g_lv.task) g_lv.task->noteUserInput();
+      }
+    }
+    if (dir == NAV_UP || dir == NAV_DOWN) return false;
+  } else if (navIsStoreTool(cur)) {
+    if (dir == NAV_UP && s_nav_store_active_tab && lv_obj_is_valid(s_nav_store_active_tab)) {
+      s_nav_show = true;
+      lv_group_focus_obj(s_nav_store_active_tab);
+    } else if (dir == NAV_DOWN && s_nav_store_first && lv_obj_is_valid(s_nav_store_first)) {
       if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list))
         lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
       s_nav_show = true;
       lv_group_focus_obj(s_nav_store_first);
-      if (g_lv.task) g_lv.task->noteUserInput();
     }
-    if (dir == NAV_UP || dir == NAV_DOWN) return false;
+    if (dir == NAV_UP || dir == NAV_DOWN) {
+      if (g_lv.task) g_lv.task->noteUserInput();
+      return false;
+    }
   } else if (dir == NAV_UP && s_nav_store_top_row &&
              navStoreRowFor(cur) == s_nav_store_top_row) {
     if (s_nav_store_list && lv_obj_is_valid(s_nav_store_list) &&
         lv_obj_get_scroll_y(s_nav_store_list) > 0) {
       // The first card may still be clipped after free-scrolling. Reveal its
-      // whole box/name before allowing the next Up press into the fixed tabs.
+      // whole box/name before allowing the next Up press into the fixed header.
       lv_obj_scroll_to_y(s_nav_store_list, 0, LV_ANIM_OFF);
+    } else if (lv_obj_t* tools = navStoreToolsTarget()) {
+      s_nav_show = true;
+      lv_group_focus_obj(tools);
     } else if (s_nav_store_active_tab && lv_obj_is_valid(s_nav_store_active_tab)) {
       s_nav_show = true;
       lv_group_focus_obj(s_nav_store_active_tab);
@@ -12941,6 +12984,24 @@ static void threadSheetIconResetCb(lv_event_t* e) {
   if (lv_event_get_code(e) == LV_EVENT_LONG_PRESSED) threadSheetIconResetDo();
 }
 
+static void chatListRefreshAfterDismiss();   // defined with the Chats header
+// "Dismiss" (#901): this thread leaves the Chats U | UR filter until a newer message waits on me.
+static void threadSheetDismissReplyDo() {
+  if (!g_lv.task) return;
+  const int idx = s_channel_long_idx;
+  char nm[UITask::MAX_THREAD_NAME + 1] = "";
+  const bool named = channelLongSheetName(nm, sizeof nm);
+  closeChannelLongSheet();
+  uint32_t key = 0;
+  if (!named || !g_lv.task->threadAwaitingReply(idx, &key)) return;
+  touchPrefsSetReplyDismiss(nm, key);
+  chatListRefreshAfterDismiss();
+  g_lv.task->showAlert(TR("Dismissed"), 1000);
+}
+static void threadSheetDismissReplyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_CLICKED) threadSheetDismissReplyDo();
+}
+
 // Per-thread settings sheet (DM or channel) — opened by long-press AND the per-row gear AND the
 // in-channel cog, so all are the SAME screen. Mark-as-read, mute messages / @ mentions, region &
 // scope, share secret, blocked users, remove/delete.
@@ -12960,6 +13021,15 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
       is_room_thread = (rc && rc->type == ADV_TYPE_ROOM);
     }
   }
+  // "Dismiss" (#901): only while the thread waits on my reply and that message was not
+  // dismissed already.
+  bool can_dismiss = false;
+  {
+    uint32_t key = 0;
+    char key_nm[UITask::MAX_THREAD_NAME + 1] = "";
+    can_dismiss = g_lv.task && g_lv.task->threadAwaitingReply(thread_idx, &key) &&
+                  channelLongSheetName(key_nm, sizeof key_nm) && touchPrefsGetReplyDismiss(key_nm) != key;
+  }
 #if !defined(TLORA_PAGER)
   // The redesign's action list: one full-width row per action, so no name is ever
   // cut short, at any text size; it scrolls when it outgrows the screen. The
@@ -12975,6 +13045,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     ActItem items[12];
     int n = 0;
     items[n++] = { LV_SYMBOL_OK, TR("Mark as read"), threadSheetMarkReadDo, false };
+    if (can_dismiss) items[n++] = { LV_SYMBOL_EYE_CLOSE, TR("Dismiss"), threadSheetDismissReplyDo, false };
     if (is_channel) {
       const uint8_t mute = touchPrefsGetChannelMute(name ? name : "");
       items[n++] = { LV_SYMBOL_SETTINGS, TR("Region & scope"), channelLongSheetRegionDo, false };
@@ -13050,8 +13121,9 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
   // (4 rows). Room: mark-read + login-again + join + reset-path + blocked +
   // delete history = 6 (3 rows — the join row fills what was a half-empty
   // bottom row, so the card height is unchanged). DM: mark-read + reset-path
-  // + blocked + delete history = 4 (2 rows).
-  const int grid_items = is_channel ? 8 : (is_room_thread ? 6 : 4);
+  // + blocked + delete history = 4 (2 rows). Both also carry the chat icon, and a thread
+  // waiting on my reply adds Dismiss (#901).
+  const int grid_items = (is_channel ? 8 : (is_room_thread ? 7 : 5)) + (can_dismiss ? 1 : 0);
   const int grid_rows  = (grid_items + 1) / 2;          // ceil
   // Exact content height: outer padding + fixed header + grid rows + one
   // full-width danger row. There is no trailing gap after the danger row.
@@ -13146,6 +13218,7 @@ static void openThreadActionSheet(int thread_idx, const char* name, bool is_chan
     y += btn_h + btn_gap;
   };
   mk(TR(LV_SYMBOL_OK "  Mark as read"), threadSheetMarkReadCb, 0);
+  if (can_dismiss) mk(TR(LV_SYMBOL_EYE_CLOSE "  Dismiss"), threadSheetDismissReplyCb, 0);
   if (is_channel) {
     mk(TR(LV_SYMBOL_SETTINGS "  Region & scope"), channelLongSheetRegionCb, 0);
     // The two mutes sit side by side on their own row; labels set by chmuteRefreshLabels().
@@ -13994,6 +14067,11 @@ static void emojiPaintTabs() {
     if (!t) continue;
     const bool on = ((int)i == s_emoji_tab);
     lv_obj_set_style_bg_color(t, lv_color_hex(on ? COLOR_ACCENT : COLOR_CONTROL), LV_PART_MAIN);
+#if CAP_EPAPER
+    // The active tab is a black block on the 1-bit panel; its black label would vanish.
+    lv_obj_t* l = lv_obj_get_child(t, 0);
+    if (l) lv_obj_set_style_text_color(l, on ? lv_color_white() : lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+#endif
   }
 }
 
@@ -14062,6 +14140,13 @@ static void emojiBuildTabRow(lv_obj_t* card, lv_coord_t w, lv_coord_t y) {
 
   for (int i = 0; i < s_emoji_group_n; ++i) {
     lv_obj_t* t = lv_btn_create(row);
+#if CAP_EPAPER
+    // The theme's release transition is created before the click handler repaints the
+    // tab, so it fades to the OLD fill and on finishing leaves that on the panel (white
+    // label on white box until the next redraw). Transitions can only be added to, not
+    // overridden, so drop the theme styles; styleButton below restores the look.
+    lv_obj_remove_style_all(t);
+#endif
     lv_obj_set_height(t, 22);
     lv_obj_set_style_pad_hor(t, 6, LV_PART_MAIN);
     lv_obj_set_style_pad_ver(t, 0, LV_PART_MAIN);
@@ -27843,7 +27928,12 @@ static void openBatteryChartWindow() {
   lv_obj_set_style_pad_left(chart, 4, LV_PART_TICKS);
   lv_chart_set_axis_tick(chart, LV_CHART_AXIS_PRIMARY_Y,   4, 0, 4, 1, true, 40);
   lv_obj_add_event_cb(chart, battChartTickCb, LV_EVENT_DRAW_PART_BEGIN, nullptr);
+#if CAP_EPAPER
+  // Blue is pale on a 1-bit panel and the line vanished; black is the one colour that holds.
+  lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x000000), LV_CHART_AXIS_PRIMARY_Y);
+#else
   lv_chart_series_t* vser = lv_chart_add_series(chart, lv_color_hex(0x4F9DF7), LV_CHART_AXIS_PRIMARY_Y);   // blue battery
+#endif
   // CPU MHz series is optional (toggled by the "CPU" chip next to the trash button).
   lv_chart_series_t* cser = nullptr;
   if (s_batt_show_cpu) {
@@ -36638,12 +36728,28 @@ static void closeAppDrawer();
 // These replace the second status-bar row of buttons the inbox used to carry.
 static constexpr lv_coord_t kChatListInset = 6;  // the inbox and contacts rows sit this far in
 static uint8_t   s_chats_filter = 0;               // 0 all, 1 channels, 2 direct
-// The "U" (unread only) chip left of the filter (#824): an on/off toggle that narrows whichever of All /
-// Channels / Direct is active to the threads with unread messages. Reading a thread
-// clears its count, so it leaves the list on the way back out of the chat (the
-// unread counts are in the list signature). Persisted (touch prefs v73).
-static bool      s_chats_unread_only = false;
+// The unread chip left of the filter (#824, #901) steps A -> U -> U | UR: every thread, only
+// threads with unread messages, or those plus threads waiting on my reply (a direct chat
+// whose newest message is theirs, a channel that @mentioned me since I last posted;
+// "Dismiss" on the thread sheet drops one until a newer message waits). It narrows
+// whichever of All / Channels / Direct is active. Reading a thread clears its count, so
+// it leaves the U list on the way back out of the chat (the unread counts are in the list
+// signature). Persisted (touch prefs v73 byte).
+static uint8_t   s_chats_unread_mode = TOUCH_CHATS_ALL;
 static lv_obj_t* s_chats_unread_chip = nullptr;
+static lv_obj_t* s_chats_unread_lbl  = nullptr;
+static const char* chatsUnreadChipText(uint8_t m) {
+  return m == TOUCH_CHATS_UNREPLIED ? "U | UR" : m == TOUCH_CHATS_UNREAD ? "U" : "A";
+}
+static const char* chatsUnreadChipTip(uint8_t m) {
+  return m == TOUCH_CHATS_UNREPLIED ? "Unread + unreplied" : m == TOUCH_CHATS_UNREAD ? "Unread only" : "All chats";
+}
+// A thread waiting on my reply that was not dismissed (the U | UR filter's second half).
+static bool chatsThreadUnreplied(int idx, const char* name) {
+  uint32_t key = 0;
+  if (!g_lv.task || !g_lv.task->threadAwaitingReply(idx, &key)) return false;
+  return touchPrefsGetReplyDismiss(name) != key;
+}
 // All / Channels / Direct is a dropdown chip ("▼ All"), as Contacts' filter is: it
 // opens an option sheet (openChatsFilterSheet, next to the Contacts sheets).
 static lv_obj_t* s_chats_filter_lbl = nullptr;
@@ -36654,9 +36760,11 @@ static void chatsChipsSync() {
   if (s_chats_filter_lbl)
     lv_label_set_text_fmt(s_chats_filter_lbl, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(s_chats_filter)));
   if (s_chats_unread_chip) {
-    if (s_chats_unread_only) lv_obj_add_state(s_chats_unread_chip, LV_STATE_CHECKED);
-    else                     lv_obj_clear_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    if (s_chats_unread_mode != TOUCH_CHATS_ALL) lv_obj_add_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    else                                        lv_obj_clear_state(s_chats_unread_chip, LV_STATE_CHECKED);
+    navSetTip(s_chats_unread_chip, TR(chatsUnreadChipTip(s_chats_unread_mode)));
   }
+  if (s_chats_unread_lbl) lv_label_set_text(s_chats_unread_lbl, TR(chatsUnreadChipText(s_chats_unread_mode)));
 }
 static void chatsFilterApply(uint8_t f) {
   s_chats_filter = f;
@@ -36671,12 +36779,16 @@ static void chatsMarkAllAsk() {
 }
 static void chatsUnreadChipCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
-  s_chats_unread_only = !s_chats_unread_only;
-  touchPrefsSetChatsUnreadOnly(s_chats_unread_only);
+  s_chats_unread_mode = (uint8_t)((s_chats_unread_mode + 1) % (TOUCH_CHATS_UNREPLIED + 1));
+  touchPrefsSetChatsUnreadMode(s_chats_unread_mode);
   chatsChipsSync();
   g_lv.dm.list_sig = 0;          // the filter is part of what the list shows: rebuild
   refreshChatList(g_lv.dm);
   if (g_lv.dm.list_cont) lv_obj_scroll_to_y(g_lv.dm.list_cont, 0, LV_ANIM_OFF);
+}
+static void chatListRefreshAfterDismiss() {
+  g_lv.dm.list_sig = 0;          // a dismissed thread leaves the U | UR list without a ring change
+  refreshChatList(g_lv.dm);
 }
 static void chatsAddCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
@@ -36755,8 +36867,10 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     snprintf(b, sizeof b, "%s %s", LV_SYMBOL_DOWN, TR(chatsFilterName(f)));
     drop_w = LV_MAX(drop_w, semi12W(b));
   }
-  const lv_coord_t text_w = (lv_coord_t)(semi12W(TR("U")) + drop_w);
-  s_chats_unread_only = touchPrefsGetChatsUnreadOnly();
+  lv_coord_t unread_w = 0;   // the A / U / "U | UR" chip, at its widest
+  for (uint8_t m = 0; m <= TOUCH_CHATS_UNREPLIED; ++m) unread_w = LV_MAX(unread_w, semi12W(TR(chatsUnreadChipText(m))));
+  const lv_coord_t text_w = (lv_coord_t)(unread_w + drop_w);
+  s_chats_unread_mode = touchPrefsGetChatsUnreadMode();
   const char* title = TR("Chats");
   const lv_coord_t title_w = lv_txt_get_width(title, (uint32_t)strlen(title), &g_font_semi_16, 0, LV_TEXT_FLAG_NONE);
   const lv_coord_t icons_w = (lv_coord_t)(2 * SC(24));
@@ -36804,9 +36918,10 @@ static lv_coord_t chatsBuildHeader(lv_obj_t* tab) {
     lv_obj_set_style_text_font(l, &g_font_semi_12, LV_PART_MAIN);
     if (i == 0) {
       lv_obj_add_event_cb(c, chatsUnreadChipCb, LV_EVENT_CLICKED, nullptr);
-      lv_label_set_text(l, TR("U"));
       s_chats_unread_chip = c;
-      navSetTip(c, TR("Unread only"));
+      s_chats_unread_lbl  = l;   // text and tip set by chatsChipsSync()
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+      lv_obj_set_width(l, unread_w);
     } else {
       lv_obj_add_event_cb(c, openChatsFilterSheetCb, LV_EVENT_CLICKED, nullptr);
       s_chats_filter_lbl = l;   // text set by chatsChipsSync()
@@ -38634,7 +38749,8 @@ void    luaHostAppPath(char* out, size_t cap, const char* rel);
 // Airtime, Wardrive): a separate field because `requires` holds one name, and older
 // firmware ignores a field it does not know (a second name in `requires` would have
 // unhidden Wardrive on the 2 MB V4).
-struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8]; };
+struct LuaCatApp  { char id[20]; char name[28]; char ver[12]; char desc[72]; char requires_cap[16]; char radio[8];
+                    char released[11]; };   // "YYYY-MM-DD" the current ver shipped; empty = sorts last
 // `icon` is the manifest's optional icon NAME (not a glyph): the device's JSON
 // scanner only reads quoted strings, and a name is reviewable in a store
 // submission where a raw private-use codepoint would not be. Mapped to a glyph
@@ -47688,9 +47804,10 @@ static void msgMenuInfoCb(lv_event_t* e) {
   openMessageInfoPopup(idx);
 }
 
-enum ChatLinkKind : uint8_t { CHAT_LINK_URL, CHAT_LINK_HASHTAG, CHAT_LINK_COORD };
+enum ChatLinkKind : uint8_t { CHAT_LINK_URL, CHAT_LINK_HASHTAG, CHAT_LINK_COORD, CHAT_LINK_CONTACT };
 static int messageMenuLinkCount(const char* text, ChatLinkKind kind);
 static void messageMenuLinkCb(lv_event_t* e);
+static void openChatContactTuple(const char* tuple);
 
 // The Pager types only into the field that holds the nav focus. Closing the action
 // menu hands the focus back to the bubble it was opened on, so after Ack / Mention
@@ -47888,6 +48005,7 @@ static void openMessageActionMenu(int msg_idx) {
   const bool can_web = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_URL) > 0;
   const bool can_channel = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_HASHTAG) > 0;
   const bool can_map = messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_COORD) > 0;
+  const bool can_contact = CAP_CHAT_CONTACT_CARDS && messageMenuLinkCount(s_msg_menu_text, CHAT_LINK_CONTACT) > 0;
 
   lv_coord_t sw = lv_disp_get_hor_res(nullptr);
   lv_coord_t sh = lv_disp_get_ver_res(nullptr);
@@ -47927,7 +48045,7 @@ static void openMessageActionMenu(int msg_idx) {
   // Header row reserves space for the close-X badge so it doesn't sit on a button.
   const int hdr_h  = 24;
 #endif
-  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + (can_web ? 1 : 0) + (can_channel ? 1 : 0) + (can_map ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
+  const int nbtn   = (can_ack ? 1 : 0) + (can_mention ? 1 : 0) + (can_web ? 1 : 0) + (can_channel ? 1 : 0) + (can_map ? 1 : 0) + (can_contact ? 1 : 0) + 3 /*Copy+Info+Delete*/ + (can_block ? 1 : 0) + (can_resend ? 1 : 0);
   const int nrows  = (nbtn + 1) / 2;
   int card_h = hdr_h + nrows * btn_h + (nrows - 1) * gap + 2 * pad;
   // Never exceed the visible area under the status bar; scroll if it ever would
@@ -48006,6 +48124,7 @@ static void openMessageActionMenu(int msg_idx) {
   if (can_map) mk_link_btn(LV_SYMBOL_GPS, TR("Map"), CHAT_LINK_COORD);
   if (can_web) mk_link_btn(LV_SYMBOL_WIFI, TR("Web"), CHAT_LINK_URL);
   if (can_channel) mk_link_btn("#", TR("Channel"), CHAT_LINK_HASHTAG);
+  if (can_contact) mk_link_btn(LV_SYMBOL_PLUS, TR("Contact"), CHAT_LINK_CONTACT);
   mk_btn(LV_SYMBOL_LIST, TR(LV_SYMBOL_LIST "  Info"), msgMenuInfoCb);
   if (can_block)  mk_btn(LV_SYMBOL_CLOSE, TR(LV_SYMBOL_CLOSE "  Block"), msgMenuBlockCb);
   if (can_resend) mk_btn(LV_SYMBOL_REFRESH, TR(LV_SYMBOL_REFRESH "  Resend"), msgMenuResendCb);
@@ -48523,6 +48642,12 @@ static constexpr lv_coord_t  kChatCompactRowGap = 4;
 static constexpr lv_coord_t  kChatCompactPadV   = 1;
 #endif
 static constexpr lv_coord_t  kChatDividerH       = 16;
+static constexpr size_t kChatContactTupleMax =
+    UITask::MAX_MSG_TEXT / (ChatContactTuple::PUBLIC_KEY_HEX_LENGTH + 6) + 1;
+static_assert(kChatContactTupleMax <= 3, "Update the chat contact card storage");
+static_assert(UITask::MAX_MSG_TEXT <
+                  (ChatContactTuple::PUBLIC_KEY_HEX_LENGTH + 6) * kChatContactTupleMax,
+              "Update the chat contact card capacity");
 
 static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool channel_mode,
                                           bool thread_is_room, lv_coord_t bubble_max_w,
@@ -48543,6 +48668,7 @@ struct ChatBubbleDisplay {
   char retro_sender[UITask::MAX_SENDER_NAME + 1];
   char san_sender[UITask::MAX_SENDER_NAME + 8];
   char san_text[UITask::MAX_MSG_TEXT + 8];
+  size_t contact_count = 0;
 #if CAP_REPLY_QUOTE
   // Reply quote (#641), filled by chatReplyQuoteFill for bubbles only.
   bool has_quote = false;
@@ -48918,7 +49044,11 @@ static void chatParseMessageDisplay(const UITask::UIMessage& m, bool channel_mod
   // identity) stays the name it advertises.
   copyUtf8ReplacingMissingGlyphs(&g_font_12, d.san_sender, sizeof(d.san_sender),
                                  m.outgoing ? d.show_sender : senderShownName(d.show_sender));
-  copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text), d.show_text);
+  char text_without_contacts[UITask::MAX_MSG_TEXT + 1];
+  snprintf(text_without_contacts, sizeof(text_without_contacts), "%s", d.show_text);
+  d.contact_count = CAP_CHAT_CONTACT_CARDS ? ChatContactTuple::extractAndRemove(text_without_contacts) : 0;
+  copyUtf8ReplacingMissingGlyphs(chatMessageFont(), d.san_text, sizeof(d.san_text),
+                                 text_without_contacts);
 }
 
 #if CAP_REPLY_QUOTE
@@ -49277,6 +49407,27 @@ static lv_coord_t chatFootChainW(const ChatFoot& f) {
   return (lv_coord_t)(n - 1) * chatFootDotStep() + SC(5) + 6;
 }
 
+static lv_coord_t chatContactCardHeight() {
+  return 2 * SC(8) + SC(38);
+}
+
+static lv_coord_t chatContactCardGap() {
+  return SC(8);
+}
+
+static lv_coord_t chatContactCardWidth(lv_coord_t inner_max_w) {
+  return LV_MIN(inner_max_w, PCW(320));
+}
+
+static lv_coord_t chatContactContentHeight(size_t contact_count, lv_coord_t text_height) {
+  if (!contact_count) return text_height;
+  lv_coord_t height = text_height;
+  if (height > 0) height += chatContactCardGap();
+  height += (lv_coord_t)contact_count * chatContactCardHeight();
+  height += (lv_coord_t)(contact_count - 1) * chatContactCardGap();
+  return height;
+}
+
 // The chain: one dot per hop joined by a line; for your own message a lit dot for
 // you and one per repeater heard.
 static void chatFootChainDrawCb(lv_event_t* e) {
@@ -49331,14 +49482,18 @@ static lv_coord_t chatMeasureBubbleHeight(const UITask::UIMessage& m, bool chann
 #endif
 
   const lv_font_t* msg_font = chatMessageFont();
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t txt_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= inner_max_w) ? txt_size.x : inner_max_w;
-  lv_point_t wrapped_size;
-  lv_txt_get_size(&wrapped_size, d.san_text, msg_font, 0, 0,
-                  txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t wrapped_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&wrapped_size, d.san_text, msg_font, 0, 0,
+                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  const lv_coord_t content_h = chatContactContentHeight(d.contact_count, wrapped_size.y);
 
-  return kChatBubblePadV * 2 + inner_y + wrapped_size.y + kChatFootGap + lv_font_get_line_height(&g_font_12);
+  return kChatBubblePadV * 2 + inner_y + content_h + kChatFootGap +
+         lv_font_get_line_height(&g_font_12);
 }
 
 static void chatBuildCompactLine(const UITask::UIMessage& m, LvChatPanel* p, int logical_i,
@@ -49490,7 +49645,7 @@ static lv_coord_t chatMeasureMessageRowHeight(const UITask::UIMessage& m, LvChat
   if (s_chat_virt.compact_chat) {
     ChatBubbleDisplay d{};
     chatParseMessageDisplay(m, p->channel_mode, s_chat_virt.thread_is_room, d);
-    return chatMeasureCompactRowHeight(m, p, logical_i, d);
+    if (!d.contact_count) return chatMeasureCompactRowHeight(m, p, logical_i, d);
   }
   return chatMeasureBubbleHeight(m, p->channel_mode, s_chat_virt.thread_is_room,
                                  s_chat_virt.bubble_max_w, logical_i);
@@ -49916,6 +50071,31 @@ static bool chatFirstUrl(const char* s, char* out, int cap) {
 static bool chatHashtagSpan(const char* text, int from, int* start, int* end) {
   return ChatHashtag::span(text, from, start, end);
 }
+static bool chatContactTupleSpan(const char* text, int from, int* start, int* end) {
+  if (!text || from < 0 || !start || !end) return false;
+  const size_t length = strlen(text);
+  size_t tuple_start = 0;
+  ChatContactTuple::Contact tuple{};
+  if (!ChatContactTuple::span(text, length, (size_t)from, &tuple_start, &tuple))
+    return false;
+  *start = (int)tuple_start;
+  *end = (int)tuple.end;
+  return true;
+}
+static bool chatContactLinkSpan(const char* text, int from, int* start, int* end) {
+  return chatContactTupleSpan(text, from, start, end);
+}
+static int chatContactLinkOrdinal(const char* text, int target_start) {
+  int count = 0;
+  for (int from = 0; from < target_start;) {
+    int start = 0, end = 0;
+    if (!chatContactTupleSpan(text, from, &start, &end) || start >= target_start)
+      break;
+    from = end;
+    ++count;
+  }
+  return count;
+}
 // ---- QR popup: a scannable QR of a URL ----
 static lv_obj_t* s_urlqr_root = nullptr;
 static void closeUrlQr() { if (s_urlqr_root) popupClose(&s_urlqr_root); }
@@ -50073,6 +50253,33 @@ static void bubbleCoordTapCb(lv_event_t* e) {
   double lat = 0.0, lon = 0.0;
   if (chatFirstCoord(m.text, &lat, &lon)) openMapAtCoords(lat, lon);
 }
+static void openMessageContactTuple(int idx, int target_ordinal) {
+  if (!g_lv.task || target_ordinal < 0) return;
+  UITask::UIMessage m;
+  if (!g_lv.task->getMessageByIndex(idx, m)) return;
+  const size_t length = strlen(m.text);
+  size_t from = 0;
+  for (int ordinal = 0;; ++ordinal) {
+    size_t start = 0;
+    ChatContactTuple::Contact tuple{};
+    if (!ChatContactTuple::span(m.text, length, from, &start, &tuple)) return;
+    if (ordinal == target_ordinal) {
+      char value[UITask::MAX_MSG_TEXT + 1];
+      const size_t tuple_length = tuple.end - start;
+      if (tuple_length >= sizeof value) return;
+      memcpy(value, m.text + start, tuple_length);
+      value[tuple_length] = '\0';
+      openChatContactTuple(value);
+      return;
+    }
+    from = tuple.end;
+  }
+}
+
+static void bubbleContactTupleTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_SHORT_CLICKED) return;
+  openMessageContactTuple((int)(intptr_t)lv_event_get_user_data(e), 0);
+}
 
 struct ChatLinkChoice {
   ChatLinkKind kind;
@@ -50080,6 +50287,7 @@ struct ChatLinkChoice {
   int end;
   double lat;
   double lon;
+  int contact_ordinal;
 };
 
 static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next) {
@@ -50087,11 +50295,13 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
   int url_start = 0, url_end = 0;
   int tag_start = 0, tag_end = 0;
   int coord_start = 0, coord_end = 0;
+  int contact_start = 0, contact_end = 0;
   double lat = 0.0, lon = 0.0;
   const bool has_url = chatUrlSpan(text, from, &url_start, &url_end);
   const bool has_tag = chatHashtagSpan(text, from, &tag_start, &tag_end);
   const bool has_coord = chatCoordSpan(text, from, &coord_start, &coord_end, &lat, &lon);
-  if (!has_url && !has_tag && !has_coord) return false;
+  const bool has_contact = CAP_CHAT_CONTACT_CARDS && chatContactLinkSpan(text, from, &contact_start, &contact_end);
+  if (!has_url && !has_tag && !has_coord && !has_contact) return false;
 
   next->start = INT_MAX;
   if (has_url && url_start < next->start)
@@ -50100,6 +50310,9 @@ static bool nextChatLinkChoice(const char* text, int from, ChatLinkChoice* next)
     *next = { CHAT_LINK_HASHTAG, tag_start, tag_end, 0.0, 0.0 };
   if (has_coord && coord_start < next->start)
     *next = { CHAT_LINK_COORD, coord_start, coord_end, lat, lon };
+  if (has_contact && contact_start < next->start)
+    *next = { CHAT_LINK_CONTACT, contact_start, contact_end, 0.0, 0.0,
+              chatContactLinkOrdinal(text, contact_start) };
   return next->start != INT_MAX && next->end > from;
 }
 
@@ -50274,6 +50487,7 @@ static void activateChatLinkChoice(int index) {
     case CHAT_LINK_URL: openUrlMenu(value); break;
     case CHAT_LINK_HASHTAG: openHashtagChat(value); break;
     case CHAT_LINK_COORD: openMapAtCoords(choice.lat, choice.lon); break;
+    case CHAT_LINK_CONTACT: if (CAP_CHAT_CONTACT_CARDS) openChatContactTuple(value); break;
   }
 }
 
@@ -50335,6 +50549,7 @@ static void bubbleChatLinkTapCb(lv_event_t* e) {
   const char* label_text = lv_label_get_text(label);
   const uint32_t char_idx = lv_label_get_letter_on(label, &point);
   const int byte_idx = (int)_lv_txt_encoded_get_byte_id(label_text, char_idx);
+  const int message_idx = (int)(intptr_t)lv_event_get_user_data(e);
   ChatLinkChoice choice{};
   for (int from = 0; nextChatLinkChoice(label_text, from, &choice); from = choice.end) {
     if (byte_idx < choice.start || byte_idx >= choice.end) continue;
@@ -50342,12 +50557,16 @@ static void bubbleChatLinkTapCb(lv_event_t* e) {
       openMapAtCoords(choice.lat, choice.lon);
       return;
     }
+    if (choice.kind == CHAT_LINK_CONTACT) {
+      if (CAP_CHAT_CONTACT_CARDS) openMessageContactTuple(message_idx, choice.contact_ordinal);
+      return;
+    }
     char value[UITask::MAX_MSG_TEXT + 1];
     const int len = choice.end - choice.start;
     memcpy(value, label_text + choice.start, len);
     value[len] = '\0';
     if (choice.kind == CHAT_LINK_URL) openUrlMenu(value);
-    else openHashtagChat(value);
+    else if (choice.kind == CHAT_LINK_HASHTAG) openHashtagChat(value);
     return;
   }
 }
@@ -50367,7 +50586,9 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
   lv_coord_t card_w = PCW(230);
   if (card_w > modalAvailW()) card_w = modalAvailW();
   const char* title_text = kind == CHAT_LINK_HASHTAG ? TR("Channel")
-                           : kind == CHAT_LINK_URL ? TR("Web") : TR("Map");
+                           : kind == CHAT_LINK_URL ? TR("Web")
+                           : kind == CHAT_LINK_CONTACT ? TR("Contact")
+                           : TR("Map");
   const lv_coord_t title_w = card_w - SC(62);
   lv_point_t title_size;
   lv_txt_get_size(&title_size, title_text, &g_font_semi_16, 0, 0, title_w, LV_TEXT_FLAG_NONE);
@@ -50430,6 +50651,10 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
     const int len = choice.end - choice.start;
     memcpy(item, s_chat_link_picker_text + choice.start, len);
     item[len] = '\0';
+    ChatContactTuple::Contact shared{};
+    if (CAP_CHAT_CONTACT_CARDS && choice.kind == CHAT_LINK_CONTACT &&
+        ChatContactTuple::parseAt(item, (size_t)len, 0, &shared))
+      snprintf(item, sizeof item, "%s", shared.name);   // the name, not 64 hex digits
     lv_label_set_text(label, item);
     lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
     lv_obj_set_width(label, card_w - 2 - 2 * pad - 16);
@@ -50438,6 +50663,245 @@ static void openChatLinkPicker(const char* text, ChatLinkKind kind) {
     lv_obj_center(label);
   }
   lv_obj_move_foreground(s_chat_link_picker);
+}
+
+static lv_obj_t* s_chat_contact_tuple_popup = nullptr;
+static ChatContactTuple::Contact s_chat_contact_tuple{};
+
+static void closeChatContactTuplePopup() {
+  if (s_chat_contact_tuple_popup) popupClose(&s_chat_contact_tuple_popup);
+}
+
+static void addChatContactTuple(const ChatContactTuple::Contact& contact) {
+  const uint8_t* pub_key = contact.public_key;
+  if (memcmp(pub_key, the_mesh.self_id.pub_key, PUB_KEY_SIZE) == 0) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("This is your own node"), 1400);
+    return;
+  }
+  if (the_mesh.lookupContactByPubKey(pub_key, PUB_KEY_SIZE)) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Already in contacts"), 1400);
+    return;
+  }
+  if (the_mesh.getNumContacts() >= MAX_CONTACTS) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Contacts full"), 1400);
+    return;
+  }
+  if (!the_mesh.uiAddDiscoveredContact(pub_key, contact.type, contact.name)) {
+    closeChatContactTuplePopup();
+    if (g_lv.task) g_lv.task->showAlert(TR("Could not add contact"), 1400);
+    return;
+  }
+  closeChatContactTuplePopup();
+  if (g_lv.task) g_lv.task->showAlert(TR("Contact added"), 1200);
+  refreshContactsList();
+}
+
+static void bubbleContactCardTapCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  const intptr_t packed = reinterpret_cast<intptr_t>(lv_event_get_user_data(e));
+  openMessageContactTuple(static_cast<int>(packed >> 2), static_cast<int>(packed & 0x3));
+}
+
+static void chatContactTupleBackdropCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED ||
+      lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+  closeChatContactTuplePopup();
+}
+
+static void chatContactTupleAddCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  addChatContactTuple(s_chat_contact_tuple);
+}
+
+static void openChatContactTuple(const char* text) {
+  if (!text) return;
+  ChatContactTuple::Contact parsed{};
+  const size_t length = strlen(text);
+  if (!ChatContactTuple::parseAt(text, length, 0, &parsed) || parsed.end != length)
+    return;
+  s_chat_contact_tuple = parsed;
+  closeChatContactTuplePopup();
+
+  const lv_coord_t sw = lv_disp_get_hor_res(nullptr);
+  const lv_coord_t sh = lv_disp_get_ver_res(nullptr);
+  const lv_coord_t pad = PSC(12);
+  const lv_coord_t card_w = LV_MIN(PCW(250), modalAvailW());
+  const lv_coord_t card_h = LV_MIN(PSC(220), modalAvailH());
+  const lv_coord_t button_h = PSC(32);
+  const lv_coord_t button_y = card_h - pad - button_h;
+  const lv_coord_t key_y = pad + PSC(76);
+  const lv_coord_t key_h = LV_MAX(PSC(20), button_y - key_y - PSC(8));
+
+  s_chat_contact_tuple_popup = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(s_chat_contact_tuple_popup);
+  lv_obj_set_size(s_chat_contact_tuple_popup, sw, sh);
+  lv_obj_set_style_bg_color(s_chat_contact_tuple_popup, lv_color_black(), LV_PART_MAIN);
+  styleScrim(s_chat_contact_tuple_popup, LV_OPA_60);
+  lv_obj_add_flag(s_chat_contact_tuple_popup, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(s_chat_contact_tuple_popup, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(s_chat_contact_tuple_popup, chatContactTupleBackdropCb,
+                      LV_EVENT_CLICKED, nullptr);
+
+  lv_obj_t* card = lv_obj_create(s_chat_contact_tuple_popup);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, card_w, card_h);
+  lv_obj_align(card, LV_ALIGN_CENTER, 0, 0);
+  styleSurface(card, COLOR_PANEL, 8);
+  lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* title = lv_label_create(card);
+  lv_label_set_text(title, TR("Add contact"));
+  lv_obj_set_style_text_font(title, &g_font_semi_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(title, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(title, pad, pad);
+  lv_obj_set_width(title, card_w - 2 * pad - PSC(30));
+  addCloseXBadge(card, [](lv_event_t*) { closeChatContactTuplePopup(); });
+
+  lv_obj_t* name = lv_label_create(card);
+  lv_label_set_text(name, s_chat_contact_tuple.name);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(name, card_w - 2 * pad);
+  lv_obj_set_style_text_font(name, &g_font_16, LV_PART_MAIN);
+  lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(name, pad, pad + PSC(26));
+
+  const char* type_name = s_chat_contact_tuple.type == 1 ? TR("Companion")
+                        : s_chat_contact_tuple.type == 2 ? TR("Repeater")
+                        : s_chat_contact_tuple.type == 3 ? TR("Room")
+                        : TR("Sensor");
+  lv_obj_t* type = lv_label_create(card);
+  lv_label_set_text(type, type_name);
+  lv_obj_set_style_text_font(type, &g_font_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(type, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(type, pad, pad + PSC(52));
+
+  lv_obj_t* key = lv_label_create(card);
+  lv_label_set_text(key, s_chat_contact_tuple.public_key_hex);
+  lv_label_set_long_mode(key, LV_LABEL_LONG_WRAP);
+  lv_obj_set_size(key, card_w - 2 * pad, key_h);
+  lv_obj_set_style_text_font(key, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(key, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(key, pad, key_y);
+
+  const lv_coord_t button_gap = PSC(8);
+  const lv_coord_t button_w = (card_w - 2 * pad - button_gap) / 2;
+  auto make_button = [&](const char* label_text, lv_coord_t x, lv_event_cb_t cb) {
+    lv_obj_t* button = lv_btn_create(card);
+    lv_obj_set_size(button, button_w, button_h);
+    lv_obj_set_pos(button, x, button_y);
+    styleButton(button);
+    lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, TR(label_text));
+    lv_obj_set_style_text_font(label, &g_font_14, LV_PART_MAIN);
+    lv_obj_center(label);
+  };
+  make_button("Cancel", pad, [](lv_event_t*) { closeChatContactTuplePopup(); });
+  make_button("Add", pad + button_w + button_gap, chatContactTupleAddCb);
+}
+
+static void chatContactCardSetAvatarContent(lv_obj_t* avatar, const char* name,
+                                            const char* type_icon, uint32_t foreground) {
+  char emoji[20];
+  if (nameFirstEmoji(name, emoji, sizeof emoji)) {
+    uint32_t offset = 0;
+    avatarAddEmojiImage(avatar, emojiLookupAny(_lv_txt_encoded_next(emoji, &offset)), false);
+  } else {
+    char initials[12];
+    const char* avatar_text = type_icon;
+    if (!avatar_text) {
+      AvatarText::initials(name, initials, sizeof initials, uiFontDrawsGlyph,
+                           (void*)&g_font_semi_14);
+      avatar_text = initials;
+    }
+    lv_obj_t* avatar_label = lv_label_create(avatar);
+    lv_label_set_text(avatar_label, avatar_text);
+    lv_obj_set_style_text_font(avatar_label, type_icon ? &ui_icons_20 : &g_font_semi_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(avatar_label, lv_color_hex(foreground), LV_PART_MAIN);
+    lv_obj_center(avatar_label);
+  }
+}
+
+static void chatCreateContactCard(lv_obj_t* parent,
+                                 const ChatContactTuple::Contact& contact,
+                                 lv_coord_t x, lv_coord_t y, lv_coord_t width,
+                                 int message_idx, int contact_ordinal) {
+  const lv_coord_t pad = SC(8);
+  const lv_coord_t stripe_w = SC(4);
+  const lv_coord_t avatar_size = SC(38);
+  const lv_coord_t card_h = chatContactCardHeight();
+  const lv_coord_t text_x = pad + stripe_w + avatar_size + SC(8);
+  const lv_coord_t text_w = LV_MAX((lv_coord_t)1, width - text_x - pad);
+  const char* type_icon = contact.type == 2 ? UI_ICON_RADIO_TOWER
+                        : contact.type == 3 ? UI_ICON_USERS
+                        : contact.type == 4 ? UI_ICON_THERMOMETER   // as in Contacts
+                        : nullptr;
+
+  lv_obj_t* card = lv_obj_create(parent);
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, width, card_h);
+  lv_obj_set_pos(card, x, y);
+  styleSurface(card, COLOR_PANEL, SC(8));
+  lv_obj_set_style_border_color(card, lv_color_hex(COLOR_BORDER), LV_PART_MAIN);
+  lv_obj_set_style_border_width(card, s_theme_high_contrast ? 2 : 1, LV_PART_MAIN);
+  lv_obj_clear_flag(card, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE | NAV_SKIP_FLAG);
+  const intptr_t action = (static_cast<intptr_t>(message_idx) << 2) |
+                          (static_cast<intptr_t>(contact_ordinal) & 0x3);
+  lv_obj_add_event_cb(card, bubbleContactCardTapCb, LV_EVENT_CLICKED,
+                      reinterpret_cast<void*>(action));
+
+  lv_obj_t* stripe = lv_obj_create(card);
+  lv_obj_remove_style_all(stripe);
+  lv_obj_set_size(stripe, stripe_w, card_h);
+  lv_obj_set_pos(stripe, 0, 0);
+  styleSurface(stripe, COLOR_ACCENT, SC(2));
+  lv_obj_clear_flag(stripe, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+
+  lv_obj_t* avatar = lv_obj_create(card);
+  lv_obj_remove_style_all(avatar);
+  lv_obj_clear_flag(avatar, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(avatar, NAV_SKIP_FLAG);
+  lv_obj_set_size(avatar, avatar_size, avatar_size);
+  lv_obj_set_pos(avatar, pad + stripe_w, pad);
+  lv_obj_set_style_radius(avatar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(avatar, LV_OPA_COVER, LV_PART_MAIN);
+#if defined(HAS_TDECK_PRO)
+  lv_obj_set_style_bg_color(avatar, lv_color_white(), LV_PART_MAIN);
+  lv_obj_set_style_border_color(avatar, lv_color_black(), LV_PART_MAIN);
+  lv_obj_set_style_border_width(avatar, 1, LV_PART_MAIN);
+  const uint32_t avatar_foreground = 0x000000;
+#else
+  lv_obj_set_style_bg_color(avatar,
+                            lv_color_hex(contact.type == 1 ? hsvRgb(nameHue(contact.name), 55, 42) : 0x607D8B),
+                            LV_PART_MAIN);
+  const uint32_t avatar_foreground = 0xE6EBED;
+#endif
+  chatContactCardSetAvatarContent(avatar, contact.name, type_icon, avatar_foreground);
+
+  lv_obj_t* name = lv_label_create(card);
+  lv_label_set_text(name, contact.name);
+  lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(name, text_w);
+  lv_obj_set_style_text_font(name, &g_font_semi_14, LV_PART_MAIN);
+  lv_obj_set_style_text_color(name, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+  lv_obj_set_pos(name, text_x, SC(6));
+
+  char short_key[24];
+  snprintf(short_key, sizeof short_key, "<%.6s...%.6s>", contact.public_key_hex,
+           contact.public_key_hex + ChatContactTuple::PUBLIC_KEY_HEX_LENGTH - 6);
+  lv_obj_t* key = lv_label_create(card);
+  lv_label_set_text(key, short_key);
+  lv_label_set_long_mode(key, LV_LABEL_LONG_DOT);
+  lv_obj_set_width(key, text_w);
+  lv_obj_set_style_text_font(key, &g_font_12, LV_PART_MAIN);
+  lv_obj_set_style_text_color(key, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+  lv_obj_set_pos(key, text_x, SC(23));
 }
 
 static int messageMenuLinkCount(const char* text, ChatLinkKind kind) {
@@ -50496,16 +50960,22 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   // rows from chatMeasureBubbleHeight, which must agree with this exactly.
   const lv_coord_t kInnerMaxW = kBubbleMaxW - 2 * kChatBubblePadH;
   const lv_font_t* msg_font = chatMessageFont();
-  lv_point_t txt_size;
-  lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t txt_size{};
+  if (d.san_text[0])
+    lv_txt_get_size(&txt_size, d.san_text, msg_font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const lv_coord_t txt_w_used = (txt_size.x <= kInnerMaxW) ? txt_size.x : kInnerMaxW;
-  lv_point_t wrapped;
-  lv_txt_get_size(&wrapped, d.san_text, msg_font, 0, 0, txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  lv_point_t wrapped{};
+  if (d.san_text[0])
+    lv_txt_get_size(&wrapped, d.san_text, msg_font, 0, 0,
+                    txt_w_used > 0 ? txt_w_used : LV_COORD_MAX, LV_TEXT_FLAG_NONE);
   const bool show_sender_line = (p->channel_mode || s_chat_virt.thread_is_room) && !m.outgoing && d.san_sender[0];
   const lv_coord_t sender_lh = lv_font_get_line_height(&g_font_semi_12);
   lv_coord_t sender_w = 0;
   if (show_sender_line) sender_w = lv_txt_get_width(d.san_sender, strlen(d.san_sender), &g_font_semi_12, 0, LV_TEXT_FLAG_NONE);
-  lv_coord_t inner_w = LV_MAX(txt_w_used > 0 ? txt_w_used : 1, LV_MIN(sender_w, kInnerMaxW));
+  const size_t contact_count = CAP_CHAT_CONTACT_CARDS ? d.contact_count : 0;
+  const lv_coord_t card_w = contact_count ? chatContactCardWidth(kInnerMaxW) : 0;
+  lv_coord_t inner_w = LV_MAX(LV_MAX(txt_w_used > 0 ? txt_w_used : 1, card_w),
+                              LV_MIN(sender_w, kInnerMaxW));
   lv_coord_t quote_h = 0;
 #if CAP_REPLY_QUOTE
   // A short reply ("yes") widens its bubble so the quote above it is readable.
@@ -50518,7 +50988,8 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 #endif
   const lv_coord_t bw = LV_MIN((lv_coord_t)(inner_w + 2 * kChatBubblePadH), kBubbleMaxW);
-  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + quote_h + wrapped.y;
+  const lv_coord_t content_h = chatContactContentHeight(contact_count, wrapped.y);
+  const lv_coord_t bh = kChatBubblePadV * 2 + (show_sender_line ? sender_lh : 0) + quote_h + content_h;
 
   ChatFoot foot;
   chatBuildFoot(m, p->channel_mode, foot);
@@ -50633,33 +51104,52 @@ static lv_coord_t chatVirtCreateBubble(LvChatPanel* p, int logical_i, int ring_i
   }
 #endif
 
-  lv_obj_t* tlbl = lv_label_create(bubble);
-  lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
-  lv_obj_set_style_text_color(tlbl,
+  lv_obj_t* tlbl = nullptr;
+  if (d.san_text[0]) {
+    tlbl = lv_label_create(bubble);
+    lv_obj_set_style_text_font(tlbl, msg_font, LV_PART_MAIN);
+    lv_obj_set_style_text_color(tlbl,
 #if defined(HAS_TDECK_PRO)
-                              lv_color_black(),
+                                lv_color_black(),
 #else
-                              lv_color_hex(COLOR_CHAT_TEXT),
+                                lv_color_hex(COLOR_CHAT_TEXT),
 #endif
-                              LV_PART_MAIN);
-  lv_label_set_text(tlbl, d.san_text);
+                                LV_PART_MAIN);
+    lv_label_set_text(tlbl, d.san_text);
+    if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(tlbl, txt_w_used);
+    lv_obj_set_pos(tlbl, 0, inner_y);
+  }
   // Detect every actionable span before layout; the overlay draws only link glyphs
   // while the plain label supplies normal text and the hit-test coordinate map.
   int _ua, _ub; const bool has_url = chatUrlSpan(d.san_text, 0, &_ua, &_ub);
   int _ca, _cb; double _clat, _clon;
   const bool has_coords = chatCoordSpan(d.san_text, 0, &_ca, &_cb, &_clat, &_clon);
   int _ha, _hb; const bool has_hashtag = chatHashtagSpan(d.san_text, 0, &_ha, &_hb);
-  if (txt_size.x > kInnerMaxW) lv_label_set_long_mode(tlbl, LV_LABEL_LONG_WRAP);
-  lv_obj_set_width(tlbl, txt_w_used);
-  lv_obj_set_pos(tlbl, 0, inner_y);
   const bool failed_send = m.outgoing && m.deliv_state == UITask::DELIV_FAILED;
   lv_obj_t* link_label = nullptr;
 #if !defined(HAS_TDECK_PRO)
-  if ((has_url || has_coords || has_hashtag) && !failed_send) {
+  if (tlbl && (has_url || has_coords || has_hashtag) && !failed_send) {
     link_label = chatCreateLinkLabel(bubble, tlbl, d.san_text, msg_font,
                                      lv_color_hex(COLOR_CHAT_TEXT), txt_w_used, wrapped.y, 0, inner_y);
   }
 #endif
+
+  if (contact_count) {
+    size_t from = 0;
+    int ordinal = 0;
+    const size_t text_length = strlen(d.show_text);
+    lv_coord_t card_y = inner_y + wrapped.y;
+    if (wrapped.y > 0) card_y += chatContactCardGap();
+    size_t tuple_start = 0;
+    ChatContactTuple::Contact contact{};
+    while (ChatContactTuple::span(d.show_text, text_length, from, &tuple_start, &contact)) {
+      chatCreateContactCard(bubble, contact, 0, card_y, card_w, ring_idx, ordinal);
+      card_y += chatContactCardHeight() + chatContactCardGap();
+      from = contact.end;
+      ++ordinal;
+    }
+  }
 
   // The foot, under the bubble: the chain, then the text; right-aligned for yours.
   {
@@ -50795,8 +51285,13 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
                       reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   double compact_lat = 0.0, compact_lon = 0.0;
   const bool compact_has_coords = chatFirstCoord(m.text, &compact_lat, &compact_lon);
+  int tuple_start = 0, tuple_end = 0;
+  const bool compact_has_contact = CAP_CHAT_CONTACT_CARDS && chatContactTupleSpan(m.text, 0, &tuple_start, &tuple_end);
   if (compact_has_coords && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
     lv_obj_add_event_cb(row, bubbleCoordTapCb, LV_EVENT_SHORT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
+  if (compact_has_contact && !(m.outgoing && m.deliv_state == UITask::DELIV_FAILED))
+    lv_obj_add_event_cb(row, bubbleContactTupleTapCb, LV_EVENT_SHORT_CLICKED,
                         reinterpret_cast<void*>(static_cast<intptr_t>(ring_idx)));
   if (m.outgoing && m.deliv_state == UITask::DELIV_FAILED)
     lv_obj_add_event_cb(row, bubbleRetryTapCb, LV_EVENT_CLICKED,
@@ -50812,8 +51307,19 @@ static lv_coord_t chatVirtCreateCompactRow(LvChatPanel* p, int logical_i, int ri
 
 static lv_coord_t chatVirtCreateMessageRow(LvChatPanel* p, int logical_i, int ring_idx,
                                            lv_coord_t vp_y, lv_coord_t* out_jump_y) {
-  if (s_chat_virt.compact_chat)
-    return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+  if (s_chat_virt.compact_chat) {
+    // A shared contact needs its card, so that message gets a bubble. Only the tuple
+    // test lives in this frame: the compact row builder below is deep enough already.
+    bool has_contact = false;
+    {
+      UITask::UIMessage m;
+      int a = 0, b = 0;
+      has_contact = CAP_CHAT_CONTACT_CARDS && g_lv.task && g_lv.task->getMessageByIndex(ring_idx, m) &&
+                    chatContactTupleSpan(m.text, 0, &a, &b);
+    }
+    if (!has_contact)
+      return chatVirtCreateCompactRow(p, logical_i, ring_idx, vp_y, out_jump_y);
+  }
   return chatVirtCreateBubble(p, logical_i, ring_idx, vp_y, out_jump_y);
 }
 
@@ -51449,13 +51955,15 @@ static void refreshChatList(LvChatPanel& p) {
   mix(s_avatar_gen);   // Settings > Theme > Chat icons redraws the rows
   mix(s_nick_gen);     // so does a contact's new nickname
   mix(s_deliv_gen);    // and a sent DM turning delivered (#670)
-  mix(p.inbox_combined ? 0xF1u + s_chats_filter + (s_chats_unread_only ? 0x100u : 0u) : 0u);
+  mix(p.inbox_combined ? 0xF1u + s_chats_filter + ((uint32_t)s_chats_unread_mode << 8) : 0u);
+  const bool unreplied_mode = p.inbox_combined && s_chats_unread_mode == TOUCH_CHATS_UNREPLIED;
   for (int i = 0; i < count; ++i) {
     bool ch = false; uint16_t unread = 0; uint32_t ts = 0;
     char nm[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, nm, sizeof(nm))) continue;
     mix((uint32_t)idxs[i]); mix(unread); mix(ts);
-    mix((ch ? 2u : 0u) | (g_lv.task->threadHasMention(idxs[i]) ? 1u : 0u));
+    mix((ch ? 2u : 0u) | (g_lv.task->threadHasMention(idxs[i]) ? 1u : 0u)
+        | (unreplied_mode && chatsThreadUnreplied(idxs[i], nm) ? 4u : 0u));
     for (const char* s = nm; *s; ++s) mix((uint8_t)*s);
     {   // a changed avatar emoji must re-render the row
       char eb[20];
@@ -51525,7 +52033,8 @@ static void refreshChatList(LvChatPanel& p) {
     char name[UITask::MAX_THREAD_NAME + 1];
     if (!g_lv.task->getThreadInfo(idxs[i], ch, unread, ts, name, sizeof(name))) continue;
     if (p.inbox_combined && ((s_chats_filter == 1 && !ch) || (s_chats_filter == 2 && ch))) continue;
-    if (p.inbox_combined && s_chats_unread_only && unread == 0) continue;
+    if (p.inbox_combined && s_chats_unread_mode != TOUCH_CHATS_ALL && unread == 0 &&
+        !(unreplied_mode && chatsThreadUnreplied(idxs[i], name))) continue;
     ++shown;
 
     // What the row shows: a direct chat's nickname. `name` stays the thread's key.
@@ -51744,7 +52253,9 @@ static void refreshChatList(LvChatPanel& p) {
 #endif
   }
   if (shown == 0) {
-    const char* none = s_chats_unread_only
+    const char* none = unreplied_mode
+        ? (s_chats_filter == 1 ? TR("No unread or unreplied channels") : s_chats_filter == 2 ? TR("No unread or unreplied direct chats") : TR("No unread or unreplied chats"))
+        : s_chats_unread_mode != TOUCH_CHATS_ALL
         ? (s_chats_filter == 1 ? TR("No unread channels") : s_chats_filter == 2 ? TR("No unread direct chats") : TR("No unread chats"))
         : (s_chats_filter == 1 ? TR("No channels yet") : TR("No direct chats yet"));
     lv_obj_t* l = lv_list_add_text(p.list_cont, none);
@@ -61613,17 +62124,33 @@ static int  s_lua_rm_pending = -1;        // long-press remove target (drawer ti
 static bool s_tile_lp_fired  = false;     // swallow the release-click after a long press
 static int  s_luastore_tab = 0;           // 0 = Apps, 1 = Built-in, 2 = Languages (kept across opens)
 static lv_obj_t* s_luastore_tabbtn[3] = { nullptr, nullptr, nullptr };
+// Apps tab toolbar (#863): search + sort. The sort mode is kept across opens like
+// the tab (not persisted); the query is cleared when the Store closes.
+static uint8_t     s_luastore_sort = storefilter::SORT_AZ;
+static char        s_luastore_query[32] = "";
+static lv_obj_t*   s_luastore_tools = nullptr;       // toolbar container (Apps tab only)
+static lv_obj_t*   s_luastore_search_ta = nullptr;
+static lv_obj_t*   s_luastore_sort_lbl = nullptr;
+static lv_timer_t* s_luastore_search_timer = nullptr; // one-shot debounce of the field
+static bool        s_luastore_reset_scroll = false;   // query/sort changed: next rebuild starts at the top
+static lv_coord_t  s_luastore_list_y = 0, s_luastore_list_h = 0, s_luastore_tools_dy = 0;
 
 static void luaStoreRebuildList();        // fwd
 static void langRebootWithNotice(const char* msg);   // fwd (Languages tab actions)
 void settingsApplyHiddenCats();           // fwd (defined with makeSettings)
 static void closeLuaStorePage() {
   if (s_luastore_poll) { lv_timer_del(s_luastore_poll); s_luastore_poll = nullptr; }
+  if (s_luastore_search_timer) { lv_timer_del(s_luastore_search_timer); s_luastore_search_timer = nullptr; }
+  if (s_luastore_search_ta && s_kb_bind_ta == s_luastore_search_ta) hideKb();   // unbind before it is freed
+  s_luastore_search_ta = s_luastore_sort_lbl = s_luastore_tools = nullptr;
+  s_luastore_query[0] = 0;
+  s_luastore_reset_scroll = false;
   s_luastore_list = nullptr;
   s_luastore_tabbtn[0] = s_luastore_tabbtn[1] = s_luastore_tabbtn[2] = nullptr;
   s_nav_store_list = s_nav_store_active_tab = nullptr;
   s_nav_store_first = s_nav_store_top_row = nullptr;
   for (lv_obj_t*& tab : s_nav_store_tabs) tab = nullptr;
+  for (lv_obj_t*& tool : s_nav_store_tools) tool = nullptr;
   appPageEnd(&closeLuaStorePage);
   popupClose(&s_luastore_root);
   // The drawer underneath was built BEFORE any install/remove done in here —
@@ -61653,6 +62180,7 @@ static void luaStoreParseCatalog() {
       if (!luaJsonField(obj, "desc", c.desc, sizeof c.desc)) c.desc[0] = 0;
       if (!luaJsonField(obj, "requires", c.requires_cap, sizeof c.requires_cap)) c.requires_cap[0] = 0;
       if (!luaJsonField(obj, "radio", c.radio, sizeof c.radio)) c.radio[0] = 0;
+      if (!luaJsonField(obj, "released", c.released, sizeof c.released)) c.released[0] = 0;
       s_lua_cat_n++;
     }
     p = cb + 1;
@@ -62000,6 +62528,17 @@ static void luaStoreLangRemoveCb(lv_event_t* e) {
 
 static void luaStoreStyleTabs() {
   s_nav_store_active_tab = nullptr;
+  // The toolbar belongs to the Apps tab only; the list moves up into its space elsewhere.
+  if (s_luastore_tools && lv_obj_is_valid(s_luastore_tools) && s_luastore_list) {
+    const bool show = (s_luastore_tab == 0);
+    if (show == lv_obj_has_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN)) {
+      if (show) lv_obj_clear_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN);
+      else      lv_obj_add_flag(s_luastore_tools, LV_OBJ_FLAG_HIDDEN);
+      const lv_coord_t dy = show ? s_luastore_tools_dy : 0;
+      lv_obj_set_y(s_luastore_list, s_luastore_list_y + dy);
+      lv_obj_set_height(s_luastore_list, s_luastore_list_h - dy);
+    }
+  }
   for (int t = 0; t < 3; t++) {
     lv_obj_t* b = s_luastore_tabbtn[t];
     if (!b || !lv_obj_is_valid(b)) continue;
@@ -62013,10 +62552,70 @@ static void luaStoreStyleTabs() {
   }
 }
 
+// ---- Apps tab toolbar: search + sort (#863) ----
+// Narrow panels (240 px V4 / M9) get the short label.
+static void luaStoreSortLabelText(char* out, size_t cap, uint8_t m, bool narrow) {
+  if (narrow) {
+    snprintf(out, cap, "%s", m == storefilter::SORT_ZA ? "Z-A" : m == storefilter::SORT_NEWEST ? TR("New") : "A-Z");
+    return;
+  }
+  const char* mode = m == storefilter::SORT_ZA ? TR("Z \xE2\x86\x92 A")
+                   : m == storefilter::SORT_NEWEST ? TR("Newest") : TR("A \xE2\x86\x92 Z");
+  snprintf(out, cap, "%s: %s", TR("Sort"), mode);
+}
+static bool luaStoreToolsNarrow() { return s_luastore_w < 260; }
+static void luaStoreSortBtnCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+  s_luastore_sort = storefilter::nextSort(s_luastore_sort);
+  if (s_luastore_sort_lbl) {
+    char t[40];
+    luaStoreSortLabelText(t, sizeof t, s_luastore_sort, luaStoreToolsNarrow());
+    lv_label_set_text(s_luastore_sort_lbl, t);
+  }
+  s_luastore_reset_scroll = true;
+  luaStoreRebuildList();   // the button lives in the toolbar, outside the list being rebuilt
+}
+static void luaStoreApplyQuery() {
+  char q[sizeof s_luastore_query];
+  storefilter::trimQuery(q, sizeof q, s_luastore_search_ta ? lv_textarea_get_text(s_luastore_search_ta) : "");
+  if (strcmp(q, s_luastore_query) == 0) return;
+  memcpy(s_luastore_query, q, sizeof q);
+  s_luastore_reset_scroll = true;
+  luaStoreRebuildList();
+}
+static void luaStoreSearchTimerCb(lv_timer_t*) {
+  s_luastore_search_timer = nullptr;   // repeat-count 1 -> LVGL deletes the timer after this
+  luaStoreApplyQuery();
+}
+// Every rebuild re-measures each card, and on the e-paper each one is a panel
+// refresh, so typing coalesces into one rebuild after a pause.
+static void luaStoreSearchSchedule(uint32_t ms) {
+  if (s_luastore_search_timer) {
+    lv_timer_set_period(s_luastore_search_timer, ms);
+    lv_timer_reset(s_luastore_search_timer);
+    return;
+  }
+  s_luastore_search_timer = lv_timer_create(luaStoreSearchTimerCb, ms, nullptr);
+  lv_timer_set_repeat_count(s_luastore_search_timer, 1);
+}
+static void luaStoreSearchChangedCb(lv_event_t* e) {
+  if (lv_event_get_code(e) == LV_EVENT_READY) { luaStoreSearchSchedule(1); return; }   // Enter: now
+  luaStoreSearchSchedule(CAP_EPAPER ? 600 : 250);
+}
+// The empty state's Clear sits inside the list, so the rebuild it causes is
+// deferred rather than run inside the button's own click.
+static void luaStoreSearchClearCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_CLICKED || !s_luastore_search_ta) return;
+  lv_textarea_set_text(s_luastore_search_ta, "");
+  luaStoreSearchSchedule(1);
+}
+
 static void luaStoreTabCb(lv_event_t* e) {
   if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
   const int t = (int)(intptr_t)lv_event_get_user_data(e);
   if (t == s_luastore_tab) return;
+  // Leaving Apps hides the search field; let go of the keyboard bound to it.
+  if (s_luastore_search_ta && s_kb_bind_ta == s_luastore_search_ta) hideKb();
   s_luastore_tab = t;
   if (t == 2) {
     luaStoreScanLangs();                          // tiny dir; sync is fine here
@@ -62075,10 +62674,16 @@ static void luaStoreRebuildList() {
   // they had scrolled to (an app near the bottom could look like it had no
   // button at all). Restored after the rows exist, so the value is clamped
   // against the NEW content height rather than the old one.
-  const lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+  lv_coord_t keep_scroll_y = lv_obj_get_scroll_y(s_luastore_list);
+  // A new query or sort is a new list: start it at the top.
+  const bool reset_scroll = s_luastore_reset_scroll;
+  s_luastore_reset_scroll = false;
+  if (reset_scroll) keep_scroll_y = 0;
 #if CAP_KEYPAD_NAV
   lv_obj_t* focused = s_nav_group ? lv_group_get_focused(s_nav_group) : nullptr;
-  if (focused && lv_obj_is_valid(focused) &&
+  if (focused && lv_obj_is_valid(focused) && navIsStoreTool(focused)) {
+    s_nav_focus_hint = focused;   // the toolbar survives the rebuild: keep typing in it
+  } else if (focused && lv_obj_is_valid(focused) &&
       (navIsStoreTab(focused) || navStoreRowFor(focused))) {
     navMarkEntered(focused);   // reselect the recreated control at the same screen position
   }
@@ -62372,7 +62977,27 @@ static void luaStoreRebuildList() {
   }
   const int  chip_h  = lh14 + lh12 - 2;                  // icon chip (square)
   const lv_coord_t pad_v = 14;                           // pad_all 7, top + bottom
-  for (int i = 0; i < s_lua_cat_n; i++) {
+  // A filtered, sorted VIEW of catalog indices. s_lua_cat itself keeps catalog
+  // order: the button callbacks carry the catalog index, and the update count
+  // and re-parse rely on that order.
+  const char* q = s_luastore_query;
+  static int view[kLuaCatMax];                 // static: the UI loop's stack is tight
+  int vn = 0, pinned = 0;
+  {
+    static storefilter::SortKey keys[kLuaCatMax];
+    for (int i = 0; i < s_lua_cat_n; i++) {
+      const LuaInstApp* in = luaStoreFindInstalled(s_lua_cat[i].id);
+      keys[i] = { s_lua_cat[i].name, s_lua_cat[i].released, CAP_STORE_SEARCH && in && luaVerNewer(s_lua_cat[i].ver, in->ver) };
+      if (!storefilter::appMatches(s_lua_cat[i].name, s_lua_cat[i].id, s_lua_cat[i].desc, q)) continue;
+      view[vn++] = i;
+      if (keys[i].update) pinned++;
+    }
+    if (CAP_STORE_SEARCH) storefilter::sortView(view, vn, keys, s_luastore_sort);   // else catalog order
+  }
+  for (int k = 0; k < vn; k++) {
+    const int i = view[k];   // the real catalog index, for every callback below
+    if (pinned > 0 && k == 0) section(TR("Updates"));
+    if (pinned > 0 && pinned < vn && k == pinned) section(TR("Apps"));
     // Per card, because every description wraps differently. Content is the
     // title line plus the wrapped description, but never shorter than the icon
     // chip or the action button or those would poke out of a short card.
@@ -62478,21 +63103,17 @@ static void luaStoreRebuildList() {
   }
 
   // ---- installed-but-not-in-catalog (sideloaded from the card) ----
-  {
-    bool any_side = false;
-    for (int i = 0; i < s_lua_inst_n; i++) {
-      bool in_cat = false;
-      for (int c = 0; c < s_lua_cat_n; c++)
-        if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
-      if (!in_cat) { any_side = true; break; }
-    }
-    if (any_side) section(TR("Your own apps"));
-  }
-  for (int i = 0; i < s_lua_inst_n; i++) {
-    bool in_cat = false;
+  // Filtered by name and id: a sideload carries no description here.
+  auto sideShown = [&](int i) {
     for (int c = 0; c < s_lua_cat_n; c++)
-      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) { in_cat = true; break; }
-    if (in_cat) continue;
+      if (strcmp(s_lua_cat[c].id, s_lua_inst[i].id) == 0) return false;
+    return storefilter::appMatches(s_lua_inst[i].name, s_lua_inst[i].id, nullptr, q);
+  };
+  int side_n = 0;
+  for (int i = 0; i < s_lua_inst_n; i++) if (sideShown(i)) side_n++;
+  if (side_n > 0) section(TR("Your own apps"));
+  for (int i = 0; i < s_lua_inst_n; i++) {
+    if (!sideShown(i)) continue;
     lv_obj_t* row = lv_obj_create(s_luastore_list);
     lv_obj_remove_style_all(row);
     lv_obj_set_size(row, W - 8, 40);
@@ -62527,9 +63148,47 @@ static void luaStoreRebuildList() {
     lv_obj_add_event_cb(b, luaStoreRemoveBtnCb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
   }
 
+  if (CAP_STORE_SEARCH && q[0] && vn == 0 && side_n == 0 && s_lua_cat_n > 0) {
+    lv_obj_t* card = lv_obj_create(s_luastore_list);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_style_bg_color(card, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 8, LV_PART_MAIN);
+    styleGlass(card);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+    char msg[160];
+    snprintf(msg, sizeof msg, TR("No apps match \"%s\""), q);
+    lv_obj_t* t = lv_label_create(card);
+    useChainedFont(t);
+    lv_label_set_text(t, msg);
+    lv_obj_set_style_text_font(t, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(t, lv_color_hex(COLOR_SUB), LV_PART_MAIN);
+    const lv_coord_t tw = W - 26 - act_gut;
+    lv_obj_set_width(t, tw);
+    lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
+    lv_obj_align(t, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_coord_t ch = wrapH(msg, &g_font_12, tw);
+    if (ch < 28) ch = 28;
+    lv_obj_set_size(card, W - 8, ch + 16);
+    lv_obj_t* b = lv_btn_create(card);
+    lv_obj_set_size(b, act_w, 28);
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(b, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COLOR_ACCENT), LV_PART_MAIN);
+    lv_obj_t* bl = lv_label_create(b);
+    lv_label_set_text(bl, TR("Clear"));
+    lv_obj_set_style_text_font(bl, &g_font_12, LV_PART_MAIN);
+    if (s_theme_day || s_theme_high_contrast)
+      lv_obj_set_style_text_color(bl, lv_color_hex(COLOR_ON_ACCENT), LV_PART_MAIN);
+    lv_obj_center(bl);
+    lv_obj_add_event_cb(b, luaStoreSearchClearCb, LV_EVENT_CLICKED, nullptr);
+  }
   if (keep_scroll_y > 0) {
     lv_obj_update_layout(s_luastore_list);          // content height must be known first
     lv_obj_scroll_to_y(s_luastore_list, keep_scroll_y, LV_ANIM_OFF);
+  } else if (reset_scroll) {
+    lv_obj_scroll_to_y(s_luastore_list, 0, LV_ANIM_OFF);
   }
 }
 
@@ -62616,11 +63275,82 @@ static void openLuaStorePage() {
   s_nav_store_list = s_luastore_list;
   lv_obj_remove_style_all(s_luastore_list);
   s_luastore_w = sw - 12;
-  lv_obj_set_size(s_luastore_list, s_luastore_w, sh - STATUSBAR_H - bar_h - 14);
-  lv_obj_set_pos(s_luastore_list, 6, 4 + bar_h + 4);
+  s_luastore_list_y = 4 + bar_h + 4;
+  s_luastore_list_h = sh - STATUSBAR_H - bar_h - 14;
+  lv_obj_set_size(s_luastore_list, s_luastore_w, s_luastore_list_h);
+  lv_obj_set_pos(s_luastore_list, 6, s_luastore_list_y);
   lv_obj_set_scroll_dir(s_luastore_list, LV_DIR_VER);
   lv_obj_set_flex_flow(s_luastore_list, LV_FLEX_FLOW_COLUMN);
   lv_obj_set_style_pad_row(s_luastore_list, 6, LV_PART_MAIN);
+
+#if !(CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS)
+  // Apps tab toolbar under the tab bar: [ search field ][ Sort ]. Starts hidden;
+  // luaStoreStyleTabs shows it on the Apps tab and moves the list down to make room.
+  if (CAP_STORE_SEARCH) {
+    const lv_coord_t tools_w = sw - 12;
+    lv_obj_t* tb = lv_obj_create(s_luastore_root);
+    s_luastore_tools = tb;
+    lv_obj_remove_style_all(tb);
+    const lv_coord_t tools_gap = 1;               // tight under the tab buttons
+    lv_obj_set_pos(tb, 6, s_luastore_list_y - 4 + tools_gap);
+    lv_obj_clear_flag(tb, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(tb, LV_OBJ_FLAG_HIDDEN);
+    const bool narrow = luaStoreToolsNarrow();
+    char t[40];
+    lv_coord_t sort_w = 0;
+    for (uint8_t m = 0; m < storefilter::SORT_COUNT; m++) {   // wide enough for every mode
+      luaStoreSortLabelText(t, sizeof t, m, narrow);
+      lv_point_t sz;
+      lv_txt_get_size(&sz, t, &g_font_12, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      if (sz.x > sort_w) sort_w = sz.x;
+    }
+    sort_w += 16;
+    if (sort_w > tools_w / 2) sort_w = tools_w / 2;
+
+    lv_obj_t* ta = lv_textarea_create(tb);
+    s_luastore_search_ta = ta;
+    lv_obj_set_pos(ta, 0, 0);
+    lv_obj_set_width(ta, tools_w - sort_w - 4);
+    styleCard(ta);
+    lv_textarea_set_one_line(ta, true);
+    taSetPlaceholder(ta, TR("Search apps"));
+    lv_textarea_set_max_length(ta, sizeof(s_luastore_query) - 1);
+    lv_obj_set_style_text_font(ta, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(ta, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(ta, 2, LV_PART_MAIN);
+    lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_VALUE_CHANGED, nullptr);
+    lv_obj_add_event_cb(ta, luaStoreSearchChangedCb, LV_EVENT_READY, nullptr);
+    attachSettingsTaEvents(ta);   // keyboard binds on focus / tap, as in Files
+    // One-line mode sizes the field to its text, so the toolbar and the Sort
+    // button take the field's height rather than the taller tab bar's.
+    lv_obj_update_layout(ta);
+    lv_coord_t tools_h = lv_obj_get_height(ta);
+    if (tools_h < lv_font_get_line_height(&g_font_12))   // no layout pass yet (hidden parent): one text line plus padding
+      tools_h = lv_font_get_line_height(&g_font_12) + 4 + 2 * lv_obj_get_style_border_width(ta, LV_PART_MAIN);
+    lv_obj_set_size(tb, tools_w, tools_h);
+
+    lv_obj_t* sb = lv_btn_create(tb);
+    lv_obj_set_size(sb, sort_w, tools_h);
+    lv_obj_align(sb, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_radius(sb, 8, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(sb, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(sb, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_t* sl = lv_label_create(sb);
+    s_luastore_sort_lbl = sl;
+    useChainedFont(sl);
+    luaStoreSortLabelText(t, sizeof t, s_luastore_sort, narrow);
+    lv_label_set_text(sl, t);
+    lv_obj_set_style_text_font(sl, &g_font_12, LV_PART_MAIN);
+    lv_obj_set_style_text_color(sl, lv_color_hex(COLOR_TEXT), LV_PART_MAIN);
+    uiFitLabelWidth(sl, sort_w - 8);
+    lv_obj_center(sl);
+    lv_obj_add_event_cb(sb, luaStoreSortBtnCb, LV_EVENT_CLICKED, nullptr);
+
+    s_nav_store_tools[0] = ta;
+    s_nav_store_tools[1] = sb;
+    s_luastore_tools_dy = tools_h + tools_gap;   // list keeps its 4 px gap below
+  }
+#endif
 
 #if CAP_BUILTIN_LUA_APPS && !CAP_STORE_DOWNLOADS
   if (s_luastore_tab == 0) s_luastore_tab = 2;   // no Apps tab on this board
@@ -79140,6 +79870,7 @@ bool UITask::loadMsgsFromStorage() {
     f.close();
     _ui_msg_count = 0;
     _ui_msg_head  = 0;
+    ++_reply_gen;
     _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
     _msgcount     = static_cast<int>(hdr.msgcount);
     return true;
@@ -79181,6 +79912,7 @@ bool UITask::loadMsgsFromStorage() {
 
   _ui_msg_count = n_keep;                     // ring is now linear: slots 0..n_keep-1, oldest first
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  ++_reply_gen;
   _thread_hist_dirty = true;                  // ring replaced — recompute "has history" on next read
   _msgcount     = static_cast<int>(hdr.msgcount);
   return true;
@@ -79314,6 +80046,7 @@ bool UITask::loadMsgsFromSegments() {
 
   _ui_msg_count = n_keep;
   _ui_msg_head  = n_keep % _ui_msg_cap;
+  ++_reply_gen;
   _thread_hist_dirty = true;   // ring replaced — recompute "has history" on next read
   _ui_seq_next  = max_seq + 1;
   s_seg_flushed_seq = max_seq;   // everything loaded IS on disk by definition
@@ -80598,6 +81331,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
     }
     strncpy(_ui_threads[i].name, name, MAX_THREAD_NAME);
     _ui_threads[i].name[MAX_THREAD_NAME] = '\0';
+    ++_reply_gen;   // a recreated thread may own ring messages already
     return i;
   }
   return -1;
@@ -80606,6 +81340,7 @@ int UITask::findOrCreateThread(const char* name, bool channel) {
 bool UITask::removeThread(int idx) {
   if (idx < 0 || idx >= MAX_UI_THREADS) return false;
   if (!_ui_threads[idx].used) return false;
+  ++_reply_gen;
   _thread_hist_dirty = true;   // slot is being freed + its ring records dropped
   // Match the thread by stored name (channel/DM) before wiping the slot so
   // we can drop any ring messages that belonged to it. Without this the
@@ -80733,6 +81468,7 @@ void UITask::refreshThreadsFromMesh() {
       if (c.name[0] && strncmp(_ui_threads[t].name, c.name, MAX_THREAD_NAME) != 0) {
         strlcpy(_ui_threads[t].name, c.name, sizeof(_ui_threads[t].name));
         _threads_dirty = true;
+        ++_reply_gen;   // its ring messages carry the old name now
       }
     }
   }
@@ -82770,6 +83506,68 @@ bool UITask::threadHasMention(int idx) const {
   return idx >= 0 && idx < MAX_UI_THREADS && _ui_threads[idx].used && _ui_threads[idx].has_mention;
 }
 
+// One ring pass, newest first, settling every thread as soon as its answer is known: a
+// direct chat by its newest message, a channel by its newest post of mine or @mention of
+// me, whichever comes first. Channels where neither appears read the whole ring, so the
+// answer is cached (see _reply_cache_sig) rather than recomputed on every list refresh.
+void UITask::rebuildReplyState() const {
+  for (int t = 0; t < MAX_UI_THREADS; ++t) _reply_key[t] = 0;
+  bool settled[MAX_UI_THREADS];
+  // A room server's thread is a group conversation: like a channel, it waits on me only
+  // for an @mention, not for every post someone else makes there.
+  bool group[MAX_UI_THREADS];
+  int open = 0;
+  for (int t = 0; t < MAX_UI_THREADS; ++t) {
+    settled[t] = !_ui_threads[t].used;
+    group[t] = false;
+    if (settled[t]) continue;
+    ++open;
+    if (_ui_threads[t].channel) { group[t] = true; continue; }
+    uint8_t pub[32];
+    if (getThreadContactPub(t, pub)) {
+      const ContactInfo* c = the_mesh.lookupContactByPubKey(pub, PUB_KEY_SIZE);
+      group[t] = c && c->type == ADV_TYPE_ROOM;
+    }
+  }
+  for (int i = 0; i < _ui_msg_count && open > 0; ++i) {
+    const int slot = (_ui_msg_head - 1 - i + _ui_msg_cap) % _ui_msg_cap;
+    const UIMessage& m = _ui_msgs[slot];
+    if (!m.thread[0] || !m.text[0]) continue;
+    for (int t = 0; t < MAX_UI_THREADS; ++t) {
+      if (settled[t] || m.channel != _ui_threads[t].channel ||
+          strncmp(m.thread, _ui_threads[t].name, MAX_THREAD_NAME) != 0) continue;
+      const bool waiting = !m.outgoing && (!group[t] || textMentionsMe(m.text));
+      if (!group[t] || m.outgoing || waiting) {   // a DM settles on its newest message
+        settled[t] = true;
+        --open;
+        if (waiting) {
+          uint32_t k = 2166136261u;
+          auto mix = [&k](uint32_t v) { k = (k ^ v) * 16777619u; };
+          mix(m.seq); mix(m.ts); mix(m.channel ? 1u : 0u);
+          _reply_key[t] = k ? k : 1u;
+        }
+      }
+      break;
+    }
+  }
+}
+
+bool UITask::threadAwaitingReply(int idx, uint32_t* key) const {
+  if (key) *key = 0;
+  if (!_ui_threads || !_ui_msgs || idx < 0 || idx >= MAX_UI_THREADS || !_ui_threads[idx].used) return false;
+  uint32_t sig = 2166136261u;
+  auto mix = [&sig](uint32_t v) { sig = (sig ^ v) * 16777619u; };
+  mix(_ui_seq_next); mix((uint32_t)_ui_msg_head); mix((uint32_t)_ui_msg_count); mix(_reply_gen);
+  if (const NodePrefs* pr = the_mesh.getNodePrefs())   // a renamed node changes what mentions me
+    for (const char* s = pr->node_name; *s; ++s) mix((uint8_t)*s);
+  if (sig != _reply_cache_sig) {
+    rebuildReplyState();
+    _reply_cache_sig = sig;
+  }
+  if (key) *key = _reply_key[idx];
+  return _reply_key[idx] != 0;
+}
+
 int UITask::getThreadCount(bool channel_mode, int out_indexes[], int max_out) const {
   int scratch[UI_SORT_SCRATCH];
   int n = 0;
@@ -82823,7 +83621,7 @@ void UITask::enforceHistoryCap(int thread_idx) {
     --_thread_msgs[thread_idx];
     ++trimmed;
   }
-  if (trimmed) _msgs_dirty = true;
+  if (trimmed) { _msgs_dirty = true; ++_reply_gen; }
 }
 
 bool UITask::threadHasMessageHistory(int thread_idx) const {
@@ -82893,6 +83691,7 @@ bool UITask::deleteMessageBySlot(int msg_idx) {
   m.sender[0] = '\0';
   segMarkSeqDirty(m.seq);   // the owning segment needs a compaction pass
   _msgs_dirty = true;
+  ++_reply_gen;
   return true;
 }
 
@@ -82920,6 +83719,7 @@ int UITask::clearThreadHistory(int thread_idx) {
   // it. Channels are listed regardless, so they need no pin.
   if (!_ui_threads[thread_idx].channel) _ui_threads[thread_idx].keep_when_empty = true;
   _thread_msgs[thread_idx] = 0;   // emptied, and no other thread was touched
+  ++_reply_gen;
   _threads_dirty = true;
   if (cleared) _msgs_dirty = true;
   return cleared;
@@ -88958,6 +89758,7 @@ static const PopupEnt k_popup_registry[] = {
   { P_OPEN(s_keyhelp),               []{ pagerKeyHelpClose(); },          PF_COUNT },   // the key help (hold Fn)
   { P_OPEN(s_ql_pill),               []{ pagerQuickLevelClose(); },       0 },          // Shift + knob level pill: passing, not counted
 #endif
+  { P_OPEN(s_chat_contact_tuple_popup), []{ closeChatContactTuplePopup(); }, PF_COUNT },   // a contact shared in chat: Add (#887)
   { P_OPEN(s_chat_link_picker),     []{ closeChatLinkPicker(); },         PF_COUNT },   // keyboard navigation: choose a link from the bubble
   { P_OPEN(s_ra_edit_root),          []{ raCloseEditSheet(); },           PF_COUNT },   // repeater admin: edit sheet
   { P_OPEN(s_actlist_root),          []{ actListClose(); },               PF_COUNT },   // action-list menu sheet

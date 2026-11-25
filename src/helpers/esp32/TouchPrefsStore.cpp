@@ -1594,14 +1594,14 @@ bool touchPrefsSetContactPurgeDays(uint16_t days) {
   s_cfg.ct_purge_days = days;
   return cfgFlush();
 }
-// The Chats "U" (unread only) chip (v73, #824).
-bool touchPrefsGetChatsUnreadOnly() {
+// The Chats unread chip (v73, #824; the third "unreplied" step #901 reuses the byte).
+uint8_t touchPrefsGetChatsUnreadMode() {
   if (!s_begun) touchPrefsBegin();
-  return s_cfg.chats_unread_only != 0;
+  return s_cfg.chats_unread_only <= TOUCH_CHATS_UNREPLIED ? s_cfg.chats_unread_only : TOUCH_CHATS_ALL;
 }
-bool touchPrefsSetChatsUnreadOnly(bool on) {
+bool touchPrefsSetChatsUnreadMode(uint8_t mode) {
   if (!s_begun) touchPrefsBegin();
-  s_cfg.chats_unread_only = on ? 1 : 0;
+  s_cfg.chats_unread_only = mode <= TOUCH_CHATS_UNREPLIED ? mode : TOUCH_CHATS_ALL;
   return cfgFlush();
 }
 uint8_t touchPrefsGetNavPos() {
@@ -2944,6 +2944,66 @@ bool touchPrefsSetChannelEmoji(const char* name, const char* utf8) {
   }
   s_begun = s_prefs.begin(TOUCH_NS, true);
   return true;
+}
+
+// ---- Dismissed "waiting for my reply" threads (#901) ----
+// Same keyed-blob pattern: 32-byte name + the 4-byte key of the message that was waiting.
+// Newest last; a full table drops its oldest entry. 48 x 36 B = 1728 B, under the cap.
+static const int   CRD_NAME  = TOUCH_CHMUTE_NAME;
+static const int   CRD_ENTRY = CRD_NAME + 4;
+static const int   CRD_MAX   = 48;
+static const char* KEY_CRD   = "chrdism";
+static uint8_t*    s_crd = (uint8_t*)tpPsAlloc(CRD_MAX * CRD_ENTRY);
+static int         s_crd_n = -1;   // -1 = not loaded yet
+static void crdLoad() {
+  if (s_crd_n >= 0) return;
+  s_crd_n = 0;
+  if (!s_begun) touchPrefsBegin();
+  if (!s_prefs.isKey(KEY_CRD)) return;
+  size_t n = s_prefs.getBytes(KEY_CRD, s_crd, (size_t)(CRD_MAX * CRD_ENTRY));
+  if (n == 0 || n > (size_t)(CRD_MAX * CRD_ENTRY)) { s_crd_n = 0; return; }
+  s_crd_n = (int)(n / CRD_ENTRY);
+}
+static int crdFind(const char* name) {
+  crdLoad();
+  for (int i = 0; i < s_crd_n; ++i)
+    if (strncmp((const char*)&s_crd[i * CRD_ENTRY], name, CRD_NAME) == 0) return i;
+  return -1;
+}
+uint32_t touchPrefsGetReplyDismiss(const char* name) {
+  if (!name || !name[0]) return 0;
+  const int i = crdFind(name);
+  if (i < 0) return 0;
+  uint32_t key;
+  memcpy(&key, &s_crd[i * CRD_ENTRY + CRD_NAME], sizeof key);
+  return key;
+}
+void touchPrefsSetReplyDismiss(const char* name, uint32_t key) {
+  if (!name || !name[0] || !s_crd) return;
+  int i = crdFind(name);
+  if (i >= 0) {   // drop the old entry; a set re-appends it as the newest
+    for (int j = i; j + 1 < s_crd_n; ++j) memcpy(&s_crd[j * CRD_ENTRY], &s_crd[(j + 1) * CRD_ENTRY], CRD_ENTRY);
+    --s_crd_n;
+  } else if (!key) {
+    return;
+  }
+  if (key) {
+    if (s_crd_n >= CRD_MAX) {
+      memmove(s_crd, s_crd + CRD_ENTRY, (size_t)((CRD_MAX - 1) * CRD_ENTRY));
+      s_crd_n = CRD_MAX - 1;
+    }
+    i = s_crd_n++;
+    memset(&s_crd[i * CRD_ENTRY], 0, CRD_ENTRY);
+    strncpy((char*)&s_crd[i * CRD_ENTRY], name, CRD_NAME - 1);
+    memcpy(&s_crd[i * CRD_ENTRY + CRD_NAME], &key, sizeof key);
+  }
+  s_prefs.end();
+  if (s_prefs.begin(TOUCH_NS, false)) {
+    if (s_crd_n == 0) s_prefs.remove(KEY_CRD);
+    else              s_prefs.putBytes(KEY_CRD, s_crd, (size_t)(s_crd_n * CRD_ENTRY));
+    s_prefs.end();
+  }
+  s_begun = s_prefs.begin(TOUCH_NS, true);
 }
 
 // Remembered repeater admin passwords --------------------------------------

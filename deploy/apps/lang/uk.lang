@@ -222,7 +222,9 @@ Connected - a browser is viewing this screen.	Підключено - брауз�
 Connecting...	Підключення...
 Connecting…	Підключення…
 Console not available on this build	Консоль недоступна в цій збірці
+Contact	Контакт
 Contact added	Контакт додано
+Could not add contact	Не вдалося додати контакт
 Contact deleted	Контакт видалено
 Contact gone	Контакт зник
 Contact missing	Контакт відсутній
@@ -2506,3 +2508,28 @@ English only. Press Up to reach the corrections, Left or Right to pick one, then
 Phosphor	Фосфор
 Apply the new look? WADAMESH restarts to apply it.	Застосувати новий вигляд? WADAMESH перезапуститься.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	З cities.bin у /var/lib/wadamesh-zero головний екран показує місто, де ви є, замість імені вузла.
+
+# Chats unread chip: unreplied step (#901)
+A	В
+U | UR	Н | БВ
+All chats	Усі чати
+Unread + unreplied	Непрочитані + без відповіді
+Dismiss	Приховати
+Dismissed	Приховано
+No unread or unreplied chats	Немає непрочитаних чатів чи чатів без відповіді
+No unread or unreplied channels	Немає непрочитаних каналів чи каналів без відповіді
+No unread or unreplied direct chats	Немає непрочитаних особистих чатів чи чатів без відповіді
+
+# Store search / sort (#863)
+Search apps	Пошук застосунків
+Updates	Оновлення
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Немає застосунків за запитом «%s»
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Немає книг. Додайте файли .epub або .txt до /meshcomod/apps/ebook.d/ на SD-картці.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Книга завелика для пам'яті застосунку. Спробуйте копію в .txt або розділіть її на частини.
+
+# Contacts shared in chat (#887)
+This is your own node	Це ваш власний вузол

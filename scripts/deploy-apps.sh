@@ -69,6 +69,21 @@ for a in apps:
             bad.append(f'{a["id"]} v{a["ver"]}: {f}')
 if bad:
     sys.exit("ABORT: apps.json points at files that do not exist: " + ", ".join(bad))
+
+# The Store's Newest sort reads "released" (the date the entry's current ver was
+# published). A missing or malformed date sorts the app to the bottom on device.
+import datetime
+undated = []
+for a in apps:
+    d = a.get("released")
+    try:
+        ok = isinstance(d, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and datetime.date.fromisoformat(d)
+    except ValueError:
+        ok = False
+    if not ok:
+        undated.append(f'{a["id"]} v{a["ver"]}: {d!r}')
+if undated:
+    sys.exit('ABORT: apps.json entries need "released": "YYYY-MM-DD": ' + ", ".join(undated))
 print(f"catalogs ok: {len(langs)} languages and {len(apps)} apps, every referenced file present")
 PY
 

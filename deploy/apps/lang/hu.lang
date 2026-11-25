@@ -224,7 +224,9 @@ Connected - a browser is viewing this screen.	Kapcsolódva - egy böngésző né
 Connecting...	Csatlakozás...
 Connecting…	Kapcsolódás…
 Console not available on this build	Konzol nem érhető el ezen a builden
+Contact	Névjegy
 Contact added	Névjegy hozzáadva
+Could not add contact	Nem sikerült hozzáadni a névjegyet
 Contact deleted	Névjegy törölve
 Contact gone	Eltűnt névjegy
 Contact missing	Hiányzó névjegy
@@ -2515,3 +2517,28 @@ English only. Press Up to reach the corrections, Left or Right to pick one, then
 Phosphor	Foszfor
 Apply the new look? WADAMESH restarts to apply it.	Alkalmazod az új kinézetet? A WADAMESH újraindul.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Ha a cities.bin a /var/lib/wadamesh-zero mappában van, a kezdőképernyő a csomópont neve helyett azt a várost mutatja, ahol vagy.
+
+# Chats unread chip: unreplied step (#901)
+A	Ö
+U | UR	O | MV
+All chats	Összes csevegés
+Unread + unreplied	Olvasatlan + megválaszolatlan
+Dismiss	Elvetés
+Dismissed	Elvetve
+No unread or unreplied chats	Nincs olvasatlan vagy megválaszolatlan csevegés
+No unread or unreplied channels	Nincs olvasatlan vagy megválaszolatlan csatorna
+No unread or unreplied direct chats	Nincs olvasatlan vagy megválaszolatlan közvetlen csevegés
+
+# Store search / sort (#863)
+Search apps	Appok keresése
+Updates	Frissítések
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Nincs találat: „%s”
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Nincs könyv. Tegyél .epub vagy .txt fájlokat az SD-kártya /meshcomod/apps/ebook.d/ mappájába.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Ez a könyv túl nagy az alkalmazás memóriájához. Próbálj egy .txt másolatot, vagy oszd részekre.
+
+# Contacts shared in chat (#887)
+This is your own node	Ez a saját csomópontod

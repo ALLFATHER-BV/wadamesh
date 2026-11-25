@@ -524,6 +524,25 @@
   #endif
 #endif
 
+// Store > Apps search field and sort button (#913), and contact cards for a
+// <key:type:name> contact shared in chat (#887). Off on the T-LoRa Pager, whose app
+// slot is the tightest: there the Apps list keeps catalog order and a shared contact
+// shows as its text.
+#ifndef CAP_STORE_SEARCH
+  #if defined(TLORA_PAGER)
+    #define CAP_STORE_SEARCH 0
+  #else
+    #define CAP_STORE_SEARCH 1
+  #endif
+#endif
+#ifndef CAP_CHAT_CONTACT_CARDS
+  #if defined(TLORA_PAGER)
+    #define CAP_CHAT_CONTACT_CARDS 0
+  #else
+    #define CAP_CHAT_CONTACT_CARDS 1
+  #endif
+#endif
+
 // The Constellation screensaver (Constellation.cpp) animates continuously. E-paper
 // cannot show that, and refreshing it to try would wear the panel, so the T-Deck
 // Pro and Max (both HAS_TDECK_PRO) go without. Every other display gets it.

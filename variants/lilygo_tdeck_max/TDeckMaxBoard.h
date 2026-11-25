@@ -49,6 +49,11 @@
 // Gauge probe/refresh failed -- never let the UI divide by zero.
 #define TDMAX_BATT_MILLIVOLTS_FALLBACK 3700
 
+// The pack LilyGo fits (1400 mAh). The BQ27220 leaves the factory set up for
+// 3000 mAh, so its state of charge, remaining capacity and time-to-empty are
+// otherwise wrong.
+#define TDMAX_GAUGE_DESIGN_MAH 1400
+
 class TDeckMaxBoard : public ESP32Board {
 public:
   void begin();

@@ -581,7 +581,7 @@
         <p>The firmware carries the emoji people use most. Put the emoji pack on the microSD card and the picker grows to nearly the full set: about 1,350 more emoji, country and region flags included, sorted into tabs (Smileys, People, Nature, Food and more) with a <b>Recent</b> tab for the ones you picked last. Messages that contain them draw them too, instead of an empty box. Without a pack nothing changes: the picker stays the plain grid it always was.</p>
         <h3>Installing it</h3>
         <ol>
-          <li>Download <a href="emoji/emoji.pack"><code>emoji.pack</code></a> (about 1 MB).</li>
+          <li>Download <a href="emoji/emoji.pack"><code>emoji.pack</code></a> (about 1 MB). On the T-Deck Pro and T-Deck Max, whose screens are black and white, download the <a href="emoji/mono/emoji.pack">black-and-white <code>emoji.pack</code></a> instead (the same size). It is drawn for those screens and matches the built-in emoji there, where the colour one turns to grey mush.</li>
           <li>Put the card in your computer and make a folder called <code>emoji</code> in the top of the card, then copy the file into it, so it sits at <code>emoji/emoji.pack</code>. Keep the name exactly as it is. Loose in the top of the card, as <code>emoji.pack</code>, works too.</li>
           <li>Put the card back and restart the device. The pack is read once, at start-up.</li>
           <li>Open the emoji picker in a conversation. Tabs along the top mean the pack is in.</li>
@@ -596,7 +596,7 @@
           </div>
         </div>
         <h3>Making your own <span class="tag">Dev</span></h3>
-        <p>The pack is built from Google's Noto emoji art, the same art as the built-in set, so both sit on the same line. <code>python3 scripts/build/gen-emoji-pack.py --all</code> in the repository builds the full one (it needs Pillow and downloads the art once). To pick your own selection, list the emoji in <code>scripts/build/emoji-pack.txt</code> and run it without <code>--all</code>. <code>scripts/build/check-emoji-pack.py emoji.pack</code> tells you whether the device would accept a pack. Thanks to TerryTel93 for the pack (#616).</p>
+        <p>The pack is built from Google's Noto emoji art, the same art as the built-in set, so both sit on the same line. <code>python3 scripts/build/gen-emoji-pack.py --all</code> in the repository builds the full one (it needs Pillow and downloads the art once); add <code>--mono</code> for the black-and-white one, drawn from Google's Noto Emoji monochrome font. To pick your own selection, list the emoji in <code>scripts/build/emoji-pack.txt</code> and run it without <code>--all</code>. <code>scripts/build/check-emoji-pack.py emoji.pack</code> tells you whether the device would accept a pack. Thanks to TerryTel93 for the pack (#616).</p>
       </div>
     </section>
 

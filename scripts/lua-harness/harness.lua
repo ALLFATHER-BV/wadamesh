@@ -329,7 +329,7 @@ local function build_wada()
                                        input = true, input_len = true,
                                        touch = cfg.caps.touch, sd = true, compass = cfg.caps.compass,
                                        accel = cfg.caps.accel, discover = cfg.caps.discover,
-                                       panel = cfg.caps.panel or false,
+                                       panel = cfg.caps.panel or false, epaper = cfg.caps.epaper or false,
                                        map = cfg.caps.sdk_ext or false,
                                        sd_list = cfg.caps.sd_list or false,
                                        sd_clean = cfg.caps.sd_clean or false,
@@ -2941,6 +2941,8 @@ scenarios.ebook_input = function()
   swipe(app, "right"); assert(eb_wait(app) == p1, "swipe right: previous")
   swipe(app, "down"); assert(eb_wait(app) == p2, "trackball down: next")
   swipe(app, "up"); assert(eb_wait(app) == p1, "trackball up: previous")
+  key(app, " "); tick(app, 3, 40)
+  assert(eb_page() == p1, "space does nothing")
   drag(app, 100, 100, 20, 100, "left"); assert(eb_wait(app) == p2, "a drag turns once, and its release is not a tap")
   tap(app, 200, 315); assert(eb_wait(app) == p2, "a tap in the button row is ignored")
   -- the footer buttons (what a jog wheel or encoder activates): next is created first
@@ -2969,9 +2971,9 @@ local function eb_pic_book()
   return zip_build(files), pic
 end
 
-local function eb_images_start(with_api, result)
+local function eb_images_start(with_api, result, caps)
   local zipped, pic = eb_pic_book()
-  eb_start(320, 240, zipped)
+  eb_start(320, 240, zipped, caps)
   local calls = { n = 0, removed = 0 }
   if with_api then
     wada.ui.image = function(file, off, len, x, y, w, h)
@@ -3023,10 +3025,13 @@ scenarios.ebook_images = function()
   app, calls = eb_images_start(true)
   p = eb_page()
   assert(p:find("<image: A diagram>", 1, true), "default shows placeholders")
+  key(app, "m"); assert(eb_row("Images: on tap"), "default mode: " .. label_dump())
+  assert(guarded(BUDGET, eb_row("Continue").fn)); eb_wait(app)
+  eb_set_images(app, "never")
   tap(app, 160, 4 + 3 * 18 + 1)
   assert(not eb_row("Continue") and calls.n == 0, "never: a tap on a placeholder does nothing")
-  key(app, "m"); assert(eb_row("Images: never"), "default mode: " .. label_dump())
-  assert(not eb_row("View image"), "no View image row in never mode")
+  key(app, "m"); assert(eb_row("Images: never"), "never mode: " .. label_dump())
+  assert(not eb_row("View image"), "no View image row")
 
   -- always: the picture gets a page of its own, the others stay text
   eb_set_images(app, "always")
@@ -3076,24 +3081,150 @@ scenarios.ebook_images = function()
   key(app, "i"); assert(#calls == before + 2, "the i key shows the picture")
   key(app, "enter"); assert(eb_wait(app) == p, "any key goes back")
   key(app, "m")
-  assert(guarded(BUDGET, assert(eb_row("View image")).fn)); assert(#calls == before + 3, "the menu row shows the picture")
-  tap(app, 160, 100); eb_wait(app)
+  assert(not eb_row("View image"), "the menu has no View image row")
+  assert(guarded(BUDGET, assert(eb_row("Continue")).fn)); eb_wait(app)
+  before = before + 2
   -- a picture the book does not contain: a note, and back on the page
   local tb = #toasts
   tap(app, 160, 4 + 7 * 18 + 1)
   assert(toasts[#toasts] == "Cannot show this image" and #toasts == tb + 1, "a missing picture says so")
   assert(eb_wait(app) == p, "and the page is back")
   app.on_close()
-  assert(storekv.img == "tap", "mode stored: " .. tostring(storekv.img))
+  assert(storekv.img == nil or storekv.img == "tap", "mode stored: " .. tostring(storekv.img))
+
+  -- no touch: the menu lists the page's pictures (a tap cannot reach them); d-pad right is the next page
+  app, calls = eb_images_start(true, nil, { touch = false, keyboard = true, sdk_ext = true })
+  p = eb_page()
+  assert(#buttons == 0, "touchless reading has no on-screen buttons")
+  key(app, "m")
+  assert(eb_row("View image 1") and eb_row("View image 2"), "a row per picture on the page: " .. label_dump())
+  assert(guarded(BUDGET, eb_row("View image 1").fn))
+  assert(#calls == 1, "the row shows the picture")
+  key(app, "enter"); assert(eb_wait(app) == p, "back on the same page")
+  swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left on the first page stays on it")
+  swipe(app, "right"); tick(app, 3, 40)
+  assert(eb_page() ~= p, "d-pad right goes to the next page")
+  swipe(app, "left"); tick(app, 3, 40); assert(eb_page() == p, "d-pad left goes back")
+  key(app, " "); tick(app, 3, 40)
+  assert(eb_page() == p, "space does nothing")
+  -- the d-pad centre is a centre tap AND Enter: with pictures on the page it must open the menu
+  enter(app, 320, 240); assert(eb_row("Continue"), "the d-pad centre opens the menu: " .. label_dump())
+  assert(guarded(BUDGET, eb_row("Continue").fn)); eb_wait(app)
+  local n0 = #calls
+  tap(app, 160, 4 + 3 * 18 + 1); key(app, "enter")   -- the centre landing on a picture's row
+  assert(#calls == n0 and eb_row("Continue"), "the centre tap over a picture row opens the menu, not the picture")
+  assert(guarded(BUDGET, eb_row("View image 1").fn))
+  enter(app, 320, 240); assert(eb_wait(app) == p and not eb_row("Continue"), "centre closes the picture, and does not open the menu too")
+  app.on_close()
+end
+
+local function eb_txt_pages(app)
+  local pages = { eb_page() }
+  while true do
+    local before = #toasts
+    key(app, "right")
+    local t = eb_wait(app)
+    if #toasts > before then assert(toasts[#toasts] == "End of book"); break end
+    pages[#pages + 1] = t
+    assert(#t > 0 and valid_utf8(t), "page " .. #pages .. " is empty or cuts a character")
+    assert(#pages < 3000, "never reaches the end")
+  end
+  return pages
+end
+
+local function eb_wrap_txt(plain, width)
+  local out, line = {}, ""
+  for w in plain:gmatch("%S+") do
+    if #line + #w + 1 > width and line ~= "" then out[#out + 1] = line; line = w
+    else line = (line == "" and w or line .. " " .. w) end
+  end
+  if line ~= "" then out[#out + 1] = line end
+  return table.concat(out, "\n")
+end
+
+scenarios.ebook_txt = function()
+  local paras, expect = {}, {}
+  for i = 1, 90 do
+    local plain = eb_para(i * 7919, 40 + (i * 13) % 90)
+    paras[#paras + 1] = eb_wrap_txt(plain, 70)
+    expect[#expect + 1] = plain
+  end
+  local want = table.concat(expect, ""):gsub("%s+", "")
+  for _, variant in ipairs({ "lf", "crlf", "bom", "line" }) do
+    local body
+    if variant == "line" then
+      local ls = {}
+      for _, e in ipairs(expect) do ls[#ls + 1] = e end
+      body = table.concat(ls, "\n")
+    else
+      body = table.concat(paras, "\n\n")
+      if variant == "crlf" then body = body:gsub("\n", "\r\n") end
+      if variant == "bom" then body = "\xEF\xBB\xBF" .. body end
+    end
+    eb_start(320, 240, body, nil, "book.txt")
+    local app = load_app()
+    eb_open_from_library(app, "book")
+    local pages = eb_txt_pages(app)
+    local got = table.concat(pages, "\n"):gsub("%s+", "")
+    assert(got == want, variant .. ": text lost or repeated (" .. #got .. " vs " .. #want .. ")")
+    assert(#pages > 20, variant .. ": should span many pages and sections: " .. #pages)
+    for i = #pages - 1, 1, -1 do
+      key(app, "left")
+      local t = eb_wait(app)
+      assert(t == pages[i], variant .. ": page " .. i .. " differs going backward")
+    end
+    print(string.format("  %s: %d pages, %d bytes, forward and back OK", variant, #pages, #got))
+    if app.on_close then guarded(BUDGET, app.on_close) end
+  end
+  -- Latin-1 file (not UTF-8): bytes become characters
+  eb_start(320, 240, "caf\xE9 cr\xE8me\n\nna\xEFve", nil, "book.txt")
+  local app = load_app()
+  eb_open_from_library(app, "book")
+  local t = eb_page()
+  assert(valid_utf8(t) and t:find("caf\xC3\xA9", 1, true) and t:find("na\xC3\xAFve", 1, true), "latin-1 text: " .. t)
+  -- empty file
+  eb_start(320, 240, "", nil, "book.txt")
+  app = load_app()
+  eb_open_from_library(app, "book")
+  assert(eb_page():find("(empty)", 1, true), "empty file: " .. tostring(eb_page()))
+  -- resume the place in a text book
+  eb_start(320, 240, table.concat(paras, "\n\n"), nil, "book.txt")
+  app = load_app()
+  eb_open_from_library(app, "book")
+  for _ = 1, 40 do eb_next(app); eb_wait(app) end
+  local at = eb_page()
+  app.on_close()
+  eb_wada()
+  fsfiles["book.txt"] = table.concat(paras, "\n\n")
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(eb_wait(app) == at, "reopens at the same page")
+  print("  latin-1, empty file, resume OK")
 end
 
 scenarios.ebook_errors = function()
-  -- empty folder: a hint, and a README that creates the folder on first run
+  -- empty folder: the README is written (creating the folder) and opens as the guide
   eb_start(320, 240, nil)
   local app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
-  assert(label_dump():find("No books", 1, true), "empty library hint: " .. label_dump())
+  local t = eb_wait(app)
   assert(fsfiles["README.txt"] and fsfiles["README.txt"]:find("ebook%-prep"), "README written")
+  assert(t:find("/meshcomod/apps/ebook.d/", 1, true), "README names the folder: " .. t)
+  app.on_close()
+  -- an older README is refreshed, and once real books exist the library is shown instead
+  eb_start(320, 240, nil)
+  fsfiles["README.txt"] = "old"
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(fsfiles["README.txt"] ~= "old", "stale README refreshed")
+  eb_wait(app)
+  app.on_close()
+  fsfiles["book.epub"] = zip_build((eb_book()))
+  fsfiles["README.txt"] = "old"
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(eb_row("book") and not eb_page(), "with books the library opens, not the README: " .. label_dump())
+  assert(fsfiles["README.txt"] ~= "old", "a stale README is refreshed even when books exist")
   -- a compressed book says how to fix it
   local files = eb_book()
   eb_start(320, 240, zip_build(files, 8))
@@ -3120,6 +3251,77 @@ scenarios.ebook_errors = function()
   app = load_app()
   assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
   assert(label_dump():find("newer firmware", 1, true), "gated: " .. label_dump())
+  -- no touch (ThinkNode M9): screens made of list rows hand the d-pad back to the firmware,
+  -- the reading screen keeps it for page turns
+  eb_start(320, 240, zip_build(files), { touch = false, keyboard = true, sdk_ext = true })
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(label_dump():find("Books", 1, true) and app.on_input == nil, "touchless library: keys left to the firmware")
+  assert(guarded(BUDGET, eb_row("book").fn))
+  eb_wait(app)
+  assert(app.on_input ~= nil, "touchless reading: the app turns pages")
+  key(app, "enter"); tick(app, 1, 40)
+  assert(app.on_input == nil and eb_row("") ~= nil, "touchless menu: keys left to the firmware")
+  -- with touch the app always keeps on_input
+  eb_start(320, 240, zip_build(files))
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(app.on_input ~= nil, "touch library keeps on_input")
+end
+
+-- A long book under the device's 256 KB app heap (#890 follow-up: an 11 MB book said
+-- "not enough memory"): 250 chapters and 300 pictures open and page; a book past the
+-- heap says so instead of sitting on "Opening...".
+local function eb_big_book(nch, nimg)
+  local files = { { "mimetype", "application/epub+zip" },
+    { "META-INF/container.xml", '<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="x"/></rootfiles></container>' } }
+  local man, spine, nav, body = {}, {}, {}, {}
+  for i = 1, 60 do local _, m = eb_para(i, 80); body[#body + 1] = "<p>" .. m .. "</p>\n" end
+  body = table.concat(body)
+  for i = 1, nch do
+    local nm = string.format("Text/chapter_%04d_split_%03d.xhtml", i, i % 7)
+    files[#files + 1] = { "OEBPS/" .. nm, "<html><body><h1>Chapter " .. i .. "</h1>" .. body ..
+      '<p><img src="../Images/illustration_' .. i .. '_highres.jpg" alt="Figure ' .. i .. '"/></p></body></html>' }
+    man[#man + 1] = string.format('<opf:item id="chapter_%04d_split_%03d" href="%s" media-type="application/xhtml+xml"/>', i, i % 7, nm)
+    spine[#spine + 1] = string.format('<opf:itemref idref="chapter_%04d_split_%03d"/>', i, i % 7)
+    nav[#nav + 1] = string.format('<li><a href="%s">Chapter %d, a long chapter title</a></li>', nm, i)
+  end
+  local img = ("\255"):rep(20000)
+  for i = 1, nimg do
+    local nm = string.format("Images/illustration_%d_highres.jpg", i)
+    files[#files + 1] = { "OEBPS/" .. nm, img }
+    man[#man + 1] = string.format('<opf:item id="img_%d" href="%s" media-type="image/jpeg"/>', i, nm)
+  end
+  files[#files + 1] = { "OEBPS/nav.xhtml", '<html><body><nav epub:type="toc"><ol>' .. table.concat(nav) .. "</ol></nav></body></html>" }
+  man[#man + 1] = '<opf:item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/>'
+  files[#files + 1] = { "OEBPS/content.opf", "<opf:package><opf:metadata><dc:title>Big &amp; Long</dc:title></opf:metadata><opf:manifest>" ..
+    table.concat(man) .. "</opf:manifest><opf:spine>" .. table.concat(spine) .. "</opf:spine></opf:package>" }
+  return zip_build(files)
+end
+
+scenarios.ebook_big = function()
+  eb_start(320, 240, eb_big_book(250, 300))
+  collectgarbage(); collectgarbage()
+  __memcap(256 * 1024)
+  local app = load_app()
+  local t = eb_open_from_library(app, "book")
+  assert(t:find("Chapter 1", 1, true), "a 250-chapter book opens under the heap cap: " .. label_dump())
+  assert(label_dump():find("1/250", 1, true), "all 250 chapters: " .. label_dump())
+  for _ = 1, 20 do eb_next(app); eb_wait(app) end
+  key(app, "m"); assert(eb_row("Chapters") or eb_row("Continue"), "the menu opens: " .. label_dump())
+  local peak = __mempeak()
+  __memcap(-1)
+  app.on_close()
+  print(string.format("  250 chapters, 300 pictures: peak %d KB of 256", peak // 1024))
+  eb_start(320, 240, eb_big_book(1500, 300))
+  collectgarbage(); collectgarbage()
+  __memcap(256 * 1024)
+  app = load_app()
+  assert(guarded(BUDGET, app.on_open, cfg.w, cfg.h))
+  assert(guarded(BUDGET, assert(eb_row("book")).fn))
+  tick(app, 400, 40)
+  __memcap(-1)
+  assert(label_dump():find("too large for the app", 1, true), "past the heap the book says so: " .. label_dump())
 end
 
 scenarios.ebook_cost = function()
@@ -3212,7 +3414,7 @@ local order = APP_PATH:find("/sdscan/", 1, true)
   or APP_PATH:find("/tetris/", 1, true)
   and { "tetris_tdeck", "tetris_v4", "tetris_keyboard", "tetris_logic", "tetris_hiscore", "tetris_cost" }
   or APP_PATH:find("/ebook/", 1, true)
-  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_errors", "ebook_cost" }
+  and { "ebook_book", "ebook_toc_and_menu", "ebook_resume", "ebook_input", "ebook_images", "ebook_txt", "ebook_errors", "ebook_big", "ebook_cost" }
   or APP_PATH:find("/breakout/", 1, true)
   and { "breakout_tdeck", "breakout_v4", "breakout_keyboard", "breakout_logic", "breakout_hiscore", "breakout_cost" }
   or APP_PATH:find("/tripodometer/", 1, true)
@@ -3246,6 +3448,7 @@ for _, name in ipairs(order) do
     print("== " .. name)
     reset_world()
     local ok, err = pcall(scenarios[name])
+    __memcap(-1)   -- a failed scenario must not leave its heap cap on the next one
     if not ok then fails = fails + 1; print("  SCENARIO FAILED: " .. tostring(err)) end
   end
 end

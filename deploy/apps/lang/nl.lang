@@ -222,7 +222,9 @@ Connected - a browser is viewing this screen.	Verbonden - een browser bekijkt di
 Connecting...	Verbinden...
 Connecting…	Verbinden…
 Console not available on this build	Console niet beschikbaar in deze build
+Contact	Contact
 Contact added	Contact toegevoegd
+Could not add contact	Contact toevoegen is mislukt
 Contact deleted	Contact verwijderd
 Contact gone	Contact weg
 Contact missing	Contact ontbreekt
@@ -2504,3 +2506,28 @@ English only. Press Up to reach the corrections, Left or Right to pick one, then
 Phosphor	Fosfor
 Apply the new look? WADAMESH restarts to apply it.	Nieuwe look toepassen? WADAMESH herstart.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Met cities.bin in /var/lib/wadamesh-zero toont Home de stad waar je bent in plaats van de nodenaam.
+
+# Chats unread chip: unreplied step (#901)
+A	A
+U | UR	O | OB
+All chats	Alle chats
+Unread + unreplied	Ongelezen + onbeantwoord
+Dismiss	Negeren
+Dismissed	Genegeerd
+No unread or unreplied chats	Geen ongelezen of onbeantwoorde chats
+No unread or unreplied channels	Geen ongelezen of onbeantwoorde kanalen
+No unread or unreplied direct chats	Geen ongelezen of onbeantwoorde directe chats
+
+# Store search / sort (#863)
+Search apps	Apps zoeken
+Updates	Updates
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Geen apps gevonden voor "%s"
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Geen boeken. Zet .epub- of .txt-bestanden in /meshcomod/apps/ebook.d/ op de SD-kaart.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Dit boek is te groot voor het geheugen van de app. Probeer een .txt-kopie of splits het in delen.
+
+# Contacts shared in chat (#887)
+This is your own node	Dit is je eigen node

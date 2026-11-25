@@ -222,7 +222,9 @@ Connected - a browser is viewing this screen.	Connecté - un navigateur affiche 
 Connecting...	Connexion...
 Connecting…	Connexion…
 Console not available on this build	Console indisponible sur cette version
+Contact	Contact
 Contact added	Contact ajouté
+Could not add contact	Impossible d’ajouter le contact
 Contact deleted	Contact supprimé
 Contact gone	Contact perdu
 Contact missing	Contact manquant
@@ -2505,3 +2507,28 @@ English only. Press Up to reach the corrections, Left or Right to pick one, then
 Phosphor	Phosphore
 Apply the new look? WADAMESH restarts to apply it.	Appliquer le nouveau look ? WADAMESH redémarre.
 With cities.bin in /var/lib/wadamesh-zero, Home shows the city you are in instead of the node name.	Avec cities.bin dans /var/lib/wadamesh-zero, l'accueil affiche la ville où vous êtes au lieu du nom du nœud.
+
+# Chats unread chip: unreplied step (#901)
+A	T
+U | UR	N | SR
+All chats	Toutes les discussions
+Unread + unreplied	Non lus + sans réponse
+Dismiss	Ignorer
+Dismissed	Ignoré
+No unread or unreplied chats	Aucune discussion non lue ou sans réponse
+No unread or unreplied channels	Aucun canal non lu ou sans réponse
+No unread or unreplied direct chats	Aucune discussion directe non lue ou sans réponse
+
+# Store search / sort (#863)
+Search apps	Rechercher des applis
+Updates	Mises à jour
+A → Z	A → Z
+Z → A	Z → A
+No apps match "%s"	Aucune appli ne correspond à « %s »
+
+# Ebook 2.0 (#890)
+No books. Add .epub or .txt files to /meshcomod/apps/ebook.d/ on the SD card.	Aucun livre. Ajoutez des fichiers .epub ou .txt dans /meshcomod/apps/ebook.d/ sur la carte SD.
+This book is too large for the app's memory. Try a .txt copy of it, or split it into parts.	Ce livre est trop volumineux pour la mémoire de l'app. Essayez une copie .txt ou découpez-le en parties.
+
+# Contacts shared in chat (#887)
+This is your own node	C'est votre propre nœud

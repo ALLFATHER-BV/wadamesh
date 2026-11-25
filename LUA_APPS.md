@@ -75,6 +75,13 @@ catalog is the third.
   immutable per-version paths, mutable index. Device store page = fetch
   index → list → install (download 2 files) → appears in the drawer.
   Uninstall = delete 2 files. Update = version compare against the index.
+- Each catalog row carries `"released": "YYYY-MM-DD"`, the date its current
+  `ver` was published; bump it with the version. The Store's Apps tab sorts by
+  it (Newest) and `scripts/deploy-apps.sh` refuses a row without a valid one.
+  Older firmware ignores the field. The Apps tab also has a search field
+  (name, id and description) and a sort button (A → Z, Z → A, Newest); apps
+  with an update are pinned on top in every mode. Match and order logic:
+  `src/ui-touch/StoreFilter.h`, host test `test/test_store_filter.cpp`.
 - The Store page also lists the **built-in removable apps** (Snake, Airtime,
   RF Monitor, later more) with the same install/uninstall verbs — for
   built-ins that just toggles drawer visibility + services (MQTT bridge gets
