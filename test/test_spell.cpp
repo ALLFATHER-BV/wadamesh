@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Host test for src/ui-touch/spell.cpp. Build and run from the repo root:
 //   c++ -std=c++17 -Isrc test/test_spell.cpp src/ui-touch/spell.cpp -o /tmp/test_spell && /tmp/test_spell
 //
@@ -158,10 +159,27 @@ static void testSuggest(const spell::Dict &d) {
     ok(spell::suggest(d, longWord, strlen(longWord), out, 3) == 0, "too long to suggest for");
 }
 
+// The block index the device rebuilds from the inflated list (spell_en.cpp)
+// must be the one the generator would have written.
+static void testBuildBlocks(const Built &b) {
+    std::vector<uint32_t> got(b.blocks.size() + 4);
+    const uint32_t n = spell::buildBlocks(b.data.data(), (uint32_t)b.data.size(), b.dict.wordCount,
+                                          got.data(), (uint32_t)got.size());
+    ok(n == b.blocks.size(), "buildBlocks finds every block");
+    ok(std::equal(b.blocks.begin(), b.blocks.end(), got.begin()), "buildBlocks offsets match");
+    ok(spell::buildBlocks(b.data.data(), (uint32_t)b.data.size(), b.dict.wordCount, got.data(), 1) == 0,
+       "buildBlocks: too small an index is refused");
+    ok(spell::buildBlocks(b.data.data(), (uint32_t)b.data.size() - 1, b.dict.wordCount, got.data(),
+                          (uint32_t)got.size()) == 0, "buildBlocks: a cut list is refused");
+    ok(spell::buildBlocks(b.data.data(), (uint32_t)b.data.size(), b.dict.wordCount - 1, got.data(),
+                          (uint32_t)got.size()) == 0, "buildBlocks: a word count that disagrees is refused");
+}
+
 int main() {
     Built b;
     build(b);
     testKnown(b.dict);
+    testBuildBlocks(b);
     testShouldCheck();
     testSuggest(b.dict);
 

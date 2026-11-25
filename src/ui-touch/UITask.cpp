@@ -21540,9 +21540,7 @@ static void buildKeyboardPage() {
 #if CAP_SPELLCHECK
     // Finishing a word the English list doesn't know offers corrections above the
     // message box. English UI only.
-#if defined(TLORA_PAGER)
-    const char* spell_help = "English only. Press Fn+Space, turn to a correction and click.";
-#elif SPELL_KEY_NAV
+#if SPELL_KEY_NAV
     const char* spell_help = "English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.";
 #else
     const char* spell_help = "English only. Tap a correction above the message box.";

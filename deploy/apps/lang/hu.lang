@@ -2496,3 +2496,8 @@ Waiting for an answer on the device.	Válaszra vár az eszközön.
 This app has no settings	Ennek az alkalmazásnak nincsenek beállításai
 Saved on the device for this app. The app reads them when it opens.	Az eszközön mentve ehhez az alkalmazáshoz. Az alkalmazás megnyitáskor olvassa be.
 Could not save to the device storage	Nem sikerült menteni az eszköz tárhelyére
+Spell suggestions	Helyesírási javaslatok
+Spell suggestions: on	Helyesírási javaslatok: bekapcsolva
+Spell suggestions: off	Helyesírási javaslatok: kikapcsolva
+English only. Tap a correction above the message box.	Csak angolul. Koppints egy javításra az üzenetmező felett.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Csak angolul. A Fel gombbal éred el a javításokat, Balra vagy Jobbra választasz, majd Enter.

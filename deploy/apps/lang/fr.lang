@@ -2486,3 +2486,8 @@ Waiting for an answer on the device.	En attente d'une réponse sur l'appareil.
 This app has no settings	Cette application n'a pas de paramètres
 Saved on the device for this app. The app reads them when it opens.	Enregistré sur l'appareil pour cette application. L'application les lit à son ouverture.
 Could not save to the device storage	Impossible d'enregistrer dans le stockage de l'appareil
+Spell suggestions	Suggestions d'orthographe
+Spell suggestions: on	Suggestions d'orthographe : activé
+Spell suggestions: off	Suggestions d'orthographe : désactivé
+English only. Tap a correction above the message box.	Anglais uniquement. Touchez une correction au-dessus du champ de message.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Anglais uniquement. Appuyez sur Haut pour atteindre les corrections, Gauche ou Droite pour en choisir une, puis Entrée.

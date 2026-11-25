@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Spell suggestions over a front-coded word list. See spell.h for the format.
 #include "spell.h"
 
@@ -80,6 +81,29 @@ bool lookup(const Dict &d, const char *q) {
 }
 
 }  // namespace
+
+uint32_t buildBlocks(const uint8_t *data, uint32_t size, uint32_t words,
+                     uint32_t *blocks, uint32_t cap) {
+    if (!data || !blocks) return 0;
+    uint32_t pos = 0, n = 0;
+    for (uint32_t k = 0; k < words; k++) {
+        if (pos >= size) return 0;
+        const uint8_t h = data[pos];
+        if (k % (uint32_t)kBlockWords == 0) {
+            if ((h >> 4) != 0 || n >= cap) return 0;
+            blocks[n++] = pos;
+        }
+        pos++;
+        uint32_t suffix = h & 15;
+        if (suffix == 15) {
+            if (pos >= size) return 0;
+            suffix = data[pos++];
+        }
+        pos += suffix + 1;   // the suffix and F
+        if (pos > size) return 0;
+    }
+    return pos == size ? n : 0;
+}
 
 bool shouldCheck(const char *w, size_t n) {
     if (!w || n < 2 || n > (size_t)kMaxWord - 2) return false;

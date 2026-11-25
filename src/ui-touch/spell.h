@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Spell suggestions for the compose box: is a word known, and if not, which
 // known words is it most likely a typo of.
 //
@@ -12,11 +13,14 @@
 //   entry  = H [L] suffix... F
 //   H      = (shared prefix length << 4) | suffix length, both 0..15. A suffix
 //            of 15 or more writes 15 here and the real length in the byte L.
-//   F      = frequency, 0 (rarest) .. 255 (most common), log-scaled.
+//   F      = frequency, 0 (rarest) .. kFreqMax (most common), log-scaled.
 // Every kBlockWords-th entry starts a block and stores its word in full
 // (prefix 0), and blocks[] holds each block's byte offset, so a lookup is a
-// binary search over blocks and a short scan inside one -- straight from
-// flash, nothing unpacked into RAM.
+// binary search over blocks and a short scan inside one.
+//
+// The English list ships deflated (66 KB of flash instead of 115 KB) and is
+// inflated into PSRAM the first time a word is checked (spell_en.cpp), where
+// buildBlocks() rebuilds the block index from it.
 #pragma once
 
 #include <stddef.h>
@@ -27,6 +31,7 @@ namespace spell {
 constexpr int kBlockWords = 32;
 constexpr int kMaxWord = 24;      // longest word checked, in bytes
 constexpr int kMaxSuggest = 3;
+constexpr int kFreqMax = 15;      // F's top value (gen_spell_dict.py FREQ_MAX)
 
 struct Dict {
     const uint8_t *data;
@@ -36,8 +41,17 @@ struct Dict {
     uint32_t wordCount;
 };
 
-// The compiled-in English list (spell_en.cpp).
+// The compiled-in English list (spell_en.cpp), inflated on the first call. An
+// empty Dict (data == nullptr) when that failed (no PSRAM): nothing is known and
+// nothing is suggested then, and it is not tried again.
 const Dict &english();
+
+// Walks a list of `words` entries in `size` bytes and writes the byte offset of
+// every kBlockWords-th entry to blocks[] (at most cap). Returns how many it wrote,
+// or 0 when the list is malformed (an entry runs past the end, or a block start
+// does not stand alone with prefix 0).
+uint32_t buildBlocks(const uint8_t *data, uint32_t size, uint32_t words,
+                     uint32_t *blocks, uint32_t cap);
 
 // Whether a token is a word worth checking at all. Not: shorter than 2 or
 // longer than kMaxWord - 2 letters, anything with a digit or a non-ASCII byte,

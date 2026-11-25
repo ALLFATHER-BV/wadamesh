@@ -981,14 +981,13 @@
   #endif
 #endif
 
-// English spell suggestions over the chat composer (spell.h). The word list is
-// ~115 KB of FLASH, no RAM. Touch boards tap a suggestion, and the Tanmatsu and
-// ThinkNode M9 step into the row with their navigation keys (UITask.cpp,
-// SPELL_KEY_NAV). Off on the plain Heltec V4: it also carries the built-in
-// translations, and with the word list its app partition was 99.7% full. Off on
-// the T-LoRa Pager too: its app slot is full (with the word list it overflowed by
-// 83 KB). The V4-R8 keeps it. Define this 0 in a board's block if another
-// outgrows its slot.
+// English spell suggestions over the chat composer (spell.h, #578). The word list
+// is ~66 KB of flash, deflated, and inflated into PSRAM (~115 KB) the first time a
+// word is checked. Touch boards tap a suggestion, and the Tanmatsu and ThinkNode M9
+// step into the row with their navigation keys (UITask.cpp, SPELL_KEY_NAV). Off on
+// the plain Heltec V4 (its app slot is shared with the built-in translations and
+// every other change of a release) and on the T-LoRa Pager (its slot is full).
+// The V4-R8 keeps it. Define this 0 in a board's block if another outgrows its slot.
 #ifndef CAP_SPELLCHECK
   #if (defined(HELTEC_LORA_V4_TFT) && !defined(HELTEC_LORA_V4_R8)) || defined(TLORA_PAGER)
     #define CAP_SPELLCHECK 0

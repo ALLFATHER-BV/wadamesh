@@ -2487,3 +2487,8 @@ Waiting for an answer on the device.	Чека се одговор на уређ�
 This app has no settings	Ова апликација нема подешавања
 Saved on the device for this app. The app reads them when it opens.	Сачувано на уређају за ову апликацију. Апликација их чита при отварању.
 Could not save to the device storage	Чување у меморију уређаја није успело
+Spell suggestions	Предлози правописа
+Spell suggestions: on	Предлози правописа: укљ
+Spell suggestions: off	Предлози правописа: искљ
+English only. Tap a correction above the message box.	Само енглески. Додирните исправку изнад поља за поруку.
+English only. Press Up to reach the corrections, Left or Right to pick one, then Enter.	Само енглески. Притисните Горе за исправке, Лево или Десно за избор, па Enter.
