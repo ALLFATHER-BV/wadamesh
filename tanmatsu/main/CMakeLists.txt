@@ -23,6 +23,11 @@ idf_component_register(
 		"."
 )
 
+# badge-bsp 2.x grabs the microSD LDO in bsp_device_initialize() (bsp_storage_initialize), which
+# makes Arduino's SD_MMC.begin() fail. main.cpp stubs it out through the linker; see the comment
+# on __wrap_bsp_storage_initialize there.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=bsp_storage_initialize")
+
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-variable" APPEND)
 idf_build_set_property(COMPILE_OPTIONS "-Wno-error=unused-const-variable" APPEND)
 # The vendored MeshCore core + Arduino libs build clean under PlatformIO's laxer flags but trip

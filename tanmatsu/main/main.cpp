@@ -44,6 +44,15 @@ extern "C" {
 #define WS_PORT 8765
 #endif
 
+// badge-bsp 2.x: bsp_device_initialize() now also runs bsp_storage_initialize(), which takes
+// on-chip LDO channel 4 (the microSD I/O supply) as an ADJUSTABLE channel and keeps it. An
+// adjustable LDO channel has exactly one owner, so Arduino's SD_MMC.begin() (which acquires
+// the same channel for its own sd_pwr_ctrl) then fails and the card never mounts: no
+// contacts, channels, chat history or identity on the card. We mount the card through
+// SD_MMC and never use bsp_storage_*, so main/CMakeLists.txt links with
+// --wrap=bsp_storage_initialize and this stub leaves the LDO free, exactly as with 0.9.x.
+extern "C" esp_err_t __wrap_bsp_storage_initialize(void) { return ESP_OK; }
+
 // Boot-trace hooks the shared code defines on the S3 boards (in src/main.cpp, which we exclude).
 volatile int g_boot_phase = 0;
 extern "C" void set_boot_phase(int phase) { g_boot_phase = phase; }
@@ -181,6 +190,7 @@ static void bootBlit() {
     int h = (y + BAND > BOOT_PH) ? (BOOT_PH - y) : BAND;
     bsp_display_blit(0, y, BOOT_PW, y + h, s_boot_fb + (size_t)y * BOOT_PW);
   }
+  bsp_display_wait(1000);   // badge-bsp 2.x: the blit only starts the copy; s_boot_fb is redrawn next
 }
 
 // Redraw the trailing "..." on the in-progress line with `ndots` dots, then blit only the few
@@ -202,6 +212,7 @@ static void bootDrawDots(int ndots) {
     int h = (y + 40 > BOOT_PH) ? (BOOT_PH - y) : 40;
     bsp_display_blit(0, y, BOOT_PW, y + h, s_boot_fb + (size_t)y * BOOT_PW);
   }
+  bsp_display_wait(1000);
 }
 
 // Cycles ".", "..", "..." on the current line so a long phase (e.g. the slow C6 radio bring-up)

@@ -1,6 +1,8 @@
 dependencies:
   idf: ">=5.5.1"
-  badgeteam/badge-bsp: "^0.9.9"
+  # badge-bsp 2.x: detects the replacement Tanmatsu display (same look, different panel init)
+  # from its display ID. 2.0.3 is the first 2.x release that accepts IDF 5.5 (2.0.0-2.0.2 need 6.0.2).
+  badgeteam/badge-bsp: "^2.0.3"
   nicolaielectronics/tanmatsu-wifi: "^1.1.2"
   nicolaielectronics/tanmatsu-lora: "^0.3.0"   # SX1262 LoRa over the C6 — TanmatsuLoraRadio bridge
   # arduino-esp32 as an IDF component so the shared wadamesh src/ (Arduino API) compiles.
