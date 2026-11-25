@@ -2,9 +2,10 @@
 -- Contributor: Hernán Moraga-Müller
 -- Version: 1.0, November 2nd, 2026
 -- CHANGE LOG:
--- It stores Tasks entries within the 200 bytes budget in the todo.sav file.
--- Added a Budget in bytes to keep track of free space available for the ToDo.
--- (in this version the Budget limit is 175 Bytes for all tasks and groups)
+-- Groups and tasks are saved as one wada.store value. The store writes each value
+-- as a single "key=value" line under 192 bytes and skips a longer one, so with the
+-- key "list" the whole payload has to stay within PAYLOAD_MAX (185) bytes. The
+-- header shows what is left of that budget.
 
 local ui, sys, store = wada.ui, wada.sys, wada.store
 local C = ui.colors
@@ -84,6 +85,8 @@ local scrollbar_hit
 local scroll_page
 local selected_task
 local do_action
+local move_task_sel
+local step_filter
 local draw
 local draw_edit
 
@@ -109,13 +112,13 @@ local draw_edit
 -- a task's text. The decoder walks the string and reassembles; the encoder
 -- strips disallowed bytes from user text before writing.
 --
--- save() enforces a 255-byte hard ceiling. If the payload overflows, the
--- last task(s) are omitted from the written string (in-memory list is not
--- touched) and a toast tells the user how many could not be persisted.
+-- save() refuses a payload over PAYLOAD_MAX and keeps the last saved one;
+-- commit_edit() checks the budget first, so an edit that would not fit is
+-- refused before it changes anything.
 
 local PAYLOAD_KEY  = "list"
 local PAYLOAD_VER  = string.char(0x01)
-local PAYLOAD_MAX  = 255
+local PAYLOAD_MAX  = 185   -- 192-byte store line - "list=" - newline - 1
 
 local S_UP = "="   -- urgent pending  (61)
 local S_UD = "*"   -- urgent done     (42)
@@ -481,13 +484,12 @@ local function draw_header()
               " task" .. (n == 1 and "" or "s")
   cv:text(12, y + 4, msg, C.text, 14)
 
-  local used = #encode_payload()
-  local budget = 255 - used
-  if budget - 69 < 0 then budget = 69 end
-  local right = "Budget: " .. budget - 69 .. " bytes"
+  local budget = PAYLOAD_MAX - #encode_payload()
+  if budget < 0 then budget = 0 end
+  local right = "Budget: " .. budget .. " bytes"
   -- Right-align: approximate character width is 7 px at 12 pt.
   local rx = W - 12 - #right * 7
-  local color = (budget - 69 < 13) and C.bad or C.sub
+  local color = (budget < 13) and C.bad or C.sub
   cv:text(rx, y + 5, right, color, 12)
 end
 
@@ -686,8 +688,8 @@ end
 
 local function edit_insert(ch)
   -- Per-kind input caps. A group label is stored as a comma-terminated
-  -- header field, and the header has a fixed 255-byte budget; three
-  -- characters is the design limit.
+  -- header field inside the PAYLOAD_MAX budget; three characters is the
+  -- design limit.
   local cap = math.huge
   if edit_ctx and edit_ctx.kind == "cat"    then cap = 3 end
   if edit_ctx and edit_ctx.kind == "rename" then cap = 3 end
@@ -749,8 +751,6 @@ function edit_hit_caret(x)
   local col = math.floor(rel / EDIT_CHAR_W + 0.5)
   edit_set_caret(start + col)
 end
-
--- Todo — part 2 of 2. Paste immediately after part 1 to form todo.lua.
 
 local PAD = 4
 local CHAR = 7
@@ -838,8 +838,8 @@ function commit_edit()
   if txt == "" then toast("Cannot be empty"); return end
 
   -- Budget gate: compute the payload that *would* exist after this edit,
-  -- without mutating categories/todos yet. Floor is PAYLOAD_MAX - 69 = 186,
-  -- the same point at which the header display reads "Budget: 0 bytes".
+  -- without mutating categories/todos yet. PAYLOAD_MAX is the same point at
+  -- which the header reads "Budget: 0 bytes".
   local function preview_len()
     -- encode_payload() reads `categories`, `todos`, `filter`. For "todo" we
     -- append a temporary record; for "todo_rename" we swap the target text;
@@ -888,7 +888,7 @@ function commit_edit()
 
   local need = preview_len()
   if need == nil then toast("Max 3 chars"); return end
-  if need > (255 - 69) then
+  if need > PAYLOAD_MAX then
     toast("Budget exhausted")
     return
   end
@@ -1017,8 +1017,6 @@ function left_hit(x, y)
   return nil
 end
 
--- Todo — part 2 of 2. Paste immediately after part 1 to form todo.lua.
-
 function right_hit(x, y)
   local rx = 4 + LEFT_W + GAP
   if x < rx or x >= W - 4 then return nil end
@@ -1121,9 +1119,55 @@ function do_action(action)
   end
 end
 
+local KEY_ACTIONS = { a = "add", g = "cats", e = "edit", u = "urgent",
+                      x = "clear", d = "del", backspace = "del" }
+
+-- Move the highlight to the next/previous task in the shown order and keep it on screen.
+function move_task_sel(step)
+  local items = snapshot_or_recompute()
+  if #items == 0 then return end
+  local pos = 0
+  for i, t in ipairs(items) do if t.id == selected_task_id then pos = i; break end end
+  if pos == 0 then pos = (step > 0) and 1 or #items
+  else pos = math.max(1, math.min(#items, pos + step)) end
+  selected_task_id = items[pos].id
+  selected_cat = nil
+  if pos <= task_scroll then task_scroll = pos - 1
+  elseif pos > task_scroll + VISIBLE_ROWS then task_scroll = pos - VISIBLE_ROWS end
+  task_scroll = clamp_scroll(task_scroll, #items, VISIBLE_ROWS)
+  draw()
+end
+
+-- Show the next/previous group ("All" first), as a tap on the group column does.
+function step_filter(step)
+  local names = group_names()
+  local cur = 1
+  for i, n in ipairs(names) do if n == filter then cur = i; break end end
+  cur = ((cur - 1 + step) % #names) + 1
+  filter = names[cur]
+  selected_cat = (filter ~= "All") and filter or nil
+  selected_task_id = nil
+  clear_snapshot(); task_scroll = 0
+  if cur <= group_scroll then group_scroll = cur - 1
+  elseif cur > group_scroll + VISIBLE_ROWS then group_scroll = cur - VISIBLE_ROWS end
+  group_scroll = clamp_scroll(group_scroll, #names, VISIBLE_ROWS)
+  reclamp_scrolls(); draw()
+end
+
 function app.on_input(ev)
 
   if mode == "confirm" then
+    if ev.type == "key" then
+      local k = tostring(ev.key or ""):lower()
+      if k == "enter" or k == "y" then
+        local kind = confirm_ctx.kind
+        confirm_ctx = nil; mode = "list"
+        if kind == "cat" then delete_selected_cat() end
+      elseif k == "esc" or k == "backspace" or k == "n" then
+        confirm_ctx = nil; mode = "list"; draw()
+      end
+      return
+    end
     if ev.type == "down" and ev.x and ev.y then
       local cw, ch, cx, cyy, bw, by = confirm_metrics()
       if in_box(ev.x, ev.y, cx + 4, by, bw, 30) then
@@ -1170,6 +1214,24 @@ function app.on_input(ev)
     return
   end
 
+  -- Trackball, D-pad and keyboard: up/down move through the tasks, left/right
+  -- step through the groups, Enter ticks the highlighted task off. Letter keys
+  -- run the bottom-bar buttons on a keyboard.
+  if ev.type == "swipe" or ev.type == "key" then
+    local k = (ev.type == "swipe") and ev.dir or tostring(ev.key or ""):lower()
+    if k == "up" or k == "down" then move_task_sel(k == "down" and 1 or -1)
+    elseif k == "left" or k == "right" then step_filter(k == "right" and 1 or -1)
+    elseif k == "enter" then
+      local t = selected_task()
+      if t then t.done = not t.done; save(); clear_snapshot(); draw()
+      else move_task_sel(1) end
+    elseif ev.type == "key" then
+      local act = KEY_ACTIONS[k]
+      if act then do_action(act) end
+    end
+    return
+  end
+
   if ev.type ~= "down" or not ev.x or not ev.y then return end
 
   local sb_kind, sb_page = scrollbar_hit(ev.x, ev.y)
@@ -1193,7 +1255,7 @@ function app.on_input(ev)
       if selected_cat == cat then selected_cat = nil
       else selected_cat = cat; selected_task_id = nil end
     end
-    save(); reclamp_scrolls(); draw(); return
+    reclamp_scrolls(); draw(); return
   end
 
   local t = right_hit(ev.x, ev.y)
