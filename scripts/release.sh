@@ -81,6 +81,22 @@ if [ -n "$DEST" ]; then
 fi
 mkdir -p "$ARCH/$TAG" "$FEED"
 
+# 1b. Never rebuild a tag whose GitHub release is already public. LauncherHub reads each
+#     tag's *-merged.bin once, records its size, and never reads it again; bmorcelli's
+#     Launcher then copies exactly that many bytes. beta_106's T-Deck image was rebuilt and
+#     re-uploaded 7 minutes after it was published: LauncherHub kept the first size (2,704 B
+#     short) and every Launcher install failed with "APP: Flash Read Failed". A fix after
+#     publishing goes out as a new tag. WADA_REPLACE_PUBLISHED=1 overrides (then run
+#     scripts/build/launcherhub-check.py <tag> and ask bmorcelli for a refresh).
+if [ "$MODE" = "beta" ] && [ -z "${WADA_REPLACE_PUBLISHED:-}" ] && command -v gh >/dev/null; then
+  if [ "$(gh release view "$TAG" -R ALLFATHER-BV/wadamesh --json isDraft -q .isDraft 2>/dev/null)" = "false" ]; then
+    echo "ERROR: $TAG is already published on GitHub. LauncherHub has read its images and will not"
+    echo "       read them again, so replacing them breaks Launcher installs. Cut a new tag instead"
+    echo "       (WADA_REPLACE_PUBLISHED=1 overrides; then run scripts/build/launcherhub-check.py $TAG)."
+    exit 1
+  fi
+fi
+
 if [ "$MODE" = "beta" ]; then
   # 2b. TEST build: compile all PlatformIO boards (tag + version embedded) into the beta archive + feed.
   # Firmware data (About screen + the app's device info) is derived here, never
