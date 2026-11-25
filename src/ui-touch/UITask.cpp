@@ -2899,10 +2899,18 @@ static lv_coord_t STATUSBAR_H = 22;
 static constexpr lv_coord_t SB_ROW     = 22;                       // one status-bar row
 static constexpr lv_coord_t SB_TOP_PAD = 8;                        // clear the top corner arc
 static constexpr lv_coord_t SB_INSET_X = 16;                       // left/right corner safe-area
+// The keyboard sits this far above the panel's bottom edge so its bottom-row
+// keys clear the corner arcs. The composer layout must know the same lift, or
+// its bottom hangs under the keyboard's top edge.
+static constexpr lv_coord_t KB_BOTTOM_LIFT = 6;
 static constexpr lv_coord_t SB_ROW1_Y  = SB_TOP_PAD + 2;           // ~10 text top of the row (clock)
 static constexpr lv_coord_t SB_CHAT_H  = SB_TOP_PAD + SB_ROW * 2;  // open-chat header height
 static bool s_round_chat_bar = false;                              // bar grown to SB_CHAT_H
 static void statusBarLayoutOneRow();   // defined just after buildGlobalStatusBar
+#else
+// Square-cornered boards: the keyboard sits flush with the bottom edge, and the
+// shared composer math reads the same constant.
+static constexpr lv_coord_t KB_BOTTOM_LIFT = 0;
 #endif
 // True while the Reader/Web page is collapsed and showing its URL in the status bar's
 // title zone — updateGlobalStatusBar then hides the clock to make room for the URL.
@@ -3336,17 +3344,18 @@ constexpr int CHAT_COMP_H      = 64;   // big screen: ~2× the typing box (60px)
 constexpr int CHAT_COMP_H      = 34;   // composer row, single line (slimmed 50 → 40 → 34; hugs the 30px textbox)
 #endif
 constexpr int CHAT_COMP_MAX_LINES = 4; // composer grows up to this many wrapped lines, then scrolls vertically
-// P4 composer. All three buttons are one size, midway between the large-screen 56-px
-// QR/emoji chips and the 34-px send button, and sit vertically centred on the text box
-// (chatComposerPlaceButtons), which also lifts them off the bottom corner arcs.
-// Portrait: the single row (QR | emoji | text | send) was crunched on the narrow
-// 284-px panel, so it splits into two rows -- QR + emoji right-aligned on top, text +
-// send below. Landscape keeps the single row. Checked live: the keyboard's rotate
-// button flips orientation with the chat open.
-static constexpr lv_coord_t CHAT_COMP_BTN_P4 = (56 + 34) / 2;
-// The T-Deck Pro uses the same portrait split (no corner arcs to clear), with
-// its 30-px buttons matching its one-line text box.
-#if CAP_ROUND_CORNERS || defined(HAS_TDECK_PRO)
+// P4 composer. All three buttons are one size — the 34-px row height — and sit
+// vertically centred on the text box; the send button keeps its inset off the
+// bottom-right corner arc. Portrait used to split into two rows (QR + emoji on
+// top, text + send below); that read badly, so the P4 now keeps the single
+// row (QR | text | emoji | send) in both orientations — see the CHAT_COMP_SPLIT
+// note below. The T-Deck Pro still splits.
+// The T-Deck Pro keeps its portrait split (no corner arcs to clear), with its
+// 30-px buttons matching its one-line text box. The P4's split was dropped:
+// one row of equal chips, each the composer row's height, reads better than
+// the old two-row split whose 45-px chips towered over the one-line text box,
+// and the QR/emoji/send trio comes out consistent (same size, same row).
+#if defined(HAS_TDECK_PRO)
 #define CHAT_COMP_SPLIT 1
 #else
 #define CHAT_COMP_SPLIT 0
@@ -3355,7 +3364,7 @@ static inline lv_coord_t chatComposerBtnSz() {
 #if defined(HAS_TDECK_PRO)
   return 30;
 #else
-  return CHAT_COMP_BTN_P4;
+  return 34;
 #endif
 }
 static inline bool chatComposerTwoRow() {
@@ -3400,7 +3409,11 @@ static inline int chatComposerMinLines() {
 // text box shorter than them sits centred on them (chatComposerSlimRowH and friends,
 // defined with the button sizes below). The P4's portrait two-row layout is unchanged.
 static inline bool chatComposerSlim() {
-#if CAP_LARGE_SCREEN
+#if CAP_ROUND_CORNERS
+  // The phone panel always keeps the slim, ONE-text-line box: the classic
+  // 64-px box showed two lines' worth of height for one line of text.
+  return !chatComposerTwoRow();
+#elif CAP_LARGE_SCREEN
   return lv_disp_get_hor_res(nullptr) > lv_disp_get_ver_res(nullptr) && !chatComposerTwoRow();
 #else
   return false;
@@ -3432,6 +3445,8 @@ static lv_coord_t s_comp_h = CHAT_COMP_H;
 static lv_coord_t s_comp_ta_h = CHAT_COMP_H - 4;   // ...and its text box's (the slim layout sets them apart)
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
 constexpr int CHAT_KB_H        = 160;  // larger original-V4 touch targets
+#elif defined(HAS_TDISPLAY_P4)
+constexpr int CHAT_KB_H        = 200;  // 5-row phone layout on the tall 284x616 UI
 #else
 constexpr int CHAT_KB_H        = 130;  // on-screen keyboard (portrait)
 #endif
@@ -3489,7 +3504,7 @@ static constexpr lv_coord_t CHAT_COMP_BTN_CROW50 = CHAT_COMP_H - 4;
 #endif
 static inline lv_coord_t chatComposerChipSz() {
 #if CAP_ROUND_CORNERS
-  return CHAT_COMP_BTN_P4;
+  return 34;
 #elif defined(HAS_CROWPANEL_50)
   return CHAT_COMP_BTN_CROW50;
 #elif CAP_LARGE_SCREEN
@@ -3502,7 +3517,7 @@ static inline lv_coord_t chatComposerChipSz() {
 }
 static inline lv_coord_t chatComposerSendSz() {
 #if CAP_ROUND_CORNERS
-  return CHAT_COMP_BTN_P4;
+  return 34;
 #elif defined(TLORA_PAGER) || defined(HAS_CROWPANEL_50) || defined(HAS_TANMATSU)
   return chatComposerChipSz();
 #else
@@ -3544,20 +3559,6 @@ static inline lv_coord_t chatComposerLeftInset() {
 static lv_coord_t chatComposerOneLineTaH() {
   return lv_font_get_line_height(&g_font_14) + 14;
 }
-#if CAP_ROUND_CORNERS
-// P4: the buttons centre on the text box but never come closer than kMinLift to the
-// bottom edge (the corner arcs); the text box follows the buttons while it is shorter.
-static constexpr lv_coord_t CHAT_COMP_MIN_LIFT_P4 = SB_TOP_PAD - 2;
-static inline lv_coord_t chatComposerP4Lift(lv_coord_t ta_h) {
-  const lv_coord_t lift = (ta_h - CHAT_COMP_BTN_P4) / 2;
-  return lift < CHAT_COMP_MIN_LIFT_P4 ? CHAT_COMP_MIN_LIFT_P4 : lift;
-}
-static inline lv_coord_t chatComposerP4TaOff(lv_coord_t ta_h) {
-  if (!chatComposerSlim()) return 0;
-  const lv_coord_t off = chatComposerP4Lift(ta_h) + (CHAT_COMP_BTN_P4 - ta_h) / 2;
-  return off > 0 ? off : 0;
-}
-#endif
 // The tallest button on the slim composer's row (QR / emoji chips, Send).
 static inline lv_coord_t chatComposerSlimBand() {
   const lv_coord_t c = chatComposerChipSz(), s = chatComposerSendSz();
@@ -3565,14 +3566,8 @@ static inline lv_coord_t chatComposerSlimBand() {
 }
 // Row height for a text box ta_h tall, slim layout.
 static lv_coord_t chatComposerSlimRowH(lv_coord_t ta_h) {
-#if CAP_ROUND_CORNERS
-  const lv_coord_t top_ta  = chatComposerP4TaOff(ta_h) + ta_h;
-  const lv_coord_t top_btn = chatComposerP4Lift(ta_h) + CHAT_COMP_BTN_P4;
-  return (top_ta > top_btn ? top_ta : top_btn) + chatComposerChromeH();
-#else
   const lv_coord_t band = chatComposerSlimBand();
   return (ta_h > band ? ta_h : band) + chatComposerChromeH();
-#endif
 }
 // Tanmatsu: the QR and emoji buttons each carry a small F-key shape just to their right
 // (chatAddFkeyHint); the text box gives up this much room per button for it.
@@ -3585,6 +3580,14 @@ static constexpr lv_coord_t CHAT_FKEY_HINT_W   = 0;
 #endif
 static inline lv_coord_t chatComposerTaW(bool channel_mode) {
   const lv_coord_t chip = chatComposerChipSz();
+#if defined(HAS_TDISPLAY_P4)
+  // The P4's quick-reply and emoji controls live on the keyboard's utility row
+  // (they used to flank the text box) AND so is Send (the deck's OK sends on
+  // this board), so the text box takes the whole row.
+  (void)channel_mode;
+  // No Send circle on this board (the deck's OK sends), so the box takes the row.
+  return chatScreenW() - 2 * chatComposerLeftInset();
+#endif
   // Two-row: the chips are on the row above, so the text box only shares its row with Send.
   if (chatComposerTwoRow()) return chatScreenW() - chatComposerSendSz() - 14 - chatComposerSendInset();
   lv_coord_t width = chatScreenW() - (2 * chip + 12) - chatComposerSendSz() - 14
@@ -3638,7 +3641,7 @@ static inline lv_coord_t chatMsgHOpen()  { return chatScreenH() - CHAT_HDR_H; }
 static inline lv_coord_t chatCompYOpen() { return chatScreenH() - s_comp_h; }
 // with keyboard shown:
 static inline lv_coord_t chatMsgHKb()    { return chatScreenH() - CHAT_HDR_H - chatKbH(); }
-static inline lv_coord_t chatCompYKb()   { return chatScreenH() - s_comp_h - chatKbH(); }
+static inline lv_coord_t chatCompYKb()   { return chatScreenH() - s_comp_h - chatKbH() - KB_BOTTOM_LIFT; }
 
 // ---- Thread list button context ----
 struct LvThreadButtonCtx { int idx; bool channel; };
@@ -10801,8 +10804,8 @@ constexpr int KB_MIRROR_STRIP_H = 52;
 
 // Keyboard rotation helpers (defined here so showKb/hideKb/kbMirrorBind can use them).
 // Layout adjusts keyboard + mirror + rotate arrows for the current rotation.
-#if CAP_LARGE_SCREEN && !CAP_ROUND_CORNERS
 static void chatComposerAutoGrow(LvChatPanel* p);       // the rotation re-runs it (kbApplyLayoutForRotation)
+#if CAP_LARGE_SCREEN
 static void chatComposerAlignSlim(LvChatPanel* p);      // defined after chatComposerAutoGrow
 #endif
 #if CHAT_COMP_SPLIT
@@ -10819,8 +10822,13 @@ static void kbApplyLayoutForRotation(uint8_t rot) {
   const lv_coord_t kb_h   = landscape ? (scr_h / 2) : CHAT_KB_H;
 
   if (g_lv.keyboard) {
+#if defined(HAS_TDISPLAY_P4)
+    lv_obj_set_size(g_lv.keyboard, scr_w, kb_h);
+    lv_obj_align(g_lv.keyboard, LV_ALIGN_BOTTOM_MID, 0, -KB_BOTTOM_LIFT);
+#else
     lv_obj_set_size(g_lv.keyboard, scr_w, kb_h);
     lv_obj_align(g_lv.keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+#endif
   }
   if (s_kb_mirror_root) {
     lv_obj_set_width(s_kb_mirror_root, scr_w);
@@ -11429,6 +11437,14 @@ static void chatComposerAutoGrow(LvChatPanel* p) {
   // here too because a rotation can switch between the slim and the classic box.
   lv_obj_set_style_radius(p->composer_ta, base_ta / 2, LV_PART_MAIN);
   lv_obj_set_y(p->composer_row, kb ? chatCompYKb() : chatCompYOpen());
+  // The jump-to-latest arrow floats just above the composer. It used to keep the
+  // Y it was built with (the keyboard-down layout), so with the keyboard up it sat
+  // UNDER the keys and the down arrow simply vanished; the up arrow, anchored to
+  // the header, stayed visible. Follow the composer instead — exact on every
+  // board, in both keyboard states.
+#if defined(HAS_TDISPLAY_P4)
+  if (p->jump_btn) lv_obj_set_y(p->jump_btn, lv_obj_get_y(p->composer_row) - 40);
+#endif
   lv_obj_set_height(p->msgs,    kb ? chatMsgHKb()  : chatMsgHOpen());
   // Grow the bottom inset with the composer so the newest bubble keeps clearing it.
   lv_obj_set_style_pad_bottom(p->msgs, s_comp_h + 6, LV_PART_MAIN);
@@ -11444,8 +11460,8 @@ static void composerAutoGrowCb(lv_event_t* e) {
   chatComposerAutoGrow(static_cast<LvChatPanel*>(lv_event_get_user_data(e)));
 }
 
-#if CAP_LARGE_SCREEN && !CAP_ROUND_CORNERS
-// Slim composer on the square-cornered large screens (Tanmatsu, CrowPanels): every control
+#if CAP_LARGE_SCREEN
+// Slim composer on the large panels (Tanmatsu, CrowPanels): every control
 // keeps its bottom alignment and x, and is lifted to sit centred in the band of the tallest
 // button, so a one-line text box and the smaller Send button line up with the big chips.
 // A text box taller than that band rests on the bottom as before. Classic layout (portrait
@@ -11677,6 +11693,25 @@ static const char* kbSelectedKeyText() {
   if (id == LV_BTNMATRIX_BTN_NONE) return nullptr;
   return lv_btnmatrix_get_btn_text(g_lv.keyboard, id);
 }
+
+// The P4's rotate control lives INSIDE the keyboard now: the remapped utility
+// row carries a single "ROT" key (kbP4Remap). The two floating rotate arrows
+// used to sit at the screen's bottom corners and collided with the composer
+// buttons. One key, one gesture: portrait -> keyboard-landscape -> portrait.
+#if defined(HAS_TDISPLAY_P4)
+static void kbRotKeyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  const lv_keyboard_mode_t mode = lv_keyboard_get_mode(kb);
+  if (mode != LV_KEYBOARD_MODE_TEXT_LOWER && mode != LV_KEYBOARD_MODE_TEXT_UPPER) return;
+  const char* key = kbSelectedKeyText();
+  if (!key || strcmp(key, LV_SYMBOL_REFRESH) != 0) return;
+  lv_event_stop_processing(e);
+  s_kb_rotation = (s_kb_rotation == LV_DISP_ROT_90) ? LV_DISP_ROT_NONE : LV_DISP_ROT_90;
+  kbApplyRotation(s_kb_rotation);
+  kbSaveRotationPref();
+}
+#endif  // HAS_TDISPLAY_P4
 
 static void accentLongPressCb(lv_event_t* e) {   // (dead on touch: LONG_PRESSED never reaches the keyboard)
   if (lv_event_get_code(e) != LV_EVENT_LONG_PRESSED || s_acc_active) return;
@@ -45951,13 +45986,22 @@ static void makeChatDetail(LvChatPanel& p) {
 
 #if !defined(TLORA_PAGER)
   p.jump_btn = lv_btn_create(p.overlay);
+#if defined(HAS_TDISPLAY_P4)
+  // A real target on the phone panel: 48x40 plus a 12-px halo (was a 28x36
+  // sliver with 6 px, which was hard to hit with a fingertip). The composer's
+  // auto-grow keeps its Y just above the text box.
+  lv_obj_set_size(p.jump_btn, 48, 40);
+  lv_obj_set_pos(p.jump_btn, chatScreenW() - 48 - 2, chatCompYOpen() - 40);
+  lv_obj_set_ext_click_area(p.jump_btn, 12);
+#else
   lv_obj_set_size(p.jump_btn, 28, 36);
+  lv_obj_set_pos(p.jump_btn, chatScreenW() - 28, chatCompYOpen() - 40);
+  lv_obj_set_ext_click_area(p.jump_btn, 6);
+#endif
   lv_obj_set_style_bg_opa(p.jump_btn, LV_OPA_TRANSP, LV_PART_MAIN);
   lv_obj_set_style_shadow_width(p.jump_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_border_width(p.jump_btn, 0, LV_PART_MAIN);
   lv_obj_set_style_outline_width(p.jump_btn, 0, LV_PART_MAIN);
-  lv_obj_set_ext_click_area(p.jump_btn, 6);
-  lv_obj_set_pos(p.jump_btn, chatScreenW() - 28, chatCompYOpen() - 40);
   lv_obj_t* jlbl = lv_label_create(p.jump_btn);
   lv_label_set_text(jlbl, LV_SYMBOL_DOWN);
   lv_obj_set_style_text_font(jlbl, &g_font_16, LV_PART_MAIN);
@@ -46025,7 +46069,13 @@ static void makeChatDetail(LvChatPanel& p) {
   // A plain line icon beside the pill (the redesign has no chip boxes here); the
   // pressed state still lifts it.
   lv_obj_set_style_bg_color(qr_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+#if defined(HAS_TDISPLAY_P4)
+  lv_obj_add_flag(qr_btn, LV_OBJ_FLAG_HIDDEN);   // moved to the keyboard's utility row
+  lv_obj_set_style_bg_color(qr_btn, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(qr_btn, LV_OPA_COVER, LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_opa(qr_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#endif
 #if defined(HAS_TDECK_PRO)
   lv_obj_set_style_text_color(qr_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
 #else
@@ -46056,7 +46106,13 @@ static void makeChatDetail(LvChatPanel& p) {
   styleButton(p.emoji_btn);
   lv_obj_set_style_radius(p.emoji_btn, chip_sz / 2, LV_PART_MAIN);
   lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(themeRole(0x000000, COLOR_PANEL)), LV_PART_MAIN);
+#if defined(HAS_TDISPLAY_P4)
+  lv_obj_add_flag(p.emoji_btn, LV_OBJ_FLAG_HIDDEN);   // moved to the keyboard's utility row
+  lv_obj_set_style_bg_color(p.emoji_btn, lv_color_hex(COLOR_ACCENT_SURFACE), LV_PART_MAIN);
+  lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_COVER, LV_PART_MAIN);
+#else
   lv_obj_set_style_bg_opa(p.emoji_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+#endif
 #if defined(HAS_TDECK_PRO)
   lv_obj_set_style_text_color(p.emoji_btn, lv_color_black(), LV_PART_MAIN);   // grey drops out on e-paper
 #else
@@ -46116,7 +46172,11 @@ static void makeChatDetail(LvChatPanel& p) {
   // have QR | message input | emoji | Send.
   lv_obj_set_size(p.composer_ta, comp_ta_w, s_comp_ta_h);
   // Bottom-aligned so the box grows UPWARD as the message wraps to more lines.
+#if defined(HAS_TDISPLAY_P4)
+  lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, chatComposerLeftInset(), 0);
+#else
   lv_obj_align(p.composer_ta, LV_ALIGN_BOTTOM_LEFT, comp_ta_x, 0);
+#endif
   styleCard(p.composer_ta);
   lv_obj_set_style_bg_color(p.composer_ta, lv_color_hex(COLOR_FIELD), LV_PART_MAIN);
   // A pill at one line. The radius is fixed at that size, not LV_RADIUS_CIRCLE:
@@ -46236,6 +46296,11 @@ static void makeChatDetail(LvChatPanel& p) {
   lv_obj_set_size(send, send_sz, send_sz);
 #else
   lv_obj_set_size(send, 30, 30);   // a circle; the slot is send_sz wide
+#endif
+#if defined(HAS_TDISPLAY_P4)
+  // The composer's Send circle is redundant on this board: the deck's OK key
+  // sends, and the circle sat greyed out over the corner arc doing nothing.
+  lv_obj_add_flag(send, LV_OBJ_FLAG_HIDDEN);
 #endif
   lv_obj_align(send, LV_ALIGN_BOTTOM_RIGHT, -chatComposerSendInset(), 0);
   stylePrimary(send);
@@ -76179,6 +76244,48 @@ static void makeSensorsTab(lv_obj_t* tab) {
 // ============================================================
 // Build full UI tree
 // ============================================================
+#if defined(HAS_TDISPLAY_P4)
+// Keyboard-side quick replies / emoji (P4). The composer chips became keys on
+// the deck's utility row, which let the text box take the full width.
+static void kbQrKeyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  const lv_keyboard_mode_t mode = lv_keyboard_get_mode(kb);
+  if (mode != LV_KEYBOARD_MODE_TEXT_LOWER && mode != LV_KEYBOARD_MODE_TEXT_UPPER) return;
+  const char* key = kbSelectedKeyText();
+  if (!key || strcmp(key, LV_SYMBOL_PASTE) != 0) return;
+  lv_event_stop_processing(e);
+  if (s_kb_panel) openQuickReplyPicker(s_kb_panel);
+}
+
+static void kbEmojiKeyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  const lv_keyboard_mode_t mode = lv_keyboard_get_mode(kb);
+  if (mode != LV_KEYBOARD_MODE_TEXT_LOWER && mode != LV_KEYBOARD_MODE_TEXT_UPPER) return;
+  const char* key = kbSelectedKeyText();
+  if (!key || strcmp(key, "\xF0\x9F\x98\x8A") != 0) return;
+  lv_event_stop_processing(e);
+  if (s_kb_panel && s_kb_panel->composer_ta) openEmojiPicker(s_kb_panel->composer_ta);
+}
+
+// The P4 hides the composer's Send circle (the deck's OK key replaced it), so OK
+// has to actually send. The keyboard's own READY handling still runs afterwards
+// and closes the keys — send, then dismiss, which is the order the circle gave.
+static void kbSendKeyCb(lv_event_t* e) {
+  if (lv_event_get_code(e) != LV_EVENT_VALUE_CHANGED) return;
+  lv_obj_t* kb = lv_event_get_target(e);
+  const lv_keyboard_mode_t mode = lv_keyboard_get_mode(kb);
+  if (mode != LV_KEYBOARD_MODE_TEXT_LOWER && mode != LV_KEYBOARD_MODE_TEXT_UPPER) return;
+  const char* key = kbSelectedKeyText();
+  if (!key || strcmp(key, LV_SYMBOL_OK) != 0) return;
+  if (!s_kb_panel || !s_kb_panel->composer_ta) return;
+  const char* text = lv_textarea_get_text(s_kb_panel->composer_ta);
+  if (!text || !text[0]) return;          // nothing to send: leave READY to dismiss
+  lv_event_send(s_kb_panel->send_btn, LV_EVENT_CLICKED, nullptr);
+}
+#endif  // HAS_TDISPLAY_P4
+
 static void buildUiTree() {
   // Always boot to the Home tab (the last-used tab is no longer restored).
   uint8_t saved_tab = HOME_TAB_INDEX;
@@ -76511,8 +76618,16 @@ static void buildUiTree() {
   // ---- Shared on-screen keyboard (child of root, hidden initially) ----
   /* On `lv_layer_top()` so the keyboard appears above fullscreen settings/chat overlays. */
   g_lv.keyboard = lv_keyboard_create(lv_layer_top());
+#if defined(HAS_TDISPLAY_P4)
+  // Full width: the letters get every pixel the panel has (the old 16-px side
+  // inset left the wide gaps the user could see), and the small bottom lift
+  // keeps the bottom row's corner keys off the AMOLED's corner arcs.
+  lv_obj_set_size(g_lv.keyboard, lv_disp_get_hor_res(nullptr), CHAT_KB_H);
+  lv_obj_align(g_lv.keyboard, LV_ALIGN_BOTTOM_MID, 0, -KB_BOTTOM_LIFT);
+#else
   lv_obj_set_size(g_lv.keyboard, lv_disp_get_hor_res(nullptr), CHAT_KB_H);
   lv_obj_align(g_lv.keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+#endif
   lv_obj_add_flag(g_lv.keyboard, LV_OBJ_FLAG_HIDDEN);
 #if defined(HELTEC_V4_EXPANSION_IO_PIN) && !defined(HELTEC_LORA_V4_R8)
   // Magnify the selected key above the finger before release. The compact V4
@@ -76532,6 +76647,15 @@ static void buildUiTree() {
 #endif
   lv_obj_add_event_cb(g_lv.keyboard, kbBackspaceSelCb,         LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, kbLangKeyCb,              LV_EVENT_VALUE_CHANGED, nullptr);
+#if defined(HAS_TDISPLAY_P4)
+  // The deck's own keys (kbP4Remap produces them). Registered on this board only:
+  // OK in particular exists on every keyboard, and it must keep meaning "dismiss"
+  // everywhere else.
+  lv_obj_add_event_cb(g_lv.keyboard, kbRotKeyCb,               LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(g_lv.keyboard, kbQrKeyCb,                LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(g_lv.keyboard, kbEmojiKeyCb,             LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_add_event_cb(g_lv.keyboard, kbSendKeyCb,              LV_EVENT_VALUE_CHANGED, nullptr);
+#endif
   lv_obj_add_event_cb(g_lv.keyboard, lv_keyboard_def_event_cb, LV_EVENT_VALUE_CHANGED, nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, keyboardCb, LV_EVENT_READY,         nullptr);
   lv_obj_add_event_cb(g_lv.keyboard, keyboardCb, LV_EVENT_CANCEL,        nullptr);
@@ -76539,7 +76663,13 @@ static void buildUiTree() {
   // Hold a letter -> accent picker (issue #22). LONG_PRESSED fires on the held
   // key; the keys are NO_REPEAT so the hold doesn't auto-type.
   lv_obj_add_event_cb(g_lv.keyboard, accentLongPressCb, LV_EVENT_LONG_PRESSED, nullptr);
-  // Dark-theme keyboard styling
+  // Dark-theme keyboard styling. The container itself carries no frame: the
+  // inherited theme style drew a blue hairline along its top and bottom edges,
+  // which read as stray rules across the screen. Only the keys are outlined.
+  lv_obj_set_style_border_width(g_lv.keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_outline_width(g_lv.keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_shadow_width(g_lv.keyboard, 0, LV_PART_MAIN);
+  lv_obj_set_style_pad_all(g_lv.keyboard, 0, LV_PART_MAIN);
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_PANEL), LV_PART_MAIN);
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_ACCENT_SURFACE),    LV_PART_ITEMS);
   lv_obj_set_style_border_color(g_lv.keyboard, lv_color_hex(COLOR_BORDER), LV_PART_ITEMS);
@@ -76547,8 +76677,17 @@ static void buildUiTree() {
   // Key labels use the extended font (montserrat + Cyrillic/Greek/Arabic fallback)
   // so the secondary keyboard layouts render real glyphs instead of tofu boxes.
   // Plain LV_FONT_DEFAULT (montserrat_14, no fallback) showed non-Latin keys as ▯.
-  // g_font_14 is the same size, so key sizing/spacing is unchanged.
+  // g_font_14 is the same size, so key sizing/spacing is unchanged. The P4's
+  // taller 5-row keyboard steps up to g_font_16 for the same reason it exists:
+  // the keys are big enough to carry it, and 14 px read small on the phone panel.
+#if defined(HAS_TDISPLAY_P4)
+  lv_obj_set_style_text_font(g_lv.keyboard, &g_font_16, LV_PART_ITEMS);
+  // Tighter gutters than the stock 10 px: the row budget goes to the keys.
+  lv_obj_set_style_pad_row(g_lv.keyboard, 6, LV_PART_MAIN);
+  lv_obj_set_style_pad_column(g_lv.keyboard, 4, LV_PART_MAIN);
+#else
   lv_obj_set_style_text_font(g_lv.keyboard, &g_font_14, LV_PART_ITEMS);
+#endif
   lv_obj_set_style_bg_color(g_lv.keyboard, lv_color_hex(COLOR_ACCENT),
                              LV_PART_ITEMS | LV_STATE_PRESSED);
   // Pre-warm the keyboard: force LVGL to compute its full button-matrix
@@ -76586,10 +76725,12 @@ static void buildUiTree() {
   // Both buttons use the rotation/refresh glyph; left vs. right position
   // tells the user which way the display will turn.
 #if !defined(HAS_WIO_TRACKER_L2) && !defined(HAS_CROWPANEL_35) && !defined(HAS_CROWPANEL_50) && !defined(HAS_CROWPANEL_P4_101) && \
-    !defined(HAS_SENSECAP_INDICATOR)
+    !defined(HAS_SENSECAP_INDICATOR) && !defined(HAS_TDISPLAY_P4)
   s_kb_rot_left_btn  = makeRotBtn(LV_SYMBOL_REFRESH, kbRotLeftCb);
   s_kb_rot_right_btn = makeRotBtn(LV_SYMBOL_REFRESH, kbRotRightCb);
 #endif
+  // The P4 moves rotation INTO the keyboard: the remapped utility row carries a
+  // single ROT key (see kbP4Remap), so nothing floats over the composer.
   // On-screen language-cycle key. Every ordinary layout now carries a real key in
   // its bottom row (KB_LANG_KEY in KeyboardLayouts.cpp), so only the V4's compact
   // maps still get this floating button. Its label is the active layout's code.
