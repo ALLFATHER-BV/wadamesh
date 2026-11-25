@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <helpers/ui/DisplayDriver.h>
-// badge-bsp headers are plain C — wrap for C++ (no extern "C" guards in them).
+// badge-bsp 2.x headers carry their own extern "C" guards; the wrapper stays for older copies.
 extern "C" {
 #include "bsp/display.h"
 #include "bsp/input.h"
@@ -21,11 +21,15 @@ public:
 
   // Match the ST7789LCDDisplay surface UITask/main.cpp call on the global `display`:
   void writePixelsRGB565(int x, int y, int w, int h, const uint16_t* pixels) {
-    // NOTE: bsp_display_blit's params are (x_start, y_start, x_end, y_end) despite the public
-    // header naming them width/height — the Tanmatsu impl forwards them straight to
-    // esp_lcd_panel_draw_bitmap. Pass exclusive end coords, NOT w/h, or partial flushes fail
-    // with "start position must be smaller than end position" and the panel shows garbage.
-    bsp_display_blit((size_t)x, (size_t)y, (size_t)(x + w), (size_t)(y + h), pixels);
+    // bsp_display_blit takes (x_start, y_start, x_end, y_end), end exclusive (badge-bsp 2.x
+    // names them that way; 0.9.x already behaved so under width/height names). Passing w/h
+    // fails with "start position must be smaller than end position" and shows garbage.
+    // From badge-bsp 2.x the blit only STARTS the transfer and the buffer must stay valid
+    // until bsp_display_wait(): LVGL reuses this buffer for the next band as soon as the
+    // flush returns, so wait here. (On IDF 5.5 the copy is done by the CPU inside the blit
+    // and the wait returns at once; with DMA2D it is a real wait.)
+    if (bsp_display_blit((size_t)x, (size_t)y, (size_t)(x + w), (size_t)(y + h), pixels) == ESP_OK)
+      bsp_display_wait(1000);
   }
   void setDisplayRotation(int rot) { (void)rot; /* TODO(device): bsp panel rotation */ }
   void startFrame() { /* boot-screen no-op; LVGL owns the frame */ }

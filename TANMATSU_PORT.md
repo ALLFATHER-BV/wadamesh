@@ -63,7 +63,8 @@ Proven end-to-end:
 
 **Gotchas found (carry into the real src/ wiring):**
 - **badge-bsp headers have NO `extern "C"` guards** → wrap every `#include "bsp/*.h"` in
-  `extern "C" { }` from C++ or the bsp symbols mangle and fail to link.
+  `extern "C" { }` from C++ or the bsp symbols mangle and fail to link. (badge-bsp 2.x adds
+  the guards itself; the wrappers stay harmless.)
 - **Two esp-hosted stacks collide:** arduino + `espressif/esp_wifi_remote` pull
   `espressif/esp_hosted`, whose whole-archive C6 SDIO driver duplicates badge.team's
   `nicolaielectronics/esp-hosted-tanmatsu` → "multiple definition". **Fix:
@@ -235,6 +236,50 @@ build_flags =
 - LoRa component: https://github.com/Nicolai-Electronics/esp32-component-tanmatsu-lora (`include/lora.h`, v0.3.0)
 - Precedent board: pioarduino `m5stack-tab5-p4` (P4 + MIPI + C6)
 - `mesh::Radio` base: monorepo `src/Dispatcher.h`; example backend `src/helpers/esp32/ESPNOWRadio.h`
+
+## badge-bsp 2.x and the replacement display (beta_107)
+
+The original Tanmatsu panel is no longer made. The replacement looks the same but needs a
+different ST7701 init sequence; badge-bsp 2.x (via `mipi_dsi_abstraction` 2.0.1) reads the
+panel's display ID over DSI at init (ID0=0x42 ID1=0x00 ID2=0x01 = the new panel) and picks
+the matching sequence, so one binary drives both. The launcher store field
+`"bsp_version": 2` (application entry, right below `revision`) marks an app as built on
+badge-bsp 2.x; `scripts/tanmatsu-appstore-publish.sh` derives it from
+`tanmatsu/dependencies.lock` (0.x/1.x -> 1), the template carries 2.
+
+- **Version:** `^2.0.3`, not 2.0.1. 2.0.0 to 2.0.2 declare `idf >=6.0.2` in the registry;
+  2.0.3 is the first 2.x that accepts our IDF 5.5.1.
+- **Lock churn:** changing the manifest makes the component manager re-solve EVERYTHING to
+  the newest versions (esp_hosted 2.12.9 -> 2.13.1, esp-sr, mdns, littlefs, ...). The
+  committed lock only moves badge-bsp and its own dependency tree (mipi_dsi_abstraction,
+  esp_lcd_st7701/ek79007/lt8912b/ili9881c/st7703, esp_lcd_touch(+gt911), es8156,
+  ssd1619, tanmatsu_coprocessor 0.8.0, tca8418). Keep it that way: an esp_hosted host bump
+  against the C6's fixed slave firmware is its own change.
+- **API changes ported:**
+  - `bsp_display_blit(x_start, y_start, x_end, y_end, buf)`: same order we already used,
+    now named so. It only STARTS the transfer; the buffer must stay valid until
+    `bsp_display_wait()`. `TanmatsuDisplay::writePixelsRGB565` and the boot splash wait.
+  - Keyboard events: `args_keyboard.utf8` is now `char[7]` (was `const char*`). We only
+    read `.ascii`, no change.
+  - `bsp_audio_set_volume()` now maps through `es8156_set_volume_percentage(p * 0.70)`
+    (was raw `180 * p / 100`): within one register step of before, so `applyVolume()`
+    keeps its 50..100 mapping.
+  - Battery percentage uses a lookup curve now; we read the voltage only.
+  - Headers carry `extern "C"` guards.
+- **`bsp_device_initialize()` does more** and no longer stops at the first failure: audio,
+  LEDs, storage, orientation, sensors, the CATT port (I2C1 on GPIO 12/13, unused by us) and
+  SAO. **Storage is a trap:** `bsp_storage_initialize()` takes on-chip LDO channel 4 (the
+  microSD I/O supply) as an adjustable channel, which can have only one owner, so Arduino's
+  `SD_MMC.begin()` would fail and the card (identity, contacts, channels, history) would
+  never mount. `main/CMakeLists.txt` links with `--wrap=bsp_storage_initialize` and
+  `main.cpp` stubs it; we never call `bsp_storage_*`. If badge-bsp renames that function the
+  wrap silently stops applying: check the `[storage] SD_MMC.begin` boot line after a bump.
+- **Display copy on IDF 5.5:** `mipi_dsi_abstraction` 2.x only enables DMA2D on IDF 6
+  (`esp_lcd_dpi_panel_enable_dma2d`), so on 5.5.1 `esp_lcd_panel_draw_bitmap` copies each
+  band with the CPU. Correct, a little slower per flush than the DMA2D copy 0.9.9 used.
+- **VCOM:** the BSP applies the launcher's calibrated `system/lcd_vcom` NVS value at panel
+  init (NVS is up by then: `initArduino()` runs `nvs_flash_init()` first).
+- Panel detection logs at INFO on the console: `ST7701 panel: Display ID: ID0=.. ID1=.. ID2=..`.
 
 ## Standalone web-flash image (#806)
 
