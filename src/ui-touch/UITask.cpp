@@ -78503,23 +78503,22 @@ bool UITask::loadHistoryFromStorage() {
     const uint32_t nt = newestThreadMessageTs(_ui_threads[i].name, _ui_threads[i].channel);
     if (nt >= 1577836800UL) { _ui_threads[i].last_ts = nt; markThreadsDirty(2000); }
   }
-  // Seed ClockFloorRTC from our own persisted outgoing messages so a hard power-slider
-  // cut before the lazy NVS clock_floor flush cannot step outgoing timestamps backward
-  // behind messages already recorded in /sd/meshcomod/msgs/seg_*.bin.
+  // A power cut between floor saves (every 15 min) can leave sent messages stamped above
+  // the persisted floor; raise the floor to the newest of them so the next send does not
+  // step back behind what a room server already saw (#835). Only while the time is not
+  // current and only within ClockFloorRTC::LOCAL_RECORD_WINDOW_SECS of the floor: a
+  // record further ahead came from a clock that was since corrected, and following it on
+  // every boot would wedge the clock forward. RAM only; the regular floor save keeps it.
   {
-    uint32_t max_out_ts = 0;
-    for (int i = 0; i < _ui_msg_count; ++i) {
+    const uint32_t base    = rtc_clock.getCurrentTime();   // brings the floor up to now
+    const uint32_t ceiling = rtc_clock.localRecordCeiling();
+    uint32_t best = 0;
+    for (int i = 0; ceiling && i < _ui_msg_count; ++i) {
       const int slot = (_ui_msg_head - _ui_msg_count + i + _ui_msg_cap) % _ui_msg_cap;
       const UIMessage& m = _ui_msgs[slot];
-      if (m.outgoing && m.ts > ClockFloorRTC::MIN_VALID_EPOCH &&
-          m.ts <= ClockFloorRTC::MAX_PLAUSIBLE_EPOCH && m.ts > max_out_ts) {
-        max_out_ts = m.ts;
-      }
+      if (m.outgoing && m.ts > base && m.ts <= ceiling && m.ts > best) best = m.ts;
     }
-    if (max_out_ts > ClockFloorRTC::MIN_VALID_EPOCH) {
-      rtc_clock.seedFloor(max_out_ts);
-      rtc_clock.seedSystemClock();
-    }
+    if (best && rtc_clock.raiseFloorFromLocalRecord(best)) rtc_clock.seedSystemClock();
   }
   if (!from_segments) {
     // Backfill per-record sequence numbers for records loaded from the
@@ -79819,11 +79818,6 @@ int UITask::appendMessage(const char* thread, const char* sender, const char* te
   }
   ++_msgcount;
   markMsgsDirty();
-#if defined(ESP32)
-  if (outgoing && rtc_clock.getFloor() > ClockFloorRTC::MIN_VALID_EPOCH) {
-    touchPrefsSetClockFloor(rtc_clock.getFloor());
-  }
-#endif
 #if !defined(HAS_TANMATSU)
   s_web_rx_nudge = true;   // any new/changed message -> nudge the Contacts/Chats web client to refetch
 #endif
@@ -85989,7 +85983,7 @@ void UITask::loop() {
     if (!s_floor_due) {
       s_floor_due = now + 60000UL;
     } else if (now >= s_floor_due) {
-      s_floor_due = now + 2UL * 60UL * 1000UL;
+      s_floor_due = now + 15UL * 60UL * 1000UL;
       touchPrefsSetClockFloor(rtc_clock.getFloor());   // no-op unless it grew
     } }
 #endif

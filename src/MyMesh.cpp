@@ -2994,31 +2994,14 @@ static uint32_t peerClockQuorumIdFromPubKey(const uint8_t* pub_key) {
   return id == 0 ? 1u : id;
 }
 
-static uint32_t peerClockQuorumIdFromChannelText(const char* text) {
-  if (!text) return 0;
-  const char* colon = strchr(text, ':');
-  if (!colon || colon == text || (colon - text) > 48) return 0;
-  uint32_t h = 2166136261u;
-  for (const char* p = text; p < colon; ++p) {
-    h ^= (uint8_t)(*p);
-    h *= 16777619u;
-  }
-  return h == 0 ? 1u : h;
-}
 #endif
 
 void MyMesh::onDiscoveredContact(ContactInfo &contact, bool is_new, uint8_t path_len, const uint8_t* path) {
-  // Bootstrap an unsynced clock (Seed or Floor after power loss) from an Ed25519-verified
-  // advertisement timestamp via adoptMeshPeerTime (2-peer quorum for large jumps, keeps
-  // _source == Floor so a stale peer heard first cannot lock out real-time peers).
+  // An unsynced clock (Seed, or a stale Floor) may follow a signed advert's timestamp, but
+  // only once a second, different key agrees (ClockFloorRTC::adoptMeshPeerTime, #835).
 #if defined(ESP32)
   rtc_clock.adoptMeshPeerTime(contact.last_advert_timestamp,
                               peerClockQuorumIdFromPubKey(contact.id.pub_key));
-#else
-  if (contact.last_advert_timestamp > 1772323200UL && contact.last_advert_timestamp < 2000000000UL &&
-      getRTCClock()->getCurrentTime() <= 1772323200UL) {
-    getRTCClock()->setCurrentTime(contact.last_advert_timestamp);
-  }
 #endif
   if (_serial->isConnected()) {
     if (is_new) {
@@ -3268,8 +3251,8 @@ ContactInfo*  MyMesh::processAck(const uint8_t *data) {
 void MyMesh::queueMessage(const ContactInfo &from, uint8_t txt_type, mesh::Packet *pkt,
                           uint32_t sender_timestamp, const uint8_t *extra, int extra_len, const char *text) {
   // Clock bootstrap from a peer's send-time when we have no real clock of our own (Wi-Fi
-  // and GPS off, or not yet synced). Uses adoptMeshPeerTime so a stale peer does not
-  // promote _source to ExternalSync and lock out real-time peers.
+  // and GPS off, or not yet synced): a decrypted DM names its key, so it can count toward
+  // the two-key quorum in ClockFloorRTC::adoptMeshPeerTime (#835).
 #if defined(ESP32)
   rtc_clock.adoptMeshPeerTime(sender_timestamp, peerClockQuorumIdFromPubKey(from.id.pub_key));
 #else
@@ -3507,10 +3490,9 @@ int MyMesh::searchChannelsByHash(const uint8_t* hash, mesh::GroupChannel dest[],
 
 void MyMesh::onChannelMessageRecv(const mesh::GroupChannel &channel, mesh::Packet *pkt, uint32_t timestamp,
                                   const char *text) {
-  // Clock bootstrap from a channel peer's send-time via adoptMeshPeerTime.
-#if defined(ESP32)
-  rtc_clock.adoptMeshPeerTime(timestamp, peerClockQuorumIdFromChannelText(text));
-#else
+  // No clock bootstrap from channel posts on ESP32 (#835): the sender is only a name in the
+  // text, so one node could pose as the two peers the quorum needs.
+#if !defined(ESP32)
   if (timestamp > 1700000000UL && timestamp < 2000000000UL &&
       getRTCClock()->getCurrentTime() < 1700000000UL) {
     getRTCClock()->setCurrentTime(timestamp);
