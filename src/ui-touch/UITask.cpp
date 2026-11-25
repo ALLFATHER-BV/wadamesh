@@ -71430,7 +71430,7 @@ static void applyBootTheme() {
 // with the active palette, including stronger outlines and inverse knobs/checks
 // in HC. Reads COLOR_ACCENT after applyAccent has initialized it at boot.
 static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
-#if defined(HAS_TDECK_PRO)
+#if CAP_EPAPER
   // E-paper: a steady text cursor. LVGL blinks it every 400 ms, and on this
   // panel each blink is a partial refresh -- the driver turns every 9th one into
   // a full, flashing refresh, so a focused field flashed the whole screen every
@@ -71449,6 +71449,8 @@ static void touchThemeApplyCb(lv_theme_t* /*th*/, lv_obj_t* obj) {
     };
     for (lv_style_selector_t sel : kCursorStates) lv_obj_set_style_anim_time(obj, 0, sel);
   }
+#endif
+#if defined(HAS_TDECK_PRO)
   // E-paper: one bit per pixel, so black outlines on white, never tints.
   if (!s_theme_day && !s_theme_high_contrast) {
     if (lv_obj_check_type(obj, &lv_switch_class))
